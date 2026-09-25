@@ -1,0 +1,84 @@
+#include "aether/physics/physics_world.h"
+#include "test_framework.h"
+
+using namespace aether;
+
+AETHER_TEST(PhysicsWorld_SphereFallsAndRestsOnFloor) {
+    PhysicsWorld physics;
+
+    // Floor: box centered at y=0, half-extents (10, 0.5, 10) -> top surface at y=0.5.
+    physics.CreateBox(Vec3(0, 0, 0), Vec3(10, 0.5f, 10));
+
+    JPH::BodyID sphere = physics.CreateSphere(Vec3(0, 5, 0), /*radius=*/0.5f, /*mass=*/1.0f, /*is_static=*/false);
+
+    f32 initial_y = physics.GetPosition(sphere).y;
+    AETHER_CHECK_NEAR(initial_y, 5.0f, 1e-3);
+
+    constexpr f32 kDt = 1.0f / 60.0f;
+    for (int i = 0; i < 240; ++i) { // 4 seconds, comfortably enough to fall and settle
+        physics.Step(kDt);
+    }
+
+    f32 final_y = physics.GetPosition(sphere).y;
+    AETHER_CHECK(final_y < initial_y);      // it fell
+    AETHER_CHECK_NEAR(final_y, 1.0f, 0.1);  // settled resting on the floor (top 0.5 + radius 0.5)
+}
+
+AETHER_TEST(PhysicsWorld_StaticBodyDoesNotMove) {
+    PhysicsWorld physics;
+    JPH::BodyID floor = physics.CreateBox(Vec3(1, 2, 3), Vec3(10, 0.5f, 10));
+
+    for (int i = 0; i < 60; ++i) {
+        physics.Step(1.0f / 60.0f);
+    }
+
+    Vec3 pos = physics.GetPosition(floor);
+    AETHER_CHECK_NEAR(pos.x, 1.0f, 1e-4);
+    AETHER_CHECK_NEAR(pos.y, 2.0f, 1e-4);
+    AETHER_CHECK_NEAR(pos.z, 3.0f, 1e-4);
+}
+
+AETHER_TEST(SyncPhysicsToTransforms_UpdatesEcsFromSimulation) {
+    World world;
+    PhysicsWorld physics;
+
+    physics.CreateBox(Vec3(0, 0, 0), Vec3(10, 0.5f, 10));
+    JPH::BodyID sphere_id = physics.CreateSphere(Vec3(0, 5, 0), 0.5f, 1.0f, false);
+
+    RigidBody body;
+    body.body_id = sphere_id;
+    body.radius = 0.5f;
+    body.mass = 1.0f;
+    Entity entity = world.CreateEntity(Transform{Vec3(0, 5, 0), Quaternion::Identity()}, body);
+
+    constexpr f32 kDt = 1.0f / 60.0f;
+    for (int i = 0; i < 240; ++i) {
+        SyncPhysicsToTransforms(world, physics, kDt);
+    }
+
+    Transform* transform = world.GetComponent<Transform>(entity);
+    AETHER_CHECK(transform != nullptr);
+    AETHER_CHECK_NEAR(transform->position.y, 1.0f, 0.1);
+}
+
+AETHER_TEST(RigidBody_SerializerRoundTripsShapeDataNotHandle) {
+    RegisterPhysicsComponentSerializers();
+
+    RigidBody original;
+    original.body_id = JPH::BodyID(42);
+    original.radius = 2.5f;
+    original.mass = 3.5f;
+    original.is_static = true;
+
+    std::vector<u8> bytes;
+    const ComponentInfo& info = GetComponentInfo(GetComponentId<RigidBody>());
+    info.serialize(&original, bytes);
+
+    RigidBody restored;
+    info.deserialize(&restored, bytes.data(), bytes.size());
+
+    AETHER_CHECK_NEAR(restored.radius, 2.5f, 1e-6);
+    AETHER_CHECK_NEAR(restored.mass, 3.5f, 1e-6);
+    AETHER_CHECK(restored.is_static == true);
+    AETHER_CHECK(restored.body_id.IsInvalid()); // handle deliberately NOT preserved
+}
