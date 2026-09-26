@@ -1,0 +1,76 @@
+{
+  "asset": { "version": "2.0", "generator": "aether test asset (hand-written, not exported from a DCC tool)" },
+  "buffers": [
+    {
+      "uri": "data:application/octet-stream;base64,zcxMvgAAAAAAAAAAzcxMPgAAAAAAAAAAzcxMvgAAAD8AAAAAzcxMPgAAAD8AAAAAzcxMvgAAgD8AAAAAzcxMPgAAgD8AAAAAzcxMvgAAwD8AAAAAzcxMPgAAwD8AAAAAzcxMvgAAAEAAAAAAzcxMPgAAAEAAAAAAzcxMvgAAIEAAAAAAzcxMPgAAIEAAAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAADNzEw+AACAP83MTD4AAAAAzczMPgAAgD/NzMw+AAAAAJqZGT8AAIA/mpkZPwAAAADNzEw/AACAP83MTD8AAAAAAACAPwAAgD8AAIA/AAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAADNzEw/zcxMPgAAAAAAAAAAzcxMP83MTD4AAAAAAAAAAAAAAD8AAAA/AAAAAAAAAAAAAAA/AAAAPwAAAAAAAAAAzcxMPs3MTD8AAAAAAAAAAM3MTD7NzEw/AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAACAAEAAQACAAMAAgAEAAMAAwAEAAUABAAGAAUABQAGAAcABgAIAAcABwAIAAkACAAKAAkACQAKAAsA",
+      "byteLength": 684
+    },
+    {
+      "uri": "data:application/octet-stream;base64,AACAPwAAAAAAAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAAAAAAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAMC/AAAAAAAAgD8=",
+      "byteLength": 128
+    },
+    {
+      "uri": "data:application/octet-stream;base64,AAAAAAAAgD8AAABAAAAAAAAAAADug4S+6kZ3PwAAAAAAAAAA7oOEPupGdz8AAAAAAAAAAO6DhL7qRnc/",
+      "byteLength": 60
+    }
+  ],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0, "byteLength": 144 },
+    { "buffer": 0, "byteOffset": 144, "byteLength": 144 },
+    { "buffer": 0, "byteOffset": 288, "byteLength": 96 },
+    { "buffer": 0, "byteOffset": 384, "byteLength": 48 },
+    { "buffer": 0, "byteOffset": 432, "byteLength": 192 },
+    { "buffer": 0, "byteOffset": 624, "byteLength": 60 },
+    { "buffer": 1, "byteOffset": 0, "byteLength": 128 },
+    { "buffer": 2, "byteOffset": 0, "byteLength": 12 },
+    { "buffer": 2, "byteOffset": 12, "byteLength": 48 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 12, "type": "VEC3" },
+    { "bufferView": 1, "componentType": 5126, "count": 12, "type": "VEC3" },
+    { "bufferView": 2, "componentType": 5126, "count": 12, "type": "VEC2" },
+    { "bufferView": 3, "componentType": 5121, "count": 12, "type": "VEC4" },
+    { "bufferView": 4, "componentType": 5126, "count": 12, "type": "VEC4" },
+    { "bufferView": 5, "componentType": 5123, "count": 30, "type": "SCALAR" },
+    { "bufferView": 6, "componentType": 5126, "count": 2, "type": "MAT4" },
+    { "bufferView": 7, "componentType": 5126, "count": 3, "type": "SCALAR" },
+    { "bufferView": 8, "componentType": 5126, "count": 3, "type": "VEC4" }
+  ],
+  "meshes": [
+    {
+      "name": "SkinnedRibbon",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2,
+            "JOINTS_0": 3,
+            "WEIGHTS_0": 4
+          },
+          "indices": 5,
+          "mode": 4
+        }
+      ]
+    }
+  ],
+  "nodes": [
+    { "name": "RibbonMesh", "mesh": 0, "skin": 0 },
+    { "name": "Joint0_Base", "children": [2] },
+    { "name": "Joint1_Tip", "translation": [0.0, 1.5, 0.0] }
+  ],
+  "skins": [
+    { "joints": [1, 2], "inverseBindMatrices": 6 }
+  ],
+  "animations": [
+    {
+      "name": "Sway",
+      "channels": [
+        { "sampler": 0, "target": { "node": 2, "path": "rotation" } }
+      ],
+      "samplers": [
+        { "input": 7, "output": 8, "interpolation": "LINEAR" }
+      ]
+    }
+  ]
+}

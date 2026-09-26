@@ -825,10 +825,43 @@ proof for the animation half: it loads `assets/models/test_animation.gltf`
 duration 2s) and calls `EvaluateAnimation` every frame — confirmed by two
 screenshots at different frame counts showing the cube at visibly different
 on-screen positions, not just logged as loaded. Stable across 6 quick runs
-plus one 2000-frame run. GPU vertex skinning itself (actually consuming
-`joint_indices`/`joint_weights`/`ComputeSkinMatrices` in a skinned draw
-call) is not wired into a demo yet — the parsed data and the CPU-side
-skin-matrix math are there and unit-tested, but no shader reads them yet.
+plus one 2000-frame run.
+
+#### Follow-up: GPU vertex skinning
+
+The one gap the animation follow-up above left explicitly open — real GPU
+skinning consuming `joint_indices`/`joint_weights`/`ComputeSkinMatrices`
+rather than just parsing and unit-testing them — is now closed.
+`AETHER_GLTF_DEMO_SKIN=1` runs a deliberately separate demo/pipeline (its
+own shader, vertex layout, and root signature — no bindless textures or
+material system, since the point is proving the skinning math, not
+re-proving texture sampling already covered elsewhere): it loads
+`assets/models/test_skinned_ribbon.gltf`, a hand-built 12-vertex, 2-joint
+ribbon (joint 0 fixed at the base, joint 1 at the midpoint, per-row
+`WEIGHTS_0` blending smoothly from 100% joint 0 at the base to 100% joint 1
+at the tip) whose single animation channel swings joint 1's rotation back
+and forth ±30° over 2 seconds.
+
+Every frame, `ComputeSkinMatrices` (CPU-side, same function the animation
+follow-up already unit-tested) computes the current joint matrices and
+uploads them to a small root-CBV constant buffer (8 `float4x4` slots — well
+past the 64-DWORD limit a single root-32-bit-constants parameter allows,
+which is why this needs an actual CBV rather than inline constants like the
+rest of this demo's root signature). The vertex shader does the actual
+skinning: standard linear blend skinning, `skinMat = Σ g_Joints[joint_i] *
+weight_i`, then `skinnedPos = mul(skinMat, position)` before the usual
+model/view/projection transform — computed per-vertex, per-frame, entirely
+on the GPU.
+
+**Verified visually**: two screenshots at different points in the animation
+cycle show the ribbon bent in visibly different amounts/directions (not a
+static pose) with a smooth, continuous curve from base to tip — the
+qualitative signature of correct per-vertex weight blending, since a bug in
+the blend math (e.g. hard-switching between joints instead of interpolating)
+would show up as a sharp kink at a fixed row instead. 81/81 tests unchanged
+(pure GPU pipeline/shader work, using already-unit-tested CPU-side math);
+existing gltf_demo modes (test_scene.gltf, `AETHER_GLTF_DEMO_ANIMATE=1`)
+regression-checked; 6 quick runs plus one 2000-frame stability run.
 
 ### Follow-up: material system (`aether::gfx::MaterialData`/`LoadMaterial`)
 
