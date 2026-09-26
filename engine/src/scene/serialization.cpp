@@ -33,7 +33,7 @@ void AppendBytes(std::vector<u8>& buffer, const void* data, usize size) {
 // Cursor over an in-memory buffer for reading LoadScene's binary format.
 class Reader {
 public:
-    explicit Reader(const std::vector<u8>& buffer) : buffer_(buffer) {}
+    explicit Reader(std::span<const u8> buffer) : buffer_(buffer) {}
 
     bool ReadBytes(void* dst, usize n) {
         if (offset_ + n > buffer_.size()) {
@@ -54,7 +54,7 @@ public:
     }
 
 private:
-    const std::vector<u8>& buffer_;
+    std::span<const u8> buffer_;
     usize offset_ = 0;
 };
 
@@ -133,7 +133,7 @@ void ApplyComponent(void* dst, const ComponentInfo& info, const PendingComponent
 
 } // namespace
 
-bool SaveScene(const World& world, const std::string& path) {
+std::vector<u8> SaveSceneToMemory(const World& world) {
     std::vector<u8> buffer;
     AppendBytes(buffer, kMagic, sizeof(kMagic));
     AppendU32(buffer, kVersion);
@@ -161,11 +161,16 @@ bool SaveScene(const World& world, const std::string& path) {
         }
     }
 
+    return buffer;
+}
+
+bool SaveScene(const World& world, const std::string& path) {
+    std::vector<u8> buffer = SaveSceneToMemory(world);
     if (!fs::WriteFileBytes(path, buffer.data(), buffer.size())) {
         AETHER_LOG_ERROR("Scene", "Failed to write scene file: %s", path.c_str());
         return false;
     }
-    AETHER_LOG_INFO("Scene", "Saved %zu entities to %s", slots.size(), path.c_str());
+    AETHER_LOG_INFO("Scene", "Saved %zu bytes to %s", buffer.size(), path.c_str());
     return true;
 }
 
@@ -175,7 +180,10 @@ bool LoadScene(World& world, const std::string& path) {
         AETHER_LOG_ERROR("Scene", "Failed to read scene file: %s", path.c_str());
         return false;
     }
+    return LoadSceneFromMemory(world, buffer, path);
+}
 
+bool LoadSceneFromMemory(World& world, std::span<const u8> buffer, const std::string& path) {
     Reader reader(buffer);
     char magic[4];
     u32 version = 0;

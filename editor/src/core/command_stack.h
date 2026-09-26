@@ -89,8 +89,8 @@ public:
     // captured from it.
     void Record(std::unique_ptr<ICommand> command, MergePolicy merge = MergePolicy::Never);
 
-    bool CanUndo() const { return !undo_.empty() && transaction_depth_ == 0; }
-    bool CanRedo() const { return !redo_.empty() && transaction_depth_ == 0; }
+    bool CanUndo() const { return !undo_.empty() && transaction_depth_ == 0 && !frozen_; }
+    bool CanRedo() const { return !redo_.empty() && transaction_depth_ == 0 && !frozen_; }
     // Return false (doing nothing) when there's nothing to undo/redo, or while
     // a transaction is open.
     bool Undo(CommandContext& ctx);
@@ -104,6 +104,12 @@ public:
     bool InTransaction() const { return transaction_depth_ > 0; }
 
     void BreakMergeChain() { merge_open_ = false; }
+
+    // While frozen (during Play-in-Editor), commands still apply — Execute
+    // calls Do — but nothing is recorded, and Undo/Redo do nothing: play-time
+    // changes are thrown away on Stop, so history must not refer to them.
+    void SetFrozen(bool frozen);
+    bool IsFrozen() const { return frozen_; }
 
     void MarkSaved();
     bool IsDirty() const;
@@ -125,6 +131,7 @@ private:
     std::string transaction_label_;
     int transaction_depth_ = 0;
     bool merge_open_ = false;
+    bool frozen_ = false;
 
     // Undo depth at the last MarkSaved, and whether that state is still
     // reachable by undo/redo (it isn't once a new command replaces the redo

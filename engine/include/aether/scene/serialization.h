@@ -2,7 +2,9 @@
 
 #include "aether/ecs/world.h"
 
+#include <span>
 #include <string>
+#include <vector>
 
 namespace aether {
 
@@ -26,6 +28,11 @@ bool SaveScene(const World& world, const std::string& path);
 // cleared first — loading is additive). Returns false if the file can't be
 // read or isn't a recognized/supported-version Aether scene file.
 bool LoadScene(World& world, const std::string& path);
+
+// The same binary format, in memory: what Play-in-Editor uses to snapshot the
+// edited world and restore it on Stop. `source_name` only labels log output.
+std::vector<u8> SaveSceneToMemory(const World& world);
+bool LoadSceneFromMemory(World& world, std::span<const u8> bytes, const std::string& source_name = "<memory>");
 
 // JSON scene files: the human-readable, diff-friendly form (see
 // docs/ROADMAP_DETAILS.md §A.3). Only reflected components can be written as
