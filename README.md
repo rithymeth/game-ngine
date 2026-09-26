@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phase 6 — Reflection & Property System (complete)
+## Status: Phase 7 — Editor Foundation (in progress)
 
 ### Phase 1 — Foundation
 
@@ -1365,6 +1365,44 @@ exactly once, both inline and on the heap. That run excludes the
 Windows-only D3D12 tests; the MSVC build hasn't been run for this change.
 The macros use `##__VA_ARGS__` (already used by the log macros) rather than
 `__VA_OPT__`, which MSVC only supports with `/Zc:preprocessor`.
+
+### Phase 7 (in progress) — Editor Foundation
+
+Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 7.
+
+**Step 1: permanent entity IDs** (`engine/include/aether/scene/entity_guid.h`).
+
+- **`EntityGuid`**: a random RFC 9562 version 4 UUID, created once and saved
+  with the entity. An `Entity` handle changes whenever an entity is
+  destroyed and recreated (undo, reloading, prefabs), so saved data and undo
+  history will refer to entities by GUID instead.
+  - `NewEntityGuid()` is thread-safe, with one OS-seeded generator per
+    thread.
+  - `ToString`/`ParseEntityGuid` use the canonical
+    `5c0a9e2e-7b1d-4c3a-9f10-2a6b8e4d1f77` form.
+- **`IdComponent`**: gives an entity its GUID. It's reflected, and shown
+  read-only in the Inspector. `EnsureGuid` adds one when missing, and
+  `RegenerateGuid` gives a duplicate a fresh ID.
+- **`GuidIndex`**: maps GUID → current `Entity`.
+  - `Find` never returns a destroyed entity, and never returns whatever new
+    entity has reused its slot.
+  - `Rebuild(world)` reindexes after a scene load and reports duplicate GUIDs
+    (the same scene loaded twice, for example). The earlier entity keeps the
+    GUID.
+- **Scene files**: JSON scenes write the ID at entity level as
+  `"guid": "…"` (§A.3 layout) rather than among the components. Both formats
+  round-trip it.
+- **Custom JSON converters** (`reflection/converters.h`):
+  `RegisterJsonConverter` lets a type pick its own JSON form (a string for
+  GUIDs, rather than `{hi, lo}`), in both JSON and binary archives. This will
+  also serve asset GUIDs in Phase 8.
+- **`World::IsAlive(Entity)`**.
+
+**Verified**: 6 new tests, including 20,000 generated GUIDs checked for
+uniqueness and version/variant bits, parse rejection cases, stale-handle
+rejection after destroy and slot reuse, duplicate detection, and
+byte-identical JSON re-saves. 93/93 tests pass on GCC 13, on Clang and
+under ASan/UBSan, and 100/100 with physics.
 
 ## Building
 
