@@ -167,8 +167,12 @@ Edge cases:
    hierarchy moved to `scene/hierarchy.h`. Selection isn't part of the
    history yet; it's cleared when undo removes the selected entity. That
    comes with a proper `EditorContext` selection model.
-5. PIE world duplication, BeginPlay/EndPlay, Stop restore, and the
-   round-trip test.
+5. ✅ **Done** (except BeginPlay/EndPlay). Play/Stop with a byte-identical
+   round-trip test, plus Pause/Step (originally planned for step 6).
+   - Implemented as snapshot, then play in place, then restore on Stop,
+     rather than a duplicated play world. The result is the same, and
+     nothing holding a `World&` has to switch.
+   - BeginPlay/EndPlay need scripting, so they wait for Phase 11.
 6. Simulate, Pause, Step, Keep Simulation Changes.
 
 ---

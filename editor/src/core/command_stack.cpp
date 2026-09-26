@@ -43,7 +43,15 @@ void CommandStack::Execute(CommandContext& ctx, std::unique_ptr<ICommand> comman
     Record(std::move(command), merge);
 }
 
+void CommandStack::SetFrozen(bool frozen) {
+    frozen_ = frozen;
+    merge_open_ = false;
+}
+
 void CommandStack::Record(std::unique_ptr<ICommand> command, MergePolicy merge) {
+    if (frozen_) {
+        return; // applied, but not part of the history (see SetFrozen)
+    }
     if (transaction_depth_ > 0) {
         transaction_commands_.push_back(std::move(command));
         return;

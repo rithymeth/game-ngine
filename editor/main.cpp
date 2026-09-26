@@ -58,6 +58,7 @@
 #include "aether/scene/hierarchy.h"
 #include "aether/scene/serialization.h"
 #include "core/commands.h"
+#include "core/play_session.h"
 #include "ui/entity_inspector.h"
 #include "ui/reflected_inspector.h"
 
@@ -1216,7 +1217,28 @@ int main() {
         Entity delete_confirm_target = kNullEntity;
         std::string delete_confirm_name;
 
-        bool playing = true;
+        // Play-in-Editor: Play snapshots the level; Stop restores it
+        // exactly (editor/src/core/play_session.h). The editor starts in edit
+        // mode — nothing simulates until Play. AETHER_EDITOR_AUTOPLAY=1 starts
+        // it playing, for automated runs that want physics from frame one.
+        editor::PlaySession play_session;
+        auto stop_playing = [&] {
+            // Entities are rebuilt from the snapshot with new handles but the
+            // same GUIDs: carry the selection across by GUID.
+            EntityGuid selected_guid;
+            if (!selected_entity.IsNull() && world.IsAlive(selected_entity)) {
+                if (const IdComponent* id = world.GetComponent<IdComponent>(selected_entity)) {
+                    selected_guid = id->guid;
+                }
+            }
+            play_session.Stop(cmd_ctx, commands);
+            selected_entity = selected_guid.IsNull() ? kNullEntity : guids.Find(world, selected_guid);
+            delete_confirm_target = kNullEntity;
+            gizmo_dragging_axis = -1;
+        };
+        if (const char* autoplay = std::getenv("AETHER_EDITOR_AUTOPLAY"); autoplay && std::atoi(autoplay) != 0) {
+            play_session.Play(cmd_ctx, commands);
+        }
         std::vector<std::unique_ptr<CommandList>> command_lists;
         std::vector<u64> frame_fences(swap_chain.BufferCount(), 0);
         for (u32 i = 0; i < swap_chain.BufferCount(); ++i) {
@@ -1233,7 +1255,7 @@ int main() {
             }
 
             constexpr f32 kDt = 1.0f / 60.0f;
-            if (playing) {
+            if (play_session.ShouldSimulate()) {
                 SyncPhysicsToTransforms(world, physics, kDt);
             }
 
@@ -1251,7 +1273,11 @@ int main() {
             }
             bool undo_requested = false;
             bool redo_requested = false;
+            bool play_toggle_requested = false;
+            bool stop_requested = false;
             if (!ImGui::GetIO().WantTextInput) {
+                play_toggle_requested = ImGui::IsKeyChordPressed(ImGuiMod_Alt | ImGuiKey_P);
+                stop_requested = !play_session.IsEditing() && ImGui::IsKeyPressed(ImGuiKey_Escape, false);
                 undo_requested = ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z);
                 redo_requested = ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Y) ||
                                  ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z);
@@ -1470,7 +1496,34 @@ int main() {
             ImGui::SetNextWindowSize(ImVec2(kLeftPanelWidth, 340.0f), ImGuiCond_FirstUseEver);
             ImGui::Begin("Aether Editor");
             ImGui::Text("Entities: %zu", world.EntityCount());
-            ImGui::Checkbox("Playing", &playing);
+            using PlayState = editor::PlaySession::State;
+            const PlayState play_state = play_session.GetState();
+            if (play_state == PlayState::Editing) {
+                if (ImGui::Button("Play (Alt+P)")) {
+                    play_toggle_requested = true;
+                }
+            } else {
+                if (ImGui::Button(play_state == PlayState::Paused ? "Resume" : "Pause")) {
+                    play_toggle_requested = true;
+                }
+                ImGui::SameLine();
+                ImGui::BeginDisabled(play_state != PlayState::Paused);
+                if (ImGui::Button("Step")) {
+                    play_session.Step();
+                }
+                ImGui::EndDisabled();
+                ImGui::SameLine();
+                if (ImGui::Button("Stop (Esc)")) {
+                    stop_requested = true;
+                }
+                ImGui::TextColored(play_state == PlayState::Paused ? ImVec4(0.82f, 0.6f, 0.13f, 1.0f)
+                                                                   : ImVec4(0.25f, 0.73f, 0.31f, 1.0f),
+                                   play_state == PlayState::Paused ? "Paused - changes are discarded on Stop"
+                                                                   : "Playing - changes are discarded on Stop");
+            }
+            // Saving or loading mid-play would capture/replace the played
+            // world, not the level being edited.
+            ImGui::BeginDisabled(play_state != PlayState::Editing);
             if (ImGui::Button("Spawn Sphere")) {
                 Entity spawned = SpawnSphere(world, physics, Vec3(spread(rng), 8.0f, spread(rng)), 0.5f, 1.0f);
                 commands.Record(editor::CreateEntityCommand::FromExisting(cmd_ctx, spawned, "Spawn Sphere"));
@@ -1503,6 +1556,8 @@ int main() {
                     commands.MarkSaved();
                 }
             }
+
+            ImGui::EndDisabled();
 
             ImGui::SeparatorText("Controls");
             ImGui::TextWrapped("Hold Right Mouse + WASD/QE to fly the camera. Left-click an entity (or empty "
@@ -1827,6 +1882,17 @@ int main() {
             }
 
             ImGui::Render();
+
+            if (stop_requested) {
+                stop_playing();
+                entities_to_delete.clear(); // handles from the played world
+            } else if (play_toggle_requested) {
+                if (play_session.GetState() == editor::PlaySession::State::Playing) {
+                    play_session.Pause();
+                } else {
+                    play_session.Play(cmd_ctx, commands);
+                }
+            }
 
             for (Entity e : entities_to_delete) {
                 if (!world.IsAlive(e)) {
