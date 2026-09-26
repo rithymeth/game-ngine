@@ -3,7 +3,10 @@
 #include "aether/core/log.h"
 #include "aether/platform/filesystem.h"
 #include "aether/reflection/serialize.h"
+#include "aether/scene/components.h"
 #include "aether/scene/entity_guid.h"
+#include "aether/scene/hierarchy.h"
+#include "aether/scene/prefab.h"
 
 #include <algorithm>
 #include <bit>
@@ -12,6 +15,19 @@
 namespace aether {
 
 namespace {
+
+// Component types get their ids (and become findable by name) on first use.
+// Loading a scene can come before any code has touched them, so register the
+// engine's scene components first, or their data would be skipped as
+// unknown.
+void RegisterSceneComponents() {
+    (void)GetComponentId<IdComponent>();
+    (void)GetComponentId<Parent>();
+    (void)GetComponentId<Transform>();
+    (void)GetComponentId<ModelRenderer>();
+    (void)GetComponentId<PrefabInstance>();
+    (void)GetComponentId<PrefabLink>();
+}
 
 constexpr char kMagic[4] = {'A', 'E', 'S', 'C'};
 // v1: per entity a u64 component mask, then {name, bytes} per set bit.
@@ -187,6 +203,7 @@ bool LoadScene(World& world, const std::string& path) {
 }
 
 bool LoadSceneFromMemory(World& world, std::span<const u8> buffer, const std::string& path) {
+    RegisterSceneComponents();
     Reader reader(buffer);
     char magic[4];
     u32 version = 0;
@@ -316,6 +333,7 @@ bool SaveSceneJson(const World& world, const std::string& path) {
 
 bool LoadSceneJson(World& world, const std::string& path) {
     using reflect::Json;
+    RegisterSceneComponents();
     std::vector<u8> bytes;
     if (!fs::ReadFileBytes(path, bytes)) {
         AETHER_LOG_ERROR("Scene", "Failed to read scene file: %s", path.c_str());
