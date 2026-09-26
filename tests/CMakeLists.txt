@@ -6,6 +6,7 @@ add_executable(aether_tests
     test_job_system.cpp
     test_ecs.cpp
     test_serialization.cpp
+    test_reflection.cpp
     test_assets.cpp
     test_gltf_loader.cpp
 )

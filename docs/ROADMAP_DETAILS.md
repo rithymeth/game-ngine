@@ -304,8 +304,12 @@ The goal is to change the ECS as little as possible:
 
 ### B.6 PR breakdown
 
-1. `TypeId`, `TypeInfo`, `TypeRegistry`, macros, and builtin types
-   (bool/ints/floats/string/Vec3/Vec4/Quaternion/Mat4). Tests 1–4.
+1. ✅ **Done.** `TypeId`, `TypeInfo`, `TypeRegistry`, macros, and builtin
+   types (bool/ints/floats/string/Vec3/Vec4/Quaternion/Mat4). Covers tests 1
+   and 4 from §B.5, with typed `FieldInfo::As<T>` access standing in for
+   test 2 until `Any` lands in the next step. Fields store a `const
+   TypeInfo*` rather than a bare `TypeId`, which saves a registry lookup per
+   access; the `TypeId` is still available as `field.type->id`.
 2. `Any` and function invocation thunks.
 3. JSON and binary archives with `SerializeObject`/`DeserializeObject`.
    Archive tests.
