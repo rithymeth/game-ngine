@@ -1,30 +1,34 @@
-// Roadmap item: glTF mesh loading (aether::assets::LoadGltf,
-// engine/include/aether/assets/gltf_loader.h). This demo is the end-to-end
-// proof: load a *real* glTF 2.0 asset from disk (JSON parsed via
-// nlohmann::json, vertex data pulled from an external .bin buffer file —
-// exercising the file-based buffer path the unit tests' embedded-base64
-// examples don't cover), build real GPU vertex/index buffers directly from
-// the loaded data, and render it — not just parse it successfully and stop.
+// Roadmap items: glTF mesh loading (aether::assets::LoadGltf) and the
+// material system (aether::gfx::MaterialData / LoadMaterial). This demo is
+// the end-to-end proof for both: load a *real* glTF 2.0 asset from disk
+// (JSON parsed via nlohmann::json, vertex data pulled from an external .bin
+// buffer file), resolve its material's texture through AssetManager into a
+// bindless index via LoadMaterial, and actually sample that texture in the
+// pixel shader — not just parse the file and stop.
 //
-// Deliberately simple shading (Lambertian diffuse + Blinn-Phong specular,
-// not the full Cook-Torrance PBR pipeline pbr_demo/ implements): this demo's
-// job is proving the loaded mesh/material data is genuinely usable, not
-// re-proving the BRDF. The loaded material's baseColorFactor drives the
-// albedo directly.
+// assets/models/test_textured_cube.gltf + test_cube.bin is a hand-written
+// (not exported from a DCC tool) 24-vertex, 6-face cube with per-face
+// normals and UVs, referencing assets/textures/checker_a.png (already used
+// elsewhere — see the asset pipeline's README section) as its
+// baseColorTexture.
 //
-// assets/models/test_cube.gltf + test_cube.bin is a hand-written (not
-// exported from a DCC tool) 24-vertex, 6-face cube with per-face normals and
-// UVs, referencing its vertex data from the external .bin file.
+// Shading is deliberately simple (Lambertian diffuse + Blinn-Phong
+// specular, not the full Cook-Torrance PBR pipeline pbr_demo/ implements):
+// this demo's job is proving the loaded mesh/material/texture data is
+// genuinely usable, not re-proving the BRDF.
 //
 // Set AETHER_GLTF_DEMO_MAX_FRAMES=<N> to auto-close after N frames instead
 // of waiting for the window to be closed. Set AETHER_GLTF_DEMO_SCREENSHOT=
 // <path> to dump the final frame to a PNG on exit.
 
+#include "aether/assets/asset_manager.h"
 #include "aether/assets/gltf_loader.h"
 #include "aether/core/log.h"
 #include "aether/gfx/buffer.h"
 #include "aether/gfx/command_list.h"
+#include "aether/gfx/descriptor_heap.h"
 #include "aether/gfx/device.h"
+#include "aether/gfx/material.h"
 #include "aether/gfx/render_graph.h"
 #include "aether/gfx/shader_compiler.h"
 #include "aether/gfx/swap_chain.h"
@@ -46,27 +50,43 @@ using namespace aether::gfx;
 
 namespace {
 
+constexpr u32 kBindlessCapacity = 64;
+
 constexpr const char* kShaderSource = R"(
-cbuffer Constants : register(b0) {
+cbuffer FrameConstants : register(b0) {
     float4x4 g_MVP;
     float4x4 g_Model;
-    float3 g_Albedo;
-    float _pad0;
     float3 g_CameraPos;
-    float _pad1;
+    float _pad0;
     float3 g_LightDir;
-    float _pad2;
+    float _pad1;
 };
+
+cbuffer MaterialConstants : register(b1) {
+    float4 g_BaseColorFactor;
+    float g_Metallic;
+    float g_Roughness;
+    uint g_BaseColorTexture;
+    uint g_NormalTexture;
+    uint g_MetallicRoughnessTexture;
+};
+
+Texture2D g_Textures[64] : register(t0, space1);
+SamplerState g_Sampler : register(s0);
+
+static const uint kInvalidTextureIndex = 0xFFFFFFFF;
 
 struct VSInput {
     float3 position : POSITION;
     float3 normal : NORMAL;
+    float2 uv : TEXCOORD0;
 };
 
 struct PSInput {
     float4 position : SV_POSITION;
     float3 worldPos : TEXCOORD0;
     float3 normal : NORMAL;
+    float2 uv : TEXCOORD1;
 };
 
 PSInput VSMain(VSInput input) {
@@ -75,6 +95,7 @@ PSInput VSMain(VSInput input) {
     result.worldPos = worldPos.xyz;
     result.position = mul(g_MVP, float4(input.position, 1.0));
     result.normal = mul((float3x3)g_Model, input.normal);
+    result.uv = input.uv;
     return result;
 }
 
@@ -84,42 +105,74 @@ float4 PSMain(PSInput input) : SV_TARGET {
     float3 V = normalize(g_CameraPos - input.worldPos);
     float3 H = normalize(V + L);
 
+    // The material system's actual contract: a texture index of
+    // kInvalidTextureIndex means "no such texture on this material", fall
+    // back to the factor alone — same as the glTF spec's own
+    // factor-times-texture-or-factor-alone semantics.
+    float3 albedo = g_BaseColorFactor.rgb;
+    if (g_BaseColorTexture != kInvalidTextureIndex) {
+        albedo *= g_Textures[g_BaseColorTexture].Sample(g_Sampler, input.uv).rgb;
+    }
+
     float ambient = 0.12;
     float diffuse = max(dot(N, L), 0.0);
-    float specular = pow(max(dot(N, H), 0.0), 32.0) * 0.5;
+    float specular = pow(max(dot(N, H), 0.0), 32.0) * (1.0 - g_Roughness) * 0.5;
 
-    float3 color = g_Albedo * (ambient + diffuse) + float3(1.0, 1.0, 1.0) * specular;
+    float3 color = albedo * (ambient + diffuse) + float3(1.0, 1.0, 1.0) * specular;
     color = color / (color + 1.0);
     color = pow(color, 1.0 / 2.2);
     return float4(color, 1.0);
 }
 )";
 
-struct Constants {
+struct FrameConstants {
     Mat4 mvp;
     Mat4 model;
-    Vec3 albedo;
-    f32 pad0;
     Vec3 camera_pos;
-    f32 pad1;
+    f32 pad0;
     Vec3 light_dir;
-    f32 pad2;
+    f32 pad1;
 };
 
 struct SimpleVertex {
     f32 pos[3];
     f32 normal[3];
+    f32 uv[2];
 };
 
 ComPtr<ID3D12RootSignature> CreateRootSignature(Device& device) {
-    D3D12_ROOT_PARAMETER param{};
-    param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    param.Constants = {/*ShaderRegister=*/0, /*RegisterSpace=*/0, /*Num32BitValues=*/sizeof(Constants) / 4};
-    param.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    D3D12_DESCRIPTOR_RANGE bindless_range{};
+    bindless_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    bindless_range.NumDescriptors = kBindlessCapacity;
+    bindless_range.BaseShaderRegister = 0;
+    bindless_range.RegisterSpace = 1;
+    bindless_range.OffsetInDescriptorsFromTableStart = 0;
+
+    D3D12_ROOT_PARAMETER params[3]{};
+    params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    params[0].Constants = {/*ShaderRegister=*/0, /*RegisterSpace=*/0, /*Num32BitValues=*/sizeof(FrameConstants) / 4};
+    params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+    params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    params[1].Constants = {/*ShaderRegister=*/1, /*RegisterSpace=*/0, /*Num32BitValues=*/sizeof(MaterialData) / 4};
+    params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+    params[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    params[2].DescriptorTable = {1, &bindless_range};
+    params[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+    D3D12_STATIC_SAMPLER_DESC sampler{};
+    sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    sampler.ShaderRegister = 0;
+    sampler.RegisterSpace = 0;
+    sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
     D3D12_ROOT_SIGNATURE_DESC desc{};
-    desc.NumParameters = 1;
-    desc.pParameters = &param;
+    desc.NumParameters = _countof(params);
+    desc.pParameters = params;
+    desc.NumStaticSamplers = 1;
+    desc.pStaticSamplers = &sampler;
     desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
     ComPtr<ID3DBlob> signature, error;
@@ -139,16 +192,18 @@ ComPtr<ID3D12PipelineState> CreatePSO(Device& device, ID3D12RootSignature* root_
     ShaderBytecode vs = CompileHLSL(kShaderSource, "VSMain", "vs_5_1", "gltf_vs");
     ShaderBytecode ps = CompileHLSL(kShaderSource, "PSMain", "ps_5_1", "gltf_ps");
 
-    D3D12_INPUT_ELEMENT_DESC input_elements[2] = {
+    D3D12_INPUT_ELEMENT_DESC input_elements[3] = {
         {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(SimpleVertex, pos),
          D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
         {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(SimpleVertex, normal),
+         D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SimpleVertex, uv),
          D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
     };
 
     D3D12_GRAPHICS_PIPELINE_STATE_DESC desc{};
     desc.pRootSignature = root_signature;
-    desc.InputLayout = {input_elements, 2};
+    desc.InputLayout = {input_elements, 3};
     desc.VS = {vs.Data(), vs.Size()};
     desc.PS = {ps.Data(), ps.Size()};
 
@@ -242,7 +297,7 @@ int main() {
 
     try {
         assets::GltfScene scene;
-        std::string gltf_path = std::string(AETHER_ASSET_DIR) + "models/test_cube.gltf";
+        std::string gltf_path = std::string(AETHER_ASSET_DIR) + "models/test_textured_cube.gltf";
         if (!assets::LoadGltf(gltf_path, scene)) {
             AETHER_LOG_FATAL("GltfDemo", "Failed to load \"%s\"", gltf_path.c_str());
             return 1;
@@ -252,14 +307,8 @@ int main() {
             return 1;
         }
         const assets::GltfPrimitive& primitive = scene.meshes[0].primitives[0];
-        Vec3 albedo(1.0f, 1.0f, 1.0f);
-        if (primitive.material_index >= 0 &&
-            static_cast<usize>(primitive.material_index) < scene.materials.size()) {
-            const assets::GltfMaterial& material = scene.materials[primitive.material_index];
-            albedo = Vec3(material.base_color[0], material.base_color[1], material.base_color[2]);
-        }
-        AETHER_LOG_INFO("GltfDemo", "Loaded mesh: %zu vertices, %zu indices, albedo=(%.2f,%.2f,%.2f)",
-                         primitive.vertices.size(), primitive.indices.size(), albedo.x, albedo.y, albedo.z);
+        AETHER_LOG_INFO("GltfDemo", "Loaded mesh: %zu vertices, %zu indices", primitive.vertices.size(),
+                         primitive.indices.size());
 
         WindowDesc window_desc;
         window_desc.title = "Aether glTF Demo";
@@ -300,10 +349,15 @@ int main() {
         ComPtr<ID3D12RootSignature> root_signature = CreateRootSignature(device);
         ComPtr<ID3D12PipelineState> pso = CreatePSO(device, root_signature.Get(), swap_chain.Format());
 
+        DescriptorHeap bindless_heap(device, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, kBindlessCapacity,
+                                      /*shader_visible=*/true);
+        assets::AssetManager asset_manager(device, bindless_heap);
+
         std::vector<SimpleVertex> vertices(primitive.vertices.size());
         for (usize i = 0; i < primitive.vertices.size(); ++i) {
             std::memcpy(vertices[i].pos, primitive.vertices[i].position, sizeof(f32) * 3);
             std::memcpy(vertices[i].normal, primitive.vertices[i].normal, sizeof(f32) * 3);
+            std::memcpy(vertices[i].uv, primitive.vertices[i].uv, sizeof(f32) * 2);
         }
 
         Buffer vertex_buffer(device, vertices.size() * sizeof(SimpleVertex), BufferKind::Upload);
@@ -320,6 +374,26 @@ int main() {
         ibv.BufferLocation = index_buffer.GPUAddress();
         ibv.SizeInBytes = static_cast<UINT>(index_buffer.Size());
         ibv.Format = DXGI_FORMAT_R32_UINT;
+
+        // The material system in action: resolve the glTF material's
+        // texture reference through AssetManager (decodes + uploads +
+        // caches) into a GPU-ready MaterialData with a real bindless index,
+        // on a one-time setup command list.
+        MaterialData material;
+        CommandList setup_cmd(device);
+        setup_cmd.Reset();
+        if (primitive.material_index >= 0 &&
+            static_cast<usize>(primitive.material_index) < scene.materials.size()) {
+            material = LoadMaterial(scene.materials[primitive.material_index], asset_manager, setup_cmd.Get());
+        }
+        setup_cmd.Close();
+        ID3D12CommandList* setup_lists[] = {setup_cmd.Get()};
+        device.WaitForFence(device.Submit(setup_lists, 1));
+
+        AETHER_LOG_INFO("GltfDemo",
+                         "Material: baseColor=(%.2f,%.2f,%.2f) metallic=%.2f roughness=%.2f baseColorTexture=%u",
+                         material.base_color[0], material.base_color[1], material.base_color[2], material.metallic,
+                         material.roughness, material.base_color_texture);
 
         std::vector<std::unique_ptr<CommandList>> command_lists;
         std::vector<u64> frame_fences(swap_chain.BufferCount(), 0);
@@ -352,12 +426,11 @@ int main() {
                 100.0f);
             Mat4 model = Mat4::Identity();
 
-            Constants constants{};
-            constants.mvp = proj * view * model;
-            constants.model = model;
-            constants.albedo = albedo;
-            constants.camera_pos = camera_pos;
-            constants.light_dir = Vec3(-0.4f, -0.8f, -0.3f).Normalized();
+            FrameConstants frame_constants{};
+            frame_constants.mvp = proj * view * model;
+            frame_constants.model = model;
+            frame_constants.camera_pos = camera_pos;
+            frame_constants.light_dir = Vec3(-0.4f, -0.8f, -0.3f).Normalized();
 
             ID3D12Resource* back_buffer = swap_chain.CurrentBackBuffer();
             RenderGraph::ResourceHandle backbuffer_handle =
@@ -386,7 +459,11 @@ int main() {
 
                     cl->SetPipelineState(pso.Get());
                     cl->SetGraphicsRootSignature(root_signature.Get());
-                    cl->SetGraphicsRoot32BitConstants(0, sizeof(Constants) / 4, &constants, 0);
+                    cl->SetGraphicsRoot32BitConstants(0, sizeof(FrameConstants) / 4, &frame_constants, 0);
+                    cl->SetGraphicsRoot32BitConstants(1, sizeof(MaterialData) / 4, &material, 0);
+                    ID3D12DescriptorHeap* heaps[] = {bindless_heap.Heap()};
+                    cl->SetDescriptorHeaps(1, heaps);
+                    cl->SetGraphicsRootDescriptorTable(2, bindless_heap.GPUHandle(0));
                     cl->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
                     cl->IASetVertexBuffers(0, 1, &vbv);
                     cl->IASetIndexBuffer(&ibv);

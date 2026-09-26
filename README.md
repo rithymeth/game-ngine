@@ -486,14 +486,11 @@ Verified two ways: unit tests (`tests/test_gltf_loader.cpp`) against a
 hand-built triangle asset with an embedded base64 buffer (exact
 positions/normals/UVs/indices, plus a materials-defaulted-per-spec case and
 malformed-JSON/missing-file failure cases), and a genuine end-to-end render
-(`gltf_demo/`) of `assets/models/test_cube.gltf` — a real external `.gltf` +
-`.bin` file pair, the code path the embedded-base64 unit tests don't
-exercise. `gltf_demo` builds real GPU vertex/index buffers straight from the
-loaded data and renders the cube with the loaded material's `baseColorFactor`
-as albedo (deliberately simple Lambertian+Blinn-Phong shading, not the full
-Cook-Torrance pipeline — this demo's job is proving the loaded data is
-genuinely usable, not re-proving the BRDF); the rendered output shows correct
-per-face normals and the expected material color, confirmed visually.
+(`gltf_demo/`) of `assets/models/test_textured_cube.gltf` — a real external
+`.gltf` + `.bin` file pair, the code path the embedded-base64 unit tests
+don't exercise. `gltf_demo` builds real GPU vertex/index buffers straight
+from the loaded data; see the material system section below for how its
+texture gets from the glTF file onto the GPU.
 
 While testing this, caught a transcription error in the unit test's own
 hand-typed base64 payload (a duplicated segment, giving a 114-byte buffer
@@ -501,6 +498,36 @@ instead of the intended 102) by actually running the test and getting a
 specific, localized `CHECK failed: prim.indices[1] == 1` rather than
 silently trusting the payload was correct — regenerated it programmatically
 instead of re-editing it by hand.
+
+### Follow-up: material system (`aether::gfx::MaterialData`/`LoadMaterial`)
+
+`engine/include/aether/gfx/material.h` is the bridge between a loaded glTF
+material description and something a shader can actually use: `MaterialData`
+is a GPU-ready struct (base color factor, metallic, roughness, three
+bindless texture indices) uploadable as-is via root 32-bit constants, and
+`LoadMaterial` resolves a `GltfMaterial`'s texture paths through
+`AssetManager` — so a texture referenced by two different materials (or
+already loaded for another purpose) is decoded/uploaded at most once,
+`AssetManager`'s caching doing exactly its job across an actual multi-user
+scenario, not just within one material. A texture field is
+`DescriptorHeap::kInvalidIndex` when the material has none; shaders check
+for that and fall back to the factor alone, matching the glTF spec's own
+factor-times-texture-or-factor-alone semantics.
+
+`gltf_demo` is the end-to-end proof: it loads
+`assets/models/test_textured_cube.gltf` (referencing
+`assets/textures/checker_a.png`, already used by the asset pipeline's own
+example — see that section), resolves its material via `LoadMaterial`, binds
+a bindless descriptor heap and the resulting texture index, and *samples
+that texture in the pixel shader* — not just carries the index around
+unused. The rendered cube visibly shows the checkerboard pattern mapped
+correctly across all six faces, confirmed visually, not assumed from the
+index being non-`kInvalidIndex`.
+
+Verified via 3 new unit tests (`tests/test_material.cpp`: factor copying +
+texture resolution, cross-material cache sharing, and the
+no-texture-leaves-indices-invalid case) — 72/72 tests overall — plus repeated
+`gltf_demo` runs (6x quick + one 2000-frame run).
 
 ## Building
 

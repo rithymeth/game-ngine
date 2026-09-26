@@ -26,6 +26,7 @@ if(WIN32)
         src/gfx/descriptor_heap.cpp
         src/gfx/buffer.cpp
         src/gfx/texture.cpp
+        src/gfx/material.cpp
         src/gfx/render_graph.cpp
         src/gfx/rhi/device_factory.cpp
         src/gfx/rhi/d3d12/d3d12_backend.cpp

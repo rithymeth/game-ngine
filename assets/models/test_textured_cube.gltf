@@ -15,19 +15,26 @@
     { "bufferView": 2, "componentType": 5126, "count": 24, "type": "VEC2" },
     { "bufferView": 3, "componentType": 5123, "count": 36, "type": "SCALAR" }
   ],
+  "images": [
+    { "uri": "../textures/checker_a.png" }
+  ],
+  "textures": [
+    { "source": 0 }
+  ],
   "materials": [
     {
-      "name": "BluePlastic",
+      "name": "CheckeredPlastic",
       "pbrMetallicRoughness": {
-        "baseColorFactor": [0.2, 0.6, 0.9, 1.0],
-        "metallicFactor": 0.1,
-        "roughnessFactor": 0.4
+        "baseColorFactor": [1.0, 1.0, 1.0, 1.0],
+        "baseColorTexture": { "index": 0 },
+        "metallicFactor": 0.05,
+        "roughnessFactor": 0.6
       }
     }
   ],
   "meshes": [
     {
-      "name": "Cube",
+      "name": "TexturedCube",
       "primitives": [
         {
           "attributes": { "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2 },
