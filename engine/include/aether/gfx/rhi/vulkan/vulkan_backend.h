@@ -87,6 +87,17 @@ public:
     VkSemaphore CurrentImageAvailableSemaphore() const { return image_available_semaphores_[frame_index_]; }
     VkSemaphore CurrentRenderFinishedSemaphore() const { return render_finished_semaphores_[frame_index_]; }
 
+    // Escape hatch for backend-specific rendering beyond clear-to-color
+    // (e.g. a real render pass + framebuffer + pipeline): the abstract
+    // ISwapChain interface only exposes an opaque TextureHandle, but a
+    // render-pass-based draw needs the actual VkImageView and VkFormat, plus
+    // the swapchain-local image index (distinct from TextureHandle::index,
+    // which is an index into the *device's* global texture table) to select
+    // the matching per-image framebuffer.
+    VkFormat Format() const { return format_; }
+    u32 CurrentImageIndex() const { return current_image_index_; }
+    VkImageView ImageView(u32 index) const { return image_views_[index]; }
+
 private:
     void CreateSwapchainAndImages(u32 width, u32 height);
     void DestroySwapchainAndImages();
@@ -102,6 +113,7 @@ private:
     u32 requested_buffer_count_ = 2;
 
     std::vector<TextureHandle> handles_;                   // one per swapchain image
+    std::vector<VkImageView> image_views_;                 // one per swapchain image
     std::vector<VkSemaphore> image_available_semaphores_;  // one per frame-in-flight slot
     std::vector<VkSemaphore> render_finished_semaphores_;
     u32 frame_index_ = 0;          // rotates through frame-in-flight slots each AcquireNextImage()

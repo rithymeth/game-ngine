@@ -217,21 +217,20 @@ an interface.
 Deliberately **not** abstracted: shader compilation, pipeline state, and
 descriptor/resource binding. HLSL root signatures and SPIR-V descriptor sets
 differ enough that unifying them is a distinctly larger, separate piece of
-work — `rhi_demo` only clears the backbuffer to a color and presents (no
-shaders, no draw calls), so `ICommandList::NativeHandle()` is the escape
-hatch backend-specific rendering code would use instead. The full
-sandbox/editor (bindless textures, compute culling, ImGui) stay D3D12-only,
-using the original (non-abstracted) `Device`/`SwapChain`/`CommandList`
-classes directly — the RHI backends adapt those by composition
-(`d3d12_backend::D3D12Device` wraps a `gfx::Device`, etc.) rather than
-modifying them, so none of Phases 3-5's tested code changed.
+work — by default `rhi_demo` just clears the backbuffer to a color and
+presents (no shaders, no draw calls). The full sandbox/editor (bindless
+textures, compute culling, ImGui) stay D3D12-only, using the original
+(non-abstracted) `Device`/`SwapChain`/`CommandList` classes directly — the
+RHI backends adapt those by composition (`d3d12_backend::D3D12Device` wraps a
+`gfx::Device`, etc.) rather than modifying them, so none of Phases 3-5's
+tested code changed.
 
 **Built without the Vulkan SDK**: this environment has a Vulkan-capable GPU
 driver (which ships the loader, `vulkan-1.dll`) but not the ~1GB LunarG SDK,
 and so no validation layers either — `VulkanDevice`'s debug-layer flag is
 accepted for symmetry with the D3D12 backend but is currently always a
-no-op, and everything was verified by actually running it (2,700+ frames
-across both backends and repeated runs, including a programmatic
+no-op, and everything was verified by actually running it (thousands of
+frames across both backends and repeated runs, including a programmatic
 `ISwapChain::Resize()` exercise) rather than via validation output. Headers
 come from a fast `FetchContent` of `KhronosGroup/Vulkan-Headers`; the import
 library is generated at configure time from the driver's own loader DLL
@@ -240,8 +239,60 @@ library is generated at configure time from the driver's own loader DLL
 instead if a real SDK is present. Timeline semaphores (core Vulkan 1.2)
 stand in for D3D12-style monotonic fence values.
 
+### Follow-up: Vulkan hello-triangle (real shaders/pipeline, same HLSL source)
+
+`AETHER_RHI_DEMO_DRAW_TRIANGLE=1` switches `rhi_demo` from clear-to-color
+into an actual rotating draw call, on **either** backend, compiled from the
+*same* HLSL source (`rhi_demo/main.cpp`'s `kTriangleShaderSource`) — no
+vertex buffer, indices come from `SV_VertexID`, a push/root constant drives
+the rotation. This is the "shaders/pipelines aren't abstracted" boundary the
+RHI header comments call out: triangle mode doesn't go through
+`ICommandList::TransitionTexture`/`ClearRenderTarget` at all (those exist
+only for the clear-to-color mode's calling convention — see
+`ToVkImageLayout`'s comment for why `RenderTarget` maps to Vulkan's
+`TRANSFER_DST_OPTIMAL`, the wrong layout for a render-pass attachment).
+Instead it records genuinely backend-specific commands via each object's
+`NativeHandle()` escape hatch:
+
+- **D3D12**: `D3DCompile` (fxc) to DXIL, a one-root-constant root signature,
+  a graphics PSO with no input layout (procedural vertices), raw
+  `ID3D12GraphicsCommandList` recording (`OMSetRenderTargets`,
+  `DrawInstanced`).
+- **Vulkan**: the *same* HLSL source through DXC's `-spirv` flag
+  (`CompileHLSLToSPIRV`, `engine/include/aether/gfx/shader_compiler.h`) to
+  SPIR-V, a real `VkRenderPass`/`VkFramebuffer`/`VkPipeline` (dynamic
+  viewport/scissor state, so the pipeline itself is resize-independent), a
+  push-constant range in place of the root constant.
+
+**Real bug found and fixed by actually running the resize test**, not by
+inspection: `VulkanSwapChain::Resize()` unconditionally destroys and
+recreates every `VkImageView`, even when the surface's
+min/maxImageExtent clamps the requested size straight back to what it
+already was (exactly what happens here — the demo resizes the swapchain
+without resizing the real HWND). A framebuffer cache keyed only on
+width/height/image-count therefore missed the rebuild and `vkCmdBeginRenderPass`
+crashed against a `VkFramebuffer` built from already-destroyed image views.
+Fixed by keying the cache on the actual `VkImageView` handles instead
+(`VulkanTriangleResources::EnsureFramebuffers` in `rhi_demo/main.cpp`).
+
+**Dependency found and fixed by actually running it, not by inspection**:
+the Windows SDK's own `dxcompiler.dll` is a build with SPIR-V codegen
+disabled (`SPIR-V CodeGen not available. Please recompile with
+-DENABLE_SPIRV_CODEGEN=ON.`) — fine for `CompileHLSL`'s unrelated
+D3DCompile/fxc path, useless for `CompileHLSLToSPIRV`. `engine/CMakeLists.txt`
+now fetches Microsoft's own official DXC GitHub release build (hash-pinned
+via `file(DOWNLOAD ... EXPECTED_HASH)`) when `AETHER_BUILD_VULKAN` is on,
+which does have SPIR-V codegen enabled and exports the same
+`DxcCreateInstance` entry point the SDK's import library already resolves at
+link time — no relink needed, only the runtime DLL changes. `rhi_demo`'s
+CMakeLists copies whichever `dxcompiler.dll` was resolved next to its
+executable as a post-build step.
+
 Not yet started: unifying shader/pipeline/draw-call recording across
-backends (the abstraction layer above this one).
+backends into a real cross-API abstraction (this triangle demo is
+backend-specific code selected at runtime, not a unified API) — bindless
+descriptors, multiple draw calls, and vertex/index buffers are all still
+open.
 
 ## Building
 

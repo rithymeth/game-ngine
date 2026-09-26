@@ -1,4 +1,4 @@
-#include "vulkan_backend.h"
+#include "aether/gfx/rhi/vulkan/vulkan_backend.h"
 
 #include "aether/core/log.h"
 
@@ -314,10 +314,12 @@ void VulkanSwapChain::CreateSwapchainAndImages(u32 width, u32 height) {
     swapchain_info.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
     swapchain_info.imageExtent = extent_;
     swapchain_info.imageArrayLayers = 1;
-    // TRANSFER_DST because this RHI slice only clears the backbuffer
-    // directly (no render pass/pipeline yet — see command_list.h); a real
-    // rendering path would add COLOR_ATTACHMENT here too.
-    swapchain_info.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    // TRANSFER_DST covers the abstract ICommandList::ClearRenderTarget path
+    // (no render pass involved); COLOR_ATTACHMENT covers a real render-pass-
+    // based draw (rhi_demo's triangle mode) — both are near-universally
+    // supported for swapchain images, so requesting both up front avoids
+    // needing two different swapchains depending on how the demo is run.
+    swapchain_info.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     swapchain_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     swapchain_info.preTransform = capabilities.currentTransform;
     swapchain_info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
@@ -332,12 +334,26 @@ void VulkanSwapChain::CreateSwapchainAndImages(u32 width, u32 height) {
     vkGetSwapchainImagesKHR(device_.Handle(), swapchain_, &actual_image_count, images.data());
 
     handles_.clear();
+    image_views_.clear();
     for (VkImage image : images) {
         handles_.push_back(device_.RegisterTexture(image));
+
+        VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        view_info.image = image;
+        view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view_info.format = format_;
+        view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        VkImageView view = VK_NULL_HANDLE;
+        AETHER_VK_CHECK(vkCreateImageView(device_.Handle(), &view_info, nullptr, &view));
+        image_views_.push_back(view);
     }
 }
 
 void VulkanSwapChain::DestroySwapchainAndImages() {
+    for (VkImageView view : image_views_) {
+        vkDestroyImageView(device_.Handle(), view, nullptr);
+    }
+    image_views_.clear();
     if (swapchain_ != VK_NULL_HANDLE) {
         vkDestroySwapchainKHR(device_.Handle(), swapchain_, nullptr);
         swapchain_ = VK_NULL_HANDLE;

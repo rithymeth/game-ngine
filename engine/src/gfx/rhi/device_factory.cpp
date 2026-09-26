@@ -1,9 +1,9 @@
 #include "aether/core/log.h"
+#include "aether/gfx/rhi/d3d12/d3d12_backend.h"
 #include "aether/gfx/rhi/device.h"
-#include "d3d12/d3d12_backend.h"
 
 #if defined(AETHER_HAS_VULKAN)
-#include "vulkan/vulkan_backend.h"
+#include "aether/gfx/rhi/vulkan/vulkan_backend.h"
 #endif
 
 namespace aether::gfx::rhi {
