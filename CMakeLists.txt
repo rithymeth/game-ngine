@@ -20,6 +20,7 @@ endif()
 option(AETHER_BUILD_SANDBOX "Build the Aether sandbox app" ON)
 option(AETHER_BUILD_PHYSICS "Build the Jolt-backed physics module" ON)
 option(AETHER_BUILD_EDITOR "Build the Dear ImGui editor app" ON)
+option(AETHER_BUILD_EDITOR_UI "Build the portable editor UI library (ImGui + reflection, no graphics backend; tested headless on every platform)" ON)
 option(AETHER_BUILD_VULKAN "Build the Vulkan RHI backend" ON)
 
 include(FetchContent)
@@ -71,7 +72,7 @@ if(AETHER_BUILD_PHYSICS)
     FetchContent_MakeAvailable(JoltPhysics)
 endif()
 
-if(AETHER_BUILD_EDITOR)
+if(AETHER_BUILD_EDITOR OR AETHER_BUILD_EDITOR_UI)
     FetchContent_Declare(
         imgui
         GIT_REPOSITORY https://github.com/ocornut/imgui.git
@@ -81,19 +82,28 @@ if(AETHER_BUILD_EDITOR)
     FetchContent_MakeAvailable(imgui)
 
     # Dear ImGui doesn't ship a CMakeLists.txt (it's meant to be dropped into
-    # the consumer's build), so we define the library ourselves: core +
-    # Win32/DX12 backends, matching this project's window/graphics layer.
-    add_library(imgui STATIC
+    # the consumer's build), so we define the libraries ourselves. imgui_core
+    # is platform-independent (no window or graphics backend): the portable
+    # editor UI library and its headless tests use it on every platform.
+    add_library(imgui_core STATIC
         ${imgui_SOURCE_DIR}/imgui.cpp
         ${imgui_SOURCE_DIR}/imgui_demo.cpp
         ${imgui_SOURCE_DIR}/imgui_draw.cpp
         ${imgui_SOURCE_DIR}/imgui_tables.cpp
         ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+        ${imgui_SOURCE_DIR}/misc/cpp/imgui_stdlib.cpp
+    )
+    target_include_directories(imgui_core PUBLIC ${imgui_SOURCE_DIR})
+endif()
+
+if(AETHER_BUILD_EDITOR AND WIN32)
+    # The Win32 + DX12 backends, matching this project's window/graphics layer.
+    add_library(imgui STATIC
         ${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp
         ${imgui_SOURCE_DIR}/backends/imgui_impl_dx12.cpp
     )
-    target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
-    target_link_libraries(imgui PUBLIC d3d12 dxgi)
+    target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR}/backends)
+    target_link_libraries(imgui PUBLIC imgui_core d3d12 dxgi)
     add_library(ImGui::ImGui ALIAS imgui)
 endif()
 
@@ -156,6 +166,10 @@ if(AETHER_BUILD_PHYSICS)
     add_subdirectory(physics)
 endif()
 
+if(AETHER_BUILD_EDITOR_UI)
+    add_subdirectory(editor/src/ui)
+endif()
+
 if(AETHER_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
@@ -165,7 +179,7 @@ if(AETHER_BUILD_SANDBOX)
     add_subdirectory(sandbox)
 endif()
 
-if(AETHER_BUILD_PHYSICS AND AETHER_BUILD_EDITOR)
+if(AETHER_BUILD_PHYSICS AND AETHER_BUILD_EDITOR AND WIN32)
     add_subdirectory(editor)
 endif()
 

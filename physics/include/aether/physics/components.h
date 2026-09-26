@@ -44,7 +44,9 @@ AETHER_REFLECT(aether::Transform, 1,
 )
 
 AETHER_REFLECT(aether::RigidBody, 1,
-    AETHER_FIELD(radius, Field_EditAnywhere, {.range_min = 0.01, .range_max = 100.0, .units = "m"}),
-    AETHER_FIELD(mass, Field_EditAnywhere, {.range_min = 0.0, .range_max = 10000.0, .units = "kg"}),
+    // Same limits the editor's body list has always used (a zero-mass dynamic
+    // body isn't valid in Jolt).
+    AETHER_FIELD(radius, Field_EditAnywhere, {.range_min = 0.05, .range_max = 5.0, .units = "m"}),
+    AETHER_FIELD(mass, Field_EditAnywhere, {.range_min = 0.01, .range_max = 100.0, .units = "kg"}),
     AETHER_FIELD(is_static, Field_EditAnywhere)
 )

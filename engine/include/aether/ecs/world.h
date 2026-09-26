@@ -169,6 +169,46 @@ public:
         return entity;
     }
 
+    bool HasComponentRaw(Entity e, ComponentId id) const { return GetRecord(e).archetype->Has(id); }
+
+    // Adds a default-constructed component by id (a no-op if the entity
+    // already has one). The type-erased counterpart of AddComponent<T>, for
+    // callers that only know the component at runtime — e.g. the editor's
+    // "Add Component" menu.
+    void AddComponentRaw(Entity e, ComponentId id) {
+        EntityRecord& rec = GetRecord(e);
+        Archetype& old_archetype = *rec.archetype;
+        if (old_archetype.Has(id)) {
+            return;
+        }
+        Archetype::Location old_loc{rec.chunk_index, rec.row};
+        ComponentMask mask = old_archetype.Mask();
+        mask.set(id);
+        Archetype& new_archetype = GetOrCreateArchetype(mask);
+        Archetype::Location new_loc = new_archetype.AllocateSlot(e);
+        new_archetype.AdoptFrom(old_archetype, old_loc, new_loc);
+        const ComponentInfo& info = GetComponentInfo(id);
+        void* base = new_archetype.ComponentArray(new_loc.chunk_index, id);
+        info.construct(static_cast<u8*>(base) + new_loc.row * info.size);
+        MigrateEntity(e, old_archetype, old_loc, new_archetype, new_loc);
+    }
+
+    // Removes (destroys) a component by id; a no-op if the entity lacks it.
+    void RemoveComponentRaw(Entity e, ComponentId id) {
+        EntityRecord& rec = GetRecord(e);
+        Archetype& old_archetype = *rec.archetype;
+        if (!old_archetype.Has(id)) {
+            return;
+        }
+        Archetype::Location old_loc{rec.chunk_index, rec.row};
+        ComponentMask mask = old_archetype.Mask();
+        mask.reset(id);
+        Archetype& new_archetype = GetOrCreateArchetype(mask);
+        Archetype::Location new_loc = new_archetype.AllocateSlot(e);
+        new_archetype.AdoptFrom(old_archetype, old_loc, new_loc);
+        MigrateEntity(e, old_archetype, old_loc, new_archetype, new_loc);
+    }
+
     void* GetComponentRaw(Entity e, ComponentId id) {
         const EntityRecord& rec = GetRecord(e);
         void* base = rec.archetype->ComponentArray(rec.chunk_index, id);

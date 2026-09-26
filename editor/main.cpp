@@ -56,6 +56,7 @@
 #include "aether/platform/window.h"
 #include "aether/scene/components.h"
 #include "aether/scene/serialization.h"
+#include "ui/reflected_inspector.h"
 
 #include <imgui.h>
 #include <imgui_impl_dx12.h>
@@ -1686,19 +1687,69 @@ int main() {
                     ImGuiCond_FirstUseEver);
                 ImGui::SetNextWindowSize(ImVec2(320.0f, 300.0f), ImGuiCond_FirstUseEver);
                 ImGui::Begin("Inspector", &show_inspector);
-                if (world.HasComponent<RigidBody>(selected_entity)) {
-                    Transform& t = *world.GetComponent<Transform>(selected_entity);
-                    RigidBody& b = *world.GetComponent<RigidBody>(selected_entity);
-                    ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "Physics Body");
-                    ImGui::DragFloat3("Position (m)##inspector", &t.position.x, 0.05f);
-                    ImGui::Text("Radius: %.2f m   Mass: %.2f kg   Static: %s", b.radius, b.mass,
-                                b.is_static ? "yes" : "no");
-                } else if (world.HasComponent<ModelRenderer>(selected_entity)) {
-                    Transform& t = *world.GetComponent<Transform>(selected_entity);
+                // Phase 6: every reflected component on the entity is drawn
+                // generically from its reflection data (editor/src/ui/
+                // reflected_inspector.h), so a newly reflected component shows
+                // up here with no editor code. The only component-specific
+                // code left is reacting to edits that must reach the physics
+                // simulation.
+                std::vector<const reflect::TypeInfo*> addable;
+                std::vector<ComponentId> addable_ids;
+                for (ComponentId id = 0; id < RegisteredComponentCount(); ++id) {
+                    const ComponentInfo& info = GetComponentInfo(id);
+                    if (info.reflected == nullptr || !editor::HasInspectableFields(*info.reflected)) {
+                        continue;
+                    }
+                    if (!world.HasComponentRaw(selected_entity, id)) {
+                        addable.push_back(info.reflected);
+                        addable_ids.push_back(id);
+                        continue;
+                    }
+                    if (!ImGui::CollapsingHeader(info.reflected->name, ImGuiTreeNodeFlags_DefaultOpen)) {
+                        continue;
+                    }
+                    editor::InspectResult edit = editor::InspectObject(
+                        *info.reflected, world.GetComponentRaw(selected_entity, id), info.reflected->name);
+                    if (!edit.Changed()) {
+                        continue;
+                    }
+                    RigidBody* body = world.GetComponent<RigidBody>(selected_entity);
+                    Transform* transform = world.GetComponent<Transform>(selected_entity);
+                    if (body == nullptr || transform == nullptr) {
+                        continue;
+                    }
+                    if (id == GetComponentId<Transform>()) {
+                        physics.SetPosition(body->body_id, transform->position);
+                    } else if (id == GetComponentId<RigidBody>()) {
+                        // Jolt shapes and motion type are effectively immutable
+                        // once a body exists; recreate it in place (same as
+                        // the body list's live edits).
+                        physics.DestroyBody(body->body_id);
+                        body->body_id =
+                            physics.CreateSphere(transform->position, body->radius, body->mass, body->is_static);
+                    }
+                }
+
+                int picked = editor::AddComponentButton(addable);
+                if (picked >= 0) {
+                    ComponentId id = addable_ids[static_cast<usize>(picked)];
+                    if (id == GetComponentId<RigidBody>()) {
+                        // A body needs a Transform to live at, and a live Jolt body.
+                        world.AddComponentRaw(selected_entity, GetComponentId<Transform>());
+                        world.AddComponentRaw(selected_entity, id);
+                        RigidBody& body = *world.GetComponent<RigidBody>(selected_entity);
+                        body.body_id = physics.CreateSphere(world.GetComponent<Transform>(selected_entity)->position,
+                                                            body.radius, body.mass, body.is_static);
+                    } else {
+                        world.AddComponentRaw(selected_entity, id);
+                    }
+                }
+
+                // glTF runtime details that aren't component data (load
+                // status, animation playback) stay hand-drawn below.
+                if (world.HasComponent<ModelRenderer>(selected_entity)) {
                     ModelRenderer& renderer = *world.GetComponent<ModelRenderer>(selected_entity);
-                    ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.2f, 1.0f), "glTF Model");
-                    ImGui::Text("Source: %s", renderer.asset_path);
-                    ImGui::DragFloat3("Position (m)##inspector", &t.position.x, 0.05f);
+                    ImGui::SeparatorText("glTF Model");
                     GltfRenderData& data = GetOrLoadGltfRenderData(device, gltf_asset_manager, gltf_cache,
                                                                     renderer.asset_path);
                     if (!data.valid) {
