@@ -15,6 +15,7 @@ add_executable(aether_tests
     test_project.cpp
     test_asset_database.cpp
     test_asset_refs.cpp
+    test_importers.cpp
     test_assets.cpp
     test_gltf_loader.cpp
 )
@@ -26,6 +27,9 @@ if(TARGET aether_editor_ui)
     target_link_libraries(aether_tests PRIVATE Aether::EditorUI)
 endif()
 target_include_directories(aether_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# Absolute path of the repo's sample assets, so tests can import real files
+# regardless of the working directory they run from.
+target_compile_definitions(aether_tests PRIVATE AETHER_REPO_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
 
 if(WIN32)
     target_sources(aether_tests PRIVATE test_render_graph.cpp test_rhi.cpp test_asset_manager.cpp test_material.cpp)
