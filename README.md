@@ -2072,6 +2072,60 @@ Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 9.
 - 165/165 tests pass on GCC 13, on Clang and under ASan/UBSan, and 172/172
   with physics.
 
+**Step 4: propagation, broken-instance warnings, and migrating overrides.**
+
+- **`PrefabLibrary`** (`scene/prefab_library.h`) loads prefab assets from
+  the asset database on first use and caches their flattened form.
+  - `Save` writes a prefab and drops the cached flat data of every prefab
+    built on it (nesting it or a variant of it, at any depth).
+  - `Reload` does the same after the file changed on disk.
+  - `Dependents` works that set out from the prefab data itself.
+- **`PropagatePrefabChange`** re-resolves only the instances of the changed
+  prefab and of prefabs built on it. Entities are reused, so selection and
+  references survive. It counts instances whose overrides were orphaned
+  and instances that failed (a cycle introduced by the edit, say).
+- **`CheckScenesUsingPrefab`** gives the §9.4 warnings. It lists every saved
+  scene that uses the prefab (directly or through prefabs built on it),
+  loads each into a scratch world, and reports the overrides the change
+  broke. Scene files aren't modified.
+- **Hot reload** reports a new **Changed** event for assets without an
+  importer (prefabs, scenes, scripts) when their content really changes.
+  The editor then calls `PrefabLibrary::Reload` and propagates.
+  - Assets without an importer are never marked imported, so change
+    detection compares their content hash, not the `needs_import` flag.
+- **Overrides migrate with their component** (§9.5).
+  - Overrides now record the component's schema version.
+  - When a C++ type is migrated (for example a field renamed from `gold` to
+    `coins`), resolving runs the type's migration hook on the overridden
+    field alone. This happens twice: once with a marker value to find the
+    field's new path, and once with the real value to get its new form. The
+    migrated override is saved back on the instance.
+  - Prefab data is compared and edited in the current schema version when
+    recording overrides and applying them.
+  - New `reflect::MigrateJson` brings saved JSON up to date without loading
+    it.
+
+**Verified**: 4 new tests.
+
+- **Propagation across a nested prefab and a variant**: 3 instances follow
+  and an unrelated prefab's instance is untouched. The overriding
+  instance keeps its value on the same entity, and the file is saved.
+  A breaking change orphans the override (it's kept), and a cycle
+  introduced by an edit fails all 3 instances, naming the cycle.
+- **Scene reports**: the scene using a variant is listed, a breaking change
+  reports its override, and an unrelated binary scene isn't listed.
+- **Hot reload**: an external edit to a `.aprefab` arrives as one Changed
+  event and reaches the instance.
+- **Migration**: a v1 `gold` override becomes a v2 `coins` override in
+  place, resolves against old and re-saved prefab data alike, and is
+  recorded in the new version. It also covers whole-component and
+  unversioned overrides, and Apply into an old prefab.
+- **Bug caught before merging**: the first version of the Changed event
+  fired for every importer-less asset on any file change, because such
+  assets always count as needing import.
+- 169/169 tests pass on GCC 13, on Clang and under ASan/UBSan, and 176/176
+  with physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
