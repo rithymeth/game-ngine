@@ -22,8 +22,18 @@ struct InspectResult {
     // True on the frame an edit finished (mouse released after a drag, Enter
     // pressed in a text field): the point to record one undo step.
     bool committed = false;
+    // The top-level field the user chose "Revert to Prefab" on (right-click
+    // on an overridden field's label), or nullptr.
+    const reflect::FieldInfo* revert_field = nullptr;
 
     bool Changed() const { return changed_field != nullptr; }
+};
+
+struct InspectOptions {
+    // Top-level fields for which this returns true are marked as overridden
+    // (prefab instances, docs/design/EDITOR_UI.md: a blue bar and highlighted
+    // label) and get a "Revert to Prefab" context menu. Empty = none.
+    std::function<bool(const reflect::FieldInfo&)> is_overridden;
 };
 
 // Draws `object`'s fields as a two-column (label | widget) property table.
@@ -39,6 +49,7 @@ struct InspectResult {
 //
 // `id` scopes ImGui ids, so two inspectors of the same type can coexist.
 InspectResult InspectObject(const reflect::TypeInfo& type, void* object, const char* id);
+InspectResult InspectObject(const reflect::TypeInfo& type, void* object, const char* id, const InspectOptions& options);
 
 template <typename T>
 InspectResult InspectObject(T& object, const char* id) {

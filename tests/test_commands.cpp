@@ -4,9 +4,11 @@
 
 #include "aether/scene/entity_guid.h"
 #include "aether/scene/hierarchy.h"
+#include "aether/reflection/serialize.h"
 #include "core/commands.h"
 #include "test_framework.h"
 #include "ui/entity_inspector.h"
+#include "ui/reflected_inspector.h"
 
 #include <imgui.h>
 
@@ -293,4 +295,96 @@ AETHER_TEST(Commands_CommitFieldEditTurnsInPlaceEditsIntoOneUndoStep) {
 
     f.stack.Undo(f.ctx);
     AETHER_CHECK(f.world.GetComponent<Transform>(f.Live(guid))->position.x == 1.0f);
+}
+
+namespace {
+
+// A one-entity prefab whose root has Vitals{100, "unit"}, and a fixture that
+// knows it.
+struct PrefabFixture : Fixture {
+    PrefabData prefab;
+    assets::AssetGuid source = assets::NewAssetGuid();
+
+    PrefabFixture() {
+        PrefabEntity root;
+        root.id = 1;
+        cmd_test::Vitals vitals;
+        root.components["Vitals"] = reflect::ToJson(vitals);
+        prefab.entities.push_back(root);
+        ctx.find_prefab = [this](const assets::AssetGuid& guid) { return guid == source ? &prefab : nullptr; };
+    }
+
+    const std::vector<PropertyOverride>& Overrides(Entity root) {
+        return world.GetComponent<PrefabInstance>(root)->overrides;
+    }
+
+    // Sets Vitals.current through a SetFieldCommand, as the Inspector does.
+    void SetCurrent(const EntityGuid& guid, f32 value) {
+        const reflect::FieldInfo& field = reflect::Reflect<cmd_test::Vitals>().fields[0];
+        const f32 old_value = world.GetComponent<cmd_test::Vitals>(Live(guid))->current;
+        stack.Execute(ctx, std::make_unique<SetFieldCommand>(guid, GetComponentId<cmd_test::Vitals>(), field,
+                                                             reflect::Any::CopyOf(*field.type, &old_value),
+                                                             reflect::Any::CopyOf(*field.type, &value)));
+        stack.BreakMergeChain();
+    }
+};
+
+} // namespace
+
+AETHER_TEST(Commands_FieldEditsOnPrefabInstancesRecordOverrides) {
+    PrefabFixture f;
+    Entity root = InstantiatePrefab(f.world, f.guids, f.source, f.prefab);
+    const EntityGuid guid = f.world.GetComponent<IdComponent>(root)->guid;
+
+    f.SetCurrent(guid, 40.0f);
+    AETHER_CHECK(f.Overrides(root).size() == 1 && f.Overrides(root)[0].field_path == "current");
+    f.stack.Undo(f.ctx); // undoing the edit undoes its override
+    AETHER_CHECK(f.Overrides(root).empty());
+    f.stack.Redo(f.ctx);
+    AETHER_CHECK(f.Overrides(root).size() == 1);
+
+    // Editing back to the prefab's value removes the override.
+    f.SetCurrent(guid, 100.0f);
+    AETHER_CHECK(f.Overrides(root).empty());
+    f.SetCurrent(guid, 7.0f);
+
+    // Revert to Prefab: value and override go; undo brings both back.
+    f.stack.Execute(f.ctx, std::make_unique<RevertPrefabOverrideCommand>(guid, GetComponentId<cmd_test::Vitals>(), "current"));
+    AETHER_CHECK(f.world.GetComponent<cmd_test::Vitals>(f.Live(guid))->current == 100.0f && f.Overrides(root).empty());
+    AETHER_CHECK(f.stack.UndoLabel() == "Revert Vitals.current");
+    f.stack.Undo(f.ctx);
+    AETHER_CHECK(f.world.GetComponent<cmd_test::Vitals>(f.Live(guid))->current == 7.0f && f.Overrides(root).size() == 1);
+    f.stack.Execute(f.ctx, std::make_unique<RevertPrefabOverrideCommand>(guid, kInvalidComponentId, ""));
+    AETHER_CHECK(f.Overrides(root).empty() && f.stack.UndoLabel() == "Revert to Prefab");
+
+    // Without a prefab lookup (or outside an instance) edits are plain edits.
+    f.ctx.find_prefab = nullptr;
+    f.SetCurrent(guid, 3.0f);
+    AETHER_CHECK(f.Overrides(root).empty());
+}
+
+AETHER_TEST(EntityInspector_MarksOverriddenFields) {
+    HeadlessImGui ui;
+    PrefabFixture f;
+    Entity root = InstantiatePrefab(f.world, f.guids, f.source, f.prefab);
+    const EntityGuid guid = f.world.GetComponent<IdComponent>(root)->guid;
+    f.SetCurrent(guid, 40.0f);
+    // Draws the prefab header, the marked field and its menu without input.
+    for (int i = 0; i < 3; ++i) {
+        ui.Frame([&] { InspectEntity(f.ctx, f.stack, f.Live(guid)); });
+    }
+    AETHER_CHECK(f.stack.UndoCount() == 1); // drawing records nothing
+
+    // The Inspector asks about top-level fields only, and reports no revert
+    // without a click.
+    cmd_test::Vitals vitals;
+    std::vector<std::string> asked;
+    InspectOptions options;
+    options.is_overridden = [&](const reflect::FieldInfo& field) {
+        asked.push_back(field.name);
+        return std::string(field.name) == "name";
+    };
+    InspectResult result;
+    ui.Frame([&] { result = InspectObject(reflect::Reflect<cmd_test::Vitals>(), &vitals, "vitals", options); });
+    AETHER_CHECK((asked == std::vector<std::string>{"current", "name"}) && result.revert_field == nullptr);
 }

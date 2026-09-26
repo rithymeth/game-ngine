@@ -84,6 +84,49 @@ void SetOverride(PrefabInstance& instance, PrefabLocalId entity, const std::stri
 bool RemoveOverride(PrefabInstance& instance, PrefabLocalId entity, const std::string& component,
                     const std::string& field_path);
 
+// ---------------------------------------------------------------------------
+// Recording, Apply and Revert (§9.3)
+// ---------------------------------------------------------------------------
+
+// The root of the instance `entity` belongs to (itself for a root), or
+// kNullEntity if it isn't part of one.
+Entity FindInstanceRoot(const World& world, const GuidIndex& guids, Entity entity);
+
+// After a component of an instance's entity was edited: records how it now
+// differs from the prefab as per-field overrides, replacing that component's
+// earlier overrides. A field edited back to the prefab's value loses its
+// override (so the Inspector stops marking it). Overrides that are orphaned
+// (their field isn't in the prefab) are kept. The root's Transform is its
+// placement, not an override, so it records nothing. Returns false if
+// `entity` isn't part of an instance, or the prefab has no such component
+// on that entity (added components aren't supported yet).
+bool RecordPrefabOverrides(World& world, const GuidIndex& guids, Entity entity, ComponentId component,
+                           const PrefabData& prefab);
+
+// Whether the Inspector should mark a field as overridden: an override on
+// exactly `field_path`, inside it ("position" when "position[1]" is
+// overridden) or around it (the whole component).
+bool IsFieldOverridden(const PrefabInstance& instance, PrefabLocalId entity, const std::string& component,
+                       const std::string& field_path);
+
+// The overrides a selection covers: entity 0 = every entity, component "" =
+// every component, field_path "" = the whole component; otherwise the path
+// and anything inside it.
+bool OverrideMatches(const PropertyOverride& override_, PrefabLocalId entity, const std::string& component,
+                     const std::string& field_path);
+
+// "Apply to Prefab": writes the selected overrides' values into `prefab`
+// and removes them from `instance`. Orphaned ones can't be applied and stay.
+// The caller saves the prefab and re-resolves its instances (others that
+// override the same field keep their own values). Returns how many applied.
+usize ApplyOverridesToPrefab(PrefabData& prefab, PrefabInstance& instance, PrefabLocalId entity = 0,
+                             const std::string& component = "", const std::string& field_path = "");
+
+// "Revert": removes the selected overrides; resolve the instance afterwards.
+// Returns how many were removed.
+usize RevertOverrides(PrefabInstance& instance, PrefabLocalId entity = 0, const std::string& component = "",
+                      const std::string& field_path = "");
+
 struct ResolveReport {
     bool ok = false;
     std::string error;

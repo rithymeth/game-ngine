@@ -28,7 +28,12 @@ bool DrawAssetRef(const TypeInfo& type, void* ptr, struct DrawContext& ctx);
 struct DrawContext {
     InspectResult result;
     const FieldInfo* top_level_field = nullptr; // attributed as the changed field
+    const InspectOptions* options = nullptr;
 };
+
+// The prefab-override marking: an accent bar at the row's left edge and the
+// label in the accent colour.
+constexpr ImVec4 kOverrideColor{0.35f, 0.65f, 1.0f, 1.0f};
 
 void NoteEdit(DrawContext& ctx, bool changed) {
     if (changed && ctx.result.changed_field == nullptr) {
@@ -120,9 +125,33 @@ void DrawStructFields(const TypeInfo& type, void* object, DrawContext& ctx, bool
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(0);
         ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(field.name);
-        if (field.meta.tooltip != nullptr && ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("%s", field.meta.tooltip);
+        const bool overridden = top_level && ctx.options != nullptr && ctx.options->is_overridden &&
+                                ctx.options->is_overridden(field);
+        if (overridden) {
+            const ImVec2 start = ImGui::GetCursorScreenPos();
+            const f32 height = ImGui::GetFrameHeight();
+            ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(start.x - 4.0f, start.y), ImVec2(start.x - 1.0f, start.y + height),
+                                                      ImGui::GetColorU32(kOverrideColor));
+            ImGui::TextColored(kOverrideColor, "%s", field.name);
+        } else {
+            ImGui::TextUnformatted(field.name);
+        }
+        if (ImGui::IsItemHovered()) {
+            if (field.meta.tooltip != nullptr) {
+                ImGui::SetTooltip("%s%s", field.meta.tooltip, overridden ? "\n(overridden in this instance)" : "");
+            } else if (overridden) {
+                ImGui::SetTooltip("Overridden in this instance");
+            }
+        }
+        if (overridden) {
+            ImGui::PushID(field.name);
+            if (ImGui::BeginPopupContextItem("override_menu", ImGuiPopupFlags_MouseButtonRight)) {
+                if (ImGui::MenuItem("Revert to Prefab")) {
+                    ctx.result.revert_field = &field;
+                }
+                ImGui::EndPopup();
+            }
+            ImGui::PopID();
         }
 
         ImGui::TableSetColumnIndex(1);
@@ -328,7 +357,12 @@ bool ContainsCaseInsensitive(std::string_view haystack, std::string_view needle)
 void SetAssetListProvider(AssetListProvider provider) { AssetProvider() = std::move(provider); }
 
 InspectResult InspectObject(const reflect::TypeInfo& type, void* object, const char* id) {
+    return InspectObject(type, object, id, InspectOptions{});
+}
+
+InspectResult InspectObject(const reflect::TypeInfo& type, void* object, const char* id, const InspectOptions& options) {
     DrawContext ctx;
+    ctx.options = &options;
     ImGui::PushID(id);
     if (type.kind == TypeKind::Struct) {
         if (ImGui::BeginTable("##properties", 2, ImGuiTableFlags_SizingStretchProp)) {
