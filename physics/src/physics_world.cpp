@@ -205,6 +205,10 @@ Quaternion PhysicsWorld::GetRotation(JPH::BodyID id) const {
     return ToAether(const_cast<PhysicsWorld*>(this)->BodyInterface().GetRotation(id));
 }
 
+void PhysicsWorld::SetPosition(JPH::BodyID id, const Vec3& position) {
+    BodyInterface().SetPosition(id, ToJolt(position), JPH::EActivation::Activate);
+}
+
 void SyncPhysicsToTransforms(World& world, PhysicsWorld& physics, f32 dt) {
     physics.Step(dt);
     world.ForEach<RigidBody, Transform>([&](RigidBody& body, Transform& transform) {

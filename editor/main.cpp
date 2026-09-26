@@ -302,11 +302,36 @@ int main() {
             }
 
             ImGui::Separator();
-            ImGui::Text("Bodies");
+            ImGui::Text("Bodies (live-edit; changes apply to the running simulation immediately)");
             int index = 0;
             world.ForEach<Transform, RigidBody>([&](Transform& t, RigidBody& b) {
-                ImGui::Text("#%d  pos=(%.2f, %.2f, %.2f)  r=%.2f  mass=%.2f", index++, t.position.x, t.position.y,
-                            t.position.z, b.radius, b.mass);
+                ImGui::PushID(index);
+                ImGui::Text("#%d", index);
+
+                bool position_changed = ImGui::DragFloat3("Position", &t.position.x, 0.05f);
+                bool radius_changed = ImGui::DragFloat("Radius", &b.radius, 0.01f, 0.05f, 5.0f, "%.2f");
+                bool mass_changed = ImGui::DragFloat("Mass", &b.mass, 0.05f, 0.01f, 100.0f, "%.2f");
+                bool static_changed = ImGui::Checkbox("Static", &b.is_static);
+
+                if (position_changed) {
+                    // Only re-teleport the body if the shape/mass didn't also
+                    // change this frame — that branch below already recreates
+                    // it at the (already updated) Transform position.
+                    if (!radius_changed && !mass_changed && !static_changed) {
+                        physics.SetPosition(b.body_id, t.position);
+                    }
+                }
+                if (radius_changed || mass_changed || static_changed) {
+                    // Jolt shapes and motion type are effectively immutable
+                    // once a body is created; the simplest correct way to
+                    // "edit" them live is to recreate the body in place.
+                    physics.DestroyBody(b.body_id);
+                    b.body_id = physics.CreateSphere(t.position, b.radius, b.mass, b.is_static);
+                }
+
+                ImGui::Separator();
+                ImGui::PopID();
+                ++index;
             });
             ImGui::End();
 

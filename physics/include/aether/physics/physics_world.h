@@ -44,6 +44,12 @@ public:
     Vec3 GetPosition(JPH::BodyID id) const;
     Quaternion GetRotation(JPH::BodyID id) const;
 
+    // Teleports a body to `position` (e.g. an editor drag-edit), waking it if
+    // it was asleep. This bypasses the simulation's own integration for one
+    // frame — fine for an editor nudging a body, not a substitute for
+    // applying forces/velocity in gameplay code.
+    void SetPosition(JPH::BodyID id, const Vec3& position);
+
     JPH::PhysicsSystem& System() { return *physics_system_; }
     JPH::BodyInterface& BodyInterface();
 
