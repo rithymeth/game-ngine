@@ -128,6 +128,11 @@ ComponentId GetComponentId() {
     return id;
 }
 
+// Number of component types registered so far; valid ids are [0, count).
+inline ComponentId RegisteredComponentCount() {
+    return detail::ComponentIdCounter().load(std::memory_order_relaxed);
+}
+
 inline const ComponentInfo& GetComponentInfo(ComponentId id) {
     return detail::ComponentRegistry()[id];
 }

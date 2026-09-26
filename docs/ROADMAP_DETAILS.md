@@ -335,8 +335,9 @@ The goal is to change the ECS as little as possible:
    - `Parent` holds a live `Entity` handle and stays raw until Phase 7's
      `EntityGuid` (§7.1 of design/PHASE_SPECS.md).
    - `EditorCamera` turned out not to be an ECS component.
-6. Editor: generic reflected Inspector and "Add Component". Remove the
-   hand-written inspector code.
+6. ✅ **Done.** Generic reflected Inspector (`editor/src/ui/`, tested
+   headless) and "+ Add Component". The hand-written per-component Inspector
+   code is removed. **Phase 6 is complete.**
 
 ---
 

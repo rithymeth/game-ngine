@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phase 5 — Gameplay Framework
+## Status: Phase 6 — Reflection & Property System (complete)
 
 ### Phase 1 — Foundation
 
@@ -1175,7 +1175,7 @@ collide with the left-column stack even when populated with real model
 data. 81/81 tests unchanged; 6 quick runs plus one 2000-frame stability
 run, all clean.
 
-### Phase 6 (in progress) — Reflection core
+### Phase 6 — Reflection & Property System
 
 First step of the [roadmap](docs/ROADMAP.md)'s Phase 6 (build spec:
 [`docs/ROADMAP_DETAILS.md` §B](docs/ROADMAP_DETAILS.md)).
@@ -1305,17 +1305,60 @@ scripting and Blueprints all build on.
   - `EditorCamera` is a local in the editor, not an ECS component, so it
     needs no reflection.
 
-Not included yet, and planned as the last step of Phase 6: the generic
-reflected Inspector.
+**Step 6: the generic Inspector.** With this step Phase 6 is complete.
+
+- **`editor/src/ui/reflected_inspector.{h,cpp}`** (new `aether_editor_ui`
+  library): `InspectObject(type, object, id)` draws any reflected object as
+  a two-column property table, following `docs/design/EDITOR_UI.md` §5.1.
+  - Checkboxes for bools.
+  - Drags for numbers, clamped to the field's `Meta` range and showing its
+    units.
+  - Text fields for `std::string` and `char[N]`, and dropdowns for enums.
+  - One X/Y/Z(/W) row for small float structs (`Vec3`, `Vec4`,
+    `Quaternion`), and collapsible sub-tables for other structs.
+  - `Meta::category` headings and `Meta::tooltip` on hover.
+  - It reports which top-level field changed, and when the edit was
+    committed, so later phases can record one undo step per edit.
+  - Only fields flagged `Field_EditAnywhere` (editable) or `Field_ReadOnly`
+    (disabled) are shown. Nested fields take their parent's setting.
+  - `AddComponentButton` is a searchable "+ Add Component" popup.
+- **The library is portable.** It depends only on ImGui and reflection, so
+  it builds and is tested **headless** on every platform. For that, ImGui is
+  now split into `imgui_core` (portable, plus `imgui_stdlib`) and the
+  Win32/DX12 backend library `imgui`. The editor executable is only
+  configured on Windows, which its Win32 backend already required.
+- **The editor's Inspector panel is now generic.** It draws every reflected
+  component on the selection, with no per-component UI code.
+  - The only component-specific code left makes edits reach the physics
+    simulation: a `Transform` edit teleports the Jolt body, and a
+    `RigidBody` edit recreates it, as the body list already did.
+  - "+ Add Component" lists every reflected component the entity doesn't
+    have yet. Adding `RigidBody` also adds a `Transform` and creates the Jolt
+    body.
+  - The glTF load status and animation controls, which aren't component
+    data, are still drawn by hand below.
+- **Type-erased `World` calls:** `World::AddComponentRaw`,
+  `RemoveComponentRaw` and `HasComponentRaw`, plus
+  `RegisteredComponentCount()`, for code that only knows a component's ID at
+  runtime.
 
 **Verified** by building the engine and tests on Linux with both GCC 13
 and Clang, with no warnings from the new code. There are 29 reflection and serialization
 tests (`tests/test_reflection.cpp`, `tests/test_reflection_any.cpp`,
 `tests/test_archive.cpp`, and the Phase 6 section of
-`tests/test_serialization.cpp`). All 81 tests pass with physics off, and
-88/88 with physics (Jolt) enabled. The editor change (removing its local
-`ModelRenderer` and including the engine header) hasn't been compiled,
-because the editor is Windows/D3D12-only. A Debug build with AddressSanitizer and
+`tests/test_serialization.cpp`). All 87 tests pass with physics off, and
+94/94 with physics (Jolt) enabled.
+
+- Five of those tests drive a real, headless ImGui context with simulated
+  keyboard input. They type into string, number and `char[N]` fields and
+  check the edited values, Meta range clamping, and commit reporting.
+- They also pass in the Debug build, where ImGui's internal assertions are
+  active.
+- The editor executable itself (Win32/D3D12) couldn't be built here. Its new
+  Inspector block was compiled on its own, pasted word for word into a small
+  file against the real engine, physics, ImGui and Inspector headers. The
+  rest of the editor diff is two alias registrations, one include, and
+  removing its local `ModelRenderer`. A Debug build with AddressSanitizer and
 UndefinedBehaviorSanitizer also passes cleanly, including a test with an
 instance-counting type showing that `Any` constructs and destroys each value
 exactly once, both inline and on the heap. That run excludes the
