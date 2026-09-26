@@ -88,6 +88,61 @@ namespace {
 constexpr u32 kMaxInstances = 256;
 constexpr const char* kScenePath = "editor_scene.aesc";
 
+// --------------------------------------------------------------------------
+// UI-workflow follow-up: a friendlier default look and a real default dock
+// layout, addressing the two biggest complaints a first-time user of the
+// earlier screenshots would have — "everything is default ImGui gray" and
+// "every panel is stacked on top of every other panel at startup."
+// --------------------------------------------------------------------------
+
+// A soft blue-teal accent instead of ImGui's default blue, plus a bit more
+// breathing room between widgets — small changes, but they're most of the
+// difference between "looks like a debug overlay" and "looks like a tool."
+void ApplyFriendlyEditorStyle() {
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.WindowRounding = 4.0f;
+    style.FrameRounding = 3.0f;
+    style.GrabRounding = 3.0f;
+    style.TabRounding = 3.0f;
+    style.WindowPadding = ImVec2(10, 10);
+    style.FramePadding = ImVec2(6, 4);
+    style.ItemSpacing = ImVec2(8, 6);
+    style.ScrollbarSize = 14.0f;
+
+    ImVec4* colors = style.Colors;
+    const ImVec4 kAccent(0.26f, 0.59f, 0.62f, 1.00f);
+    const ImVec4 kAccentHover(0.32f, 0.70f, 0.74f, 1.00f);
+    const ImVec4 kAccentActive(0.20f, 0.48f, 0.51f, 1.00f);
+    colors[ImGuiCol_TitleBgActive] = kAccentActive;
+    colors[ImGuiCol_Header] = kAccent;
+    colors[ImGuiCol_HeaderHovered] = kAccentHover;
+    colors[ImGuiCol_HeaderActive] = kAccentActive;
+    colors[ImGuiCol_Button] = kAccentActive;
+    colors[ImGuiCol_ButtonHovered] = kAccentHover;
+    colors[ImGuiCol_ButtonActive] = kAccent;
+    colors[ImGuiCol_FrameBgHovered] = ImVec4(0.30f, 0.30f, 0.33f, 1.00f);
+    colors[ImGuiCol_CheckMark] = kAccentHover;
+    colors[ImGuiCol_SliderGrab] = kAccent;
+    colors[ImGuiCol_SliderGrabActive] = kAccentHover;
+    colors[ImGuiCol_Tab] = ImVec4(0.16f, 0.16f, 0.18f, 1.00f);
+    colors[ImGuiCol_TabHovered] = kAccentHover;
+    colors[ImGuiCol_TabActive] = kAccentActive;
+}
+
+// Default panel layout: this editor's vendored ImGui is built from a plain
+// release tag (v1.92.9), not the separate "docking" branch, so there's no
+// DockBuilder/DockSpace here — instead, every panel below gets an explicit
+// default position/size via ImGuiCond_FirstUseEver, arranged as a simple
+// non-overlapping grid (main panel + Hierarchy + Asset Browser stacked down
+// the left edge, Inspector on the right) so nothing starts stacked on top
+// of anything else. ImGuiCond_FirstUseEver means this only ever applies
+// before a window has a saved position — once a user drags a panel
+// themselves, that layout persists via ImGui's own imgui.ini, same as any
+// other ImGui app.
+constexpr f32 kMenuBarHeight = 20.0f;
+constexpr f32 kPanelMargin = 8.0f;
+constexpr f32 kLeftPanelWidth = 340.0f;
+
 // A model-carrying entity's only component beyond Transform — a reference to
 // a glTF asset (relative to AETHER_ASSET_DIR, e.g. "models/foo.gltf"), not
 // the loaded GPU/CPU data itself (that lives in GltfCache below, keyed by
@@ -1054,6 +1109,14 @@ int main() {
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
         ImGui::StyleColorsDark();
+        // UI-workflow follow-up: a non-overlapping default layout for the
+        // panels this editor already had (Aether Editor, Hierarchy,
+        // Inspector, Asset Browser) instead of every one of them stacking on
+        // top of each other at (0,0) — the biggest usability problem in
+        // earlier screenshots. See each panel's SetNextWindowPos/Size call
+        // below, and ApplyFriendlyEditorStyle for the accent-color/spacing
+        // pass.
+        ApplyFriendlyEditorStyle();
         ImGui_ImplWin32_Init(window.NativeHandle());
 
         ImGui_ImplDX12_InitInfo init_info{};
@@ -1134,6 +1197,18 @@ int main() {
         Vec3 gizmo_drag_start_point{0, 0, 0};
         Vec3 gizmo_drag_start_entity_pos{0, 0, 0};
 
+        // UI-workflow follow-up state: panel visibility is toggled from the
+        // new "View" menu so a user who closes a panel can bring it back
+        // without restarting; delete_confirm_target/name back a single
+        // shared "Are you sure?" modal instead of every Delete button
+        // deleting immediately and irreversibly.
+        bool show_hierarchy = true;
+        bool show_inspector = true;
+        bool show_asset_browser = true;
+        bool show_help = true;
+        Entity delete_confirm_target = kNullEntity;
+        std::string delete_confirm_name;
+
         bool playing = true;
         std::vector<std::unique_ptr<CommandList>> command_lists;
         std::vector<u64> frame_fences(swap_chain.BufferCount(), 0);
@@ -1171,6 +1246,29 @@ int main() {
                 Radians(60.0f), static_cast<f32>(swap_chain.Width()) / static_cast<f32>(swap_chain.Height()), 0.1f,
                 100.0f);
             Mat4 view_proj = proj * view;
+
+            // A real menu bar, mainly so a panel a user closes (via its
+            // title-bar X) can be brought back without restarting — the
+            // same "View > Panel Name" convention every docked-panel editor
+            // uses. Called before the dockspace host below so the main
+            // viewport's WorkPos/WorkSize already exclude this strip.
+            if (ImGui::BeginMainMenuBar()) {
+                if (ImGui::BeginMenu("View")) {
+                    ImGui::MenuItem("Hierarchy", nullptr, &show_hierarchy);
+                    ImGui::MenuItem("Inspector", nullptr, &show_inspector);
+                    ImGui::MenuItem("Asset Browser", nullptr, &show_asset_browser);
+                    ImGui::Separator();
+                    ImGui::MenuItem("Help", nullptr, &show_help);
+                    ImGui::EndMenu();
+                }
+                if (ImGui::BeginMenu("Help")) {
+                    if (ImGui::MenuItem("Show Help Window")) {
+                        show_help = true;
+                    }
+                    ImGui::EndMenu();
+                }
+                ImGui::EndMainMenuBar();
+            }
 
             // Every currently-referenced model asset must be loaded before
             // this frame's draw commands are recorded — loading uploads via
@@ -1318,6 +1416,8 @@ int main() {
 
             std::vector<Entity> entities_to_delete;
 
+            ImGui::SetNextWindowPos(ImVec2(kPanelMargin, kMenuBarHeight + kPanelMargin), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(ImVec2(kLeftPanelWidth, 340.0f), ImGuiCond_FirstUseEver);
             ImGui::Begin("Aether Editor");
             ImGui::Text("Entities: %zu", world.EntityCount());
             ImGui::Checkbox("Playing", &playing);
@@ -1347,28 +1447,42 @@ int main() {
                 }
             }
 
-            ImGui::Separator();
-            ImGui::TextWrapped("Camera: hold Right Mouse + WASD/QE to fly. Left-click an entity (or empty space) to "
-                                "select/deselect. Drag a gizmo arrow to move the selection.");
-            ImGui::Separator();
-            ImGui::Text("Bodies (live-edit; changes apply to the running simulation immediately)");
+            ImGui::SeparatorText("Controls");
+            ImGui::TextWrapped("Hold Right Mouse + WASD/QE to fly the camera. Left-click an entity (or empty "
+                                "space) to select/deselect. Drag a gizmo arrow to move the selection.");
+
+            // Bodies list: a colored bullet per row (matching the sphere's
+            // own on-screen color scheme — gold when selected) instead of a
+            // bare "#N", so a row's entity type/state reads at a glance
+            // instead of only through its label text.
+            ImGui::SeparatorText("Bodies");
+            ImGui::TextDisabled("Live-edit: changes apply to the running simulation immediately.");
             int index = 0;
             ForEachWithEntity<Transform, RigidBody>(world, [&](Entity e, Transform& t, RigidBody& b) {
                 ImGui::PushID(index);
-                ImGui::Text("#%d", index);
+                bool is_selected = (e == selected_entity);
+                // Colored label instead of a plain "#N" — matches the same
+                // gold-when-selected / blue-otherwise scheme the sphere's
+                // own on-screen color already uses, so a row's state reads
+                // at a glance. (Not a separate bullet glyph: the default
+                // ImGui font only ships Basic Latin, so anything outside
+                // ASCII renders as a missing-glyph box.)
+                ImVec4 label_color = is_selected ? ImVec4(1.0f, 0.85f, 0.2f, 1.0f) : ImVec4(0.4f, 0.7f, 1.0f, 1.0f);
+                ImGui::TextColored(label_color, "Body #%d", index);
                 ImGui::SameLine();
-                if (ImGui::SmallButton(e == selected_entity ? "Selected" : "Select")) {
+                if (ImGui::SmallButton(is_selected ? "Selected" : "Select")) {
                     selected_entity = e;
                 }
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Delete")) {
-                    entities_to_delete.push_back(e);
+                    delete_confirm_target = e;
+                    delete_confirm_name = "Body #" + std::to_string(index);
                 }
 
-                bool position_changed = ImGui::DragFloat3("Position", &t.position.x, 0.05f);
-                bool radius_changed = ImGui::DragFloat("Radius", &b.radius, 0.01f, 0.05f, 5.0f, "%.2f");
-                bool mass_changed = ImGui::DragFloat("Mass", &b.mass, 0.05f, 0.01f, 100.0f, "%.2f");
-                bool static_changed = ImGui::Checkbox("Static", &b.is_static);
+                bool position_changed = ImGui::DragFloat3("Position (m)", &t.position.x, 0.05f);
+                bool radius_changed = ImGui::DragFloat("Radius (m)", &b.radius, 0.01f, 0.05f, 5.0f, "%.2f");
+                bool mass_changed = ImGui::DragFloat("Mass (kg)", &b.mass, 0.05f, 0.01f, 100.0f, "%.2f");
+                bool static_changed = ImGui::Checkbox("Static (doesn't fall)", &b.is_static);
 
                 if (position_changed) {
                     // Only re-teleport the body if the shape/mass didn't also
@@ -1394,54 +1508,89 @@ int main() {
             // Same list treatment for model entities, now that a model is a
             // normal (Transform, ModelRenderer) entity instead of a special
             // case rendered outside the ECS entirely.
-            ImGui::Text("Models");
+            ImGui::SeparatorText("Models");
             int model_index = 0;
             ForEachWithEntity<Transform, ModelRenderer>(world, [&](Entity e, Transform& t, ModelRenderer& renderer) {
                 ImGui::PushID(1000 + model_index); // offset so IDs never collide with the Bodies loop above
-                ImGui::Text("#%d %s", model_index, renderer.asset_path);
+                bool is_selected = (e == selected_entity);
+                ImVec4 label_color = is_selected ? ImVec4(1.0f, 0.85f, 0.2f, 1.0f) : ImVec4(1.0f, 0.55f, 0.2f, 1.0f);
+                ImGui::TextColored(label_color, "%s", renderer.asset_path);
                 ImGui::SameLine();
-                if (ImGui::SmallButton(e == selected_entity ? "Selected" : "Select")) {
+                if (ImGui::SmallButton(is_selected ? "Selected" : "Select")) {
                     selected_entity = e;
                 }
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Delete")) {
-                    entities_to_delete.push_back(e);
+                    delete_confirm_target = e;
+                    delete_confirm_name = std::string("Model \"") + renderer.asset_path + "\"";
                 }
-                ImGui::DragFloat3("Position", &t.position.x, 0.05f);
+                ImGui::DragFloat3("Position (m)", &t.position.x, 0.05f);
                 ImGui::Separator();
                 ImGui::PopID();
                 ++model_index;
             });
             ImGui::End();
 
+            // Shared "Are you sure?" confirmation for every Delete button
+            // above (and in the Hierarchy panel below) — friendlier than
+            // deleting immediately and irreversibly on a single misclick.
+            // OpenPopup is safe to call every frame while the target is set:
+            // ImGui no-ops it once the popup's already open.
+            if (!delete_confirm_target.IsNull()) {
+                ImGui::OpenPopup("Confirm Delete");
+            }
+            if (ImGui::BeginPopupModal("Confirm Delete", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::Text("Delete %s?", delete_confirm_name.c_str());
+                ImGui::TextDisabled("This cannot be undone.");
+                ImGui::Separator();
+                if (ImGui::Button("Delete", ImVec2(120, 0))) {
+                    entities_to_delete.push_back(delete_confirm_target);
+                    delete_confirm_target = kNullEntity;
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SetItemDefaultFocus();
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                    delete_confirm_target = kNullEntity;
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndPopup();
+            }
+
             // Asset browser follow-up: what used to be an inline "Add Model"
             // button list inside the main panel is now its own dedicated
             // window, with a Refresh button re-running ListAvailableGltfModels()
             // so a .gltf dropped into assets/models/ while the editor is
             // running shows up without a restart.
-            ImGui::Begin("Asset Browser");
-            ImGui::Text("assets/models/*.gltf");
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Refresh")) {
-                available_gltf_models = ListAvailableGltfModels();
-            }
-            ImGui::Separator();
-            if (available_gltf_models.empty()) {
-                ImGui::TextDisabled("(no .gltf files found under assets/models/)");
-            }
-            for (const std::string& model_path : available_gltf_models) {
-                ImGui::PushID(model_path.c_str());
-                ImGui::Text("%s", model_path.c_str());
+            if (show_asset_browser) {
+                ImGui::SetNextWindowPos(ImVec2(kPanelMargin, kMenuBarHeight + kPanelMargin + 340.0f + kPanelMargin),
+                                         ImGuiCond_FirstUseEver);
+                ImGui::SetNextWindowSize(ImVec2(kLeftPanelWidth, 220.0f), ImGuiCond_FirstUseEver);
+                ImGui::Begin("Asset Browser", &show_asset_browser);
+                ImGui::TextWrapped("Click Spawn to add a model to the scene.");
+                ImGui::Text("assets/models/*.gltf");
                 ImGui::SameLine();
-                if (ImGui::SmallButton("Spawn")) {
-                    Vec3 spawn_pos(spread(rng), 1.2f, spread(rng) + 3.5f);
-                    Entity new_entity =
-                        world.CreateEntity(Transform{spawn_pos, Quaternion::Identity()}, ModelRenderer{});
-                    SetModelPath(*world.GetComponent<ModelRenderer>(new_entity), model_path);
+                if (ImGui::SmallButton("Refresh")) {
+                    available_gltf_models = ListAvailableGltfModels();
                 }
-                ImGui::PopID();
+                ImGui::Separator();
+                if (available_gltf_models.empty()) {
+                    ImGui::TextDisabled("(no .gltf files found under assets/models/)");
+                }
+                for (const std::string& model_path : available_gltf_models) {
+                    ImGui::PushID(model_path.c_str());
+                    ImGui::Text("%s", model_path.c_str());
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Spawn")) {
+                        Vec3 spawn_pos(spread(rng), 1.2f, spread(rng) + 3.5f);
+                        Entity new_entity =
+                            world.CreateEntity(Transform{spawn_pos, Quaternion::Identity()}, ModelRenderer{});
+                        SetModelPath(*world.GetComponent<ModelRenderer>(new_entity), model_path);
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::End();
             }
-            ImGui::End();
 
             // Scene-hierarchy follow-up: a real parent/child tree view,
             // replacing the flat Bodies/Models lists' implicit assumption
@@ -1449,7 +1598,12 @@ int main() {
             // row nests that row's entity under whatever's currently
             // selected (rejecting the drop if it would create a cycle — see
             // WouldCreateCycle); "Unparent" detaches it back to the root.
-            ImGui::Begin("Hierarchy");
+            if (show_hierarchy) {
+            ImGui::SetNextWindowPos(
+                ImVec2(kPanelMargin, kMenuBarHeight + kPanelMargin + 340.0f + kPanelMargin + 220.0f + kPanelMargin),
+                ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(ImVec2(kLeftPanelWidth, 220.0f), ImGuiCond_FirstUseEver);
+            ImGui::Begin("Hierarchy", &show_hierarchy);
             ImGui::TextWrapped(
                 "Select an entity, then click \"Parent to selection\" on another row to nest it underneath.");
             ImGui::Separator();
@@ -1505,6 +1659,11 @@ int main() {
                     if (ImGui::SmallButton("Unparent")) {
                         world.RemoveComponent<Parent>(e);
                     }
+                    ImGui::SameLine();
+                }
+                if (ImGui::SmallButton("Delete")) {
+                    delete_confirm_target = e;
+                    delete_confirm_name = entity_label(e);
                 }
                 if (has_children && open) {
                     for (Entity child : it->second) {
@@ -1519,6 +1678,7 @@ int main() {
                 draw_hierarchy_node(root);
             }
             ImGui::End();
+            } // show_hierarchy
 
             // Inspector: shows only the selected entity, regardless of which
             // list it was selected from — the "click-to-select" workflow's
@@ -1526,20 +1686,25 @@ int main() {
             // button per row above), not a true click-in-viewport pick —
             // that needs screen-to-world ray casting against each entity's
             // bounds, real future work.
-            if (!selected_entity.IsNull()) {
-                ImGui::Begin("Inspector");
+            if (show_inspector && !selected_entity.IsNull()) {
+                ImGui::SetNextWindowPos(
+                    ImVec2(static_cast<f32>(swap_chain.Width()) - 320.0f - kPanelMargin, kMenuBarHeight + kPanelMargin),
+                    ImGuiCond_FirstUseEver);
+                ImGui::SetNextWindowSize(ImVec2(320.0f, 300.0f), ImGuiCond_FirstUseEver);
+                ImGui::Begin("Inspector", &show_inspector);
                 if (world.HasComponent<RigidBody>(selected_entity)) {
                     Transform& t = *world.GetComponent<Transform>(selected_entity);
                     RigidBody& b = *world.GetComponent<RigidBody>(selected_entity);
-                    ImGui::Text("Physics body");
-                    ImGui::DragFloat3("Position##inspector", &t.position.x, 0.05f);
-                    ImGui::Text("Radius: %.2f  Mass: %.2f  Static: %s", b.radius, b.mass, b.is_static ? "yes" : "no");
+                    ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "Physics Body");
+                    ImGui::DragFloat3("Position (m)##inspector", &t.position.x, 0.05f);
+                    ImGui::Text("Radius: %.2f m   Mass: %.2f kg   Static: %s", b.radius, b.mass,
+                                b.is_static ? "yes" : "no");
                 } else if (world.HasComponent<ModelRenderer>(selected_entity)) {
                     Transform& t = *world.GetComponent<Transform>(selected_entity);
                     ModelRenderer& renderer = *world.GetComponent<ModelRenderer>(selected_entity);
-                    ImGui::Text("glTF model");
+                    ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.2f, 1.0f), "glTF Model");
                     ImGui::Text("Source: %s", renderer.asset_path);
-                    ImGui::DragFloat3("Position##inspector", &t.position.x, 0.05f);
+                    ImGui::DragFloat3("Position (m)##inspector", &t.position.x, 0.05f);
                     GltfRenderData& data = GetOrLoadGltfRenderData(device, gltf_asset_manager, gltf_cache,
                                                                     renderer.asset_path);
                     if (!data.valid) {
@@ -1558,6 +1723,37 @@ int main() {
                 }
                 if (ImGui::Button("Deselect")) {
                     selected_entity = kNullEntity;
+                }
+                ImGui::End();
+            }
+
+            // Onboarding follow-up: shown by default on first run so a new
+            // user isn't left guessing what the mouse/keys do — the single
+            // biggest gap the earlier gizmo/picking/camera follow-up left
+            // completely undocumented in-app. The title-bar close (X), wired
+            // to show_help, is how it gets dismissed; "Help > Show Help
+            // Window" in the menu bar brings it back.
+            if (show_help) {
+                ImGui::SetNextWindowSize(ImVec2(420, 0), ImGuiCond_FirstUseEver);
+                ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_FirstUseEver,
+                                         ImVec2(0.5f, 0.5f));
+                ImGui::Begin("Help", &show_help);
+                ImGui::TextWrapped("Welcome to the Aether Editor. Quick reference:");
+                ImGui::SeparatorText("Camera");
+                ImGui::BulletText("Hold Right Mouse Button + move to look around.");
+                ImGui::BulletText("W/A/S/D to move, E/Q to rise/fall (while holding RMB).");
+                ImGui::SeparatorText("Selecting & moving");
+                ImGui::BulletText("Left-click an object in the 3D view to select it.");
+                ImGui::BulletText("Left-click empty space to deselect.");
+                ImGui::BulletText("Drag a red/green/blue gizmo arrow to move the selection along that axis.");
+                ImGui::BulletText("Or use the Position fields in the Bodies/Models/Inspector panels.");
+                ImGui::SeparatorText("Scene");
+                ImGui::BulletText("The Hierarchy panel shows parent/child relationships.");
+                ImGui::BulletText("\"Parent to selection\" nests an entity under whatever's selected.");
+                ImGui::BulletText("The Asset Browser spawns new models from assets/models/*.gltf.");
+                ImGui::Separator();
+                if (ImGui::Button("Got it", ImVec2(120, 0))) {
+                    show_help = false;
                 }
                 ImGui::End();
             }

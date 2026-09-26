@@ -1119,6 +1119,57 @@ the glTF root signature already sets for the same reason (its PSO also has
 a real vertex input layout, unlike the billboard-sphere pipeline). 81/81
 tests unchanged; 6 quick runs plus one 2000-frame stability run, all clean.
 
+### Follow-up: friendlier UI (layout, style, confirmations, help)
+
+The previous two follow-ups added real functionality (camera, picking,
+gizmo, hierarchy, asset browser) but left the UI itself exactly as
+default-ImGui-gray as it always was, with every panel spawning at the same
+default position — the screenshots showed Hierarchy, Inspector, and the
+main panel all stacked directly on top of each other. This follow-up is a
+pure UI/UX pass, no new editor functionality.
+
+- **Non-overlapping default layout.** Every panel (`Aether Editor`, `Asset
+  Browser`, `Hierarchy`, `Inspector`) now gets an explicit default
+  position/size via `ImGui::SetNextWindowPos`/`SetNextWindowSize` with
+  `ImGuiCond_FirstUseEver` — a simple left-column stack (main panel → Asset
+  Browser → Hierarchy) plus Inspector on the right, leaving the 3D viewport
+  visible in between. `ImGuiCond_FirstUseEver` means this only applies
+  before a window has a saved position in `imgui.ini`; once a user drags a
+  panel themselves, their own layout persists across runs. (A real docked
+  layout via `ImGui::DockBuilder`/`DockSpace` was the first approach tried,
+  but this project's vendored ImGui is pinned to a plain release tag
+  (`v1.92.9`) rather than the separate `docking` git branch, so those
+  symbols don't exist in this build — reverted in favor of the
+  `SetNextWindowPos` approach above rather than repointing the whole
+  project at a different ImGui branch for one follow-up.)
+- **Friendlier visual style** (`ApplyFriendlyEditorStyle`): a soft blue-teal
+  accent color (buttons, headers, checkmarks, tabs) in place of ImGui's
+  default blue, rounded corners, and more breathing room between widgets.
+  `ImGui::SeparatorText` section headers ("Controls", "Bodies", "Models")
+  replace the old plain `Text` + `Separator` pairs. Bodies/models are
+  color-coded by type and selection state (blue for a body, orange for a
+  model, gold when selected) instead of a bare `#N`.
+- **Friendlier controls**: field labels now carry units ("Position (m)",
+  "Radius (m)", "Mass (kg)", "Static (doesn't fall)") instead of bare nouns.
+  Every **Delete** button (Bodies, Models, and the Hierarchy panel) now
+  opens a shared "Are you sure?" confirmation modal instead of deleting
+  immediately and irreversibly on a single misclick.
+- **Onboarding**: a new **Help** window, shown by default on first run,
+  centered on screen, with a plain-language quick reference for the camera
+  controls, selecting/moving, and the scene hierarchy — the one thing the
+  camera/picking/gizmo follow-up left completely undocumented in-app. A
+  **View** menu (new main menu bar) can re-show it, or any panel closed via
+  its title-bar X, without restarting.
+
+**Verified by actual execution**: screenshots (with `imgui.ini` cleared to
+force first-run defaults) confirm all five panels lay out without
+overlapping, the accent color/section headers/unit labels render correctly,
+and — with a temporary env-var-gated self-test forcing a selection, removed
+before commit — that the Inspector's default top-right position doesn't
+collide with the left-column stack even when populated with real model
+data. 81/81 tests unchanged; 6 quick runs plus one 2000-frame stability
+run, all clean.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
