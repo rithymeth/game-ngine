@@ -350,3 +350,18 @@ void RegisterMigration(const TypeInfo& type, MigrationFn fn) {
 }
 
 } // namespace aether::reflect
+
+// bytes.h
+#include "aether/reflection/bytes.h"
+
+namespace aether::reflect {
+
+void AppendBinary(const TypeInfo& type, const void* object, std::vector<u8>& out) {
+    Json::to_msgpack(ToJson(type, object), out);
+}
+
+bool ReadBinary(const TypeInfo& type, void* object, const u8* data, usize size) {
+    return LoadBinary(type, object, std::span<const u8>(data, size), nullptr);
+}
+
+} // namespace aether::reflect

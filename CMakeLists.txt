@@ -54,6 +54,12 @@ if(AETHER_BUILD_PHYSICS)
     # into a /MD executable is a hard CRT conflict (duplicate symbols). Force
     # Jolt onto the dynamic runtime to match before it configures.
     set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF CACHE BOOL "" FORCE)
+    # Jolt builds without C++ RTTI by default, but JoltJobSystemAdapter derives
+    # from JPH::JobSystemWithBarrier in our own (RTTI-enabled) code, so its
+    # vtable references Jolt's typeinfo. MSVC tolerates the mismatch; GCC and
+    # Clang fail to link ("undefined reference to typeinfo for
+    # JPH::JobSystemWithBarrier"). Build Jolt with RTTI to match.
+    set(CPP_RTTI_ENABLED ON CACHE BOOL "" FORCE)
 
     FetchContent_Declare(
         JoltPhysics

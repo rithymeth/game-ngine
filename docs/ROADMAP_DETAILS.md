@@ -323,8 +323,12 @@ The goal is to change the ECS as little as possible:
      of being stored on `TypeInfo`, so `type_info.h` doesn't depend on JSON.
    The API is `ToJson`/`FromJson`, `Save/LoadJsonText` and
    `Save/LoadBinary` in `reflection/serialize.h`.
-4. ECS integration: reflected names, reflection-driven default
-   serializers, the 256-component cap, legacy scene fixture test.
+4. ✅ **Done.** ECS integration: reflected names, reflection-driven
+   default serializers, the 256-component cap, scene format v2 with a
+   per-component encoding byte, and `SaveSceneJson`/`LoadSceneJson`. The
+   legacy test builds a v1 file byte by byte in the test itself, rather than
+   using a checked-in fixture, because v1 component names are
+   compiler-specific `typeid` names.
 5. Reflect `Transform`, `Parent`, `ModelRenderer`, `RigidBody` (fields
    only), and `EditorCamera`.
 6. Editor: generic reflected Inspector and "Add Component". Remove the
