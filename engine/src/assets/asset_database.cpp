@@ -109,6 +109,13 @@ bool SaveAssetMeta(const stdfs::path& meta_file, const AssetMeta& meta, std::str
     json["source_hash"] = meta.source_hash;
     json["settings"] = meta.settings.is_object() ? meta.settings : Json::object();
     json["labels"] = meta.labels;
+    if (!meta.sub_assets.empty()) {
+        Json subs = Json::object();
+        for (const SubAssetMeta& sub : meta.sub_assets) {
+            subs[sub.key] = {{"guid", ToString(sub.guid)}, {"importer", sub.importer}};
+        }
+        json["sub_assets"] = std::move(subs);
+    }
     std::string text = json.dump(2);
     text.push_back('\n');
     if (!fs::WriteFileBytes(meta_file.string(), text.data(), text.size())) {
@@ -147,6 +154,20 @@ bool LoadAssetMeta(const stdfs::path& meta_file, AssetMeta& out, std::string* er
                 meta.labels.push_back(label.get<std::string>());
             }
         }
+    }
+    if (auto it = json.find("sub_assets"); it != json.end() && it->is_object()) {
+        for (const auto& [key, entry] : it->items()) {
+            SubAssetMeta sub;
+            sub.key = key;
+            if (!entry.is_object() || !entry.contains("guid") || !entry["guid"].is_string() ||
+                !ParseAssetGuid(entry["guid"].get_ref<const std::string&>(), sub.guid) || sub.guid.IsNull()) {
+                continue; // dropped; the next import gives the key a new GUID
+            }
+            sub.importer = entry.value("importer", "");
+            meta.sub_assets.push_back(std::move(sub));
+        }
+        std::sort(meta.sub_assets.begin(), meta.sub_assets.end(),
+                  [](const SubAssetMeta& a, const SubAssetMeta& b) { return a.key < b.key; });
     }
     out = std::move(meta);
     return true;
@@ -252,13 +273,25 @@ ScanResult AssetDatabase::Scan() {
 
     std::unordered_map<std::string, bool> has_meta;
     for (LoadedMeta& entry : loaded) {
+        bool changed = false;
         if (records_.count(entry.meta.guid) != 0) {
             AssetGuid old = entry.meta.guid;
             entry.meta.guid = NewAssetGuid();
-            SaveAssetMeta(entry.meta_file, entry.meta);
+            changed = true;
             result.warnings.push_back(RelativeString(root_, entry.source) + " had the same GUID (" + ToString(old) +
                                       ") as another asset, e.g. copied with its .ameta; gave it a new one");
             ++result.duplicates_fixed;
+        }
+        // Sub-asset GUIDs are copied along with the .ameta too.
+        for (SubAssetMeta& sub : entry.meta.sub_assets) {
+            if (records_.count(sub.guid) != 0 || sub.guid == entry.meta.guid) {
+                sub.guid = NewAssetGuid();
+                changed = true;
+                ++result.duplicates_fixed;
+            }
+        }
+        if (changed) {
+            SaveAssetMeta(entry.meta_file, entry.meta);
         }
         AssetRecord record;
         record.guid = entry.meta.guid;
@@ -270,6 +303,19 @@ ScanResult AssetDatabase::Scan() {
         } else {
             record.source_hash = HashFile(entry.source);
             record.needs_import = record.source_hash != entry.meta.source_hash;
+        }
+        for (const SubAssetMeta& sub : entry.meta.sub_assets) {
+            AssetRecord sub_record;
+            sub_record.guid = sub.guid;
+            sub_record.path = record.path + "#" + sub.key;
+            sub_record.importer = sub.importer;
+            sub_record.source_hash = record.source_hash;
+            sub_record.missing = record.missing;
+            sub_record.parent = record.guid;
+            sub_record.sub_key = sub.key;
+            record.sub_assets.push_back(sub.guid);
+            by_path_[sub_record.path] = sub.guid;
+            records_[sub.guid] = std::move(sub_record);
         }
         has_meta[record.path] = true;
         by_path_[record.path] = record.guid;
@@ -391,7 +437,20 @@ bool AssetDatabase::Delete(const AssetGuid& guid_ref, bool force, std::string* e
         SetError(error, "No asset with GUID " + ToString(guid));
         return false;
     }
+    if (it->second.IsSubAsset()) {
+        SetError(error, it->second.path + " is part of another asset; delete its source instead");
+        return false;
+    }
+    // Users of the asset or any of its sub-assets, from outside it.
     std::vector<const AssetRecord*> users = Referencers(guid);
+    for (const AssetGuid& sub : it->second.sub_assets) {
+        for (const AssetRecord* user : Referencers(sub)) {
+            if (std::find(users.begin(), users.end(), user) == users.end()) {
+                users.push_back(user);
+            }
+        }
+    }
+    std::sort(users.begin(), users.end(), [](const AssetRecord* a, const AssetRecord* b) { return a->path < b->path; });
     if (!users.empty() && !force) {
         std::string message = it->second.path + " is used by " + std::to_string(users.size()) + " asset(s):";
         for (const AssetRecord* user : users) {
@@ -404,13 +463,30 @@ bool AssetDatabase::Delete(const AssetGuid& guid_ref, bool force, std::string* e
     std::error_code ec;
     stdfs::remove(source, ec);
     stdfs::remove(MetaPathFor(source), ec);
+    const std::vector<AssetGuid> subs = it->second.sub_assets;
+    for (const AssetGuid& sub : subs) {
+        EraseRecord(sub);
+    }
+    EraseRecord(guid);
+    return true;
+}
+
+void AssetDatabase::EraseRecord(const AssetGuid& guid_ref) {
+    const AssetGuid guid = guid_ref;
+    auto it = records_.find(guid);
+    if (it == records_.end()) {
+        return;
+    }
     by_path_.erase(it->second.path);
     records_.erase(it);
     referencers_.erase(guid);
     for (auto& [other, list] : referencers_) {
         list.erase(std::remove(list.begin(), list.end(), guid), list.end());
     }
-    return true;
+    for (auto& [other, record] : records_) {
+        record.dependencies.erase(std::remove(record.dependencies.begin(), record.dependencies.end(), guid),
+                                  record.dependencies.end());
+    }
 }
 
 const AssetRecord* AssetDatabase::Find(const AssetGuid& guid) const {
@@ -441,6 +517,14 @@ bool AssetDatabase::Move(const AssetGuid& guid_ref, const std::string& new_path,
         return false;
     }
     AssetRecord& record = it->second;
+    if (record.IsSubAsset()) {
+        SetError(error, record.path + " is part of another asset; move its source instead");
+        return false;
+    }
+    if (new_path.find('#') != std::string::npos) {
+        SetError(error, "Asset paths can't contain '#'");
+        return false;
+    }
     const stdfs::path from = Absolute(record.path);
     const stdfs::path to = Absolute(new_path);
     std::error_code ec;
@@ -468,17 +552,97 @@ bool AssetDatabase::Move(const AssetGuid& guid_ref, const std::string& new_path,
     by_path_.erase(record.path);
     record.path = stdfs::path(new_path).generic_string();
     by_path_[record.path] = guid;
+    for (const AssetGuid& sub_guid : record.sub_assets) {
+        AssetRecord& sub = records_[sub_guid];
+        by_path_.erase(sub.path);
+        sub.path = record.path + "#" + sub.sub_key;
+        by_path_[sub.path] = sub_guid;
+    }
     return true;
 }
 
 stdfs::path AssetDatabase::SourcePath(const AssetGuid& guid) const {
     const AssetRecord* record = Find(guid);
+    if (record != nullptr && record->IsSubAsset()) {
+        record = Find(record->parent);
+    }
     return record != nullptr ? Absolute(record->path) : stdfs::path();
 }
 
 stdfs::path AssetDatabase::MetaPath(const AssetGuid& guid) const {
-    const AssetRecord* record = Find(guid);
-    return record != nullptr ? MetaPathFor(Absolute(record->path)) : stdfs::path();
+    const stdfs::path source = SourcePath(guid);
+    return source.empty() ? source : MetaPathFor(source);
+}
+
+std::vector<AssetGuid> AssetDatabase::SetSubAssets(const AssetGuid& source_ref,
+                                                   const std::vector<SubAssetMeta>& sub_assets, std::string* error) {
+    const AssetGuid source = source_ref;
+    auto it = records_.find(source);
+    if (it == records_.end() || it->second.IsSubAsset()) {
+        SetError(error, "No source asset with GUID " + ToString(source));
+        return {};
+    }
+    for (usize i = 0; i < sub_assets.size(); ++i) {
+        const std::string& key = sub_assets[i].key;
+        if (key.empty()) {
+            SetError(error, "Sub-asset keys can't be empty");
+            return {};
+        }
+        for (usize k = 0; k < i; ++k) {
+            if (sub_assets[k].key == key) {
+                SetError(error, "Duplicate sub-asset key \"" + key + "\"");
+                return {};
+            }
+        }
+    }
+    const stdfs::path meta_file = MetaPath(source);
+    AssetMeta meta;
+    if (!LoadAssetMeta(meta_file, meta, error)) {
+        return {};
+    }
+
+    std::unordered_map<std::string, AssetGuid> existing;
+    for (const SubAssetMeta& sub : meta.sub_assets) {
+        existing[sub.key] = sub.guid;
+    }
+    std::vector<AssetGuid> guids;
+    std::vector<SubAssetMeta> updated;
+    for (const SubAssetMeta& wanted : sub_assets) {
+        SubAssetMeta sub = wanted;
+        auto found = existing.find(sub.key);
+        sub.guid = found != existing.end() ? found->second : NewAssetGuid();
+        guids.push_back(sub.guid);
+        updated.push_back(std::move(sub));
+    }
+    std::sort(updated.begin(), updated.end(), [](const SubAssetMeta& a, const SubAssetMeta& b) { return a.key < b.key; });
+    meta.sub_assets = updated;
+    if (!SaveAssetMeta(meta_file, meta, error)) {
+        return {};
+    }
+
+    // Update the records: drop keys no longer produced, add or refresh the rest.
+    const std::vector<AssetGuid> old_subs = it->second.sub_assets;
+    for (const AssetGuid& old : old_subs) {
+        if (std::find(guids.begin(), guids.end(), old) == guids.end()) {
+            EraseRecord(old);
+        }
+    }
+    AssetRecord& record = records_[source];
+    record.sub_assets.clear();
+    for (const SubAssetMeta& sub : updated) {
+        AssetRecord sub_record;
+        sub_record.guid = sub.guid;
+        sub_record.path = record.path + "#" + sub.key;
+        sub_record.importer = sub.importer;
+        sub_record.source_hash = record.source_hash;
+        sub_record.missing = record.missing;
+        sub_record.parent = source;
+        sub_record.sub_key = sub.key;
+        record.sub_assets.push_back(sub.guid);
+        by_path_[sub_record.path] = sub.guid;
+        records_[sub.guid] = std::move(sub_record);
+    }
+    return guids;
 }
 
 bool AssetDatabase::MarkImported(const AssetGuid& guid, std::string* error, u32 importer_version) {
@@ -488,6 +652,10 @@ bool AssetDatabase::MarkImported(const AssetGuid& guid, std::string* error, u32 
         return false;
     }
     AssetRecord& record = it->second;
+    if (record.IsSubAsset()) {
+        SetError(error, record.path + " is imported with its source");
+        return false;
+    }
     const stdfs::path meta_file = MetaPathFor(Absolute(record.path));
     AssetMeta meta;
     if (!LoadAssetMeta(meta_file, meta, error)) {
@@ -502,6 +670,9 @@ bool AssetDatabase::MarkImported(const AssetGuid& guid, std::string* error, u32 
         return false;
     }
     record.needs_import = false;
+    for (const AssetGuid& sub : record.sub_assets) {
+        records_[sub].source_hash = record.source_hash;
+    }
     return true;
 }
 

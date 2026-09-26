@@ -156,12 +156,12 @@ AETHER_TEST(Import_AllPendingWithTheRealTextureImporter) {
     stdfs::copy_file(kRepoTextures / "checker_a.png", project / "Content/a.png");
     stdfs::copy_file(kRepoTextures / "checker_b.png", project / "Content/b.png");
     std::ofstream(project / "Content/broken.png") << "not a png";
-    std::ofstream(project / "Content/hero.gltf") << "{}"; // no Model importer yet
+    std::ofstream(project / "Content/song.wav") << "RIFF"; // no Sound importer yet
     AssetDatabase db(project / "Content");
     db.Scan();
 
     ImporterRegistry importers = ImporterRegistry::WithBuiltins();
-    AETHER_CHECK(importers.Find("Texture") != nullptr && importers.Find("Model") == nullptr);
+    AETHER_CHECK(importers.Find("Texture") != nullptr && importers.Find("Model") != nullptr);
     DerivedDataCache cache(project / "Intermediate/DDC");
     ImportAllResult result = ImportAll(db, importers, cache);
     AETHER_CHECK(result.imported == 2 && result.failed == 1 && result.skipped == 1 && result.from_cache == 0);

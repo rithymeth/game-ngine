@@ -11,6 +11,15 @@
 
 namespace aether::assets {
 
+// A sub-asset split out of a source file by its importer (a glTF's meshes,
+// materials, animations), remembered in the source's .ameta so its GUID is
+// stable across reimports.
+struct SubAssetMeta {
+    std::string key;      // "mesh:0"
+    AssetGuid guid;
+    std::string importer; // "Mesh"
+};
+
 // Sidecar metadata stored next to every asset source as "<file>.ameta"
 // (format: docs/ROADMAP_DETAILS.md §A.2).
 struct AssetMeta {
@@ -20,6 +29,7 @@ struct AssetMeta {
     std::string source_hash;       // hash of the source when it was last imported; "" = never
     nlohmann::json settings = nlohmann::json::object(); // importer-specific options
     std::vector<std::string> labels;
+    std::vector<SubAssetMeta> sub_assets; // sorted by key
 
     static constexpr const char* kExtension = ".ameta";
 };
@@ -43,6 +53,15 @@ struct AssetRecord {
     bool missing = false;    // .ameta exists but its source doesn't
     bool needs_import = false; // source changed since it was last imported (or never imported)
     std::vector<AssetGuid> dependencies; // assets this one refers to (scenes, prefabs), sorted
+    // Sub-assets: `path` is "<source path>#<key>" ("Models/hero.gltf#mesh:0"),
+    // `importer` is the sub-asset type, and `parent` is the source's GUID.
+    // They share the source's file, hash and missing state, and are never
+    // imported on their own (needs_import is always false).
+    AssetGuid parent;          // null for a source asset
+    std::string sub_key;       // "" for a source asset
+    std::vector<AssetGuid> sub_assets; // a source's sub-assets, in key order
+
+    bool IsSubAsset() const { return !parent.IsNull(); }
 };
 
 struct ScanResult {
@@ -80,8 +99,17 @@ public:
     std::vector<const AssetRecord*> All() const;
 
     // Moves/renames an asset's source and .ameta together. Its GUID — and so
-    // every reference to it — is unchanged. Fails if the target exists.
+    // every reference to it — is unchanged, as are its sub-assets' (whose
+    // paths follow). Fails if the target exists, or for a sub-asset (move
+    // its source instead).
     bool Move(const AssetGuid& guid, const std::string& new_path, std::string* error = nullptr);
+
+    // Replaces a source's sub-assets with `sub_assets` (key + importer; guid
+    // ignored): keys it already had keep their GUIDs, new keys get new ones,
+    // and keys no longer produced are removed. Writes the .ameta. Returns the
+    // GUIDs in the order given (empty on error).
+    std::vector<AssetGuid> SetSubAssets(const AssetGuid& source, const std::vector<SubAssetMeta>& sub_assets,
+                                        std::string* error = nullptr);
 
     // Records that the asset's current source has been imported (writes its
     // hash into the .ameta, clearing needs_import).
@@ -98,8 +126,9 @@ public:
     // AssetRef fields are saved.
     std::vector<const AssetRecord*> Referencers(const AssetGuid& guid) const;
 
-    // Deletes an asset's source and .ameta. Refused while other assets refer
-    // to it (the error names them), unless `force`.
+    // Deletes an asset's source and .ameta, with its sub-assets. Refused
+    // while other assets refer to it or its sub-assets (the error names
+    // them), unless `force`. A sub-asset can't be deleted on its own.
     bool Delete(const AssetGuid& guid, bool force, std::string* error = nullptr);
 
     const std::filesystem::path& ContentRoot() const { return root_; }
@@ -108,6 +137,7 @@ private:
     std::filesystem::path Absolute(const std::string& relative) const { return root_ / relative; }
 
     void RebuildDependencies();
+    void EraseRecord(const AssetGuid& guid);
 
     std::filesystem::path root_;
     std::unordered_map<AssetGuid, std::vector<AssetGuid>> referencers_;
