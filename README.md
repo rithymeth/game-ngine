@@ -1565,6 +1565,45 @@ confirm.
   harness with no warnings. The editor executable still needs a Windows
   build.
 
+**Step 6: projects, and reflected arrays.**
+
+- **Projects** (`engine/include/aether/project/project.h`, in the engine so
+  the future standalone player can read them):
+  - `ProjectSettings` is reflected and editable in the Inspector: name,
+    engine version, startup scene, plugins, fixed timestep, gravity, and
+    collision layers.
+  - `CreateProject` makes the standard folder layout (`Content/`, `Config/`,
+    `Saved/`, `Intermediate/`) with a `.gitignore` for the generated folders
+    and writes `Name.aproject`. It validates the name and refuses a non-empty
+    folder.
+  - `LoadProject`/`SaveProject` use deterministic JSON stamped with the
+    engine version (`aether/core/version.h`, now 0.7.0). Loading tolerates
+    missing and unknown fields, warns about a project saved by a newer
+    engine, and enforces "layer 0 is Default, at most 32 layers".
+  - `EnsureProjectFolders` restores the ignored folders after a fresh clone.
+- **Recent projects** (`editor/src/core/recent_projects.h`): most recent
+  first, no duplicates, at most 10. It's stored per user (`%APPDATA%/Aether`
+  or `~/.config/aether`), and can prune projects that no longer exist.
+- **Reflected arrays**: `std::vector<T>` for any reflected `T` (structs and
+  nested arrays included) is `TypeKind::Array`, with the declared name
+  `Array<T>`.
+  - JSON and binary archives handle arrays. The data decides the length, and
+    each element loads tolerantly, with warnings naming the index
+    (`Route.tags[1]`).
+  - `Any` and field access work with arrays.
+  - The Inspector shows arrays as a collapsible "N elements" list with a
+    remove button per element and "+ Add".
+- **Not in this step:** File > New / Open Project and the project browser
+  window in the editor, which are Windows UI.
+
+**Verified**: 9 new tests covering the array archives (nested, empty,
+bad-element warnings), project create/load/save (layout, `.gitignore`,
+byte-stable saves, bad names, non-empty folders, newer-engine and layer
+warnings, non-project files), the recent-projects rules and persistence,
+and a headless Inspector draw of `ProjectSettings`. 124/124 tests pass on
+GCC 13, on Clang and under ASan/UBSan, and 131/131 with physics. Nothing in
+the editor executable changed.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,

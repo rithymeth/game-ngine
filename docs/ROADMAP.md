@@ -1413,11 +1413,11 @@ Work in this order. Each line is roughly one PR-sized chunk, or a few.
 1. ✅ Reflection core (`TypeInfo`, fields, `Any`) → port existing components.
 2. ✅ JSON archive + versioned serialization → scenes saved as JSON.
 3. ✅ Generic reflected Inspector + "Add Component".
-4. Split `editor/main.cpp` into panels; ImGui docking branch; theme tokens.
-5. Undo/redo command stack + `EntityGuid`s.
-6. Play-in-Editor world duplication; Simulate/Pause/Step.
+4. Split `editor/main.cpp` into panels; ImGui docking branch; theme tokens. *(Deferred until the editor can be built and checked on Windows.)*
+5. ✅ Undo/redo command stack + `EntityGuid`s.
+6. ✅ Play-in-Editor (snapshot and restore); Pause/Step. Simulate mode is still to do.
 7. Rotate/scale gizmos, snapping, multi-select, duplicate, copy/paste.
-8. Project files (`.aproject`), project-relative content, recent projects.
+8. ✅ Project files (`.aproject`), project folder layout, recent projects. The editor's New/Open Project UI is still to do.
 9. Asset GUIDs + `.ameta` + `AssetDatabase` + rename-safe references.
 10. Importers → DDC → async loading → hot reload; Content Browser v2 with
     thumbnails.

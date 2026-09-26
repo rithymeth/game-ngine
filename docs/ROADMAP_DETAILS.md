@@ -24,24 +24,28 @@ diffs stay small. Every file starts with a `"$type"` and `"$version"`.
 
 ### A.1 Project file: `MyGame.aproject`
 
+As implemented in Phase 7 (`engine/include/aether/project/project.h`). It
+uses `"$v"` for the schema version, like every other reflected document.
+Keys are sorted because the file is written deterministically.
+
 ```json
 {
   "$type": "Project",
-  "$version": 1,
+  "$v": 1,
+  "engine_version": "0.7.0",
+  "fixed_timestep_hz": 60.0,
+  "gravity": [0.0, -9.81, 0.0],
+  "layers": ["Default", "Player", "Enemy", "Pickup", "UI"],
   "name": "MyGame",
-  "engine_version": "0.6.0",
-  "startup_scene": "a3f1c2d4-0000-4000-8000-00000000c0de",
-  "modules": [
-    { "name": "MyGame", "type": "runtime", "path": "Source/MyGame" }
-  ],
-  "plugins": ["Aether.Physics", "Aether.Audio"],
-  "settings": {
-    "physics": { "fixed_timestep_hz": 60, "gravity": [0, -9.81, 0] },
-    "input":   { "default_contexts": ["b71e...-imc-default"] },
-    "layers":  ["Default", "Player", "Enemy", "Pickup", "UI"]
-  }
+  "plugins": ["Aether.Physics"],
+  "startup_scene": "Maps/Level_01.ascene"
 }
 ```
+
+`startup_scene` is a path relative to `Content/` until the asset database
+(Phase 8) replaces it with an asset GUID. Game code modules (the `modules`
+list in the original plan) will be added with native game modules in
+Phase 11.
 
 Project folder layout:
 

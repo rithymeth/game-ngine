@@ -10,6 +10,7 @@ add_library(aether_engine STATIC
     src/scene/serialization.cpp
     src/scene/entity_guid.cpp
     src/scene/hierarchy.cpp
+    src/project/project.cpp
     src/reflection/any.cpp
     src/reflection/registry.cpp
     src/reflection/serialize.cpp
