@@ -1052,6 +1052,73 @@ logged a genuine `PASS`. 81/81 tests unchanged (ECS/editor integration
 work, not new pure logic needing new unit tests); 6 quick runs plus one
 2000-frame stability run.
 
+### Follow-up: viewport picking, transform gizmo, scene hierarchy, asset browser, editor camera
+
+The previous follow-up explicitly deferred real click-in-viewport picking,
+a draggable gizmo, and any parent/child concept — this one builds all of
+that, plus the fly camera picking/gizmos need to be meaningful against.
+
+- **Editor camera (`EditorCamera`).** Replaces the hardcoded static
+  `Mat4::LookAtRH(Vec3(0,6,-14), Vec3(0,1,0), Vec3(0,1,0))` with a real
+  fly camera: hold Right Mouse to look around (mouse delta → yaw/pitch) and
+  move with WASD/QE while it's held, gated on `!ImGui::GetIO().WantCaptureMouse`
+  so dragging an ImGui panel or slider never also spins the camera —
+  standard Unity/Unreal-style scheme, needs no in-app explanation.
+- **Viewport picking.** A mouse click unprojects into a world-space ray
+  (`ScreenPointToRay`, via a general 4x4 matrix inverse of `view_proj` —
+  `InverseGeneral`/`InvertMatrix4x4`, since `Mat4` had no inverse of its
+  own), tested against every `RigidBody`'s sphere and every
+  `ModelRenderer`'s bounding sphere (`RaySphereIntersect`). The model
+  bounding sphere is computed once at load time from the raw vertex extents
+  (`GltfRenderData::bounds_center`/`bounds_radius`) — approximate, not
+  per-triangle, but correct enough to click a model. Clicking empty space
+  deselects, matching every mainstream 3D editor. This runs alongside (not
+  instead of) the existing list-based "Select" buttons.
+- **Transform gizmo.** A minimal unlit line-list pipeline (its own PSO/root
+  signature — `CreateGizmoPSO`/`CreateGizmoRootSignature`, depth-test off so
+  it's always visible on top, same as every mainstream editor's gizmo) draws
+  three axis-colored lines at the selected entity's position. Dragging an
+  axis moves the entity strictly along that one world-space axis regardless
+  of camera angle, via the standard closest-point-between-two-lines
+  formula (`ClosestPointOnAxisToRay`) rather than a naive screen-space-only
+  projection — the same technique real 3D-editor gizmos use. A `RigidBody`
+  being dragged re-teleports its physics body the same way the Inspector's
+  own `DragFloat3` position edit already does.
+- **Scene hierarchy.** A new `Parent { Entity entity; }` component plus
+  `ComputeWorldTransform` (walks the `Parent` chain, composing local
+  transforms into a world one, bounded to 32 steps against a cycle) give the
+  previously-flat ECS a real parent/child concept for the first time. The
+  Hierarchy panel renders it as an actual `ImGui::TreeNodeEx` tree, with a
+  "Parent to selection" button per row (rejected via `WouldCreateCycle` if
+  it would make an entity its own ancestor) and "Unparent" to detach.
+  Deleting a parented-to entity unparents its children first (collected,
+  then applied — mutating an entity's archetype from inside the same
+  `ForEachWithEntity` iteration that found it would invalidate that
+  iteration mid-flight) so no `Parent` is ever left dangling at a
+  stale/reused entity index.
+- **Asset browser.** What was an inline "Add Model" button list inside the
+  main panel is now its own "Asset Browser" window, with a **Refresh**
+  button that re-runs `ListAvailableGltfModels()` — a `.gltf` dropped into
+  `assets/models/` while the editor is running now shows up without a
+  restart.
+
+**Verified by actual execution, not by code review alone**: a temporary
+self-test (`AETHER_EDITOR_SELFTEST_HIERARCHY`) parented one model to
+another, moved the parent by a known delta, and asserted the child's world
+position moved by that same delta while its local `Transform` stayed
+untouched — logged a genuine `PASS`. A second temporary self-test
+(`AETHER_EDITOR_SELFTEST_GIZMO`) forced a known selection and camera
+framing and confirmed the axis-colored gizmo lines actually render (visible
+in a screenshot) at the same time as the Inspector panel. Both self-tests
+were removed before commit, same discipline as the earlier Save/Load
+round-trip self-test. A missing
+`D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT` flag on the
+gizmo's root signature caused an immediate `CreateGraphicsPipelineState`
+failure (`E_INVALIDARG`) the first time it ran — fixed by copying the flag
+the glTF root signature already sets for the same reason (its PSO also has
+a real vertex input layout, unlike the billboard-sphere pipeline). 81/81
+tests unchanged; 6 quick runs plus one 2000-frame stability run, all clean.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,

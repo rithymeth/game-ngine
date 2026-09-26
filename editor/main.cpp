@@ -15,14 +15,24 @@
 // Editor-workflow follow-up: a loaded glTF model is now a normal ECS
 // entity (Transform + ModelRenderer, see below), not a hardcoded, always-
 // present render path bolted onto the side — it shows up in the same
-// entity list the physics spheres do, spawns via an "Add Model" panel that
-// lists whatever .gltf files sit under assets/models/ instead of a path
-// baked into source, round-trips through Save/Load Scene exactly like a
-// RigidBody entity does (ModelRenderer's asset_path is plain fixed-size
+// entity list the physics spheres do, spawns via an "Asset Browser" panel
+// that lists whatever .gltf files sit under assets/models/ instead of a
+// path baked into source, round-trips through Save/Load Scene exactly like
+// a RigidBody entity does (ModelRenderer's asset_path is plain fixed-size
 // data, so it needs no custom serializer — see GltfCache's comment), and
-// can be selected (a "Select" button per entity row, not yet a true
-// click-in-viewport pick — see the Inspector panel's comment) for a
-// dedicated Inspector view and an on-screen highlight tint.
+// can be selected for a dedicated Inspector view and an on-screen highlight
+// tint.
+//
+// Viewport/gizmo/hierarchy follow-up: the camera is a real fly camera
+// (EditorCamera — hold Right Mouse + WASD/QE), replacing the old static
+// LookAtRH. Selection is now a real click-in-viewport pick (screen-to-world
+// ray vs. each entity's bounding sphere — ScreenPointToRay/
+// RaySphereIntersect), in addition to the list-based "Select" buttons.
+// The selected entity gets a draggable 3-axis translate gizmo (line-list
+// renderer, no depth test, axis-constrained drag via
+// ClosestPointOnAxisToRay). A Parent component plus ComputeWorldTransform
+// give entities a real scene hierarchy, shown as a tree in the Hierarchy
+// panel ("Parent to selection" / "Unparent" per row).
 //
 // Set AETHER_EDITOR_MAX_FRAMES=<N> to auto-close after N frames instead of
 // waiting for the window to be closed, for scripted/automated verification.
@@ -57,6 +67,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <random>
 #include <string>
@@ -119,6 +130,259 @@ void ForEachWithEntity(World& world, Func&& func) {
             }
         }
     });
+}
+
+// Scene-hierarchy follow-up: an entity's Transform is local to its parent
+// (if any) instead of always being world space. A flat ECS has no built-in
+// notion of "child of" — this is the one component that adds it. Walked in
+// ComputeWorldTransform below; bounded to avoid spinning forever if a save
+// file (or a bug) ever produces a cycle.
+struct Parent {
+    Entity entity = kNullEntity;
+};
+
+Mat4 LocalTransformMatrix(const Transform& t) { return Mat4::Translation(t.position) * t.rotation.ToMat4(); }
+
+// Composes local -> world by walking the Parent chain. Every render/pick/
+// gizmo site that used to read Transform directly and treat it as world
+// space now goes through this instead, so parenting an entity actually
+// moves it (and its children) instead of only affecting a tree-view label.
+Mat4 ComputeWorldTransform(World& world, Entity e) {
+    Mat4 result = Mat4::Identity();
+    Entity current = e;
+    for (int guard = 0; guard < 32 && !current.IsNull(); ++guard) {
+        Transform* t = world.GetComponent<Transform>(current);
+        if (!t) {
+            break;
+        }
+        result = LocalTransformMatrix(*t) * result;
+        Parent* parent = world.GetComponent<Parent>(current);
+        current = parent ? parent->entity : kNullEntity;
+    }
+    return result;
+}
+
+Vec3 WorldPosition(World& world, Entity e) {
+    Mat4 world_transform = ComputeWorldTransform(world, e);
+    return Vec3(world_transform.cols[3].x, world_transform.cols[3].y, world_transform.cols[3].z);
+}
+
+// Rejects a would-be parent assignment that would create a cycle (making e
+// its own ancestor) — the one invariant the tree-view UI below relies on to
+// never infinite-loop.
+bool WouldCreateCycle(World& world, Entity e, Entity new_parent) {
+    Entity current = new_parent;
+    for (int guard = 0; guard < 32 && !current.IsNull(); ++guard) {
+        if (current == e) {
+            return true;
+        }
+        Parent* parent = world.GetComponent<Parent>(current);
+        current = parent ? parent->entity : kNullEntity;
+    }
+    return false;
+}
+
+// --------------------------------------------------------------------------
+// Editor camera: replaces the hardcoded static LookAtRH(0,6,-14 -> 0,1,0)
+// view with a real fly camera, since viewport picking and a gizmo are both
+// meaningless against a viewpoint the user can't move. Standard Unity/
+// Unreal-style scheme: hold the right mouse button to look around (mouse
+// delta -> yaw/pitch) and move with WASD/QE while it's held. Gated on
+// !WantCaptureMouse so dragging an ImGui slider or panel never also spins
+// the camera.
+// --------------------------------------------------------------------------
+struct EditorCamera {
+    Vec3 position{0.0f, 6.0f, -14.0f};
+    f32 yaw = 0.0f;     // radians, around world +Y
+    f32 pitch = -0.343f; // radians, matches the old static camera's framing
+    f32 move_speed = 6.0f;
+    f32 look_speed = 0.0025f;
+
+    Vec3 Forward() const {
+        return Vec3(std::sin(yaw) * std::cos(pitch), std::sin(pitch), std::cos(yaw) * std::cos(pitch)).Normalized();
+    }
+    Vec3 Right() const { return Forward().Cross(Vec3(0, 1, 0)).Normalized(); }
+    Mat4 ViewMatrix() const { return Mat4::LookAtRH(position, position + Forward(), Vec3(0, 1, 0)); }
+
+    void Update(f32 dt) {
+        ImGuiIO& io = ImGui::GetIO();
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Right) || io.WantCaptureMouse) {
+            return;
+        }
+        yaw += io.MouseDelta.x * look_speed;
+        pitch -= io.MouseDelta.y * look_speed;
+        constexpr f32 kPitchLimit = 1.5f;
+        pitch = std::clamp(pitch, -kPitchLimit, kPitchLimit);
+
+        Vec3 forward = Forward();
+        Vec3 right = Right();
+        f32 amount = move_speed * dt;
+        if (ImGui::IsKeyDown(ImGuiKey_W)) position = position + forward * amount;
+        if (ImGui::IsKeyDown(ImGuiKey_S)) position = position - forward * amount;
+        if (ImGui::IsKeyDown(ImGuiKey_D)) position = position + right * amount;
+        if (ImGui::IsKeyDown(ImGuiKey_A)) position = position - right * amount;
+        if (ImGui::IsKeyDown(ImGuiKey_E)) position.y += amount;
+        if (ImGui::IsKeyDown(ImGuiKey_Q)) position.y -= amount;
+    }
+};
+
+// --------------------------------------------------------------------------
+// Viewport picking + gizmo math: a screen-space mouse position becomes a
+// world-space ray (ScreenPointToRay), tested against each candidate
+// entity's bounding sphere (RaySphereIntersect) to find what's under the
+// cursor; WorldToScreen does the reverse projection for gizmo hit-testing;
+// ClosestPointOnAxisToRay is what makes dragging a gizmo arrow move the
+// entity strictly along that one world-space axis instead of snapping to
+// wherever the mouse ray happens to be.
+// --------------------------------------------------------------------------
+// General 4x4 inverse (the public-domain MESA/GLU cofactor-expansion
+// algorithm) — Mat4 only ships the handful of constructors it needs
+// elsewhere (Translation/Scale/LookAtRH/PerspectiveRH), none of which
+// require inverting an arbitrary matrix, so view_proj's inverse (needed to
+// unproject a mouse click into a world-space ray) is built here instead.
+bool InvertMatrix4x4(const f32 m[16], f32 inv_out[16]) {
+    f32 inv[16];
+    inv[0] = m[5] * m[10] * m[15] - m[5] * m[11] * m[14] - m[9] * m[6] * m[15] + m[9] * m[7] * m[14] +
+             m[13] * m[6] * m[11] - m[13] * m[7] * m[10];
+    inv[4] = -m[4] * m[10] * m[15] + m[4] * m[11] * m[14] + m[8] * m[6] * m[15] - m[8] * m[7] * m[14] -
+             m[12] * m[6] * m[11] + m[12] * m[7] * m[10];
+    inv[8] = m[4] * m[9] * m[15] - m[4] * m[11] * m[13] - m[8] * m[5] * m[15] + m[8] * m[7] * m[13] +
+             m[12] * m[5] * m[11] - m[12] * m[7] * m[9];
+    inv[12] = -m[4] * m[9] * m[14] + m[4] * m[10] * m[13] + m[8] * m[5] * m[14] - m[8] * m[6] * m[13] -
+              m[12] * m[5] * m[10] + m[12] * m[6] * m[9];
+    inv[1] = -m[1] * m[10] * m[15] + m[1] * m[11] * m[14] + m[9] * m[2] * m[15] - m[9] * m[3] * m[14] -
+             m[13] * m[2] * m[11] + m[13] * m[3] * m[10];
+    inv[5] = m[0] * m[10] * m[15] - m[0] * m[11] * m[14] - m[8] * m[2] * m[15] + m[8] * m[3] * m[14] +
+             m[12] * m[2] * m[11] - m[12] * m[3] * m[10];
+    inv[9] = -m[0] * m[9] * m[15] + m[0] * m[11] * m[13] + m[8] * m[1] * m[15] - m[8] * m[3] * m[13] -
+             m[12] * m[1] * m[11] + m[12] * m[3] * m[9];
+    inv[13] = m[0] * m[9] * m[14] - m[0] * m[10] * m[13] - m[8] * m[1] * m[14] + m[8] * m[2] * m[13] +
+              m[12] * m[1] * m[10] - m[12] * m[2] * m[9];
+    inv[2] = m[1] * m[6] * m[15] - m[1] * m[7] * m[14] - m[5] * m[2] * m[15] + m[5] * m[3] * m[14] +
+             m[13] * m[2] * m[7] - m[13] * m[3] * m[6];
+    inv[6] = -m[0] * m[6] * m[15] + m[0] * m[7] * m[14] + m[4] * m[2] * m[15] - m[4] * m[3] * m[14] -
+             m[12] * m[2] * m[7] + m[12] * m[3] * m[6];
+    inv[10] = m[0] * m[5] * m[15] - m[0] * m[7] * m[13] - m[4] * m[1] * m[15] + m[4] * m[3] * m[13] +
+              m[12] * m[1] * m[7] - m[12] * m[3] * m[5];
+    inv[14] = -m[0] * m[5] * m[14] + m[0] * m[6] * m[13] + m[4] * m[1] * m[14] - m[4] * m[2] * m[13] -
+              m[12] * m[1] * m[6] + m[12] * m[2] * m[5];
+    inv[3] = -m[1] * m[6] * m[11] + m[1] * m[7] * m[10] + m[5] * m[2] * m[11] - m[5] * m[3] * m[10] -
+             m[9] * m[2] * m[7] + m[9] * m[3] * m[6];
+    inv[7] = m[0] * m[6] * m[11] - m[0] * m[7] * m[10] - m[4] * m[2] * m[11] + m[4] * m[3] * m[10] +
+             m[8] * m[2] * m[7] - m[8] * m[3] * m[6];
+    inv[11] = -m[0] * m[5] * m[11] + m[0] * m[7] * m[9] + m[4] * m[1] * m[11] - m[4] * m[3] * m[9] -
+              m[8] * m[1] * m[7] + m[8] * m[3] * m[5];
+    inv[15] = m[0] * m[5] * m[10] - m[0] * m[6] * m[9] - m[4] * m[1] * m[10] + m[4] * m[2] * m[9] +
+              m[8] * m[1] * m[6] - m[8] * m[2] * m[5];
+
+    f32 det = m[0] * inv[0] + m[1] * inv[4] + m[2] * inv[8] + m[3] * inv[12];
+    if (det == 0.0f) {
+        return false;
+    }
+    f32 inv_det = 1.0f / det;
+    for (int i = 0; i < 16; ++i) {
+        inv_out[i] = inv[i] * inv_det;
+    }
+    return true;
+}
+
+Mat4 InverseGeneral(const Mat4& m) {
+    f32 a[16];
+    for (int c = 0; c < 4; ++c) {
+        a[c * 4 + 0] = m.cols[c].x;
+        a[c * 4 + 1] = m.cols[c].y;
+        a[c * 4 + 2] = m.cols[c].z;
+        a[c * 4 + 3] = m.cols[c].w;
+    }
+    f32 inv[16];
+    if (!InvertMatrix4x4(a, inv)) {
+        return Mat4::Identity();
+    }
+    Mat4 result;
+    for (int c = 0; c < 4; ++c) {
+        result.cols[c] = Vec4(inv[c * 4 + 0], inv[c * 4 + 1], inv[c * 4 + 2], inv[c * 4 + 3]);
+    }
+    return result;
+}
+
+struct Ray {
+    Vec3 origin;
+    Vec3 dir; // normalized
+};
+
+Ray ScreenPointToRay(f32 mouse_x, f32 mouse_y, u32 width, u32 height, const Mat4& view_proj) {
+    f32 ndc_x = (mouse_x / static_cast<f32>(width)) * 2.0f - 1.0f;
+    f32 ndc_y = 1.0f - (mouse_y / static_cast<f32>(height)) * 2.0f;
+
+    Mat4 inv_view_proj = InverseGeneral(view_proj);
+    Vec4 near_h = inv_view_proj * Vec4(ndc_x, ndc_y, 0.0f, 1.0f);
+    Vec4 far_h = inv_view_proj * Vec4(ndc_x, ndc_y, 1.0f, 1.0f);
+    near_h = near_h * (1.0f / near_h.w);
+    far_h = far_h * (1.0f / far_h.w);
+
+    Vec3 origin(near_h.x, near_h.y, near_h.z);
+    Vec3 far_point(far_h.x, far_h.y, far_h.z);
+    return Ray{origin, (far_point - origin).Normalized()};
+}
+
+bool RaySphereIntersect(const Ray& ray, Vec3 center, f32 radius, f32& out_t) {
+    Vec3 oc = ray.origin - center;
+    f32 b = oc.Dot(ray.dir);
+    f32 c = oc.Dot(oc) - radius * radius;
+    f32 disc = b * b - c;
+    if (disc < 0.0f) {
+        return false;
+    }
+    f32 sqrt_disc = std::sqrt(disc);
+    f32 t = -b - sqrt_disc;
+    if (t < 0.0f) {
+        t = -b + sqrt_disc;
+    }
+    if (t < 0.0f) {
+        return false;
+    }
+    out_t = t;
+    return true;
+}
+
+struct ScreenPos {
+    f32 x, y;
+    bool visible;
+};
+
+ScreenPos WorldToScreen(Vec3 world, const Mat4& view_proj, u32 width, u32 height) {
+    Vec4 clip = view_proj * Vec4(world.x, world.y, world.z, 1.0f);
+    if (clip.w <= 0.0001f) {
+        return {0, 0, false};
+    }
+    Vec3 ndc(clip.x / clip.w, clip.y / clip.w, clip.z / clip.w);
+    return {(ndc.x * 0.5f + 0.5f) * static_cast<f32>(width), (1.0f - (ndc.y * 0.5f + 0.5f)) * static_cast<f32>(height),
+            true};
+}
+
+f32 PointSegmentDistance2D(f32 px, f32 py, f32 ax, f32 ay, f32 bx, f32 by) {
+    f32 dx = bx - ax, dy = by - ay;
+    f32 len_sq = dx * dx + dy * dy;
+    f32 t = len_sq > 1e-6f ? std::clamp(((px - ax) * dx + (py - ay) * dy) / len_sq, 0.0f, 1.0f) : 0.0f;
+    f32 cx = ax + t * dx, cy = ay + t * dy;
+    return std::sqrt((px - cx) * (px - cx) + (py - cy) * (py - cy));
+}
+
+// Closest point on the infinite line (p0 + t*axis) to the ray (origin,
+// dir) — the standard closest-point-between-two-lines formula, specialized
+// for a unit axis direction. Used so an axis-constrained gizmo drag tracks
+// the mouse correctly in 3D regardless of camera angle, instead of a naive
+// (and wrong) screen-space-only projection.
+Vec3 ClosestPointOnAxisToRay(Vec3 p0, Vec3 axis, const Ray& ray) {
+    Vec3 w0 = p0 - ray.origin;
+    f32 a = 1.0f; // axis.Dot(axis), axis is unit length
+    f32 b = axis.Dot(ray.dir);
+    f32 c = 1.0f; // ray.dir.Dot(ray.dir), dir is unit length
+    f32 d = axis.Dot(w0);
+    f32 e = ray.dir.Dot(w0);
+    f32 denom = a * c - b * b;
+    f32 t = (std::fabs(denom) > 1e-6f) ? (b * e - c * d) / denom : 0.0f;
+    return p0 + axis * t;
 }
 
 struct EditorInstance {
@@ -428,6 +692,110 @@ ComPtr<ID3D12PipelineState> CreateGltfPSO(Device& device, ID3D12RootSignature* r
     return pso;
 }
 
+// --------------------------------------------------------------------------
+// Transform gizmo: a minimal unlit line-list renderer (no depth test, so the
+// handles always draw on top of the scene, same as every other 3D editor's
+// gizmo) for the three translate-axis handles drawn at the selected
+// entity's position. Deliberately its own tiny pipeline rather than reusing
+// the sphere or glTF ones — neither is a colored-line renderer, and this one
+// needs no textures, no lighting, and writes a fresh 6-vertex buffer once
+// per frame (cheap enough not to double-buffer).
+// --------------------------------------------------------------------------
+struct GizmoVertex {
+    f32 pos[3];
+    f32 color[3];
+};
+
+constexpr const char* kGizmoShaderSource = R"(
+cbuffer ViewProj : register(b0) { float4x4 g_ViewProj; };
+
+struct VSInput {
+    float3 position : POSITION;
+    float3 color : COLOR;
+};
+struct PSInput {
+    float4 position : SV_POSITION;
+    float3 color : COLOR;
+};
+
+PSInput VSMain(VSInput input) {
+    PSInput result;
+    result.position = mul(g_ViewProj, float4(input.position, 1.0));
+    result.color = input.color;
+    return result;
+}
+
+float4 PSMain(PSInput input) : SV_TARGET {
+    return float4(input.color, 1.0);
+}
+)";
+
+ComPtr<ID3D12RootSignature> CreateGizmoRootSignature(Device& device) {
+    D3D12_ROOT_PARAMETER params[1]{};
+    params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    params[0].Descriptor = {0, 0};
+    params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+
+    D3D12_ROOT_SIGNATURE_DESC desc{};
+    desc.NumParameters = _countof(params);
+    desc.pParameters = params;
+    // Required because the gizmo PSO below has a real vertex input layout
+    // (unlike the billboard-sphere pipeline, which reads SV_VertexID and
+    // needs no vertex buffer at all) — omitting this flag is what made
+    // CreateGraphicsPipelineState fail with E_INVALIDARG the first time.
+    desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+
+    ComPtr<ID3DBlob> signature, error;
+    HRESULT hr = D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, &signature, &error);
+    if (FAILED(hr)) {
+        const char* message = error ? static_cast<const char*>(error->GetBufferPointer()) : "(no error blob)";
+        AETHER_LOG_FATAL("D3D12", "Gizmo root signature serialization failed: %s", message);
+        throw std::runtime_error("gizmo root signature serialization failed");
+    }
+    ComPtr<ID3D12RootSignature> root_signature;
+    AETHER_D3D_CHECK(device.Handle()->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(),
+                                                           IID_PPV_ARGS(&root_signature)));
+    return root_signature;
+}
+
+ComPtr<ID3D12PipelineState> CreateGizmoPSO(Device& device, ID3D12RootSignature* root_signature,
+                                            DXGI_FORMAT rtv_format) {
+    ShaderBytecode vs = CompileHLSL(kGizmoShaderSource, "VSMain", "vs_5_0", "editor_gizmo_vs");
+    ShaderBytecode ps = CompileHLSL(kGizmoShaderSource, "PSMain", "ps_5_0", "editor_gizmo_ps");
+
+    D3D12_INPUT_ELEMENT_DESC input_elements[2] = {
+        {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(GizmoVertex, pos),
+         D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        {"COLOR", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(GizmoVertex, color),
+         D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+    };
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC desc{};
+    desc.pRootSignature = root_signature;
+    desc.InputLayout = {input_elements, 2};
+    desc.VS = {vs.Data(), vs.Size()};
+    desc.PS = {ps.Data(), ps.Size()};
+    desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+    desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+    desc.RasterizerState.DepthClipEnable = TRUE;
+    desc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    // No depth test: a gizmo that could disappear behind geometry it's
+    // meant to be manipulating would make dragging it unreliable — every
+    // mainstream 3D editor draws gizmos on top unconditionally.
+    desc.DepthStencilState.DepthEnable = FALSE;
+    desc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+    desc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+    desc.SampleMask = UINT_MAX;
+    desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE;
+    desc.NumRenderTargets = 1;
+    desc.RTVFormats[0] = rtv_format;
+    desc.SampleDesc.Count = 1;
+
+    ComPtr<ID3D12PipelineState> pso;
+    AETHER_D3D_CHECK(device.Handle()->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&pso)));
+    return pso;
+}
+
 // Everything needed to draw one glTF asset: geometry buffers, the resolved
 // material, and the parsed GltfScene itself (kept around for its
 // node_instances/animations, re-evaluated in place each frame — see the
@@ -451,6 +819,14 @@ struct GltfRenderData {
     bool valid = false; // false if LoadGltf failed — draw calls skip it, the UI still shows it as an entry
     bool animate = true;
     f32 anim_time = 0.0f;
+    // Viewport-picking follow-up: an approximate model-space bounding sphere
+    // (center + radius) computed once at load from the raw vertex extents,
+    // used to hit-test this asset against a mouse ray the same way a
+    // RigidBody's own `radius` already is — good enough for "is the cursor
+    // roughly over this model," not a substitute for real per-triangle
+    // picking.
+    Vec3 bounds_center{0, 0, 0};
+    f32 bounds_radius = 0.5f;
 };
 
 using GltfCache = std::unordered_map<std::string, std::unique_ptr<GltfRenderData>>;
@@ -479,11 +855,20 @@ GltfRenderData& GetOrLoadGltfRenderData(Device& device, assets::AssetManager& as
     const assets::GltfPrimitive& primitive = data->scene.meshes[0].primitives[0];
     data->index_count = primitive.indices.size();
 
+    Vec3 bounds_min(1e30f, 1e30f, 1e30f);
+    Vec3 bounds_max(-1e30f, -1e30f, -1e30f);
     std::vector<GltfSimpleVertex> vertices(primitive.vertices.size());
     for (usize i = 0; i < primitive.vertices.size(); ++i) {
         std::memcpy(vertices[i].pos, primitive.vertices[i].position, sizeof(f32) * 3);
         std::memcpy(vertices[i].normal, primitive.vertices[i].normal, sizeof(f32) * 3);
         std::memcpy(vertices[i].uv, primitive.vertices[i].uv, sizeof(f32) * 2);
+        Vec3 p(vertices[i].pos[0], vertices[i].pos[1], vertices[i].pos[2]);
+        bounds_min = Vec3(std::min(bounds_min.x, p.x), std::min(bounds_min.y, p.y), std::min(bounds_min.z, p.z));
+        bounds_max = Vec3(std::max(bounds_max.x, p.x), std::max(bounds_max.y, p.y), std::max(bounds_max.z, p.z));
+    }
+    if (!vertices.empty()) {
+        data->bounds_center = (bounds_min + bounds_max) * 0.5f;
+        data->bounds_radius = std::max((bounds_max - bounds_min).Length() * 0.5f, 0.1f);
     }
     data->vertex_buffer =
         std::make_unique<Buffer>(device, vertices.size() * sizeof(GltfSimpleVertex), BufferKind::Upload);
@@ -729,16 +1114,25 @@ int main() {
         // now just the first entity spawned into a scene that can hold any
         // number of them, added/removed at runtime like the physics spheres
         // already are.
-        {
-            Entity model_entity =
-                world.CreateEntity(Transform{Vec3(-2.0f, 1.2f, 3.5f), Quaternion::Identity()}, ModelRenderer{});
-            SetModelPath(*world.GetComponent<ModelRenderer>(model_entity), "models/test_animation.gltf");
-        }
+        Entity model_entity =
+            world.CreateEntity(Transform{Vec3(-2.0f, 1.2f, 3.5f), Quaternion::Identity()}, ModelRenderer{});
+        SetModelPath(*world.GetComponent<ModelRenderer>(model_entity), "models/test_animation.gltf");
 
-        // The editor's one form of "selection" so far — see the Inspector
-        // panel below and the top-of-file comment for what this does and
-        // doesn't cover yet.
+        // Viewport-picking/gizmo follow-up: click an entity in the 3D
+        // viewport (not just its row in a list) to select it, then drag one
+        // of the gizmo's three axis handles to move it — see the top-of-file
+        // comment for what this now covers.
         Entity selected_entity = kNullEntity;
+        EditorCamera camera;
+
+        ComPtr<ID3D12RootSignature> gizmo_root_signature = CreateGizmoRootSignature(device);
+        ComPtr<ID3D12PipelineState> gizmo_pso = CreateGizmoPSO(device, gizmo_root_signature.Get(), swap_chain.Format());
+        Buffer gizmo_vertex_buffer(device, sizeof(GizmoVertex) * 6, BufferKind::Upload);
+        constexpr f32 kGizmoAxisLength = 1.5f;
+        constexpr f32 kGizmoPickPixels = 10.0f;
+        int gizmo_dragging_axis = -1; // -1 = not dragging, 0/1/2 = X/Y/Z
+        Vec3 gizmo_drag_start_point{0, 0, 0};
+        Vec3 gizmo_drag_start_entity_pos{0, 0, 0};
 
         bool playing = true;
         std::vector<std::unique_ptr<CommandList>> command_lists;
@@ -764,6 +1158,19 @@ int main() {
             ImGui_ImplDX12_NewFrame();
             ImGui_ImplWin32_NewFrame();
             ImGui::NewFrame();
+
+            // Editor camera/viewport follow-up: computed once per frame,
+            // right after NewFrame() (so camera.Update() can read this
+            // frame's ImGui::GetIO() mouse/key state), and reused for both
+            // this frame's picking/gizmo math below and its render pass at
+            // the bottom of the loop — no more of the old hardcoded static
+            // LookAtRH.
+            camera.Update(kDt);
+            Mat4 view = camera.ViewMatrix();
+            Mat4 proj = Mat4::PerspectiveRH(
+                Radians(60.0f), static_cast<f32>(swap_chain.Width()) / static_cast<f32>(swap_chain.Height()), 0.1f,
+                100.0f);
+            Mat4 view_proj = proj * view;
 
             // Every currently-referenced model asset must be loaded before
             // this frame's draw commands are recorded — loading uploads via
@@ -797,6 +1204,118 @@ int main() {
                 instances.push_back(inst);
             });
 
+            // Viewport picking + gizmo drag: read right after NewFrame() but
+            // before any ImGui panel for this frame is submitted —
+            // io.WantCaptureMouse at this point still reflects where last
+            // frame's panels were laid out, which is exactly the standard
+            // ordering every ImGui-driven tool uses to tell "click hit a
+            // panel" from "click hit the 3D viewport" apart.
+            {
+                ImGuiIO& io = ImGui::GetIO();
+                bool mouse_over_viewport = !io.WantCaptureMouse;
+                const Vec3 kAxes[3] = {Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)};
+
+                if (gizmo_dragging_axis == -1 && !selected_entity.IsNull() && mouse_over_viewport &&
+                    ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                    Transform* sel_t = world.GetComponent<Transform>(selected_entity);
+                    if (sel_t) {
+                        Vec3 gizmo_origin = world.HasComponent<ModelRenderer>(selected_entity)
+                                                 ? WorldPosition(world, selected_entity)
+                                                 : sel_t->position;
+                        ScreenPos origin_screen =
+                            WorldToScreen(gizmo_origin, view_proj, swap_chain.Width(), swap_chain.Height());
+                        f32 best_dist = kGizmoPickPixels;
+                        int best_axis = -1;
+                        if (origin_screen.visible) {
+                            for (int a = 0; a < 3; ++a) {
+                                ScreenPos tip_screen = WorldToScreen(gizmo_origin + kAxes[a] * kGizmoAxisLength,
+                                                                      view_proj, swap_chain.Width(),
+                                                                      swap_chain.Height());
+                                if (!tip_screen.visible) {
+                                    continue;
+                                }
+                                f32 dist = PointSegmentDistance2D(io.MousePos.x, io.MousePos.y, origin_screen.x,
+                                                                   origin_screen.y, tip_screen.x, tip_screen.y);
+                                if (dist < best_dist) {
+                                    best_dist = dist;
+                                    best_axis = a;
+                                }
+                            }
+                        }
+                        if (best_axis >= 0) {
+                            gizmo_dragging_axis = best_axis;
+                            Ray ray = ScreenPointToRay(io.MousePos.x, io.MousePos.y, swap_chain.Width(),
+                                                        swap_chain.Height(), view_proj);
+                            gizmo_drag_start_point = ClosestPointOnAxisToRay(sel_t->position, kAxes[best_axis], ray);
+                            gizmo_drag_start_entity_pos = sel_t->position;
+                        }
+                    }
+                }
+
+                if (gizmo_dragging_axis >= 0) {
+                    if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                        Ray ray = ScreenPointToRay(io.MousePos.x, io.MousePos.y, swap_chain.Width(),
+                                                    swap_chain.Height(), view_proj);
+                        Vec3 current_point =
+                            ClosestPointOnAxisToRay(gizmo_drag_start_entity_pos, kAxes[gizmo_dragging_axis], ray);
+                        Vec3 delta = current_point - gizmo_drag_start_point;
+                        Transform* sel_t = world.GetComponent<Transform>(selected_entity);
+                        if (sel_t) {
+                            sel_t->position = gizmo_drag_start_entity_pos + delta;
+                            if (world.HasComponent<RigidBody>(selected_entity)) {
+                                // Live-drag re-teleports the physics body the
+                                // same way the Inspector's own DragFloat3
+                                // position edit already does — see that
+                                // panel's comment on why a full recreate
+                                // isn't needed just to move it.
+                                physics.SetPosition(world.GetComponent<RigidBody>(selected_entity)->body_id,
+                                                     sel_t->position);
+                            }
+                        }
+                    } else {
+                        gizmo_dragging_axis = -1;
+                    }
+                } else if (mouse_over_viewport && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                    // Not on a gizmo handle — fall through to real
+                    // click-in-viewport picking: cast a ray from the camera
+                    // through the cursor and take the nearest hit among
+                    // every RigidBody's sphere and every ModelRenderer's
+                    // (model-space, transformed to world) bounding sphere.
+                    // Clicking empty space deselects, matching every
+                    // mainstream 3D editor.
+                    Ray ray = ScreenPointToRay(io.MousePos.x, io.MousePos.y, swap_chain.Width(), swap_chain.Height(),
+                                                view_proj);
+                    f32 best_t = 1e30f;
+                    Entity best_entity = kNullEntity;
+                    ForEachWithEntity<Transform, RigidBody>(world, [&](Entity e, Transform& t, RigidBody& b) {
+                        f32 hit_t;
+                        if (RaySphereIntersect(ray, t.position, b.radius, hit_t) && hit_t < best_t) {
+                            best_t = hit_t;
+                            best_entity = e;
+                        }
+                    });
+                    ForEachWithEntity<Transform, ModelRenderer>(
+                        world, [&](Entity e, Transform&, ModelRenderer& renderer) {
+                            auto it = gltf_cache.find(renderer.asset_path);
+                            if (it == gltf_cache.end() || !it->second->valid) {
+                                return;
+                            }
+                            Mat4 model_world = ComputeWorldTransform(world, e);
+                            Vec4 center_h = model_world * Vec4(it->second->bounds_center.x,
+                                                                it->second->bounds_center.y,
+                                                                it->second->bounds_center.z, 1.0f);
+                            Vec3 world_center(center_h.x, center_h.y, center_h.z);
+                            f32 hit_t;
+                            if (RaySphereIntersect(ray, world_center, it->second->bounds_radius, hit_t) &&
+                                hit_t < best_t) {
+                                best_t = hit_t;
+                                best_entity = e;
+                            }
+                        });
+                    selected_entity = best_entity;
+                }
+            }
+
             std::vector<Entity> entities_to_delete;
 
             ImGui::Begin("Aether Editor");
@@ -828,26 +1347,9 @@ int main() {
                 }
             }
 
-            // In-editor asset picker: lists whatever ListAvailableGltfModels()
-            // found under assets/models/ at startup, instead of a path
-            // hardcoded in source — click one to spawn a new entity
-            // referencing it.
             ImGui::Separator();
-            ImGui::Text("Add Model");
-            if (available_gltf_models.empty()) {
-                ImGui::TextDisabled("(no .gltf files found under assets/models/)");
-            }
-            for (const std::string& model_path : available_gltf_models) {
-                ImGui::PushID(model_path.c_str());
-                if (ImGui::Button(model_path.c_str())) {
-                    Vec3 spawn_pos(spread(rng), 1.2f, spread(rng) + 3.5f);
-                    Entity new_entity = world.CreateEntity(Transform{spawn_pos, Quaternion::Identity()},
-                                                            ModelRenderer{});
-                    SetModelPath(*world.GetComponent<ModelRenderer>(new_entity), model_path);
-                }
-                ImGui::PopID();
-            }
-
+            ImGui::TextWrapped("Camera: hold Right Mouse + WASD/QE to fly. Left-click an entity (or empty space) to "
+                                "select/deselect. Drag a gizmo arrow to move the selection.");
             ImGui::Separator();
             ImGui::Text("Bodies (live-edit; changes apply to the running simulation immediately)");
             int index = 0;
@@ -912,6 +1414,112 @@ int main() {
             });
             ImGui::End();
 
+            // Asset browser follow-up: what used to be an inline "Add Model"
+            // button list inside the main panel is now its own dedicated
+            // window, with a Refresh button re-running ListAvailableGltfModels()
+            // so a .gltf dropped into assets/models/ while the editor is
+            // running shows up without a restart.
+            ImGui::Begin("Asset Browser");
+            ImGui::Text("assets/models/*.gltf");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Refresh")) {
+                available_gltf_models = ListAvailableGltfModels();
+            }
+            ImGui::Separator();
+            if (available_gltf_models.empty()) {
+                ImGui::TextDisabled("(no .gltf files found under assets/models/)");
+            }
+            for (const std::string& model_path : available_gltf_models) {
+                ImGui::PushID(model_path.c_str());
+                ImGui::Text("%s", model_path.c_str());
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Spawn")) {
+                    Vec3 spawn_pos(spread(rng), 1.2f, spread(rng) + 3.5f);
+                    Entity new_entity =
+                        world.CreateEntity(Transform{spawn_pos, Quaternion::Identity()}, ModelRenderer{});
+                    SetModelPath(*world.GetComponent<ModelRenderer>(new_entity), model_path);
+                }
+                ImGui::PopID();
+            }
+            ImGui::End();
+
+            // Scene-hierarchy follow-up: a real parent/child tree view,
+            // replacing the flat Bodies/Models lists' implicit assumption
+            // that every entity is independent. "Parent to Selection" on a
+            // row nests that row's entity under whatever's currently
+            // selected (rejecting the drop if it would create a cycle — see
+            // WouldCreateCycle); "Unparent" detaches it back to the root.
+            ImGui::Begin("Hierarchy");
+            ImGui::TextWrapped(
+                "Select an entity, then click \"Parent to selection\" on another row to nest it underneath.");
+            ImGui::Separator();
+
+            std::vector<Entity> all_entities;
+            ForEachWithEntity<Transform>(world, [&](Entity e, Transform&) { all_entities.push_back(e); });
+
+            std::unordered_map<u32, std::vector<Entity>> children_of; // keyed by Parent entity's index
+            std::vector<Entity> roots;
+            for (Entity e : all_entities) {
+                Parent* p = world.GetComponent<Parent>(e);
+                if (p && !p->entity.IsNull()) {
+                    children_of[p->entity.index].push_back(e);
+                } else {
+                    roots.push_back(e);
+                }
+            }
+
+            auto entity_label = [&](Entity e) -> std::string {
+                if (ModelRenderer* mr = world.GetComponent<ModelRenderer>(e)) {
+                    return std::string("Model: ") + mr->asset_path;
+                }
+                if (world.HasComponent<RigidBody>(e)) {
+                    return "Body #" + std::to_string(e.index);
+                }
+                return "Entity #" + std::to_string(e.index);
+            };
+
+            std::function<void(Entity)> draw_hierarchy_node = [&](Entity e) {
+                ImGui::PushID(static_cast<int>(e.index));
+                auto it = children_of.find(e.index);
+                bool has_children = it != children_of.end() && !it->second.empty();
+                ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+                if (!has_children) {
+                    flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+                }
+                if (e == selected_entity) {
+                    flags |= ImGuiTreeNodeFlags_Selected;
+                }
+                bool open = ImGui::TreeNodeEx(entity_label(e).c_str(), flags);
+                if (ImGui::IsItemClicked()) {
+                    selected_entity = e;
+                }
+                ImGui::SameLine();
+                if (!selected_entity.IsNull() && selected_entity != e &&
+                    !WouldCreateCycle(world, e, selected_entity)) {
+                    if (ImGui::SmallButton("Parent to selection")) {
+                        world.AddComponent(e, Parent{selected_entity});
+                    }
+                    ImGui::SameLine();
+                }
+                if (world.HasComponent<Parent>(e)) {
+                    if (ImGui::SmallButton("Unparent")) {
+                        world.RemoveComponent<Parent>(e);
+                    }
+                }
+                if (has_children && open) {
+                    for (Entity child : it->second) {
+                        draw_hierarchy_node(child);
+                    }
+                    ImGui::TreePop();
+                }
+                ImGui::PopID();
+            };
+
+            for (Entity root : roots) {
+                draw_hierarchy_node(root);
+            }
+            ImGui::End();
+
             // Inspector: shows only the selected entity, regardless of which
             // list it was selected from — the "click-to-select" workflow's
             // payoff panel. Selection itself is still list-based (a "Select"
@@ -960,6 +1568,23 @@ int main() {
                 if (world.HasComponent<RigidBody>(e)) {
                     physics.DestroyBody(world.GetComponent<RigidBody>(e)->body_id);
                 }
+                // Unparent anything that pointed at this entity before
+                // destroying it — a Parent left dangling at a stale/reused
+                // index would corrupt ComputeWorldTransform and the
+                // Hierarchy panel's tree for the next entity that happens to
+                // land in that slot. Collected first, applied after: calling
+                // RemoveComponent (which migrates the entity to a different
+                // archetype) from inside ForEachWithEntity's own archetype
+                // iteration would invalidate that iteration mid-flight.
+                std::vector<Entity> orphaned_children;
+                ForEachWithEntity<Parent>(world, [&](Entity child, Parent& p) {
+                    if (p.entity == e) {
+                        orphaned_children.push_back(child);
+                    }
+                });
+                for (Entity child : orphaned_children) {
+                    world.RemoveComponent<Parent>(child);
+                }
                 if (e == selected_entity) {
                     selected_entity = kNullEntity;
                 }
@@ -983,14 +1608,37 @@ int main() {
                 assets::EvaluateAnimation(data->scene, animation, data->anim_time, data->scene.node_instances);
             }
 
-            Mat4 view = Mat4::LookAtRH(Vec3(0, 6, -14), Vec3(0, 1, 0), Vec3(0, 1, 0));
-            Mat4 proj = Mat4::PerspectiveRH(Radians(60.0f),
-                                             static_cast<f32>(swap_chain.Width()) / static_cast<f32>(swap_chain.Height()),
-                                             0.1f, 100.0f);
-            Mat4 view_proj = proj * view;
+            // view/proj/view_proj were already computed at the top of this
+            // iteration (right after NewFrame()) so picking/gizmo math could
+            // use them too — no longer recomputed here.
             view_proj_buffer.Update(&view_proj, sizeof(f32) * 16);
             if (!instances.empty()) {
                 instance_buffer.Update(instances.data(), sizeof(EditorInstance) * instances.size());
+            }
+
+            // Gizmo geometry: 3 axis lines (X=red, Y=green, Z=blue) rebuilt
+            // every frame at the selected entity's current position — cheap
+            // enough (6 vertices) that a dynamic per-frame upload is simpler
+            // than tracking whether it actually moved.
+            bool draw_gizmo = false;
+            GizmoVertex gizmo_vertices[6]{};
+            if (!selected_entity.IsNull()) {
+                Transform* sel_t = world.GetComponent<Transform>(selected_entity);
+                if (sel_t) {
+                    Vec3 origin = world.HasComponent<ModelRenderer>(selected_entity) ? WorldPosition(world, selected_entity)
+                                                                                      : sel_t->position;
+                    const Vec3 axes[3] = {Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)};
+                    const f32 axis_colors[3][3] = {{1, 0.2f, 0.2f}, {0.2f, 1, 0.2f}, {0.3f, 0.5f, 1}};
+                    for (int a = 0; a < 3; ++a) {
+                        Vec3 tip = origin + axes[a] * kGizmoAxisLength;
+                        gizmo_vertices[a * 2 + 0] = {{origin.x, origin.y, origin.z},
+                                                      {axis_colors[a][0], axis_colors[a][1], axis_colors[a][2]}};
+                        gizmo_vertices[a * 2 + 1] = {{tip.x, tip.y, tip.z},
+                                                      {axis_colors[a][0], axis_colors[a][1], axis_colors[a][2]}};
+                    }
+                    gizmo_vertex_buffer.Update(gizmo_vertices, sizeof(gizmo_vertices));
+                    draw_gizmo = true;
+                }
             }
 
             u32 buffer_index = swap_chain.CurrentBackBufferIndex();
@@ -1041,7 +1689,7 @@ int main() {
                     // other.
                     bool any_model_bound = false;
                     ForEachWithEntity<Transform, ModelRenderer>(
-                        world, [&](Entity e, Transform& t, ModelRenderer& renderer) {
+                        world, [&](Entity e, Transform&, ModelRenderer& renderer) {
                             auto it = gltf_cache.find(renderer.asset_path);
                             if (it == gltf_cache.end() || !it->second->valid) {
                                 return;
@@ -1061,14 +1709,19 @@ int main() {
                             cl->IASetIndexBuffer(&data.ibv);
                             cl->SetGraphicsRoot32BitConstants(1, sizeof(MaterialData) / 4, &data.material, 0);
 
-                            Mat4 entity_transform = Mat4::Translation(t.position) * t.rotation.ToMat4();
+                            // Scene-hierarchy follow-up: composed from the
+                            // Parent chain (identity for an entity with no
+                            // Parent), not just this entity's own local
+                            // Transform — see ComputeWorldTransform's
+                            // comment.
+                            Mat4 entity_transform = ComputeWorldTransform(world, e);
                             f32 highlight = (e == selected_entity) ? 1.0f : 0.0f;
                             for (const assets::GltfNodeInstance& node_instance : data.scene.node_instances) {
                                 Mat4 model = entity_transform * node_instance.world_transform;
                                 GltfFrameConstants gltf_frame_constants{};
                                 gltf_frame_constants.model = model;
                                 gltf_frame_constants.mvp = view_proj * model;
-                                gltf_frame_constants.camera_pos = Vec3(0, 6, -14);
+                                gltf_frame_constants.camera_pos = camera.position;
                                 gltf_frame_constants.light_dir = Vec3(-0.4f, -0.8f, -0.3f).Normalized();
                                 gltf_frame_constants.highlight = highlight;
                                 cl->SetGraphicsRoot32BitConstants(0, sizeof(GltfFrameConstants) / 4,
@@ -1076,6 +1729,24 @@ int main() {
                                 cl->DrawIndexedInstanced(static_cast<UINT>(data.index_count), 1, 0, 0, 0);
                             }
                         });
+
+                    // Transform-gizmo follow-up: 3 draggable axis lines for
+                    // whatever's currently selected, drawn last (and with
+                    // depth testing off, see CreateGizmoPSO) so they're
+                    // always visible on top of the scene.
+                    if (draw_gizmo) {
+                        D3D12_VERTEX_BUFFER_VIEW gizmo_vbv{};
+                        gizmo_vbv.BufferLocation = gizmo_vertex_buffer.GPUAddress();
+                        gizmo_vbv.SizeInBytes = static_cast<UINT>(gizmo_vertex_buffer.Size());
+                        gizmo_vbv.StrideInBytes = sizeof(GizmoVertex);
+
+                        cl->SetPipelineState(gizmo_pso.Get());
+                        cl->SetGraphicsRootSignature(gizmo_root_signature.Get());
+                        cl->SetGraphicsRootConstantBufferView(0, view_proj_buffer.GPUAddress());
+                        cl->IASetVertexBuffers(0, 1, &gizmo_vbv);
+                        cl->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_LINELIST);
+                        cl->DrawInstanced(6, 1, 0, 0);
+                    }
 
                     ID3D12DescriptorHeap* imgui_heaps[] = {imgui_srv_heap.Heap()};
                     cl->SetDescriptorHeaps(1, imgui_heaps);
