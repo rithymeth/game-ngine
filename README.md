@@ -1692,6 +1692,55 @@ both directions, and the headless Inspector asset picker. The legacy
 `ModelRenderer` scene test still passes. 135/135 tests pass on GCC 13, on
 Clang and under ASan/UBSan, and 142/142 with physics.
 
+**Step 3: importers, the derived data cache, and the texture importer.**
+
+- **`IAssetImporter`** (`assets/importer.h`): an importer is a pure
+  function of the source bytes and its settings, with a version number to
+  bump whenever its output changes. `ImporterRegistry::WithBuiltins()`
+  registers the built-in ones.
+- **`ImportAsset`**:
+  - Settings are the importer's defaults, with the `.ameta`'s `settings`
+    merged over them.
+  - It checks the cache for exactly that input before running the importer.
+  - On success the `.ameta` records the imported source hash and importer
+    version.
+  - `ImportAll` handles everything marked `needs_import`, and reports what
+    was imported, served from the cache, failed, or skipped (no importer for
+    that type yet).
+- **`DerivedDataCache`** (`assets/derived_data_cache.h`) stores entries under
+  `Intermediate/DDC/`, with a 128-bit key from importer name, importer
+  version, source hash, settings and platform.
+  - Writes are atomic (a temp file, then rename).
+  - Changing a setting and changing it back, switching branches, or a fresh
+  clone therefore reuses earlier imports instead of redoing them.
+- **`TextureImporter`**:
+  - It decodes PNG/JPG/TGA/BMP to RGBA8.
+  - It builds a full mip chain with a 2×2 box filter, averaging in linear
+    light for sRGB textures (black and white averages to 188, not 128) and
+    keeping alpha linear.
+  - Settings: `srgb`, `generate_mips`, and `max_size` (halve until the image
+    fits). A setting of the wrong type falls back to the default with a
+    warning.
+  - Output is the engine's `ATEX` format (`Encode/DecodeTextureData`, with
+    size checks on load). It's uncompressed; BC7 needs an encoder, which
+    comes later.
+- **Tests import real files.** `AETHER_REPO_ASSETS_DIR` gives the tests the
+  repo's `assets/` folder as an absolute path.
+
+**Verified**: 5 new tests.
+
+- A real 64×64 PNG yields a 7-level mip chain, and the 1×1 mip of the 2×2
+  corners texture equals the linear-space average.
+- Settings and `max_size` change the output as expected, bad settings give
+  warnings, and a missing file or corrupt `ATEX` data is rejected.
+- The cache is checked with an import-counting importer: a repeat import is
+  a hit, a changed setting is a miss, changing it back is a hit again, and a
+  different platform or an edited source is a miss.
+- `ImportAll` over real textures plus a broken file and an unsupported type,
+  then a cache-only pass after the stored hashes are wiped.
+- 140/140 tests pass on GCC 13, on Clang and under ASan/UBSan, and 147/147
+  with physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,

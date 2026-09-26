@@ -266,7 +266,11 @@ runs when a project is opened for the first time with the new engine:
      current.
    - Dependencies come from scanning scene and prefab files for asset GUID
      strings, not from importer output.
-3. Importer interface and the texture importer with DDC.
+3. ✅ **Done.** Importer interface and the texture importer with DDC.
+   - Output is uncompressed RGBA8 with gamma-correct mips. BC7 compression
+     needs an encoder, so it's deferred.
+   - Importers run synchronously for now; job-system async loading comes
+     with hot reload in step 5.
 4. glTF importer split into sub-assets.
 5. File watcher, debounce, and hot reload for textures, then meshes, then
    shaders.
