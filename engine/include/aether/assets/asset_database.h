@@ -85,7 +85,12 @@ public:
 
     // Records that the asset's current source has been imported (writes its
     // hash into the .ameta, clearing needs_import).
-    bool MarkImported(const AssetGuid& guid, std::string* error = nullptr);
+    // `importer_version`, if non-zero, is also recorded.
+    bool MarkImported(const AssetGuid& guid, std::string* error = nullptr, u32 importer_version = 0);
+
+    // Absolute paths of an asset's source and .ameta ("" if unknown GUID).
+    std::filesystem::path SourcePath(const AssetGuid& guid) const;
+    std::filesystem::path MetaPath(const AssetGuid& guid) const;
 
     // Assets that refer to `guid` (the reverse of AssetRecord::dependencies),
     // sorted by path. Dependencies are found by Scan: every scene and prefab

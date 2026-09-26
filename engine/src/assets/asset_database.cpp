@@ -471,7 +471,17 @@ bool AssetDatabase::Move(const AssetGuid& guid_ref, const std::string& new_path,
     return true;
 }
 
-bool AssetDatabase::MarkImported(const AssetGuid& guid, std::string* error) {
+stdfs::path AssetDatabase::SourcePath(const AssetGuid& guid) const {
+    const AssetRecord* record = Find(guid);
+    return record != nullptr ? Absolute(record->path) : stdfs::path();
+}
+
+stdfs::path AssetDatabase::MetaPath(const AssetGuid& guid) const {
+    const AssetRecord* record = Find(guid);
+    return record != nullptr ? MetaPathFor(Absolute(record->path)) : stdfs::path();
+}
+
+bool AssetDatabase::MarkImported(const AssetGuid& guid, std::string* error, u32 importer_version) {
     auto it = records_.find(guid);
     if (it == records_.end() || it->second.missing) {
         SetError(error, "No asset source for GUID " + ToString(guid));
@@ -485,6 +495,9 @@ bool AssetDatabase::MarkImported(const AssetGuid& guid, std::string* error) {
     }
     record.source_hash = HashFile(Absolute(record.path));
     meta.source_hash = record.source_hash;
+    if (importer_version != 0) {
+        meta.importer_version = importer_version;
+    }
     if (!SaveAssetMeta(meta_file, meta, error)) {
         return false;
     }
