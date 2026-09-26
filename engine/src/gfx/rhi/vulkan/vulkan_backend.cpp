@@ -705,14 +705,34 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
     VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
     multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
+    // Standard non-premultiplied alpha blending — src.rgb*src.a +
+    // dst.rgb*(1-src.a) for color, src.a straight through for alpha (the
+    // usual "output alpha doesn't itself get blended" convention, matching
+    // the D3D12 backend's equivalent blend state exactly).
     VkPipelineColorBlendAttachmentState blend_attachment{};
     blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                                        VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-    blend_attachment.blendEnable = VK_FALSE;
+    blend_attachment.blendEnable = desc.enable_blending ? VK_TRUE : VK_FALSE;
+    if (desc.enable_blending) {
+        blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+        blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
+        blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+        blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
+    }
 
     VkPipelineColorBlendStateCreateInfo blend_state{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
     blend_state.attachmentCount = 1;
     blend_state.pAttachments = &blend_attachment;
+
+    // The render pass's depth attachment (see CreateDefaultRenderPass) is
+    // always present; this is what actually opts a given pipeline in or out
+    // of testing/writing against it.
+    VkPipelineDepthStencilStateCreateInfo depth_stencil{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+    depth_stencil.depthTestEnable = desc.depth_test ? VK_TRUE : VK_FALSE;
+    depth_stencil.depthWriteEnable = desc.depth_test ? VK_TRUE : VK_FALSE;
+    depth_stencil.depthCompareOp = VK_COMPARE_OP_LESS;
 
     VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
     VkPipelineDynamicStateCreateInfo dynamic_state{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
@@ -728,6 +748,7 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
     pipeline_info.pRasterizationState = &rasterizer;
     pipeline_info.pMultisampleState = &multisample;
     pipeline_info.pColorBlendState = &blend_state;
+    pipeline_info.pDepthStencilState = &depth_stencil;
     pipeline_info.pDynamicState = &dynamic_state;
     pipeline_info.layout = record.layout;
     pipeline_info.renderPass = vk_swap.DefaultRenderPass();
@@ -872,15 +893,37 @@ void VulkanSwapChain::CreateDefaultRenderPass() {
     color_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     color_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
+    // Always present (see depth_image_'s header comment) so any pipeline —
+    // whether or not PipelineDesc::depth_test is set — can run in this one
+    // render pass; loadOp=CLEAR every frame regardless of whether the
+    // current draw actually depth-tests is harmless (same "always clear,
+    // discard prior contents" convention the color attachment already uses).
+    VkAttachmentDescription depth_attachment{};
+    depth_attachment.format = kDepthFormat;
+    depth_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depth_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    depth_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depth_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    depth_attachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentDescription attachments[2] = {color_attachment, depth_attachment};
+
     VkAttachmentReference color_ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkAttachmentReference depth_ref{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
 
     VkSubpassDescription subpass{};
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
     subpass.colorAttachmentCount = 1;
     subpass.pColorAttachments = &color_ref;
+    subpass.pDepthStencilAttachment = &depth_ref;
 
     // Synchronizes subpass 0 with the swapchain's image-available semaphore,
-    // which VulkanDevice::Submit waits on at COLOR_ATTACHMENT_OUTPUT.
+    // which VulkanDevice::Submit waits on at COLOR_ATTACHMENT_OUTPUT — the
+    // depth attachment's own read/write hazard is confined entirely within
+    // this subpass (no other subpass or resource touches it), so it needs
+    // no separate dependency entry.
     VkSubpassDependency dependency{};
     dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
     dependency.dstSubpass = 0;
@@ -890,8 +933,8 @@ void VulkanSwapChain::CreateDefaultRenderPass() {
     dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 
     VkRenderPassCreateInfo rp_info{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
-    rp_info.attachmentCount = 1;
-    rp_info.pAttachments = &color_attachment;
+    rp_info.attachmentCount = 2;
+    rp_info.pAttachments = attachments;
     rp_info.subpassCount = 1;
     rp_info.pSubpasses = &subpass;
     rp_info.dependencyCount = 1;
@@ -899,13 +942,59 @@ void VulkanSwapChain::CreateDefaultRenderPass() {
     AETHER_VK_CHECK(vkCreateRenderPass(device_.Handle(), &rp_info, nullptr, &default_render_pass_));
 }
 
+void VulkanSwapChain::CreateDepthResources() {
+    VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    image_info.imageType = VK_IMAGE_TYPE_2D;
+    image_info.format = kDepthFormat;
+    image_info.extent = {extent_.width, extent_.height, 1};
+    image_info.mipLevels = 1;
+    image_info.arrayLayers = 1;
+    image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+    image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    image_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    AETHER_VK_CHECK(vkCreateImage(device_.Handle(), &image_info, nullptr, &depth_image_));
+
+    VkMemoryRequirements mem_reqs{};
+    vkGetImageMemoryRequirements(device_.Handle(), depth_image_, &mem_reqs);
+    VkMemoryAllocateInfo alloc_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    alloc_info.allocationSize = mem_reqs.size;
+    alloc_info.memoryTypeIndex =
+        FindMemoryType(device_.PhysicalDevice(), mem_reqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    AETHER_VK_CHECK(vkAllocateMemory(device_.Handle(), &alloc_info, nullptr, &depth_memory_));
+    AETHER_VK_CHECK(vkBindImageMemory(device_.Handle(), depth_image_, depth_memory_, 0));
+
+    VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    view_info.image = depth_image_;
+    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view_info.format = kDepthFormat;
+    view_info.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+    AETHER_VK_CHECK(vkCreateImageView(device_.Handle(), &view_info, nullptr, &depth_image_view_));
+}
+
+void VulkanSwapChain::DestroyDepthResources() {
+    if (depth_image_view_ != VK_NULL_HANDLE) {
+        vkDestroyImageView(device_.Handle(), depth_image_view_, nullptr);
+        depth_image_view_ = VK_NULL_HANDLE;
+    }
+    if (depth_image_ != VK_NULL_HANDLE) {
+        vkDestroyImage(device_.Handle(), depth_image_, nullptr);
+        depth_image_ = VK_NULL_HANDLE;
+    }
+    if (depth_memory_ != VK_NULL_HANDLE) {
+        vkFreeMemory(device_.Handle(), depth_memory_, nullptr);
+        depth_memory_ = VK_NULL_HANDLE;
+    }
+}
+
 void VulkanSwapChain::CreateFramebuffers() {
     framebuffers_.resize(image_views_.size());
     for (usize i = 0; i < image_views_.size(); ++i) {
-        VkImageView attachments[] = {image_views_[i]};
+        VkImageView attachments[] = {image_views_[i], depth_image_view_};
         VkFramebufferCreateInfo fb_info{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
         fb_info.renderPass = default_render_pass_;
-        fb_info.attachmentCount = 1;
+        fb_info.attachmentCount = 2;
         fb_info.pAttachments = attachments;
         fb_info.width = extent_.width;
         fb_info.height = extent_.height;
@@ -975,11 +1064,13 @@ void VulkanSwapChain::CreateSwapchainAndImages(u32 width, u32 height) {
         image_views_.push_back(view);
     }
 
+    CreateDepthResources();
     CreateFramebuffers();
 }
 
 void VulkanSwapChain::DestroySwapchainAndImages() {
     DestroyFramebuffers();
+    DestroyDepthResources();
     for (VkImageView view : image_views_) {
         vkDestroyImageView(device_.Handle(), view, nullptr);
     }
@@ -1140,19 +1231,25 @@ void VulkanCommandList::SetViewportAndScissor(const Viewport& viewport, const Re
 void VulkanCommandList::BeginRenderPass(ISwapChain& swap_chain, const ClearColor& clear_color) {
     auto& vk_swap = static_cast<VulkanSwapChain&>(swap_chain);
 
-    VkClearValue clear_value{};
-    clear_value.color.float32[0] = clear_color.r;
-    clear_value.color.float32[1] = clear_color.g;
-    clear_value.color.float32[2] = clear_color.b;
-    clear_value.color.float32[3] = clear_color.a;
+    // Index 0 = color attachment, index 1 = depth (see
+    // VulkanSwapChain::CreateDefaultRenderPass) — both attachments use
+    // loadOp=CLEAR every frame, so both need a clear value here regardless
+    // of whether the pipeline this pass ends up drawing with actually
+    // depth-tests.
+    VkClearValue clear_values[2]{};
+    clear_values[0].color.float32[0] = clear_color.r;
+    clear_values[0].color.float32[1] = clear_color.g;
+    clear_values[0].color.float32[2] = clear_color.b;
+    clear_values[0].color.float32[3] = clear_color.a;
+    clear_values[1].depthStencil.depth = 1.0f;
 
     VkRenderPassBeginInfo rp_begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     rp_begin.renderPass = vk_swap.DefaultRenderPass();
     rp_begin.framebuffer = vk_swap.CurrentFramebuffer();
     rp_begin.renderArea.offset = {0, 0};
     rp_begin.renderArea.extent = {vk_swap.Width(), vk_swap.Height()};
-    rp_begin.clearValueCount = 1;
-    rp_begin.pClearValues = &clear_value;
+    rp_begin.clearValueCount = 2;
+    rp_begin.pClearValues = clear_values;
     vkCmdBeginRenderPass(command_buffer_, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
 
     // Negative-height viewport (y = height, height = -height): the standard

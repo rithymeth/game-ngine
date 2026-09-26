@@ -34,25 +34,30 @@
 //
 //  - AETHER_RHI_DEMO_DRAW_UNIFIED=1 (highest priority — wins over both of the
 //    above): the "Unified Cross-API Renderer" follow-up's actual proof, now
-//    including its own "vertex buffers + textures" follow-up. Triangle/Cube
-//    mode above still each pick between two hand-written backend-specific
-//    implementations at startup (`if (backend == ...)`); Unified mode
-//    instead calls IDevice::CreatePipeline/CreateVertexBuffer/
-//    CreateIndexBuffer/CreateTexture once and then records every frame
-//    purely through ICommandList::BeginRenderPass/BindPipeline/
-//    BindBindlessTextures/BindVertexBuffer/BindIndexBuffer/SetPushConstants/
-//    DrawIndexed/EndRenderPass — the exact same calls, in the exact same
-//    order, with zero backend branching in this file, render the same
-//    rotating textured quad (a real GPU vertex/index buffer pair, a real
-//    uploaded GPU texture sampled through a device-global bindless
-//    descriptor table) on both D3D12 and Vulkan. This used to be
-//    procedural-vertices-only with no textures/descriptors at all (see
-//    PipelineDesc's comment for what's still narrow: one fixed vertex
-//    layout, one push-constant block, a fixed-capacity bindless texture
-//    table rather than a general material/mesh system) — Cube mode's real
+//    including its "vertex buffers + textures" and "depth buffer + blend
+//    states" follow-ups. Triangle/Cube mode above still each pick between
+//    two hand-written backend-specific implementations at startup
+//    (`if (backend == ...)`); Unified mode instead calls
+//    IDevice::CreatePipeline/CreateVertexBuffer/CreateIndexBuffer/
+//    CreateTexture once and then records every frame purely through
+//    ICommandList::BeginRenderPass/BindPipeline/BindBindlessTextures/
+//    BindVertexBuffer/BindIndexBuffer/SetPushConstants/DrawIndexed/
+//    EndRenderPass — the exact same calls, in the exact same order, with
+//    zero backend branching in this file, render the same scene on both
+//    D3D12 and Vulkan: a rotating textured quad (a real GPU vertex/index
+//    buffer pair, a real uploaded GPU texture sampled through a
+//    device-global bindless descriptor table), a red/blue quad pair proving
+//    PipelineDesc::depth_test (drawn far-then-near in *reverse* depth order
+//    — a broken depth test would let the later, farther draw incorrectly
+//    win), and a translucent green quad proving PipelineDesc::enable_blending.
+//    This used to be procedural-vertices-only with no textures/descriptors,
+//    depth testing, or blending at all (see PipelineDesc's comment for
+//    what's still narrow: one fixed vertex layout, one push-constant block,
+//    a fixed-capacity bindless texture table, one shared depth buffer rather
+//    than a general material/mesh/render-target system) — Cube mode's real
 //    vertex buffers and depth buffer above still exist as a second, older
-//    proof that predates the RHI having its own unified buffer/texture
-//    support, and are kept as-is for that historical comparison.
+//    proof that predates the RHI having its own unified buffer/texture/
+//    depth support, and are kept as-is for that historical comparison.
 //
 // Set AETHER_RHI_DEMO_MAX_FRAMES=<N> to auto-close after N frames instead of
 // waiting for the window to be closed, for scripted/automated verification.
@@ -171,6 +176,8 @@ constexpr const char* kUnifiedTexturedQuadShaderSource = R"(
 struct PushConstants {
     float g_Time;
     uint g_TextureIndex;
+    float g_Depth;
+    float g_Opacity;
 };
 // `[[vk::push_constant]]` uses attribute syntax fxc (the D3D12/D3DCompile
 // path's compiler, unlike DXC) can't parse at all — a hard syntax error,
@@ -205,13 +212,26 @@ PSInput VSMain(VSInput input) {
     float2 rotated = float2(input.position.x * c - input.position.y * s,
                              input.position.x * s + input.position.y * c);
     PSInput result;
-    result.position = float4(rotated, 0.0, 1.0);
+    // g_Depth: written straight through as clip-space Z (w=1, so NDC z ==
+    // clip z) — the "Unified renderer: depth buffer + blend states"
+    // follow-up's per-draw depth value. DXC's SPIR-V codegen keeps D3D's
+    // [0,1] depth-range convention rather than OpenGL's [-1,1] (a real,
+    // useful DXC/Vulkan quirk in this engine's favor), so a value here
+    // means the same thing — "how close to the near plane" — on both
+    // backends with no extra remapping needed.
+    result.position = float4(rotated, g_PC.g_Depth, 1.0);
     result.uv = input.uv;
     return result;
 }
 
 float4 PSMain(PSInput input) : SV_TARGET {
-    return g_Textures[g_PC.g_TextureIndex].Sample(g_Sampler, input.uv);
+    float4 sampled = g_Textures[g_PC.g_TextureIndex].Sample(g_Sampler, input.uv);
+    // g_Opacity: multiplies the sampled alpha, independent of the texture's
+    // own (fully opaque) alpha — the knob the blend-states half of this
+    // follow-up's demo uses to make a translucent draw visually obvious
+    // rather than relying on a texture asset that happens to have partial
+    // alpha baked in.
+    return float4(sampled.rgb, sampled.a * g_PC.g_Opacity);
 }
 )";
 
@@ -223,7 +243,23 @@ struct UnifiedVertex {
 struct UnifiedPushConstants {
     f32 time;
     u32 texture_index;
+    f32 depth;
+    f32 opacity;
 };
+
+// A flat solid-color texture — used by the depth/blend demo quads below,
+// where the point is to tell three overlapping quads apart by color, not to
+// re-prove texture sampling (the checkerboard already does that).
+std::vector<u8> GenerateSolidColorPixels(u32 size, u8 r, u8 g, u8 b, u8 a) {
+    std::vector<u8> pixels(static_cast<usize>(size) * size * 4);
+    for (usize i = 0; i < static_cast<usize>(size) * size; ++i) {
+        pixels[i * 4 + 0] = r;
+        pixels[i * 4 + 1] = g;
+        pixels[i * 4 + 2] = b;
+        pixels[i * 4 + 3] = a;
+    }
+    return pixels;
+}
 
 // A tiny procedural checkerboard — deliberately low-resolution and
 // high-contrast so a screenshot makes it immediately obvious whether the
@@ -1588,6 +1624,18 @@ int main() {
         BufferHandle unified_vertex_buffer;
         BufferHandle unified_index_buffer;
         SampledTextureHandle unified_texture;
+
+        // The "depth buffer + blend states" follow-up's proof: two more
+        // pipelines sharing the same HLSL source and vertex/index data
+        // shape, differing only in PipelineDesc::depth_test/enable_blending.
+        PipelineHandle unified_depth_pipeline;   // depth_test=true, opaque
+        PipelineHandle unified_blend_pipeline;   // depth_test=true, alpha-blended
+        BufferHandle unified_offset_vertex_buffer;
+        BufferHandle unified_offset_index_buffer;
+        SampledTextureHandle unified_red_texture;
+        SampledTextureHandle unified_blue_texture;
+        SampledTextureHandle unified_green_texture;
+
         if (mode == DemoMode::Unified) {
             PipelineDesc pipeline_desc;
             pipeline_desc.hlsl_source = kUnifiedTexturedQuadShaderSource;
@@ -1595,6 +1643,14 @@ int main() {
             pipeline_desc.use_vertex_buffer = true;
             pipeline_desc.enable_bindless_textures = true;
             unified_pipeline = device->CreatePipeline(pipeline_desc, *swap_chain);
+
+            PipelineDesc depth_pipeline_desc = pipeline_desc;
+            depth_pipeline_desc.depth_test = true;
+            unified_depth_pipeline = device->CreatePipeline(depth_pipeline_desc, *swap_chain);
+
+            PipelineDesc blend_pipeline_desc = depth_pipeline_desc;
+            blend_pipeline_desc.enable_blending = true;
+            unified_blend_pipeline = device->CreatePipeline(blend_pipeline_desc, *swap_chain);
 
             UnifiedVertex quad_vertices[4] = {
                 {{-0.6f, -0.6f, 0.0f}, {0.0f, 1.0f}},
@@ -1608,6 +1664,28 @@ int main() {
 
             std::vector<u8> checker_pixels = GenerateCheckerboardPixels(/*size=*/64, /*cell_size=*/8);
             unified_texture = device->CreateTexture(64, 64, checker_pixels.data());
+
+            // Offset to the right of the main quad, overlapping its right
+            // half — this is what makes the depth-test-vs-blend distinction
+            // visible in one screenshot: the red/blue pair (drawn at the
+            // main quad's position) tests draw-order-independent occlusion,
+            // and this offset quad (drawn with the blend pipeline, on top of
+            // whichever of red/blue wins) shows translucency where it
+            // overlaps them and pure green where it doesn't.
+            UnifiedVertex offset_quad_vertices[4] = {
+                {{-0.1f, -0.6f, 0.0f}, {0.0f, 1.0f}},
+                {{0.9f, -0.6f, 0.0f}, {1.0f, 1.0f}},
+                {{0.9f, 0.6f, 0.0f}, {1.0f, 0.0f}},
+                {{-0.1f, 0.6f, 0.0f}, {0.0f, 0.0f}},
+            };
+            unified_offset_vertex_buffer =
+                device->CreateVertexBuffer(offset_quad_vertices, sizeof(offset_quad_vertices));
+            unified_offset_index_buffer =
+                device->CreateIndexBuffer(quad_indices, sizeof(quad_indices), IndexFormat::UInt32);
+
+            unified_red_texture = device->CreateTexture(4, 4, GenerateSolidColorPixels(4, 220, 40, 40, 255).data());
+            unified_blue_texture = device->CreateTexture(4, 4, GenerateSolidColorPixels(4, 40, 90, 220, 255).data());
+            unified_green_texture = device->CreateTexture(4, 4, GenerateSolidColorPixels(4, 60, 200, 90, 255).data());
         }
 
         std::vector<std::unique_ptr<ICommandList>> command_lists;
@@ -1717,9 +1795,44 @@ int main() {
                 cmd.BindBindlessTextures();
                 cmd.BindVertexBuffer(unified_vertex_buffer, sizeof(UnifiedVertex));
                 cmd.BindIndexBuffer(unified_index_buffer, IndexFormat::UInt32);
-                UnifiedPushConstants push_constants{t, unified_texture.index};
+                UnifiedPushConstants push_constants{t, unified_texture.index, 0.5f, 1.0f};
                 cmd.SetPushConstants(&push_constants, sizeof(push_constants));
                 cmd.DrawIndexed(6);
+
+                // Depth-test proof: draw the FARTHER (red, depth=0.8) quad
+                // AFTER the NEARER (blue, depth=0.2) one, both at the exact
+                // same screen position. If depth_test is actually working,
+                // blue must still be the one visible — a broken/absent
+                // depth test would let red (drawn later) overwrite it
+                // regardless of which is actually nearer. Not rotating
+                // (time=0) so this trio reads as a clean, static composition
+                // distinct from the spinning checkerboard quad above.
+                cmd.BindPipeline(unified_depth_pipeline);
+                cmd.BindBindlessTextures();
+                cmd.BindVertexBuffer(unified_vertex_buffer, sizeof(UnifiedVertex));
+                cmd.BindIndexBuffer(unified_index_buffer, IndexFormat::UInt32);
+                UnifiedPushConstants blue_push{0.0f, unified_blue_texture.index, 0.2f, 1.0f};
+                cmd.SetPushConstants(&blue_push, sizeof(blue_push));
+                cmd.DrawIndexed(6);
+                UnifiedPushConstants red_push{0.0f, unified_red_texture.index, 0.8f, 1.0f};
+                cmd.SetPushConstants(&red_push, sizeof(red_push));
+                cmd.DrawIndexed(6);
+
+                // Blend-state proof: a translucent green quad, offset to
+                // overlap the right half of the red/blue pair, closer than
+                // both (depth=0.1) so it passes the depth test against them
+                // — where it overlaps blue the result should read as a
+                // blended blue-green, and where it doesn't overlap anything
+                // it should read as pure (fully opaque-looking, since
+                // there's only background behind it) green.
+                cmd.BindPipeline(unified_blend_pipeline);
+                cmd.BindBindlessTextures();
+                cmd.BindVertexBuffer(unified_offset_vertex_buffer, sizeof(UnifiedVertex));
+                cmd.BindIndexBuffer(unified_offset_index_buffer, IndexFormat::UInt32);
+                UnifiedPushConstants green_push{0.0f, unified_green_texture.index, 0.1f, 0.5f};
+                cmd.SetPushConstants(&green_push, sizeof(green_push));
+                cmd.DrawIndexed(6);
+
                 cmd.EndRenderPass();
             } else {
                 ResourceState before = used_before[slot] ? ResourceState::Present : ResourceState::Undefined;

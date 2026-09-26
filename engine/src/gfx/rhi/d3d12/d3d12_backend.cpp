@@ -179,7 +179,30 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
     pso_desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
     pso_desc.RasterizerState.CullMode = desc.cull_back_face ? D3D12_CULL_MODE_BACK : D3D12_CULL_MODE_NONE;
     pso_desc.RasterizerState.DepthClipEnable = TRUE;
+
     pso_desc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    if (desc.enable_blending) {
+        // Standard non-premultiplied alpha blending, matching the Vulkan
+        // backend's equivalent VkPipelineColorBlendAttachmentState exactly.
+        pso_desc.BlendState.RenderTarget[0].BlendEnable = TRUE;
+        pso_desc.BlendState.RenderTarget[0].SrcBlend = D3D12_BLEND_SRC_ALPHA;
+        pso_desc.BlendState.RenderTarget[0].DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+        pso_desc.BlendState.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
+        pso_desc.BlendState.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
+        pso_desc.BlendState.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_ZERO;
+        pso_desc.BlendState.RenderTarget[0].BlendOpAlpha = D3D12_BLEND_OP_ADD;
+    }
+
+    // Always declared with the swap chain's own D32_FLOAT depth format
+    // (always bound in BeginRenderPass — see D3D12SwapChain::DepthDSV's
+    // comment), even for a pipeline with depth_test = false: D3D12 requires
+    // a PSO's DSVFormat to be compatible with whatever DSV is actually bound
+    // at draw time, regardless of whether that PSO's own DepthEnable is set.
+    pso_desc.DepthStencilState.DepthEnable = desc.depth_test ? TRUE : FALSE;
+    pso_desc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+    pso_desc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+    pso_desc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+
     pso_desc.SampleMask = UINT_MAX;
     pso_desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     pso_desc.NumRenderTargets = 1;
@@ -221,6 +244,41 @@ D3D12SwapChain::D3D12SwapChain(D3D12Device& device, void* hwnd, u32 width, u32 h
         handles_.push_back(device_.RegisterTexture(swap_chain_.BackBuffer(i), swap_chain_.BackBufferRTV(i)));
     }
     used_before_.assign(swap_chain_.BufferCount(), false);
+    CreateDepthBuffer(swap_chain_.Width(), swap_chain_.Height());
+}
+
+void D3D12SwapChain::CreateDepthBuffer(u32 width, u32 height) {
+    D3D12_HEAP_PROPERTIES default_heap{};
+    default_heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+    D3D12_RESOURCE_DESC depth_desc{};
+    depth_desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    depth_desc.Width = width;
+    depth_desc.Height = height;
+    depth_desc.DepthOrArraySize = 1;
+    depth_desc.MipLevels = 1;
+    depth_desc.Format = DXGI_FORMAT_D32_FLOAT;
+    depth_desc.SampleDesc.Count = 1;
+    depth_desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+    D3D12_CLEAR_VALUE clear_value{};
+    clear_value.Format = DXGI_FORMAT_D32_FLOAT;
+    clear_value.DepthStencil.Depth = 1.0f;
+
+    depth_resource_.Reset();
+    AETHER_D3D_CHECK(device_.Native().Handle()->CreateCommittedResource(
+        &default_heap, D3D12_HEAP_FLAG_NONE, &depth_desc, D3D12_RESOURCE_STATE_DEPTH_WRITE, &clear_value,
+        IID_PPV_ARGS(&depth_resource_)));
+
+    if (!depth_dsv_heap_) {
+        depth_dsv_heap_ = std::make_unique<DescriptorHeap>(device_.Native(), D3D12_DESCRIPTOR_HEAP_TYPE_DSV,
+                                                             /*capacity=*/1, /*shader_visible=*/false);
+        depth_dsv_heap_->Allocate();
+    }
+    D3D12_DEPTH_STENCIL_VIEW_DESC dsv_desc{};
+    dsv_desc.Format = DXGI_FORMAT_D32_FLOAT;
+    dsv_desc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+    device_.Native().Handle()->CreateDepthStencilView(depth_resource_.Get(), &dsv_desc, depth_dsv_heap_->CPUHandle(0));
 }
 
 void D3D12SwapChain::Resize(u32 width, u32 height) {
@@ -229,6 +287,7 @@ void D3D12SwapChain::Resize(u32 width, u32 height) {
         device_.UpdateTexture(handles_[i], swap_chain_.BackBuffer(i), swap_chain_.BackBufferRTV(i));
     }
     used_before_.assign(swap_chain_.BufferCount(), false);
+    CreateDepthBuffer(swap_chain_.Width(), swap_chain_.Height());
 }
 
 D3D12CommandList::D3D12CommandList(D3D12Device& device, D3D12_COMMAND_LIST_TYPE type)
@@ -267,7 +326,15 @@ void D3D12CommandList::BeginRenderPass(ISwapChain& swap_chain, const ClearColor&
 
     const f32 c[4] = {clear_color.r, clear_color.g, clear_color.b, clear_color.a};
     cmd_.Get()->ClearRenderTargetView(rtv, c, 0, nullptr);
-    cmd_.Get()->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+
+    // Always bound and cleared, regardless of whether the pipeline this
+    // pass ends up drawing with actually depth-tests (PipelineDesc::
+    // depth_test) — mirrors the Vulkan backend's default render pass always
+    // having a depth attachment. A pipeline with depth_test=false simply
+    // never reads or writes it.
+    D3D12_CPU_DESCRIPTOR_HANDLE dsv = d3d_swap.DepthDSV();
+    cmd_.Get()->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+    cmd_.Get()->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
 
     D3D12_VIEWPORT viewport{0.0f, 0.0f, static_cast<f32>(d3d_swap.Width()), static_cast<f32>(d3d_swap.Height()),
                              0.0f, 1.0f};

@@ -447,6 +447,61 @@ unit-testable pure logic); Clear/Triangle/Cube modes regression-checked on
 both backends, plus 6 quick runs + one 2000-frame run per backend and a
 programmatic-resize test, all stable.
 
+### Follow-up: Unified renderer — depth buffer + blend states
+
+The last two gaps `PipelineDesc` left to backend-specific code: real depth
+testing and alpha blending, both now toggleable per-pipeline
+(`depth_test`/`enable_blending`) with zero backend branching in `rhi_demo`.
+
+- **A depth buffer on both backends, always present.** Rather than make
+  depth attachment presence itself a per-pipeline, per-render-pass
+  variable — which Vulkan's rigid render-pass/framebuffer model makes
+  awkward, since a framebuffer's attachment list is fixed at creation —
+  both backends now unconditionally maintain one shared depth buffer per
+  swap chain (`D3D12SwapChain`'s own `D32_FLOAT` resource + DSV;
+  `VulkanSwapChain`'s single default render pass gained a second,
+  always-declared depth attachment, with a matching depth image recreated
+  alongside the color images on resize). `BeginRenderPass` always clears and
+  binds it on both backends; `PipelineDesc::depth_test` is what actually
+  opts a given pipeline's own `DepthStencilState`/
+  `VkPipelineDepthStencilStateCreateInfo` in or out of testing/writing
+  against it — a pipeline with `depth_test = false` just never reads or
+  writes what's bound, exactly like every pre-existing Unified-mode pipeline
+  behaved before this field existed.
+- **Alpha blending**: standard non-premultiplied `src.rgb*src.a +
+  dst.rgb*(1-src.a)` color blending (output alpha passes straight through
+  unblended) when `enable_blending = true`, identical
+  `D3D12_BLEND_SRC_ALPHA`/`VK_BLEND_FACTOR_SRC_ALPHA` factors on both
+  backends.
+
+`rhi_demo`'s Unified mode gained two more pipelines (same shared HLSL
+source and vertex/index data shape, differing only in these two flags) and
+a small static scene proving both, drawn alongside the existing rotating
+quad:
+
+- A red quad and a blue quad at the same screen position, blue nearer
+  (`depth=0.2`) than red (`depth=0.8`) — but drawn in *reverse* depth order
+  (blue first, red second). A broken or absent depth test would let the
+  later, farther draw (red) incorrectly win; a working one keeps blue on top
+  regardless of draw order. This is deliberately a stronger test than "draw
+  near-to-far and see the right thing" would be, since draw order and depth
+  order agreeing by construction wouldn't distinguish a real depth test from
+  no depth test at all.
+- A translucent green quad (`opacity=0.5`, blended pipeline), offset to
+  overlap the right half of the red/blue pair and closer than both
+  (`depth=0.1`, so it passes the depth test against them).
+
+**Verified visually**: a screenshot shows blue fully covering the
+same-position red (confirming the depth test, not just "didn't crash" —
+if it were broken, red would be visibly on top instead, since it's drawn
+second), a visibly blended blue-green region exactly where the green quad
+overlaps blue, and pure green where it doesn't — pixel-identical between
+D3D12 and Vulkan. 81/81 unit tests pass (unchanged — GPU pipeline/shader
+plumbing, not new unit-testable pure logic); Clear/Triangle/Cube/Unified
+modes regression-checked on both backends, 6 quick runs + one 2000-frame run
+per backend, and a programmatic-resize test (exercising the depth buffer's
+own recreate-on-resize path) — all stable.
+
 ### Follow-up: asset pipeline (file-based texture loading, cached)
 
 The first item of the post-Phase-5 roadmap: `aether::assets` adds real

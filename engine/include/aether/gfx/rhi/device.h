@@ -46,6 +46,22 @@ struct PipelineDesc {
     // shader which bindless index to sample, the caller is expected to carry
     // it in the push-constant block.
     bool enable_bindless_textures = false;
+
+    // Depth test + write (LESS) against the swap chain's own per-image
+    // depth buffer (see ISwapChain — both backends now always maintain one,
+    // recreated alongside the color images on resize, regardless of whether
+    // any given pipeline actually uses it) — the "Unified renderer: depth
+    // buffer + blend states" follow-up. false (the default) draws with no
+    // depth test at all, matching every earlier PipelineDesc pipeline's
+    // behavior before this field existed.
+    bool depth_test = false;
+
+    // Standard non-premultiplied alpha blending (src.rgb*src.a +
+    // dst.rgb*(1-src.a); output alpha passes through unblended) instead of
+    // an opaque overwrite. Combine with depth_test = true and draw
+    // back-to-front for correct transparency, same as any other
+    // depth-tested renderer — this RHI has no automatic draw-order sorting.
+    bool enable_blending = false;
 };
 
 // Backend-agnostic device/queue/submission layer, extended with a genuinely

@@ -217,6 +217,8 @@ private:
     void CreateDefaultRenderPass();
     void CreateFramebuffers();
     void DestroyFramebuffers();
+    void CreateDepthResources();
+    void DestroyDepthResources();
 
     VulkanDevice& device_;
     void* hwnd_ = nullptr;
@@ -227,6 +229,20 @@ private:
     u32 requested_buffer_count_ = 2;
     VkRenderPass default_render_pass_ = VK_NULL_HANDLE;
     std::vector<VkFramebuffer> framebuffers_;  // one per swapchain image
+
+    // A single depth buffer, shared by every swapchain image (recreated
+    // alongside them on resize) — the "Unified renderer: depth buffer +
+    // blend states" follow-up. Always present in default_render_pass_'s
+    // subpass and every framebuffer, regardless of whether any given
+    // pipeline actually depth-tests (PipelineDesc::depth_test toggles a
+    // pipeline's own VkPipelineDepthStencilStateCreateInfo, independent of
+    // whether the render pass/framebuffer it runs in has a depth
+    // attachment) — this mirrors the D3D12 backend always binding its own
+    // depth buffer in BeginRenderPass regardless of the bound pipeline.
+    static constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
+    VkImage depth_image_ = VK_NULL_HANDLE;
+    VkDeviceMemory depth_memory_ = VK_NULL_HANDLE;
+    VkImageView depth_image_view_ = VK_NULL_HANDLE;
 
     std::vector<TextureHandle> handles_;                   // one per swapchain image
     std::vector<VkImageView> image_views_;                 // one per swapchain image
