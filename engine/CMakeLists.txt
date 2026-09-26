@@ -17,6 +17,7 @@ add_library(aether_engine STATIC
     src/assets/stb_image_impl.cpp
     src/assets/image.cpp
     src/assets/gltf_loader.cpp
+    src/assets/asset_database.cpp
 )
 
 target_include_directories(aether_engine PRIVATE ${stb_SOURCE_DIR})
