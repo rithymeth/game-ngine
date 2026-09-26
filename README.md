@@ -6,7 +6,8 @@ design.
 
 The plan for growing Aether into a full engine (editor, visual scripting /
 Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
-[`docs/ROADMAP.md`](docs/ROADMAP.md).
+[`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
+[`docs/README.md`](docs/README.md).
 
 ## Status: Phase 5 — Gameplay Framework
 
