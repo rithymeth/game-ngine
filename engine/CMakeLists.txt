@@ -23,6 +23,8 @@ add_library(aether_engine STATIC
     src/assets/importer.cpp
     src/assets/texture_importer.cpp
     src/assets/model_importer.cpp
+    src/assets/file_watcher.cpp
+    src/assets/hot_reload.cpp
 )
 
 target_include_directories(aether_engine PRIVATE ${stb_SOURCE_DIR})
