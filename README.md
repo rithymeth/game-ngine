@@ -4,6 +4,10 @@ A data-oriented, job-based game engine targeting Vulkan/DirectX 12. See
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) *(coming later)* for the full
 design.
 
+The plan for growing Aether into a full engine (editor, visual scripting /
+Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
+[`docs/ROADMAP.md`](docs/ROADMAP.md).
+
 ## Status: Phase 5 — Gameplay Framework
 
 ### Phase 1 — Foundation
