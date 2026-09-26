@@ -8,6 +8,7 @@ add_library(aether_engine STATIC
     src/job/job_system.cpp
     src/ecs/archetype.cpp
     src/scene/serialization.cpp
+    src/reflection/registry.cpp
     src/assets/stb_image_impl.cpp
     src/assets/image.cpp
     src/assets/gltf_loader.cpp
