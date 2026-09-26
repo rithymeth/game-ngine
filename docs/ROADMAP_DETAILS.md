@@ -80,6 +80,17 @@ MyGame/
 }
 ```
 
+A source that its importer splits into pieces (a glTF's meshes, materials
+and animations) also lists them, so each piece keeps its GUID across
+reimports:
+
+```json
+  "sub_assets": {
+    "mesh:0":     { "guid": "0f5e…", "importer": "Mesh" },
+    "material:0": { "guid": "8a21…", "importer": "Material" }
+  }
+```
+
 The DDC key is `hash(source_hash, settings, importer_version, target platform)`.
 
 ### A.3 Scene: `Level_01.ascene`

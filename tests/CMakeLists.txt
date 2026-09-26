@@ -16,6 +16,7 @@ add_executable(aether_tests
     test_asset_database.cpp
     test_asset_refs.cpp
     test_importers.cpp
+    test_model_importer.cpp
     test_assets.cpp
     test_gltf_loader.cpp
 )
