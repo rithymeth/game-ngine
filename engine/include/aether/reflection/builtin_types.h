@@ -3,6 +3,7 @@
 #include "aether/math/math.h"
 #include "aether/reflection/reflect_macros.h"
 
+#include <cstring>
 #include <string>
 
 // Reflection for the engine's builtin value types: primitives, std::string,
@@ -34,6 +35,34 @@ AETHER_REFLECT_PRIMITIVE(aether::u64, "u64", UInt)
 AETHER_REFLECT_PRIMITIVE(aether::f32, "f32", Float)
 AETHER_REFLECT_PRIMITIVE(aether::f64, "f64", Float)
 AETHER_REFLECT_PRIMITIVE(std::string, "string", String)
+
+// Fixed-size character buffers (`char name[64]`), for plain-data components
+// that must stay trivially copyable. Declared name "char[N]". Serialized as a
+// string; loading a string that doesn't fit is truncated with a warning.
+template <aether::usize N>
+struct aether::reflect::Reflector<char[N]> {
+    static const ::aether::reflect::TypeInfo& Get() {
+        static const std::string declared_name = "char[" + std::to_string(N) + "]";
+        static const ::aether::reflect::TypeInfo info = [] {
+            using namespace ::aether::reflect;
+            TypeInfo type_info;
+            type_info.name = declared_name.c_str();
+            type_info.id = HashTypeName(type_info.name);
+            type_info.kind = TypeKind::FixedString;
+            type_info.size = static_cast<u32>(N);
+            type_info.alignment = 1;
+            type_info.construct = [](void* dst) { std::memset(dst, 0, N); };
+            type_info.destruct = [](void*) {};
+            type_info.copy_construct = [](void* dst, const void* src) { std::memcpy(dst, src, N); };
+            type_info.move_construct = [](void* dst, void* src) { std::memcpy(dst, src, N); };
+            type_info.copy_assign = [](void* dst, const void* src) { std::memcpy(dst, src, N); };
+            return type_info;
+        }();
+        static const bool registered = (::aether::reflect::TypeRegistry::Register(info), true);
+        (void)registered;
+        return info;
+    }
+};
 
 template <>
 inline constexpr bool aether::reflect::detail::kSerializeAsArray<aether::Vec3> = true;

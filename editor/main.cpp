@@ -54,6 +54,7 @@
 #include "aether/math/math.h"
 #include "aether/physics/physics_world.h"
 #include "aether/platform/window.h"
+#include "aether/scene/components.h"
 #include "aether/scene/serialization.h"
 
 #include <imgui.h>
@@ -143,22 +144,9 @@ constexpr f32 kMenuBarHeight = 20.0f;
 constexpr f32 kPanelMargin = 8.0f;
 constexpr f32 kLeftPanelWidth = 340.0f;
 
-// A model-carrying entity's only component beyond Transform — a reference to
-// a glTF asset (relative to AETHER_ASSET_DIR, e.g. "models/foo.gltf"), not
-// the loaded GPU/CPU data itself (that lives in GltfCache below, keyed by
-// this same path, shared across every entity that references it). Plain
-// fixed-size data (not std::string) specifically so it needs no custom
-// (de)serializer to round-trip through SaveScene/LoadScene — the default
-// raw-byte component serializer every ComponentInfo gets is already correct
-// for it, the same way it already is for Transform.
-struct ModelRenderer {
-    char asset_path[128] = {};
-};
-
-void SetModelPath(ModelRenderer& renderer, const std::string& path) {
-    std::memset(renderer.asset_path, 0, sizeof(renderer.asset_path));
-    std::strncpy(renderer.asset_path, path.c_str(), sizeof(renderer.asset_path) - 1);
-}
+// ModelRenderer (a model-carrying entity's glTF asset path) and SetModelPath
+// now live in aether/scene/components.h, reflected, since they're runtime
+// components rather than editor ones.
 
 // World::ForEach/ForEachChunk give component references but not the Entity
 // each one belongs to — fine for the physics sync system, not enough for an
@@ -1053,6 +1041,12 @@ int main() {
 
     try {
         RegisterPhysicsComponentSerializers();
+        // Scenes saved before ModelRenderer moved out of this file's anonymous
+        // namespace stored it under that type's typeid name. MSVC and the
+        // Itanium ABI (GCC/Clang) spell it differently; register both so
+        // those scenes still find their models.
+        RegisterComponentAlias<ModelRenderer>("struct `anonymous namespace'::ModelRenderer");
+        RegisterComponentAlias<ModelRenderer>("N12_GLOBAL__N_113ModelRendererE");
 
         WindowDesc window_desc;
         window_desc.title = "Aether Editor - Phase 5";

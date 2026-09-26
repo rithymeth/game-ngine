@@ -1,6 +1,7 @@
 #include "aether/reflection/reflection.h"
 #include "test_framework.h"
 
+#include <cstring>
 #include <string>
 
 using namespace aether;
@@ -206,4 +207,44 @@ AETHER_TEST(Reflection_LifecycleThunksManageNonTrivialTypes) {
     info.destruct(a);
     info.destruct(b);
     info.destruct(c);
+}
+
+namespace game {
+struct Label {
+    char text[8] = {};
+    i32 priority = 0;
+};
+} // namespace game
+
+AETHER_REFLECT(game::Label, 1, AETHER_FIELD(text), AETHER_FIELD(priority))
+
+#include "aether/reflection/serialize.h"
+
+AETHER_TEST(Reflection_FixedStringArrays) {
+    const TypeInfo& info = Reflect<game::Label>();
+    const FieldInfo* text = info.FindField("text");
+    AETHER_CHECK(text->type->kind == TypeKind::FixedString);
+    AETHER_CHECK(std::string(text->type->name) == "char[8]");
+    AETHER_CHECK(text->type->size == 8);
+    AETHER_CHECK(&Reflect<char[8]>() == text->type);
+    AETHER_CHECK(&Reflect<char[16]>() != text->type);
+
+    game::Label label;
+    std::memcpy(label.text, "hello", 6);
+    Any copy = text->Get(&label); // Any::CopyOf, since arrays can't be passed by value
+    AETHER_CHECK(copy.Type() == text->type);
+    AETHER_CHECK(std::string(static_cast<const char*>(copy.Data())) == "hello");
+
+    Json json = ToJson(label);
+    AETHER_CHECK(json["text"] == "hello");
+
+    game::Label loaded;
+    LoadReport report;
+    AETHER_CHECK(FromJson(loaded, json, &report) && report.warnings.empty());
+    AETHER_CHECK(std::string(loaded.text) == "hello");
+
+    // Too long: truncated to 7 characters plus the terminator, with a warning.
+    AETHER_CHECK(FromJson(loaded, Json{{"text", "much too long"}}, &report));
+    AETHER_CHECK(std::string(loaded.text) == "much to");
+    AETHER_CHECK(report.warnings.size() == 1);
 }
