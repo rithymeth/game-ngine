@@ -376,6 +376,44 @@ Not yet started: reference counting/unloading, async/streamed loading, and
 non-texture asset types (meshes, materials, ...) — see the glTF loader and
 material system items later in the roadmap.
 
+### Follow-up: PBR renderer (`pbr_demo/`)
+
+Roadmap item 2: a real physically-based renderer — Cook-Torrance specular
+(GGX normal distribution, Smith geometry term, Schlick Fresnel), Lambertian
+diffuse, metallic-roughness workflow, matching the standard textbook
+derivation (the same one LearnOpenGL/Sascha Willems' widely-used reference
+implementations use). A separate project from `sandbox/` (same reasoning as
+`rhi_demo/`): `sandbox/` stays focused on bindless textures + GPU-driven
+culling, `pbr_demo/` on the lighting model, rather than merging both into one
+increasingly tangled demo.
+
+Scene: the classic "material ball grid" used to validate a PBR
+implementation — a 7x7 grid of spheres, metallic varying 0→1 along one axis
+and roughness 0.05→1 along the other, one directional light plus a small
+ambient term. This was actually **looked at**, not just run without
+crashing: a mathematically wrong BRDF still renders *something*, so
+`AETHER_PBR_DEMO_SCREENSHOT=<path>` dumps the final frame to a PNG (via
+`stb_image_write`, same `stb` fetch as the asset pipeline) for exactly this
+kind of visual check. The rendered grid shows the expected qualitative
+trends: rough spheres look matte/chalky regardless of metallic, smooth
+spheres show a tight specular highlight that's white on dielectrics
+(metallic=0) and tinted by the albedo on metals (metallic=1), and metals
+darken toward black in their diffuse response as expected.
+
+**Real bug found by actually capturing a screenshot, not by inspection**: a
+single-frame capture (`AETHER_PBR_DEMO_MAX_FRAMES=1`) came back blank. DXGI's
+flip-model swap chain advances `GetCurrentBackBufferIndex()` as soon as
+`Present()` is called, so after the loop's *final* `Present()`,
+`SwapChain::CurrentBackBuffer()` already points at the *next*,
+never-rendered buffer — not the one the last frame actually drew into.
+Fixed by having the caller track the last-rendered buffer index explicitly
+and read that specific buffer back (`SwapChain::BackBuffer(index)`) instead
+of trusting "current".
+
+Not yet started: normal mapping, image-based lighting/environment
+reflections, and multiple/colored lights — the single hardcoded directional
+light is enough to validate the BRDF but not a full lighting pipeline.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,

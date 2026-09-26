@@ -153,4 +153,5 @@ endif()
 
 if(WIN32)
     add_subdirectory(rhi_demo)
+    add_subdirectory(pbr_demo)
 endif()
