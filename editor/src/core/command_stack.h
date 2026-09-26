@@ -1,7 +1,10 @@
 #pragma once
 
 #include "aether/core/base.h"
+#include "aether/ecs/component.h"
+#include "aether/ecs/entity.h"
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -9,15 +12,31 @@
 namespace aether {
 class World;
 class GuidIndex;
+namespace reflect {
+struct FieldInfo;
+}
 } // namespace aether
 
 namespace aether::editor {
+
+// Callbacks the built-in commands (commands.h) make when they change the
+// world, so systems holding state outside the ECS can follow along — the
+// editor uses them to create, destroy and update Jolt bodies. They fire on
+// the first execution and on every undo and redo alike. Any may be empty.
+struct EditorHooks {
+    std::function<void(Entity)> on_entity_created;     // after it exists, with all its components
+    std::function<void(Entity)> on_entity_destroying;  // just before it's destroyed
+    std::function<void(Entity, ComponentId)> on_component_added;
+    std::function<void(Entity, ComponentId)> on_component_removing;
+    std::function<void(Entity, ComponentId, const reflect::FieldInfo&)> on_field_changed;
+};
 
 // What commands act on. Grows as the editor does (selection, assets, ...);
 // kept to the essentials for now. See docs/design/PHASE_SPECS.md §7.2.
 struct CommandContext {
     World& world;
     GuidIndex& guids;
+    EditorHooks* hooks = nullptr;
 };
 
 // One undoable editor action. Do() is called once when the command is first
@@ -63,6 +82,12 @@ public:
     static constexpr usize kDefaultMemoryBudget = 256ull * 1024 * 1024;
 
     void Execute(CommandContext& ctx, std::unique_ptr<ICommand> command, MergePolicy merge = MergePolicy::Never);
+
+    // Records a command whose effect has already been applied (Do() isn't
+    // called now, only on redo) — for actions performed by existing code,
+    // e.g. spawning an entity and then recording a CreateEntityCommand
+    // captured from it.
+    void Record(std::unique_ptr<ICommand> command, MergePolicy merge = MergePolicy::Never);
 
     bool CanUndo() const { return !undo_.empty() && transaction_depth_ == 0; }
     bool CanRedo() const { return !redo_.empty() && transaction_depth_ == 0; }
