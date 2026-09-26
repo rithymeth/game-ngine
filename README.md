@@ -1175,6 +1175,47 @@ collide with the left-column stack even when populated with real model
 data. 81/81 tests unchanged; 6 quick runs plus one 2000-frame stability
 run, all clean.
 
+### Phase 6 (in progress) — Reflection core
+
+First step of the [roadmap](docs/ROADMAP.md)'s Phase 6 (build spec:
+[`docs/ROADMAP_DETAILS.md` §B](docs/ROADMAP_DETAILS.md)).
+`engine/include/aether/reflection/` lets the engine describe its own types at
+runtime, which the generic Inspector, versioned serialization, undo/redo,
+scripting and Blueprints all build on.
+
+- **`TypeInfo` / `FieldInfo`**: name, kind (bool/int/uint/float/string/enum/
+  struct), size, alignment, schema version, fields in declaration order
+  (offset, field type, `FieldFlags`, editor `Meta` such as tooltip, category,
+  range and units), enum name/value tables, and construct/destruct/
+  copy/move thunks. `FieldInfo::As<T>(obj)` gives typed access and returns
+  `nullptr` on a type mismatch instead of reinterpreting memory.
+- **`TypeId`**: FNV-1a 64 of the *declared* name (`"Health"`, namespace
+  stripped). This replaces `typeid(T).name()`, whose output differs between
+  compilers, as the future on-disk key. The hash is pinned by a test.
+- **`TypeRegistry`**: find by name or `TypeId`, list all types. Types
+  register statically, so `Find("Health")` works before anything calls
+  `Reflect<Health>()`. A second type with the same declared name is rejected
+  with an error log.
+- **Macros**: `AETHER_REFLECT(Type, version, AETHER_FIELD(member, flags,
+  {.meta...}), ...)` and `AETHER_ENUM(Type, version, AETHER_ENUM_VALUE(...))`,
+  used at global scope. A field of an unreflected type is a compile error
+  with a message saying what to add.
+- **Builtins**: `bool`, `i8`–`i64`, `u8`–`u64`, `f32`, `f64`,
+  `std::string`, `Vec3`, `Vec4`, `Quaternion` and `Mat4` (as four `Vec4`
+  columns).
+
+Not included yet, and planned as the next steps of Phase 6: `Any` and
+function reflection, JSON/binary archives, ECS integration (reflected
+component names in scene files), reflecting the existing components, and the
+generic Inspector.
+
+**Verified** by building the engine and tests on Linux with both GCC 13
+and Clang, with no warnings from the new code: 8 new tests in
+`tests/test_reflection.cpp`, 58/58 passing. That run excludes the
+Windows-only D3D12 tests; the MSVC build hasn't been run for this change.
+The macros use `##__VA_ARGS__` (already used by the log macros) rather than
+`__VA_OPT__`, which MSVC only supports with `/Zc:preprocessor`.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
