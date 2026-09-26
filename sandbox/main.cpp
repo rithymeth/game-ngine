@@ -1,5 +1,6 @@
 // Phase 4 proof-of-life: bindless textures + GPU-driven frustum culling +
-// a render graph tying it together.
+// a render graph tying it together, extended with a transient depth buffer
+// and true async compute (a follow-up pass).
 //
 // Scene: 64 textured quads scattered along Z, most of them beyond the far
 // plane or outside the frustum. A compute pass culls them against 6 planes
@@ -8,8 +9,21 @@
 // pass then issues all 64 draws in a single ExecuteIndirect call — the CPU
 // never learns which instances survived. Both passes go through a
 // RenderGraph, which is what inserts the UAV<->indirect-argument barrier on
-// the commands buffer and the backbuffer's RENDER_TARGET<->PRESENT barriers,
-// instead of either pass hand-rolling ResourceBarrier calls.
+// the commands buffer, the depth buffer's transition into DEPTH_WRITE, and
+// the backbuffer's RENDER_TARGET<->PRESENT barriers, instead of any pass
+// hand-rolling ResourceBarrier calls.
+//
+// The depth buffer is a RenderGraph *transient* resource (RenderGraph
+// allocates and owns it, unlike the imported swap chain backbuffer) —
+// created once via CreateTransientTexture and recreated in place on resize;
+// the Forward pass's returned ResourceHandle never changes.
+//
+// The culling pass is tagged QueueType::Compute and runs on
+// Device::ComputeQueue(), a genuinely separate hardware queue from the
+// Forward pass's graphics queue — real async compute, not just a compute
+// pass sharing the graphics queue. The two queues are connected by a GPU-
+// side fence wait (Device::GraphicsQueueWaitOnCompute), not a CPU stall, so
+// they can overlap on hardware that supports it.
 //
 // The vertex/pixel shaders index a `Texture2D g_Textures[]` array by a
 // per-instance integer (its bindless heap index) passed through a root
@@ -292,13 +306,16 @@ ComPtr<ID3D12PipelineState> CreateGraphicsPSO(Device& device, ID3D12RootSignatur
     desc.RasterizerState.DepthClipEnable = TRUE;
 
     desc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
-    desc.DepthStencilState.DepthEnable = FALSE;
+    desc.DepthStencilState.DepthEnable = TRUE;
+    desc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+    desc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
     desc.DepthStencilState.StencilEnable = FALSE;
 
     desc.SampleMask = UINT_MAX;
     desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     desc.NumRenderTargets = 1;
     desc.RTVFormats[0] = rtv_format;
+    desc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
     desc.SampleDesc.Count = 1;
 
     ComPtr<ID3D12PipelineState> pso;
@@ -383,7 +400,33 @@ int main() {
 
         Device device(/*enable_debug_layer=*/true);
         SwapChain swap_chain(device, window.NativeHandle(), window.Width(), window.Height());
-        window.on_resize = [&](u32 w, u32 h) { swap_chain.Resize(w, h); };
+
+        RenderGraph graph(device);
+
+        auto create_depth_buffer = [&](u32 width, u32 height) {
+            D3D12_RESOURCE_DESC depth_desc{};
+            depth_desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+            depth_desc.Width = width;
+            depth_desc.Height = height;
+            depth_desc.DepthOrArraySize = 1;
+            depth_desc.MipLevels = 1;
+            depth_desc.Format = DXGI_FORMAT_D32_FLOAT;
+            depth_desc.SampleDesc.Count = 1;
+            depth_desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+            D3D12_CLEAR_VALUE clear_value{};
+            clear_value.Format = DXGI_FORMAT_D32_FLOAT;
+            clear_value.DepthStencil.Depth = 1.0f;
+
+            return graph.CreateTransientTexture(depth_desc, D3D12_RESOURCE_STATE_DEPTH_WRITE, &clear_value,
+                                                 "SandboxDepth");
+        };
+        RenderGraph::ResourceHandle depth_handle = create_depth_buffer(window.Width(), window.Height());
+
+        window.on_resize = [&](u32 w, u32 h) {
+            swap_chain.Resize(w, h);
+            depth_handle = create_depth_buffer(w, h);
+        };
 
         DescriptorHeap bindless_heap(device, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, kBindlessCapacity,
                                       /*shader_visible=*/true);
@@ -433,12 +476,14 @@ int main() {
         ExtractFrustumPlanes(view_proj, planes);
         frustum_planes_buffer.Update(planes, sizeof(planes));
 
-        RenderGraph graph;
-
         std::vector<std::unique_ptr<CommandList>> command_lists;
+        std::vector<std::unique_ptr<CommandList>> compute_command_lists;
         std::vector<u64> frame_fences(swap_chain.BufferCount(), 0);
+        std::vector<u64> compute_frame_fences(swap_chain.BufferCount(), 0);
         for (u32 i = 0; i < swap_chain.BufferCount(); ++i) {
             command_lists.push_back(std::make_unique<CommandList>(device));
+            compute_command_lists.push_back(
+                std::make_unique<CommandList>(device, D3D12_COMMAND_LIST_TYPE_COMPUTE));
         }
 
         AETHER_LOG_INFO("Sandbox", "Entering main loop (%u instances, bindless capacity %u)", kInstanceCount,
@@ -453,9 +498,12 @@ int main() {
 
             u32 buffer_index = swap_chain.CurrentBackBufferIndex();
             device.WaitForFence(frame_fences[buffer_index]);
+            device.WaitForComputeFence(compute_frame_fences[buffer_index]);
 
             CommandList& cmd = *command_lists[buffer_index];
+            CommandList& compute_cmd = *compute_command_lists[buffer_index];
             cmd.Reset();
+            compute_cmd.Reset();
 
             ID3D12Resource* back_buffer = swap_chain.CurrentBackBuffer();
             RenderGraph::ResourceHandle backbuffer_handle =
@@ -463,6 +511,13 @@ int main() {
             RenderGraph::ResourceHandle commands_handle =
                 graph.ImportResource(commands_buffer.Handle(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, "IndirectCommands");
 
+            // Culling runs on the async compute queue: it only ever needs
+            // UNORDERED_ACCESS, a state compute command lists can transition
+            // into, so this pass's barrier records cleanly onto compute_cmd.
+            // The Forward pass's own transition into INDIRECT_ARGUMENT below
+            // happens on the graphics queue instead (compute lists can't
+            // transition into that state) — RenderGraph picks the right
+            // command list for each automatically from the pass's QueueType.
             graph.AddPass(
                 "Culling",
                 [&](RenderGraph::PassBuilder& builder) {
@@ -476,19 +531,23 @@ int main() {
                     cl->SetComputeRootUnorderedAccessView(2, commands_buffer.GPUAddress());
                     cl->SetComputeRoot32BitConstant(3, kInstanceCount, 0);
                     cl->Dispatch((kInstanceCount + 63) / 64, 1, 1);
-                });
+                },
+                QueueType::Compute);
 
             graph.AddPass(
                 "Forward",
                 [&](RenderGraph::PassBuilder& builder) {
                     builder.Write(backbuffer_handle, D3D12_RESOURCE_STATE_RENDER_TARGET);
+                    builder.Write(depth_handle, D3D12_RESOURCE_STATE_DEPTH_WRITE);
                     builder.Read(commands_handle, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
                 },
                 [&](ID3D12GraphicsCommandList* cl) {
                     D3D12_CPU_DESCRIPTOR_HANDLE rtv = swap_chain.CurrentBackBufferRTV();
-                    cl->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+                    D3D12_CPU_DESCRIPTOR_HANDLE dsv = graph.GetOrCreateDSV(depth_handle);
+                    cl->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
                     const f32 clear_color[4] = {0.05f, 0.05f, 0.08f, 1.0f};
                     cl->ClearRenderTargetView(rtv, clear_color, 0, nullptr);
+                    cl->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
                     D3D12_VIEWPORT viewport{0.0f, 0.0f, static_cast<f32>(swap_chain.Width()),
                                              static_cast<f32>(swap_chain.Height()), 0.0f, 1.0f};
@@ -526,8 +585,20 @@ int main() {
                     });
             }
 
-            graph.Execute(cmd.Get());
+            graph.Execute(cmd.Get(), compute_cmd.Get());
             graph.Reset();
+
+            // Submit compute first and get the graphics queue to wait on it
+            // via a GPU-side fence wait (Device::GraphicsQueueWaitOnCompute)
+            // rather than a CPU stall — this is the actual async-compute
+            // primitive: the two queues' work can overlap on hardware that
+            // supports it, with only the *dependency* (graphics needs
+            // culling's output) enforced, not a full serialization.
+            compute_cmd.Close();
+            ID3D12CommandList* compute_lists[] = {compute_cmd.Get()};
+            u64 compute_fence_value = device.SubmitCompute(compute_lists, 1);
+            compute_frame_fences[buffer_index] = compute_fence_value;
+            device.GraphicsQueueWaitOnCompute(compute_fence_value);
 
             cmd.Close();
             ID3D12CommandList* lists[] = {cmd.Get()};

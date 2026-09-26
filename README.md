@@ -72,10 +72,8 @@ without touching call sites — see the Phase 3 discussion in project history).
   hand-rolling `ResourceBarrier` calls. Resource state is tracked by pointer
   identity and persists across frames (needed for correctness — e.g. a swap
   chain backbuffer must be known to start next frame in `PRESENT`).
-  Dependency-driven pass *reordering*, transient resource
-  allocation/aliasing, and multi-queue async-compute sequencing — all part
-  of the original Task Graph design — are not implemented yet; this is the
-  barrier-automation core they'd be built on.
+  Dependency-driven pass *reordering* is still not implemented; passes run in
+  the order they were registered, within their queue.
 - **GPU-driven culling** (`sandbox/main.cpp`): a compute pass extracts 6
   frustum planes from the view-projection matrix (Gribb-Hartmann) and tests
   each instance's bounding sphere, writing one indirect-draw command per
@@ -137,8 +135,36 @@ discussion in project history.
   messages without the engine's `Window` class exposing its private
   `WndProc`.
 
-Not yet started: Vulkan backend, transient/aliased render graph resources,
-async compute.
+### Follow-up: transient render graph resources & async compute
+
+- **Transient resources** (`RenderGraph::CreateTransientTexture`,
+  `GetOrCreateRTV`/`GetOrCreateDSV`): unlike `ImportResource` (externally
+  owned), the graph allocates and keeps these alive itself, keyed by name so
+  calling it again (e.g. after a window resize) recreates the underlying
+  resource in place under the *same* `ResourceHandle` — passes referencing it
+  don't need to change. The sandbox uses this for a real depth buffer
+  (`DXGI_FORMAT_D32_FLOAT`), replacing the depth-disabled PSOs every phase
+  before this one shipped with. Distinct transient resources are **not**
+  sub-allocated/aliased against a shared heap even when their lifetimes don't
+  overlap — each gets its own committed allocation; true memory aliasing is
+  still future work.
+- **Async compute** (`Device::ComputeQueue`/`SubmitCompute`/
+  `GraphicsQueueWaitOnCompute`, `RenderGraph`'s per-pass `QueueType`): a
+  second, independent `ID3D12CommandQueue` (its own fence) that can execute
+  concurrently with the direct/graphics queue on hardware that supports it.
+  `RenderGraph::AddPass` takes an optional `QueueType` tag and
+  `RenderGraph::Execute` records each pass into whichever of the two command
+  lists the caller provides matches its queue — a Compute-tagged pass's
+  barriers only ever need states legal on a compute list (`UNORDERED_ACCESS`,
+  not `INDIRECT_ARGUMENT`); the state's final transition into something
+  graphics-only happens on the graphics list instead, automatically, from the
+  same barrier-diffing logic already in place. The sandbox's GPU-driven
+  culling pass now runs on the compute queue, with the graphics queue
+  GPU-side-waiting (`GraphicsQueueWaitOnCompute`, not a CPU stall) on its
+  fence before consuming its output — verified stable (identical 20/64
+  culling result) across 960 frames spanning 8 repeated runs.
+
+Not yet started: Vulkan backend, transient resource memory aliasing.
 
 ## Building
 

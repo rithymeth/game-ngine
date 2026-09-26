@@ -244,7 +244,7 @@ int main() {
             command_lists.push_back(std::make_unique<CommandList>(device));
         }
 
-        RenderGraph graph;
+        RenderGraph graph(device);
         AETHER_LOG_INFO("Editor", "Entering main loop");
 
         i32 frame_index = 0;

@@ -30,6 +30,27 @@ public:
     void WaitForFence(u64 fence_value);
     bool IsFenceComplete(u64 fence_value) const { return fence_->GetCompletedValue() >= fence_value; }
 
+    // A second, independent queue (its own fence) for async compute: work
+    // submitted here can execute on the GPU concurrently with the direct
+    // queue's graphics work, on hardware that supports it. Cross-queue data
+    // dependencies still need an explicit GPU-side wait (see
+    // ComputeQueueWaitOnGraphics/GraphicsQueueWaitOnCompute below) — nothing
+    // here is safe to assume ordered with direct-queue work by default.
+    ID3D12CommandQueue* ComputeQueue() const { return compute_queue_.Get(); }
+
+    u64 SubmitCompute(ID3D12CommandList* const* lists, u32 count);
+    void WaitForComputeFence(u64 fence_value);
+    bool IsComputeFenceComplete(u64 fence_value) const { return compute_fence_->GetCompletedValue() >= fence_value; }
+
+    // GPU-side (not CPU-blocking) cross-queue waits: makes one queue's
+    // future work wait for the other queue to reach a given fence value
+    // before it starts executing. This is the actual primitive async
+    // compute overlap is built from — e.g. the graphics queue waiting on a
+    // compute pass's output without the CPU ever blocking to synchronize
+    // them.
+    void ComputeQueueWaitOnGraphics(u64 graphics_fence_value);
+    void GraphicsQueueWaitOnCompute(u64 compute_fence_value);
+
 private:
     ComPtr<IDXGIFactory6> factory_;
     ComPtr<ID3D12Device> device_;
@@ -37,6 +58,11 @@ private:
     ComPtr<ID3D12Fence> fence_;
     HANDLE fence_event_ = nullptr;
     u64 next_fence_value_ = 1;
+
+    ComPtr<ID3D12CommandQueue> compute_queue_;
+    ComPtr<ID3D12Fence> compute_fence_;
+    HANDLE compute_fence_event_ = nullptr;
+    u64 next_compute_fence_value_ = 1;
 };
 
 } // namespace aether::gfx
