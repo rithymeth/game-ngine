@@ -10,13 +10,16 @@ add_library(aether_engine STATIC
     src/scene/serialization.cpp
     src/reflection/any.cpp
     src/reflection/registry.cpp
+    src/reflection/serialize.cpp
     src/assets/stb_image_impl.cpp
     src/assets/image.cpp
     src/assets/gltf_loader.cpp
 )
 
 target_include_directories(aether_engine PRIVATE ${stb_SOURCE_DIR})
-target_link_libraries(aether_engine PRIVATE nlohmann_json::nlohmann_json)
+# PUBLIC: reflection/serialize.h exposes nlohmann::json (the in-memory form
+# of the JSON archive, and what schema migration hooks edit).
+target_link_libraries(aether_engine PUBLIC nlohmann_json::nlohmann_json)
 
 if(WIN32)
     target_sources(aether_engine PRIVATE

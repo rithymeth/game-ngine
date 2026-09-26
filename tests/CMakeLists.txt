@@ -8,6 +8,7 @@ add_executable(aether_tests
     test_serialization.cpp
     test_reflection.cpp
     test_reflection_any.cpp
+    test_archive.cpp
     test_assets.cpp
     test_gltf_loader.cpp
 )
