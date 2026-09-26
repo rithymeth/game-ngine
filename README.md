@@ -2126,6 +2126,60 @@ Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 9.
 - 169/169 tests pass on GCC 13, on Clang and under ASan/UBSan, and 176/176
   with physics.
 
+**Step 5: gameplay framework components and lifecycle events.**
+
+- **`scene/gameplay.h`**:
+  - **`Camera`**: perspective or orthographic, FOV, orthographic height,
+    near and far planes, and priority.
+    - `CameraProjection` works for both modes (the new `OrthographicRH` is
+      the counterpart of `PerspectiveRH`, with Vulkan's 0–1 depth).
+    - `CameraView` inverts the camera's world transform, through its
+      parents.
+    - `FindActiveCamera` picks the highest-priority camera on an active
+      entity.
+    - Degenerate settings are clamped rather than producing NaNs.
+  - **`Tags`**: named labels, with `HasTag`, `AddTag`, `RemoveTag` and
+    `FindEntitiesWithTag`.
+  - **`Layer`**: an index into the project's 32 named layers, with
+    `LayerMask`, `FindLayer`, `MakeLayerMask` (unknown names are reported)
+    and `IsInLayerMask`.
+  - **`Active`**: switches an entity and everything under it on or off
+    (`IsActiveInHierarchy`).
+  - All four are reflected (so they appear in the Inspector) and are
+    registered before scenes load.
+- **`Lifecycle`** (`scene/lifecycle.h`) runs `OnCreate`, `OnEnable`,
+  `OnStart`, `OnUpdate`, `OnFixedUpdate`, `OnLateUpdate`, `OnDisable` and
+  `OnDestroy` for the components they're registered on. This is what
+  scripts and Blueprints will attach to.
+  - Ordering: creating, enabling and starting go parents first. Disabling
+    and destroying go children first.
+  - Deactivating an entity disables its subtree and stops its updates.
+    Reactivating it enables them again.
+  - `Destroy` removes a whole subtree.
+  - Anything that happens during a callback takes effect when the current
+    pass ends, so callbacks never see half-destroyed state. That covers a
+    spawn, a `Destroy`, a `SetActive`, and components being added or
+    removed. An entity queued for destruction still gets that pass's
+    update.
+  - Removing a component ends just its registration, and adding one during
+    play starts it.
+
+**Verified**: 5 new tests.
+
+- **Camera maths**: near and far planes map to depth 0 and 1, the
+  frustum's top edge maps to +1, orthographic corners and depth are
+  checked, and view × world is the identity through a rotated parent.
+- **Active-camera choice**: priority, inactive entities and inactive
+  parents, and clamping of degenerate settings.
+- **Tags and layers**: exact name matching, masks, out-of-range layers,
+  and a scene save/load round trip of all four components.
+- **Lifecycle**: the full event order on a three-level hierarchy through
+  play, deactivate, reactivate, destroy and end of play. Spawns, destroys
+  and deactivation made during a callback are safe, and the
+  per-component registrations are covered.
+- 174/174 tests pass on GCC 13, on Clang and under ASan/UBSan, and 181/181
+  with physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
