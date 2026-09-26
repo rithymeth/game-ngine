@@ -66,6 +66,13 @@ bool LoadBinary(const TypeInfo& type, void* object, std::span<const u8> bytes, L
 using MigrationFn = void (*)(u16 from_version, Json& data);
 void RegisterMigration(const TypeInfo& type, MigrationFn fn);
 
+// Brings a struct's saved JSON object up to `type`'s current version in
+// place: if its "$v" is older, runs the type's migration hook (if any) and
+// sets "$v" to the current version. Loading does this itself; this is for
+// code that works on saved JSON directly (prefab data and overrides).
+// Returns true if `data` was migrated.
+bool MigrateJson(const TypeInfo& type, Json& data);
+
 template <typename T>
 Json ToJson(const T& object) {
     return ToJson(Reflect<T>(), &object);

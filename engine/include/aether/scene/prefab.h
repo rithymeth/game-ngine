@@ -31,6 +31,10 @@ struct PropertyOverride {
     // "position[1]" (vectors are saved as [x, y, z]); "" = the whole component.
     std::string field_path;
     std::string value;      // the field's JSON, as text
+    // The component type's schema version the path and value were written
+    // for (0 = unknown: taken as current). When the C++ type has since been
+    // migrated (a renamed field, say), resolving migrates the override too.
+    u16 version = 0;
 };
 
 // An instance of another prefab placed inside this one (nested prefab).
@@ -134,7 +138,15 @@ bool FlattenPrefab(const PrefabData& prefab, const PrefabLookup& find, PrefabDat
 bool FlattenPrefab(const assets::AssetGuid& source, const PrefabLookup& find, PrefabData& out,
                    std::string* error = nullptr, std::vector<PropertyOverride>* orphaned = nullptr);
 
-// Sets (or replaces) an override, or removes one.
+// Brings an override written for an older version of its component type up
+// to date, by running the type's migration hook on just that field: a
+// renamed field gets its new path, a converted value its new form. Returns
+// true if it changed. An override the migration drops is left unchanged (it
+// then shows up as orphaned).
+bool MigrateOverride(PropertyOverride& override_);
+
+// Sets (or replaces) an override, or removes one. The override is stamped
+// with the component type's current schema version.
 void SetOverride(PrefabInstance& instance, PrefabLocalId entity, const std::string& component,
                  const std::string& field_path, const nlohmann::json& value);
 bool RemoveOverride(PrefabInstance& instance, PrefabLocalId entity, const std::string& component,
@@ -226,7 +238,8 @@ AETHER_REFLECT(aether::PropertyOverride, 1,
     AETHER_FIELD(entity),
     AETHER_FIELD(component),
     AETHER_FIELD(field_path),
-    AETHER_FIELD(value)
+    AETHER_FIELD(value),
+    AETHER_FIELD(version)
 )
 
 AETHER_REFLECT(aether::PrefabInstance, 1,

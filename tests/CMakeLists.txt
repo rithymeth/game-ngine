@@ -20,6 +20,7 @@ add_executable(aether_tests
     test_hot_reload.cpp
     test_content_browser.cpp
     test_prefab.cpp
+    test_prefab_library.cpp
     test_assets.cpp
     test_gltf_loader.cpp
 )

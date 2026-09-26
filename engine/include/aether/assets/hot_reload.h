@@ -12,6 +12,8 @@ struct AssetChange {
     enum class Kind {
         Added,      // a new source appeared (and was imported, if it has an importer)
         Reimported, // its source or its .ameta settings changed; `output` is the new data
+        Changed,    // its source changed but it has no importer (prefabs, scenes,
+                    // scripts): the editor reloads it itself, e.g. PrefabLibrary::Reload
         Failed,     // (re)import failed; `output.error` says why. Keep using the old data.
                     // Reported once; retried when the file or its settings change.
         Moved,      // renamed or moved outside the editor (its .ameta went with it)
@@ -53,6 +55,9 @@ private:
     // Source hash + settings of imports that failed: not retried (and not
     // reported again) until the source or its settings change.
     std::unordered_map<AssetGuid, std::string> failed_;
+    // Last seen source hash per asset: assets without an importer are never
+    // marked imported, so needs_import stays set; this tells real edits.
+    std::unordered_map<AssetGuid, std::string> hashes_;
 };
 
 } // namespace aether::assets

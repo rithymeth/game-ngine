@@ -41,6 +41,7 @@ HotReloader::HotReloader(AssetDatabase& database, const ImporterRegistry& import
     for (const AssetRecord* record : database_.All()) {
         if (!record->IsSubAsset()) {
             settings_[record->guid] = SettingsText(database_, record->guid);
+            hashes_[record->guid] = record->source_hash;
         }
     }
 }
@@ -118,6 +119,12 @@ std::vector<AssetChange> HotReloader::Update(FileWatcher::Clock::time_point now)
             }
         }
         settings_[guid] = SettingsText(database_, guid);
+        const bool edited = hashes_[guid] != record->source_hash;
+        hashes_[guid] = record->source_hash;
+        if (import && kind == AssetChange::Kind::Reimported && importers_.Find(record->importer) == nullptr &&
+            !edited && !(old != before.end() && old->second.missing)) {
+            import = false; // no importer, and its content didn't actually change
+        }
         const std::string attempt = record->source_hash + "|" + settings_[guid];
         if (auto failed = failed_.find(guid); failed != failed_.end() && failed->second == attempt) {
             import = false; // this exact input already failed; wait for a change
@@ -141,7 +148,7 @@ std::vector<AssetChange> HotReloader::Update(FileWatcher::Clock::time_point now)
             // The import rewrote the .ameta; that's not a change to react to.
             watcher_.Refresh(path + meta_ext);
         } else if (kind == AssetChange::Kind::Reimported) {
-            continue; // no importer for this type: nothing to reload
+            change.kind = AssetChange::Kind::Changed; // no importer: the editor reloads it itself
         }
         if (kind == AssetChange::Kind::Added) {
             watcher_.Refresh(path + meta_ext); // Scan created it

@@ -428,7 +428,13 @@ struct SystemDesc {
    - Apply to Prefab writes into a variant's overrides. For entities
      inside nested prefabs it's still to do.
    - The migration-hook test (§9.5) comes with propagation in step 4.
-4. Propagation on prefab save and orphaned override warnings.
+4. ✅ **Done.** Propagation on prefab save and orphaned override warnings.
+   - `PrefabLibrary`, `PropagatePrefabChange` and `CheckScenesUsingPrefab`
+     (the affected-scenes warning list); showing it in the Messages panel
+     is Windows editor work.
+   - Overrides carry their component's schema version and are migrated
+     with it (the §9.5 migration test), by running the type's migration
+     hook on the single overridden field.
 5. Gameplay framework components (Camera, Tags, Layers) and lifecycle
    events.
 6. `SystemDesc` scheduler and fixed timestep with interpolation.
