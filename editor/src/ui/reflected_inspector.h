@@ -1,6 +1,9 @@
 #pragma once
 
+#include "aether/assets/asset_guid.h"
 #include "aether/reflection/reflection.h"
+
+#include <functional>
 
 #include <span>
 #include <string>
@@ -41,6 +44,17 @@ template <typename T>
 InspectResult InspectObject(T& object, const char* id) {
     return InspectObject(reflect::Reflect<T>(), &object, id);
 }
+
+// Asset reference fields (assets::AssetRef<T>) are drawn as a dropdown of
+// the assets of that type. The editor supplies the list — typically from its
+// AssetDatabase — as (GUID, display name) pairs for an importer name such as
+// "Model". With no provider set, a reference shows its GUID read-only.
+struct AssetChoice {
+    assets::AssetGuid guid;
+    std::string name;
+};
+using AssetListProvider = std::function<std::vector<AssetChoice>(const char* asset_type)>;
+void SetAssetListProvider(AssetListProvider provider);
 
 // True if InspectObject would show at least one field of `type`.
 bool HasInspectableFields(const reflect::TypeInfo& type);
