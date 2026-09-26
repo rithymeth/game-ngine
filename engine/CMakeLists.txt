@@ -10,9 +10,11 @@ add_library(aether_engine STATIC
     src/scene/serialization.cpp
     src/assets/stb_image_impl.cpp
     src/assets/image.cpp
+    src/assets/gltf_loader.cpp
 )
 
 target_include_directories(aether_engine PRIVATE ${stb_SOURCE_DIR})
+target_link_libraries(aether_engine PRIVATE nlohmann_json::nlohmann_json)
 
 if(WIN32)
     target_sources(aether_engine PRIVATE

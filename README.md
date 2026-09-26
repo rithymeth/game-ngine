@@ -467,12 +467,47 @@ Not yet started: full split-sum prefiltered specular IBL with roughness-
 dependent mip selection and a BRDF LUT — the current specular reflection is
 sharp regardless of roughness, just faded in strength.
 
+### Follow-up: glTF mesh loading (`aether::assets::LoadGltf`)
+
+`engine/include/aether/assets/gltf_loader.h` loads real glTF 2.0 assets: JSON
+parsed via `nlohmann::json` (`FetchContent`-fetched — a real, well-tested
+parser rather than a hand-rolled one just for this), vertex data resolved
+from either an external `.bin` file (relative to the `.gltf` path) or an
+embedded `data:` base64 URI (own base64 decoder, ~30 lines). Scope:
+POSITION/NORMAL/TEXCOORD_0 attributes, indexed triangle-mode primitives, and
+`pbrMetallicRoughness` materials with file-URI textures — a direct match for
+the engine's own PBR metallic-roughness workflow (`pbr_demo`), so no
+material-model conversion is needed. Not handled: the node hierarchy/
+transform tree (every primitive loads as if it were the scene's only node),
+skinning/animation, embedded (data-URI) images, and non-metallic-roughness
+material extensions.
+
+Verified two ways: unit tests (`tests/test_gltf_loader.cpp`) against a
+hand-built triangle asset with an embedded base64 buffer (exact
+positions/normals/UVs/indices, plus a materials-defaulted-per-spec case and
+malformed-JSON/missing-file failure cases), and a genuine end-to-end render
+(`gltf_demo/`) of `assets/models/test_cube.gltf` — a real external `.gltf` +
+`.bin` file pair, the code path the embedded-base64 unit tests don't
+exercise. `gltf_demo` builds real GPU vertex/index buffers straight from the
+loaded data and renders the cube with the loaded material's `baseColorFactor`
+as albedo (deliberately simple Lambertian+Blinn-Phong shading, not the full
+Cook-Torrance pipeline — this demo's job is proving the loaded data is
+genuinely usable, not re-proving the BRDF); the rendered output shows correct
+per-face normals and the expected material color, confirmed visually.
+
+While testing this, caught a transcription error in the unit test's own
+hand-typed base64 payload (a duplicated segment, giving a 114-byte buffer
+instead of the intended 102) by actually running the test and getting a
+specific, localized `CHECK failed: prim.indices[1] == 1` rather than
+silently trusting the payload was correct — regenerated it programmatically
+instead of re-editing it by hand.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
 or GCC), and network access the first time you configure (to fetch Jolt
-Physics, Dear ImGui, Vulkan-Headers, stb_image, and — on a Vulkan-enabled
-Windows build — a SPIR-V-capable `dxcompiler.dll` release).
+Physics, Dear ImGui, Vulkan-Headers, stb_image, nlohmann/json, and — on a
+Vulkan-enabled Windows build — a SPIR-V-capable `dxcompiler.dll` release).
 
 ```bash
 cmake -S . -B build

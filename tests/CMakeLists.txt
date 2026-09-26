@@ -7,6 +7,7 @@ add_executable(aether_tests
     test_ecs.cpp
     test_serialization.cpp
     test_assets.cpp
+    test_gltf_loader.cpp
 )
 
 target_link_libraries(aether_tests PRIVATE Aether::Engine)

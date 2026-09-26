@@ -36,6 +36,18 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(stb)
 
+# nlohmann/json for the glTF loader's .gltf JSON parsing — a real,
+# well-tested parser (spec-correct string escaping/unicode/number handling)
+# rather than a hand-rolled one just for this.
+set(JSON_BuildTests OFF CACHE INTERNAL "")
+FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.12.0
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(nlohmann_json)
+
 if(AETHER_BUILD_PHYSICS)
     # Jolt defaults to the static MSVC runtime (/MT) on MSVC; our own targets
     # use the default dynamic runtime (/MD), and linking a /MT static lib
@@ -154,4 +166,5 @@ endif()
 if(WIN32)
     add_subdirectory(rhi_demo)
     add_subdirectory(pbr_demo)
+    add_subdirectory(gltf_demo)
 endif()
