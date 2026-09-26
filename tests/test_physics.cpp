@@ -140,3 +140,64 @@ AETHER_TEST(RigidBody_SerializerRoundTripsShapeDataNotHandle) {
     AETHER_CHECK(restored.is_static == true);
     AETHER_CHECK(restored.body_id.IsInvalid()); // handle deliberately NOT preserved
 }
+
+#include "aether/physics/components.h"
+#include "aether/scene/serialization.h"
+
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <string>
+
+AETHER_TEST(PhysicsComponents_AreReflectedAndRoundTripThroughBothSceneFormats) {
+    RegisterPhysicsComponentSerializers();
+
+    const reflect::TypeInfo& transform = reflect::Reflect<Transform>();
+    AETHER_CHECK(transform.FindField("position") && transform.FindField("rotation"));
+    const reflect::TypeInfo& body = reflect::Reflect<RigidBody>();
+    AETHER_CHECK(body.fields.size() == 3);            // radius, mass, is_static
+    AETHER_CHECK(body.FindField("body_id") == nullptr); // live handle: never reflected
+
+    const ComponentInfo& body_info = GetComponentInfo(GetComponentId<RigidBody>());
+    AETHER_CHECK(body_info.encoding == ComponentEncoding::Custom); // binary format unchanged
+    AETHER_CHECK(body_info.reflected == &body);
+    AETHER_CHECK(std::string(GetComponentInfo(GetComponentId<Transform>()).name) == "Transform");
+
+    World world;
+    RigidBody rb;
+    rb.radius = 0.75f;
+    rb.mass = 3.0f;
+    rb.is_static = true;
+    rb.body_id = JPH::BodyID(12345);
+    world.CreateEntity(Transform{Vec3(1, 2, 3), Quaternion::Identity()}, rb);
+
+    auto check = [](World& loaded) {
+        int count = 0;
+        loaded.ForEach<Transform, RigidBody>([&](Transform& t, RigidBody& b) {
+            ++count;
+            AETHER_CHECK(t.position.y == 2.0f && t.rotation.w == 1.0f);
+            AETHER_CHECK(b.radius == 0.75f && b.mass == 3.0f && b.is_static);
+            AETHER_CHECK(b.body_id.IsInvalid()); // must be recreated, never restored
+        });
+        AETHER_CHECK(count == 1);
+    };
+
+    std::string binary_path = (std::filesystem::temp_directory_path() / "aether_test_physics.aesc").string();
+    AETHER_CHECK(SaveScene(world, binary_path));
+    World from_binary;
+    AETHER_CHECK(LoadScene(from_binary, binary_path));
+    check(from_binary);
+
+    std::string json_path = (std::filesystem::temp_directory_path() / "aether_test_physics.ascene").string();
+    AETHER_CHECK(SaveSceneJson(world, json_path));
+    std::ifstream file(json_path);
+    std::string text((std::istreambuf_iterator<char>(file)), {});
+    AETHER_CHECK(text.find("\"RigidBody\"") != std::string::npos);
+    AETHER_CHECK(text.find("body_id") == std::string::npos);
+    World from_json;
+    AETHER_CHECK(LoadSceneJson(from_json, json_path));
+    check(from_json);
+
+    std::filesystem::remove(binary_path);
+    std::filesystem::remove(json_path);
+}

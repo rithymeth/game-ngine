@@ -329,8 +329,12 @@ The goal is to change the ECS as little as possible:
    legacy test builds a v1 file byte by byte in the test itself, rather than
    using a checked-in fixture, because v1 component names are
    compiler-specific `typeid` names.
-5. Reflect `Transform`, `Parent`, `ModelRenderer`, `RigidBody` (fields
-   only), and `EditorCamera`.
+5. ✅ **Done.** Reflected `Transform`, `RigidBody` (fields only) and
+   `ModelRenderer`, which moved to `engine/include/aether/scene/components.h`
+   and needed the new `char[N]` support. Two components are left out:
+   - `Parent` holds a live `Entity` handle and stays raw until Phase 7's
+     `EntityGuid` (§7.1 of design/PHASE_SPECS.md).
+   - `EditorCamera` turned out not to be an ECS component.
 6. Editor: generic reflected Inspector and "Add Component". Remove the
    hand-written inspector code.
 

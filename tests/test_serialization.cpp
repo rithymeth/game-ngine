@@ -352,3 +352,49 @@ AETHER_TEST(SceneJson_ToleratesUnknownComponentsAndRejectsNonScenes) {
     AETHER_CHECK(!LoadSceneJson(other, path));
     std::filesystem::remove(path);
 }
+
+#include "aether/scene/components.h"
+
+AETHER_TEST(Serialization_ModelRendererIsReflectedAndKeepsLegacyRawData) {
+    const ComponentInfo& info = GetComponentInfo(GetComponentId<ModelRenderer>());
+    AETHER_CHECK(std::string(info.name) == "ModelRenderer");
+    AETHER_CHECK(info.encoding == ComponentEncoding::Reflected);
+    AETHER_CHECK(info.trivially_copyable);
+
+    // An editor scene from before the move: v1 format, ModelRenderer stored
+    // raw under an old name (registered as an alias, as the editor does).
+    RegisterComponentAlias<ModelRenderer>("OldEditorModelRendererName");
+    ModelRenderer old_component;
+    SetModelPath(old_component, "models/test_cube.gltf");
+    std::vector<u8> file = {'A', 'E', 'S', 'C'};
+    PutU32(file, 1);
+    PutU32(file, 1);
+    PutU64(file, 0b1);
+    PutRecordV1(file, "OldEditorModelRendererName", &old_component, sizeof(old_component));
+    std::string path = TempScenePath("aether_test_model_v1.aesc");
+    AETHER_CHECK(fs::WriteFileBytes(path, file.data(), file.size()));
+
+    World world;
+    AETHER_CHECK(LoadScene(world, path));
+    int found = 0;
+    world.ForEach<ModelRenderer>([&](ModelRenderer& r) {
+        ++found;
+        AETHER_CHECK(std::string(r.asset_path) == "models/test_cube.gltf");
+    });
+    AETHER_CHECK(found == 1);
+
+    // And as JSON, the path is a readable string.
+    std::string json_path = TempScenePath("aether_test_model.ascene");
+    AETHER_CHECK(SaveSceneJson(world, json_path));
+    std::vector<u8> bytes = ReadAll(json_path);
+    AETHER_CHECK(std::string(bytes.begin(), bytes.end()).find("\"asset_path\": \"models/test_cube.gltf\"") !=
+                 std::string::npos);
+    World from_json;
+    AETHER_CHECK(LoadSceneJson(from_json, json_path));
+    from_json.ForEach<ModelRenderer>([&](ModelRenderer& r) {
+        AETHER_CHECK(std::string(r.asset_path) == "models/test_cube.gltf");
+    });
+
+    std::filesystem::remove(path);
+    std::filesystem::remove(json_path);
+}
