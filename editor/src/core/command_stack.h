@@ -44,8 +44,9 @@ struct CommandContext {
     World& world;
     GuidIndex& guids;
     EditorHooks* hooks = nullptr;
-    // A prefab asset's loaded data by GUID (null if unavailable). With it,
-    // field edits on prefab instances are recorded as overrides (§9.3).
+    // A prefab asset's data by GUID, flattened (FlattenPrefab: nesting and
+    // variants resolved), or null if unavailable. With it, field edits on
+    // prefab instances are recorded as overrides (§9.3).
     std::function<const PrefabData*(const assets::AssetGuid&)> find_prefab;
 };
 
