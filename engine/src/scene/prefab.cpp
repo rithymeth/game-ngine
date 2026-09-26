@@ -103,7 +103,135 @@ Json* FindField(Json& root, const std::string& path) {
     return node;
 }
 
+// Builds the smallest JSON holding `value` at `path` (objects for names,
+// null-padded arrays for indices). False if the path is malformed.
+bool SetAtPath(Json& root, const std::string& path, const Json& value) {
+    Json* node = &root;
+    usize i = 0;
+    while (i < path.size()) {
+        if (path[i] == '.') {
+            ++i;
+            continue;
+        }
+        if (path[i] == '[') {
+            const usize close = path.find(']', i);
+            if (close == std::string::npos || close == i + 1) {
+                return false;
+            }
+            const std::string digits = path.substr(i + 1, close - i - 1);
+            if (!std::all_of(digits.begin(), digits.end(), [](unsigned char c) { return std::isdigit(c); }) ||
+                digits.size() > 6) {
+                return false;
+            }
+            const usize index = std::stoul(digits);
+            if (!node->is_array()) {
+                *node = Json::array();
+            }
+            while (node->size() <= index) {
+                node->push_back(nullptr);
+            }
+            node = &(*node)[index];
+            i = close + 1;
+            continue;
+        }
+        usize end = i;
+        while (end < path.size() && path[end] != '.' && path[end] != '[') {
+            ++end;
+        }
+        if (!node->is_object()) {
+            *node = Json::object();
+        }
+        node = &(*node)[path.substr(i, end - i)];
+        i = end;
+    }
+    *node = value;
+    return true;
+}
+
+// The path (in override syntax) at which `target` occurs in `json`.
+bool FindPathOf(const Json& json, const Json& target, const std::string& path, std::string& out) {
+    if (json == target) {
+        out = path;
+        return true;
+    }
+    if (json.is_object()) {
+        for (auto it = json.begin(); it != json.end(); ++it) {
+            if (it.key() != "$v" && FindPathOf(it.value(), target, path.empty() ? it.key() : path + "." + it.key(), out)) {
+                return true;
+            }
+        }
+    } else if (json.is_array()) {
+        for (usize i = 0; i < json.size(); ++i) {
+            if (FindPathOf(json[i], target, path + "[" + std::to_string(i) + "]", out)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+const reflect::TypeInfo* ReflectedComponent(const std::string& name) {
+    const ComponentId id = FindComponentIdByName(name);
+    return id != kInvalidComponentId ? GetComponentInfo(id).reflected : nullptr;
+}
+
+// Migrates every known component's JSON to its type's current version.
+void UpgradeComponents(Json& components) {
+    for (auto it = components.begin(); it != components.end(); ++it) {
+        if (const reflect::TypeInfo* type = ReflectedComponent(it.key())) {
+            reflect::MigrateJson(*type, it.value());
+        }
+    }
+}
+
 } // namespace
+
+bool MigrateOverride(PropertyOverride& override_) {
+    const reflect::TypeInfo* type = ReflectedComponent(override_.component);
+    if (type == nullptr || override_.version == 0 || override_.version >= type->version) {
+        return false;
+    }
+    const Json value = Json::parse(override_.value, nullptr, /*allow_exceptions=*/false);
+    if (value.is_discarded()) {
+        return false;
+    }
+    if (override_.field_path.empty()) {
+        // The whole component: migrate it as saved.
+        Json whole = value;
+        if (!whole.is_object()) {
+            return false;
+        }
+        whole["$v"] = override_.version;
+        reflect::MigrateJson(*type, whole);
+        override_.value = whole.dump();
+        override_.version = type->version;
+        return true;
+    }
+    // Run the migration on just this field, twice: once with a marker, to see
+    // where the field moved, and once with the value, to see what it became.
+    static const Json kMarker = "\u0001aether-override-marker\u0001";
+    Json marked = Json::object();
+    Json valued = Json::object();
+    if (!SetAtPath(marked, override_.field_path, kMarker) || !SetAtPath(valued, override_.field_path, value)) {
+        return false;
+    }
+    marked["$v"] = override_.version;
+    valued["$v"] = override_.version;
+    reflect::MigrateJson(*type, marked);
+    reflect::MigrateJson(*type, valued);
+    std::string new_path;
+    if (!FindPathOf(marked, kMarker, "", new_path) || new_path.empty()) {
+        return false; // dropped by the migration
+    }
+    const Json* migrated = FindField(valued, new_path);
+    if (migrated == nullptr) {
+        return false;
+    }
+    override_.field_path = new_path;
+    override_.value = migrated->dump();
+    override_.version = type->version;
+    return true;
+}
 
 namespace {
 
@@ -112,10 +240,22 @@ namespace {
 // `overrides`, whole-component ones first so a field override on the same
 // component wins. Overrides that can't be applied go to `orphaned`; ones on
 // removed entities are moot and dropped quietly.
+// Component data is migrated to the current schema versions first, and so
+// are overrides written for older ones (`migrated`, if given, receives the
+// overrides as migrated, when any changed).
 std::vector<PrefabEntity> ApplyPrefabEdits(const std::vector<PrefabEntity>& entities, PrefabLocalId root_id,
-                                           const std::vector<PropertyOverride>& overrides,
+                                           const std::vector<PropertyOverride>& original_overrides,
                                            const std::vector<PrefabLocalId>& removed_ids,
-                                           std::vector<PropertyOverride>& orphaned) {
+                                           std::vector<PropertyOverride>& orphaned,
+                                           std::vector<PropertyOverride>* migrated = nullptr) {
+    std::vector<PropertyOverride> overrides = original_overrides;
+    bool any_migrated = false;
+    for (PropertyOverride& override_ : overrides) {
+        any_migrated |= MigrateOverride(override_);
+    }
+    if (any_migrated && migrated != nullptr) {
+        *migrated = overrides;
+    }
     std::vector<PrefabEntity> data;
     std::set<PrefabLocalId> kept;
     std::set<PrefabLocalId> all;
@@ -128,6 +268,7 @@ std::vector<PrefabEntity> ApplyPrefabEdits(const std::vector<PrefabEntity>& enti
         }
         kept.insert(entity.id);
         data.push_back(entity);
+        UpgradeComponents(data.back().components);
     }
 
     std::vector<const PropertyOverride*> ordered;
@@ -513,13 +654,16 @@ bool FlattenPrefab(const assets::AssetGuid& source, const PrefabLookup& find, Pr
 
 void SetOverride(PrefabInstance& instance, PrefabLocalId entity, const std::string& component,
                  const std::string& field_path, const Json& value) {
+    const reflect::TypeInfo* type = ReflectedComponent(component);
+    const u16 version = type != nullptr ? type->version : 0;
     for (PropertyOverride& existing : instance.overrides) {
         if (existing.entity == entity && existing.component == component && existing.field_path == field_path) {
             existing.value = value.dump();
+            existing.version = version;
             return;
         }
     }
-    instance.overrides.push_back({entity, component, field_path, value.dump()});
+    instance.overrides.push_back({entity, component, field_path, value.dump(), version});
 }
 
 bool RemoveOverride(PrefabInstance& instance, PrefabLocalId entity, const std::string& component,
@@ -613,11 +757,12 @@ bool RecordPrefabOverrides(World& world, const GuidIndex& guids, Entity entity, 
     }
     const PrefabLocalId local_id = link->local_id;
     const Json current = reflect::ToJson(*info.reflected, world.GetComponentRaw(entity, component));
+    Json base_copy = *base;
+    reflect::MigrateJson(*info.reflected, base_copy); // compare like with like
     std::vector<std::pair<std::string, Json>> diffs;
-    DiffJson(*base, current, "", diffs);
+    DiffJson(base_copy, current, "", diffs);
 
     PrefabInstance& instance = *world.GetComponent<PrefabInstance>(root);
-    Json base_copy = *base;
     auto& overrides = instance.overrides;
     overrides.erase(std::remove_if(overrides.begin(), overrides.end(),
                                    [&](const PropertyOverride& o) {
@@ -673,6 +818,11 @@ usize ApplyOverridesToPrefab(PrefabData& prefab, PrefabInstance& instance, Prefa
         if (OverrideMatches(*it, entity, component, field_path)) {
             if (PrefabEntity* target = prefab.Find(it->entity); target != nullptr && !target->nested) {
                 if (auto comp = target->components.find(it->component); comp != target->components.end()) {
+                    // Both in the current schema version (the prefab is saved upgraded).
+                    if (const reflect::TypeInfo* type = ReflectedComponent(it->component)) {
+                        reflect::MigrateJson(*type, *comp);
+                    }
+                    MigrateOverride(*it);
                     field = FindField(*comp, it->field_path);
                 }
             }
@@ -720,8 +870,13 @@ ResolveReport ResolvePrefabInstance(World& world, GuidIndex& guids, Entity root,
     const EntityGuid root_guid = EnsureGuid(world, root, &guids);
     const PrefabLocalId root_id = prefab.Root();
 
-    std::vector<PrefabEntity> data =
-        ApplyPrefabEdits(prefab.entities, root_id, instance.overrides, instance.removed_entities, report.orphaned);
+    std::vector<PropertyOverride> migrated;
+    std::vector<PrefabEntity> data = ApplyPrefabEdits(prefab.entities, root_id, instance.overrides,
+                                                      instance.removed_entities, report.orphaned, &migrated);
+    if (!migrated.empty()) {
+        // Keep the overrides in their migrated form (saved with the scene).
+        world.GetComponent<PrefabInstance>(root)->overrides = std::move(migrated);
+    }
 
     // 4. Entities that already belong to this instance, by local id.
     std::unordered_map<PrefabLocalId, Entity> existing;

@@ -436,6 +436,25 @@ void RegisterJsonConverter(const TypeInfo& type, ToJsonConverter to_json, FromJs
     registry.by_type[type.id] = {to_json, from_json};
 }
 
+bool MigrateJson(const TypeInfo& type, Json& data) {
+    if (!data.is_object() || type.kind != TypeKind::Struct || type.serialize_as_array) {
+        return false;
+    }
+    u16 saved_version = 1;
+    if (auto it = data.find("$v"); it != data.end() && it->is_number_integer()) {
+        const i64 v = it->get<i64>();
+        saved_version = static_cast<u16>(v < 1 ? 1 : (v > 0xFFFF ? 0xFFFF : v));
+    }
+    if (saved_version >= type.version) {
+        return false;
+    }
+    if (MigrationFn migrate = FindMigration(type)) {
+        migrate(saved_version, data);
+    }
+    data["$v"] = type.version;
+    return true;
+}
+
 void RegisterMigration(const TypeInfo& type, MigrationFn fn) {
     MigrationRegistry& registry = Migrations();
     std::lock_guard<std::mutex> lock(registry.mutex);
