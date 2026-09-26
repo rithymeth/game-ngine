@@ -65,6 +65,60 @@ AETHER_TEST(SyncPhysicsToTransforms_UpdatesEcsFromSimulation) {
     AETHER_CHECK_NEAR(transform->position.y, 1.0f, 0.1);
 }
 
+// Exercises the exact mechanism the editor's live-edit inspector drives for
+// a position edit (drag the Position widget -> PhysicsWorld::SetPosition),
+// without needing to actually click an ImGui widget.
+AETHER_TEST(PhysicsWorld_SetPositionTeleportsBodyImmediately) {
+    JobSystem jobs(2);
+    PhysicsWorld physics(jobs);
+    JPH::BodyID sphere = physics.CreateSphere(Vec3(0, 5, 0), 0.5f, 1.0f, /*is_static=*/false);
+
+    physics.SetPosition(sphere, Vec3(3, 7, -2));
+
+    Vec3 pos = physics.GetPosition(sphere);
+    AETHER_CHECK_NEAR(pos.x, 3.0f, 1e-4);
+    AETHER_CHECK_NEAR(pos.y, 7.0f, 1e-4);
+    AETHER_CHECK_NEAR(pos.z, -2.0f, 1e-4);
+}
+
+// Exercises the exact mechanism the editor's live-edit inspector drives for
+// a radius/mass/static edit: since Jolt's shape and motion type are
+// effectively immutable once a body exists, the editor destroys the old
+// body and recreates it at the same position with the new radius. This
+// checks that recreation actually took effect physically: a sphere resting
+// on a floor settles higher after its radius grows (resting center = floor
+// top + radius), not just that the API calls didn't crash.
+AETHER_TEST(Editor_LiveEditRadiusRecreatesBodyAndChangesRestingHeight) {
+    JobSystem jobs(2);
+    PhysicsWorld physics(jobs);
+
+    // Floor: box centered at y=0, half-extents (10, 0.5, 10) -> top surface at y=0.5.
+    physics.CreateBox(Vec3(0, 0, 0), Vec3(10, 0.5f, 10));
+
+    JPH::BodyID sphere = physics.CreateSphere(Vec3(0, 5, 0), /*radius=*/0.5f, /*mass=*/1.0f, /*is_static=*/false);
+
+    constexpr f32 kDt = 1.0f / 60.0f;
+    for (int i = 0; i < 240; ++i) {
+        physics.Step(kDt);
+    }
+    f32 settled_small = physics.GetPosition(sphere).y;
+    AETHER_CHECK_NEAR(settled_small, 1.0f, 0.1); // floor top 0.5 + radius 0.5
+
+    // Simulate the editor's "Radius" drag widget changing 0.5 -> 1.5: same
+    // recreate-in-place sequence as the RigidBody edit branch in editor/main.cpp.
+    Vec3 position_at_edit = physics.GetPosition(sphere);
+    physics.DestroyBody(sphere);
+    JPH::BodyID resized = physics.CreateSphere(position_at_edit, /*radius=*/1.5f, /*mass=*/1.0f, /*is_static=*/false);
+    AETHER_CHECK(resized != sphere); // genuinely a new body, not a mutated old one
+
+    for (int i = 0; i < 240; ++i) {
+        physics.Step(kDt);
+    }
+    f32 settled_large = physics.GetPosition(resized).y;
+    AETHER_CHECK_NEAR(settled_large, 2.0f, 0.1); // floor top 0.5 + new radius 1.5
+    AETHER_CHECK(settled_large > settled_small + 0.5f); // unambiguously higher, not noise
+}
+
 AETHER_TEST(RigidBody_SerializerRoundTripsShapeDataNotHandle) {
     RegisterPhysicsComponentSerializers();
 
