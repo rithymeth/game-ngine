@@ -1434,8 +1434,56 @@ the original state exactly and redo-all the state after the run.
   storage order.
 - 100/100 tests pass on GCC 13, on Clang and under ASan/UBSan, and 107/107
   with physics.
-- The editor doesn't route its edits through the stack yet; that's the next
-  step, with the reflection-based built-in commands.
+
+**Step 3: built-in commands, and Ctrl+Z in the editor.**
+
+- **Commands** (`editor/src/core/commands.h`): `SetFieldCommand` (merges
+  drags), `CreateEntityCommand`, `DestroyEntityCommand`,
+  `AddComponentCommand` and `RemoveComponentCommand`. They work for any
+  component through the ECS registry and reflection.
+  - `EntitySnapshot` saves every component of an entity (reflected, raw or
+    custom-serialized), so deleting and undoing restores the entity exactly,
+    with the same GUID.
+  - `CreateEntityCommand::FromExisting` plus the new `CommandStack::Record`
+    capture something other code already spawned, without creating it twice.
+  - `EnsureAllGuids` gives a loaded world unique IDs.
+- **`EditorHooks`**: callbacks for created, destroying, component added or
+  removing, and field changed. They fire on the first execution and on every
+  undo and redo, so systems outside the ECS can follow along. The commands
+  themselves know nothing about physics.
+- **`InspectEntity`** (`editor/src/ui/entity_inspector.h`): the editor's
+  Inspector body.
+  - Every edit becomes a `SetFieldCommand`: the widget's in-place change is
+    reverted and re-applied through the command. A drag is one undo step,
+    ending when the edit is committed.
+  - Adding and removing components (right-click a component's header) are
+    commands too.
+  - The entity's ID is shown as a line of text rather than as an editable
+    card.
+- **Editor**:
+  - Ctrl+Z, and Ctrl+Y or Ctrl+Shift+Z (ignored while typing in a text
+    field), plus an Edit menu showing the next Undo/Redo label.
+  - Spawning a sphere or model and deleting are undoable. The hooks
+    create and destroy Jolt bodies, teleport a body on a `Transform` edit and
+    recreate it on a `RigidBody` edit, including on undo and redo.
+  - Saving marks the history clean; loading a scene clears it and gives
+    every entity an ID.
+  - Stale handles (a selection, pending delete, or `Parent` link to an
+    entity that undo destroyed) are dropped instead of followed. The
+    hierarchy walks check `IsAlive`.
+- **Known gaps, for the next step:**
+  - `Parent` still stores a raw `Entity`, so undoing the delete of a parent
+    doesn't re-link its children.
+  - The old body-list sliders in the "Aether Editor" window still edit
+    directly, not through commands.
+
+**Verified**: 6 new tests, including a headless ImGui test that types a
+value into the Inspector and checks it becomes one labelled, undoable
+command. 106/106 tests pass on GCC 13, on Clang and under ASan/UBSan, and
+113/113 with physics. The editor executable isn't built here (Win32/D3D12).
+Every changed block of `editor/main.cpp` (hooks, shortcuts, Edit menu,
+spawn/save/load, Inspector call, delete loop, stale-link cleanup) was
+compiled together in a harness against the real headers, with no warnings.
 
 ## Building
 
