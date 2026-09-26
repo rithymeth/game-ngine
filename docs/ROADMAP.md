@@ -1,8 +1,14 @@
 # Aether Roadmap: from rendering tech demo to full game engine
 
-> Companion document: [`ROADMAP_DETAILS.md`](ROADMAP_DETAILS.md) has file
-> format examples, a ready-to-build Phase 6 spec, the Blueprint VM opcode
-> table, more editor mockups, shortcuts, effort estimates, and risks.
+> Companion documents (index in [`docs/README.md`](README.md)):
+> - [`ROADMAP_DETAILS.md`](ROADMAP_DETAILS.md): file formats, the Phase 6
+>   build spec, Blueprint VM opcodes, more mockups, shortcuts, estimates, risks
+> - [`design/PHASE_SPECS.md`](design/PHASE_SPECS.md): build specs for
+>   Phases 7, 8, 9, 11 and 13
+> - [`design/EDITOR_UI.md`](design/EDITOR_UI.md): full editor UI design spec
+> - [`design/BLUEPRINT_NODES.md`](design/BLUEPRINT_NODES.md): Blueprint node reference
+> - [`tutorials/FIRST_GAME.md`](tutorials/FIRST_GAME.md): the target
+>   "first game" walkthrough and M2 acceptance test
 
 This document is the plan for turning Aether from what it is now (a strong
 rendering, ECS and physics core with a single-file ImGui editor) into a
