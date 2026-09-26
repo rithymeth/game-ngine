@@ -15,7 +15,8 @@ namespace aether::reflect {
 // Values up to kInlineSize bytes (and kInlineAlign alignment) live inside the
 // Any itself; larger ones (Mat4, big structs) go to the heap. Copying an Any
 // copies its value through TypeInfo::copy_construct; moving an Any leaves the
-// source empty. An empty Any has Type() == nullptr.
+// source empty. An empty Any has Type() == nullptr. Arrays (char[N]) can't be
+// passed by value; use Any::CopyOf, which FieldInfo::Get does for you.
 class Any {
 public:
     static constexpr usize kInlineSize = 32;
@@ -24,7 +25,8 @@ public:
     Any() = default;
 
     template <typename T>
-        requires(!std::is_same_v<std::remove_cvref_t<T>, Any> && Reflected<std::remove_cvref_t<T>>)
+        requires(!std::is_same_v<std::remove_cvref_t<T>, Any> && !std::is_array_v<std::remove_cvref_t<T>> &&
+                 Reflected<std::remove_cvref_t<T>>)
     Any(T&& value) { // NOLINT(google-explicit-constructor): implicit so calls read naturally
         using V = std::remove_cvref_t<T>;
         void* storage = Allocate(Reflect<V>());
