@@ -13,6 +13,7 @@ add_executable(aether_tests
     test_hierarchy.cpp
     test_reflection_arrays.cpp
     test_project.cpp
+    test_asset_database.cpp
     test_assets.cpp
     test_gltf_loader.cpp
 )

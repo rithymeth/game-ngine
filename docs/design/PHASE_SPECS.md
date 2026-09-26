@@ -253,7 +253,11 @@ runs when a project is opened for the first time with the new engine:
 
 ### 8.5 PR breakdown
 
-1. `AssetGuid`, `.ameta` read/write, `AssetDatabase::Scan` with tests.
+1. ✅ **Done.** `AssetGuid`, `.ameta` read/write, `AssetDatabase::Scan` with
+   tests, plus `Move` and `MarkImported`. One rule was added: an unreadable
+   `.ameta` is never overwritten; its asset is skipped with a warning.
+   Referencers and delete-with-reference-check come with `AssetRef` in
+   step 2.
 2. `AssetRef<T>` reflected type, resolution, and migration of
    `ModelRenderer`.
 3. Importer interface and the texture importer with DDC.
