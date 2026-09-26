@@ -379,6 +379,74 @@ side**, not by inspection:
   compared its two backends' pixels directly before this round's screenshot
   tooling existed.
 
+### Follow-up: Unified renderer — real vertex buffers + textures
+
+The Unified Cross-API Renderer above was deliberately narrow: procedural
+vertices, one push-constant block, no vertex buffers or textures. This
+follow-up closes exactly that gap, still with zero backend branching in
+`rhi_demo`'s recording code. `IDevice` gained `CreateVertexBuffer`/
+`CreateIndexBuffer` (host-visible/upload-heap on both backends) and
+`CreateTexture` (uploads into a device-global bindless texture table);
+`ICommandList` gained `BindVertexBuffer`/`BindIndexBuffer`/`DrawIndexed`/
+`BindBindlessTextures`; `PipelineDesc` gained `use_vertex_buffer` (a single
+fixed `{float3 position; float2 uv;}` layout — not a general attribute-list
+API, the same "minimal shape that makes it real" trade-off `PipelineDesc`
+already made) and `enable_bindless_textures`.
+
+- **Bindless texture table**: a fixed `kMaxBindlessTextures = 32` capacity on
+  both backends, sidestepping dynamic Vulkan descriptor-set-layout growth
+  entirely — the layout (and a 1x1 white dummy texture, duplicated into
+  every slot up front) is built once in each backend's constructor, so a
+  pipeline created with `enable_bindless_textures` always sees a stable,
+  fully-populated descriptor layout, never an uninitialized slot. D3D12
+  reuses `gfx::DescriptorHeap`/`gfx::Texture` directly (the same bindless
+  machinery `sandbox`/`pbr_demo`/`gltf_demo` already use); Vulkan builds the
+  equivalent from raw `VkImage`/`VkDescriptorSet` calls, since no existing
+  helper covered that in this codebase yet — a real, staged (not host-visible)
+  upload this time, since texture-sampling performance is the actual point.
+- **Real bug found by actually screenshotting both backends** (not by
+  inspection): the rotating textured quad's rotation was permanently stuck
+  at zero on Vulkan while D3D12 rendered it correctly — caught by comparing
+  screenshots at frame 10 and frame 120 and finding them pixel-identical on
+  Vulkan (i.e. genuinely frozen, not just slow). Root cause: DXC only
+  recognizes the `[[vk::push_constant]]` attribute on a global variable of
+  *struct* type — a plain HLSL `cbuffer` doesn't qualify — so without it, a
+  `cbuffer` silently compiles to an ordinary Vulkan uniform-buffer descriptor
+  instead of an actual push-constant block. No validation layer exists in
+  this environment to flag the mismatch (see `VulkanDevice`'s class comment),
+  so it just read back zeroed/garbage memory from an unbound descriptor
+  slot — the texture index happened to read back as 0 too, which
+  coincidentally *was* the correct index (the only texture created), making
+  the bug invisible in the rendered texture and visible only in the frozen
+  rotation. Fixed by switching to `[[vk::push_constant]] ConstantBuffer<T>`
+  (the attribute's actually-supported form) — but `[[vk::...]]` attribute
+  syntax is a hard parse error under fxc (the D3D12/`D3DCompile` path's
+  compiler), not a harmless ignore, so it can't appear unconditionally in
+  HLSL shared between both compilers. Guarded with `#ifdef __spirv__`
+  (a macro DXC predefines only when compiling with `-spirv`, never fxc) so
+  the C preprocessor strips the attribute before either compiler's parser
+  ever sees it on the branch that doesn't apply.
+- Two register spaces, not one, for the texture array and sampler
+  (`Texture2D g_Textures[32] : register(t0, space0)` /
+  `SamplerState g_Sampler : register(s0, space1)`): DXC's default HLSL→
+  SPIR-V binding assignment is `binding = register number, set = space
+  number`, *regardless of the resource's type letter* — so a texture array
+  at `t0` and a sampler at `s0` in the *same* space would both map to
+  Vulkan `(set=0, binding=0)` and collide (illegal SPIR-V: two descriptors
+  can't share a binding). Putting the sampler in `space1` puts it in a
+  second Vulkan descriptor set instead, with zero effect on the D3D12 root
+  signature (which already tracks `(register, space)` per resource type
+  independently, via the static sampler's own `RegisterSpace = 1`).
+
+Verified visually: `rhi_demo`'s `AETHER_RHI_DEMO_DRAW_UNIFIED=1` mode now
+renders a rotating, checkerboard-textured quad — a real GPU vertex/index
+buffer pair and a real uploaded GPU texture sampled through the bindless
+table — pixel-identical between D3D12 and Vulkan screenshots. 75/75 unit
+tests still pass (this follow-up is GPU pipeline/shader plumbing, not new
+unit-testable pure logic); Clear/Triangle/Cube modes regression-checked on
+both backends, plus 6 quick runs + one 2000-frame run per backend and a
+programmatic-resize test, all stable.
+
 ### Follow-up: asset pipeline (file-based texture loading, cached)
 
 The first item of the post-Phase-5 roadmap: `aether::assets` adds real

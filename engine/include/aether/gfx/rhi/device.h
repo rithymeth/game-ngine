@@ -26,6 +26,26 @@ struct PipelineDesc {
     std::string ps_entry = "PSMain";
     u32 push_constant_size_bytes = 0;
     bool cull_back_face = false;
+
+    // Real vertex-buffer input (the "Unified Cross-API Renderer" vertex
+    // buffers/textures follow-up) instead of procedural SV_VertexID/
+    // gl_VertexIndex-driven vertices: both backends build the identical
+    // fixed input layout — { float3 position; float2 uv; }, matching
+    // ICommandList::BindVertexBuffer's expected vertex stride — when this is
+    // set. Kept to one fixed layout (rather than a general attribute
+    // description list) for the same reason PipelineDesc itself stays
+    // narrow: this is the minimal shape that makes "real vertex buffers,
+    // unified across both backends" true, not a general mesh/material
+    // system (see IDevice's class comment).
+    bool use_vertex_buffer = false;
+
+    // Reserves this pipeline's descriptor layout for the device-global
+    // bindless texture table (IDevice::CreateTexture / kMaxBindlessTextures)
+    // — a Texture2D array + one shared linear/wrap sampler on both backends.
+    // Requires push_constant_size_bytes > 0: with no other way to tell the
+    // shader which bindless index to sample, the caller is expected to carry
+    // it in the push-constant block.
+    bool enable_bindless_textures = false;
 };
 
 // Backend-agnostic device/queue/submission layer, extended with a genuinely
@@ -92,6 +112,27 @@ public:
     // returned handle isn't tied to that particular swap chain instance
     // beyond that.
     virtual PipelineHandle CreatePipeline(const PipelineDesc& desc, ISwapChain& swap_chain) = 0;
+
+    // Real GPU vertex/index buffers (the "Unified Cross-API Renderer" follow-
+    // up) — uploaded once from `data` (host-visible/upload-heap on both
+    // backends, matching this RHI's demo-scale "no staging buffer" trade-off
+    // elsewhere), read via ICommandList::BindVertexBuffer/BindIndexBuffer.
+    // `size_bytes` for CreateVertexBuffer must be a multiple of the
+    // PipelineDesc's fixed vertex stride (sizeof position+uv); `format`
+    // matters only for BindIndexBuffer's stride, not storage.
+    virtual BufferHandle CreateVertexBuffer(const void* data, u64 size_bytes) = 0;
+    virtual BufferHandle CreateIndexBuffer(const void* data, u64 size_bytes, IndexFormat format) = 0;
+
+    // Uploads a tightly-packed RGBA8 texture into the device-global bindless
+    // table and returns its SampledTextureHandle — index i for the i-th
+    // texture created (see kMaxBindlessTextures) is exactly the integer a
+    // shader needs, via a push constant, to sample it from `Texture2D
+    // g_Textures[kMaxBindlessTextures] : register(t0)` (D3D12) / the
+    // equivalent bindless-array binding (Vulkan). Self-contained: internally
+    // records and submits its own short-lived upload command list and waits
+    // on its fence, so the caller doesn't need an already-open command list
+    // (unlike gfx::Texture, which this wraps on the D3D12 side).
+    virtual SampledTextureHandle CreateTexture(u32 width, u32 height, const u8* rgba8_pixels) = 0;
 
     virtual Backend GetBackend() const = 0;
 

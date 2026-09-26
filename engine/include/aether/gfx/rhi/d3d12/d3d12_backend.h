@@ -1,10 +1,14 @@
 #pragma once
 
+#include "aether/gfx/buffer.h"
 #include "aether/gfx/command_list.h"
+#include "aether/gfx/descriptor_heap.h"
 #include "aether/gfx/device.h"
 #include "aether/gfx/rhi/device.h"
 #include "aether/gfx/swap_chain.h"
+#include "aether/gfx/texture.h"
 
+#include <memory>
 #include <vector>
 
 namespace aether::gfx::rhi::d3d12_backend {
@@ -39,6 +43,17 @@ public:
     PipelineHandle CreatePipeline(const PipelineDesc& desc, ISwapChain& swap_chain) override;
     const PipelineRecord& GetPipeline(PipelineHandle handle) const { return pipelines_[handle.index]; }
 
+    BufferHandle CreateVertexBuffer(const void* data, u64 size_bytes) override {
+        return CreateBufferInternal(data, size_bytes);
+    }
+    BufferHandle CreateIndexBuffer(const void* data, u64 size_bytes, IndexFormat) override {
+        return CreateBufferInternal(data, size_bytes);
+    }
+    const gfx::Buffer& GetBuffer(BufferHandle handle) const { return *buffers_[handle.index]; }
+
+    SampledTextureHandle CreateTexture(u32 width, u32 height, const u8* rgba8_pixels) override;
+    DescriptorHeap& BindlessTextureHeap() { return *bindless_texture_heap_; }
+
     std::unique_ptr<ICommandList> CreateComputeCommandList() override;
     u64 SubmitCompute(ICommandList& cmd) override;
     void WaitForComputeFence(u64 fence_value) override { device_.WaitForComputeFence(fence_value); }
@@ -60,9 +75,23 @@ public:
     const TextureRecord& GetTexture(TextureHandle handle) const { return textures_[handle.index]; }
 
 private:
+    BufferHandle CreateBufferInternal(const void* data, u64 size_bytes);
+
     gfx::Device device_;
     std::vector<TextureRecord> textures_;
     std::vector<PipelineRecord> pipelines_;
+    std::vector<std::unique_ptr<gfx::Buffer>> buffers_;
+
+    // The device-global bindless texture table (see kMaxBindlessTextures):
+    // built once here so a pipeline created with enable_bindless_textures
+    // can reference a stable descriptor-table shape from the start, with
+    // every slot pre-filled with dummy_texture_'s SRV (index 0 permanently)
+    // so the debug layer never sees an uninitialized descriptor in the
+    // table's range, regardless of how many real CreateTexture() calls have
+    // happened yet.
+    std::unique_ptr<DescriptorHeap> bindless_texture_heap_;
+    std::unique_ptr<gfx::Texture> dummy_texture_;
+    std::vector<std::unique_ptr<gfx::Texture>> sampled_textures_;
 };
 
 class D3D12SwapChain final : public ISwapChain {
@@ -114,6 +143,11 @@ public:
     void BindPipeline(PipelineHandle pipeline) override;
     void SetPushConstants(const void* data, u32 size_bytes) override;
     void Draw(u32 vertex_count) override;
+
+    void BindVertexBuffer(BufferHandle buffer, u32 stride_bytes) override;
+    void BindIndexBuffer(BufferHandle buffer, IndexFormat format) override;
+    void DrawIndexed(u32 index_count) override;
+    void BindBindlessTextures() override;
 
     void* NativeHandle() const override { return cmd_.Get(); }
 

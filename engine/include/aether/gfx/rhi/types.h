@@ -43,4 +43,36 @@ struct PipelineHandle {
     bool IsValid() const { return index != static_cast<u32>(-1); }
 };
 
+// Opaque handle into a backend device's internal vertex/index buffer table —
+// see IDevice::CreateVertexBuffer/CreateIndexBuffer. Never dereferenced by
+// calling code.
+struct BufferHandle {
+    u32 index = static_cast<u32>(-1);
+    bool IsValid() const { return index != static_cast<u32>(-1); }
+};
+
+// Opaque handle into a backend device's global bindless texture table — see
+// IDevice::CreateTexture. Unlike TextureHandle (render-target/backbuffer
+// textures, tracked in a separate table), a SampledTextureHandle's `index`
+// IS the value a shader receives to select this texture, matching the
+// bindless convention gfx::DescriptorHeap/gfx::Texture already use
+// elsewhere in this engine (see descriptor_heap.h's comment) — there's no
+// per-draw descriptor rebinding, ICommandList::BindBindlessTextures() binds
+// the whole table once and a pipeline's push constants carry the index.
+struct SampledTextureHandle {
+    u32 index = static_cast<u32>(-1);
+    bool IsValid() const { return index != static_cast<u32>(-1); }
+};
+
+// Fixed capacity of the device-global bindless texture table both backends
+// build: a real bindless design would grow this dynamically (see
+// gfx::DescriptorHeap's free-list allocator for what that looks like on
+// D3D12), but a fixed small capacity, sized well above what any demo built
+// against this RHI actually needs, avoids Vulkan descriptor-set-layout
+// recreation entirely — the layout (and the dummy-filled descriptor set) is
+// built once, in each IDevice implementation's constructor.
+constexpr u32 kMaxBindlessTextures = 32;
+
+enum class IndexFormat { UInt16, UInt32 };
+
 } // namespace aether::gfx::rhi

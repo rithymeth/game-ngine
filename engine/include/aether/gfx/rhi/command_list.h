@@ -59,6 +59,26 @@ public:
     // driven, no vertex buffer) as a triangle list.
     virtual void Draw(u32 vertex_count) = 0;
 
+    // Real vertex/index buffers + bindless textures (the "Unified Cross-API
+    // Renderer" follow-up) — must be called after BindPipeline, with a
+    // pipeline created with use_vertex_buffer/enable_bindless_textures set
+    // accordingly. `stride_bytes` must match the fixed { float3 position;
+    // float2 uv; } layout PipelineDesc::use_vertex_buffer bakes into the
+    // pipeline (both backends assert this rather than silently misreading
+    // vertex data at the wrong stride).
+    virtual void BindVertexBuffer(BufferHandle buffer, u32 stride_bytes) = 0;
+    virtual void BindIndexBuffer(BufferHandle buffer, IndexFormat format) = 0;
+    virtual void DrawIndexed(u32 index_count) = 0;
+
+    // Binds the device-global bindless texture table (IDevice::CreateTexture)
+    // for the currently-bound pipeline (must have been created with
+    // enable_bindless_textures = true). One call per draw sequence is enough
+    // — the whole table is bound at once, same as gfx::DescriptorHeap's
+    // bindless convention elsewhere in this engine; which texture a given
+    // draw actually samples is selected shader-side by an index carried in
+    // SetPushConstants' data, not by anything this call takes.
+    virtual void BindBindlessTextures() = 0;
+
     // Escape hatch: the backend-native command list/buffer pointer
     // (ID3D12GraphicsCommandList* for D3D12, VkCommandBuffer for Vulkan,
     // reinterpret_cast from a uintptr_t on the Vulkan side since VkCommandBuffer

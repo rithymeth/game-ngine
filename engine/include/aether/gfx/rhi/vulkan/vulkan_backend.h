@@ -26,6 +26,23 @@ struct PipelineRecord {
     VkPipeline pipeline = VK_NULL_HANDLE;
 };
 
+// Host-visible + host-coherent, matching the rest of this RHI's demo-scale
+// "no staging buffer" trade-off for vertex/index data (see
+// IDevice::CreateVertexBuffer's comment).
+struct BufferRecord {
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+};
+
+// A real (device-local, staged) sampled texture — unlike BufferRecord above,
+// texture sampling performance is the entire point of CreateTexture, so this
+// one goes through a proper staging-buffer upload into DEVICE_LOCAL memory.
+struct SampledTextureRecord {
+    VkImage image = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkImageView view = VK_NULL_HANDLE;
+};
+
 // Vulkan counterpart to d3d12_backend::D3D12Device. Notably: this
 // environment has the Vulkan loader (a GPU driver ships it) but not the
 // LunarG validation layers, which only come with the full SDK — so unlike
@@ -53,6 +70,27 @@ public:
 
     PipelineHandle CreatePipeline(const PipelineDesc& desc, ISwapChain& swap_chain) override;
     const PipelineRecord& GetPipeline(PipelineHandle handle) const { return pipelines_[handle.index]; }
+
+    BufferHandle CreateVertexBuffer(const void* data, u64 size_bytes) override;
+    BufferHandle CreateIndexBuffer(const void* data, u64 size_bytes, IndexFormat format) override;
+    const BufferRecord& GetBuffer(BufferHandle handle) const { return buffers_[handle.index]; }
+
+    SampledTextureHandle CreateTexture(u32 width, u32 height, const u8* rgba8_pixels) override;
+
+    // The device-global bindless texture table — TWO descriptor sets, not
+    // one: set 0 is a SAMPLED_IMAGE array (kMaxBindlessTextures slots,
+    // matching the shared HLSL's `Texture2D g_Textures[32] : register(t0,
+    // space0)`), set 1 is a single SAMPLER (matching `SamplerState
+    // g_Sampler : register(s0, space1)`). See the "Unified mode's
+    // textured-quad pipeline" comment in rhi_demo/main.cpp for why the
+    // shared HLSL puts them in different register spaces (hence different
+    // Vulkan descriptor sets) rather than combining them — both built once
+    // in the constructor so CreatePipeline can reference stable layouts from
+    // the very first enable_bindless_textures pipeline.
+    VkDescriptorSetLayout BindlessTextureSetLayout() const { return bindless_texture_set_layout_; }
+    VkDescriptorSetLayout BindlessSamplerSetLayout() const { return bindless_sampler_set_layout_; }
+    VkDescriptorSet BindlessTextureSet() const { return bindless_texture_set_; }
+    VkDescriptorSet BindlessSamplerSet() const { return bindless_sampler_set_; }
 
     Backend GetBackend() const override { return Backend::Vulkan; }
     void* NativeHandle() const override { return device_; }
@@ -111,6 +149,26 @@ private:
 
     std::vector<TextureRecord> textures_;
     std::vector<PipelineRecord> pipelines_;
+    std::vector<BufferRecord> buffers_;
+    std::vector<SampledTextureRecord> sampled_textures_;
+
+    VkDescriptorSetLayout bindless_texture_set_layout_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout bindless_sampler_set_layout_ = VK_NULL_HANDLE;
+    VkDescriptorPool bindless_pool_ = VK_NULL_HANDLE;
+    VkDescriptorSet bindless_texture_set_ = VK_NULL_HANDLE;
+    VkDescriptorSet bindless_sampler_set_ = VK_NULL_HANDLE;
+    VkSampler bindless_sampler_ = VK_NULL_HANDLE;
+
+    // A 1x1 white dummy image, referenced by every bindless descriptor slot
+    // no real CreateTexture() call has claimed yet — see
+    // D3D12Device::dummy_texture_'s comment for why every slot needs a valid
+    // descriptor from the start, not just the ones a particular draw
+    // actually samples.
+    SampledTextureRecord dummy_texture_;
+
+    BufferHandle CreateBufferInternal(const void* data, u64 size_bytes);
+    void CreateBindlessTextureInfrastructure();
+    SampledTextureRecord UploadTextureRecord(u32 width, u32 height, const u8* rgba8_pixels);
 };
 
 class VulkanSwapChain final : public ISwapChain {
@@ -198,6 +256,11 @@ public:
     void BindPipeline(PipelineHandle pipeline) override;
     void SetPushConstants(const void* data, u32 size_bytes) override;
     void Draw(u32 vertex_count) override;
+
+    void BindVertexBuffer(BufferHandle buffer, u32 stride_bytes) override;
+    void BindIndexBuffer(BufferHandle buffer, IndexFormat format) override;
+    void DrawIndexed(u32 index_count) override;
+    void BindBindlessTextures() override;
 
     void* NativeHandle() const override { return command_buffer_; }
 

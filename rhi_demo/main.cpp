@@ -33,19 +33,26 @@
 //    (aether::Mat4, the same PerspectiveRH/LookAtRH sandbox/main.cpp uses).
 //
 //  - AETHER_RHI_DEMO_DRAW_UNIFIED=1 (highest priority — wins over both of the
-//    above): the "Unified Cross-API Renderer" follow-up's actual proof.
-//    Triangle/Cube mode above still each pick between two hand-written
-//    backend-specific implementations at startup (`if (backend == ...)`);
-//    Unified mode instead calls IDevice::CreatePipeline once and then
-//    records every frame purely through
-//    ICommandList::BeginRenderPass/BindPipeline/SetPushConstants/Draw/
-//    EndRenderPass — the exact same calls, in the exact same order, with
-//    zero backend branching in this file, produce the same rotating
-//    triangle on both D3D12 and Vulkan. What makes this possible is
-//    genuinely narrow (see PipelineDesc's comment): procedural vertices, one
-//    push-constant block, no vertex buffers/textures/descriptors — Cube
-//    mode's real vertex buffers and depth buffer are exactly the kind of
-//    thing still requiring the backend-specific NativeHandle() escape hatch.
+//    above): the "Unified Cross-API Renderer" follow-up's actual proof, now
+//    including its own "vertex buffers + textures" follow-up. Triangle/Cube
+//    mode above still each pick between two hand-written backend-specific
+//    implementations at startup (`if (backend == ...)`); Unified mode
+//    instead calls IDevice::CreatePipeline/CreateVertexBuffer/
+//    CreateIndexBuffer/CreateTexture once and then records every frame
+//    purely through ICommandList::BeginRenderPass/BindPipeline/
+//    BindBindlessTextures/BindVertexBuffer/BindIndexBuffer/SetPushConstants/
+//    DrawIndexed/EndRenderPass — the exact same calls, in the exact same
+//    order, with zero backend branching in this file, render the same
+//    rotating textured quad (a real GPU vertex/index buffer pair, a real
+//    uploaded GPU texture sampled through a device-global bindless
+//    descriptor table) on both D3D12 and Vulkan. This used to be
+//    procedural-vertices-only with no textures/descriptors at all (see
+//    PipelineDesc's comment for what's still narrow: one fixed vertex
+//    layout, one push-constant block, a fixed-capacity bindless texture
+//    table rather than a general material/mesh system) — Cube mode's real
+//    vertex buffers and depth buffer above still exist as a second, older
+//    proof that predates the RHI having its own unified buffer/texture
+//    support, and are kept as-is for that historical comparison.
 //
 // Set AETHER_RHI_DEMO_MAX_FRAMES=<N> to auto-close after N frames instead of
 // waiting for the window to be closed, for scripted/automated verification.
@@ -129,6 +136,114 @@ float4 PSMain(PSInput input) : SV_TARGET {
     return float4(input.color, 1.0);
 }
 )";
+
+// ---------------------------------------------------------------------
+// Unified mode's textured-quad pipeline: the "vertex buffers + textures"
+// follow-up. g_Textures/g_Sampler deliberately live in different HLSL
+// register spaces (t0 space0 vs s0 space1) — not because D3D12 needs that,
+// but because DXC's default HLSL->SPIR-V binding assignment is
+// `binding = register number, set = space number` *regardless of the
+// resource's type letter*, so a texture array at t0 and a sampler at s0 in
+// the SAME space would both map to Vulkan (set=0, binding=0) and collide
+// (illegal SPIR-V — two descriptors can't share a binding). Putting the
+// sampler in space1 puts it in a second Vulkan descriptor set instead, with
+// zero effect on the D3D12 root signature (which already tracks (register,
+// space) per-resource-type independently) — see IDevice::CreatePipeline's
+// two backend implementations for how each side wires this up.
+// ---------------------------------------------------------------------
+
+constexpr const char* kUnifiedTexturedQuadShaderSource = R"(
+// ConstantBuffer<T> + [[vk::push_constant]], not a plain `cbuffer` — DXC
+// only recognizes the push_constant attribute on a global variable of
+// struct type (a plain HLSL `cbuffer` doesn't qualify), and without it a
+// cbuffer compiles to an ordinary Vulkan uniform-buffer descriptor instead
+// of an actual push-constant block — silently: no validation layer is
+// available in this environment to flag the mismatch (see VulkanDevice's
+// class comment), it just reads back whatever garbage happens to occupy
+// that unbound descriptor slot, which is how this was actually caught (the
+// quad's rotation was permanently stuck at zero on Vulkan while D3D12 —
+// unaffected, since D3D12 root 32-bit constants don't go through this
+// DXC-specific mapping at all — rotated correctly). `[[vk::push_constant]]`
+// on a `ConstantBuffer<T>` global is DXC/fxc-portable: fxc (the D3D12
+// path's compiler) ignores the unrecognized `[[vk::...]]` attribute rather
+// than erroring on it, and ConstantBuffer<T> at register(b0) still binds to
+// the same root-constants slot a plain cbuffer would.
+struct PushConstants {
+    float g_Time;
+    uint g_TextureIndex;
+};
+// `[[vk::push_constant]]` uses attribute syntax fxc (the D3D12/D3DCompile
+// path's compiler, unlike DXC) can't parse at all — a hard syntax error,
+// not a harmless "unrecognized attribute" ignore, so it can't appear
+// unconditionally in HLSL source compiled by both. `__spirv__` is a macro
+// DXC predefines only when compiling with `-spirv` (see
+// CompileHLSLToSPIRV) — never defined for fxc's D3DCompile path — so this
+// `#ifdef` is resolved by the C preprocessor stage, before either
+// compiler's parser ever sees the attribute token on the branch that
+// doesn't apply to it.
+#ifdef __spirv__
+[[vk::push_constant]]
+#endif
+ConstantBuffer<PushConstants> g_PC : register(b0);
+
+struct VSInput {
+    float3 position : POSITION;
+    float2 uv : TEXCOORD0;
+};
+
+struct PSInput {
+    float4 position : SV_POSITION;
+    float2 uv : TEXCOORD0;
+};
+
+Texture2D g_Textures[32] : register(t0, space0);
+SamplerState g_Sampler : register(s0, space1);
+
+PSInput VSMain(VSInput input) {
+    float c = cos(g_PC.g_Time);
+    float s = sin(g_PC.g_Time);
+    float2 rotated = float2(input.position.x * c - input.position.y * s,
+                             input.position.x * s + input.position.y * c);
+    PSInput result;
+    result.position = float4(rotated, 0.0, 1.0);
+    result.uv = input.uv;
+    return result;
+}
+
+float4 PSMain(PSInput input) : SV_TARGET {
+    return g_Textures[g_PC.g_TextureIndex].Sample(g_Sampler, input.uv);
+}
+)";
+
+struct UnifiedVertex {
+    f32 pos[3];
+    f32 uv[2];
+};
+
+struct UnifiedPushConstants {
+    f32 time;
+    u32 texture_index;
+};
+
+// A tiny procedural checkerboard — deliberately low-resolution and
+// high-contrast so a screenshot makes it immediately obvious whether the
+// texture actually reached the shader (as opposed to sampling garbage or
+// the dummy white placeholder every unclaimed bindless slot starts with).
+std::vector<u8> GenerateCheckerboardPixels(u32 size, u32 cell_size) {
+    std::vector<u8> pixels(static_cast<usize>(size) * size * 4);
+    for (u32 y = 0; y < size; ++y) {
+        for (u32 x = 0; x < size; ++x) {
+            bool light = ((x / cell_size) + (y / cell_size)) % 2 == 0;
+            u8 value = light ? 235 : 40;
+            u8* p = &pixels[(static_cast<usize>(y) * size + x) * 4];
+            p[0] = value;
+            p[1] = light ? value : static_cast<u8>(80);
+            p[2] = light ? value : static_cast<u8>(200);
+            p[3] = 255;
+        }
+    }
+    return pixels;
+}
 
 // ---------------------------------------------------------------------
 // D3D12 triangle pipeline
@@ -1465,13 +1580,34 @@ int main() {
         // Unified mode's pipeline: ONE CreatePipeline call, no backend
         // branch — the D3D12/Vulkan-specific root signature/PSO vs. pipeline
         // layout/render pass/pipeline creation all happens inside
-        // IDevice::CreatePipeline, hidden from this call site.
+        // IDevice::CreatePipeline, hidden from this call site. Same for the
+        // vertex/index buffers and texture below: CreateVertexBuffer/
+        // CreateIndexBuffer/CreateTexture are the "vertex buffers + textures"
+        // follow-up's actual proof — no backend branch here either.
         PipelineHandle unified_pipeline;
+        BufferHandle unified_vertex_buffer;
+        BufferHandle unified_index_buffer;
+        SampledTextureHandle unified_texture;
         if (mode == DemoMode::Unified) {
             PipelineDesc pipeline_desc;
-            pipeline_desc.hlsl_source = kTriangleShaderSource;
-            pipeline_desc.push_constant_size_bytes = sizeof(f32);
+            pipeline_desc.hlsl_source = kUnifiedTexturedQuadShaderSource;
+            pipeline_desc.push_constant_size_bytes = sizeof(UnifiedPushConstants);
+            pipeline_desc.use_vertex_buffer = true;
+            pipeline_desc.enable_bindless_textures = true;
             unified_pipeline = device->CreatePipeline(pipeline_desc, *swap_chain);
+
+            UnifiedVertex quad_vertices[4] = {
+                {{-0.6f, -0.6f, 0.0f}, {0.0f, 1.0f}},
+                {{0.6f, -0.6f, 0.0f}, {1.0f, 1.0f}},
+                {{0.6f, 0.6f, 0.0f}, {1.0f, 0.0f}},
+                {{-0.6f, 0.6f, 0.0f}, {0.0f, 0.0f}},
+            };
+            u32 quad_indices[6] = {0, 1, 2, 0, 2, 3};
+            unified_vertex_buffer = device->CreateVertexBuffer(quad_vertices, sizeof(quad_vertices));
+            unified_index_buffer = device->CreateIndexBuffer(quad_indices, sizeof(quad_indices), IndexFormat::UInt32);
+
+            std::vector<u8> checker_pixels = GenerateCheckerboardPixels(/*size=*/64, /*cell_size=*/8);
+            unified_texture = device->CreateTexture(64, 64, checker_pixels.data());
         }
 
         std::vector<std::unique_ptr<ICommandList>> command_lists;
@@ -1565,18 +1701,25 @@ int main() {
                 used_before[slot] = true;
             } else if (mode == DemoMode::Unified) {
                 // The actual unification proof: this exact call sequence —
-                // BeginRenderPass/BindPipeline/SetPushConstants/Draw/
-                // EndRenderPass, with NO D3D12- or Vulkan-specific code
-                // anywhere in this file — renders the rotating triangle on
-                // both backends. D3D12/Vulkan's opposite NDC +Y convention
-                // is handled inside BeginRenderPass's Vulkan implementation
-                // (a negative-height viewport, entirely host-side), not
-                // here — so this call site really doesn't know or care which
+                // BeginRenderPass/BindPipeline/BindBindlessTextures/
+                // BindVertexBuffer/BindIndexBuffer/SetPushConstants/
+                // DrawIndexed/EndRenderPass, with NO D3D12- or Vulkan-
+                // specific code anywhere in this file — renders the same
+                // rotating textured quad, sampling a real GPU texture
+                // through a real GPU vertex/index buffer pair, on both
+                // backends. D3D12/Vulkan's opposite NDC +Y convention is
+                // handled inside BeginRenderPass's Vulkan implementation (a
+                // negative-height viewport, entirely host-side), not here —
+                // so this call site really doesn't know or care which
                 // backend it's talking to.
                 cmd.BeginRenderPass(*swap_chain, {0.02f, 0.02f, 0.05f, 1.0f});
                 cmd.BindPipeline(unified_pipeline);
-                cmd.SetPushConstants(&t, sizeof(t));
-                cmd.Draw(3);
+                cmd.BindBindlessTextures();
+                cmd.BindVertexBuffer(unified_vertex_buffer, sizeof(UnifiedVertex));
+                cmd.BindIndexBuffer(unified_index_buffer, IndexFormat::UInt32);
+                UnifiedPushConstants push_constants{t, unified_texture.index};
+                cmd.SetPushConstants(&push_constants, sizeof(push_constants));
+                cmd.DrawIndexed(6);
                 cmd.EndRenderPass();
             } else {
                 ResourceState before = used_before[slot] ? ResourceState::Present : ResourceState::Undefined;

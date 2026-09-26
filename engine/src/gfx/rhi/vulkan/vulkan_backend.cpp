@@ -3,6 +3,7 @@
 #include "aether/core/log.h"
 #include "aether/gfx/shader_compiler.h"
 
+#include <cstring>
 #include <stdexcept>
 #include <vector>
 
@@ -240,6 +241,8 @@ VulkanDevice::VulkanDevice(bool enable_debug_layer) {
 
     AETHER_LOG_INFO("Vulkan", "Device initialized (graphics queue family %u, compute queue family %u)",
                      queue_family_index_, compute_queue_family_index_);
+
+    CreateBindlessTextureInfrastructure();
 }
 
 VulkanDevice::~VulkanDevice() {
@@ -258,6 +261,31 @@ VulkanDevice::~VulkanDevice() {
         }
         if (compute_timeline_semaphore_ != VK_NULL_HANDLE) {
             vkDestroySemaphore(device_, compute_timeline_semaphore_, nullptr);
+        }
+        for (const BufferRecord& buffer : buffers_) {
+            vkDestroyBuffer(device_, buffer.buffer, nullptr);
+            vkFreeMemory(device_, buffer.memory, nullptr);
+        }
+        auto destroy_texture_record = [this](const SampledTextureRecord& record) {
+            vkDestroyImageView(device_, record.view, nullptr);
+            vkDestroyImage(device_, record.image, nullptr);
+            vkFreeMemory(device_, record.memory, nullptr);
+        };
+        for (const SampledTextureRecord& texture : sampled_textures_) {
+            destroy_texture_record(texture);
+        }
+        destroy_texture_record(dummy_texture_);
+        if (bindless_pool_ != VK_NULL_HANDLE) {
+            vkDestroyDescriptorPool(device_, bindless_pool_, nullptr);
+        }
+        if (bindless_texture_set_layout_ != VK_NULL_HANDLE) {
+            vkDestroyDescriptorSetLayout(device_, bindless_texture_set_layout_, nullptr);
+        }
+        if (bindless_sampler_set_layout_ != VK_NULL_HANDLE) {
+            vkDestroyDescriptorSetLayout(device_, bindless_sampler_set_layout_, nullptr);
+        }
+        if (bindless_sampler_ != VK_NULL_HANDLE) {
+            vkDestroySampler(device_, bindless_sampler_, nullptr);
         }
         vkDestroyDevice(device_, nullptr);
     }
@@ -351,12 +379,265 @@ VkShaderModule CreateShaderModuleFromBytecode(VkDevice device, const gfx::Shader
     AETHER_VK_CHECK(vkCreateShaderModule(device, &info, nullptr, &module));
     return module;
 }
+
+u32 FindMemoryType(VkPhysicalDevice physical_device, u32 type_bits, VkMemoryPropertyFlags properties) {
+    VkPhysicalDeviceMemoryProperties mem_props{};
+    vkGetPhysicalDeviceMemoryProperties(physical_device, &mem_props);
+    for (u32 i = 0; i < mem_props.memoryTypeCount; ++i) {
+        bool type_ok = (type_bits & (1u << i)) != 0;
+        bool props_ok = (mem_props.memoryTypes[i].propertyFlags & properties) == properties;
+        if (type_ok && props_ok) {
+            return i;
+        }
+    }
+    AETHER_LOG_FATAL("Vulkan", "No suitable Vulkan memory type found");
+    throw std::runtime_error("no suitable Vulkan memory type");
+}
+
+// Host-visible + host-coherent — see BufferRecord's comment for why this is
+// the right trade-off for vertex/index data at this RHI's demo scale (and
+// also reused for CreateTexture's staging buffer, which is genuinely
+// short-lived regardless).
+BufferRecord CreateHostVisibleBuffer(VkDevice device, VkPhysicalDevice physical_device, VkDeviceSize size,
+                                      VkBufferUsageFlags usage, const void* data) {
+    BufferRecord result;
+    VkBufferCreateInfo buffer_info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    buffer_info.size = size;
+    buffer_info.usage = usage;
+    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    AETHER_VK_CHECK(vkCreateBuffer(device, &buffer_info, nullptr, &result.buffer));
+
+    VkMemoryRequirements mem_reqs{};
+    vkGetBufferMemoryRequirements(device, result.buffer, &mem_reqs);
+    VkMemoryAllocateInfo alloc_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    alloc_info.allocationSize = mem_reqs.size;
+    alloc_info.memoryTypeIndex = FindMemoryType(
+        physical_device, mem_reqs.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    AETHER_VK_CHECK(vkAllocateMemory(device, &alloc_info, nullptr, &result.memory));
+    AETHER_VK_CHECK(vkBindBufferMemory(device, result.buffer, result.memory, 0));
+
+    void* mapped = nullptr;
+    AETHER_VK_CHECK(vkMapMemory(device, result.memory, 0, size, 0, &mapped));
+    std::memcpy(mapped, data, static_cast<usize>(size));
+    vkUnmapMemory(device, result.memory);
+    return result;
+}
 } // namespace
+
+BufferHandle VulkanDevice::CreateBufferInternal(const void* data, u64 size_bytes) {
+    // Both usages on every buffer regardless of which CreateXBuffer call
+    // made it — simpler than tracking per-buffer usage flags, and harmless:
+    // an unused usage bit on a host-visible buffer costs nothing at this
+    // demo's scale.
+    BufferRecord record = CreateHostVisibleBuffer(device_, physical_device_, size_bytes,
+                                                   VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                                                   data);
+    buffers_.push_back(record);
+    return BufferHandle{static_cast<u32>(buffers_.size() - 1)};
+}
+
+BufferHandle VulkanDevice::CreateVertexBuffer(const void* data, u64 size_bytes) {
+    return CreateBufferInternal(data, size_bytes);
+}
+
+BufferHandle VulkanDevice::CreateIndexBuffer(const void* data, u64 size_bytes, IndexFormat) {
+    return CreateBufferInternal(data, size_bytes);
+}
+
+SampledTextureRecord VulkanDevice::UploadTextureRecord(u32 width, u32 height, const u8* rgba8_pixels) {
+    VkDeviceSize image_size = static_cast<VkDeviceSize>(width) * height * 4;
+    BufferRecord staging =
+        CreateHostVisibleBuffer(device_, physical_device_, image_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, rgba8_pixels);
+
+    SampledTextureRecord record;
+    VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    image_info.imageType = VK_IMAGE_TYPE_2D;
+    image_info.format = VK_FORMAT_R8G8B8A8_UNORM;
+    image_info.extent = {width, height, 1};
+    image_info.mipLevels = 1;
+    image_info.arrayLayers = 1;
+    image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+    image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    image_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    AETHER_VK_CHECK(vkCreateImage(device_, &image_info, nullptr, &record.image));
+
+    VkMemoryRequirements mem_reqs{};
+    vkGetImageMemoryRequirements(device_, record.image, &mem_reqs);
+    VkMemoryAllocateInfo alloc_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    alloc_info.allocationSize = mem_reqs.size;
+    alloc_info.memoryTypeIndex =
+        FindMemoryType(physical_device_, mem_reqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    AETHER_VK_CHECK(vkAllocateMemory(device_, &alloc_info, nullptr, &record.memory));
+    AETHER_VK_CHECK(vkBindImageMemory(device_, record.image, record.memory, 0));
+
+    std::unique_ptr<ICommandList> cmd = CreateCommandList();
+    cmd->Reset();
+    auto native_cmd = static_cast<VkCommandBuffer>(cmd->NativeHandle());
+
+    VkImageMemoryBarrier to_dst{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    to_dst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    to_dst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    to_dst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_dst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_dst.image = record.image;
+    to_dst.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    to_dst.srcAccessMask = 0;
+    to_dst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(native_cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr,
+                          0, nullptr, 1, &to_dst);
+
+    VkBufferImageCopy region{};
+    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.imageExtent = {width, height, 1};
+    vkCmdCopyBufferToImage(native_cmd, staging.buffer, record.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+    VkImageMemoryBarrier to_shader_read{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    to_shader_read.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    to_shader_read.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    to_shader_read.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_shader_read.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_shader_read.image = record.image;
+    to_shader_read.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    to_shader_read.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    to_shader_read.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(native_cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
+                          nullptr, 0, nullptr, 1, &to_shader_read);
+
+    cmd->Close();
+    WaitForFence(Submit(*cmd, nullptr));
+
+    vkDestroyBuffer(device_, staging.buffer, nullptr);
+    vkFreeMemory(device_, staging.memory, nullptr);
+
+    VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    view_info.image = record.image;
+    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view_info.format = VK_FORMAT_R8G8B8A8_UNORM;
+    view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    AETHER_VK_CHECK(vkCreateImageView(device_, &view_info, nullptr, &record.view));
+
+    return record;
+}
+
+SampledTextureHandle VulkanDevice::CreateTexture(u32 width, u32 height, const u8* rgba8_pixels) {
+    SampledTextureRecord record = UploadTextureRecord(width, height, rgba8_pixels);
+    u32 index = static_cast<u32>(sampled_textures_.size());
+    sampled_textures_.push_back(record);
+
+    VkDescriptorImageInfo image_desc{};
+    image_desc.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    image_desc.imageView = record.view;
+
+    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    write.dstSet = bindless_texture_set_;
+    write.dstBinding = 0;
+    write.dstArrayElement = index;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    write.pImageInfo = &image_desc;
+    vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+
+    return SampledTextureHandle{index};
+}
+
+void VulkanDevice::CreateBindlessTextureInfrastructure() {
+    VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    sampler_info.magFilter = VK_FILTER_LINEAR;
+    sampler_info.minFilter = VK_FILTER_LINEAR;
+    sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    AETHER_VK_CHECK(vkCreateSampler(device_, &sampler_info, nullptr, &bindless_sampler_));
+
+    // Two separate set layouts (SAMPLED_IMAGE array + standalone SAMPLER),
+    // not one combined-image-sampler binding — see this file's header
+    // comment on BindlessTextureSetLayout for why.
+    VkDescriptorSetLayoutBinding texture_binding{};
+    texture_binding.binding = 0;
+    texture_binding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    texture_binding.descriptorCount = kMaxBindlessTextures;
+    texture_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutCreateInfo texture_layout_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    texture_layout_info.bindingCount = 1;
+    texture_layout_info.pBindings = &texture_binding;
+    AETHER_VK_CHECK(vkCreateDescriptorSetLayout(device_, &texture_layout_info, nullptr, &bindless_texture_set_layout_));
+
+    VkDescriptorSetLayoutBinding sampler_binding{};
+    sampler_binding.binding = 0;
+    sampler_binding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+    sampler_binding.descriptorCount = 1;
+    sampler_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutCreateInfo sampler_layout_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    sampler_layout_info.bindingCount = 1;
+    sampler_layout_info.pBindings = &sampler_binding;
+    AETHER_VK_CHECK(vkCreateDescriptorSetLayout(device_, &sampler_layout_info, nullptr, &bindless_sampler_set_layout_));
+
+    VkDescriptorPoolSize pool_sizes[2] = {
+        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, kMaxBindlessTextures},
+        {VK_DESCRIPTOR_TYPE_SAMPLER, 1},
+    };
+    VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    pool_info.maxSets = 2;
+    pool_info.poolSizeCount = 2;
+    pool_info.pPoolSizes = pool_sizes;
+    AETHER_VK_CHECK(vkCreateDescriptorPool(device_, &pool_info, nullptr, &bindless_pool_));
+
+    VkDescriptorSetLayout set_layouts[2] = {bindless_texture_set_layout_, bindless_sampler_set_layout_};
+    VkDescriptorSet sets[2] = {VK_NULL_HANDLE, VK_NULL_HANDLE};
+    VkDescriptorSetAllocateInfo set_alloc{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    set_alloc.descriptorPool = bindless_pool_;
+    set_alloc.descriptorSetCount = 2;
+    set_alloc.pSetLayouts = set_layouts;
+    AETHER_VK_CHECK(vkAllocateDescriptorSets(device_, &set_alloc, sets));
+    bindless_texture_set_ = sets[0];
+    bindless_sampler_set_ = sets[1];
+
+    VkDescriptorImageInfo sampler_desc{};
+    sampler_desc.sampler = bindless_sampler_;
+    VkWriteDescriptorSet sampler_write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    sampler_write.dstSet = bindless_sampler_set_;
+    sampler_write.dstBinding = 0;
+    sampler_write.descriptorCount = 1;
+    sampler_write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+    sampler_write.pImageInfo = &sampler_desc;
+    vkUpdateDescriptorSets(device_, 1, &sampler_write, 0, nullptr);
+
+    // A 1x1 white dummy texture, duplicated into every bindless texture
+    // slot up front — see SampledTextureRecord dummy_texture_'s header
+    // comment for why every slot needs a valid descriptor before any
+    // enable_bindless_textures pipeline draws, not just the indices a real
+    // CreateTexture() call has claimed so far.
+    const u8 white_pixel[4] = {255, 255, 255, 255};
+    dummy_texture_ = UploadTextureRecord(1, 1, white_pixel);
+
+    std::vector<VkDescriptorImageInfo> image_infos(kMaxBindlessTextures);
+    for (VkDescriptorImageInfo& info : image_infos) {
+        info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        info.imageView = dummy_texture_.view;
+    }
+    VkWriteDescriptorSet texture_write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    texture_write.dstSet = bindless_texture_set_;
+    texture_write.dstBinding = 0;
+    texture_write.dstArrayElement = 0;
+    texture_write.descriptorCount = kMaxBindlessTextures;
+    texture_write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    texture_write.pImageInfo = image_infos.data();
+    vkUpdateDescriptorSets(device_, 1, &texture_write, 0, nullptr);
+}
 
 PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain& swap_chain) {
     auto& vk_swap = static_cast<VulkanSwapChain&>(swap_chain);
 
     PipelineRecord record;
+
+    if (desc.enable_bindless_textures) {
+        AETHER_ASSERT(desc.push_constant_size_bytes > 0);
+    }
 
     VkPushConstantRange push_range{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                     desc.push_constant_size_bytes};
@@ -364,6 +645,11 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
     if (desc.push_constant_size_bytes > 0) {
         layout_info.pushConstantRangeCount = 1;
         layout_info.pPushConstantRanges = &push_range;
+    }
+    VkDescriptorSetLayout bindless_set_layouts[2] = {bindless_texture_set_layout_, bindless_sampler_set_layout_};
+    if (desc.enable_bindless_textures) {
+        layout_info.setLayoutCount = 2;
+        layout_info.pSetLayouts = bindless_set_layouts;
     }
     AETHER_VK_CHECK(vkCreatePipelineLayout(device_, &layout_info, nullptr, &record.layout));
 
@@ -384,7 +670,23 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
     stages[1].module = ps_module;
     stages[1].pName = desc.ps_entry.c_str();
 
+    // The one fixed vertex layout PipelineDesc::use_vertex_buffer means —
+    // see its comment for why this isn't a general attribute-list API. Must
+    // match the D3D12 backend's D3D12_INPUT_ELEMENT_DESC layout exactly.
+    VkVertexInputBindingDescription vertex_binding{0, 20 /* sizeof(float3 pos) + sizeof(float2 uv) */,
+                                                    VK_VERTEX_INPUT_RATE_VERTEX};
+    VkVertexInputAttributeDescription vertex_attributes[2] = {
+        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0},
+        {1, 0, VK_FORMAT_R32G32_SFLOAT, 12},
+    };
+
     VkPipelineVertexInputStateCreateInfo vertex_input{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    if (desc.use_vertex_buffer) {
+        vertex_input.vertexBindingDescriptionCount = 1;
+        vertex_input.pVertexBindingDescriptions = &vertex_binding;
+        vertex_input.vertexAttributeDescriptionCount = 2;
+        vertex_input.pVertexAttributeDescriptions = vertex_attributes;
+    }
 
     VkPipelineInputAssemblyStateCreateInfo input_assembly{
         VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
@@ -885,6 +1187,29 @@ void VulkanCommandList::SetPushConstants(const void* data, u32 size_bytes) {
 
 void VulkanCommandList::Draw(u32 vertex_count) {
     vkCmdDraw(command_buffer_, vertex_count, 1, 0, 0);
+}
+
+void VulkanCommandList::BindVertexBuffer(BufferHandle buffer, u32 stride_bytes) {
+    (void)stride_bytes; // the stride is baked into the pipeline's VkVertexInputBindingDescription, not per-bind state
+    const BufferRecord& record = device_.GetBuffer(buffer);
+    VkDeviceSize offset = 0;
+    vkCmdBindVertexBuffers(command_buffer_, 0, 1, &record.buffer, &offset);
+}
+
+void VulkanCommandList::BindIndexBuffer(BufferHandle buffer, IndexFormat format) {
+    const BufferRecord& record = device_.GetBuffer(buffer);
+    VkIndexType index_type = format == IndexFormat::UInt16 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32;
+    vkCmdBindIndexBuffer(command_buffer_, record.buffer, 0, index_type);
+}
+
+void VulkanCommandList::DrawIndexed(u32 index_count) {
+    vkCmdDrawIndexed(command_buffer_, index_count, 1, 0, 0, 0);
+}
+
+void VulkanCommandList::BindBindlessTextures() {
+    VkDescriptorSet sets[2] = {device_.BindlessTextureSet(), device_.BindlessSamplerSet()};
+    vkCmdBindDescriptorSets(command_buffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, bound_pipeline_layout_, 0, 2, sets, 0,
+                             nullptr);
 }
 
 } // namespace aether::gfx::rhi::vulkan_backend
