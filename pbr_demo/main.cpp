@@ -601,6 +601,7 @@ struct PointLight {
 };
 
 #define kNumLights 4
+#define kNumShadowCasters 2
 
 cbuffer FrameConstants : register(b1) {
     float4x4 g_ViewProj;
@@ -609,13 +610,18 @@ cbuffer FrameConstants : register(b1) {
     float3 g_Albedo;
     float _Pad1;
     PointLight g_Lights[kNumLights];
-    // Shadow mapping follow-up: g_Lights[0] is the sole shadow-casting
-    // light (see the README's shadow-mapping section for why one light,
-    // not all four — point-light shadows need a cubemap per light, real
-    // future work). g_LightViewProj projects world space into that light's
-    // shadow-map clip space; g_ShadowTexelSize is 1/shadow-map-resolution,
-    // used to offset the 3x3 PCF taps below by exactly one texel.
-    float4x4 g_LightViewProj;
+    // Multi-light shadow mapping follow-up: g_Lights[0] and g_Lights[1] —
+    // not all four — are shadow-casting (see the README's shadow-mapping
+    // section for why the other two still aren't: a point light's shadow
+    // genuinely needs a 6-face cubemap to cover every direction it
+    // illuminates from, real future work; two independent 2D perspective
+    // shadow maps, one per near-ish light, is what this follow-up actually
+    // adds over the original single-light version). g_LightViewProj[i]
+    // projects world space into shadow-caster i's shadow-map clip space;
+    // g_ShadowTexelSize is 1/shadow-map-resolution (same resolution for
+    // both maps), used to offset the 3x3 PCF taps below by exactly one
+    // texel.
+    float4x4 g_LightViewProj[kNumShadowCasters];
     float g_ShadowTexelSize;
     float3 _Pad2;
 };
@@ -624,7 +630,7 @@ Texture2D g_NormalMap : register(t0);
 TextureCube g_PrefilteredEnvMap : register(t1);
 TextureCube g_IrradianceMap : register(t2);
 Texture2D g_BRDFLUT : register(t3);
-Texture2D g_ShadowMap : register(t4);
+Texture2D g_ShadowMaps[kNumShadowCasters] : register(t4);
 SamplerState g_Sampler : register(s0);
 SamplerComparisonState g_ShadowSampler : register(s1);
 
@@ -699,8 +705,11 @@ float3 FresnelSchlick(float cosTheta, float3 F0) {
 // rather than derived analytically (slope-scaled bias would adapt better
 // across very different geometry, but is more machinery than this demo's
 // single-light, mostly-flat-relative-to-the-light-direction spheres need).
-float ComputeShadow(float3 worldPos) {
-    float4 lightClip = mul(g_LightViewProj, float4(worldPos, 1.0));
+// `casterIndex` selects both which g_LightViewProj entry to project through
+// and which g_ShadowMaps slot to sample — the two are always used as a
+// pair, one per shadow-casting light (see FrameConstants' comment).
+float ComputeShadow(int casterIndex, float3 worldPos) {
+    float4 lightClip = mul(g_LightViewProj[casterIndex], float4(worldPos, 1.0));
     float3 ndc = lightClip.xyz / lightClip.w;
     float2 shadowUV = ndc.xy * 0.5 + 0.5;
     shadowUV.y = 1.0 - shadowUV.y; // NDC +Y is up; texture space +V is down
@@ -717,7 +726,8 @@ float ComputeShadow(float3 worldPos) {
         [unroll]
         for (int dy = -1; dy <= 1; ++dy) {
             float2 offset = float2(dx, dy) * g_ShadowTexelSize;
-            shadow += g_ShadowMap.SampleCmpLevelZero(g_ShadowSampler, shadowUV + offset, currentDepth - kDepthBias);
+            shadow +=
+                g_ShadowMaps[casterIndex].SampleCmpLevelZero(g_ShadowSampler, shadowUV + offset, currentDepth - kDepthBias);
         }
     }
     return shadow / 9.0;
@@ -765,8 +775,22 @@ float4 PSMain(PSInput input) : SV_TARGET {
         float3 specular = numerator / denominator;
 
         float NdotL = max(dot(N, L), 0.0);
-        // Only g_Lights[0] casts a shadow — see FrameConstants' comment.
-        float shadowFactor = (i == 0) ? ComputeShadow(input.worldPos) : 1.0;
+        // Only g_Lights[0] and g_Lights[1] cast shadows — see
+        // FrameConstants' comment. Written as explicit literal-index
+        // branches (not a `(i < kNumShadowCasters) ? ComputeShadow(i, ...) :
+        // 1.0` ternary indexed by the loop variable) because fxc, unrolling
+        // this kNumLights=4 loop, was found to still elaborate
+        // ComputeShadow's g_ShadowMaps[i] access for i=2,3 even though that
+        // ternary branch is dead there — "literal loop terminated early due
+        // to out of bounds array access" against the kNumShadowCasters=2
+        // array. Comparing `i` against literal 0/1 directly lets the
+        // compiler prove those calls unreachable and elide them instead.
+        float shadowFactor = 1.0;
+        if (i == 0) {
+            shadowFactor = ComputeShadow(0, input.worldPos);
+        } else if (i == 1) {
+            shadowFactor = ComputeShadow(1, input.worldPos);
+        }
         Lo += (kD * g_Albedo / kPi + specular) * radiance * NdotL * shadowFactor;
     }
 
@@ -819,6 +843,8 @@ struct PointLight {
     f32 pad1;
 };
 
+constexpr u32 kNumShadowCasters = 2;
+
 struct FrameConstants {
     Mat4 view_proj;
     Vec3 camera_pos;
@@ -826,20 +852,21 @@ struct FrameConstants {
     Vec3 albedo;
     f32 pad1;
     PointLight lights[kNumLights];
-    Mat4 light_view_proj;
+    Mat4 light_view_proj[kNumShadowCasters];
     f32 shadow_texel_size;
     f32 pad2[3];
 };
 
 ComPtr<ID3D12RootSignature> CreatePBRRootSignature(Device& device) {
     // One contiguous range covering t0 (normal map), t1 (prefiltered
-    // environment cubemap), t2 (irradiance cubemap), t3 (BRDF LUT), t4
-    // (shadow map) — a TextureCube SRV uses the same SRV descriptor range
-    // type as a Texture2D one, they only differ in the
-    // D3D12_SHADER_RESOURCE_VIEW_DESC used when the view itself is created.
+    // environment cubemap), t2 (irradiance cubemap), t3 (BRDF LUT), t4-t5
+    // (g_ShadowMaps[kNumShadowCasters], one 2D shadow map per shadow-casting
+    // light) — a TextureCube SRV uses the same SRV descriptor range type as
+    // a Texture2D one, they only differ in the D3D12_SHADER_RESOURCE_VIEW_DESC
+    // used when the view itself is created.
     D3D12_DESCRIPTOR_RANGE normal_map_range{};
     normal_map_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-    normal_map_range.NumDescriptors = 5;
+    normal_map_range.NumDescriptors = 4 + kNumShadowCasters;
     normal_map_range.BaseShaderRegister = 0;
     normal_map_range.RegisterSpace = 0;
     normal_map_range.OffsetInDescriptorsFromTableStart = 0;
@@ -1267,14 +1294,15 @@ int main() {
         constexpr u32 kGridSize = 7;
         Buffer frame_constants_buffer(device, sizeof(FrameConstants), BufferKind::Upload);
 
-        // A single non-bindless SRV heap for this demo's five textures —
-        // normal map (t0), prefiltered environment cubemap (t1), irradiance
-        // cubemap (t2), BRDF LUT (t3), shadow map (t4). Allocation order
-        // matters: the root signature binds all five as one contiguous
-        // descriptor-table range starting at this heap's index 0, so they
-        // must land at heap indices 0/1/2/3/4 in exactly that order (not
-        // sandbox's bindless heap — one texture per fixed slot).
-        DescriptorHeap texture_heap(device, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, /*capacity=*/5,
+        // A single non-bindless SRV heap for this demo's textures — normal
+        // map (t0), prefiltered environment cubemap (t1), irradiance cubemap
+        // (t2), BRDF LUT (t3), then kNumShadowCasters shadow maps (t4, t5,
+        // ...). Allocation order matters: the root signature binds them all
+        // as one contiguous descriptor-table range starting at this heap's
+        // index 0, so they must land at heap indices 0/1/2/3/4/5/... in
+        // exactly that order (not sandbox's bindless heap — one texture per
+        // fixed slot).
+        DescriptorHeap texture_heap(device, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, /*capacity=*/4 + kNumShadowCasters,
                                      /*shader_visible=*/true);
 
         std::vector<u8> normal_map_pixels = GenerateBumpNormalMap(256, /*frequency=*/6.0f, /*strength=*/2.5f);
@@ -1320,8 +1348,14 @@ int main() {
         ComPtr<ID3D12RootSignature> shadow_root_signature = CreateShadowRootSignature(device);
         ComPtr<ID3D12PipelineState> shadow_pso = CreateShadowPSO(device, shadow_root_signature.Get());
 
-        ComPtr<ID3D12Resource> shadow_map_resource;
-        {
+        // kNumShadowCasters independent shadow maps, one per shadow-casting
+        // light — same TYPELESS-resource/separate-DSV-and-SRV-view trick as
+        // the single-light version, just done kNumShadowCasters times.
+        std::vector<ComPtr<ID3D12Resource>> shadow_map_resources(kNumShadowCasters);
+        DescriptorHeap shadow_dsv_heap(device, D3D12_DESCRIPTOR_HEAP_TYPE_DSV, /*capacity=*/kNumShadowCasters,
+                                        /*shader_visible=*/false);
+        std::vector<u32> shadow_dsv_indices(kNumShadowCasters);
+        for (u32 caster = 0; caster < kNumShadowCasters; ++caster) {
             D3D12_HEAP_PROPERTIES default_heap{};
             default_heap.Type = D3D12_HEAP_TYPE_DEFAULT;
 
@@ -1341,18 +1375,14 @@ int main() {
 
             AETHER_D3D_CHECK(device.Handle()->CreateCommittedResource(
                 &default_heap, D3D12_HEAP_FLAG_NONE, &shadow_desc, D3D12_RESOURCE_STATE_DEPTH_WRITE, &clear_value,
-                IID_PPV_ARGS(&shadow_map_resource)));
-        }
+                IID_PPV_ARGS(&shadow_map_resources[caster])));
 
-        DescriptorHeap shadow_dsv_heap(device, D3D12_DESCRIPTOR_HEAP_TYPE_DSV, /*capacity=*/1,
-                                        /*shader_visible=*/false);
-        u32 shadow_dsv_index = shadow_dsv_heap.Allocate();
-        {
+            shadow_dsv_indices[caster] = shadow_dsv_heap.Allocate();
             D3D12_DEPTH_STENCIL_VIEW_DESC dsv_desc{};
             dsv_desc.Format = DXGI_FORMAT_D32_FLOAT;
             dsv_desc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
-            device.Handle()->CreateDepthStencilView(shadow_map_resource.Get(), &dsv_desc,
-                                                     shadow_dsv_heap.CPUHandle(shadow_dsv_index));
+            device.Handle()->CreateDepthStencilView(shadow_map_resources[caster].Get(), &dsv_desc,
+                                                     shadow_dsv_heap.CPUHandle(shadow_dsv_indices[caster]));
         }
 
         std::vector<std::unique_ptr<CommandList>> command_lists;
@@ -1376,20 +1406,22 @@ int main() {
         AETHER_ASSERT(irradiance_map.srv_index == 2);
         AETHER_ASSERT(brdf_lut.BindlessIndex() == 3);
 
-        // The shadow map's SRV must be allocated after the four textures
+        // The shadow maps' SRVs must be allocated after the four textures
         // above (whose constructors each call texture_heap.Allocate()
-        // internally) so it lands at index 4, matching the root signature's
-        // t0-t4 contiguous range.
-        u32 shadow_srv_index = texture_heap.Allocate();
-        AETHER_ASSERT(shadow_srv_index == 4);
-        {
+        // internally) so they land at indices 4, 5, ..., matching the root
+        // signature's t0-t(3+kNumShadowCasters) contiguous range and
+        // g_ShadowMaps[]'s expected slot order (caster i at index 4+i).
+        std::vector<u32> shadow_srv_indices(kNumShadowCasters);
+        for (u32 caster = 0; caster < kNumShadowCasters; ++caster) {
+            shadow_srv_indices[caster] = texture_heap.Allocate();
+            AETHER_ASSERT(shadow_srv_indices[caster] == 4 + caster);
             D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc{};
             srv_desc.Format = DXGI_FORMAT_R32_FLOAT;
             srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
             srv_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
             srv_desc.Texture2D.MipLevels = 1;
-            device.Handle()->CreateShaderResourceView(shadow_map_resource.Get(), &srv_desc,
-                                                       texture_heap.CPUHandle(shadow_srv_index));
+            device.Handle()->CreateShaderResourceView(shadow_map_resources[caster].Get(), &srv_desc,
+                                                       texture_heap.CPUHandle(shadow_srv_indices[caster]));
         }
 
         setup_cmd.Close();
@@ -1414,7 +1446,7 @@ int main() {
         i32 frame_index = 0;
         f32 t = 0.0f;
         u32 last_rendered_buffer_index = 0;
-        bool shadow_map_used_before = false;
+        std::vector<bool> shadow_map_used_before(kNumShadowCasters, false);
         while (window.PumpMessages()) {
             if (window.IsMinimized()) {
                 continue;
@@ -1442,42 +1474,44 @@ int main() {
             // with the others in the shader's per-light loop.
             f32 intensity = 130.0f;
             Vec3 light0_pos(-4.5f, 4.5f, 6.0f);
+            Vec3 light1_pos(4.5f, 4.5f, 6.0f);
             FrameConstants frame_constants{};
             frame_constants.view_proj = proj * view;
             frame_constants.camera_pos = camera_pos;
             frame_constants.albedo = Vec3(0.9f, 0.15f, 0.15f); // crimson dielectric/metal base color
             frame_constants.lights[0] = {light0_pos, 0.0f, Vec3(0.1f, 0.2f, 1.0f) * intensity, 0.0f};
-            frame_constants.lights[1] = {Vec3(4.5f, 4.5f, 6.0f), 0.0f, Vec3(0.15f, 1.0f, 0.2f) * intensity, 0.0f};
+            frame_constants.lights[1] = {light1_pos, 0.0f, Vec3(0.15f, 1.0f, 0.2f) * intensity, 0.0f};
             frame_constants.lights[2] = {Vec3(-4.5f, -4.5f, 6.0f), 0.0f, Vec3(1.0f, 0.15f, 0.9f) * intensity, 0.0f};
             frame_constants.lights[3] = {Vec3(4.5f, -4.5f, 6.0f), 0.0f, Vec3(1.0f, 0.85f, 0.1f) * intensity, 0.0f};
 
-            // g_Lights[0] is the sole shadow-casting light (see
+            // g_Lights[0] and g_Lights[1] are the shadow-casting lights (see
             // FrameConstants' HLSL-side comment) — a perspective projection
-            // from its position toward the grid's center, wide enough
+            // from each one's position toward the grid's center, wide enough
             // (60 degrees) to cover the whole 7x7 grid from ~8.75 units away.
-            Mat4 light_view = Mat4::LookAtRH(light0_pos, Vec3(0, 0, 0), Vec3(0, 1, 0));
-            Mat4 light_proj = Mat4::PerspectiveRH(Radians(60.0f), 1.0f, 1.0f, 20.0f);
-            frame_constants.light_view_proj = light_proj * light_view;
+            Vec3 caster_positions[kNumShadowCasters] = {light0_pos, light1_pos};
+            for (u32 caster = 0; caster < kNumShadowCasters; ++caster) {
+                Mat4 light_view = Mat4::LookAtRH(caster_positions[caster], Vec3(0, 0, 0), Vec3(0, 1, 0));
+                Mat4 light_proj = Mat4::PerspectiveRH(Radians(60.0f), 1.0f, 1.0f, 20.0f);
+                frame_constants.light_view_proj[caster] = light_proj * light_view;
+            }
             frame_constants.shadow_texel_size = 1.0f / static_cast<f32>(kShadowMapSize);
             frame_constants_buffer.Update(&frame_constants, sizeof(FrameConstants));
 
-            // Shadow pass: depth-only render of every sphere from
-            // g_Lights[0]'s point of view, recorded directly on `cmd`
-            // (raw D3D12 calls, not through `graph`) before the main pass
-            // below — see shadow_map_resource's setup comment for why this
-            // multi-pass, cross-usage (DSV this pass, SRV the next) resource
-            // isn't a RenderGraph-managed one.
-            {
-                D3D12_RESOURCE_STATES shadow_before =
-                    shadow_map_used_before ? D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE
-                                            : D3D12_RESOURCE_STATE_DEPTH_WRITE;
-                if (shadow_map_used_before) {
-                    D3D12_RESOURCE_BARRIER to_write =
-                        TransitionBarrier(shadow_map_resource.Get(), shadow_before, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+            // Shadow passes: depth-only render of every sphere from each
+            // shadow-casting light's point of view, recorded directly on
+            // `cmd` (raw D3D12 calls, not through `graph`) before the main
+            // pass below — see shadow_map_resources' setup comment for why
+            // this multi-pass, cross-usage (DSV this pass, SRV the next)
+            // resource isn't a RenderGraph-managed one.
+            for (u32 caster = 0; caster < kNumShadowCasters; ++caster) {
+                ID3D12Resource* shadow_map = shadow_map_resources[caster].Get();
+                if (shadow_map_used_before[caster]) {
+                    D3D12_RESOURCE_BARRIER to_write = TransitionBarrier(
+                        shadow_map, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
                     cmd->ResourceBarrier(1, &to_write);
                 }
 
-                D3D12_CPU_DESCRIPTOR_HANDLE shadow_dsv = shadow_dsv_heap.CPUHandle(shadow_dsv_index);
+                D3D12_CPU_DESCRIPTOR_HANDLE shadow_dsv = shadow_dsv_heap.CPUHandle(shadow_dsv_indices[caster]);
                 cmd->OMSetRenderTargets(0, nullptr, FALSE, &shadow_dsv);
                 cmd->ClearDepthStencilView(shadow_dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
@@ -1495,16 +1529,17 @@ int main() {
 
                 for (u32 row = 0; row < kGridSize; ++row) {
                     for (u32 col = 0; col < kGridSize; ++col) {
-                        ShadowConstants shadow_constants{frame_constants.light_view_proj * instance_model(row, col)};
+                        ShadowConstants shadow_constants{frame_constants.light_view_proj[caster] *
+                                                          instance_model(row, col)};
                         cmd->SetGraphicsRoot32BitConstants(0, sizeof(ShadowConstants) / 4, &shadow_constants, 0);
                         cmd->DrawIndexedInstanced(static_cast<UINT>(sphere_indices.size()), 1, 0, 0, 0);
                     }
                 }
 
                 D3D12_RESOURCE_BARRIER to_read = TransitionBarrier(
-                    shadow_map_resource.Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                    shadow_map, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
                 cmd->ResourceBarrier(1, &to_read);
-                shadow_map_used_before = true;
+                shadow_map_used_before[caster] = true;
             }
 
             ID3D12Resource* back_buffer = swap_chain.CurrentBackBuffer();
@@ -1593,7 +1628,16 @@ int main() {
             SaveBackbufferScreenshot(device, swap_chain, last_rendered_buffer_index, screenshot_path);
         }
         if (const char* shadow_map_screenshot_path = std::getenv("AETHER_PBR_DEMO_SHADOW_MAP_SCREENSHOT")) {
-            SaveShadowMapScreenshot(device, shadow_map_resource.Get(), kShadowMapSize, shadow_map_screenshot_path);
+            // One dump per shadow caster: "<path>" for caster 0, "<path>_1"
+            // (before the extension, if any) for caster 1, etc.
+            std::string base_path(shadow_map_screenshot_path);
+            usize dot = base_path.find_last_of('.');
+            std::string stem = dot == std::string::npos ? base_path : base_path.substr(0, dot);
+            std::string ext = dot == std::string::npos ? std::string() : base_path.substr(dot);
+            for (u32 caster = 0; caster < kNumShadowCasters; ++caster) {
+                std::string path = caster == 0 ? base_path : stem + "_" + std::to_string(caster) + ext;
+                SaveShadowMapScreenshot(device, shadow_map_resources[caster].Get(), kShadowMapSize, path);
+            }
         }
 
         AETHER_LOG_INFO("PBRDemo", "Shutting down cleanly");

@@ -717,6 +717,52 @@ neighboring spheres barely occlude each other at this grid's spacing).
   what actually demonstrates correctness. 81/81 tests pass (unchanged — pure
   GPU pipeline/shader work); 6 quick runs plus one 2000-frame stability run.
 
+#### Follow-up: multi-light shadows
+
+The single-light version above now casts shadows from `g_Lights[0]` **and**
+`g_Lights[1]` — two independent shadow maps, not a shared/combined one.
+Everything doubled up: `kNumShadowCasters = 2` shadow map resources/DSVs/SRVs
+(`t4`, `t5`), `FrameConstants::light_view_proj` became a
+`float4x4[kNumShadowCasters]` array, and the per-frame shadow pass now loops
+over both casters, transitioning and rendering into each one's own depth
+buffer in turn. `g_ShadowMaps[kNumShadowCasters]` (a real HLSL resource
+array, not a bindless index) holds both maps; `ComputeShadow(casterIndex,
+worldPos)` takes which caster to project through and sample.
+
+- **A real fxc quirk found by actually compiling, not by inspection**:
+  writing the per-light shadow selection as `(i < kNumShadowCasters) ?
+  ComputeShadow(i, worldPos) : 1.0` inside the already-`[unroll]`ed 4-light
+  loop failed to compile — `error X3504: literal loop terminated early due
+  to out of bounds array access`. fxc, unrolling the outer loop, still
+  elaborated `ComputeShadow(i, ...)`'s `g_ShadowMaps[i]` access for `i=2,3`
+  even though that ternary branch is dead there for a 2-element array —
+  apparently the ternary's false branch doesn't get proven unreachable
+  before bounds-checking runs. Rewritten as explicit `if (i == 0) ... else
+  if (i == 1) ...` branches (literal-compared against `i`, not a symbolic
+  `kNumShadowCasters` bound) let the compiler actually eliminate the
+  out-of-range calls instead of merely skipping them at runtime.
+- Two shadow-casting point lights (as opposed to a single one) is a
+  meaningfully different scene than uniformly extending to all four would
+  be: the two chosen (`g_Lights[0]`/`[1]`, the "front" pair in this scene's
+  corner layout) are the ones whose shadows actually fall across the visible
+  ground plane from the demo's default camera framing. All four remaining
+  point-light shadows (not just two) and true omnidirectional point-light
+  shadows (a 6-face cubemap per light, not a single-direction perspective
+  map) are still real future work.
+
+**Verified visually**: both raw shadow maps were dumped
+(`AETHER_PBR_DEMO_SHADOW_MAP_SCREENSHOT` now writes one file per caster,
+`<path>` and `<path>_1`) and show the same 49-sphere grid from two
+genuinely different (mirrored, since the lights sit at opposite grid
+corners) points of view — not the same map duplicated. The two shadow
+factors were then visualized simultaneously (`float4(shadow0, shadow1, 1,
+1)` — cyan where only caster 0's shadow lands, magenta where only caster
+1's does, navy where both overlap, white where neither does) and showed
+three distinctly shaped, independently-positioned shadow regions on the
+ground plane — confirming both maps are sampled and combined correctly,
+not just that a second copy of the first one renders. 81/81 tests pass
+(unchanged); 6 quick runs plus one 2000-frame stability run.
+
 ### Follow-up: glTF mesh loading (`aether::assets::LoadGltf`)
 
 `engine/include/aether/assets/gltf_loader.h` loads real glTF 2.0 assets: JSON
