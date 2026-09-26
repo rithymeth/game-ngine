@@ -1,6 +1,8 @@
 #pragma once
 
 #include "aether/core/base.h"
+#include "aether/reflection/bytes.h"
+#include "aether/reflection/type_info.h"
 
 #include <atomic>
 #include <bitset>
@@ -16,24 +18,44 @@
 namespace aether {
 
 using ComponentId = u32;
-inline constexpr usize kMaxComponentTypes = 64;
+inline constexpr usize kMaxComponentTypes = 256;
 inline constexpr ComponentId kInvalidComponentId = static_cast<ComponentId>(-1);
 using ComponentMask = std::bitset<kMaxComponentTypes>;
+
+// How a component's serialize/deserialize functions encode it. Stored per
+// component in scene files, so a scene saved before a component became
+// reflected can still load after it did.
+enum class ComponentEncoding : u8 {
+    Raw = 0,       // default for unreflected components: the struct's bytes
+    Custom = 1,    // installed by SetComponentSerializer
+    Reflected = 2, // default for reflected components: reflect::AppendBinary/ReadBinary
+};
 
 // Type-erased operations an Archetype (or the scene serializer) needs to
 // manage a component's storage without knowing its C++ type: how big a slot
 // is, how to construct/destruct/move one in place, and how to turn one into
 // bytes and back. Populated once per type the first time GetComponentId<T>()
-// is called for it; serialize/deserialize default to a raw memcpy of the
-// type, which is correct for POD components (Transform, Velocity, ...) but
-// wrong for anything owning a resource or a live runtime handle (a component
-// wrapping a physics engine body ID, say) — such types must override their
-// serializer with SetComponentSerializer() to (de)serialize the meaningful
-// data instead of the handle itself.
+// is called for it.
+//
+// Serialization defaults depend on whether the type is reflected:
+// - Reflected (AETHER_REFLECT visible where GetComponentId<T>() is first
+//   instantiated — i.e. in the header next to the type): the component is
+//   named by its declared name and (de)serialized field by field through the
+//   reflection binary archive, which tolerates added/removed fields.
+// - Not reflected: named by typeid(T).name() and saved as raw bytes, which is
+//   correct for POD components but compiler-specific in its naming and wrong
+//   for anything owning a resource or a live runtime handle — such types
+//   should be reflected, or override their serializer with
+//   SetComponentSerializer().
+// A reflected component's typeid name is also registered as an alias, so
+// scene files saved before the type was reflected still resolve it.
 struct ComponentInfo {
     usize size = 0;
     usize alignment = 0;
     const char* name = "";
+    ComponentEncoding encoding = ComponentEncoding::Raw;
+    const reflect::TypeInfo* reflected = nullptr; // non-null when the type is reflected
+    bool trivially_copyable = false;              // raw-byte loading is only safe when true
     void (*construct)(void* dst) = nullptr;
     void (*destruct)(void* ptr) = nullptr;
     void (*move)(void* dst, void* src) = nullptr;
@@ -74,17 +96,32 @@ ComponentId GetComponentId() {
         info.size = sizeof(T);
         info.alignment = alignof(T);
         info.name = typeid(T).name();
+        info.trivially_copyable = std::is_trivially_copyable_v<T>;
         info.construct = [](void* dst) { new (dst) T(); };
         info.destruct = [](void* ptr) { static_cast<T*>(ptr)->~T(); };
         info.move = [](void* dst, void* src) { new (dst) T(std::move(*static_cast<T*>(src))); };
-        info.serialize = [](const void* component, std::vector<u8>& out) {
-            const u8* bytes = static_cast<const u8*>(component);
-            out.insert(out.end(), bytes, bytes + sizeof(T));
-        };
-        info.deserialize = [](void* component, const u8* data, usize size) {
-            AETHER_ASSERT(size == sizeof(T));
-            std::memcpy(component, data, size < sizeof(T) ? size : sizeof(T));
-        };
+        if constexpr (reflect::Reflected<T>) {
+            // Legacy alias: the name unreflected versions of this type were saved under.
+            detail::ComponentNameRegistry()[info.name] = new_id;
+            info.name = reflect::Reflect<T>().name;
+            info.reflected = &reflect::Reflect<T>();
+            info.encoding = ComponentEncoding::Reflected;
+            info.serialize = [](const void* component, std::vector<u8>& out) {
+                reflect::AppendBinary(reflect::Reflect<T>(), component, out);
+            };
+            info.deserialize = [](void* component, const u8* data, usize size) {
+                reflect::ReadBinary(reflect::Reflect<T>(), component, data, size);
+            };
+        } else {
+            info.serialize = [](const void* component, std::vector<u8>& out) {
+                const u8* bytes = static_cast<const u8*>(component);
+                out.insert(out.end(), bytes, bytes + sizeof(T));
+            };
+            info.deserialize = [](void* component, const u8* data, usize size) {
+                AETHER_ASSERT(size == sizeof(T));
+                std::memcpy(component, data, size < sizeof(T) ? size : sizeof(T));
+            };
+        }
         detail::ComponentNameRegistry()[info.name] = new_id;
         return new_id;
     }();
@@ -112,6 +149,7 @@ void SetComponentSerializer(const char* name, void (*serialize)(const void*, std
     ComponentId id = GetComponentId<T>();
     ComponentInfo& info = detail::ComponentRegistry()[id];
     info.name = name;
+    info.encoding = ComponentEncoding::Custom;
     info.serialize = serialize;
     info.deserialize = deserialize;
     detail::ComponentNameRegistry()[name] = id;

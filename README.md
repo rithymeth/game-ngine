@@ -1250,14 +1250,44 @@ scripting and Blueprints all build on.
   example renaming `hp` to `health`) before it's loaded, in both archive
   formats.
 
-Not included yet, and planned as the next steps of Phase 6: ECS integration
-(reflected component names in scene files), reflecting the existing
-components, and the generic Inspector.
+**Step 4: ECS and scene integration.**
+
+- **Reflected components** get reflection-based defaults in
+  `GetComponentId<T>()`. They're named by their declared name (`"Stamina"`)
+  instead of the compiler-specific `typeid` name, and saved field by field
+  through the binary archive. Their old `typeid` name is also registered as
+  an alias, so older scene files still find them. Components that aren't
+  reflected, and custom serializers such as `RigidBody`'s, behave exactly as
+  before.
+- **More component types:** the cap goes from 64 to **256**. Archetypes are
+  now looked up by the full `ComponentMask` rather than `mask.to_ullong()`,
+  which only worked with 64 or fewer.
+- **Scene format v2 (`.aesc`):**
+  - Each entity stores its component count instead of a 64-bit mask.
+  - Each component stores an encoding byte (raw, custom or reflected).
+  - Entities are written in creation order, so saving the same world twice,
+    or load → save, gives identical bytes.
+  - **v1 files still load**, including raw-byte components into types that
+    have since become reflected (when the type is plain data and its size is
+    unchanged).
+- **JSON scenes (`.ascene`):** `SaveSceneJson`/`LoadSceneJson` use the
+  §A.3 layout. Only reflected components are written, and anything else is
+  left out with a warning. Unknown components and fields are skipped when
+  loading.
+- **Build fix:** Jolt is now built with C++ RTTI. `JoltJobSystemAdapter`
+  derives from a Jolt class in our RTTI-enabled code, and GCC and Clang
+  failed to link without it. Physics builds and tests on Linux for the first
+  time.
+
+Not included yet, and planned as the next steps of Phase 6: reflecting the
+existing components, and the generic Inspector.
 
 **Verified** by building the engine and tests on Linux with both GCC 13
-and Clang, with no warnings from the new code. There are 23 reflection and serialization
-tests (`tests/test_reflection.cpp`, `tests/test_reflection_any.cpp` and
-`tests/test_archive.cpp`), and 73/73 tests pass. A Debug build with AddressSanitizer and
+and Clang, with no warnings from the new code. There are 29 reflection and serialization
+tests (`tests/test_reflection.cpp`, `tests/test_reflection_any.cpp`,
+`tests/test_archive.cpp`, and the Phase 6 section of
+`tests/test_serialization.cpp`). All 79 tests pass with physics off, and
+85/85 with physics (Jolt) enabled. A Debug build with AddressSanitizer and
 UndefinedBehaviorSanitizer also passes cleanly, including a test with an
 instance-counting type showing that `Any` constructs and destroys each value
 exactly once, both inline and on the heap. That run excludes the
