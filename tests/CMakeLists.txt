@@ -17,7 +17,7 @@ add_executable(aether_tests
 target_link_libraries(aether_tests PRIVATE Aether::Engine)
 
 if(TARGET aether_editor_ui)
-    target_sources(aether_tests PRIVATE test_editor_ui.cpp test_command_stack.cpp)
+    target_sources(aether_tests PRIVATE test_editor_ui.cpp test_command_stack.cpp test_commands.cpp)
     target_link_libraries(aether_tests PRIVATE Aether::EditorUI)
 endif()
 target_include_directories(aether_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

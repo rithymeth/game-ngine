@@ -154,8 +154,14 @@ Edge cases:
      than the stack watching ImGui.
    - The random test compares a GUID-keyed snapshot, not raw scene bytes,
      because recreated entities get new handles and a new storage order.
-3. The built-in commands; wire Inspector edits, spawn and delete through
-   them. Ctrl+Z / Ctrl+Y and Edit menu entries.
+3. ✅ **Done.** The built-in commands, with Inspector edits, spawn and delete
+   wired through them, plus Ctrl+Z / Ctrl+Y and Edit menu entries. Physics
+   side effects go through `EditorHooks`, so they also happen on undo and
+   redo.
+   - `ReparentCommand` and the `Parent` switch to `EntityGuid` move to
+     step 4.
+   - The legacy body-list sliders are also still direct edits, to be
+     routed through commands in step 4.
 4. Gizmo drag merging and reparent command; selection in history.
 5. PIE world duplication, BeginPlay/EndPlay, Stop restore, and the
    round-trip test.
