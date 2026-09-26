@@ -939,6 +939,59 @@ texture resolution, cross-material cache sharing, and the
 no-texture-leaves-indices-invalid case) — 72/72 tests overall — plus repeated
 `gltf_demo` runs (6x quick + one 2000-frame run).
 
+### Follow-up: editor glTF integration
+
+Every glTF-related follow-up above was proven out in a standalone demo
+(`gltf_demo`); this one connects that pipeline to the actual gameplay
+editor (`editor/`, Phase 5's ImGui + ECS + Jolt physics overlay) instead —
+loading a real, textured, animated glTF asset into the same scene the
+ECS/physics entities already live in, not another separate program.
+
+- **A second, independent render pipeline** (`CreateGltfRootSignature`/
+  `CreateGltfPSO`, the same shader/vertex-layout/bindless-material shape
+  `gltf_demo` uses) draws `assets/models/test_animation.gltf` — a real
+  `LoadGltf` load, a real `LoadMaterial`-resolved bindless texture, a real
+  `EvaluateAnimation` call every frame — alongside the editor's existing
+  billboard-quad ECS entity renderer, in the same render pass.
+- **A real depth buffer**, added specifically for this follow-up: the
+  editor's billboard spheres never needed one before (drawn with
+  `DepthEnable = FALSE`, correct by construction since they're flat,
+  camera-facing quads with no real depth relationships to get wrong). A
+  genuine 3D mesh sharing the scene changes that — both pipelines now
+  depth-test against one shared, `RenderGraph`-managed depth buffer
+  (recreated on resize, same pattern `gltf_demo`/`pbr_demo` already use), so
+  the glTF model and the physics spheres occlude each other correctly by
+  actual depth rather than by draw order.
+- **A live "glTF Model" ImGui panel**: source path, index count, resolved
+  material base color, and — when the asset has an animation, which this
+  one does — an "Animate" checkbox and a running `current/duration` time
+  readout, wired straight to the same `EvaluateAnimation` call driving the
+  render.
+- **A real bug caught by actually looking at the screenshot, not by
+  inspection**: the model's first placement (offset to the side of the
+  falling-sphere playground, chosen by eyeballing world-space coordinates)
+  rendered nothing at all — not a black cube, no draw call trace, just
+  absent. It was simply outside the camera's frustum; `LookAtRH`'s
+  particular handedness/right-vector convention here also means +X world
+  maps to the *left* of the screen for this camera setup, not the right, as
+  discovered by testing at the origin (visible, centered) and then at a
+  positive-X offset (moved *toward* the ImGui panel on the left instead of
+  away from it) — not something that would have been caught by reading the
+  matrix math alone.
+
+**Verified visually across two frames**: the model appears as a distinctly
+checkered cube next to (not overlapping) the ECS-driven spheres, with the
+ImGui panel's displayed animation time genuinely advancing between
+screenshots (confirmed at two frame counts deliberately *not* an exact
+multiple of the 2-second animation's period apart, after an initial pair of
+screenshots happened to land on the same phase by coincidence and looked
+identical) and the cube visibly at a different position each time. A
+physics sphere is also visibly correctly occluded by/occluding the glTF
+mesh in one of the two screenshots — confirming the shared depth buffer
+composites the two pipelines correctly, not just that both draw calls
+execute without crashing. 81/81 tests unchanged (pure integration/rendering
+work, no new pure logic); 6 quick runs plus one 2000-frame stability run.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,

@@ -1,5 +1,10 @@
 add_executable(aether_editor main.cpp)
 target_link_libraries(aether_editor PRIVATE Aether::Engine Aether::Physics ImGui::ImGui)
+# For the glTF integration follow-up: loads assets/models/test_animation.gltf
+# at a real filesystem path, same convention gltf_demo already uses, and
+# dumps a screenshot via stb_image_write (same as gltf_demo/pbr_demo).
+target_compile_definitions(aether_editor PRIVATE AETHER_ASSET_DIR="${CMAKE_SOURCE_DIR}/assets/")
+target_include_directories(aether_editor PRIVATE ${stb_SOURCE_DIR})
 
 # See sandbox/CMakeLists.txt's comment: dxcompiler.dll is an implicit
 # load-time dependency of anything linking aether_engine.lib on WIN32.
