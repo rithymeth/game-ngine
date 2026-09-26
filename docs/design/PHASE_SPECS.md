@@ -421,7 +421,13 @@ struct SystemDesc {
      font has no bold face.
    - `ApplyOverridesToPrefab` is done; its editor button waits for the
      Windows editor's asset saving.
-3. Nesting, variants, cycle detection.
+3. ✅ **Done.** Nesting, variants, cycle detection.
+   - `FlattenPrefab` turns nesting and variants into flat data, then the
+     step 1 resolve runs unchanged. Nested entities get path-derived stable
+     IDs (`NestedLocalId`), so overrides can address them.
+   - Apply to Prefab writes into a variant's overrides. For entities
+     inside nested prefabs it's still to do.
+   - The migration-hook test (§9.5) comes with propagation in step 4.
 4. Propagation on prefab save and orphaned override warnings.
 5. Gameplay framework components (Camera, Tags, Layers) and lifecycle
    events.
