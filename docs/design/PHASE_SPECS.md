@@ -162,7 +162,11 @@ Edge cases:
      step 4.
    - The legacy body-list sliders are also still direct edits, to be
      routed through commands in step 4.
-4. Gizmo drag merging and reparent command; selection in history.
+4. ✅ **Done** (except selection in history). Gizmo drags recorded as one
+   undo step, `ReparentCommand`, `Parent` switched to `EntityGuid`, and the
+   hierarchy moved to `scene/hierarchy.h`. Selection isn't part of the
+   history yet; it's cleared when undo removes the selected entity. That
+   comes with a proper `EditorContext` selection model.
 5. PIE world duplication, BeginPlay/EndPlay, Stop restore, and the
    round-trip test.
 6. Simulate, Pause, Step, Keep Simulation Changes.

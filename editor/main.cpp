@@ -55,6 +55,7 @@
 #include "aether/physics/physics_world.h"
 #include "aether/platform/window.h"
 #include "aether/scene/components.h"
+#include "aether/scene/hierarchy.h"
 #include "aether/scene/serialization.h"
 #include "core/commands.h"
 #include "ui/entity_inspector.h"
@@ -178,71 +179,10 @@ void ForEachWithEntity(World& world, Func&& func) {
     });
 }
 
-// Scene-hierarchy follow-up: an entity's Transform is local to its parent
-// (if any) instead of always being world space. A flat ECS has no built-in
-// notion of "child of" — this is the one component that adds it. Walked in
-// ComputeWorldTransform below; bounded to avoid spinning forever if a save
-// file (or a bug) ever produces a cycle.
-struct Parent {
-    Entity entity = kNullEntity;
-};
-
-Mat4 LocalTransformMatrix(const Transform& t) { return Mat4::Translation(t.position) * t.rotation.ToMat4(); }
-
-// Composes local -> world by walking the Parent chain. Every render/pick/
-// gizmo site that used to read Transform directly and treat it as world
-// space now goes through this instead, so parenting an entity actually
-// moves it (and its children) instead of only affecting a tree-view label.
-Mat4 ComputeWorldTransform(World& world, Entity e) {
-    Mat4 result = Mat4::Identity();
-    Entity current = e;
-    for (int guard = 0; guard < 32 && world.IsAlive(current); ++guard) {
-        Transform* t = world.GetComponent<Transform>(current);
-        if (!t) {
-            break;
-        }
-        result = LocalTransformMatrix(*t) * result;
-        Parent* parent = world.GetComponent<Parent>(current);
-        current = parent ? parent->entity : kNullEntity;
-    }
-    return result;
-}
-
-Vec3 WorldPosition(World& world, Entity e) {
-    Mat4 world_transform = ComputeWorldTransform(world, e);
-    return Vec3(world_transform.cols[3].x, world_transform.cols[3].y, world_transform.cols[3].z);
-}
-
-// Parent still stores a raw Entity handle (it moves to EntityGuid with the
-// reparent command, Phase 7 step 4), so undo/redo — which destroys and
-// recreates entities with new handles — can leave a link pointing at a dead
-// entity. Drop those links instead of following them.
-void RemoveStaleParents(World& world) {
-    std::vector<Entity> stale;
-    ForEachWithEntity<Parent>(world, [&](Entity child, Parent& p) {
-        if (!world.IsAlive(p.entity)) {
-            stale.push_back(child);
-        }
-    });
-    for (Entity child : stale) {
-        world.RemoveComponent<Parent>(child);
-    }
-}
-
-// Rejects a would-be parent assignment that would create a cycle (making e
-// its own ancestor) — the one invariant the tree-view UI below relies on to
-// never infinite-loop.
-bool WouldCreateCycle(World& world, Entity e, Entity new_parent) {
-    Entity current = new_parent;
-    for (int guard = 0; guard < 32 && world.IsAlive(current); ++guard) {
-        if (current == e) {
-            return true;
-        }
-        Parent* parent = world.GetComponent<Parent>(current);
-        current = parent ? parent->entity : kNullEntity;
-    }
-    return false;
-}
+// The scene hierarchy (Parent, ComputeWorldTransform, WorldPosition,
+// WouldCreateCycle) lives in aether/scene/hierarchy.h. Parent links are
+// EntityGuids resolved through `guids`, so they survive undo/redo destroying
+// and recreating entities.
 
 // --------------------------------------------------------------------------
 // Editor camera: replaces the hardcoded static LookAtRH(0,6,-14 -> 0,1,0)
@@ -1363,10 +1303,10 @@ int main() {
                 }
                 ImGui::EndMainMenuBar();
             }
-            if (undo_requested && commands.Undo(cmd_ctx)) {
-                RemoveStaleParents(world);
-            } else if (redo_requested && commands.Redo(cmd_ctx)) {
-                RemoveStaleParents(world);
+            if (undo_requested) {
+                commands.Undo(cmd_ctx);
+            } else if (redo_requested) {
+                commands.Redo(cmd_ctx);
             }
 
             // Every currently-referenced model asset must be loaded before
@@ -1417,7 +1357,7 @@ int main() {
                     Transform* sel_t = world.GetComponent<Transform>(selected_entity);
                     if (sel_t) {
                         Vec3 gizmo_origin = world.HasComponent<ModelRenderer>(selected_entity)
-                                                 ? WorldPosition(world, selected_entity)
+                                                 ? WorldPosition(world, guids, selected_entity)
                                                  : sel_t->position;
                         ScreenPos origin_screen =
                             WorldToScreen(gizmo_origin, view_proj, swap_chain.Width(), swap_chain.Height());
@@ -1471,6 +1411,17 @@ int main() {
                         }
                     } else {
                         gizmo_dragging_axis = -1;
+                        // The drag moved the entity live; record the whole drag
+                        // as one undoable edit (start -> end).
+                        if (!selected_entity.IsNull() && world.IsAlive(selected_entity)) {
+                            Transform* sel_t = world.GetComponent<Transform>(selected_entity);
+                            if (sel_t != nullptr) {
+                                editor::CommitFieldEdit(cmd_ctx, commands, EnsureGuid(world, selected_entity, &guids),
+                                                        GetComponentId<Transform>(),
+                                                        *reflect::Reflect<Transform>().FindField("position"), sel_t,
+                                                        reflect::Any(gizmo_drag_start_entity_pos), /*committed=*/true);
+                            }
+                        }
                     }
                 } else if (mouse_over_viewport && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                     // Not on a gizmo handle — fall through to real
@@ -1497,7 +1448,7 @@ int main() {
                             if (it == gltf_cache.end() || !it->second->valid) {
                                 return;
                             }
-                            Mat4 model_world = ComputeWorldTransform(world, e);
+                            Mat4 model_world = ComputeWorldTransform(world, guids, e);
                             Vec4 center_h = model_world * Vec4(it->second->bounds_center.x,
                                                                 it->second->bounds_center.y,
                                                                 it->second->bounds_center.z, 1.0f);
@@ -1585,26 +1536,31 @@ int main() {
                     delete_confirm_name = "Body #" + std::to_string(index);
                 }
 
-                bool position_changed = ImGui::DragFloat3("Position (m)", &t.position.x, 0.05f);
-                bool radius_changed = ImGui::DragFloat("Radius (m)", &b.radius, 0.01f, 0.05f, 5.0f, "%.2f");
-                bool mass_changed = ImGui::DragFloat("Mass (kg)", &b.mass, 0.05f, 0.01f, 100.0f, "%.2f");
-                bool static_changed = ImGui::Checkbox("Static (doesn't fall)", &b.is_static);
-
-                if (position_changed) {
-                    // Only re-teleport the body if the shape/mass didn't also
-                    // change this frame — that branch below already recreates
-                    // it at the (already updated) Transform position.
-                    if (!radius_changed && !mass_changed && !static_changed) {
-                        physics.SetPosition(b.body_id, t.position);
+                // Each slider edits in place, then CommitFieldEdit turns the
+                // change into an undoable command (a drag merges into one
+                // step). Physics follows through hooks.on_field_changed.
+                // Every entity has an IdComponent (EnsureAllGuids at startup
+                // and load, FromExisting on spawn), so none is added here —
+                // that would move the entity mid-iteration.
+                const IdComponent* row_id = world.GetComponent<IdComponent>(e);
+                auto undoable = [&](ComponentId component, void* data, const char* field_name, auto&& widget) {
+                    const reflect::FieldInfo& field = *GetComponentInfo(component).reflected->FindField(field_name);
+                    reflect::Any before = field.Get(data);
+                    bool changed = widget();
+                    bool committed = ImGui::IsItemDeactivatedAfterEdit();
+                    if (row_id != nullptr && (changed || committed)) {
+                        editor::CommitFieldEdit(cmd_ctx, commands, row_id->guid, component, field, data, before,
+                                                committed);
                     }
-                }
-                if (radius_changed || mass_changed || static_changed) {
-                    // Jolt shapes and motion type are effectively immutable
-                    // once a body is created; the simplest correct way to
-                    // "edit" them live is to recreate the body in place.
-                    physics.DestroyBody(b.body_id);
-                    b.body_id = physics.CreateSphere(t.position, b.radius, b.mass, b.is_static);
-                }
+                };
+                undoable(GetComponentId<Transform>(), &t, "position",
+                         [&] { return ImGui::DragFloat3("Position (m)", &t.position.x, 0.05f); });
+                undoable(GetComponentId<RigidBody>(), &b, "radius",
+                         [&] { return ImGui::DragFloat("Radius (m)", &b.radius, 0.01f, 0.05f, 5.0f, "%.2f"); });
+                undoable(GetComponentId<RigidBody>(), &b, "mass",
+                         [&] { return ImGui::DragFloat("Mass (kg)", &b.mass, 0.05f, 0.01f, 100.0f, "%.2f"); });
+                undoable(GetComponentId<RigidBody>(), &b, "is_static",
+                         [&] { return ImGui::Checkbox("Static (doesn't fall)", &b.is_static); });
 
                 ImGui::Separator();
                 ImGui::PopID();
@@ -1718,12 +1674,14 @@ int main() {
             std::vector<Entity> all_entities;
             ForEachWithEntity<Transform>(world, [&](Entity e, Transform&) { all_entities.push_back(e); });
 
-            std::unordered_map<u32, std::vector<Entity>> children_of; // keyed by Parent entity's index
+            std::unordered_map<u32, std::vector<Entity>> children_of; // keyed by the parent's entity index
             std::vector<Entity> roots;
             for (Entity e : all_entities) {
-                Parent* p = world.GetComponent<Parent>(e);
-                if (p && !p->entity.IsNull()) {
-                    children_of[p->entity.index].push_back(e);
+                // A child whose parent doesn't currently exist (e.g. deleted,
+                // pending undo) shows as a root until it does again.
+                Entity parent = GetParent(world, guids, e);
+                if (!parent.IsNull()) {
+                    children_of[parent.index].push_back(e);
                 } else {
                     roots.push_back(e);
                 }
@@ -1756,15 +1714,18 @@ int main() {
                 }
                 ImGui::SameLine();
                 if (!selected_entity.IsNull() && selected_entity != e &&
-                    !WouldCreateCycle(world, e, selected_entity)) {
+                    !WouldCreateCycle(world, guids, e, selected_entity)) {
                     if (ImGui::SmallButton("Parent to selection")) {
-                        world.AddComponent(e, Parent{selected_entity});
+                        commands.Execute(cmd_ctx, std::make_unique<editor::ReparentCommand>(
+                                                      EnsureGuid(world, e, &guids),
+                                                      EnsureGuid(world, selected_entity, &guids)));
                     }
                     ImGui::SameLine();
                 }
                 if (world.HasComponent<Parent>(e)) {
                     if (ImGui::SmallButton("Unparent")) {
-                        world.RemoveComponent<Parent>(e);
+                        commands.Execute(cmd_ctx, std::make_unique<editor::ReparentCommand>(
+                                                      EnsureGuid(world, e, &guids), EntityGuid{}));
                     }
                     ImGui::SameLine();
                 }
@@ -1871,29 +1832,12 @@ int main() {
                 if (!world.IsAlive(e)) {
                     continue; // e.g. deleted twice in one frame
                 }
-                // Unparent anything that pointed at this entity before
-                // destroying it — a Parent left dangling at a stale/reused
-                // index would corrupt ComputeWorldTransform and the
-                // Hierarchy panel's tree for the next entity that happens to
-                // land in that slot. Collected first, applied after: calling
-                // RemoveComponent (which migrates the entity to a different
-                // archetype) from inside ForEachWithEntity's own archetype
-                // iteration would invalidate that iteration mid-flight.
-                std::vector<Entity> orphaned_children;
-                ForEachWithEntity<Parent>(world, [&](Entity child, Parent& p) {
-                    if (p.entity == e) {
-                        orphaned_children.push_back(child);
-                    }
-                });
-                for (Entity child : orphaned_children) {
-                    world.RemoveComponent<Parent>(child);
-                }
+                // Children keep their Parent link (a GUID): while this entity
+                // is gone they act as roots, and undo re-attaches them.
                 if (e == selected_entity) {
                     selected_entity = kNullEntity;
                 }
                 // Undoable; the Jolt body goes via hooks.on_entity_destroying.
-                // (Unparenting the children above isn't recorded, so undo
-                // restores the entity without re-linking them.)
                 EntityGuid guid = EnsureGuid(world, e, &guids);
                 commands.Execute(cmd_ctx, std::make_unique<editor::DestroyEntityCommand>(guid));
             }
@@ -1932,7 +1876,7 @@ int main() {
             if (!selected_entity.IsNull()) {
                 Transform* sel_t = world.GetComponent<Transform>(selected_entity);
                 if (sel_t) {
-                    Vec3 origin = world.HasComponent<ModelRenderer>(selected_entity) ? WorldPosition(world, selected_entity)
+                    Vec3 origin = world.HasComponent<ModelRenderer>(selected_entity) ? WorldPosition(world, guids, selected_entity)
                                                                                       : sel_t->position;
                     const Vec3 axes[3] = {Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)};
                     const f32 axis_colors[3][3] = {{1, 0.2f, 0.2f}, {0.2f, 1, 0.2f}, {0.3f, 0.5f, 1}};
@@ -2021,7 +1965,7 @@ int main() {
                             // Parent), not just this entity's own local
                             // Transform — see ComputeWorldTransform's
                             // comment.
-                            Mat4 entity_transform = ComputeWorldTransform(world, e);
+                            Mat4 entity_transform = ComputeWorldTransform(world, guids, e);
                             f32 highlight = (e == selected_entity) ? 1.0f : 0.0f;
                             for (const assets::GltfNodeInstance& node_instance : data.scene.node_instances) {
                                 Mat4 model = entity_transform * node_instance.world_transform;
