@@ -1404,6 +1404,39 @@ rejection after destroy and slot reuse, duplicate detection, and
 byte-identical JSON re-saves. 93/93 tests pass on GCC 13, on Clang and
 under ASan/UBSan, and 100/100 with physics.
 
+**Step 2: the undo/redo command stack** (`editor/src/core/command_stack.h`,
+part of the portable editor library, so it's tested headless).
+
+- `ICommand` has `Do`, `Undo`, `Label`, `TryMerge` and `MemoryBytes`.
+  Commands refer to entities by `EntityGuid`, so undoing a delete (which
+  recreates the entity with a new handle) keeps every later command working.
+- **Merging**: `Execute(ctx, cmd, MergePolicy::Allow)` folds successive
+  values from one slider or gizmo drag into a single undo step, until
+  `BreakMergeChain()` is called when the edit is committed. Undo, redo,
+  saving and transactions also break the chain, so a merge never reaches
+  back past any of them.
+- **Transactions**: `BeginTransaction`/`EndTransaction` group a multi-step
+  action (duplicate, paste, create prefab) into one entry. Nested pairs are
+  allowed, and undo/redo are refused while a transaction is open.
+- **Unsaved-changes tracking**: `MarkSaved`/`IsDirty` know when undo or redo
+  lands back on the saved state, and when that state has become unreachable
+  (redo history replaced, or the entry dropped by the budget).
+- **Memory budget** (256 MB by default): the oldest entries are dropped
+  first, and the newest one is always kept.
+
+**Verified**: 7 new tests with test-only create, destroy and set commands on
+a real `World`. One is the spec's randomized test: 1,000 random creates,
+destroys, sets, merged drags and transactions, then undo-all must reproduce
+the original state exactly and redo-all the state after the run.
+
+- The comparison is a GUID → content snapshot rather than raw scene bytes,
+  because recreated entities get new handles and therefore a different
+  storage order.
+- 100/100 tests pass on GCC 13, on Clang and under ASan/UBSan, and 107/107
+  with physics.
+- The editor doesn't route its edits through the stack yet; that's the next
+  step, with the reflection-based built-in commands.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
