@@ -143,7 +143,11 @@ Edge cases:
 
 ### 7.4 PR breakdown
 
-1. `EntityGuid`, `IdComponent`, `GuidIndex` with tests.
+1. ✅ **Done.** `EntityGuid`, `IdComponent`, `GuidIndex` with tests, plus
+   custom JSON converters so GUIDs save as strings. The index is kept up to
+   date explicitly (`Add`/`Remove`/`Rebuild`, and `EnsureGuid`/
+   `RegenerateGuid` update it), not by hooks in `World`, and `Find` validates
+   every entry against the live world.
 2. `CommandStack` with transactions and merging, plus the random-command
    test using a test-only command.
 3. The built-in commands; wire Inspector edits, spawn and delete through

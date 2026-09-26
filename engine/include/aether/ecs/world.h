@@ -136,6 +136,13 @@ public:
     }
 
     usize EntityCount() const { return records_.size() - free_indices_.size(); }
+
+    // True if `e` refers to a live entity (not destroyed, not a stale handle
+    // to a recycled slot, not kNullEntity).
+    bool IsAlive(Entity e) const {
+        return !e.IsNull() && e.index < records_.size() && records_[e.index].generation == e.generation &&
+               records_[e.index].archetype != nullptr;
+    }
     usize ArchetypeCount() const { return archetypes_.size(); }
 
     // Type-erased access, for code that must work over "whatever components
