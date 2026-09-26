@@ -105,6 +105,65 @@ Json* FindField(Json& root, const std::string& path) {
 
 } // namespace
 
+namespace {
+
+// Steps 1-3 of §9.2 on a flat entity list (root first, parents before
+// children): drop `removed` entities (and their children), then apply
+// `overrides`, whole-component ones first so a field override on the same
+// component wins. Overrides that can't be applied go to `orphaned`; ones on
+// removed entities are moot and dropped quietly.
+std::vector<PrefabEntity> ApplyPrefabEdits(const std::vector<PrefabEntity>& entities, PrefabLocalId root_id,
+                                           const std::vector<PropertyOverride>& overrides,
+                                           const std::vector<PrefabLocalId>& removed_ids,
+                                           std::vector<PropertyOverride>& orphaned) {
+    std::vector<PrefabEntity> data;
+    std::set<PrefabLocalId> kept;
+    std::set<PrefabLocalId> all;
+    const std::set<PrefabLocalId> removed(removed_ids.begin(), removed_ids.end());
+    for (const PrefabEntity& entity : entities) {
+        all.insert(entity.id);
+        const bool is_root = entity.id == root_id;
+        if (!is_root && (removed.count(entity.id) != 0 || kept.count(entity.parent) == 0)) {
+            continue;
+        }
+        kept.insert(entity.id);
+        data.push_back(entity);
+    }
+
+    std::vector<const PropertyOverride*> ordered;
+    for (const PropertyOverride& override_ : overrides) {
+        ordered.push_back(&override_);
+    }
+    std::stable_sort(ordered.begin(), ordered.end(), [](const PropertyOverride* a, const PropertyOverride* b) {
+        return a->field_path.empty() && !b->field_path.empty();
+    });
+    for (const PropertyOverride* override_ptr : ordered) {
+        const PropertyOverride& override_ = *override_ptr;
+        if (all.count(override_.entity) != 0 && kept.count(override_.entity) == 0) {
+            continue; // on a removed entity: moot, not orphaned
+        }
+        Json* field = nullptr;
+        for (PrefabEntity& entity : data) {
+            if (entity.id != override_.entity) {
+                continue;
+            }
+            if (auto component = entity.components.find(override_.component); component != entity.components.end()) {
+                field = FindField(*component, override_.field_path);
+            }
+            break;
+        }
+        Json value = Json::parse(override_.value, nullptr, /*allow_exceptions=*/false);
+        if (field == nullptr || value.is_discarded()) {
+            orphaned.push_back(override_);
+            continue;
+        }
+        *field = std::move(value);
+    }
+    return data;
+}
+
+} // namespace
+
 // ---------------------------------------------------------------------------
 // Prefab data and files
 // ---------------------------------------------------------------------------
@@ -122,12 +181,57 @@ PrefabEntity* PrefabData::Find(PrefabLocalId id) {
     return const_cast<PrefabEntity*>(static_cast<const PrefabData*>(this)->Find(id));
 }
 
+namespace {
+
+Json NestedToJson(const assets::AssetGuid& source, const std::vector<PropertyOverride>& overrides,
+                  const std::vector<PrefabLocalId>& removed) {
+    return {{"source", assets::ToString(source)}, {"overrides", reflect::ToJson(overrides)}, {"removed", removed}};
+}
+
+bool NestedFromJson(const Json& json, assets::AssetGuid& source, std::vector<PropertyOverride>& overrides,
+                    std::vector<PrefabLocalId>& removed) {
+    if (!json.is_object() || !json.contains("source") || !json["source"].is_string() ||
+        !assets::ParseAssetGuid(json["source"].get_ref<const std::string&>(), source) || source.IsNull()) {
+        return false;
+    }
+    if (auto it = json.find("overrides"); it != json.end() && !reflect::FromJson(overrides, *it)) {
+        return false;
+    }
+    if (auto it = json.find("removed"); it != json.end()) {
+        if (!it->is_array()) {
+            return false;
+        }
+        for (const Json& id : *it) {
+            if (!id.is_number_unsigned()) {
+                return false;
+            }
+            removed.push_back(id.get<PrefabLocalId>());
+        }
+    }
+    return true;
+}
+
+} // namespace
+
+bool PrefabData::IsFlat() const {
+    return !IsVariant() &&
+           std::none_of(entities.begin(), entities.end(), [](const PrefabEntity& e) { return e.nested.has_value(); });
+}
+
 Json PrefabToJson(const PrefabData& prefab) {
     Json entities = Json::array();
     for (const PrefabEntity& entity : prefab.entities) {
-        entities.push_back({{"id", entity.id}, {"parent", entity.parent}, {"components", entity.components}});
+        Json item{{"id", entity.id}, {"parent", entity.parent}, {"components", entity.components}};
+        if (entity.nested) {
+            item["prefab"] = NestedToJson(entity.nested->source, entity.nested->overrides, entity.nested->removed_entities);
+        }
+        entities.push_back(std::move(item));
     }
-    return {{"$type", "Prefab"}, {"$version", kPrefabVersion}, {"entities", std::move(entities)}};
+    Json json = {{"$type", "Prefab"}, {"$version", kPrefabVersion}, {"entities", std::move(entities)}};
+    if (prefab.IsVariant()) {
+        json["base"] = NestedToJson(prefab.base, prefab.base_overrides, prefab.base_removed);
+    }
+    return json;
 }
 
 bool PrefabFromJson(const Json& json, PrefabData& out, std::string* error) {
@@ -139,12 +243,17 @@ bool PrefabFromJson(const Json& json, PrefabData& out, std::string* error) {
         SetError(error, "Unsupported prefab version");
         return false;
     }
+    PrefabData prefab;
+    if (auto base = json.find("base"); base != json.end() &&
+                                       !NestedFromJson(*base, prefab.base, prefab.base_overrides, prefab.base_removed)) {
+        SetError(error, "The prefab's \"base\" is malformed");
+        return false;
+    }
     auto entities = json.find("entities");
-    if (entities == json.end() || !entities->is_array() || entities->empty()) {
+    if (entities == json.end() || !entities->is_array() || (entities->empty() && !prefab.IsVariant())) {
         SetError(error, "The prefab has no entities");
         return false;
     }
-    PrefabData prefab;
     std::set<PrefabLocalId> seen;
     for (const Json& item : *entities) {
         if (!item.is_object() || !item.contains("id") || !item["id"].is_number_unsigned()) {
@@ -156,6 +265,26 @@ bool PrefabFromJson(const Json& json, PrefabData& out, std::string* error) {
         entity.parent = item.value("parent", 0u);
         if (auto components = item.find("components"); components != item.end() && components->is_object()) {
             entity.components = *components;
+        }
+        if (auto nested = item.find("prefab"); nested != item.end()) {
+            NestedPrefab data;
+            if (!NestedFromJson(*nested, data.source, data.overrides, data.removed_entities)) {
+                SetError(error, "Prefab entity " + std::to_string(entity.id) + " has a malformed \"prefab\"");
+                return false;
+            }
+            entity.nested = std::move(data);
+        }
+        if (prefab.IsVariant()) {
+            // A variant's entities hang off the base's (not known here) or
+            // earlier added ones; FlattenPrefab checks the parents exist.
+            if (entity.id == 0 || seen.count(entity.id) != 0 || entity.parent == 0) {
+                SetError(error, "Variant entity " + std::to_string(entity.id) +
+                                    ": ids must be unique and non-zero, and every entity needs a parent");
+                return false;
+            }
+            seen.insert(entity.id);
+            prefab.entities.push_back(std::move(entity));
+            continue;
         }
         const bool is_root = prefab.entities.empty();
         if (entity.id == 0 || seen.count(entity.id) != 0) {
@@ -217,6 +346,15 @@ PrefabData MakePrefab(const World& world, const GuidIndex& guids, Entity root) {
         PrefabEntity entity;
         entity.id = next_id++;
         entity.parent = item.parent;
+        if (const PrefabInstance* instance = world.GetComponent<PrefabInstance>(item.entity)) {
+            // A prefab instance: nest its prefab instead of copying its entities.
+            entity.nested = NestedPrefab{instance->source.guid, instance->overrides, instance->removed_entities};
+            if (const Transform* transform = world.GetComponent<Transform>(item.entity)) {
+                entity.components["Transform"] = reflect::ToJson(*transform);
+            }
+            prefab.entities.push_back(std::move(entity));
+            continue; // its entities come from its prefab
+        }
         for (ComponentId id : ComponentsOf(world, item.entity)) {
             const ComponentInfo& info = GetComponentInfo(id);
             if (IsManaged(id) || info.reflected == nullptr) {
@@ -238,6 +376,140 @@ PrefabData MakePrefab(const World& world, const GuidIndex& guids, Entity root) {
 // ---------------------------------------------------------------------------
 // Instances
 // ---------------------------------------------------------------------------
+
+PrefabLocalId NestedLocalId(PrefabLocalId outer, PrefabLocalId inner) {
+    u32 hash = 2166136261u;
+    for (PrefabLocalId part : {outer, inner}) {
+        for (int shift = 0; shift < 32; shift += 8) {
+            hash ^= (part >> shift) & 0xffu;
+            hash *= 16777619u;
+        }
+    }
+    return hash == 0 ? 1 : hash;
+}
+
+namespace {
+
+std::string ChainText(const std::vector<assets::AssetGuid>& chain, const assets::AssetGuid& last) {
+    std::string text;
+    for (const assets::AssetGuid& guid : chain) {
+        text += assets::ToString(guid) + " -> ";
+    }
+    return text + assets::ToString(last);
+}
+
+struct Flattener {
+    const PrefabLookup& find;
+    std::vector<PropertyOverride>& orphaned;
+    std::string error;
+    std::vector<assets::AssetGuid> chain; // prefabs being flattened, outermost first (null = unnamed)
+
+    // The flat entities of the prefab `source`, or false.
+    bool FlattenSource(const assets::AssetGuid& source, std::vector<PrefabEntity>& out) {
+        if (std::find(chain.begin(), chain.end(), source) != chain.end()) {
+            error = "Prefab cycle: " + ChainText(chain, source);
+            return false;
+        }
+        if (chain.size() >= static_cast<usize>(kMaxPrefabNesting)) {
+            error = "Prefabs nested more than " + std::to_string(kMaxPrefabNesting) + " deep: " + ChainText(chain, source);
+            return false;
+        }
+        const PrefabData* prefab = find ? find(source) : nullptr;
+        if (prefab == nullptr) {
+            error = "Prefab " + assets::ToString(source) + " isn't available (used by " +
+                    (chain.empty() ? std::string("this prefab") : ChainText({}, chain.back())) + ")";
+            return false;
+        }
+        chain.push_back(source);
+        const bool ok = Flatten(*prefab, out);
+        chain.pop_back();
+        return ok;
+    }
+
+    bool Flatten(const PrefabData& prefab, std::vector<PrefabEntity>& out) {
+        std::vector<PrefabEntity> result;
+        if (prefab.IsVariant()) {
+            std::vector<PrefabEntity> base;
+            if (!FlattenSource(prefab.base, base)) {
+                return false;
+            }
+            result = ApplyPrefabEdits(base, base.front().id, prefab.base_overrides, prefab.base_removed, orphaned);
+        }
+        for (const PrefabEntity& entity : prefab.entities) {
+            if (entity.parent != 0 &&
+                std::none_of(result.begin(), result.end(), [&](const PrefabEntity& e) { return e.id == entity.parent; })) {
+                error = "Prefab entity " + std::to_string(entity.id) + "'s parent " + std::to_string(entity.parent) +
+                        " doesn't exist (removed from the base, or listed after it)";
+                return false;
+            }
+            if (!entity.nested) {
+                result.push_back(entity);
+                continue;
+            }
+            std::vector<PrefabEntity> sub;
+            if (!FlattenSource(entity.nested->source, sub)) {
+                return false;
+            }
+            const PrefabLocalId sub_root = sub.front().id;
+            sub = ApplyPrefabEdits(sub, sub_root, entity.nested->overrides, entity.nested->removed_entities, orphaned);
+            for (PrefabEntity& inner : sub) {
+                if (inner.id == sub_root) {
+                    inner.id = entity.id;
+                    inner.parent = entity.parent;
+                    for (auto it = entity.components.begin(); it != entity.components.end(); ++it) {
+                        inner.components[it.key()] = it.value(); // e.g. where it's placed
+                    }
+                } else {
+                    inner.id = NestedLocalId(entity.id, inner.id);
+                    inner.parent = inner.parent == sub_root ? entity.id : NestedLocalId(entity.id, inner.parent);
+                }
+                result.push_back(std::move(inner));
+            }
+        }
+        if (result.empty() || result.front().parent != 0) {
+            error = "The prefab has no root entity";
+            return false;
+        }
+        std::set<PrefabLocalId> ids;
+        for (const PrefabEntity& entity : result) {
+            if (!ids.insert(entity.id).second) {
+                error = "Two prefab entities got local id " + std::to_string(entity.id) +
+                        "; renumber the entities of one of the nested prefabs";
+                return false;
+            }
+        }
+        out = std::move(result);
+        return true;
+    }
+};
+
+} // namespace
+
+bool FlattenPrefab(const PrefabData& prefab, const PrefabLookup& find, PrefabData& out, std::string* error,
+                   std::vector<PropertyOverride>* orphaned, const assets::AssetGuid& self) {
+    std::vector<PropertyOverride> ignored;
+    Flattener flattener{find, orphaned != nullptr ? *orphaned : ignored, {}, {}};
+    if (!self.IsNull()) {
+        flattener.chain.push_back(self);
+    }
+    PrefabData flat;
+    if (!flattener.Flatten(prefab, flat.entities)) {
+        SetError(error, flattener.error);
+        return false;
+    }
+    out = std::move(flat);
+    return true;
+}
+
+bool FlattenPrefab(const assets::AssetGuid& source, const PrefabLookup& find, PrefabData& out, std::string* error,
+                   std::vector<PropertyOverride>* orphaned) {
+    const PrefabData* prefab = find ? find(source) : nullptr;
+    if (prefab == nullptr) {
+        SetError(error, "Prefab " + assets::ToString(source) + " isn't available");
+        return false;
+    }
+    return FlattenPrefab(*prefab, find, out, error, orphaned, source);
+}
 
 void SetOverride(PrefabInstance& instance, PrefabLocalId entity, const std::string& component,
                  const std::string& field_path, const Json& value) {
@@ -380,8 +652,26 @@ usize ApplyOverridesToPrefab(PrefabData& prefab, PrefabInstance& instance, Prefa
     auto& overrides = instance.overrides;
     for (auto it = overrides.begin(); it != overrides.end();) {
         Json* field = nullptr;
+        if (OverrideMatches(*it, entity, component, field_path) && prefab.IsVariant() &&
+            prefab.Find(it->entity) == nullptr) {
+            // An entity from the variant's base: record it as a variant override.
+            bool replaced = false;
+            for (PropertyOverride& existing : prefab.base_overrides) {
+                if (existing.entity == it->entity && existing.component == it->component &&
+                    existing.field_path == it->field_path) {
+                    existing.value = it->value;
+                    replaced = true;
+                }
+            }
+            if (!replaced) {
+                prefab.base_overrides.push_back(*it);
+            }
+            it = overrides.erase(it);
+            ++applied;
+            continue;
+        }
         if (OverrideMatches(*it, entity, component, field_path)) {
-            if (PrefabEntity* target = prefab.Find(it->entity)) {
+            if (PrefabEntity* target = prefab.Find(it->entity); target != nullptr && !target->nested) {
                 if (auto comp = target->components.find(it->component); comp != target->components.end()) {
                     field = FindField(*comp, it->field_path);
                 }
@@ -421,61 +711,17 @@ ResolveReport ResolvePrefabInstance(World& world, GuidIndex& guids, Entity root,
         report.error = "The prefab has no entities";
         return report;
     }
+    if (!prefab.IsFlat()) {
+        report.error = "The prefab has nested prefabs or a base; flatten it first (FlattenPrefab)";
+        return report;
+    }
     // A copy: adding components below moves the root's storage.
     const PrefabInstance instance = *world.GetComponent<PrefabInstance>(root);
     const EntityGuid root_guid = EnsureGuid(world, root, &guids);
     const PrefabLocalId root_id = prefab.Root();
 
-    // 1-2. The prefab's entities, minus the ones this instance removed (and
-    // their children; parents come first, so one pass is enough).
-    std::vector<PrefabEntity> data;
-    std::set<PrefabLocalId> kept;
-    const std::set<PrefabLocalId> removed(instance.removed_entities.begin(), instance.removed_entities.end());
-    for (const PrefabEntity& entity : prefab.entities) {
-        const bool is_root = entity.id == root_id;
-        if (!is_root && (removed.count(entity.id) != 0 || kept.count(entity.parent) == 0)) {
-            continue;
-        }
-        kept.insert(entity.id);
-        data.push_back(entity);
-    }
-    auto find_data = [&](PrefabLocalId id) -> PrefabEntity* {
-        for (PrefabEntity& entity : data) {
-            if (entity.id == id) {
-                return &entity;
-            }
-        }
-        return nullptr;
-    };
-
-    // 3. Overrides: whole-component ones first, so a field override on the
-    // same component wins (the more specific override wins, §9.2).
-    std::vector<const PropertyOverride*> ordered;
-    for (const PropertyOverride& override_ : instance.overrides) {
-        ordered.push_back(&override_);
-    }
-    std::stable_sort(ordered.begin(), ordered.end(), [](const PropertyOverride* a, const PropertyOverride* b) {
-        return a->field_path.empty() && !b->field_path.empty();
-    });
-    for (const PropertyOverride* override_ptr : ordered) {
-        const PropertyOverride& override_ = *override_ptr;
-        if (prefab.Find(override_.entity) != nullptr && kept.count(override_.entity) == 0) {
-            continue; // on a removed entity: moot, not orphaned
-        }
-        PrefabEntity* entity = find_data(override_.entity);
-        Json* field = nullptr;
-        if (entity != nullptr) {
-            if (auto component = entity->components.find(override_.component); component != entity->components.end()) {
-                field = FindField(*component, override_.field_path);
-            }
-        }
-        Json value = Json::parse(override_.value, nullptr, /*allow_exceptions=*/false);
-        if (field == nullptr || value.is_discarded()) {
-            report.orphaned.push_back(override_);
-            continue;
-        }
-        *field = std::move(value);
-    }
+    std::vector<PrefabEntity> data =
+        ApplyPrefabEdits(prefab.entities, root_id, instance.overrides, instance.removed_entities, report.orphaned);
 
     // 4. Entities that already belong to this instance, by local id.
     std::unordered_map<PrefabLocalId, Entity> existing;
@@ -568,19 +814,32 @@ Entity InstantiatePrefab(World& world, GuidIndex& guids, const assets::AssetGuid
 std::vector<std::pair<Entity, ResolveReport>> ResolveAllPrefabInstances(World& world, GuidIndex& guids,
                                                                          const PrefabLookup& find) {
     std::vector<std::pair<Entity, ResolveReport>> reports;
+    struct Flat {
+        bool ok = false;
+        std::string error;
+        PrefabData data;
+        std::vector<PropertyOverride> orphaned; // inside the prefab itself
+    };
+    std::unordered_map<assets::AssetGuid, Flat> flattened; // each prefab once
     for (Entity root : EntitiesWith(world, GetComponentId<PrefabInstance>())) {
         if (!world.IsAlive(root)) {
             continue; // destroyed while resolving an earlier instance
         }
         const assets::AssetGuid source = world.GetComponent<PrefabInstance>(root)->source.guid;
-        const PrefabData* prefab = find ? find(source) : nullptr;
-        if (prefab == nullptr) {
-            ResolveReport missing;
-            missing.error = "Prefab " + assets::ToString(source) + " isn't available";
-            reports.emplace_back(root, std::move(missing));
+        auto [it, inserted] = flattened.try_emplace(source);
+        Flat& flat = it->second;
+        if (inserted) {
+            flat.ok = FlattenPrefab(source, find, flat.data, &flat.error, &flat.orphaned);
+        }
+        if (!flat.ok) {
+            ResolveReport failed;
+            failed.error = flat.error;
+            reports.emplace_back(root, std::move(failed));
             continue;
         }
-        reports.emplace_back(root, ResolvePrefabInstance(world, guids, root, *prefab));
+        ResolveReport report = ResolvePrefabInstance(world, guids, root, flat.data);
+        report.orphaned.insert(report.orphaned.end(), flat.orphaned.begin(), flat.orphaned.end());
+        reports.emplace_back(root, std::move(report));
     }
     return reports;
 }

@@ -1,9 +1,11 @@
 #include "aether/scene/hierarchy.h"
+#include "aether/reflection/serialize.h"
 #include "aether/scene/prefab.h"
 #include "aether/scene/serialization.h"
 #include "test_framework.h"
 
 #include <filesystem>
+#include <unordered_map>
 
 using namespace aether;
 namespace stdfs = std::filesystem;
@@ -348,4 +350,234 @@ AETHER_TEST(Prefab_ApplyAndRevert) {
     AETHER_CHECK(OverrideMatches(o, 2, "Transform", "position") && OverrideMatches(o, 0, "", ""));
     AETHER_CHECK(!OverrideMatches(o, 2, "Transform", "pos") && !OverrideMatches(o, 2, "Transform", "position[10]"));
     AETHER_CHECK(!OverrideMatches(o, 3, "Transform", "") && !OverrideMatches(o, 2, "Loot", ""));
+}
+
+namespace {
+
+// A prefab library for nesting tests: GUID -> data.
+struct Library {
+    std::unordered_map<assets::AssetGuid, PrefabData> prefabs;
+
+    assets::AssetGuid Add(PrefabData data) {
+        const assets::AssetGuid guid = assets::NewAssetGuid();
+        prefabs[guid] = std::move(data);
+        return guid;
+    }
+    PrefabLookup Lookup() {
+        return [this](const assets::AssetGuid& guid) -> const PrefabData* {
+            auto it = prefabs.find(guid);
+            return it != prefabs.end() ? &it->second : nullptr;
+        };
+    }
+};
+
+PrefabEntity Plain(PrefabLocalId id, PrefabLocalId parent, i32 gold) {
+    PrefabEntity entity;
+    entity.id = id;
+    entity.parent = parent;
+    entity.components["Loot"] = {{"gold", gold}, {"items", Json::array()}};
+    entity.components["Transform"] = reflect::ToJson(Transform{Vec3{0, 0, 0}, Quaternion::Identity()});
+    return entity;
+}
+
+PrefabEntity Nest(PrefabLocalId id, PrefabLocalId parent, const assets::AssetGuid& source,
+                  std::vector<PropertyOverride> overrides = {}) {
+    PrefabEntity entity;
+    entity.id = id;
+    entity.parent = parent;
+    entity.nested = NestedPrefab{source, std::move(overrides), {}};
+    return entity;
+}
+
+PropertyOverride Gold(PrefabLocalId entity, i32 gold) { return {entity, "Loot", "gold", std::to_string(gold)}; }
+
+i32 GoldOf(const PrefabData& flat, PrefabLocalId id) { return flat.Find(id)->components["Loot"]["gold"].get<i32>(); }
+
+} // namespace
+
+AETHER_TEST(Prefab_NestedThreeDeepWithPrecedence) {
+    Library lib;
+    // C: a coin (1). B: a pouch (1) holding C at 2. A: a chest (1) holding B at 5.
+    PrefabData c;
+    c.entities = {Plain(1, 0, 1)};
+    const assets::AssetGuid c_guid = lib.Add(c);
+    PrefabData b;
+    b.entities = {Plain(1, 0, 0), Nest(2, 1, c_guid, {Gold(1, 2)})}; // B overrides C's coin: 2
+    const assets::AssetGuid b_guid = lib.Add(b);
+    PrefabData a;
+    a.entities = {Plain(1, 0, 0), Nest(5, 1, b_guid)};
+    const assets::AssetGuid a_guid = lib.Add(a);
+
+    // The coin's id in A's flat data: B's nesting entity (5) + the coin's id in B (2).
+    const PrefabLocalId coin = NestedLocalId(5, 2);
+    PrefabData flat;
+    std::string error;
+    AETHER_CHECK(FlattenPrefab(a_guid, lib.Lookup(), flat, &error) && flat.IsFlat());
+    AETHER_CHECK(flat.entities.size() == 3 && flat.Find(5) != nullptr && flat.Find(coin) != nullptr);
+    AETHER_CHECK(flat.Find(coin)->parent == 5 && flat.Find(5)->parent == 1);
+    AETHER_CHECK(GoldOf(flat, coin) == 2); // B's override beats C's default
+
+    // A overrides the coin too (in its nesting of B): A beats B.
+    lib.prefabs[a_guid].entities[1].nested->overrides = {Gold(2, 3)};
+    AETHER_CHECK(FlattenPrefab(a_guid, lib.Lookup(), flat, &error) && GoldOf(flat, coin) == 3);
+
+    // An instance of A overrides it again: the instance beats everything.
+    Fixture f;
+    Entity root = InstantiatePrefab(f.world, f.guids, a_guid, flat);
+    SetOverride(*f.world.GetComponent<PrefabInstance>(root), coin, "Loot", "gold", 4);
+    auto reports = ResolveAllPrefabInstances(f.world, f.guids, lib.Lookup());
+    AETHER_CHECK(reports.size() == 1 && reports[0].second.ok);
+    AETHER_CHECK(f.world.GetComponent<Loot>(Linked(f.world, root, coin))->gold == 4);
+    AETHER_CHECK(f.world.EntityCount() == 3);
+
+    // Peel the layers off one at a time.
+    RevertOverrides(*f.world.GetComponent<PrefabInstance>(root));
+    ResolveAllPrefabInstances(f.world, f.guids, lib.Lookup());
+    AETHER_CHECK(f.world.GetComponent<Loot>(Linked(f.world, root, coin))->gold == 3);
+    lib.prefabs[a_guid].entities[1].nested->overrides.clear();
+    ResolveAllPrefabInstances(f.world, f.guids, lib.Lookup());
+    AETHER_CHECK(f.world.GetComponent<Loot>(Linked(f.world, root, coin))->gold == 2);
+    lib.prefabs[b_guid].entities[1].nested->overrides.clear();
+    ResolveAllPrefabInstances(f.world, f.guids, lib.Lookup());
+    AETHER_CHECK(f.world.GetComponent<Loot>(Linked(f.world, root, coin))->gold == 1);
+
+    // Editing the innermost prefab reaches the instance, on the same entity.
+    const Entity coin_entity = Linked(f.world, root, coin);
+    lib.prefabs[c_guid].entities[0].components["Loot"]["gold"] = 9;
+    ResolveAllPrefabInstances(f.world, f.guids, lib.Lookup());
+    AETHER_CHECK(Linked(f.world, root, coin) == coin_entity && f.world.GetComponent<Loot>(coin_entity)->gold == 9);
+
+    // A nesting entity can place (override components of) the nested root.
+    lib.prefabs[a_guid].entities[1].components["Transform"] =
+        reflect::ToJson(Transform{Vec3{0, 2, 0}, Quaternion::Identity()});
+    AETHER_CHECK(FlattenPrefab(a_guid, lib.Lookup(), flat, &error));
+    AETHER_CHECK(flat.Find(5)->components["Transform"]["position"][1] == 2.0);
+    AETHER_CHECK(flat.Find(5)->components["Loot"]["gold"] == 0); // B's root keeps its other components
+
+    // Resolving un-flattened data is refused.
+    AETHER_CHECK(!ResolvePrefabInstance(f.world, f.guids, root, lib.prefabs[a_guid]).ok);
+}
+
+AETHER_TEST(Prefab_VariantOfVariantAndCycles) {
+    Library lib;
+    PrefabData goblin;
+    goblin.entities = {Plain(1, 0, 10), Plain(2, 1, 1)};
+    const assets::AssetGuid goblin_guid = lib.Add(goblin);
+    // A chief: more gold on the root, and an extra child.
+    PrefabData chief;
+    chief.base = goblin_guid;
+    chief.base_overrides = {Gold(1, 50)};
+    chief.entities = {Plain(3, 1, 5)};
+    const assets::AssetGuid chief_guid = lib.Add(chief);
+    // A king: a variant of the chief; overrides the chief's child, drops 2.
+    PrefabData king;
+    king.base = chief_guid;
+    king.base_overrides = {Gold(3, 500)};
+    king.base_removed = {2};
+    const assets::AssetGuid king_guid = lib.Add(king);
+
+    PrefabData flat;
+    std::string error;
+    AETHER_CHECK(FlattenPrefab(chief_guid, lib.Lookup(), flat, &error));
+    AETHER_CHECK(flat.entities.size() == 3 && GoldOf(flat, 1) == 50 && GoldOf(flat, 3) == 5 && GoldOf(flat, 2) == 1);
+    AETHER_CHECK(FlattenPrefab(king_guid, lib.Lookup(), flat, &error));
+    AETHER_CHECK(flat.entities.size() == 2 && GoldOf(flat, 1) == 50 && GoldOf(flat, 3) == 500);
+    AETHER_CHECK(flat.Find(2) == nullptr);
+
+    // The goblin changes: both variants follow where they don't override.
+    lib.prefabs[goblin_guid].entities[0].components["Loot"]["items"] = Json::array({"club"});
+    AETHER_CHECK(FlattenPrefab(king_guid, lib.Lookup(), flat, &error));
+    AETHER_CHECK(flat.Find(1)->components["Loot"]["items"].size() == 1 && GoldOf(flat, 1) == 50);
+
+    // Apply from an instance of the king: base entities become variant overrides.
+    Fixture f;
+    Entity root = InstantiatePrefab(f.world, f.guids, king_guid, flat);
+    SetOverride(*f.world.GetComponent<PrefabInstance>(root), 1, "Loot", "gold", 900);
+    AETHER_CHECK(ApplyOverridesToPrefab(lib.prefabs[king_guid], *f.world.GetComponent<PrefabInstance>(root)) == 1);
+    AETHER_CHECK(lib.prefabs[king_guid].base_overrides.size() == 2);
+    AETHER_CHECK(FlattenPrefab(king_guid, lib.Lookup(), flat, &error) && GoldOf(flat, 1) == 900);
+    AETHER_CHECK(FlattenPrefab(chief_guid, lib.Lookup(), flat, &error) && GoldOf(flat, 1) == 50); // the chief is untouched
+
+    // A variant whose added entity's parent is gone is an error, not a crash.
+    lib.prefabs[king_guid].entities = {Plain(7, 2, 0)}; // 2 was removed
+    AETHER_CHECK(!FlattenPrefab(king_guid, lib.Lookup(), flat, &error) && error.find("parent") != std::string::npos);
+
+    // Cycles are rejected with the chain named: A holds B, B holds A.
+    PrefabData cycle_a;
+    PrefabData cycle_b;
+    const assets::AssetGuid a_guid = lib.Add(cycle_a);
+    const assets::AssetGuid b_guid = lib.Add(cycle_b);
+    lib.prefabs[a_guid].entities = {Plain(1, 0, 0), Nest(2, 1, b_guid)};
+    lib.prefabs[b_guid].entities = {Plain(1, 0, 0), Nest(2, 1, a_guid)};
+    AETHER_CHECK(!FlattenPrefab(a_guid, lib.Lookup(), flat, &error) && error.find("cycle") != std::string::npos);
+    AETHER_CHECK(error.find(assets::ToString(b_guid)) != std::string::npos);
+    // ...a variant of itself, directly or through another...
+    PrefabData self_variant;
+    const assets::AssetGuid self_guid = lib.Add(self_variant);
+    lib.prefabs[self_guid].base = self_guid;
+    AETHER_CHECK(!FlattenPrefab(self_guid, lib.Lookup(), flat, &error) && error.find("cycle") != std::string::npos);
+    lib.prefabs[goblin_guid].base = king_guid; // goblin -> king -> chief -> goblin
+    AETHER_CHECK(!FlattenPrefab(chief_guid, lib.Lookup(), flat, &error) && error.find("cycle") != std::string::npos);
+    lib.prefabs[goblin_guid].base = {};
+    // ...and a missing prefab is reported, also through ResolveAll.
+    lib.prefabs[a_guid].entities[1].nested->source = assets::NewAssetGuid();
+    AETHER_CHECK(!FlattenPrefab(a_guid, lib.Lookup(), flat, &error) && error.find("isn't available") != std::string::npos);
+    Fixture g;
+    PrefabInstance broken;
+    broken.source.guid = a_guid;
+    g.world.CreateEntity(IdComponent{NewEntityGuid()}, std::move(broken));
+    auto reports = ResolveAllPrefabInstances(g.world, g.guids, lib.Lookup());
+    AETHER_CHECK(reports.size() == 1 && !reports[0].second.ok && !reports[0].second.error.empty());
+}
+
+AETHER_TEST(Prefab_NestedAndVariantFilesAndCapture) {
+    Library lib;
+    PrefabData coin;
+    coin.entities = {Plain(1, 0, 1)};
+    const assets::AssetGuid coin_guid = lib.Add(coin);
+
+    // A scene with an instance of the coin under a plain entity, captured
+    // into a prefab: the instance becomes a nested entry.
+    Fixture f;
+    Entity holder = f.Make(Vec3{0, 0, 0});
+    PrefabData coin_flat;
+    AETHER_CHECK(FlattenPrefab(coin_guid, lib.Lookup(), coin_flat));
+    Transform at{Vec3{1, 0, 0}, Quaternion::Identity()};
+    Entity instance = InstantiatePrefab(f.world, f.guids, coin_guid, coin_flat, &at);
+    f.world.AddComponent<Parent>(instance, Parent{f.world.GetComponent<IdComponent>(holder)->guid});
+    SetOverride(*f.world.GetComponent<PrefabInstance>(instance), 1, "Loot", "gold", 7);
+    PrefabData captured = MakePrefab(f.world, f.guids, holder);
+    AETHER_CHECK(captured.entities.size() == 2 && captured.entities[1].nested.has_value());
+    AETHER_CHECK(captured.entities[1].nested->source == coin_guid && captured.entities[1].nested->overrides.size() == 1);
+    AETHER_CHECK(captured.entities[1].components["Transform"]["position"][0] == 1.0);
+
+    PrefabData flat;
+    AETHER_CHECK(FlattenPrefab(captured, lib.Lookup(), flat) && flat.entities.size() == 2 && GoldOf(flat, 2) == 7);
+
+    // Nested entries and variants survive a file round trip.
+    PrefabData variant;
+    variant.base = coin_guid;
+    variant.base_overrides = {Gold(1, 3)};
+    variant.base_removed = {4};
+    variant.entities = {Plain(2, 1, 0)};
+    for (const PrefabData* data : {&captured, &variant}) {
+        PrefabData loaded;
+        std::string error;
+        AETHER_CHECK(PrefabFromJson(PrefabToJson(*data), loaded, &error));
+        AETHER_CHECK(PrefabToJson(loaded) == PrefabToJson(*data));
+    }
+    PrefabData loaded;
+    PrefabFromJson(PrefabToJson(variant), loaded);
+    AETHER_CHECK(loaded.IsVariant() && loaded.base_removed == std::vector<PrefabLocalId>{4});
+    AETHER_CHECK(!loaded.IsFlat() && !captured.IsFlat() && flat.IsFlat());
+    Json bad = PrefabToJson(variant);
+    bad["entities"][0]["parent"] = 0; // a variant can't add a second root
+    AETHER_CHECK(!PrefabFromJson(bad, loaded));
+    Json bad_nested = PrefabToJson(captured);
+    bad_nested["entities"][1]["prefab"]["source"] = "not a guid";
+    AETHER_CHECK(!PrefabFromJson(bad_nested, loaded));
+
+    // Nested ids are stable and don't collide with plain ones in practice.
+    AETHER_CHECK(NestedLocalId(5, 2) == NestedLocalId(5, 2) && NestedLocalId(5, 2) != NestedLocalId(2, 5));
+    AETHER_CHECK(NestedLocalId(5, 2) > 1000);
 }

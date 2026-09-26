@@ -2026,6 +2026,52 @@ Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 9.
 - 162/162 tests pass on GCC 13, on Clang and under ASan/UBSan, and 169/169
   with physics.
 
+**Step 3: nested prefabs, variants and cycle detection.**
+
+- **Nested prefabs**: a prefab entity can be an instance of another prefab.
+  It carries that prefab's source, its overrides and its removed entities.
+  - The nesting entity's own components (typically its Transform) apply on
+    top of the nested root's.
+  - `MakePrefab` turns an instance it captures into a nested entry, instead
+    of copying its entities.
+- **Variants**: a prefab can be a variant of another (`base`). It changes
+  the base's entities with its own overrides and removals, and can add
+  entities.
+- **`FlattenPrefab`** resolves nesting and variants into one plain entity
+  list, which is what instances are resolved from.
+  - Precedence runs as in the spec: nested defaults, then the nesting
+    prefab's overrides, then variant overrides, then instance overrides.
+  - Entities inside nested prefabs get **stable local IDs** derived from
+    their path (`NestedLocalId`), so instance overrides and entity reuse
+    work for them unchanged.
+  - Refused with the prefab chain named: **cycles** (a prefab containing
+    itself, or a variant of itself, directly or not), missing prefabs,
+    nesting more than 32 deep, clashing IDs, and a variant entity whose
+    parent was removed.
+  - `ResolveAllPrefabInstances` flattens each prefab once per call. An edit
+    to the innermost prefab reaches every instance and reuses the same
+    entities.
+- **Apply to a variant** turns overrides of the base's entities into
+  variant overrides, leaving the base untouched. Applying overrides of
+  entities inside nested prefabs is not done yet: they stay on the
+  instance.
+- The `.aprefab` format adds `"prefab": {source, overrides, removed}` on
+  nested entities and a top-level `"base"` for variants.
+
+**Verified**: 3 new tests.
+
+- **Three levels deep**: an override at each level wins over the one
+  below. They peel off one by one, an edit to the innermost prefab
+  propagates, and a nesting entity can place the nested root.
+- **Variants**: a variant of a variant with removal, base changes flowing
+  through, Apply into the variant, and an error for a removed parent.
+- **Errors**: a two-prefab nesting cycle, a direct and a three-step
+  variant cycle, and a missing prefab (also through `ResolveAll`).
+- **Files and capture**: capturing a scene with an instance, JSON round
+  trips of nested entries and variants, and malformed files refused.
+- 165/165 tests pass on GCC 13, on Clang and under ASan/UBSan, and 172/172
+  with physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
