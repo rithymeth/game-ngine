@@ -1204,14 +1204,36 @@ scripting and Blueprints all build on.
   `std::string`, `Vec3`, `Vec4`, `Quaternion` and `Mat4` (as four `Vec4`
   columns).
 
-Not included yet, and planned as the next steps of Phase 6: `Any` and
-function reflection, JSON/binary archives, ECS integration (reflected
-component names in scene files), reflecting the existing components, and the
-generic Inspector.
+**Step 2: `Any` and function reflection.**
+
+- **`Any`** (`any.h`): holds one value of any reflected type together with
+  its `TypeInfo`. Values up to 32 bytes are stored inline; larger ones, such
+  as `Mat4`, go on the heap with the correct alignment. Copying an `Any`
+  copies its value through the type's own copy constructor, and moving one
+  leaves the source empty. `TryGet<T>()` returns `nullptr` on a type
+  mismatch.
+- **Field access through `Any`**: `FieldInfo::Get(obj)` returns a copy, and
+  `FieldInfo::Set(obj, any)` refuses a value of the wrong type and leaves the
+  field unchanged.
+- **Functions**: `AETHER_METHOD(name, flags, {"param", "names"})` goes in the
+  same `AETHER_REFLECT` list as fields. It records the return and parameter
+  types, marks `const` and `static` functions automatically, and generates a
+  call thunk. `FunctionInfo::Invoke(self, args, &ret)` checks the argument
+  count, every argument type, and that member functions get an instance, and
+  calls nothing if any check fails. A parameter taken as `T&` writes its
+  result back into its `Any` argument.
+
+Not included yet, and planned as the next steps of Phase 6: JSON/binary
+archives, ECS integration (reflected component names in scene files),
+reflecting the existing components, and the generic Inspector.
 
 **Verified** by building the engine and tests on Linux with both GCC 13
-and Clang, with no warnings from the new code: 8 new tests in
-`tests/test_reflection.cpp`, 58/58 passing. That run excludes the
+and Clang, with no warnings from the new code. There are 14 reflection tests
+(`tests/test_reflection.cpp` and `tests/test_reflection_any.cpp`), and
+64/64 tests pass. A Debug build with AddressSanitizer and
+UndefinedBehaviorSanitizer also passes cleanly, including a test with an
+instance-counting type showing that `Any` constructs and destroys each value
+exactly once, both inline and on the heap. That run excludes the
 Windows-only D3D12 tests; the MSVC build hasn't been run for this change.
 The macros use `##__VA_ARGS__` (already used by the log macros) rather than
 `__VA_OPT__`, which MSVC only supports with `/Zc:preprocessor`.
