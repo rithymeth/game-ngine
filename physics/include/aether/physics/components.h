@@ -2,19 +2,13 @@
 
 #include "aether/math/math.h"
 #include "aether/reflection/reflection.h"
+#include "aether/scene/components.h" // Transform
 
 // Jolt.h must be included before any other Jolt header.
 #include <Jolt/Jolt.h>
 #include <Jolt/Physics/Body/BodyID.h>
 
 namespace aether {
-
-// World-space transform. Plain data — round-trips through the default
-// raw-byte component serializer with no special handling.
-struct Transform {
-    Vec3 position;
-    Quaternion rotation;
-};
 
 // A dynamic or static physics body. `body_id` is a live Jolt handle, not
 // meaningful across a save/load — RegisterPhysicsComponentSerializers()
@@ -34,15 +28,10 @@ void RegisterPhysicsComponentSerializers();
 } // namespace aether
 
 // Reflection (Phase 6): drives the generic Inspector and JSON scenes.
-// RigidBody's live `body_id` is deliberately not reflected. Its binary scene
+// (Transform lives in aether/scene/components.h.) RigidBody's live `body_id` is deliberately not reflected. Its binary scene
 // serializer stays the custom one installed by
 // RegisterPhysicsComponentSerializers(), so existing .aesc files keep
 // loading unchanged.
-AETHER_REFLECT(aether::Transform, 1,
-    AETHER_FIELD(position, Field_EditAnywhere, {.units = "m"}),
-    AETHER_FIELD(rotation, Field_EditAnywhere)
-)
-
 AETHER_REFLECT(aether::RigidBody, 1,
     // Same limits the editor's body list has always used (a zero-mass dynamic
     // body isn't valid in Jolt).
