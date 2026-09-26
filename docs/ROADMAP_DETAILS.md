@@ -313,8 +313,16 @@ The goal is to change the ECS as little as possible:
 2. ✅ **Done.** `Any` and function invocation thunks: `AETHER_METHOD` for
    member, const and static functions, and type-checked
    `FunctionInfo::Invoke`. Covers tests 2 and 3 from §B.5.
-3. JSON and binary archives with `SerializeObject`/`DeserializeObject`.
-   Archive tests.
+3. ✅ **Done.** JSON and binary archives, plus the archive tests from
+   §B.5. Two changes from the plan above:
+   - The binary archive is MessagePack of the same JSON document rather than
+     a separate name-free format. That keeps binary data as tolerant of
+     schema changes as JSON, and the migration hooks work on both. The
+     compact cooked format (§A.5) comes with the cooker.
+   - Migration hooks are registered with `RegisterMigration<T>(fn)` instead
+     of being stored on `TypeInfo`, so `type_info.h` doesn't depend on JSON.
+   The API is `ToJson`/`FromJson`, `Save/LoadJsonText` and
+   `Save/LoadBinary` in `reflection/serialize.h`.
 4. ECS integration: reflected names, reflection-driven default
    serializers, the 256-component cap, legacy scene fixture test.
 5. Reflect `Transform`, `Parent`, `ModelRenderer`, `RigidBody` (fields

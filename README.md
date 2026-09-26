@@ -1223,14 +1223,41 @@ scripting and Blueprints all build on.
   calls nothing if any check fails. A parameter taken as `T&` writes its
   result back into its `Any` argument.
 
-Not included yet, and planned as the next steps of Phase 6: JSON/binary
-archives, ECS integration (reflected component names in scene files),
-reflecting the existing components, and the generic Inspector.
+**Step 3: JSON and binary archives** (`serialize.h`).
+
+- `SaveJsonText`/`LoadJsonText` and `SaveBinary`/`LoadBinary` work for any
+  reflected value, with no per-type code.
+- Both archives share one document model. Binary is the same document
+  encoded as MessagePack, so it's smaller but keeps field names and is just
+  as tolerant of schema changes. The compact cooked format with no field
+  names comes later, with the cooker.
+- **Readable, deterministic JSON**:
+  - Keys are sorted, and each struct records its schema version as `"$v"`.
+  - Enums are written by name, and math types as arrays (`[x, y, z]`).
+  - `f32` values use their shortest exact form (`0.1`, not
+    `0.10000000149011612`).
+  - Saving the same object twice gives byte-identical text, and so does
+    save → load → save.
+- **Tolerant loading**:
+  - A field missing from the data keeps its default.
+  - Data for a field that no longer exists is ignored.
+  - Wrong-typed values, out-of-range integers and unknown enum names are
+    skipped with a warning that names the path (`Everything.mood`), and the
+    rest of the object still loads.
+  - Data saved by a newer version loads the fields this version knows, with
+    a warning.
+- **Schema migration**: `RegisterMigration<T>(fn)` edits old data (for
+  example renaming `hp` to `health`) before it's loaded, in both archive
+  formats.
+
+Not included yet, and planned as the next steps of Phase 6: ECS integration
+(reflected component names in scene files), reflecting the existing
+components, and the generic Inspector.
 
 **Verified** by building the engine and tests on Linux with both GCC 13
-and Clang, with no warnings from the new code. There are 14 reflection tests
-(`tests/test_reflection.cpp` and `tests/test_reflection_any.cpp`), and
-64/64 tests pass. A Debug build with AddressSanitizer and
+and Clang, with no warnings from the new code. There are 23 reflection and serialization
+tests (`tests/test_reflection.cpp`, `tests/test_reflection_any.cpp` and
+`tests/test_archive.cpp`), and 73/73 tests pass. A Debug build with AddressSanitizer and
 UndefinedBehaviorSanitizer also passes cleanly, including a test with an
 instance-counting type showing that `Any` constructs and destroys each value
 exactly once, both inline and on the heap. That run excludes the

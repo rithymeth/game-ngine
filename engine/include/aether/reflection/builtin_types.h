@@ -35,6 +35,15 @@ AETHER_REFLECT_PRIMITIVE(aether::f32, "f32", Float)
 AETHER_REFLECT_PRIMITIVE(aether::f64, "f64", Float)
 AETHER_REFLECT_PRIMITIVE(std::string, "string", String)
 
+template <>
+inline constexpr bool aether::reflect::detail::kSerializeAsArray<aether::Vec3> = true;
+template <>
+inline constexpr bool aether::reflect::detail::kSerializeAsArray<aether::Vec4> = true;
+template <>
+inline constexpr bool aether::reflect::detail::kSerializeAsArray<aether::Quaternion> = true;
+template <>
+inline constexpr bool aether::reflect::detail::kSerializeAsArray<aether::Mat4> = true;
+
 AETHER_REFLECT(aether::Vec3, 1, AETHER_FIELD(x), AETHER_FIELD(y), AETHER_FIELD(z))
 AETHER_REFLECT(aether::Vec4, 1, AETHER_FIELD(x), AETHER_FIELD(y), AETHER_FIELD(z), AETHER_FIELD(w))
 AETHER_REFLECT(aether::Quaternion, 1, AETHER_FIELD(x), AETHER_FIELD(y), AETHER_FIELD(z), AETHER_FIELD(w))
