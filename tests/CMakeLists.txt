@@ -18,6 +18,7 @@ add_executable(aether_tests
     test_importers.cpp
     test_model_importer.cpp
     test_hot_reload.cpp
+    test_content_browser.cpp
     test_assets.cpp
     test_gltf_loader.cpp
 )

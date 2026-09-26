@@ -289,8 +289,16 @@ runs when a project is opened for the first time with the new engine:
    - `AssetHandle<T>`/`AssetStore<T>` implement the slot + generation
      design above. Swapping renderer resources (textures, meshes, shaders)
      on reload is editor work pending the Windows build.
-6. Content Browser v2: thumbnails, rename/move with reference safety,
-   Reference Viewer.
+6. ✅ **Done** (engine side). Content Browser v2: thumbnails, rename/move with
+   reference safety, Reference Viewer.
+   - `assets/content_browser.h` holds the listing, search, rename/move,
+     reference graph and thumbnails; the ImGui panel is pending the Windows
+     build.
+   - Reference safety: GUID references need nothing; the relative URIs
+     inside `.gltf` files are rewritten on move, and a `.gltf` now depends on
+     the textures it names.
+   - Thumbnails cover textures and materials. Model and mesh thumbnails need
+     an offscreen render, so they come with the renderer-side editor work.
 
 ---
 

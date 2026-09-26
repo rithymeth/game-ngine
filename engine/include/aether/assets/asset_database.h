@@ -123,7 +123,8 @@ public:
     // Assets that refer to `guid` (the reverse of AssetRecord::dependencies),
     // sorted by path. Dependencies are found by Scan: every scene and prefab
     // file (JSON or binary) is searched for asset GUID strings, which is how
-    // AssetRef fields are saved.
+    // AssetRef fields are saved; a .gltf depends on the texture assets its
+    // image URIs point at.
     std::vector<const AssetRecord*> Referencers(const AssetGuid& guid) const;
 
     // Deletes an asset's source and .ameta, with its sub-assets. Refused
