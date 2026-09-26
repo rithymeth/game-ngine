@@ -23,6 +23,7 @@ add_executable(aether_tests
     test_prefab_library.cpp
     test_gameplay.cpp
     test_scheduler.cpp
+    test_input.cpp
     test_assets.cpp
     test_gltf_loader.cpp
 )

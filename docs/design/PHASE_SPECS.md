@@ -455,6 +455,46 @@ struct SystemDesc {
 
 ---
 
+## Phase 10: input
+
+### 10.1 Model
+
+Devices feed a raw `InputState` (every `Key` across keyboard, mouse and
+gamepad, as a value). `InputSystem::Update` then evaluates the context
+stack against it each frame:
+
+1. Contexts are evaluated from highest priority down. A context that
+   `consume_input`s hides the keys it's using from lower ones, and
+   `block_lower_contexts` hides everything from them. A binding that
+   loses its input this way resets quietly, without firing Released or
+   Completed.
+2. Per binding: the raw value goes through the **modifiers** (dead zone,
+   negate, swizzle, scale) into a Vec3, then the **triggers** (Down,
+   Pressed, Released, Hold, Tap, DoubleTap, Chord). A binding with no
+   triggers counts whenever its value is non-zero.
+3. An action's phase is the strongest of its bindings' (None < Ongoing <
+   Triggered). Its value is the sum of its actuated bindings' values, which
+   is how WASD becomes one 2D axis.
+4. Phase changes become events: Started, Ongoing, Triggered (every frame
+   it's triggered), Completed, Canceled.
+
+Chords see their chord action as evaluated so far this frame, or last
+frame's state for an action in a lower context.
+
+### 10.2 PR breakdown
+
+1. ✅ **Done.** Keys and raw state, actions, mapping contexts, modifiers,
+   triggers, the context stack, events and the polling API, all testable
+   with synthetic events (the phase's "done when").
+2. Input assets (`InputAction` and `InputMappingContext` files through the
+   asset database), runtime rebinding, "press a key" capture, and user
+   overrides saved to config.
+3. Platform backends: Win32 keyboard and mouse (raw delta, cursor lock),
+   XInput gamepads (Windows), and the SDL controller database elsewhere.
+4. Editor: the Input Mapping Context editor, and Project Settings > Input.
+
+---
+
 ## Phase 11: Luau binding and script hot reload
 
 ### 11.1 Binding generation from reflection
