@@ -1741,6 +1741,60 @@ Clang and under ASan/UBSan, and 142/142 with physics.
 - 140/140 tests pass on GCC 13, on Clang and under ASan/UBSan, and 147/147
   with physics.
 
+**Step 4: the glTF model importer, split into sub-assets.**
+
+- **`ModelImporter`** (`assets/model_importer.h`) wraps the existing glTF
+  loader. One `.gltf` becomes a model plus separately referenceable pieces:
+  - `mesh:<i>`: a **Mesh** per glTF mesh, with vertices, indices,
+    skinning data and per-primitive bounds. It's saved in the compact
+    binary `AMSH` format (`Encode/DecodeMeshData`, size-checked on load).
+  - `material:<i>`: a **Material** per material (metallic-roughness), saved
+    through reflection. Texture URIs are rewritten as content-relative asset
+    paths (`../textures/a.png` becomes `textures/a.png`), ready for
+    `FindByPath`.
+  - `animation:<i>`: an **Animation** per clip, saved through reflection.
+  - The model's own data is a manifest: the node tree, skins, and the keys
+    of its sub-assets.
+  - Settings: `import_materials` and `import_animations`.
+- **Sub-assets in the database**:
+  - Each one gets its own GUID, kept in the source's `.ameta` under
+    `sub_assets`, so the GUID is stable across reimports and sessions.
+    `AssetRef<MeshAsset>`, `AssetRef<MaterialAsset>` and
+    `AssetRef<AnimationAsset>` can point at them.
+  - Their records have paths such as `models/hero.gltf#mesh:0`, a `parent`,
+    and a `sub_key`.
+  - `SetSubAssets` keeps the GUIDs of existing keys, adds new keys, and
+    removes keys the importer no longer produces (for example, after
+    turning materials off).
+  - Moving a model moves its sub-assets' paths with it. Deleting a model is
+    refused while anything uses the model **or any of its pieces**.
+    Sub-assets can't be moved or deleted on their own.
+  - Copying a model together with its `.ameta` gives the copy new GUIDs for
+    the model and every sub-asset.
+- **`ImportAsset`**:
+  - Cache entries now hold the main data plus every sub-asset (`AIMP`
+    container). A cached entry in the older layout is simply re-imported.
+  - Called with a sub-asset's GUID, it imports the source (normally a cache
+    hit) and returns just that piece.
+
+**Verified**: 5 new tests, using the repo's glTF files.
+
+- `AMSH` round-trips, and truncated data, trailing bytes and oversized
+  counts are rejected.
+- The textured cube has 24 vertices, 36 indices, symmetric bounds, and its
+  texture path rewritten.
+- Animation keys have the right width, skinned vertices carry joints, the
+  node tree is kept, settings drop the optional pieces, and a missing file
+  fails.
+- Sub-asset GUIDs are the same in a fresh database and after a cached
+  reimport, and a changed setting removes only the material.
+- Move and delete work with sub-assets, including a scene that references
+  a mesh blocking deletion, and copying with the `.ameta` gives fresh GUIDs.
+- UBSan caught a zero-length `memcpy` from an empty vector's null
+  pointer, which was fixed before merging.
+- 145/145 tests pass on GCC 13, on Clang and under ASan/UBSan, and 152/152
+  with physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,

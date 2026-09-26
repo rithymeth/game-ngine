@@ -271,7 +271,14 @@ runs when a project is opened for the first time with the new engine:
      needs an encoder, so it's deferred.
    - Importers run synchronously for now; job-system async loading comes
      with hot reload in step 5.
-4. glTF importer split into sub-assets.
+4. ✅ **Done.** glTF importer split into sub-assets (meshes, materials,
+   animations).
+   - Sub-asset GUIDs live in the source's `.ameta` (`sub_assets`), keyed by
+     `mesh:<i>` etc., so they're stable across reimports.
+   - Material texture references are content-relative paths for now.
+     Turning them into `AssetRef<Texture>` needs the database at import
+     time, which comes with the Content Browser (step 6).
+   - Meshes use a raw binary format (`AMSH`); the rest use reflection.
 5. File watcher, debounce, and hot reload for textures, then meshes, then
    shaders.
 6. Content Browser v2: thumbnails, rename/move with reference safety,
