@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phase 8 — Asset System (in progress; Phase 7 editor UI items pending a Windows build)
+## Status: Phases 8–9 done on the engine side (asset system; prefabs and scheduling); their editor UI, and Phase 7's, pending a Windows build. Next: Phase 10 — Input
 
 ### Phase 1 — Foundation
 
@@ -1604,7 +1604,7 @@ and a headless Inspector draw of `ProjectSettings`. 124/124 tests pass on
 GCC 13, on Clang and under ASan/UBSan, and 131/131 with physics. Nothing in
 the editor executable changed.
 
-### Phase 8 (in progress) — Asset System
+### Phase 8 (engine side done) — Asset System
 
 Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 8.
 
@@ -1919,7 +1919,7 @@ Windows build.
 - 153/153 tests pass on GCC 13, on Clang and under ASan/UBSan, and 160/160
   with physics.
 
-### Phase 9 (in progress) — Prefabs and scheduling
+### Phase 9 (engine side done) — Prefabs and scheduling
 
 Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 9.
 
@@ -2179,6 +2179,60 @@ Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 9.
   per-component registrations are covered.
 - 174/174 tests pass on GCC 13, on Clang and under ASan/UBSan, and 181/181
   with physics.
+
+**Step 6: the system scheduler and the fixed-timestep frame**
+(`scene/scheduler.h`, §9.6).
+
+- **`SystemDesc`**: a name, a phase (PreUpdate, FixedUpdate, Update,
+  LateUpdate or PreRender), the components it reads and writes, `after`
+  constraints, and whether it's `main_thread_only`.
+- **`SystemScheduler`** builds one dependency graph per phase.
+  - A system runs after the ones it lists in `after`, and after earlier
+    systems it conflicts with: two systems that touch the same component,
+    at least one writing it.
+  - The order behind "earlier" comes from the `after` lists first, then
+    registration order. So only contradictory `after` lists can make a
+    cycle.
+  - It reports an `after` that names an unknown system, one in another
+    phase, and cycles (naming the systems in the cycle).
+- **Running a phase**: the graph is run as levels of mutually independent
+  systems.
+  - With a `JobSystem`, each level runs in parallel on its workers.
+    `main_thread_only` systems run on the calling thread at the same time.
+  - Without one, a phase runs in its sequential order.
+  - Levels are a conservative way to schedule the graph. Starting each
+    system the moment its own predecessors finish can come later without
+    changing the interface.
+- **`FixedTimestep`**: an accumulator that runs 0–5 fixed steps a frame. If
+  more are owed (a hitch), the excess is dropped, which avoids the "spiral
+  of death". `Alpha()` is the blend factor for rendering.
+- **`FrameLoop::Tick`** runs PreUpdate, FixedUpdate as many times as due,
+  Update, LateUpdate, then PreRender with `alpha` set.
+- **Render interpolation**: before each fixed step, `PreviousTransform`
+  records each entity's Transform (`RecordPreviousTransformsSystem`).
+  `InterpolateTransform` blends position and rotation (shortest-path nlerp)
+  by `alpha`, so movement is drawn smoothly between fixed steps.
+
+**Verified**: 5 new tests.
+
+- **Ordering**: levels and order from access and `after`, readers sharing a
+  level, and `after` overriding registration order. Four kinds of bad
+  graph are rejected.
+- **Parallel runs**: each system registers its access while it runs, and
+  no conflicting pair was ever seen running at once. Independent systems
+  did overlap, the main-thread-only system stayed on the main thread, and
+  a run without a job system matches the sequential order. Stable across
+  repeated runs.
+- **Fixed timestep**: accumulation, the 5-step cap with drop, and 144 Hz
+  frames averaging out to 60 fixed steps a second.
+- **Frame loop**: phase order and fixed-step counts, a mover drawn at
+  `alpha` 0.5 between steps, and shortest-path rotation blending.
+- 179/179 tests pass on GCC 13, on Clang and under ASan/UBSan, and 186/186
+  with physics.
+
+With this, Phase 9 is done on the engine side. Its editor parts (prefab
+edit mode, the Apply button, the warnings in the Messages panel) wait for
+the Windows build along with the Phase 7 and 8 editor work.
 
 ## Building
 
