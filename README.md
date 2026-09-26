@@ -1471,11 +1471,8 @@ the original state exactly and redo-all the state after the run.
   - Stale handles (a selection, pending delete, or `Parent` link to an
     entity that undo destroyed) are dropped instead of followed. The
     hierarchy walks check `IsAlive`.
-- **Known gaps, for the next step:**
-  - `Parent` still stores a raw `Entity`, so undoing the delete of a parent
-    doesn't re-link its children.
-  - The old body-list sliders in the "Aether Editor" window still edit
-    directly, not through commands.
+- Two gaps from this step were closed in step 4: `Parent` links surviving
+  undo, and the body-list sliders going through commands.
 
 **Verified**: 6 new tests, including a headless ImGui test that types a
 value into the Inspector and checks it becomes one labelled, undoable
@@ -1484,6 +1481,45 @@ command. 106/106 tests pass on GCC 13, on Clang and under ASan/UBSan, and
 Every changed block of `editor/main.cpp` (hooks, shortcuts, Edit menu,
 spawn/save/load, Inspector call, delete loop, stale-link cleanup) was
 compiled together in a harness against the real headers, with no warnings.
+
+**Step 4: the scene hierarchy, reparenting, and gizmo/slider undo.**
+
+- **`engine/include/aether/scene/hierarchy.h`** (moved out of the editor):
+  - `Parent` now stores the parent's **`EntityGuid`**, not an `Entity`
+    handle, and is reflected.
+  - `GetParent`, `ComputeWorldTransform`, `WorldPosition`,
+    `WouldCreateCycle` and `ChildrenOf` resolve links through the
+    `GuidIndex`, with a depth cap that also cuts off cycles in bad data.
+  - A child whose parent doesn't currently exist behaves as a root, and is
+    attached again the moment an entity with that GUID exists. So deleting a
+    parent and undoing re-links its children with no cleanup code; the
+    editor's orphan-unparenting and stale-link removal are gone.
+- **`Transform` moved into the engine** (`scene/components.h`). It isn't
+  physics-specific; `physics/components.h` includes it.
+- **`ReparentCommand`** makes "Parent to selection" and "Unparent" in the
+  Hierarchy panel undoable.
+- **`CommitFieldEdit`**: turns any widget's in-place edit into an undoable
+  command. Successive edits merge, and it breaks the merge chain on commit.
+  - **Gizmo drags** are recorded as one undo step (start → end position)
+    when the mouse is released.
+  - **The body-list sliders** (position, radius, mass, static) go through it,
+    and their Jolt syncing now happens in the hooks, so undo resyncs physics
+    too.
+  - `InspectEntity` uses it as well.
+- **Test fix:** a test type added in step 3 (`cmd_test::Health`) shared its
+  declared name with another test type. The registry was correctly rejecting
+  it with an error log. It's renamed.
+
+**Verified**: 6 new tests covering world transforms through a rotated
+chain, cycle detection including a data cycle, a link surviving parent
+destroy and recreate, `Parent` in both scene formats, reparent undo/redo
+including delete-undo re-linking, and a gizmo-style drag becoming one undo
+step. 112/112 tests pass on GCC 13, on Clang and under ASan/UBSan, and
+119/119 with physics. The changed editor blocks (hooks, undo application,
+gizmo drag, body list, Hierarchy panel, delete loop, hierarchy call sites)
+were compiled together in a harness against the real headers, with no
+warnings. The editor executable itself still needs a Windows build to
+confirm.
 
 ## Building
 

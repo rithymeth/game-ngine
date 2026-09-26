@@ -10,14 +10,6 @@
 
 namespace aether::editor {
 
-namespace {
-
-bool SameValue(const reflect::TypeInfo& type, const void* a, const void* b) {
-    return reflect::ToJson(type, a) == reflect::ToJson(type, b);
-}
-
-} // namespace
-
 void InspectEntity(CommandContext& ctx, CommandStack& stack, Entity entity) {
     const EntityGuid guid = EnsureGuid(ctx.world, entity, &ctx.guids);
     // The permanent ID is identity, not editable data: a quiet line, not a card.
@@ -58,18 +50,9 @@ void InspectEntity(CommandContext& ctx, CommandStack& stack, Entity entity) {
             InspectResult edit = InspectObject(type, component, type.name);
             if (edit.Changed()) {
                 const reflect::FieldInfo& field = *edit.changed_field;
-                const void* old_ptr = field.Ptr(before.Data());
-                if (!SameValue(*field.type, old_ptr, field.Ptr(component))) {
-                    reflect::Any new_value = field.Get(component);
-                    reflect::Any old_value = reflect::Any::CopyOf(*field.type, old_ptr);
-                    field.Set(component, old_value); // the command re-applies it (and fires hooks)
-                    stack.Execute(ctx,
-                                  std::make_unique<SetFieldCommand>(guid, id, field, std::move(old_value),
-                                                                    std::move(new_value)),
-                                  MergePolicy::Allow);
-                }
-            }
-            if (edit.committed) {
+                CommitFieldEdit(ctx, stack, guid, id, field, component,
+                                reflect::Any::CopyOf(*field.type, field.Ptr(before.Data())), edit.committed);
+            } else if (edit.committed) {
                 stack.BreakMergeChain();
             }
         }
