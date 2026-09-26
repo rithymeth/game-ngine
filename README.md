@@ -1795,6 +1795,68 @@ Clang and under ASan/UBSan, and 142/142 with physics.
 - 145/145 tests pass on GCC 13, on Clang and under ASan/UBSan, and 152/152
   with physics.
 
+**Step 5: file watching, debouncing and hot reload.**
+
+- **`FileWatcher`** (`assets/file_watcher.h`) reports files added, modified
+  or removed under `Content/`.
+  - A change is reported once it has been quiet for 200 ms, so a burst of
+    saves is one change.
+  - Editors that save by writing a temp file and renaming it over the
+    original produce a single Modified for the original. The temp file's add
+    and remove cancel out.
+  - It polls (modification time and size), which works on every platform.
+    Native notifications (`ReadDirectoryChangesW`, `inotify`) can replace
+    the folder walk later without changing the interface.
+  - Time is passed in, so tests control it exactly.
+- **`AssetHandle<T>` / `AssetStore<T>`** (`assets/asset_handle.h`):
+  - Handles share one slot per asset. A reload replaces the data behind
+    every handle and bumps a generation number.
+  - Code that built something from the data, such as a GPU texture,
+    compares generations and rebuilds when they differ.
+- **`HotReloader`** (`assets/hot_reload.h`): call `Update(now)` once per
+  frame. It rescans and reimports what changed, and returns what happened:
+  - **Reimported**: the source was edited, it came back after being deleted,
+    or its import settings were edited by hand in the `.ameta`.
+  - **Added**: a new file, imported straight away.
+  - **Failed**: the import failed; keep using the old data. It's reported
+    once and retried only when the file or its settings change, not on
+    every later change.
+  - **Moved**: renamed or moved outside the editor together with its
+    `.ameta`. Same GUID, so nothing that uses it breaks.
+  - **Missing**: its source was deleted.
+  - Each change lists the assets that use it (including through its
+    sub-assets), for rebuilding things like a material after its texture
+    changes.
+  - Importing rewrites the `.ameta`. The reloader tells the watcher about
+    its own writes, so they don't come back as changes and cause endless
+    reimports.
+  - Imports run inside `Update` for now. They move to worker jobs when the
+    engine has a job system.
+  - Hooking this into the editor's renderer (textures, then meshes, then
+    shaders) needs the Windows build, like the other editor-side work.
+
+**Verified**: 3 new tests.
+
+- **Watcher**: debounce timing, the temp-file-and-rename save, removals,
+  hidden folders, and a file created and deleted before settling.
+- **Handles**: see reloads and keep their data after the store drops the
+  asset.
+- **End to end, on a real texture**:
+  - An edit is reimported and the handle's generation goes up, with the
+    scene that uses it listed.
+  - The reloader's own writes cause no further changes.
+  - A settings edit reimports without mips; rewriting the same settings
+    does nothing.
+  - A new file is added and a broken file fails.
+  - A move outside the editor keeps the GUID.
+  - A delete is reported missing, and the file coming back is reimported.
+  - Fixing the broken file imports it.
+- **Bug caught by the end-to-end test and fixed before merging**: a file
+  that failed to import was retried and reported again on every unrelated
+  change.
+- 148/148 tests pass on GCC 13, on Clang and under ASan/UBSan, and 155/155
+  with physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,

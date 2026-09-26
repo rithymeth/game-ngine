@@ -279,8 +279,16 @@ runs when a project is opened for the first time with the new engine:
      Turning them into `AssetRef<Texture>` needs the database at import
      time, which comes with the Content Browser (step 6).
    - Meshes use a raw binary format (`AMSH`); the rest use reflection.
-5. File watcher, debounce, and hot reload for textures, then meshes, then
-   shaders.
+5. ✅ **Done** (engine side). File watcher, debounce, and hot reload for
+   textures, then meshes, then shaders.
+   - The watcher polls (mtime + size) instead of using `ReadDirectoryChangesW`
+     or `inotify`; native backends can replace the walk behind the same
+     interface.
+   - `HotReloader` reimports synchronously in `Update()`; worker jobs come
+     with the job system.
+   - `AssetHandle<T>`/`AssetStore<T>` implement the slot + generation
+     design above. Swapping renderer resources (textures, meshes, shaders)
+     on reload is editor work pending the Windows build.
 6. Content Browser v2: thumbnails, rename/move with reference safety,
    Reference Viewer.
 
