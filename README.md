@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phase 7 — Editor Foundation (in progress)
+## Status: Phase 8 — Asset System (in progress; Phase 7 editor UI items pending a Windows build)
 
 ### Phase 1 — Foundation
 
@@ -1603,6 +1603,53 @@ warnings, non-project files), the recent-projects rules and persistence,
 and a headless Inspector draw of `ProjectSettings`. 124/124 tests pass on
 GCC 13, on Clang and under ASan/UBSan, and 131/131 with physics. Nothing in
 the editor executable changed.
+
+### Phase 8 (in progress) — Asset System
+
+Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 8.
+
+**Step 1: asset IDs, `.ameta` files and the asset database**
+(`engine/include/aether/assets/asset_database.h`).
+
+- **`AssetGuid`**: a permanent version 4 UUID per asset, a separate type from
+  `EntityGuid` so the two can't be mixed up. It's reflected and saved as its
+  string form.
+- **`.ameta` sidecars** (`Brick.png.ameta`, §A.2 format): GUID, importer,
+  importer version, the source hash at the last import, importer-specific
+  settings, and labels.
+- **`AssetDatabase::Scan()`** walks `Content/`:
+  - A source with no `.ameta` gets one, with a new GUID. Which files count
+    as assets is decided by extension.
+  - An `.ameta` whose source is gone is kept and marked missing, since the
+    file may come back (a branch switch, say), and it keeps the same
+    identity when it does.
+  - A file copied together with its `.ameta` gives two assets the same GUID.
+    The older `.ameta` keeps it and the newer one gets a fresh GUID, with a
+    warning.
+  - A source whose hash changed since its last import is marked
+    `needs_import`, and `MarkImported` records the new hash.
+  - An `.ameta` that can't be read is **left untouched** and its asset
+    skipped, with a warning. Merge conflicts are the usual cause, and
+    rewriting the file would lose the GUID.
+  - Hidden folders such as `.git` are skipped, and paths are `/`-separated on
+    every platform.
+- **`Move()`** renames or moves an asset's source and `.ameta` together, so
+  its GUID (and every reference to it) is unchanged. It refuses to overwrite
+  an existing asset.
+- File hashes are FNV-1a 64 for now (`fnv1a64:…`). xxHash is a planned
+  speed upgrade, and the prefix keeps that change detectable.
+
+**Verified**: 7 new tests. They cover:
+
+- stable rescans with byte-identical `.ameta` files
+- moves surviving a fresh database
+- a missing source coming back with the same identity
+- a duplicate GUID from copying a file with its `.ameta`
+- change detection, with settings and labels preserved
+- a corrupt `.ameta` being preserved
+
+131/131 tests pass on GCC 13, on Clang and under ASan/UBSan, and 138/138
+with physics.
 
 ## Building
 
