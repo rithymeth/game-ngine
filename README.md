@@ -164,6 +164,45 @@ discussion in project history.
   fence before consuming its output — verified stable (identical 20/64
   culling result) across 960 frames spanning 8 repeated runs.
 
+### Follow-up: transient resource memory aliasing
+
+`RenderGraph::CreateTransientTexture` now defers actual GPU allocation to
+`Execute()`'s internal `Compile()` step, once the frame's full pass list (and
+therefore each transient resource's lifetime — the span between its first
+and last use) is known. Distinct transients whose lifetimes don't overlap
+are placed into a shared `ID3D12Heap` via `CreatePlacedResource` (first-fit-
+decreasing by size) instead of each getting its own committed allocation,
+with a `D3D12_RESOURCE_BARRIER_TYPE_ALIASING` barrier inserted automatically
+at whichever pass first activates the later resource. A transient touched
+from both queues is conservatively excluded from aliasing (its own dedicated
+allocation) rather than risk an unsafe cross-queue alias. There's no public
+D3D12 API to confirm two *texture* resources share physical memory from the
+resource objects themselves (`GetGPUVirtualAddress` is only meaningful for
+buffers) — verified instead via a diagnostic `RenderGraph::ShareHeapAllocation`
+accessor checking the engine's own bucket-assignment bookkeeping, trusting
+`CreatePlacedResource` to honor the heap+offset contract it documents; a
+dedicated test also confirms overlapping-lifetime transients are correctly
+*refused* aliasing. The sandbox's depth buffer now goes through this same
+allocation path (a "bucket of one," exercising it without literally needing
+a second transient to alias against) — reverified stable across 1,500+
+frames spanning 5 repeated runs.
+
+### Follow-up: dependency-driven pass reordering (attempted, reverted)
+
+Worth recording honestly rather than hiding: a same-queue topological sort
+over pass resource usages was built, then removed after its own test caught
+that it was a mathematically guaranteed no-op. With only a resource handle
+and a state per usage — no notion of a `Write` producing a new "version" a
+`Read` can selectively bind to — every dependency edge that construction can
+produce necessarily points from an earlier registration index to a later
+one. Feeding that into a topological sort with "smallest ready index first"
+as the tie-break reproduces the original registration order for *any*
+input; it can neither reorder anything nor (since a cycle would require a
+backward edge) ever detect one. Genuine reordering needs resource
+versioning, a distinctly larger feature than what was scoped here — see
+`ComputeExecutionOrder`'s comment in `render_graph.cpp` for the full
+reasoning. Passes execute in plain registration order per queue.
+
 ### Follow-up: Vulkan backend (swappable RHI)
 
 `engine/include/aether/gfx/rhi` is a genuinely backend-swappable abstraction
@@ -202,8 +241,7 @@ instead if a real SDK is present. Timeline semaphores (core Vulkan 1.2)
 stand in for D3D12-style monotonic fence values.
 
 Not yet started: unifying shader/pipeline/draw-call recording across
-backends (the abstraction layer above this one), transient resource memory
-aliasing.
+backends (the abstraction layer above this one).
 
 ## Building
 
