@@ -22,6 +22,16 @@ struct PrefabAsset {
 struct SoundAsset {
     static constexpr const char* kImporter = "Sound";
 };
+// Sub-assets split out of a model (ModelImporter).
+struct MeshAsset {
+    static constexpr const char* kImporter = "Mesh";
+};
+struct MaterialAsset {
+    static constexpr const char* kImporter = "Material";
+};
+struct AnimationAsset {
+    static constexpr const char* kImporter = "Animation";
+};
 
 // A reference to an asset by GUID (Phase 8, docs/design/PHASE_SPECS.md §8.1),
 // typed by what kind of asset it must be. Saved as the GUID string, so it

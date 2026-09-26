@@ -17,9 +17,20 @@ struct ImportContext {
     const nlohmann::json& settings; // importer defaults, overridden by the .ameta's settings
 };
 
+// One piece split out of a source file, e.g. a mesh of a glTF model. It gets
+// its own GUID (kept across reimports by `key`), so it can be referenced on
+// its own: AssetRef<MeshAsset>.
+struct SubAssetOutput {
+    std::string key;      // unique within the source, stable across reimports: "mesh:0"
+    std::string importer; // its asset type: "Mesh", "Material", "Animation"
+    std::vector<u8> data;
+    AssetGuid guid;       // filled in by ImportAsset
+};
+
 struct ImportResult {
     bool ok = false;
     std::vector<u8> data; // the processed, engine-ready form of the asset
+    std::vector<SubAssetOutput> sub_assets;
     std::string error;
     std::vector<std::string> warnings;
 };
@@ -40,7 +51,7 @@ public:
 
 class ImporterRegistry {
 public:
-    // With the built-in importers registered (currently: Texture).
+    // With the built-in importers registered (Texture, Model).
     static ImporterRegistry WithBuiltins();
 
     void Register(std::unique_ptr<IAssetImporter> importer); // replaces one with the same name
@@ -54,6 +65,7 @@ struct ImportOutput {
     bool ok = false;
     bool from_cache = false;
     std::vector<u8> data;
+    std::vector<SubAssetOutput> sub_assets; // with their GUIDs
     std::string error;
     std::vector<std::string> warnings;
 };
@@ -61,7 +73,11 @@ struct ImportOutput {
 // Imports one asset: settings = importer defaults merged with the .ameta's
 // (the .ameta wins), then the DDC is checked for exactly that input before
 // running the importer. On success the .ameta records the imported source
-// hash and importer version (AssetDatabase::MarkImported).
+// hash and importer version (AssetDatabase::MarkImported), and the source's
+// sub-assets are registered (AssetDatabase::SetSubAssets).
+//
+// Given a sub-asset's GUID, imports its source (usually a cache hit) and
+// returns that sub-asset's data in `data`.
 ImportOutput ImportAsset(AssetDatabase& database, const AssetGuid& guid, const ImporterRegistry& importers,
                          DerivedDataCache& cache, const std::string& platform = "default");
 
@@ -73,7 +89,7 @@ struct ImportAllResult {
     std::vector<std::string> errors;
 };
 
-// Imports every asset marked needs_import.
+// Imports every asset marked needs_import (sub-assets come with their source).
 ImportAllResult ImportAll(AssetDatabase& database, const ImporterRegistry& importers, DerivedDataCache& cache,
                           const std::string& platform = "default");
 

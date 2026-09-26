@@ -22,6 +22,7 @@ add_library(aether_engine STATIC
     src/assets/derived_data_cache.cpp
     src/assets/importer.cpp
     src/assets/texture_importer.cpp
+    src/assets/model_importer.cpp
 )
 
 target_include_directories(aether_engine PRIVATE ${stb_SOURCE_DIR})
