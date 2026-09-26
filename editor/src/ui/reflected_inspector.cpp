@@ -192,6 +192,52 @@ void DrawValue(const TypeInfo& type, void* ptr, const reflect::Meta& meta, DrawC
         }
         return;
     }
+    case TypeKind::Array: {
+        const usize count = type.array_size(ptr);
+        if (ImGui::TreeNodeEx("##v", ImGuiTreeNodeFlags_SpanAvailWidth, "%zu element%s", count, count == 1 ? "" : "s")) {
+            usize remove_index = count; // none
+            if (ImGui::BeginTable("##elements", 3, ImGuiTableFlags_SizingStretchProp)) {
+                ImGui::TableSetupColumn("index", ImGuiTableColumnFlags_WidthFixed);
+                ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn("remove", ImGuiTableColumnFlags_WidthFixed);
+                for (usize i = 0; i < count; ++i) {
+                    ImGui::PushID(static_cast<int>(i));
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextDisabled("[%zu]", i);
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::SetNextItemWidth(-FLT_MIN);
+                    DrawValue(*type.element, type.array_element(ptr, i), {}, ctx);
+                    ImGui::TableSetColumnIndex(2);
+                    if (ImGui::SmallButton("x")) {
+                        remove_index = i;
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Remove element %zu", i);
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::EndTable();
+            }
+            if (remove_index < count) {
+                // Shift the later elements down (copy-assign), then shrink.
+                for (usize i = remove_index; i + 1 < count; ++i) {
+                    type.element->copy_assign(type.array_element(ptr, i), type.array_element(ptr, i + 1));
+                }
+                type.array_resize(ptr, count - 1);
+                NoteEdit(ctx, true);
+                ctx.result.committed = true;
+            }
+            if (ImGui::SmallButton("+ Add")) {
+                type.array_resize(ptr, type.array_size(ptr) + 1);
+                NoteEdit(ctx, true);
+                ctx.result.committed = true;
+            }
+            ImGui::TreePop();
+        }
+        return;
+    }
     case TypeKind::Struct: {
         if (IsCompactFloatRow(type)) {
             const std::string format = NumberFormat(*type.fields[0].type, meta);
