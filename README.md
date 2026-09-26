@@ -410,9 +410,31 @@ Fixed by having the caller track the last-rendered buffer index explicitly
 and read that specific buffer back (`SwapChain::BackBuffer(index)`) instead
 of trusting "current".
 
-Not yet started: normal mapping, image-based lighting/environment
-reflections, and multiple/colored lights — the single hardcoded directional
-light is enough to validate the BRDF but not a full lighting pipeline.
+### Follow-up: normal mapping + multiple colored lights
+
+`pbr_demo` gained tangent-space normal mapping and four independent colored
+point lights, replacing the original single directional light.
+
+- **Normal mapping**: the sphere's tangent is derived analytically (the
+  partial derivative of the sphere's position with respect to longitude),
+  not looked up from a table, and re-orthogonalized per-pixel against the
+  interpolated normal (Gram-Schmidt) before building the TBN basis — linear
+  interpolation across a triangle doesn't preserve perpendicularity, so
+  skipping that step would introduce a visible per-triangle-facet artifact.
+  The normal map itself is generated procedurally (`GenerateBumpNormalMap`):
+  a height field `h(u,v) = sin(u)*cos(v)` differentiated in closed form into
+  a tangent-space normal (`(-dh/dx, -dh/dy, 1)`, normalized) — no image file
+  or finite-difference pass needed since `h`'s derivative has an exact
+  analytic form.
+- **Multiple colored lights**: four point lights (inverse-square falloff)
+  at the grid's corners, each a distinct saturated color, summed per-pixel
+  in an unrolled shader loop — replacing the single hardcoded directional
+  light. Genuinely visible in the rendered output: each corner of the
+  material grid visibly picks up its nearest light's tint.
+
+Not yet started: image-based lighting and environment reflections (a
+prefiltered environment cubemap + irradiance convolution) — the remaining
+item before the lighting model can be called reasonably complete.
 
 ## Building
 

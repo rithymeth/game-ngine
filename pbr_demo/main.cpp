@@ -1,16 +1,22 @@
-// Roadmap item 2: a real PBR (physically-based) renderer — Cook-Torrance
-// specular (GGX normal distribution, Smith geometry term, Schlick Fresnel
-// approximation) plus a Lambertian diffuse term, metallic-roughness
-// workflow. Textbook formulas (matching the widely-used LearnOpenGL/Sascha
-// Willems reference derivations), not a simplified stand-in.
+// Roadmap item 2 (+ follow-ups: normal mapping, multiple/colored lights): a
+// real PBR (physically-based) renderer — Cook-Torrance specular (GGX normal
+// distribution, Smith geometry term, Schlick Fresnel approximation) plus a
+// Lambertian diffuse term, metallic-roughness workflow. Textbook formulas
+// (matching the widely-used LearnOpenGL/Sascha Willems reference
+// derivations), not a simplified stand-in. Tangent-space normal mapping
+// (procedural bump map, TBN built per-vertex from an analytic sphere
+// tangent) perturbs the shading normal before the BRDF runs; four point
+// lights with distinct colors and inverse-square falloff replace the
+// original single directional light, summed per-pixel.
 //
 // Scene: the classic "material ball grid" used to visually validate a PBR
 // implementation — a 7x7 grid of spheres, metallic varying 0->1 along one
-// axis and roughness varying 0.05->1 along the other, lit by a single
-// directional light plus a small constant ambient term. Seeing the expected
+// axis and roughness varying 0.05->1 along the other. Seeing the expected
 // qualitative trends (rough dielectrics look chalky/diffuse, smooth metals
 // show a sharp, tinted specular highlight, low-roughness anything gets a
-// tight bright highlight) is the actual verification here — a mathematically
+// tight bright highlight, and now: visible surface bumps from the normal
+// map, and each light's color separately visible on the near side of the
+// grid it illuminates) is the actual verification here — a mathematically
 // wrong BRDF still "renders", it just looks wrong, so this was checked by
 // actually looking at rendered frames, not just by not crashing (see the
 // screenshot capture note below).
@@ -28,10 +34,12 @@
 #include "aether/core/log.h"
 #include "aether/gfx/buffer.h"
 #include "aether/gfx/command_list.h"
+#include "aether/gfx/descriptor_heap.h"
 #include "aether/gfx/device.h"
 #include "aether/gfx/render_graph.h"
 #include "aether/gfx/shader_compiler.h"
 #include "aether/gfx/swap_chain.h"
+#include "aether/gfx/texture.h"
 #include "aether/math/mat4.h"
 #include "aether/math/math.h"
 #include "aether/platform/filesystem.h"
@@ -53,11 +61,20 @@ namespace {
 struct PBRVertex {
     f32 pos[3];
     f32 normal[3];
+    f32 uv[2];
+    f32 tangent[3];
 };
 
 // A unit UV sphere (radius baked in via `radius`), position == normalized
 // normal since it's centered at the origin — no separate normal computation
-// needed.
+// needed. The tangent is the analytic partial derivative of position with
+// respect to theta (longitude) — d/dtheta (sin(phi)cos(theta), 0,
+// sin(phi)sin(theta)) directionally reduces to (-sin(theta), 0, cos(theta)),
+// independent of phi — i.e. "the direction u increases in", which is exactly
+// what a tangent needs to be for the TBN basis normal mapping builds
+// per-pixel. Degenerates at the poles (where the whole notion of "which way
+// is east" is ill-defined) but stays a valid unit vector everywhere, which
+// is enough for a demo.
 void GenerateSphere(f32 radius, u32 stacks, u32 slices, std::vector<PBRVertex>& out_vertices,
                      std::vector<u32>& out_indices) {
     for (u32 i = 0; i <= stacks; ++i) {
@@ -68,10 +85,24 @@ void GenerateSphere(f32 radius, u32 stacks, u32 slices, std::vector<PBRVertex>& 
         for (u32 j = 0; j <= slices; ++j) {
             f32 u = static_cast<f32>(j) / static_cast<f32>(slices);
             f32 theta = u * 2.0f * kPi;
-            f32 x = sin_phi * std::cos(theta);
+            f32 cos_theta = std::cos(theta);
+            f32 sin_theta = std::sin(theta);
+            f32 x = sin_phi * cos_theta;
             f32 y = cos_phi;
-            f32 z = sin_phi * std::sin(theta);
-            out_vertices.push_back({{x * radius, y * radius, z * radius}, {x, y, z}});
+            f32 z = sin_phi * sin_theta;
+            PBRVertex vertex{};
+            vertex.pos[0] = x * radius;
+            vertex.pos[1] = y * radius;
+            vertex.pos[2] = z * radius;
+            vertex.normal[0] = x;
+            vertex.normal[1] = y;
+            vertex.normal[2] = z;
+            vertex.uv[0] = u;
+            vertex.uv[1] = v;
+            vertex.tangent[0] = -sin_theta;
+            vertex.tangent[1] = 0.0f;
+            vertex.tangent[2] = cos_theta;
+            out_vertices.push_back(vertex);
         }
     }
     for (u32 i = 0; i < stacks; ++i) {
@@ -88,6 +119,33 @@ void GenerateSphere(f32 radius, u32 stacks, u32 slices, std::vector<PBRVertex>& 
     }
 }
 
+// A procedural tangent-space normal map (a grid of smooth wave bumps),
+// generated analytically rather than loaded from a file: the height field is
+// h(u,v) = sin(u)*cos(v), and the tangent-space normal at each texel is
+// exactly (-dh/dx, -dh/dy, 1) normalized — this is the standard
+// height-to-normal-map derivation, computed here in closed form instead of
+// via a finite-difference Sobel pass since h is a known analytic function.
+std::vector<u8> GenerateBumpNormalMap(u32 size, f32 frequency, f32 strength) {
+    std::vector<u8> pixels(static_cast<usize>(size) * size * 4);
+    for (u32 y = 0; y < size; ++y) {
+        for (u32 x = 0; x < size; ++x) {
+            f32 u = static_cast<f32>(x) / static_cast<f32>(size) * frequency * 2.0f * kPi;
+            f32 v = static_cast<f32>(y) / static_cast<f32>(size) * frequency * 2.0f * kPi;
+            f32 scale = frequency * 2.0f * kPi / static_cast<f32>(size);
+            f32 dh_du = std::cos(u) * std::cos(v) * scale;
+            f32 dh_dv = -std::sin(u) * std::sin(v) * scale;
+
+            Vec3 n = Vec3(-dh_du * strength, -dh_dv * strength, 1.0f).Normalized();
+            u8* p = &pixels[(static_cast<usize>(y) * size + x) * 4];
+            p[0] = static_cast<u8>((n.x * 0.5f + 0.5f) * 255.0f);
+            p[1] = static_cast<u8>((n.y * 0.5f + 0.5f) * 255.0f);
+            p[2] = static_cast<u8>((n.z * 0.5f + 0.5f) * 255.0f);
+            p[3] = 255;
+        }
+    }
+    return pixels;
+}
+
 // Cook-Torrance GGX/Smith/Schlick BRDF, standard metallic-roughness
 // workflow. Per-instance data (model matrix + material params) comes
 // through root constants (one draw call per sphere — this demo's scope is
@@ -101,27 +159,40 @@ cbuffer InstanceConstants : register(b0) {
     float g_Roughness;
 };
 
+struct PointLight {
+    float3 position;
+    float _pad0;
+    float3 color;
+    float _pad1;
+};
+
+#define kNumLights 4
+
 cbuffer FrameConstants : register(b1) {
     float4x4 g_ViewProj;
     float3 g_CameraPos;
     float _Pad0;
-    float3 g_LightDir;
-    float _Pad1;
-    float3 g_LightColor;
-    float _Pad2;
     float3 g_Albedo;
-    float _Pad3;
+    float _Pad1;
+    PointLight g_Lights[kNumLights];
 };
+
+Texture2D g_NormalMap : register(t0);
+SamplerState g_Sampler : register(s0);
 
 struct VSInput {
     float3 position : POSITION;
     float3 normal : NORMAL;
+    float2 uv : TEXCOORD0;
+    float3 tangent : TANGENT;
 };
 
 struct PSInput {
     float4 position : SV_POSITION;
     float3 worldPos : TEXCOORD0;
     float3 normal : NORMAL;
+    float2 uv : TEXCOORD1;
+    float3 tangent : TANGENT;
 };
 
 PSInput VSMain(VSInput input) {
@@ -130,6 +201,8 @@ PSInput VSMain(VSInput input) {
     result.worldPos = worldPos.xyz;
     result.position = mul(g_ViewProj, worldPos);
     result.normal = mul((float3x3)g_Model, input.normal);
+    result.tangent = mul((float3x3)g_Model, input.tangent);
+    result.uv = input.uv;
     return result;
 }
 
@@ -162,26 +235,49 @@ float3 FresnelSchlick(float cosTheta, float3 F0) {
 }
 
 float4 PSMain(PSInput input) : SV_TARGET {
-    float3 N = normalize(input.normal);
-    float3 V = normalize(g_CameraPos - input.worldPos);
-    float3 L = normalize(-g_LightDir);
-    float3 H = normalize(V + L);
+    float3 N_geom = normalize(input.normal);
+    // Gram-Schmidt re-orthogonalize the tangent against the interpolated
+    // normal (linear interpolation across a triangle doesn't preserve
+    // perpendicularity), then derive the bitangent — the standard TBN setup.
+    float3 T = normalize(input.tangent - N_geom * dot(N_geom, input.tangent));
+    float3 B = cross(N_geom, T);
+    float3x3 TBN = float3x3(T, B, N_geom);
 
+    float3 tangentNormal = g_NormalMap.Sample(g_Sampler, input.uv).rgb * 2.0 - 1.0;
+    // mul(vector, matrix) treats the vector as a row vector in HLSL, i.e.
+    // result = sum_i vector[i] * matrix.row[i] — with TBN's rows literally
+    // T, B, N_geom (float3x3(T,B,N) sets rows, not columns), this computes
+    // tangentNormal.x*T + tangentNormal.y*B + tangentNormal.z*N_geom: exactly
+    // the tangent-space-to-world-space basis transform.
+    float3 N = normalize(mul(tangentNormal, TBN));
+
+    float3 V = normalize(g_CameraPos - input.worldPos);
     float3 F0 = lerp(float3(0.04, 0.04, 0.04), g_Albedo, g_Metallic);
 
-    float NDF = DistributionGGX(N, H, g_Roughness);
-    float G = GeometrySmith(N, V, L, g_Roughness);
-    float3 F = FresnelSchlick(max(dot(H, V), 0.0), F0);
+    float3 Lo = float3(0.0, 0.0, 0.0);
+    [unroll]
+    for (int i = 0; i < kNumLights; ++i) {
+        float3 lightVec = g_Lights[i].position - input.worldPos;
+        float dist = length(lightVec);
+        float3 L = lightVec / max(dist, 1e-4);
+        float3 H = normalize(V + L);
+        float attenuation = 1.0 / max(dist * dist, 1e-4);
+        float3 radiance = g_Lights[i].color * attenuation;
 
-    float3 kS = F;
-    float3 kD = (1.0 - kS) * (1.0 - g_Metallic);
+        float NDF = DistributionGGX(N, H, g_Roughness);
+        float G = GeometrySmith(N, V, L, g_Roughness);
+        float3 F = FresnelSchlick(max(dot(H, V), 0.0), F0);
 
-    float3 numerator = NDF * G * F;
-    float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 1e-4;
-    float3 specular = numerator / denominator;
+        float3 kS = F;
+        float3 kD = (1.0 - kS) * (1.0 - g_Metallic);
 
-    float NdotL = max(dot(N, L), 0.0);
-    float3 Lo = (kD * g_Albedo / kPi + specular) * g_LightColor * NdotL;
+        float3 numerator = NDF * G * F;
+        float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 1e-4;
+        float3 specular = numerator / denominator;
+
+        float NdotL = max(dot(N, L), 0.0);
+        Lo += (kD * g_Albedo / kPi + specular) * radiance * NdotL;
+    }
 
     float3 ambient = float3(0.03, 0.03, 0.03) * g_Albedo;
     float3 color = ambient + Lo;
@@ -199,20 +295,36 @@ struct InstanceConstants {
     f32 roughness;
 };
 
+constexpr u32 kNumLights = 4;
+
+// Layout must byte-for-byte match the HLSL PointLight struct (each field
+// pair already fills a 16-byte cbuffer slot exactly, so the array packs
+// contiguously with no inter-element padding).
+struct PointLight {
+    Vec3 position;
+    f32 pad0;
+    Vec3 color;
+    f32 pad1;
+};
+
 struct FrameConstants {
     Mat4 view_proj;
     Vec3 camera_pos;
     f32 pad0;
-    Vec3 light_dir;
-    f32 pad1;
-    Vec3 light_color;
-    f32 pad2;
     Vec3 albedo;
-    f32 pad3;
+    f32 pad1;
+    PointLight lights[kNumLights];
 };
 
 ComPtr<ID3D12RootSignature> CreatePBRRootSignature(Device& device) {
-    D3D12_ROOT_PARAMETER params[2]{};
+    D3D12_DESCRIPTOR_RANGE normal_map_range{};
+    normal_map_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    normal_map_range.NumDescriptors = 1;
+    normal_map_range.BaseShaderRegister = 0;
+    normal_map_range.RegisterSpace = 0;
+    normal_map_range.OffsetInDescriptorsFromTableStart = 0;
+
+    D3D12_ROOT_PARAMETER params[3]{};
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     params[0].Constants = {/*ShaderRegister=*/0, /*RegisterSpace=*/0,
                             /*Num32BitValues=*/sizeof(InstanceConstants) / 4};
@@ -222,9 +334,22 @@ ComPtr<ID3D12RootSignature> CreatePBRRootSignature(Device& device) {
     params[1].Descriptor = {/*ShaderRegister=*/1, /*RegisterSpace=*/0};
     params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
+    params[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    params[2].DescriptorTable = {1, &normal_map_range};
+    params[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+    D3D12_STATIC_SAMPLER_DESC sampler{};
+    sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    sampler.ShaderRegister = 0;
+    sampler.RegisterSpace = 0;
+    sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
     D3D12_ROOT_SIGNATURE_DESC desc{};
     desc.NumParameters = _countof(params);
     desc.pParameters = params;
+    desc.NumStaticSamplers = 1;
+    desc.pStaticSamplers = &sampler;
     desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
     ComPtr<ID3DBlob> signature, error;
@@ -245,14 +370,20 @@ ComPtr<ID3D12PipelineState> CreatePBRPSO(Device& device, ID3D12RootSignature* ro
     ShaderBytecode vs = CompileHLSL(kPBRShaderSource, "VSMain", "vs_5_1", "pbr_vs");
     ShaderBytecode ps = CompileHLSL(kPBRShaderSource, "PSMain", "ps_5_1", "pbr_ps");
 
-    D3D12_INPUT_ELEMENT_DESC input_elements[2] = {
-        {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-        {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+    D3D12_INPUT_ELEMENT_DESC input_elements[4] = {
+        {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(PBRVertex, pos),
+         D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(PBRVertex, normal),
+         D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(PBRVertex, uv),
+         D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        {"TANGENT", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(PBRVertex, tangent),
+         D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
     };
 
     D3D12_GRAPHICS_PIPELINE_STATE_DESC desc{};
     desc.pRootSignature = root_signature;
-    desc.InputLayout = {input_elements, 2};
+    desc.InputLayout = {input_elements, 4};
     desc.VS = {vs.Data(), vs.Size()};
     desc.PS = {ps.Data(), ps.Size()};
 
@@ -415,11 +546,28 @@ int main() {
         constexpr u32 kGridSize = 7;
         Buffer frame_constants_buffer(device, sizeof(FrameConstants), BufferKind::Upload);
 
+        // A single non-bindless SRV heap just for the normal map — this demo
+        // has exactly one texture, so the full bindless-heap machinery
+        // sandbox/ uses would be pure overhead here.
+        DescriptorHeap texture_heap(device, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, /*capacity=*/1,
+                                     /*shader_visible=*/true);
+
+        std::vector<u8> normal_map_pixels = GenerateBumpNormalMap(256, /*frequency=*/6.0f, /*strength=*/2.5f);
+
         std::vector<std::unique_ptr<CommandList>> command_lists;
         std::vector<u64> frame_fences(swap_chain.BufferCount(), 0);
         for (u32 i = 0; i < swap_chain.BufferCount(); ++i) {
             command_lists.push_back(std::make_unique<CommandList>(device));
         }
+
+        // One-time upload of the normal map, on its own short-lived command
+        // list submitted and waited on before the main loop starts.
+        CommandList setup_cmd(device);
+        setup_cmd.Reset();
+        Texture normal_map(device, texture_heap, setup_cmd.Get(), 256, 256, normal_map_pixels.data());
+        setup_cmd.Close();
+        ID3D12CommandList* setup_lists[] = {setup_cmd.Get()};
+        device.WaitForFence(device.Submit(setup_lists, 1));
 
         AETHER_LOG_INFO("PBRDemo", "Entering main loop (%ux%u material grid)", kGridSize, kGridSize);
 
@@ -445,12 +593,21 @@ int main() {
                 Radians(45.0f), static_cast<f32>(swap_chain.Width()) / static_cast<f32>(swap_chain.Height()), 0.1f,
                 100.0f);
 
+            // Four colored point lights at the grid's corners (inverse-square
+            // falloff, so `intensity` is tuned well above 1 to still read as
+            // bright at ~7-8 units away) — this is what actually exercises
+            // "multiple lights" and "colored lights": each corner of the
+            // grid visibly picks up its nearest light's color/tint, summed
+            // with the others in the shader's per-light loop.
+            f32 intensity = 220.0f;
             FrameConstants frame_constants{};
             frame_constants.view_proj = proj * view;
             frame_constants.camera_pos = camera_pos;
-            frame_constants.light_dir = Vec3(-0.4f, -0.8f, -0.3f).Normalized();
-            frame_constants.light_color = Vec3(4.0f, 4.0f, 4.0f); // bright directional light, tonemapped in-shader
-            frame_constants.albedo = Vec3(0.9f, 0.15f, 0.15f);    // crimson dielectric/metal base color
+            frame_constants.albedo = Vec3(0.9f, 0.15f, 0.15f); // crimson dielectric/metal base color
+            frame_constants.lights[0] = {Vec3(-4.5f, 4.5f, 6.0f), 0.0f, Vec3(0.1f, 0.2f, 1.0f) * intensity, 0.0f};
+            frame_constants.lights[1] = {Vec3(4.5f, 4.5f, 6.0f), 0.0f, Vec3(0.15f, 1.0f, 0.2f) * intensity, 0.0f};
+            frame_constants.lights[2] = {Vec3(-4.5f, -4.5f, 6.0f), 0.0f, Vec3(1.0f, 0.15f, 0.9f) * intensity, 0.0f};
+            frame_constants.lights[3] = {Vec3(4.5f, -4.5f, 6.0f), 0.0f, Vec3(1.0f, 0.85f, 0.1f) * intensity, 0.0f};
             frame_constants_buffer.Update(&frame_constants, sizeof(FrameConstants));
 
             ID3D12Resource* back_buffer = swap_chain.CurrentBackBuffer();
@@ -481,6 +638,9 @@ int main() {
                     cl->SetPipelineState(pso.Get());
                     cl->SetGraphicsRootSignature(root_signature.Get());
                     cl->SetGraphicsRootConstantBufferView(1, frame_constants_buffer.GPUAddress());
+                    ID3D12DescriptorHeap* heaps[] = {texture_heap.Heap()};
+                    cl->SetDescriptorHeaps(1, heaps);
+                    cl->SetGraphicsRootDescriptorTable(2, texture_heap.GPUHandle(0));
                     cl->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
                     cl->IASetVertexBuffers(0, 1, &vbv);
                     cl->IASetIndexBuffer(&ibv);
