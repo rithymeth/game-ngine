@@ -413,7 +413,14 @@ struct SystemDesc {
      entities alone.
    - The instance root keeps its own Transform (its placement); its other
      components follow the prefab.
-2. Override recording, bold UI, Apply/Revert.
+2. ✅ **Done** (except the Apply button). Override recording, bold UI, Apply/Revert.
+   - Recording diffs the edited component against the prefab (per leaf
+     field), so it happens on undo and redo too and reverting by hand
+     clears the override.
+   - "Bold" is an accent bar plus accent-coloured label: ImGui's default
+     font has no bold face.
+   - `ApplyOverridesToPrefab` is done; its editor button waits for the
+     Windows editor's asset saving.
 3. Nesting, variants, cycle detection.
 4. Propagation on prefab save and orphaned override warnings.
 5. Gameplay framework components (Camera, Tags, Layers) and lifecycle

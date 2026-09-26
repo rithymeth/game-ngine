@@ -262,6 +262,155 @@ bool RemoveOverride(PrefabInstance& instance, PrefabLocalId entity, const std::s
     return true;
 }
 
+Entity FindInstanceRoot(const World& world, const GuidIndex& guids, Entity entity) {
+    if (!world.IsAlive(entity)) {
+        return kNullEntity;
+    }
+    if (world.HasComponent<PrefabInstance>(entity)) {
+        return entity;
+    }
+    const PrefabLink* link = world.GetComponent<PrefabLink>(entity);
+    if (link == nullptr) {
+        return kNullEntity;
+    }
+    const Entity root = guids.Find(world, link->instance);
+    return !root.IsNull() && world.HasComponent<PrefabInstance>(root) ? root : kNullEntity;
+}
+
+namespace {
+
+std::string Join(const std::string& path, const std::string& key) { return path.empty() ? key : path + "." + key; }
+
+// Leaf paths where `current` differs from `base`. Objects are compared key by
+// key (keys only in `current` can't be overridden: the field isn't in the
+// prefab), same-size arrays element by element, anything else as a whole.
+void DiffJson(const Json& base, const Json& current, const std::string& path,
+              std::vector<std::pair<std::string, Json>>& out) {
+    if (base == current) {
+        return;
+    }
+    if (base.is_object() && current.is_object()) {
+        for (auto it = base.begin(); it != base.end(); ++it) {
+            if (!it.key().empty() && it.key().front() == '$') {
+                continue; // "$v" and other archive metadata
+            }
+            if (auto other = current.find(it.key()); other != current.end()) {
+                DiffJson(it.value(), *other, Join(path, it.key()), out);
+            }
+        }
+        return;
+    }
+    if (base.is_array() && current.is_array() && base.size() == current.size()) {
+        for (usize i = 0; i < base.size(); ++i) {
+            DiffJson(base[i], current[i], path + "[" + std::to_string(i) + "]", out);
+        }
+        return;
+    }
+    out.emplace_back(path, current);
+}
+
+bool IsInsidePath(const std::string& path, const std::string& outer) {
+    if (outer.empty() || path == outer) {
+        return true;
+    }
+    return path.size() > outer.size() && path.compare(0, outer.size(), outer) == 0 &&
+           (path[outer.size()] == '.' || path[outer.size()] == '[');
+}
+
+} // namespace
+
+bool RecordPrefabOverrides(World& world, const GuidIndex& guids, Entity entity, ComponentId component,
+                           const PrefabData& prefab) {
+    const Entity root = FindInstanceRoot(world, guids, entity);
+    const PrefabLink* link = world.IsAlive(entity) ? world.GetComponent<PrefabLink>(entity) : nullptr;
+    const ComponentInfo& info = GetComponentInfo(component);
+    if (root.IsNull() || link == nullptr || info.reflected == nullptr || IsManaged(component)) {
+        return false;
+    }
+    if (entity == root && component == GetComponentId<Transform>()) {
+        return true; // the instance's placement
+    }
+    const PrefabEntity* base_entity = prefab.Find(link->local_id);
+    if (base_entity == nullptr) {
+        return false;
+    }
+    const std::string name = info.reflected->name;
+    auto base = base_entity->components.find(name);
+    if (base == base_entity->components.end() || !world.HasComponentRaw(entity, component)) {
+        return false;
+    }
+    const PrefabLocalId local_id = link->local_id;
+    const Json current = reflect::ToJson(*info.reflected, world.GetComponentRaw(entity, component));
+    std::vector<std::pair<std::string, Json>> diffs;
+    DiffJson(*base, current, "", diffs);
+
+    PrefabInstance& instance = *world.GetComponent<PrefabInstance>(root);
+    Json base_copy = *base;
+    auto& overrides = instance.overrides;
+    overrides.erase(std::remove_if(overrides.begin(), overrides.end(),
+                                   [&](const PropertyOverride& o) {
+                                       // Keep orphans: their field isn't in the prefab to compare with.
+                                       return o.entity == local_id && o.component == name &&
+                                              FindField(base_copy, o.field_path) != nullptr;
+                                   }),
+                    overrides.end());
+    for (const auto& [path, value] : diffs) {
+        SetOverride(instance, local_id, name, path, value);
+    }
+    return true;
+}
+
+bool OverrideMatches(const PropertyOverride& override_, PrefabLocalId entity, const std::string& component,
+                     const std::string& field_path) {
+    return (entity == 0 || override_.entity == entity) && (component.empty() || override_.component == component) &&
+           IsInsidePath(override_.field_path, field_path);
+}
+
+bool IsFieldOverridden(const PrefabInstance& instance, PrefabLocalId entity, const std::string& component,
+                       const std::string& field_path) {
+    return std::any_of(instance.overrides.begin(), instance.overrides.end(), [&](const PropertyOverride& o) {
+        return o.entity == entity && o.component == component &&
+               (IsInsidePath(o.field_path, field_path) || IsInsidePath(field_path, o.field_path));
+    });
+}
+
+usize ApplyOverridesToPrefab(PrefabData& prefab, PrefabInstance& instance, PrefabLocalId entity,
+                             const std::string& component, const std::string& field_path) {
+    usize applied = 0;
+    auto& overrides = instance.overrides;
+    for (auto it = overrides.begin(); it != overrides.end();) {
+        Json* field = nullptr;
+        if (OverrideMatches(*it, entity, component, field_path)) {
+            if (PrefabEntity* target = prefab.Find(it->entity)) {
+                if (auto comp = target->components.find(it->component); comp != target->components.end()) {
+                    field = FindField(*comp, it->field_path);
+                }
+            }
+        }
+        Json value = field != nullptr ? Json::parse(it->value, nullptr, /*allow_exceptions=*/false) : Json();
+        if (field == nullptr || value.is_discarded()) {
+            ++it;
+            continue;
+        }
+        *field = std::move(value);
+        it = overrides.erase(it);
+        ++applied;
+    }
+    return applied;
+}
+
+usize RevertOverrides(PrefabInstance& instance, PrefabLocalId entity, const std::string& component,
+                      const std::string& field_path) {
+    const usize before = instance.overrides.size();
+    auto& overrides = instance.overrides;
+    overrides.erase(std::remove_if(overrides.begin(), overrides.end(),
+                                   [&](const PropertyOverride& o) {
+                                       return OverrideMatches(o, entity, component, field_path);
+                                   }),
+                    overrides.end());
+    return before - overrides.size();
+}
+
 ResolveReport ResolvePrefabInstance(World& world, GuidIndex& guids, Entity root, const PrefabData& prefab) {
     ResolveReport report;
     if (!world.IsAlive(root) || !world.HasComponent<PrefabInstance>(root)) {

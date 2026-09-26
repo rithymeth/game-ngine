@@ -265,3 +265,87 @@ AETHER_TEST(Prefab_RemovedAndAddedChildrenAndPrefabEdits) {
     }
     stdfs::remove(json_file);
 }
+
+AETHER_TEST(Prefab_EditsBecomeOverridesAndRevertByHandRemovesThem) {
+    PrefabData chest = MakeChest();
+    Fixture f;
+    Entity root = InstantiatePrefab(f.world, f.guids, assets::NewAssetGuid(), chest);
+    const Entity loot = Linked(f.world, root, 4);
+    const Entity lid = Linked(f.world, root, 2);
+    const ComponentId loot_id = GetComponentId<Loot>();
+    const ComponentId transform_id = GetComponentId<Transform>();
+    auto overrides = [&] { return f.world.GetComponent<PrefabInstance>(root)->overrides; };
+
+    f.world.GetComponent<Loot>(loot)->gold = 50;
+    AETHER_CHECK(RecordPrefabOverrides(f.world, f.guids, loot, loot_id, chest));
+    AETHER_CHECK(overrides().size() == 1 && overrides()[0].field_path == "gold" && overrides()[0].value == "50");
+    const PrefabInstance& instance = *f.world.GetComponent<PrefabInstance>(root);
+    AETHER_CHECK(IsFieldOverridden(instance, 4, "Loot", "gold") && !IsFieldOverridden(instance, 4, "Loot", "items"));
+    AETHER_CHECK(!IsFieldOverridden(instance, 2, "Loot", "gold"));
+
+    // Setting it back by hand removes the override.
+    f.world.GetComponent<Loot>(loot)->gold = 10;
+    AETHER_CHECK(RecordPrefabOverrides(f.world, f.guids, loot, loot_id, chest) && overrides().empty());
+
+    // One vector element; a resized array is overridden as a whole.
+    f.world.GetComponent<Transform>(lid)->position.y = 4.0f;
+    RecordPrefabOverrides(f.world, f.guids, lid, transform_id, chest);
+    AETHER_CHECK(overrides().size() == 1 && overrides()[0].field_path == "position[1]");
+    AETHER_CHECK(IsFieldOverridden(*f.world.GetComponent<PrefabInstance>(root), 2, "Transform", "position"));
+    f.world.GetComponent<Loot>(loot)->items.push_back("key");
+    RecordPrefabOverrides(f.world, f.guids, loot, loot_id, chest);
+    AETHER_CHECK(overrides().size() == 2 && overrides()[1].field_path == "items");
+
+    // Moving the root is placing the instance, not an override; entities
+    // outside an instance record nothing.
+    f.world.GetComponent<Transform>(root)->position.x = 9.0f;
+    AETHER_CHECK(RecordPrefabOverrides(f.world, f.guids, root, transform_id, chest) && overrides().size() == 2);
+    Entity loose = f.Make(Vec3{0, 0, 0});
+    AETHER_CHECK(!RecordPrefabOverrides(f.world, f.guids, loose, transform_id, chest));
+    AETHER_CHECK(FindInstanceRoot(f.world, f.guids, lid) == root && FindInstanceRoot(f.world, f.guids, loose).IsNull());
+
+    // An orphaned override on the component survives re-recording.
+    SetOverride(*f.world.GetComponent<PrefabInstance>(root), 4, "Loot", "old_field", 1);
+    RecordPrefabOverrides(f.world, f.guids, loot, loot_id, chest);
+    AETHER_CHECK(overrides().size() == 3);
+}
+
+AETHER_TEST(Prefab_ApplyAndRevert) {
+    PrefabData chest = MakeChest();
+    Fixture f;
+    const assets::AssetGuid source = assets::NewAssetGuid();
+    Entity a = InstantiatePrefab(f.world, f.guids, source, chest);
+    Entity b = InstantiatePrefab(f.world, f.guids, source, chest);
+    Entity c = InstantiatePrefab(f.world, f.guids, source, chest);
+    SetOverride(*f.world.GetComponent<PrefabInstance>(a), 4, "Loot", "gold", 75);
+    SetOverride(*f.world.GetComponent<PrefabInstance>(a), 2, "Transform", "position[1]", 2.0);
+    SetOverride(*f.world.GetComponent<PrefabInstance>(a), 4, "Loot", "gone", 1); // orphan
+    SetOverride(*f.world.GetComponent<PrefabInstance>(c), 4, "Loot", "gold", 5);
+
+    // Apply just a's gold: the prefab changes, a loses that override.
+    AETHER_CHECK(ApplyOverridesToPrefab(chest, *f.world.GetComponent<PrefabInstance>(a), 4, "Loot", "gold") == 1);
+    AETHER_CHECK(chest.Find(4)->components["Loot"]["gold"] == 75);
+    AETHER_CHECK(f.world.GetComponent<PrefabInstance>(a)->overrides.size() == 2);
+    ResolveAllPrefabInstances(f.world, f.guids, [&](const assets::AssetGuid&) { return &chest; });
+    AETHER_CHECK(f.world.GetComponent<Loot>(Linked(f.world, b, 4))->gold == 75); // follows the new default
+    AETHER_CHECK(f.world.GetComponent<Loot>(Linked(f.world, c, 4))->gold == 5);  // keeps its own
+    AETHER_CHECK(f.world.GetComponent<Loot>(Linked(f.world, a, 4))->gold == 75);
+
+    // Apply everything: the orphan can't be applied and stays.
+    AETHER_CHECK(ApplyOverridesToPrefab(chest, *f.world.GetComponent<PrefabInstance>(a)) == 1);
+    AETHER_CHECK(chest.Find(2)->components["Transform"]["position"][1] == 2.0);
+    AETHER_CHECK(f.world.GetComponent<PrefabInstance>(a)->overrides.size() == 1);
+
+    // Revert: c's gold goes back to the prefab's.
+    AETHER_CHECK(RevertOverrides(*f.world.GetComponent<PrefabInstance>(c), 4, "Loot") == 1);
+    ResolvePrefabInstance(f.world, f.guids, c, chest);
+    AETHER_CHECK(f.world.GetComponent<Loot>(Linked(f.world, c, 4))->gold == 75);
+    AETHER_CHECK(RevertOverrides(*f.world.GetComponent<PrefabInstance>(a)) == 1); // everything, orphan included
+    AETHER_CHECK(RevertOverrides(*f.world.GetComponent<PrefabInstance>(a)) == 0);
+
+    // Path matching: a path covers what's inside it, not its siblings.
+    PropertyOverride o{2, "Transform", "position[1]", "0"};
+    AETHER_CHECK(OverrideMatches(o, 2, "Transform", "position") && OverrideMatches(o, 0, "", ""));
+    AETHER_CHECK(!OverrideMatches(o, 2, "Transform", "pos") && !OverrideMatches(o, 2, "Transform", "position[10]"));
+    AETHER_CHECK(!OverrideMatches(o, 3, "Transform", "") && !OverrideMatches(o, 2, "Loot", ""));
+}

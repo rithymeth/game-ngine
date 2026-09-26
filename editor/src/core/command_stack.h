@@ -12,8 +12,12 @@
 namespace aether {
 class World;
 class GuidIndex;
+struct PrefabData;
 namespace reflect {
 struct FieldInfo;
+}
+namespace assets {
+struct AssetGuid;
 }
 } // namespace aether
 
@@ -34,9 +38,15 @@ struct EditorHooks {
 // What commands act on. Grows as the editor does (selection, assets, ...);
 // kept to the essentials for now. See docs/design/PHASE_SPECS.md §7.2.
 struct CommandContext {
+    CommandContext(World& world_, GuidIndex& guids_, EditorHooks* hooks_ = nullptr)
+        : world(world_), guids(guids_), hooks(hooks_) {}
+
     World& world;
     GuidIndex& guids;
     EditorHooks* hooks = nullptr;
+    // A prefab asset's loaded data by GUID (null if unavailable). With it,
+    // field edits on prefab instances are recorded as overrides (§9.3).
+    std::function<const PrefabData*(const assets::AssetGuid&)> find_prefab;
 };
 
 // One undoable editor action. Do() is called once when the command is first
