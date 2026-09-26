@@ -310,7 +310,9 @@ The goal is to change the ECS as little as possible:
    test 2 until `Any` lands in the next step. Fields store a `const
    TypeInfo*` rather than a bare `TypeId`, which saves a registry lookup per
    access; the `TypeId` is still available as `field.type->id`.
-2. `Any` and function invocation thunks.
+2. ✅ **Done.** `Any` and function invocation thunks: `AETHER_METHOD` for
+   member, const and static functions, and type-checked
+   `FunctionInfo::Invoke`. Covers tests 2 and 3 from §B.5.
 3. JSON and binary archives with `SerializeObject`/`DeserializeObject`.
    Archive tests.
 4. ECS integration: reflected names, reflection-driven default
