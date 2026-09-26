@@ -1,5 +1,9 @@
 # Aether Roadmap: from rendering tech demo to full game engine
 
+> Companion document: [`ROADMAP_DETAILS.md`](ROADMAP_DETAILS.md) has file
+> format examples, a ready-to-build Phase 6 spec, the Blueprint VM opcode
+> table, more editor mockups, shortcuts, effort estimates, and risks.
+
 This document is the plan for turning Aether from what it is now (a strong
 rendering, ECS and physics core with a single-file ImGui editor) into a
 complete, Unreal/Unity/Godot-class engine. That means an editor people can
@@ -113,6 +117,7 @@ templates/  NEW: starter projects (FPS, third-person, 2D platformer, top-down)
 | **M3: Good-looking and alive** | 14 → 19 | Full PBR renderer in the editor, materials, animation, audio, game UI, particles |
 | **M4: Complete games** | 20 → 23 | AI, world building, multiplayer, profiling tools |
 | **M5: Shippable** | 24 → 26 | Cook and package a standalone game for Windows/Linux; templates; docs |
+| **M6: Advanced** | 27 → 36 | Cinematics, save games, localization, abilities/RPG kits, ray tracing, XR, mobile/web, modding, accessibility, optional AI assistants |
 
 ---
 
@@ -1121,6 +1126,267 @@ engine.
 
 ---
 
+# M6: Advanced and specialized systems
+
+These phases come after the engine can ship a game. They're the features
+large productions and specific genres expect. Most of them are independent,
+so after M5 they can be built in any order, depending on which games are
+being made with Aether.
+
+## Phase 27: Cinematics (Sequencer / Timeline)
+
+**Why:** cutscenes, trailers, scripted events, and in-game camera moves.
+Phase 16 only mentions this briefly.
+
+### Engine / runtime work
+
+- `LevelSequence` asset: a set of **tracks** bound to entities by
+  `EntityGuid` (or "spawnable" entities the sequence creates itself).
+- Track types:
+
+  | Track | Keys |
+  |---|---|
+  | Transform | position/rotation/scale curves (Bezier, linear, constant) |
+  | Property | any reflected field (Phase 6): float, color, bool, enum |
+  | Animation | clips with blend in/out, play rate, slot |
+  | Camera Cut | which `CineCamera` is active, with blends |
+  | Audio | sound, start offset, volume curve |
+  | Event | fires a Blueprint custom event at a time |
+  | Visibility / Spawn | enable/disable or spawn/destroy an entity |
+  | Fade / Post-process | screen fade, post-process volume weight |
+  | Subsequence | another sequence, time-offset (shots inside a scene) |
+
+- `CineCamera` component: focal length, sensor size, aperture and focus
+  distance (drives DOF), rack focus, and a camera rig (rail, crane).
+- `SequencePlayer` component and Blueprint nodes: Play, Pause, Stop, Set
+  Time, Set Play Rate, OnFinished.
+- **Movie render:** render a sequence offline to a PNG/EXR sequence at a
+  fixed frame rate, with high-quality anti-aliasing (accumulate N TAA
+  samples per frame).
+
+### Editor UI
+
+```
+┌ SEQ_Intro ───────────────────────────────────────────────────────────────────────┐
+│ [⏮][◀][▶][⏭]  00:04:12 / 00:30:00   24 fps ▾   🔒 Lock camera   [🎬 Render]      │
+├────────────────────────┬─────────────────────────────────────────────────────────┤
+│ + Track ▾   🔍         │ 0s      2s      4s ▼    6s      8s      10s             │
+│ ▾ 🎥 Camera Cuts       │ [ Cam_Wide ──────][ Cam_Close ─────────][ Cam_Wide ]     │
+│ ▾ 🧍 Hero              │                                                         │
+│    Transform           │  ◆───────◆──────────◆                                   │
+│    Animation           │ [ Idle ][ Walk ──────────][ Wave ]                       │
+│ ▾ 💡 Sun               │                                                         │
+│    Intensity           │  ◆──────────────────────────◆                           │
+│ ⚡ Events              │            ▲ OpenDoor                                    │
+│ 🔊 Audio               │ [ music_intro.ogg ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ]     │
+└────────────────────────┴─────────────────────────────────────────────────────────┘
+```
+
+A curve editor tab opens for any selected track. Pressing **Record** turns
+edits made in the viewport or Inspector into keys automatically.
+
+### Done when
+
+- A 30-second cutscene with 3 camera cuts, character animation, an event
+  that opens a door, and music plays back in PIE and renders to a PNG
+  sequence.
+
+---
+
+## Phase 28: Save Game and Persistence
+
+- `SaveGame` object: a reflected struct the game defines
+  (`AETHER_REFLECT(MySave, ...)`) and saves to a slot using the Phase 6
+  archive; versioned, with migration hooks.
+- `SaveSystem::Save(slot, obj)`, `Load(slot)`, `ListSlots()`,
+  `DeleteSlot(slot)`; async so saving doesn't hitch; atomic write
+  (write to temp, then rename) so a crash never corrupts a save.
+- **World state persistence:** a `SaveableEntity` component marks entities
+  whose flagged fields are captured (doors opened, pickups collected,
+  enemy killed), keyed by `EntityGuid`.
+- Settings (graphics quality, audio volumes, keybindings) stored
+  separately from game saves.
+- Platform backends: local file first; cloud saves (Steam/EOS) as plugins.
+- Blueprint nodes: Save Game to Slot, Load Game from Slot, Does Save Game
+  Exist, Create Save Game Object.
+- Editor: a **Save Inspector** panel that opens a `.asav` and shows its
+  contents with the generic Inspector (useful for debugging).
+
+---
+
+## Phase 29: Localization and Text
+
+- `LocText` type: a string key plus source text, used for every
+  player-visible string; the runtime UI (Phase 18) and Blueprint text
+  pins take `LocText`, not raw strings.
+- **String tables** (CSV/PO import and export) per language; the gather
+  step scans scenes, prefabs, Blueprints and widgets for `LocText` and
+  produces a translation file.
+- Runtime language switch without a restart; fallback chain
+  (`pt-BR → pt → en`).
+- Text shaping for complex scripts via **HarfBuzz**; right-to-left layout
+  (Arabic, Hebrew); font fallback (Latin → CJK → emoji); plurals and
+  gender through ICU MessageFormat-style arguments (`{count} coin{count|s}`).
+- Localized assets (a different texture or voice line per language).
+- Editor: a **Localization Dashboard** (languages, completion percentage
+  per language, missing keys) and a pseudo-localization preview mode that
+  makes strings longer and accented to catch clipped UI.
+
+---
+
+## Phase 30: Gameplay Ability System and RPG Toolkit
+
+**Why:** most action, RPG and MOBA games rebuild the same systems: stats,
+buffs, cooldowns and abilities. Unreal's Gameplay Ability System (GAS) is
+the model to follow.
+
+- **Attributes:** an `AttributeSet` component (Health, Mana, Stamina,
+  AttackPower, …) with base and current values; changes are events.
+- **Gameplay Effects** (asset): instant, duration, or infinite modifiers
+  (`add`/`multiply`/`override`) on attributes, with stacking rules,
+  periodic ticks (poison: −5 HP per second), and conditions.
+- **Gameplay Tags:** hierarchical tags (`State.Stunned`,
+  `Damage.Fire`) used by abilities to block and cancel each other.
+- **Abilities** (Blueprint subclass of `GameplayAbility`): activation
+  requirements (cost, cooldown, required/blocked tags), `ActivateAbility`
+  graph with latent tasks (Play Montage and Wait, Wait for Input Release,
+  Wait for Target Data), commit and end.
+- Networked (prediction keys) once Phase 22 exists.
+- **Genre kits on top**, each as an optional plugin:
+  - Inventory and items (item definitions as assets, stacks, equipment
+    slots, a drag-and-drop inventory widget template)
+  - **Dialogue graph** (nodes: line with speaker, portrait and voice;
+    choice; condition; set variable; event), with a dialogue editor using
+    the Phase 12 graph widget
+  - **Quest system** (objectives, prerequisites, rewards, a quest log
+    widget template)
+  - Interaction system (look-at or proximity prompts, "Press E to open")
+- Editor: an **Attribute debugger** overlay during PIE (stats, active
+  effects with remaining time, tags on the selected entity).
+
+---
+
+## Phase 31: Advanced Rendering
+
+Phase 14's clustered forward+ pipeline covers most games. This phase adds
+the features that high-end productions compare against Unreal 5.
+
+- **Hardware ray tracing** (DXR 1.1 / `VK_KHR_ray_query`): ray-traced
+  shadows, reflections and ambient occlusion, with rasterized fallbacks.
+  The RHI gains acceleration structures (BLAS/TLAS) and ray query
+  support.
+- **Dynamic global illumination:** probe-based DDGI (ray traced) first;
+  screen-space GI as a fallback on hardware without ray tracing.
+- **Virtualized geometry** (Nanite-like): meshlet clustering at import
+  (meshoptimizer), GPU cluster culling, mesh shaders where supported,
+  hierarchical LOD. This is a research-sized project; do it only when
+  scenes need millions of instances.
+- **Virtual shadow maps** to pair with virtualized geometry.
+- **Upscalers:** FSR 3 (open source) built in; DLSS and XeSS as plugins
+  (their SDK licenses don't allow them in the core repo).
+- **Volumetrics:** volumetric fog and lighting (froxel-based, reusing the
+  Phase 14 clusters), volumetric clouds, god rays.
+- **Water:** FFT ocean, shoreline foam, underwater post-process, and
+  buoyancy (with physics).
+- **Hair and fur** (strand-based later; cards first), **skin** with
+  subsurface scattering (separable SSS).
+- **Decals v2:** deferred decals that affect normal and roughness.
+- **Scalability:** every feature has quality levels tied to the Phase 25
+  presets.
+
+### Done when
+
+- A benchmark scene reaches 60 FPS at 1440p with ray-traced shadows and
+  reflections on a mid-range RT GPU, and falls back automatically with the
+  same look (within tolerance) on a GPU without ray tracing.
+
+---
+
+## Phase 32: XR (VR and AR)
+
+- **OpenXR** runtime integration (Meta Quest via Link/Air Link, SteamVR,
+  Windows Mixed Reality, Pico).
+- Stereo rendering: single-pass instanced (both eyes in one draw);
+  foveated rendering where the runtime supports it.
+- `XRRig` prefab: head camera, hand controllers with input actions
+  (Phase 10 gains XR device bindings), hand tracking poses.
+- Interaction toolkit: grab (direct and distance), teleport locomotion,
+  smooth locomotion with comfort vignette, snap turn, UI pointer for
+  world-space widgets (Phase 18).
+- Editor: **VR preview** in PIE, and a "VR template" project.
+- AR (later): passthrough on Quest, plane detection, anchors.
+
+---
+
+## Phase 33: Mobile and Web
+
+- **Android** (Vulkan, NativeActivity, Gradle packaging from the Phase 25
+  Package window) and **iOS** (Metal backend, Xcode project generation).
+- Mobile renderer path: tile-friendly forward pipeline, fewer passes,
+  ASTC textures, half-resolution post, dynamic resolution.
+- Touch input: gestures (tap, swipe, pinch, rotate), a virtual joystick
+  widget template.
+- Power and thermal: frame-rate caps, pause when backgrounded.
+- **Web** (later): WebGPU backend + Emscripten for playable browser
+  builds and demos.
+
+---
+
+## Phase 34: Modding and User-Generated Content
+
+- Mod packages: a `.aplugin` (Phase 26) plus cooked content in a `.apak`,
+  loaded at startup from a `Mods/` folder in a defined order.
+- **Safe scripting for mods:** Luau is already sandboxed (Phase 11); mods
+  get a restricted API surface with no filesystem or network access by
+  default.
+- A stripped-down "mod editor" build of the editor that only works with
+  the game's content and exposed types.
+- Asset overrides (replace a texture or mesh by GUID) and additive content
+  (new levels, items).
+- Steam Workshop / mod.io integration as plugins.
+
+---
+
+## Phase 35: Accessibility
+
+Accessibility is cheaper to build in than to add later, so the runtime
+UI and input phases should follow these rules from the start. This phase
+is where the full set lands.
+
+- **Input:** full remapping (Phase 10), hold-to-toggle options, adjustable
+  dead zones and sensitivity, one-handed presets.
+- **Visual:** subtitle system (size, background, speaker names and colors,
+  directional indicators for off-screen sounds), colorblind filters
+  (protanopia/deuteranopia/tritanopia simulation and correction), UI
+  scale, high contrast mode, reduced motion (disables camera shake and
+  head bob).
+- **Audio:** mono audio, per-bus volume, visual cues for important sounds.
+- **Screen reader** support for menus (UI Automation on Windows, AT-SPI on
+  Linux) using the widget tree's names and roles.
+- **Editor accessibility too:** keyboard navigation of every panel, UI
+  scale, and colorblind-safe pin and node colors (Phase 12's pin colors
+  get shapes as well, so color is never the only signal).
+
+---
+
+## Phase 36: AI-assisted tools (optional)
+
+These are editor conveniences, never runtime requirements. The engine must
+work fully without them.
+
+- **Blueprint assistant:** describe logic in text ("when the player enters
+  this trigger, open the door over 1 second") and the assistant proposes a
+  node graph the user reviews and accepts. It uses the same Phase 12 graph
+  model, so the output is ordinary, editable nodes.
+- **Explain this graph / this error:** a plain-language summary of a
+  selected graph or compiler error.
+- **Asset search by description** ("red brick wall texture") using
+  embeddings of names, tags and thumbnails.
+- Implemented as an editor plugin with a pluggable model provider, off by
+  default, and clearly labeled when content was generated.
+
+---
+
 ## 3. Cross-cutting concerns (every phase)
 
 | Concern | Rule |
@@ -1181,6 +1447,15 @@ Work in this order. Each line is roughly one PR-sized chunk, or a few.
 34. Linux + macOS (MoltenVK); CI matrix.
 35. Cooker, pak files, standalone player, Package window.
 36. Templates, plugin system, editor extensibility, 2D toolkit, docs.
+37. Sequencer: tracks, CineCamera, movie render.
+38. Save game system and world state persistence.
+39. Localization: `LocText`, string tables, HarfBuzz shaping, dashboard.
+40. Ability system (attributes, effects, tags, abilities), then inventory,
+    dialogue and quest kits.
+41. Accessibility pass across runtime UI, input, audio and the editor.
+42. Advanced rendering: ray tracing, DDGI, volumetrics, upscalers, water.
+43. XR (OpenXR), mobile (Android/iOS) and web (WebGPU).
+44. Modding support, then optional AI-assisted editor tools.
 
 ---
 
@@ -1207,3 +1482,12 @@ Work in this order. Each line is roughly one PR-sized chunk, or a few.
 | Multi-platform packaging | ✓ | ✓ | ✓ | **24, 25** |
 | 2D toolkit | Paper2D | 2D tools | ✓ (first-class) | **26** |
 | Plugins / editor scripting | ✓ | ✓ | ✓ (`@tool`) | **26** |
+| Cinematics | Sequencer | Timeline | AnimationPlayer | **27** |
+| Save games | SaveGame | (custom / PlayerPrefs) | (custom / ConfigFile) | **28** |
+| Localization | Localization Dashboard | Localization package | TranslationServer | **29** |
+| Ability system | GAS | (packages) | (plugins) | **30** |
+| Ray tracing / GI | Lumen, HW RT | HDRP RT | SDFGI | **31** |
+| XR | OpenXR | XR Interaction Toolkit | OpenXR | **32** |
+| Mobile / Web | ✓ / (Pixel Streaming) | ✓ / WebGL | ✓ / Web export | **33** |
+| Modding | (per-game) | (per-game) | PCK loading | **34** |
+| Accessibility | (partial) | (partial) | (partial) | **35** |
