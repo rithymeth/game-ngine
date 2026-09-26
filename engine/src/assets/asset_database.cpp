@@ -1,4 +1,5 @@
 #include "aether/assets/asset_database.h"
+#include "aether/assets/asset_ref.h"
 
 #include "aether/core/log.h"
 #include "aether/platform/filesystem.h"
@@ -40,6 +41,22 @@ namespace detail {
 nlohmann::json AssetGuidToJson(const void* object) { return ToString(*static_cast<const AssetGuid*>(object)); }
 bool AssetGuidFromJson(const nlohmann::json& data, void* object) {
     return data.is_string() && ParseAssetGuid(data.get_ref<const std::string&>(), *static_cast<AssetGuid*>(object));
+}
+nlohmann::json AssetRefToJson(const void* object) {
+    const AssetGuid& guid = *static_cast<const AssetGuid*>(object);
+    return guid.IsNull() ? std::string() : ToString(guid);
+}
+bool AssetRefFromJson(const nlohmann::json& data, void* object) {
+    if (!data.is_string()) {
+        return false;
+    }
+    AssetGuid& guid = *static_cast<AssetGuid*>(object);
+    const std::string& text = data.get_ref<const std::string&>();
+    if (text.empty()) {
+        guid = {};
+        return true;
+    }
+    return ParseAssetGuid(text, guid);
 }
 } // namespace detail
 
@@ -137,7 +154,7 @@ bool LoadAssetMeta(const stdfs::path& meta_file, AssetMeta& out, std::string* er
 
 std::string ImporterForExtension(const stdfs::path& file) {
     static const std::map<std::string, std::string> kImporters = {
-        {".png", "Texture"},  {".jpg", "Texture"}, {".jpeg", "Texture"}, {".tga", "Texture"}, {".bmp", "Texture"},
+        {".aesc", "Scene"},   {".png", "Texture"},  {".jpg", "Texture"}, {".jpeg", "Texture"}, {".tga", "Texture"}, {".bmp", "Texture"},
         {".hdr", "Texture"},  {".gltf", "Model"},  {".glb", "Model"},    {".ascene", "Scene"}, {".aprefab", "Prefab"},
         {".wav", "Sound"},    {".ogg", "Sound"},   {".flac", "Sound"},   {".mp3", "Sound"},    {".luau", "Script"},
         {".hlsl", "Shader"},  {".ttf", "Font"},    {".otf", "Font"},
@@ -284,6 +301,8 @@ ScanResult AssetDatabase::Scan() {
         ++result.created_meta;
     }
 
+    RebuildDependencies();
+
     result.assets = records_.size();
     for (const auto& [guid, record] : records_) {
         result.needs_import += record.needs_import ? 1 : 0;
@@ -292,6 +311,106 @@ ScanResult AssetDatabase::Scan() {
         AETHER_LOG_WARN("Assets", "%s", warning.c_str());
     }
     return result;
+}
+
+namespace {
+
+bool IsHexDigit(u8 c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
+
+// Every substring shaped like a UUID (8-4-4-4-12 hex digits) in `bytes`. JSON
+// and MessagePack both store strings as raw UTF-8, so this finds saved
+// AssetRef GUIDs in either scene format without parsing it.
+std::vector<AssetGuid> FindGuidStrings(const std::vector<u8>& bytes) {
+    std::vector<AssetGuid> found;
+    constexpr usize kLength = 36;
+    for (usize i = 0; i + kLength <= bytes.size(); ++i) {
+        bool shaped = true;
+        for (usize k = 0; k < kLength && shaped; ++k) {
+            const bool dash = k == 8 || k == 13 || k == 18 || k == 23;
+            shaped = dash ? bytes[i + k] == '-' : IsHexDigit(bytes[i + k]);
+        }
+        if (!shaped) {
+            continue;
+        }
+        AssetGuid guid;
+        if (ParseAssetGuid(std::string_view(reinterpret_cast<const char*>(bytes.data() + i), kLength), guid)) {
+            found.push_back(guid);
+            i += kLength - 1;
+        }
+    }
+    return found;
+}
+
+} // namespace
+
+void AssetDatabase::RebuildDependencies() {
+    referencers_.clear();
+    for (auto& [guid, record] : records_) {
+        record.dependencies.clear();
+        if (record.missing || (record.importer != "Scene" && record.importer != "Prefab")) {
+            continue;
+        }
+        std::vector<u8> bytes;
+        if (!fs::ReadFileBytes(Absolute(record.path).string(), bytes)) {
+            continue;
+        }
+        for (const AssetGuid& referenced : FindGuidStrings(bytes)) {
+            // Entity GUIDs share the format; only known asset GUIDs count.
+            if (referenced != guid && records_.count(referenced) != 0) {
+                record.dependencies.push_back(referenced);
+            }
+        }
+        std::sort(record.dependencies.begin(), record.dependencies.end());
+        record.dependencies.erase(std::unique(record.dependencies.begin(), record.dependencies.end()),
+                                  record.dependencies.end());
+        for (const AssetGuid& dependency : record.dependencies) {
+            referencers_[dependency].push_back(guid);
+        }
+    }
+}
+
+std::vector<const AssetRecord*> AssetDatabase::Referencers(const AssetGuid& guid) const {
+    std::vector<const AssetRecord*> result;
+    if (auto it = referencers_.find(guid); it != referencers_.end()) {
+        for (const AssetGuid& referencer : it->second) {
+            if (const AssetRecord* record = Find(referencer)) {
+                result.push_back(record);
+            }
+        }
+    }
+    std::sort(result.begin(), result.end(), [](const AssetRecord* a, const AssetRecord* b) { return a->path < b->path; });
+    return result;
+}
+
+bool AssetDatabase::Delete(const AssetGuid& guid_ref, bool force, std::string* error) {
+    // A copy: callers commonly pass a reference into the very record this
+    // erases (db.Delete(db.FindByPath(p)->guid, ...)).
+    const AssetGuid guid = guid_ref;
+    auto it = records_.find(guid);
+    if (it == records_.end()) {
+        SetError(error, "No asset with GUID " + ToString(guid));
+        return false;
+    }
+    std::vector<const AssetRecord*> users = Referencers(guid);
+    if (!users.empty() && !force) {
+        std::string message = it->second.path + " is used by " + std::to_string(users.size()) + " asset(s):";
+        for (const AssetRecord* user : users) {
+            message += " " + user->path;
+        }
+        SetError(error, message);
+        return false;
+    }
+    const stdfs::path source = Absolute(it->second.path);
+    std::error_code ec;
+    stdfs::remove(source, ec);
+    stdfs::remove(MetaPathFor(source), ec);
+    by_path_.erase(it->second.path);
+    records_.erase(it);
+    referencers_.erase(guid);
+    for (auto& [other, list] : referencers_) {
+        list.erase(std::remove(list.begin(), list.end(), guid), list.end());
+    }
+    return true;
 }
 
 const AssetRecord* AssetDatabase::Find(const AssetGuid& guid) const {
@@ -314,7 +433,8 @@ std::vector<const AssetRecord*> AssetDatabase::All() const {
     return all;
 }
 
-bool AssetDatabase::Move(const AssetGuid& guid, const std::string& new_path, std::string* error) {
+bool AssetDatabase::Move(const AssetGuid& guid_ref, const std::string& new_path, std::string* error) {
+    const AssetGuid guid = guid_ref; // may refer into the record being updated
     auto it = records_.find(guid);
     if (it == records_.end()) {
         SetError(error, "No asset with GUID " + ToString(guid));

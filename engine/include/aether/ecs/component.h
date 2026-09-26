@@ -61,6 +61,10 @@ struct ComponentInfo {
     void (*move)(void* dst, void* src) = nullptr;
     void (*serialize)(const void* component, std::vector<u8>& out) = nullptr;
     void (*deserialize)(void* component, const u8* data, usize size) = nullptr;
+    // Optional: loads raw bytes saved by an older build with a different
+    // layout (the scene loader calls it for Raw-encoded data that the current
+    // encoding can't take). Returns false to fall back to default values.
+    bool (*legacy_raw_load)(void* component, const u8* data, usize size) = nullptr;
 };
 
 namespace detail {
@@ -176,6 +180,14 @@ void ReadComponentField(const u8* data, usize size, usize& offset, T& out_value)
     AETHER_ASSERT(offset + sizeof(T) <= size);
     std::memcpy(&out_value, data + offset, sizeof(T));
     offset += sizeof(T);
+}
+
+// Installs T's legacy raw loader (see ComponentInfo::legacy_raw_load). Returns
+// true so it can initialize a static.
+template <typename T>
+bool SetLegacyRawLoader(bool (*loader)(void* component, const u8* data, usize size)) {
+    detail::ComponentRegistry()[GetComponentId<T>()].legacy_raw_load = loader;
+    return true;
 }
 
 // Makes `name` resolve to T when loading scenes — for files written under a

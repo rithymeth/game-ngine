@@ -258,8 +258,14 @@ runs when a project is opened for the first time with the new engine:
    `.ameta` is never overwritten; its asset is skipped with a warning.
    Referencers and delete-with-reference-check come with `AssetRef` in
    step 2.
-2. `AssetRef<T>` reflected type, resolution, and migration of
-   `ModelRenderer`.
+2. ✅ **Done.** `AssetRef<T>` reflected type, resolution, and migration of
+   `ModelRenderer`, plus dependency tracking (`Referencers`) and
+   delete-with-reference-check.
+   - The migration keeps the path alongside the GUID. The Windows-only
+     renderer still loads by path, and `ResolveModelAssets` keeps the path
+     current.
+   - Dependencies come from scanning scene and prefab files for asset GUID
+     strings, not from importer output.
 3. Importer interface and the texture importer with DDC.
 4. glTF importer split into sub-assets.
 5. File watcher, debounce, and hot reload for textures, then meshes, then

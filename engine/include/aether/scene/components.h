@@ -1,6 +1,8 @@
 #pragma once
 
+#include "aether/assets/asset_ref.h"
 #include "aether/core/base.h"
+#include "aether/ecs/component.h"
 #include "aether/math/math.h"
 #include "aether/reflection/reflection.h"
 
@@ -17,15 +19,19 @@ struct Transform {
     Quaternion rotation;
 };
 
-// A model-carrying entity's reference to a glTF asset (relative to the asset
-// directory, e.g. "models/foo.gltf"), not the loaded GPU/CPU data itself —
-// renderers cache that separately, keyed by this same path, shared across
-// every entity that references it. A fixed-size buffer rather than
-// std::string so the component stays plain data. Moved here from the editor
-// (docs/design/EDITOR_UI.md §10): it's a runtime component, not an editor one.
-// Phase 8 replaces the path with an asset GUID reference.
+// A model-carrying entity's reference to a glTF asset — not the loaded
+// GPU/CPU data itself, which renderers cache separately, shared across every
+// entity that references it.
+//
+// `model` (Phase 8) is the permanent reference, by asset GUID, and survives
+// the file being renamed or moved. `asset_path` (relative to the content
+// folder, e.g. "models/foo.gltf") is what today's renderer loads from; with an
+// AssetDatabase, ResolveModelAssets (scene/model_assets.h) keeps the two in
+// step: it fills `model` from the path for old data, and updates the path
+// from `model` after a rename. Plain data (fixed-size path buffer).
 struct ModelRenderer {
     char asset_path[128] = {};
+    assets::AssetRef<assets::ModelAsset> model;
 };
 
 inline void SetModelPath(ModelRenderer& renderer, const std::string& path) {
@@ -41,5 +47,22 @@ AETHER_REFLECT(aether::Transform, 1,
 )
 
 AETHER_REFLECT(aether::ModelRenderer, 1,
-    AETHER_FIELD(asset_path, Field_EditAnywhere, {.tooltip = "glTF model, relative to the asset directory"})
+    AETHER_FIELD(model, Field_EditAnywhere, {.tooltip = "The glTF model asset"}),
+    AETHER_FIELD(asset_path, Field_ReadOnly, {.tooltip = "Path the renderer loads, kept in step with the model asset"})
 )
+
+namespace aether::detail {
+// Scenes saved before ModelRenderer gained `model` stored it as 128 raw bytes
+// (just the path). Load those into the path; ResolveModelAssets then fills in
+// the GUID.
+inline bool LoadLegacyModelRenderer(void* component, const u8* data, usize size) {
+    if (size != sizeof(ModelRenderer::asset_path)) {
+        return false;
+    }
+    auto* renderer = static_cast<ModelRenderer*>(component);
+    std::memcpy(renderer->asset_path, data, size);
+    renderer->asset_path[sizeof(renderer->asset_path) - 1] = '\0';
+    return true;
+}
+inline const bool kModelRendererLegacyLoader = SetLegacyRawLoader<ModelRenderer>(&LoadLegacyModelRenderer);
+} // namespace aether::detail
