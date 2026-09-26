@@ -11,6 +11,7 @@ add_library(aether_engine STATIC
     src/scene/entity_guid.cpp
     src/scene/hierarchy.cpp
     src/scene/prefab.cpp
+    src/scene/prefab_library.cpp
     src/project/project.cpp
     src/scene/model_assets.cpp
     src/reflection/any.cpp
