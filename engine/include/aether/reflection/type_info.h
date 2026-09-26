@@ -125,6 +125,10 @@ struct TypeInfo {
     u32 size = 0;
     u32 alignment = 0;
     u16 version = 1;           // schema version, bumped when fields change meaning
+    // Struct only: serialize as a JSON array of field values in declaration
+    // order ([1, 2, 3]) instead of an object. Used for small math types; set
+    // by specializing detail::kSerializeAsArray<T>.
+    bool serialize_as_array = false;
 
     std::vector<FieldInfo> fields;       // Struct only, declaration order
     std::vector<FunctionInfo> functions; // Struct only, declaration order
@@ -213,6 +217,11 @@ const T* FieldInfo::As(const void* object) const {
 
 namespace detail {
 
+// Specialize to true for small, fixed-shape value types (see
+// TypeInfo::serialize_as_array). Must be visible before the type is reflected.
+template <typename T>
+inline constexpr bool kSerializeAsArray = false;
+
 // Fills in everything about T that doesn't depend on its fields: identity,
 // size, and lifecycle thunks.
 template <typename T>
@@ -224,6 +233,7 @@ TypeInfo MakeTypeInfo(const char* declared_name, TypeKind kind, u16 version) {
     info.size = static_cast<u32>(sizeof(T));
     info.alignment = static_cast<u32>(alignof(T));
     info.version = version;
+    info.serialize_as_array = kSerializeAsArray<T>;
     if constexpr (std::is_default_constructible_v<T>) {
         info.construct = [](void* dst) { new (dst) T(); };
     }
