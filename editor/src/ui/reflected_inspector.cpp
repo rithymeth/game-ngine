@@ -17,6 +17,14 @@ using reflect::FieldInfo;
 using reflect::TypeInfo;
 using reflect::TypeKind;
 
+AssetListProvider& AssetProvider() {
+    static AssetListProvider provider;
+    return provider;
+}
+
+// An AssetRef<T>: a single AssetGuid field. Returns true if handled.
+bool DrawAssetRef(const TypeInfo& type, void* ptr, struct DrawContext& ctx);
+
 struct DrawContext {
     InspectResult result;
     const FieldInfo* top_level_field = nullptr; // attributed as the changed field
@@ -239,6 +247,9 @@ void DrawValue(const TypeInfo& type, void* ptr, const reflect::Meta& meta, DrawC
         return;
     }
     case TypeKind::Struct: {
+        if (type.asset_type != nullptr && DrawAssetRef(type, ptr, ctx)) {
+            return;
+        }
         if (IsCompactFloatRow(type)) {
             const std::string format = NumberFormat(*type.fields[0].type, meta);
             NoteEdit(ctx, ImGui::DragScalarN("##v", ImGuiDataType_Float, ptr, static_cast<int>(type.fields.size()),
@@ -259,6 +270,49 @@ void DrawValue(const TypeInfo& type, void* ptr, const reflect::Meta& meta, DrawC
     }
 }
 
+bool DrawAssetRef(const TypeInfo& type, void* ptr, DrawContext& ctx) {
+    if (type.fields.size() != 1 || type.fields[0].type != &reflect::Reflect<assets::AssetGuid>()) {
+        return false;
+    }
+    auto* guid = static_cast<assets::AssetGuid*>(type.fields[0].Ptr(ptr));
+    if (!AssetProvider()) {
+        ImGui::TextDisabled("%s", guid->IsNull() ? "(none)" : assets::ToString(*guid).c_str());
+        return true;
+    }
+    std::vector<AssetChoice> choices = AssetProvider()(type.asset_type);
+    std::string preview = "(none)";
+    if (!guid->IsNull()) {
+        preview = "(missing " + assets::ToString(*guid) + ")";
+        for (const AssetChoice& choice : choices) {
+            if (choice.guid == *guid) {
+                preview = choice.name;
+            }
+        }
+    }
+    if (ImGui::BeginCombo("##v", preview.c_str())) {
+        if (ImGui::Selectable("(none)", guid->IsNull()) && !guid->IsNull()) {
+            *guid = {};
+            NoteEdit(ctx, true);
+            ctx.result.committed = true;
+        }
+        for (const AssetChoice& choice : choices) {
+            ImGui::PushID(assets::ToString(choice.guid).c_str());
+            const bool selected = choice.guid == *guid;
+            if (ImGui::Selectable(choice.name.c_str(), selected) && !selected) {
+                *guid = choice.guid;
+                NoteEdit(ctx, true);
+                ctx.result.committed = true;
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s asset", type.asset_type);
+    }
+    return true;
+}
+
 bool ContainsCaseInsensitive(std::string_view haystack, std::string_view needle) {
     if (needle.empty()) {
         return true;
@@ -270,6 +324,8 @@ bool ContainsCaseInsensitive(std::string_view haystack, std::string_view needle)
 }
 
 } // namespace
+
+void SetAssetListProvider(AssetListProvider provider) { AssetProvider() = std::move(provider); }
 
 InspectResult InspectObject(const reflect::TypeInfo& type, void* object, const char* id) {
     DrawContext ctx;

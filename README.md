@@ -1651,6 +1651,47 @@ Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 8.
 131/131 tests pass on GCC 13, on Clang and under ASan/UBSan, and 138/138
 with physics.
 
+**Step 2: asset references by ID, dependency tracking, safe delete.**
+
+- **`AssetRef<T>`** (`assets/asset_ref.h`): a typed reference to an asset
+  (`AssetRef<Model>`, `AssetRef<Texture>`, ...). It's reflected, and saved
+  as the asset's GUID string (`""` for none), so it survives the asset being
+  renamed or moved. The new `TypeInfo::asset_type` names the asset kind.
+- **Dependencies**: `Scan` searches every scene and prefab, JSON or binary,
+  for asset GUIDs (which is how `AssetRef` fields are saved).
+  - `AssetRecord::dependencies` and `Referencers(guid)` answer "what uses
+    this?".
+  - Entity GUIDs share the format but aren't counted, because only known
+    asset GUIDs are.
+- **`Delete(guid, force)`** removes an asset's source and `.ameta`. It's
+  refused while other assets use it, and the error names them.
+- **`ModelRenderer.model`**: an `AssetRef<Model>` next to the existing
+  `asset_path`, which is now shown read-only.
+  - `ResolveModelAssets(world, db)` (`scene/model_assets.h`) links old
+    path-only data to the GUID, and after a rename updates the path from the
+    GUID, so moved models keep rendering. It won't accept a GUID that points
+    at a non-model asset.
+  - The editor's renderer still loads by path, which the resolver keeps
+    current. Calling the resolver from the editor comes with its asset
+    browser work (Windows).
+- **Old scenes still load** through the new per-component
+  `SetLegacyRawLoader`, since `ModelRenderer` changed size. It reads the old
+  128-byte raw records, which the plain raw loader refuses because the sizes
+  no longer match.
+- **Inspector**: asset references are a dropdown of assets of that kind, from
+  a list the editor supplies (`SetAssetListProvider`). A reference to an
+  asset that's gone shows as "(missing …)".
+- **Bug caught by AddressSanitizer and fixed before merging**: `Delete` (and
+  `Move`) read their `guid` argument after erasing the record it pointed
+  into (`db.Delete(db.FindByPath(p)->guid)`). They now copy it first.
+
+**Verified**: 4 new tests covering the `AssetRef` JSON form (none, set,
+bad), referencers from both scene formats (entity GUIDs excluded), rename
+without touching scenes, refused and forced deletes, model resolution in
+both directions, and the headless Inspector asset picker. The legacy
+`ModelRenderer` scene test still passes. 135/135 tests pass on GCC 13, on
+Clang and under ASan/UBSan, and 142/142 with physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
