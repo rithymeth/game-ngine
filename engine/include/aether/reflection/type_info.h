@@ -24,6 +24,7 @@ enum class TypeKind : u8 {
     FixedString, // char[N]: a NUL-terminated string in a fixed buffer of `size` bytes
     Enum,   // integer-backed enum; see TypeInfo::enum_values / underlying
     Struct, // aggregate of FieldInfo entries
+    Array,  // std::vector<T>: `element` is T; accessed through the array_* thunks
 };
 
 // Optional, editor-facing field metadata. An aggregate so reflected fields can
@@ -135,6 +136,16 @@ struct TypeInfo {
     std::vector<FunctionInfo> functions; // Struct only, declaration order
     std::vector<EnumValue> enum_values;  // Enum only
     const TypeInfo* underlying = nullptr; // Enum only: the integer type backing it
+    const TypeInfo* element = nullptr;    // Array only: the element type
+
+    // Array only. `array_element` returns element `index` (< size) of a live
+    // array; `array_resize` default-constructs new elements.
+    usize (*array_size)(const void* array) = nullptr;
+    void (*array_resize)(void* array, usize size) = nullptr;
+    void* (*array_element)(void* array, usize index) = nullptr;
+    const void* ArrayElement(const void* array, usize index) const {
+        return array_element(const_cast<void*>(array), index);
+    }
 
     // Lifecycle thunks. `construct` default-constructs into uninitialized
     // memory (nullptr if T isn't default-constructible); the *_construct

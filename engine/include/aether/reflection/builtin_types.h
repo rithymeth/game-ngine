@@ -5,6 +5,7 @@
 
 #include <cstring>
 #include <string>
+#include <vector>
 
 // Reflection for the engine's builtin value types: primitives, std::string,
 // and the math types. Declared names are the engine's own spellings ("f32",
@@ -35,6 +36,34 @@ AETHER_REFLECT_PRIMITIVE(aether::u64, "u64", UInt)
 AETHER_REFLECT_PRIMITIVE(aether::f32, "f32", Float)
 AETHER_REFLECT_PRIMITIVE(aether::f64, "f64", Float)
 AETHER_REFLECT_PRIMITIVE(std::string, "string", String)
+
+// Arrays: std::vector<T> of any reflected T (including structs and other
+// arrays). Declared name "Array<T>", e.g. "Array<string>". std::vector<bool>
+// isn't supported — its elements aren't addressable; use std::vector<u8>.
+template <typename T>
+struct aether::reflect::Reflector<std::vector<T>> {
+    static_assert(!std::is_same_v<T, bool>, "std::vector<bool> can't be reflected; use std::vector<u8>");
+    static const ::aether::reflect::TypeInfo& Get() {
+        static const std::string declared_name = std::string("Array<") + Reflect<T>().name + ">";
+        static const ::aether::reflect::TypeInfo info = [] {
+            using namespace ::aether::reflect;
+            using Self = std::vector<T>;
+            TypeInfo type_info = detail::MakeTypeInfo<Self>("", TypeKind::Array, 1);
+            type_info.name = declared_name.c_str();
+            type_info.id = HashTypeName(type_info.name);
+            type_info.element = &Reflect<T>();
+            type_info.array_size = [](const void* array) { return static_cast<const Self*>(array)->size(); };
+            type_info.array_resize = [](void* array, usize size) { static_cast<Self*>(array)->resize(size); };
+            type_info.array_element = [](void* array, usize index) -> void* {
+                return &(*static_cast<Self*>(array))[index];
+            };
+            return type_info;
+        }();
+        static const bool registered = (::aether::reflect::TypeRegistry::Register(info), true);
+        (void)registered;
+        return info;
+    }
+};
 
 // Fixed-size character buffers (`char name[64]`), for plain-data components
 // that must stay trivially copyable. Declared name "char[N]". Serialized as a
