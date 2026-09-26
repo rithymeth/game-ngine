@@ -444,7 +444,14 @@ struct SystemDesc {
      are deferred to the end of the pass.
    - Tags are compared by name. Hashed tags, SpringArm, timers and the
      event bus come with the gameplay work that needs them.
-6. `SystemDesc` scheduler and fixed timestep with interpolation.
+6. ✅ **Done.** `SystemDesc` scheduler and fixed timestep with interpolation.
+   - Phases run as levels of the DAG (each level in parallel on the job
+     system). Starting each system as soon as its own predecessors finish
+     can replace the level barrier later without changing the interface.
+   - `ComponentMask` access and `std::function` run callbacks (the spec's
+     function pointer is too narrow for systems with state).
+   - Moving the existing editor and physics updates onto the scheduler is
+     editor work pending the Windows build.
 
 ---
 
