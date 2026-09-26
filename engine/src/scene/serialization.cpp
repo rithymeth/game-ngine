@@ -3,6 +3,7 @@
 #include "aether/core/log.h"
 #include "aether/platform/filesystem.h"
 #include "aether/reflection/serialize.h"
+#include "aether/scene/entity_guid.h"
 
 #include <algorithm>
 #include <bit>
@@ -261,10 +262,18 @@ bool LoadScene(World& world, const std::string& path) {
 bool SaveSceneJson(const World& world, const std::string& path) {
     using reflect::Json;
     Json entities = Json::array();
+    const ComponentId id_component = GetComponentId<IdComponent>();
     for (const EntitySlot& slot : CollectEntities(world)) {
         Json components = Json::object();
+        Json guid;
         for (ComponentId id : ComponentIdsOf(slot.archetype->Mask())) {
             const ComponentInfo& info = GetComponentInfo(id);
+            if (id == id_component) {
+                // The entity's identity goes at entity level (§A.3), not
+                // among its components.
+                guid = ToString(static_cast<const IdComponent*>(ComponentPtr(slot, id))->guid);
+                continue;
+            }
             if (info.reflected == nullptr) {
                 AETHER_LOG_WARN("Scene", "Component '%s' isn't reflected, so it can't be saved to JSON (%s)",
                                 info.name, path.c_str());
@@ -274,8 +283,12 @@ bool SaveSceneJson(const World& world, const std::string& path) {
             // renamed the component for the binary format.
             components[info.reflected->name] = reflect::ToJson(*info.reflected, ComponentPtr(slot, id));
         }
-        if (!components.empty()) {
-            entities.push_back(Json{{"components", std::move(components)}});
+        if (!components.empty() || !guid.is_null()) {
+            Json entity{{"components", std::move(components)}};
+            if (!guid.is_null()) {
+                entity["guid"] = std::move(guid);
+            }
+            entities.push_back(std::move(entity));
         }
     }
 
@@ -322,6 +335,14 @@ bool LoadSceneJson(World& world, const std::string& path) {
 
         ComponentMask mask;
         std::vector<std::pair<ComponentId, const Json*>> pending;
+        EntityGuid guid;
+        if (auto guid_json = entity_json.find("guid"); guid_json != entity_json.end()) {
+            if (guid_json->is_string() && ParseEntityGuid(guid_json->get_ref<const std::string&>(), guid)) {
+                mask.set(GetComponentId<IdComponent>());
+            } else {
+                AETHER_LOG_WARN("Scene", "Ignoring invalid entity guid in %s", path.c_str());
+            }
+        }
         for (auto it = components->begin(); it != components->end(); ++it) {
             ComponentId id = FindComponentIdByName(it.key());
             if (id == kInvalidComponentId || GetComponentInfo(id).reflected == nullptr) {
@@ -334,6 +355,9 @@ bool LoadSceneJson(World& world, const std::string& path) {
         }
 
         Entity entity = world.CreateEntityRaw(mask);
+        if (!guid.IsNull()) {
+            world.GetComponent<IdComponent>(entity)->guid = guid;
+        }
         for (auto& [id, data] : pending) {
             reflect::FromJson(*GetComponentInfo(id).reflected, world.GetComponentRaw(entity, id), *data);
         }
