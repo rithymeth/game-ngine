@@ -56,6 +56,8 @@
 #include "aether/platform/window.h"
 #include "aether/scene/components.h"
 #include "aether/scene/serialization.h"
+#include "core/commands.h"
+#include "ui/entity_inspector.h"
 #include "ui/reflected_inspector.h"
 
 #include <imgui.h>
@@ -194,7 +196,7 @@ Mat4 LocalTransformMatrix(const Transform& t) { return Mat4::Translation(t.posit
 Mat4 ComputeWorldTransform(World& world, Entity e) {
     Mat4 result = Mat4::Identity();
     Entity current = e;
-    for (int guard = 0; guard < 32 && !current.IsNull(); ++guard) {
+    for (int guard = 0; guard < 32 && world.IsAlive(current); ++guard) {
         Transform* t = world.GetComponent<Transform>(current);
         if (!t) {
             break;
@@ -211,12 +213,28 @@ Vec3 WorldPosition(World& world, Entity e) {
     return Vec3(world_transform.cols[3].x, world_transform.cols[3].y, world_transform.cols[3].z);
 }
 
+// Parent still stores a raw Entity handle (it moves to EntityGuid with the
+// reparent command, Phase 7 step 4), so undo/redo — which destroys and
+// recreates entities with new handles — can leave a link pointing at a dead
+// entity. Drop those links instead of following them.
+void RemoveStaleParents(World& world) {
+    std::vector<Entity> stale;
+    ForEachWithEntity<Parent>(world, [&](Entity child, Parent& p) {
+        if (!world.IsAlive(p.entity)) {
+            stale.push_back(child);
+        }
+    });
+    for (Entity child : stale) {
+        world.RemoveComponent<Parent>(child);
+    }
+}
+
 // Rejects a would-be parent assignment that would create a cycle (making e
 // its own ancestor) — the one invariant the tree-view UI below relies on to
 // never infinite-loop.
 bool WouldCreateCycle(World& world, Entity e, Entity new_parent) {
     Entity current = new_parent;
-    for (int guard = 0; guard < 32 && !current.IsNull(); ++guard) {
+    for (int guard = 0; guard < 32 && world.IsAlive(current); ++guard) {
         if (current == e) {
             return true;
         }
@@ -1183,6 +1201,60 @@ int main() {
         Entity selected_entity = kNullEntity;
         EditorCamera camera;
 
+        // Phase 7: undo/redo. Every Inspector edit, spawn and delete is an
+        // undoable command (editor/src/core/commands.h). The hooks keep Jolt
+        // bodies in step with the ECS on every do, undo and redo — the
+        // commands themselves know nothing about physics.
+        GuidIndex guids;
+        editor::CommandStack commands;
+        editor::EditorHooks hooks;
+        auto destroy_body = [&](Entity e) {
+            if (RigidBody* b = world.GetComponent<RigidBody>(e); b != nullptr && !b->body_id.IsInvalid()) {
+                physics.DestroyBody(b->body_id);
+                b->body_id = JPH::BodyID();
+            }
+        };
+        auto create_body = [&](Entity e) {
+            RigidBody* b = world.GetComponent<RigidBody>(e);
+            Transform* t = world.GetComponent<Transform>(e);
+            if (b != nullptr && t != nullptr) {
+                b->body_id = physics.CreateSphere(t->position, b->radius, b->mass, b->is_static);
+            }
+        };
+        hooks.on_entity_created = [&](Entity e) { create_body(e); };
+        hooks.on_entity_destroying = [&](Entity e) { destroy_body(e); };
+        hooks.on_component_added = [&](Entity e, ComponentId id) {
+            if (id != GetComponentId<RigidBody>()) {
+                return;
+            }
+            if (!world.HasComponent<Transform>(e)) {
+                world.AddComponent(e, Transform{}); // a body needs somewhere to live
+            }
+            create_body(e);
+        };
+        hooks.on_component_removing = [&](Entity e, ComponentId id) {
+            if (id == GetComponentId<RigidBody>()) {
+                destroy_body(e);
+            }
+        };
+        hooks.on_field_changed = [&](Entity e, ComponentId id, const reflect::FieldInfo&) {
+            RigidBody* b = world.GetComponent<RigidBody>(e);
+            Transform* t = world.GetComponent<Transform>(e);
+            if (b == nullptr || t == nullptr || b->body_id.IsInvalid()) {
+                return;
+            }
+            if (id == GetComponentId<Transform>()) {
+                physics.SetPosition(b->body_id, t->position);
+            } else if (id == GetComponentId<RigidBody>()) {
+                // Jolt shapes and motion type are effectively immutable once
+                // a body exists; recreate it in place.
+                destroy_body(e);
+                create_body(e);
+            }
+        };
+        editor::CommandContext cmd_ctx{world, guids, &hooks};
+        editor::EnsureAllGuids(world, guids);
+
         ComPtr<ID3D12RootSignature> gizmo_root_signature = CreateGizmoRootSignature(device);
         ComPtr<ID3D12PipelineState> gizmo_pso = CreateGizmoPSO(device, gizmo_root_signature.Get(), swap_chain.Format());
         Buffer gizmo_vertex_buffer(device, sizeof(GizmoVertex) * 6, BufferKind::Upload);
@@ -1229,6 +1301,22 @@ int main() {
             ImGui_ImplWin32_NewFrame();
             ImGui::NewFrame();
 
+            // Undo/redo destroys and recreates entities, so any handle kept
+            // across frames may have gone stale.
+            if (!selected_entity.IsNull() && !world.IsAlive(selected_entity)) {
+                selected_entity = kNullEntity;
+            }
+            if (!delete_confirm_target.IsNull() && !world.IsAlive(delete_confirm_target)) {
+                delete_confirm_target = kNullEntity;
+            }
+            bool undo_requested = false;
+            bool redo_requested = false;
+            if (!ImGui::GetIO().WantTextInput) {
+                undo_requested = ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z);
+                redo_requested = ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Y) ||
+                                 ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z);
+            }
+
             // Editor camera/viewport follow-up: computed once per frame,
             // right after NewFrame() (so camera.Update() can read this
             // frame's ImGui::GetIO() mouse/key state), and reused for both
@@ -1248,6 +1336,17 @@ int main() {
             // uses. Called before the dockspace host below so the main
             // viewport's WorkPos/WorkSize already exclude this strip.
             if (ImGui::BeginMainMenuBar()) {
+                if (ImGui::BeginMenu("Edit")) {
+                    std::string undo_label = "Undo " + commands.UndoLabel();
+                    std::string redo_label = "Redo " + commands.RedoLabel();
+                    if (ImGui::MenuItem(undo_label.c_str(), "Ctrl+Z", false, commands.CanUndo())) {
+                        undo_requested = true;
+                    }
+                    if (ImGui::MenuItem(redo_label.c_str(), "Ctrl+Y", false, commands.CanRedo())) {
+                        redo_requested = true;
+                    }
+                    ImGui::EndMenu();
+                }
                 if (ImGui::BeginMenu("View")) {
                     ImGui::MenuItem("Hierarchy", nullptr, &show_hierarchy);
                     ImGui::MenuItem("Inspector", nullptr, &show_inspector);
@@ -1263,6 +1362,11 @@ int main() {
                     ImGui::EndMenu();
                 }
                 ImGui::EndMainMenuBar();
+            }
+            if (undo_requested && commands.Undo(cmd_ctx)) {
+                RemoveStaleParents(world);
+            } else if (redo_requested && commands.Redo(cmd_ctx)) {
+                RemoveStaleParents(world);
             }
 
             // Every currently-referenced model asset must be loaded before
@@ -1417,11 +1521,14 @@ int main() {
             ImGui::Text("Entities: %zu", world.EntityCount());
             ImGui::Checkbox("Playing", &playing);
             if (ImGui::Button("Spawn Sphere")) {
-                SpawnSphere(world, physics, Vec3(spread(rng), 8.0f, spread(rng)), 0.5f, 1.0f);
+                Entity spawned = SpawnSphere(world, physics, Vec3(spread(rng), 8.0f, spread(rng)), 0.5f, 1.0f);
+                commands.Record(editor::CreateEntityCommand::FromExisting(cmd_ctx, spawned, "Spawn Sphere"));
             }
             ImGui::SameLine();
             if (ImGui::Button("Save Scene")) {
-                SaveScene(world, kScenePath);
+                if (SaveScene(world, kScenePath)) {
+                    commands.MarkSaved();
+                }
             }
             ImGui::SameLine();
             if (ImGui::Button("Load Scene")) {
@@ -1439,6 +1546,10 @@ int main() {
                     world.ForEach<Transform, RigidBody>([&](Transform& t, RigidBody& b) {
                         b.body_id = physics.CreateSphere(t.position, b.radius, b.mass, b.is_static);
                     });
+                    // A different world: the old history no longer applies.
+                    commands.Clear();
+                    editor::EnsureAllGuids(world, guids);
+                    commands.MarkSaved();
                 }
             }
 
@@ -1581,6 +1692,7 @@ int main() {
                         Entity new_entity =
                             world.CreateEntity(Transform{spawn_pos, Quaternion::Identity()}, ModelRenderer{});
                         SetModelPath(*world.GetComponent<ModelRenderer>(new_entity), model_path);
+                        commands.Record(editor::CreateEntityCommand::FromExisting(cmd_ctx, new_entity, "Spawn Model"));
                     }
                     ImGui::PopID();
                 }
@@ -1687,63 +1799,13 @@ int main() {
                     ImGuiCond_FirstUseEver);
                 ImGui::SetNextWindowSize(ImVec2(320.0f, 300.0f), ImGuiCond_FirstUseEver);
                 ImGui::Begin("Inspector", &show_inspector);
-                // Phase 6: every reflected component on the entity is drawn
-                // generically from its reflection data (editor/src/ui/
-                // reflected_inspector.h), so a newly reflected component shows
-                // up here with no editor code. The only component-specific
-                // code left is reacting to edits that must reach the physics
-                // simulation.
-                std::vector<const reflect::TypeInfo*> addable;
-                std::vector<ComponentId> addable_ids;
-                for (ComponentId id = 0; id < RegisteredComponentCount(); ++id) {
-                    const ComponentInfo& info = GetComponentInfo(id);
-                    if (info.reflected == nullptr || !editor::HasInspectableFields(*info.reflected)) {
-                        continue;
-                    }
-                    if (!world.HasComponentRaw(selected_entity, id)) {
-                        addable.push_back(info.reflected);
-                        addable_ids.push_back(id);
-                        continue;
-                    }
-                    if (!ImGui::CollapsingHeader(info.reflected->name, ImGuiTreeNodeFlags_DefaultOpen)) {
-                        continue;
-                    }
-                    editor::InspectResult edit = editor::InspectObject(
-                        *info.reflected, world.GetComponentRaw(selected_entity, id), info.reflected->name);
-                    if (!edit.Changed()) {
-                        continue;
-                    }
-                    RigidBody* body = world.GetComponent<RigidBody>(selected_entity);
-                    Transform* transform = world.GetComponent<Transform>(selected_entity);
-                    if (body == nullptr || transform == nullptr) {
-                        continue;
-                    }
-                    if (id == GetComponentId<Transform>()) {
-                        physics.SetPosition(body->body_id, transform->position);
-                    } else if (id == GetComponentId<RigidBody>()) {
-                        // Jolt shapes and motion type are effectively immutable
-                        // once a body exists; recreate it in place (same as
-                        // the body list's live edits).
-                        physics.DestroyBody(body->body_id);
-                        body->body_id =
-                            physics.CreateSphere(transform->position, body->radius, body->mass, body->is_static);
-                    }
-                }
-
-                int picked = editor::AddComponentButton(addable);
-                if (picked >= 0) {
-                    ComponentId id = addable_ids[static_cast<usize>(picked)];
-                    if (id == GetComponentId<RigidBody>()) {
-                        // A body needs a Transform to live at, and a live Jolt body.
-                        world.AddComponentRaw(selected_entity, GetComponentId<Transform>());
-                        world.AddComponentRaw(selected_entity, id);
-                        RigidBody& body = *world.GetComponent<RigidBody>(selected_entity);
-                        body.body_id = physics.CreateSphere(world.GetComponent<Transform>(selected_entity)->position,
-                                                            body.radius, body.mass, body.is_static);
-                    } else {
-                        world.AddComponentRaw(selected_entity, id);
-                    }
-                }
+                // Every reflected component on the entity is drawn
+                // generically from its reflection data, so a newly reflected
+                // component shows up here with no editor code.
+                // Every edit, add and remove is an undoable command; the
+                // physics side effects live in `hooks` above, so they also
+                // happen on undo and redo.
+                editor::InspectEntity(cmd_ctx, commands, selected_entity);
 
                 // glTF runtime details that aren't component data (load
                 // status, animation playback) stay hand-drawn below.
@@ -1806,8 +1868,8 @@ int main() {
             ImGui::Render();
 
             for (Entity e : entities_to_delete) {
-                if (world.HasComponent<RigidBody>(e)) {
-                    physics.DestroyBody(world.GetComponent<RigidBody>(e)->body_id);
+                if (!world.IsAlive(e)) {
+                    continue; // e.g. deleted twice in one frame
                 }
                 // Unparent anything that pointed at this entity before
                 // destroying it — a Parent left dangling at a stale/reused
@@ -1829,7 +1891,11 @@ int main() {
                 if (e == selected_entity) {
                     selected_entity = kNullEntity;
                 }
-                world.DestroyEntity(e);
+                // Undoable; the Jolt body goes via hooks.on_entity_destroying.
+                // (Unparenting the children above isn't recorded, so undo
+                // restores the entity without re-linking them.)
+                EntityGuid guid = EnsureGuid(world, e, &guids);
+                commands.Execute(cmd_ctx, std::make_unique<editor::DestroyEntityCommand>(guid));
             }
 
             // Advance each cached asset's animation once per frame (not once

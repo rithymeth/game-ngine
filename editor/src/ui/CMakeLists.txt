@@ -4,7 +4,9 @@
 # platform. The Windows editor executable links this library.
 add_library(aether_editor_ui STATIC
     reflected_inspector.cpp
+    entity_inspector.cpp
     ../core/command_stack.cpp
+    ../core/commands.cpp
 )
 target_include_directories(aether_editor_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(aether_editor_ui PUBLIC Aether::Engine imgui_core)

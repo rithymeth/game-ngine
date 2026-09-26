@@ -216,6 +216,10 @@ public:
         MigrateEntity(e, old_archetype, old_loc, new_archetype, new_loc);
     }
 
+    const void* GetComponentRaw(Entity e, ComponentId id) const {
+        return const_cast<World*>(this)->GetComponentRaw(e, id);
+    }
+
     void* GetComponentRaw(Entity e, ComponentId id) {
         const EntityRecord& rec = GetRecord(e);
         void* base = rec.archetype->ComponentArray(rec.chunk_index, id);

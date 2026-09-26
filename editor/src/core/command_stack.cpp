@@ -40,7 +40,10 @@ private:
 
 void CommandStack::Execute(CommandContext& ctx, std::unique_ptr<ICommand> command, MergePolicy merge) {
     command->Do(ctx);
+    Record(std::move(command), merge);
+}
 
+void CommandStack::Record(std::unique_ptr<ICommand> command, MergePolicy merge) {
     if (transaction_depth_ > 0) {
         transaction_commands_.push_back(std::move(command));
         return;
