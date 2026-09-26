@@ -76,7 +76,11 @@ VkInstance CreateInstance(bool /*enable_debug_layer*/) {
 
 struct PhysicalDeviceChoice {
     VkPhysicalDevice device = VK_NULL_HANDLE;
-    u32 queue_family_index = 0;
+    u32 graphics_family = 0;
+    u32 compute_family = 0;
+    u32 compute_queue_index = 0; // index within compute_family's queues
+    bool compute_is_dedicated_family = false;
+    bool compute_is_separate_queue = false; // false only when truly the same queue as graphics
 };
 
 PhysicalDeviceChoice PickPhysicalDevice(VkInstance instance) {
@@ -111,7 +115,9 @@ PhysicalDeviceChoice PickPhysicalDevice(VkInstance instance) {
             bool discrete = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
 
             if (!found || (discrete && !found_discrete)) {
-                best = {device, i};
+                best = {};
+                best.device = device;
+                best.graphics_family = i;
                 found = true;
                 found_discrete = discrete;
                 AETHER_LOG_INFO("Vulkan", "Considering adapter: %s (discrete=%d)", props.deviceName, discrete);
@@ -124,15 +130,68 @@ PhysicalDeviceChoice PickPhysicalDevice(VkInstance instance) {
         AETHER_LOG_FATAL("Vulkan", "No physical device with a graphics+present-capable queue family found");
         throw std::runtime_error("no suitable Vulkan physical device");
     }
+
+    // Look for a genuinely dedicated async-compute queue family (COMPUTE
+    // without GRAPHICS) — this is what makes "async" compute real hardware
+    // concurrency rather than just an API shape. Fall back to a second queue
+    // instance in the graphics family, then to the same queue as graphics.
+    u32 queue_family_count = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(best.device, &queue_family_count, nullptr);
+    std::vector<VkQueueFamilyProperties> families(queue_family_count);
+    vkGetPhysicalDeviceQueueFamilyProperties(best.device, &queue_family_count, families.data());
+
+    for (u32 i = 0; i < queue_family_count; ++i) {
+        bool compute = (families[i].queueFlags & VK_QUEUE_COMPUTE_BIT) != 0;
+        bool graphics = (families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0;
+        if (compute && !graphics) {
+            best.compute_family = i;
+            best.compute_queue_index = 0;
+            best.compute_is_dedicated_family = true;
+            best.compute_is_separate_queue = true;
+            AETHER_LOG_INFO("Vulkan", "Found a dedicated async-compute queue family (index %u)", i);
+            return best;
+        }
+    }
+
+    if (families[best.graphics_family].queueCount >= 2) {
+        best.compute_family = best.graphics_family;
+        best.compute_queue_index = 1;
+        best.compute_is_separate_queue = true;
+        AETHER_LOG_INFO("Vulkan",
+                         "No dedicated compute family; using a second queue instance in the graphics family");
+        return best;
+    }
+
+    best.compute_family = best.graphics_family;
+    best.compute_queue_index = 0;
+    best.compute_is_separate_queue = false;
+    AETHER_LOG_WARN("Vulkan", "No spare queue for async compute on this device; compute will serialize with "
+                              "graphics on the same queue");
     return best;
 }
 
-VkDevice CreateLogicalDevice(VkPhysicalDevice physical_device, u32 queue_family_index) {
-    f32 priority = 1.0f;
-    VkDeviceQueueCreateInfo queue_info{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
-    queue_info.queueFamilyIndex = queue_family_index;
-    queue_info.queueCount = 1;
-    queue_info.pQueuePriorities = &priority;
+VkDevice CreateLogicalDevice(VkPhysicalDevice physical_device, const PhysicalDeviceChoice& choice) {
+    f32 priorities[2] = {1.0f, 1.0f};
+    std::vector<VkDeviceQueueCreateInfo> queue_infos;
+
+    VkDeviceQueueCreateInfo graphics_queue_info{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
+    graphics_queue_info.queueFamilyIndex = choice.graphics_family;
+    // Same family, distinct queue instance for compute: request both queues
+    // up front (queueCount=2); vkGetDeviceQueue then fetches index 1 for
+    // compute separately.
+    bool shares_family_with_second_queue =
+        choice.compute_is_separate_queue && !choice.compute_is_dedicated_family;
+    graphics_queue_info.queueCount = shares_family_with_second_queue ? 2 : 1;
+    graphics_queue_info.pQueuePriorities = priorities;
+    queue_infos.push_back(graphics_queue_info);
+
+    if (choice.compute_is_dedicated_family) {
+        VkDeviceQueueCreateInfo compute_queue_info{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
+        compute_queue_info.queueFamilyIndex = choice.compute_family;
+        compute_queue_info.queueCount = 1;
+        compute_queue_info.pQueuePriorities = priorities;
+        queue_infos.push_back(compute_queue_info);
+    }
 
     VkPhysicalDeviceVulkan12Features features_12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
     features_12.timelineSemaphore = VK_TRUE;
@@ -141,8 +200,8 @@ VkDevice CreateLogicalDevice(VkPhysicalDevice physical_device, u32 queue_family_
 
     VkDeviceCreateInfo device_info{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
     device_info.pNext = &features_12;
-    device_info.queueCreateInfoCount = 1;
-    device_info.pQueueCreateInfos = &queue_info;
+    device_info.queueCreateInfoCount = static_cast<u32>(queue_infos.size());
+    device_info.pQueueCreateInfos = queue_infos.data();
     device_info.enabledExtensionCount = static_cast<u32>(std::size(extensions));
     device_info.ppEnabledExtensionNames = extensions;
 
@@ -158,10 +217,16 @@ VulkanDevice::VulkanDevice(bool enable_debug_layer) {
 
     PhysicalDeviceChoice choice = PickPhysicalDevice(instance_);
     physical_device_ = choice.device;
-    queue_family_index_ = choice.queue_family_index;
+    queue_family_index_ = choice.graphics_family;
+    compute_queue_family_index_ = choice.compute_family;
 
-    device_ = CreateLogicalDevice(physical_device_, queue_family_index_);
+    device_ = CreateLogicalDevice(physical_device_, choice);
     vkGetDeviceQueue(device_, queue_family_index_, 0, &queue_);
+    if (choice.compute_is_separate_queue) {
+        vkGetDeviceQueue(device_, compute_queue_family_index_, choice.compute_queue_index, &compute_queue_);
+    } else {
+        compute_queue_ = queue_; // serialized fallback — see PickPhysicalDevice's warning
+    }
 
     VkSemaphoreTypeCreateInfo timeline_type{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
     timeline_type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
@@ -170,8 +235,10 @@ VulkanDevice::VulkanDevice(bool enable_debug_layer) {
     VkSemaphoreCreateInfo semaphore_info{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
     semaphore_info.pNext = &timeline_type;
     AETHER_VK_CHECK(vkCreateSemaphore(device_, &semaphore_info, nullptr, &timeline_semaphore_));
+    AETHER_VK_CHECK(vkCreateSemaphore(device_, &semaphore_info, nullptr, &compute_timeline_semaphore_));
 
-    AETHER_LOG_INFO("Vulkan", "Device initialized (queue family %u)", queue_family_index_);
+    AETHER_LOG_INFO("Vulkan", "Device initialized (graphics queue family %u, compute queue family %u)",
+                     queue_family_index_, compute_queue_family_index_);
 }
 
 VulkanDevice::~VulkanDevice() {
@@ -179,6 +246,9 @@ VulkanDevice::~VulkanDevice() {
         vkDeviceWaitIdle(device_);
         if (timeline_semaphore_ != VK_NULL_HANDLE) {
             vkDestroySemaphore(device_, timeline_semaphore_, nullptr);
+        }
+        if (compute_timeline_semaphore_ != VK_NULL_HANDLE) {
+            vkDestroySemaphore(device_, compute_timeline_semaphore_, nullptr);
         }
         vkDestroyDevice(device_, nullptr);
     }
@@ -193,7 +263,74 @@ std::unique_ptr<ISwapChain> VulkanDevice::CreateSwapChain(void* native_window_ha
 }
 
 std::unique_ptr<ICommandList> VulkanDevice::CreateCommandList() {
-    return std::make_unique<VulkanCommandList>(*this);
+    return std::make_unique<VulkanCommandList>(*this, queue_family_index_);
+}
+
+std::unique_ptr<ICommandList> VulkanDevice::CreateComputeCommandList() {
+    return std::make_unique<VulkanCommandList>(*this, compute_queue_family_index_);
+}
+
+u64 VulkanDevice::SubmitCompute(ICommandList& cmd) {
+    auto native_cmd = static_cast<VkCommandBuffer>(cmd.NativeHandle());
+
+    std::vector<VkSemaphore> wait_semaphores;
+    std::vector<VkPipelineStageFlags> wait_stages;
+    std::vector<u64> wait_values;
+
+    if (pending_compute_wait_.valid) {
+        wait_semaphores.push_back(pending_compute_wait_.semaphore);
+        wait_stages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+        wait_values.push_back(pending_compute_wait_.value);
+        pending_compute_wait_ = {};
+    }
+
+    u64 fence_value = next_compute_fence_value_++;
+    VkSemaphore signal_semaphores[] = {compute_timeline_semaphore_};
+    u64 signal_values[] = {fence_value};
+
+    VkTimelineSemaphoreSubmitInfo timeline_info{VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO};
+    timeline_info.waitSemaphoreValueCount = static_cast<u32>(wait_values.size());
+    timeline_info.pWaitSemaphoreValues = wait_values.data();
+    timeline_info.signalSemaphoreValueCount = 1;
+    timeline_info.pSignalSemaphoreValues = signal_values;
+
+    VkSubmitInfo submit_info{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    submit_info.pNext = &timeline_info;
+    submit_info.waitSemaphoreCount = static_cast<u32>(wait_semaphores.size());
+    submit_info.pWaitSemaphores = wait_semaphores.data();
+    submit_info.pWaitDstStageMask = wait_stages.data();
+    submit_info.commandBufferCount = 1;
+    submit_info.pCommandBuffers = &native_cmd;
+    submit_info.signalSemaphoreCount = 1;
+    submit_info.pSignalSemaphores = signal_semaphores;
+
+    AETHER_VK_CHECK(vkQueueSubmit(compute_queue_, 1, &submit_info, VK_NULL_HANDLE));
+    return fence_value;
+}
+
+void VulkanDevice::WaitForComputeFence(u64 fence_value) {
+    if (fence_value == 0 || IsComputeFenceComplete(fence_value)) {
+        return;
+    }
+    VkSemaphoreWaitInfo wait_info{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
+    wait_info.semaphoreCount = 1;
+    wait_info.pSemaphores = &compute_timeline_semaphore_;
+    wait_info.pValues = &fence_value;
+    AETHER_VK_CHECK(vkWaitSemaphores(device_, &wait_info, UINT64_MAX));
+}
+
+bool VulkanDevice::IsComputeFenceComplete(u64 fence_value) const {
+    u64 current_value = 0;
+    vkGetSemaphoreCounterValue(device_, compute_timeline_semaphore_, &current_value);
+    return current_value >= fence_value;
+}
+
+void VulkanDevice::ComputeQueueWaitOnGraphics(u64 graphics_fence_value) {
+    pending_compute_wait_ = {true, timeline_semaphore_, graphics_fence_value};
+}
+
+void VulkanDevice::GraphicsQueueWaitOnCompute(u64 compute_fence_value) {
+    pending_graphics_wait_ = {true, compute_timeline_semaphore_, compute_fence_value};
 }
 
 u64 VulkanDevice::Submit(ICommandList& cmd, ISwapChain* wait_on_swap_chain) {
@@ -211,6 +348,13 @@ u64 VulkanDevice::Submit(ICommandList& cmd, ISwapChain* wait_on_swap_chain) {
 
         signal_semaphores.push_back(vk_swap_chain->CurrentRenderFinishedSemaphore());
         signal_values.push_back(0); // ignored for a binary semaphore entry
+    }
+
+    if (pending_graphics_wait_.valid) {
+        wait_semaphores.push_back(pending_graphics_wait_.semaphore);
+        wait_stages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+        wait_values.push_back(pending_graphics_wait_.value);
+        pending_graphics_wait_ = {};
     }
 
     u64 fence_value = next_fence_value_++;
@@ -436,10 +580,10 @@ void VulkanSwapChain::Present(bool vsync) {
 
 // --------------------------------------------------------------------------
 
-VulkanCommandList::VulkanCommandList(VulkanDevice& device) : device_(device) {
+VulkanCommandList::VulkanCommandList(VulkanDevice& device, u32 queue_family_index) : device_(device) {
     VkCommandPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
     pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-    pool_info.queueFamilyIndex = device_.QueueFamilyIndex();
+    pool_info.queueFamilyIndex = queue_family_index;
     AETHER_VK_CHECK(vkCreateCommandPool(device_.Handle(), &pool_info, nullptr, &command_pool_));
 
     VkCommandBufferAllocateInfo alloc_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};

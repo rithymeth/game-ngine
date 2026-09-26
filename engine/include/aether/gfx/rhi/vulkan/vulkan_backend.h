@@ -38,6 +38,14 @@ public:
     u64 Submit(ICommandList& cmd, ISwapChain* wait_on_swap_chain) override;
     void WaitForFence(u64 fence_value) override;
     bool IsFenceComplete(u64 fence_value) const override;
+
+    std::unique_ptr<ICommandList> CreateComputeCommandList() override;
+    u64 SubmitCompute(ICommandList& cmd) override;
+    void WaitForComputeFence(u64 fence_value) override;
+    bool IsComputeFenceComplete(u64 fence_value) const override;
+    void ComputeQueueWaitOnGraphics(u64 graphics_fence_value) override;
+    void GraphicsQueueWaitOnCompute(u64 compute_fence_value) override;
+
     Backend GetBackend() const override { return Backend::Vulkan; }
     void* NativeHandle() const override { return device_; }
 
@@ -46,6 +54,16 @@ public:
     VkDevice Handle() const { return device_; }
     VkQueue Queue() const { return queue_; }
     u32 QueueFamilyIndex() const { return queue_family_index_; }
+
+    // The async-compute queue: a genuinely separate, dedicated compute-only
+    // queue family when the hardware exposes one (common on discrete GPUs —
+    // it's what makes the concurrency real rather than just API shape), a
+    // second queue instance from the graphics family if that's all that's
+    // available, or — logged loudly if so — the same queue/family as
+    // graphics, serializing "async" compute with graphics on hardware that
+    // truly only exposes one queue. See PickPhysicalDevice's comment.
+    VkQueue ComputeQueue() const { return compute_queue_; }
+    u32 ComputeQueueFamilyIndex() const { return compute_queue_family_index_; }
 
     TextureHandle RegisterTexture(VkImage image);
     void UpdateTexture(TextureHandle handle, VkImage image);
@@ -64,6 +82,24 @@ private:
     // core-promoted), which we require at instance/device creation.
     VkSemaphore timeline_semaphore_ = VK_NULL_HANDLE;
     u64 next_fence_value_ = 1;
+
+    VkQueue compute_queue_ = VK_NULL_HANDLE;
+    u32 compute_queue_family_index_ = 0;
+    VkSemaphore compute_timeline_semaphore_ = VK_NULL_HANDLE;
+    u64 next_compute_fence_value_ = 1;
+
+    // Vulkan has no queue-level wait primitive independent of a submission
+    // (unlike ID3D12CommandQueue::Wait) — a cross-queue wait can only attach
+    // to an actual vkQueueSubmit's pWaitSemaphores. ComputeQueueWaitOnGraphics/
+    // GraphicsQueueWaitOnCompute stash the request here; the next
+    // SubmitCompute/Submit call on that queue consumes (and clears) it.
+    struct PendingWait {
+        bool valid = false;
+        VkSemaphore semaphore = VK_NULL_HANDLE;
+        u64 value = 0;
+    };
+    PendingWait pending_compute_wait_;
+    PendingWait pending_graphics_wait_;
 
     std::vector<TextureRecord> textures_;
 };
@@ -122,7 +158,11 @@ private:
 
 class VulkanCommandList final : public ICommandList {
 public:
-    explicit VulkanCommandList(VulkanDevice& device);
+    // queue_family_index selects which queue family's command pool this
+    // list's buffer comes from — must match whichever queue it's later
+    // submitted to (VulkanDevice::Queue() vs ComputeQueue()), matching
+    // D3D12CommandList's `type` parameter serving the same purpose.
+    explicit VulkanCommandList(VulkanDevice& device, u32 queue_family_index);
     ~VulkanCommandList() override;
 
     void Reset() override;

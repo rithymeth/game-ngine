@@ -38,6 +38,32 @@ public:
     virtual void WaitForFence(u64 fence_value) = 0;
     virtual bool IsFenceComplete(u64 fence_value) const = 0;
 
+    // A second, independent queue for async compute: work submitted here can
+    // execute on the GPU concurrently with the direct/graphics queue, on
+    // hardware that supports it — the same capability gfx::Device already
+    // has for the D3D12-only sandbox, now exposed at the swappable RHI
+    // layer. Command lists submitted here must come from
+    // CreateComputeCommandList(), not CreateCommandList() (D3D12 requires a
+    // command list's recorded type to match the queue it's executed on;
+    // Vulkan requires the command pool's queue family to match).
+    virtual std::unique_ptr<ICommandList> CreateComputeCommandList() = 0;
+    virtual u64 SubmitCompute(ICommandList& cmd) = 0;
+    virtual void WaitForComputeFence(u64 fence_value) = 0;
+    virtual bool IsComputeFenceComplete(u64 fence_value) const = 0;
+
+    // GPU-side (not CPU-blocking) cross-queue waits, matching gfx::Device's
+    // primitive of the same name: makes the NEXT submission on the waiting
+    // queue wait for the other queue to reach a given fence value before it
+    // starts executing. D3D12 has a true queue-level wait
+    // (ID3D12CommandQueue::Wait) independent of any particular submission;
+    // Vulkan has no equivalent primitive in core 1.2 — a wait semaphore can
+    // only attach to an actual vkQueueSubmit — so the Vulkan backend queues
+    // the wait and attaches it to whichever SubmitCompute/Submit call comes
+    // next on that queue. Call this immediately before the submission it's
+    // meant to gate.
+    virtual void ComputeQueueWaitOnGraphics(u64 graphics_fence_value) = 0;
+    virtual void GraphicsQueueWaitOnCompute(u64 compute_fence_value) = 0;
+
     virtual Backend GetBackend() const = 0;
 
     // Escape hatch matching ICommandList::NativeHandle(): ID3D12Device* or

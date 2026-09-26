@@ -288,11 +288,51 @@ link time — no relink needed, only the runtime DLL changes. `rhi_demo`'s
 CMakeLists copies whichever `dxcompiler.dll` was resolved next to its
 executable as a post-build step.
 
+### Follow-up: real vertex/index buffers + depth testing (cube demo)
+
+`AETHER_RHI_DEMO_DRAW_CUBE=1` (takes priority over `DRAW_TRIANGLE` if both are
+set) upgrades `rhi_demo` from the procedural, buffer-less triangle into an
+actual indexed, depth-tested cube — exercising real GPU buffer creation and
+upload identically on both backends: `gfx::Buffer` (upload-heap, persistently
+mapped) for D3D12, a host-visible/host-coherent `VkBuffer`/`VkDeviceMemory`
+for Vulkan. One depth buffer *per swapchain image*, not a single shared one:
+this demo's frame loop only fences a slot right before reusing it, so two
+backbuffers' GPU work can genuinely overlap — a single shared depth buffer
+would be a real write/write hazard between concurrent frames. The MVP matrix
+is built with the engine's existing math (`aether::Mat4`, the same
+`PerspectiveRH`/`LookAtRH` `sandbox/main.cpp` already uses) and passed as a
+D3D12 root constant / Vulkan push constant; a `FlipY` constant baked into the
+same push-constant block compensates for D3D12/Vulkan's opposite NDC Y
+convention directly in the one shared HLSL source, rather than needing two
+different projection matrices.
+
+### Follow-up: async compute on the Vulkan backend
+
+`IDevice` gained `CreateComputeCommandList`/`SubmitCompute`/
+`WaitForComputeFence`/`IsComputeFenceComplete`/`ComputeQueueWaitOnGraphics`/
+`GraphicsQueueWaitOnCompute` — the same async-compute primitives `gfx::Device`
+already had for the D3D12-only sandbox, now genuinely implemented on both RHI
+backends (this is squarely inside the "device/queue/submission" layer the
+RHI abstraction covers, unlike shaders/pipelines). `VulkanDevice` picks a
+**dedicated** async-compute queue family (`VK_QUEUE_COMPUTE_BIT` without
+`VK_QUEUE_GRAPHICS_BIT`) when the hardware exposes one — confirmed via
+`tests/aether_tests.exe`'s log output to actually be found on this machine's
+NVIDIA GPU (queue family 2) — falling back to a second queue instance in the
+graphics family, and finally (logged loudly) to sharing the same queue if
+neither is available. D3D12's `ID3D12CommandQueue::Wait` is a true
+queue-level primitive independent of any submission; Vulkan has no
+equivalent in core 1.2, so `ComputeQueueWaitOnGraphics`/
+`GraphicsQueueWaitOnCompute` queue the wait semaphore and attach it to
+whichever `SubmitCompute`/`Submit` call comes next on that queue. Verified
+via lifecycle and non-deadlock tests mirroring the existing RHI test style
+(59/59 tests passing) — genuine cross-queue race correctness isn't
+practically testable without validation layers, matching this whole RHI
+effort's established verification approach.
+
 Not yet started: unifying shader/pipeline/draw-call recording across
-backends into a real cross-API abstraction (this triangle demo is
+backends into a real cross-API abstraction (the triangle/cube demos are
 backend-specific code selected at runtime, not a unified API) — bindless
-descriptors, multiple draw calls, and vertex/index buffers are all still
-open.
+descriptors and multiple simultaneous draw calls/objects are still open.
 
 ## Building
 

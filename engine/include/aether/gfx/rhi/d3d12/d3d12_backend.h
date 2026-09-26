@@ -30,6 +30,18 @@ public:
     u64 Submit(ICommandList& cmd, ISwapChain* wait_on_swap_chain = nullptr) override;
     void WaitForFence(u64 fence_value) override;
     bool IsFenceComplete(u64 fence_value) const override { return device_.IsFenceComplete(fence_value); }
+
+    std::unique_ptr<ICommandList> CreateComputeCommandList() override;
+    u64 SubmitCompute(ICommandList& cmd) override;
+    void WaitForComputeFence(u64 fence_value) override { device_.WaitForComputeFence(fence_value); }
+    bool IsComputeFenceComplete(u64 fence_value) const override { return device_.IsComputeFenceComplete(fence_value); }
+    void ComputeQueueWaitOnGraphics(u64 graphics_fence_value) override {
+        device_.ComputeQueueWaitOnGraphics(graphics_fence_value);
+    }
+    void GraphicsQueueWaitOnCompute(u64 compute_fence_value) override {
+        device_.GraphicsQueueWaitOnCompute(compute_fence_value);
+    }
+
     Backend GetBackend() const override { return Backend::D3D12; }
     void* NativeHandle() const override { return device_.Handle(); }
 
@@ -65,7 +77,7 @@ private:
 
 class D3D12CommandList final : public ICommandList {
 public:
-    explicit D3D12CommandList(D3D12Device& device);
+    explicit D3D12CommandList(D3D12Device& device, D3D12_COMMAND_LIST_TYPE type = D3D12_COMMAND_LIST_TYPE_DIRECT);
 
     void Reset() override { cmd_.Reset(); }
     void Close() override { cmd_.Close(); }

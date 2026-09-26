@@ -34,6 +34,16 @@ void D3D12Device::WaitForFence(u64 fence_value) {
     device_.WaitForFence(fence_value);
 }
 
+std::unique_ptr<ICommandList> D3D12Device::CreateComputeCommandList() {
+    return std::make_unique<D3D12CommandList>(*this, D3D12_COMMAND_LIST_TYPE_COMPUTE);
+}
+
+u64 D3D12Device::SubmitCompute(ICommandList& cmd) {
+    auto* native = static_cast<ID3D12GraphicsCommandList*>(cmd.NativeHandle());
+    ID3D12CommandList* lists[] = {native};
+    return device_.SubmitCompute(lists, 1);
+}
+
 TextureHandle D3D12Device::RegisterTexture(ID3D12Resource* resource, D3D12_CPU_DESCRIPTOR_HANDLE rtv) {
     TextureHandle handle{static_cast<u32>(textures_.size())};
     textures_.push_back({resource, rtv});
@@ -58,7 +68,8 @@ void D3D12SwapChain::Resize(u32 width, u32 height) {
     }
 }
 
-D3D12CommandList::D3D12CommandList(D3D12Device& device) : device_(device), cmd_(device.Native()) {}
+D3D12CommandList::D3D12CommandList(D3D12Device& device, D3D12_COMMAND_LIST_TYPE type)
+    : device_(device), cmd_(device.Native(), type) {}
 
 void D3D12CommandList::TransitionTexture(TextureHandle texture, ResourceState before, ResourceState after) {
     const TextureRecord& record = device_.GetTexture(texture);
