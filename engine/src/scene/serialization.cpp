@@ -5,6 +5,7 @@
 #include "aether/reflection/serialize.h"
 #include "aether/scene/components.h"
 #include "aether/scene/entity_guid.h"
+#include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
 #include "aether/scene/prefab.h"
 
@@ -27,6 +28,10 @@ void RegisterSceneComponents() {
     (void)GetComponentId<ModelRenderer>();
     (void)GetComponentId<PrefabInstance>();
     (void)GetComponentId<PrefabLink>();
+    (void)GetComponentId<Active>();
+    (void)GetComponentId<Camera>();
+    (void)GetComponentId<Tags>();
+    (void)GetComponentId<Layer>();
 }
 
 constexpr char kMagic[4] = {'A', 'E', 'S', 'C'};
