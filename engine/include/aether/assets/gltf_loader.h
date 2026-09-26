@@ -2,7 +2,9 @@
 
 #include "aether/core/base.h"
 #include "aether/math/mat4.h"
+#include "aether/math/quaternion.h"
 
+#include <array>
 #include <string>
 #include <vector>
 
@@ -33,6 +35,16 @@ struct GltfPrimitive {
     std::vector<GltfVertex> vertices;
     std::vector<u32> indices;
     i32 material_index = -1; // index into GltfScene::materials, -1 if none
+
+    // Skinning data (glTF's JOINTS_0/WEIGHTS_0 attributes), parallel to
+    // `vertices` (same size) when BOTH are present on this primitive; empty
+    // otherwise, which is how a caller tells a non-skinned primitive apart
+    // from a skinned one — don't index these unless they're non-empty.
+    // `joint_indices[i][k]` is an index into whichever GltfSkin this
+    // primitive's node references (GltfNode::skin_index), not directly into
+    // GltfScene::nodes.
+    std::vector<std::array<u16, 4>> joint_indices;
+    std::vector<std::array<f32, 4>> joint_weights;
 };
 
 struct GltfMesh {
@@ -53,28 +65,143 @@ struct GltfNodeInstance {
     Mat4 world_transform;
 };
 
+// A node's raw local transform components (translation/rotation/scale) —
+// unlike GltfNodeInstance above, this is kept as separate TRS fields rather
+// than pre-baked into a Mat4, specifically so animation playback
+// (EvaluateAnimation) can override individual components (a channel might
+// animate only rotation, say, leaving translation/scale at these static
+// values) without needing to decompose an arbitrary matrix back into TRS.
+// `uses_matrix` is true only for the rare node authored with an explicit
+// "matrix" instead of TRS fields — per the glTF spec such a node cannot be
+// the target of an animation channel, so `matrix` is used verbatim and
+// translation/rotation/scale are left at their defaults (never read).
+struct GltfNode {
+    Vec3 translation{0.0f, 0.0f, 0.0f};
+    Quaternion rotation = Quaternion::Identity();
+    Vec3 scale{1.0f, 1.0f, 1.0f};
+    Mat4 matrix; // valid only if uses_matrix
+    bool uses_matrix = false;
+    i32 mesh_index = -1; // -1 if this node has no mesh
+    i32 skin_index = -1; // -1 if this node's mesh (if any) isn't skinned
+    std::vector<usize> children;
+
+    Mat4 LocalTransform() const {
+        return uses_matrix ? matrix : Mat4::Translation(translation) * rotation.ToMat4() * Mat4::Scale(scale);
+    }
+};
+
+// A skin: `joints[k]` is a node index (into GltfScene::nodes) and
+// `inverse_bind_matrices[k]` is that joint's inverse bind matrix — the
+// transform from mesh-local space into that joint's own rest-pose local
+// space, factored out so that at runtime a joint's skinning matrix is just
+// `joint_world_transform * inverse_bind_matrices[k]` (see
+// ComputeSkinMatrices). Same length as `joints`; per the glTF spec,
+// `inverseBindMatrices` is optional and defaults to all-identity when
+// omitted (a skin with no inverse binds at all, meaning the joints' rest
+// pose already matches mesh space) — that default is applied at parse time
+// here, so callers never need to special-case a missing accessor.
+struct GltfSkin {
+    std::vector<usize> joints;
+    std::vector<Mat4> inverse_bind_matrices;
+};
+
+enum class GltfAnimationPath { Translation, Rotation, Scale };
+enum class GltfAnimationInterpolation { Linear, Step };
+
+// One animated property of one node. `times` is strictly increasing
+// (keyframe timestamps, seconds); `values` is `times.size()` groups of
+// either 3 floats (Translation/Scale) or 4 floats (Rotation, as an xyzw
+// quaternion) laid out contiguously, i.e. `values.size() ==
+// times.size() * ComponentsPerKey()`. CUBICSPLINE interpolation (which
+// additionally stores in/out tangents per key) is out of this loader's
+// scope — a CUBICSPLINE-sampled channel is skipped entirely at parse time,
+// same as an unsupported primitive mode elsewhere in this loader — LINEAR
+// and STEP cover the overwhelming majority of exported animations.
+struct GltfAnimationChannel {
+    usize node_index = 0;
+    GltfAnimationPath path = GltfAnimationPath::Translation;
+    GltfAnimationInterpolation interpolation = GltfAnimationInterpolation::Linear;
+    std::vector<f32> times;
+    std::vector<f32> values;
+
+    usize ComponentsPerKey() const { return path == GltfAnimationPath::Rotation ? 4 : 3; }
+};
+
+struct GltfAnimation {
+    std::string name;
+    std::vector<GltfAnimationChannel> channels;
+    f32 duration = 0.0f; // max keyframe time across all channels, seconds
+};
+
 struct GltfScene {
     std::vector<GltfMesh> meshes;
     std::vector<GltfMaterial> materials;
     std::vector<GltfNodeInstance> node_instances;
+
+    // The raw node hierarchy (present alongside the flattened
+    // node_instances above specifically so animation playback has
+    // something to re-walk) plus skins/animations. Empty when the source
+    // glTF has no "nodes"/"skins"/"animations" arrays, same as
+    // node_instances is empty for a nodeless file.
+    std::vector<GltfNode> nodes;
+    std::vector<usize> root_nodes;
+    std::vector<GltfSkin> skins;
+    std::vector<GltfAnimation> animations;
 };
+
+// Re-walks the node hierarchy with `animation` sampled at `time_seconds`
+// (channels targeting a node override that node's translation/rotation/
+// scale for this evaluation only — GltfScene::nodes itself is never
+// mutated) instead of the bind pose ParseNodeInstances used, producing the
+// same flattened {mesh_index, world_transform} shape GltfScene::node_instances
+// already has. `time_seconds` is clamped to [0, animation.duration], not
+// looped — a caller wanting looping playback sends `fmod(t, duration)`
+// itself, since "loop" vs. "clamp to last frame" vs. "ping-pong" is a
+// policy decision this loader has no basis to make for the caller.
+// Multiple channels targeting the same node/path is undefined (last one in
+// `animation.channels` wins) — glTF-valid but exotic content this loader
+// doesn't need to arbitrate.
+void EvaluateAnimation(const GltfScene& scene, const GltfAnimation& animation, f32 time_seconds,
+                        std::vector<GltfNodeInstance>& out_node_instances);
+
+// The skinning matrices for one skin, given the same animated node-world-
+// transform data EvaluateAnimation computes internally (recomputed here
+// rather than plumbed out of EvaluateAnimation, since most callers only
+// need one or the other, not both, on a given frame) — `out_matrices[k] =
+// world_transform_of(skin.joints[k]) * skin.inverse_bind_matrices[k]`,
+// ready to upload to a GPU skinning buffer indexed by GltfPrimitive's
+// joint_indices. Pass an empty `animation`/time_seconds == 0 with no
+// channels targeting this skin's joints to get the bind-pose skin matrices
+// (every joint's matrix reduces to identity in that case, since a joint's
+// world transform then equals the inverse of its own inverse-bind matrix by
+// construction).
+void ComputeSkinMatrices(const GltfScene& scene, const GltfAnimation* animation, f32 time_seconds,
+                          const GltfSkin& skin, std::vector<Mat4>& out_matrices);
 
 // Loads a glTF 2.0 asset: JSON parsed via nlohmann::json, buffers resolved
 // either from an external .bin file (relative to `path`) or an embedded
 // `data:` URI (base64-decoded). Returns false (logged) on failure.
 //
-// Scope: POSITION/NORMAL/TEXCOORD_0 vertex attributes (missing NORMAL is
-// filled with a placeholder up-vector, missing TEXCOORD_0 with zero — a
-// primitive with no POSITION accessor is skipped, not fabricated),
-// triangle-mode indexed primitives, pbrMetallicRoughness materials with
-// file-URI textures, and the node hierarchy/transform tree (TRS or matrix,
-// walked from the default scene's root nodes and flattened into
-// GltfScene::node_instances — see its comment). A glTF with no "scenes"
-// array at all (rare, technically valid) falls back to treating every node
-// that isn't referenced as another node's child as a root. Explicitly NOT
-// handled (see the README's glTF loader section): skinning/animation,
-// embedded (data-URI) images, non-metallic-roughness material extensions
-// (KHR_materials_*, etc), and multiple/non-default scenes.
+// Scope: POSITION/NORMAL/TEXCOORD_0/JOINTS_0/WEIGHTS_0 vertex attributes
+// (missing NORMAL is filled with a placeholder up-vector, missing
+// TEXCOORD_0 with zero — a primitive with no POSITION accessor is skipped,
+// not fabricated; JOINTS_0/WEIGHTS_0 are only populated when BOTH are
+// present, see GltfPrimitive), triangle-mode indexed primitives,
+// pbrMetallicRoughness materials with file-URI textures, the node
+// hierarchy/transform tree (TRS or matrix, walked from the default scene's
+// root nodes and flattened into GltfScene::node_instances — see its
+// comment; also kept unflattened in GltfScene::nodes for animation
+// playback), skins (GltfScene::skins — joints + inverse bind matrices), and
+// animations (GltfScene::animations — translation/rotation/scale channels,
+// LINEAR/STEP interpolation; see EvaluateAnimation/ComputeSkinMatrices for
+// playback). A glTF with no "scenes" array at all (rare, technically valid)
+// falls back to treating every node that isn't referenced as another node's
+// child as a root. Explicitly NOT handled (see the README's glTF loader
+// section): CUBICSPLINE animation interpolation, GPU vertex skinning (the
+// parsed joint/weight/skin-matrix data is there, but no demo wires it into
+// an actual skinned draw call yet), embedded (data-URI) images,
+// non-metallic-roughness material extensions (KHR_materials_*, etc), and
+// multiple/non-default scenes.
 bool LoadGltf(const std::string& path, GltfScene& out_scene);
 
 } // namespace aether::assets

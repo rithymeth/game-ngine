@@ -6,6 +6,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 
@@ -209,101 +210,65 @@ u32 ReadIndex(const AccessorInfo& info, usize index) {
     }
 }
 
+// JOINTS_0 is typically UNSIGNED_BYTE or UNSIGNED_SHORT (rarely UNSIGNED_INT
+// in the wild, but the spec allows only the first two) — reused ReadIndex's
+// per-component decode rather than duplicating it, just applied 4 times for
+// a VEC4 accessor.
+void ReadU16x4(const AccessorInfo& info, usize index, std::array<u16, 4>& out) {
+    const u8* elem = info.data + index * info.stride;
+    usize component_size = ComponentSize(info.component_type);
+    for (usize c = 0; c < 4; ++c) {
+        AccessorInfo component_info = info;
+        component_info.data = elem + c * component_size;
+        component_info.stride = 0;
+        out[c] = static_cast<u16>(ReadIndex(component_info, 0));
+    }
+}
+
 // A node's local transform is either an explicit 4x4 "matrix" (glTF stores
 // it column-major, 16 floats — the exact same layout aether::Mat4 itself
-// uses, hence the direct memcpy) or composed from TRS (translation/
-// rotation/scale) fields, each defaulting per the spec to identity/zero/one
-// when absent. glTF's TRS-to-matrix order is T * R * S (scale applied
-// first, then rotate, then translate).
-Mat4 ParseNodeLocalTransform(const Json& node_json) {
+// uses, hence the direct memcpy) or separate TRS (translation/rotation/
+// scale) fields, each defaulting per the spec to identity/zero/one when
+// absent — kept as separate fields (GltfNode::translation/rotation/scale),
+// not baked into a matrix here, specifically so EvaluateAnimation can later
+// override individual components. glTF's TRS-to-matrix order is T * R * S
+// (scale applied first, then rotate, then translate) — see
+// GltfNode::LocalTransform.
+void ParseNodeTRS(const Json& node_json, GltfNode& out_node) {
     if (node_json.contains("matrix")) {
         const Json& matrix_json = node_json["matrix"];
         f32 values[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
         for (usize i = 0; i < 16 && i < matrix_json.size(); ++i) {
             values[i] = matrix_json[i].get<f32>();
         }
-        Mat4 result;
-        std::memcpy(&result, values, sizeof(values));
-        return result;
-    }
-
-    Vec3 translation(0.0f, 0.0f, 0.0f);
-    if (node_json.contains("translation")) {
-        const Json& t = node_json["translation"];
-        translation = Vec3(t[0].get<f32>(), t[1].get<f32>(), t[2].get<f32>());
-    }
-    Quaternion rotation = Quaternion::Identity();
-    if (node_json.contains("rotation")) {
-        const Json& r = node_json["rotation"];
-        rotation = Quaternion(r[0].get<f32>(), r[1].get<f32>(), r[2].get<f32>(), r[3].get<f32>());
-    }
-    Vec3 scale(1.0f, 1.0f, 1.0f);
-    if (node_json.contains("scale")) {
-        const Json& s = node_json["scale"];
-        scale = Vec3(s[0].get<f32>(), s[1].get<f32>(), s[2].get<f32>());
-    }
-
-    return Mat4::Translation(translation) * rotation.ToMat4() * Mat4::Scale(scale);
-}
-
-// Walks the node tree from the default scene's roots (or, if the file has
-// no "scenes" array at all, every node that isn't referenced as another
-// node's child), accumulating world = parent_world * local per node, and
-// records one GltfNodeInstance per mesh-carrying node — the flattened
-// result a renderer actually needs, rather than exposing the tree itself.
-// Iterative (an explicit stack), not recursive, so a pathologically deep
-// hierarchy can't blow the call stack.
-void ParseNodeInstances(const Json& gltf, GltfScene& out_scene) {
-    if (!gltf.contains("nodes")) {
+        std::memcpy(&out_node.matrix, values, sizeof(values));
+        out_node.uses_matrix = true;
         return;
     }
-    const Json& nodes_json = gltf["nodes"];
-    usize node_count = nodes_json.size();
 
-    std::vector<Mat4> local_transforms(node_count);
-    std::vector<std::vector<usize>> children(node_count);
-    std::vector<i32> mesh_indices(node_count, -1);
-    std::vector<bool> is_child(node_count, false);
-
-    for (usize i = 0; i < node_count; ++i) {
-        const Json& node_json = nodes_json[i];
-        local_transforms[i] = ParseNodeLocalTransform(node_json);
-        if (node_json.contains("mesh")) {
-            mesh_indices[i] = node_json["mesh"].get<i32>();
-        }
-        if (node_json.contains("children")) {
-            for (const auto& child_ref : node_json["children"]) {
-                usize child_index = child_ref.get<usize>();
-                if (child_index < node_count) {
-                    children[i].push_back(child_index);
-                    is_child[child_index] = true;
-                }
-            }
-        }
+    if (node_json.contains("translation")) {
+        const Json& t = node_json["translation"];
+        out_node.translation = Vec3(t[0].get<f32>(), t[1].get<f32>(), t[2].get<f32>());
     }
-
-    std::vector<usize> roots;
-    if (gltf.contains("scenes") && !gltf["scenes"].empty()) {
-        usize scene_index = gltf.value("scene", static_cast<usize>(0));
-        if (scene_index >= gltf["scenes"].size()) {
-            scene_index = 0;
-        }
-        if (gltf["scenes"][scene_index].contains("nodes")) {
-            for (const auto& root_ref : gltf["scenes"][scene_index]["nodes"]) {
-                usize root_index = root_ref.get<usize>();
-                if (root_index < node_count) {
-                    roots.push_back(root_index);
-                }
-            }
-        }
-    } else {
-        for (usize i = 0; i < node_count; ++i) {
-            if (!is_child[i]) {
-                roots.push_back(i);
-            }
-        }
+    if (node_json.contains("rotation")) {
+        const Json& r = node_json["rotation"];
+        out_node.rotation = Quaternion(r[0].get<f32>(), r[1].get<f32>(), r[2].get<f32>(), r[3].get<f32>());
     }
+    if (node_json.contains("scale")) {
+        const Json& s = node_json["scale"];
+        out_node.scale = Vec3(s[0].get<f32>(), s[1].get<f32>(), s[2].get<f32>());
+    }
+}
 
+// Walks `nodes` from `roots`, accumulating world = parent_world * local per
+// node, and records one GltfNodeInstance per mesh-carrying node — the
+// flattened result a renderer actually needs, rather than exposing the tree
+// itself. Iterative (an explicit stack), not recursive, so a pathologically
+// deep hierarchy can't blow the call stack. Shared by both the static bind
+// pose (LoadGltf, called on GltfScene::nodes as parsed) and animation
+// playback (EvaluateAnimation, called on a temporary animated copy).
+void FlattenNodeInstances(const std::vector<GltfNode>& nodes, const std::vector<usize>& roots,
+                           std::vector<GltfNodeInstance>& out_instances) {
     struct StackEntry {
         usize node_index;
         Mat4 parent_world;
@@ -315,14 +280,252 @@ void ParseNodeInstances(const Json& gltf, GltfScene& out_scene) {
     while (!stack.empty()) {
         StackEntry entry = stack.back();
         stack.pop_back();
-        Mat4 world = entry.parent_world * local_transforms[entry.node_index];
-        if (mesh_indices[entry.node_index] >= 0) {
-            out_scene.node_instances.push_back({static_cast<usize>(mesh_indices[entry.node_index]), world});
+        const GltfNode& node = nodes[entry.node_index];
+        Mat4 world = entry.parent_world * node.LocalTransform();
+        if (node.mesh_index >= 0) {
+            out_instances.push_back({static_cast<usize>(node.mesh_index), world});
         }
-        for (usize child : children[entry.node_index]) {
+        for (usize child : node.children) {
             stack.push_back({child, world});
         }
     }
+}
+
+// Builds GltfScene::nodes/root_nodes from the glTF's "nodes"/"scenes"
+// arrays (see ParseNodeTRS for the local-transform parsing, and the
+// "no scenes array" root-detection fallback this mirrors from the
+// pre-animation-follow-up version of this function).
+void ParseNodeHierarchy(const Json& gltf, GltfScene& out_scene) {
+    if (!gltf.contains("nodes")) {
+        return;
+    }
+    const Json& nodes_json = gltf["nodes"];
+    usize node_count = nodes_json.size();
+
+    out_scene.nodes.resize(node_count);
+    std::vector<bool> is_child(node_count, false);
+
+    for (usize i = 0; i < node_count; ++i) {
+        const Json& node_json = nodes_json[i];
+        GltfNode& node = out_scene.nodes[i];
+        ParseNodeTRS(node_json, node);
+        if (node_json.contains("mesh")) {
+            node.mesh_index = node_json["mesh"].get<i32>();
+        }
+        if (node_json.contains("skin")) {
+            node.skin_index = node_json["skin"].get<i32>();
+        }
+        if (node_json.contains("children")) {
+            for (const auto& child_ref : node_json["children"]) {
+                usize child_index = child_ref.get<usize>();
+                if (child_index < node_count) {
+                    node.children.push_back(child_index);
+                    is_child[child_index] = true;
+                }
+            }
+        }
+    }
+
+    if (gltf.contains("scenes") && !gltf["scenes"].empty()) {
+        usize scene_index = gltf.value("scene", static_cast<usize>(0));
+        if (scene_index >= gltf["scenes"].size()) {
+            scene_index = 0;
+        }
+        if (gltf["scenes"][scene_index].contains("nodes")) {
+            for (const auto& root_ref : gltf["scenes"][scene_index]["nodes"]) {
+                usize root_index = root_ref.get<usize>();
+                if (root_index < node_count) {
+                    out_scene.root_nodes.push_back(root_index);
+                }
+            }
+        }
+    } else {
+        for (usize i = 0; i < node_count; ++i) {
+            if (!is_child[i]) {
+                out_scene.root_nodes.push_back(i);
+            }
+        }
+    }
+}
+
+// glTF's inverseBindMatrices accessor (when present) is MAT4-typed,
+// column-major, same layout as ParseNodeTRS's "matrix" case — read via
+// ReadFloatN 16 components at a time rather than a dedicated MAT4 reader,
+// since ReadFloatN already handles the only componentType (FLOAT) this
+// accessor is ever encoded as.
+void ParseSkins(const Json& gltf, const std::vector<std::vector<u8>>& buffers, GltfScene& out_scene) {
+    if (!gltf.contains("skins")) {
+        return;
+    }
+    for (const auto& skin_json : gltf["skins"]) {
+        GltfSkin skin;
+        if (skin_json.contains("joints")) {
+            for (const auto& joint_ref : skin_json["joints"]) {
+                skin.joints.push_back(joint_ref.get<usize>());
+            }
+        }
+        skin.inverse_bind_matrices.assign(skin.joints.size(), Mat4::Identity());
+        if (skin_json.contains("inverseBindMatrices")) {
+            AccessorInfo info;
+            if (ResolveAccessor(gltf, skin_json["inverseBindMatrices"].get<usize>(), buffers, info)) {
+                usize count = std::min(info.count, skin.joints.size());
+                for (usize i = 0; i < count; ++i) {
+                    f32 values[16];
+                    ReadFloatN(info, i, values, 16);
+                    std::memcpy(&skin.inverse_bind_matrices[i], values, sizeof(values));
+                }
+            }
+        }
+        out_scene.skins.push_back(std::move(skin));
+    }
+}
+
+GltfAnimationPath ParseAnimationPath(const std::string& path, bool& out_supported) {
+    out_supported = true;
+    if (path == "translation") return GltfAnimationPath::Translation;
+    if (path == "rotation") return GltfAnimationPath::Rotation;
+    if (path == "scale") return GltfAnimationPath::Scale;
+    out_supported = false; // "weights" (morph targets) — out of scope
+    return GltfAnimationPath::Translation;
+}
+
+void ParseAnimations(const Json& gltf, const std::vector<std::vector<u8>>& buffers, GltfScene& out_scene) {
+    if (!gltf.contains("animations")) {
+        return;
+    }
+    for (const auto& anim_json : gltf["animations"]) {
+        if (!anim_json.contains("channels") || !anim_json.contains("samplers")) {
+            continue;
+        }
+        GltfAnimation animation;
+        animation.name = anim_json.value("name", std::string());
+        const Json& samplers_json = anim_json["samplers"];
+
+        for (const auto& channel_json : anim_json["channels"]) {
+            if (!channel_json.contains("target") || !channel_json["target"].contains("node")) {
+                continue; // targetless channel (e.g. a pointer extension) — out of scope
+            }
+            const Json& target = channel_json["target"];
+            bool path_supported = false;
+            GltfAnimationPath path = ParseAnimationPath(target.value("path", std::string()), path_supported);
+            if (!path_supported) {
+                AETHER_LOG_WARN("glTF", "Skipping animation channel with unsupported target path \"%s\"",
+                                 target.value("path", std::string()).c_str());
+                continue;
+            }
+
+            usize sampler_index = channel_json.value("sampler", static_cast<usize>(0));
+            if (sampler_index >= samplers_json.size()) {
+                continue;
+            }
+            const Json& sampler_json = samplers_json[sampler_index];
+            std::string interpolation_str = sampler_json.value("interpolation", std::string("LINEAR"));
+            if (interpolation_str == "CUBICSPLINE") {
+                AETHER_LOG_WARN("glTF", "Skipping CUBICSPLINE-interpolated animation channel (unsupported)");
+                continue;
+            }
+
+            AccessorInfo input_info;
+            AccessorInfo output_info;
+            if (!sampler_json.contains("input") || !sampler_json.contains("output") ||
+                !ResolveAccessor(gltf, sampler_json["input"].get<usize>(), buffers, input_info) ||
+                !ResolveAccessor(gltf, sampler_json["output"].get<usize>(), buffers, output_info)) {
+                continue;
+            }
+
+            GltfAnimationChannel channel;
+            channel.node_index = target["node"].get<usize>();
+            channel.path = path;
+            channel.interpolation =
+                interpolation_str == "STEP" ? GltfAnimationInterpolation::Step : GltfAnimationInterpolation::Linear;
+
+            channel.times.resize(input_info.count);
+            for (usize i = 0; i < input_info.count; ++i) {
+                ReadFloatN(input_info, i, &channel.times[i], 1);
+                animation.duration = std::max(animation.duration, channel.times[i]);
+            }
+
+            usize components = channel.ComponentsPerKey();
+            channel.values.resize(output_info.count * components);
+            for (usize i = 0; i < output_info.count; ++i) {
+                ReadFloatN(output_info, i, &channel.values[i * components], components);
+            }
+
+            animation.channels.push_back(std::move(channel));
+        }
+
+        out_scene.animations.push_back(std::move(animation));
+    }
+}
+
+// Linear (STEP: nearest-previous-keyframe) sampling of a channel's raw
+// float components at `time_seconds`, already clamped to the channel's own
+// [times.front(), times.back()] range by the caller conceptually — done
+// here since it needs `channel.times` to compute the clamp anyway. Shared
+// by both Vec3 paths (translation/scale) and the quaternion path
+// (component-wise LERP + renormalize below — a standard cheap
+// approximation of SLERP, accurate enough for reasonably dense keyframes,
+// without the extra acos/sin SLERP needs).
+void SampleChannelRaw(const GltfAnimationChannel& channel, f32 time_seconds, f32* out) {
+    usize n = channel.ComponentsPerKey();
+    if (channel.times.empty()) {
+        for (usize i = 0; i < n; ++i) {
+            out[i] = 0.0f;
+        }
+        return;
+    }
+    f32 t = std::clamp(time_seconds, channel.times.front(), channel.times.back());
+
+    usize k = 0;
+    while (k + 1 < channel.times.size() && channel.times[k + 1] <= t) {
+        ++k;
+    }
+    const f32* v0 = &channel.values[k * n];
+    if (k + 1 >= channel.times.size() || channel.interpolation == GltfAnimationInterpolation::Step) {
+        for (usize i = 0; i < n; ++i) {
+            out[i] = v0[i];
+        }
+        return;
+    }
+    f32 t0 = channel.times[k];
+    f32 t1 = channel.times[k + 1];
+    f32 alpha = (t1 > t0) ? (t - t0) / (t1 - t0) : 0.0f;
+    const f32* v1 = &channel.values[(k + 1) * n];
+    for (usize i = 0; i < n; ++i) {
+        out[i] = v0[i] + (v1[i] - v0[i]) * alpha;
+    }
+}
+
+// Applies every channel in `animation` to a working copy of `scene.nodes`
+// (translation/rotation/scale only — a matrix-based node's channels, if any
+// somehow exist in spec-invalid content, are simply not applied, since
+// GltfNode::LocalTransform ignores TRS fields when uses_matrix is set).
+std::vector<GltfNode> ApplyAnimationToNodes(const GltfScene& scene, const GltfAnimation& animation,
+                                             f32 time_seconds) {
+    std::vector<GltfNode> animated_nodes = scene.nodes;
+    for (const GltfAnimationChannel& channel : animation.channels) {
+        if (channel.node_index >= animated_nodes.size()) {
+            continue;
+        }
+        GltfNode& node = animated_nodes[channel.node_index];
+        if (node.uses_matrix) {
+            continue;
+        }
+        f32 values[4];
+        SampleChannelRaw(channel, time_seconds, values);
+        switch (channel.path) {
+            case GltfAnimationPath::Translation:
+                node.translation = Vec3(values[0], values[1], values[2]);
+                break;
+            case GltfAnimationPath::Scale:
+                node.scale = Vec3(values[0], values[1], values[2]);
+                break;
+            case GltfAnimationPath::Rotation:
+                node.rotation = Quaternion(values[0], values[1], values[2], values[3]).Normalized();
+                break;
+        }
+    }
+    return animated_nodes;
 }
 
 } // namespace
@@ -444,8 +647,18 @@ bool LoadGltf(const std::string& path, GltfScene& out_scene) {
                 bool has_uv = attributes.contains("TEXCOORD_0") &&
                               ResolveAccessor(gltf, attributes["TEXCOORD_0"].get<usize>(), buffers, uv_info);
 
+                AccessorInfo joints_info;
+                AccessorInfo weights_info;
+                bool has_skinning = attributes.contains("JOINTS_0") && attributes.contains("WEIGHTS_0") &&
+                                    ResolveAccessor(gltf, attributes["JOINTS_0"].get<usize>(), buffers, joints_info) &&
+                                    ResolveAccessor(gltf, attributes["WEIGHTS_0"].get<usize>(), buffers, weights_info);
+
                 GltfPrimitive primitive;
                 primitive.vertices.resize(position_info.count);
+                if (has_skinning) {
+                    primitive.joint_indices.resize(position_info.count);
+                    primitive.joint_weights.resize(position_info.count);
+                }
                 for (usize i = 0; i < position_info.count; ++i) {
                     ReadFloatN(position_info, i, primitive.vertices[i].position, 3);
                     if (has_normal) {
@@ -460,6 +673,10 @@ bool LoadGltf(const std::string& path, GltfScene& out_scene) {
                     } else {
                         primitive.vertices[i].uv[0] = 0.0f;
                         primitive.vertices[i].uv[1] = 0.0f;
+                    }
+                    if (has_skinning) {
+                        ReadU16x4(joints_info, i, primitive.joint_indices[i]);
+                        ReadFloatN(weights_info, i, primitive.joint_weights[i].data(), 4);
                     }
                 }
 
@@ -485,11 +702,61 @@ bool LoadGltf(const std::string& path, GltfScene& out_scene) {
         }
     }
 
-    ParseNodeInstances(gltf, out_scene);
+    ParseNodeHierarchy(gltf, out_scene);
+    FlattenNodeInstances(out_scene.nodes, out_scene.root_nodes, out_scene.node_instances);
+    ParseSkins(gltf, buffers, out_scene);
+    ParseAnimations(gltf, buffers, out_scene);
 
-    AETHER_LOG_INFO("glTF", "Loaded \"%s\": %zu mesh(es), %zu material(s), %zu node instance(s)", path.c_str(),
-                     out_scene.meshes.size(), out_scene.materials.size(), out_scene.node_instances.size());
+    AETHER_LOG_INFO("glTF",
+                     "Loaded \"%s\": %zu mesh(es), %zu material(s), %zu node instance(s), %zu skin(s), "
+                     "%zu animation(s)",
+                     path.c_str(), out_scene.meshes.size(), out_scene.materials.size(),
+                     out_scene.node_instances.size(), out_scene.skins.size(), out_scene.animations.size());
     return true;
+}
+
+void EvaluateAnimation(const GltfScene& scene, const GltfAnimation& animation, f32 time_seconds,
+                        std::vector<GltfNodeInstance>& out_node_instances) {
+    out_node_instances.clear();
+    std::vector<GltfNode> animated_nodes = ApplyAnimationToNodes(scene, animation, time_seconds);
+    FlattenNodeInstances(animated_nodes, scene.root_nodes, out_node_instances);
+}
+
+void ComputeSkinMatrices(const GltfScene& scene, const GltfAnimation* animation, f32 time_seconds,
+                          const GltfSkin& skin, std::vector<Mat4>& out_matrices) {
+    std::vector<GltfNode> animated_nodes =
+        animation ? ApplyAnimationToNodes(scene, *animation, time_seconds) : scene.nodes;
+
+    // World transforms for every node, not just the skin's joints — a
+    // joint's ancestors may not themselves be joints, so the cheapest
+    // correct approach is one full hierarchy walk (same cost
+    // FlattenNodeInstances already pays for rendering) rather than N partial
+    // walks up from each joint individually.
+    std::vector<Mat4> world_transforms(animated_nodes.size(), Mat4::Identity());
+    struct StackEntry {
+        usize node_index;
+        Mat4 parent_world;
+    };
+    std::vector<StackEntry> stack;
+    for (usize root : scene.root_nodes) {
+        stack.push_back({root, Mat4::Identity()});
+    }
+    while (!stack.empty()) {
+        StackEntry entry = stack.back();
+        stack.pop_back();
+        Mat4 world = entry.parent_world * animated_nodes[entry.node_index].LocalTransform();
+        world_transforms[entry.node_index] = world;
+        for (usize child : animated_nodes[entry.node_index].children) {
+            stack.push_back({child, world});
+        }
+    }
+
+    out_matrices.resize(skin.joints.size());
+    for (usize k = 0; k < skin.joints.size(); ++k) {
+        usize joint_node = skin.joints[k];
+        Mat4 joint_world = joint_node < world_transforms.size() ? world_transforms[joint_node] : Mat4::Identity();
+        out_matrices[k] = joint_world * skin.inverse_bind_matrices[k];
+    }
 }
 
 } // namespace aether::assets

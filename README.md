@@ -682,6 +682,54 @@ at distinct positions, one visibly offset from and near its parent rather
 than at the origin, not just asserted from the code. Verified stable across
 6 quick runs plus one 2000-frame run.
 
+#### Follow-up: skinning + animation data (`GltfSkin`/`GltfAnimation`)
+
+`LoadGltf` now also parses `skins` (joints + inverse bind matrices, defaulting
+to identity inverse binds per spec when the accessor is omitted) and
+`animations` (translation/rotation/scale channels, LINEAR/STEP
+interpolation — CUBICSPLINE channels are skipped, same treatment as an
+unsupported primitive mode elsewhere in this loader) into
+`GltfScene::skins`/`GltfScene::animations`. The node hierarchy is now also
+kept unflattened (`GltfScene::nodes`/`root_nodes`, TRS fields kept separate
+rather than pre-baked into a matrix) specifically so playback can override
+individual components per channel. `GltfPrimitive` gained parallel
+`joint_indices`/`joint_weights` arrays, populated only when a primitive has
+both `JOINTS_0` and `WEIGHTS_0` accessors.
+
+Two runtime entry points do the actual playback math:
+
+- `EvaluateAnimation(scene, animation, time_seconds, out_node_instances)` —
+  re-walks the hierarchy with a channel-animated copy of the nodes (the
+  original `GltfScene::nodes` is never mutated), producing the same
+  flattened `{mesh_index, world_transform}` shape the static bind pose
+  already exposes. Time is clamped to `[0, duration]`, not looped — a caller
+  wanting looping playback sends `fmod(t, duration)` itself.
+- `ComputeSkinMatrices(scene, animation, time_seconds, skin, out_matrices)` —
+  `joint_world_transform * inverse_bind_matrix` per joint, ready for a
+  future GPU skinning shader to consume. Quaternion rotation channels use
+  component-wise LERP + renormalize rather than SLERP (a standard cheap
+  approximation, accurate enough for reasonably dense keyframes).
+
+Verified with 6 new unit tests (`tests/test_gltf_loader.cpp`): channel
+times/values decode correctly, `EvaluateAnimation` interpolates linearly
+mid-segment *and* clamps rather than extrapolates past the last keyframe,
+a skin's matrices reduce to identity at rest pose with a genuinely
+non-identity inverse bind matrix (not the degenerate identity/identity case,
+which would pass even with the joint-world/inverse-bind multiplication
+order reversed), the identity-inverse-bind default, and
+`JOINTS_0`/`WEIGHTS_0` parsing. 81/81 tests overall.
+
+`gltf_demo`'s `AETHER_GLTF_DEMO_ANIMATE=1` mode is the end-to-end render
+proof for the animation half: it loads `assets/models/test_animation.gltf`
+(a single cube whose node slides from x=-2 to x=+2 and back, LINEAR,
+duration 2s) and calls `EvaluateAnimation` every frame — confirmed by two
+screenshots at different frame counts showing the cube at visibly different
+on-screen positions, not just logged as loaded. Stable across 6 quick runs
+plus one 2000-frame run. GPU vertex skinning itself (actually consuming
+`joint_indices`/`joint_weights`/`ComputeSkinMatrices` in a skinned draw
+call) is not wired into a demo yet — the parsed data and the CPU-side
+skin-matrix math are there and unit-tested, but no shader reads them yet.
+
 ### Follow-up: material system (`aether::gfx::MaterialData`/`LoadMaterial`)
 
 `engine/include/aether/gfx/material.h` is the bridge between a loaded glTF

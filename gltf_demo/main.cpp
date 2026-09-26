@@ -300,15 +300,29 @@ int main() {
     }
     const char* screenshot_path = std::getenv("AETHER_GLTF_DEMO_SCREENSHOT");
 
+    // Set AETHER_GLTF_DEMO_ANIMATE=1 to load test_animation.gltf (a single
+    // cube whose node has a translation animation, see
+    // assets/models/test_animation.gltf) and play it back every frame via
+    // aether::assets::EvaluateAnimation instead of the static test_scene.gltf
+    // hierarchy — the actual end-to-end proof of the glTF animation
+    // follow-up (parse -> evaluate -> render), not just that it parses.
+    bool animate = std::getenv("AETHER_GLTF_DEMO_ANIMATE") != nullptr;
+
     try {
         assets::GltfScene scene;
-        std::string gltf_path = std::string(AETHER_ASSET_DIR) + "models/test_scene.gltf";
+        std::string gltf_path =
+            std::string(AETHER_ASSET_DIR) + (animate ? "models/test_animation.gltf" : "models/test_scene.gltf");
         if (!assets::LoadGltf(gltf_path, scene)) {
             AETHER_LOG_FATAL("GltfDemo", "Failed to load \"%s\"", gltf_path.c_str());
             return 1;
         }
         if (scene.meshes.empty() || scene.meshes[0].primitives.empty()) {
             AETHER_LOG_FATAL("GltfDemo", "Loaded glTF has no renderable primitives");
+            return 1;
+        }
+        if (animate && scene.animations.empty()) {
+            AETHER_LOG_FATAL("GltfDemo", "AETHER_GLTF_DEMO_ANIMATE=1 but \"%s\" has no animations",
+                              gltf_path.c_str());
             return 1;
         }
         if (scene.node_instances.empty()) {
@@ -318,8 +332,9 @@ int main() {
             scene.node_instances.push_back({0, Mat4::Identity()});
         }
         const assets::GltfPrimitive& primitive = scene.meshes[0].primitives[0];
-        AETHER_LOG_INFO("GltfDemo", "Loaded mesh: %zu vertices, %zu indices, %zu node instance(s)",
-                         primitive.vertices.size(), primitive.indices.size(), scene.node_instances.size());
+        AETHER_LOG_INFO("GltfDemo", "Loaded mesh: %zu vertices, %zu indices, %zu node instance(s), %zu animation(s)",
+                         primitive.vertices.size(), primitive.indices.size(), scene.node_instances.size(),
+                         scene.animations.size());
 
         WindowDesc window_desc;
         window_desc.title = "Aether glTF Demo";
@@ -436,6 +451,12 @@ int main() {
                 Radians(50.0f), static_cast<f32>(swap_chain.Width()) / static_cast<f32>(swap_chain.Height()), 0.1f,
                 100.0f);
             Mat4 view_proj = proj * view;
+
+            if (animate) {
+                const assets::GltfAnimation& animation = scene.animations[0];
+                f32 anim_time = animation.duration > 0.0f ? std::fmod(t * 2.0f, animation.duration) : 0.0f;
+                assets::EvaluateAnimation(scene, animation, anim_time, scene.node_instances);
+            }
 
             ID3D12Resource* back_buffer = swap_chain.CurrentBackBuffer();
             RenderGraph::ResourceHandle backbuffer_handle =
