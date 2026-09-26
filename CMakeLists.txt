@@ -20,6 +20,7 @@ endif()
 option(AETHER_BUILD_SANDBOX "Build the Aether sandbox app" ON)
 option(AETHER_BUILD_PHYSICS "Build the Jolt-backed physics module" ON)
 option(AETHER_BUILD_EDITOR "Build the Dear ImGui editor app" ON)
+option(AETHER_BUILD_VULKAN "Build the Vulkan RHI backend" ON)
 
 include(FetchContent)
 
@@ -66,6 +67,59 @@ if(AETHER_BUILD_EDITOR)
     add_library(ImGui::ImGui ALIAS imgui)
 endif()
 
+if(AETHER_BUILD_VULKAN AND WIN32)
+    FetchContent_Declare(
+        VulkanHeaders
+        GIT_REPOSITORY https://github.com/KhronosGroup/Vulkan-Headers.git
+        GIT_TAG v1.4.309
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(VulkanHeaders)
+
+    # Prefer a real Vulkan SDK if one is installed (VULKAN_SDK env var or the
+    # usual install locations). If not, this machine's GPU driver still
+    # ships the loader DLL (C:\Windows\System32\vulkan-1.dll) — generate an
+    # import library from it directly rather than requiring the ~1GB SDK
+    # download just to get a .lib file. Either way we only need the headers
+    # (fetched above) and something to link against; the loader itself
+    # resolves ICD/layers at runtime regardless of how we linked it.
+    find_package(Vulkan QUIET)
+    if(Vulkan_FOUND)
+        set(AETHER_VULKAN_INCLUDE_DIRS ${Vulkan_INCLUDE_DIRS})
+        set(AETHER_VULKAN_LIBRARY ${Vulkan_LIBRARY})
+        message(STATUS "Vulkan: using installed SDK (${Vulkan_LIBRARY})")
+    else()
+        set(_aether_vulkan_dll "C:/Windows/System32/vulkan-1.dll")
+        find_program(AETHER_DUMPBIN_EXE dumpbin)
+        find_program(AETHER_LIB_EXE lib)
+        if(EXISTS ${_aether_vulkan_dll} AND AETHER_DUMPBIN_EXE AND AETHER_LIB_EXE)
+            set(_aether_vulkan_lib_dir "${CMAKE_BINARY_DIR}/vulkan_lib")
+            execute_process(
+                COMMAND powershell -ExecutionPolicy Bypass -File
+                        "${CMAKE_SOURCE_DIR}/tools/generate_vulkan_import_lib.ps1"
+                        -DllPath ${_aether_vulkan_dll}
+                        -OutputDir ${_aether_vulkan_lib_dir}
+                        -DumpbinPath ${AETHER_DUMPBIN_EXE}
+                        -LibPath ${AETHER_LIB_EXE}
+                RESULT_VARIABLE _aether_vulkan_gen_result
+            )
+            if(_aether_vulkan_gen_result EQUAL 0 AND EXISTS "${_aether_vulkan_lib_dir}/vulkan-1.lib")
+                set(AETHER_VULKAN_INCLUDE_DIRS "${vulkanheaders_SOURCE_DIR}/include")
+                set(AETHER_VULKAN_LIBRARY "${_aether_vulkan_lib_dir}/vulkan-1.lib")
+                message(STATUS "Vulkan: no SDK found; generated an import lib from the driver's loader DLL")
+            else()
+                message(WARNING "Vulkan: failed to generate import lib from ${_aether_vulkan_dll}; Vulkan backend disabled")
+                set(AETHER_BUILD_VULKAN OFF)
+            endif()
+        else()
+            message(WARNING "Vulkan: no SDK and no system vulkan-1.dll/dumpbin/lib found; Vulkan backend disabled")
+            set(AETHER_BUILD_VULKAN OFF)
+        endif()
+    endif()
+else()
+    set(AETHER_BUILD_VULKAN OFF)
+endif()
+
 add_subdirectory(engine)
 
 if(AETHER_BUILD_PHYSICS)
@@ -83,4 +137,8 @@ endif()
 
 if(AETHER_BUILD_PHYSICS AND AETHER_BUILD_EDITOR)
     add_subdirectory(editor)
+endif()
+
+if(WIN32)
+    add_subdirectory(rhi_demo)
 endif()

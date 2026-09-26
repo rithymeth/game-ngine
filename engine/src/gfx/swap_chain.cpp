@@ -70,8 +70,12 @@ u32 SwapChain::CurrentBackBufferIndex() const {
 }
 
 D3D12_CPU_DESCRIPTOR_HANDLE SwapChain::CurrentBackBufferRTV() const {
+    return BackBufferRTV(CurrentBackBufferIndex());
+}
+
+D3D12_CPU_DESCRIPTOR_HANDLE SwapChain::BackBufferRTV(u32 index) const {
     D3D12_CPU_DESCRIPTOR_HANDLE handle = rtv_heap_->GetCPUDescriptorHandleForHeapStart();
-    handle.ptr += static_cast<SIZE_T>(CurrentBackBufferIndex()) * rtv_descriptor_size_;
+    handle.ptr += static_cast<SIZE_T>(index) * rtv_descriptor_size_;
     return handle;
 }
 

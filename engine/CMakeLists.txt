@@ -21,7 +21,16 @@ if(WIN32)
         src/gfx/buffer.cpp
         src/gfx/texture.cpp
         src/gfx/render_graph.cpp
+        src/gfx/rhi/device_factory.cpp
+        src/gfx/rhi/d3d12/d3d12_backend.cpp
     )
+endif()
+
+if(AETHER_BUILD_VULKAN)
+    target_sources(aether_engine PRIVATE src/gfx/rhi/vulkan/vulkan_backend.cpp)
+    target_include_directories(aether_engine PRIVATE ${AETHER_VULKAN_INCLUDE_DIRS})
+    target_link_libraries(aether_engine PRIVATE ${AETHER_VULKAN_LIBRARY})
+    target_compile_definitions(aether_engine PUBLIC AETHER_HAS_VULKAN)
 endif()
 
 target_include_directories(aether_engine

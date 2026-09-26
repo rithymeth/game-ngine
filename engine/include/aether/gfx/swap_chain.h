@@ -28,6 +28,12 @@ public:
     ID3D12Resource* CurrentBackBuffer() const { return back_buffers_[CurrentBackBufferIndex()].Get(); }
     D3D12_CPU_DESCRIPTOR_HANDLE CurrentBackBufferRTV() const;
 
+    // Per-index access to every backbuffer, for callers (e.g. the RHI
+    // abstraction layer) that register all of them up front rather than
+    // re-querying "the current one" each frame.
+    ID3D12Resource* BackBuffer(u32 index) const { return back_buffers_[index].Get(); }
+    D3D12_CPU_DESCRIPTOR_HANDLE BackBufferRTV(u32 index) const;
+
     u32 Width() const { return width_; }
     u32 Height() const { return height_; }
     u32 BufferCount() const { return buffer_count_; }

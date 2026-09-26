@@ -164,21 +164,62 @@ discussion in project history.
   fence before consuming its output — verified stable (identical 20/64
   culling result) across 960 frames spanning 8 repeated runs.
 
-Not yet started: Vulkan backend, transient resource memory aliasing.
+### Follow-up: Vulkan backend (swappable RHI)
+
+`engine/include/aether/gfx/rhi` is a genuinely backend-swappable abstraction
+— `IDevice`/`ISwapChain`/`ICommandList` — for the layer that actually *can*
+be made identical across D3D12 and Vulkan: device/queue creation, a swap
+chain, command list recording lifecycle, submission, and fence-based
+GPU/CPU sync. `rhi_demo/` runs the exact same frame loop, written entirely
+against these interfaces, on **either** backend depending on an environment
+variable — proof it's real swapping, not two code paths pretending to share
+an interface.
+
+Deliberately **not** abstracted: shader compilation, pipeline state, and
+descriptor/resource binding. HLSL root signatures and SPIR-V descriptor sets
+differ enough that unifying them is a distinctly larger, separate piece of
+work — `rhi_demo` only clears the backbuffer to a color and presents (no
+shaders, no draw calls), so `ICommandList::NativeHandle()` is the escape
+hatch backend-specific rendering code would use instead. The full
+sandbox/editor (bindless textures, compute culling, ImGui) stay D3D12-only,
+using the original (non-abstracted) `Device`/`SwapChain`/`CommandList`
+classes directly — the RHI backends adapt those by composition
+(`d3d12_backend::D3D12Device` wraps a `gfx::Device`, etc.) rather than
+modifying them, so none of Phases 3-5's tested code changed.
+
+**Built without the Vulkan SDK**: this environment has a Vulkan-capable GPU
+driver (which ships the loader, `vulkan-1.dll`) but not the ~1GB LunarG SDK,
+and so no validation layers either — `VulkanDevice`'s debug-layer flag is
+accepted for symmetry with the D3D12 backend but is currently always a
+no-op, and everything was verified by actually running it (2,700+ frames
+across both backends and repeated runs, including a programmatic
+`ISwapChain::Resize()` exercise) rather than via validation output. Headers
+come from a fast `FetchContent` of `KhronosGroup/Vulkan-Headers`; the import
+library is generated at configure time from the driver's own loader DLL
+(`tools/generate_vulkan_import_lib.ps1`: `dumpbin /EXPORTS` → a linker
+`.def` file → `lib.exe`) — `find_package(Vulkan)` is tried first and used
+instead if a real SDK is present. Timeline semaphores (core Vulkan 1.2)
+stand in for D3D12-style monotonic fence values.
+
+Not yet started: unifying shader/pipeline/draw-call recording across
+backends (the abstraction layer above this one), transient resource memory
+aliasing.
 
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
 or GCC), and network access the first time you configure (to fetch Jolt
-Physics and Dear ImGui).
+Physics, Dear ImGui, and Vulkan-Headers).
 
 ```bash
 cmake -S . -B build
 cmake --build build --config RelWithDebInfo
 ./build/sandbox/aether_sandbox.exe          # Windows only; Phase 3/4 bindless + GPU-culling demo
 ./build/editor/aether_editor.exe            # Windows only; Phase 5 ImGui editor + physics
+AETHER_RHI_BACKEND=vulkan ./build/rhi_demo/aether_rhi_demo.exe   # or =d3d12 (default); swappable RHI proof
 ctest --test-dir build --output-on-failure
 ```
 
-Set `-DAETHER_BUILD_PHYSICS=OFF` and/or `-DAETHER_BUILD_EDITOR=OFF` to skip
-the Jolt/ImGui fetches (e.g. for a quick engine-only build with no network).
+Set `-DAETHER_BUILD_PHYSICS=OFF`, `-DAETHER_BUILD_EDITOR=OFF`, and/or
+`-DAETHER_BUILD_VULKAN=OFF` to skip the corresponding fetches (e.g. for a
+quick engine-only build with no network).
