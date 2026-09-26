@@ -237,9 +237,14 @@ void SaveBackbufferScreenshot(Device& device, SwapChain& swap_chain, u32 buffer_
     D3D12_RESOURCE_DESC desc = back_buffer->GetDesc();
 
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
-    u64 row_pitch = 0;
     u64 total_bytes = 0;
-    device.Handle()->GetCopyableFootprints(&desc, 0, 1, 0, &footprint, nullptr, &row_pitch, &total_bytes);
+    // The 7th output param (left null here) is the UNPADDED row size, not
+    // the actual stride between rows in the copied buffer
+    // (footprint.Footprint.RowPitch, 256-byte aligned) — see rhi_demo's
+    // SaveD3D12Screenshot for the real bug this caused there (not visible at
+    // this demo's 1024x768, where 1024*4=4096 already happens to be
+    // 256-aligned).
+    device.Handle()->GetCopyableFootprints(&desc, 0, 1, 0, &footprint, nullptr, nullptr, &total_bytes);
 
     Buffer readback(device, total_bytes, BufferKind::Readback);
 
@@ -277,8 +282,8 @@ void SaveBackbufferScreenshot(Device& device, SwapChain& swap_chain, u32 buffer_
     u32 height = desc.Height;
     std::vector<u8> tight(static_cast<usize>(width) * height * 4);
     for (u32 y = 0; y < height; ++y) {
-        std::memcpy(&tight[static_cast<usize>(y) * width * 4], &raw[static_cast<usize>(y) * row_pitch],
-                    static_cast<usize>(width) * 4);
+        std::memcpy(&tight[static_cast<usize>(y) * width * 4],
+                    &raw[static_cast<usize>(y) * footprint.Footprint.RowPitch], static_cast<usize>(width) * 4);
     }
 
     stbi_write_png(path.c_str(), static_cast<int>(width), static_cast<int>(height), 4, tight.data(),

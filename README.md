@@ -329,10 +329,55 @@ via lifecycle and non-deadlock tests mirroring the existing RHI test style
 practically testable without validation layers, matching this whole RHI
 effort's established verification approach.
 
-Not yet started: unifying shader/pipeline/draw-call recording across
-backends into a real cross-API abstraction (the triangle/cube demos are
-backend-specific code selected at runtime, not a unified API) — bindless
-descriptors and multiple simultaneous draw calls/objects are still open.
+### Follow-up: Unified Cross-API Renderer
+
+The RHI's last major gap — unifying shader/pipeline/draw-call recording
+across backends — now has a real, narrow implementation. `IDevice` gained
+`CreatePipeline(PipelineDesc, ISwapChain&)`, and `ICommandList` gained
+`BeginRenderPass`/`EndRenderPass`/`BindPipeline`/`SetPushConstants`/`Draw`.
+Unlike the triangle/cube demos (which each pick between two hand-written
+backend-specific implementations at startup), `rhi_demo`'s new
+`AETHER_RHI_DEMO_DRAW_UNIFIED=1` mode calls these five abstract methods with
+**zero `if (backend == ...)` branching** in the recording code, and produces
+the same rotating triangle on both D3D12 and Vulkan — confirmed by
+screenshotting both and comparing pixel-for-pixel, not just by neither
+backend crashing.
+
+What makes this tractable — and honestly, narrow — is `PipelineDesc`: one
+HLSL source compiled two ways internally (`CompileHLSL`/`CompileHLSLToSPIRV`,
+the same split the triangle demo already used, just moved behind the RHI),
+one push-constant block, no vertex buffers, no textures/descriptors. On
+D3D12 this is a root signature + PSO; on Vulkan, `VulkanSwapChain` now owns
+a `VkRenderPass` and one framebuffer per image internally (created once,
+recreated alongside the image views on resize) so `BeginRenderPass` can hide
+the render-pass/framebuffer machinery entirely. A real material/mesh system
+(vertex buffers, descriptor/texture binding, blend states, ...) is still a
+distinctly larger, separate piece of work, done via `NativeHandle()` and
+backend-specific recording — `rhi_demo`'s cube mode is exactly that.
+
+**Two real bugs found by actually screenshotting both backends side by
+side**, not by inspection:
+
+- A stride bug in every screenshot-capture helper in this repo (`rhi_demo`,
+  `pbr_demo`, `gltf_demo`): `ID3D12Device::GetCopyableFootprints`'s
+  `pRowSizeInBytes` output parameter is the *unpadded* row size, not the
+  actual byte stride between rows in the copied buffer
+  (`footprint.Footprint.RowPitch`, 256-byte aligned) — using the former as a
+  stride sheared the image diagonally. Invisible at `pbr_demo`'s 1280x720 or
+  `gltf_demo`'s 1024x768, where the unpadded row size already happens to be
+  256-aligned (5120 and 4096 respectively); `rhi_demo`'s 800x600 isn't
+  (3200), which is what finally exposed it. Fixed in all three.
+- D3D12 and Vulkan disagree on which way NDC +Y points. A shader-side
+  push-constant flip was tried first and broke Vulkan rendering outright —
+  pipeline creation "succeeded" but nothing rasterized, for a reason not
+  fully root-caused, on a driver with no validation layers to explain why.
+  Fixed properly instead with a negative-height Vulkan viewport (the
+  standard trick, core since Vulkan 1.1) inside `BeginRenderPass` — no
+  shader or push-constant changes needed, and it revealed that the
+  *original* triangle mode (not just Unified) had been rendering mirrored
+  between backends all along, just never caught because nothing had
+  compared its two backends' pixels directly before this round's screenshot
+  tooling existed.
 
 ### Follow-up: asset pipeline (file-based texture loading, cached)
 

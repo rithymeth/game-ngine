@@ -5,18 +5,38 @@
 #include "aether/gfx/rhi/types.h"
 
 #include <memory>
+#include <string>
 
 namespace aether::gfx::rhi {
 
-// Backend-agnostic device/queue/submission layer — the part of an RHI that
-// genuinely can be made identical across D3D12 and Vulkan (create a device,
-// create a swap chain, record a command list, submit it, wait on a fence
-// value, present). Shader compilation, pipeline state, descriptor/resource
-// binding and draw calls are NOT abstracted here — those differ enough
-// between the two APIs (HLSL root signatures vs SPIR-V descriptor sets, PSOs
-// vs pipeline objects) that unifying them is a distinctly larger, separate
-// piece of work; code needing them uses ICommandList::NativeHandle() and
-// writes backend-specific recording, selected by IDevice::GetBackend().
+// Describes a pipeline for IDevice::CreatePipeline: one HLSL source compiled
+// two ways internally (D3DCompile/DXIL for D3D12, DXC/SPIR-V for Vulkan —
+// the same dual-compile CompileHLSL/CompileHLSLToSPIRV split rhi_demo's
+// triangle mode already used, just moved behind the RHI instead of
+// duplicated in demo code), one push-constant block, procedural vertices
+// (no vertex buffer — see ICommandList::Draw). This is deliberately the
+// minimal shape that made rhi_demo's triangle mode's two backend-specific
+// pipeline-creation functions unifiable into one; a real material/mesh
+// system needs considerably more (vertex layouts, descriptor/texture
+// binding, blend states, ...) — see the RHI's README section for what's
+// still open.
+struct PipelineDesc {
+    std::string hlsl_source;
+    std::string vs_entry = "VSMain";
+    std::string ps_entry = "PSMain";
+    u32 push_constant_size_bytes = 0;
+    bool cull_back_face = false;
+};
+
+// Backend-agnostic device/queue/submission layer, extended with a genuinely
+// unified pipeline-creation + draw-call path (see PipelineDesc and
+// ICommandList's BeginRenderPass/BindPipeline/SetPushConstants/Draw) for the
+// narrow but real slice of "shaders/pipelines/draw calls" that a single
+// procedural-vertex, single-push-constant-block pipeline covers. A full
+// material/mesh system (vertex buffers, descriptor/texture binding, blend
+// states, ...) is a distinctly larger, separate piece of work still done via
+// ICommandList::NativeHandle() and backend-specific recording (see
+// rhi_demo's cube mode) — GetBackend() is there for exactly that case.
 class IDevice {
 public:
     virtual ~IDevice() = default;
@@ -63,6 +83,15 @@ public:
     // meant to gate.
     virtual void ComputeQueueWaitOnGraphics(u64 graphics_fence_value) = 0;
     virtual void GraphicsQueueWaitOnCompute(u64 compute_fence_value) = 0;
+
+    // Compiles `desc.hlsl_source` for this device's backend and builds
+    // whatever backend-specific pipeline object that requires (D3D12 root
+    // signature + PSO; Vulkan pipeline layout + a render-pass-compatible
+    // graphics pipeline targeting `swap_chain`'s format). `swap_chain` is
+    // only consulted for its color format/backend at creation time — the
+    // returned handle isn't tied to that particular swap chain instance
+    // beyond that.
+    virtual PipelineHandle CreatePipeline(const PipelineDesc& desc, ISwapChain& swap_chain) = 0;
 
     virtual Backend GetBackend() const = 0;
 

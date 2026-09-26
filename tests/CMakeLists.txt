@@ -15,6 +15,18 @@ target_include_directories(aether_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 if(WIN32)
     target_sources(aether_tests PRIVATE test_render_graph.cpp test_rhi.cpp test_asset_manager.cpp test_material.cpp)
+
+    # See sandbox/CMakeLists.txt's comment: dxcompiler.dll is an implicit
+    # load-time dependency of anything linking aether_engine.lib whose link
+    # pulls in a CompileHLSL/CompileHLSLToSPIRV reference — test_rhi.cpp
+    # exercising the Vulkan backend's CreatePipeline (added for the RHI's
+    # "Unified Cross-API Renderer" follow-up) is now one of those.
+    if(AETHER_DXCOMPILER_DLL)
+        add_custom_command(TARGET aether_tests POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${AETHER_DXCOMPILER_DLL}" "$<TARGET_FILE_DIR:aether_tests>/dxcompiler.dll"
+        )
+    endif()
 endif()
 
 if(TARGET Aether::Physics)

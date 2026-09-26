@@ -1,6 +1,7 @@
 #include "aether/gfx/rhi/vulkan/vulkan_backend.h"
 
 #include "aether/core/log.h"
+#include "aether/gfx/shader_compiler.h"
 
 #include <stdexcept>
 #include <vector>
@@ -244,6 +245,14 @@ VulkanDevice::VulkanDevice(bool enable_debug_layer) {
 VulkanDevice::~VulkanDevice() {
     if (device_ != VK_NULL_HANDLE) {
         vkDeviceWaitIdle(device_);
+        for (const PipelineRecord& record : pipelines_) {
+            if (record.pipeline != VK_NULL_HANDLE) {
+                vkDestroyPipeline(device_, record.pipeline, nullptr);
+            }
+            if (record.layout != VK_NULL_HANDLE) {
+                vkDestroyPipelineLayout(device_, record.layout, nullptr);
+            }
+        }
         if (timeline_semaphore_ != VK_NULL_HANDLE) {
             vkDestroySemaphore(device_, timeline_semaphore_, nullptr);
         }
@@ -331,6 +340,107 @@ void VulkanDevice::ComputeQueueWaitOnGraphics(u64 graphics_fence_value) {
 
 void VulkanDevice::GraphicsQueueWaitOnCompute(u64 compute_fence_value) {
     pending_graphics_wait_ = {true, compute_timeline_semaphore_, compute_fence_value};
+}
+
+namespace {
+VkShaderModule CreateShaderModuleFromBytecode(VkDevice device, const gfx::ShaderBytecode& bytecode) {
+    VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+    info.codeSize = bytecode.Size();
+    info.pCode = reinterpret_cast<const u32*>(bytecode.Data());
+    VkShaderModule module = VK_NULL_HANDLE;
+    AETHER_VK_CHECK(vkCreateShaderModule(device, &info, nullptr, &module));
+    return module;
+}
+} // namespace
+
+PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain& swap_chain) {
+    auto& vk_swap = static_cast<VulkanSwapChain&>(swap_chain);
+
+    PipelineRecord record;
+
+    VkPushConstantRange push_range{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                    desc.push_constant_size_bytes};
+    VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    if (desc.push_constant_size_bytes > 0) {
+        layout_info.pushConstantRangeCount = 1;
+        layout_info.pPushConstantRanges = &push_range;
+    }
+    AETHER_VK_CHECK(vkCreatePipelineLayout(device_, &layout_info, nullptr, &record.layout));
+
+    gfx::ShaderBytecode vs_spirv =
+        gfx::CompileHLSLToSPIRV(desc.hlsl_source, desc.vs_entry.c_str(), "vs_6_0", "rhi_pipeline_vs");
+    gfx::ShaderBytecode ps_spirv =
+        gfx::CompileHLSLToSPIRV(desc.hlsl_source, desc.ps_entry.c_str(), "ps_6_0", "rhi_pipeline_ps");
+    VkShaderModule vs_module = CreateShaderModuleFromBytecode(device_, vs_spirv);
+    VkShaderModule ps_module = CreateShaderModuleFromBytecode(device_, ps_spirv);
+
+    VkPipelineShaderStageCreateInfo stages[2]{};
+    stages[0] = VkPipelineShaderStageCreateInfo{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vs_module;
+    stages[0].pName = desc.vs_entry.c_str();
+    stages[1] = VkPipelineShaderStageCreateInfo{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = ps_module;
+    stages[1].pName = desc.ps_entry.c_str();
+
+    VkPipelineVertexInputStateCreateInfo vertex_input{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+
+    VkPipelineInputAssemblyStateCreateInfo input_assembly{
+        VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+    input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkPipelineViewportStateCreateInfo viewport_state{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+    viewport_state.viewportCount = 1;
+    viewport_state.scissorCount = 1;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.cullMode = desc.cull_back_face ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
+    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rasterizer.lineWidth = 1.0f;
+
+    VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+    multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineColorBlendAttachmentState blend_attachment{};
+    blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                       VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    blend_attachment.blendEnable = VK_FALSE;
+
+    VkPipelineColorBlendStateCreateInfo blend_state{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+    blend_state.attachmentCount = 1;
+    blend_state.pAttachments = &blend_attachment;
+
+    VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynamic_state{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+    dynamic_state.dynamicStateCount = 2;
+    dynamic_state.pDynamicStates = dynamic_states;
+
+    VkGraphicsPipelineCreateInfo pipeline_info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+    pipeline_info.stageCount = 2;
+    pipeline_info.pStages = stages;
+    pipeline_info.pVertexInputState = &vertex_input;
+    pipeline_info.pInputAssemblyState = &input_assembly;
+    pipeline_info.pViewportState = &viewport_state;
+    pipeline_info.pRasterizationState = &rasterizer;
+    pipeline_info.pMultisampleState = &multisample;
+    pipeline_info.pColorBlendState = &blend_state;
+    pipeline_info.pDynamicState = &dynamic_state;
+    pipeline_info.layout = record.layout;
+    pipeline_info.renderPass = vk_swap.DefaultRenderPass();
+    pipeline_info.subpass = 0;
+
+    VkResult pipeline_result =
+        vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &record.pipeline);
+
+    vkDestroyShaderModule(device_, vs_module, nullptr);
+    vkDestroyShaderModule(device_, ps_module, nullptr);
+
+    AETHER_VK_CHECK(pipeline_result);
+
+    pipelines_.push_back(record);
+    return PipelineHandle{static_cast<u32>(pipelines_.size() - 1)};
 }
 
 u64 VulkanDevice::Submit(ICommandList& cmd, ISwapChain* wait_on_swap_chain) {
@@ -425,6 +535,7 @@ VulkanSwapChain::VulkanSwapChain(VulkanDevice& device, void* native_window_handl
                                           &present_supported);
     AETHER_ASSERT(present_supported == VK_TRUE);
 
+    CreateDefaultRenderPass();
     CreateSwapchainAndImages(width, height);
     CreateSyncObjects();
 }
@@ -433,9 +544,79 @@ VulkanSwapChain::~VulkanSwapChain() {
     vkDeviceWaitIdle(device_.Handle());
     DestroySyncObjects();
     DestroySwapchainAndImages();
+    if (default_render_pass_ != VK_NULL_HANDLE) {
+        vkDestroyRenderPass(device_.Handle(), default_render_pass_, nullptr);
+    }
     if (surface_ != VK_NULL_HANDLE) {
         vkDestroySurfaceKHR(device_.Instance(), surface_, nullptr);
     }
+}
+
+// One render pass for this swapchain's format (stable across resize — only
+// the framebuffers, tied to specific image views, need recreating there).
+// Every frame clears via loadOp=CLEAR and discards prior contents, so
+// initialLayout can always be UNDEFINED regardless of what layout the image
+// was actually left in — matching rhi_demo's triangle/cube modes' own render
+// passes (this is that same pattern, now living in the engine instead of
+// duplicated per-demo).
+void VulkanSwapChain::CreateDefaultRenderPass() {
+    VkAttachmentDescription color_attachment{};
+    color_attachment.format = format_;
+    color_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    color_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    color_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    color_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    color_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+    VkAttachmentReference color_ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments = &color_ref;
+
+    // Synchronizes subpass 0 with the swapchain's image-available semaphore,
+    // which VulkanDevice::Submit waits on at COLOR_ATTACHMENT_OUTPUT.
+    VkSubpassDependency dependency{};
+    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependency.dstSubpass = 0;
+    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.srcAccessMask = 0;
+    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+    VkRenderPassCreateInfo rp_info{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+    rp_info.attachmentCount = 1;
+    rp_info.pAttachments = &color_attachment;
+    rp_info.subpassCount = 1;
+    rp_info.pSubpasses = &subpass;
+    rp_info.dependencyCount = 1;
+    rp_info.pDependencies = &dependency;
+    AETHER_VK_CHECK(vkCreateRenderPass(device_.Handle(), &rp_info, nullptr, &default_render_pass_));
+}
+
+void VulkanSwapChain::CreateFramebuffers() {
+    framebuffers_.resize(image_views_.size());
+    for (usize i = 0; i < image_views_.size(); ++i) {
+        VkImageView attachments[] = {image_views_[i]};
+        VkFramebufferCreateInfo fb_info{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+        fb_info.renderPass = default_render_pass_;
+        fb_info.attachmentCount = 1;
+        fb_info.pAttachments = attachments;
+        fb_info.width = extent_.width;
+        fb_info.height = extent_.height;
+        fb_info.layers = 1;
+        AETHER_VK_CHECK(vkCreateFramebuffer(device_.Handle(), &fb_info, nullptr, &framebuffers_[i]));
+    }
+}
+
+void VulkanSwapChain::DestroyFramebuffers() {
+    for (VkFramebuffer fb : framebuffers_) {
+        vkDestroyFramebuffer(device_.Handle(), fb, nullptr);
+    }
+    framebuffers_.clear();
 }
 
 void VulkanSwapChain::CreateSwapchainAndImages(u32 width, u32 height) {
@@ -491,9 +672,12 @@ void VulkanSwapChain::CreateSwapchainAndImages(u32 width, u32 height) {
         AETHER_VK_CHECK(vkCreateImageView(device_.Handle(), &view_info, nullptr, &view));
         image_views_.push_back(view);
     }
+
+    CreateFramebuffers();
 }
 
 void VulkanSwapChain::DestroySwapchainAndImages() {
+    DestroyFramebuffers();
     for (VkImageView view : image_views_) {
         vkDestroyImageView(device_.Handle(), view, nullptr);
     }
@@ -649,6 +833,58 @@ void VulkanCommandList::SetViewportAndScissor(const Viewport& viewport, const Re
                   {static_cast<u32>(scissor.right - scissor.left), static_cast<u32>(scissor.bottom - scissor.top)}};
     vkCmdSetViewport(command_buffer_, 0, 1, &vp);
     vkCmdSetScissor(command_buffer_, 0, 1, &rect);
+}
+
+void VulkanCommandList::BeginRenderPass(ISwapChain& swap_chain, const ClearColor& clear_color) {
+    auto& vk_swap = static_cast<VulkanSwapChain&>(swap_chain);
+
+    VkClearValue clear_value{};
+    clear_value.color.float32[0] = clear_color.r;
+    clear_value.color.float32[1] = clear_color.g;
+    clear_value.color.float32[2] = clear_color.b;
+    clear_value.color.float32[3] = clear_color.a;
+
+    VkRenderPassBeginInfo rp_begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    rp_begin.renderPass = vk_swap.DefaultRenderPass();
+    rp_begin.framebuffer = vk_swap.CurrentFramebuffer();
+    rp_begin.renderArea.offset = {0, 0};
+    rp_begin.renderArea.extent = {vk_swap.Width(), vk_swap.Height()};
+    rp_begin.clearValueCount = 1;
+    rp_begin.pClearValues = &clear_value;
+    vkCmdBeginRenderPass(command_buffer_, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
+
+    // Negative-height viewport (y = height, height = -height): the standard
+    // trick to make Vulkan's NDC +Y point up like D3D12's, entirely on the
+    // host side — callers of this abstract BeginRenderPass never need to
+    // know or care that the two backends disagree on NDC Y direction.
+    // Requires VK_KHR_maintenance1 (core since Vulkan 1.1; this backend
+    // already requires 1.2). Found necessary by actually screenshotting
+    // Unified-mode's output on both backends and seeing the same shader
+    // produce a vertically mirrored triangle without this.
+    VkViewport viewport{0.0f, static_cast<f32>(vk_swap.Height()), static_cast<f32>(vk_swap.Width()),
+                         -static_cast<f32>(vk_swap.Height()), 0.0f, 1.0f};
+    VkRect2D scissor{{0, 0}, {vk_swap.Width(), vk_swap.Height()}};
+    vkCmdSetViewport(command_buffer_, 0, 1, &viewport);
+    vkCmdSetScissor(command_buffer_, 0, 1, &scissor);
+}
+
+void VulkanCommandList::EndRenderPass() {
+    vkCmdEndRenderPass(command_buffer_);
+}
+
+void VulkanCommandList::BindPipeline(PipelineHandle pipeline) {
+    const PipelineRecord& record = device_.GetPipeline(pipeline);
+    vkCmdBindPipeline(command_buffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline);
+    bound_pipeline_layout_ = record.layout;
+}
+
+void VulkanCommandList::SetPushConstants(const void* data, u32 size_bytes) {
+    vkCmdPushConstants(command_buffer_, bound_pipeline_layout_,
+                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, size_bytes, data);
+}
+
+void VulkanCommandList::Draw(u32 vertex_count) {
+    vkCmdDraw(command_buffer_, vertex_count, 1, 0, 0);
 }
 
 } // namespace aether::gfx::rhi::vulkan_backend

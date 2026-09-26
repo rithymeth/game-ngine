@@ -36,4 +36,11 @@ struct Rect {
     i32 left, top, right, bottom;
 };
 
+// Opaque handle into a backend device's internal pipeline table — see
+// IDevice::CreatePipeline. Never dereferenced by calling code.
+struct PipelineHandle {
+    u32 index = static_cast<u32>(-1);
+    bool IsValid() const { return index != static_cast<u32>(-1); }
+};
+
 } // namespace aether::gfx::rhi

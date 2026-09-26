@@ -4,7 +4,7 @@
 // on the AETHER_RHI_BACKEND environment variable ("d3d12" or "vulkan",
 // default d3d12).
 //
-// Three demo modes:
+// Four demo modes:
 //
 //  - Default: clear the backbuffer to a color and present, every frame. No
 //    shaders, no pipelines, no draw calls — this is the "does the device/
@@ -32,6 +32,21 @@
 //    both backends, driven by an MVP matrix built with the engine's own math
 //    (aether::Mat4, the same PerspectiveRH/LookAtRH sandbox/main.cpp uses).
 //
+//  - AETHER_RHI_DEMO_DRAW_UNIFIED=1 (highest priority — wins over both of the
+//    above): the "Unified Cross-API Renderer" follow-up's actual proof.
+//    Triangle/Cube mode above still each pick between two hand-written
+//    backend-specific implementations at startup (`if (backend == ...)`);
+//    Unified mode instead calls IDevice::CreatePipeline once and then
+//    records every frame purely through
+//    ICommandList::BeginRenderPass/BindPipeline/SetPushConstants/Draw/
+//    EndRenderPass — the exact same calls, in the exact same order, with
+//    zero backend branching in this file, produce the same rotating
+//    triangle on both D3D12 and Vulkan. What makes this possible is
+//    genuinely narrow (see PipelineDesc's comment): procedural vertices, one
+//    push-constant block, no vertex buffers/textures/descriptors — Cube
+//    mode's real vertex buffers and depth buffer are exactly the kind of
+//    thing still requiring the backend-specific NativeHandle() escape hatch.
+//
 // Set AETHER_RHI_DEMO_MAX_FRAMES=<N> to auto-close after N frames instead of
 // waiting for the window to be closed, for scripted/automated verification.
 
@@ -45,6 +60,9 @@
 #include "aether/math/mat4.h"
 #include "aether/math/math.h"
 #include "aether/platform/window.h"
+
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <stb_image_write.h>
 
 #if defined(AETHER_HAS_VULKAN)
 #include "aether/gfx/rhi/vulkan/vulkan_backend.h"
@@ -67,6 +85,17 @@ namespace {
 // (the elapsed time) drives a 2D rotation, just so both backends visibly
 // have to get *some* per-frame data to the shader correctly, not just a
 // static draw.
+//
+// D3D12/Vulkan disagree on which way NDC +Y points (D3D12: up; Vulkan:
+// down) — found to matter here by actually screenshotting both backends'
+// output side by side and seeing the triangle come out vertically mirrored.
+// Fixed with a negative-height viewport on the Vulkan side (the standard,
+// well-known trick — VK_KHR_maintenance1/core-1.1+) rather than a
+// shader-side flip constant: a second push-constant field was tried first
+// and broke Vulkan rendering outright (pipeline "succeeded" but nothing
+// rasterized, on a driver with no validation layers to explain why) for a
+// reason not fully root-caused; the negative-viewport approach needs no
+// shader or push-constant-layout change at all, sidestepping that entirely.
 constexpr const char* kTriangleShaderSource = R"(
 cbuffer PushConstants : register(b0) {
     float g_Time;
@@ -481,6 +510,81 @@ void RecordD3D12CubeFrame(ID3D12Device* device, ICommandList& cmd, gfx::SwapChai
 }
 
 // ---------------------------------------------------------------------
+// Screenshot capture, for visually verifying that both backends actually
+// render the same thing under Unified mode (not just that neither crashes).
+// Takes the caller-tracked *last rendered* TextureHandle — same DXGI-flip-
+// model reasoning as pbr_demo/gltf_demo's screenshot helpers: by the time
+// the main loop has broken out and Present() was already called for that
+// handle, its D3D12 resource state is PRESENT / its Vulkan layout is
+// PRESENT_SRC_KHR, which both backends' capture code below assumes.
+// ---------------------------------------------------------------------
+
+void SaveD3D12Screenshot(IDevice& device, TextureHandle backbuffer, u32 width, u32 height, const std::string& path) {
+    auto& d3d_device = static_cast<d3d12_backend::D3D12Device&>(device);
+    ID3D12Resource* resource = d3d_device.GetTexture(backbuffer).resource;
+    auto* native_device = static_cast<ID3D12Device*>(device.NativeHandle());
+
+    D3D12_RESOURCE_DESC desc = resource->GetDesc();
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
+    u64 total_bytes = 0;
+    // The 7th output param (left null here) is the UNPADDED row size
+    // (width * bytesPerPixel) — NOT the actual stride between rows in the
+    // copied buffer, which is footprint.Footprint.RowPitch (256-byte
+    // aligned). Using the unpadded value as the stride below was a real bug,
+    // caught by actually running this at 800x600: 800*4=3200 isn't a
+    // multiple of 256, so the real row pitch is padded up to 3328, and using
+    // 3200 as the stride sheared the image diagonally, one row drifting
+    // further per line. Never visible at pbr_demo's 1280x720 or gltf_demo's
+    // 1024x768 — 1280*4=5120 and 1024*4=4096 both already happen to be
+    // 256-aligned, hiding the exact same bug there by coincidence.
+    native_device->GetCopyableFootprints(&desc, 0, 1, 0, &footprint, nullptr, nullptr, &total_bytes);
+
+    gfx::Buffer readback(d3d_device.Native(), total_bytes, gfx::BufferKind::Readback);
+
+    std::unique_ptr<ICommandList> cmd = device.CreateCommandList();
+    cmd->Reset();
+    auto* native_cmd = static_cast<ID3D12GraphicsCommandList*>(cmd->NativeHandle());
+
+    D3D12_RESOURCE_BARRIER to_src =
+        gfx::TransitionBarrier(resource, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    native_cmd->ResourceBarrier(1, &to_src);
+
+    D3D12_TEXTURE_COPY_LOCATION src{};
+    src.pResource = resource;
+    src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    src.SubresourceIndex = 0;
+    D3D12_TEXTURE_COPY_LOCATION dst{};
+    dst.pResource = readback.Handle();
+    dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    dst.PlacedFootprint = footprint;
+    native_cmd->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+
+    D3D12_RESOURCE_BARRIER to_present =
+        gfx::TransitionBarrier(resource, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PRESENT);
+    native_cmd->ResourceBarrier(1, &to_present);
+
+    cmd->Close();
+    device.WaitForFence(device.Submit(*cmd));
+
+    std::vector<u8> raw(total_bytes);
+    readback.Read(raw.data(), total_bytes);
+
+    std::vector<u8> tight(static_cast<usize>(width) * height * 4);
+    for (u32 y = 0; y < height; ++y) {
+        std::memcpy(&tight[static_cast<usize>(y) * width * 4],
+                    &raw[static_cast<usize>(y) * footprint.Footprint.RowPitch], static_cast<usize>(width) * 4);
+    }
+
+    // D3D12's swapchain format is R8G8B8A8_UNORM (gfx::SwapChain's default) — already RGBA, no swizzle needed.
+    stbi_write_png(path.c_str(), static_cast<int>(width), static_cast<int>(height), 4, tight.data(),
+                   static_cast<int>(width) * 4);
+    AETHER_LOG_INFO("RHIDemo", "Wrote D3D12 screenshot to \"%s\"", path.c_str());
+}
+
+// (SaveVulkanScreenshot and the SaveScreenshot dispatcher are defined below,
+// after FindMemoryType — see that comment.)
+
+// ---------------------------------------------------------------------
 // Vulkan triangle pipeline
 // ---------------------------------------------------------------------
 
@@ -737,8 +841,12 @@ void RecordVulkanTriangleFrame(ICommandList& cmd, vulkan_backend::VulkanSwapChai
 
     vkCmdBeginRenderPass(native_cmd, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
 
-    VkViewport viewport{
-        0.0f, 0.0f, static_cast<f32>(native_swap.Width()), static_cast<f32>(native_swap.Height()), 0.0f, 1.0f};
+    // Negative-height viewport (y = height, height = -height): the standard
+    // trick to make Vulkan's NDC +Y point up like D3D12's, entirely on the
+    // host side — no shader or push-constant change needed. Requires
+    // VK_KHR_maintenance1, core since Vulkan 1.1 (we require 1.2 already).
+    VkViewport viewport{0.0f, static_cast<f32>(native_swap.Height()), static_cast<f32>(native_swap.Width()),
+                         -static_cast<f32>(native_swap.Height()), 0.0f, 1.0f};
     VkRect2D scissor{{0, 0}, {native_swap.Width(), native_swap.Height()}};
     vkCmdSetViewport(native_cmd, 0, 1, &viewport);
     vkCmdSetScissor(native_cmd, 0, 1, &scissor);
@@ -768,6 +876,93 @@ u32 FindMemoryType(VkPhysicalDevice physical_device, u32 type_bits, VkMemoryProp
     throw std::runtime_error("no suitable Vulkan memory type");
 }
 
+// See SaveD3D12Screenshot's comment above (near the D3D12 cube pipeline)
+// for what this is for and why the caller must pass the last-*rendered*
+// TextureHandle, not a freshly-queried "current" one.
+void SaveVulkanScreenshot(IDevice& device, TextureHandle backbuffer, u32 width, u32 height, const std::string& path) {
+    auto& vk_device = static_cast<vulkan_backend::VulkanDevice&>(device);
+    VkImage image = vk_device.GetTexture(backbuffer);
+    VkDevice native_device = vk_device.Handle();
+
+    VkDeviceSize buffer_size = static_cast<VkDeviceSize>(width) * height * 4;
+    VkBufferCreateInfo buf_info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    buf_info.size = buffer_size;
+    buf_info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    buf_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VkBuffer staging_buffer = VK_NULL_HANDLE;
+    AETHER_RHI_DEMO_VK_CHECK(vkCreateBuffer(native_device, &buf_info, nullptr, &staging_buffer));
+
+    VkMemoryRequirements mem_reqs{};
+    vkGetBufferMemoryRequirements(native_device, staging_buffer, &mem_reqs);
+    VkMemoryAllocateInfo alloc_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    alloc_info.allocationSize = mem_reqs.size;
+    alloc_info.memoryTypeIndex = FindMemoryType(vk_device.PhysicalDevice(), mem_reqs.memoryTypeBits,
+                                                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    VkDeviceMemory staging_memory = VK_NULL_HANDLE;
+    AETHER_RHI_DEMO_VK_CHECK(vkAllocateMemory(native_device, &alloc_info, nullptr, &staging_memory));
+    AETHER_RHI_DEMO_VK_CHECK(vkBindBufferMemory(native_device, staging_buffer, staging_memory, 0));
+
+    std::unique_ptr<ICommandList> cmd = device.CreateCommandList();
+    cmd->Reset();
+    auto native_cmd = static_cast<VkCommandBuffer>(cmd->NativeHandle());
+
+    VkImageMemoryBarrier to_src{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    to_src.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    to_src.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    to_src.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_src.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_src.image = image;
+    to_src.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    to_src.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+    to_src.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    vkCmdPipelineBarrier(native_cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr,
+                          0, nullptr, 1, &to_src);
+
+    VkBufferImageCopy region{};
+    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.imageExtent = {width, height, 1};
+    vkCmdCopyImageToBuffer(native_cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, staging_buffer, 1, &region);
+    // No transition back to PRESENT_SRC_KHR needed — this image is never presented again.
+
+    cmd->Close();
+    device.WaitForFence(device.Submit(*cmd));
+
+    void* mapped = nullptr;
+    AETHER_RHI_DEMO_VK_CHECK(vkMapMemory(native_device, staging_memory, 0, buffer_size, 0, &mapped));
+
+    // Vulkan's swapchain format is B8G8R8A8_UNORM (VulkanSwapChain's
+    // default) — swap R/B before writing an RGBA PNG.
+    std::vector<u8> rgba(static_cast<usize>(buffer_size));
+    const u8* bgra = static_cast<const u8*>(mapped);
+    for (usize i = 0; i < static_cast<usize>(width) * height; ++i) {
+        rgba[i * 4 + 0] = bgra[i * 4 + 2];
+        rgba[i * 4 + 1] = bgra[i * 4 + 1];
+        rgba[i * 4 + 2] = bgra[i * 4 + 0];
+        rgba[i * 4 + 3] = bgra[i * 4 + 3];
+    }
+    vkUnmapMemory(native_device, staging_memory);
+
+    stbi_write_png(path.c_str(), static_cast<int>(width), static_cast<int>(height), 4, rgba.data(),
+                   static_cast<int>(width) * 4);
+    AETHER_LOG_INFO("RHIDemo", "Wrote Vulkan screenshot to \"%s\"", path.c_str());
+
+    vkDestroyBuffer(native_device, staging_buffer, nullptr);
+    vkFreeMemory(native_device, staging_memory, nullptr);
+}
+#endif // defined(AETHER_HAS_VULKAN)
+
+void SaveScreenshot(IDevice& device, TextureHandle backbuffer, u32 width, u32 height, const std::string& path) {
+    if (device.GetBackend() == Backend::D3D12) {
+        SaveD3D12Screenshot(device, backbuffer, width, height, path);
+    }
+#if defined(AETHER_HAS_VULKAN)
+    else {
+        SaveVulkanScreenshot(device, backbuffer, width, height, path);
+    }
+#endif
+}
+
+#if defined(AETHER_HAS_VULKAN)
 // Host-visible + host-coherent: simplest correct approach at demo scale (a
 // handful of KB), no staging buffer / transfer queue needed. A real asset
 // pipeline would use a device-local buffer with a staging upload instead.
@@ -1185,10 +1380,17 @@ int main() {
         max_frames = std::atoi(env);
     }
 
-    enum class DemoMode { Clear, Triangle, Cube };
+    enum class DemoMode { Clear, Triangle, Cube, Unified };
     DemoMode mode = DemoMode::Clear;
-    if (std::getenv("AETHER_RHI_DEMO_DRAW_CUBE") != nullptr) {
-        mode = DemoMode::Cube; // cube takes priority if both env vars are set
+    if (std::getenv("AETHER_RHI_DEMO_DRAW_UNIFIED") != nullptr) {
+        // Highest priority: the "Unified Cross-API Renderer" follow-up's
+        // proof — the exact same abstract-API code path (no `if (backend ==
+        // ...)` branch anywhere in this mode's setup or per-frame recording)
+        // renders on both backends, unlike Triangle/Cube mode below which
+        // each still pick between two backend-specific implementations.
+        mode = DemoMode::Unified;
+    } else if (std::getenv("AETHER_RHI_DEMO_DRAW_CUBE") != nullptr) {
+        mode = DemoMode::Cube;
     } else if (std::getenv("AETHER_RHI_DEMO_DRAW_TRIANGLE") != nullptr) {
         mode = DemoMode::Triangle;
     }
@@ -1260,6 +1462,18 @@ int main() {
 #endif
         }
 
+        // Unified mode's pipeline: ONE CreatePipeline call, no backend
+        // branch — the D3D12/Vulkan-specific root signature/PSO vs. pipeline
+        // layout/render pass/pipeline creation all happens inside
+        // IDevice::CreatePipeline, hidden from this call site.
+        PipelineHandle unified_pipeline;
+        if (mode == DemoMode::Unified) {
+            PipelineDesc pipeline_desc;
+            pipeline_desc.hlsl_source = kTriangleShaderSource;
+            pipeline_desc.push_constant_size_bytes = sizeof(f32);
+            unified_pipeline = device->CreatePipeline(pipeline_desc, *swap_chain);
+        }
+
         std::vector<std::unique_ptr<ICommandList>> command_lists;
         std::vector<u64> frame_fences(swap_chain->BufferCount(), 0);
         // Vulkan swap chain images start life in an undefined layout;
@@ -1273,7 +1487,10 @@ int main() {
             command_lists.push_back(device->CreateCommandList());
         }
 
-        const char* mode_name = mode == DemoMode::Cube ? "cube" : mode == DemoMode::Triangle ? "triangle" : "clear";
+        const char* mode_name = mode == DemoMode::Unified   ? "unified"
+                                 : mode == DemoMode::Cube    ? "cube"
+                                 : mode == DemoMode::Triangle ? "triangle"
+                                                              : "clear";
         AETHER_LOG_INFO("RHIDemo", "Entering main loop (backend=%s, %u buffers, mode=%s)",
                          backend == Backend::Vulkan ? "Vulkan" : "D3D12", swap_chain->BufferCount(), mode_name);
 
@@ -1281,6 +1498,7 @@ int main() {
 
         i32 frame_index = 0;
         f32 t = 0.0f;
+        TextureHandle last_rendered_backbuffer{};
         while (window.PumpMessages()) {
             if (window.IsMinimized()) {
                 continue;
@@ -1302,6 +1520,7 @@ int main() {
 
             swap_chain->AcquireNextImage();
             TextureHandle back_buffer = swap_chain->CurrentBackBuffer();
+            last_rendered_backbuffer = back_buffer;
 
             // There's no direct "which slot is this" query on ISwapChain
             // (backends differ on whether that's the acquired image index or
@@ -1344,6 +1563,21 @@ int main() {
                 }
 #endif
                 used_before[slot] = true;
+            } else if (mode == DemoMode::Unified) {
+                // The actual unification proof: this exact call sequence —
+                // BeginRenderPass/BindPipeline/SetPushConstants/Draw/
+                // EndRenderPass, with NO D3D12- or Vulkan-specific code
+                // anywhere in this file — renders the rotating triangle on
+                // both backends. D3D12/Vulkan's opposite NDC +Y convention
+                // is handled inside BeginRenderPass's Vulkan implementation
+                // (a negative-height viewport, entirely host-side), not
+                // here — so this call site really doesn't know or care which
+                // backend it's talking to.
+                cmd.BeginRenderPass(*swap_chain, {0.02f, 0.02f, 0.05f, 1.0f});
+                cmd.BindPipeline(unified_pipeline);
+                cmd.SetPushConstants(&t, sizeof(t));
+                cmd.Draw(3);
+                cmd.EndRenderPass();
             } else {
                 ResourceState before = used_before[slot] ? ResourceState::Present : ResourceState::Undefined;
                 cmd.TransitionTexture(back_buffer, before, ResourceState::RenderTarget);
@@ -1368,6 +1602,11 @@ int main() {
 
         for (u64 fence : frame_fences) {
             device->WaitForFence(fence);
+        }
+
+        if (const char* screenshot_path = std::getenv("AETHER_RHI_DEMO_SCREENSHOT")) {
+            SaveScreenshot(*device, last_rendered_backbuffer, swap_chain->Width(), swap_chain->Height(),
+                           screenshot_path);
         }
 
         AETHER_LOG_INFO("RHIDemo", "Shutting down cleanly");

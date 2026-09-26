@@ -20,6 +20,11 @@ struct TextureRecord {
 // IDevice by composition rather than inheritance — gfx::Device stays exactly
 // as it was, this just wraps it and adds the texture-handle table
 // ICommandList's abstract TransitionTexture/ClearRenderTarget need.
+struct PipelineRecord {
+    ComPtr<ID3D12RootSignature> root_signature;
+    ComPtr<ID3D12PipelineState> pso;
+};
+
 class D3D12Device final : public IDevice {
 public:
     explicit D3D12Device(bool enable_debug_layer);
@@ -30,6 +35,9 @@ public:
     u64 Submit(ICommandList& cmd, ISwapChain* wait_on_swap_chain = nullptr) override;
     void WaitForFence(u64 fence_value) override;
     bool IsFenceComplete(u64 fence_value) const override { return device_.IsFenceComplete(fence_value); }
+
+    PipelineHandle CreatePipeline(const PipelineDesc& desc, ISwapChain& swap_chain) override;
+    const PipelineRecord& GetPipeline(PipelineHandle handle) const { return pipelines_[handle.index]; }
 
     std::unique_ptr<ICommandList> CreateComputeCommandList() override;
     u64 SubmitCompute(ICommandList& cmd) override;
@@ -54,6 +62,7 @@ public:
 private:
     gfx::Device device_;
     std::vector<TextureRecord> textures_;
+    std::vector<PipelineRecord> pipelines_;
 };
 
 class D3D12SwapChain final : public ISwapChain {
@@ -69,10 +78,25 @@ public:
     u32 BufferCount() const override { return swap_chain_.BufferCount(); }
     void* NativeHandle() const override { return const_cast<gfx::SwapChain*>(&swap_chain_); }
 
+    gfx::SwapChain& Native() { return swap_chain_; }
+    u32 CurrentIndex() const { return swap_chain_.CurrentBackBufferIndex(); }
+
+    // Tracks, per backbuffer index, whether BeginRenderPass has transitioned
+    // it before — a fresh backbuffer starts life in COMMON, everything after
+    // its first use starts from PRESENT (matching the RHI's existing
+    // TransitionTexture convention, now applied automatically instead of by
+    // the caller). Returns the PREVIOUS value and marks it used.
+    bool ConsumeUsedBefore(u32 index) {
+        bool previous = used_before_[index];
+        used_before_[index] = true;
+        return previous;
+    }
+
 private:
     D3D12Device& device_;
     gfx::SwapChain swap_chain_;
     std::vector<TextureHandle> handles_;
+    std::vector<bool> used_before_;
 };
 
 class D3D12CommandList final : public ICommandList {
@@ -84,11 +108,19 @@ public:
     void TransitionTexture(TextureHandle texture, ResourceState before, ResourceState after) override;
     void ClearRenderTarget(TextureHandle texture, const ClearColor& color) override;
     void SetViewportAndScissor(const Viewport& viewport, const Rect& scissor) override;
+
+    void BeginRenderPass(ISwapChain& swap_chain, const ClearColor& clear_color) override;
+    void EndRenderPass() override;
+    void BindPipeline(PipelineHandle pipeline) override;
+    void SetPushConstants(const void* data, u32 size_bytes) override;
+    void Draw(u32 vertex_count) override;
+
     void* NativeHandle() const override { return cmd_.Get(); }
 
 private:
     D3D12Device& device_;
     gfx::CommandList cmd_;
+    ID3D12Resource* active_backbuffer_ = nullptr; // set by BeginRenderPass, consumed by EndRenderPass
 };
 
 } // namespace aether::gfx::rhi::d3d12_backend

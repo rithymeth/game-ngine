@@ -1,5 +1,6 @@
 add_executable(aether_rhi_demo main.cpp)
 target_link_libraries(aether_rhi_demo PRIVATE Aether::Engine)
+target_include_directories(aether_rhi_demo PRIVATE ${stb_SOURCE_DIR})
 
 if(AETHER_DXCOMPILER_DLL)
     add_custom_command(TARGET aether_rhi_demo POST_BUILD

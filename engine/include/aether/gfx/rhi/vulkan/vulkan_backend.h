@@ -21,6 +21,11 @@ struct TextureRecord {
     VkImage image = VK_NULL_HANDLE;
 };
 
+struct PipelineRecord {
+    VkPipelineLayout layout = VK_NULL_HANDLE;
+    VkPipeline pipeline = VK_NULL_HANDLE;
+};
+
 // Vulkan counterpart to d3d12_backend::D3D12Device. Notably: this
 // environment has the Vulkan loader (a GPU driver ships it) but not the
 // LunarG validation layers, which only come with the full SDK — so unlike
@@ -45,6 +50,9 @@ public:
     bool IsComputeFenceComplete(u64 fence_value) const override;
     void ComputeQueueWaitOnGraphics(u64 graphics_fence_value) override;
     void GraphicsQueueWaitOnCompute(u64 compute_fence_value) override;
+
+    PipelineHandle CreatePipeline(const PipelineDesc& desc, ISwapChain& swap_chain) override;
+    const PipelineRecord& GetPipeline(PipelineHandle handle) const { return pipelines_[handle.index]; }
 
     Backend GetBackend() const override { return Backend::Vulkan; }
     void* NativeHandle() const override { return device_; }
@@ -102,6 +110,7 @@ private:
     PendingWait pending_graphics_wait_;
 
     std::vector<TextureRecord> textures_;
+    std::vector<PipelineRecord> pipelines_;
 };
 
 class VulkanSwapChain final : public ISwapChain {
@@ -134,11 +143,22 @@ public:
     u32 CurrentImageIndex() const { return current_image_index_; }
     VkImageView ImageView(u32 index) const { return image_views_[index]; }
 
+    // Backing for ICommandList::BeginRenderPass/IDevice::CreatePipeline (the
+    // "Unified Cross-API Renderer" follow-up): one render pass for this
+    // swapchain's format, created once and stable across resize, plus one
+    // framebuffer per image, recreated alongside the image views whenever
+    // the swapchain itself is recreated (resize or out-of-date).
+    VkRenderPass DefaultRenderPass() const { return default_render_pass_; }
+    VkFramebuffer CurrentFramebuffer() const { return framebuffers_[current_image_index_]; }
+
 private:
     void CreateSwapchainAndImages(u32 width, u32 height);
     void DestroySwapchainAndImages();
     void CreateSyncObjects();
     void DestroySyncObjects();
+    void CreateDefaultRenderPass();
+    void CreateFramebuffers();
+    void DestroyFramebuffers();
 
     VulkanDevice& device_;
     void* hwnd_ = nullptr;
@@ -147,6 +167,8 @@ private:
     VkFormat format_ = VK_FORMAT_B8G8R8A8_UNORM;
     VkExtent2D extent_{};
     u32 requested_buffer_count_ = 2;
+    VkRenderPass default_render_pass_ = VK_NULL_HANDLE;
+    std::vector<VkFramebuffer> framebuffers_;  // one per swapchain image
 
     std::vector<TextureHandle> handles_;                   // one per swapchain image
     std::vector<VkImageView> image_views_;                 // one per swapchain image
@@ -170,12 +192,20 @@ public:
     void TransitionTexture(TextureHandle texture, ResourceState before, ResourceState after) override;
     void ClearRenderTarget(TextureHandle texture, const ClearColor& color) override;
     void SetViewportAndScissor(const Viewport& viewport, const Rect& scissor) override;
+
+    void BeginRenderPass(ISwapChain& swap_chain, const ClearColor& clear_color) override;
+    void EndRenderPass() override;
+    void BindPipeline(PipelineHandle pipeline) override;
+    void SetPushConstants(const void* data, u32 size_bytes) override;
+    void Draw(u32 vertex_count) override;
+
     void* NativeHandle() const override { return command_buffer_; }
 
 private:
     VulkanDevice& device_;
     VkCommandPool command_pool_ = VK_NULL_HANDLE;
     VkCommandBuffer command_buffer_ = VK_NULL_HANDLE;
+    VkPipelineLayout bound_pipeline_layout_ = VK_NULL_HANDLE; // set by BindPipeline, read by SetPushConstants
 };
 
 } // namespace aether::gfx::rhi::vulkan_backend
