@@ -241,20 +241,19 @@ private:
     }
 
     Archetype& GetOrCreateArchetype(ComponentMask mask) {
-        u64 key = mask.to_ullong();
-        auto it = archetypes_.find(key);
+        auto it = archetypes_.find(mask);
         if (it != archetypes_.end()) {
             return *it->second;
         }
         auto archetype = std::make_unique<Archetype>(mask);
         Archetype& ref = *archetype;
-        archetypes_.emplace(key, std::move(archetype));
+        archetypes_.emplace(mask, std::move(archetype));
         return ref;
     }
 
     std::vector<EntityRecord> records_;
     std::vector<u32> free_indices_;
-    std::unordered_map<u64, std::unique_ptr<Archetype>> archetypes_;
+    std::unordered_map<ComponentMask, std::unique_ptr<Archetype>> archetypes_; // std::hash<bitset> keyed
 };
 
 } // namespace aether
