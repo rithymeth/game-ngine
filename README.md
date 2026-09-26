@@ -992,6 +992,66 @@ composites the two pipelines correctly, not just that both draw calls
 execute without crashing. 81/81 tests unchanged (pure integration/rendering
 work, no new pure logic); 6 quick runs plus one 2000-frame stability run.
 
+### Follow-up: toward a usable editor workflow
+
+The glTF integration above was still a single hardcoded model bolted onto
+the side of the editor — always present, one fixed path baked into source,
+rendered outside the ECS entirely. This follow-up makes a model a normal
+part of the same entity workflow the physics spheres already have: spawn
+it, see it in the entity list, move it, select it, save it, delete it.
+
+- **Models are entities now.** `ModelRenderer` (`{ char asset_path[128]; }`)
+  is a component like any other — `world.CreateEntity(Transform{...},
+  ModelRenderer{...})` — not a `gltf_scene`/`gltf_loaded` pair of local
+  variables living outside the ECS. It's plain fixed-size data rather than
+  `std::string` specifically so it needs **no custom serializer** to
+  round-trip through Save/Load Scene: the default raw-byte `ComponentInfo`
+  serializer every component type gets for free (the same one `Transform`
+  already relies on) is already correct for it. The actual GPU/CPU
+  resources (vertex/index buffers, resolved material, parsed `GltfScene`)
+  live in `GltfCache`, a `path -> GltfRenderData` map — a component can't
+  own a GPU buffer or a variable-size string in the ECS's fixed-slot chunked
+  storage, so the component only carries the *reference*, and every entity
+  pointing at the same asset path shares one `GltfRenderData` (uploaded
+  once), the same caching discipline `AssetManager` already applies to
+  individual textures.
+- **In-editor asset picker.** `ListAvailableGltfModels()` scans
+  `assets/models/*.gltf` at startup; the "Add Model" panel lists whatever
+  it finds as buttons — click one to spawn a new entity referencing it, no
+  path hardcoded in source.
+- **Scene save/load round-trips models.** Verified directly, not assumed
+  from the component being POD: a temporary self-test (`SaveScene` a world
+  with a `ModelRenderer` entity, `LoadScene` into a fresh `World`, confirm
+  the loaded entity's `asset_path` matches) logged `PASS` before being
+  removed — the mechanism is also covered generically by
+  `tests/test_serialization.cpp`'s existing round-trip test, which already
+  exercises an arbitrary plain-data component the same shape `ModelRenderer`
+  is.
+- **Selection + Inspector**, the scoped form: a "Select" button per
+  entity-list row (bodies and models both) sets an `Entity selected_entity`,
+  which opens a dedicated Inspector panel for *only* that entity and tints
+  its rendered color/material toward gold — real, visible selection
+  feedback. What this deliberately isn't yet: clicking directly on an
+  object *in the viewport* to select it, which needs screen-to-world ray
+  casting against each entity's bounds, and a draggable 3D transform gizmo
+  instead of raw `DragFloat3` fields — both real future work, not silently
+  dropped scope.
+- `ForEachWithEntity<Components...>` — built on the same type-erased
+  `Archetype`/`EntityArray()` access the scene serializer already uses — is
+  what makes any of this possible: `World::ForEach` hands back component
+  references but not the `Entity` they belong to, and an editor that needs
+  to select or delete *this specific entity* needs the handle, not just its
+  data.
+
+**Verified visually and by an actual round-trip, not by inspection**: the
+Add Model panel correctly lists all four `.gltf` files under
+`assets/models/`; selecting the initial model shows its live Inspector data
+(source path, material, Animate toggle, running time) *and* renders it with
+the gold highlight tint, confirmed in a screenshot; the Save/Load self-test
+logged a genuine `PASS`. 81/81 tests unchanged (ECS/editor integration
+work, not new pure logic needing new unit tests); 6 quick runs plus one
+2000-frame stability run.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
