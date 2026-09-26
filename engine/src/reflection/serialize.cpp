@@ -164,6 +164,13 @@ Json SaveValue(const TypeInfo& type, const void* ptr) {
         }
         return value; // a value with no named entry (e.g. combined flags)
     }
+    case TypeKind::Array: {
+        Json array = Json::array();
+        for (usize i = 0, n = type.array_size(ptr); i < n; ++i) {
+            array.push_back(SaveValue(*type.element, type.ArrayElement(ptr, i)));
+        }
+        return array;
+    }
     case TypeKind::Struct: {
         if (type.serialize_as_array) {
             Json array = Json::array();
@@ -364,6 +371,20 @@ bool LoadValue(const TypeInfo& type, void* ptr, const Json& data, LoadContext& c
         }
         ctx.Warn(path, std::string("expected an enum name, found ") + JsonTypeName(data));
         return false;
+    }
+    case TypeKind::Array: {
+        if (!data.is_array()) {
+            ctx.Warn(path, std::string("expected an array, found ") + JsonTypeName(data));
+            return false;
+        }
+        // The data decides the length; each element loads tolerantly into a
+        // default-constructed element, like a struct field does.
+        type.array_resize(ptr, 0);
+        type.array_resize(ptr, data.size());
+        for (usize i = 0; i < data.size(); ++i) {
+            LoadValue(*type.element, type.array_element(ptr, i), data[i], ctx, path + "[" + std::to_string(i) + "]");
+        }
+        return true;
     }
     case TypeKind::Struct:
         return LoadStruct(type, ptr, data, ctx, path);
