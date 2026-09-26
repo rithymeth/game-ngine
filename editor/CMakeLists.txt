@@ -1,5 +1,8 @@
 add_executable(aether_editor main.cpp)
-target_link_libraries(aether_editor PRIVATE Aether::Engine Aether::Physics ImGui::ImGui)
+target_link_libraries(aether_editor PRIVATE Aether::Engine Aether::Physics Aether::EditorUI ImGui::ImGui)
+if(NOT AETHER_BUILD_EDITOR_UI)
+    message(FATAL_ERROR "The editor needs AETHER_BUILD_EDITOR_UI=ON (its generic Inspector lives there)")
+endif()
 # For the glTF integration follow-up: loads assets/models/test_animation.gltf
 # at a real filesystem path, same convention gltf_demo already uses, and
 # dumps a screenshot via stb_image_write (same as gltf_demo/pbr_demo).

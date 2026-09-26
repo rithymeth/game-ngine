@@ -1410,9 +1410,9 @@ work fully without them.
 
 Work in this order. Each line is roughly one PR-sized chunk, or a few.
 
-1. Reflection core (`TypeInfo`, fields, `Any`) → port existing components.
-2. JSON archive + versioned serialization → scenes saved as JSON.
-3. Generic reflected Inspector + "Add Component".
+1. ✅ Reflection core (`TypeInfo`, fields, `Any`) → port existing components.
+2. ✅ JSON archive + versioned serialization → scenes saved as JSON.
+3. ✅ Generic reflected Inspector + "Add Component".
 4. Split `editor/main.cpp` into panels; ImGui docking branch; theme tokens.
 5. Undo/redo command stack + `EntityGuid`s.
 6. Play-in-Editor world duplication; Simulate/Pause/Step.

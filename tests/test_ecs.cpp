@@ -139,3 +139,26 @@ AETHER_TEST(World_EntityHandleGenerationPreventsStaleAccessAliasing) {
     AETHER_CHECK(a.index == b.index);          // slot reused
     AETHER_CHECK(a.generation != b.generation); // but handle no longer matches
 }
+
+AETHER_TEST(World_RawAddAndRemoveComponentById) {
+    World world;
+    Entity e = world.CreateEntity(Position{1, 2, 3});
+    ComponentId name_id = GetComponentId<Name>();
+    AETHER_CHECK(RegisteredComponentCount() > name_id);
+
+    AETHER_CHECK(!world.HasComponentRaw(e, name_id));
+    world.AddComponentRaw(e, name_id);
+    AETHER_CHECK(world.HasComponentRaw(e, name_id));
+    AETHER_CHECK(world.GetComponent<Name>(e) != nullptr && world.GetComponent<Name>(e)->value.empty());
+    AETHER_CHECK(world.GetComponent<Position>(e)->y == 2.0f); // existing component carried over
+
+    world.GetComponent<Name>(e)->value = "a string long enough to allocate on the heap";
+    world.AddComponentRaw(e, name_id); // already present: no-op
+    AETHER_CHECK(world.GetComponent<Name>(e)->value == "a string long enough to allocate on the heap");
+
+    world.RemoveComponentRaw(e, name_id);
+    AETHER_CHECK(!world.HasComponentRaw(e, name_id));
+    AETHER_CHECK(world.GetComponent<Position>(e)->z == 3.0f);
+    world.RemoveComponentRaw(e, name_id); // absent: no-op
+    AETHER_CHECK(world.EntityCount() == 1);
+}
