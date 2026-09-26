@@ -4,6 +4,7 @@
 
 #include <concepts>
 #include <new>
+#include <span>
 #include <string_view>
 #include <type_traits>
 #include <utility>
@@ -49,6 +50,7 @@ enum FieldFlags : u32 {
 };
 
 struct TypeInfo;
+class Any;
 
 struct FieldInfo {
     const char* name = "";
@@ -67,11 +69,53 @@ struct FieldInfo {
     T* As(void* object) const;
     template <typename T>
     const T* As(const void* object) const;
+
+    // Type-erased access (defined in any.cpp). Set copies `value` into the
+    // field and returns false, leaving the field unchanged, if `value` holds a
+    // different type.
+    Any Get(const void* object) const;
+    bool Set(void* object, const Any& value) const;
 };
 
 struct EnumValue {
     const char* name = "";
     i64 value = 0;
+};
+
+enum FunctionFlags : u32 {
+    Fn_None = 0,
+    Fn_BlueprintCallable = 1u << 0, // becomes a Blueprint node (Phase 12)
+    Fn_Pure = 1u << 1,              // no side effects: a pure node with no exec pins
+    Fn_Const = 1u << 2,             // set automatically for const member functions
+    Fn_Static = 1u << 3,            // set automatically for static/free functions; no `self`
+};
+
+struct ParamInfo {
+    const char* name = "";
+    const TypeInfo* type = nullptr;
+};
+
+// A reflected function: a member function (called on an instance of the
+// owning type) or a static function. Invoke type-checks every argument
+// against `params` before calling, so a bad call from a script or Blueprint
+// is refused instead of reinterpreting memory.
+struct FunctionInfo {
+    const char* name = "";
+    const TypeInfo* return_type = nullptr; // nullptr for void
+    std::vector<ParamInfo> params;
+    u32 flags = Fn_None;
+
+    // Type-erased call. `args` has exactly params.size() entries, already
+    // validated; a non-void result is stored into `*ret` when ret != nullptr.
+    void (*thunk)(void* self, Any* args, Any* ret) = nullptr;
+
+    bool HasFlag(FunctionFlags flag) const { return (flags & flag) != 0; }
+
+    // Returns false (and calls nothing) if the argument count or any argument
+    // type doesn't match, or if a member function is given a null `self`.
+    // Arguments are passed by reference: a function taking `T&` can write
+    // back into its Any argument.
+    bool Invoke(void* self, std::span<Any> args, Any* ret = nullptr) const;
 };
 
 struct TypeInfo {
@@ -83,6 +127,7 @@ struct TypeInfo {
     u16 version = 1;           // schema version, bumped when fields change meaning
 
     std::vector<FieldInfo> fields;       // Struct only, declaration order
+    std::vector<FunctionInfo> functions; // Struct only, declaration order
     std::vector<EnumValue> enum_values;  // Enum only
     const TypeInfo* underlying = nullptr; // Enum only: the integer type backing it
 
@@ -93,11 +138,21 @@ struct TypeInfo {
     void (*destruct)(void* object) = nullptr;
     void (*copy_construct)(void* dst, const void* src) = nullptr;
     void (*move_construct)(void* dst, void* src) = nullptr;
+    void (*copy_assign)(void* dst, const void* src) = nullptr; // both live objects
 
     const FieldInfo* FindField(std::string_view field_name) const {
         for (const FieldInfo& field : fields) {
             if (field_name == field.name) {
                 return &field;
+            }
+        }
+        return nullptr;
+    }
+
+    const FunctionInfo* FindFunction(std::string_view function_name) const {
+        for (const FunctionInfo& function : functions) {
+            if (function_name == function.name) {
+                return &function;
             }
         }
         return nullptr;
@@ -178,6 +233,9 @@ TypeInfo MakeTypeInfo(const char* declared_name, TypeKind kind, u16 version) {
     }
     if constexpr (std::is_move_constructible_v<T>) {
         info.move_construct = [](void* dst, void* src) { new (dst) T(std::move(*static_cast<T*>(src))); };
+    }
+    if constexpr (std::is_copy_assignable_v<T>) {
+        info.copy_assign = [](void* dst, const void* src) { *static_cast<T*>(dst) = *static_cast<const T*>(src); };
     }
     return info;
 }
