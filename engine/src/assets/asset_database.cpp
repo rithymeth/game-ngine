@@ -1,5 +1,6 @@
 #include "aether/assets/asset_database.h"
 #include "aether/assets/asset_ref.h"
+#include "aether/assets/gltf_references.h"
 
 #include "aether/core/log.h"
 #include "aether/platform/filesystem.h"
@@ -393,11 +394,22 @@ void AssetDatabase::RebuildDependencies() {
     referencers_.clear();
     for (auto& [guid, record] : records_) {
         record.dependencies.clear();
-        if (record.missing || (record.importer != "Scene" && record.importer != "Prefab")) {
+        if (record.missing || record.IsSubAsset()) {
+            continue;
+        }
+        if (record.importer == "Model") {
+            // A .gltf names its textures by relative path, not GUID.
+            for (const GltfFileReference& ref : GltfFileReferences(root_, record.path)) {
+                auto it = by_path_.find(ref.path);
+                if (!ref.path.empty() && it != by_path_.end() && it->second != guid) {
+                    record.dependencies.push_back(it->second);
+                }
+            }
+        } else if (record.importer != "Scene" && record.importer != "Prefab") {
             continue;
         }
         std::vector<u8> bytes;
-        if (!fs::ReadFileBytes(Absolute(record.path).string(), bytes)) {
+        if (record.importer != "Model" && !fs::ReadFileBytes(Absolute(record.path).string(), bytes)) {
             continue;
         }
         for (const AssetGuid& referenced : FindGuidStrings(bytes)) {

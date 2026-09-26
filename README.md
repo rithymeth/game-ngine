@@ -1857,6 +1857,68 @@ Clang and under ASan/UBSan, and 142/142 with physics.
 - 148/148 tests pass on GCC 13, on Clang and under ASan/UBSan, and 155/155
   with physics.
 
+**Step 6: the Content Browser's engine side** (`assets/content_browser.h`).
+The ImGui panel draws from this. The panel itself is editor work pending the
+Windows build.
+
+- **Listing**: `ContentFolders` lists every folder, including empty ones.
+  - `ListContent` shows folders first, then assets, sorted by name ignoring
+    case.
+  - Search matches part of a name, ignoring case, and looks through
+    subfolders.
+  - Results can be filtered by type, and a model's meshes, materials and
+    animations can be listed with it.
+  - `CreateContentFolder` makes a new folder.
+- **Names**: `IsValidAssetName` accepts only names that work on every
+  platform. It refuses Windows-forbidden characters, `#` (used for
+  sub-asset paths), hidden names, a trailing dot or space, and device names
+  such as `CON`.
+- **Rename and move with reference safety**: `MoveContent` and
+  `RenameContent` move a file or a whole folder, including its `.ameta`
+  files and helper files such as a glTF's `.bin`.
+  - GUID references (scenes, prefabs, `AssetRef`) need no change.
+  - glTF files refer to their buffers and textures by **relative path**,
+    which a move would break, so those paths are rewritten. This covers a
+    moved model's own references and other models' references to a moved
+    texture.
+  - Rename keeps the extension and refuses to change it, since that would
+    change how the file is imported.
+  - Moves are refused into the folder itself, onto an existing file, for a
+    sub-asset or an `.ameta`, and outside `Content/`.
+- **glTF dependencies**: a model now depends on the texture assets it names,
+  so deleting a texture a model uses is refused, and hot reload lists the
+  model among the texture's dependents.
+- **Reference Viewer**: `CollectReferences` walks what an asset uses, or what
+  uses it (including through its sub-assets), depth-first. A shared asset or
+  a cycle is shown once and marked, not followed again.
+- **Thumbnails**: `AssetThumbnail` works for textures and materials.
+  - A texture's thumbnail is made from the smallest mip that's still large
+    enough, then box-filtered to fit.
+  - A material's thumbnail is its base colour texture, or a colour swatch,
+    tinted by the base colour in linear light.
+  - Models and meshes need the renderer, so they show a type icon instead.
+
+**Verified**: 5 new tests.
+
+- **Listing**: folders (empty ones included, hidden ones skipped), search,
+  the type filter, and sub-assets.
+- **Names**: invalid names are refused, and URI encoding round-trips.
+- **Moves**:
+  - Moving a texture rewrote the 3 models that use it, and the material then
+    imports with the new path.
+  - A model moved on its own still loads its 24-vertex mesh.
+  - A folder move carries its `.bin`, and references from outside into the
+    folder are updated.
+  - Renames, including a folder rename, keep GUIDs.
+  - Seven kinds of invalid move are refused.
+- **Reference Viewer**: both directions, with a scene cycle.
+- **Thumbnails**: scaling, a solid-red texture, a material, and no thumbnail
+  for models and meshes.
+- **Test bugs fixed**: searching "red" also matched "texturED", and one test
+  looked up sub-assets before importing anything.
+- 153/153 tests pass on GCC 13, on Clang and under ASan/UBSan, and 160/160
+  with physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
