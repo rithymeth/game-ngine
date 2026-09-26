@@ -1,13 +1,17 @@
-// Roadmap item 2 (+ follow-ups: normal mapping, multiple/colored lights): a
-// real PBR (physically-based) renderer — Cook-Torrance specular (GGX normal
-// distribution, Smith geometry term, Schlick Fresnel approximation) plus a
-// Lambertian diffuse term, metallic-roughness workflow. Textbook formulas
-// (matching the widely-used LearnOpenGL/Sascha Willems reference
-// derivations), not a simplified stand-in. Tangent-space normal mapping
-// (procedural bump map, TBN built per-vertex from an analytic sphere
-// tangent) perturbs the shading normal before the BRDF runs; four point
-// lights with distinct colors and inverse-square falloff replace the
-// original single directional light, summed per-pixel.
+// Roadmap item 2 (+ follow-ups: normal mapping, multiple/colored lights,
+// full split-sum prefiltered specular IBL): a real PBR (physically-based)
+// renderer — Cook-Torrance specular (GGX normal distribution, Smith geometry
+// term, Schlick Fresnel approximation) plus a Lambertian diffuse term,
+// metallic-roughness workflow. Textbook formulas (matching the widely-used
+// LearnOpenGL/Sascha Willems reference derivations), not a simplified
+// stand-in. Tangent-space normal mapping (procedural bump map, TBN built
+// per-vertex from an analytic sphere tangent) perturbs the shading normal
+// before the BRDF runs; four point lights with distinct colors and
+// inverse-square falloff replace the original single directional light,
+// summed per-pixel; ambient specular uses the full split-sum approximation
+// (Karis 2013) — a prefiltered environment mip chain plus a BRDF LUT, both
+// precomputed CPU-side at startup — rather than a roughness-faded direct
+// reflection (see the "Follow-up: full split-sum ... IBL" README section).
 //
 // Scene: the classic "material ball grid" used to visually validate a PBR
 // implementation — a 7x7 grid of spheres, metallic varying 0->1 along one
@@ -48,6 +52,7 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -259,6 +264,174 @@ std::vector<std::vector<u8>> GenerateIrradianceCubeFaces(u32 size) {
     return faces;
 }
 
+// --------------------------------------------------------------------------
+// Split-sum prefiltered specular IBL (Karis, "Real Shading in Unreal Engine
+// 4", 2013): a prefiltered environment mip chain (each mip pre-convolved
+// against the GGX lobe for that mip's roughness, so the runtime cost is one
+// trilinear cubemap sample) plus a 2D BRDF LUT (indexed by NdotV and
+// roughness, storing the two scalars the specular integral factors into:
+// see IntegrateBRDF below). Both are precomputed here on the CPU, same as
+// the diffuse-irradiance convolution above — this is a demo, not a runtime
+// asset pipeline, so "precompute once at startup with plain C++ loops"
+// beats standing up a compute-shader pass for what's fundamentally the same
+// one-time cost either way.
+// --------------------------------------------------------------------------
+
+// Van der Corput radical inverse (base 2) — paired with i/N to form the
+// Hammersley low-discrepancy sequence GGX importance sampling is built on
+// (same Karis 2013 derivation as the rest of this section).
+f32 RadicalInverseVdC(u32 bits) {
+    bits = (bits << 16u) | (bits >> 16u);
+    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+    bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+    bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+    return static_cast<f32>(bits) * 2.3283064365386963e-10f; // / 2^32
+}
+
+// GGX importance-sampled half-vector, in the *tangent space of N* (N along
+// +Z) — i.e. this is deliberately basis-free; callers transform the result
+// into whatever space they need (world space for the mip prefilter, or used
+// directly when N is already (0,0,1) as in IntegrateBRDF below). Same
+// distribution DistributionGGX evaluates in the pixel shader, sampled here
+// instead of evaluated.
+Vec3 ImportanceSampleGGXTangent(f32 xi_x, f32 xi_y, f32 roughness) {
+    f32 a = roughness * roughness;
+    f32 phi = 2.0f * kPi * xi_x;
+    f32 cos_theta = std::sqrt((1.0f - xi_y) / (1.0f + (a * a - 1.0f) * xi_y));
+    f32 sin_theta = std::sqrt(std::max(0.0f, 1.0f - cos_theta * cos_theta));
+    return Vec3(sin_theta * std::cos(phi), sin_theta * std::sin(phi), cos_theta);
+}
+
+// One mip level of the prefiltered environment cubemap, for a given
+// roughness: for each texel's direction N, assume N == V == R (the standard
+// split-sum simplifying assumption — see Karis 2013 section 3), importance-
+// sample the GGX lobe around N, and accumulate SkyColor(L) weighted by
+// NdotL. roughness == 0 skips the GGX sampling entirely (a mirror lobe is a
+// single direction, not a distribution to sample) and just mirrors SkyColor
+// directly — this is mip 0. Evaluated directly against the analytic
+// SkyColor() function for the same reason GenerateIrradianceCubeFaces is:
+// SkyColor *is* the environment radiance, no texture-sampling round trip
+// needed.
+std::vector<std::vector<u8>> GeneratePrefilteredEnvironmentMip(u32 size, f32 roughness, u32 sample_count) {
+    std::vector<std::vector<u8>> faces(6);
+    for (u32 face = 0; face < 6; ++face) {
+        std::vector<u8>& pixels = faces[face];
+        pixels.resize(static_cast<usize>(size) * size * 4);
+        for (u32 y = 0; y < size; ++y) {
+            for (u32 x = 0; x < size; ++x) {
+                f32 u = (static_cast<f32>(x) + 0.5f) / static_cast<f32>(size);
+                f32 v = (static_cast<f32>(y) + 0.5f) / static_cast<f32>(size);
+                Vec3 N = CubeFaceDirection(face, u, v).Normalized();
+
+                Vec3 color;
+                if (roughness <= 1e-4f) {
+                    color = SkyColor(N);
+                } else {
+                    Vec3 V = N;
+                    Vec3 up = std::abs(N.y) < 0.999f ? Vec3(0, 1, 0) : Vec3(1, 0, 0);
+                    Vec3 tangent_x = up.Cross(N).Normalized();
+                    Vec3 tangent_y = N.Cross(tangent_x);
+
+                    Vec3 prefiltered(0.0f, 0.0f, 0.0f);
+                    f32 total_weight = 0.0f;
+                    for (u32 i = 0; i < sample_count; ++i) {
+                        f32 xi_x = static_cast<f32>(i) / static_cast<f32>(sample_count);
+                        f32 xi_y = RadicalInverseVdC(i);
+                        Vec3 h_tangent = ImportanceSampleGGXTangent(xi_x, xi_y, roughness);
+                        Vec3 H = tangent_x * h_tangent.x + tangent_y * h_tangent.y + N * h_tangent.z;
+                        Vec3 L = (H * (2.0f * V.Dot(H)) - V).Normalized();
+                        f32 NdotL = std::max(N.Dot(L), 0.0f);
+                        if (NdotL > 0.0f) {
+                            prefiltered = prefiltered + SkyColor(L) * NdotL;
+                            total_weight += NdotL;
+                        }
+                    }
+                    color = total_weight > 0.0f ? prefiltered * (1.0f / total_weight) : SkyColor(N);
+                }
+
+                u8* p = &pixels[(static_cast<usize>(y) * size + x) * 4];
+                p[0] = static_cast<u8>(std::min(color.x, 1.0f) * 255.0f);
+                p[1] = static_cast<u8>(std::min(color.y, 1.0f) * 255.0f);
+                p[2] = static_cast<u8>(std::min(color.z, 1.0f) * 255.0f);
+                p[3] = 255;
+            }
+        }
+    }
+    return faces;
+}
+
+// IBL variant of the Smith geometry term: k = roughness^2/2, distinct from
+// the direct-lighting k = (roughness+1)^2/8 used in the pixel shader's
+// GeometrySchlickGGX — same split between "direct" and "IBL" k as Karis
+// 2013 / the LearnOpenGL IBL chapter (the IBL k comes from matching Smith's
+// term to the GGX importance-sampling PDF, so it's not the same
+// approximation the direct-lighting k is).
+f32 GeometrySchlickGGXIBL(f32 NdotV, f32 roughness) {
+    f32 k = (roughness * roughness) / 2.0f;
+    return NdotV / (NdotV * (1.0f - k) + k);
+}
+
+f32 GeometrySmithIBL(f32 NdotV, f32 NdotL, f32 roughness) {
+    return GeometrySchlickGGXIBL(NdotV, roughness) * GeometrySchlickGGXIBL(NdotL, roughness);
+}
+
+// The split-sum's second factor: integrates the BRDF (minus F0, which
+// factors out as F0*scale + bias — the whole point of the split) over the
+// GGX-importance-sampled hemisphere, for a given (NdotV, roughness) pair.
+// This is the exact derivation the runtime g_BRDFLUT texture bakes: the
+// pixel shader just looks up (scale, bias) instead of running this loop
+// per-pixel per-frame.
+void IntegrateBRDF(f32 NdotV, f32 roughness, u32 sample_count, f32& out_scale, f32& out_bias) {
+    Vec3 V(std::sqrt(std::max(0.0f, 1.0f - NdotV * NdotV)), 0.0f, NdotV);
+    f32 A = 0.0f;
+    f32 B = 0.0f;
+
+    for (u32 i = 0; i < sample_count; ++i) {
+        f32 xi_x = static_cast<f32>(i) / static_cast<f32>(sample_count);
+        f32 xi_y = RadicalInverseVdC(i);
+        // N == (0,0,1) here, so tangent space *is* world space — the H
+        // ImportanceSampleGGXTangent returns needs no basis transform.
+        Vec3 H = ImportanceSampleGGXTangent(xi_x, xi_y, roughness);
+        Vec3 L = (H * (2.0f * V.Dot(H)) - V).Normalized();
+
+        f32 NdotL = std::max(L.z, 0.0f);
+        f32 NdotH = std::max(H.z, 0.0f);
+        f32 VdotH = std::max(V.Dot(H), 0.0f);
+
+        if (NdotL > 0.0f) {
+            f32 G = GeometrySmithIBL(NdotV, NdotL, roughness);
+            f32 G_Vis = (G * VdotH) / std::max(NdotH * NdotV, 1e-5f);
+            f32 Fc = std::pow(1.0f - VdotH, 5.0f);
+            A += (1.0f - Fc) * G_Vis;
+            B += Fc * G_Vis;
+        }
+    }
+    out_scale = A / static_cast<f32>(sample_count);
+    out_bias = B / static_cast<f32>(sample_count);
+}
+
+// x = NdotV, y = roughness (matching the shader's g_BRDFLUT.Sample(uv =
+// float2(NdotV, roughness)) lookup) — scale packed into R, bias into G;
+// B/A unused (0/255) since Texture only supports RGBA8.
+std::vector<u8> GenerateBRDFLUT(u32 size, u32 sample_count) {
+    std::vector<u8> pixels(static_cast<usize>(size) * size * 4);
+    for (u32 y = 0; y < size; ++y) {
+        f32 roughness = (static_cast<f32>(y) + 0.5f) / static_cast<f32>(size);
+        for (u32 x = 0; x < size; ++x) {
+            f32 NdotV = std::max((static_cast<f32>(x) + 0.5f) / static_cast<f32>(size), 1e-3f);
+            f32 scale, bias;
+            IntegrateBRDF(NdotV, roughness, sample_count, scale, bias);
+            u8* p = &pixels[(static_cast<usize>(y) * size + x) * 4];
+            p[0] = static_cast<u8>(std::clamp(scale, 0.0f, 1.0f) * 255.0f);
+            p[1] = static_cast<u8>(std::clamp(bias, 0.0f, 1.0f) * 255.0f);
+            p[2] = 0;
+            p[3] = 255;
+        }
+    }
+    return pixels;
+}
+
 struct CubemapTexture {
     ComPtr<ID3D12Resource> resource;
     // Kept alive for the CubemapTexture's own lifetime rather than freed
@@ -268,24 +441,31 @@ struct CubemapTexture {
     u32 srv_index = DescriptorHeap::kInvalidIndex;
 };
 
-// Uploads a 6-face RGBA8 cubemap — DescriptorHeap-allocated SRV, one
-// DEFAULT-heap resource with 6 array slices (one subresource per face, since
-// MipLevels=1), one UPLOAD-heap staging buffer sized for all 6 faces at
-// once. Mirrors gfx::Texture's single-face upload pattern
-// (engine/src/gfx/texture.cpp), generalized to 6 subresources.
+// Uploads a 6-face RGBA8 cubemap, optionally with multiple mip levels —
+// DescriptorHeap-allocated SRV, one DEFAULT-heap resource with 6 array
+// slices * mip_faces.size() mip levels, one UPLOAD-heap staging buffer sized
+// for every subresource at once. Mirrors gfx::Texture's single-face upload
+// pattern (engine/src/gfx/texture.cpp), generalized to 6*mip_count
+// subresources. `mip_faces[mip][face]` must be sized for
+// `base_size >> mip` (tightly packed RGBA8) — the irradiance map (one mip)
+// and the prefiltered environment map (kEnvMapMipCount mips) both go through
+// this one function; a 1-element `mip_faces` is exactly the old
+// single-mip-cubemap case.
 CubemapTexture CreateCubemapTexture(Device& device, DescriptorHeap& heap, ID3D12GraphicsCommandList* upload_cmd,
-                                     u32 face_size, const std::vector<std::vector<u8>>& faces) {
+                                     u32 base_size, const std::vector<std::vector<std::vector<u8>>>& mip_faces) {
     CubemapTexture result;
+    u32 mip_count = static_cast<u32>(mip_faces.size());
+    u32 num_subresources = 6 * mip_count;
 
     D3D12_HEAP_PROPERTIES default_heap{};
     default_heap.Type = D3D12_HEAP_TYPE_DEFAULT;
 
     D3D12_RESOURCE_DESC tex_desc{};
     tex_desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-    tex_desc.Width = face_size;
-    tex_desc.Height = face_size;
+    tex_desc.Width = base_size;
+    tex_desc.Height = base_size;
     tex_desc.DepthOrArraySize = 6;
-    tex_desc.MipLevels = 1;
+    tex_desc.MipLevels = static_cast<UINT16>(mip_count);
     tex_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     tex_desc.SampleDesc.Count = 1;
     tex_desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
@@ -294,11 +474,16 @@ CubemapTexture CreateCubemapTexture(Device& device, DescriptorHeap& heap, ID3D12
                                                                D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
                                                                IID_PPV_ARGS(&result.resource)));
 
-    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprints[6]{};
-    UINT num_rows[6]{};
-    UINT64 row_sizes[6]{};
+    // Subresource index = mip + face * mip_count (D3D12's standard
+    // MipSlice + ArraySlice * MipLevels indexing for a single-plane
+    // resource) — GetCopyableFootprints fills footprints[subresource] using
+    // that exact same indexing, so no separate mapping table is needed.
+    std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> footprints(num_subresources);
+    std::vector<UINT> num_rows(num_subresources);
+    std::vector<UINT64> row_sizes(num_subresources);
     UINT64 total_bytes = 0;
-    device.Handle()->GetCopyableFootprints(&tex_desc, 0, 6, 0, footprints, num_rows, row_sizes, &total_bytes);
+    device.Handle()->GetCopyableFootprints(&tex_desc, 0, num_subresources, 0, footprints.data(), num_rows.data(),
+                                            row_sizes.data(), &total_bytes);
 
     D3D12_HEAP_PROPERTIES upload_heap{};
     upload_heap.Type = D3D12_HEAP_TYPE_UPLOAD;
@@ -322,25 +507,34 @@ CubemapTexture CreateCubemapTexture(Device& device, DescriptorHeap& heap, ID3D12
     D3D12_RANGE no_read{0, 0};
     AETHER_D3D_CHECK(staging->Map(0, &no_read, reinterpret_cast<void**>(&mapped)));
     for (u32 face = 0; face < 6; ++face) {
-        for (u32 row = 0; row < face_size; ++row) {
-            std::memcpy(mapped + footprints[face].Offset + static_cast<u64>(row) * footprints[face].Footprint.RowPitch,
-                        faces[face].data() + static_cast<u64>(row) * face_size * 4, static_cast<usize>(face_size) * 4);
+        for (u32 mip = 0; mip < mip_count; ++mip) {
+            u32 subresource = mip + face * mip_count;
+            u32 mip_size = base_size >> mip;
+            const std::vector<u8>& pixels = mip_faces[mip][face];
+            for (u32 row = 0; row < mip_size; ++row) {
+                std::memcpy(mapped + footprints[subresource].Offset +
+                                static_cast<u64>(row) * footprints[subresource].Footprint.RowPitch,
+                            pixels.data() + static_cast<u64>(row) * mip_size * 4, static_cast<usize>(mip_size) * 4);
+            }
         }
     }
     staging->Unmap(0, nullptr);
 
     for (u32 face = 0; face < 6; ++face) {
-        D3D12_TEXTURE_COPY_LOCATION dst{};
-        dst.pResource = result.resource.Get();
-        dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-        dst.SubresourceIndex = face;
+        for (u32 mip = 0; mip < mip_count; ++mip) {
+            u32 subresource = mip + face * mip_count;
+            D3D12_TEXTURE_COPY_LOCATION dst{};
+            dst.pResource = result.resource.Get();
+            dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            dst.SubresourceIndex = subresource;
 
-        D3D12_TEXTURE_COPY_LOCATION src{};
-        src.pResource = staging;
-        src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-        src.PlacedFootprint = footprints[face];
+            D3D12_TEXTURE_COPY_LOCATION src{};
+            src.pResource = staging;
+            src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+            src.PlacedFootprint = footprints[subresource];
 
-        upload_cmd->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+            upload_cmd->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+        }
     }
 
     D3D12_RESOURCE_BARRIER barrier = TransitionBarrier(result.resource.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
@@ -352,7 +546,7 @@ CubemapTexture CreateCubemapTexture(Device& device, DescriptorHeap& heap, ID3D12
     srv_desc.Format = tex_desc.Format;
     srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
     srv_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-    srv_desc.TextureCube.MipLevels = 1;
+    srv_desc.TextureCube.MipLevels = mip_count;
     device.Handle()->CreateShaderResourceView(result.resource.Get(), &srv_desc, heap.CPUHandle(result.srv_index));
 
     return result;
@@ -390,9 +584,15 @@ cbuffer FrameConstants : register(b1) {
 };
 
 Texture2D g_NormalMap : register(t0);
-TextureCube g_EnvironmentMap : register(t1);
+TextureCube g_PrefilteredEnvMap : register(t1);
 TextureCube g_IrradianceMap : register(t2);
+Texture2D g_BRDFLUT : register(t3);
 SamplerState g_Sampler : register(s0);
+
+// Must match kEnvMapMipCount on the C++ side (the number of mips baked into
+// g_PrefilteredEnvMap) so roughness->mip mapping lines up with what was
+// actually prefiltered at each level.
+static const float kEnvMapMaxMipIndex = 4.0;
 
 struct VSInput {
     float3 position : POSITION;
@@ -494,20 +694,25 @@ float4 PSMain(PSInput input) : SV_TARGET {
     }
 
     // Image-based lighting: diffuse from the precomputed irradiance
-    // convolution (aether::CreateCubemapTexture / GenerateIrradianceCubeFaces
-    // on the CPU, see the comment there), specular from a direct environment
-    // reflection off the base (non-convolved) cubemap. The roughness fade on
-    // the specular term is a deliberately simple stand-in for full
-    // split-sum/prefiltered-mip specular IBL (not implemented) — it fades
-    // reflections out for rough surfaces without actually blurring them.
-    float3 ambientFresnel = FresnelSchlick(max(dot(N, V), 0.0), F0);
+    // convolution (GenerateIrradianceCubeFaces on the CPU, see the comment
+    // there); specular via the full split-sum approximation (Karis, "Real
+    // Shading in Unreal Engine 4", 2013) — g_PrefilteredEnvMap's mip chain
+    // was pre-convolved against the GGX lobe for each mip's roughness (see
+    // GeneratePrefilteredEnvironmentMip), so a single roughness-selected
+    // trilinear sample stands in for what would otherwise be a per-pixel
+    // importance-sampling loop; g_BRDFLUT bakes the second split-sum factor
+    // (IntegrateBRDF, also precomputed CPU-side) so the runtime cost is just
+    // two texture samples, not an integral.
+    float NdotV = max(dot(N, V), 0.0);
+    float3 ambientFresnel = FresnelSchlick(NdotV, F0);
     float3 ambientKd = (1.0 - ambientFresnel) * (1.0 - g_Metallic);
     float3 irradiance = g_IrradianceMap.Sample(g_Sampler, N).rgb;
     float3 diffuseIBL = ambientKd * irradiance * g_Albedo;
 
     float3 R = reflect(-V, N);
-    float3 envColor = g_EnvironmentMap.Sample(g_Sampler, R).rgb;
-    float3 specularIBL = envColor * ambientFresnel * (1.0 - g_Roughness * 0.9);
+    float3 prefilteredColor = g_PrefilteredEnvMap.SampleLevel(g_Sampler, R, g_Roughness * kEnvMapMaxMipIndex).rgb;
+    float2 brdf = g_BRDFLUT.Sample(g_Sampler, float2(NdotV, g_Roughness)).rg;
+    float3 specularIBL = prefilteredColor * (F0 * brdf.x + brdf.y);
 
     float3 ambient = diffuseIBL + specularIBL;
     float3 color = ambient + Lo;
@@ -547,13 +752,14 @@ struct FrameConstants {
 };
 
 ComPtr<ID3D12RootSignature> CreatePBRRootSignature(Device& device) {
-    // One contiguous range covering t0 (normal map), t1 (environment
-    // cubemap), t2 (irradiance cubemap) — a TextureCube SRV uses the same
-    // SRV descriptor range type as a Texture2D one, they only differ in the
-    // D3D12_SHADER_RESOURCE_VIEW_DESC used when the view itself is created.
+    // One contiguous range covering t0 (normal map), t1 (prefiltered
+    // environment cubemap), t2 (irradiance cubemap), t3 (BRDF LUT) — a
+    // TextureCube SRV uses the same SRV descriptor range type as a
+    // Texture2D one, they only differ in the D3D12_SHADER_RESOURCE_VIEW_DESC
+    // used when the view itself is created.
     D3D12_DESCRIPTOR_RANGE normal_map_range{};
     normal_map_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-    normal_map_range.NumDescriptors = 3;
+    normal_map_range.NumDescriptors = 4;
     normal_map_range.BaseShaderRegister = 0;
     normal_map_range.RegisterSpace = 0;
     normal_map_range.OffsetInDescriptorsFromTableStart = 0;
@@ -785,18 +991,41 @@ int main() {
         constexpr u32 kGridSize = 7;
         Buffer frame_constants_buffer(device, sizeof(FrameConstants), BufferKind::Upload);
 
-        // A single non-bindless SRV heap for this demo's three textures —
-        // normal map (t0), environment cubemap (t1), irradiance cubemap
-        // (t2). Allocation order matters: the root signature binds all three
-        // as one contiguous descriptor-table range starting at this heap's
-        // index 0, so they must land at heap indices 0/1/2 in exactly that
-        // order (not sandbox's bindless heap — one texture per fixed slot).
-        DescriptorHeap texture_heap(device, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, /*capacity=*/3,
+        // A single non-bindless SRV heap for this demo's four textures —
+        // normal map (t0), prefiltered environment cubemap (t1), irradiance
+        // cubemap (t2), BRDF LUT (t3). Allocation order matters: the root
+        // signature binds all four as one contiguous descriptor-table range
+        // starting at this heap's index 0, so they must land at heap indices
+        // 0/1/2/3 in exactly that order (not sandbox's bindless heap — one
+        // texture per fixed slot).
+        DescriptorHeap texture_heap(device, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, /*capacity=*/4,
                                      /*shader_visible=*/true);
 
         std::vector<u8> normal_map_pixels = GenerateBumpNormalMap(256, /*frequency=*/6.0f, /*strength=*/2.5f);
-        std::vector<std::vector<u8>> sky_faces = GenerateSkyCubeFaces(128);
         std::vector<std::vector<u8>> irradiance_faces = GenerateIrradianceCubeFaces(16);
+
+        // Split-sum specular IBL setup: kEnvMapMipCount mips, roughness 0
+        // (mirror, mip 0) through 1 (fully rough, mip kEnvMapMipCount-1),
+        // each mip's resolution halving as roughness increases (a rougher
+        // reflection is a lower-frequency function of direction, so it needs
+        // less resolution — same reasoning as the irradiance map's low
+        // resolution). Sample counts scale up per mip as resolution drops,
+        // since fewer, larger texels can afford more samples each within the
+        // same startup-time budget. Must match kEnvMapMaxMipIndex in the
+        // shader above.
+        constexpr u32 kEnvMapMipCount = 5;
+        constexpr u32 kEnvMapBaseSize = 128;
+        constexpr u32 kEnvMapSampleCounts[kEnvMapMipCount] = {1, 32, 64, 128, 256};
+        std::vector<std::vector<std::vector<u8>>> prefiltered_env_mips;
+        for (u32 mip = 0; mip < kEnvMapMipCount; ++mip) {
+            u32 mip_size = kEnvMapBaseSize >> mip;
+            f32 roughness = static_cast<f32>(mip) / static_cast<f32>(kEnvMapMipCount - 1);
+            prefiltered_env_mips.push_back(
+                GeneratePrefilteredEnvironmentMip(mip_size, roughness, kEnvMapSampleCounts[mip]));
+        }
+
+        constexpr u32 kBRDFLUTSize = 128;
+        std::vector<u8> brdf_lut_pixels = GenerateBRDFLUT(kBRDFLUTSize, /*sample_count=*/512);
 
         std::vector<std::unique_ptr<CommandList>> command_lists;
         std::vector<u64> frame_fences(swap_chain.BufferCount(), 0);
@@ -804,17 +1033,20 @@ int main() {
             command_lists.push_back(std::make_unique<CommandList>(device));
         }
 
-        // One-time upload of all three textures, on its own short-lived
+        // One-time upload of all four textures, on its own short-lived
         // command list submitted and waited on before the main loop starts.
         CommandList setup_cmd(device);
         setup_cmd.Reset();
         Texture normal_map(device, texture_heap, setup_cmd.Get(), 256, 256, normal_map_pixels.data());
-        CubemapTexture environment_map = CreateCubemapTexture(device, texture_heap, setup_cmd.Get(), 128, sky_faces);
+        CubemapTexture environment_map =
+            CreateCubemapTexture(device, texture_heap, setup_cmd.Get(), kEnvMapBaseSize, prefiltered_env_mips);
         CubemapTexture irradiance_map =
-            CreateCubemapTexture(device, texture_heap, setup_cmd.Get(), 16, irradiance_faces);
+            CreateCubemapTexture(device, texture_heap, setup_cmd.Get(), 16, {irradiance_faces});
+        Texture brdf_lut(device, texture_heap, setup_cmd.Get(), kBRDFLUTSize, kBRDFLUTSize, brdf_lut_pixels.data());
         AETHER_ASSERT(normal_map.BindlessIndex() == 0);
         AETHER_ASSERT(environment_map.srv_index == 1);
         AETHER_ASSERT(irradiance_map.srv_index == 2);
+        AETHER_ASSERT(brdf_lut.BindlessIndex() == 3);
         setup_cmd.Close();
         ID3D12CommandList* setup_lists[] = {setup_cmd.Get()};
         device.WaitForFence(device.Submit(setup_lists, 1));

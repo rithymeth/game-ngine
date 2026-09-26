@@ -493,11 +493,8 @@ procedural sky environment cubemap, sampled two ways:
   through a texture). Computed once at startup at low resolution (16×16 per
   face): diffuse irradiance is a low-frequency function by construction, so
   there's no detail lost by not computing it at a higher resolution.
-- **Environment reflections**: the base (non-convolved) sky cubemap sampled
-  by the reflection vector, weighted by Fresnel and a roughness fade. This is
-  a deliberately simpler stand-in for full split-sum/prefiltered-mip specular
-  IBL (not implemented) — reflections fade out for rough surfaces rather than
-  actually blurring, so it's honest about not being roughness-correct.
+- **Environment reflections**: full split-sum prefiltered specular IBL (see
+  the follow-up below) — roughness-correct, not just roughness-faded.
 
 **Verified numerically, not just visually**, since the effect is subtle when
 blended with a saturated albedo and bright point lights: sampled pixels
@@ -508,9 +505,49 @@ zenith) and dropping below it near the bottom (reflecting the ground tone) —
 the expected directional variation, confirmed with actual pixel values, not
 assumed from the code looking right.
 
-Not yet started: full split-sum prefiltered specular IBL with roughness-
-dependent mip selection and a BRDF LUT — the current specular reflection is
-sharp regardless of roughness, just faded in strength.
+### Follow-up: full split-sum prefiltered specular IBL
+
+The roughness-faded direct-reflection stand-in above is replaced with the
+real split-sum approximation (Karis, "Real Shading in Unreal Engine 4",
+2013) — the same technique behind every modern realtime PBR renderer's IBL:
+
+- **Prefiltered environment mip chain** (`GeneratePrefilteredEnvironmentMip`,
+  `kEnvMapMipCount = 5`): mip 0 is the sharp mirror environment (roughness
+  0), and each subsequent mip is GGX-importance-sampled (`Hammersley` +
+  `ImportanceSampleGGXTangent`, the same low-discrepancy-sequence technique
+  the LearnOpenGL/Karis reference derivation uses) against progressively
+  higher roughness, at progressively lower resolution — a rougher lobe is a
+  lower-frequency function of direction, exactly like the diffuse-irradiance
+  map's low resolution above, so less resolution loses no real detail.
+  Sample counts scale up as resolution drops (1/32/64/128/256 across the 5
+  mips) so quality stays roughly constant per output texel within the same
+  startup-time budget. `CreateCubemapTexture` was generalized from a
+  single-mip cubemap uploader to a multi-mip one (`mip + face * mip_count`
+  D3D12 subresource indexing) to hold the chain.
+- **BRDF LUT** (`GenerateBRDFLUT`/`IntegrateBRDF`): a 128×128 2D texture,
+  indexed by `(NdotV, roughness)`, storing the split-sum's second factor —
+  the BRDF integral with F0 factored out as `F0*scale + bias` — precomputed
+  once at startup via the same GGX importance sampling, using the IBL
+  variant of the Smith geometry term (`k = roughness²/2`, distinct from the
+  `k = (roughness+1)²/8` the direct-lighting BRDF uses — matching Smith's
+  term to the importance-sampling PDF requires the different k).
+- **Runtime cost**: two texture samples per pixel (`SampleLevel` on the
+  prefiltered cubemap at `roughness * 4`, letting hardware trilinear
+  filtering interpolate between the 5 precomputed mips for in-between
+  roughness values, plus a `BRDFLUT` lookup) instead of a per-pixel
+  importance-sampling loop — all the actual integration work happens once,
+  CPU-side, at startup.
+
+**Verified visually and by contrast**: a smooth metal sphere
+(roughness≈0.05) shows a crisp, high-contrast mirror of the procedural bump
+map's hex-cell pattern; the equivalent fully-rough metal sphere
+(roughness=1.0) shows that same pattern completely blurred away, replaced by
+soft, low-contrast colored blooms from the four point lights — the
+qualitative signature of roughness-correct specular IBL, not achievable by
+the old fade-strength-only stand-in (which kept the sharp pattern at every
+roughness, just dimmer). 75/75 tests pass (unchanged — this follow-up has no
+new unit-testable pure logic, only GPU pipeline/shader changes), plus 6 quick
+runs and one 2000-frame stability run with no crashes.
 
 ### Follow-up: glTF mesh loading (`aether::assets::LoadGltf`)
 
