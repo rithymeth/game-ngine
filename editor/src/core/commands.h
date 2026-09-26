@@ -2,6 +2,7 @@
 
 #include "aether/reflection/reflection.h"
 #include "aether/scene/entity_guid.h"
+#include "aether/scene/hierarchy.h"
 #include "core/command_stack.h"
 
 #include <memory>
@@ -120,6 +121,35 @@ private:
     ComponentId component_;
     std::vector<u8> bytes_;
 };
+
+// Makes `new_parent` the parent of an entity (a null GUID detaches it to the
+// root), remembering what it was attached to before. The child's Transform
+// is kept as-is, i.e. interpreted relative to its new parent.
+class ReparentCommand final : public ICommand {
+public:
+    ReparentCommand(EntityGuid entity, EntityGuid new_parent);
+    void Do(CommandContext& ctx) override;
+    void Undo(CommandContext& ctx) override;
+    std::string Label() const override;
+
+private:
+    void Attach(CommandContext& ctx, bool has_parent, const EntityGuid& parent);
+
+    EntityGuid entity_;
+    EntityGuid new_parent_;
+    bool had_parent_ = false;
+    EntityGuid old_parent_;
+};
+
+// Turns an edit a widget already made in place into an undoable command: if
+// the field's value differs from `old_value`, puts the old value back and
+// executes a SetFieldCommand to the new one (merging with the previous edit
+// of the same field, so a drag is one step). If `committed` (the widget's
+// edit just finished), also breaks the merge chain. Returns true if a
+// command was executed.
+bool CommitFieldEdit(CommandContext& ctx, CommandStack& stack, const EntityGuid& entity, ComponentId component,
+                     const reflect::FieldInfo& field, void* component_data, const reflect::Any& old_value,
+                     bool committed);
 
 // Gives every entity in the world a unique GUID and reindexes: call after
 // loading a scene or at startup. Returns how many GUIDs were created or

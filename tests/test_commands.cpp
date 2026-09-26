@@ -3,6 +3,7 @@
 // entity_inspector.h), headless.
 
 #include "aether/scene/entity_guid.h"
+#include "aether/scene/hierarchy.h"
 #include "core/commands.h"
 #include "test_framework.h"
 #include "ui/entity_inspector.h"
@@ -16,7 +17,7 @@ using namespace aether::editor;
 
 namespace cmd_test {
 
-struct Health {
+struct Vitals {
     f32 current = 100.0f;
     std::string name = "unit";
 };
@@ -32,7 +33,7 @@ struct RawData {
 
 } // namespace cmd_test
 
-AETHER_REFLECT(cmd_test::Health, 1,
+AETHER_REFLECT(cmd_test::Vitals, 1,
     AETHER_FIELD(current, Field_EditAnywhere, {.range_min = 0, .range_max = 1000}),
     AETHER_FIELD(name, Field_EditAnywhere)
 )
@@ -99,33 +100,33 @@ private:
 
 AETHER_TEST(Commands_SetFieldUndoRedoAndMerge) {
     Fixture f;
-    Entity e = f.world.CreateEntity(cmd_test::Health{});
+    Entity e = f.world.CreateEntity(cmd_test::Vitals{});
     EntityGuid guid = EnsureGuid(f.world, e, &f.guids);
-    const ComponentId health = GetComponentId<cmd_test::Health>();
-    const reflect::FieldInfo& current = *reflect::Reflect<cmd_test::Health>().FindField("current");
+    const ComponentId health = GetComponentId<cmd_test::Vitals>();
+    const reflect::FieldInfo& current = *reflect::Reflect<cmd_test::Vitals>().FindField("current");
 
     for (int v = 90; v >= 50; v -= 10) { // one "drag"
-        f32 old_value = f.world.GetComponent<cmd_test::Health>(f.Live(guid))->current;
+        f32 old_value = f.world.GetComponent<cmd_test::Vitals>(f.Live(guid))->current;
         f.stack.Execute(f.ctx,
                         std::make_unique<SetFieldCommand>(guid, health, current, reflect::Any(old_value),
                                                           reflect::Any(static_cast<f32>(v))),
                         MergePolicy::Allow);
     }
     AETHER_CHECK(f.stack.UndoCount() == 1);
-    AETHER_CHECK(f.stack.UndoLabel() == "Edit Health.current");
-    AETHER_CHECK(f.world.GetComponent<cmd_test::Health>(e)->current == 50.0f);
+    AETHER_CHECK(f.stack.UndoLabel() == "Edit Vitals.current");
+    AETHER_CHECK(f.world.GetComponent<cmd_test::Vitals>(e)->current == 50.0f);
     AETHER_CHECK(f.log.field_changed == 5 && f.log.last_field == "current");
 
     f.stack.Undo(f.ctx);
-    AETHER_CHECK(f.world.GetComponent<cmd_test::Health>(e)->current == 100.0f);
+    AETHER_CHECK(f.world.GetComponent<cmd_test::Vitals>(e)->current == 100.0f);
     AETHER_CHECK(f.log.field_changed == 6); // hooks fire on undo too
     f.stack.Redo(f.ctx);
-    AETHER_CHECK(f.world.GetComponent<cmd_test::Health>(e)->current == 50.0f);
+    AETHER_CHECK(f.world.GetComponent<cmd_test::Vitals>(e)->current == 50.0f);
 }
 
 AETHER_TEST(Commands_DestroyAndUndoRestoresEveryComponent) {
     Fixture f;
-    Entity e = f.world.CreateEntity(cmd_test::Health{42.0f, "a name long enough for the heap, not SSO"},
+    Entity e = f.world.CreateEntity(cmd_test::Vitals{42.0f, "a name long enough for the heap, not SSO"},
                                     cmd_test::RawData{0xBEEF});
     EntityGuid guid = EnsureGuid(f.world, e, &f.guids);
 
@@ -136,8 +137,8 @@ AETHER_TEST(Commands_DestroyAndUndoRestoresEveryComponent) {
     f.stack.Undo(f.ctx);
     Entity restored = f.Live(guid);
     AETHER_CHECK(!restored.IsNull());
-    AETHER_CHECK(f.world.GetComponent<cmd_test::Health>(restored)->current == 42.0f);
-    AETHER_CHECK(f.world.GetComponent<cmd_test::Health>(restored)->name == "a name long enough for the heap, not SSO");
+    AETHER_CHECK(f.world.GetComponent<cmd_test::Vitals>(restored)->current == 42.0f);
+    AETHER_CHECK(f.world.GetComponent<cmd_test::Vitals>(restored)->name == "a name long enough for the heap, not SSO");
     AETHER_CHECK(f.world.GetComponent<cmd_test::RawData>(restored)->bits == 0xBEEF); // unreflected, raw bytes
     AETHER_CHECK(f.log.created == 1);
 
@@ -163,7 +164,7 @@ AETHER_TEST(Commands_CreateFromExistingEntityRecordsWithoutDoubleCreating) {
 
 AETHER_TEST(Commands_AddAndRemoveComponent) {
     Fixture f;
-    Entity e = f.world.CreateEntity(cmd_test::Health{});
+    Entity e = f.world.CreateEntity(cmd_test::Vitals{});
     EntityGuid guid = EnsureGuid(f.world, e, &f.guids);
     const ComponentId armor = GetComponentId<cmd_test::Armor>();
 
@@ -178,7 +179,7 @@ AETHER_TEST(Commands_AddAndRemoveComponent) {
     AETHER_CHECK(f.world.GetComponent<cmd_test::Armor>(f.Live(guid))->rating == 77);
     f.stack.Undo(f.ctx); // undo the add
     AETHER_CHECK(!f.world.HasComponentRaw(f.Live(guid), armor));
-    AETHER_CHECK(f.world.GetComponent<cmd_test::Health>(f.Live(guid))->current == 100.0f);
+    AETHER_CHECK(f.world.GetComponent<cmd_test::Vitals>(f.Live(guid))->current == 100.0f);
 }
 
 AETHER_TEST(Commands_EnsureAllGuidsFixesMissingAndDuplicates) {
@@ -197,7 +198,7 @@ AETHER_TEST(Commands_EnsureAllGuidsFixesMissingAndDuplicates) {
 AETHER_TEST(EntityInspector_EditsBecomeUndoableCommands) {
     HeadlessImGui ui;
     Fixture f;
-    Entity e = f.world.CreateEntity(cmd_test::Health{});
+    Entity e = f.world.CreateEntity(cmd_test::Vitals{});
     auto frame = [&](bool focus_first_field) {
         ui.Frame([&] {
             if (focus_first_field) {
@@ -210,7 +211,7 @@ AETHER_TEST(EntityInspector_EditsBecomeUndoableCommands) {
     EntityGuid guid = f.world.GetComponent<IdComponent>(e)->guid;
     AETHER_CHECK(!guid.IsNull() && f.stack.UndoCount() == 0);
 
-    // Type a value into Health.current and press Enter.
+    // Type a value into Vitals.current and press Enter.
     frame(true);
     frame(false);
     ImGui::GetIO().AddInputCharactersUTF8("250");
@@ -221,13 +222,75 @@ AETHER_TEST(EntityInspector_EditsBecomeUndoableCommands) {
     frame(false);
 
     Entity live = f.Live(guid);
-    AETHER_CHECK(f.world.GetComponent<cmd_test::Health>(live)->current == 250.0f);
+    AETHER_CHECK(f.world.GetComponent<cmd_test::Vitals>(live)->current == 250.0f);
     AETHER_CHECK(f.stack.UndoCount() == 1);
-    AETHER_CHECK(f.stack.UndoLabel() == "Edit Health.current");
+    AETHER_CHECK(f.stack.UndoLabel() == "Edit Vitals.current");
     AETHER_CHECK(f.log.field_changed >= 1); // the edit went through the command (and its hook)
 
     f.stack.Undo(f.ctx);
-    AETHER_CHECK(f.world.GetComponent<cmd_test::Health>(live)->current == 100.0f);
+    AETHER_CHECK(f.world.GetComponent<cmd_test::Vitals>(live)->current == 100.0f);
     frame(false); // drawing after undo shows the restored value and records nothing new
     AETHER_CHECK(f.stack.UndoCount() == 0 && f.stack.RedoCount() == 1);
+}
+
+AETHER_TEST(Commands_ReparentUndoRedo) {
+    Fixture f;
+    Entity a = f.world.CreateEntity(Transform{});
+    Entity b = f.world.CreateEntity(Transform{});
+    Entity c = f.world.CreateEntity(Transform{});
+    EntityGuid ga = EnsureGuid(f.world, a, &f.guids);
+    EntityGuid gb = EnsureGuid(f.world, b, &f.guids);
+    EntityGuid gc = EnsureGuid(f.world, c, &f.guids);
+
+    f.stack.Execute(f.ctx, std::make_unique<ReparentCommand>(gc, ga)); // c under a
+    AETHER_CHECK(GetParent(f.world, f.guids, f.Live(gc)) == f.Live(ga));
+    AETHER_CHECK(f.stack.UndoLabel() == "Parent");
+    f.stack.Execute(f.ctx, std::make_unique<ReparentCommand>(gc, gb)); // move c under b
+    AETHER_CHECK(GetParent(f.world, f.guids, f.Live(gc)) == f.Live(gb));
+    f.stack.Execute(f.ctx, std::make_unique<ReparentCommand>(gc, EntityGuid{})); // detach
+    AETHER_CHECK(!f.world.HasComponent<Parent>(f.Live(gc)));
+    AETHER_CHECK(f.stack.UndoLabel() == "Unparent");
+
+    f.stack.Undo(f.ctx);
+    AETHER_CHECK(GetParent(f.world, f.guids, f.Live(gc)) == f.Live(gb));
+    f.stack.Undo(f.ctx);
+    AETHER_CHECK(GetParent(f.world, f.guids, f.Live(gc)) == f.Live(ga));
+    f.stack.Undo(f.ctx);
+    AETHER_CHECK(!f.world.HasComponent<Parent>(f.Live(gc)));
+    f.stack.Redo(f.ctx);
+    f.stack.Redo(f.ctx);
+    AETHER_CHECK(GetParent(f.world, f.guids, f.Live(gc)) == f.Live(gb));
+
+    // Deleting the parent and undoing re-attaches the child with no fix-up.
+    f.stack.Execute(f.ctx, std::make_unique<DestroyEntityCommand>(gb));
+    AETHER_CHECK(GetParent(f.world, f.guids, f.Live(gc)).IsNull());
+    f.stack.Undo(f.ctx);
+    AETHER_CHECK(GetParent(f.world, f.guids, f.Live(gc)) == f.Live(gb));
+}
+
+AETHER_TEST(Commands_CommitFieldEditTurnsInPlaceEditsIntoOneUndoStep) {
+    Fixture f;
+    Entity e = f.world.CreateEntity(Transform{Vec3(1, 2, 3), Quaternion::Identity()});
+    EntityGuid guid = EnsureGuid(f.world, e, &f.guids);
+    const ComponentId transform = GetComponentId<Transform>();
+    const reflect::FieldInfo& position = *reflect::Reflect<Transform>().FindField("position");
+
+    // A "gizmo drag": the widget moves the value in place each frame.
+    for (int frame = 1; frame <= 5; ++frame) {
+        Transform* t = f.world.GetComponent<Transform>(f.Live(guid));
+        reflect::Any before = position.Get(t);
+        t->position.x = 1.0f + static_cast<f32>(frame);
+        CommitFieldEdit(f.ctx, f.stack, guid, transform, position, t, before, /*committed=*/frame == 5);
+    }
+    AETHER_CHECK(f.world.GetComponent<Transform>(f.Live(guid))->position.x == 6.0f);
+    AETHER_CHECK(f.stack.UndoCount() == 1 && f.stack.UndoLabel() == "Edit Transform.position");
+    AETHER_CHECK(f.log.field_changed == 5); // hooks saw every step (e.g. to move a physics body)
+
+    // An unchanged value records nothing.
+    Transform* t = f.world.GetComponent<Transform>(f.Live(guid));
+    AETHER_CHECK(!CommitFieldEdit(f.ctx, f.stack, guid, transform, position, t, position.Get(t), true));
+    AETHER_CHECK(f.stack.UndoCount() == 1);
+
+    f.stack.Undo(f.ctx);
+    AETHER_CHECK(f.world.GetComponent<Transform>(f.Live(guid))->position.x == 1.0f);
 }

@@ -1,6 +1,7 @@
 #include "core/commands.h"
 
 #include "aether/core/log.h"
+#include "aether/reflection/serialize.h"
 
 namespace aether::editor {
 
@@ -225,6 +226,51 @@ void RemoveComponentCommand::Undo(CommandContext& ctx) {
 
 std::string RemoveComponentCommand::Label() const {
     return std::string("Remove ") + ComponentName(component_);
+}
+
+// ---------------------------------------------------------------------------
+// ReparentCommand
+// ---------------------------------------------------------------------------
+
+ReparentCommand::ReparentCommand(EntityGuid entity, EntityGuid new_parent)
+    : entity_(entity), new_parent_(new_parent) {}
+
+void ReparentCommand::Attach(CommandContext& ctx, bool has_parent, const EntityGuid& parent) {
+    Entity entity = Resolve(ctx, entity_);
+    if (has_parent) {
+        ctx.world.AddComponent(entity, Parent{parent}); // adds, or overwrites an existing one
+    } else {
+        ctx.world.RemoveComponent<Parent>(entity);
+    }
+}
+
+void ReparentCommand::Do(CommandContext& ctx) {
+    const Parent* current = ctx.world.GetComponent<Parent>(Resolve(ctx, entity_));
+    had_parent_ = current != nullptr;
+    old_parent_ = current != nullptr ? current->parent : EntityGuid{};
+    Attach(ctx, !new_parent_.IsNull(), new_parent_);
+}
+
+void ReparentCommand::Undo(CommandContext& ctx) { Attach(ctx, had_parent_, old_parent_); }
+
+std::string ReparentCommand::Label() const { return new_parent_.IsNull() ? "Unparent" : "Parent"; }
+
+bool CommitFieldEdit(CommandContext& ctx, CommandStack& stack, const EntityGuid& entity, ComponentId component,
+                     const reflect::FieldInfo& field, void* component_data, const reflect::Any& old_value,
+                     bool committed) {
+    bool executed = false;
+    const void* current = field.Ptr(component_data);
+    if (reflect::ToJson(*field.type, old_value.Data()) != reflect::ToJson(*field.type, current)) {
+        reflect::Any new_value = field.Get(component_data);
+        field.Set(component_data, old_value); // the command re-applies it (and fires hooks)
+        stack.Execute(ctx, std::make_unique<SetFieldCommand>(entity, component, field, old_value, std::move(new_value)),
+                      MergePolicy::Allow);
+        executed = true;
+    }
+    if (committed) {
+        stack.BreakMergeChain();
+    }
+    return executed;
 }
 
 usize EnsureAllGuids(World& world, GuidIndex& guids) {
