@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 done on the engine side (asset system; prefabs and scheduling); their editor UI, and Phase 7's, pending a Windows build. Next: Phase 10 — Input
+## Status: Phases 8–9 done on the engine side (asset system; prefabs and scheduling); their editor UI, and Phase 7's, pending a Windows build. Now: Phase 10 — Input (in progress)
 
 ### Phase 1 — Foundation
 
@@ -2233,6 +2233,55 @@ Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 9.
 With this, Phase 9 is done on the engine side. Its editor parts (prefab
 edit mode, the Apply button, the warnings in the Messages panel) wait for
 the Windows build along with the Phase 7 and 8 editor work.
+
+### Phase 10 (in progress) — Input
+
+Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 10.
+
+**Step 1: action mapping** (`input/keys.h`, `input/actions.h`).
+
+- **`Key`** covers keyboard, mouse buttons, mouse movement and wheel,
+  gamepad buttons, sticks and triggers. Keys are saved by name (`"W"`,
+  `"GamepadA"`).
+- **`InputState`** is the raw device layer. The platform feeds it, and so
+  can tests with synthetic events. Mouse movement accumulates over a frame,
+  and `EndFrame` resets it.
+- **Actions and mapping contexts** (Unreal Enhanced Input style):
+  - An `InputAction` has a name and a value type (Bool, Axis1D/2D/3D).
+  - An `InputMappingContext` binds keys to actions.
+  - **Modifiers**: dead zone, negate, swizzle, scale. WASD becomes one 2D
+    Move axis this way.
+  - **Triggers**: Down, Pressed, Released, Hold (once or repeating), Tap,
+    DoubleTap, and Chord (for example, W sprints only while Shift is
+    held).
+- **Context stack with priorities**: a vehicle context's Space can mean
+  Brake, hiding the on-foot Jump, and a UI context can block gameplay
+  entirely. A key lost to a higher context resets quietly, so closing a
+  menu doesn't fire spurious Released or Completed events.
+- **Reading actions**: `GetBool` / `GetAxis1D` / `GetAxis2D` / `GetAxis3D`,
+  and events (Started, Ongoing, Triggered, Completed, Canceled) through
+  `Subscribe`. The event names match what the Blueprint nodes will expose.
+- All input types are reflected, so mapping contexts save as readable JSON.
+- Still to come: input assets, rebinding (step 2), the Win32 and XInput
+  backends (step 3), and the editor (step 4).
+
+**Verified**: 6 new tests, all on synthetic device events (the phase's
+"done when").
+
+- **Device state**: key names and resetting deltas.
+- **Modifiers**: WASD to 2D, keys cancelling out, a stick through a dead
+  zone and scale, and swizzle orders.
+- **Triggers**, over 0.1 s frames:
+  - Pressed and Released.
+  - Hold firing on the 6th frame and completing while still held.
+    Released early, it's canceled. A repeating hold fires every frame.
+  - Tap, fast and too slow; DoubleTap, fast and too slow; Chord.
+- **Context stack**: consuming, non-consuming, UI blocking with no
+  spurious events afterwards, mouse movement as an axis, and
+  subscriptions.
+- **JSON**: a mapping context round-trips byte for byte.
+- 185/185 tests pass on GCC 13, on Clang and under ASan/UBSan, and 192/192
+  with physics.
 
 ## Building
 
