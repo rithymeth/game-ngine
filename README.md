@@ -519,13 +519,12 @@ parsed via `nlohmann::json` (`FetchContent`-fetched — a real, well-tested
 parser rather than a hand-rolled one just for this), vertex data resolved
 from either an external `.bin` file (relative to the `.gltf` path) or an
 embedded `data:` base64 URI (own base64 decoder, ~30 lines). Scope:
-POSITION/NORMAL/TEXCOORD_0 attributes, indexed triangle-mode primitives, and
+POSITION/NORMAL/TEXCOORD_0 attributes, indexed triangle-mode primitives,
 `pbrMetallicRoughness` materials with file-URI textures — a direct match for
 the engine's own PBR metallic-roughness workflow (`pbr_demo`), so no
-material-model conversion is needed. Not handled: the node hierarchy/
-transform tree (every primitive loads as if it were the scene's only node),
-skinning/animation, embedded (data-URI) images, and non-metallic-roughness
-material extensions.
+material-model conversion is needed — and the node hierarchy/transform tree
+(see below). Not handled: skinning/animation, embedded (data-URI) images, and
+non-metallic-roughness material extensions.
 
 Verified two ways: unit tests (`tests/test_gltf_loader.cpp`) against a
 hand-built triangle asset with an embedded base64 buffer (exact
@@ -543,6 +542,40 @@ instead of the intended 102) by actually running the test and getting a
 specific, localized `CHECK failed: prim.indices[1] == 1` rather than
 silently trusting the payload was correct — regenerated it programmatically
 instead of re-editing it by hand.
+
+#### Follow-up: node hierarchy / multi-node scenes
+
+`LoadGltf` now walks the glTF `nodes`/`scenes` tree instead of treating every
+primitive as if it were the scene's only object. Each node's local transform
+comes from either a `matrix` (16 floats, column-major — matches
+`aether::Mat4`'s own layout exactly, so it's a straight `memcpy`) or TRS
+fields (`translation`/`rotation`/`scale`, each defaulting per spec when
+absent; local = T·R·S). The tree is walked iteratively (explicit stack, not
+recursion, to avoid stack-overflow risk on deep hierarchies), composing
+`world = parent_world * local` — parent-then-child order, which matters
+because these compositions don't commute — and flattened into
+`GltfScene::node_instances`: a flat list of `{mesh_index, world_transform}`
+pairs. A renderer just iterates that list and draws each mesh with its
+resolved world transform; it never needs to walk the tree itself. A glTF file
+with no `scenes`/`scene` array at all (rare, but technically spec-valid)
+falls back to treating every node that isn't referenced as another node's
+child as an implicit root.
+
+Verified with 3 new unit tests (`tests/test_gltf_loader.cpp`): one uses a
+non-commuting scale-then-translate pair specifically so an accidentally
+reversed multiplication order (`child * parent` instead of
+`parent * child`) would produce a different, wrong world position and get
+caught — pure translations would happen to pass either way, so they wouldn't
+actually test the order. The other two cover multiple root nodes sharing one
+mesh, and the no-`scenes`-array root-detection fallback. 75/75 tests overall.
+
+`gltf_demo` renders `assets/models/test_scene.gltf`, a hand-built 4-node
+hierarchy (a root translated node with two children, one of which itself has
+a child) producing 3 cube instances at different, hierarchy-derived world
+positions — confirmed by an actual screenshot showing three checkered cubes
+at distinct positions, one visibly offset from and near its parent rather
+than at the origin, not just asserted from the code. Verified stable across
+6 quick runs plus one 2000-frame run.
 
 ### Follow-up: material system (`aether::gfx::MaterialData`/`LoadMaterial`)
 

@@ -145,3 +145,91 @@ AETHER_TEST(Gltf_MaterialDefaultsMatchSpecWhenFieldsOmitted) {
 
     std::filesystem::remove(path);
 }
+
+AETHER_TEST(Gltf_NodeHierarchyComposesParentThenChildTransform) {
+    // Root: scale x2, no mesh. Child: translate (1,0,0), references mesh 0
+    // (an empty mesh — geometry is irrelevant to this test, only the
+    // resulting world transform is). If composition order were wrong
+    // (child * parent instead of parent * child), the mesh-local origin
+    // would land at world (1,0,0) instead of the correct (2,0,0) — scale
+    // and translation don't commute, unlike two pure translations, so this
+    // genuinely distinguishes the two orders rather than passing either way.
+    constexpr const char* kHierarchyGltf = R"({
+      "asset": {"version": "2.0"},
+      "meshes": [ {"primitives": []} ],
+      "nodes": [
+        {"scale": [2.0, 2.0, 2.0], "children": [1]},
+        {"translation": [1.0, 0.0, 0.0], "mesh": 0}
+      ],
+      "scenes": [ {"nodes": [0]} ],
+      "scene": 0
+    })";
+    std::string path = WriteTempGltf("aether_test_hierarchy.gltf", kHierarchyGltf);
+
+    GltfScene scene;
+    AETHER_CHECK(LoadGltf(path, scene));
+    AETHER_CHECK(scene.node_instances.size() == 1);
+    AETHER_CHECK(scene.node_instances[0].mesh_index == 0);
+
+    const Vec4& world_origin = scene.node_instances[0].world_transform.cols[3];
+    AETHER_CHECK(std::abs(world_origin.x - 2.0f) < 1e-5f);
+    AETHER_CHECK(std::abs(world_origin.y - 0.0f) < 1e-5f);
+    AETHER_CHECK(std::abs(world_origin.z - 0.0f) < 1e-5f);
+
+    std::filesystem::remove(path);
+}
+
+AETHER_TEST(Gltf_NodeHierarchyMultipleMeshInstances) {
+    constexpr const char* kMultiInstanceGltf = R"({
+      "asset": {"version": "2.0"},
+      "meshes": [ {"primitives": []} ],
+      "nodes": [
+        {"mesh": 0, "translation": [-5.0, 0.0, 0.0]},
+        {"mesh": 0, "translation": [5.0, 0.0, 0.0]}
+      ],
+      "scenes": [ {"nodes": [0, 1]} ],
+      "scene": 0
+    })";
+    std::string path = WriteTempGltf("aether_test_multi_instance.gltf", kMultiInstanceGltf);
+
+    GltfScene scene;
+    AETHER_CHECK(LoadGltf(path, scene));
+    AETHER_CHECK(scene.node_instances.size() == 2);
+
+    bool found_left = false;
+    bool found_right = false;
+    for (const auto& instance : scene.node_instances) {
+        AETHER_CHECK(instance.mesh_index == 0);
+        f32 x = instance.world_transform.cols[3].x;
+        if (std::abs(x - -5.0f) < 1e-5f) found_left = true;
+        if (std::abs(x - 5.0f) < 1e-5f) found_right = true;
+    }
+    AETHER_CHECK(found_left);
+    AETHER_CHECK(found_right);
+
+    std::filesystem::remove(path);
+}
+
+AETHER_TEST(Gltf_NoScenesArrayFallsBackToNonChildNodesAsRoots) {
+    // No "scenes"/"scene" at all (technically valid glTF) — every node that
+    // isn't referenced as another node's child should be treated as a root.
+    // Node 0 is a child of node 1, so only node 1 (and transitively node 0
+    // under it) should be walked; node 0 must NOT also be walked a second
+    // time as a spurious extra root.
+    constexpr const char* kNoScenesGltf = R"({
+      "asset": {"version": "2.0"},
+      "meshes": [ {"primitives": []} ],
+      "nodes": [
+        {"mesh": 0},
+        {"translation": [3.0, 0.0, 0.0], "children": [0]}
+      ]
+    })";
+    std::string path = WriteTempGltf("aether_test_no_scenes.gltf", kNoScenesGltf);
+
+    GltfScene scene;
+    AETHER_CHECK(LoadGltf(path, scene));
+    AETHER_CHECK(scene.node_instances.size() == 1);
+    AETHER_CHECK(std::abs(scene.node_instances[0].world_transform.cols[3].x - 3.0f) < 1e-5f);
+
+    std::filesystem::remove(path);
+}

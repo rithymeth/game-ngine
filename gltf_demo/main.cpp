@@ -302,7 +302,7 @@ int main() {
 
     try {
         assets::GltfScene scene;
-        std::string gltf_path = std::string(AETHER_ASSET_DIR) + "models/test_textured_cube.gltf";
+        std::string gltf_path = std::string(AETHER_ASSET_DIR) + "models/test_scene.gltf";
         if (!assets::LoadGltf(gltf_path, scene)) {
             AETHER_LOG_FATAL("GltfDemo", "Failed to load \"%s\"", gltf_path.c_str());
             return 1;
@@ -311,9 +311,15 @@ int main() {
             AETHER_LOG_FATAL("GltfDemo", "Loaded glTF has no renderable primitives");
             return 1;
         }
+        if (scene.node_instances.empty()) {
+            // Fall back to a single identity-transform instance, for a glTF
+            // with meshes but no node/scene graph at all (e.g. the
+            // single-cube test assets from before this follow-up).
+            scene.node_instances.push_back({0, Mat4::Identity()});
+        }
         const assets::GltfPrimitive& primitive = scene.meshes[0].primitives[0];
-        AETHER_LOG_INFO("GltfDemo", "Loaded mesh: %zu vertices, %zu indices", primitive.vertices.size(),
-                         primitive.indices.size());
+        AETHER_LOG_INFO("GltfDemo", "Loaded mesh: %zu vertices, %zu indices, %zu node instance(s)",
+                         primitive.vertices.size(), primitive.indices.size(), scene.node_instances.size());
 
         WindowDesc window_desc;
         window_desc.title = "Aether glTF Demo";
@@ -424,18 +430,12 @@ int main() {
             cmd.Reset();
 
             t += 0.01f;
-            Vec3 camera_pos(std::sin(t) * 3.0f, 1.5f, std::cos(t) * 3.0f);
+            Vec3 camera_pos(std::sin(t) * 6.5f, 2.5f, std::cos(t) * 6.5f);
             Mat4 view = Mat4::LookAtRH(camera_pos, Vec3(0, 0, 0), Vec3(0, 1, 0));
             Mat4 proj = Mat4::PerspectiveRH(
                 Radians(50.0f), static_cast<f32>(swap_chain.Width()) / static_cast<f32>(swap_chain.Height()), 0.1f,
                 100.0f);
-            Mat4 model = Mat4::Identity();
-
-            FrameConstants frame_constants{};
-            frame_constants.mvp = proj * view * model;
-            frame_constants.model = model;
-            frame_constants.camera_pos = camera_pos;
-            frame_constants.light_dir = Vec3(-0.4f, -0.8f, -0.3f).Normalized();
+            Mat4 view_proj = proj * view;
 
             ID3D12Resource* back_buffer = swap_chain.CurrentBackBuffer();
             RenderGraph::ResourceHandle backbuffer_handle =
@@ -464,15 +464,28 @@ int main() {
 
                     cl->SetPipelineState(pso.Get());
                     cl->SetGraphicsRootSignature(root_signature.Get());
-                    cl->SetGraphicsRoot32BitConstants(0, sizeof(FrameConstants) / 4, &frame_constants, 0);
-                    cl->SetGraphicsRoot32BitConstants(1, sizeof(MaterialData) / 4, &material, 0);
                     ID3D12DescriptorHeap* heaps[] = {bindless_heap.Heap()};
                     cl->SetDescriptorHeaps(1, heaps);
                     cl->SetGraphicsRootDescriptorTable(2, bindless_heap.GPUHandle(0));
+                    cl->SetGraphicsRoot32BitConstants(1, sizeof(MaterialData) / 4, &material, 0);
                     cl->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
                     cl->IASetVertexBuffers(0, 1, &vbv);
                     cl->IASetIndexBuffer(&ibv);
-                    cl->DrawIndexedInstanced(static_cast<UINT>(primitive.indices.size()), 1, 0, 0, 0);
+
+                    // One draw per node instance (root constants are cheap
+                    // to re-set between draws on the same command list) —
+                    // this is what actually exercises the node hierarchy:
+                    // three cubes, one mesh, three different world
+                    // transforms coming straight out of GltfScene::node_instances.
+                    for (const assets::GltfNodeInstance& instance : scene.node_instances) {
+                        FrameConstants frame_constants{};
+                        frame_constants.model = instance.world_transform;
+                        frame_constants.mvp = view_proj * instance.world_transform;
+                        frame_constants.camera_pos = camera_pos;
+                        frame_constants.light_dir = Vec3(-0.4f, -0.8f, -0.3f).Normalized();
+                        cl->SetGraphicsRoot32BitConstants(0, sizeof(FrameConstants) / 4, &frame_constants, 0);
+                        cl->DrawIndexedInstanced(static_cast<UINT>(primitive.indices.size()), 1, 0, 0, 0);
+                    }
                 });
 
             graph.Execute(cmd.Get(), nullptr);

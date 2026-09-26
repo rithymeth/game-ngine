@@ -1,6 +1,7 @@
 #include "aether/assets/gltf_loader.h"
 
 #include "aether/core/log.h"
+#include "aether/math/quaternion.h"
 #include "aether/platform/filesystem.h"
 
 #include <nlohmann/json.hpp>
@@ -208,6 +209,122 @@ u32 ReadIndex(const AccessorInfo& info, usize index) {
     }
 }
 
+// A node's local transform is either an explicit 4x4 "matrix" (glTF stores
+// it column-major, 16 floats — the exact same layout aether::Mat4 itself
+// uses, hence the direct memcpy) or composed from TRS (translation/
+// rotation/scale) fields, each defaulting per the spec to identity/zero/one
+// when absent. glTF's TRS-to-matrix order is T * R * S (scale applied
+// first, then rotate, then translate).
+Mat4 ParseNodeLocalTransform(const Json& node_json) {
+    if (node_json.contains("matrix")) {
+        const Json& matrix_json = node_json["matrix"];
+        f32 values[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        for (usize i = 0; i < 16 && i < matrix_json.size(); ++i) {
+            values[i] = matrix_json[i].get<f32>();
+        }
+        Mat4 result;
+        std::memcpy(&result, values, sizeof(values));
+        return result;
+    }
+
+    Vec3 translation(0.0f, 0.0f, 0.0f);
+    if (node_json.contains("translation")) {
+        const Json& t = node_json["translation"];
+        translation = Vec3(t[0].get<f32>(), t[1].get<f32>(), t[2].get<f32>());
+    }
+    Quaternion rotation = Quaternion::Identity();
+    if (node_json.contains("rotation")) {
+        const Json& r = node_json["rotation"];
+        rotation = Quaternion(r[0].get<f32>(), r[1].get<f32>(), r[2].get<f32>(), r[3].get<f32>());
+    }
+    Vec3 scale(1.0f, 1.0f, 1.0f);
+    if (node_json.contains("scale")) {
+        const Json& s = node_json["scale"];
+        scale = Vec3(s[0].get<f32>(), s[1].get<f32>(), s[2].get<f32>());
+    }
+
+    return Mat4::Translation(translation) * rotation.ToMat4() * Mat4::Scale(scale);
+}
+
+// Walks the node tree from the default scene's roots (or, if the file has
+// no "scenes" array at all, every node that isn't referenced as another
+// node's child), accumulating world = parent_world * local per node, and
+// records one GltfNodeInstance per mesh-carrying node — the flattened
+// result a renderer actually needs, rather than exposing the tree itself.
+// Iterative (an explicit stack), not recursive, so a pathologically deep
+// hierarchy can't blow the call stack.
+void ParseNodeInstances(const Json& gltf, GltfScene& out_scene) {
+    if (!gltf.contains("nodes")) {
+        return;
+    }
+    const Json& nodes_json = gltf["nodes"];
+    usize node_count = nodes_json.size();
+
+    std::vector<Mat4> local_transforms(node_count);
+    std::vector<std::vector<usize>> children(node_count);
+    std::vector<i32> mesh_indices(node_count, -1);
+    std::vector<bool> is_child(node_count, false);
+
+    for (usize i = 0; i < node_count; ++i) {
+        const Json& node_json = nodes_json[i];
+        local_transforms[i] = ParseNodeLocalTransform(node_json);
+        if (node_json.contains("mesh")) {
+            mesh_indices[i] = node_json["mesh"].get<i32>();
+        }
+        if (node_json.contains("children")) {
+            for (const auto& child_ref : node_json["children"]) {
+                usize child_index = child_ref.get<usize>();
+                if (child_index < node_count) {
+                    children[i].push_back(child_index);
+                    is_child[child_index] = true;
+                }
+            }
+        }
+    }
+
+    std::vector<usize> roots;
+    if (gltf.contains("scenes") && !gltf["scenes"].empty()) {
+        usize scene_index = gltf.value("scene", static_cast<usize>(0));
+        if (scene_index >= gltf["scenes"].size()) {
+            scene_index = 0;
+        }
+        if (gltf["scenes"][scene_index].contains("nodes")) {
+            for (const auto& root_ref : gltf["scenes"][scene_index]["nodes"]) {
+                usize root_index = root_ref.get<usize>();
+                if (root_index < node_count) {
+                    roots.push_back(root_index);
+                }
+            }
+        }
+    } else {
+        for (usize i = 0; i < node_count; ++i) {
+            if (!is_child[i]) {
+                roots.push_back(i);
+            }
+        }
+    }
+
+    struct StackEntry {
+        usize node_index;
+        Mat4 parent_world;
+    };
+    std::vector<StackEntry> stack;
+    for (usize root : roots) {
+        stack.push_back({root, Mat4::Identity()});
+    }
+    while (!stack.empty()) {
+        StackEntry entry = stack.back();
+        stack.pop_back();
+        Mat4 world = entry.parent_world * local_transforms[entry.node_index];
+        if (mesh_indices[entry.node_index] >= 0) {
+            out_scene.node_instances.push_back({static_cast<usize>(mesh_indices[entry.node_index]), world});
+        }
+        for (usize child : children[entry.node_index]) {
+            stack.push_back({child, world});
+        }
+    }
+}
+
 } // namespace
 
 bool LoadGltf(const std::string& path, GltfScene& out_scene) {
@@ -368,8 +485,10 @@ bool LoadGltf(const std::string& path, GltfScene& out_scene) {
         }
     }
 
-    AETHER_LOG_INFO("glTF", "Loaded \"%s\": %zu mesh(es), %zu material(s)", path.c_str(), out_scene.meshes.size(),
-                     out_scene.materials.size());
+    ParseNodeInstances(gltf, out_scene);
+
+    AETHER_LOG_INFO("glTF", "Loaded \"%s\": %zu mesh(es), %zu material(s), %zu node instance(s)", path.c_str(),
+                     out_scene.meshes.size(), out_scene.materials.size(), out_scene.node_instances.size());
     return true;
 }
 
