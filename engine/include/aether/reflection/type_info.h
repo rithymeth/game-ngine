@@ -131,6 +131,10 @@ struct TypeInfo {
     // order ([1, 2, 3]) instead of an object. Used for small math types; set
     // by specializing detail::kSerializeAsArray<T>.
     bool serialize_as_array = false;
+    // Non-null for asset references (assets::AssetRef<T>): the importer name
+    // of the asset type they point at ("Model", "Texture", ...). Lets the
+    // editor draw an asset picker instead of the raw GUID.
+    const char* asset_type = nullptr;
 
     std::vector<FieldInfo> fields;       // Struct only, declaration order
     std::vector<FunctionInfo> functions; // Struct only, declaration order

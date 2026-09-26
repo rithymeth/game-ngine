@@ -42,6 +42,7 @@ struct AssetRecord {
     std::string source_hash; // current hash of the source file ("" if missing)
     bool missing = false;    // .ameta exists but its source doesn't
     bool needs_import = false; // source changed since it was last imported (or never imported)
+    std::vector<AssetGuid> dependencies; // assets this one refers to (scenes, prefabs), sorted
 };
 
 struct ScanResult {
@@ -69,6 +70,7 @@ public:
     // - A source whose hash differs from its .ameta's is marked needs_import.
     // - An unreadable .ameta (e.g. a merge conflict) is left untouched and its
     //   asset skipped, with a warning: replacing it would lose the GUID.
+    // - Scenes and prefabs are searched for the asset GUIDs they refer to.
     // Hidden files and folders (starting with '.') are skipped.
     ScanResult Scan();
 
@@ -85,12 +87,25 @@ public:
     // hash into the .ameta, clearing needs_import).
     bool MarkImported(const AssetGuid& guid, std::string* error = nullptr);
 
+    // Assets that refer to `guid` (the reverse of AssetRecord::dependencies),
+    // sorted by path. Dependencies are found by Scan: every scene and prefab
+    // file (JSON or binary) is searched for asset GUID strings, which is how
+    // AssetRef fields are saved.
+    std::vector<const AssetRecord*> Referencers(const AssetGuid& guid) const;
+
+    // Deletes an asset's source and .ameta. Refused while other assets refer
+    // to it (the error names them), unless `force`.
+    bool Delete(const AssetGuid& guid, bool force, std::string* error = nullptr);
+
     const std::filesystem::path& ContentRoot() const { return root_; }
 
 private:
     std::filesystem::path Absolute(const std::string& relative) const { return root_ / relative; }
 
+    void RebuildDependencies();
+
     std::filesystem::path root_;
+    std::unordered_map<AssetGuid, std::vector<AssetGuid>> referencers_;
     std::unordered_map<AssetGuid, AssetRecord> records_;
     std::unordered_map<std::string, AssetGuid> by_path_;
 };

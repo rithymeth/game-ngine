@@ -77,3 +77,39 @@ AETHER_TEST(ProjectSettings_DrawInTheInspectorHeadless) {
     AETHER_CHECK(settings.plugins.size() == 2 && settings.layers.size() == 2);
     ImGui::DestroyContext(context);
 }
+
+#include "aether/assets/asset_ref.h"
+#include "aether/scene/components.h"
+
+AETHER_TEST(Inspector_AssetRefFieldsUseTheProviderHeadless) {
+    ImGuiContext* context = ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.IniFilename = nullptr;
+    io.DisplaySize = ImVec2(1024, 768);
+    io.DeltaTime = 1.0f / 60.0f;
+    unsigned char* pixels = nullptr;
+    int w = 0, h = 0;
+    io.Fonts->GetTexDataAsRGBA32(&pixels, &w, &h);
+
+    const aether::assets::AssetGuid crate = aether::assets::NewAssetGuid();
+    int provider_calls = 0;
+    std::string asked_for;
+    aether::editor::SetAssetListProvider([&](const char* asset_type) {
+        ++provider_calls;
+        asked_for = asset_type;
+        return std::vector<aether::editor::AssetChoice>{{crate, "models/crate.gltf"}};
+    });
+
+    aether::ModelRenderer renderer;
+    renderer.model.guid = crate;
+    for (int frame = 0; frame < 2; ++frame) {
+        ImGui::NewFrame();
+        ImGui::Begin("Inspector");
+        AETHER_CHECK(!aether::editor::InspectObject(renderer, "model").Changed());
+        ImGui::End();
+        ImGui::Render();
+    }
+    AETHER_CHECK(provider_calls == 2 && asked_for == "Model"); // asked for Model assets, once per frame
+    aether::editor::SetAssetListProvider(nullptr);
+    ImGui::DestroyContext(context);
+}

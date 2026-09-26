@@ -121,6 +121,9 @@ void ApplyComponent(void* dst, const ComponentInfo& info, const PendingComponent
             std::memcpy(dst, pending.data.data(), info.size);
             return;
         }
+        if (info.legacy_raw_load != nullptr && info.legacy_raw_load(dst, pending.data.data(), pending.data.size())) {
+            return;
+        }
         AETHER_LOG_WARN("Scene",
                         "Component '%s' in %s was saved as raw bytes by an older build and its layout changed; "
                         "loaded with default values",

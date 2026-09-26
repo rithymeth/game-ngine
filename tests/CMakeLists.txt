@@ -14,6 +14,7 @@ add_executable(aether_tests
     test_reflection_arrays.cpp
     test_project.cpp
     test_asset_database.cpp
+    test_asset_refs.cpp
     test_assets.cpp
     test_gltf_loader.cpp
 )
