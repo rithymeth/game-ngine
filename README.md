@@ -1521,6 +1521,50 @@ were compiled together in a harness against the real headers, with no
 warnings. The editor executable itself still needs a Windows build to
 confirm.
 
+**Step 5: Play-in-Editor** (`editor/src/core/play_session.h`).
+
+- **Play** snapshots the edited level into memory (the binary scene format,
+  via the new `SaveSceneToMemory`/`LoadSceneFromMemory`) and freezes the
+  undo history.
+- **Stop** throws the played world away and rebuilds the level from the
+  snapshot. Everything that happened during play (physics, spawns,
+  deletions, Inspector edits) is undone exactly, and the pre-play undo
+  history still works.
+  - This restores in place instead of running a separate play world as the
+    spec describes. The result is the same for the user, and nothing that
+    holds a `World&` has to switch worlds.
+  - The hooks rebuild the Jolt bodies, and the selection carries over by
+    GUID.
+- **Pause, Resume and Step** (Step advances exactly one frame while paused).
+- **`CommandStack::SetFrozen`**: during play, commands still apply but
+  aren't recorded, and Undo/Redo do nothing.
+- **Editor**:
+  - The "Playing" checkbox is replaced by Play / Pause / Resume / Step / Stop
+    buttons, with Alt+P to play or pause and Esc to stop, plus a status line
+    saying play-time changes are discarded.
+  - Save and Load Scene are disabled while playing.
+  - **The editor now starts in edit mode**: nothing simulates until you press
+    Play. Before, the physics ran from launch. Set
+    `AETHER_EDITOR_AUTOPLAY=1` to start playing, for automated runs.
+- Not included yet: `BeginPlay`/`EndPlay` events (they arrive with
+  scripting in Phase 11) and the green PIE viewport border
+  (`docs/design/EDITOR_UI.md` §6.2).
+
+**Verified**: 3 new tests.
+
+- A full play session (moving, spawning, deleting, plus an index gap left by
+  earlier edits) is followed by Stop, and the level must save
+  **byte-identical** to before Play. The test also checks that hooks fired
+  and GUIDs and the hierarchy survived.
+- History is frozen during play and works again after Stop.
+- Pause and Step behave as described, and invalid transitions do nothing.
+- 115/115 tests pass on GCC 13, on Clang and under ASan/UBSan, and 122/122
+  with physics.
+- The new editor blocks (session, stop-with-selection, shortcuts, toolbar,
+  simulation gate, play/stop application) were compiled together in a
+  harness with no warnings. The editor executable still needs a Windows
+  build.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
