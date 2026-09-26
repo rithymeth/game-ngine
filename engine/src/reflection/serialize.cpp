@@ -1,5 +1,7 @@
 #include "aether/reflection/serialize.h"
 
+#include "aether/reflection/converters.h"
+
 #include "aether/core/log.h"
 
 #include <charconv>
@@ -7,6 +9,7 @@
 #include <cstring>
 #include <limits>
 #include <mutex>
+#include <shared_mutex>
 #include <unordered_map>
 
 namespace aether::reflect {
@@ -32,6 +35,32 @@ MigrationFn FindMigration(const TypeInfo& type) {
     std::lock_guard<std::mutex> lock(registry.mutex);
     auto it = registry.by_type.find(type.id);
     return it != registry.by_type.end() ? it->second : nullptr;
+}
+
+// ---------------------------------------------------------------------------
+// Custom JSON converters (converters.h)
+// ---------------------------------------------------------------------------
+
+struct ConverterRegistry {
+    std::shared_mutex mutex; // read on every value saved/loaded, written rarely
+    std::unordered_map<TypeId, std::pair<ToJsonConverter, FromJsonConverter>> by_type;
+};
+
+ConverterRegistry& Converters() {
+    static ConverterRegistry registry;
+    return registry;
+}
+
+const std::pair<ToJsonConverter, FromJsonConverter>* FindConverter(const TypeInfo& type) {
+    // Only structs can have converters (see RegisterJsonConverter), so the
+    // common scalar path never takes the lock.
+    if (type.kind != TypeKind::Struct) {
+        return nullptr;
+    }
+    ConverterRegistry& registry = Converters();
+    std::shared_lock<std::shared_mutex> lock(registry.mutex);
+    auto it = registry.by_type.find(type.id);
+    return it != registry.by_type.end() ? &it->second : nullptr;
 }
 
 // ---------------------------------------------------------------------------
@@ -104,6 +133,9 @@ double ShortestF32(f32 value) {
 // ---------------------------------------------------------------------------
 
 Json SaveValue(const TypeInfo& type, const void* ptr) {
+    if (const auto* converter = FindConverter(type)) {
+        return converter->first(ptr);
+    }
     switch (type.kind) {
     case TypeKind::Bool:
         return *static_cast<const bool*>(ptr);
@@ -262,6 +294,14 @@ bool LoadStruct(const TypeInfo& type, void* ptr, const Json& data, LoadContext& 
 }
 
 bool LoadValue(const TypeInfo& type, void* ptr, const Json& data, LoadContext& ctx, const std::string& path) {
+    if (const auto* converter = FindConverter(type)) {
+        if (!converter->second(data, ptr)) {
+            ctx.Warn(path, std::string("not a valid ") + type.name + " (found " + JsonTypeName(data) +
+                               "); kept the existing value");
+            return false;
+        }
+        return true;
+    }
     switch (type.kind) {
     case TypeKind::Bool:
         if (!data.is_boolean()) {
@@ -366,6 +406,13 @@ bool LoadBinary(const TypeInfo& type, void* object, std::span<const u8> bytes, L
         return false;
     }
     return FromJson(type, object, data, report);
+}
+
+void RegisterJsonConverter(const TypeInfo& type, ToJsonConverter to_json, FromJsonConverter from_json) {
+    AETHER_ASSERT(type.kind == TypeKind::Struct);
+    ConverterRegistry& registry = Converters();
+    std::unique_lock<std::shared_mutex> lock(registry.mutex);
+    registry.by_type[type.id] = {to_json, from_json};
 }
 
 void RegisterMigration(const TypeInfo& type, MigrationFn fn) {
