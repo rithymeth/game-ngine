@@ -146,6 +146,218 @@ std::vector<u8> GenerateBumpNormalMap(u32 size, f32 frequency, f32 strength) {
     return pixels;
 }
 
+// --------------------------------------------------------------------------
+// Environment cubemap + diffuse-irradiance convolution (image-based
+// lighting) and specular environment reflections.
+// --------------------------------------------------------------------------
+
+// Analytic sky: a horizon->zenith gradient plus a darker ground half,
+// evaluated directly as a function of direction — no image asset needed, and
+// (unlike the normal map's height field) there's no derivative to take here,
+// just a direct color function of `dir`.
+Vec3 SkyColor(Vec3 dir) {
+    dir = dir.Normalized();
+    f32 t = std::pow(std::max(dir.y, 0.0f), 0.5f);
+    Vec3 horizon(0.85f, 0.80f, 0.70f);
+    Vec3 zenith(0.15f, 0.35f, 0.75f);
+    Vec3 sky = horizon + (zenith - horizon) * t;
+    if (dir.y < 0.0f) {
+        f32 g = std::min(-dir.y * 2.0f, 1.0f);
+        Vec3 ground(0.20f, 0.18f, 0.15f);
+        sky = horizon + (ground - horizon) * g;
+    }
+    return sky;
+}
+
+// Standard D3D cubemap face-to-direction mapping (array slice order +X, -X,
+// +Y, -Y, +Z, -Z), (u,v) in [0,1) across each face.
+Vec3 CubeFaceDirection(u32 face, f32 u, f32 v) {
+    f32 s = 2.0f * u - 1.0f;
+    f32 t = 2.0f * v - 1.0f;
+    switch (face) {
+        case 0: return Vec3(1.0f, -t, -s);
+        case 1: return Vec3(-1.0f, -t, s);
+        case 2: return Vec3(s, 1.0f, t);
+        case 3: return Vec3(s, -1.0f, -t);
+        case 4: return Vec3(s, -t, 1.0f);
+        default: return Vec3(-s, -t, -1.0f);
+    }
+}
+
+std::vector<std::vector<u8>> GenerateSkyCubeFaces(u32 size) {
+    std::vector<std::vector<u8>> faces(6);
+    for (u32 face = 0; face < 6; ++face) {
+        std::vector<u8>& pixels = faces[face];
+        pixels.resize(static_cast<usize>(size) * size * 4);
+        for (u32 y = 0; y < size; ++y) {
+            for (u32 x = 0; x < size; ++x) {
+                f32 u = (static_cast<f32>(x) + 0.5f) / static_cast<f32>(size);
+                f32 v = (static_cast<f32>(y) + 0.5f) / static_cast<f32>(size);
+                Vec3 color = SkyColor(CubeFaceDirection(face, u, v));
+                u8* p = &pixels[(static_cast<usize>(y) * size + x) * 4];
+                p[0] = static_cast<u8>(std::min(color.x, 1.0f) * 255.0f);
+                p[1] = static_cast<u8>(std::min(color.y, 1.0f) * 255.0f);
+                p[2] = static_cast<u8>(std::min(color.z, 1.0f) * 255.0f);
+                p[3] = 255;
+            }
+        }
+    }
+    return faces;
+}
+
+// Diffuse-irradiance convolution: for each output texel's direction N,
+// integrates incoming radiance over the hemisphere around N, cosine-weighted
+// (the standard diffuse-irradiance formula, matching the widely-used
+// LearnOpenGL IBL derivation — same "textbook reference" approach as the
+// BRDF and the normal-map derivative above). Evaluated directly against the
+// analytic SkyColor() function rather than by texture-sampling the generated
+// cube faces — mathematically the same integral, since SkyColor *is* the
+// environment's radiance function; this just skips a redundant
+// texture-into-CPU round trip. Deliberately low resolution (this is a
+// low-frequency function by construction — convolving a whole hemisphere
+// erases all high-frequency detail) and done once at startup, not per-frame.
+std::vector<std::vector<u8>> GenerateIrradianceCubeFaces(u32 size) {
+    constexpr u32 kPhiSteps = 64;
+    constexpr u32 kThetaSteps = 16;
+
+    std::vector<std::vector<u8>> faces(6);
+    for (u32 face = 0; face < 6; ++face) {
+        std::vector<u8>& pixels = faces[face];
+        pixels.resize(static_cast<usize>(size) * size * 4);
+        for (u32 y = 0; y < size; ++y) {
+            for (u32 x = 0; x < size; ++x) {
+                f32 u = (static_cast<f32>(x) + 0.5f) / static_cast<f32>(size);
+                f32 v = (static_cast<f32>(y) + 0.5f) / static_cast<f32>(size);
+                Vec3 N = CubeFaceDirection(face, u, v).Normalized();
+
+                Vec3 up = std::abs(N.y) < 0.999f ? Vec3(0, 1, 0) : Vec3(1, 0, 0);
+                Vec3 right = up.Cross(N).Normalized();
+                up = N.Cross(right);
+
+                Vec3 irradiance(0.0f, 0.0f, 0.0f);
+                for (u32 pi = 0; pi < kPhiSteps; ++pi) {
+                    f32 phi = (static_cast<f32>(pi) / static_cast<f32>(kPhiSteps)) * 2.0f * kPi;
+                    for (u32 ti = 0; ti < kThetaSteps; ++ti) {
+                        f32 theta = (static_cast<f32>(ti) / static_cast<f32>(kThetaSteps)) * (kPi * 0.5f);
+                        f32 st = std::sin(theta);
+                        f32 ct = std::cos(theta);
+                        Vec3 tangent_sample(st * std::cos(phi), st * std::sin(phi), ct);
+                        Vec3 sample_dir = right * tangent_sample.x + up * tangent_sample.y + N * tangent_sample.z;
+                        irradiance = irradiance + SkyColor(sample_dir) * (ct * st);
+                    }
+                }
+                irradiance = irradiance * (kPi / static_cast<f32>(kPhiSteps * kThetaSteps));
+
+                u8* p = &pixels[(static_cast<usize>(y) * size + x) * 4];
+                p[0] = static_cast<u8>(std::min(irradiance.x, 1.0f) * 255.0f);
+                p[1] = static_cast<u8>(std::min(irradiance.y, 1.0f) * 255.0f);
+                p[2] = static_cast<u8>(std::min(irradiance.z, 1.0f) * 255.0f);
+                p[3] = 255;
+            }
+        }
+    }
+    return faces;
+}
+
+struct CubemapTexture {
+    ComPtr<ID3D12Resource> resource;
+    // Kept alive for the CubemapTexture's own lifetime rather than freed
+    // once the copy completes — same demo-scale trade-off gfx::Texture's
+    // upload_staging_ member documents (engine/include/aether/gfx/texture.h).
+    ComPtr<ID3D12Resource> upload_staging;
+    u32 srv_index = DescriptorHeap::kInvalidIndex;
+};
+
+// Uploads a 6-face RGBA8 cubemap — DescriptorHeap-allocated SRV, one
+// DEFAULT-heap resource with 6 array slices (one subresource per face, since
+// MipLevels=1), one UPLOAD-heap staging buffer sized for all 6 faces at
+// once. Mirrors gfx::Texture's single-face upload pattern
+// (engine/src/gfx/texture.cpp), generalized to 6 subresources.
+CubemapTexture CreateCubemapTexture(Device& device, DescriptorHeap& heap, ID3D12GraphicsCommandList* upload_cmd,
+                                     u32 face_size, const std::vector<std::vector<u8>>& faces) {
+    CubemapTexture result;
+
+    D3D12_HEAP_PROPERTIES default_heap{};
+    default_heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+    D3D12_RESOURCE_DESC tex_desc{};
+    tex_desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    tex_desc.Width = face_size;
+    tex_desc.Height = face_size;
+    tex_desc.DepthOrArraySize = 6;
+    tex_desc.MipLevels = 1;
+    tex_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    tex_desc.SampleDesc.Count = 1;
+    tex_desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+
+    AETHER_D3D_CHECK(device.Handle()->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &tex_desc,
+                                                               D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                                               IID_PPV_ARGS(&result.resource)));
+
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprints[6]{};
+    UINT num_rows[6]{};
+    UINT64 row_sizes[6]{};
+    UINT64 total_bytes = 0;
+    device.Handle()->GetCopyableFootprints(&tex_desc, 0, 6, 0, footprints, num_rows, row_sizes, &total_bytes);
+
+    D3D12_HEAP_PROPERTIES upload_heap{};
+    upload_heap.Type = D3D12_HEAP_TYPE_UPLOAD;
+
+    D3D12_RESOURCE_DESC upload_desc{};
+    upload_desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    upload_desc.Width = total_bytes;
+    upload_desc.Height = 1;
+    upload_desc.DepthOrArraySize = 1;
+    upload_desc.MipLevels = 1;
+    upload_desc.Format = DXGI_FORMAT_UNKNOWN;
+    upload_desc.SampleDesc.Count = 1;
+    upload_desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+    AETHER_D3D_CHECK(device.Handle()->CreateCommittedResource(&upload_heap, D3D12_HEAP_FLAG_NONE, &upload_desc,
+                                                               D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                               IID_PPV_ARGS(&result.upload_staging)));
+    ID3D12Resource* staging = result.upload_staging.Get();
+
+    u8* mapped = nullptr;
+    D3D12_RANGE no_read{0, 0};
+    AETHER_D3D_CHECK(staging->Map(0, &no_read, reinterpret_cast<void**>(&mapped)));
+    for (u32 face = 0; face < 6; ++face) {
+        for (u32 row = 0; row < face_size; ++row) {
+            std::memcpy(mapped + footprints[face].Offset + static_cast<u64>(row) * footprints[face].Footprint.RowPitch,
+                        faces[face].data() + static_cast<u64>(row) * face_size * 4, static_cast<usize>(face_size) * 4);
+        }
+    }
+    staging->Unmap(0, nullptr);
+
+    for (u32 face = 0; face < 6; ++face) {
+        D3D12_TEXTURE_COPY_LOCATION dst{};
+        dst.pResource = result.resource.Get();
+        dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        dst.SubresourceIndex = face;
+
+        D3D12_TEXTURE_COPY_LOCATION src{};
+        src.pResource = staging;
+        src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        src.PlacedFootprint = footprints[face];
+
+        upload_cmd->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    }
+
+    D3D12_RESOURCE_BARRIER barrier = TransitionBarrier(result.resource.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
+                                                        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    upload_cmd->ResourceBarrier(1, &barrier);
+
+    result.srv_index = heap.Allocate();
+    D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc{};
+    srv_desc.Format = tex_desc.Format;
+    srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+    srv_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srv_desc.TextureCube.MipLevels = 1;
+    device.Handle()->CreateShaderResourceView(result.resource.Get(), &srv_desc, heap.CPUHandle(result.srv_index));
+
+    return result;
+}
+
 // Cook-Torrance GGX/Smith/Schlick BRDF, standard metallic-roughness
 // workflow. Per-instance data (model matrix + material params) comes
 // through root constants (one draw call per sphere — this demo's scope is
@@ -178,6 +390,8 @@ cbuffer FrameConstants : register(b1) {
 };
 
 Texture2D g_NormalMap : register(t0);
+TextureCube g_EnvironmentMap : register(t1);
+TextureCube g_IrradianceMap : register(t2);
 SamplerState g_Sampler : register(s0);
 
 struct VSInput {
@@ -279,7 +493,23 @@ float4 PSMain(PSInput input) : SV_TARGET {
         Lo += (kD * g_Albedo / kPi + specular) * radiance * NdotL;
     }
 
-    float3 ambient = float3(0.03, 0.03, 0.03) * g_Albedo;
+    // Image-based lighting: diffuse from the precomputed irradiance
+    // convolution (aether::CreateCubemapTexture / GenerateIrradianceCubeFaces
+    // on the CPU, see the comment there), specular from a direct environment
+    // reflection off the base (non-convolved) cubemap. The roughness fade on
+    // the specular term is a deliberately simple stand-in for full
+    // split-sum/prefiltered-mip specular IBL (not implemented) — it fades
+    // reflections out for rough surfaces without actually blurring them.
+    float3 ambientFresnel = FresnelSchlick(max(dot(N, V), 0.0), F0);
+    float3 ambientKd = (1.0 - ambientFresnel) * (1.0 - g_Metallic);
+    float3 irradiance = g_IrradianceMap.Sample(g_Sampler, N).rgb;
+    float3 diffuseIBL = ambientKd * irradiance * g_Albedo;
+
+    float3 R = reflect(-V, N);
+    float3 envColor = g_EnvironmentMap.Sample(g_Sampler, R).rgb;
+    float3 specularIBL = envColor * ambientFresnel * (1.0 - g_Roughness * 0.9);
+
+    float3 ambient = diffuseIBL + specularIBL;
     float3 color = ambient + Lo;
 
     color = color / (color + 1.0); // Reinhard tonemap
@@ -317,9 +547,13 @@ struct FrameConstants {
 };
 
 ComPtr<ID3D12RootSignature> CreatePBRRootSignature(Device& device) {
+    // One contiguous range covering t0 (normal map), t1 (environment
+    // cubemap), t2 (irradiance cubemap) — a TextureCube SRV uses the same
+    // SRV descriptor range type as a Texture2D one, they only differ in the
+    // D3D12_SHADER_RESOURCE_VIEW_DESC used when the view itself is created.
     D3D12_DESCRIPTOR_RANGE normal_map_range{};
     normal_map_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-    normal_map_range.NumDescriptors = 1;
+    normal_map_range.NumDescriptors = 3;
     normal_map_range.BaseShaderRegister = 0;
     normal_map_range.RegisterSpace = 0;
     normal_map_range.OffsetInDescriptorsFromTableStart = 0;
@@ -546,13 +780,18 @@ int main() {
         constexpr u32 kGridSize = 7;
         Buffer frame_constants_buffer(device, sizeof(FrameConstants), BufferKind::Upload);
 
-        // A single non-bindless SRV heap just for the normal map — this demo
-        // has exactly one texture, so the full bindless-heap machinery
-        // sandbox/ uses would be pure overhead here.
-        DescriptorHeap texture_heap(device, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, /*capacity=*/1,
+        // A single non-bindless SRV heap for this demo's three textures —
+        // normal map (t0), environment cubemap (t1), irradiance cubemap
+        // (t2). Allocation order matters: the root signature binds all three
+        // as one contiguous descriptor-table range starting at this heap's
+        // index 0, so they must land at heap indices 0/1/2 in exactly that
+        // order (not sandbox's bindless heap — one texture per fixed slot).
+        DescriptorHeap texture_heap(device, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, /*capacity=*/3,
                                      /*shader_visible=*/true);
 
         std::vector<u8> normal_map_pixels = GenerateBumpNormalMap(256, /*frequency=*/6.0f, /*strength=*/2.5f);
+        std::vector<std::vector<u8>> sky_faces = GenerateSkyCubeFaces(128);
+        std::vector<std::vector<u8>> irradiance_faces = GenerateIrradianceCubeFaces(16);
 
         std::vector<std::unique_ptr<CommandList>> command_lists;
         std::vector<u64> frame_fences(swap_chain.BufferCount(), 0);
@@ -560,11 +799,17 @@ int main() {
             command_lists.push_back(std::make_unique<CommandList>(device));
         }
 
-        // One-time upload of the normal map, on its own short-lived command
-        // list submitted and waited on before the main loop starts.
+        // One-time upload of all three textures, on its own short-lived
+        // command list submitted and waited on before the main loop starts.
         CommandList setup_cmd(device);
         setup_cmd.Reset();
         Texture normal_map(device, texture_heap, setup_cmd.Get(), 256, 256, normal_map_pixels.data());
+        CubemapTexture environment_map = CreateCubemapTexture(device, texture_heap, setup_cmd.Get(), 128, sky_faces);
+        CubemapTexture irradiance_map =
+            CreateCubemapTexture(device, texture_heap, setup_cmd.Get(), 16, irradiance_faces);
+        AETHER_ASSERT(normal_map.BindlessIndex() == 0);
+        AETHER_ASSERT(environment_map.srv_index == 1);
+        AETHER_ASSERT(irradiance_map.srv_index == 2);
         setup_cmd.Close();
         ID3D12CommandList* setup_lists[] = {setup_cmd.Get()};
         device.WaitForFence(device.Submit(setup_lists, 1));
@@ -599,7 +844,7 @@ int main() {
             // "multiple lights" and "colored lights": each corner of the
             // grid visibly picks up its nearest light's color/tint, summed
             // with the others in the shader's per-light loop.
-            f32 intensity = 220.0f;
+            f32 intensity = 130.0f;
             FrameConstants frame_constants{};
             frame_constants.view_proj = proj * view;
             frame_constants.camera_pos = camera_pos;

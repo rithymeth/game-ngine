@@ -432,9 +432,40 @@ point lights, replacing the original single directional light.
   light. Genuinely visible in the rendered output: each corner of the
   material grid visibly picks up its nearest light's tint.
 
-Not yet started: image-based lighting and environment reflections (a
-prefiltered environment cubemap + irradiance convolution) — the remaining
-item before the lighting model can be called reasonably complete.
+### Follow-up: image-based lighting + environment reflections
+
+`pbr_demo`'s ambient term is no longer a flat constant — it now comes from a
+procedural sky environment cubemap, sampled two ways:
+
+- **Diffuse IBL**: a genuine diffuse-irradiance convolution
+  (`GenerateIrradianceCubeFaces`), matching the standard derivation (same
+  "textbook reference" approach as the BRDF and normal-map math elsewhere in
+  this demo) — for each output texel's direction, a cosine-weighted Riemann
+  sum over the hemisphere (64×16 samples), evaluated directly against the
+  analytic `SkyColor()` function rather than by texture-sampling a generated
+  cube (mathematically the same integral, since `SkyColor` *is* the
+  environment's radiance function — this just skips a redundant round trip
+  through a texture). Computed once at startup at low resolution (16×16 per
+  face): diffuse irradiance is a low-frequency function by construction, so
+  there's no detail lost by not computing it at a higher resolution.
+- **Environment reflections**: the base (non-convolved) sky cubemap sampled
+  by the reflection vector, weighted by Fresnel and a roughness fade. This is
+  a deliberately simpler stand-in for full split-sum/prefiltered-mip specular
+  IBL (not implemented) — reflections fade out for rough surfaces rather than
+  actually blurring, so it's honest about not being roughness-correct.
+
+**Verified numerically, not just visually**, since the effect is subtle when
+blended with a saturated albedo and bright point lights: sampled pixels
+directly from a smooth dielectric sphere (the case where the specular term
+is least tinted by albedo — dielectrics have an achromatic F0) show the blue
+channel exceeding green near the top of the sphere (reflecting the sky's
+zenith) and dropping below it near the bottom (reflecting the ground tone) —
+the expected directional variation, confirmed with actual pixel values, not
+assumed from the code looking right.
+
+Not yet started: full split-sum prefiltered specular IBL with roughness-
+dependent mip selection and a BRDF LUT — the current specular reflection is
+sharp regardless of roughness, just faded in strength.
 
 ## Building
 
