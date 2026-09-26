@@ -34,6 +34,7 @@
 // Set AETHER_SANDBOX_MAX_FRAMES=<N> to auto-close after N frames instead of
 // waiting for the window to be closed, for scripted/automated verification.
 
+#include "aether/assets/asset_manager.h"
 #include "aether/core/log.h"
 #include "aether/gfx/buffer.h"
 #include "aether/gfx/command_list.h"
@@ -352,23 +353,6 @@ ComPtr<ID3D12CommandSignature> CreateIndirectCommandSignature(Device& device, ID
     return command_signature;
 }
 
-// A tiny procedural RGBA8 checkerboard, so the demo has something to sample
-// without depending on an image loader (that's future asset-pipeline work).
-std::vector<u8> MakeCheckerboardTexture(u32 size, u8 r0, u8 g0, u8 b0, u8 r1, u8 g1, u8 b1) {
-    std::vector<u8> pixels(static_cast<usize>(size) * size * 4);
-    for (u32 y = 0; y < size; ++y) {
-        for (u32 x = 0; x < size; ++x) {
-            bool even = ((x / 8) + (y / 8)) % 2 == 0;
-            u8* p = &pixels[(static_cast<usize>(y) * size + x) * 4];
-            p[0] = even ? r0 : r1;
-            p[1] = even ? g0 : g1;
-            p[2] = even ? b0 : b1;
-            p[3] = 255;
-        }
-    }
-    return pixels;
-}
-
 std::vector<InstanceData> MakeInstances() {
     std::vector<InstanceData> instances(kInstanceCount);
     for (u32 i = 0; i < kInstanceCount; ++i) {
@@ -437,14 +421,18 @@ int main() {
         ComPtr<ID3D12PipelineState> compute_pso = CreateComputePSO(device, compute_root.Get());
         ComPtr<ID3D12CommandSignature> command_signature = CreateIndirectCommandSignature(device, graphics_root.Get());
 
-        // One-time setup command list: uploads both textures.
+        // One-time setup command list: loads both textures from disk through
+        // the asset pipeline (aether::assets::AssetManager) rather than
+        // procedurally generating them — real file-based loading, decoding,
+        // and bindless-index caching, exercised end to end.
         CommandList setup_cmd(device);
         setup_cmd.Reset();
 
-        std::vector<u8> checker_a = MakeCheckerboardTexture(64, 220, 60, 60, 40, 10, 10);
-        std::vector<u8> checker_b = MakeCheckerboardTexture(64, 60, 140, 220, 10, 30, 60);
-        Texture texture_a(device, bindless_heap, setup_cmd.Get(), 64, 64, checker_a.data());
-        Texture texture_b(device, bindless_heap, setup_cmd.Get(), 64, 64, checker_b.data());
+        assets::AssetManager asset_manager(device, bindless_heap);
+        u32 checker_a_index = asset_manager.LoadTexture(AETHER_ASSET_DIR "textures/checker_a.png", setup_cmd.Get());
+        u32 checker_b_index = asset_manager.LoadTexture(AETHER_ASSET_DIR "textures/checker_b.png", setup_cmd.Get());
+        AETHER_ASSERT(checker_a_index != DescriptorHeap::kInvalidIndex);
+        AETHER_ASSERT(checker_b_index != DescriptorHeap::kInvalidIndex);
 
         setup_cmd.Close();
         ID3D12CommandList* setup_lists[] = {setup_cmd.Get()};
@@ -452,7 +440,7 @@ int main() {
 
         std::vector<InstanceData> instance_data = MakeInstances();
         for (auto& inst : instance_data) {
-            inst.texture_index = (inst.texture_index == 0) ? texture_a.BindlessIndex() : texture_b.BindlessIndex();
+            inst.texture_index = (inst.texture_index == 0) ? checker_a_index : checker_b_index;
         }
 
         Buffer instance_buffer(device, sizeof(InstanceData) * kInstanceCount, BufferKind::Upload);

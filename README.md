@@ -334,11 +334,54 @@ backends into a real cross-API abstraction (the triangle/cube demos are
 backend-specific code selected at runtime, not a unified API) — bindless
 descriptors and multiple simultaneous draw calls/objects are still open.
 
+### Follow-up: asset pipeline (file-based texture loading, cached)
+
+The first item of the post-Phase-5 roadmap: `aether::assets` adds real
+file-based asset loading on top of the existing engine, replacing the
+sandbox's procedurally-generated checkerboard textures with actual PNG files
+loaded from disk (`assets/textures/`).
+
+- `assets::DecodeImageFile` (`engine/include/aether/assets/image.h`) decodes
+  PNG/JPG/BMP/TGA into RGBA8 pixels via `stb_image` (`nothings/stb`,
+  `FetchContent`-fetched, single header, no build system of its own — wrapped
+  by one `.cpp` providing `STB_IMAGE_IMPLEMENTATION`). Platform-independent;
+  built unconditionally, not gated on `WIN32`.
+- `assets::AssetManager` (WIN32-only, needs `gfx::Device`/`DescriptorHeap`)
+  adds path-keyed caching on top: `LoadTexture(path, upload_cmd)` decodes and
+  uploads on a cache miss and returns the cached bindless index on a hit —
+  loading the same path twice does **not** re-decode or re-upload, verified
+  directly (`AssetManager_LoadingSamePathTwiceReturnsCachedIndexWithoutReupload`),
+  not just assumed.
+- Named `DecodeImageFile`, not `LoadImage`: the obvious name collides with
+  the WinAPI macro `LoadImage` → `LoadImageA`/`LoadImageW` from `Windows.h`,
+  which any TU including the D3D12 headers pulls in — caught at link time
+  (`unresolved external symbol ... LoadImageA`), not by inspection.
+- **Real bug found by actually running `aether_sandbox`/`aether_editor`
+  after wiring this in** (not by inspection): both were already silently
+  broken before this change, crashing on launch with `STATUS_DLL_NOT_FOUND`.
+  `shader_compiler.cpp`'s `CompileHLSLToSPIRV` (added for the Vulkan
+  hello-triangle follow-up) references `DxcCreateInstance` unconditionally,
+  so any executable that pulls that object file into its link — anything
+  that calls `CompileHLSL`, like the sandbox — gets `dxcompiler.dll` as an
+  implicit load-time dependency, even though it never calls the SPIR-V path.
+  `aether_tests.exe` happened to never trigger this (no test calls
+  `CompileHLSL`, so the linker never pulls that object file in), which is
+  why it went unnoticed. `rhi_demo` already had the fix (it does call
+  `CompileHLSLToSPIRV`); `sandbox`/`editor` didn't, since nothing in either
+  had needed `dxcompiler.dll` before. Both `CMakeLists.txt` now copy
+  `dxcompiler.dll` next to their executable as a post-build step, same as
+  `rhi_demo`.
+
+Not yet started: reference counting/unloading, async/streamed loading, and
+non-texture asset types (meshes, materials, ...) — see the glTF loader and
+material system items later in the roadmap.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
 or GCC), and network access the first time you configure (to fetch Jolt
-Physics, Dear ImGui, and Vulkan-Headers).
+Physics, Dear ImGui, Vulkan-Headers, stb_image, and — on a Vulkan-enabled
+Windows build — a SPIR-V-capable `dxcompiler.dll` release).
 
 ```bash
 cmake -S . -B build

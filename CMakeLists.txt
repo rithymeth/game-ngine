@@ -24,6 +24,18 @@ option(AETHER_BUILD_VULKAN "Build the Vulkan RHI backend" ON)
 
 include(FetchContent)
 
+# Single-header stb_image (nothings/stb) for the asset pipeline's image
+# decoding (PNG/JPG/BMP -> RGBA8). No build system of its own — just the
+# header, wrapped by engine/src/assets/stb_image_impl.cpp to provide the
+# implementation once.
+FetchContent_Declare(
+    stb
+    GIT_REPOSITORY https://github.com/nothings/stb.git
+    GIT_TAG 2c980bb59875b0d32144a71867fbdebb2f77cd20
+    GIT_SHALLOW FALSE
+)
+FetchContent_MakeAvailable(stb)
+
 if(AETHER_BUILD_PHYSICS)
     # Jolt defaults to the static MSVC runtime (/MT) on MSVC; our own targets
     # use the default dynamic runtime (/MD), and linking a /MT static lib

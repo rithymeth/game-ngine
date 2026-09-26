@@ -8,7 +8,11 @@ add_library(aether_engine STATIC
     src/job/job_system.cpp
     src/ecs/archetype.cpp
     src/scene/serialization.cpp
+    src/assets/stb_image_impl.cpp
+    src/assets/image.cpp
 )
+
+target_include_directories(aether_engine PRIVATE ${stb_SOURCE_DIR})
 
 if(WIN32)
     target_sources(aether_engine PRIVATE
@@ -23,6 +27,7 @@ if(WIN32)
         src/gfx/render_graph.cpp
         src/gfx/rhi/device_factory.cpp
         src/gfx/rhi/d3d12/d3d12_backend.cpp
+        src/assets/asset_manager.cpp
     )
 endif()
 

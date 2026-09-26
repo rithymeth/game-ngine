@@ -6,13 +6,14 @@ add_executable(aether_tests
     test_job_system.cpp
     test_ecs.cpp
     test_serialization.cpp
+    test_assets.cpp
 )
 
 target_link_libraries(aether_tests PRIVATE Aether::Engine)
 target_include_directories(aether_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 if(WIN32)
-    target_sources(aether_tests PRIVATE test_render_graph.cpp test_rhi.cpp)
+    target_sources(aether_tests PRIVATE test_render_graph.cpp test_rhi.cpp test_asset_manager.cpp)
 endif()
 
 if(TARGET Aether::Physics)
