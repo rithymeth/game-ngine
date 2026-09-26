@@ -115,6 +115,14 @@ Json SaveValue(const TypeInfo& type, const void* ptr) {
         return type.size == 4 ? ShortestF32(*static_cast<const f32*>(ptr)) : *static_cast<const f64*>(ptr);
     case TypeKind::String:
         return *static_cast<const std::string*>(ptr);
+    case TypeKind::FixedString: {
+        const char* chars = static_cast<const char*>(ptr);
+        usize length = 0;
+        while (length < type.size && chars[length] != '\0') {
+            ++length;
+        }
+        return std::string(chars, length);
+    }
     case TypeKind::Enum: {
         const TypeInfo& underlying = *type.underlying;
         i64 value = underlying.kind == TypeKind::UInt ? static_cast<i64>(ReadUnsigned(ptr, underlying.size))
@@ -283,6 +291,23 @@ bool LoadValue(const TypeInfo& type, void* ptr, const Json& data, LoadContext& c
         }
         *static_cast<std::string*>(ptr) = data.get<std::string>();
         return true;
+    case TypeKind::FixedString: {
+        if (!data.is_string()) {
+            ctx.Warn(path, std::string("expected a string, found ") + JsonTypeName(data));
+            return false;
+        }
+        const std::string& text = data.get_ref<const std::string&>();
+        usize length = text.size();
+        if (length >= type.size) {
+            length = type.size - 1; // keep room for the terminator
+            ctx.Warn(path, "string of " + std::to_string(text.size()) + " bytes doesn't fit in " + type.name +
+                               "; truncated to " + std::to_string(length));
+        }
+        char* chars = static_cast<char*>(ptr);
+        std::memset(chars, 0, type.size);
+        std::memcpy(chars, text.data(), length);
+        return true;
+    }
     case TypeKind::Enum: {
         if (data.is_string()) {
             i64 value = 0;

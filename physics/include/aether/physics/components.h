@@ -1,6 +1,7 @@
 #pragma once
 
 #include "aether/math/math.h"
+#include "aether/reflection/reflection.h"
 
 // Jolt.h must be included before any other Jolt header.
 #include <Jolt/Jolt.h>
@@ -31,3 +32,19 @@ struct RigidBody {
 void RegisterPhysicsComponentSerializers();
 
 } // namespace aether
+
+// Reflection (Phase 6): drives the generic Inspector and JSON scenes.
+// RigidBody's live `body_id` is deliberately not reflected. Its binary scene
+// serializer stays the custom one installed by
+// RegisterPhysicsComponentSerializers(), so existing .aesc files keep
+// loading unchanged.
+AETHER_REFLECT(aether::Transform, 1,
+    AETHER_FIELD(position, Field_EditAnywhere, {.units = "m"}),
+    AETHER_FIELD(rotation, Field_EditAnywhere)
+)
+
+AETHER_REFLECT(aether::RigidBody, 1,
+    AETHER_FIELD(radius, Field_EditAnywhere, {.range_min = 0.01, .range_max = 100.0, .units = "m"}),
+    AETHER_FIELD(mass, Field_EditAnywhere, {.range_min = 0.0, .range_max = 10000.0, .units = "kg"}),
+    AETHER_FIELD(is_static, Field_EditAnywhere)
+)

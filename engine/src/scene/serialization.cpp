@@ -270,7 +270,9 @@ bool SaveSceneJson(const World& world, const std::string& path) {
                                 info.name, path.c_str());
                 continue;
             }
-            components[info.name] = reflect::ToJson(*info.reflected, ComponentPtr(slot, id));
+            // The reflected (declared) name, even if a custom serializer
+            // renamed the component for the binary format.
+            components[info.reflected->name] = reflect::ToJson(*info.reflected, ComponentPtr(slot, id));
         }
         if (!components.empty()) {
             entities.push_back(Json{{"components", std::move(components)}});

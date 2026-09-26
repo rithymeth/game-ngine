@@ -173,6 +173,14 @@ void ReadComponentField(const u8* data, usize size, usize& offset, T& out_value)
     offset += sizeof(T);
 }
 
+// Makes `name` resolve to T when loading scenes — for files written under a
+// name T no longer has (e.g. a type that moved namespaces, which changes its
+// typeid name).
+template <typename T>
+void RegisterComponentAlias(const std::string& name) {
+    detail::ComponentNameRegistry()[name] = GetComponentId<T>();
+}
+
 template <typename... Ts>
 ComponentMask ComponentMaskOf() {
     ComponentMask mask;

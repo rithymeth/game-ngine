@@ -21,6 +21,7 @@ enum class TypeKind : u8 {
     UInt,   // unsigned integer of `size` bytes
     Float,  // f32 or f64, by `size`
     String, // std::string
+    FixedString, // char[N]: a NUL-terminated string in a fixed buffer of `size` bytes
     Enum,   // integer-backed enum; see TypeInfo::enum_values / underlying
     Struct, // aggregate of FieldInfo entries
 };

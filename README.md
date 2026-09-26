@@ -1279,15 +1279,43 @@ scripting and Blueprints all build on.
   failed to link without it. Physics builds and tests on Linux for the first
   time.
 
-Not included yet, and planned as the next steps of Phase 6: reflecting the
-existing components, and the generic Inspector.
+**Step 5: the existing components are reflected.**
+
+- **`Transform`** (position in m, rotation) and **`RigidBody`** (radius,
+  mass, `is_static`, with editor ranges and units) are reflected in
+  `physics/components.h`. `RigidBody`'s live Jolt `body_id` is left out on
+  purpose, and its custom binary serializer is kept, so existing `.aesc`
+  files load unchanged. Both components now round-trip through JSON scenes.
+- **`ModelRenderer`** moved from `editor/main.cpp` to
+  `engine/include/aether/scene/components.h` and is reflected there, since
+  it's a runtime component. The move follows the plan in
+  `docs/design/EDITOR_UI.md` §10.
+  - Its old in-editor type names are registered as aliases through the new
+    `RegisterComponentAlias<T>()`, so editor scenes saved before the move
+    still find their models.
+  - The GCC/Clang alias string was checked against those compilers' actual
+    `typeid` output. The MSVC string follows MSVC's documented format but
+    hasn't been run.
+- **Fixed-size strings:** reflection now supports `char[N]` fields
+  (`TypeKind::FixedString`). They're saved as strings, and a string that's
+  too long is truncated with a warning when loading.
+- **Not reflected:**
+  - `Parent` holds a live `Entity` handle, which can't be remapped on load
+    until Phase 7's entity GUIDs. It keeps its raw-byte behavior for now.
+  - `EditorCamera` is a local in the editor, not an ECS component, so it
+    needs no reflection.
+
+Not included yet, and planned as the last step of Phase 6: the generic
+reflected Inspector.
 
 **Verified** by building the engine and tests on Linux with both GCC 13
 and Clang, with no warnings from the new code. There are 29 reflection and serialization
 tests (`tests/test_reflection.cpp`, `tests/test_reflection_any.cpp`,
 `tests/test_archive.cpp`, and the Phase 6 section of
-`tests/test_serialization.cpp`). All 79 tests pass with physics off, and
-85/85 with physics (Jolt) enabled. A Debug build with AddressSanitizer and
+`tests/test_serialization.cpp`). All 81 tests pass with physics off, and
+88/88 with physics (Jolt) enabled. The editor change (removing its local
+`ModelRenderer` and including the engine header) hasn't been compiled,
+because the editor is Windows/D3D12-only. A Debug build with AddressSanitizer and
 UndefinedBehaviorSanitizer also passes cleanly, including a test with an
 instance-counting type showing that `Any` constructs and destroys each value
 exactly once, both inline and on the heap. That run excludes the
