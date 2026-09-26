@@ -1,10 +1,12 @@
+#include "aether/job/job_system.h"
 #include "aether/physics/physics_world.h"
 #include "test_framework.h"
 
 using namespace aether;
 
 AETHER_TEST(PhysicsWorld_SphereFallsAndRestsOnFloor) {
-    PhysicsWorld physics;
+    JobSystem jobs(2);
+    PhysicsWorld physics(jobs);
 
     // Floor: box centered at y=0, half-extents (10, 0.5, 10) -> top surface at y=0.5.
     physics.CreateBox(Vec3(0, 0, 0), Vec3(10, 0.5f, 10));
@@ -25,7 +27,8 @@ AETHER_TEST(PhysicsWorld_SphereFallsAndRestsOnFloor) {
 }
 
 AETHER_TEST(PhysicsWorld_StaticBodyDoesNotMove) {
-    PhysicsWorld physics;
+    JobSystem jobs(2);
+    PhysicsWorld physics(jobs);
     JPH::BodyID floor = physics.CreateBox(Vec3(1, 2, 3), Vec3(10, 0.5f, 10));
 
     for (int i = 0; i < 60; ++i) {
@@ -40,7 +43,8 @@ AETHER_TEST(PhysicsWorld_StaticBodyDoesNotMove) {
 
 AETHER_TEST(SyncPhysicsToTransforms_UpdatesEcsFromSimulation) {
     World world;
-    PhysicsWorld physics;
+    JobSystem jobs(2);
+    PhysicsWorld physics(jobs);
 
     physics.CreateBox(Vec3(0, 0, 0), Vec3(10, 0.5f, 10));
     JPH::BodyID sphere_id = physics.CreateSphere(Vec3(0, 5, 0), 0.5f, 1.0f, false);

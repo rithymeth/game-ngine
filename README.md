@@ -96,14 +96,22 @@ discussion in project history.
 
 - **Physics** (`physics/`, a separate `Aether::Physics` target so the core
   engine stays dependency-free unless you opt in): `PhysicsWorld` wraps a
-  Jolt `PhysicsSystem` plus the allocator/job-system/broadphase-layer
-  boilerplate Jolt requires, exposed through `aether::Vec3`/`Quaternion`
-  rather than `JPH::` types for the common create-body/step/read-transform
-  path. `Transform` and `RigidBody` (`physics/include/aether/physics/components.h`)
-  are plain ECS components; `SyncPhysicsToTransforms(world, physics, dt)`
-  steps the simulation and writes each `RigidBody` entity's simulated pose
-  back into its `Transform`. Jolt runs on its own internal thread pool —
-  routing that through `aether::JobSystem` instead is future work.
+  Jolt `PhysicsSystem` plus the allocator/broadphase-layer boilerplate Jolt
+  requires, exposed through `aether::Vec3`/`Quaternion` rather than `JPH::`
+  types for the common create-body/step/read-transform path. `Transform` and
+  `RigidBody` (`physics/include/aether/physics/components.h`) are plain ECS
+  components; `SyncPhysicsToTransforms(world, physics, dt)` steps the
+  simulation and writes each `RigidBody` entity's simulated pose back into
+  its `Transform`. Physics jobs run on `aether::JobSystem` — not a
+  Jolt-owned thread pool — via `JoltJobSystemAdapter`
+  (`physics/include/aether/physics/jolt_job_system_adapter.h`), which
+  implements Jolt's `JPH::JobSystem` interface (job allocation via a
+  `FixedSizeFreeList`, `QueueJob`/`QueueJobs` scheduling onto
+  `aether::JobSystem`) on top of `JPH::JobSystemWithBarrier` for the
+  Barrier/`WaitForJobs` machinery `PhysicsSystem::Update()` blocks on. Any
+  thread that calls into `PhysicsSystem::Update` (i.e. `PhysicsWorld::Step`)
+  must already be registered with the `aether::JobSystem` passed to
+  `PhysicsWorld`'s constructor.
 - **Scene serialization** (`engine/include/aether/scene/serialization.h`):
   `SaveScene`/`LoadScene` walk every archetype generically (via new
   type-erased `World::ForEachArchetype`/`CreateEntityRaw`/`GetComponentRaw`)
@@ -116,18 +124,21 @@ discussion in project history.
   handle, which is meaningless once reloaded — the editor recreates the
   physics body on load.
 - **Editor** (`editor/`): a Dear ImGui overlay on the Phase 3/4 D3D12 layer
-  driving a live `World` + `PhysicsWorld` — entity list, spawn/play/pause
-  controls, Save/Load Scene buttons. Rendering is plain instanced
-  `DrawInstanced` colored quads reading `Transform` each frame (no bindless
-  textures or GPU culling here — Phase 4 already proved those out; keeping
-  this phase's new surface area to ImGui + physics + serialization). Required
-  one small engine change: `Window::native_message_hook` so ImGui's Win32
-  backend can see input messages without the engine's `Window` class
-  exposing its private `WndProc`.
+  driving a live `World` + `PhysicsWorld` — entity list with **live-editable**
+  position/radius/mass/static fields (position edits teleport the Jolt body
+  via `PhysicsWorld::SetPosition`; radius/mass/static edits recreate it,
+  since Jolt's shape and motion type are effectively immutable once a body
+  exists), spawn/play/pause controls, Save/Load Scene buttons. Rendering is
+  plain instanced `DrawInstanced` colored quads reading `Transform` each
+  frame (no bindless textures or GPU culling here — Phase 4 already proved
+  those out; keeping this phase's new surface area to ImGui + physics +
+  serialization). Required one small engine change:
+  `Window::native_message_hook` so ImGui's Win32 backend can see input
+  messages without the engine's `Window` class exposing its private
+  `WndProc`.
 
 Not yet started: Vulkan backend, transient/aliased render graph resources,
-async compute, routing Jolt through `aether::JobSystem`, and editing
-component values live in the inspector (currently read-only display).
+async compute.
 
 ## Building
 

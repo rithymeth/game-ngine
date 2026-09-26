@@ -2,11 +2,12 @@
 
 #include "aether/core/base.h"
 #include "aether/ecs/world.h"
+#include "aether/job/job_system.h"
 #include "aether/math/math.h"
 #include "aether/physics/components.h"
 
 #include <Jolt/Jolt.h>
-#include <Jolt/Core/JobSystemThreadPool.h>
+#include <Jolt/Core/JobSystem.h>
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/BodyInterface.h>
 #include <Jolt/Physics/PhysicsSystem.h>
@@ -15,15 +16,17 @@
 
 namespace aether {
 
-// Owns a Jolt PhysicsSystem plus the allocator/job-system/layer-filter
-// boilerplate Jolt requires, wrapped behind aether::Vec3/Quaternion so
-// callers don't need to touch JPH:: types directly for the common case
-// (create a body, step, read its transform back). Jolt's own thread pool
-// drives the simulation internally — routing that through aether::JobSystem
-// instead is future work, not done here, to keep this integration bounded.
+// Owns a Jolt PhysicsSystem plus the allocator/layer-filter boilerplate Jolt
+// requires, wrapped behind aether::Vec3/Quaternion so callers don't need to
+// touch JPH:: types directly for the common case (create a body, step, read
+// its transform back). Simulation jobs run on the aether::JobSystem passed
+// in — via JoltJobSystemAdapter — rather than a Jolt-owned thread pool, so
+// physics shares the same worker threads as the rest of the engine. Step()
+// (and anything else that reaches JPH::PhysicsSystem::Update) must be called
+// from a thread registered with that JobSystem; see JoltJobSystemAdapter.
 class PhysicsWorld {
 public:
-    PhysicsWorld();
+    explicit PhysicsWorld(JobSystem& job_system);
     ~PhysicsWorld();
 
     PhysicsWorld(const PhysicsWorld&) = delete;
@@ -57,7 +60,7 @@ private:
     struct Layers; // Jolt broadphase/object layer glue; defined in the .cpp
 
     std::unique_ptr<JPH::TempAllocatorImpl> temp_allocator_;
-    std::unique_ptr<JPH::JobSystemThreadPool> job_system_;
+    std::unique_ptr<JPH::JobSystem> jolt_job_system_;
     std::unique_ptr<Layers> layers_;
     std::unique_ptr<JPH::PhysicsSystem> physics_system_;
 };

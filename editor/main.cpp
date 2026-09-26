@@ -23,6 +23,7 @@
 #include "aether/gfx/render_graph.h"
 #include "aether/gfx/shader_compiler.h"
 #include "aether/gfx/swap_chain.h"
+#include "aether/job/job_system.h"
 #include "aether/math/math.h"
 #include "aether/physics/physics_world.h"
 #include "aether/platform/window.h"
@@ -225,7 +226,8 @@ int main() {
         Buffer instance_buffer(device, sizeof(EditorInstance) * kMaxInstances, BufferKind::Upload);
 
         World world;
-        PhysicsWorld physics;
+        JobSystem job_system;
+        PhysicsWorld physics(job_system);
         physics.CreateBox(Vec3(0, 0, 0), Vec3(10, 0.5f, 10));
 
         std::mt19937 rng(1234);

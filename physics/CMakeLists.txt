@@ -1,5 +1,6 @@
 add_library(aether_physics STATIC
     src/physics_world.cpp
+    src/jolt_job_system_adapter.cpp
 )
 
 target_include_directories(aether_physics PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

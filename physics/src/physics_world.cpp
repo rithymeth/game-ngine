@@ -1,6 +1,7 @@
 #include "aether/physics/physics_world.h"
 
 #include "aether/core/log.h"
+#include "aether/physics/jolt_job_system_adapter.h"
 
 #include <Jolt/RegisterTypes.h>
 #include <Jolt/Core/Factory.h>
@@ -14,7 +15,6 @@
 #include <atomic>
 #include <cstdarg>
 #include <cstdio>
-#include <thread>
 
 namespace aether {
 
@@ -119,14 +119,13 @@ struct PhysicsWorld::Layers {
     ObjectVsBroadPhaseLayerFilterImpl object_vs_broad_phase_layer_filter;
 };
 
-PhysicsWorld::PhysicsWorld() {
+PhysicsWorld::PhysicsWorld(JobSystem& job_system) {
     EnsureJoltInitialized();
 
     temp_allocator_ = std::make_unique<JPH::TempAllocatorImpl>(10 * 1024 * 1024);
 
-    u32 worker_count = std::thread::hardware_concurrency() > 1 ? std::thread::hardware_concurrency() - 1 : 1;
-    job_system_ =
-        std::make_unique<JPH::JobSystemThreadPool>(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers, worker_count);
+    jolt_job_system_ =
+        std::make_unique<JoltJobSystemAdapter>(job_system, JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers);
 
     layers_ = std::make_unique<Layers>();
 
@@ -141,13 +140,14 @@ PhysicsWorld::PhysicsWorld() {
                            layers_->object_layer_pair_filter);
     physics_system_->SetGravity(JPH::Vec3(0.0f, -9.81f, 0.0f));
 
-    AETHER_LOG_INFO("Physics", "Jolt PhysicsSystem initialized (%u worker threads)", worker_count);
+    AETHER_LOG_INFO("Physics", "Jolt PhysicsSystem initialized (routed through aether::JobSystem, %d max concurrency)",
+                     jolt_job_system_->GetMaxConcurrency());
 }
 
 PhysicsWorld::~PhysicsWorld() {
     physics_system_.reset();
     layers_.reset();
-    job_system_.reset();
+    jolt_job_system_.reset();
     temp_allocator_.reset();
     ReleaseJolt();
 }
@@ -194,7 +194,7 @@ void PhysicsWorld::DestroyBody(JPH::BodyID id) {
 
 void PhysicsWorld::Step(f32 dt) {
     constexpr int kCollisionSteps = 1;
-    physics_system_->Update(dt, kCollisionSteps, temp_allocator_.get(), job_system_.get());
+    physics_system_->Update(dt, kCollisionSteps, temp_allocator_.get(), jolt_job_system_.get());
 }
 
 Vec3 PhysicsWorld::GetPosition(JPH::BodyID id) const {
