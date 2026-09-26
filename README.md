@@ -2283,6 +2283,47 @@ Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 10
 - 185/185 tests pass on GCC 13, on Clang and under ASan/UBSan, and 192/192
   with physics.
 
+**Step 2: input assets, rebinding and key capture** (`input/bindings.h`).
+
+- **Input assets**: `.aaction` (an action) and `.amapping` (a mapping
+  context) are reflected JSON files in `Content/`.
+  - The asset database recognises both.
+  - `InputAssetLibrary` loads every one, reports unreadable files, registers
+    the actions, and activates contexts by name.
+  - A context saved without a name takes its file's name.
+- **Rebinding per player**: a `KeyOverride` is "the Nth binding of this
+  action in this context now uses this key", and `Key::None` unbinds it.
+  - `UserBindings` holds a player's rebinds.
+  - `ApplyUserBindings` gives a rebound copy of a context. The project's
+    defaults are never changed, and a rebind whose binding no longer exists
+    is reported, not applied.
+  - Rebinds are saved in `Saved/Config/Input.json` (`UserBindingsPath`),
+    separate from the project's defaults, so the defaults can change
+    without losing the player's choices.
+  - `FindConflicts` lists the other bindings already using a key, for "C is
+    already bound to Crouch" warnings.
+- **"Press a key…" capture** (`KeyCapture`):
+  - It ignores the button that was held when capture began (the click on
+    the button itself) until it's released.
+  - Mouse movement never counts. Sticks and triggers count once pushed past
+    half-way.
+  - Escape cancels, or can be allowed as a binding.
+
+**Verified**: 3 new tests.
+
+- **Assets**: saved and loaded through the database with extensions
+  recognised, a broken file reported, an unnamed context named after its
+  file, and a wrong-kind file refused. An activated asset context drives
+  an action.
+- **Rebinding**: slots, conflicts, a replaced, unbound, stale or
+  other-context rebind, the old key no longer working in play, and saving
+  and reloading with keys stored by name. Reset one and reset all, with no
+  file meaning no rebinds.
+- **Key capture**: the held click, mouse movement, a half-pressed trigger,
+  Escape both ways, and re-pressing after release.
+- 188/188 tests pass on GCC 13, on Clang and under ASan/UBSan, and 195/195
+  with physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,

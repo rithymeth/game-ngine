@@ -16,6 +16,7 @@ add_library(aether_engine STATIC
     src/scene/lifecycle.cpp
     src/scene/scheduler.cpp
     src/input/input.cpp
+    src/input/bindings.cpp
     src/project/project.cpp
     src/scene/model_assets.cpp
     src/reflection/any.cpp
