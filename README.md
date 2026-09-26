@@ -617,6 +617,51 @@ roughness, just dimmer). 75/75 tests pass (unchanged — this follow-up has no
 new unit-testable pure logic, only GPU pipeline/shader changes), plus 6 quick
 runs and one 2000-frame stability run with no crashes.
 
+### Follow-up: shadow mapping
+
+`pbr_demo` gained a real depth-pass-then-sample shadow, cast by
+`g_Lights[0]` onto a new ground plane added specifically to receive it (the
+sphere grid alone has almost nothing for a shadow to visibly fall on —
+neighboring spheres barely occlude each other at this grid's spacing).
+
+- **Shadow pass**: a second, depth-only pipeline (`CreateShadowRootSignature`/
+  `CreateShadowPSO`, minimal HLSL — one matrix in, `SV_POSITION` out, no
+  pixel shader at all) renders every sphere (and only spheres — the ground
+  plane is a receiver, not a caster) into a 1024×1024 depth buffer from
+  `g_Lights[0]`'s point of view, recorded with raw D3D12 calls directly on
+  the frame's command list rather than through `RenderGraph`: the shadow map
+  is read (SRV) in the very same frame it's written (DSV) by a different
+  pipeline, a multi-pass cross-usage pattern this file's `RenderGraph` usage
+  wasn't set up to track. The resource itself is `DXGI_FORMAT_R32_TYPELESS`
+  with separate `D32_FLOAT` (DSV) and `R32_FLOAT` (SRV) views — the standard
+  way to get a depth buffer that's also sampled as a regular texture.
+- **Sampling**: `ComputeShadow` (HLSL) projects the fragment's world
+  position into the light's clip space and does 3×3 PCF (percentage-closer
+  filtering) — 9 hardware comparison samples (`SampleCmpLevelZero` against a
+  `SamplerComparisonState`, `D3D12_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT`)
+  averaged into a soft 0..1 factor, with a small constant depth bias against
+  shadow acne. Only `g_Lights[0]`'s contribution is multiplied by the
+  factor — a point light's shadow genuinely needs a full cubemap (6 faces)
+  to cover every direction it illuminates from, which is real future work;
+  this follow-up proves the depth-pass/sample-back mechanics with one 2D
+  shadow map instead.
+- **Verified two ways, not just "didn't crash"**: the raw shadow map was
+  dumped to a grayscale PNG (`AETHER_PBR_DEMO_SHADOW_MAP_SCREENSHOT`,
+  `SaveShadowMapScreenshot`) and shows exactly the expected
+  perspective-correct silhouette of all 49 spheres from the light's point of
+  view. More importantly, the *sampled* shadow factor was visualized
+  directly (temporarily returning `float4(shadowFactor.xxx, 1)` from the
+  pixel shader instead of the lit color) and showed crisp, correctly
+  perspective-shaped shadow ellipses on the ground plane, precisely aligned
+  with each sphere — confirming the full pass end-to-end (generation,
+  projection, PCF, and compositing), not just that the depth pass alone
+  produces plausible-looking output. In the final lit composite the effect
+  is present but visually subtle against this scene's strong ambient IBL
+  and the ground's own bump-mapped normal texture — a lighting-balance/
+  exposure detail, not a correctness one; the shadow-factor visualization is
+  what actually demonstrates correctness. 81/81 tests pass (unchanged — pure
+  GPU pipeline/shader work); 6 quick runs plus one 2000-frame stability run.
+
 ### Follow-up: glTF mesh loading (`aether::assets::LoadGltf`)
 
 `engine/include/aether/assets/gltf_loader.h` loads real glTF 2.0 assets: JSON
