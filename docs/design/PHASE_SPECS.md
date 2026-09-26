@@ -435,8 +435,15 @@ struct SystemDesc {
    - Overrides carry their component's schema version and are migrated
      with it (the §9.5 migration test), by running the type's migration
      hook on the single overridden field.
-5. Gameplay framework components (Camera, Tags, Layers) and lifecycle
+5. ✅ **Done.** Gameplay framework components (Camera, Tags, Layers) and lifecycle
    events.
+   - Also an `Active` component, since OnEnable/OnDisable need something
+     to enable and disable.
+   - `Lifecycle` dispatches per registered component type (scripts and
+     Blueprints register theirs in Phases 11-12). Changes made in callbacks
+     are deferred to the end of the pass.
+   - Tags are compared by name. Hashed tags, SpringArm, timers and the
+     event bus come with the gameplay work that needs them.
 6. `SystemDesc` scheduler and fixed timestep with interpolation.
 
 ---
