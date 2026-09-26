@@ -15,6 +15,21 @@ Entity Resolve(CommandContext& ctx, const EntityGuid& guid) {
     return entity;
 }
 
+// On a prefab instance, keeps its overrides in step with an edit. Runs on
+// Do, Undo and Redo alike, so undoing an edit also undoes its override.
+void RecordPrefabEdit(CommandContext& ctx, Entity entity, ComponentId component) {
+    if (!ctx.find_prefab) {
+        return;
+    }
+    const Entity root = FindInstanceRoot(ctx.world, ctx.guids, entity);
+    if (root.IsNull()) {
+        return;
+    }
+    if (const PrefabData* prefab = ctx.find_prefab(ctx.world.GetComponent<PrefabInstance>(root)->source.guid)) {
+        RecordPrefabOverrides(ctx.world, ctx.guids, entity, component, *prefab);
+    }
+}
+
 const char* ComponentName(ComponentId id) {
     const ComponentInfo& info = GetComponentInfo(id);
     return info.reflected != nullptr ? info.reflected->name : info.name;
@@ -79,6 +94,7 @@ void SetFieldCommand::Apply(CommandContext& ctx, const reflect::Any& value) {
     void* component = ctx.world.GetComponentRaw(entity, component_);
     AETHER_ASSERT(component != nullptr);
     field_->Set(component, value);
+    RecordPrefabEdit(ctx, entity, component_);
     if (ctx.hooks != nullptr && ctx.hooks->on_field_changed) {
         ctx.hooks->on_field_changed(entity, component_, *field_);
     }
@@ -296,6 +312,62 @@ usize EnsureAllGuids(World& world, GuidIndex& guids) {
         }
     }
     return changed;
+}
+
+// ---------------------------------------------------------------------------
+// RevertPrefabOverrideCommand
+// ---------------------------------------------------------------------------
+
+RevertPrefabOverrideCommand::RevertPrefabOverrideCommand(EntityGuid entity, ComponentId component,
+                                                         std::string field_path)
+    : entity_(entity), component_(component), field_path_(std::move(field_path)) {}
+
+void RevertPrefabOverrideCommand::Resolve(CommandContext& ctx, Entity root) {
+    if (!ctx.find_prefab) {
+        return;
+    }
+    if (const PrefabData* prefab = ctx.find_prefab(ctx.world.GetComponent<PrefabInstance>(root)->source.guid)) {
+        ResolvePrefabInstance(ctx.world, ctx.guids, root, *prefab);
+    }
+}
+
+void RevertPrefabOverrideCommand::Do(CommandContext& ctx) {
+    const Entity entity = editor::Resolve(ctx, entity_);
+    const Entity root = FindInstanceRoot(ctx.world, ctx.guids, entity);
+    const PrefabLink* link = ctx.world.GetComponent<PrefabLink>(entity);
+    if (root.IsNull() || link == nullptr) {
+        return;
+    }
+    const PrefabLocalId local_id = link->local_id;
+    PrefabInstance& instance = *ctx.world.GetComponent<PrefabInstance>(root);
+    before_ = instance.overrides;
+    const std::string component = component_ == kInvalidComponentId ? std::string() : ComponentName(component_);
+    RevertOverrides(instance, local_id, component, component_ == kInvalidComponentId ? std::string() : field_path_);
+    Resolve(ctx, root);
+}
+
+void RevertPrefabOverrideCommand::Undo(CommandContext& ctx) {
+    const Entity root = FindInstanceRoot(ctx.world, ctx.guids, editor::Resolve(ctx, entity_));
+    if (root.IsNull()) {
+        return;
+    }
+    ctx.world.GetComponent<PrefabInstance>(root)->overrides = before_;
+    Resolve(ctx, root);
+}
+
+std::string RevertPrefabOverrideCommand::Label() const {
+    if (component_ == kInvalidComponentId) {
+        return "Revert to Prefab";
+    }
+    return std::string("Revert ") + ComponentName(component_) + (field_path_.empty() ? "" : "." + field_path_);
+}
+
+usize RevertPrefabOverrideCommand::MemoryBytes() const {
+    usize bytes = sizeof(*this) + field_path_.size();
+    for (const PropertyOverride& o : before_) {
+        bytes += sizeof(o) + o.component.size() + o.field_path.size() + o.value.size();
+    }
+    return bytes;
 }
 
 } // namespace aether::editor

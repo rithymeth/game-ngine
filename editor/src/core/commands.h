@@ -3,6 +3,7 @@
 #include "aether/reflection/reflection.h"
 #include "aether/scene/entity_guid.h"
 #include "aether/scene/hierarchy.h"
+#include "aether/scene/prefab.h"
 #include "core/command_stack.h"
 
 #include <memory>
@@ -139,6 +140,28 @@ private:
     EntityGuid new_parent_;
     bool had_parent_ = false;
     EntityGuid old_parent_;
+};
+
+// "Revert to Prefab" for part of a prefab instance (§9.3): removes the
+// overrides of `entity`'s `component` at `field_path` (and inside it; "" =
+// the whole component, ComponentId kInvalidComponentId = every component of
+// the entity) and resolves the instance. Undo puts the overrides back.
+// Needs CommandContext::find_prefab.
+class RevertPrefabOverrideCommand final : public ICommand {
+public:
+    RevertPrefabOverrideCommand(EntityGuid entity, ComponentId component, std::string field_path);
+    void Do(CommandContext& ctx) override;
+    void Undo(CommandContext& ctx) override;
+    std::string Label() const override;
+    usize MemoryBytes() const override;
+
+private:
+    void Resolve(CommandContext& ctx, Entity root);
+
+    EntityGuid entity_;
+    ComponentId component_;
+    std::string field_path_;
+    std::vector<PropertyOverride> before_; // the instance's overrides before Do
 };
 
 // Turns an edit a widget already made in place into an undoable command: if

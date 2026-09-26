@@ -1982,6 +1982,50 @@ Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 9.
 - 158/158 tests pass on GCC 13, on Clang and under ASan/UBSan, and 165/165
   with physics.
 
+**Step 2: recording overrides, marking them, Apply and Revert** (§9.3).
+
+- **`RecordPrefabOverrides`** compares an instance entity's component with
+  the prefab and stores the differences as per-field overrides: `gold`,
+  `position[1]`, or a whole list that changed length.
+  - Editing a field back to the prefab's value removes its override.
+  - Moving an instance's root is placing it, not overriding it.
+  - Orphaned overrides are kept.
+- **`SetFieldCommand` records overrides** whenever the editor supplies
+  `CommandContext::find_prefab`. It records on Do, Undo and Redo, so undoing
+  an edit also undoes its override.
+- **`RevertPrefabOverrideCommand`** (Revert to Prefab, for one field or all
+  of an entity's overrides) removes the overrides and resolves the
+  instance. Undo puts both the values and the overrides back.
+- **`ApplyOverridesToPrefab`** writes selected overrides into the prefab and
+  removes them from the instance. Other instances that override the same
+  field keep their own values. Orphans can't be applied and stay.
+- **`IsFieldOverridden`** and **`RevertOverrides`** support the UI.
+  Overrides are matched by path, so `position` covers `position[1]`.
+- **Inspector**: overridden fields get an accent bar and a highlighted
+  label (`InspectOptions::is_overridden`), plus a right-click
+  **Revert to Prefab**. An instance's entity shows its override count and a
+  **Revert All** button.
+  - Apply to Prefab needs the prefab asset saved, so its button comes with
+    the editor's asset work on Windows.
+- `CommandContext` gained a constructor, so existing `{world, guids,
+  &hooks}` initialisations don't trip missing-initialiser warnings.
+
+**Verified**: 4 new tests.
+
+- **Recording**: a field, reverting it by hand, a vector element, a
+  resized array, root placement, a non-instance entity, and a surviving
+  orphan.
+- **Apply and Revert across three instances**: the others follow the new
+  default and the overriding one keeps its value. Path matching is
+  checked.
+- **Editor commands**: an edit records an override, and undo, redo and
+  editing back all behave. Revert and Revert All work and undo, and
+  nothing is recorded without a prefab lookup.
+- **Headless Inspector**: draws a marked instance without recording
+  anything, and only top-level fields are asked about.
+- 162/162 tests pass on GCC 13, on Clang and under ASan/UBSan, and 169/169
+  with physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
