@@ -1919,6 +1919,69 @@ Windows build.
 - 153/153 tests pass on GCC 13, on Clang and under ASan/UBSan, and 160/160
   with physics.
 
+### Phase 9 (in progress) — Prefabs and scheduling
+
+Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 9.
+
+**Step 1: prefab assets and resolving instances** (`scene/prefab.h`).
+
+- **Prefab data** (`.aprefab`, JSON): a root entity and its descendants.
+  - Each entity has a local ID that's unique within the prefab, its
+    parent's local ID, and its reflected components in the same JSON form
+    as JSON scenes.
+  - `MakePrefab` captures an entity and everything under it.
+  - Loading checks the structure: one root, unique non-zero IDs, and
+    parents listed before their children.
+- **Instances**: the root entity of an instance has a `PrefabInstance`
+  component. It holds the prefab reference, the property overrides, and
+  the prefab entities this instance removed.
+  - Every entity created from the prefab gets a `PrefabLink` (its instance
+    and local ID).
+  - `InstantiatePrefab` creates an instance, optionally at a given
+    Transform.
+- **Overrides** name an entity, a component, a field path (`gold`,
+  `items[1]`, `position[1]`, or `""` for the whole component) and a JSON
+  value.
+  - Whole-component overrides are applied first, so a field override on the
+    same component wins.
+  - An override whose entity, component or field no longer exists is
+    **kept and reported as orphaned**, not silently deleted.
+- **`ResolvePrefabInstance`** (§9.2): starts from the prefab's data, takes
+  away the removed entities, applies the overrides, then creates, updates or
+  destroys entities to match.
+  - Existing entities are **reused** (matched by their `PrefabLink`), so
+    references and selections stay valid.
+  - The root keeps its own Transform and parent: that's where the instance
+    is placed.
+  - Children added to an instance by hand have no link, so they're left
+    alone.
+  - `ResolveAllPrefabInstances` re-resolves every instance after a scene
+    loads or a prefab changes, and reports instances whose prefab isn't
+    available.
+- **Scene loading registers the engine's scene components first.**
+  Components get their IDs on first use, so a scene loaded before any
+  prefab code had run would have dropped `PrefabInstance` data as unknown.
+  The same applied to `Parent`.
+- Nesting and variants come in step 3, and recording overrides from editor
+  edits (with bold fields, Apply and Revert) in step 2.
+
+**Verified**: 5 new tests.
+
+- **Capture and files**: capturing a 4-entity chest, a file round trip, and
+  four kinds of malformed prefab refused.
+- **Instantiating**: the hierarchy is built, world positions follow the
+  placed root, and each instance gets separate entities.
+- **One override among 100 instances**: when the prefab changes the same
+  field, 99 instances follow and the overridden one keeps its value, on the
+  same entity. Removing the override brings it back in line.
+- **Override paths**: vector and array elements, whole-component
+  precedence, and 4 kinds of orphan, all kept on the instance.
+- **Removed and added children**: they survive binary and JSON scene
+  save/load plus prefab edits (a new child, a changed field, a deleted
+  entity, a dropped component), and an unavailable prefab is reported.
+- 158/158 tests pass on GCC 13, on Clang and under ASan/UBSan, and 165/165
+  with physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,

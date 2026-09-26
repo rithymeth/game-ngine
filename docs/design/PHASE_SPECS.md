@@ -404,7 +404,15 @@ struct SystemDesc {
 
 ### 9.7 PR breakdown
 
-1. Prefab asset save/load and `PrefabInstance` resolve (no nesting).
+1. ✅ **Done.** Prefab asset save/load and `PrefabInstance` resolve (no nesting).
+   - Override values are JSON (with JSON-structure field paths such as
+     `items[2]` and `position[1]`), not archive bytes: prefab data is
+     already reflected JSON, and JSON diffs and merges well.
+   - Added children need no `added_entities` list: they're ordinary scene
+     entities parented under the instance, and resolving leaves unlinked
+     entities alone.
+   - The instance root keeps its own Transform (its placement); its other
+     components follow the prefab.
 2. Override recording, bold UI, Apply/Revert.
 3. Nesting, variants, cycle detection.
 4. Propagation on prefab save and orphaned override warnings.
