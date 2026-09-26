@@ -486,9 +486,12 @@ frame's state for an action in a lower context.
 1. ✅ **Done.** Keys and raw state, actions, mapping contexts, modifiers,
    triggers, the context stack, events and the polling API, all testable
    with synthetic events (the phase's "done when").
-2. Input assets (`InputAction` and `InputMappingContext` files through the
+2. ✅ **Done.** Input assets (`InputAction` and `InputMappingContext` files through the
    asset database), runtime rebinding, "press a key" capture, and user
    overrides saved to config.
+   - `.aaction` / `.amapping` files; bindings refer to actions by name.
+   - Rebinds address "the Nth binding of an action in a context", and are
+     saved in `Saved/Config/Input.json`, separate from the defaults.
 3. Platform backends: Win32 keyboard and mouse (raw delta, cursor lock),
    XInput gamepads (Windows), and the SDL controller database elsewhere.
 4. Editor: the Input Mapping Context editor, and Project Settings > Input.

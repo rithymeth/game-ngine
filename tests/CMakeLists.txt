@@ -24,6 +24,7 @@ add_executable(aether_tests
     test_gameplay.cpp
     test_scheduler.cpp
     test_input.cpp
+    test_input_bindings.cpp
     test_assets.cpp
     test_gltf_loader.cpp
 )
