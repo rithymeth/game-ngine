@@ -47,9 +47,17 @@ struct GraphLinkView {
     float glow = 0.0f; // 0..1: the exec trace makes wires glow as they fire
 };
 
+// A comment box behind the nodes, identified by its index in `comments`.
+struct GraphCommentView {
+    std::string text;
+    float x = 0.0f, y = 0.0f, width = 0.0f, height = 0.0f;
+    u32 color = 0x40FFFFFF;
+};
+
 struct GraphViewModel {
     std::vector<GraphNodeView> nodes;
     std::vector<GraphLinkView> links;
+    std::vector<GraphCommentView> comments;
     const GraphNodeView* Find(u32 id) const;
 };
 
@@ -60,6 +68,11 @@ struct NodeLayout {
     std::vector<float> input_y, output_y; // pin centers
 };
 NodeLayout LayoutNode(const GraphNodeView& node, float font_size);
+
+// The canvas rectangle around these nodes (all of them if `nodes` is empty);
+// false if none are in the model. Needs an ImGui context (text widths).
+bool NodeBounds(const GraphViewModel& model, const std::set<u32>& nodes, float font_size, float& x0, float& y0, float& x1,
+                float& y1);
 
 struct GraphPinRef {
     u32 node = 0;
@@ -73,7 +86,9 @@ struct GraphViewState {
     float pan_x = 0.0f, pan_y = 0.0f; // canvas point at the view's top-left
     float zoom = 1.0f;                // 0.25 .. 2
     std::set<u32> selection;
-    bool request_fit = false; // fit every node on the next draw (Home)
+    int selected_comment = -1; // a comment box, selected by clicking its title bar
+    bool request_fit = false;           // fit every node on the next draw (Home)
+    bool request_fit_selection = false; // with request_fit: only the selection (F)
 
     // In-progress gestures.
     bool dragging_nodes = false;
@@ -82,6 +97,9 @@ struct GraphViewState {
     bool box_selecting = false;
     float box_x0 = 0.0f, box_y0 = 0.0f;
     float drag_dx = 0.0f, drag_dy = 0.0f; // node drag so far, canvas units
+    int dragging_comment = -1;             // moving a comment box (and the nodes inside it)
+    int resizing_comment = -1;             // dragging a comment box's corner
+    std::set<u32> comment_nodes;           // the nodes moving with the comment
 
     // Where the last draw put the canvas (screen space).
     float origin_x = 0.0f, origin_y = 0.0f, width = 0.0f, height = 0.0f;
@@ -108,13 +126,32 @@ struct GraphViewResult {
     GraphPinRef palette_from;
     u32 double_clicked = 0; // a node, e.g. to open a function graph
     bool selection_changed = false;
+
+    // Comment boxes: index -> new rectangle (after a move or resize), a
+    // Delete with a comment selected, and C with nodes selected (the owner
+    // adds a box around them).
+    struct CommentRect {
+        usize index = 0;
+        float x = 0.0f, y = 0.0f, width = 0.0f, height = 0.0f;
+    };
+    std::vector<CommentRect> comments_changed;
+    int deleted_comment = -1;
+    bool comment_selection = false;
+
+    // Clipboard keys (Ctrl+C/X/V/D), for the owner. Pastes go at the
+    // mouse's canvas position.
+    bool copy = false, cut = false, paste = false, duplicate = false;
+    float mouse_x = 0.0f, mouse_y = 0.0f; // canvas units
 };
 
 // Mouse: drag nodes (Ctrl+click adds to the selection), drag from a pin to
 // another to link them (or to empty canvas for the palette), drag on empty
 // canvas to box-select, Alt+click a wire to break it, right-click for the
-// palette, middle-drag to pan, wheel to zoom about the cursor.
-// Keys (while hovered): Delete, Home (fit), Ctrl+A.
+// palette, middle-drag to pan, wheel to zoom about the cursor. A comment
+// box's title bar selects and moves it with its nodes; its bottom-right
+// corner resizes it.
+// Keys (while hovered): Delete, Home (fit all), F (frame the selection),
+// Tab (palette), C (comment the selection), Ctrl+A, Ctrl+C/X/V/D.
 GraphViewResult DrawGraphView(const char* id, const GraphViewModel& model, GraphViewState& state);
 
 // Hit testing (screen space), for the widget and for tests.
@@ -122,6 +159,9 @@ bool PinScreenPosition(const GraphViewModel& model, const GraphViewState& state,
                        float& y);
 bool HitTestPin(const GraphViewModel& model, const GraphViewState& state, float x, float y, GraphPinRef& out);
 u32 HitTestNode(const GraphViewModel& model, const GraphViewState& state, float x, float y); // 0 = none
+// A comment box's title bar or resize corner under (x, y); -1 if none.
+int HitTestCommentTitle(const GraphViewModel& model, const GraphViewState& state, float x, float y);
+int HitTestCommentCorner(const GraphViewModel& model, const GraphViewState& state, float x, float y);
 // The wire under (x, y), within `tolerance` pixels; -1 if none.
 int HitTestLink(const GraphViewModel& model, const GraphViewState& state, float x, float y, float tolerance = 5.0f);
 
