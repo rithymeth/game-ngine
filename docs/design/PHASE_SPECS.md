@@ -1916,3 +1916,90 @@ can be added later) pulls from the mixer on its own thread.
    the audio thread, and a null backend.
 6. ✅ **Done.** Editors: the waveform preview, the sound cue graph and the
    mixer panel with live meters.
+
+---
+
+## Phase 18: runtime game UI
+
+The concept is in [ROADMAP.md Phase 18](../ROADMAP.md). The engine side is
+the `Aether::UI` library (`ui/`): a retained widget tree with layout,
+input and styles. It paints into a draw list of clipped, textured quads,
+which the renderer draws (GPU side with the Windows renderer work).
+Everything else runs and is tested headless.
+
+### 18.1 Widgets, layout and drawing
+
+- **Units**: layout is in layout units, the pixels of a reference
+  resolution (1920×1080 by default); the viewport scales them to the
+  screen. +x is right and +y is down.
+- **Widget**: a name, visibility, opacity, clipping of children, and a
+  slot its parent reads.
+  - Visibility: Visible; Hidden (keeps its space); Collapsed (none);
+    HitTestInvisible (drawn, not hit, nor are its children); and
+    SelfHitTestInvisible (only its children are hit).
+  - Layout is two passes: Measure (children first, desired sizes), then
+    Arrange (parents first, rectangles).
+  - Painting draws the widget, then its children (clipped if it clips),
+    then any overlay such as a scroll bar. Opacity multiplies down the
+    tree.
+  - Hit testing tries children front to back, then the widget itself.
+    Panels let clicks through; images, bordered backgrounds and scroll
+    boxes catch them.
+- **Panels**:
+
+  | Panel | Places its children |
+  |---|---|
+  | Canvas | by anchors (below), in `z` order |
+  | HorizontalBox / VerticalBox | in a row or column; `fill` 0 takes the desired size, `fill` > 0 shares what's left by weight; aligned across; `spacing` between |
+  | Grid | in cells (row, column, spans); an auto track is its widest single-cell child, a weighted one (`column_fill`/`row_fill`) shares the rest |
+  | Overlay | on top of each other, each aligned in the area |
+  | SizeBox | one child, its size overridden or clamped |
+  | Border | one child inside `padding`, over a background brush |
+  | ScrollBox | one child longer than the box, scrolled, clipped, with a scroll bar; `ScrollIntoView` scrolls the least that shows a rectangle |
+  | Spacer | nothing: fixed empty space |
+
+- **Anchors** (Canvas): each axis attaches to a fraction of the canvas.
+  - At a point (min = max), the child sits at the anchor plus
+    `position`, sized `size` (or its desired size with `auto_size`),
+    about its `alignment` pivot.
+  - Stretched (min < max), its edges are the anchors inset by `margins`.
+- **Text**: lines break at `\n` and, with `wrap_width`, greedily between
+  words; a word longer than a line gets one to itself. It's justified left,
+  centre or right. UTF-8, with invalid bytes read as U+FFFD. Fonts supply
+  ascent, line height, glyphs (advance, quad, UV) and kerning. The
+  built-in stand-in has fixed-width boxes; real SDF fonts come in step 5.
+- **Brushes**: none, colour, image, box (9-slice: corners keep their
+  size, times `slice_scale`, and shrink to fit small rectangles; edges
+  stretch one way; the middle both) and frame (9-slice without the
+  middle).
+- **Draw list**: quads (rectangle, UV, colour, texture, clip index) and
+  clip rectangles, each intersected with the one it's pushed inside.
+  Empty, transparent or fully clipped quads are dropped. `Scale` turns
+  layout units into pixels.
+- **Viewport**: widget layers in z order (equal z in the order added),
+  each laid out over the safe area.
+  - Scale rules: none, shortest side, longest side, width, height, or a
+    curve (the shortest side in pixels to a scale), clamped.
+  - The safe area is insets in pixels (notches, overscan).
+  - It paints to pixels, and hit tests the top layer first.
+
+### 18.2 PR breakdown
+
+1. ✅ **Done.** The widget tree, the layout panels (Canvas with anchors,
+   boxes, Grid, Overlay, SizeBox, Border, ScrollBox, Spacer), Text and
+   Image, the draw list (9-slice, clipping, text), resolution scaling,
+   safe areas and hit testing.
+2. Interactive widgets (Button, Toggle, Slider, ProgressBar, TextInput,
+   Dropdown, virtualized ListView, Tooltip), and input: pointer and touch
+   routing (hover, press, capture, wheel), focus with gamepad and keyboard
+   navigation, and the UI input context taking input before gameplay.
+3. Styles and themes as assets (per-state brushes, fonts and colours),
+   `.aui` layout files, and data binding to reflected fields.
+4. Widget Blueprints (a layout plus an event graph on the Phase 12 VM,
+   with Create Widget, Add to Viewport, Set Text and events such as
+   OnClicked), and UI animations (tweens and keyframe timelines of
+   position, scale, opacity and colour).
+5. SDF text (font atlases from TrueType via stb_truetype), and world-space
+   UI (health bars over enemies, projected or on 3D quads).
+6. The UI Designer: palette, hierarchy, canvas with selection, anchors and
+   resolution preview, details, and the animation timeline.
