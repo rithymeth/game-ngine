@@ -53,7 +53,7 @@ appear only once per graph, except Custom Events, which have unique names.
 | **Event EndPlay** | `▶`, `● reason: EndPlayReason` | destroyed, level unloaded, or PIE stopped |
 | **Event Tick** | `▶`, `● delta_seconds: float` | every frame, after physics. Can be disabled or throttled per class (Class Settings > Tick Interval) |
 | **Event FixedTick** | `▶`, `● fixed_delta: float` | every fixed step (60 Hz default), before physics. Use for forces |
-| **Event OnCollisionBegin / End** | `▶`, `● other: Entity`, `● hit: HitResult` | a physics contact starts or ends (Phase 13) |
+| **Event OnCollisionBegin / Stay / End** | `▶`, `● other: Entity` (a `hit` pin with the point and normal comes with Phase 13's queries) | a physics contact starts, continues (every step, only for colliders with Report Stay) or ends (Phase 13) |
 | **Event OnTriggerEnter / Exit** | `▶`, `● other: Entity` | another body enters or leaves this entity's trigger collider |
 | **Event OnDamaged** | `▶`, `● amount: float`, `● instigator: Entity`, `● type: DamageType` | `Apply Damage` targets this entity |
 | **Event InputAction** *(config: action)* | `▶ Started`, `▶ Triggered`, `▶ Completed`, `● value: Wildcard` | the chosen Input Action changes state (Phase 10). The value type follows the action (bool/float/Vec2/Vec3) |

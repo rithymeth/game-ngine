@@ -83,6 +83,17 @@ std::vector<u8> SettingsOf(const World& world, Entity e) {
 
 } // namespace
 
+const char* PhysicsEventName(PhysicsEventType type) {
+    switch (type) {
+    case PhysicsEventType::CollisionBegin: return "Event.OnCollisionBegin";
+    case PhysicsEventType::CollisionStay: return "Event.OnCollisionStay";
+    case PhysicsEventType::CollisionEnd: return "Event.OnCollisionEnd";
+    case PhysicsEventType::TriggerEnter: return "Event.OnTriggerEnter";
+    case PhysicsEventType::TriggerExit: return "Event.OnTriggerExit";
+    }
+    return "";
+}
+
 PhysicsScene::PhysicsScene(World& world, PhysicsWorld& physics) : world_(world), physics_(physics) {}
 
 PhysicsScene::~PhysicsScene() {
@@ -104,7 +115,10 @@ Entity PhysicsScene::EntityOf(JPH::BodyID body) const {
 
 void PhysicsScene::Destroy(Tracked& tracked) {
     if (tracked.body.IsInvalid()) return;
-    by_body_.erase(tracked.body.GetIndexAndSequenceNumber());
+    const u32 id = tracked.body.GetIndexAndSequenceNumber();
+    graveyard_[id] = by_body_[id]; // its contacts End at the next step
+    by_body_.erase(id);
+    physics_.SetReportStay(tracked.body, false);
     physics_.DestroyBody(tracked.body);
     tracked.body = JPH::BodyID();
     if (world_.IsAlive(tracked.entity)) {
@@ -231,6 +245,11 @@ bool PhysicsScene::Build(Entity e, Tracked& tracked, std::string& problem) {
     tracked.rotation = rotation;
     tracked.motion = motion;
     by_body_[tracked.body.GetIndexAndSequenceNumber()] = EntityKey(e);
+    auto stay = [&](const auto* c) { return c != nullptr && c->report_stay; };
+    physics_.SetReportStay(tracked.body, stay(world_.GetComponent<BoxCollider>(e)) || stay(world_.GetComponent<SphereCollider>(e)) ||
+                                             stay(world_.GetComponent<CapsuleCollider>(e)) ||
+                                             stay(world_.GetComponent<ConvexCollider>(e)) ||
+                                             stay(world_.GetComponent<MeshCollider>(e)));
     if (RigidBody* body = world_.GetComponent<RigidBody>(e)) body->body_id = tracked.body;
     return true;
 }
@@ -318,6 +337,42 @@ void PhysicsScene::Step(f32 dt) {
         tracked.position = t->position;
         tracked.rotation = t->rotation;
     }
+    Dispatch();
+}
+
+Entity PhysicsScene::Owner(JPH::BodyID body) const {
+    const u32 id = body.GetIndexAndSequenceNumber();
+    if (auto it = by_body_.find(id); it != by_body_.end()) return EntityFromKey(it->second);
+    if (auto it = graveyard_.find(id); it != graveyard_.end()) return EntityFromKey(it->second);
+    return kNullEntity;
+}
+
+void PhysicsScene::Dispatch() {
+    events_.clear();
+    // Map every contact to entities first: handlers may destroy entities
+    // (and a later Sync their bodies) while we deliver.
+    std::vector<PhysicsEvent> pending;
+    for (const ContactEvent& c : physics_.Contacts()) {
+        const Entity e1 = Owner(c.body1), e2 = Owner(c.body2);
+        PhysicsEventType type;
+        if (c.trigger) {
+            if (c.type == ContactType::Stay) continue;
+            type = c.type == ContactType::Begin ? PhysicsEventType::TriggerEnter : PhysicsEventType::TriggerExit;
+        } else {
+            type = c.type == ContactType::Begin  ? PhysicsEventType::CollisionBegin
+                   : c.type == ContactType::Stay ? PhysicsEventType::CollisionStay
+                                                 : PhysicsEventType::CollisionEnd;
+        }
+        // The contact normal points from body 1 to body 2; each side gets it pointing at itself.
+        if (!e1.IsNull()) pending.push_back({e1, e2, type, c.point, Vec3(-c.normal.x, -c.normal.y, -c.normal.z), c.approach_speed});
+        if (!e2.IsNull()) pending.push_back({e2, e1, type, c.point, c.normal, c.approach_speed});
+    }
+    for (const PhysicsEvent& e : pending) {
+        if (!world_.IsAlive(e.self)) continue; // destroyed earlier in this dispatch (or before it)
+        events_.push_back(e);
+        if (handler_) handler_(e);
+    }
+    graveyard_.clear();
 }
 
 } // namespace aether

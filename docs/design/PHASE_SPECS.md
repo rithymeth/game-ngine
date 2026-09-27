@@ -1010,8 +1010,46 @@ flying, swimming).
    - **Debug fix**: the broadphase interface now implements
      `GetBroadPhaseLayerName`, which Jolt's profiling builds need. Debug
      builds with physics failed to compile without it.
-3. Contact listener queue and event dispatch, with a determinism test (same
-   scene, same events in the same order across 10 runs).
+3. ✅ **Done.** Contact listener queue and event dispatch, with a
+   determinism test (same scene, same events in the same order across 10
+   runs).
+   - **Queue**: Jolt's callbacks (worker threads) claim slots in a
+     16,384-entry buffer with one atomic counter. There's no lock and no
+     allocation; overflow is counted (`DroppedContacts`) and logged.
+     Persisted callbacks are kept only for bodies that asked for Stay.
+   - **After the step**, `PhysicsWorld` sorts the entries by (body pair,
+     sub-shapes, kind) and counts sub-shape contacts per body pair, so a
+     compound touching with two parts begins once. The result is
+     `ContactEvent`s: Begin with point, normal and approach speed; Stay
+     at most once per pair per step; End.
+   - **Sleep**: Jolt reports a sleeping pair's contacts as removed and
+     re-adds them on waking. A pair whose bodies are all asleep turns
+     dormant instead of ending. It ends only if a body wakes without
+     touching, or goes away, so a resting pile doesn't flicker
+     Begin/End.
+   - **`PhysicsScene`** maps bodies to entities and delivers
+     `PhysicsEvent{self, other, type, point, normal, approach_speed}` to
+     both sides through `SetEventHandler`. Types: CollisionBegin/Stay/End,
+     or TriggerEnter/Exit when either body is a sensor; triggers never
+     Stay. The normal points at `self`.
+     - A destroyed body's entity is remembered until its End goes out,
+       so the survivor hears it, with the gone entity as `other`.
+     - An event whose `self` was destroyed earlier in the same dispatch
+       is skipped.
+   - **Stay** is opt-in per collider (`report_stay`). `PhysicsEventName`
+     gives the Blueprint event, and the Event OnCollisionStay node was
+     added.
+   - **Fix** found by the determinism test's repeated worlds:
+     `JoltJobSystemAdapter`'s destructor now waits for the wrappers it
+     scheduled. A worker releases its job after marking it done, so a
+     world destroyed right after `Update` could free the job pool under
+     it. That tripped a Jolt assertion in Debug builds. Jolt's asserts
+     now log the failed expression.
+   - **Not yet**: the impulse Jolt computes during solving isn't
+     reported (approach speed stands in, as Jolt suggests for impact
+     sounds). Events go to Blueprints through a handler the game sets up
+     (the test shows one line); the player loop wires it with the other
+     hookups.
 4. Queries with Blueprint nodes.
 5. `CharacterMovement` with tests for slopes, steps, and jump buffering.
 6. Collider gizmos and the physics debug draw toggle.

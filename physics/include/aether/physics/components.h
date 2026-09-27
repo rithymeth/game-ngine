@@ -54,6 +54,7 @@ struct BoxCollider {
     bool is_trigger = false;
     f32 friction = 0.5f;
     f32 restitution = 0.0f;
+    bool report_stay = false; // OnCollisionStay every step while touching (off by default: it's every step)
 };
 
 struct SphereCollider {
@@ -62,6 +63,7 @@ struct SphereCollider {
     bool is_trigger = false;
     f32 friction = 0.5f;
     f32 restitution = 0.0f;
+    bool report_stay = false; // OnCollisionStay every step while touching (off by default: it's every step)
 };
 
 // Upright (along Y). `height` is the whole capsule, caps included.
@@ -72,6 +74,7 @@ struct CapsuleCollider {
     bool is_trigger = false;
     f32 friction = 0.5f;
     f32 restitution = 0.0f;
+    bool report_stay = false; // OnCollisionStay every step while touching (off by default: it's every step)
 };
 
 // The convex hull of a point cloud (a rock, a crate with bevels).
@@ -81,6 +84,7 @@ struct ConvexCollider {
     bool is_trigger = false;
     f32 friction = 0.5f;
     f32 restitution = 0.0f;
+    bool report_stay = false; // OnCollisionStay every step while touching (off by default: it's every step)
 };
 
 // A triangle mesh (level geometry). Only static bodies can use the triangles
@@ -93,6 +97,7 @@ struct MeshCollider {
     bool is_trigger = false;
     f32 friction = 0.5f;
     f32 restitution = 0.0f;
+    bool report_stay = false; // OnCollisionStay every step while touching (off by default: it's every step)
 };
 
 // Installs RigidBody's custom binary (de)serializer and its JSON migration
@@ -134,7 +139,8 @@ AETHER_REFLECT(aether::BoxCollider, 1,
     AETHER_FIELD(center, Field_EditAnywhere, {.units = "m"}),
     AETHER_FIELD(is_trigger, Field_EditAnywhere, {.tooltip = "Reports overlaps (OnTriggerEnter/Exit) instead of colliding"}),
     AETHER_FIELD(friction, Field_EditAnywhere, {.range_min = 0.0, .range_max = 2.0}),
-    AETHER_FIELD(restitution, Field_EditAnywhere, {.range_min = 0.0, .range_max = 1.0})
+    AETHER_FIELD(restitution, Field_EditAnywhere, {.range_min = 0.0, .range_max = 1.0}),
+    AETHER_FIELD(report_stay, Field_EditAnywhere, {.tooltip = "Send OnCollisionStay every step while touching"})
 )
 
 AETHER_REFLECT(aether::SphereCollider, 1,
@@ -142,7 +148,8 @@ AETHER_REFLECT(aether::SphereCollider, 1,
     AETHER_FIELD(center, Field_EditAnywhere, {.units = "m"}),
     AETHER_FIELD(is_trigger, Field_EditAnywhere, {.tooltip = "Reports overlaps (OnTriggerEnter/Exit) instead of colliding"}),
     AETHER_FIELD(friction, Field_EditAnywhere, {.range_min = 0.0, .range_max = 2.0}),
-    AETHER_FIELD(restitution, Field_EditAnywhere, {.range_min = 0.0, .range_max = 1.0})
+    AETHER_FIELD(restitution, Field_EditAnywhere, {.range_min = 0.0, .range_max = 1.0}),
+    AETHER_FIELD(report_stay, Field_EditAnywhere, {.tooltip = "Send OnCollisionStay every step while touching"})
 )
 
 AETHER_REFLECT(aether::CapsuleCollider, 1,
@@ -151,7 +158,8 @@ AETHER_REFLECT(aether::CapsuleCollider, 1,
     AETHER_FIELD(center, Field_EditAnywhere, {.units = "m"}),
     AETHER_FIELD(is_trigger, Field_EditAnywhere, {.tooltip = "Reports overlaps (OnTriggerEnter/Exit) instead of colliding"}),
     AETHER_FIELD(friction, Field_EditAnywhere, {.range_min = 0.0, .range_max = 2.0}),
-    AETHER_FIELD(restitution, Field_EditAnywhere, {.range_min = 0.0, .range_max = 1.0})
+    AETHER_FIELD(restitution, Field_EditAnywhere, {.range_min = 0.0, .range_max = 1.0}),
+    AETHER_FIELD(report_stay, Field_EditAnywhere, {.tooltip = "Send OnCollisionStay every step while touching"})
 )
 
 AETHER_REFLECT(aether::ConvexCollider, 1,
@@ -159,7 +167,8 @@ AETHER_REFLECT(aether::ConvexCollider, 1,
     AETHER_FIELD(center, Field_EditAnywhere, {.units = "m"}),
     AETHER_FIELD(is_trigger, Field_EditAnywhere, {.tooltip = "Reports overlaps (OnTriggerEnter/Exit) instead of colliding"}),
     AETHER_FIELD(friction, Field_EditAnywhere, {.range_min = 0.0, .range_max = 2.0}),
-    AETHER_FIELD(restitution, Field_EditAnywhere, {.range_min = 0.0, .range_max = 1.0})
+    AETHER_FIELD(restitution, Field_EditAnywhere, {.range_min = 0.0, .range_max = 1.0}),
+    AETHER_FIELD(report_stay, Field_EditAnywhere, {.tooltip = "Send OnCollisionStay every step while touching"})
 )
 
 AETHER_REFLECT(aether::MeshCollider, 1,
@@ -168,5 +177,6 @@ AETHER_REFLECT(aether::MeshCollider, 1,
     AETHER_FIELD(center, Field_EditAnywhere, {.units = "m"}),
     AETHER_FIELD(is_trigger, Field_EditAnywhere, {.tooltip = "Reports overlaps (OnTriggerEnter/Exit) instead of colliding"}),
     AETHER_FIELD(friction, Field_EditAnywhere, {.range_min = 0.0, .range_max = 2.0}),
-    AETHER_FIELD(restitution, Field_EditAnywhere, {.range_min = 0.0, .range_max = 1.0})
+    AETHER_FIELD(restitution, Field_EditAnywhere, {.range_min = 0.0, .range_max = 1.0}),
+    AETHER_FIELD(report_stay, Field_EditAnywhere, {.tooltip = "Send OnCollisionStay every step while touching"})
 )

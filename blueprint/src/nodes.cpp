@@ -197,6 +197,7 @@ void RegisterBuiltins(Registry& r) {
     AddEvent(r, "Event.OnTriggerExit", "Event OnTriggerExit", {Out("other", kEntity)});
     AddEvent(r, "Event.OnCollisionBegin", "Event OnCollisionBegin", {Out("other", kEntity)});
     AddEvent(r, "Event.OnCollisionEnd", "Event OnCollisionEnd", {Out("other", kEntity)});
+    AddEvent(r, "Event.OnCollisionStay", "Event OnCollisionStay", {Out("other", kEntity)});
     r.exact["Event.Custom"] = [](const NodeContext& c, NodeError& error) -> std::optional<NodeSignature> {
         const std::string name = c.node.config.value("name", "");
         if (name.empty()) return Fail(error, "BP007", "A Custom Event needs a name.");

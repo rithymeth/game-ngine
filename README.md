@@ -3465,6 +3465,57 @@ Phase 13.
   and under ASan/UBSan, and 273/273 without physics on GCC 13, Clang and
   ASan/UBSan.
 
+**Step 3: contact and trigger events** (§13.1).
+
+- **Collected safely**: Jolt reports contacts from its worker threads
+  during the step. They go into a fixed-size buffer with one atomic
+  counter, with no locks and no allocation. After the step, on the game's
+  thread, they're sorted, so the same scene always gives the same events
+  in the same order.
+- **Events per entity**: `PhysicsScene::SetEventHandler` receives each
+  event for both entities involved, with the contact point, a normal
+  pointing at the receiver, and the impact speed:
+  - `CollisionBegin` / `CollisionEnd` for solid bodies, once per pair even
+    when several parts of a compound touch;
+  - `CollisionStay` every step while touching, only for colliders with
+    `report_stay`;
+  - `TriggerEnter` / `TriggerExit` when either body is a trigger.
+- **Resting doesn't flicker**: Jolt drops the contacts of sleeping bodies.
+  Aether keeps the pair until a body wakes up away from it, so a pile at
+  rest doesn't fire End and Begin again.
+- **Destroyed entities**: the survivor still gets the End. Events for an
+  entity destroyed by an earlier handler in the same batch are skipped.
+- **Blueprints**: `PhysicsEventName` gives the event to dispatch
+  ("Event.OnTriggerEnter"), and there's a new Event OnCollisionStay node.
+- **Fix**: destroying a `PhysicsWorld` right after a step could trip a
+  Jolt assertion in Debug builds, about once in 15 runs.
+  - The cause: a worker thread marks a Jolt job done, which lets
+    `Update` return, and only then drops its reference to the job. The
+    job pool could be destroyed in between.
+  - The job-system adapter now waits for those last releases before it
+    goes away.
+  - Jolt's Debug assertions now log what failed instead of stopping at a
+    bare breakpoint trap.
+
+**Verified**: 6 new tests.
+
+- A two-sphere compound lands with one Begin per side. Its normals point
+  at each receiver, and its impact speed is about 4.4 m/s after a 1 m
+  fall. It falls asleep with no End. Lifted away, it ends once, then
+  begins again when it lands.
+- Stay comes only when asked, at most once per step.
+- A ball falling through a trigger enters and then exits, with no
+  collision events.
+- A destroyed ball's End still reaches the floor, and a handler that
+  destroys an entity stops that entity's later events.
+- A 40-ball pile falling through a trigger on 4 worker threads gives the
+  identical event sequence in 10 runs.
+- BP_Coin, collected by a falling player ball through a real trigger,
+  destroys itself; a ball that isn't the player doesn't collect it.
+- 292/292 tests pass with physics on GCC 13 (RelWithDebInfo, and Debug
+  40 runs in a row) and under ASan/UBSan, and 273/273 without physics on
+  GCC 13, Clang and ASan/UBSan.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
