@@ -1759,7 +1759,48 @@ can be added later) pulls from the mixer on its own thread.
   - Instances can be stopped (with a fade), moved and have their volume
     changed.
 
-### 17.4 PR breakdown
+### 17.4 Components, the audio system and Blueprints
+
+- **AudioSource**: a cue, auto-play, volume and pitch.
+  - Blueprint methods: Play, Stop, Fade In, Fade Out, Set Volume, Set Cue
+    and Is Playing (pure). They queue commands the system applies.
+  - Its cue follows the entity's world position, with velocity from its
+    movement (doppler).
+  - When the cue ends by itself, the system reports it, dispatched as
+    `Event.OnAudioFinished (cue)`. Stopping or fading out isn't ending.
+  - Entities that go away fade their sound out over 50 ms.
+- **AudioListener**: the first active one (lowest entity index) sets the
+  mixer's listener from its world position and facing (-Z forward, +Y
+  up), with velocity from its movement.
+- **ReverbZone**: full strength within `radius`, fading linearly over
+  `blend_distance`.
+  - The listener's zone is the highest priority, then the strongest.
+  - The system adds one reverb effect to `reverb_bus` (SFX) the first
+    time any zone exists. It sets room size and damping from that zone,
+    and wet = the zone's wet × its strength.
+- **AudioSystem** (`Update(dt)`):
+  - listener, sources, attached sounds, bus fades, reverb, occlusion
+    (`Mixer::UpdateOcclusion`) and the cue player;
+  - world positions follow the scene hierarchy when given a `GuidIndex`;
+  - missing or invalid cues (checked against the sound bank) are reported
+    once each.
+- **The Audio library** (static Blueprint functions, category "Audio"),
+  acting on the active system (the last one made):
+
+  | Node | Does |
+  |---|---|
+  | PlaySound2D (cue, volume_db, pitch) | plays a cue without 3D, even a spatial one |
+  | PlaySoundAtLocation (cue, location, volume_db, pitch) | plays a cue at a point |
+  | SpawnSoundAttached (cue, target, offset, volume_db) | follows an entity (the offset turns with it) and stops if it's destroyed |
+  | SetBusVolume (bus, volume_db, fade_seconds) | fades linearly in dB; a new fade replaces the old one |
+  | StopAllSounds | stops everything the system plays |
+
+- **Entity parameters**: `Entity` is now reflected, so native functions can
+  take and return entities as Blueprint Entity pins. Static native
+  functions are listed under their type's name rather than
+  "Components|".
+
+### 17.5 PR breakdown
 
 1. ✅ **Done.** Sounds (WAV), voices (resampling, pitch, loop, pan,
    fades), the bus mixer with meters, and the DSP effects.
@@ -1769,7 +1810,7 @@ can be added later) pulls from the mixer on its own thread.
 3. ✅ **Done.** Sound cues (random, sequence, modulate, concatenate,
    loop, mix, delay) and `.acue` files; Ogg Vorbis and FLAC decoding;
    streaming long sounds; sample-accurate delayed starts.
-4. Components (`AudioSource`, `AudioListener`, `ReverbZone`), the
+4. ✅ **Done.** Components (`AudioSource`, `AudioListener`, `ReverbZone`), the
    `AudioSystem`, and the Blueprint nodes (Play Sound 2D/at Location,
    Spawn Sound Attached, Fade In/Out, Set Bus Volume).
 5. The device backend (miniaudio) with a lock-free handoff to the audio

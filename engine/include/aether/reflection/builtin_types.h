@@ -1,5 +1,6 @@
 #pragma once
 
+#include "aether/ecs/entity.h"
 #include "aether/math/math.h"
 #include "aether/reflection/reflect_macros.h"
 
@@ -105,6 +106,10 @@ inline constexpr bool aether::reflect::detail::kSerializeAsArray<aether::Mat4> =
 AETHER_REFLECT(aether::Vec3, 1, AETHER_FIELD(x), AETHER_FIELD(y), AETHER_FIELD(z))
 AETHER_REFLECT(aether::Vec4, 1, AETHER_FIELD(x), AETHER_FIELD(y), AETHER_FIELD(z), AETHER_FIELD(w))
 AETHER_REFLECT(aether::Quaternion, 1, AETHER_FIELD(x), AETHER_FIELD(y), AETHER_FIELD(z), AETHER_FIELD(w))
+// Entity handles, so native functions can take and return entities
+// (Blueprint Entity pins). A handle only means something while the world
+// that made it is running; it isn't a saved reference (use EntityGuid).
+AETHER_REFLECT(aether::Entity, 1, AETHER_FIELD(index), AETHER_FIELD(generation))
 
 // Mat4 stores `Vec4 cols[4]`; fixed-size arrays aren't a reflected kind (yet),
 // so its columns are exposed as four Vec4 fields at their array offsets.
