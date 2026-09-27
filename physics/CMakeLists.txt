@@ -1,5 +1,6 @@
 add_library(aether_physics STATIC
     src/physics_world.cpp
+    src/physics_scene.cpp
     src/jolt_job_system_adapter.cpp
 )
 

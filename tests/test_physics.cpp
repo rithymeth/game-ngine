@@ -51,7 +51,6 @@ AETHER_TEST(SyncPhysicsToTransforms_UpdatesEcsFromSimulation) {
 
     RigidBody body;
     body.body_id = sphere_id;
-    body.radius = 0.5f;
     body.mass = 1.0f;
     Entity entity = world.CreateEntity(Transform{Vec3(0, 5, 0), Quaternion::Identity()}, body);
 
@@ -124,9 +123,10 @@ AETHER_TEST(RigidBody_SerializerRoundTripsShapeDataNotHandle) {
 
     RigidBody original;
     original.body_id = JPH::BodyID(42);
-    original.radius = 2.5f;
+    original.motion = BodyMotion::Kinematic;
     original.mass = 3.5f;
-    original.is_static = true;
+    original.gravity_scale = 0.5f;
+    original.lock_rotation_y = true;
 
     std::vector<u8> bytes;
     const ComponentInfo& info = GetComponentInfo(GetComponentId<RigidBody>());
@@ -135,9 +135,9 @@ AETHER_TEST(RigidBody_SerializerRoundTripsShapeDataNotHandle) {
     RigidBody restored;
     info.deserialize(&restored, bytes.data(), bytes.size());
 
-    AETHER_CHECK_NEAR(restored.radius, 2.5f, 1e-6);
+    AETHER_CHECK(restored.motion == BodyMotion::Kinematic && restored.lock_rotation_y && !restored.lock_rotation_x);
     AETHER_CHECK_NEAR(restored.mass, 3.5f, 1e-6);
-    AETHER_CHECK(restored.is_static == true);
+    AETHER_CHECK_NEAR(restored.gravity_scale, 0.5f, 1e-6);
     AETHER_CHECK(restored.body_id.IsInvalid()); // handle deliberately NOT preserved
 }
 
@@ -155,7 +155,8 @@ AETHER_TEST(PhysicsComponents_AreReflectedAndRoundTripThroughBothSceneFormats) {
     const reflect::TypeInfo& transform = reflect::Reflect<Transform>();
     AETHER_CHECK(transform.FindField("position") && transform.FindField("rotation"));
     const reflect::TypeInfo& body = reflect::Reflect<RigidBody>();
-    AETHER_CHECK(body.fields.size() == 3);            // radius, mass, is_static
+    AETHER_CHECK(body.fields.size() == 10); // motion, mass, damping x2, gravity, CCD, locks x3, legacy radius
+    AETHER_CHECK(body.version == 2);
     AETHER_CHECK(body.FindField("body_id") == nullptr); // live handle: never reflected
 
     const ComponentInfo& body_info = GetComponentInfo(GetComponentId<RigidBody>());
@@ -165,9 +166,8 @@ AETHER_TEST(PhysicsComponents_AreReflectedAndRoundTripThroughBothSceneFormats) {
 
     World world;
     RigidBody rb;
-    rb.radius = 0.75f;
+    rb.motion = BodyMotion::Static;
     rb.mass = 3.0f;
-    rb.is_static = true;
     rb.body_id = JPH::BodyID(12345);
     world.CreateEntity(Transform{Vec3(1, 2, 3), Quaternion::Identity()}, rb);
 
@@ -176,7 +176,7 @@ AETHER_TEST(PhysicsComponents_AreReflectedAndRoundTripThroughBothSceneFormats) {
         loaded.ForEach<Transform, RigidBody>([&](Transform& t, RigidBody& b) {
             ++count;
             AETHER_CHECK(t.position.y == 2.0f && t.rotation.w == 1.0f);
-            AETHER_CHECK(b.radius == 0.75f && b.mass == 3.0f && b.is_static);
+            AETHER_CHECK(b.mass == 3.0f && b.motion == BodyMotion::Static);
             AETHER_CHECK(b.body_id.IsInvalid()); // must be recreated, never restored
         });
         AETHER_CHECK(count == 1);

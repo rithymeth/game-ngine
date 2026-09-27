@@ -928,10 +928,18 @@ Entity SpawnSphere(World& world, PhysicsWorld& physics, const Vec3& position, f3
     JPH::BodyID body_id = physics.CreateSphere(position, radius, mass, /*is_static=*/false);
     RigidBody body;
     body.body_id = body_id;
-    body.radius = radius;
     body.mass = mass;
-    body.is_static = false;
-    return world.CreateEntity(Transform{position, Quaternion::Identity()}, body);
+    body.motion = BodyMotion::Dynamic;
+    SphereCollider shape;
+    shape.radius = radius;
+    return world.CreateEntity(Transform{position, Quaternion::Identity()}, body, shape);
+}
+
+// The editor's bodies are spheres: a RigidBody plus a SphereCollider (Phase
+// 13 split the shape out of RigidBody). 0.5 m if the collider is missing.
+f32 SphereRadiusOf(const World& world, Entity e) {
+    const SphereCollider* shape = world.GetComponent<SphereCollider>(e);
+    return shape != nullptr ? shape->radius : 0.5f;
 }
 
 // Same DXGI-flip-model-aware backbuffer readback as gltf_demo/pbr_demo (see
@@ -1159,7 +1167,8 @@ int main() {
             RigidBody* b = world.GetComponent<RigidBody>(e);
             Transform* t = world.GetComponent<Transform>(e);
             if (b != nullptr && t != nullptr) {
-                b->body_id = physics.CreateSphere(t->position, b->radius, b->mass, b->is_static);
+                b->body_id = physics.CreateSphere(t->position, SphereRadiusOf(world, e), b->mass,
+                                                  b->motion == BodyMotion::Static);
             }
         };
         hooks.on_entity_created = [&](Entity e) { create_body(e); };
@@ -1186,7 +1195,7 @@ int main() {
             }
             if (id == GetComponentId<Transform>()) {
                 physics.SetPosition(b->body_id, t->position);
-            } else if (id == GetComponentId<RigidBody>()) {
+            } else if (id == GetComponentId<RigidBody>() || id == GetComponentId<SphereCollider>()) {
                 // Jolt shapes and motion type are effectively immutable once
                 // a body exists; recreate it in place.
                 destroy_body(e);
@@ -1345,7 +1354,7 @@ int main() {
             });
 
             std::vector<EditorInstance> instances;
-            ForEachWithEntity<Transform, RigidBody>(world, [&](Entity e, Transform& t, RigidBody& b) {
+            ForEachWithEntity<Transform, RigidBody>(world, [&](Entity e, Transform& t, RigidBody&) {
                 if (instances.size() >= kMaxInstances) {
                     return;
                 }
@@ -1354,7 +1363,7 @@ int main() {
                 inst.center[0] = t.position.x;
                 inst.center[1] = t.position.y;
                 inst.center[2] = t.position.z;
-                inst.radius = b.radius;
+                inst.radius = SphereRadiusOf(world, e);
                 if (is_selected) {
                     inst.color[0] = 1.0f;
                     inst.color[1] = 0.85f;
@@ -1461,9 +1470,9 @@ int main() {
                                                 view_proj);
                     f32 best_t = 1e30f;
                     Entity best_entity = kNullEntity;
-                    ForEachWithEntity<Transform, RigidBody>(world, [&](Entity e, Transform& t, RigidBody& b) {
+                    ForEachWithEntity<Transform, RigidBody>(world, [&](Entity e, Transform& t, RigidBody&) {
                         f32 hit_t;
-                        if (RaySphereIntersect(ray, t.position, b.radius, hit_t) && hit_t < best_t) {
+                        if (RaySphereIntersect(ray, t.position, SphereRadiusOf(world, e), hit_t) && hit_t < best_t) {
                             best_t = hit_t;
                             best_entity = e;
                         }
@@ -1547,8 +1556,12 @@ int main() {
                     // ModelRenderer needs no such reconnection: asset_path is
                     // plain data, and GetOrLoadGltfRenderData above re-loads
                     // (or finds already-cached) GPU resources for it lazily.
-                    world.ForEach<Transform, RigidBody>([&](Transform& t, RigidBody& b) {
-                        b.body_id = physics.CreateSphere(t.position, b.radius, b.mass, b.is_static);
+                    // Scenes saved before the collider split keep the radius
+                    // on the RigidBody; give those a SphereCollider first.
+                    MigrateLegacyRigidBodies(world);
+                    ForEachWithEntity<Transform, RigidBody>(world, [&](Entity e, Transform& t, RigidBody& b) {
+                        b.body_id = physics.CreateSphere(t.position, SphereRadiusOf(world, e), b.mass,
+                                                         b.motion == BodyMotion::Static);
                     });
                     // A different world: the old history no longer applies.
                     commands.Clear();
@@ -1610,12 +1623,19 @@ int main() {
                 };
                 undoable(GetComponentId<Transform>(), &t, "position",
                          [&] { return ImGui::DragFloat3("Position (m)", &t.position.x, 0.05f); });
-                undoable(GetComponentId<RigidBody>(), &b, "radius",
-                         [&] { return ImGui::DragFloat("Radius (m)", &b.radius, 0.01f, 0.05f, 5.0f, "%.2f"); });
+                if (SphereCollider* shape = world.GetComponent<SphereCollider>(e)) {
+                    undoable(GetComponentId<SphereCollider>(), shape, "radius", [&] {
+                        return ImGui::DragFloat("Radius (m)", &shape->radius, 0.01f, 0.05f, 5.0f, "%.2f");
+                    });
+                }
                 undoable(GetComponentId<RigidBody>(), &b, "mass",
                          [&] { return ImGui::DragFloat("Mass (kg)", &b.mass, 0.05f, 0.01f, 100.0f, "%.2f"); });
-                undoable(GetComponentId<RigidBody>(), &b, "is_static",
-                         [&] { return ImGui::Checkbox("Static (doesn't fall)", &b.is_static); });
+                undoable(GetComponentId<RigidBody>(), &b, "motion", [&] {
+                    bool is_static = b.motion == BodyMotion::Static;
+                    const bool changed = ImGui::Checkbox("Static (doesn't fall)", &is_static);
+                    if (changed) b.motion = is_static ? BodyMotion::Static : BodyMotion::Dynamic;
+                    return changed;
+                });
 
                 ImGui::Separator();
                 ImGui::PopID();

@@ -9,6 +9,7 @@
 #include <Jolt/Jolt.h>
 #include <Jolt/Core/JobSystem.h>
 #include <Jolt/Core/TempAllocator.h>
+#include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyInterface.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 
@@ -41,6 +42,12 @@ public:
     JPH::BodyID CreateSphere(const Vec3& position, f32 radius, f32 mass, bool is_static);
 
     void DestroyBody(JPH::BodyID id);
+
+    // For PhysicsScene: the object layer for a moving or non-moving body
+    // (the collision matrix of step 2 replaces this), and adding a body
+    // built from full Jolt settings.
+    JPH::ObjectLayer ObjectLayerFor(bool moving) const;
+    JPH::BodyID CreateBody(const JPH::BodyCreationSettings& settings, bool activate);
 
     void Step(f32 dt);
 

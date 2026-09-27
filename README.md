@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–12 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Now: Phase 13 — physics events and character movement
+## Status: Phases 8–9 and 11–12 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Now: Phase 13 — physics events and character movement (in progress)
 
 ### Phase 1 — Foundation
 
@@ -3381,6 +3381,61 @@ Phase 12 on the portable side.
   such as the quadratic one.
 - 272/272 tests pass on GCC 13, on Clang and under ASan/UBSan, and 279/279
   with physics.
+
+### Phase 13 (in progress) — Physics events and character movement
+
+Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md),
+Phase 13.
+
+**Step 1: collider components and the motion-only RigidBody** (§13.4).
+
+- **Colliders** (`physics/include/aether/physics/components.h`):
+  `BoxCollider`, `SphereCollider`, `CapsuleCollider` (upright, height
+  including the caps), `ConvexCollider` (the hull of a point cloud) and
+  `MeshCollider` (triangles).
+  - Each has a center offset, a trigger flag, friction and restitution.
+  - Several on one entity make one compound body.
+  - A moving mesh collider uses the convex hull of its vertices, since
+    Jolt (like Unity and Unreal) only collides with triangle meshes on
+    static bodies.
+- **`RigidBody`** now says only how a body moves: Static, Kinematic or
+  Dynamic, mass, linear and angular damping, gravity scale, continuous
+  collision detection, and rotation locks per axis. Colliders with no
+  RigidBody make a static body.
+- **Old scenes still load.** The pre-split RigidBody (radius, mass,
+  is_static) is read from both binary and JSON scenes, and
+  `MigrateLegacyRigidBodies` turns its radius into a SphereCollider.
+- **`PhysicsScene`** (`physics_scene.h`) keeps Jolt bodies in step with
+  the ECS:
+  - it creates a body for each entity with colliders, rebuilds it when a
+    collider or the RigidBody changes, and removes it with the entity or
+    its last collider;
+  - each step, it moves kinematic bodies to their Transform, teleports
+    others that gameplay moved, simulates, and writes dynamic bodies back
+    to their Transforms;
+  - it reports why a collider couldn't make a body (a hull of fewer than
+    four points, say);
+  - each body carries its entity, ready for contact events in step 3.
+- **Editor**: the sample spheres are now RigidBody + SphereCollider, and
+  loading a scene migrates old ones. This part of `editor/main.cpp`
+  hasn't been compiled yet (it builds only on Windows).
+
+**Verified**: 5 new tests.
+
+- The old binary and JSON RigidBody forms load and migrate, once, and
+  skip entities that already have a collider.
+- Every collider kind and RigidBody option round-trips through the
+  binary and JSON scene formats.
+- Bodies of each kind settle at the right height on a floor: sphere,
+  flat box, upright capsule, convex cube, and a box-and-sphere compound.
+  A triangle-mesh floor holds a ball, a trigger lets one fall through,
+  and a moving mesh collider rests as its hull.
+- A radius edit rebuilds the body where it is, and a Transform set by
+  gameplay teleports a dynamic body. Static bodies stay put and a
+  kinematic one follows its Transform. A bad hull reports why until it's
+  fixed. Removing the collider or the entity removes the body.
+- 284/284 tests pass with physics on GCC 13 and under ASan/UBSan, and
+  272/272 without physics on GCC 13, Clang and ASan/UBSan.
 
 ## Building
 

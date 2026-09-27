@@ -2,6 +2,7 @@
 
 #include "aether/core/log.h"
 #include "aether/physics/jolt_job_system_adapter.h"
+#include "aether/reflection/serialize.h"
 
 #include <Jolt/RegisterTypes.h>
 #include <Jolt/Core/Factory.h>
@@ -13,6 +14,7 @@
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 
 #include <atomic>
+#include <cstring>
 #include <cstdarg>
 #include <cstdio>
 
@@ -186,6 +188,14 @@ JPH::BodyID PhysicsWorld::CreateSphere(const Vec3& position, f32 radius, f32 mas
                                              is_static ? JPH::EActivation::DontActivate : JPH::EActivation::Activate);
 }
 
+JPH::ObjectLayer PhysicsWorld::ObjectLayerFor(bool moving) const {
+    return moving ? ObjectLayers::kMoving : ObjectLayers::kNonMoving;
+}
+
+JPH::BodyID PhysicsWorld::CreateBody(const JPH::BodyCreationSettings& settings, bool activate) {
+    return BodyInterface().CreateAndAddBody(settings, activate ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
+}
+
 void PhysicsWorld::DestroyBody(JPH::BodyID id) {
     JPH::BodyInterface& bi = BodyInterface();
     bi.RemoveBody(id);
@@ -217,27 +227,92 @@ void SyncPhysicsToTransforms(World& world, PhysicsWorld& physics, f32 dt) {
     });
 }
 
+namespace {
+
+// Binary RigidBody payloads. Before the collider split (Phase 13 step 1) it
+// was exactly radius (f32), mass (f32), is_static (bool). Now it's a magic
+// tag, then the reflected binary form, so later fields need no new format.
+constexpr u32 kRigidBodyMagic = 0x32304252; // "RB02"
+constexpr usize kLegacyRigidBodySize = sizeof(f32) + sizeof(f32) + sizeof(bool);
+
+// JSON: version 1 had {radius, mass, is_static}.
+void MigrateRigidBodyJson(u16 from_version, reflect::Json& data) {
+    if (from_version >= 2) return;
+    if (data.contains("is_static")) {
+        data["motion"] = data["is_static"].get<bool>() ? "Static" : "Dynamic";
+        data.erase("is_static");
+    }
+    if (data.contains("radius")) {
+        data["legacy_radius"] = data["radius"];
+        data.erase("radius");
+    }
+}
+
+} // namespace
+
 void RegisterPhysicsComponentSerializers() {
+    static const bool migration = (reflect::RegisterMigration<RigidBody>(MigrateRigidBodyJson), true);
+    (void)migration;
     SetComponentSerializer<RigidBody>(
         "aether::RigidBody",
         [](const void* component, std::vector<u8>& out) {
-            const auto* body = static_cast<const RigidBody*>(component);
-            // Body id is deliberately NOT serialized — it's a live handle
-            // into a specific PhysicsWorld's body manager and meaningless
-            // once reloaded. Only the data needed to recreate the body is
-            // saved; PhysicsWorld re-creates it on load (see the editor).
-            AppendComponentField(out, body->radius);
-            AppendComponentField(out, body->mass);
-            AppendComponentField(out, body->is_static);
+            // The body id is deliberately not serialized: it's a live handle
+            // into one PhysicsWorld, meaningless once reloaded.
+            AppendComponentField(out, kRigidBodyMagic);
+            const std::vector<u8> body = reflect::SaveBinary(*static_cast<const RigidBody*>(component));
+            out.insert(out.end(), body.begin(), body.end());
         },
         [](void* component, const u8* data, usize size) {
             auto* body = static_cast<RigidBody*>(component);
+            *body = RigidBody{};
             usize offset = 0;
-            ReadComponentField(data, size, offset, body->radius);
-            ReadComponentField(data, size, offset, body->mass);
-            ReadComponentField(data, size, offset, body->is_static);
-            body->body_id = JPH::BodyID(); // invalid; caller must recreate the physics body
+            u32 magic = 0;
+            if (size >= sizeof(u32)) std::memcpy(&magic, data, sizeof(u32));
+            if (magic == kRigidBodyMagic) {
+                reflect::LoadBinary(*body, std::span<const u8>(data + sizeof(u32), size - sizeof(u32)));
+            } else if (size == kLegacyRigidBodySize) {
+                f32 radius = 0.0f;
+                bool is_static = false;
+                ReadComponentField(data, size, offset, radius);
+                ReadComponentField(data, size, offset, body->mass);
+                ReadComponentField(data, size, offset, is_static);
+                body->legacy_radius = radius;
+                body->motion = is_static ? BodyMotion::Static : BodyMotion::Dynamic;
+            } else {
+                AETHER_LOG_WARN("Physics", "RigidBody data of an unknown format (%zu bytes); using defaults", size);
+            }
+            body->body_id = JPH::BodyID(); // invalid; the caller recreates the physics body
         });
+}
+
+usize MigrateLegacyRigidBodies(World& world) {
+    std::vector<Entity> entities;
+    world.ForEachArchetype([&](Archetype& archetype) {
+        if (!archetype.Mask().test(GetComponentId<RigidBody>())) return;
+        for (usize c = 0; c < archetype.ChunkCount(); ++c) {
+            Entity* e = archetype.EntityArray(c);
+            entities.insert(entities.end(), e, e + archetype.ChunkEntityCount(c));
+        }
+    });
+    usize migrated = 0;
+    for (Entity e : entities) {
+        RigidBody* body = world.GetComponent<RigidBody>(e);
+        if (body == nullptr || body->legacy_radius <= 0.0f) continue;
+        const f32 radius = body->legacy_radius;
+        body->legacy_radius = 0.0f;
+        if (HasCollider(world, e)) continue;
+        SphereCollider sphere;
+        sphere.radius = radius;
+        world.AddComponent(e, sphere);
+        ++migrated;
+    }
+    return migrated;
+}
+
+bool HasCollider(const World& world, Entity entity) {
+    return world.HasComponent<BoxCollider>(entity) || world.HasComponent<SphereCollider>(entity) ||
+           world.HasComponent<CapsuleCollider>(entity) || world.HasComponent<ConvexCollider>(entity) ||
+           world.HasComponent<MeshCollider>(entity);
 }
 
 } // namespace aether
