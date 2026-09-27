@@ -3461,8 +3461,9 @@ Phase 13.
 - With Ghost set to pass through Default, a ghost ball falls through
   the floor while a player ball lands. Moving the ghost to the Player
   layer makes it land, and a ghost still lands on the player.
-- 286/286 tests pass with physics on GCC 13, and 273/273 without physics
-  on GCC 13, Clang and ASan/UBSan.
+- 286/286 tests pass with physics on GCC 13 (RelWithDebInfo and Debug)
+  and under ASan/UBSan, and 273/273 without physics on GCC 13, Clang and
+  ASan/UBSan.
 
 ## Building
 
