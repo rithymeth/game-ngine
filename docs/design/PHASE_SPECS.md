@@ -1401,3 +1401,63 @@ generic: their result is their widest input, and a float input broadcasts
 - `Texture.Triplanar` projects a texture along the three axes, blending
   by the normal raised to a sharpness. The vertex stage samples with
   `SampleLevel`.
+
+---
+
+## Phase 16: animation
+
+The concept is in [ROADMAP.md Phase 16](../ROADMAP.md). The runtime is the
+`Aether::Animation` library (`animation/`): skeletons, poses, clips,
+blending, blend spaces, animation graphs, IK and retargeting. It is plain
+C++ on the engine and is tested headless. GPU skinning in the renderer and
+Jolt ragdolls come at the end of the phase.
+
+### 16.1 Data
+
+- A **Skeleton** is a list of bones, each with a parent that comes before
+  it. A bone has a name, a rest pose (translation, rotation, scale) and an
+  inverse bind matrix. `BuildSkeleton` makes one from an imported model's
+  skin. Each bone's parent is its nearest ancestor that is also a joint,
+  and the joints are reordered so that parents come first. Non-joint
+  nodes between joints, and above the root joint, are folded into the
+  rest poses, so model space matches what the inverse binds expect.
+- A **Pose** is one local transform per bone. `LocalToModel` walks the
+  bones in order, and skin matrices are `model * inverse_bind`.
+- An **AnimationClip** has one track per bone (empty means the rest
+  pose), each with translation, rotation and scale keys. `BuildClip` maps
+  an imported animation's channels onto the skeleton.
+  - Sampling uses a binary search for the key, then lerp for translation
+    and scale and a shortest-path nlerp for rotation. Step interpolation
+    is kept.
+  - Keyframe reduction drops keys that interpolation between their
+    neighbours reproduces within a tolerance (metres, radians, scale
+    ratio).
+  - Compression quantizes each track to 16 bits per component, within
+    the track's range, and uses smallest-three for rotations (the
+    largest component is dropped, and its index is kept in 2 bits). The
+    result is a byte blob that decodes back into a clip.
+- **Blending**: `BlendPoses` blends two poses by a weight, optionally per
+  bone through a mask. `MakeAdditive` and `ApplyAdditive` make and apply
+  deltas against a reference pose. `BoneMask` covers a bone and its
+  descendants, which is how layered upper-body and lower-body blends
+  work.
+
+### 16.2 PR breakdown
+
+1. ✅ **Done.** Skeletons, poses, clips (sampling, reduction,
+   compression), blending, additive and bone masks
+   (`aether/animation/*.h`).
+2. Blend spaces (1D, and 2D by triangulation) with synced playback, and
+   root motion extraction.
+3. The animation graph model and its runtime: a state machine (states,
+   transitions with conditions on graph variables, blend times,
+   conduits, sub-machines) and the blend nodes. Diagnostics AG001 and up.
+4. The `Animator` component, evaluated in parallel jobs; montages
+   (sections, slots); anim notifies as Blueprint events; root motion into
+   `CharacterMovement`.
+5. IK (two-bone, look-at, FABRIK, foot placement) and retargeting
+   between skeletons.
+6. Editors (portable): the animation graph and state machine editor, the
+   blend space editor and the asset viewer.
+7. GPU skinning in the renderer, and ragdolls with blending to and from
+   animation (GPU / Windows).
