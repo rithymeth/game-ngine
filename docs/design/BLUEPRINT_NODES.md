@@ -284,6 +284,7 @@ parameter list.
 | BP203 | runtime | "'{fn}' was called more than {depth} levels deep. Check for endless recursion." |
 | BP204 | runtime | "The call to '{fn}' was refused." (the native function rejected its arguments) |
 | BP205 | runtime | "Index {i} is out of range (the array has {n} items) in '{event}'. Check Is Valid Index first." (Get returns the default; Set does nothing; logged once per node) |
+| BP206 | runtime | "Spawn Blueprint in '{event}' has nothing to spawn with (no spawner is set up)." (the VM runs without a BlueprintSystem) |
 
 ---
 

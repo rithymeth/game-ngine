@@ -3,6 +3,10 @@
 #include "aether/core/log.h"
 #include "aether/ecs/world.h"
 #include "aether/reflection/reflection.h"
+#include "aether/assets/asset_guid.h"
+#include "aether/scene/components.h"
+#include "aether/scene/gameplay.h"
+#include "aether/scene/hierarchy.h"
 
 #include <algorithm>
 #include <cmath>
@@ -182,6 +186,44 @@ void BlueprintVM::Detach(Entity entity) {
     order_.erase(std::remove(order_.begin(), order_.end(), Key(entity)), order_.end());
 }
 
+void BlueprintVM::Finish() {
+    RemoveDetached();
+    ProcessDestroys();
+}
+
+void BlueprintVM::ProcessDestroys() {
+    if (destroying_) return; // EndPlay dispatched below finishes here too
+    destroying_ = true;
+    while (!pending_destroy_.empty()) {
+        std::vector<Entity> batch;
+        batch.swap(pending_destroy_);
+        for (Entity e : batch) {
+            if (!world_.IsAlive(e)) continue;
+            if (destroy_) {
+                destroy_(e);
+                continue;
+            }
+            if (IsAttached(e)) {
+                Dispatch(e, "Event.EndPlay");
+                Detach(e);
+            }
+            world_.DestroyEntity(e);
+        }
+    }
+    RemoveDetached();
+    destroying_ = false;
+}
+
+Transform* BlueprintVM::TransformOf(Instance& instance, const CompiledFunction& fn, NodeId node, Entity target) {
+    Transform* t = world_.IsAlive(target) ? world_.GetComponent<Transform>(target) : nullptr;
+    if (t == nullptr) {
+        Warn("BP201", instance, fn, node,
+             "Used the transform of an entity that is gone or has no Transform in '" + fn.name +
+                 "'. Use Is Valid first.");
+    }
+    return t;
+}
+
 void BlueprintVM::RemoveDetached() {
     for (auto it = instances_.begin(); it != instances_.end();) {
         if (it->second->detached) {
@@ -231,7 +273,7 @@ bool BlueprintVM::Dispatch(Entity entity, std::string_view event, std::span<cons
         }
     }
     const bool ok = Run(*instance, it->second, frame, depth_);
-    if (outermost) RemoveDetached();
+    if (outermost) Finish();
     return ok;
 }
 
@@ -269,7 +311,7 @@ void BlueprintVM::ResumeDue() {
         for (usize i = 0; i < action.s.size(); ++i) frame.s[i] = std::move(action.s[i]);
         for (usize i = 0; i < action.a.size(); ++i) frame.a[i] = std::move(action.a[i]);
         Run(instance, action.function, frame, 0, action.resume_pc);
-        RemoveDetached();
+        Finish();
     }
 }
 
@@ -308,6 +350,7 @@ void BlueprintVM::StartLatent(Instance& instance, u32 function, const Instr& in,
 }
 
 void BlueprintVM::Tick(f32 delta_seconds) {
+    last_delta_ = delta_seconds;
     time_ += delta_seconds;
     ++frame_;
     ResumeDue();
@@ -315,7 +358,12 @@ void BlueprintVM::Tick(f32 delta_seconds) {
     const std::vector<u64> order = order_; // stable while events attach or detach
     for (u64 key : order) {
         auto it = instances_.find(key);
-        if (it == instances_.end() || it->second->detached || !it->second->enabled) continue;
+        if (it == instances_.end() || it->second->detached) continue;
+        if (!world_.IsAlive(it->second->entity)) {
+            Detach(it->second->entity); // destroyed behind the VM's back
+            continue;
+        }
+        if (!it->second->enabled) continue;
         if (it->second->blueprint->events.count("Event.Tick") == 0) continue;
         Dispatch(it->second->entity, "Event.Tick", std::span<const VmValue>(&dt, 1));
     }
@@ -675,6 +723,127 @@ bool BlueprintVM::Run(Instance& instance, u32 function, Frame& frame, u32 depth,
         case Op::CountGet: r[in.a] = Reg::Int(instance.states[in.b].counter); break;
         case Op::CountReset: instance.states[in.a].counter = 0; break;
         case Op::Latent: StartLatent(instance, function, in, frame); break;
+        case Op::GetLoc:
+        case Op::GetRot: {
+            const Transform* t = TransformOf(instance, fn, fn.node_of[pc - 1], r[in.b].AsEntity());
+            if (in.op == Op::GetLoc) r[in.a] = Reg::Vector(t != nullptr ? t->position : Vec3{});
+            else r[in.a] = Reg::Quat(t != nullptr ? t->rotation : Quaternion{});
+            break;
+        }
+        case Op::SetLoc:
+        case Op::AddOffset:
+        case Op::SetRot: {
+            Transform* t = TransformOf(instance, fn, fn.node_of[pc - 1], r[in.b].AsEntity());
+            if (t == nullptr) break;
+            if (in.op == Op::SetLoc) t->position = r[in.c].AsVec3();
+            else if (in.op == Op::AddOffset) t->position = t->position + r[in.c].AsVec3();
+            else t->rotation = r[in.c].AsQuat();
+            break;
+        }
+        case Op::WorldLoc: {
+            const Entity target = r[in.b].AsEntity();
+            if (guids_ != nullptr && world_.IsAlive(target)) {
+                r[in.a] = Reg::Vector(WorldPosition(world_, *guids_, target));
+            } else {
+                const Transform* t = TransformOf(instance, fn, fn.node_of[pc - 1], target);
+                r[in.a] = Reg::Vector(t != nullptr ? t->position : Vec3{});
+            }
+            break;
+        }
+        case Op::QuatRotate: {
+            // v' = v + 2w(q x v) + 2 q x (q x v)
+            const Quaternion q = r[in.b].AsQuat();
+            const Vec3 v = r[in.c].AsVec3(), u{q.x, q.y, q.z};
+            const Vec3 t = u.Cross(v) * 2.0f;
+            r[in.a] = Reg::Vector(v + t * q.w + u.Cross(t));
+            break;
+        }
+        case Op::QuatAxisAngle: {
+            const Vec3 axis = r[in.b].AsVec3();
+            r[in.a] = Reg::Quat(axis.LengthSq() > 1e-12f
+                                    ? Quaternion::FromAxisAngle(axis, r[in.c].f * 0.017453292519943295f)
+                                    : Quaternion{});
+            break;
+        }
+        case Op::QuatMul: r[in.a] = Reg::Quat(r[in.b].AsQuat() * r[in.c].AsQuat()); break;
+        case Op::HasTagOp: {
+            const Entity target = r[in.b].AsEntity();
+            r[in.a] = Reg::Bool(world_.IsAlive(target) && HasTag(world_, target, s[in.c]));
+            break;
+        }
+        case Op::AddTagOp:
+        case Op::RemoveTagOp: {
+            const Entity target = r[in.b].AsEntity();
+            if (!world_.IsAlive(target)) {
+                Warn("BP201", instance, fn, fn.node_of[pc - 1],
+                     "Changed the tags of an entity that is gone in '" + fn.name + "'. Use Is Valid first.");
+            } else if (in.op == Op::AddTagOp) {
+                AddTag(world_, target, s[in.c]);
+            } else {
+                RemoveTag(world_, target, s[in.c]);
+            }
+            break;
+        }
+        case Op::FindTagOp: {
+            ArrayValue& array = arrays[in.a];
+            array = ArrayValue{};
+            array.type = ValueType::Entity;
+            for (Entity e : FindEntitiesWithTag(world_, s[in.b])) array.values.push_back(Reg::EntityOf(e));
+            break;
+        }
+        case Op::GetParentOp: {
+            const Entity target = r[in.b].AsEntity();
+            r[in.a] = Reg::EntityOf(guids_ != nullptr && world_.IsAlive(target) ? GetParent(world_, *guids_, target)
+                                                                               : kNullEntity);
+            break;
+        }
+        case Op::AttachOp: {
+            const Entity child = r[in.b].AsEntity(), parent = r[in.c].AsEntity();
+            const IdComponent* id = world_.IsAlive(parent) ? world_.GetComponent<IdComponent>(parent) : nullptr;
+            if (guids_ == nullptr || !world_.IsAlive(child) || id == nullptr ||
+                WouldCreateCycle(world_, *guids_, child, parent)) {
+                Warn("BP201", instance, fn, fn.node_of[pc - 1],
+                     "Attach To in '" + fn.name + "' needs two live entities (the parent with an ID), and can't "
+                     "make an entity its own ancestor.");
+                break;
+            }
+            const EntityGuid guid = id->guid;
+            if (Parent* p = world_.GetComponent<Parent>(child)) p->parent = guid;
+            else world_.AddComponent(child, Parent{guid});
+            break;
+        }
+        case Op::DetachOp: {
+            const Entity target = r[in.b].AsEntity();
+            if (world_.IsAlive(target) && world_.GetComponent<Parent>(target) != nullptr) {
+                world_.RemoveComponent<Parent>(target);
+            }
+            break;
+        }
+        case Op::DestroyOp: {
+            const Entity target = r[in.b].AsEntity();
+            if (world_.IsAlive(target) &&
+                std::find(pending_destroy_.begin(), pending_destroy_.end(), target) == pending_destroy_.end()) {
+                pending_destroy_.push_back(target);
+            }
+            break;
+        }
+        case Op::SpawnOp: {
+            assets::AssetGuid guid;
+            Entity spawned = kNullEntity;
+            if (!spawn_) {
+                Warn("BP206", instance, fn, fn.node_of[pc - 1],
+                     "Spawn Blueprint in '" + fn.name + "' has nothing to spawn with (no spawner is set up).");
+            } else if (assets::ParseAssetGuid(bp.spawn_assets[static_cast<usize>(in.d)], guid)) {
+                Transform transform;
+                transform.position = r[in.b].AsVec3();
+                transform.rotation = r[in.c].AsQuat();
+                spawned = spawn_(guid, transform);
+            }
+            r[in.a] = Reg::EntityOf(spawned);
+            break;
+        }
+        case Op::GameTime: r[in.a] = Reg::Float(static_cast<f32>(time_)); break;
+        case Op::DeltaTime: r[in.a] = Reg::Float(last_delta_); break;
         case Op::NewA:
             arrays[in.a] = ArrayValue{};
             arrays[in.a].type = static_cast<ValueType>(in.c);
