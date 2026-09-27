@@ -109,6 +109,23 @@ OpInfo Info(Op op) {
     case Op::StrFn: return {"STRFN", "ssi-"};
     case Op::ParseI: return {"PARSE_I", "rsr-"};
     case Op::ParseF: return {"PARSE_F", "rsr-"};
+    case Op::NewA: return {"ARR_NEW", "ai--"};
+    case Op::PushA: return {"ARR_PUSH", "ax--"};
+    case Op::MoveA: return {"ARR_MOVE", "aa--"};
+    case Op::GetVarA: return {"GETVARA", "a--v"};
+    case Op::SetVarA: return {"SETVARA", "-a-v"};
+    case Op::LenA: return {"ARR_LEN", "ra--"};
+    case Op::GetA: return {"ARR_GET", "xar-"};
+    case Op::ValidIdxA: return {"ARR_VALID", "rar-"};
+    case Op::FindA: return {"ARR_FIND", "rax-"};
+    case Op::VarAdd: return {"VARR_ADD", "rx-v"};
+    case Op::VarAddUnique: return {"VARR_ADDU", "rx-v"};
+    case Op::VarInsert: return {"VARR_INSERT", "-xrv"};
+    case Op::VarRemoveAt: return {"VARR_REMOVEAT", "--rv"};
+    case Op::VarRemoveItem: return {"VARR_REMOVE", "rx-v"};
+    case Op::VarClear: return {"VARR_CLEAR", "---v"};
+    case Op::VarSetAt: return {"VARR_SET", "-xrv"};
+    case Op::VarReverse: return {"VARR_REVERSE", "---v"};
     case Op::StateInit: return {"STATE_INIT", "zr--"};
     case Op::StateJmpIf: return {"STATE_JMPIF", "z-i@"};
     case Op::StateSet: return {"STATE_SET", "z-i-"};
@@ -123,7 +140,9 @@ OpInfo Info(Op op) {
     return {"?", "----"};
 }
 
-std::string RegName(RegRef r) { return (r.bank == Bank::String ? "s" : "r") + std::to_string(r.index); }
+std::string RegName(RegRef r) {
+    return (r.bank == Bank::String ? "s" : r.bank == Bank::Array ? "a" : "r") + std::to_string(r.index);
+}
 
 } // namespace
 
@@ -143,6 +162,8 @@ std::string Disassemble(const CompiledBlueprint& bp, const CompiledFunction& fn)
             switch (kind) {
             case 'r': operands += "r" + std::to_string(v); break;
             case 's': operands += "s" + std::to_string(v); break;
+            case 'a': operands += "a" + std::to_string(v); break;
+            case 'x': operands += "x" + std::to_string(v); break; // an item: value or string register
             case 'i': operands += std::to_string(v); break;
             case '@': operands += "@" + std::to_string(v); break;
             case 'z': operands += "slot" + std::to_string(v); break;
@@ -157,7 +178,11 @@ std::string Disassemble(const CompiledBlueprint& bp, const CompiledFunction& fn)
             case 'v': {
                 std::string name = "?";
                 for (const CompiledVariable& var : bp.variables) {
-                    if (var.slot.index == v && (var.slot.bank == Bank::String) == (in.op == Op::GetVarS || in.op == Op::SetVarS)) {
+                    const bool string_op = in.op == Op::GetVarS || in.op == Op::SetVarS;
+                    const bool array_op = in.op == Op::GetVarA || in.op == Op::SetVarA ||
+                                          (in.op >= Op::VarAdd && in.op <= Op::VarReverse);
+                    const Bank bank = array_op ? Bank::Array : string_op ? Bank::String : Bank::Value;
+                    if (var.slot.index == v && var.slot.bank == bank) {
                         name = var.name;
                     }
                 }

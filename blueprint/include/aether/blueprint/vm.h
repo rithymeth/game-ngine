@@ -71,6 +71,9 @@ public:
 
     VmValue GetVariable(Entity entity, std::string_view name) const;
     bool SetVariable(Entity entity, std::string_view name, const VmValue& value);
+    // Array variables, element by element (empty if it isn't one).
+    std::vector<VmValue> GetArray(Entity entity, std::string_view name) const;
+    bool SetArray(Entity entity, std::string_view name, const std::vector<VmValue>& items);
 
     // Where Print String goes (default: the engine log, category "Blueprint").
     void SetPrintHandler(std::function<void(Entity, const std::string&)> handler) { print_ = std::move(handler); }
@@ -98,12 +101,14 @@ private:
         u64 order = 0;      // ties resume in start order
         std::vector<Reg> r;
         std::vector<std::string> s;
+        std::vector<ArrayValue> a;
     };
     struct Instance {
         Entity entity;
         std::shared_ptr<const CompiledBlueprint> blueprint;
         std::vector<Reg> vars;
         std::vector<std::string> svars;
+        std::vector<ArrayValue> avars;
         bool detached = false; // detached while running: removed when the outermost run ends
         bool enabled = true;
         std::vector<NodeState> states; // CompiledBlueprint::state_slots
@@ -111,6 +116,7 @@ private:
     struct Frame {
         std::vector<Reg> r;
         std::vector<std::string> s;
+        std::vector<ArrayValue> a;
     };
 
     static u64 Key(Entity e) { return (static_cast<u64>(e.generation) << 32) | e.index; }

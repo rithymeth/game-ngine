@@ -47,7 +47,22 @@ struct alignas(16) Reg {
 };
 static_assert(sizeof(Reg) == 16);
 
-enum class Bank : u8 { Value, String };
+enum class Bank : u8 { Value, String, Array };
+
+// An array register or variable (Phase 12 step 4): values, or strings for
+// Array<string>. Elements compare by their bytes (Find, Contains, Add Unique).
+struct ArrayValue {
+    ValueType type = ValueType::None; // the element type
+    bool strings = false;
+    std::vector<Reg> values;
+    std::vector<std::string> texts;
+
+    usize Size() const { return strings ? texts.size() : values.size(); }
+    void Clear() {
+        values.clear();
+        texts.clear();
+    }
+};
 
 struct RegRef {
     Bank bank = Bank::Value;
@@ -122,6 +137,25 @@ enum class Op : u8 {
     StrFn,     // a = dst, b = src, c = StrFn
     ParseI,    // a = dst int, b = string, c = dst success bool
     ParseF,    // a = dst float, b = string, c = dst success bool
+    // Arrays: A = array register; items are in the value or string bank to
+    // match the array. Var* ops change array variable d in place.
+    NewA,      // a = dst, c = element ValueType
+    PushA,     // a = array, b = item
+    MoveA,     // a = dst, b = src
+    GetVarA,   // a = dst, d = slot (a copy)
+    SetVarA,   // b = src, d = slot
+    LenA,      // a = dst int, b = array
+    GetA,      // a = dst item, b = array, c = index (out of range: default, BP205)
+    ValidIdxA, // a = dst bool, b = array, c = index
+    FindA,     // a = dst int, b = array, c = item (-1 if absent)
+    VarAdd,       // a = dst index, b = item
+    VarAddUnique, // a = dst index (-1 if already there), b = item
+    VarInsert,    // b = item, c = index
+    VarRemoveAt,  // c = index
+    VarRemoveItem, // a = dst bool, b = item (the first match)
+    VarClear,
+    VarSetAt,     // b = item, c = index
+    VarReverse,
     // Latent actions (§C.4): a = state slot, b = duration register, c =
     // LatentKind, d = latent index. Starts the action and carries on; its
     // "completed" code runs later from the latent's resume point.
@@ -184,6 +218,7 @@ struct CompiledFunction {
     std::vector<NodeId> node_of; // per instruction: the node that emitted it (for errors and the debugger)
     u16 value_regs = 0;
     u16 string_regs = 0;
+    u16 array_regs = 0;
     std::vector<RegRef> params;  // where arguments land
     std::vector<PinType> param_types;
     std::vector<RegRef> results; // function outputs
@@ -205,6 +240,7 @@ struct CompiledBlueprint {
     std::vector<CompiledVariable> variables;
     u16 value_vars = 0;
     u16 string_vars = 0;
+    u16 array_vars = 0;
     std::vector<CompiledFunction> functions;
     std::map<std::string, u32> events;    // event key ("Event.Tick", "Event.Custom:Hit") -> function
     std::map<std::string, u32> function_index; // function graph name -> function
