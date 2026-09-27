@@ -686,14 +686,30 @@ struct Blueprint{ std::string parent; std::vector<Variable> variables; std::vect
    - Custom node types register through `RegisterNodeType` and
      `RegisterNodeFamily`, the §D mechanism, with the same factories the
      built-ins use.
-2. Compiler and VM: lower to the §C.2 register bytecode, typed math
-   opcodes, pure nodes cached per exec step, native calls through
-   `FunctionInfo`, `BlueprintInstance` component, dispatch of BeginPlay,
-   Tick and custom events, the BP202 instruction budget, and a golden
-   bytecode test for BP_Door.
+2. ✅ **Done.** Compiler and VM: lower to the §C.2 register bytecode, typed
+   math opcodes, pure nodes cached per exec step, native calls through
+   `FunctionInfo`, dispatch of BeginPlay, Tick and custom events, the BP202
+   instruction budget, and a golden bytecode test for BP_Door.
+   - **Registers**: two banks per frame, 16-byte value registers and
+     string registers. Frames are kept per call depth and reused, so a
+     dispatch allocates nothing (except native calls that box arguments
+     in `Any`).
+   - **Exec flow**:
+     - An exec wire back into a node already on the path compiles to a
+       jump, so loops are guarded by the budget.
+     - A node reached by two paths is emitted once per path. This is
+       correct because what runs after it can differ between paths.
+   - **Calls**: functions and custom events are called with a new frame,
+     and BP203 limits the depth.
+   - **Unsupported types**: structs and arrays in compiled code are
+     refused with BP012 until step 4.
+   - **Instances**: they're attached to entities through
+     `BlueprintVM::Attach`. The `BlueprintInstance` component and play
+     start come with step 3's lifecycle integration.
 3. Latent actions (Delay, Retriggerable Delay, Delay Until Next Tick, Do
-   Once, Gate, Do N, Flip Flop), the LatentActionManager, and lifecycle
-   and scheduler integration.
+   Once, Gate, Do N, Flip Flop), the LatentActionManager, the
+   `BlueprintInstance` component, and lifecycle and scheduler
+   integration.
 4. The rest of the v1 node library: loops, switches, select, strings and
    arrays, entity and world nodes, conversions, Format Text, functions,
    macros, event dispatchers and interfaces.
