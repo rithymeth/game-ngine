@@ -195,7 +195,10 @@ bool LuauHost::LoadChunk(std::string_view source, const std::string& chunk_name,
     auto cached = bytecode_.find(key);
     if (cached == bytecode_.end()) {
         size_t size = 0;
-        char* code = luau_compile(source.data(), source.size(), nullptr, &size);
+        lua_CompileOptions compile{};
+        compile.optimizationLevel = 1;
+        compile.debugLevel = options_.allow_debug ? 2 : 1; // 2 keeps local names
+        char* code = luau_compile(source.data(), source.size(), &compile, &size);
         cached = bytecode_.emplace(key, std::string(code, size)).first;
         std::free(code);
     }
@@ -209,7 +212,25 @@ bool LuauHost::LoadChunk(std::string_view source, const std::string& chunk_name,
         bytecode_.erase(cached); // a syntax error: don't keep it
         return false;
     }
+    // Remember the latest function for this chunk (for late breakpoints).
+    lua_pushvalue(state_, -1);
+    const int ref = lua_ref(state_, -1);
+    lua_pop(state_, 1);
+    if (auto it = chunk_functions_.find(chunk_name); it != chunk_functions_.end()) {
+        lua_unref(state_, it->second);
+        it->second = ref;
+    } else {
+        chunk_functions_.emplace(chunk_name, ref);
+    }
+    if (on_chunk_loaded_) {
+        on_chunk_loaded_(chunk_name);
+    }
     return true;
+}
+
+int LuauHost::ChunkFunction(const std::string& chunk) const {
+    auto it = chunk_functions_.find(chunk);
+    return it != chunk_functions_.end() ? it->second : LUA_NOREF;
 }
 
 ScriptResult LuauHost::Run(std::string_view source, const std::string& chunk_name) {
