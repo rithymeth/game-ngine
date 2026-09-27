@@ -38,6 +38,7 @@ struct CuePlayParams {
     f32 pitch = 1.0f;
     f32 fade_in = 0.0f;
     Vec3 position{}, velocity{}; // for spatial cues
+    bool force_2d = false;       // play a spatial cue without 3D (Play Sound 2D)
 };
 
 // Plays cues on a mixer: evaluates each cue, schedules its sounds

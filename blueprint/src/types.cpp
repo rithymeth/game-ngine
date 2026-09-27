@@ -61,6 +61,7 @@ std::optional<PinType> PinTypeOf(const reflect::TypeInfo& type) {
     if (&type == &Reflect<std::string>()) return PinType::Of(ValueType::String);
     if (&type == &Reflect<Vec3>()) return PinType::Of(ValueType::Vec3);
     if (&type == &Reflect<Quaternion>()) return PinType::Of(ValueType::Quat);
+    if (&type == &Reflect<Entity>()) return PinType::Of(ValueType::Entity);
     if (type.kind == reflect::TypeKind::Array && type.element != nullptr) {
         std::optional<PinType> element = PinTypeOf(*type.element);
         if (element && !element->is_array) {

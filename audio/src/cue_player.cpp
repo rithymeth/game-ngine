@@ -85,7 +85,7 @@ void CuePlayer::Schedule(Instance& in, const CuePlan& plan) {
         p.fade_in = item.offset <= 0.0 ? in.params.fade_in : 0.0f;
         p.priority = cue.priority;
         p.virtual_mode = cue.virtual_mode;
-        p.spatial = cue.spatial;
+        p.spatial = cue.spatial && !in.params.force_2d;
         p.position = in.params.position;
         p.velocity = in.params.velocity;
         p.spatial_blend = cue.spatial_blend;

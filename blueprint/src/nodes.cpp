@@ -184,6 +184,12 @@ bool SplitMember(std::string_view suffix, const reflect::TypeInfo*& type, std::s
     return type != nullptr && type->kind == reflect::TypeKind::Struct;
 }
 
+// Component methods go under Components|<type>; static functions (function
+// libraries such as Audio's) under their type's name.
+static std::string NativeCategory(const reflect::TypeInfo& type, const reflect::FunctionInfo& fn) {
+    return fn.HasFlag(reflect::Fn_Static) ? std::string(type.name) : std::string("Components|") + type.name;
+}
+
 void RegisterBuiltins(Registry& r) {
     const PinType kBool = T(ValueType::Bool), kInt = T(ValueType::Int), kFloat = T(ValueType::Float),
                   kString = T(ValueType::String), kVec3 = T(ValueType::Vec3), kEntity = T(ValueType::Entity);
@@ -213,6 +219,8 @@ void RegisterBuiltins(Registry& r) {
     AddEvent(r, "Event.OnMontageSectionChanged", "Event OnMontageSectionChanged", {Out("montage", kString), Out("section", kString)});
     AddEvent(r, "Event.OnMontageBlendingOut", "Event OnMontageBlendingOut", {Out("montage", kString), Out("interrupted", kBool)});
     AddEvent(r, "Event.OnMontageEnded", "Event OnMontageEnded", {Out("montage", kString), Out("interrupted", kBool)});
+    // Audio (Phase 17 step 4): an AudioSource's cue ended by itself.
+    AddEvent(r, "Event.OnAudioFinished", "Event OnAudioFinished", {Out("cue", kString)});
     r.exact["Event.Custom"] = [](const NodeContext& c, NodeError& error) -> std::optional<NodeSignature> {
         const std::string name = c.node.config.value("name", "");
         if (name.empty()) return Fail(error, "BP007", "A Custom Event needs a name.");
@@ -983,8 +991,7 @@ void RegisterBuiltins(Registry& r) {
                 if (!pt) return Fail(error, "BP007", std::string("'") + fn->name + "' returns a type Blueprints can't use.");
                 pins.push_back(Out("return", *pt));
             }
-            NodeSignature s = Sig(fn->name, std::string("Components|") + type->name, pure ? NodeKind::Pure : NodeKind::Impure,
-                                  std::move(pins));
+            NodeSignature s = Sig(fn->name, NativeCategory(*type, *fn), pure ? NodeKind::Pure : NodeKind::Impure, std::move(pins));
             s.owner = type;
             s.function = fn;
             return s;
@@ -994,8 +1001,7 @@ void RegisterBuiltins(Registry& r) {
             for (const reflect::TypeInfo* type : reflect::TypeRegistry::AllTypes())
                 for (const reflect::FunctionInfo& fn : type->functions)
                     if (fn.HasFlag(reflect::Fn_BlueprintCallable))
-                        entries.push_back({std::string("Call.Native:") + type->name + "." + fn.name, fn.name,
-                                           std::string("Components|") + type->name});
+                        entries.push_back({std::string("Call.Native:") + type->name + "." + fn.name, fn.name, NativeCategory(*type, fn)});
             return entries;
         }};
     auto field_family = [kEntity](bool set) -> Family {

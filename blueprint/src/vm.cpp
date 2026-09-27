@@ -75,6 +75,7 @@ reflect::Any AnyOf(const Reg& r, const std::string& s, const PinType& type) {
     case ValueType::String: return reflect::Any(s);
     case ValueType::Vec3: return reflect::Any(r.AsVec3());
     case ValueType::Quat: return reflect::Any(r.AsQuat());
+    case ValueType::Entity: return reflect::Any(r.AsEntity());
     default: return {};
     }
 }
@@ -87,6 +88,7 @@ void StoreAny(const reflect::Any& any, const PinType& type, Reg& r, std::string&
     case ValueType::String: if (auto* v = any.TryGet<std::string>()) s = *v; break;
     case ValueType::Vec3: if (auto* v = any.TryGet<Vec3>()) r = Reg::Vector(*v); break;
     case ValueType::Quat: if (auto* v = any.TryGet<Quaternion>()) r = Reg::Quat(*v); break;
+    case ValueType::Entity: if (auto* v = any.TryGet<Entity>()) r = Reg::EntityOf(*v); break;
     default: break;
     }
 }
