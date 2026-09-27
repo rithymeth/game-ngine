@@ -2,11 +2,28 @@
 
 #include "aether/physics/physics_world.h"
 
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 namespace aether {
+
+// Physics events per entity (Phase 13 step 3), delivered after each Step on
+// the calling thread: each contact reaches both entities, `self` and
+// `other`. `normal` points from `other` toward `self`. Solid bodies get
+// CollisionBegin/Stay/End (Stay only when a collider asks for it), triggers
+// get TriggerEnter/Exit. `other` may already be destroyed in an End or Exit.
+enum class PhysicsEventType : u8 { CollisionBegin, CollisionStay, CollisionEnd, TriggerEnter, TriggerExit };
+struct PhysicsEvent {
+    Entity self, other;
+    PhysicsEventType type = PhysicsEventType::CollisionBegin;
+    Vec3 point{0, 0, 0};
+    Vec3 normal{0, 0, 0};
+    f32 approach_speed = 0.0f; // m/s along the normal, at Begin/Enter
+};
+// The Blueprint and script event for a type ("Event.OnTriggerEnter").
+const char* PhysicsEventName(PhysicsEventType type);
 
 // Keeps a PhysicsWorld's bodies in step with the ECS (Phase 13 step 1):
 // every entity with a collider has one Jolt body, shaped by its colliders
@@ -33,6 +50,14 @@ public:
     void Sync();
     void Step(f32 dt);
 
+    // Called for each event after the step, in a deterministic order (the
+    // body pairs sorted, then body 1's entity before body 2's). An event
+    // whose `self` was destroyed earlier in the same dispatch (by a handler)
+    // is skipped.
+    using EventHandler = std::function<void(const PhysicsEvent&)>;
+    void SetEventHandler(EventHandler handler) { handler_ = std::move(handler); }
+    const std::vector<PhysicsEvent>& Events() const { return events_; } // the last Step's delivered events
+
     JPH::BodyID BodyOf(Entity entity) const; // invalid if it has none
     Entity EntityOf(JPH::BodyID body) const; // null if it isn't one of ours
     usize BodyCount() const { return bodies_.size(); }
@@ -56,12 +81,17 @@ private:
 
     bool Build(Entity entity, Tracked& tracked, std::string& problem);
     void Destroy(Tracked& tracked);
+    void Dispatch();
+    Entity Owner(JPH::BodyID body) const; // ours, or destroyed since the last dispatch
 
     World& world_;
     PhysicsWorld& physics_;
     std::unordered_map<u64, Tracked> bodies_; // by EntityKey
     std::unordered_map<u32, u64> by_body_;    // BodyID index+sequence -> EntityKey
     std::unordered_map<u32, std::string> problems_;
+    std::unordered_map<u32, u64> graveyard_; // destroyed bodies -> entity, until their End is dispatched
+    EventHandler handler_;
+    std::vector<PhysicsEvent> events_;
 };
 
 } // namespace aether

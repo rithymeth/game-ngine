@@ -7,13 +7,16 @@
 #include <Jolt/RegisterTypes.h>
 #include <Jolt/Core/Factory.h>
 #include <Jolt/Physics/Body/BodyActivationListener.h>
+#include <Jolt/Physics/Collision/ContactListener.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 
+#include <algorithm>
 #include <atomic>
+#include <tuple>
 #include <cstring>
 #include <cstdarg>
 #include <cstdio>
@@ -117,6 +120,70 @@ Quaternion ToAether(JPH::QuatArg q) { return Quaternion(q.GetX(), q.GetY(), q.Ge
 
 } // namespace
 
+// Contacts as Jolt reports them, from worker threads during a Step.
+struct PhysicsWorld::ContactQueue final : public JPH::ContactListener {
+    enum Kind : u8 { Added, Persisted, Removed };
+    struct Raw {
+        u32 body1 = 0, body2 = 0; // BodyID index + sequence
+        u32 sub1 = 0, sub2 = 0;
+        Kind kind = Added;
+        bool trigger = false;
+        Vec3 point, normal;
+        f32 approach_speed = 0.0f;
+    };
+    static constexpr u32 kCapacity = 16384;
+
+    std::vector<Raw> buffer = std::vector<Raw>(kCapacity); // allocated once; slots claimed with an atomic counter
+    std::atomic<u32> count{0};
+    std::atomic<u64> dropped{0};
+    std::vector<u8> report_stay; // by body index; only read during a Step
+
+    void Push(const Raw& raw) {
+        const u32 slot = count.fetch_add(1, std::memory_order_relaxed);
+        if (slot < kCapacity) {
+            buffer[slot] = raw;
+        } else {
+            dropped.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    bool WantsStay(const JPH::Body& a, const JPH::Body& b) const {
+        const u32 ia = a.GetID().GetIndex(), ib = b.GetID().GetIndex();
+        return (ia < report_stay.size() && report_stay[ia]) || (ib < report_stay.size() && report_stay[ib]);
+    }
+    void Record(const JPH::Body& b1, const JPH::Body& b2, const JPH::ContactManifold& m, Kind kind) {
+        Raw raw;
+        raw.body1 = b1.GetID().GetIndexAndSequenceNumber();
+        raw.body2 = b2.GetID().GetIndexAndSequenceNumber();
+        raw.sub1 = m.mSubShapeID1.GetValue();
+        raw.sub2 = m.mSubShapeID2.GetValue();
+        raw.kind = kind;
+        raw.trigger = b1.IsSensor() || b2.IsSensor();
+        const JPH::RVec3 p = m.GetWorldSpaceContactPointOn1(0);
+        raw.point = Vec3(static_cast<f32>(p.GetX()), static_cast<f32>(p.GetY()), static_cast<f32>(p.GetZ()));
+        raw.normal = ToAether(m.mWorldSpaceNormal);
+        // Jolt sorts the pair (body 1 has the lower id); the normal moves body 2 out.
+        raw.approach_speed = std::max(0.0f, -(b2.GetLinearVelocity() - b1.GetLinearVelocity()).Dot(m.mWorldSpaceNormal));
+        Push(raw);
+    }
+
+    void OnContactAdded(const JPH::Body& b1, const JPH::Body& b2, const JPH::ContactManifold& m, JPH::ContactSettings&) override {
+        Record(b1, b2, m, Added);
+    }
+    void OnContactPersisted(const JPH::Body& b1, const JPH::Body& b2, const JPH::ContactManifold& m,
+                            JPH::ContactSettings&) override {
+        if (!b1.IsSensor() && !b2.IsSensor() && WantsStay(b1, b2)) Record(b1, b2, m, Persisted);
+    }
+    void OnContactRemoved(const JPH::SubShapeIDPair& pair) override {
+        Raw raw;
+        raw.body1 = pair.GetBody1ID().GetIndexAndSequenceNumber();
+        raw.body2 = pair.GetBody2ID().GetIndexAndSequenceNumber();
+        raw.sub1 = pair.GetSubShapeID1().GetValue();
+        raw.sub2 = pair.GetSubShapeID2().GetValue();
+        raw.kind = Removed;
+        Push(raw);
+    }
+};
+
 struct PhysicsWorld::Layers {
     CollisionMatrix matrix; // read by the pair filter; SetCollisionMatrix changes it
     ObjectLayerPairFilterImpl object_layer_pair_filter{matrix};
@@ -144,6 +211,9 @@ PhysicsWorld::PhysicsWorld(JobSystem& job_system) {
                            layers_->broad_phase_layer_interface, layers_->object_vs_broad_phase_layer_filter,
                            layers_->object_layer_pair_filter);
     physics_system_->SetGravity(JPH::Vec3(0.0f, -9.81f, 0.0f));
+    contact_queue_ = std::make_unique<ContactQueue>();
+    contact_queue_->report_stay.assign(kMaxBodies, 0);
+    physics_system_->SetContactListener(contact_queue_.get());
 
     AETHER_LOG_INFO("Physics", "Jolt PhysicsSystem initialized (routed through aether::JobSystem, %d max concurrency)",
                      jolt_job_system_->GetMaxConcurrency());
@@ -151,6 +221,7 @@ PhysicsWorld::PhysicsWorld(JobSystem& job_system) {
 
 PhysicsWorld::~PhysicsWorld() {
     physics_system_.reset();
+    contact_queue_.reset();
     layers_.reset();
     jolt_job_system_.reset();
     temp_allocator_.reset();
@@ -215,7 +286,101 @@ void PhysicsWorld::DestroyBody(JPH::BodyID id) {
 
 void PhysicsWorld::Step(f32 dt) {
     constexpr int kCollisionSteps = 1;
+    contact_queue_->count.store(0, std::memory_order_relaxed);
     physics_system_->Update(dt, kCollisionSteps, temp_allocator_.get(), jolt_job_system_.get());
+    ProcessContacts();
+}
+
+void PhysicsWorld::SetReportStay(JPH::BodyID body, bool report) {
+    if (!body.IsInvalid() && body.GetIndex() < contact_queue_->report_stay.size()) {
+        contact_queue_->report_stay[body.GetIndex()] = report ? 1 : 0;
+    }
+}
+
+u64 PhysicsWorld::DroppedContacts() const { return contact_queue_->dropped.load(std::memory_order_relaxed); }
+
+void PhysicsWorld::ProcessContacts() {
+    ++step_;
+    contacts_.clear();
+    ContactQueue& queue = *contact_queue_;
+    const u32 filled = std::min(queue.count.load(std::memory_order_relaxed), ContactQueue::kCapacity);
+    if (queue.count.load(std::memory_order_relaxed) > ContactQueue::kCapacity) {
+        AETHER_LOG_WARN("Physics", "%u contact callbacks didn't fit the contact buffer this step (capacity %u); events were lost",
+                        queue.count.load(std::memory_order_relaxed) - ContactQueue::kCapacity, ContactQueue::kCapacity);
+    }
+    // Worker threads fill the buffer in any order: sort for a deterministic one.
+    std::sort(queue.buffer.begin(), queue.buffer.begin() + filled, [](const ContactQueue::Raw& a, const ContactQueue::Raw& b) {
+        return std::tie(a.body1, a.body2, a.sub1, a.sub2, a.kind) < std::tie(b.body1, b.body2, b.sub1, b.sub2, b.kind);
+    });
+    auto key_of = [](u32 b1, u32 b2) { return (static_cast<u64>(b1) << 32) | b2; };
+    auto event = [](u32 b1, u32 b2, ContactType type, bool trigger) {
+        ContactEvent e;
+        e.body1 = JPH::BodyID(b1);
+        e.body2 = JPH::BodyID(b2);
+        e.type = type;
+        e.trigger = trigger;
+        return e;
+    };
+    std::vector<u64> check; // pairs that lost a sub-shape contact this step
+    for (u32 i = 0; i < filled; ++i) {
+        const ContactQueue::Raw& raw = queue.buffer[i];
+        const u64 key = key_of(raw.body1, raw.body2);
+        PairState& pair = pairs_[key];
+        switch (raw.kind) {
+        case ContactQueue::Added:
+            if (pair.touching == 0 && !pair.dormant) {
+                ContactEvent e = event(raw.body1, raw.body2, ContactType::Begin, raw.trigger);
+                e.point = raw.point;
+                e.normal = raw.normal;
+                e.approach_speed = raw.approach_speed;
+                contacts_.push_back(e);
+            }
+            ++pair.touching;
+            pair.dormant = false;
+            pair.trigger = raw.trigger;
+            break;
+        case ContactQueue::Persisted:
+            if (pair.touching > 0 && !pair.trigger && pair.stay_step != step_) {
+                pair.stay_step = step_; // once per pair per step
+                ContactEvent e = event(raw.body1, raw.body2, ContactType::Stay, false);
+                e.point = raw.point;
+                e.normal = raw.normal;
+                contacts_.push_back(e);
+            }
+            break;
+        case ContactQueue::Removed:
+            if (pair.touching > 0) --pair.touching;
+            if (pair.touching == 0) check.push_back(key);
+            break;
+        }
+    }
+    // A pair with no contacts left ends, unless both bodies just fell asleep
+    // (Jolt drops sleeping contacts; they come back as Added on waking).
+    // Dormant pairs end once a body wakes without touching, or goes away.
+    std::sort(check.begin(), check.end());
+    JPH::BodyInterface& bodies = physics_system_->GetBodyInterface();
+    for (auto it = pairs_.begin(); it != pairs_.end();) {
+        PairState& pair = it->second;
+        const bool candidate =
+            pair.touching == 0 && (pair.dormant || std::binary_search(check.begin(), check.end(), it->first));
+        if (!candidate) {
+            if (pair.touching == 0 && !pair.dormant) {
+                it = pairs_.erase(it); // e.g. a Removed for a pair we never saw begin
+                continue;
+            }
+            ++it;
+            continue;
+        }
+        const JPH::BodyID b1(static_cast<u32>(it->first >> 32)), b2(static_cast<u32>(it->first));
+        const bool exist = bodies.IsAdded(b1) && bodies.IsAdded(b2);
+        if (exist && !bodies.IsActive(b1) && !bodies.IsActive(b2)) {
+            pair.dormant = true;
+            ++it;
+            continue;
+        }
+        contacts_.push_back(event(b1.GetIndexAndSequenceNumber(), b2.GetIndexAndSequenceNumber(), ContactType::End, pair.trigger));
+        it = pairs_.erase(it);
+    }
 }
 
 Vec3 PhysicsWorld::GetPosition(JPH::BodyID id) const {
