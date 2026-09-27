@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Now: Phase 19 — VFX and particles (in progress)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor)
 
 ### Phase 1 — Foundation
 
@@ -5081,6 +5081,53 @@ shader later). Spec: [PHASE_SPECS.md, Phase 19](docs/design/PHASE_SPECS.md).
   - parameters in the spawner and the constants;
   - stop and restart.
 - 391/391 tests pass on GCC 13, Clang and ASan/UBSan, and 423/423 with
+  physics.
+
+**Step 6: the particle editor** (§19.6, `editor/src/vfx/`).
+
+- **The document**: undoable edits to emitters, settings, modules and
+  their fields, parameters, bindings and sub-emitters.
+  - Renames and moves keep references intact: sub-emitters follow
+    emitter names, and bindings follow module moves and parameter
+    renames.
+- **The editor**:
+  - Emitter list and module stack, with add menus, enabling, reordering
+    and removal.
+  - Details with curve and gradient editors, min/max ranges, enum
+    combos, and the emitter's settings, sub-emitters and bindings.
+  - A live preview: orbit camera, play/pause/speed/loop, and a timeline
+    scrubber that replays deterministically.
+  - Parameters, per-emitter stats (particles, spawned, bounds, CPU time,
+    CPU or GPU) and diagnostics.
+- Like the other editors, it's hooked into the editor window with the
+  Windows build.
+
+**Verified**: 2 new tests.
+
+- The document:
+  - emitters added, duplicated, renamed with sub-emitters following,
+    moved, removed and undone;
+  - settings, including refused ones;
+  - modules by stage, fields and refusals, enabling, and merged drags;
+  - bindings following module moves and removals and parameter renames;
+  - sub-emitters with checks;
+  - files.
+- Curve and gradient keys: ordering, replacing, clamping and removal
+  limits.
+- The preview:
+  - whole steps, and seeking that matches playing exactly;
+  - the seek limit;
+  - stats;
+  - the camera and projection.
+- The panel, drawn headless:
+  - playing and pausing;
+  - scrubbing;
+  - an edit shown at the same moment;
+  - details for every kind of field;
+  - Delete and Ctrl+Z keys;
+  - stale selections dropped;
+  - looping.
+- 393/393 tests pass on GCC 13, Clang and ASan/UBSan, and 425/425 with
   physics.
 
 ## Building

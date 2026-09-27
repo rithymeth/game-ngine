@@ -26,11 +26,15 @@ add_library(aether_editor_ui STATIC
     ../audio/mixer_panel.cpp
     ../uidesign/ui_layout_document.cpp
     ../uidesign/ui_designer.cpp
+    ../vfx/vfx_document.cpp
+    ../vfx/vfx_preview.cpp
+    ../vfx/vfx_editor.cpp
     ../core/command_stack.cpp
     ../core/commands.cpp
     ../core/play_session.cpp
     ../core/recent_projects.cpp
+    ../core/json_edit.cpp
 )
 target_include_directories(aether_editor_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
-target_link_libraries(aether_editor_ui PUBLIC Aether::Engine Aether::Blueprint Aether::Renderer Aether::Animation Aether::Audio Aether::UI imgui_core)
+target_link_libraries(aether_editor_ui PUBLIC Aether::Engine Aether::Blueprint Aether::Renderer Aether::Animation Aether::Audio Aether::UI Aether::VFX imgui_core)
 add_library(Aether::EditorUI ALIAS aether_editor_ui)
