@@ -839,6 +839,30 @@ private:
             Emit({Op::BindDispatcher, 0, 0, 0, static_cast<i32>(out_.dispatcher_binds.size() - 1)}, id);
             return Chain(id, "then");
         }
+        if (type == "Physics.LineTrace" || type == "Physics.SphereTrace" || type == "Physics.OverlapSphere") {
+            TraceInfo trace;
+            trace.kind = type == "Physics.LineTrace"     ? TraceInfo::Kind::Line
+                         : type == "Physics.SphereTrace" ? TraceInfo::Kind::Sphere
+                                                         : TraceInfo::Kind::OverlapSphere;
+            const bool overlap = trace.kind == TraceInfo::Kind::OverlapSphere;
+            trace.start = Input(id, overlap ? "center" : "start");
+            if (!overlap) trace.end = Input(id, "end");
+            if (trace.kind != TraceInfo::Kind::Line) trace.radius = Input(id, "radius");
+            trace.layers = Input(id, "layers");
+            trace.ignore_self = Input(id, "ignore_self");
+            if (overlap) {
+                trace.entities = OutputReg(id, *sig.Find("entities", PinDir::Out));
+            } else {
+                trace.hit = OutputReg(id, *sig.Find("hit", PinDir::Out));
+                trace.entity = OutputReg(id, *sig.Find("hit_entity", PinDir::Out));
+                trace.location = OutputReg(id, *sig.Find("location", PinDir::Out));
+                trace.normal = OutputReg(id, *sig.Find("normal", PinDir::Out));
+                trace.distance = OutputReg(id, *sig.Find("distance", PinDir::Out));
+            }
+            out_.traces.push_back(trace);
+            Emit({Op::TraceOp, 0, 0, 0, static_cast<i32>(out_.traces.size() - 1)}, id);
+            return Chain(id, "then");
+        }
         if (type == "Entity.Spawn") {
             const RegRef location = Input(id, "location"), rotation = Input(id, "rotation");
             const RegRef spawned = OutputReg(id, *sig.Find("spawned", PinDir::Out));

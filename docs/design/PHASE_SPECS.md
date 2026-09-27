@@ -1050,6 +1050,25 @@ flying, swimming).
      sounds). Events go to Blueprints through a handler the game sets up
      (the test shows one line); the player loop wires it with the other
      hookups.
-4. Queries with Blueprint nodes.
+4. ✅ **Done.** Queries with Blueprint nodes.
+   - **`PhysicsWorld`**: `RayCast`, `ShapeCast` (any Jolt shape, with a
+     rotation), `SphereCast`, `Overlap` and `OverlapSphere`. All take a
+     `QueryFilter`: a layer mask, bodies to ignore, and whether to
+     include triggers (off by default).
+     - Built on Jolt's `NarrowPhaseQuery`, with an object-layer filter
+       from the mask and a body filter for the ignore list and sensors.
+     - Results give the body, point, surface normal (pointing back at
+       the query) and distance.
+     - A shape cast that starts inside something hits at distance 0.
+     - Overlaps come back sorted by body.
+   - **`PhysicsScene`** gives the same in entity terms, and ignores one
+     entity (usually the caller).
+   - **Blueprint nodes**: Line Trace, Sphere Trace and Overlap Sphere.
+     They're impure, with `layers` as an int mask and `ignore self` on by
+     default. They compile to one `TRACE` instruction with a table entry,
+     and the VM asks `SetPhysicsQueries` hooks the game connects.
+     Without hooks they find nothing and warn BP207. HitResult structs,
+     multi-hit traces, box and capsule traces, and the force and velocity
+     nodes come later.
 5. `CharacterMovement` with tests for slopes, steps, and jump buffering.
 6. Collider gizmos and the physics debug draw toggle.

@@ -1108,6 +1108,37 @@ bool BlueprintVM::Run(Instance& instance, u32 function, Frame& frame, u32 depth,
             }
             break;
         }
+        case Op::TraceOp: {
+            const TraceInfo& t = bp.traces[static_cast<usize>(in.d)];
+            const bool overlap = t.kind == TraceInfo::Kind::OverlapSphere;
+            const u32 layers = static_cast<u32>(r[t.layers.index].i);
+            const Entity ignore = r[t.ignore_self.index].b ? instance.entity : kNullEntity;
+            const f32 radius = t.kind == TraceInfo::Kind::Line ? 0.0f : std::max(0.0f, r[t.radius.index].f);
+            const bool available = overlap ? static_cast<bool>(queries_.overlap_sphere) : static_cast<bool>(queries_.trace);
+            if (!available) {
+                Warn("BP207", instance, fn, fn.node_of[pc - 1],
+                     "A physics query in '" + fn.name + "' has no physics to ask (no physics scene is connected).");
+            }
+            if (overlap) {
+                ArrayValue& array = arrays[t.entities.index];
+                array = ArrayValue{};
+                array.type = ValueType::Entity;
+                if (available) {
+                    for (Entity e : queries_.overlap_sphere(r[t.start.index].AsVec3(), radius, layers, ignore)) {
+                        array.values.push_back(Reg::EntityOf(e));
+                    }
+                }
+            } else {
+                PhysicsHit hit;
+                if (available) hit = queries_.trace(r[t.start.index].AsVec3(), r[t.end.index].AsVec3(), radius, layers, ignore);
+                r[t.hit.index] = Reg::Bool(hit.hit);
+                r[t.entity.index] = Reg::EntityOf(hit.entity);
+                r[t.location.index] = Reg::Vector(hit.location);
+                r[t.normal.index] = Reg::Vector(hit.normal);
+                r[t.distance.index] = Reg::Float(hit.distance);
+            }
+            break;
+        }
         case Op::SpawnOp: {
             assets::AssetGuid guid;
             Entity spawned = kNullEntity;

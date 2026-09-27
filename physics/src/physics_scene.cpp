@@ -340,6 +340,40 @@ void PhysicsScene::Step(f32 dt) {
     Dispatch();
 }
 
+namespace {
+QueryFilter FilterFor(const PhysicsScene& scene, LayerMask layers, Entity ignore, bool include_triggers) {
+    QueryFilter filter;
+    filter.layers = layers;
+    filter.include_triggers = include_triggers;
+    if (!ignore.IsNull()) {
+        const JPH::BodyID body = scene.BodyOf(ignore);
+        if (!body.IsInvalid()) filter.ignore.push_back(body);
+    }
+    return filter;
+}
+} // namespace
+
+SceneHit PhysicsScene::RayCast(const Vec3& from, const Vec3& to, LayerMask layers, Entity ignore, bool include_triggers) const {
+    const QueryHit hit = physics_.RayCast(from, to, FilterFor(*this, layers, ignore, include_triggers));
+    return {hit.hit, hit.hit ? EntityOf(hit.body) : kNullEntity, hit.point, hit.normal, hit.distance};
+}
+
+SceneHit PhysicsScene::SphereCast(f32 radius, const Vec3& from, const Vec3& to, LayerMask layers, Entity ignore,
+                                  bool include_triggers) const {
+    const QueryHit hit = physics_.SphereCast(radius, from, to, FilterFor(*this, layers, ignore, include_triggers));
+    return {hit.hit, hit.hit ? EntityOf(hit.body) : kNullEntity, hit.point, hit.normal, hit.distance};
+}
+
+std::vector<Entity> PhysicsScene::OverlapSphere(const Vec3& center, f32 radius, LayerMask layers, Entity ignore,
+                                                bool include_triggers) const {
+    std::vector<Entity> out;
+    for (JPH::BodyID body : physics_.OverlapSphere(center, radius, FilterFor(*this, layers, ignore, include_triggers))) {
+        const Entity e = EntityOf(body);
+        if (!e.IsNull()) out.push_back(e);
+    }
+    return out;
+}
+
 Entity PhysicsScene::Owner(JPH::BodyID body) const {
     const u32 id = body.GetIndexAndSequenceNumber();
     if (auto it = by_body_.find(id); it != by_body_.end()) return EntityFromKey(it->second);
