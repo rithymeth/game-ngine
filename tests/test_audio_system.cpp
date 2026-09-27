@@ -259,12 +259,12 @@ AETHER_TEST(Audio_LibraryBusFadesAndReverbZones) {
     AudioSystem sys(w, mixer, rig.bank, rig.Lookup());
     const Entity ear = w.CreateEntity(Transform{Vec3(), Quaternion::Identity()}, AudioListener{});
     sys.Update(0.01f);
-    AETHER_CHECK(sys.Reverb() == nullptr); // no zones: no effect at all
+    AETHER_CHECK(!sys.HasReverb()); // no zones: no effect at all
     ReverbZone hall;
     hall.radius = 5.0f, hall.blend_distance = 5.0f, hall.wet = 0.4f, hall.room_size = 0.9f;
     const Entity zone = w.CreateEntity(Transform{Vec3(20, 0, 0), Quaternion::Identity()}, hall);
     sys.Update(0.01f);
-    AETHER_CHECK(sys.Reverb() != nullptr && sys.ReverbStrength() == 0.0f && sys.Reverb()->wet == 0.0f);
+    AETHER_CHECK(sys.HasReverb() && sys.ReverbStrength() == 0.0f && sys.ReverbWet() == 0.0f);
     auto tail = [&] {
         // A blip on SFX; what's left 0.1 s after it ends is reverb.
         PlayParams p;
@@ -281,21 +281,21 @@ AETHER_TEST(Audio_LibraryBusFadesAndReverbZones) {
     AETHER_CHECK(tail() == 0.0f); // outside: dry
     w.GetComponent<Transform>(ear)->position = Vec3(18, 0, 0);
     sys.Update(0.01f);
-    AETHER_CHECK(sys.ReverbStrength() == 1.0f && Near(sys.Reverb()->wet, 0.4f) && Near(sys.Reverb()->room_size, 0.9f));
+    AETHER_CHECK(sys.ReverbStrength() == 1.0f && Near(sys.ReverbWet(), 0.4f) && Near(sys.ReverbRoomSize(), 0.9f));
     AETHER_CHECK(tail() > 1e-3f); // inside: a tail
     w.GetComponent<Transform>(ear)->position = Vec3(27.5f, 0, 0);
     sys.Update(0.01f);
-    AETHER_CHECK(Near(sys.ReverbStrength(), 0.5f) && Near(sys.Reverb()->wet, 0.2f));
+    AETHER_CHECK(Near(sys.ReverbStrength(), 0.5f) && Near(sys.ReverbWet(), 0.2f));
     // A higher-priority zone wins where they overlap, even when weaker.
     ReverbZone cave;
     cave.radius = 1.0f, cave.blend_distance = 10.0f, cave.priority = 1, cave.wet = 0.8f, cave.room_size = 0.3f;
     w.CreateEntity(Transform{Vec3(30, 0, 0), Quaternion::Identity()}, cave);
     sys.Update(0.01f);
-    AETHER_CHECK(Near(sys.Reverb()->room_size, 0.3f) && Near(sys.ReverbStrength(), 0.85f) && Near(sys.Reverb()->wet, 0.68f));
+    AETHER_CHECK(Near(sys.ReverbRoomSize(), 0.3f) && Near(sys.ReverbStrength(), 0.85f) && Near(sys.ReverbWet(), 0.68f));
     w.DestroyEntity(zone);
     w.GetComponent<Transform>(ear)->position = Vec3(100, 0, 0);
     sys.Update(0.01f);
-    AETHER_CHECK(sys.ReverbStrength() == 0.0f && sys.Reverb()->wet == 0.0f);
+    AETHER_CHECK(sys.ReverbStrength() == 0.0f && sys.ReverbWet() == 0.0f);
 }
 
 AETHER_TEST(Audio_BlueprintNodes) {

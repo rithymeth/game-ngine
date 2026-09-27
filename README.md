@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Now: Phase 17 — audio (mixer, 3D, streaming, cues and components done; device backend next)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Now: Phase 17 — audio (engine side done; editors next)
 
 ### Phase 1 — Foundation
 
@@ -4483,6 +4483,45 @@ in step 5.
 - A Blueprint that plays a 2D sound, attaches a hum, fades a bus and fades
   in its own source, then prints the cue from `Event OnAudioFinished`.
 - 353/353 tests pass on GCC 13, Clang and ASan/UBSan, and 385/385 with
+  physics.
+
+**Step 5: the output device and the audio thread** (§17.5).
+
+- **Backends**:
+  - miniaudio for the platform's device (WASAPI, Core Audio, ALSA,
+    PulseAudio, ...).
+  - A null backend, real time or pumped by hand, which can capture its
+    output.
+  - A default that falls back to null when there's no device.
+- **The mixer on its own thread**:
+  - Game-thread changes go to the audio thread through a lock-free queue
+    and are applied in order before each block.
+  - The audio thread publishes a snapshot (voices, meters, the clock)
+    through a triple buffer.
+  - Nothing on the game thread waits for the audio thread, and the audio
+    thread never waits for anything.
+  - Voice ids come back at once, and a sound just played already counts
+    as playing.
+  - Scheduled sounds subtract the time they spent queued, so cue loops
+    stay sample-accurate while the game schedules them live.
+- **Existing code runs threaded unchanged**: CuePlayer and AudioSystem
+  work the same either way; the AudioSystem's reverb changes go through
+  `Post`.
+
+**Verified**: 4 new tests, clean under ThreadSanitizer too.
+
+- The queue, across two threads (200,000 items in order).
+- A threaded mixer, pumped from another thread, producing exactly the same
+  samples, meters, counts and voice info as a mixer on one thread, over
+  eight rounds of changes. Queued plays and stops are seen at once.
+- A real-time audio thread under 3,000 random plays, moves, stops and
+  occlusion updates, plus 20,000 commands at once (more than the queue
+  holds).
+- A cue loop scheduled live from the game thread staying sample-exact
+  for a quarter second.
+- miniaudio's null device pulling audio on its own thread and playing a
+  sound through.
+- 357/357 tests pass on GCC 13, Clang and ASan/UBSan, and 389/389 with
   physics.
 
 ## Building

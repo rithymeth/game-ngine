@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <thread>
 
 namespace aether::audio {
 
@@ -25,14 +26,28 @@ Mixer::Mixer(u32 sample_rate) : sample_rate_(std::max(sample_rate, 1u)) {
     Bus master;
     master.name = "Master";
     buses_.push_back(std::move(master));
+    game_buses_.resize(1);
+    voices_.reserve(256); // the audio thread rarely has to grow it
 }
 
+Mixer::~Mixer() {
+    // Nothing renders any more: apply what's queued (it may hand over effects and streams), then free it.
+    if (commands_) {
+        ApplyCommands();
+        CollectGarbage();
+    }
+}
+
+// --- Buses ------------------------------------------------------------------------------------
+
 BusId Mixer::AddBus(const std::string& name, BusId parent) {
+    if (threaded_) return kInvalidBus;
     if (parent >= buses_.size()) parent = kMasterBus;
     Bus b;
     b.name = name;
     b.parent = parent;
     buses_.push_back(std::move(b));
+    game_buses_.emplace_back();
     return static_cast<BusId>(buses_.size() - 1);
 }
 
@@ -49,24 +64,53 @@ BusId Mixer::FindBus(const std::string& name) const {
     return kInvalidBus;
 }
 
-bool Mixer::SetBusVolume(BusId bus, f32 db) {
-    if (bus >= buses_.size()) return false;
+bool Mixer::DoSetBusVolume(BusId bus, f32 db) {
     buses_[bus].volume_db = db;
     buses_[bus].gain = DbToGain(db);
     return true;
 }
 
-bool Mixer::SetBusMuted(BusId bus, bool muted) {
+bool Mixer::SetBusVolume(BusId bus, f32 db) {
     if (bus >= buses_.size()) return false;
-    buses_[bus].muted = muted;
+    game_buses_[bus].volume_db = db;
+    if (!threaded_) return DoSetBusVolume(bus, db);
+    Submit([bus, db](Mixer& m) { m.DoSetBusVolume(bus, db); });
     return true;
 }
 
+f32 Mixer::BusVolume(BusId bus) const { return bus < game_buses_.size() ? game_buses_[bus].volume_db : 0.0f; }
+
+bool Mixer::SetBusMuted(BusId bus, bool muted) {
+    if (bus >= buses_.size()) return false;
+    game_buses_[bus].muted = muted;
+    if (!threaded_) {
+        buses_[bus].muted = muted;
+        return true;
+    }
+    Submit([bus, muted](Mixer& m) { m.buses_[bus].muted = muted; });
+    return true;
+}
+
+bool Mixer::BusMuted(BusId bus) const { return bus < game_buses_.size() && game_buses_[bus].muted; }
+
 AudioEffect* Mixer::AddEffect(BusId bus, std::unique_ptr<AudioEffect> effect) {
     if (bus >= buses_.size() || !effect) return nullptr;
-    buses_[bus].effects.push_back(std::move(effect));
-    return buses_[bus].effects.back().get();
+    AudioEffect* raw = effect.release();
+    if (!threaded_) {
+        buses_[bus].effects.emplace_back(raw);
+    } else {
+        Submit([bus, raw](Mixer& m) { m.buses_[bus].effects.emplace_back(raw); }); // owned from when it's applied
+    }
+    return raw;
 }
+
+BusMeter Mixer::Meter(BusId bus) const {
+    if (!threaded_) return bus < buses_.size() ? buses_[bus].meter : BusMeter{};
+    const Snapshot& s = View();
+    return bus < s.meters.size() ? s.meters[bus] : BusMeter{};
+}
+
+// --- Voices -----------------------------------------------------------------------------------
 
 Mixer::Voice* Mixer::Find(VoiceId id) {
     for (Voice& v : voices_) {
@@ -81,32 +125,68 @@ const Mixer::Voice* Mixer::Find(VoiceId id) const {
     return nullptr;
 }
 
+VoiceId Mixer::NewId() {
+    const VoiceId id = next_id_++;
+    if (next_id_ == 0) next_id_ = 1;
+    return id;
+}
+
 VoiceId Mixer::Play(const SoundWave* sound, const PlayParams& p) {
-    if (sound == nullptr || sound->Frames() == 0 || sound->sample_rate == 0) return 0;
-    Voice v;
-    v.sound = sound;
-    return Start(std::move(v), p);
+    if (sound == nullptr || sound->Frames() == 0 || sound->sample_rate == 0 || p.bus >= buses_.size()) return 0;
+    const VoiceId id = NewId();
+    if (!threaded_) {
+        Voice v;
+        v.sound = sound;
+        Start(std::move(v), p, id, frames_rendered_);
+        return id;
+    }
+    const u64 issued = View().frames;
+    const u64 seq = Submit([sound, p, id, issued](Mixer& m) {
+        Voice v;
+        v.sound = sound;
+        m.Start(std::move(v), p, id, issued);
+    });
+    pending_plays_.emplace_back(seq, id);
+    if (p.spatial && p.occlusion) game_occluded_[id] = p.position;
+    return id;
 }
 
 VoiceId Mixer::PlayStream(std::unique_ptr<AudioStream> stream, const PlayParams& p) {
-    if (stream == nullptr || stream->Frames() == 0 || stream->SampleRate() == 0 || stream->Channels() < 1 || stream->Channels() > 2) return 0;
-    Voice v;
-    v.stream = std::move(stream);
-    v.window_start = std::numeric_limits<i64>::min() / 2; // nothing decoded yet: the first Fill seeks
-    return Start(std::move(v), p);
+    if (stream == nullptr || stream->Frames() == 0 || stream->SampleRate() == 0 || stream->Channels() < 1 || stream->Channels() > 2 ||
+        p.bus >= buses_.size()) {
+        return 0;
+    }
+    const VoiceId id = NewId();
+    auto start = [p, id](Mixer& m, AudioStream* raw, u64 issued) {
+        Voice v;
+        v.stream.reset(raw);
+        v.window_start = std::numeric_limits<i64>::min() / 2; // nothing decoded yet: the first Fill seeks
+        m.Start(std::move(v), p, id, issued);
+    };
+    if (!threaded_) {
+        start(*this, stream.release(), frames_rendered_);
+        return id;
+    }
+    AudioStream* raw = stream.release(); // owned by the voice once the command is applied
+    const u64 issued = View().frames;
+    const u64 seq = Submit([start, raw, issued](Mixer& m) { start(m, raw, issued); });
+    pending_plays_.emplace_back(seq, id);
+    if (p.spatial && p.occlusion) game_occluded_[id] = p.position;
+    return id;
 }
 
-VoiceId Mixer::Start(Voice v, const PlayParams& p) {
-    if (p.bus >= buses_.size()) return 0;
-    v.id = next_id_++;
-    if (next_id_ == 0) next_id_ = 1;
+void Mixer::Start(Voice v, const PlayParams& p, VoiceId id, u64 issued_at) {
+    v.id = id;
     v.bus = p.bus;
     v.position = std::clamp(static_cast<f64>(p.start_time) * Rate(v), 0.0, static_cast<f64>(Frames(v)));
     v.pitch = std::max(p.pitch, 0.0f);
     v.gain = v.current_gain = DbToGain(p.volume_db);
     v.pan = std::clamp(p.pan, -1.0f, 1.0f);
     v.loop = p.loop;
-    v.delay_frames = static_cast<u64>(std::llround(std::max(p.delay, 0.0) * sample_rate_));
+    // The delay counts from when the game asked, so time spent in the queue comes off it.
+    const u64 delay = static_cast<u64>(std::llround(std::max(p.delay, 0.0) * sample_rate_));
+    const u64 queued = frames_rendered_ > issued_at ? frames_rendered_ - issued_at : 0;
+    v.delay_frames = delay > queued ? delay - queued : 0;
     v.priority = p.priority;
     v.virtual_mode = p.virtual_mode;
     v.spatial = p.spatial;
@@ -120,12 +200,10 @@ VoiceId Mixer::Start(Voice v, const PlayParams& p) {
         v.fade = 0.0f;
         v.fade_step = 1.0f / (p.fade_in * static_cast<f32>(sample_rate_));
     }
-    const VoiceId id = v.id;
     voices_.push_back(std::move(v));
-    return id;
 }
 
-bool Mixer::Stop(VoiceId id, f32 fade_out) {
+bool Mixer::DoStop(VoiceId id, f32 fade_out) {
     Voice* v = Find(id);
     if (v == nullptr) return false;
     if (fade_out <= 0.0f) {
@@ -137,52 +215,96 @@ bool Mixer::Stop(VoiceId id, f32 fade_out) {
     return true;
 }
 
-void Mixer::StopAll() { voices_.clear(); }
-
-bool Mixer::SetVolume(VoiceId id, f32 db) {
-    Voice* v = Find(id);
-    if (v == nullptr) return false;
-    v->gain = DbToGain(db);
+bool Mixer::Stop(VoiceId id, f32 fade_out) {
+    if (!threaded_) return DoStop(id, fade_out);
+    if (!IsPlaying(id)) return false;
+    const u64 seq = Submit([id, fade_out](Mixer& m) { m.DoStop(id, fade_out); });
+    if (fade_out <= 0.0f) pending_stops_.emplace_back(seq, id);
     return true;
 }
 
-bool Mixer::SetPitch(VoiceId id, f32 pitch) {
-    Voice* v = Find(id);
-    if (v == nullptr) return false;
-    v->pitch = std::max(pitch, 0.0f);
-    return true;
+void Mixer::StopAll() {
+    if (!threaded_) {
+        voices_.clear();
+        return;
+    }
+    stop_all_seq_ = Submit([](Mixer& m) { m.voices_.clear(); });
+    pending_plays_.clear();
+    game_occluded_.clear();
 }
 
-bool Mixer::SetPan(VoiceId id, f32 pan) {
-    Voice* v = Find(id);
-    if (v == nullptr) return false;
-    v->pan = std::clamp(pan, -1.0f, 1.0f);
-    return true;
-}
+// Applies `edit` to the voice now, or queues it (threaded). False for voices that aren't playing.
+#define AETHER_VOICE_EDIT(edit)                                                      \
+    if (!threaded_) {                                                                \
+        Voice* v = Find(id);                                                         \
+        if (v == nullptr) return false;                                              \
+        edit;                                                                        \
+        return true;                                                                 \
+    }                                                                                \
+    if (!IsPlaying(id)) return false;                                                \
+    Submit([=](Mixer& m) {                                                           \
+        if (Voice* v = m.Find(id)) { edit; }                                         \
+    });                                                                              \
+    return true
 
+bool Mixer::SetVolume(VoiceId id, f32 db) { AETHER_VOICE_EDIT(v->gain = DbToGain(db)); }
+bool Mixer::SetPitch(VoiceId id, f32 pitch) { AETHER_VOICE_EDIT(v->pitch = std::max(pitch, 0.0f)); }
+bool Mixer::SetPan(VoiceId id, f32 pan) { AETHER_VOICE_EDIT(v->pan = std::clamp(pan, -1.0f, 1.0f)); }
+bool Mixer::SetOcclusion(VoiceId id, f32 amount) { AETHER_VOICE_EDIT(v->occlusion_target = std::clamp(amount, 0.0f, 1.0f)); }
 bool Mixer::SetPosition(VoiceId id, const Vec3& position, const Vec3& velocity) {
-    Voice* v = Find(id);
-    if (v == nullptr) return false;
-    v->position3d = position;
-    v->velocity = velocity;
-    return true;
+    if (threaded_) {
+        if (auto it = game_occluded_.find(id); it != game_occluded_.end()) it->second = position;
+    }
+    AETHER_VOICE_EDIT((v->position3d = position, v->velocity = velocity));
 }
 
-bool Mixer::SetOcclusion(VoiceId id, f32 amount) {
-    Voice* v = Find(id);
-    if (v == nullptr) return false;
-    v->occlusion_target = std::clamp(amount, 0.0f, 1.0f);
-    return true;
+#undef AETHER_VOICE_EDIT
+
+void Mixer::SetListener(const Listener& listener) {
+    game_listener_ = listener;
+    if (!threaded_) {
+        listener_ = listener;
+        return;
+    }
+    Submit([listener](Mixer& m) { m.listener_ = listener; });
+}
+
+void Mixer::SetMaxVoices(u32 count) {
+    game_max_voices_ = std::max(count, 1u);
+    if (!threaded_) {
+        max_voices_ = game_max_voices_;
+        return;
+    }
+    Submit([n = game_max_voices_](Mixer& m) { m.max_voices_ = n; });
 }
 
 void Mixer::UpdateOcclusion() {
     if (!occlusion_query) return;
-    for (Voice& v : voices_) {
-        if (v.spatial && v.occlusion) v.occlusion_target = std::clamp(occlusion_query(listener_.position, v.position3d), 0.0f, 1.0f);
+    if (!threaded_) {
+        for (Voice& v : voices_) {
+            if (v.spatial && v.occlusion) v.occlusion_target = std::clamp(occlusion_query(listener_.position, v.position3d), 0.0f, 1.0f);
+        }
+        return;
+    }
+    // Threaded: ask on the game thread, from where the game last put each voice.
+    for (auto it = game_occluded_.begin(); it != game_occluded_.end();) {
+        if (!IsPlaying(it->first)) {
+            it = game_occluded_.erase(it);
+            continue;
+        }
+        SetOcclusion(it->first, occlusion_query(game_listener_.position, it->second));
+        ++it;
     }
 }
 
 bool Mixer::GetVoiceInfo(VoiceId id, VoiceInfo& out) const {
+    if (threaded_) {
+        if (PendingStop(id)) return false;
+        const Snapshot::VoiceState* v = Seen(id);
+        if (v == nullptr) return false;
+        out = v->info;
+        return true;
+    }
     const Voice* v = Find(id);
     if (v == nullptr) return false;
     out = v->info;
@@ -191,17 +313,161 @@ bool Mixer::GetVoiceInfo(VoiceId id, VoiceInfo& out) const {
 }
 
 usize Mixer::RealVoiceCount() const {
+    if (threaded_) return View().real;
     return static_cast<usize>(std::count_if(voices_.begin(), voices_.end(), [](const Voice& v) { return !v.is_virtual; }));
 }
 
-bool Mixer::IsPlaying(VoiceId id) const { return Find(id) != nullptr; }
+usize Mixer::VirtualVoiceCount() const {
+    const usize all = VoiceCount(), real = RealVoiceCount();
+    return all > real ? all - real : 0;
+}
+
+usize Mixer::VoiceCount() const {
+    if (!threaded_) return voices_.size();
+    const Snapshot& s = View();
+    usize n = pending_plays_.size();
+    if (stop_all_seq_ <= s.applied) {
+        for (const auto& v : s.voices) n += PendingStop(v.id) ? 0 : 1;
+    }
+    for (const auto& [seq, id] : pending_stops_) {
+        for (const auto& [play_seq, play_id] : pending_plays_) n -= play_id == id ? 1 : 0;
+    }
+    return n;
+}
+
+bool Mixer::IsPlaying(VoiceId id) const {
+    if (!threaded_) return Find(id) != nullptr;
+    if (PendingStop(id)) return false;
+    for (const auto& [seq, pending] : pending_plays_) {
+        if (pending == id) return true;
+    }
+    return Seen(id) != nullptr;
+}
 
 f32 Mixer::PlaybackTime(VoiceId id) const {
+    if (threaded_) {
+        if (PendingStop(id)) return -1.0f;
+        if (const Snapshot::VoiceState* v = Seen(id)) return v->time;
+        return IsPlaying(id) ? 0.0f : -1.0f; // queued, not started yet
+    }
     const Voice* v = Find(id);
     if (v == nullptr) return -1.0f;
     const f64 n = static_cast<f64>(Frames(*v));
     const f64 at = v->stream && v->loop ? std::fmod(v->position, n) : v->position; // streams count past loops
     return static_cast<f32>(at / Rate(*v));
+}
+
+u64 Mixer::FramesRendered() const { return threaded_ ? View().frames : frames_rendered_; }
+
+// --- Threading ----------------------------------------------------------------------------------
+
+void Mixer::Post(std::function<void(Mixer&)> edit) {
+    if (!threaded_) {
+        edit(*this);
+        return;
+    }
+    Submit(std::move(edit));
+}
+
+u64 Mixer::Submit(std::function<void(Mixer&)> apply) {
+    Command* c = new Command{next_seq_++, std::move(apply)};
+    CollectGarbage();
+    while (!commands_->Push(c)) {
+        // Full: the audio thread is behind. Wait for it (it frees a slot each command).
+        std::this_thread::yield();
+        CollectGarbage();
+    }
+    return c->seq;
+}
+
+void Mixer::ApplyCommands() {
+    Command* c = nullptr;
+    while (commands_->Pop(c)) {
+        c->apply(*this);
+        applied_ = c->seq;
+        if (!garbage_->Push(c)) delete c; // the game thread hasn't collected: free it here rather than wait
+    }
+}
+
+void Mixer::CollectGarbage() const {
+    Command* c = nullptr;
+    while (garbage_->Pop(c)) delete c;
+}
+
+void Mixer::Publish() {
+    Snapshot& s = slots_[back_];
+    s.applied = applied_;
+    s.frames = frames_rendered_;
+    s.voices.clear();
+    s.real = 0;
+    for (const Voice& v : voices_) {
+        Snapshot::VoiceState state;
+        state.id = v.id;
+        state.info = v.info;
+        state.info.is_virtual = v.is_virtual;
+        const f64 n = static_cast<f64>(Frames(v));
+        state.time = static_cast<f32>((v.stream && v.loop ? std::fmod(v.position, n) : v.position) / Rate(v));
+        s.voices.push_back(state);
+        s.real += v.is_virtual ? 0 : 1;
+    }
+    std::sort(s.voices.begin(), s.voices.end(), [](const auto& a, const auto& b) { return a.id < b.id; });
+    s.meters.resize(buses_.size());
+    for (usize i = 0; i < buses_.size(); ++i) s.meters[i] = buses_[i].meter;
+    back_ = middle_.exchange(back_ | kFresh, std::memory_order_acq_rel) & 3u;
+}
+
+const Mixer::Snapshot& Mixer::View() const {
+    if (middle_.load(std::memory_order_acquire) & kFresh) front_ = middle_.exchange(front_, std::memory_order_acq_rel) & 3u;
+    CollectGarbage();
+    // Changes the audio thread has applied aren't pending any more.
+    const u64 applied = slots_[front_].applied;
+    while (!pending_plays_.empty() && pending_plays_.front().first <= applied) pending_plays_.pop_front();
+    while (!pending_stops_.empty() && pending_stops_.front().first <= applied) pending_stops_.pop_front();
+    return slots_[front_];
+}
+
+const Mixer::Snapshot::VoiceState* Mixer::Seen(VoiceId id) const {
+    const Snapshot& s = View();
+    if (stop_all_seq_ > s.applied) return nullptr; // everything it saw is being stopped
+    const auto it = std::lower_bound(s.voices.begin(), s.voices.end(), id, [](const auto& v, VoiceId x) { return v.id < x; });
+    return it != s.voices.end() && it->id == id ? &*it : nullptr;
+}
+
+bool Mixer::PendingStop(VoiceId id) const {
+    View();
+    for (const auto& [seq, stopped] : pending_stops_) {
+        if (stopped == id) return true;
+    }
+    return false;
+}
+
+void Mixer::SetThreaded(bool threaded) {
+    if (threaded == threaded_) return;
+    if (threaded) {
+        if (!commands_) {
+            commands_ = std::make_unique<SpscQueue<Command*>>(8192);
+            garbage_ = std::make_unique<SpscQueue<Command*>>(8192);
+        }
+        game_listener_ = listener_;
+        for (usize i = 0; i < buses_.size(); ++i) game_buses_[i] = {buses_[i].volume_db, buses_[i].muted};
+        game_max_voices_ = max_voices_;
+        pending_plays_.clear();
+        pending_stops_.clear();
+        stop_all_seq_ = 0;
+        game_occluded_.clear();
+        for (const Voice& v : voices_) {
+            if (v.spatial && v.occlusion) game_occluded_[v.id] = v.position3d;
+        }
+        applied_ = next_seq_ - 1;
+        Publish(); // a first view, before the audio thread starts
+        threaded_ = true;
+        View();
+    } else {
+        // Nothing renders now: catch up here.
+        ApplyCommands();
+        CollectGarbage();
+        threaded_ = false;
+    }
 }
 
 void Mixer::Spatialize(Voice& v, u32 frames, const std::vector<f32>& bus_gains) {
@@ -370,6 +636,7 @@ bool Mixer::MixVoice(Voice& v, f32* out, u32 frames, f32 ramp_from, f32 ramp_to)
 }
 
 void Mixer::Render(f32* out, u32 frames) {
+    if (threaded_) ApplyCommands();
     for (Bus& b : buses_) b.buffer.assign(static_cast<usize>(frames) * 2, 0.0f);
     // Each bus's gain all the way to Master, for audibility. Parents come first.
     std::vector<f32> bus_gains(buses_.size(), 1.0f);
@@ -436,6 +703,7 @@ void Mixer::Render(f32* out, u32 frames) {
         }
     }
     std::copy(buses_[kMasterBus].buffer.begin(), buses_[kMasterBus].buffer.end(), out);
+    if (threaded_) Publish();
 }
 
 } // namespace aether::audio

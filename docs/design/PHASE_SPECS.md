@@ -1800,7 +1800,49 @@ can be added later) pulls from the mixer on its own thread.
   functions are listed under their type's name rather than
   "Components|".
 
-### 17.5 PR breakdown
+### 17.5 Output and the audio thread
+
+- **Backends** (`AudioBackend`) own the thread that asks for audio. They
+  call back for each period of interleaved stereo.
+  - `NullBackend`: real time (a thread paced by the period) or manual
+    (`Pump` renders on the caller's thread); it can capture what it's
+    given.
+  - `MiniaudioBackend`: the platform's device through miniaudio (WASAPI,
+    Core Audio, ALSA, PulseAudio, ...), 32-bit float stereo at the
+    mixer's rate. It can use miniaudio's null device for tests.
+  - `CreateDefaultBackend` tries the device and falls back to real-time
+    null.
+- **AudioOutput** threads the mixer and renders it from the backend's
+  callback; stopping puts it back on one thread.
+- **Threaded mixer**:
+  - Changes (play, stop, volume, position, buses, listener, effects,
+    `Post`) become commands in a lock-free single-producer
+    single-consumer queue (8192). The audio thread applies them in
+    order at the start of each Render.
+  - Used commands go back through a second queue, so the game thread
+    frees them.
+  - If the queue is full, the game thread waits for room; commands are
+    never dropped.
+  - Voice ids are handed out on the game thread, so `Play` returns at
+    once.
+  - After each Render the audio thread publishes a snapshot through a
+    triple buffer: the last command applied, the frame clock, each
+    voice's info and playback time, the bus meters and the real-voice
+    count.
+  - Queries read the snapshot plus the game thread's pending changes. A
+    queued play counts as playing, a queued hard stop as stopped, and a
+    queued StopAll as everything stopped. Bus settings and the listener
+    come from a game-side copy.
+  - A play remembers the game's clock when it was asked. The frames it
+    waited in the queue come off its delay, so scheduled sounds (cue
+    loops) stay sample-accurate when the delay covers the latency.
+  - Occlusion is asked on the game thread, from the game's copy of each
+    occluded voice's position.
+  - Buses are made before threading. Fields such as `speed_of_sound` are
+    set before, or through `Post`. The AudioSystem changes its reverb
+    through `Post`.
+
+### 17.6 PR breakdown
 
 1. ✅ **Done.** Sounds (WAV), voices (resampling, pitch, loop, pan,
    fades), the bus mixer with meters, and the DSP effects.
@@ -1810,10 +1852,10 @@ can be added later) pulls from the mixer on its own thread.
 3. ✅ **Done.** Sound cues (random, sequence, modulate, concatenate,
    loop, mix, delay) and `.acue` files; Ogg Vorbis and FLAC decoding;
    streaming long sounds; sample-accurate delayed starts.
-4. ✅ **Done.** Components (`AudioSource`, `AudioListener`, `ReverbZone`), the
-   `AudioSystem`, and the Blueprint nodes (Play Sound 2D/at Location,
-   Spawn Sound Attached, Fade In/Out, Set Bus Volume).
-5. The device backend (miniaudio) with a lock-free handoff to the audio
-   thread, and a null backend.
+4. ✅ **Done.** Components (`AudioSource`, `AudioListener`,
+   `ReverbZone`), the `AudioSystem`, and the Blueprint nodes (Play Sound
+   2D/at Location, Spawn Sound Attached, Fade In/Out, Set Bus Volume).
+5. ✅ **Done.** The device backend (miniaudio) with a lock-free handoff to
+   the audio thread, and a null backend.
 6. Editors: the waveform preview, the sound cue graph and the mixer panel
    with live meters.
