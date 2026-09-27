@@ -3437,6 +3437,33 @@ Phase 13.
 - 284/284 tests pass with physics on GCC 13 and under ASan/UBSan, and
   272/272 without physics on GCC 13, Clang and ASan/UBSan.
 
+**Step 2: layers and the collision matrix** (§13.4).
+
+- **The matrix** lives in the project: `ProjectSettings::collision_matrix`
+  holds, for each of the 32 layers, the mask of layers it collides with.
+  - Everything collides by default, and a project that never changes it
+    stores nothing.
+  - `SetLayersCollide(project, a, b, false)` turns off a pair both ways.
+    For example, "Ghost" passes through "Default", or pickups ignore each
+    other.
+- **Physics follows it**: `PhysicsWorld::SetCollisionMatrix` applies it,
+  and every body sits on its entity's `Layer`. Changing an entity's layer
+  moves its body to that layer.
+- **Fix**: Debug builds with physics compile again. Jolt's profiling
+  builds need a name for each broadphase layer, which the layer glue
+  didn't provide.
+
+**Verified**: 2 new tests.
+
+- The matrix is symmetric, it returns to empty when every pair is back
+  on, a file where only one side of a pair says "no" still gives a
+  symmetric result, and it round-trips through the project's JSON.
+- With Ghost set to pass through Default, a ghost ball falls through
+  the floor while a player ball lands. Moving the ghost to the Player
+  layer makes it land, and a ghost still lands on the player.
+- 286/286 tests pass with physics on GCC 13, and 273/273 without physics
+  on GCC 13, Clang and ASan/UBSan.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
