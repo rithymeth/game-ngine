@@ -148,6 +148,7 @@ GraphViewModel BuildBlueprintView(const bp::Blueprint& blueprint, const bp::Grap
         link.glow = type != out_types.end() && type->second.IsExec() && options.fired.count(l.from.node) ? 1.0f : 0.0f;
         model.links.push_back(std::move(link));
     }
+    for (const bp::CommentBox& c : graph.comments) model.comments.push_back({c.text, c.x, c.y, c.width, c.height, c.color});
     return model;
 }
 
@@ -219,6 +220,17 @@ std::vector<std::string> ApplyGraphEdits(const bp::Blueprint& blueprint, bp::Gra
         if (!ConnectPins(blueprint, graph, edits.connect_from, edits.connect_to, &error)) errors.push_back(error);
     }
     if (!edits.deleted.empty()) DeleteNodes(graph, std::vector<NodeId>(edits.deleted.begin(), edits.deleted.end()));
+    for (const GraphViewResult::CommentRect& c : edits.comments_changed) {
+        if (c.index >= graph.comments.size()) continue;
+        bp::CommentBox& box = graph.comments[c.index];
+        box.x = c.x;
+        box.y = c.y;
+        box.width = c.width;
+        box.height = c.height;
+    }
+    if (edits.deleted_comment >= 0 && static_cast<usize>(edits.deleted_comment) < graph.comments.size()) {
+        graph.comments.erase(graph.comments.begin() + edits.deleted_comment);
+    }
     return errors;
 }
 

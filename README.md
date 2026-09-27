@@ -3288,6 +3288,58 @@ step 4, the v1 node library.
 - 263/263 tests pass on GCC 13, on Clang and under ASan/UBSan, and 270/270
   with physics.
 
+**Step 6, part 2: the Blueprint editor panels** (§12.6). This completes
+step 6. Portable code in `aether_editor_ui`, tested headless.
+
+- **The document** (`editor/src/graph/blueprint_document.h`) holds the
+  open Blueprint and its file, with no ImGui.
+  - Undo/redo keeps whole-Blueprint snapshots. Typing in one field is one
+    step.
+  - It tracks the compile status: not compiled, OK, warnings, errors, or
+    changed since.
+  - My Blueprint edits: add, rename and remove variables, functions,
+    macros and event dispatchers. A rename updates the nodes that refer
+    to it; a removal takes them away. Changing a variable's type breaks
+    the links that no longer fit.
+  - Copy, cut, paste and duplicate nodes, with the links between them.
+- **Comment boxes** are saved in the graph (`comments` in the `.abp`).
+  Press C to box the selection. Dragging a box's title moves it and the
+  nodes inside, and its corner resizes it.
+- **The editor** (`blueprint_editor.h`) lays out the panels from
+  ROADMAP.md §12.6:
+  - a toolbar: Compile (colored by status), Save, Undo/Redo, and the
+    parent class;
+  - My Blueprint: graphs, functions, macros, variables (drag one onto the
+    graph for a Get node), event dispatchers and interfaces;
+  - graph tabs, opened by double-clicking a graph or a call node;
+  - Details: a variable's name, type, default and flags; a function's or
+    macro's inputs and outputs; a dispatcher's parameters; a node's
+    comment and pin defaults; a comment box's text and color;
+  - Compiler Results, where clicking a row selects and frames its node;
+  - the node palette, searchable, filtered by a dragged pin, and closed
+    with Esc.
+- **Keys**: Ctrl+Z/Y (undo/redo), Ctrl+S (save), F7 (compile), and in the
+  graph Tab (palette), F (frame the selection), C (comment) and
+  Ctrl+C/X/V/D.
+- **Not yet**: the Class Defaults and Components tabs, the diff view, the
+  minimap and bookmarks, reroute nodes, and collapsing a selection into a
+  function.
+
+**Verified**: 5 new tests.
+
+- Undo/redo with merged edits, save and load, and the compile status.
+- Renames and removals following references, name checks, and a type
+  change breaking only the links that no longer fit.
+- Paste positions and links, junk clipboards refused without an undo
+  step, duplicate, and comment boxes round-tripping through the `.abp`.
+- The widget moving a comment box with the node inside it, resizing it,
+  and deleting it.
+- Every Details page drawing, tabs following a rename, a Compiler Results
+  row focusing its node, the palette from a pin (filtered, placed and
+  linked, closed with Esc), and the keys driven by simulated input.
+- 268/268 tests pass on GCC 13, on Clang and under ASan/UBSan, and 275/275
+  with physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
