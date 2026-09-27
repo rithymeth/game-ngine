@@ -258,6 +258,9 @@ enum class SimSpace : u8 {
     Local, // particles move with the emitter
 };
 
+// Where the simulation runs (step 5): Auto picks the GPU for big emitters it supports.
+enum class SimTarget : u8 { Auto, Cpu, Gpu };
+
 struct EmitterSettings {
     std::string name = "Emitter";
     bool enabled = true;
@@ -267,6 +270,7 @@ struct EmitterSettings {
     bool looping = true;
     f32 start_delay = 0.0f;
     f32 warmup = 0.0f; // seconds simulated at once when it starts (a fire that's already burning)
+    SimTarget target = SimTarget::Auto;
 };
 
 // --- Events, sub-emitters and parameters (step 3) --------------------------------------------------------
