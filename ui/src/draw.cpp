@@ -1,9 +1,43 @@
 #include "aether/ui/draw.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
 namespace aether::ui {
+
+f32 SdfCoverage(f32 d, const DrawQuad& q) {
+    if (q.sdf_range <= 0.0f) return 1.0f;
+    const f32 w = 1.0f / q.sdf_range + q.sdf_softness;
+    return std::clamp((d - q.sdf_edge) / w + 0.5f, 0.0f, 1.0f);
+}
+
+void FontLibrary::Add(const std::string& name, const Font* font) {
+    for (auto& [n, f] : fonts_) {
+        if (n == name) {
+            f = font;
+            return;
+        }
+    }
+    fonts_.emplace_back(name, font);
+}
+
+void FontLibrary::Remove(const std::string& name) {
+    std::erase_if(fonts_, [&](const auto& e) { return e.first == name; });
+}
+
+const Font* FontLibrary::Find(const std::string& name) const {
+    for (const auto& [n, f] : fonts_) {
+        if (n == name) return f;
+    }
+    return nullptr;
+}
+
+std::vector<std::string> FontLibrary::Names() const {
+    std::vector<std::string> out;
+    for (const auto& e : fonts_) out.push_back(e.first);
+    return out;
+}
 
 Glyph BuiltinFont::GlyphOf(u32 codepoint, f32 size) const {
     Glyph g;
@@ -145,28 +179,67 @@ void DrawList::AddBrush(const Rect& r, const Brush& b, f32 opacity) {
     }
 }
 
-void DrawList::AddText(const Font& font, std::string_view text, f32 size, const Rect& box, Color color, TextAlign align, f32 wrap_width) {
+void DrawList::AddSdfQuad(const Rect& local, Color color, u32 texture, const Rect& uv, f32 range, f32 edge, f32 softness) {
+    const usize before = quads.size();
+    AddQuad(local, color, texture, uv);
+    if (quads.size() == before) return;
+    // The field's span in the current units: the transform's scale grows it with the glyph.
+    const Affine& t = transforms_.back();
+    DrawQuad& q = quads.back();
+    q.sdf_range = range * std::min(std::abs(t.scale.x), std::abs(t.scale.y));
+    q.sdf_edge = edge;
+    q.sdf_softness = softness;
+}
+
+void DrawList::AddText(const Font& font, std::string_view text, f32 size, const Rect& box, Color color, TextAlign align, f32 wrap_width,
+                       const TextEffects* effects) {
     const TextLayout layout = LayoutText(font, text, size, wrap_width);
-    f32 y = box.y + font.Ascent(size);
-    for (const TextLine& line : layout.lines) {
-        f32 x = box.x;
-        if (align == TextAlign::Center) x += (box.w - line.width) * 0.5f;
-        else if (align == TextAlign::Right) x += box.w - line.width;
-        u32 prev = 0;
-        for (usize i = line.begin; i < line.end;) {
-            const u32 cp = DecodeUtf8(text, i);
-            if (prev != 0) x += font.Kerning(prev, cp, size);
-            const Glyph g = font.GlyphOf(cp, size);
-            AddQuad({x + g.quad.x, y + g.quad.y, g.quad.w, g.quad.h}, color, font.Texture(), g.uv);
-            x += g.advance;
-            prev = cp;
+    const f32 range = font.SdfRange(size), edge = font.SdfEdge();
+    // One pass over the glyphs per layer (shadow, outline, fill), so an
+    // outline never covers the neighbouring glyph's fill.
+    auto pass = [&](Vec2 offset, Color c, f32 grow, f32 softness) {
+        if (c.a <= 0.0f) return;
+        f32 y = box.y + font.Ascent(size) + offset.y;
+        for (const TextLine& line : layout.lines) {
+            f32 x = box.x + offset.x;
+            if (align == TextAlign::Center) x += (box.w - line.width) * 0.5f;
+            else if (align == TextAlign::Right) x += box.w - line.width;
+            u32 prev = 0;
+            for (usize i = line.begin; i < line.end;) {
+                const u32 cp = DecodeUtf8(text, i);
+                if (prev != 0) x += font.Kerning(prev, cp, size);
+                const Glyph g = font.GlyphOf(cp, size);
+                const Rect r{x + g.quad.x, y + g.quad.y, g.quad.w, g.quad.h};
+                if (range > 0.0f) {
+                    // Grow the shape by moving the edge down the field (it can't go past the field's end).
+                    const f32 e = std::max(edge - grow / range, 0.02f);
+                    AddSdfQuad(r, c, font.Texture(), g.uv, range, e, softness / range);
+                } else if (grow > 0.0f) {
+                    for (const Vec2 d : {Vec2{-grow, 0}, Vec2{grow, 0}, Vec2{0, -grow}, Vec2{0, grow}}) {
+                        AddQuad({r.x + d.x, r.y + d.y, r.w, r.h}, c, font.Texture(), g.uv);
+                    }
+                } else {
+                    AddQuad(r, c, font.Texture(), g.uv);
+                }
+                x += g.advance;
+                prev = cp;
+            }
+            y += font.LineHeight(size);
         }
-        y += font.LineHeight(size);
+    };
+    if (effects != nullptr) {
+        const Color shadow = effects->shadow_color.WithAlpha(color.a);
+        pass(effects->shadow_offset, shadow, effects->outline, effects->shadow_softness);
+        if (effects->outline > 0.0f) pass({}, effects->outline_color.WithAlpha(color.a), effects->outline, 0.0f);
     }
+    pass({}, color, 0.0f, 0.0f);
 }
 
 void DrawList::Scale(f32 s) {
-    for (DrawQuad& q : quads) q.rect = {q.rect.x * s, q.rect.y * s, q.rect.w * s, q.rect.h * s};
+    for (DrawQuad& q : quads) {
+        q.rect = {q.rect.x * s, q.rect.y * s, q.rect.w * s, q.rect.h * s};
+        q.sdf_range *= s;
+    }
     for (usize i = 1; i < clips.size(); ++i) clips[i] = {clips[i].x * s, clips[i].y * s, clips[i].w * s, clips[i].h * s};
 }
 

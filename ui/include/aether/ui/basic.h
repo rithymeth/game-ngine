@@ -6,8 +6,9 @@
 
 namespace aether::ui {
 
-// Text in the layout's font: its desired size is the text's, broken at
-// '\n' and, with wrap_width, between words.
+// Text in the layout's font (or `font`, by name, from the viewport's font
+// library): its desired size is the text's, broken at '\n' and, with
+// wrap_width, between words. `effects` draws an outline and a shadow.
 class Text final : public Widget {
 public:
     explicit Text(std::string text = {}) : text(std::move(text)) {}
@@ -17,6 +18,8 @@ public:
     Color color;
     TextAlign justify = TextAlign::Left;
     f32 wrap_width = 0.0f;
+    std::string font; // "" = the default
+    TextEffects effects;
 
 protected:
     Vec2 ComputeDesired(const LayoutContext& ctx) override;

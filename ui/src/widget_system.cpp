@@ -3,6 +3,7 @@
 #include "aether/ecs/component.h"
 #include "aether/ui/basic.h"
 #include "aether/ui/controls.h"
+#include "aether/ui/world_ui.h"
 
 #include <algorithm>
 
@@ -11,7 +12,18 @@ namespace aether {
 namespace {
 ui::UISystem* g_active = nullptr;
 
-ui::Widget* Target(const Entity& e, const std::string& widget) { return g_active != nullptr ? g_active->FindWidget(e, widget) : nullptr; }
+// The entity's screen widget, else its world-space one.
+ui::Widget* Target(const Entity& e, const std::string& widget) {
+    if (ui::Widget* w = g_active != nullptr ? g_active->FindWidget(e, widget) : nullptr) return w;
+    ui::WorldUISystem* world = ui::WorldUISystem::Active();
+    return world != nullptr ? world->FindWidget(e, widget) : nullptr;
+}
+
+ui::UIAnimator* AnimatorFor(const Entity& e) {
+    if (ui::UIAnimator* a = g_active != nullptr ? g_active->AnimatorOf(e) : nullptr) return a;
+    ui::WorldUISystem* world = ui::WorldUISystem::Active();
+    return world != nullptr ? world->AnimatorOf(e) : nullptr;
+}
 } // namespace
 
 Entity UI::CreateWidget(const std::string& layout, i32 z) { return g_active != nullptr ? g_active->CreateWidget(layout, z) : kNullEntity; }
@@ -73,11 +85,11 @@ f32 UI::GetValue(const Entity& target, const std::string& widget) {
 }
 
 void UI::PlayAnimation(const Entity& target, const std::string& animation) {
-    if (ui::UIAnimator* a = g_active != nullptr ? g_active->AnimatorOf(target) : nullptr) a->Play(animation);
+    if (ui::UIAnimator* a = AnimatorFor(target)) a->Play(animation);
 }
 
 void UI::StopAnimation(const Entity& target, const std::string& animation) {
-    if (ui::UIAnimator* a = g_active != nullptr ? g_active->AnimatorOf(target) : nullptr) a->Stop(animation);
+    if (ui::UIAnimator* a = AnimatorFor(target)) a->Stop(animation);
 }
 
 void UI::SetFocus(const Entity& target, const std::string& widget) {
@@ -178,11 +190,11 @@ bool UISystem::FocusWidget(Entity e, const std::string& widget) {
     return true;
 }
 
-void UISystem::Hook(Instance& in, Widget& w) {
+void detail::HookWidgetEvents(Widget& w, Entity e, std::vector<WidgetEvent>& sink) {
     // Controls raise events for the entity's Blueprint (after whatever they did before).
-    const Entity e = in.entity;
     const std::string name = w.name;
-    auto push = [this, e, name](WidgetEvent::Kind kind, f32 value, const std::string& text) { pending_.push_back({e, kind, name, value, text}); };
+    std::vector<WidgetEvent>* out = &sink;
+    auto push = [out, e, name](WidgetEvent::Kind kind, f32 value, const std::string& text) { out->push_back({e, kind, name, value, text}); };
     if (auto* b = dynamic_cast<Button*>(&w)) {
         auto prev = b->on_clicked;
         b->on_clicked = [push, prev] {
@@ -220,7 +232,33 @@ void UISystem::Hook(Instance& in, Widget& w) {
             push(WidgetEvent::Kind::SelectionChanged, static_cast<f32>(v), {});
         };
     }
-    for (usize i = 0; i < w.ChildCount(); ++i) Hook(in, *w.Child(i));
+    for (usize i = 0; i < w.ChildCount(); ++i) HookWidgetEvents(*w.Child(i), e, sink);
+}
+
+std::vector<std::string> detail::BindingSourceNames(const std::vector<Binding>& bindings) {
+    std::vector<std::string> out;
+    for (const Binding& b : bindings) {
+        for (const std::string* path : {&b.source, &b.divide_by}) {
+            const std::string head = path->substr(0, path->find('.'));
+            if (!head.empty() && std::find(out.begin(), out.end(), head) == out.end()) out.push_back(head);
+        }
+    }
+    return out;
+}
+
+void detail::RefreshBindingSources(World& world, Entity entity, const std::vector<std::string>& sources, const GlobalSources& globals, DataBinder& binder) {
+    // Component storage moves as entities change archetype: point the sources at it again each frame.
+    for (const std::string& name : sources) {
+        if (const auto g = globals.find(name); g != globals.end()) {
+            binder.AddSource(name, g->second.first, *g->second.second);
+            continue;
+        }
+        const ComponentId id = FindComponentIdByName(name);
+        const reflect::TypeInfo* type = reflect::TypeRegistry::Find(name);
+        void* data = id == kInvalidComponentId ? nullptr : world.GetComponentRaw(entity, id);
+        if (data != nullptr && type != nullptr) binder.AddSource(name, data, *type);
+        else binder.RemoveSource(name);
+    }
 }
 
 bool UISystem::Create(Instance& in) {
@@ -242,32 +280,14 @@ bool UISystem::Create(Instance& in) {
     }
     in.binder = std::make_unique<DataBinder>();
     in.bindings = doc.bindings;
-    for (const Binding& b : in.bindings) {
-        for (const std::string* path : {&b.source, &b.divide_by}) {
-            const std::string head = path->substr(0, path->find('.'));
-            if (!head.empty() && std::find(in.sources.begin(), in.sources.end(), head) == in.sources.end()) in.sources.push_back(head);
-        }
-    }
+    in.sources = detail::BindingSourceNames(in.bindings);
     Refresh(in);
     for (const std::string& p : in.binder->Bind(*in.root, in.bindings)) problems_.push_back("layout '" + in.layout + "': " + p);
-    Hook(in, *in.root);
+    detail::HookWidgetEvents(*in.root, in.entity, pending_);
     return true;
 }
 
-void UISystem::Refresh(Instance& in) {
-    // Component storage moves as entities change archetype: point the sources at it again each frame.
-    for (const std::string& name : in.sources) {
-        if (const auto g = globals_.find(name); g != globals_.end()) {
-            in.binder->AddSource(name, g->second.first, *g->second.second);
-            continue;
-        }
-        const ComponentId id = FindComponentIdByName(name);
-        const reflect::TypeInfo* type = reflect::TypeRegistry::Find(name);
-        void* data = id == kInvalidComponentId ? nullptr : world_.GetComponentRaw(in.entity, id);
-        if (data != nullptr && type != nullptr) in.binder->AddSource(name, data, *type);
-        else in.binder->RemoveSource(name);
-    }
-}
+void UISystem::Refresh(Instance& in) { detail::RefreshBindingSources(world_, in.entity, in.sources, globals_, *in.binder); }
 
 void UISystem::Destroy(Instance& in) {
     if (in.root != nullptr) {
