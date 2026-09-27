@@ -2801,6 +2801,76 @@ new `Aether::Blueprint` library (`blueprint/`) depends only on the engine.
 - 226/226 tests pass on GCC 13, on Clang and under ASan/UBSan, and 233/233
   with physics.
 
+**Step 2: the compiler and VM** (§12.4, ROADMAP_DETAILS §C).
+
+- **`CompileBlueprint`** validates first, then lowers every event and
+  function graph to typed register bytecode (`bytecode.h`).
+  - **Registers**: two banks per frame, 16-byte value registers (bool,
+    int, float, Vec3, Quat, Entity) and string registers.
+  - **Typed opcodes**: `ADD_F`, `ADD_V3`, `CMP_LT_I`, `CLAMP_F`, and so
+    on. The VM never checks a type in its hot loop.
+  - **Exec flow**:
+    - Links are walked from each entry: Branch becomes `JMPF`, and a
+      Sequence runs its outputs in order.
+    - An exec wire back into a node already on the path becomes a jump,
+      so loops are guarded by the instruction budget.
+  - **Pure nodes** are emitted right before the impure node that reads
+    them, and cached for that node only. So `count = count + 1` twice
+    reads `count` again the second time.
+  - **Implicit conversions** become `CONV_I2F`, `CONV_F2I` and `TOSTR`.
+  - **Calls**:
+    - Reflected functions and component fields go through
+      `FunctionInfo` and `FieldInfo`.
+    - Blueprint functions (pure or not, with early Return nodes) and
+      custom events get their own frame.
+  - **Unsupported types**: structs and arrays are refused for now with
+    the new BP012.
+  - **`Disassemble`** prints a function as text, for golden tests and
+    debugging.
+- **`BlueprintVM`** runs instances attached to entities, each with its
+  own variables.
+  - Instance-editable overrides are applied at attach time.
+  - **Running events**: `Dispatch` runs any event with arguments.
+    `BeginPlay` and `Tick` run on every instance, in attach order.
+  - Variables can be read and set from C++, and Print String goes to a
+    handler.
+  - **Frames** are reused per call depth, so a dispatch allocates nothing.
+  - Instances can be attached or detached from inside a running event.
+- **Runtime safety** (BLUEPRINT_NODES.md §13):
+  - BP202 stops an event after its instruction budget (1M by default) and
+    names the node. The budget is per dispatch.
+  - BP201: a call or field access on an entity without the component is
+    logged once per node. It returns a default value, and execution goes
+    on.
+  - The new BP203 limits call depth (endless recursion), and BP204
+    reports a refused native call.
+  - Division by zero gives 0.
+
+**Verified**: 5 new tests.
+
+- **BP_Door**:
+  - The golden bytecode for its trigger event and `Open` function.
+  - Opening once and staying open, missing events and non-instances,
+    overrides per instance, and detaching.
+- **Math and flow**:
+  - int→float→string, Sequence, and per-step caching of pure nodes.
+  - Branch, Vec3 printing, string equality, and divide by zero.
+  - float→int truncation, and Self/Is Valid.
+  - Variables from C++, and separate instances.
+- **Engine hookups**:
+  - Tick accumulating delta time, and instances without Tick skipped.
+  - Native calls (impure and pure) and component Get/Set.
+  - BP201 once with a default result.
+- **Functions**: pure and impure functions and custom events, called from
+  a graph and from C++.
+- **Failures**:
+  - BP202 on an exec loop, stopped at the right node and fresh on the
+    next dispatch.
+  - BP203 on recursion.
+  - BP012 and validation errors blocking the compile.
+- 231/231 tests pass on GCC 13, on Clang and under ASan/UBSan, and 238/238
+  with physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
