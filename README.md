@@ -3086,6 +3086,50 @@ point 3, ROADMAP_DETAILS §C.4).
 - 247/247 tests pass on GCC 13, on Clang and under ASan/UBSan, and 254/254
   with physics.
 
+**Step 4, part 4: event dispatchers and interfaces** (BLUEPRINT_NODES.md
+§10, §8, ROADMAP §12.1). Blueprints can now talk to each other.
+
+- **Event dispatchers** are declared on a Blueprint (`OnOpened(by:
+  Entity)`) and saved in the .abp.
+  - **Call \<Dispatcher\>** runs every Custom Event bound to the target
+    entity's dispatcher, with the call's arguments.
+  - **Bind / Unbind / Unbind All** name a Custom Event handler of the
+    listener's own Blueprint. A listener can bind to another class's
+    dispatcher, since binding goes by name. If the listener declares a
+    dispatcher of that name, the handler's parameters must match it (the
+    new BP014).
+  - **Bindings**:
+    - Binding twice is one binding, and handlers may bind or unbind
+      while the dispatcher is running.
+    - A binding goes away when either side is detached or destroyed.
+- **Blueprint Interfaces** are registered with
+  `RegisterBlueprintInterface` (an interface name and its functions'
+  parameters).
+  - A Blueprint lists the interfaces it implements, and handles
+    `Event.Interface:Interactable.Interact`.
+  - A Blueprint that doesn't list the interface can't have its events
+    (the new BP015).
+  - **Interact (Message)** calls the target's implementation. On an
+    entity that doesn't implement it, it does nothing, with no error,
+    like Unreal.
+  - **Does Implement** answers whether it does.
+  - The palette offers the interface's events to implementers.
+
+**Verified**: 3 new tests.
+
+- **Dispatchers**:
+  - Two listeners bound to a door and called with the instigator.
+  - Duplicate binds, Unbind, a detached listener unbound, Unbind All,
+    and the .abp round trip.
+- **Dispatcher errors**: BP014 for mismatched parameters, and BP004 for
+  a missing handler or an undeclared dispatcher.
+- **Interfaces**:
+  - A lever implementing Interactable, called from a player.
+  - Non-implementers and non-instances ignored silently.
+  - BP015, BP004, the palette, and the .abp round trip.
+- 250/250 tests pass on GCC 13, on Clang and under ASan/UBSan, and 257/257
+  with physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,

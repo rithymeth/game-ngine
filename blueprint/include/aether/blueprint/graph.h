@@ -68,10 +68,22 @@ struct Graph {
     NodeId NextId() const; // one past the highest ID in use
 };
 
+// An event dispatcher (BLUEPRINT_NODES.md §10): a multicast event other
+// Blueprints bind their Custom Events to.
+struct Dispatcher {
+    std::string name;
+    std::vector<Variable> params;
+};
+
 struct Blueprint {
     std::string parent = "native:Entity"; // a native base class, or another Blueprint's asset GUID
     std::vector<Variable> variables;
     std::vector<Graph> graphs;
+    std::vector<Dispatcher> dispatchers;
+    std::vector<std::string> interfaces; // Blueprint Interfaces this class implements
+
+    const Dispatcher* FindDispatcher(std::string_view name) const;
+    bool Implements(std::string_view interface_name) const;
 
     const Variable* FindVariable(std::string_view name) const;
     const Graph* FindGraph(std::string_view name) const;
