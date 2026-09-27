@@ -1,5 +1,7 @@
 #include "aether/blueprint/validate.h"
 
+#include "macros.h"
+
 #include <algorithm>
 #include <functional>
 #include <map>
@@ -245,6 +247,7 @@ ValidationResult ValidateBlueprint(const Blueprint& blueprint) {
             }
         }
     }
+    CheckMacroCycles(blueprint, result);
     return result;
 }
 

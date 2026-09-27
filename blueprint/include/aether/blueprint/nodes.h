@@ -26,6 +26,7 @@ enum class NodeKind : u8 {
     Latent,         // impure, finishes on a later frame (step 3)
     FunctionEntry,  // a function graph's entry
     FunctionReturn, // a function graph's exit
+    Tunnel,         // a macro's inputs or outputs (only inside macro graphs; inlined away)
 };
 
 enum PinFlags : u32 {
