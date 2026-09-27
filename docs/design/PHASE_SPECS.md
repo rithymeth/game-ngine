@@ -587,7 +587,11 @@ comment above it adds metadata.
      (hot reload).
    - Inspector edits change the component in place. Recording them as
      undoable commands comes with the Windows editor work.
-4. Events (`:Connect`) and Input/Physics/Timer APIs.
+4. ✅ **Done** (physics queries with Phase 13). Events (`:Connect`) and Input/Physics/Timer APIs.
+   - Physics reaches scripts through `SendEvent` (OnCollisionBegin and
+     friends call script methods). Raycasts and overlaps come with Phase
+     13's character and query work.
+   - Script-made events (`Event.new`) live as long as the script system.
 5. Hot reload and the error overlay.
 6. Code editor panel with completion from reflection; DAP debugger.
 

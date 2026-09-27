@@ -151,10 +151,24 @@ ScriptClassInfo ScriptSystem::DescribeSource(LuauHost& host, const std::string& 
 ScriptSystem::ScriptSystem(LuauHost& host, World& world, GuidIndex& guids, SourceLoader loader)
     : host_(host), world_(world), guids_(guids), loader_(std::move(loader)) {
     host_.BindWorld(&world_, &guids_);
+    InstallApi();
 }
 
 ScriptSystem::~ScriptSystem() {
+    BindInput(nullptr);
     lua_State* L = host_.State();
+    // Scripts may still hold events or timers: they now report that no
+    // script system is running instead of reaching this one.
+    lua_pushnil(L);
+    lua_setfield(L, LUA_REGISTRYINDEX, "Aether.ScriptSystem");
+    for (auto& [id, event] : events_) {
+        for (const Connection& c : event.connections) {
+            lua_unref(L, c.function_ref);
+        }
+    }
+    for (const Timer& timer : timers_) {
+        lua_unref(L, timer.function_ref);
+    }
     for (auto& [guid, instance] : instances_) {
         lua_unref(L, instance.ref);
     }
@@ -235,7 +249,7 @@ void ScriptSystem::Create(Entity entity) {
         lua_setfield(L, -2, property.name.c_str());
     }
     const EntityGuid guid = world_.GetComponent<IdComponent>(entity)->guid;
-    instances_[guid] = Instance{lua_ref(L, -1), component->script.guid, cls->name};
+    instances_[guid] = Instance{lua_ref(L, -1), component->script.guid, cls->name, next_owner_++};
     lua_pop(L, 1);
 }
 
@@ -259,10 +273,12 @@ void ScriptSystem::Invoke(Entity entity, const char* method, const f32* dt) {
         ++args;
     }
     std::string error;
+    const u64 previous_owner = current_owner_;
+    current_owner_ = instance->owner; // what it connects is its own
     if (!host_.ProtectedCall(args, 0, &error)) {
-        errors_.push_back(error);
-        AETHER_LOG_ERROR("Script", "%s (in %s)", error.c_str(), method);
+        RecordError(error + " (in " + method + ")");
     }
+    current_owner_ = previous_owner;
     lua_settop(L, top);
 }
 
@@ -273,6 +289,7 @@ void ScriptSystem::Destroy(Entity entity) {
         return;
     }
     if (auto it = instances_.find(id->guid); it != instances_.end()) {
+        ReleaseOwner(it->second.owner); // its connections and timers end with it
         lua_unref(host_.State(), it->second.ref);
         instances_.erase(it);
     }
@@ -298,7 +315,11 @@ ScriptResult ScriptSystem::CallMethod(Entity entity, const std::string& method, 
     for (const ScriptValue& arg : args) {
         PushScriptValue(L, arg);
     }
-    if (!host_.ProtectedCall(static_cast<int>(args.size()) + 1, LUA_MULTRET, &result.error)) {
+    const u64 previous_owner = current_owner_;
+    current_owner_ = instance->owner;
+    const bool ok = host_.ProtectedCall(static_cast<int>(args.size()) + 1, LUA_MULTRET, &result.error);
+    current_owner_ = previous_owner;
+    if (!ok) {
         lua_settop(L, top);
         return result;
     }
