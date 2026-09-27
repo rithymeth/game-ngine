@@ -276,6 +276,13 @@ struct CompiledFunction {
     std::string graph; // the graph it came from
     std::vector<Instr> code;
     std::vector<NodeId> node_of; // per instruction: the node that emitted it (for errors and the debugger)
+    // Debug info (Phase 12 step 5): where each node's code starts, in pc
+    // order (several nodes can start at one pc: a Sequence with no code of
+    // its own, an impure node and the pure nodes it reads), and the register
+    // holding each pin's value, for the debugger's value inspection.
+    std::vector<u8> is_entry; // per instruction
+    std::vector<std::pair<u32, NodeId>> entries;
+    std::map<std::pair<NodeId, std::string>, TypedReg> pin_values;
     u16 value_regs = 0;
     u16 string_regs = 0;
     u16 array_regs = 0;

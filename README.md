@@ -3207,6 +3207,50 @@ step 4, the v1 node library.
 - 256/256 tests pass on GCC 13, on Clang and under ASan/UBSan, and 263/263
   with physics.
 
+**Step 5: the Blueprint debugger** (§12.5).
+
+- **Breakpoints on nodes** (`SetBreakpoint(blueprint, graph, node)`)
+  work in event graphs and function graphs.
+  - A breakpoint in a loop body stops every iteration.
+  - Setting one on a node with no code is refused.
+- **At a stop**, the handler gets:
+  - the reason (breakpoint, step or pause);
+  - the call stack, innermost first, each frame with its function, graph
+    and current node;
+  - every pin's current value, for data-pin hovers and watches: "42",
+    "true", "(1, 0, 0)", "Entity(3v1)", "[4 items]".
+- **Actions**: Continue, Step Into (enters called functions), Step Over
+  (runs them) and Step Out (back to the caller's next node).
+  `RequestPause` is the Pause button: it stops at the next node any
+  Blueprint runs.
+- **Instance filter**: "Debug: BP_Door_2" only stops for that entity.
+- **Exec trace** for wire animation: every node that starts running is
+  recorded (entity, graph, node, frame number) in a capped buffer. The
+  editor takes it each frame, and it works without a debug handler.
+- **Cost when not debugging**: one flag test per instruction. The
+  compiler records where each node's code starts, and which register
+  holds each pin's value.
+
+**Verified**: 3 new tests.
+
+- **Breakpoints**:
+  - One in a called function stopping with two frames, and the caller's
+    pin values visible (40 + 2 = "42").
+  - Then the event's Print with the call's result ("84").
+  - Clearing and detaching, and a loop-body breakpoint stopping three
+    times with the index.
+- **Stepping**:
+  - Step Over not entering the function.
+  - Step Into entering it and Step Out returning to the next node.
+  - Pause, and the stop count.
+- **Filter and trace**:
+  - The instance filter.
+  - The trace listing nodes in execution order across the function
+    call, with the frame number, and the trace capped to its latest
+    entries.
+- 259/259 tests pass on GCC 13, on Clang and under ASan/UBSan, and 266/266
+  with physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
