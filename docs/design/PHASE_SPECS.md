@@ -1249,8 +1249,33 @@ renders.
    - **On the RHI**: executing the plan (resource creation in one heap,
      barriers, queue fences, pass callbacks) is the GPU work of step 5.
      The D3D12-only `gfx::RenderGraph` stays until then.
-4. Post-processing math: auto exposure, ACES/AgX tone mapping, bloom chain
-   sizes, TAA jitter, with CPU references.
+4. ✅ **Done.** Post-processing math: auto exposure, ACES/AgX tone
+   mapping, bloom chain sizes, TAA jitter, with CPU references
+   (`renderer/include/aether/renderer/post.h`).
+   - **Auto exposure**:
+     - A 256-bin log2 luminance histogram over [-10, 10] EV, with black
+       in bin 0.
+     - The average takes the pixels between the 50th and 95th
+       percentiles, so the sun and the dark half don't pull it; black
+       pixels never count.
+     - EV100 from the average (K = 12.5), then exposure =
+       2^compensation / (1.2 × 2^EV100).
+     - Adaptation moves exponentially toward the target, faster
+       brightening (3/s) than darkening (1/s), clamped to [-4, 16] EV.
+   - **Tone mapping**:
+     - ACES uses Stephen Hill's RRT + ODT fit.
+     - AgX uses Troy Sobotka's inset matrix, a log2 encoding over
+       [-12.47, 4.03], a 6th-order base curve, the outset matrix, and a
+       2.2 decode.
+     - `None` clamps. sRGB encode and decode are included.
+   - **Grading**: saturation around Rec. 709 luminance, and a vignette
+     factor.
+   - **Bloom chain**: half size per level, rounded up, from half the
+     source, down to 8 px or 6 levels.
+   - **TAA**: Halton(2, 3) jitter repeating every 8 frames, centered on
+     the pixel. `JitterProjection` adds offset × w to clip x and y, so
+     every point moves by exactly the offset at any depth, for
+     perspective and orthographic projections.
 5. GPU passes on D3D12 and Vulkan: depth pre-pass, clustered forward PBR,
    shadows, sky, post (Windows).
 6. The editor viewport and the player on the renderer, view modes, and the

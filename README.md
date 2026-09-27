@@ -3770,6 +3770,43 @@ references for GPU passes; the GPU versions will be checked against them.
 - 283/283 tests pass on GCC 13, Clang and ASan/UBSan, and 314/314 with
   physics.
 
+**Step 4: post-processing math** (§14.2). These are CPU references for
+the post-processing shaders, plus the values the renderer works out each
+frame.
+
+- **Auto exposure**: `LuminanceHistogram` and `AverageLuminance` measure
+  a frame, ignoring the darkest half and the brightest 5% so the sun
+  doesn't set the exposure. `EV100FromLuminance` and `ExposureFromEV100`
+  turn that into an exposure, with compensation in EV. `AdaptEV100`
+  eases toward it, adjusting to brightness faster than to darkness, like
+  an eye.
+- **Tone mapping**: `TonemapACES` (Stephen Hill's fit) and `TonemapAgX`
+  (Troy Sobotka's AgX), plus sRGB encoding and decoding.
+- **Grading**: saturation that keeps brightness, and a vignette.
+- **Bloom**: `BloomChain` gives the sizes of the downsampled images, for
+  example 960×540 down to 30×17 from 1080p.
+- **TAA**: `TaaJitter` gives a Halton(2, 3) sub-pixel offset per frame,
+  and `JitterProjection` shifts a projection by it exactly.
+
+**Verified**: 3 new tests.
+
+- For uniform scenes from 0.05 to 40, the exposure maps each to the same
+  value. The sun and black pixels are ignored. Adaptation converges,
+  brightening faster than darkening, and clamps. Compensation doubles
+  per EV.
+- Both tone mappers keep black near 0 and huge values at or below 1, and
+  are monotonic from 0.001 to 200. Mid grey stays neutral, and negative
+  input doesn't produce NaN. A very bright red turns toward white under
+  AgX.
+- sRGB matches known values and round-trips.
+- Saturation keeps luminance, and the vignette is untouched at the
+  center. The bloom chain from 1080p matches, as do known Halton values
+  and a jitter centered on average. A jittered projection moves points by
+  exactly 0.25 and −0.4 pixels at every depth, for perspective and
+  orthographic, without touching depth.
+- 286/286 tests pass on GCC 13, Clang and ASan/UBSan, and 317/317 with
+  physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,

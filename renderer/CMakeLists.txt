@@ -10,6 +10,7 @@ add_library(aether_renderer STATIC
     src/clusters.cpp
     src/shadows.cpp
     src/frame_graph.cpp
+    src/post.cpp
 )
 target_include_directories(aether_renderer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aether_renderer PUBLIC cxx_std_20)
