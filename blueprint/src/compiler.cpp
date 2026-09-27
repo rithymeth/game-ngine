@@ -2,6 +2,7 @@
 
 #include "aether/reflection/reflection.h"
 
+#include <algorithm>
 #include <set>
 
 namespace aether::bp {
@@ -549,6 +550,27 @@ private:
             return true;
         }
         if (type.rfind("Array.", 0) == 0) return EvaluateArray(id, sig, type);
+        static const std::pair<const char*, Op> kEntityGets[] = {
+            {"Entity.GetLocation", Op::GetLoc}, {"Entity.GetRotation", Op::GetRot},
+            {"Entity.GetWorldLocation", Op::WorldLoc}, {"Entity.GetParent", Op::GetParentOp}};
+        for (const auto& [name, op] : kEntityGets) {
+            if (type == name) {
+                const PinDesc& out = *std::find_if(sig.pins.begin(), sig.pins.end(),
+                                                   [](const PinDesc& p) { return p.dir == PinDir::Out; });
+                const RegRef target = Input(id, "target");
+                const RegRef dst = Alloc(out.type, id);
+                Emit({op, dst.index, target.index}, id);
+                SetPure(id, out.name, dst);
+                return true;
+            }
+        }
+        if (type == "Quat.RotateVector") return emit(Op::QuatRotate, {Input(id, "rotation"), Input(id, "vector")}), true;
+        if (type == "Quat.FromAxisAngle") return emit(Op::QuatAxisAngle, {Input(id, "axis"), Input(id, "degrees")}), true;
+        if (type == "Quat.Multiply") return emit(Op::QuatMul, {Input(id, "a"), Input(id, "b")}), true;
+        if (type == "Entity.HasTag") return emit(Op::HasTagOp, {Input(id, "target"), Input(id, "tag")}), true;
+        if (type == "Entity.FindWithTag") return emit(Op::FindTagOp, {Input(id, "tag")}, "entities"), true;
+        if (type == "World.GameTime") return emit(Op::GameTime, {}, "seconds"), true;
+        if (type == "World.DeltaSeconds") return emit(Op::DeltaTime, {}, "seconds"), true;
         if (type.rfind("Conv.ToString:", 0) == 0) {
             const PinDesc& in = *sig.Find("value", PinDir::In);
             const RegRef value = Input(id, "value");
@@ -738,6 +760,26 @@ private:
             }
             Emit({Op::Latent, Slot(id), duration.index, static_cast<u16>(kind), static_cast<i32>(it->second)}, id);
             return; // what follows (a Sequence's next output) runs now; "completed" runs later
+        }
+        static const std::pair<const char*, std::pair<Op, const char*>> kEntitySets[] = {
+            {"Entity.SetLocation", {Op::SetLoc, "location"}}, {"Entity.SetRotation", {Op::SetRot, "rotation"}},
+            {"Entity.AddOffset", {Op::AddOffset, "offset"}},   {"Entity.AddTag", {Op::AddTagOp, "tag"}},
+            {"Entity.RemoveTag", {Op::RemoveTagOp, "tag"}},    {"Entity.AttachTo", {Op::AttachOp, "parent"}},
+            {"Entity.Detach", {Op::DetachOp, nullptr}},        {"Entity.Destroy", {Op::DestroyOp, nullptr}}};
+        for (const auto& [name, op] : kEntitySets) {
+            if (type != name) continue;
+            const RegRef target = Input(id, "target");
+            const u16 value = op.second != nullptr ? Input(id, op.second).index : 0;
+            Emit({op.first, 0, target.index, value}, id);
+            return Chain(id, "then");
+        }
+        if (type == "Entity.Spawn") {
+            const RegRef location = Input(id, "location"), rotation = Input(id, "rotation");
+            const RegRef spawned = OutputReg(id, *sig.Find("spawned", PinDir::Out));
+            out_.spawn_assets.push_back(NodeOf(id).config.value("blueprint", ""));
+            Emit({Op::SpawnOp, spawned.index, location.index, rotation.index,
+                  static_cast<i32>(out_.spawn_assets.size() - 1)}, id);
+            return Chain(id, "then");
         }
         if (type.rfind("Flow.ForEach:", 0) == 0) {
             // Iterates a copy: changing the array in the body doesn't affect the loop.

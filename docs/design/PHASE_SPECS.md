@@ -753,7 +753,23 @@ struct Blueprint{ std::string parent; std::vector<Variable> variables; std::vect
        out-of-range remove does nothing.
      - Sort, Shuffle and Filter need comparator functions, so they wait
        for part 4. So do arrays in native calls and Dispatch arguments.
-   - Part 3: entity and world nodes (Spawn, Destroy, transforms, tags).
+   - ✅ **Part 3 done:** entity and world nodes.
+     - Transforms: Get/Set Location and Rotation, Add Offset and Get World
+       Location. Rotation helpers: Rotate Vector, Rotation from Axis and
+       Angle, and Combine Rotations.
+     - Tags: Has/Add/Remove Tag and Find Entities with Tag.
+     - Hierarchy: Get Parent, Attach To (refusing cycles) and Detach.
+     - Lifetime: Destroy Entity and Spawn Blueprint.
+     - Time: Game Time and Delta Seconds.
+     - **Destroy** is deferred until the running event finishes. Then
+       EndPlay runs, and the entity is destroyed through the lifecycle
+       when a `BlueprintSystem` is set up.
+     - **Spawn** goes through a spawner hook. `BlueprintSystem` creates the
+       entity with an ID, a Transform and a `BlueprintInstance`, and
+       attaches it straight away. BeginPlay comes at the lifecycle's next
+       sync.
+     - **Not yet**: Transform has no scale, so there are no scale nodes.
+       Expose-on-spawn pins come with part 4.
    - Part 4: macros, event dispatchers and interfaces.
 5. Debugger: node breakpoints, stepping and call stack, exec trace for
    wire animation, watched pin values, and an instance filter.

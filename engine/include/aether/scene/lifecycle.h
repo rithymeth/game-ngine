@@ -54,6 +54,7 @@ public:
     // Ends play: OnDisable and OnDestroy for everything that's in play.
     void EndPlay();
     bool IsPlaying() const { return playing_; }
+    GuidIndex& Guids() { return guids_; }
 
     void Update(f32 dt);
     void FixedUpdate(f32 dt);

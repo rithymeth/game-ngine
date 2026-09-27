@@ -1,5 +1,6 @@
 #include "aether/blueprint/nodes.h"
 
+#include "aether/assets/asset_guid.h"
 #include "aether/reflection/reflection.h"
 
 #include <algorithm>
@@ -596,6 +597,59 @@ void RegisterBuiltins(Registry& r) {
 
     // --- Entity (§6) and debug (§11) ---------------------------------------
     AddPure(r, "Entity.Self", "Get Self", "Entity", {Out("self", kEntity)});
+    // Transforms (local: relative to the parent, if any), tags, hierarchy,
+    // lifetime and time (BLUEPRINT_NODES.md §6).
+    const PinType kQuat = T(ValueType::Quat);
+    AddPure(r, "Entity.GetLocation", "Get Location", "Entity|Transform",
+            {In("target", kEntity, Pin_Self), Out("location", kVec3)});
+    AddPure(r, "Entity.GetRotation", "Get Rotation", "Entity|Transform",
+            {In("target", kEntity, Pin_Self), Out("rotation", kQuat)});
+    AddPure(r, "Entity.GetWorldLocation", "Get World Location", "Entity|Transform",
+            {In("target", kEntity, Pin_Self), Out("location", kVec3)});
+    auto impure = [&](const std::string& id, const std::string& title, const std::string& category,
+                      std::vector<PinDesc> inputs, std::vector<PinDesc> outputs = {}) {
+        r.exact[id] = [=](const NodeContext&, NodeError&) -> std::optional<NodeSignature> {
+            std::vector<PinDesc> pins{ExecIn()};
+            pins.insert(pins.end(), inputs.begin(), inputs.end());
+            pins.push_back(ExecOut());
+            pins.insert(pins.end(), outputs.begin(), outputs.end());
+            return Sig(title, category, NodeKind::Impure, pins);
+        };
+    };
+    impure("Entity.SetLocation", "Set Location", "Entity|Transform",
+           {In("target", kEntity, Pin_Self), In("location", kVec3)});
+    impure("Entity.SetRotation", "Set Rotation", "Entity|Transform",
+           {In("target", kEntity, Pin_Self), In("rotation", kQuat)});
+    impure("Entity.AddOffset", "Add Offset", "Entity|Transform",
+           {In("target", kEntity, Pin_Self), In("offset", kVec3)});
+    AddPure(r, "Quat.RotateVector", "Rotate Vector", "Math|Rotation",
+            {In("rotation", kQuat), In("vector", kVec3, Vec3{0.0f, 0.0f, 1.0f}), Out("result", kVec3)});
+    AddPure(r, "Quat.FromAxisAngle", "Rotation from Axis and Angle", "Math|Rotation",
+            {In("axis", kVec3, Vec3{0.0f, 1.0f, 0.0f}), In("degrees", kFloat), Out("result", kQuat)});
+    AddPure(r, "Quat.Multiply", "Combine Rotations", "Math|Rotation",
+            {In("a", kQuat), In("b", kQuat), Out("result", kQuat)});
+    AddPure(r, "Entity.HasTag", "Has Tag", "Entity|Tags",
+            {In("target", kEntity, Pin_Self), In("tag", kString), Out("result", kBool)});
+    AddPure(r, "Entity.FindWithTag", "Find Entities with Tag", "Entity|Tags",
+            {In("tag", kString), Out("entities", PinType::ArrayOf(kEntity))});
+    impure("Entity.AddTag", "Add Tag", "Entity|Tags", {In("target", kEntity, Pin_Self), In("tag", kString)});
+    impure("Entity.RemoveTag", "Remove Tag", "Entity|Tags", {In("target", kEntity, Pin_Self), In("tag", kString)});
+    AddPure(r, "Entity.GetParent", "Get Parent", "Entity|Hierarchy",
+            {In("target", kEntity, Pin_Self), Out("parent", kEntity)});
+    impure("Entity.AttachTo", "Attach To", "Entity|Hierarchy",
+           {In("target", kEntity, Pin_Self), In("parent", kEntity)});
+    impure("Entity.Detach", "Detach", "Entity|Hierarchy", {In("target", kEntity, Pin_Self)});
+    impure("Entity.Destroy", "Destroy Entity", "Entity", {In("target", kEntity, Pin_Self)});
+    r.exact["Entity.Spawn"] = [=](const NodeContext& c, NodeError& error) -> std::optional<NodeSignature> {
+        assets::AssetGuid guid;
+        if (!assets::ParseAssetGuid(c.node.config.value("blueprint", ""), guid) || guid.IsNull()) {
+            return Fail(error, "BP007", "Spawn needs a Blueprint to spawn (its asset in the node's settings).");
+        }
+        return Sig("Spawn Blueprint", "Entity", NodeKind::Impure,
+                   {ExecIn(), In("location", kVec3), In("rotation", kQuat), ExecOut(), Out("spawned", kEntity)});
+    };
+    AddPure(r, "World.GameTime", "Get Game Time", "Utilities|Time", {Out("seconds", kFloat)});
+    AddPure(r, "World.DeltaSeconds", "Get Delta Seconds", "Utilities|Time", {Out("seconds", kFloat)});
     AddPure(r, "Entity.IsValid", "Is Valid", "Entity", {In("entity", kEntity), Out("result", kBool)});
     r.exact["Debug.Print"] = [kString](const NodeContext&, NodeError&) -> std::optional<NodeSignature> {
         return Sig("Print String", "Debug", NodeKind::Impure,
