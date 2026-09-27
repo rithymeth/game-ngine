@@ -606,8 +606,11 @@ comment above it adds metadata.
        report frames and locals, printed without running script code.
      - `CompleteScript` does text-based completion from the script API and
        reflection.
-   - Next: the ImGui code editor panel (portable widget) and the DAP
-     server over the debugger core.
+   - ✅ **Part 2 done:** the DAP server (`DapFraming`, `DapSession`).
+     - It doesn't depend on a transport. The socket listener comes with the
+       Windows editor hookup.
+     - `evaluate` covers locals only.
+   - Next: the ImGui code editor panel (a portable widget).
 
 ---
 

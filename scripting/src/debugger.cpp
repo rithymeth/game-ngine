@@ -172,6 +172,8 @@ void ScriptDebugger::ClearAllBreakpoints() {
     }
 }
 
+bool ScriptDebugger::IsLoaded(const std::string& chunk) const { return host_.ChunkFunction(chunk) != LUA_NOREF; }
+
 std::vector<int> ScriptDebugger::Breakpoints(const std::string& chunk) const {
     std::vector<int> lines;
     if (auto it = breakpoints_.find(chunk); it != breakpoints_.end()) {
