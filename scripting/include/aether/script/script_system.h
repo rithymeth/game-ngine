@@ -1,5 +1,6 @@
 #pragma once
 
+#include "aether/assets/hot_reload.h"
 #include "aether/input/actions.h"
 #include "aether/scene/lifecycle.h"
 #include "aether/scene/script_component.h"
@@ -11,6 +12,17 @@
 #include <vector>
 
 namespace aether::script {
+
+// A script error split into its parts, for the error overlay and the code
+// editor ("Spin.luau:12: attempt to index nil" -> chunk, line, message).
+struct ScriptError {
+    std::string chunk;   // "Spin.luau" ("" if the text had no location)
+    i32 line = 0;        // 0 if unknown
+    std::string message;
+    std::string text;    // the whole original error
+
+    static ScriptError Parse(const std::string& text);
+};
 
 // Runs ScriptComponents (Phase 11 step 3, docs/design/PHASE_SPECS.md §11.2).
 //
@@ -60,6 +72,27 @@ public:
     // Calls `method` on the entity's script if it defines it (e.g.
     // "OnCollisionBegin" from physics); false if it has no script or method.
     bool SendEvent(Entity entity, const std::string& method, const std::vector<ScriptValue>& args = {});
+
+    // Hot reload (§11.3): recompiles `script`. If it fails, running
+    // instances keep the old code and the error is kept (ReloadErrors) until
+    // a later reload succeeds. If it succeeds, every live instance keeps its
+    // own fields (its state), switches to the new class (so methods and the
+    // defaults it doesn't override are the new ones), and gets :OnReload()
+    // if the class defines it. Event connections made by the old code stay.
+    struct ReloadResult {
+        bool ok = false;
+        usize instances = 0; // live instances switched to the new code
+        std::string error;
+    };
+    ReloadResult Reload(const assets::AssetGuid& script);
+    // Reloads the scripts among a HotReloader's changes (.luau files that
+    // changed or came back). Returns how many reloads were attempted.
+    usize ReloadChanged(const std::vector<assets::AssetChange>& changes);
+    // Scripts whose latest reload failed, with the error (the overlay's list).
+    const std::unordered_map<assets::AssetGuid, ScriptError>& ReloadErrors() const { return reload_errors_; }
+
+    // A SourceLoader reading scripts from an asset database (must outlive it).
+    static SourceLoader DatabaseLoader(const assets::AssetDatabase& database);
 
     usize ConnectionCount() const;
     usize TimerCount() const { return timers_.size(); }
@@ -146,6 +179,9 @@ private:
 
     std::unordered_map<u32, EventData> events_;
     std::vector<Timer> timers_;
+    std::unordered_map<assets::AssetGuid, ScriptError> reload_errors_;
+    // Entities in play whose script failed to load, by script: started when it reloads.
+    std::unordered_map<EntityGuid, assets::AssetGuid> waiting_;
     std::unordered_map<std::string, u32> input_events_; // "action\nevent" -> event id
     input::InputSystem* input_ = nullptr;
     std::vector<u32> input_subscriptions_;

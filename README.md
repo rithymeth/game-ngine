@@ -2506,6 +2506,46 @@ Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 11
 - 202/202 tests pass on GCC 13, on Clang and under ASan/UBSan, and 209/209
   with physics.
 
+**Step 5: script hot reload and the error overlay** (§11.3).
+
+- **`ScriptSystem::Reload(script)`** recompiles a script while the game
+  runs.
+  - **If it fails**, running instances keep the old code. The error is
+    kept, split into chunk, line and message (`ScriptError`), for the
+    overlay until a later reload succeeds.
+  - **If it succeeds**, every live instance keeps its own fields (its
+    state) but switches to the new class, and `OnReload` is called if the
+    class defines it. New methods apply straight away, and so do new
+    defaults for variables the entity doesn't override. Its own overrides
+    stay.
+  - Entities that entered play while their script had an error start
+    running (`OnCreate`, `OnEnable`, `OnStart`) as soon as a reload
+    succeeds, so a fix takes effect without restarting play.
+- **`ReloadChanged(changes)`** takes the `HotReloader`'s change list and
+  reloads the loaded `.luau` scripts in it. Scripts nobody uses, and
+  non-scripts, are skipped. **`DatabaseLoader`** reads script sources
+  through the asset database.
+- **Error overlay** (`editor/src/ui/error_overlay.h`, portable):
+  - A stack of red toasts in the bottom-right corner, such as
+    "Mover.luau:12  attempt to index nil".
+  - It shows up to N, with a "+N more" line, and a click returns the entry
+    so the editor can open the file at that line.
+
+**Verified**: 3 new tests.
+
+- **Reload in play**:
+  - A broken edit keeps v1 running, with the error parsed.
+  - The fix keeps state, calls `OnReload`, adds new methods, and applies
+    new defaults except where an entity overrides them. The next frame
+    runs the new code.
+- **Through the file watcher**: a script broken from the start of play is
+  fixed on disk, and the entity starts running. Unused scripts and
+  non-scripts are skipped, and error parsing is checked (including a
+  Windows-style path).
+- **Headless overlay**: empty, capped with "+N more", and no location.
+- 205/205 tests pass on GCC 13, on Clang and under ASan/UBSan, and 212/212
+  with physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
