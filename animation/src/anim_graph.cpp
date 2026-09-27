@@ -15,7 +15,7 @@ namespace {
 constexpr int kFormatVersion = 1;
 constexpr int kMaxConduitHops = 8;
 
-const char* kKindNames[] = {"Clip", "BlendSpace", "Blend", "BlendByBool", "BlendByInt", "Layered", "Additive", "StateMachine"};
+const char* kKindNames[] = {"Clip", "BlendSpace", "Blend", "BlendByBool", "BlendByInt", "Layered", "Additive", "StateMachine", "Slot"};
 const char* kTypeNames[] = {"bool", "int", "float", "trigger"};
 const char* kOpNames[] = {"==", "!=", "<", "<=", ">", ">=", "true", "false", "triggered"};
 
@@ -27,6 +27,7 @@ void InputCount(AnimNodeKind k, usize& min, bool& more) {
     case AnimNodeKind::BlendSpace:
     case AnimNodeKind::StateMachine: min = 0; break;
     case AnimNodeKind::BlendByInt: min = 2, more = true; break;
+    case AnimNodeKind::Slot: min = 1; break;
     default: min = 2; break;
     }
 }
@@ -127,6 +128,9 @@ std::vector<AnimDiagnostic> ValidateAnimGraph(const AnimGraph& g, const AnimAsse
             break;
         case AnimNodeKind::Additive:
             if (!n.variable.empty()) check_var(n.variable, {VarType::Float}, n.id, {}, what);
+            break;
+        case AnimNodeKind::Slot:
+            if (n.slot.empty()) add("AG002", n.id, {}, what + " needs a slot name.");
             break;
         case AnimNodeKind::StateMachine:
             if (g.FindMachine(n.machine) == nullptr) add("AG006", n.id, n.machine, what + " runs '" + n.machine + "', which isn't a state machine.");
@@ -270,14 +274,22 @@ std::vector<AnimDiagnostic> ValidateAnimGraph(const AnimGraph& g, const AnimAsse
 
 // --- Runtime ------------------------------------------------------------------------------------
 
+const char* AnimEventTypeName(AnimEventType t) {
+    static const char* kNames[] = {"Notify", "NotifyBegin", "NotifyEnd", "StateChanged", "MontageStarted", "MontageSectionChanged",
+                                   "MontageBlendingOut", "MontageEnded"};
+    return kNames[static_cast<int>(t)];
+}
+
 struct AnimGraphInstance::NodeState {
     u64 frame = ~0ull;
+    f32 weight = 0.0f; // how much this frame's output used this node (summed over its parents)
     Pose pose;
-    f32 time = 0.0f;
+    f32 time = 0.0f, previous_time = 0.0f;
     std::unique_ptr<BlendSpacePlayer> player;
     std::vector<f32> weights; // BlendByBool/Int crossfades
     BoneMask mask;
     bool has_mask = false;
+    RootMotionDelta motion; // this frame's, at full weight
 };
 
 struct AnimGraphInstance::MachineState {
@@ -287,6 +299,19 @@ struct AnimGraphInstance::MachineState {
     bool from_snapshot = false;
     Pose snapshot;
     f32 blend_elapsed = 0.0f, blend_duration = 0.0f;
+};
+
+struct AnimGraphInstance::MontageRun {
+    Montage montage;
+    const AnimationClip* clip = nullptr;
+    f32 time = 0.0f;
+    f32 rate = 1.0f;
+    i32 section = -1;
+    f32 weight = 0.0f;
+    bool blending_out = false;
+    bool interrupted = false;
+    f32 blend_out = 0.0f, blend_out_elapsed = 0.0f, weight_at_blend_out = 0.0f;
+    Pose pose;
 };
 
 AnimGraphInstance::AnimGraphInstance(const AnimGraph& graph, const Skeleton& skeleton, AnimAssets assets)
@@ -303,6 +328,9 @@ bool SetValue(std::map<std::string, f32>& values, const AnimGraph& g, const std:
     values[name] = value;
     return true;
 }
+
+// The signed angle about +Y of a yaw rotation.
+f32 YawAngle(const Quaternion& q) { return 2.0f * std::atan2(q.y, q.w); }
 } // namespace
 
 bool AnimGraphInstance::SetBool(const std::string& n, bool v) { return SetValue(values_, graph_, n, v ? 1.0f : 0.0f, {VarType::Bool}); }
@@ -315,20 +343,196 @@ f32 AnimGraphInstance::Get(const std::string& n) const {
     return it == values_.end() ? 0.0f : it->second;
 }
 
+void AnimGraphInstance::SetRootMotion(bool enabled, const RootMotionSettings& settings) {
+    root_motion_enabled_ = enabled;
+    root_settings_ = settings;
+}
+
+void AnimGraphInstance::Emit(AnimEvent e) { (in_update_ ? events_ : pending_).push_back(std::move(e)); }
+
 void AnimGraphInstance::Update(f32 dt, Pose& out) {
     ++frame_;
     changes_.clear();
-    out = Evaluate(graph_.output, dt);
+    events_ = std::move(pending_);
+    pending_.clear();
+    in_update_ = true;
+    root_motion_ = {};
+    root_yaw_ = 0.0f;
+    UpdateMontages(dt);
+    out = Evaluate(graph_.output, dt, 1.0f);
+    Collect();
+    root_motion_.rotation = Quaternion::FromAxisAngle(Vec3(0, 1, 0), root_yaw_);
     for (const AnimVariable& v : graph_.variables) {
         if (v.type == VarType::Trigger) values_[v.name] = 0.0f;
     }
+    in_update_ = false;
+}
+
+void AnimGraphInstance::Collect() {
+    auto add_motion = [&](const RootMotionDelta& d, f32 w) {
+        root_motion_.translation = root_motion_.translation + d.translation * w;
+        root_yaw_ += YawAngle(d.rotation) * w;
+    };
+    auto notify = [&](const AnimationClip& clip, f32 from, f32 to, bool loop, f32 weight) {
+        std::vector<NotifyPoint> points;
+        CollectNotifies(clip, from, to, loop, points);
+        for (const NotifyPoint& p : points) {
+            const AnimEventType type = !p.window ? AnimEventType::Notify : p.end ? AnimEventType::NotifyEnd : AnimEventType::NotifyBegin;
+            Emit({type, p.notify->name, clip.name, {}, std::min(weight, 1.0f), false});
+        }
+    };
+    for (auto& [id, ns] : nodes_) {
+        if (ns->frame != frame_ || ns->weight <= 0.0f) continue;
+        const AnimNode* n = graph_.Find(id);
+        if (n == nullptr) continue;
+        if (n->kind == AnimNodeKind::Clip) {
+            const AnimationClip* c = assets_.clip ? assets_.clip(n->asset) : nullptr;
+            if (c == nullptr) continue;
+            notify(*c, ClipTime(*c, ns->previous_time, n->loop), ClipTime(*c, ns->time, n->loop), n->loop, ns->weight);
+            if (root_motion_enabled_) add_motion(ns->motion, std::min(ns->weight, 1.0f));
+        } else if (n->kind == AnimNodeKind::BlendSpace && ns->player) {
+            // Notifies from the heaviest clip only, so a blend of walk cycles steps once.
+            const auto& w = ns->player->Weights();
+            if (!w.empty()) {
+                if (const AnimationClip* c = ns->player->ClipOf(w.front().sample)) {
+                    notify(*c, ns->player->PreviousPhase() * c->duration, ns->player->Phase() * c->duration, true, ns->weight * w.front().weight);
+                }
+            }
+            if (root_motion_enabled_) add_motion(ns->motion, std::min(ns->weight, 1.0f));
+        }
+    }
+}
+
+void AnimGraphInstance::UpdateMontages(f32 dt) {
+    for (auto it = montages_.begin(); it != montages_.end();) {
+        MontageRun& r = *it->second;
+        const Montage& m = r.montage;
+        const f32 duration = r.clip->duration;
+        if (!r.blending_out) r.weight = m.blend_in > 0.0f ? std::min(1.0f, r.weight + dt / m.blend_in) : 1.0f;
+        // Advance through sections; a finished chain holds on its last frame.
+        f32 left = dt * r.rate;
+        std::vector<std::pair<f32, f32>> spans; // clip time played, for notifies and root motion
+        for (int guard = 0; guard < 16 && left > 0.0f; ++guard) {
+            const f32 end = m.SectionEnd(r.section, duration);
+            const f32 step = std::min(left, std::max(0.0f, end - r.time));
+            spans.push_back({r.time, r.time + step});
+            r.time += step;
+            left -= step;
+            if (r.time < end) break;
+            const std::string next = r.section >= 0 ? m.sections[static_cast<usize>(r.section)].next : std::string();
+            const i32 target = next.empty() ? -1 : m.FindSection(next);
+            if (target < 0) {
+                r.time = end;
+                break;
+            }
+            r.section = target;
+            r.time = m.sections[static_cast<usize>(target)].start;
+            Emit({AnimEventType::MontageSectionChanged, m.name, next, {}, 1.0f, false});
+        }
+        // The last section of the chain: blend out so it's gone by its end.
+        const bool last = r.section < 0 || m.sections[static_cast<usize>(r.section)].next.empty();
+        const f32 end = m.SectionEnd(r.section, duration);
+        if (last && !r.blending_out && r.time >= end - m.blend_out) {
+            r.blending_out = true;
+            r.blend_out = std::max(0.0f, end - r.time) / std::max(r.rate, 1e-6f);
+            r.weight_at_blend_out = r.weight;
+            r.blend_out_elapsed = 0.0f;
+            Emit({AnimEventType::MontageBlendingOut, m.name, {}, {}, 1.0f, false});
+        }
+        for (const auto& [a, b] : spans) {
+            std::vector<NotifyPoint> points;
+            CollectNotifies(*r.clip, a, b, false, points);
+            for (const NotifyPoint& p : points) {
+                const AnimEventType type = !p.window ? AnimEventType::Notify : p.end ? AnimEventType::NotifyEnd : AnimEventType::NotifyBegin;
+                Emit({type, p.notify->name, r.clip->name, {}, r.weight, false});
+            }
+            if (root_motion_enabled_) {
+                const RootMotionDelta d = ExtractRootMotion(*r.clip, skeleton_, a, b, false, root_settings_);
+                root_motion_.translation = root_motion_.translation + d.translation * r.weight;
+                root_yaw_ += YawAngle(d.rotation) * r.weight;
+            }
+        }
+        SampleClip(*r.clip, skeleton_, r.time, false, r.pose);
+        if (root_motion_enabled_) StripRootMotion(r.pose, *r.clip, skeleton_, root_settings_);
+        if (r.blending_out) {
+            r.blend_out_elapsed += dt;
+            r.weight = r.blend_out > 0.0f ? r.weight_at_blend_out * std::max(0.0f, 1.0f - r.blend_out_elapsed / r.blend_out) : 0.0f;
+            if (r.blend_out_elapsed >= r.blend_out) {
+                Emit({AnimEventType::MontageEnded, m.name, {}, {}, 1.0f, r.interrupted});
+                it = montages_.erase(it);
+                continue;
+            }
+        }
+        ++it;
+    }
+}
+
+bool AnimGraphInstance::PlayMontage(const Montage& montage, f32 rate, const std::string& section) {
+    const AnimationClip* clip = assets_.clip ? assets_.clip(montage.clip) : nullptr;
+    if (clip == nullptr || rate <= 0.0f) return false;
+    auto run = std::make_unique<MontageRun>();
+    run->montage = montage;
+    run->montage.Normalize();
+    run->clip = clip;
+    run->rate = rate;
+    const i32 start = section.empty() ? (run->montage.sections.empty() ? -1 : 0) : run->montage.FindSection(section);
+    if (!section.empty() && start < 0) return false;
+    run->section = start;
+    run->time = start >= 0 ? run->montage.sections[static_cast<usize>(start)].start : 0.0f;
+    auto& slot = montages_[montage.slot];
+    if (slot) {
+        run->weight = slot->weight; // take over from the one there, without a pop
+        Emit({AnimEventType::MontageEnded, slot->montage.name, {}, {}, 1.0f, true});
+    }
+    SampleClip(*clip, skeleton_, run->time, false, run->pose);
+    slot = std::move(run);
+    Emit({AnimEventType::MontageStarted, montage.name, {}, {}, 1.0f, false});
+    return true;
+}
+
+bool AnimGraphInstance::StopMontage(const std::string& slot, f32 blend_out) {
+    auto it = montages_.find(slot);
+    if (it == montages_.end() || it->second->blending_out) return false;
+    MontageRun& r = *it->second;
+    r.blending_out = true;
+    r.interrupted = true;
+    r.blend_out = blend_out < 0.0f ? r.montage.blend_out : blend_out;
+    r.blend_out_elapsed = 0.0f;
+    r.weight_at_blend_out = r.weight;
+    Emit({AnimEventType::MontageBlendingOut, r.montage.name, {}, {}, 1.0f, true});
+    return true;
+}
+
+bool AnimGraphInstance::JumpToSection(const std::string& section, const std::string& slot) {
+    auto it = montages_.find(slot);
+    if (it == montages_.end()) return false;
+    MontageRun& r = *it->second;
+    const i32 s = r.montage.FindSection(section);
+    if (s < 0) return false;
+    r.section = s;
+    r.time = r.montage.sections[static_cast<usize>(s)].start;
+    Emit({AnimEventType::MontageSectionChanged, r.montage.name, section, {}, 1.0f, false});
+    return true;
+}
+
+bool AnimGraphInstance::IsPlayingMontage(const std::string& slot) const { return montages_.count(slot) != 0; }
+
+std::string AnimGraphInstance::CurrentSection(const std::string& slot) const {
+    auto it = montages_.find(slot);
+    if (it == montages_.end() || it->second->section < 0) return {};
+    return it->second->montage.sections[static_cast<usize>(it->second->section)].name;
+}
+
+f32 AnimGraphInstance::MontageWeight(const std::string& slot) const {
+    auto it = montages_.find(slot);
+    return it == montages_.end() ? 0.0f : it->second->weight;
 }
 
 void AnimGraphInstance::Reset(u32 id) {
     const AnimNode* n = graph_.Find(id);
     if (n == nullptr) return;
     if (auto it = nodes_.find(id); it != nodes_.end()) {
-        it->second->time = 0.0f;
+        it->second->time = it->second->previous_time = 0.0f;
         it->second->player.reset();
         it->second->weights.clear();
     }
@@ -434,7 +638,7 @@ bool AnimGraphInstance::FindTransition(const StateMachine& m, MachineState& ms, 
     return false;
 }
 
-void AnimGraphInstance::EvaluateMachine(const AnimNode& node, f32 dt, Pose& out) {
+void AnimGraphInstance::EvaluateMachine(const AnimNode& node, f32 dt, f32 weight, Pose& out) {
     const StateMachine* m = graph_.FindMachine(node.machine);
     if (m == nullptr || m->states.empty() || m->entry >= m->states.size()) {
         out = RestPose(skeleton_);
@@ -453,13 +657,12 @@ void AnimGraphInstance::EvaluateMachine(const AnimNode& node, f32 dt, Pose& out)
     std::vector<std::string> used;
     if (FindTransition(*m, ms, target, blend, used)) {
         const bool blending = ms.blend_duration > 0.0f && ms.blend_elapsed < ms.blend_duration;
-        if (blending) {
-            ms.snapshot = out; // last frame's blended pose: blend on from where it was
-            ms.from_snapshot = true;
-        } else {
-            ms.from_snapshot = false;
-        }
-        changes_.push_back({m->name, m->states[static_cast<usize>(ms.current)].name, m->states[static_cast<usize>(target)].name});
+        ms.from_snapshot = blending;
+        if (blending) ms.snapshot = out; // last frame's blended pose: blend on from where it was
+        const std::string& from = m->states[static_cast<usize>(ms.current)].name;
+        const std::string& to = m->states[static_cast<usize>(target)].name;
+        changes_.push_back({m->name, from, to});
+        Emit({AnimEventType::StateChanged, to, from, m->name, 1.0f, false});
         ms.from = ms.current;
         ms.current = target;
         ms.time_in_state = 0.0f;
@@ -468,11 +671,15 @@ void AnimGraphInstance::EvaluateMachine(const AnimNode& node, f32 dt, Pose& out)
         Reset(m->states[static_cast<usize>(target)].pose);
         for (const std::string& trigger : used) values_[trigger] = 0.0f;
     }
-    const Pose target_pose = Evaluate(m->states[static_cast<usize>(ms.current)].pose, dt);
-    if (ms.blend_duration > 0.0f && ms.blend_elapsed < ms.blend_duration && ms.from >= 0) {
+    const bool blending = ms.blend_duration > 0.0f && ms.blend_elapsed < ms.blend_duration && ms.from >= 0;
+    f32 alpha = 1.0f;
+    if (blending) {
         ms.blend_elapsed += dt;
-        const f32 alpha = std::clamp(ms.blend_elapsed / ms.blend_duration, 0.0f, 1.0f);
-        const Pose source = ms.from_snapshot ? ms.snapshot : Evaluate(m->states[static_cast<usize>(ms.from)].pose, dt);
+        alpha = std::clamp(ms.blend_elapsed / ms.blend_duration, 0.0f, 1.0f);
+    }
+    const Pose target_pose = Evaluate(m->states[static_cast<usize>(ms.current)].pose, dt, weight * alpha);
+    if (blending) {
+        const Pose source = ms.from_snapshot ? ms.snapshot : Evaluate(m->states[static_cast<usize>(ms.from)].pose, dt, weight * (1.0f - alpha));
         if (source.local.size() == target_pose.local.size()) BlendPoses(source, target_pose, alpha, out);
         else out = target_pose;
         if (alpha >= 1.0f) ms.from = -1;
@@ -482,21 +689,26 @@ void AnimGraphInstance::EvaluateMachine(const AnimNode& node, f32 dt, Pose& out)
     }
 }
 
-const Pose& AnimGraphInstance::Evaluate(u32 id, f32 dt) {
+const Pose& AnimGraphInstance::Evaluate(u32 id, f32 dt, f32 weight) {
     auto& slot = nodes_[id];
     if (!slot) {
         slot = std::make_unique<NodeState>();
         slot->pose = RestPose(skeleton_);
     }
     NodeState& ns = *slot;
-    if (ns.frame == frame_) return ns.pose; // shared input, or a loop (validation reports those)
+    if (ns.frame == frame_) { // shared input (or a loop, which validation reports)
+        ns.weight += weight;
+        return ns.pose;
+    }
     ns.frame = frame_;
+    ns.weight = weight;
+    ns.motion = {};
     const AnimNode* n = graph_.Find(id);
     if (n == nullptr) {
         ns.pose = RestPose(skeleton_);
         return ns.pose;
     }
-    auto input = [&](usize i) -> Pose { return i < n->inputs.size() ? Evaluate(n->inputs[i], dt) : RestPose(skeleton_); };
+    auto input = [&](usize i, f32 w) -> Pose { return i < n->inputs.size() ? Evaluate(n->inputs[i], dt, w) : RestPose(skeleton_); };
     switch (n->kind) {
     case AnimNodeKind::Clip: {
         const AnimationClip* c = assets_.clip ? assets_.clip(n->asset) : nullptr;
@@ -504,9 +716,15 @@ const Pose& AnimGraphInstance::Evaluate(u32 id, f32 dt) {
             ns.pose = RestPose(skeleton_);
             break;
         }
+        ns.previous_time = ns.time;
         ns.time += dt * n->rate;
         if (!n->loop) ns.time = std::clamp(ns.time, 0.0f, c->duration);
         SampleClip(*c, skeleton_, ns.time, n->loop, ns.pose);
+        if (root_motion_enabled_) {
+            ns.motion = ExtractRootMotion(*c, skeleton_, ClipTime(*c, ns.previous_time, n->loop), ClipTime(*c, ns.time, n->loop), n->loop,
+                                          root_settings_);
+            StripRootMotion(ns.pose, *c, skeleton_, root_settings_);
+        }
         break;
     }
     case AnimNodeKind::BlendSpace: {
@@ -521,14 +739,14 @@ const Pose& AnimGraphInstance::Evaluate(u32 id, f32 dt) {
             ns.player = std::make_unique<BlendSpacePlayer>(*bs, std::move(clips), skeleton_);
         }
         ns.player->SetParameters(Get(n->variable), n->variable_y.empty() ? 0.0f : Get(n->variable_y));
-        ns.player->Update(dt * n->rate, ns.pose);
+        ns.player->Update(dt * n->rate, ns.pose, root_motion_enabled_ ? &ns.motion : nullptr, &root_settings_);
         break;
     }
     case AnimNodeKind::Blend: {
         const f32 alpha = std::clamp(Get(n->variable), 0.0f, 1.0f);
-        if (alpha <= 0.0f) ns.pose = input(0);
-        else if (alpha >= 1.0f) ns.pose = input(1);
-        else BlendPoses(input(0), input(1), alpha, ns.pose);
+        if (alpha <= 0.0f) ns.pose = input(0, weight);
+        else if (alpha >= 1.0f) ns.pose = input(1, weight);
+        else BlendPoses(input(0, weight * (1.0f - alpha)), input(1, weight * alpha), alpha, ns.pose);
         break;
     }
     case AnimNodeKind::BlendByBool:
@@ -546,20 +764,22 @@ const Pose& AnimGraphInstance::Evaluate(u32 id, f32 dt) {
             ns.weights[std::min(active, count - 1)] = 1.0f; // start settled
         }
         const f32 step = n->blend_time > 0.0f ? dt / n->blend_time : 1.0f;
+        f32 total = 0.0f;
         for (usize i = 0; i < count; ++i) {
             const f32 goal = i == active ? 1.0f : 0.0f;
             ns.weights[i] = goal > ns.weights[i] ? std::min(goal, ns.weights[i] + step) : std::max(goal, ns.weights[i] - step);
+            total += ns.weights[i];
         }
         std::vector<Pose> poses;
         std::vector<f32> weights;
         for (usize i = 0; i < count; ++i) {
             if (ns.weights[i] <= 0.0f) continue;
-            poses.push_back(input(i));
+            poses.push_back(input(i, weight * ns.weights[i] / total));
             weights.push_back(ns.weights[i]);
         }
         std::vector<const Pose*> ptrs;
         for (const Pose& p : poses) ptrs.push_back(&p);
-        if (ptrs.empty()) ns.pose = input(active);
+        if (ptrs.empty()) ns.pose = input(active, weight);
         else BlendWeighted(ptrs, weights, ns.pose);
         break;
     }
@@ -568,21 +788,34 @@ const Pose& AnimGraphInstance::Evaluate(u32 id, f32 dt) {
             ns.mask = MakeBoneMask(skeleton_, n->bone, n->depth);
             ns.has_mask = true;
         }
-        const Pose base = input(0), layer = input(1);
+        const Pose base = input(0, weight), layer = input(1, weight * n->weight);
         BlendPoses(base, layer, n->weight, ns.pose, &ns.mask);
         break;
     }
     case AnimNodeKind::Additive: {
-        Pose base = input(0);
-        const Pose delta = MakeAdditive(input(1), RestPose(skeleton_));
-        ApplyAdditive(base, delta, n->variable.empty() ? n->weight : Get(n->variable));
+        const f32 amount = n->variable.empty() ? n->weight : Get(n->variable);
+        Pose base = input(0, weight);
+        const Pose delta = MakeAdditive(input(1, weight * amount), RestPose(skeleton_));
+        ApplyAdditive(base, delta, amount);
         ns.pose = std::move(base);
         break;
     }
     case AnimNodeKind::StateMachine: {
         Pose out = ns.pose; // last frame's, for a snapshot
-        EvaluateMachine(*n, dt, out);
+        EvaluateMachine(*n, dt, weight, out);
         ns.pose = std::move(out); // std::map nodes don't move, so `ns` is still valid
+        break;
+    }
+    case AnimNodeKind::Slot: {
+        auto it = montages_.find(n->slot);
+        const f32 mw = it == montages_.end() ? 0.0f : it->second->weight;
+        if (mw >= 1.0f) {
+            ns.pose = it->second->pose;
+        } else {
+            const Pose source = input(0, weight * (1.0f - mw));
+            if (mw <= 0.0f || it->second->pose.local.size() != source.local.size()) ns.pose = source;
+            else BlendPoses(source, it->second->pose, mw, ns.pose);
+        }
         break;
     }
     }
@@ -622,6 +855,7 @@ json AnimGraphToJson(const AnimGraph& g) {
         if (n.weight != 1.0f) j["weight"] = n.weight;
         if (!n.bone.empty()) j["bone"] = n.bone;
         if (n.depth != 0) j["depth"] = n.depth;
+        if (!n.slot.empty()) j["slot"] = n.slot;
         nodes.push_back(std::move(j));
     }
     for (const StateMachine& m : g.machines) {
@@ -698,6 +932,7 @@ bool AnimGraphFromJson(const json& j, AnimGraph& out, std::string* error) {
         node.weight = n.value("weight", 1.0f);
         node.bone = n.value("bone", "");
         node.depth = n.value("depth", 0u);
+        node.slot = n.value("slot", "");
         g.nodes.push_back(std::move(node));
     }
     for (const json& mj : j.value("machines", json::array())) {

@@ -29,12 +29,32 @@ struct BoneTrack {
     Vec3Track scale;
 };
 
+// A named moment in a clip (a footstep, a hit frame), or a window when
+// `duration` > 0 (begin and end are reported separately).
+struct AnimNotify {
+    std::string name;
+    f32 time = 0.0f;
+    f32 duration = 0.0f;
+};
+
 struct AnimationClip {
     std::string name;
     f32 duration = 0.0f; // seconds
     std::vector<BoneTrack> tracks; // one per bone
+    std::vector<AnimNotify> notifies;
     usize KeyCount() const;
 };
+
+// The notify points a playhead crossed going from `from` to `to` (clip
+// times, after `from` and up to and including `to`): a looping clip that
+// wrapped counts the end and then the start. A window notify crosses twice,
+// at its begin (`end` false) and at its end (`end` true).
+struct NotifyPoint {
+    const AnimNotify* notify = nullptr;
+    bool window = false; // a window's begin or end, not an instant
+    bool end = false;
+};
+void CollectNotifies(const AnimationClip& clip, f32 from, f32 to, bool loop, std::vector<NotifyPoint>& out);
 
 // Maps an imported animation's channels onto a skeleton (`bone_nodes` from
 // BuildSkeleton). Channels for nodes that aren't bones are skipped.

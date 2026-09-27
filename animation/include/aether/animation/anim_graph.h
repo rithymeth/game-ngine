@@ -1,6 +1,7 @@
 #pragma once
 
 #include "aether/animation/blend_space.h"
+#include "aether/animation/montage.h"
 
 #include <nlohmann/json.hpp>
 
@@ -33,7 +34,8 @@ enum class AnimNodeKind : u8 {
     BlendByInt,  // inputs [0, 1, ...], variable, blend_time
     Layered,     // inputs [base, layer], bone + depth: the layer applies from that bone down; weight
     Additive,    // inputs [base, additive]: the additive input's difference from the rest pose, times weight (or `variable`)
-    StateMachine // machine
+    StateMachine, // machine
+    Slot          // inputs [source], slot: montages playing in that slot blend in over the source
 };
 const char* AnimNodeKindName(AnimNodeKind kind);
 
@@ -51,6 +53,7 @@ struct AnimNode {
     f32 weight = 1.0f;     // Layered, Additive
     std::string bone;      // Layered
     u32 depth = 0;         // Layered: blend depth
+    std::string slot;      // Slot
 };
 
 enum class CompareOp : u8 { Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, IsTrue, IsFalse, Triggered };
@@ -107,7 +110,7 @@ struct AnimAssets {
 // variable of the wrong type for its use; AG006 a state machine problem (no
 // states, a bad entry, a transition to a state that doesn't exist, an
 // unknown machine); AG007 a conduit as the entry or with no way out; AG008
-// a state machine inside itself; AG009 (warning) a state no transition
+// a state machine inside itself (or a Slot node without a slot name: AG002); AG009 (warning) a state no transition
 // reaches; AG010 a clip or blend space the assets don't have; AG011 two
 // variables or states with one name.
 struct AnimDiagnostic {
@@ -122,6 +125,28 @@ std::vector<AnimDiagnostic> ValidateAnimGraph(const AnimGraph& graph, const Anim
 // --- Runtime -------------------------------------------------------------------------------
 struct StateChange {
     std::string machine, from, to;
+};
+
+// What happened during an Update, for gameplay and Blueprints (the
+// Animator's events, step 4).
+enum class AnimEventType : u8 {
+    Notify,                // name: the notify
+    NotifyBegin,           // a window notify starting
+    NotifyEnd,             // and ending
+    StateChanged,          // name: the new state, detail: the old one, machine
+    MontageStarted,        // name: the montage
+    MontageSectionChanged, // detail: the section
+    MontageBlendingOut,
+    MontageEnded, // interrupted: stopped or replaced rather than finished
+};
+const char* AnimEventTypeName(AnimEventType type);
+struct AnimEvent {
+    AnimEventType type = AnimEventType::Notify;
+    std::string name;
+    std::string detail;
+    std::string machine;
+    f32 weight = 1.0f; // notifies: how much the animation that fired it counted
+    bool interrupted = false;
 };
 
 // One character's graph: its variable values and every node's playback state.
@@ -147,11 +172,36 @@ public:
     std::string CurrentState(u32 machine_node) const;
     bool InTransition(u32 machine_node) const;
 
+    // Everything that happened during the last Update (and calls since it,
+    // like PlayMontage's start): notifies, state changes, montage events.
+    const std::vector<AnimEvent>& Events() const { return events_; }
+
+    // --- Montages ---------------------------------------------------------------
+    // Plays a montage in its slot (replacing the one there, which ends
+    // interrupted), from a section or the start. False if its clip isn't known.
+    bool PlayMontage(const Montage& montage, f32 rate = 1.0f, const std::string& section = {});
+    // Blends the slot's montage out (over `blend_out`, or its own when < 0).
+    bool StopMontage(const std::string& slot = "Default", f32 blend_out = -1.0f);
+    bool JumpToSection(const std::string& section, const std::string& slot = "Default");
+    bool IsPlayingMontage(const std::string& slot = "Default") const;
+    std::string CurrentSection(const std::string& slot = "Default") const;
+    f32 MontageWeight(const std::string& slot = "Default") const;
+
+    // --- Root motion ------------------------------------------------------------
+    // With root motion on, clips and montages play in place and their
+    // motion, weighted like their poses, is collected for the character.
+    void SetRootMotion(bool enabled, const RootMotionSettings& settings = {});
+    const RootMotionDelta& RootMotion() const { return root_motion_; } // the last Update's
+
 private:
     struct NodeState;
     struct MachineState;
-    const Pose& Evaluate(u32 node, f32 dt);
-    void EvaluateMachine(const AnimNode& node, f32 dt, Pose& out);
+    struct MontageRun;
+    const Pose& Evaluate(u32 node, f32 dt, f32 weight);
+    void EvaluateMachine(const AnimNode& node, f32 dt, f32 weight, Pose& out);
+    void UpdateMontages(f32 dt);
+    void Emit(AnimEvent event);
+    void Collect(); // notifies and root motion from this frame's nodes
     void Reset(u32 node);
     f32 RemainingTime(u32 node) const;
     bool Passes(const Transition& t, const StateMachine& m, const MachineState& ms) const;
@@ -165,6 +215,13 @@ private:
     std::map<u32, std::unique_ptr<MachineState>> machines_;
     u64 frame_ = 0;
     std::vector<StateChange> changes_;
+    std::map<std::string, std::unique_ptr<MontageRun>> montages_; // by slot
+    std::vector<AnimEvent> events_, pending_;
+    bool in_update_ = false;
+    bool root_motion_enabled_ = false;
+    RootMotionSettings root_settings_;
+    RootMotionDelta root_motion_;
+    f32 root_yaw_ = 0.0f;
 };
 
 // .aanim files.
