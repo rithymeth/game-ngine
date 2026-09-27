@@ -20,11 +20,15 @@ add_library(aether_editor_ui STATIC
     ../anim/anim_graph_editor.cpp
     ../anim/blend_space_editor.cpp
     ../anim/anim_viewer.cpp
+    ../audio/waveform.cpp
+    ../audio/cue_document.cpp
+    ../audio/cue_editor.cpp
+    ../audio/mixer_panel.cpp
     ../core/command_stack.cpp
     ../core/commands.cpp
     ../core/play_session.cpp
     ../core/recent_projects.cpp
 )
 target_include_directories(aether_editor_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
-target_link_libraries(aether_editor_ui PUBLIC Aether::Engine Aether::Blueprint Aether::Renderer Aether::Animation imgui_core)
+target_link_libraries(aether_editor_ui PUBLIC Aether::Engine Aether::Blueprint Aether::Renderer Aether::Animation Aether::Audio imgui_core)
 add_library(Aether::EditorUI ALIAS aether_editor_ui)

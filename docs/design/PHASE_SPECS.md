@@ -1842,7 +1842,64 @@ can be added later) pulls from the mixer on its own thread.
     set before, or through `Post`. The AudioSystem changes its reverb
     through `Post`.
 
-### 17.6 PR breakdown
+### 17.6 Editors
+
+- **Waveform preview** (`editor/src/audio/waveform`):
+  - Min/max and RMS per pixel column, per channel, over the visible
+    range; zoomed in, a column is a single sample.
+  - Statistics: peak, RMS, DC offset and clipped samples.
+  - The mouse wheel zooms about the cursor (never below 16 frames) and
+    Shift+wheel scrolls. Click sets the playhead; dragging selects a
+    region.
+  - Preview plays from the playhead through a mixer. With a selection, it
+    starts at the selection and loops it.
+- **Sound cue editor** (`cue_document`, `cue_editor`):
+  - The document owns the `.acue` and JSON undo (merged drags; no-op
+    edits aren't steps).
+  - Nodes are added (the first becomes the output's) and deleted (unhooked
+    everywhere, and from the output).
+  - Links replace an input, or append one on a multi-input node's "+"
+    pin. Loops, inputs on a Wave, and a second input on a one-input node
+    are refused with a reason. Disconnecting shifts later inputs with
+    their weights and volumes.
+  - The graph uses the Phase 12 widget. Nodes are coloured by type, with
+    an Output node and error outlines from the diagnostics.
+  - Details:
+    - per node type: sound, looping, weights, no-repeat, volume and pitch
+      ranges, loop count, input volumes and delay range;
+    - for the output: name, volume, pitch, bus, priority, virtual mode,
+      spatial blend, doppler and occlusion, and attenuation with its
+      model, distances, rolloff, air absorption, custom curve points and a
+      plot of the falloff.
+  - A palette with search offers node types and a Wave per sound.
+  - Diagnostics jump to their node. Preview through a CuePlayer (Space) is
+    refused while there are errors.
+- **Mixer panel** (`mixer_panel`):
+  - **Buses**: a strip per bus with L/R meters from -60 to +6 dB (level,
+    RMS and a held peak), a fader (double-click for unity) and mute.
+    Meter ballistics: the level rises at once and falls 24 dB/s; the peak
+    holds 1 s, then falls.
+  - **Effects**: bypass and sliders for each effect's settings (filter,
+    compressor, reverb), and gain reduction on a single-threaded mixer.
+    On a threaded mixer the panel asks the audio thread for the settings
+    through `Post` and writes them the same way. It keeps a bypass set
+    before the answer arrives.
+  - **Voices**: a table of every voice's time, real or virtual, distance,
+    gain, pan and pitch.
+  - The mixer gained `EffectCount`/`EffectAt` (a game-side list) and
+    `Voices()` (from the snapshot when threaded).
+- **Sync groups** (found by the TSan run of the threaded cue test): on a
+  threaded mixer the game's clock can lag the audio thread by a period.
+  A cue's first sound (delay 0) then started that late while its later
+  sounds kept their schedule.
+  - `Mixer::BeginSyncGroup` makes a time base that the audio thread
+    starts when it reaches it. A voice with `PlayParams::sync_group` is
+    delayed from that base, not from when its command arrived.
+  - The CuePlayer gives each playing cue a group, so its sounds keep
+    exact spacing however late their commands arrive (within the
+    lookahead). On one thread it behaves as before.
+
+### 17.7 PR breakdown
 
 1. ✅ **Done.** Sounds (WAV), voices (resampling, pitch, loop, pan,
    fades), the bus mixer with meters, and the DSP effects.
@@ -1857,5 +1914,5 @@ can be added later) pulls from the mixer on its own thread.
    2D/at Location, Spawn Sound Attached, Fade In/Out, Set Bus Volume).
 5. ✅ **Done.** The device backend (miniaudio) with a lock-free handoff to
    the audio thread, and a null backend.
-6. Editors: the waveform preview, the sound cue graph and the mixer panel
-   with live meters.
+6. ✅ **Done.** Editors: the waveform preview, the sound cue graph and the
+   mixer panel with live meters.

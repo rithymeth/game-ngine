@@ -156,6 +156,26 @@ AETHER_TEST(Audio_ThreadedMixerMatchesDirect) {
     const std::vector<f32> got = null->Captured();
     AETHER_CHECK(got.size() == expected.size() && got == expected);
     AETHER_CHECK(null->FramesPulled() == 8 * 1024);
+    // Sync groups: a voice asked for after its group started still starts on the group's schedule.
+    {
+        AudioEffect* lowpass = threaded.EffectAt(kMasterBus, 0); // added above: keep it from rounding the edges
+        threaded.Post([lowpass](Mixer&) { lowpass->bypass = true; });
+        threaded.StopAll(); // the tone from the last round
+        null->Pump(256);
+        const usize base = null->Captured().size() / 2; // the frame the group's start is applied at
+        const u32 group = threaded.BeginSyncGroup();
+        null->Pump(256); // the group starts; nothing in it yet
+        const SoundWave level = Dc(0.5f, 240);
+        PlayParams p;
+        p.sync_group = group;
+        p.delay = 480.0 / kRate; // 480 frames after the group's start: 224 frames from now
+        p.pan = -1.0f;
+        threaded.Play(&level, p);
+        null->Pump(1024);
+        const std::vector<f32> all = null->Captured();
+        AETHER_CHECK(all[2 * (base + 479)] == 0.0f && all[2 * (base + 480)] > 0.49f && all[2 * (base + 719)] > 0.49f && all[2 * (base + 720)] == 0.0f);
+        threaded.EndSyncGroup(group);
+    }
     // Posted edits run on the audio thread, in order with the rest.
     bool ran = false;
     threaded.Post([&](Mixer& m) { ran = m.Threaded(); });
@@ -207,7 +227,8 @@ AETHER_TEST(Audio_RealTimeThreadStressAndSeamlessCues) {
     output.Stop();
 
     // Cue loops scheduled from the game thread while audio runs stay seamless: each repeat
-    // is asked for a little ahead, and the time it spent queued comes off its delay.
+    // is asked for a little ahead, placed from the cue's sync group, whose start the audio
+    // thread fixes, so the game's clock lagging (a period or more) doesn't shift anything.
     Mixer m(kRate);
     auto rt = std::make_unique<NullBackend>(true, true);
     NullBackend* capture = rt.get();
@@ -224,10 +245,12 @@ AETHER_TEST(Audio_RealTimeThreadStressAndSeamlessCues) {
     cue.nodes = {one, two, cat, loop};
     cue.root = 4;
     CuePlayer player(m, bank);
-    player.lookahead = 0.03f;
+    // Far enough ahead to cover the game thread's pauses between Updates, even
+    // under a slow build (sanitizers); sample accuracy holds within the lookahead.
+    player.lookahead = 0.1f;
     AETHER_CHECK(out.Start(128));
     const CueHandle h = player.Play(cue);
-    const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
+    const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
     while (std::chrono::steady_clock::now() < until) {
         player.Update();
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
@@ -244,7 +267,8 @@ AETHER_TEST(Audio_RealTimeThreadStressAndSeamlessCues) {
         const f32 expected = ((i - first) % 720 < 480 ? 0.25f : 0.5f) * k;
         worst = std::max(worst, std::fabs(got[i * 2] - expected));
     }
-    AETHER_CHECK(checked == 12000 && worst < 1e-6f); // a quarter second of repeats, sample-exact
+    AETHER_CHECK(checked == 12000); // a quarter second of repeats...
+    AETHER_CHECK(worst < 1e-6f);    // ...sample-exact
 }
 
 AETHER_TEST(Audio_MiniaudioNullDevice) {
