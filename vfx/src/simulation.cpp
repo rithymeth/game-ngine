@@ -214,9 +214,10 @@ void EmitterInstance::Advance(f32 dt) {
                 const SpawnModule& m = emitter_.spawn[mi];
                 f32& carry = carries_[mi]; // each module's part-particle left over
                 if (const auto* r = std::get_if<SpawnRate>(&m); r != nullptr && On(*r) && r->rate > 0.0f) {
-                    const f32 due = carry + r->rate * (a1 - a0);
-                    const u32 n = static_cast<u32>(due + kCountSlack);
-                    for (u32 k = 0; k < n; ++k) birth_at(a0 + (static_cast<f32>(k) + 1.0f - carry) / r->rate);
+                    const f32 rate = r->rate * spawn_scale_;
+                    const f32 due = carry + rate * (a1 - a0);
+                    const u32 n = rate > 0.0f ? static_cast<u32>(due + kCountSlack) : 0;
+                    for (u32 k = 0; k < n; ++k) birth_at(a0 + (static_cast<f32>(k) + 1.0f - carry) / rate);
                     carry = due - static_cast<f32>(n);
                 } else if (const auto* b = std::get_if<SpawnBurst>(&m); b != nullptr && On(*b)) {
                     const u32 first_loop = s.looping ? static_cast<u32>(a0 / s.duration) : 0;
@@ -230,13 +231,13 @@ void EmitterInstance::Advance(f32 dt) {
                             const f32 fire = start + at;
                             if (fire >= a1) break;
                             if (fire < a0) continue;
-                            const u32 n = static_cast<u32>(std::lround(std::max(rng_.Range(b->count), 0.0f)));
+                            const u32 n = static_cast<u32>(std::lround(std::max(rng_.Range(b->count) * spawn_scale_, 0.0f)));
                             for (u32 c = 0; c < n; ++c) birth_at(fire);
                         }
                     }
                 } else if (const auto* d = std::get_if<SpawnPerDistance>(&m); d != nullptr && On(*d) && d->per_unit > 0.0f) {
                     const f32 moved = (pose_.position - last_pose_.position).Length();
-                    const f32 want = moved * d->per_unit;
+                    const f32 want = moved * d->per_unit * spawn_scale_;
                     const f32 due = carry + want;
                     const u32 n = static_cast<u32>(due + kCountSlack);
                     for (u32 k = 0; k < n; ++k) {
@@ -561,6 +562,10 @@ const ParameterValue* ParticleSystemInstance::GetParameter(const std::string& na
         if (p.name == name) return &p.value;
     }
     return nullptr;
+}
+
+void ParticleSystemInstance::SetSpawnScale(f32 scale) {
+    for (auto& e : emitters_) e->SetSpawnScale(scale);
 }
 
 void ParticleSystemInstance::SetCollider(const ParticleCollider* collider) {
