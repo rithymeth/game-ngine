@@ -78,6 +78,12 @@ public:
     std::vector<Entity> OverlapSphere(const Vec3& center, f32 radius, LayerMask layers = kAllLayers, Entity ignore = kNullEntity,
                                       bool include_triggers = false) const;
 
+    // A body made elsewhere (a character's inner body) that events and
+    // queries should name as `entity`. Release it before destroying it; its
+    // Ends still reach the entity.
+    void AdoptBody(JPH::BodyID body, Entity entity);
+    void ReleaseBody(JPH::BodyID body);
+
     JPH::BodyID BodyOf(Entity entity) const; // invalid if it has none
     Entity EntityOf(JPH::BodyID body) const; // null if it isn't one of ours
     usize BodyCount() const { return bodies_.size(); }

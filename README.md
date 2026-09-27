@@ -3553,6 +3553,56 @@ Phase 13.
   and under ASan/UBSan, and 273/273 without physics on GCC 13, Clang and
   ASan/UBSan.
 
+**Step 5: character movement** (§13.3).
+
+- **`CharacterMovement`** (`physics/include/aether/physics/character.h`)
+  is a capsule character on Jolt's `CharacterVirtual`, with the spec's
+  defaults:
+  - a 0.35 m × 1.8 m capsule;
+  - walking at 4 m/s and running at 7;
+  - accelerating at 20 m/s², braking at 25, and 5 in the air with 0.3 air
+    control;
+  - jumping at 5 m/s, with 0.1 s of coyote time and a 0.1 s jump buffer;
+  - 45° slopes and 0.35 m steps.
+- **Driving it**: gameplay calls `AddInput(direction)` and `Jump()` and
+  sets `run` each step. `CharacterSystem::Step(dt)` moves every character
+  and writes its feet to the Transform; run it before the PhysicsScene's
+  step.
+  - It walks up steps and walkable slopes and slides down steeper ones.
+  - It rides moving platforms.
+  - It can be teleported by setting its Transform.
+- **Events**: Landed (with the impact speed), Jumped and
+  MovementModeChanged, delivered to a handler. The new Blueprint events
+  OnLanded, OnJumped and OnMovementModeChanged receive them.
+- **Triggers see characters**: each character has an inner kinematic body
+  that the physics scene maps to its entity. Trigger zones and queries
+  name the character.
+
+**Verified**: 6 new tests.
+
+- Walking: it lands and stands at floor height. It walks at 4 m/s,
+  covering about 3.6 m in the first second while it speeds up. It runs at
+  7 m/s, with over-long input clamped, brakes to a stop in under
+  0.3 s, and teleports.
+- Slopes: on 30° it stands still for 2 s without creeping, and walks up
+  it. On 60° it slides to the bottom and can't walk up.
+- Steps: a 0.3 m step is climbed, and a 0.6 m wall blocks it.
+- Jumping: it reaches about 1.27 m (v²/2g) and lands at about 5 m/s. A
+  second press in the air does nothing. A jump 0.03 s after walking off a
+  ledge works, but not after 0.2 s. A press 0.05 s before landing jumps on
+  landing, but not one 0.25 s before.
+- Triggers and platforms: walking through a trigger enters and exits it
+  once, and a ray from above hits the character. A platform moving at
+  1 m/s carries a character on it. Removing the component removes the
+  character.
+- Blueprints receive OnLanded with the impact speed, and
+  OnMovementModeChanged with Walking.
+- Fix found on the way: gravity applied while standing made characters
+  creep down walkable slopes at about 7 cm/s. It now applies only in the
+  air.
+- 301/301 tests pass with physics on GCC 13, and 273/273 without physics
+  on GCC 13, Clang and ASan/UBSan.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,

@@ -198,6 +198,10 @@ void RegisterBuiltins(Registry& r) {
     AddEvent(r, "Event.OnCollisionBegin", "Event OnCollisionBegin", {Out("other", kEntity)});
     AddEvent(r, "Event.OnCollisionEnd", "Event OnCollisionEnd", {Out("other", kEntity)});
     AddEvent(r, "Event.OnCollisionStay", "Event OnCollisionStay", {Out("other", kEntity)});
+    // Character movement (Phase 13 step 5). The mode is 0 walking, 1 falling, 2 flying, 3 swimming.
+    AddEvent(r, "Event.OnLanded", "Event OnLanded", {Out("impact_speed", kFloat)});
+    AddEvent(r, "Event.OnJumped", "Event OnJumped", {});
+    AddEvent(r, "Event.OnMovementModeChanged", "Event OnMovementModeChanged", {Out("new_mode", kInt)});
     r.exact["Event.Custom"] = [](const NodeContext& c, NodeError& error) -> std::optional<NodeSignature> {
         const std::string name = c.node.config.value("name", "");
         if (name.empty()) return Fail(error, "BP007", "A Custom Event needs a name.");
