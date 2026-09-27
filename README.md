@@ -2610,6 +2610,53 @@ which come next.
 - 212/212 tests pass on GCC 13, on Clang and under ASan/UBSan, and 219/219
   with physics.
 
+**Step 6, part 2: the DAP server** (`scripting/include/aether/script/dap.h`).
+VS Code and other Debug Adapter Protocol clients can debug the game's
+scripts through the `ScriptDebugger`. It doesn't depend on a transport: the
+editor passes in the bytes it receives and sends what the session writes.
+The socket listener comes with the Windows editor hookup.
+
+- **`DapFraming`** handles DAP's `Content-Length` framing.
+  - It reassembles messages that arrive in pieces or several per read.
+    Lengths are counted in bytes, so UTF-8 text is safe.
+  - A message that isn't JSON is skipped and counted. A header without a
+    length drops the buffer, since the next message can't be found.
+- **`DapSession`** handles these requests: `initialize` (then sends the
+  `initialized` event), `launch`/`attach`, `configurationDone`,
+  `setBreakpoints`, `threads`, `stackTrace`, `scopes`, `variables`,
+  `evaluate`, `continue`, `next`, `stepIn`, `stepOut`, `pause` and
+  `disconnect`. Other requests get an error response.
+  - Scripts appear as one thread, "Scripts".
+  - **Breakpoints**: a source path maps to its chunk (by default, the file
+    name). A breakpoint in a script that hasn't loaded yet is accepted but
+    shown unverified until it loads. One past the end of the file is
+    refused with a message.
+  - **At a stop** it sends `stopped` (reason `breakpoint`, `step` or
+    `pause`) and blocks inside the debugger's handler, reading requests
+    until one resumes execution.
+  - **Inspecting**: each stack frame has a Locals scope. `evaluate`
+    returns the value of a local in the chosen frame, which covers hover
+    tooltips; other expressions are refused.
+  - **Pause while running** stops at the next line a script runs.
+  - **If the client disconnects**, or sends `disconnect`, its breakpoints
+    are cleared and the game runs on.
+  - Stops before `initialize` don't block.
+
+**Verified**: 3 new tests.
+
+- **Framing**: split and joined reads, UTF-8, invalid JSON skipped, and
+  a header without a length.
+- **A scripted client**:
+  - A breakpoint set before load is unverified; re-sent after load it's
+    verified on line 3, and one past the end is refused.
+  - Paths come back in stack frames. Locals, `evaluate` (including in the
+    caller's frame) and Step Out work.
+  - Breakpoints cleared from inside a stop take effect.
+- **Edge cases**: pause while running, unknown requests, stepping while
+  running, the client vanishing mid-stop, and `disconnect`.
+- 215/215 tests pass on GCC 13, on Clang and under ASan/UBSan, and 222/222
+  with physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
