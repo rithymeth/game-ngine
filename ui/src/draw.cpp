@@ -78,7 +78,24 @@ DrawList::DrawList() {
     stack_.push_back(0);
 }
 
-void DrawList::PushClip(const Rect& rect) {
+Rect DrawList::Transform(const Rect& r) const {
+    const Affine& t = transforms_.back();
+    return {r.x * t.scale.x + t.translate.x, r.y * t.scale.y + t.translate.y, r.w * t.scale.x, r.h * t.scale.y};
+}
+
+void DrawList::PushTransform(Vec2 offset, Vec2 scale, Vec2 pivot) {
+    // Local: p' = pivot + (p - pivot) * scale + offset; then the current transform on top.
+    const Affine& cur = transforms_.back();
+    const Vec2 t{pivot.x * (1.0f - scale.x) + offset.x, pivot.y * (1.0f - scale.y) + offset.y};
+    transforms_.push_back({{scale.x * cur.scale.x, scale.y * cur.scale.y}, {t.x * cur.scale.x + cur.translate.x, t.y * cur.scale.y + cur.translate.y}});
+}
+
+void DrawList::PopTransform() {
+    if (transforms_.size() > 1) transforms_.pop_back();
+}
+
+void DrawList::PushClip(const Rect& local) {
+    const Rect rect = Transform(local);
     clips.push_back(clips[stack_.back()].Intersect(rect));
     stack_.push_back(static_cast<u32>(clips.size() - 1));
 }
@@ -87,7 +104,8 @@ void DrawList::PopClip() {
     if (stack_.size() > 1) stack_.pop_back();
 }
 
-void DrawList::AddQuad(const Rect& rect, Color color, u32 texture, const Rect& uv) {
+void DrawList::AddQuad(const Rect& local, Color color, u32 texture, const Rect& uv) {
+    const Rect rect = Transform(local);
     if (rect.Empty() || color.a <= 0.0f) return;
     if (clips[stack_.back()].Intersect(rect).Empty()) return;
     quads.push_back({rect, uv, color, texture, stack_.back()});

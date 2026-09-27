@@ -94,9 +94,14 @@ public:
     std::vector<DrawQuad> quads;
     std::vector<Rect> clips;
 
-    void PushClip(const Rect& rect); // intersected with the current clip
+    void PushClip(const Rect& rect); // intersected with the current clip (rect in the current transform)
     void PopClip();
     u32 CurrentClip() const { return stack_.back(); }
+    // Render transforms (step 4): later quads and clips are scaled about
+    // `pivot` then moved by `offset` (composed with the current one).
+    void PushTransform(Vec2 offset, Vec2 scale, Vec2 pivot);
+    void PopTransform();
+    Rect Transform(const Rect& r) const;
 
     void AddQuad(const Rect& rect, Color color, u32 texture = 0, const Rect& uv = {0, 0, 1, 1});
     void AddBrush(const Rect& rect, const Brush& brush, f32 opacity = 1.0f);
@@ -106,7 +111,11 @@ public:
     void Scale(f32 s);
 
 private:
+    struct Affine {
+        Vec2 scale{1, 1}, translate;
+    };
     std::vector<u32> stack_;
+    std::vector<Affine> transforms_{Affine{}};
 };
 
 } // namespace aether::ui

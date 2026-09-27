@@ -74,6 +74,13 @@ public:
     Visibility visibility = Visibility::Visible;
     f32 opacity = 1.0f;
     bool clip_children = false;
+    // A render transform (step 4): drawn and hit scaled about the pivot
+    // (0..1 of its rectangle) and moved, without changing layout. It
+    // applies to the children too. Animations use it for slides and pops.
+    Vec2 render_offset;
+    Vec2 render_scale{1.0f, 1.0f};
+    Vec2 render_pivot{0.5f, 0.5f};
+    bool HasRenderTransform() const { return render_offset.x != 0.0f || render_offset.y != 0.0f || render_scale.x != 1.0f || render_scale.y != 1.0f; }
     Slot slot;
 
     // --- The tree -----------------------------------------------------------------

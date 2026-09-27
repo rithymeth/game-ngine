@@ -221,6 +221,13 @@ void RegisterBuiltins(Registry& r) {
     AddEvent(r, "Event.OnMontageEnded", "Event OnMontageEnded", {Out("montage", kString), Out("interrupted", kBool)});
     // Audio (Phase 17 step 4): an AudioSource's cue ended by itself.
     AddEvent(r, "Event.OnAudioFinished", "Event OnAudioFinished", {Out("cue", kString)});
+    // UI (Phase 18 step 4): a Widget Blueprint's controls and animations.
+    AddEvent(r, "Event.OnWidgetClicked", "Event OnWidgetClicked", {Out("widget", kString)});
+    AddEvent(r, "Event.OnWidgetValueChanged", "Event OnWidgetValueChanged", {Out("widget", kString), Out("value", kFloat)});
+    AddEvent(r, "Event.OnWidgetCheckChanged", "Event OnWidgetCheckChanged", {Out("widget", kString), Out("checked", kBool)});
+    AddEvent(r, "Event.OnWidgetTextCommitted", "Event OnWidgetTextCommitted", {Out("widget", kString), Out("text", kString)});
+    AddEvent(r, "Event.OnWidgetSelectionChanged", "Event OnWidgetSelectionChanged", {Out("widget", kString), Out("index", kInt)});
+    AddEvent(r, "Event.OnWidgetAnimationFinished", "Event OnWidgetAnimationFinished", {Out("animation", kString)});
     r.exact["Event.Custom"] = [](const NodeContext& c, NodeError& error) -> std::optional<NodeSignature> {
         const std::string name = c.node.config.value("name", "");
         if (name.empty()) return Fail(error, "BP007", "A Custom Event needs a name.");
