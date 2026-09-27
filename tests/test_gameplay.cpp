@@ -1,3 +1,4 @@
+#include "aether/reflection/serialize.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
 #include "aether/scene/lifecycle.h"
@@ -286,4 +287,36 @@ AETHER_TEST(Lifecycle_PerComponentRegistrations) {
     life.Update(0.016f);
     AETHER_CHECK(life.TrackedCount() == 0 && rec.Take().empty() && other_log.size() == 5);
     life.EndPlay();
+}
+
+AETHER_TEST(Gameplay_CollisionMatrixIsSymmetricAndSaved) {
+    ProjectSettings settings;
+    settings.layers = {"Default", "Player", "Ghost", "Pickup"};
+    CollisionMatrix all = MakeCollisionMatrix(settings); // an untouched project: everything collides
+    AETHER_CHECK(all.ShouldCollide(0, 31) && all.CollidesWith(2) == kAllLayers && settings.collision_matrix.empty());
+
+    AETHER_CHECK(SetLayersCollide(settings, 2, 0, false)); // Ghost passes through Default
+    AETHER_CHECK(SetLayersCollide(settings, 3, 3, false)); // pickups ignore each other
+    AETHER_CHECK(!SetLayersCollide(settings, 1, 7, false)); // not a layer of this project
+    CollisionMatrix m = MakeCollisionMatrix(settings);
+    AETHER_CHECK(!m.ShouldCollide(0, 2) && !m.ShouldCollide(2, 0) && !m.ShouldCollide(3, 3));
+    AETHER_CHECK(m.ShouldCollide(1, 2) && m.ShouldCollide(1, 0) && m.ShouldCollide(3, 0));
+    AETHER_CHECK(settings.collision_matrix.size() == 4); // rows up to the last changed one
+
+    // Back on again: the stored rows shrink away.
+    SetLayersCollide(settings, 2, 0, true);
+    SetLayersCollide(settings, 3, 3, true);
+    AETHER_CHECK(settings.collision_matrix.empty());
+
+    // A lopsided file (only one side says "no") still gives a symmetric matrix.
+    settings.collision_matrix = {kAllLayers & ~(1u << 1)};
+    m = MakeCollisionMatrix(settings);
+    AETHER_CHECK(!m.ShouldCollide(0, 1) && !m.ShouldCollide(1, 0));
+
+    // Saved with the project.
+    SetLayersCollide(settings, 1, 3, false);
+    const std::string text = reflect::SaveJsonText(settings);
+    ProjectSettings loaded;
+    AETHER_CHECK(reflect::LoadJsonText(loaded, text));
+    AETHER_CHECK(!MakeCollisionMatrix(loaded).ShouldCollide(3, 1) && MakeCollisionMatrix(loaded).ShouldCollide(3, 2));
 }
