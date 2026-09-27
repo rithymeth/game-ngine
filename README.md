@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phase 14 (the unified renderer) up to its GPU passes. Now: Phase 15 — materials (in progress)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–15 (the unified renderer; materials and the material editor) up to their GPU parts. Now: Phase 16 — animation (in progress)
 
 ### Phase 1 — Foundation
 
@@ -4014,6 +4014,55 @@ HLSL, like Unreal's material editor. They live in `Aether::Renderer`
   and bottom tab draws. Parameter nodes, renames, forgetting undone
   selections, a failed save, and a function document.
 - 308/308 tests pass on GCC 13, Clang and ASan/UBSan, and 339/339 with
+  physics.
+
+### Phase 16 (in progress) — Animation
+
+Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md),
+Phase 16. The runtime is the new `Aether::Animation` library
+(`animation/`), which builds and tests headless.
+
+**Step 1: skeletons, poses, clips and blending** (§16.1).
+
+- **`BuildSkeleton`** turns an imported model's skin into bones.
+  - Parents come first, and each bone's parent is its nearest joint
+    ancestor.
+  - Non-joint nodes in between, or above the root, are folded into the
+    rest poses.
+  - A matrix node is decomposed into translation, rotation and scale.
+  - Duplicate, missing and out-of-range joints are refused.
+- **Poses**: `LocalToModel` and `SkinMatrices` (model × inverse bind).
+- **Clips**: `BuildClip` maps an imported animation's channels onto the
+  bones. Sampling handles linear and step keys, clamping or looping, and
+  falls back to the rest pose.
+- **Keyframe reduction** removes keys within translation, rotation and
+  scale tolerances. It checks between keys too, because rotations aren't
+  linear. Constant tracks shrink to one key.
+- **Compression**: 16-bit quantized times and values, with smallest-three
+  rotations. A 6-bone test clip is more than 2x smaller than plain floats,
+  and decoding checks bounds.
+- **Blending**: pose blends (optionally through a bone mask with a soft
+  ramp), and additive animation made from and applied to a reference.
+- **Rotation helpers**: nlerp, slerp, conjugate, rotating a vector, and
+  an angle measure that stays precise for small angles.
+
+**Verified**: 6 new tests.
+
+- The rotation helpers.
+- A skeleton from an out-of-order skin with an intermediate node, with
+  model positions and identity skin matrices at rest. A matrix joint
+  round-trips, and five kinds of bad skin are refused.
+- Sampling: linear, step, clamped and looping, with rest fallback. A
+  non-bone channel is skipped.
+- Reduction: a line shrinks to 2 keys, a constant track to 1, and held
+  keys merge. Over 1000 samples of a sine wave and a wobble, the error
+  stays within tolerance.
+- Compression: round-trip errors of about 3e-5 m and under 2e-4 rad.
+  Step flags survive, every truncated prefix is refused, and bad
+  indices are caught.
+- Blending by weight and by upper-body mask, a soft mask ramp, and
+  additive round trips.
+- 314/314 tests pass on GCC 13, Clang and ASan/UBSan, and 345/345 with
   physics.
 
 ## Building
