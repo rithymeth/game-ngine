@@ -3549,8 +3549,9 @@ Phase 13.
 - A Blueprint's Line Trace, driven through the VM, hits the floor below
   it and not itself, and its Overlap Sphere counts its two neighbours.
   Without physics connected, the trace misses and warns BP207.
-- 295/295 tests pass with physics on GCC 13, and 273/273 without physics
-  on GCC 13, Clang and ASan/UBSan.
+- 295/295 tests pass with physics on GCC 13 (RelWithDebInfo and Debug)
+  and under ASan/UBSan, and 273/273 without physics on GCC 13, Clang and
+  ASan/UBSan.
 
 ## Building
 
