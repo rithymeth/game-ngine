@@ -202,6 +202,17 @@ void RegisterBuiltins(Registry& r) {
     AddEvent(r, "Event.OnLanded", "Event OnLanded", {Out("impact_speed", kFloat)});
     AddEvent(r, "Event.OnJumped", "Event OnJumped", {});
     AddEvent(r, "Event.OnMovementModeChanged", "Event OnMovementModeChanged", {Out("new_mode", kInt)});
+    // Animation (Phase 16 step 4): notifies from clips and montages, state
+    // machine changes, and montage progress, from the Animator.
+    AddEvent(r, "Event.OnAnimNotify", "Event OnAnimNotify", {Out("name", kString)});
+    AddEvent(r, "Event.OnAnimNotifyBegin", "Event OnAnimNotifyBegin", {Out("name", kString)});
+    AddEvent(r, "Event.OnAnimNotifyEnd", "Event OnAnimNotifyEnd", {Out("name", kString)});
+    AddEvent(r, "Event.OnAnimStateChanged", "Event OnAnimStateChanged",
+             {Out("machine", kString), Out("from", kString), Out("to", kString)});
+    AddEvent(r, "Event.OnMontageStarted", "Event OnMontageStarted", {Out("montage", kString)});
+    AddEvent(r, "Event.OnMontageSectionChanged", "Event OnMontageSectionChanged", {Out("montage", kString), Out("section", kString)});
+    AddEvent(r, "Event.OnMontageBlendingOut", "Event OnMontageBlendingOut", {Out("montage", kString), Out("interrupted", kBool)});
+    AddEvent(r, "Event.OnMontageEnded", "Event OnMontageEnded", {Out("montage", kString), Out("interrupted", kBool)});
     r.exact["Event.Custom"] = [](const NodeContext& c, NodeError& error) -> std::optional<NodeSignature> {
         const std::string name = c.node.config.value("name", "");
         if (name.empty()) return Fail(error, "BP007", "A Custom Event needs a name.");

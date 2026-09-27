@@ -9,7 +9,7 @@ namespace aether::anim {
 namespace {
 
 constexpr u32 kMagic = 0x4D4E4141; // "AANM"
-constexpr u16 kVersion = 1;
+constexpr u16 kVersion = 2; // 2: notifies after the tracks
 constexpr f32 kRotationRange = 0.70710678f; // the three smallest components of a unit quaternion are within ±1/√2
 
 enum : u8 {
@@ -173,6 +173,14 @@ std::vector<u8> CompressClip(const AnimationClip& clip) {
         if (flags & kHasRotation) PutRotationTrack(w, t.rotation);
         if (flags & kHasScale) PutVec3Track(w, t.scale);
     }
+    w.Put(static_cast<u32>(clip.notifies.size()));
+    for (const AnimNotify& n : clip.notifies) {
+        const u16 size = static_cast<u16>(std::min<usize>(n.name.size(), 0xFFFF));
+        w.Put(size);
+        for (u16 i = 0; i < size; ++i) w.Put(static_cast<u8>(n.name[i]));
+        w.Put(n.time);
+        w.Put(n.duration);
+    }
     return std::move(w.bytes);
 }
 
@@ -203,6 +211,19 @@ bool DecompressClip(const std::vector<u8>& bytes, AnimationClip& out, std::strin
         t.translation.step = (flags & kTranslationStep) != 0;
         t.rotation.step = (flags & kRotationStep) != 0;
         t.scale.step = (flags & kScaleStep) != 0;
+    }
+    if (version >= 2) {
+        u32 notifies = 0;
+        if (!r.Get(notifies) || notifies > bytes.size()) return fail("the clip is cut short");
+        for (u32 i = 0; i < notifies; ++i) {
+            u16 size = 0;
+            if (!r.Get(size) || !r.Skip(size)) return fail("the clip is cut short");
+            AnimNotify n;
+            n.name.assign(reinterpret_cast<const char*>(bytes.data() + r.pos), size);
+            r.pos += size;
+            if (!r.Get(n.time) || !r.Get(n.duration)) return fail("the clip is cut short");
+            clip.notifies.push_back(std::move(n));
+        }
     }
     if (r.pos != bytes.size()) return fail("the clip has trailing data");
     out = std::move(clip);

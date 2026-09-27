@@ -77,6 +77,8 @@ public:
     void Update(f32 dt, Pose& out, RootMotionDelta* motion = nullptr, const RootMotionSettings* settings = nullptr);
 
     f32 Phase() const { return phase_; } // 0..1
+    f32 PreviousPhase() const { return previous_phase_; } // before the last Update
+    const AnimationClip* ClipOf(u32 sample) const { return sample < clips_.size() ? clips_[sample] : nullptr; }
     const std::vector<BlendWeight>& Weights() const { return weights_; }
     f32 CycleDuration() const; // seconds for one cycle at the current weights
 
@@ -85,7 +87,7 @@ private:
     std::vector<const AnimationClip*> clips_;
     const Skeleton& skeleton_;
     f32 x_ = 0.0f, y_ = 0.0f;
-    f32 phase_ = 0.0f;
+    f32 phase_ = 0.0f, previous_phase_ = 0.0f;
     std::vector<BlendWeight> weights_;
     std::vector<Pose> scratch_;
 };

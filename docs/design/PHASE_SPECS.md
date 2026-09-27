@@ -1453,9 +1453,9 @@ Jolt ragdolls come at the end of the phase.
    machine (states, transitions with conditions on graph variables,
    blend times, conduits, sub-machines) and the blend nodes. Diagnostics
    AG001–AG011 (§16.4).
-4. The `Animator` component, evaluated in parallel jobs; montages
-   (sections, slots); anim notifies as Blueprint events; root motion into
-   `CharacterMovement`.
+4. ✅ **Done.** The `Animator` component, evaluated in parallel jobs;
+   montages (sections, slots); anim notifies as Blueprint events; root
+   motion into `CharacterMovement` (§16.5).
 5. IK (two-bone, look-at, FABRIK, foot placement) and retargeting
    between skeletons.
 6. Editors (portable): the animation graph and state machine editor, the
@@ -1538,4 +1538,56 @@ Jolt ragdolls come at the end of the phase.
   - AG009 (warning): an unreachable state.
   - AG010: a missing clip or blend space.
   - AG011: a duplicate name.
+
+### 16.5 Animator, montages, notifies and root motion
+
+- **Notifies**: named points in a clip, or windows when they have a
+  duration.
+  - A playhead reports those it crosses, after its start and up to and
+    including its end; a loop wrap reports the end and then the start.
+    Windows report a begin and an end.
+  - In a graph, a notify comes with the weight of the path that played
+    it. A blend space reports only its heaviest clip's notifies, so a
+    blend of walk cycles steps once.
+  - Compressed clips carry notifies from format version 2; version 1 data
+    still loads.
+- **Montages** (`.amontage`): a clip on a named slot, with blend in and
+  out times and sections.
+  - Each section runs to the next section's start and then follows
+    `next`. A section can name itself as `next` to loop; an empty `next`
+    ends the montage.
+  - A montage blends out so that it is gone by the end of the last
+    section in its chain.
+  - `JumpToSection` moves between sections. `StopMontage` blends out
+    early and ends the montage as interrupted. Playing a montage over
+    another ends the old one as interrupted and takes over its weight,
+    so nothing pops.
+  - A graph's `Slot` node blends its slot's montage over its input.
+  - Diagnostics MN001–MN004.
+- **Events** (`AnimEvent`):
+  - Notify, NotifyBegin, NotifyEnd.
+  - StateChanged.
+  - MontageStarted, MontageSectionChanged, MontageBlendingOut,
+    MontageEnded (with `interrupted`).
+  - Calls made between Updates report with the next Update.
+  - Blueprint events: `Event.OnAnimNotify(name)`,
+    `Event.OnAnimNotifyBegin/End(name)`,
+    `Event.OnAnimStateChanged(machine, from, to)`,
+    `Event.OnMontageStarted(montage)`,
+    `Event.OnMontageSectionChanged(montage, section)`, and
+    `Event.OnMontageBlendingOut/Ended(montage, interrupted)`.
+- **Root motion in graphs**: with root motion on, clips, blend spaces and
+  montages play in place. Their motion is summed, weighted like their
+  poses, and a montage counts by how far it is blended in.
+- **`Animator` component** (graph, skeleton, root_motion, speed, paused):
+  - Its Blueprint-callable methods (Set Float/Bool/Int Parameter, Set
+    Trigger, Play Montage, Stop Montage, Jump To Section) queue commands.
+  - `AnimationSystem` applies them, then evaluates every Animator. With
+    a `JobSystem` they are evaluated in parallel, one job per character,
+    with results identical to serial.
+  - It keeps each entity's pose, skin matrices, events and world-space
+    root motion.
+- **`CharacterMovement::AddRootMotion(displacement, yaw)`**: for one
+  step, the displacement replaces the input's horizontal movement
+  (gravity and jumps still apply), and the yaw turns the Transform.
 

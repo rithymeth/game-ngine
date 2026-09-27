@@ -190,4 +190,22 @@ usize ReduceKeys(AnimationClip& clip, const ReductionSettings& s) {
     return removed;
 }
 
+void CollectNotifies(const AnimationClip& clip, f32 from, f32 to, bool loop, std::vector<NotifyPoint>& out) {
+    auto crossed = [&](f32 a, f32 b, bool include_start) {
+        // Points in (a, b], or [a, b] for the start of a wrapped span.
+        for (const AnimNotify& n : clip.notifies) {
+            auto hit = [&](f32 t) { return (include_start ? t >= a : t > a) && t <= b; };
+            if (hit(n.time)) out.push_back({&n, n.duration > 0.0f, false});
+            if (n.duration > 0.0f && hit(std::min(n.time + n.duration, clip.duration))) out.push_back({&n, true, true});
+        }
+    };
+    if (clip.notifies.empty() || from == to) return;
+    if (to > from || !loop) {
+        if (to > from) crossed(from, to, false);
+        return;
+    }
+    crossed(from, clip.duration, false); // wrapped: the end, then the start
+    crossed(0.0f, to, true);
+}
+
 } // namespace aether::anim

@@ -291,7 +291,7 @@ AETHER_TEST(Animation_CompressionRoundTrips) {
     one.tracks[0].rotation.times = {0.0f};
     one.tracks[0].rotation.values = {Quaternion::Identity()};
     std::vector<u8> index = CompressClip(one);
-    index[index.size() - 7] = 9; // the dropped component's index
+    index[index.size() - 11] = 9; // the dropped component's index (before the 4-byte notify count)
     AETHER_CHECK(!DecompressClip(index, back, &error));
     AETHER_CHECK(DecompressClip(CompressClip(AnimationClip{}), back) && back.tracks.empty());
 }

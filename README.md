@@ -4136,6 +4136,53 @@ Phase 16. The runtime is the new `Aether::Animation` library
 - 324/324 tests pass on GCC 13, Clang and ASan/UBSan, and 355/355 with
   physics.
 
+**Step 4: Animator, montages, notifies and root motion** (§16.5).
+
+- **Notifies**: instant and window notifies on clips, reported as the
+  playhead crosses them (across loop wraps too), each with its path's
+  weight. Blend spaces step once. Compressed clips carry notifies (format
+  v2, and v1 still loads).
+- **Montages** (`.amontage`):
+  - a clip on a slot with blend in and out;
+  - sections that chain, loop or end, plus Jump To Section and Stop;
+  - replacing a montage takes over its weight without a pop;
+  - a `Slot` node in the graph shows them.
+- **Events**: notifies, state changes and montage progress, as
+  `AnimEvent`s and as eight new Blueprint events (`Event.OnAnimNotify`,
+  `Event.OnMontageEnded`, ...).
+- **Root motion**: graphs and montages play in place, and their weighted
+  motion is handed to the character. `CharacterMovement::AddRootMotion`
+  moves the capsule by it for one step and turns the entity.
+- **`Animator` component**: graph, skeleton, root motion, speed, pause.
+  Its Blueprint-callable Set Parameter, Set Trigger, Play/Stop Montage
+  and Jump To Section queue commands.
+- **`AnimationSystem`**: runs every Animator, in parallel jobs when given
+  a `JobSystem`. It keeps poses, skin matrices, events and world-space
+  root motion, and reports missing assets once.
+
+**Verified**: 6 new tests.
+
+- Notify crossing rules, and compression v2 and v1.
+- Graph notifies: two steps per walk cycle, one per cycle from a blend
+  space, and crossfade weights.
+- Montages:
+  - blend-in weights;
+  - a looping section, hits and window notifies;
+  - jumping to the end and finishing on its own;
+  - stopping (interrupted), and replacement taking over the weight.
+  - Files, MN001–MN004, and a slot without a name.
+- Root motion: in place at 2 m/s across loop wraps, a half-blended
+  montage adding its share, and none when it's off.
+- Animator:
+  - commands and events per entity, missing assets, and dropped
+    entities;
+  - 12 characters in parallel jobs match serial exactly;
+  - a Blueprint plays a montage and hears its notify and its end.
+- With physics: a character facing +X walks 3 m along X in 2 s from the
+  clip's +Z root motion, stays grounded, and stops when the motion stops.
+- 329/329 tests pass on GCC 13, Clang and ASan/UBSan, and 361/361 with
+  physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,

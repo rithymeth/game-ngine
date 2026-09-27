@@ -268,6 +268,7 @@ f32 BlendSpacePlayer::CycleDuration() const {
 void BlendSpacePlayer::Update(f32 dt, Pose& out, RootMotionDelta* motion, const RootMotionSettings* settings) {
     const f32 cycle = CycleDuration();
     const f32 before = phase_;
+    previous_phase_ = phase_;
     if (cycle > 0.0f) {
         phase_ += dt / cycle;
         phase_ -= std::floor(phase_);

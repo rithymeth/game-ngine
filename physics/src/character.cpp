@@ -168,13 +168,23 @@ void CharacterSystem::Step(f32 dt) {
 
         Vec3 move = cm.move_velocity;
         if (!cm.flying) move.y = 0.0f;
-        if (cm.flying || was_grounded) {
+        const bool root_motion = cm.has_root_motion && dt > 0.0f;
+        if (root_motion) {
+            // The animation moves the character this step.
+            move = cm.root_motion * (1.0f / dt);
+            if (!cm.flying) move.y = 0.0f;
+            transform.rotation = (Quaternion::FromAxisAngle(Vec3(0, 1, 0), cm.root_motion_yaw) * transform.rotation).Normalized();
+        } else if (cm.flying || was_grounded) {
             move = MoveTowards(move, desired, (input_len > 0.0f ? cm.acceleration : cm.braking) * dt);
         } else if (input_len > 0.0f) {
             // In the air only part of the input counts, and changes come slowly.
             const Vec3 target = move + (desired - move) * std::clamp(cm.air_control, 0.0f, 1.0f);
             move = MoveTowards(move, target, cm.air_acceleration * dt);
         }
+
+        cm.root_motion = Vec3(0, 0, 0);
+        cm.root_motion_yaw = 0.0f;
+        cm.has_root_motion = false;
 
         bool jumped = false;
         JPH::Vec3 velocity;
