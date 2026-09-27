@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Next: Phase 14 — the unified renderer
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Now: Phase 14 — the unified renderer (in progress)
 
 ### Phase 1 — Foundation
 
@@ -3642,6 +3642,55 @@ Phase 13 on the portable side.
 - 304/304 tests pass with physics on GCC 13 (RelWithDebInfo and Debug)
   and under ASan/UBSan, and 273/273 without physics on GCC 13, Clang and
   ASan/UBSan.
+
+### Phase 14 (in progress) — The unified renderer
+
+Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md),
+Phase 14. The editor viewport and the player will share one renderer.
+Its CPU side lives in the new `Aether::Renderer` library (`renderer/`),
+which builds and tests headless; the GPU passes come later in the phase.
+
+**Step 1: the render scene, views, culling and draw lists** (§14.2).
+
+- **Components**: `DirectionalLight`, `PointLight`, `SpotLight`,
+  `SkyLight`, and `PostProcessVolume`.
+  - Lights point along their entity's forward.
+  - A post-process volume is either global or a box that fades in over a
+    blend distance, and sets exposure compensation, bloom, vignette,
+    saturation and the tone mapper (ACES, AgX or none).
+- **The render scene**: each frame, `ExtractRenderScene` copies the world
+  into flat arrays the renderer can use while the game moves on.
+  - It takes only active entities, with world transforms through the
+    hierarchy and world bounding boxes.
+  - Each mesh gets a key, so identical meshes can be drawn together.
+  - It collects directional, point, spot and sky light values.
+  - It collects post-process volumes.
+- **Views**: `MakeView` builds the matrices and the view frustum from a
+  camera, or from the scene's active camera.
+- **Culling and draw lists**: `Cull` keeps the objects inside the
+  frustum. `BuildDrawList` groups them by mesh into instanced batches,
+  sorted front to back.
+- **Post-processing at a point**: `BlendPostProcess` mixes the volumes in
+  priority order. A bounded volume fades in with distance, and its tone
+  mapper wins once it counts for at least half.
+
+**Verified**: 4 new tests.
+
+- A child's transform goes through its parent, and inactive entities are
+  skipped. Custom and default bounds, and shared and distinct mesh keys,
+  come out right. A sun pitched down shines straight down. Light values,
+  and spot cones that need clamping, are correct, and so is a turned
+  box's world bounds.
+- A camera's view puts the origin 10 m ahead. The frustum rejects points
+  outside the cone, behind, past the far plane and before the near
+  plane, and tests spheres. The view matches the scene's `CameraView`.
+  Culling keeps boxes inside, straddling a side, or around the camera.
+- Draw lists batch three meshes with instances nearest first, and order
+  batches by their nearest instance.
+- Post-process volumes blend fully inside, half at 1 m out, and a
+  quarter at 1.5 m. The tone mapper switches at half weight.
+- 277/277 tests pass on GCC 13, Clang and ASan/UBSan, and 308/308 with
+  physics.
 
 ## Building
 

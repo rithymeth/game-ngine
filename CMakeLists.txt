@@ -164,6 +164,8 @@ endif()
 add_subdirectory(engine)
 # Blueprints (Phase 12): graph model, compiler and VM; engine-only, no fetches.
 add_subdirectory(blueprint)
+# The renderer's CPU side (Phase 14); engine-only, no fetches.
+add_subdirectory(renderer)
 
 if(AETHER_BUILD_SCRIPTING)
     # Luau (MIT, luau-lang/luau): the scripting VM and compiler (Phase 11).
