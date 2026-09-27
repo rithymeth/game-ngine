@@ -16,7 +16,7 @@ namespace aether::script {
 namespace {
 
 constexpr const char* kCallbacks[] = {"OnCreate", "OnEnable", "OnStart", "OnUpdate", "OnFixedUpdate",
-                                      "OnLateUpdate", "OnDisable", "OnDestroy"};
+                                      "OnLateUpdate", "OnDisable", "OnDestroy", "OnReload"};
 
 void PushJsonValue(lua_State* L, const nlohmann::json& value) {
     if (value.is_boolean()) {
@@ -228,6 +228,9 @@ void ScriptSystem::Create(Entity entity) {
     }
     Class* cls = LoadClass(component->script.guid);
     if (cls == nullptr) {
+        if (const IdComponent* id = world_.GetComponent<IdComponent>(entity)) {
+            waiting_[id->guid] = component->script.guid; // starts if the script is fixed
+        }
         return;
     }
     lua_State* L = host_.State();
@@ -288,6 +291,7 @@ void ScriptSystem::Destroy(Entity entity) {
     if (id == nullptr) {
         return;
     }
+    waiting_.erase(id->guid);
     if (auto it = instances_.find(id->guid); it != instances_.end()) {
         ReleaseOwner(it->second.owner); // its connections and timers end with it
         lua_unref(host_.State(), it->second.ref);
