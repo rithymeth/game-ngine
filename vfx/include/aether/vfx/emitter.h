@@ -128,6 +128,15 @@ struct CollisionPlane {
     f32 lifetime_loss = 0.0f;      // of a particle's whole life, used up per hit (1: dies)
     f32 radius_scale = 0.5f;       // the particle's radius as a share of its size
 };
+// Collision with the scene through the instance's collider (a depth buffer,
+// physics raycasts; step 3): each particle's move this frame is a ray.
+struct SceneCollision {
+    bool enabled = true;
+    f32 bounce = 0.5f;
+    f32 friction = 0.1f;
+    f32 lifetime_loss = 0.0f; // of its whole life, per hit (1: dies)
+    f32 radius_scale = 0.5f;  // kept this far (times its size) off the surface
+};
 struct SizeOverLife {
     bool enabled = true;
     FloatCurve curve = FloatCurve::Constant(1.0f); // times the initial size
@@ -225,7 +234,8 @@ struct LightRenderer {
 
 using SpawnModule = std::variant<SpawnRate, SpawnBurst, SpawnPerDistance>;
 using InitModule = std::variant<InitLifetime, InitShape, InitVelocity, InitSize, InitColor, InitRotation, InheritVelocity>;
-using UpdateModule = std::variant<Gravity, Drag, CurlNoiseForce, Vortex, PointAttractor, KillVolume, CollisionPlane, SizeOverLife, ColorOverLife, SpeedOverLife>;
+using UpdateModule =
+    std::variant<Gravity, Drag, CurlNoiseForce, Vortex, PointAttractor, KillVolume, CollisionPlane, SizeOverLife, ColorOverLife, SpeedOverLife, SceneCollision>;
 using RenderModule = std::variant<SpriteRenderer, MeshRenderer, RibbonRenderer, LightRenderer>;
 
 // A module's type name ("SpawnRate"), and every name a stage takes (the editor's add menu).
@@ -259,19 +269,68 @@ struct EmitterSettings {
     f32 warmup = 0.0f; // seconds simulated at once when it starts (a fire that's already burning)
 };
 
+// --- Events, sub-emitters and parameters (step 3) --------------------------------------------------------
+enum class ParticleEventKind : u8 { Birth, Death, Collision };
+
+// When a particle of this emitter is born, dies or hits something, another
+// emitter of the same system (by name) emits at that point.
+struct SubEmitter {
+    ParticleEventKind event = ParticleEventKind::Death;
+    std::string emitter;
+    FloatRange count{1.0f, 1.0f};
+    f32 probability = 1.0f;       // per event
+    f32 inherit_velocity = 0.0f;  // of the particle's velocity, added to the new ones'
+    bool inherit_color = false;   // the new ones take its colour
+    bool inherit_size = false;    // and size
+    u32 max_per_frame = 100;      // events handled per frame (runaway chains stop here)
+};
+
+enum class ParameterType : u8 { Float, Vector, Color };
+struct ParameterValue {
+    ParameterType type = ParameterType::Float;
+    f32 f = 0.0f;
+    Vec3 v;
+    LinearColor c;
+    static ParameterValue Float(f32 x) { return {ParameterType::Float, x, {}, {}}; }
+    static ParameterValue Vector(const Vec3& x) { return {ParameterType::Vector, 0.0f, x, {}}; }
+    static ParameterValue Color(const LinearColor& x) { return {ParameterType::Color, 0.0f, {}, x}; }
+};
+// A value the game sets at runtime (Set Parameter), declared on the system.
+struct ParticleParameter {
+    std::string name;
+    ParameterValue value; // its type and default
+};
+// A module field that follows a parameter: "spawn[0].rate",
+// "init[2].speed" (a range: both ends), "update[1].acceleration",
+// "init[3].color" (a gradient: one colour).
+struct ParameterBinding {
+    std::string parameter;
+    std::string field;
+};
+
 struct Emitter {
     EmitterSettings settings;
     std::vector<SpawnModule> spawn;
     std::vector<InitModule> init;
     std::vector<UpdateModule> update;
     std::vector<RenderModule> render;
+    std::vector<SubEmitter> sub_emitters;
+    std::vector<ParameterBinding> bindings;
 };
 
-// A particle system asset (.avfx): emitters that play together.
+// A particle system asset (.avfx): emitters that play together, and the parameters they read.
 struct ParticleSystemAsset {
     std::string name;
     std::vector<Emitter> emitters;
+    std::vector<ParticleParameter> parameters;
+    const ParticleParameter* FindParameter(const std::string& name) const;
+    i64 FindEmitter(const std::string& name) const; // -1 if none
 };
+
+// Sets a module field ("spawn[0].rate") on an emitter. Floats go to number
+// and range fields; vectors to vector fields; colours to colour and
+// gradient fields. False (with the reason) for a bad path or type.
+bool SetModuleField(Emitter& emitter, const std::string& field, const ParameterValue& value, std::string* error = nullptr);
 
 nlohmann::json EmitterToJson(const Emitter& e);
 bool EmitterFromJson(const nlohmann::json& j, Emitter& out, std::string* error = nullptr);
@@ -291,5 +350,12 @@ struct EmitterDiagnostic {
 // FX008 nothing draws it (warning); FX009 a flipbook with no columns or
 // rows, or more frames than cells; FX010 a mesh renderer without a mesh.
 std::vector<EmitterDiagnostic> ValidateEmitter(const Emitter& e);
+// The emitter checks for each emitter (prefixed with its name), plus the
+// system's: FX011 a sub-emitter naming no emitter of the system (or its
+// own); FX012 sub-emitters that trigger each other in a loop (warning);
+// FX013 a binding to an unknown parameter, or to a field that doesn't
+// exist or doesn't take the parameter's type; FX014 two emitters with one
+// name.
+std::vector<EmitterDiagnostic> ValidateParticleSystem(const ParticleSystemAsset& asset);
 
 } // namespace aether::vfx

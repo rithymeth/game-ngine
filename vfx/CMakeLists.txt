@@ -7,6 +7,7 @@ add_library(aether_vfx STATIC
     src/emitter.cpp
     src/simulation.cpp
     src/render.cpp
+    src/collision.cpp
 )
 target_include_directories(aether_vfx PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aether_vfx PUBLIC cxx_std_20)
