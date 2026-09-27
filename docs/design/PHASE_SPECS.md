@@ -570,8 +570,15 @@ comment above it adds metadata.
      allocator.
    - Values crossing C++/Luau are nil, bool, number and string for now.
      Engine types come with step 2.
-2. Reflection-driven bindings for fields and functions, with the typed
+2. ✅ **Done.** Reflection-driven bindings for fields and functions, with the typed
    fast paths and handle safety.
+   - Component handles are (binding generation, entity, component id).
+     Every access re-checks the entity is alive and still has the
+     component. Re-binding the world invalidates all handles.
+   - Functions are exposed whatever their flags. Filtering to
+     `BlueprintCallable` can come with the exposure rules of step 3.
+   - `Quaternion` and other structs are tables for now. Only `Vec3` is a
+     native vector.
 3. `ScriptComponent`, lifecycle, exposed variables in the Inspector.
 4. Events (`:Connect`) and Input/Physics/Timer APIs.
 5. Hot reload and the error overlay.

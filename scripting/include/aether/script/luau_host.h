@@ -1,6 +1,7 @@
 #pragma once
 
 #include "aether/core/base.h"
+#include "aether/ecs/entity.h"
 
 #include <filesystem>
 #include <functional>
@@ -12,11 +13,22 @@
 
 struct lua_State;
 
+namespace aether {
+class World;
+class GuidIndex;
+} // namespace aether
+
 namespace aether::script {
 
-// A value crossing between C++ and Luau: nil, boolean, number or string.
-// (Engine types, entities and components come with the reflection bindings.)
-using ScriptValue = std::variant<std::monostate, bool, f64, std::string>;
+// An entity passed to or from a script (needs a bound world; see BindWorld).
+struct EntityRef {
+    Entity entity;
+    bool operator==(const EntityRef& o) const { return entity == o.entity; }
+};
+
+// A value crossing between C++ and Luau: nil, boolean, number, string or
+// entity. (Other Luau values come back as nil.)
+using ScriptValue = std::variant<std::monostate, bool, f64, std::string, EntityRef>;
 
 struct ScriptResult {
     bool ok = false;
@@ -60,6 +72,17 @@ public:
     ScriptValue GetGlobal(const std::string& name);
     void SetGlobal(const std::string& name, const ScriptValue& value);
 
+    // Gives scripts access to a world (Phase 11 step 2, §11.1). Scripts then
+    // have a global `world` (Spawn, Destroy, Find, EntitiesWith) and entity
+    // values with :Get/:Add/:Has/:Remove/:IsValid/:Guid; components expose
+    // their reflected fields (read and write) and functions (as methods).
+    // Entities and components are handles, re-checked on every use: using
+    // one whose entity was destroyed, whose component was removed, or from
+    // before the world was re-bound raises a script error, never a crash.
+    // Pass nullptr to unbind.
+    void BindWorld(World* world, GuidIndex* guids);
+    World* BoundWorld() const { return world_; }
+
     // Where print() goes (default: the engine log, category "Script").
     void SetPrintHandler(std::function<void(const std::string&)> handler) { print_ = std::move(handler); }
 
@@ -72,11 +95,17 @@ private:
     static void* Allocate(void* ud, void* ptr, size_t old_size, size_t new_size);
     static void Interrupt(lua_State* state, int gc);
     static int Print(lua_State* state);
+    friend struct BindingAccess;
 
     ScriptResult CallTop(int args, const std::string& what); // runs the function on the stack
 
+    void InstallWorldBindings();
+
     Options options_;
     lua_State* state_ = nullptr;
+    World* world_ = nullptr;
+    GuidIndex* guids_ = nullptr;
+    u64 binding_generation_ = 1;
     usize memory_used_ = 0;
     u64 ticks_ = 0;
     bool budget_exceeded_ = false;
