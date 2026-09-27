@@ -1696,15 +1696,79 @@ can be added later) pulls from the mixer on its own thread.
   - A voice going virtual is mixed for one more block ramping down, and
     one coming back ramps up over its first block.
 
-### 17.3 PR breakdown
+### 17.3 Decoding, streaming and sound cues
+
+- **Formats**: WAV (our decoder), Ogg Vorbis (stb_vorbis) and FLAC
+  (dr_flac), detected from the file's first bytes. Mono and stereo.
+- **Streams** (`AudioStream`) decode as they play, from compressed bytes
+  in memory (shared between voices) or from a file. `Mixer::PlayStream`
+  keeps a window of decoded frames per voice, decoded 4096 frames ahead
+  at a time:
+  - Its position counts on through loops, and the stream seeks to 0 at
+    its end.
+  - Jumping elsewhere (a start time, back from virtual, a restart) seeks.
+  - A streamed voice mixes exactly the same samples as the decoded sound
+    would.
+- **Delayed starts**: `PlayParams::delay` starts a voice that many
+  seconds into the next Render, to the sample. The mixer counts the
+  frames it has rendered as its clock.
+- **Sound cues** (`.acue`, JSON): nodes with children, and the output's
+  settings (volume, pitch, bus, priority, virtual mode, 3D).
+
+  | Node | Plays |
+  |---|---|
+  | Wave | a sound, optionally looping |
+  | Random | one child by weight; `no_repeat` never picks the last one again |
+  | Sequence | one child in turn, remembered between plays |
+  | Modulator | its child with a random volume and pitch from ranges |
+  | Concatenator | its children back to back |
+  | Loop | its child `count` times, or forever (0) |
+  | Mix | all its children at once, each with an input volume |
+  | Delay | its child after a random wait |
+
+- **Evaluation** turns a cue into a plan: sounds with start offsets,
+  volumes and pitches (pitch shortens durations), and its duration.
+  - A Loop forever over a Wave is one looping voice.
+  - A Loop forever over anything else leaves a tail: the body is
+    evaluated again at the time it ends, so random choices vary each
+    time round.
+  - Unknown sounds play nothing.
+  - Choices and random numbers come from a seeded `CueState` per cue.
+- **Validation** (errors unless noted):
+
+  | Code | Problem |
+  |---|---|
+  | CU001 | no output node |
+  | CU002 | duplicate node id |
+  | CU003 | a child that doesn't exist |
+  | CU004 | a cycle |
+  | CU005 | the wrong number of inputs |
+  | CU006 | a Wave with no sound |
+  | CU007 | a sound that doesn't exist |
+  | CU008 | an inverted or invalid range |
+  | CU009 | negative or all-zero weights |
+  | CU010 | (warning) inputs after one that never ends |
+  | CU011 | (warning) a node the output doesn't reach |
+
+- **CuePlayer**: plays cues from a `SoundBank` (decoded or streamed
+  sounds by name).
+  - Every sound is placed as a delay from the cue's start frame, so
+    concatenations and loops are seamless and never drift.
+  - Each repeat of an endless loop is scheduled when it comes within
+    `lookahead` (0.25 s) in `Update`.
+  - Instances can be stopped (with a fade), moved and have their volume
+    changed.
+
+### 17.4 PR breakdown
 
 1. ✅ **Done.** Sounds (WAV), voices (resampling, pitch, loop, pan,
    fades), the bus mixer with meters, and the DSP effects.
 2. ✅ **Done.** 3D: listener, attenuation curves (inverse, linear,
    logarithmic, custom) with air absorption, spatial blend, doppler,
    voice limiting by priority with virtual voices, and an occlusion hook.
-3. Sound cues (random, sequence, modulate, concatenate, loop, mix) and
-   `.acue` files; OGG and FLAC decoding; streaming long sounds.
+3. ✅ **Done.** Sound cues (random, sequence, modulate, concatenate,
+   loop, mix, delay) and `.acue` files; Ogg Vorbis and FLAC decoding;
+   streaming long sounds; sample-accurate delayed starts.
 4. Components (`AudioSource`, `AudioListener`, `ReverbZone`), the
    `AudioSystem`, and the Blueprint nodes (Play Sound 2D/at Location,
    Spawn Sound Attached, Fade In/Out, Set Bus Volume).
