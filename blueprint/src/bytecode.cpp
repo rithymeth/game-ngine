@@ -150,6 +150,8 @@ OpInfo Info(Op op) {
     case Op::BindDispatcher: return {"BINDD", "---i"};
     case Op::InterfaceCall: return {"CALLI", "---i"};
     case Op::ImplementsOp: return {"IMPLEMENTS", "rr-i"};
+    case Op::SortVar: return {"ARR_SORT", "---i"};
+    case Op::FilterA: return {"ARR_FILTER", "aa-i"};
     case Op::StateInit: return {"STATE_INIT", "zr--"};
     case Op::StateJmpIf: return {"STATE_JMPIF", "z-i@"};
     case Op::StateSet: return {"STATE_SET", "z-i-"};

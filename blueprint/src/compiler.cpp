@@ -344,6 +344,14 @@ private:
     bool EvaluateArray(NodeId id, const NodeSignature& sig, const std::string& type) {
         auto is = [&](const char* op) { return type.rfind(std::string("Array.") + op + ":", 0) == 0; };
         const PinType i32t = PinType::Of(ValueType::Int), boolt = PinType::Of(ValueType::Bool);
+        if (is("Filter")) {
+            const RegRef source = Input(id, "array");
+            const RegRef dst = Alloc(sig.Find("result", PinDir::Out)->type, id);
+            out_.sorts.push_back({static_cast<i32>(out_.function_index.at(NodeOf(id).config.value("by", ""))), 0});
+            Emit({Op::FilterA, dst.index, source.index, 0, static_cast<i32>(out_.sorts.size() - 1)}, id);
+            SetPure(id, "result", dst);
+            return true;
+        }
         if (is("Make")) {
             const PinDesc& out = *sig.Find("array", PinDir::Out);
             const RegRef dst = LoadValue({}, out.type, id); // NEWA
@@ -817,9 +825,14 @@ private:
         if (type == "Entity.Spawn") {
             const RegRef location = Input(id, "location"), rotation = Input(id, "rotation");
             const RegRef spawned = OutputReg(id, *sig.Find("spawned", PinDir::Out));
-            out_.spawn_assets.push_back(NodeOf(id).config.value("blueprint", ""));
-            Emit({Op::SpawnOp, spawned.index, location.index, rotation.index,
-                  static_cast<i32>(out_.spawn_assets.size() - 1)}, id);
+            SpawnInfo spawn;
+            spawn.asset = NodeOf(id).config.value("blueprint", "");
+            for (const PinDesc& pin : sig.pins) {
+                if (pin.dir != PinDir::In || pin.type.IsExec() || pin.name == "location" || pin.name == "rotation") continue;
+                spawn.exposed.push_back({pin.name, {Input(id, pin.name), pin.type}});
+            }
+            out_.spawns.push_back(std::move(spawn));
+            Emit({Op::SpawnOp, spawned.index, location.index, rotation.index, static_cast<i32>(out_.spawns.size() - 1)}, id);
             return Chain(id, "then");
         }
         if (type.rfind("Flow.ForEach:", 0) == 0) {
@@ -852,6 +865,12 @@ private:
             auto is = [&](const char* op) { return type.rfind(std::string("Array.") + op + ":", 0) == 0; };
             auto item = [&] { return Input(id, "item").index; };
             auto index = [&] { return Input(id, "index").index; };
+            if (is("Sort")) {
+                const std::string by = NodeOf(id).config.value("by", "");
+                out_.sorts.push_back({by.empty() ? -1 : static_cast<i32>(out_.function_index.at(by)), slot});
+                Emit({Op::SortVar, 0, 0, 0, static_cast<i32>(out_.sorts.size() - 1)}, id);
+                return Chain(id, "then");
+            }
             if (is("Add") || is("AddUnique")) {
                 const u16 value = item();
                 const RegRef dst = OutputReg(id, *sig.Find("index", PinDir::Out));

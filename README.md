@@ -3168,6 +3168,45 @@ point 3, ROADMAP_DETAILS §C.4).
 - 253/253 tests pass on GCC 13, on Clang and under ASan/UBSan, and 260/260
   with physics.
 
+**Step 4, part 6: Sort, Filter and Expose on Spawn**. This completes
+step 4, the v1 node library.
+
+- **Sort** changes an array variable in place.
+  - It uses the natural order for ints, floats and strings, or a
+    comparator function of the Blueprint (config `by`: `(a, b) -> bool`,
+    "a comes before b").
+  - It's a stable merge sort written by hand, so an inconsistent
+    comparator scrambles the order but can't crash (unlike `std::sort`).
+  - A comparator that fails, such as one that runs out of budget, stops
+    the event.
+- **Filter** returns the items a predicate `(item) -> bool` accepts, and
+  is pure.
+- **Errors**:
+  - A comparator or predicate with the wrong signature is refused with
+    the new BP017.
+  - A missing one is BP004.
+  - Sorting Vec3s (no natural order) without one is BP007.
+- **Expose on Spawn**:
+  - The Spawn Blueprint node gets one input pin per variable listed in
+    its config `expose` (the editor fills it in from the class).
+  - The values reach the spawner as JSON, and `BlueprintSystem` applies
+    them when it attaches the new instance, before its BeginPlay.
+  - Only variables marked Expose on Spawn (or Instance Editable) accept
+    them.
+  - The spawner hook now gets these values as a third argument.
+
+**Verified**: 3 new tests.
+
+- **Sorting and filtering**: ints ascending, descending by a Blueprint
+  comparator, strings, and a filter of the even numbers. A 100-item sort
+  matches `std::sort`.
+- **Sort errors**: BP007, BP017 and BP004, each on its node.
+- **Spawning**: a bank spawning a coin with value 25 and label "gold",
+  printed by the coin's BeginPlay. A non-exposed variable is ignored, and
+  a bad exposed pin is refused.
+- 256/256 tests pass on GCC 13, on Clang and under ASan/UBSan, and 263/263
+  with physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,

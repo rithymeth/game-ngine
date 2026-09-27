@@ -50,8 +50,8 @@ public:
     BlueprintVM(World& world, Options options);
 
     // Makes `entity` an instance of `blueprint`, with variables at their
-    // defaults except `overrides` ({"name": value}, for instance-editable
-    // variables; others are ignored). Replaces an existing instance.
+    // defaults except `overrides` ({"name": value}, for instance-editable and
+    // expose-on-spawn variables; others are ignored). Replaces an existing instance.
     // Doesn't run BeginPlay; dispatch it when play starts.
     bool Attach(Entity entity, std::shared_ptr<const CompiledBlueprint> blueprint,
                 const nlohmann::json& overrides = nlohmann::json::object());
@@ -86,7 +86,10 @@ public:
     // Spawn Blueprint: creates an entity running `blueprint` at `transform`
     // and returns it (BlueprintSystem sets this; without one, Spawn gives
     // no entity and BP206).
-    using SpawnHandler = std::function<Entity(const assets::AssetGuid& blueprint, const Transform& transform)>;
+    // `exposed` holds the Spawn node's Expose on Spawn values ({"name": value}),
+    // to apply when attaching the new instance (before its BeginPlay).
+    using SpawnHandler = std::function<Entity(const assets::AssetGuid& blueprint, const Transform& transform,
+                                              const nlohmann::json& exposed)>;
     void SetSpawnHandler(SpawnHandler handler) { spawn_ = std::move(handler); }
     // Destroy Entity is deferred until the running event finishes. Then this
     // runs, if set (BlueprintSystem: the lifecycle's Destroy). Otherwise the
@@ -142,6 +145,10 @@ private:
     const Instance* Find(Entity e) const;
 
     bool Run(Instance& instance, u32 function, Frame& frame, u32 depth, usize start_pc = 0);
+    // Calls a Blueprint function with array items as its arguments (Sort's
+    // comparator, Filter's predicate); its bool result goes to `result`.
+    bool CallPredicate(Instance& instance, u32 function, const ArrayValue& array, usize a, const usize* b, u32 depth,
+                       bool& result);
     void StartLatent(Instance& instance, u32 function, const Instr& in, Frame& frame);
     void ResumeDue();
     bool Call(Instance& instance, const FunctionCall& call, Frame& caller, u32 depth);
