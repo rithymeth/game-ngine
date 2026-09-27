@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 in progress (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 in progress (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes)
 
 ### Phase 1 — Foundation
 
@@ -5233,6 +5233,49 @@ Behavior Trees and perception come next. Spec:
 - Placed pads, a turned link proxy that is enabled, disabled and made one
   way, and loading.
 - 412/412 tests pass on GCC 13, Clang and ASan/UBSan, and 444/444 with
+  physics.
+
+**Step 3: agents and crowds** (§20.3).
+
+- **`NavAgent`**, steered by Detour's crowd:
+  - it walks to a point or follows an entity;
+  - it avoids other agents and separates from them, and anticipates
+    corners;
+  - it turns to face where it goes;
+  - it stops within a stopping distance, and sits a base offset above
+    the mesh.
+- **Methods** (Blueprint nodes and Luau): `MoveTo`, `MoveToEntity`,
+  `Stop`, `Warp`, and status, velocity, speed, remaining-distance and
+  goal queries.
+- **Moves**:
+  - a move fails when the goal is cut off or off the mesh, unless
+    `allow_partial`;
+  - each arrival or failure fires `Event.OnMoveCompleted`.
+- **`NavCrowd`**:
+  - adds and removes agents with their entities;
+  - replans when obstacles change the mesh;
+  - makes a new crowd after a rebake;
+  - lists an agent's next corners.
+- **`Navigation`** Blueprint library: reachability, path length,
+  projecting onto the mesh, on-mesh tests, random reachable points and
+  raycasts.
+
+**Verified**: 11 new tests.
+
+- Walking to a point: timing, facing, coming to rest, and the event.
+- Going round a wall.
+- Unreachable and off-mesh goals failing, and partial moves.
+- Two agents passing each other.
+- Following a moving entity, and one that goes.
+- Stop and Warp, the base offset, and removal.
+- Replanning round a new obstacle, and a walled-in goal failing then
+  succeeding.
+- Waiting for a mesh, and carrying on after a rebake.
+- The `Navigation` library.
+- Blueprint nodes (Random Reachable Point into Move To, then Event
+  OnMoveCompleted).
+- Luau calling the agent's methods.
+- 423/423 tests pass on GCC 13, Clang and ASan/UBSan, and 455/455 with
   physics.
 
 ## Building

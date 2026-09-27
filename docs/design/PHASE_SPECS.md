@@ -2746,7 +2746,56 @@ It all runs and is tested headless.
     tiles.
   - The last `NavWorld` made is the active one, for step 3's nodes.
 
-### 20.3 PR breakdown
+### 20.3 Agents and crowds
+
+- **`NavAgent`** walks its entity over the mesh. It is steered by
+  Detour's crowd, which:
+  - anticipates corners;
+  - optimizes the path by visibility and topology;
+  - avoids other agents, at four qualities (0 is none);
+  - separates it from neighbours by a weight.
+- **Settings**:
+  - the agent's radius, height, maximum speed and acceleration;
+  - a stopping distance and a base offset above the mesh;
+  - turning to face where it goes, at a turn speed;
+  - `allow_partial`, and `goal_tolerance` (how far off the mesh a goal
+    may be).
+- **Methods** (Blueprint nodes, and Luau methods on the component):
+  - `MoveTo` a point;
+  - `MoveToEntity`, which follows the target: it replans once the target
+    has moved 0.5 m (or the stopping distance), and fails if the target
+    goes;
+  - `Stop` and `Warp` (onto the mesh);
+  - pure queries: `IsMoving`, `HasArrived`, `HasFailed`, `GetVelocity`,
+    `GetSpeed`, `GetRemainingDistance` and `GetGoal`.
+  - They queue commands. The next update applies them, and keeps them
+    until there is a mesh.
+- **Status** is `Idle`, `Moving`, `Arrived` or `Failed`:
+  - A move fails at once when the goal is cut off, or lies more than
+    `goal_tolerance` from the mesh (inside an obstacle, say), unless
+    `allow_partial`; with it, the agent walks as near as it gets.
+  - It arrives within the stopping distance of the goal (on the mesh).
+  - Each arrival or failure is an `Event.OnMoveCompleted (success)` for
+    Blueprints. Stopping isn't completing.
+- **`NavCrowd`** runs a world's agents on its `NavWorld`:
+  - An agent is added where its entity is, snapped to the mesh, and
+    removed when its entity or component goes.
+  - Settings apply every update.
+  - When tiles change (the navigation revision moves), moving agents
+    replan, so obstacles that appear are walked round and goals that
+    are walled in fail.
+  - A new bake or load makes a new crowd. Agents are added again, and
+    moving ones carry on.
+  - It writes the agents' Transforms (as world space) and turns them.
+  - `Corners` gives an agent's next corners, for debugging.
+- **`Navigation`** is a Blueprint library over the active navigation
+  world:
+  - `IsReachable`, `PathLength` (-1 without a complete path);
+  - `ProjectPoint`, `IsOnNavMesh`;
+  - `RandomReachablePoint` within a radius, and `Raycast` (where a
+    straight walk stops).
+
+### 20.4 PR breakdown
 
 1. ✅ **Done.** Navmesh baking from geometry with Recast (tiles, agent
    settings, areas) and Detour queries (paths, nearest points, raycasts,
@@ -2755,7 +2804,7 @@ It all runs and is tested headless.
 2. ✅ **Done.** Runtime tile rebuilds for dynamic obstacles (boxes and cylinders that
    carve), off-mesh links (jumps, ladders, drops), area volumes that
    mark areas, and gathering the geometry from the scene.
-3. The `NavAgent` component on Detour's crowd (steering, local avoidance,
+3. ✅ **Done.** The `NavAgent` component on Detour's crowd (steering, local avoidance,
    the agent moving the entity's transform), and Blueprint and Luau
    nodes (Move To, Stop, Find Path, Random Reachable Point).
 4. Blackboards (typed keys) and Behavior Trees:
