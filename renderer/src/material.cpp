@@ -1,6 +1,7 @@
 #include "aether/renderer/material.h"
 
 #include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <functional>
 #include <map>
@@ -27,6 +28,11 @@ NodeSignature Sig(const std::string& title, const std::string& category, std::ve
     s.outputs = std::move(out);
     s.generic = generic;
     return s;
+}
+
+bool IsIdentifier(const std::string& s) {
+    if (s.empty() || !(std::isalpha(static_cast<unsigned char>(s[0])) || s[0] == '_')) return false;
+    return std::all_of(s.begin(), s.end(), [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; });
 }
 
 const char* ShadingName(ShadingModel m) { return m == ShadingModel::Unlit ? "Unlit" : "DefaultLit"; }
@@ -165,6 +171,113 @@ const Catalog& GetCatalog() {
         panner.inputs[2].implicit = "time";
         fixed("Coords.Panner", panner);
         fixed("Texture.NormalUnpack", Sig("Unpack Normal", "Texture", {In("packed", F4, {0.5f, 0.5f, 1, 1})}, {Out("normal", F3)}));
+
+        // Phase 15 step 4: noise, triplanar mapping, custom HLSL, reroutes and functions.
+        c.exact["Math.Noise"] = [=](const Material&, const Node& node, const std::string&, std::string& error) -> std::optional<NodeSignature> {
+            const json octaves = node.config.value("octaves", json(1));
+            if (!octaves.is_number_integer() || octaves.get<i64>() < 1 || octaves.get<i64>() > 8) {
+                error = "Noise's octaves must be 1 to 8";
+                return std::nullopt;
+            }
+            NodeSignature s = Sig("Noise", "Math", {In("position", F3), In("scale", F, {1, 1, 1, 1})}, {Out("result", F)});
+            s.inputs[0].implicit = "world_position";
+            return s;
+        };
+        NodeSignature triplanar = Sig("Triplanar Sample", "Texture",
+                                      {In("texture", T), In("position", F3), In("normal", F3), In("scale", F, {1, 1, 1, 1}),
+                                       In("sharpness", F, {4, 4, 4, 4})},
+                                      {Out("rgba", F4), Out("rgb", F3)});
+        triplanar.inputs[0].required = true;
+        triplanar.inputs[1].implicit = "world_position";
+        triplanar.inputs[2].implicit = "normal";
+        fixed("Texture.Triplanar", triplanar);
+        // Custom HLSL: config {"inputs": [{"name", "type"}], "output": type, "code": function body}.
+        c.exact["Custom.HLSL"] = [=](const Material&, const Node& node, const std::string&, std::string& error) -> std::optional<NodeSignature> {
+            const auto output = ParseType(node.config.value("output", "float"));
+            if (!output || *output == PinType::Texture) {
+                error = "a Custom node's output must be float to float4";
+                return std::nullopt;
+            }
+            const json code = node.config.value("code", json("return 0.0;"));
+            if (!code.is_string() || code.get<std::string>().find_first_not_of(" \t\r\n") == std::string::npos) {
+                error = "a Custom node needs code";
+                return std::nullopt;
+            }
+            std::vector<PinDesc> inputs;
+            const json list = node.config.value("inputs", json::array());
+            if (!list.is_array()) {
+                error = "a Custom node's inputs must be a list";
+                return std::nullopt;
+            }
+            std::set<std::string> names;
+            for (const json& in : list) {
+                const std::string name = in.is_object() ? in.value("name", "") : "";
+                const auto type = ParseType(in.is_object() ? in.value("type", "") : "");
+                if (!IsIdentifier(name) || name == "i" || name.rfind("_t", 0) == 0 || !names.insert(name).second) {
+                    error = "a Custom node's input names must be unique HLSL identifiers ('" + name + "' isn't)";
+                    return std::nullopt;
+                }
+                if (!type) {
+                    error = "a Custom node's input '" + name + "' has an unknown type";
+                    return std::nullopt;
+                }
+                PinDesc p = In(name, *type);
+                p.required = *type == PinType::Texture;
+                inputs.push_back(p);
+            }
+            return Sig(node.config.value("title", "Custom"), "Custom", std::move(inputs), {Out("result", *output)});
+        };
+        // A pass-through of a fixed type; what inlined function inputs and outputs become.
+        c.exact["Utility.Reroute"] = [=](const Material&, const Node& node, const std::string&, std::string& error) -> std::optional<NodeSignature> {
+            const auto type = ParseType(node.config.value("type", "float"));
+            Vec4 def{0, 0, 0, 0};
+            if (!type || (node.config.contains("default") && !VecFrom(node.config["default"], def))) {
+                error = "a Reroute needs a type (and a numeric default)";
+                return std::nullopt;
+            }
+            NodeSignature s = Sig("Reroute", "Utility", {In("value", *type, def)}, {Out("value", *type)});
+            s.inputs[0].required = *type == PinType::Texture;
+            return s;
+        };
+        // Function interfaces: config {"name", "type", "default"}.
+        auto interface = [=](bool input) {
+            return [=](const Material&, const Node& node, const std::string&, std::string& error) -> std::optional<NodeSignature> {
+                const std::string name = node.config.value("name", input ? "In" : "Out");
+                const auto type = ParseType(node.config.value("type", "float"));
+                Vec4 def{0, 0, 0, 0};
+                if (name.empty() || !type || (node.config.contains("default") && !VecFrom(node.config["default"], def))) {
+                    error = std::string("a Function ") + (input ? "Input" : "Output") + " needs a name and a type";
+                    return std::nullopt;
+                }
+                if (input) return std::optional<NodeSignature>(Sig("Input " + name, "Functions", {}, {Out("value", *type)}));
+                return std::optional<NodeSignature>(Sig("Output " + name, "Functions", {In("value", *type, def)}, {}));
+            };
+        };
+        c.exact["Function.Input"] = interface(true);
+        c.exact["Function.Output"] = interface(false);
+        c.families["Function.Call:"] = [=](const Material& m, const Node&, const std::string& name, std::string& error) -> std::optional<NodeSignature> {
+            const Material* fn = m.functions ? m.functions->Find(name) : nullptr;
+            if (fn == nullptr) {
+                error = "MT012:no material function named '" + name + "'";
+                return std::nullopt;
+            }
+            NodeSignature s = Sig(name, "Functions", {}, {});
+            for (const Node& n : fn->nodes) {
+                if (n.type != "Function.Input" && n.type != "Function.Output") continue;
+                std::string ignored;
+                const std::optional<NodeSignature> pin = interface(n.type == "Function.Input")(m, n, {}, ignored);
+                if (!pin) continue;
+                if (n.type == "Function.Input") {
+                    PinDesc p = In(n.config.value("name", "In"), pin->outputs[0].type);
+                    if (n.config.contains("default")) VecFrom(n.config["default"], p.default_value);
+                    p.required = p.type == PinType::Texture;
+                    s.inputs.push_back(p);
+                } else {
+                    s.outputs.push_back(Out(n.config.value("name", "Out"), pin->inputs[0].type));
+                }
+            }
+            return s;
+        };
         return c;
     }();
     return catalog;
@@ -296,6 +409,8 @@ std::optional<NodeSignature> ResolveNode(const Material& m, const Node& node, st
 std::vector<PaletteEntry> ListNodeTypes(const Material& m) {
     std::vector<PaletteEntry> out;
     for (const auto& [id, factory] : GetCatalog().exact) {
+        const bool interface = id == "Function.Input" || id == "Function.Output";
+        if ((interface && !m.is_function) || (m.is_function && id == "Material.Output")) continue;
         Node probe;
         probe.type = id;
         std::string error;
@@ -304,6 +419,9 @@ std::vector<PaletteEntry> ListNodeTypes(const Material& m) {
     for (const Parameter& p : m.parameters) {
         const std::string prefix = p.type == PinType::Texture ? "Param.Texture:" : p.type == PinType::Float ? "Param.Scalar:" : "Param.Vector:";
         out.push_back({prefix + p.name, p.name, "Parameters"});
+    }
+    if (m.functions) {
+        for (const auto& [name, fn] : m.functions->functions) out.push_back({"Function.Call:" + name, name, "Functions"});
     }
     return out;
 }
@@ -340,8 +458,8 @@ Analysis Analyze(const Material& m) {
         std::string error;
         if (auto sig = ResolveNode(m, n, &error)) {
             sigs.emplace(n.id, std::move(*sig));
-        } else if (error.rfind("MT006:", 0) == 0) {
-            report("MT006", n.id, "", error.substr(6) + ".");
+        } else if (error.size() > 6 && error.rfind("MT", 0) == 0 && error[5] == ':') {
+            report(error.substr(0, 5), n.id, "", error.substr(6) + ".");
         } else {
             report("MT002", n.id, "", error + ".");
         }
@@ -350,8 +468,64 @@ Analysis Analyze(const Material& m) {
             a.output = n.id;
         }
     }
-    if (outputs == 0) report("MT001", 0, "", "The material has no Material Output node.");
-    if (outputs > 1) report("MT001", 0, "", "The material has more than one Material Output node.");
+    if (m.is_function) {
+        // A function's interface: at least one output, unique names, no Material Output.
+        std::set<std::string> inputs, outs;
+        for (const Node& n : m.nodes) {
+            if (n.type == "Material.Output") report("MT011", n.id, "", "A material function can't have a Material Output; use Function Output.");
+            if (n.type != "Function.Input" && n.type != "Function.Output") continue;
+            const std::string name = n.config.value("name", n.type == "Function.Input" ? "In" : "Out");
+            if (!(n.type == "Function.Input" ? inputs : outs).insert(name).second) {
+                report("MT011", n.id, "", "Two function " + std::string(n.type == "Function.Input" ? "inputs" : "outputs") + " are named '" + name + "'.");
+            }
+        }
+        if (outs.empty()) report("MT011", 0, "", "The function has no Function Output node.");
+        a.output = 0;
+    } else {
+        for (const Node& n : m.nodes) {
+            if (n.type == "Function.Input" || n.type == "Function.Output") {
+                report("MT002", n.id, "", "Function Input and Output nodes only work in material functions.");
+            }
+        }
+        if (outputs == 0) report("MT001", 0, "", "The material has no Material Output node.");
+        if (outputs > 1) report("MT001", 0, "", "The material has more than one Material Output node.");
+    }
+    // Called functions: no recursion, and no errors of their own.
+    std::set<std::string> checked;
+    for (const Node& n : m.nodes) {
+        if (n.type.rfind("Function.Call:", 0) != 0 || !sigs.count(n.id)) continue;
+        const std::string name = n.type.substr(14);
+        std::vector<std::string> path;
+        std::function<bool(const std::string&)> loops = [&](const std::string& fn_name) {
+            if (std::find(path.begin(), path.end(), fn_name) != path.end()) return true;
+            const Material* fn = m.functions->Find(fn_name);
+            if (fn == nullptr) return false;
+            path.push_back(fn_name);
+            for (const Node& inner : fn->nodes) {
+                if (inner.type.rfind("Function.Call:", 0) == 0 && loops(inner.type.substr(14))) return true;
+            }
+            path.pop_back();
+            return false;
+        };
+        if (loops(name)) {
+            report("MT012", n.id, "", "The function '" + name + "' calls itself (through " + path.back() + "); functions can't recurse.");
+            continue;
+        }
+        if (!checked.insert(name).second) continue;
+        Material fn = *m.functions->Find(name);
+        if (!fn.functions) fn.functions = m.functions;
+        const Analysis inner = Analyze(fn);
+        if (!inner.Ok()) {
+            std::string first;
+            for (const Diagnostic& d : inner.diagnostics) {
+                if (d.severity == Severity::Error) {
+                    first = d.code + ": " + d.message;
+                    break;
+                }
+            }
+            report("MT013", n.id, "", "The function '" + name + "' has errors (" + first + ")");
+        }
+    }
 
     // Links: pins exist, one link per input.
     std::map<std::pair<NodeId, std::string>, const Link*> incoming;
@@ -511,6 +685,10 @@ json MaterialToJson(const Material& m) {
     }
     json links = json::array();
     for (const Link& l : m.links) links.push_back({{"from", json::array({l.from.node, l.from.pin})}, {"to", json::array({l.to.node, l.to.pin})}});
+    if (m.is_function) {
+        return {{"$type", "MaterialFunction"}, {"$version", kFormatVersion}, {"description", m.description}, {"parameters", params},
+                {"nodes", nodes}, {"links", links}};
+    }
     return {{"$type", "Material"}, {"$version", kFormatVersion}, {"shading", ShadingName(m.shading)}, {"blend", BlendName(m.blend)},
             {"two_sided", m.two_sided}, {"opacity_mask_clip", m.opacity_mask_clip}, {"parameters", params}, {"nodes", nodes}, {"links", links}};
 }
@@ -520,9 +698,12 @@ bool MaterialFromJson(const json& j, Material& out, std::string* error) {
         if (error != nullptr) *error = message;
         return false;
     };
-    if (!j.is_object() || j.value("$type", "") != "Material") return fail("not a material file");
+    const std::string type = j.is_object() ? j.value("$type", "") : "";
+    if (type != "Material" && type != "MaterialFunction") return fail("not a material file");
     if (j.value("$version", 0) > kFormatVersion) return fail("saved by a newer version of the engine");
     Material m;
+    m.is_function = type == "MaterialFunction";
+    m.description = j.value("description", "");
     const std::string shading = j.value("shading", "DefaultLit");
     if (shading == "Unlit") m.shading = ShadingModel::Unlit;
     else if (shading != "DefaultLit") return fail("unknown shading model '" + shading + "'");
@@ -599,6 +780,75 @@ bool LoadMaterial(const std::filesystem::path& path, Material& out, std::string*
         return false;
     }
     return MaterialFromJson(j, out, error);
+}
+
+// --- Functions -----------------------------------------------------------------------------
+
+const Material* FunctionLibrary::Find(const std::string& name) const {
+    auto it = functions.find(name);
+    return it == functions.end() ? nullptr : &it->second;
+}
+
+bool InlineFunctions(const Material& material, Material& out, std::string* error) {
+    auto fail = [&](const std::string& message) {
+        if (error != nullptr) *error = message;
+        return false;
+    };
+    Material m = material;
+    for (usize expansions = 0;; ++expansions) {
+        auto call = std::find_if(m.nodes.begin(), m.nodes.end(), [](const Node& n) { return n.type.rfind("Function.Call:", 0) == 0; });
+        if (call == m.nodes.end()) break;
+        if (expansions >= 1024) return fail("MT012: too many nested function calls (does a function call itself?)");
+        const Node site = *call;
+        const std::string name = site.type.substr(14);
+        const Material* fn = m.functions ? m.functions->Find(name) : nullptr;
+        if (fn == nullptr) return fail("MT012: no material function named '" + name + "'");
+        m.nodes.erase(call);
+
+        // Copy the function's nodes under fresh ids; its interface becomes reroutes.
+        std::map<NodeId, NodeId> ids;
+        std::map<std::string, NodeId> input_of, output_of;
+        NodeId next = m.NextId();
+        for (const Node& n : fn->nodes) {
+            Node copy = n;
+            copy.id = next++;
+            copy.x = site.x + n.x * 0.1f;
+            copy.y = site.y + n.y * 0.1f;
+            ids[n.id] = copy.id;
+            if (n.type == "Function.Input" || n.type == "Function.Output") {
+                const bool input = n.type == "Function.Input";
+                copy.type = "Utility.Reroute";
+                copy.config = json{{"type", n.config.value("type", "float")}};
+                if (n.config.contains("default")) copy.config["default"] = n.config["default"];
+                (input ? input_of : output_of)[n.config.value("name", input ? "In" : "Out")] = copy.id;
+            }
+            m.nodes.push_back(std::move(copy));
+        }
+        for (const Link& l : fn->links) {
+            if (ids.count(l.from.node) && ids.count(l.to.node)) m.links.push_back({{ids[l.from.node], l.from.pin}, {ids[l.to.node], l.to.pin}});
+        }
+        // Rewire the call site: its inputs feed the input reroutes, its outputs come from the output reroutes.
+        std::vector<Link> kept;
+        for (const Link& l : m.links) {
+            if (l.to.node == site.id) {
+                auto it = input_of.find(l.to.pin);
+                if (it != input_of.end()) kept.push_back({l.from, {it->second, "value"}});
+            } else if (l.from.node == site.id) {
+                auto it = output_of.find(l.from.pin);
+                if (it != output_of.end()) kept.push_back({{it->second, "value"}, l.to});
+            } else {
+                kept.push_back(l);
+            }
+        }
+        m.links = std::move(kept);
+        // Per-node defaults on the call become the input reroutes' defaults.
+        for (const auto& [pin, value] : site.defaults.items()) {
+            auto it = input_of.find(pin);
+            if (it != input_of.end()) m.Find(it->second)->config["default"] = value;
+        }
+    }
+    out = std::move(m);
+    return true;
 }
 
 } // namespace aether::mat

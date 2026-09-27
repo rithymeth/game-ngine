@@ -74,6 +74,51 @@ std::string Convert(const std::string& expr, PinType from, PinType to) {
     return "(" + expr + ")." + kSwizzle[b];
 }
 
+u64 Fnv1a(const std::string& s, u64 h = 1469598103934665603ull);
+
+const char* kNoiseHelpers = R"(float3 AetherHash33(float3 p) {
+    p = float3(dot(p, float3(127.1, 311.7, 74.7)), dot(p, float3(269.5, 183.3, 246.1)), dot(p, float3(113.5, 271.9, 124.6)));
+    return -1.0 + 2.0 * frac(sin(p) * 43758.5453123);
+}
+float AetherGradient(float3 i, float3 f, float3 corner) {
+    return dot(AetherHash33(i + corner), f - corner);
+}
+// Gradient noise, about -1..1.
+float AetherGradientNoise(float3 p) {
+    float3 i = floor(p);
+    float3 f = frac(p);
+    float3 u = f * f * (3.0 - 2.0 * f);
+    return lerp(lerp(lerp(AetherGradient(i, f, float3(0, 0, 0)), AetherGradient(i, f, float3(1, 0, 0)), u.x),
+                     lerp(AetherGradient(i, f, float3(0, 1, 0)), AetherGradient(i, f, float3(1, 1, 0)), u.x), u.y),
+                lerp(lerp(AetherGradient(i, f, float3(0, 0, 1)), AetherGradient(i, f, float3(1, 0, 1)), u.x),
+                     lerp(AetherGradient(i, f, float3(0, 1, 1)), AetherGradient(i, f, float3(1, 1, 1)), u.x), u.y), u.z);
+}
+float AetherFbm(float3 p, int octaves) {
+    float sum = 0.0;
+    float amplitude = 0.5;
+    for (int o = 0; o < octaves; ++o) {
+        sum += amplitude * AetherGradientNoise(p);
+        p *= 2.0;
+        amplitude *= 0.5;
+    }
+    return sum;
+}
+)";
+
+const char* kTriplanarHelpers = R"(float3 AetherTriplanarWeights(float3 n, float sharpness) {
+    float3 w = pow(abs(n), sharpness);
+    return w / max(w.x + w.y + w.z, 1e-5);
+}
+float4 AetherTriplanar(Texture2D t, SamplerState s, float3 p, float3 n, float sharpness) {
+    float3 w = AetherTriplanarWeights(n, sharpness);
+    return t.Sample(s, p.yz) * w.x + t.Sample(s, p.xz) * w.y + t.Sample(s, p.xy) * w.z;
+}
+float4 AetherTriplanarLevel(Texture2D t, SamplerState s, float3 p, float3 n, float sharpness) {
+    float3 w = AetherTriplanarWeights(n, sharpness);
+    return t.SampleLevel(s, p.yz, 0) * w.x + t.SampleLevel(s, p.xz, 0) * w.y + t.SampleLevel(s, p.xy, 0) * w.z;
+}
+)";
+
 struct OutputPin {
     const char* pin;
     const char* field;
@@ -98,6 +143,7 @@ struct Emitter {
     std::set<std::string>& textures;
     std::set<NodeId>& live;
     u32& instructions;
+    std::map<std::string, std::string>& helpers; // helper function name -> its HLSL
 
     std::vector<std::string> lines;
     std::map<std::string, std::string> shared; // expression -> the local holding it
@@ -128,6 +174,10 @@ struct Emitter {
         if (p.implicit == "normal") {
             features.vertex_normal = true;
             return Convert("i.vertex_normal", PinType::Float3, want);
+        }
+        if (p.implicit == "world_position") {
+            features.world_position = true;
+            return Convert("i.world_position", PinType::Float3, want);
         }
         if (p.implicit == "time") {
             features.time = true;
@@ -220,6 +270,37 @@ struct Emitter {
             out["uv"] = Local(PinType::Float2, "(" + uv + " + " + speed + " * " + time + ")");
         } else if (t == "Texture.NormalUnpack") {
             out["normal"] = Local(PinType::Float3, "((" + in("packed", PinType::Float4) + ").xyz * 2.0 - 1.0)");
+        } else if (t == "Utility.Reroute") {
+            out["value"] = in("value", sig.outputs[0].type);
+        } else if (t == "Math.Noise") {
+            helpers.emplace("AetherNoise", kNoiseHelpers);
+            const std::string p = "(" + in("position", PinType::Float3) + " * " + in("scale", PinType::Float) + ")";
+            const u32 octaves = node.config.value("octaves", 1u);
+            out["result"] = Local(PinType::Float, octaves == 1 ? "AetherGradientNoise(" + p + ")"
+                                                               : "AetherFbm(" + p + ", " + std::to_string(octaves) + ")");
+        } else if (t == "Texture.Triplanar") {
+            helpers.emplace("AetherTriplanar", kTriplanarHelpers);
+            const std::string v = Local(PinType::Float4, std::string(vertex ? "AetherTriplanarLevel(" : "AetherTriplanar(") +
+                                                             in("texture", PinType::Texture) + ", MaterialSampler, " +
+                                                             in("position", PinType::Float3) + " * " + in("scale", PinType::Float) + ", " +
+                                                             in("normal", PinType::Float3) + ", " + in("sharpness", PinType::Float) + ")");
+            out["rgba"] = v;
+            out["rgb"] = v + ".rgb";
+        } else if (t == "Custom.HLSL") {
+            // Each distinct body and signature becomes one helper function.
+            std::string params, args;
+            for (const PinDesc& p : sig.inputs) {
+                params += std::string(params.empty() ? "" : ", ") + (p.type == PinType::Texture ? "Texture2D" : TypeName(p.type)) + " " + p.name;
+                args += (args.empty() ? "" : ", ") + in(p.name.c_str(), p.type);
+            }
+            const std::string code = node.config.value("code", "return 0.0;");
+            const std::string head = std::string(TypeName(sig.outputs[0].type)) + " %s(" + params + ")";
+            char name[40];
+            std::snprintf(name, sizeof name, "Custom_%016llx", static_cast<unsigned long long>(Fnv1a(head + "\n" + code)));
+            std::string text = head;
+            text.replace(text.find("%s"), 2, name);
+            helpers.emplace(name, text + " {\n" + code + "\n}\n");
+            out["result"] = Local(sig.outputs[0].type, std::string(name) + "(" + args + ")");
         } else if (t.rfind("Math.", 0) == 0) {
             const PinType g = GenericType(node, sig);
             std::vector<std::string> args;
@@ -246,7 +327,7 @@ struct Emitter {
     }
 };
 
-u64 Fnv1a(const std::string& s, u64 h = 1469598103934665603ull) {
+u64 Fnv1a(const std::string& s, u64 h) {
     for (const unsigned char c : s) {
         h ^= c;
         h *= 1099511628211ull;
@@ -296,10 +377,23 @@ ParameterLayout LayoutParameters(const Material& m) {
     return layout;
 }
 
-GeneratedMaterial GenerateHlsl(const Material& m) {
+GeneratedMaterial GenerateHlsl(const Material& material) {
     GeneratedMaterial g;
-    g.analysis = Analyze(m);
-    if (!g.analysis.Ok()) return g;
+    g.analysis = Analyze(material);
+    if (!g.analysis.Ok() || material.is_function) return g;
+    // Functions are inlined; the flat graph is what's emitted.
+    Material m;
+    std::string inline_error;
+    if (!InlineFunctions(material, m, &inline_error)) {
+        g.analysis.diagnostics.push_back({"MT012", Severity::Error, 0, "", inline_error});
+        ++g.analysis.errors;
+        return g;
+    }
+    const Analysis flat = Analyze(m);
+    if (!flat.Ok()) {
+        g.analysis = flat;
+        return g;
+    }
 
     std::map<NodeId, NodeSignature> sigs;
     for (const Node& n : m.nodes) sigs.emplace(n.id, *ResolveNode(m, n));
@@ -317,14 +411,15 @@ GeneratedMaterial GenerateHlsl(const Material& m) {
         if (unlit) return pin == "Emissive";
         return true;
     };
-    const NodeId out = g.analysis.output;
+    const NodeId out = flat.output;
     const NodeSignature& out_sig = sigs.at(out);
     std::set<std::string> textures;
     std::set<NodeId> live;
     u32 instructions = 0;
+    std::map<std::string, std::string> helpers;
 
     // The pixel stage: the surface.
-    Emitter pixel{m, g.analysis, sigs, incoming, ids, false, g.features, textures, live, instructions, {}, {}, {}};
+    Emitter pixel{m, flat, sigs, incoming, ids, false, g.features, textures, live, instructions, helpers, {}, {}, {}};
     std::vector<std::string> assigns;
     for (const OutputPin& p : kSurfacePins) {
         const PinDesc& desc = *out_sig.Input(p.pin);
@@ -332,7 +427,7 @@ GeneratedMaterial GenerateHlsl(const Material& m) {
         assigns.push_back(std::string("    o.") + p.field + " = " + value + ";");
     }
     // The vertex stage: the world position offset, when connected.
-    Emitter vertex{m, g.analysis, sigs, incoming, ids, true, g.features, textures, live, instructions, {}, {}, {}};
+    Emitter vertex{m, flat, sigs, incoming, ids, true, g.features, textures, live, instructions, helpers, {}, {}, {}};
     std::string wpo = "float3(0.0, 0.0, 0.0)";
     if (incoming.count({out, "WorldPositionOffset"})) {
         g.features.world_position_offset = true;
@@ -378,6 +473,13 @@ GeneratedMaterial GenerateHlsl(const Material& m) {
          "    float opacity;\n"
          "    float opacity_mask;\n"
          "};\n\n";
+    // Library helpers (noise, triplanar) first, then Custom nodes' functions.
+    for (const auto& [name, text] : helpers) {
+        if (name.rfind("Aether", 0) == 0) h += text + "\n";
+    }
+    for (const auto& [name, text] : helpers) {
+        if (name.rfind("Custom_", 0) == 0) h += text + "\n";
+    }
     h += "MaterialOutputs EvaluateMaterial(MaterialInputs i) {\n    MaterialOutputs o;\n";
     for (const std::string& l : pixel.lines) h += l + "\n";
     for (const std::string& l : assigns) h += l + "\n";
