@@ -1449,9 +1449,10 @@ Jolt ragdolls come at the end of the phase.
    (`aether/animation/*.h`).
 2. ✅ **Done.** Blend spaces (1D, and 2D by triangulation) with synced
    playback, and root motion extraction (§16.3).
-3. The animation graph model and its runtime: a state machine (states,
-   transitions with conditions on graph variables, blend times,
-   conduits, sub-machines) and the blend nodes. Diagnostics AG001 and up.
+3. ✅ **Done.** The animation graph model and its runtime: a state
+   machine (states, transitions with conditions on graph variables,
+   blend times, conduits, sub-machines) and the blend nodes. Diagnostics
+   AG001–AG011 (§16.4).
 4. The `Animator` component, evaluated in parallel jobs; montages
    (sections, slots); anim notifies as Blueprint events; root motion into
    `CharacterMovement`.
@@ -1493,4 +1494,48 @@ Jolt ragdolls come at the end of the phase.
   - `StripRootMotion` plays the clip in place: the root stays at its
     start position and heading.
   - A blend space's motion is the weighted sum of its clips' motion.
+
+### 16.4 Animation graphs (`.aanim`)
+
+- **Variables** are bool, int, float or trigger. A trigger lasts until a
+  transition uses it or the next Update ends.
+- **Pose nodes** form a DAG ending at `output`:
+  - Clip;
+  - Blend Space, with its parameters from variables;
+  - Blend, by a float alpha;
+  - Blend by Bool and Blend by Int, which crossfade over `blend_time`;
+  - Layered, where a layer applies from a bone down, with an optional
+    soft ramp;
+  - Additive, which applies the input's difference from the rest pose;
+  - State Machine.
+
+  A node shared by two parents is evaluated once per frame.
+- **State machines**:
+  - Each state plays a pose node. A State Machine node there makes it a
+    sub-machine, which restarts at its entry whenever its state is
+    entered.
+  - Conduits have no pose: a transition into one is taken only when one
+    of the conduit's exits holds too, and it goes straight through.
+  - Transitions come from a state or from any state. Each has conditions
+    that must all hold, and a priority (higher first, then list order).
+  - A transition can also require that the state's animation is within
+    `blend_time` of its end.
+  - Transitions crossfade over `blend_time`, and the state being left
+    keeps playing during the crossfade. A transition taken mid-blend
+    blends from a snapshot of the current pose, so nothing pops.
+  - The state changes of each Update are reported (for Blueprint events
+    in step 4).
+- **Diagnostics**:
+  - AG001: no output node.
+  - AG002: wrong inputs.
+  - AG003: pose nodes that loop.
+  - AG004: an unknown variable.
+  - AG005: a variable of the wrong type for its use or comparison.
+  - AG006: a machine problem (no states, a bad entry, a missing state,
+    an unknown machine).
+  - AG007: a conduit as the entry, or with no way out.
+  - AG008: a machine inside itself.
+  - AG009 (warning): an unreachable state.
+  - AG010: a missing clip or blend space.
+  - AG011: a duplicate name.
 
