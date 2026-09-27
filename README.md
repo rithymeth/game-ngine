@@ -3932,6 +3932,38 @@ HLSL, like Unreal's material editor. They live in `Aether::Renderer`
 - 300/300 tests pass on GCC 13, Clang and ASan/UBSan, and 331/331 with
   physics.
 
+**Step 4: functions, custom code, noise and triplanar** (§15.5).
+
+- **Material functions** (`.amf`) are reusable subgraphs with Function
+  Input and Function Output nodes. Materials call them with
+  `Function.Call:<name>` nodes, and functions can call other functions.
+  - Codegen inlines each call. The inputs and outputs become typed
+    reroutes, so a function returns exactly the type it declares.
+  - Errors: an interface problem (MT011), an unknown or recursive call
+    (MT012), or a broken function (MT013) is reported on the call.
+- **Custom HLSL node**: typed inputs, an output type and a function body.
+  Identical nodes share one helper function.
+- **Noise**: 3D gradient noise, with up to 8 octaves of fBm. It uses
+  world position by default.
+- **Triplanar Sample**: a texture projected along X, Y and Z, blended by
+  the normal. It uses `SampleLevel` in the vertex stage.
+- **Reroute** node, typed.
+
+**Verified**: 3 new tests.
+
+- Function interfaces, palettes and every error code, including
+  recursion through two functions. Functions round-trip as
+  `MaterialFunction` files.
+- A function that calls another function twice inlines with no calls
+  left. Each call keeps its own defaults, and a declared float3 output
+  keeps its type. The original graph is untouched, and the output
+  compiles.
+- Custom, Noise (1 and 4 octaves) and Triplanar (pixel and vertex)
+  generate the expected helpers and calls, and compile. Bad Custom and
+  Noise configs, and an unsampled Triplanar, are refused.
+- 303/303 tests pass on GCC 13, Clang and ASan/UBSan, and 334/334 with
+  physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,

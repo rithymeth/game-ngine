@@ -1321,8 +1321,8 @@ generic: their result is their widest input, and a float input broadcasts
 3. ✅ **Done.** Material instances: parameter overrides without
    recompiling, the packed parameter buffer, and the Blueprint parameter
    nodes (`aether/renderer/material_instance.h`, §15.4).
-4. Material functions (reusable subgraphs), a Custom HLSL node, Noise and
-   Triplanar.
+4. ✅ **Done.** Material functions (reusable subgraphs), a Custom HLSL
+   node, Noise and Triplanar (§15.5).
 5. The material editor: the graph panel (Phase 12's widget), parameters,
    details and stats.
 6. DXC compilation to DXIL and SPIR-V, the permutation cache in the DDC, and
@@ -1377,3 +1377,25 @@ generic: their result is their widest input, and a float input broadcasts
   Set Texture, Get Scalar, Get Vector, Clear).
 - Extraction copies the overrides into the render scene, and draw
   batches split by material.
+
+### 15.5 Functions and custom code
+
+- A material function (`.amf`, `"$type": "MaterialFunction"`) is a graph
+  with `Function.Input` nodes (`name`, `type`, `default`) and
+  `Function.Output` nodes instead of a Material Output. A material calls
+  one with `Function.Call:<name>`, resolved against its `FunctionLibrary`.
+  - The call's pins are the function's inputs and outputs, in node order.
+    Texture inputs are required.
+  - Codegen inlines calls, recursively. Each input and output becomes a
+    `Utility.Reroute` of its declared type, so a function's output type
+    is exactly what it declares.
+  - Errors: MT011 (the interface), MT012 (unknown or recursive calls) and
+    MT013 (a called function has its own errors).
+- `Custom.HLSL` takes typed inputs (unique identifiers, not `i` or
+  `_t…`), an output type and a function body. Each distinct body and
+  signature is emitted once, as a helper function.
+- `Math.Noise` is 3D gradient noise over world position (by default)
+  times a scale. With 1 to 8 octaves, it becomes fBm.
+- `Texture.Triplanar` projects a texture along the three axes, blending
+  by the normal raised to a sharpness. The vertex stage samples with
+  `SampleLevel`.
