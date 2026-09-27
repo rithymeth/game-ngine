@@ -3600,8 +3600,9 @@ Phase 13.
 - Fix found on the way: gravity applied while standing made characters
   creep down walkable slopes at about 7 cm/s. It now applies only in the
   air.
-- 301/301 tests pass with physics on GCC 13, and 273/273 without physics
-  on GCC 13, Clang and ASan/UBSan.
+- 301/301 tests pass with physics on GCC 13 (RelWithDebInfo and Debug)
+  and under ASan/UBSan, and 273/273 without physics on GCC 13, Clang and
+  ASan/UBSan.
 
 ## Building
 
