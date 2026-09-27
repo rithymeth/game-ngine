@@ -3858,6 +3858,43 @@ HLSL, like Unreal's material editor. They live in `Aether::Renderer`
 - 291/291 tests pass on GCC 13, Clang and ASan/UBSan, and 322/322 with
   physics.
 
+**Step 2: HLSL generation** (§15.3, `aether/renderer/material_codegen.h`).
+
+- **`GenerateHlsl`** turns a valid material into a shader include:
+  - a `MaterialParams` constant buffer;
+  - the textures it samples;
+  - `EvaluateMaterial` for the pixel stage;
+  - `EvaluateWorldPositionOffset` for the vertex stage, which samples with
+    `SampleLevel`.
+- **Only what's used**: nodes that don't reach an output are dropped, and
+  so are the ones behind pins the settings ignore (Opacity on an Opaque
+  material, everything except Emissive on Unlit). Identical expressions
+  are computed once.
+- **Parameter layout**: widest first, each into the first gap that
+  doesn't cross a 16-byte register, with explicit `packoffset`s.
+  Parameter names become safe, unique identifiers (`P_Base_Tint`).
+- **Permutations**: defines for shading, blend, two-sided, mask clip,
+  world position offset, UV count and the inputs used. There is also a
+  64-bit key that ignores node positions and parameter values.
+- Stats for the editor: live node and instruction counts.
+
+**Verified**: 5 new tests.
+
+- The buffer layout matches HLSL's rules, and identifiers are made safe
+  and unique.
+- The surface code matches expected lines, including broadcasts,
+  truncation and per-node defaults. Invalid materials don't generate.
+- Dead nodes and ignored pins emit nothing. Two identical multiplies and a
+  sample read three times are each computed once.
+- A graph using every node type samples with `SampleLevel` in the vertex
+  stage, gives only sampled textures a slot, and reports its features.
+  Keys change with code and settings only.
+- When `glslangValidator` is installed, the output of five materials
+  compiles as HLSL (lit, unlit, translucent, empty, and the graph with
+  every node type).
+- 296/296 tests pass on GCC 13, Clang and ASan/UBSan, and 327/327 with
+  physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,

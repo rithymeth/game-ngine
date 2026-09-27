@@ -1314,9 +1314,10 @@ generic: their result is their widest input, and a float input broadcasts
 1. ✅ **Done.** The material model: asset, graph, node library, type
    inference, validation (MT001–MT010) and `.amat` save/load
    (`aether/renderer/material.h`).
-2. HLSL generation: dead-node elimination, shared subexpressions,
-   parameter buffer layout (16-byte rules) and texture slots, and a
-   permutation key.
+2. ✅ **Done.** HLSL generation: dead-node elimination, shared
+   subexpressions, parameter buffer layout (16-byte rules) and texture
+   slots, and a permutation key (`aether/renderer/material_codegen.h`,
+   §15.3).
 3. Material instances: parameter overrides without recompiling, the
    packed parameter buffer, and the Blueprint parameter nodes.
 4. Material functions (reusable subgraphs), a Custom HLSL node, Noise and
@@ -1325,3 +1326,25 @@ generic: their result is their widest input, and a float input broadcasts
    details and stats.
 6. DXC compilation to DXIL and SPIR-V, the permutation cache in the DDC, and
    the live preview (GPU).
+
+### 15.3 Generated shaders
+
+`GenerateHlsl` produces an include that the renderer's passes call:
+
+- `cbuffer MaterialParams : register(b0, space1)` holds every scalar and
+  vector parameter, widest first, each with an explicit `packoffset` in the
+  first gap that doesn't cross a 16-byte register. The layout depends only
+  on the parameters, so instances share it.
+- The textures the graph samples are `Texture2D T_<name> : register(tN,
+  space1)`, in declaration order, with one `MaterialSampler` at `s0`.
+- `MaterialOutputs EvaluateMaterial(MaterialInputs i)` is the pixel stage.
+  It fills every output: pins the settings ignore get their defaults, and
+  their nodes are not emitted.
+- `float3 EvaluateWorldPositionOffset(MaterialInputs i)` is the vertex
+  stage. It samples with `SampleLevel(..., 0)`.
+- Defines select the pass's permutation: `MATERIAL_SHADING_*`,
+  `MATERIAL_BLEND_*`, `MATERIAL_TWO_SIDED`, `MATERIAL_OPACITY_MASK_CLIP`,
+  `MATERIAL_WORLD_POSITION_OFFSET`, `MATERIAL_TEXCOORDS=N` and
+  `MATERIAL_USES_*`.
+- The permutation key is a hash of the code and the defines. Moving nodes
+  or changing parameter values doesn't change it.
