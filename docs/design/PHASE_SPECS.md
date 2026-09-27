@@ -1318,8 +1318,9 @@ generic: their result is their widest input, and a float input broadcasts
    subexpressions, parameter buffer layout (16-byte rules) and texture
    slots, and a permutation key (`aether/renderer/material_codegen.h`,
    §15.3).
-3. Material instances: parameter overrides without recompiling, the
-   packed parameter buffer, and the Blueprint parameter nodes.
+3. ✅ **Done.** Material instances: parameter overrides without
+   recompiling, the packed parameter buffer, and the Blueprint parameter
+   nodes (`aether/renderer/material_instance.h`, §15.4).
 4. Material functions (reusable subgraphs), a Custom HLSL node, Noise and
    Triplanar.
 5. The material editor: the graph panel (Phase 12's widget), parameters,
@@ -1348,3 +1349,31 @@ generic: their result is their widest input, and a float input broadcasts
   `MATERIAL_USES_*`.
 - The permutation key is a hash of the code and the defines. Moving nodes
   or changing parameter values doesn't change it.
+
+### 15.4 Material instances (`.amati`)
+
+```json
+{
+  "$type": "MaterialInstance", "$version": 1,
+  "parent": "materials/M_Metal.amat",
+  "parameters": { "Tint": [0.8, 0.4, 0.2, 0], "Roughness": 0.9,
+                  "Albedo": {"texture": "<asset guid>"} }
+}
+```
+
+- A parent is a material or another instance; chains resolve parent
+  first, up to 16 deep. The chain errors are MI003 (a loop), MI004 (a
+  missing or wrong-type parent) and MI005 (too deep).
+- An override is skipped with a warning when the parameter was renamed
+  away (MI001) or its kind changed (MI002), so instances survive edits to
+  their parent.
+- Instances share the parent's shader: only the MaterialParams bytes and
+  the texture bindings differ.
+- At runtime a `ParameterBlock` holds one set of values. It repacks
+  lazily, and its revision changes only when a value does.
+- Per entity, the `MaterialParameters` component names the material or
+  instance to draw with and holds overrides. Its Blueprint-callable
+  methods become the Blueprint parameter nodes (Set Scalar, Set Vector,
+  Set Texture, Get Scalar, Get Vector, Clear).
+- Extraction copies the overrides into the render scene, and draw
+  batches split by material.
