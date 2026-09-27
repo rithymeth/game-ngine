@@ -197,6 +197,8 @@ FetchContent_MakeAvailable(miniaudio)
 add_subdirectory(audio)
 # Runtime game UI (Phase 18): widgets, layout, input and a draw list; engine-only.
 add_subdirectory(ui)
+# Particle systems (Phase 19): emitters, modules and the simulation; engine-only.
+add_subdirectory(vfx)
 
 if(AETHER_BUILD_SCRIPTING)
     # Luau (MIT, luau-lang/luau): the scripting VM and compiler (Phase 11).

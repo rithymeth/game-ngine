@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Now: Phase 19 — VFX and particles (in progress)
 
 ### Phase 1 — Foundation
 
@@ -4858,6 +4858,68 @@ renderer, so its layout, input and styles are tested headless.
   - keying, scrubbing and looping playback;
   - Delete and Ctrl+Z keys, and selections that go stale.
 - 377/377 tests pass on GCC 13, Clang and ASan/UBSan, and 409/409 with
+  physics.
+
+### Phase 19 (in progress) — VFX and particles
+
+The `Aether::VFX` library (`vfx/`): particle systems as stacks of modules,
+simulated on the CPU (the GPU path generates the same stack as a compute
+shader later). Spec: [PHASE_SPECS.md, Phase 19](docs/design/PHASE_SPECS.md).
+
+**Step 1: emitters, modules and the CPU simulation** (§19.1).
+
+- **Values**:
+  - Ranges.
+  - Float curves: linear, smooth or stepped.
+  - Colour gradients.
+  - A seedable random generator, and curl noise.
+- **Modules**:
+  - Spawn: rate, bursts, and per distance moved.
+  - Initialize: lifetime, seven shapes, cone, radial or direction
+    velocity, size, colour, rotation and spin, and the emitter's own
+    velocity.
+  - Update:
+    - gravity, drag, curl noise, vortices and attractors;
+    - collision planes and kill volumes;
+    - speed, size and colour over life.
+- **Emitters**: world or local simulation, loops, delays, warmup and
+  caps.
+- **Assets**: saved in `.avfx` files, with errors that say where and
+  seven checks (FX001–FX007).
+- **The simulation**:
+  - One array per attribute.
+  - Births placed along the emitter's motion within the frame.
+  - Repeatable for a given seed.
+  - Whole systems of emitters.
+
+**Verified**: 3 new tests.
+
+- Values:
+  - curves (keys, holds, smoothing, clamping);
+  - gradients;
+  - the generator's repeatability and distributions;
+  - noise smoothness and a curl with no divergence;
+  - JSON and its errors.
+- Assets:
+  - every module round-tripped;
+  - eight kinds of load error with their paths;
+  - all seven checks.
+- The simulation:
+  - rates, including two added;
+  - lifetimes;
+  - bursts in cycles and loops, start delays and the cap;
+  - repeatability and Restart;
+  - gravity and drag against their formulas;
+  - all seven shapes;
+  - velocities in a turned emitter, and radial velocity;
+  - world against local space;
+  - trails along the path, with inherited velocity;
+  - vortex, attractor, kill volumes and a bouncing ball on a plane;
+  - over-life curves;
+  - warmup, stopping, bounds and systems.
+- 50,000 particles with gravity, drag, size, colour and a plane take
+  about 1.3 ms a frame.
+- 380/380 tests pass on GCC 13, Clang and ASan/UBSan, and 412/412 with
   physics.
 
 ## Building
