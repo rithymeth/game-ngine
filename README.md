@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 done on the engine side (asset system; prefabs and scheduling); their editor UI, and Phase 7's, pending a Windows build. Now: Phase 10 — Input (in progress)
+## Status: Phases 8–9 and 11 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Next: Phase 12 — Blueprints
 
 ### Phase 1 — Foundation
 
@@ -2327,7 +2327,7 @@ Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 10
 Steps 3 (Win32 and XInput backends) and 4 (the input editor) need the
 Windows build.
 
-### Phase 11 (in progress) — Scripting (Luau)
+### Phase 11 (done on the portable side) — Scripting (Luau)
 
 Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 11.
 
@@ -2655,6 +2655,76 @@ The socket listener comes with the Windows editor hookup.
 - **Edge cases**: pause while running, unknown requests, stepping while
   running, the client vanishing mid-stop, and `disconnect`.
 - 215/215 tests pass on GCC 13, on Clang and under ASan/UBSan, and 222/222
+  with physics.
+
+**Step 6, part 3: the code editor panel** (`editor/src/ui/code_editor.h`,
+portable). This finishes Phase 11 on the portable side. Hooking the panel,
+completion, the debugger and a DAP socket into the Windows editor window is
+Windows editor work.
+
+- **`CodeDocument`** is the text model and has no UI.
+  - **Text**: lines of UTF-8, and the cursor never lands inside a code
+    point. CRLF and tabs are normalized on load. Offsets convert both ways,
+    for completion.
+  - **Moving**: arrows, words, Home (to the first non-blank character, then
+    to column 0), End, and selection.
+  - **Editing**:
+    - Enter auto-indents after `then`, `do`, `else`, `repeat`, `function(...)`,
+      `{` and `(`, ignoring comments.
+    - Typing `end`, `else`, `elseif`, `until` or `}` alone on a line takes
+      back one level.
+    - Backspace in the indentation goes back an indent stop.
+    - Tab and Shift+Tab indent or unindent the selected lines, and Ctrl+/
+      toggles `-- ` at their common indent.
+  - **Undo/redo** keeps snapshots. A run of typing is one step, and moving
+    or punctuation ends it. `Dirty()` is false again after undoing back to
+    the saved text.
+  - **Find** is forward or backward, wraps, and can match case.
+  - **`TokenizeLuauLine`** highlights keywords, the engine's builtins
+    (`self`, `world`, `Input`, `math`, ...), numbers (`2.5e-3`), strings
+    with escapes, and comments. Long comments and strings (`--[[`,
+    `[==[`) carry across lines. A field named like a keyword (`t.end`)
+    stays plain text.
+- **`DrawCodeEditor`** is the ImGui widget, in a scrolling child window.
+  - **Gutter**: line numbers and breakpoint dots; clicking toggles a
+    breakpoint and reports it.
+  - **Markers**: the debugger's current line (a yellow arrow and band) and
+    the error line (a red band with an underline, and the message on
+    hover).
+  - **Text**: highlighted, with the selection and cursor drawn.
+  - **Mouse**: click to place the cursor, Shift+click or drag to select.
+    Clicking outside drops focus.
+  - **Keys**: everything the model does, plus PageUp/PageDown, Ctrl+A/C/X/V,
+    Ctrl+Z/Y, Ctrl+S (reported as a save request) and read-only mode.
+    While it's focused, it owns Tab, Enter and the arrows, so they edit
+    instead of moving focus.
+  - **Completion popup**: it opens while typing a name or after `.`/`:`,
+    and on Ctrl+Space. Up/Down pick, Enter or Tab accept (one undo step),
+    and Escape or a non-name character closes it.
+    - It takes its items from a callback, which the editor wires to
+      `script::CompleteScript`, so this library doesn't depend on
+      scripting.
+
+**Verified**: 6 new tests.
+
+- **The model**:
+  - Offsets, clamping, moving and UTF-8.
+  - Auto-indent of a whole function typed key by key, Enter mid-line,
+    comments, `else`, Backspace stops, Tab and Shift+Tab with a selection,
+    and comment toggling.
+  - Undo runs, dirty tracking through undo and save, and find with
+    wrapping and case.
+  - Tokens for numbers, strings, members, and long comments and strings
+    across lines.
+- **The widget, headless**:
+  - Keys are ignored until it's focused.
+  - Typing and auto-indent, selection, select all, copy, undo/redo, save,
+    Tab staying in the editor, Ctrl+/, and read-only.
+  - Clicking and Shift+click selection, breakpoint toggling, and the
+    completion popup: open, refine, pick with the arrows, accept, undo,
+    Escape and Ctrl+Space.
+  - Losing focus on an outside click.
+- 221/221 tests pass on GCC 13, on Clang and under ASan/UBSan, and 228/228
   with physics.
 
 ## Building

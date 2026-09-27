@@ -7,6 +7,8 @@ add_library(aether_editor_ui STATIC
     entity_inspector.cpp
     script_inspector.cpp
     error_overlay.cpp
+    code_document.cpp
+    code_editor.cpp
     ../core/command_stack.cpp
     ../core/commands.cpp
     ../core/play_session.cpp
