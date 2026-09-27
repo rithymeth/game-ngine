@@ -5043,6 +5043,46 @@ shader later). Spec: [PHASE_SPECS.md, Phase 19](docs/design/PHASE_SPECS.md).
 - 388/388 tests pass on GCC 13, Clang and ASan/UBSan, and 420/420 with
   physics.
 
+**Step 5: the GPU path** (§19.5, `aether/vfx/gpu.h`).
+
+- **CPU or GPU per emitter**: Auto picks the GPU for big emitters it
+  can run. Sub-emitters, lights and ribbons need the CPU, and the check
+  says which.
+- **A generated HLSL compute shader** per emitter stack:
+  - reset, emit and update kernels with dead and alive lists;
+  - the whole Initialize and Update stack, with curl noise and
+    depth-buffer collision when they're used;
+  - enums compiled in, values read from constants.
+- **Constants packed on the CPU** each frame, so parameters work without
+  recompiling. Curves and gradients become lookup tables.
+- **A CPU-side driver** keeps the clock and spawn modules and hands the
+  GPU its spawn counts and frame constants. Dispatch comes with the
+  Windows renderer.
+
+**Verified**: 3 new tests.
+
+- What can run on the GPU, and the target choice in every setting, saved
+  and loaded.
+- Generated shaders:
+  - the right kernels and resources;
+  - constants counted, ordered and named;
+  - the same key when only values change, and a new one when the stack
+    changes;
+  - disabled modules left out.
+- 14 variants (every shape, velocity mode, space, volume shape and
+  module frame, plus an empty stack) compiled with glslangValidator,
+  every kernel, and checked with spirv-val.
+- Baked curves within 0.03 of the curve, and gradient tables.
+- The frame constants' layout, word by word.
+- The driver:
+  - spawn counts from rates and bursts;
+  - frame seeds;
+  - motion and velocity;
+  - parameters in the spawner and the constants;
+  - stop and restart.
+- 391/391 tests pass on GCC 13, Clang and ASan/UBSan, and 423/423 with
+  physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,

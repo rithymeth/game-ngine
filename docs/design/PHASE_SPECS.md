@@ -2500,7 +2500,53 @@ CPU simulation as its reference and as the path for small emitters.
 - Emitters take a spawn scale (`SetSpawnScale`), which multiplies rates,
   bursts and per-distance spawning.
 
-### 19.5 PR breakdown
+### 19.5 The GPU path
+
+- **Support** (`CheckGpuSupport`): everything runs on the GPU except
+  sub-emitters, light renderers and ribbons. Sub-emitters and lights
+  need particle data back on the CPU; ribbons need birth order. Scene
+  collisions there use the depth buffer.
+- **Choosing CPU or GPU** (`ChooseSimTarget`): each emitter has a target
+  of Auto, Cpu or Gpu.
+  - Auto picks the GPU when the device has compute, the stack is
+    supported, and `max_particles` reaches a threshold (4096).
+  - Gpu falls back to the CPU when the GPU can't run the emitter.
+- **The shader** (`GenerateParticleShader`): one HLSL compute shader of
+  64-thread groups, with three kernels:
+  - `ResetMain` (every slot free);
+  - `EmitMain` (per new particle): takes a slot from the dead list with
+    an atomic decrement, is placed along the frame's motion, and runs
+    the Initialize modules with a PCG hash per thread;
+  - `UpdateMain` (per slot): runs forces, then the move, then
+    collisions and kill volumes, then looks. It puts the dead back on
+    the dead list and the living on the alive list the renderer draws.
+  - Enums and `world` flags are compiled in, and disabled modules
+    compile out. Noise and depth code are included only when used.
+  - Its key is a hash of the code, so emitters whose stacks have the
+    same shape share a shader.
+- **Constants**: module values aren't in the code.
+  - They are float4s in a `Modules` constant buffer, packed by
+    `PackModuleConstants` in the order the shader reads them, each
+    named.
+  - Parameters therefore change them without a recompile.
+  - Curves are baked into 16-sample tables (4 float4s), gradients into
+    16 float4s, and both are read back with linear interpolation.
+- **Frame constants** (`PackFrameConstants`): delta time, time, spawn
+  count, a frame seed, the emitter's pose, previous position and
+  velocity, particle cap, and the depth buffer's size and thickness.
+  Also the view-projection and its inverse, column-major as HLSL
+  stores them.
+- **The driver** (`GpuEmitterDriver`): the CPU half of a GPU emitter.
+  - It runs the clock, loops and spawn modules with the same code as
+    the CPU path (an emitter instance whose particles are counted and
+    dropped each frame).
+  - Each frame it gives the spawn count and frame constants.
+  - It applies parameters to both the spawner and the constants.
+- Dispatch belongs to the Windows renderer. The CPU simulation is the
+  reference, and the path for small emitters and the unsupported
+  features.
+
+### 19.6 PR breakdown
 
 1. ✅ **Done.** Curves, gradients, noise and randomness; the emitter's module
    stacks (spawn, initialize, update) and their asset format and checks;
@@ -2515,7 +2561,7 @@ CPU simulation as its reference and as the path for small emitters.
 4. ✅ **Done.** The `ParticleSystem` component and system (pooling, culling by distance
    and bounds, LOD), and Blueprint nodes (Spawn Emitter at Location or
    Attached, Set Parameter, OnSystemFinished).
-5. The GPU path: the stack generated as a compute shader with the CPU
+5. ✅ **Done** (portable part). The GPU path: the stack generated as a compute shader with the CPU
    simulation as its reference, and the choice between them per emitter
    (dispatch with the Windows renderer).
 6. The editor: the emitter stack with module details, curve and gradient
