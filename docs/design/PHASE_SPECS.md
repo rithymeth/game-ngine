@@ -2287,3 +2287,100 @@ editors it is built on Dear ImGui alone and runs headless in tests.
    UI (health bars over enemies, projected or on 3D quads).
 6. ✅ **Done** (portable part). The UI Designer: palette, hierarchy, canvas with selection, anchors and
    resolution preview, details, and the animation timeline.
+
+---
+
+## Phase 19: VFX and particles
+
+The concept is in [ROADMAP.md Phase 19](../ROADMAP.md). The engine side is
+the `Aether::VFX` library (`vfx/`). An emitter is a stack of modules, as
+in Niagara or Unity's VFX Graph, and a CPU simulation runs the stack over
+arrays of particle attributes. It runs and is tested headless. The GPU
+path is the same stack generated as a compute shader (step 5), with the
+CPU simulation as its reference and as the path for small emitters.
+
+### 19.1 Emitters, modules and the CPU simulation
+
+- **Values** (`curves.h`):
+  - Ranges: a random value between min and max.
+  - Float curves: Linear, Smooth (Catmull-Rom, flat at the ends) or
+    Constant keys, clamped outside them.
+  - Colour gradients: colour and alpha keys apart.
+  - A seedable PCG32 generator, with points in and on spheres and
+    directions in a cone.
+  - Perlin noise and its curl (divergence-free swirls).
+  - Each type has a compact JSON form: a number for a constant, `[min,
+    max]` for a range, `{keys, interp}` for a curve, `{colors, alphas}`
+    for a gradient.
+- **Modules** (`emitter.h`), in three stages:
+  - **Spawn**: `SpawnRate` (per second, spread evenly through the frame,
+    part-particles carried over); `SpawnBurst` (a count at a time in each
+    loop, repeating for a number of cycles or until the loop ends);
+    `SpawnPerDistance` (along the path the emitter moved).
+  - **Initialize**: lifetime; shape (point, sphere, hemisphere, box,
+    cone base, circle, edge, from surface to volume by `thickness`);
+    velocity (a cone around a direction, radial from the shape, or a
+    direction); size; colour (a random point on a gradient); rotation
+    and spin; a share of the emitter's own velocity. Directions are in
+    the emitter's frame.
+  - **Update**:
+    - forces: gravity (world), drag, curl noise with a drifting field,
+      vortex (spin and pull), point attractors (falloff, kill radius);
+    - `SpeedOverLife`;
+    - collision planes (bounce, friction, life lost per hit, the
+      particle's radius);
+    - kill volumes (sphere or box, killing inside or outside);
+    - `SizeOverLife` and `ColorOverLife`, which multiply the particle's
+      initial values.
+    - Places are in the emitter's frame unless `world` is set.
+- **Emitter settings**: name, enabled, `max_particles`, the simulation
+  space (World: particles stay behind; Local: they move with the
+  emitter), loop duration, looping, start delay and warmup (simulated at
+  once in 1/30 s steps).
+- **Assets** (`.avfx`, JSON): `{version, name, emitters}`. Each module
+  saves its type and fields; the same field list writes, reads and
+  checks it. Errors name where
+  (`emitter 'A': update[1] (Vortex): center: a vector is [x, y, z]`).
+  Checks:
+  - FX001 nothing spawns (warning);
+  - FX002 a lifetime that isn't positive;
+  - FX003 `max_particles` outside 1 to 1,000,000;
+  - FX004 a range whose min is over its max;
+  - FX005 a burst bigger than `max_particles` (warning);
+  - FX006 a duration that isn't positive;
+  - FX007 keys out of order.
+- **The simulation** (`simulation.h`):
+  - `ParticleBuffer` holds one array per attribute: position, velocity,
+    age, lifetime, size, rotation, spin, colour, the initial size and
+    colour, a seed and an id. A death swaps the last particle in.
+  - `EmitterInstance` has its clock, loops, spawning and the stack.
+    - Newborns are placed along the emitter's motion during the frame
+      and have lived only part of it. Forces run in stack order, then
+      the move, then collisions, kill volumes and looks.
+    - The same asset, seed and steps give the same particles, and
+      `Restart` replays them.
+    - It can `Emit` on demand, `Stop` spawning, `Clear`, and report
+      bounds, spawn totals and loops.
+  - `ParticleSystemInstance` plays a system's emitters together.
+
+### 19.2 PR breakdown
+
+1. ✅ **Done.** Curves, gradients, noise and randomness; the emitter's module
+   stacks (spawn, initialize, update) and their asset format and checks;
+   the CPU simulation.
+2. Rendering data: sprites and billboards (camera-facing, velocity-aligned,
+   fixed axes), flipbook animation, sorting, soft-particle parameters,
+   mesh particles, ribbons and trails, and particle lights, as instance
+   and vertex data for the renderer.
+3. Events and sub-emitters (on birth, death and collision), collision
+   against the depth buffer and physics, and user parameters that modules
+   read (Set Parameter).
+4. The `ParticleSystem` component and system (pooling, culling by distance
+   and bounds, LOD), and Blueprint nodes (Spawn Emitter at Location or
+   Attached, Set Parameter, OnSystemFinished).
+5. The GPU path: the stack generated as a compute shader with the CPU
+   simulation as its reference, and the choice between them per emitter
+   (dispatch with the Windows renderer).
+6. The editor: the emitter stack with module details, curve and gradient
+   editors, and a live preview with a timeline scrubber and per-emitter
+   stats.
