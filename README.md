@@ -3727,6 +3727,49 @@ references for GPU passes; the GPU versions will be checked against them.
 - 280/280 tests pass on GCC 13, Clang and ASan/UBSan, and 311/311 with
   physics.
 
+**Step 3: the frame graph's planning** (§14.2).
+
+- **`FrameGraph`** (`renderer/include/aether/renderer/frame_graph.h`)
+  plans a frame without depending on D3D12 or Vulkan.
+  - Each pass declares its queue (graphics or compute) and what it reads
+    and writes, and how: render target, depth, shader read or write,
+    copy, and so on.
+  - Resources are textures and buffers that exist only during the frame,
+    or imported ones such as the swap chain image.
+- **`Compile()` works out the frame**:
+  - which passes run: a pass whose results nobody uses is dropped;
+  - every barrier: state changes, write-to-write barriers between compute
+    writes, barriers when memory is reused, and final states for imported
+    resources;
+  - which passes wait on the other queue, so compute and graphics can
+    overlap safely;
+  - the frame's temporary memory: resources that are never alive at the
+    same time share one heap. In the test frame, the bloom texture reuses
+    the shadow map's memory.
+  - clear errors for mistakes such as reading something before it's
+    written.
+- **Next**: carrying the plan out on the GPU comes with step 5.
+
+**Verified**: 3 new tests.
+
+- A forward+ frame: shadows, depth pre-pass, compute light culling,
+  forward, an unused debug view, compute bloom, and tone mapping to the
+  swap chain.
+  - The debug view is dropped, and every expected barrier is there,
+    including the swap chain's final return to Present.
+  - The compute and graphics passes wait on each other in the right
+    places.
+  - Lifetimes are right, and the bloom texture reuses the shadow map's
+    memory with an aliasing barrier.
+- Two compute writes in a row get a UAV barrier, and a side-effect pass
+  runs. A graph with no outputs runs nothing. Reading before writing and
+  using one resource two ways are reported.
+- 200 random graphs: resources alive at once never share memory, the
+  output pass always runs, and every running pass's inputs are made by
+  earlier running passes.
+- 283/283 tests pass on GCC 13, Clang and ASan/UBSan, and 314/314 with
+  physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,

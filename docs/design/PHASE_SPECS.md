@@ -1214,9 +1214,41 @@ renders.
        texels.
      - Its orthographic light view reaches `depth_padding` further toward
        the sun, for casters outside the view.
-3. The render graph on the RHI: pass declarations, dependency order,
-   culling unused passes, barriers, and transient resource aliasing, with
-   the planning tested headless.
+3. ✅ **Done** (planning). The render graph on the RHI: pass
+   declarations, dependency order, culling unused passes, barriers, and
+   transient resource aliasing, with the planning tested headless.
+   - **`FrameGraph`** (`renderer/include/aether/renderer/frame_graph.h`)
+     is the backend-neutral plan. Each pass declares its queue (graphics
+     or compute) and its reads and writes, each with an `Access`
+     (ColorTarget, DepthWrite/Read, ShaderRead/Write, Copy, IndirectArgs,
+     Present). Resources are transient textures and buffers, or imported
+     ones with an initial and a final access.
+   - **`Compile()`**:
+     - **Order**: passes run in declaration order. A pass can only
+       depend on earlier ones, so that order is always valid, and it's
+       the order the author wrote.
+     - **Culling**: starting from side-effect passes and writers of
+       imported resources (frame outputs), it keeps what they need.
+       Only read-after-write and write-after-write edges carry data;
+       write-after-read edges only order passes, so they can't keep a
+       useless reader alive.
+     - **Barriers**: each pass moves its resources to the access it
+       declared. ShaderWrite after ShaderWrite gets a UAV barrier. A
+       transient's first use in memory another resource used earlier
+       this frame gets an aliasing barrier. Imported resources get final
+       barriers back to their final access.
+     - **Queues**: each pass lists the other queue's passes it depends
+       on, including write-after-read, so the backend can place
+       fences.
+     - **Transient memory**: each resource's lifetime is its first to
+       last use in the order. Resources are placed largest first, each
+       at the lowest 64 KB-aligned offset free of anything alive at the
+       same time.
+     - **Errors**: a transient read before anything writes it, and one
+       pass using a resource two ways.
+   - **On the RHI**: executing the plan (resource creation in one heap,
+     barriers, queue fences, pass callbacks) is the GPU work of step 5.
+     The D3D12-only `gfx::RenderGraph` stays until then.
 4. Post-processing math: auto exposure, ACES/AgX tone mapping, bloom chain
    sizes, TAA jitter, with CPU references.
 5. GPU passes on D3D12 and Vulkan: depth pre-pass, clustered forward PBR,
