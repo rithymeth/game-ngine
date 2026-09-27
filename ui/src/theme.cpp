@@ -51,7 +51,7 @@ void ApplyTheme(const Theme& theme, Widget& w) {
     if (auto* c = dynamic_cast<Control*>(&w)) {
         c->style = theme.StyleFor(w.TypeName(), w.style_class);
     } else if (auto* t = dynamic_cast<Text*>(&w)) {
-        if (const TextStyle* s = theme.TextFor(w.style_class)) t->color = s->color, t->size = s->size;
+        if (const TextStyle* s = theme.TextFor(w.style_class)) t->color = s->color, t->size = s->size, t->font = s->font, t->effects = s->effects;
     } else if (auto* p = dynamic_cast<ProgressBar*>(&w)) {
         const ControlStyle& s = theme.StyleFor("ProgressBar", w.style_class);
         p->background = s.normal;
@@ -93,6 +93,34 @@ bool ColorFromJson(const json& j, Color& out, const std::map<std::string, Color>
     }
     if (!Floats(j, v, 4)) return Fail(error, "a colour is \"@name\", \"#RRGGBB(AA)\" or [r, g, b(, a)]");
     out = {v[0], v[1], v[2], v[3]};
+    return true;
+}
+
+json TextEffectsToJson(const TextEffects& e) {
+    const TextEffects none;
+    json j = json::object();
+    if (e.outline != none.outline) j["outline"] = e.outline;
+    if (!(e.outline_color == none.outline_color)) j["outline_color"] = ColorToJson(e.outline_color);
+    if (!(e.shadow_offset == none.shadow_offset)) j["shadow_offset"] = {e.shadow_offset.x, e.shadow_offset.y};
+    if (!(e.shadow_color == none.shadow_color)) j["shadow_color"] = ColorToJson(e.shadow_color);
+    if (e.shadow_softness != none.shadow_softness) j["shadow_softness"] = e.shadow_softness;
+    return j;
+}
+
+bool TextEffectsFromJson(const json& j, TextEffects& out, const std::map<std::string, Color>& palette, std::string* error) {
+    if (!j.is_object()) return Fail(error, "text effects are an object");
+    TextEffects e;
+    e.outline = j.value("outline", e.outline);
+    e.shadow_softness = j.value("shadow_softness", e.shadow_softness);
+    if (j.contains("outline_color") && !ColorFromJson(j["outline_color"], e.outline_color, palette, error)) return false;
+    if (j.contains("shadow_color") && !ColorFromJson(j["shadow_color"], e.shadow_color, palette, error)) return false;
+    if (j.contains("shadow_offset")) {
+        f32 v[2] = {0, 0};
+        if (!Floats(j["shadow_offset"], v, 2)) return Fail(error, "shadow_offset is [x, y]");
+        e.shadow_offset = {v[0], v[1]};
+    }
+    if (e.outline < 0.0f || e.shadow_softness < 0.0f) return Fail(error, "outline and shadow softness can't be negative");
+    out = e;
     return true;
 }
 
@@ -186,7 +214,11 @@ json ThemeToJson(const Theme& t) {
     json colors = json::object(), styles = json::object(), text = json::object();
     for (const auto& [name, c] : t.colors) colors[name] = ColorToJson(c);
     for (const auto& [name, s] : t.styles) styles[name] = StyleToJson(s);
-    for (const auto& [name, s] : t.text) text[name] = {{"color", ColorToJson(s.color)}, {"size", s.size}};
+    for (const auto& [name, s] : t.text) {
+        json& tj = text[name] = {{"color", ColorToJson(s.color)}, {"size", s.size}};
+        if (!s.font.empty()) tj["font"] = s.font;
+        if (!(s.effects == TextEffects{})) tj["effects"] = TextEffectsToJson(s.effects);
+    }
     return {{"version", 1}, {"name", t.name}, {"colors", colors}, {"styles", styles}, {"text", text}};
 }
 
@@ -232,6 +264,8 @@ bool ThemeFromJson(const json& j, Theme& out, const TextureResolver& textures, s
             TextStyle s;
             if (tj.contains("color") && !ColorFromJson(tj["color"], s.color, t.colors, error)) return false;
             s.size = tj.value("size", s.size);
+            s.font = tj.value("font", s.font);
+            if (tj.contains("effects") && !TextEffectsFromJson(tj["effects"], s.effects, t.colors, error)) return false;
             t.text[name] = s;
         }
     }

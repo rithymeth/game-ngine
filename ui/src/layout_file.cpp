@@ -198,12 +198,16 @@ std::map<std::string, WidgetType>& Registry() {
                 j["color"] = ColorToJson(t.color);
                 if (t.justify != TextAlign::Left) j["justify"] = kTextAlign[static_cast<usize>(t.justify)];
                 if (t.wrap_width != 0.0f) j["wrap_width"] = t.wrap_width;
+                if (!t.font.empty()) j["font"] = t.font;
+                if (!(t.effects == TextEffects{})) j["effects"] = TextEffectsToJson(t.effects);
             },
             [](Text& t, const json& j, TR, std::string* e) {
                 t.text = j.value("text", t.text);
                 t.size = j.value("size", t.size);
                 if (j.contains("color") && !ColorFromJson(j["color"], t.color, {}, e)) return false;
                 t.wrap_width = j.value("wrap_width", t.wrap_width);
+                t.font = j.value("font", t.font);
+                if (j.contains("effects") && !TextEffectsFromJson(j["effects"], t.effects, {}, e)) return false;
                 return ReadEnum(j, "justify", kTextAlign, t.justify, e);
             }));
         add(Type<Image>(

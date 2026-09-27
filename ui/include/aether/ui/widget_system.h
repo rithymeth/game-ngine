@@ -54,6 +54,17 @@ struct WidgetEvent {
     std::string text;   // committed text
 };
 
+// Shared with WorldUISystem.
+namespace detail {
+// Chains each control's callbacks under `root` to push its events into `sink` (which must outlive the widgets).
+void HookWidgetEvents(Widget& root, Entity entity, std::vector<WidgetEvent>& sink);
+// The source names bindings read ("Health" of "Health.current").
+std::vector<std::string> BindingSourceNames(const std::vector<Binding>& bindings);
+using GlobalSources = std::map<std::string, std::pair<void*, const reflect::TypeInfo*>>;
+// Points each source at a global, else the entity's component of that type name.
+void RefreshBindingSources(World& world, Entity entity, const std::vector<std::string>& sources, const GlobalSources& globals, DataBinder& binder);
+} // namespace detail
+
 // Runs the WidgetComponents of a world on a viewport: shows each one's
 // layout (themed), keeps its bindings and animations going, and collects
 // control events for Blueprints. Call Update each frame before drawing.
@@ -102,7 +113,6 @@ private:
     };
     bool Create(Instance& in);
     Instance* Ensure(Entity e, const WidgetComponent& wc); // the entity's instance, made or remade as needed
-    void Hook(Instance& in, Widget& w);
     void Refresh(Instance& in); // re-point sources at the entity's components (they move)
     void Destroy(Instance& in);
     Instance* Find(Entity e);
@@ -114,7 +124,7 @@ private:
     LayoutLoader loader_;
     const Theme* theme_;
     std::map<u32, std::unique_ptr<Instance>> instances_; // by entity index
-    std::map<std::string, std::pair<void*, const reflect::TypeInfo*>> globals_;
+    detail::GlobalSources globals_;
     std::vector<WidgetEvent> events_, pending_;
     std::vector<std::string> problems_;
     std::map<std::string, bool> reported_;
@@ -122,6 +132,7 @@ private:
 };
 
 void RegisterWidgetComponents();
+
 
 } // namespace aether::ui
 

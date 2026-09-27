@@ -19,6 +19,8 @@ namespace aether::ui {
 struct TextStyle {
     Color color{0.95f, 0.95f, 0.95f, 1};
     f32 size = 20.0f;
+    std::string font; // a name in the font library ("" = the default)
+    TextEffects effects;
 };
 
 struct Theme {
@@ -43,6 +45,9 @@ void ApplyTheme(const Theme& theme, Widget& root);
 // JSON (colours resolve against `palette`).
 nlohmann::json ColorToJson(const Color& c);
 bool ColorFromJson(const nlohmann::json& j, Color& out, const std::map<std::string, Color>& palette = {}, std::string* error = nullptr);
+// {outline, outline_color, shadow_offset, shadow_color, shadow_softness}; only what differs from none.
+nlohmann::json TextEffectsToJson(const TextEffects& e);
+bool TextEffectsFromJson(const nlohmann::json& j, TextEffects& out, const std::map<std::string, Color>& palette = {}, std::string* error = nullptr);
 nlohmann::json BrushToJson(const Brush& b);
 bool BrushFromJson(const nlohmann::json& j, Brush& out, const std::map<std::string, Color>& palette = {}, const TextureResolver& textures = {},
                    std::string* error = nullptr);

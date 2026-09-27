@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Now: Phase 18 — runtime game UI (widgets, controls, themes, layouts, binding, Widget Blueprints and animations done)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Now: Phase 18 — runtime game UI (widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text and world-space UI done)
 
 ### Phase 1 — Foundation
 
@@ -4760,6 +4760,57 @@ renderer, so its layout, input and styles are tested headless.
 - The `UI` library directly, and hiding, removing, switching and missing
   layouts.
 - 373/373 tests pass on GCC 13, Clang and ASan/UBSan, and 405/405 with
+  physics.
+
+**Step 5: distance-field text and world-space UI** (§18.5).
+
+- **SDF fonts** (`aether/ui/font.h`):
+  - TrueType/OpenType through stb_truetype.
+  - Glyphs rasterized on first use into a growing distance-field atlas,
+    with dirty rectangles for upload.
+  - Kerning, fallback glyphs and prewarming.
+  - Text stays sharp at any size and zoom.
+- **Text effects**: outlines and soft drop shadows, from the same atlas.
+  They are set per Text widget or theme text style, and saved.
+- **Font libraries**: Text widgets and text styles pick fonts by name.
+- **World widgets** (`aether/ui/world_ui.h`): a layout at an entity's
+  place, bound to its components.
+  - Either projected onto the screen (sized by distance, pixel-snapped),
+    or a quad in the scene that faces the camera or the entity's way.
+  - Hidden when behind the camera, too far or off screen.
+  - Picking by rectangle or ray.
+  - Interactive ones take pointer input.
+  - Their events reach Blueprints, and the UI library works on them.
+- A Roboto font (Apache 2.0) in `assets/fonts` for the tests.
+
+**Verified**: 2 new tests.
+
+- Fonts:
+  - loading, and bad files and settings refused;
+  - metrics that scale with size;
+  - glyph caching and dirty rectangles;
+  - distances inside and outside a glyph;
+  - kerning and fallbacks;
+  - atlas growth that keeps glyphs, and overflow reported.
+- Drawing:
+  - coverage maths, and field spans through transforms and scaling;
+  - an 'I' at 16 and 200 pixels, with edges at most two pixels wide and
+    stems in proportion;
+  - outline and soft-shadow passes checked pixel by pixel;
+  - bitmap outlines.
+- Fonts by name in viewports, layouts and themes, round-tripped, with
+  bad effects refused.
+- World widgets:
+  - projection to the exact pixel;
+  - bindings, clipping, and far-first order;
+  - distance scaling and its limit;
+  - hiding in four ways, and the UI scale;
+  - quads with their corners and transform, billboarded and fixed;
+  - picking and clicks on both kinds, drags off that don't click, and
+    click-through;
+  - the UI library;
+  - problems reported once, and removal.
+- 375/375 tests pass on GCC 13, Clang and ASan/UBSan, and 407/407 with
   physics.
 
 ## Building

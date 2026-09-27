@@ -51,12 +51,14 @@ struct Slot {
 };
 
 struct LayoutContext {
-    const Font* font = nullptr;
+    const Font* font = nullptr;         // the default
+    const FontLibrary* fonts = nullptr; // named ones (Text::font)
 };
 
 struct PaintContext {
     const Font* font = nullptr;
     f32 opacity = 1.0f;
+    const FontLibrary* fonts = nullptr;
 };
 
 // A node in the UI tree. Layout is two passes: Measure (children first) for
