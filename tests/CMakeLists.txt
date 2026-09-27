@@ -61,4 +61,9 @@ if(TARGET Aether::Physics)
     target_link_libraries(aether_tests PRIVATE Aether::Physics)
 endif()
 
+if(TARGET Aether::Scripting)
+    target_sources(aether_tests PRIVATE test_luau_host.cpp)
+    target_link_libraries(aether_tests PRIVATE Aether::Scripting)
+endif()
+
 add_test(NAME aether_tests COMMAND aether_tests)

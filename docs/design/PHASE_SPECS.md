@@ -563,8 +563,13 @@ comment above it adds metadata.
 
 ### 11.5 PR breakdown
 
-1. Fetch Luau (MIT) via `FetchContent`, a `LuauHost` that runs a script
+1. ✅ **Done.** Fetch Luau (MIT) via `FetchContent`, a `LuauHost` that runs a script
    file, tests.
+   - The sandbox and limits of §11.4 came with it. The instruction budget
+     counts interrupt checks, and the memory cap is enforced by the VM's
+     allocator.
+   - Values crossing C++/Luau are nil, bool, number and string for now.
+     Engine types come with step 2.
 2. Reflection-driven bindings for fields and functions, with the typed
    fast paths and handle safety.
 3. `ScriptComponent`, lifecycle, exposed variables in the Inspector.
