@@ -4099,6 +4099,43 @@ Phase 16. The runtime is the new `Aether::Animation` library
 - 319/319 tests pass on GCC 13, Clang and ASan/UBSan, and 350/350 with
   physics.
 
+**Step 3: animation graphs and state machines** (§16.4, `aether/animation/anim_graph.h`).
+
+- **Graph** (`.aanim`): typed variables (bool, int, float, trigger) and a
+  DAG of pose nodes:
+  - Clip;
+  - Blend Space;
+  - Blend by alpha, by bool and by int (with crossfades);
+  - Layered per bone;
+  - Additive;
+  - State Machine.
+- **State machines**:
+  - Transitions have conditions that must all hold, a priority, a blend
+    time and an optional "when the animation finishes" rule.
+  - Any-state transitions, conduits (pass-through decision states) and
+    sub-machines (a state playing another machine, restarting at its
+    entry).
+  - The state being left keeps playing during a crossfade. Interrupting
+    a blend blends from a snapshot, with no pop.
+  - Each Update's state changes are reported.
+- **`AnimGraphInstance`**: one character's variable values and playback
+  state. A node shared by two parents advances once per frame.
+- **Diagnostics** AG001–AG011, from loops and bad inputs to type errors
+  in conditions and unreachable states.
+
+**Verified**: 5 new tests.
+
+- Locomotion: a quarter-per-frame blend into Walk. An any-state Jump on
+  a trigger outranks Walk → Run and uses up the trigger. Jump → Idle
+  only near Jump's end, and unused triggers expire.
+- A jump mid-blend continues from the blended pose.
+- Conduit pass-through, and staying put when no exit holds. A sub-machine
+  inside an outer machine restarts at its entry after death and revive.
+- Every blend node's result, and the shared node advancing once.
+- Every diagnostic, and `.aanim` round trips and bad files.
+- 324/324 tests pass on GCC 13, Clang and ASan/UBSan, and 355/355 with
+  physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,

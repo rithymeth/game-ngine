@@ -7,6 +7,7 @@ add_library(aether_animation STATIC
     src/compression.cpp
     src/root_motion.cpp
     src/blend_space.cpp
+    src/anim_graph.cpp
 )
 target_include_directories(aether_animation PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aether_animation PUBLIC cxx_std_20)
