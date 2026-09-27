@@ -132,16 +132,66 @@ Vec3 EmitterInstance::DirectionIn(const Vec3& d, bool world) const {
 }
 
 void EmitterInstance::Update(f32 dt) {
+    if (auto_clear_events_) events_.clear();
     if (!emitter_.settings.enabled || dt < 0.0f) return;
     if (!warmed_) {
         warmed_ = true;
-        // Run the warmup at once, with the emitter still.
+        // Run the warmup at once, with the emitter still (and its events forgotten).
         const EmitterPose moving_from = last_pose_;
         last_pose_ = pose_;
+        const usize kept = events_.size();
         for (f32 left = emitter_.settings.warmup; left > 1e-6f; left -= kWarmupStep) Advance(std::min(kWarmupStep, left));
+        events_.resize(kept);
         last_pose_ = moving_from;
     }
     Advance(dt);
+}
+
+void EmitterInstance::Record(ParticleEventKind kind, usize i, const Vec3& normal, bool expired) {
+    if ((event_mask_ & EventBit(kind)) == 0) return;
+    const ParticleBuffer& p = particles_;
+    const bool local = emitter_.settings.space == SimSpace::Local;
+    ParticleEvent e;
+    e.kind = kind;
+    e.position = local ? pose_.ToWorld(p.position[i]) : p.position[i];
+    e.velocity = local ? pose_.DirectionToWorld(p.velocity[i]) : p.velocity[i];
+    e.normal = local ? pose_.DirectionToWorld(normal) : normal;
+    e.color = p.color[i];
+    e.size = p.size[i];
+    e.id = p.id[i];
+    e.expired = expired;
+    events_.push_back(e);
+}
+
+usize EmitterInstance::EmitAt(usize count, const Vec3& world_position, const Vec3& add_velocity, const LinearColor* color, const f32* size) {
+    // Born at the point as if the emitter stood there, still.
+    const EmitterPose pose = pose_, last = last_pose_;
+    const Vec3 velocity = emitter_velocity_;
+    pose_.position = last_pose_.position = world_position;
+    emitter_velocity_ = {};
+    const usize first = particles_.count;
+    const u8 mask = event_mask_;
+    event_mask_ &= static_cast<u8>(~EventBit(ParticleEventKind::Birth)); // recorded below, once the overrides are in
+    Spawn(std::vector<Birth>(count, Birth{0.0f, 1.0f}));
+    event_mask_ = mask;
+    const bool local = emitter_.settings.space == SimSpace::Local;
+    const Vec3 add = local ? pose_.DirectionToLocal(add_velocity) : add_velocity;
+    pose_ = pose, last_pose_ = last;
+    emitter_velocity_ = velocity;
+    ParticleBuffer& p = particles_;
+    for (usize i = first; i < p.count; ++i) {
+        // A local simulation put the shape's offset about the origin: move it to the point.
+        if (local) p.position[i] = pose_.ToLocal(world_position) + p.position[i];
+        p.velocity[i] = p.velocity[i] + add;
+        if (color != nullptr) p.color[i] = p.base_color[i] = *color;
+        if (size != nullptr) p.size[i] = p.base_size[i] = *size;
+        Record(ParticleEventKind::Birth, i);
+    }
+    return p.count - first;
+}
+
+bool EmitterInstance::SetField(const std::string& field, const ParameterValue& value, std::string* error) {
+    return SetModuleField(emitter_, field, value, error);
 }
 
 void EmitterInstance::Advance(f32 dt) {
@@ -296,6 +346,7 @@ void EmitterInstance::Initialize(usize i, const Birth& b) {
     p.spin[i] = spin;
     p.seed[i] = rng_.NextU32();
     p.id[i] = next_id_++;
+    Record(ParticleEventKind::Birth, i);
 }
 
 void EmitterInstance::Simulate(f32 dt, usize first_new) {
@@ -353,7 +404,12 @@ void EmitterInstance::Simulate(f32 dt, usize first_new) {
             },
             m);
     }
-    // Move.
+    // Move (keeping where they were, for scene collisions).
+    const bool scene = collider_ != nullptr && std::any_of(emitter_.update.begin(), emitter_.update.end(), [](const UpdateModule& m) {
+        const auto* c = std::get_if<SceneCollision>(&m);
+        return c != nullptr && c->enabled;
+    });
+    if (scene) previous_.assign(p.position.begin(), p.position.begin() + static_cast<std::ptrdiff_t>(n));
     for (usize i = 0; i < n; ++i) p.position[i] = p.position[i] + p.velocity[i] * (speed[i] * step_[i]);
 
     // Collisions, kill volumes and looks, in the stack's order.
@@ -376,7 +432,32 @@ void EmitterInstance::Simulate(f32 dt, usize first_new) {
                             const Vec3 along = p.velocity[i] - nrm * into;
                             p.velocity[i] = along * (1.0f - std::clamp(mod.friction, 0.0f, 1.0f)) - nrm * (into * mod.bounce);
                             p.age[i] += p.lifetime[i] * mod.lifetime_loss;
+                            Record(ParticleEventKind::Collision, i, nrm);
                         }
+                    }
+                } else if constexpr (std::is_same_v<T, SceneCollision>) {
+                    if (!scene) return;
+                    const bool local = emitter_.settings.space == SimSpace::Local;
+                    for (usize i = 0; i < n; ++i) {
+                        const Vec3 from = local ? pose_.ToWorld(previous_[i]) : previous_[i];
+                        const Vec3 to = local ? pose_.ToWorld(p.position[i]) : p.position[i];
+                        const Vec3 move = to - from;
+                        const f32 length = move.Length();
+                        if (length < 1e-7f) continue;
+                        // Reach one radius past the move, so a particle resting on the surface stays on it.
+                        const f32 radius = p.size[i] * mod.radius_scale;
+                        Vec3 hit, normal;
+                        if (!collider_->Raycast(from, to + move * (radius / length), hit, normal)) continue;
+                        const Vec3 nrm = local ? pose_.DirectionToLocal(normal) : normal;
+                        const Vec3 at = hit + normal * radius;
+                        p.position[i] = local ? pose_.ToLocal(at) : at;
+                        const f32 into = p.velocity[i].Dot(nrm);
+                        if (into < 0.0f) {
+                            const Vec3 along = p.velocity[i] - nrm * into;
+                            p.velocity[i] = along * (1.0f - std::clamp(mod.friction, 0.0f, 1.0f)) - nrm * (into * mod.bounce);
+                        }
+                        p.age[i] += p.lifetime[i] * mod.lifetime_loss;
+                        Record(ParticleEventKind::Collision, i, nrm);
                     }
                 } else if constexpr (std::is_same_v<T, KillVolume>) {
                     const Vec3 c = PointIn(mod.center, mod.world);
@@ -411,7 +492,10 @@ void EmitterInstance::Simulate(f32 dt, usize first_new) {
     }
     // Deaths, from the back so each swap brings in one already handled.
     for (usize i = n; i-- > 0;) {
-        if (dead[i] || p.age[i] >= p.lifetime[i]) p.Kill(i);
+        if (dead[i] || p.age[i] >= p.lifetime[i]) {
+            Record(ParticleEventKind::Death, i, {}, !dead[i]);
+            p.Kill(i);
+        }
     }
 }
 
@@ -433,10 +517,58 @@ Bounds EmitterInstance::ComputeBounds() const {
 
 // --- ParticleSystemInstance ----------------------------------------------------------------------------
 
-ParticleSystemInstance::ParticleSystemInstance(const ParticleSystemAsset& asset, u64 seed) {
-    for (usize i = 0; i < asset.emitters.size(); ++i) {
+ParticleSystemInstance::ParticleSystemInstance(const ParticleSystemAsset& asset, u64 seed)
+    : parameters_(asset.parameters), assets_(asset.emitters), rng_(seed ^ 0xA5A5A5A5DEADBEEFULL) {
+    const usize n = asset.emitters.size();
+    subs_.resize(n);
+    needed_masks_.assign(n, 0);
+    for (usize i = 0; i < n; ++i) {
         emitters_.push_back(std::make_unique<EmitterInstance>(asset.emitters[i], seed * 0x9E3779B97F4A7C15ULL + i + 1));
+        emitters_.back()->SetAutoClearEvents(false);
+        for (const SubEmitter& sub : asset.emitters[i].sub_emitters) {
+            const i64 target = asset.FindEmitter(sub.emitter);
+            if (target < 0 || static_cast<usize>(target) == i) continue; // FX011
+            subs_[i].push_back({sub, static_cast<usize>(target)});
+            needed_masks_[i] |= EventBit(sub.event);
+        }
+        emitters_.back()->RecordEvents(needed_masks_[i]);
     }
+    // The defaults, into every bound field.
+    for (const ParticleParameter& p : parameters_) (void)SetParameter(p.name, p.value);
+}
+
+bool ParticleSystemInstance::SetParameter(const std::string& name, const ParameterValue& value, std::string* error) {
+    auto it = std::find_if(parameters_.begin(), parameters_.end(), [&](const ParticleParameter& p) { return p.name == name; });
+    if (it == parameters_.end()) {
+        if (error != nullptr) *error = "no parameter '" + name + "'";
+        return false;
+    }
+    if (it->value.type != value.type) {
+        if (error != nullptr) *error = "parameter '" + name + "' is a different type";
+        return false;
+    }
+    it->value = value;
+    for (usize i = 0; i < emitters_.size(); ++i) {
+        for (const ParameterBinding& b : assets_[i].bindings) {
+            if (b.parameter == name) (void)emitters_[i]->SetField(b.field, value); // bad bindings are FX013
+        }
+    }
+    return true;
+}
+
+const ParameterValue* ParticleSystemInstance::GetParameter(const std::string& name) const {
+    for (const ParticleParameter& p : parameters_) {
+        if (p.name == name) return &p.value;
+    }
+    return nullptr;
+}
+
+void ParticleSystemInstance::SetCollider(const ParticleCollider* collider) {
+    for (auto& e : emitters_) e->SetCollider(collider);
+}
+
+void ParticleSystemInstance::RecordEvents(u8 mask) {
+    for (usize i = 0; i < emitters_.size(); ++i) emitters_[i]->RecordEvents(static_cast<u8>(mask | needed_masks_[i]));
 }
 
 void ParticleSystemInstance::SetPose(const EmitterPose& pose) {
@@ -446,7 +578,36 @@ void ParticleSystemInstance::Teleport(const EmitterPose& pose) {
     for (auto& e : emitters_) e->Teleport(pose);
 }
 void ParticleSystemInstance::Update(f32 dt) {
+    for (auto& e : emitters_) e->ClearEvents();
     for (auto& e : emitters_) e->Update(dt);
+    // Feed sub-emitters from this frame's events. Their births can be events
+    // too (chains), so go round until nothing new, each sub-emitter handling
+    // at most its max_per_frame.
+    const usize n = emitters_.size();
+    std::vector<usize> cursor(n, 0);
+    std::vector<std::vector<u32>> handled(n);
+    for (usize i = 0; i < n; ++i) handled[i].assign(subs_[i].size(), 0);
+    for (int pass = 0; pass < 16; ++pass) {
+        bool any = false;
+        for (usize i = 0; i < n; ++i) {
+            const usize end = emitters_[i]->Events().size();
+            for (usize k = cursor[i]; k < end; ++k) {
+                const ParticleEvent ev = emitters_[i]->Events()[k]; // a copy: the target may be this one's own list
+                for (usize si = 0; si < subs_[i].size(); ++si) {
+                    const SubEmitter& sub = subs_[i][si].sub;
+                    if (sub.event != ev.kind || handled[i][si] >= sub.max_per_frame) continue;
+                    ++handled[i][si];
+                    if (rng_.Next01() >= sub.probability) continue;
+                    const usize count = static_cast<usize>(std::lround(std::max(rng_.Range(sub.count), 0.0f)));
+                    sub_spawns_ += emitters_[subs_[i][si].target]->EmitAt(count, ev.position, ev.velocity * sub.inherit_velocity,
+                                                                        sub.inherit_color ? &ev.color : nullptr, sub.inherit_size ? &ev.size : nullptr);
+                }
+            }
+            any |= end > cursor[i];
+            cursor[i] = end;
+        }
+        if (!any) break;
+    }
 }
 void ParticleSystemInstance::Stop() {
     for (auto& e : emitters_) e->Stop();
@@ -455,7 +616,13 @@ void ParticleSystemInstance::Restart() {
     for (auto& e : emitters_) e->Restart();
 }
 bool ParticleSystemInstance::Finished() const {
-    return std::all_of(emitters_.begin(), emitters_.end(), [](const auto& e) { return e->Finished() || !e->Asset().settings.enabled; });
+    // Emitters only fed by sub-emitters (no spawn modules of their own) are done when empty.
+    return std::all_of(emitters_.begin(), emitters_.end(), [](const auto& e) {
+        const bool spawns_itself = std::any_of(e->Asset().spawn.begin(), e->Asset().spawn.end(), [](const SpawnModule& m) {
+            return std::visit([](const auto& x) { return x.enabled; }, m);
+        });
+        return !e->Asset().settings.enabled || e->Finished() || (!spawns_itself && e->Count() == 0);
+    });
 }
 usize ParticleSystemInstance::Count() const {
     usize n = 0;
