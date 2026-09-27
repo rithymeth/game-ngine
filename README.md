@@ -4065,6 +4065,40 @@ Phase 16. The runtime is the new `Aether::Animation` library
 - 314/314 tests pass on GCC 13, Clang and ASan/UBSan, and 345/345 with
   physics.
 
+**Step 2: blend spaces and root motion** (§16.3).
+
+- **Blend spaces** (`.ablend`):
+  - 1D, and 2D with Delaunay triangulation and barycentric weights. The
+    nearest hull point is used outside the samples, and collinear
+    samples blend along their line.
+  - Diagnostics BS001–BS006.
+- **`BlendSpacePlayer`** keeps every clip at the same phase. A cycle
+  takes the weighted average of the clip durations, so walk and run
+  stay in step while the speed changes.
+- **`BlendWeighted`** blends any number of poses. Rotations are aligned
+  first, so opposite-signed quaternions don't cancel out.
+- **Root motion**: `ExtractRootMotion` gives the root's movement over
+  the ground and its heading, in its own frame, across loop wraps.
+  `StripRootMotion` plays in place. Blend spaces hand out the blended
+  motion.
+
+**Verified**: 5 new tests.
+
+- 1D weights: in any order, clamped and at the samples.
+- 2D weights: a cross reproduces 200 random points. Outside the hull
+  uses the nearest edge. A 30-sample cloud passes the Delaunay
+  empty-circle check, and points inside it are reproduced.
+- Every diagnostic, collinear fallback blending, and `.ablend` round
+  trips and bad files.
+- Weighted poses, including a negated quaternion. The walk/run sync
+  matches separately sampled clips, and phase is kept across a
+  parameter change.
+- Root motion: halves, composed steps, loop wraps, settings and
+  stripping. A blend-space player travels the average distance while
+  playing in place.
+- 319/319 tests pass on GCC 13, Clang and ASan/UBSan, and 350/350 with
+  physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
