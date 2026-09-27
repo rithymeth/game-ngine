@@ -176,6 +176,16 @@ void BlueprintVM::Detach(Entity entity) {
     auto it = instances_.find(Key(entity));
     if (it == instances_.end()) return;
     const u64 key = Key(entity);
+    // Its dispatchers go, and so do its bindings to others'.
+    for (auto b = bindings_.begin(); b != bindings_.end();) {
+        if (b->first.first == key) {
+            b = bindings_.erase(b);
+            continue;
+        }
+        auto& list = b->second;
+        list.erase(std::remove_if(list.begin(), list.end(), [&](const auto& l) { return l.first == key; }), list.end());
+        ++b;
+    }
     latent_.erase(std::remove_if(latent_.begin(), latent_.end(), [&](const LatentAction& a) { return a.owner == key; }),
                   latent_.end()); // an entity's pending actions go with it
     if (depth_ > 0) {
@@ -436,6 +446,16 @@ bool BlueprintVM::SetArray(Entity entity, std::string_view name, const std::vect
         }
     }
     return true;
+}
+
+std::vector<VmValue> BlueprintVM::ArgsOf(const std::vector<TypedReg>& args, const Frame& frame) const {
+    std::vector<VmValue> values(args.size()); // filled in place (GCC mis-warns on moved-in variants)
+    for (usize i = 0; i < args.size(); ++i) {
+        const TypedReg& arg = args[i];
+        if (arg.reg.bank == Bank::String) values[i] = frame.s[arg.reg.index];
+        else if (arg.reg.bank != Bank::Array) values[i] = ValueOf(frame.r[arg.reg.index], arg.type); // arrays don't cross yet
+    }
+    return values;
 }
 
 void BlueprintVM::Warn(const char* code, const Instance& instance, const CompiledFunction& fn, NodeId node,
@@ -723,6 +743,51 @@ bool BlueprintVM::Run(Instance& instance, u32 function, Frame& frame, u32 depth,
         case Op::CountGet: r[in.a] = Reg::Int(instance.states[in.b].counter); break;
         case Op::CountReset: instance.states[in.a].counter = 0; break;
         case Op::Latent: StartLatent(instance, function, in, frame); break;
+        case Op::CallDispatcher: {
+            const DispatcherCall& call = bp.dispatcher_calls[static_cast<usize>(in.d)];
+            const Entity target = r[call.target.index].AsEntity();
+            auto it = bindings_.find({Key(target), call.dispatcher});
+            if (it == bindings_.end()) break;
+            const std::vector<VmValue> args = ArgsOf(call.args, frame);
+            const auto listeners = it->second; // a handler may bind or unbind
+            for (const auto& [listener, event] : listeners) {
+                auto l = instances_.find(listener);
+                if (l != instances_.end() && !l->second->detached) Dispatch(l->second->entity, "Event.Custom:" + event, args);
+            }
+            break;
+        }
+        case Op::BindDispatcher: {
+            const DispatcherBind& bind = bp.dispatcher_binds[static_cast<usize>(in.d)];
+            const auto key = std::make_pair(Key(r[bind.target.index].AsEntity()), bind.dispatcher);
+            auto& list = bindings_[key];
+            const std::pair<u64, std::string> me{Key(instance.entity), bind.event};
+            if (bind.mode == DispatcherBind::Mode::Bind) {
+                if (std::find(list.begin(), list.end(), me) == list.end()) list.push_back(me);
+            } else if (bind.mode == DispatcherBind::Mode::Unbind) {
+                list.erase(std::remove(list.begin(), list.end(), me), list.end());
+            } else {
+                list.clear();
+            }
+            break;
+        }
+        case Op::InterfaceCall: {
+            const InterfaceCallInfo& call = bp.interface_calls[static_cast<usize>(in.d)];
+            const Entity target = r[call.target.index].AsEntity();
+            const Instance* other = Find(target);
+            const std::string key = "Event.Interface:" + call.key;
+            if (other != nullptr && other->blueprint->events.count(key) != 0) {
+                Dispatch(target, key, ArgsOf(call.args, frame)); // not implemented: nothing happens
+            }
+            break;
+        }
+        case Op::ImplementsOp: {
+            const Instance* other = Find(r[in.b].AsEntity());
+            const std::string& name = bp.names[static_cast<usize>(in.d)];
+            r[in.a] = Reg::Bool(other != nullptr && std::find(other->blueprint->interfaces.begin(),
+                                                              other->blueprint->interfaces.end(),
+                                                              name) != other->blueprint->interfaces.end());
+            break;
+        }
         case Op::GetLoc:
         case Op::GetRot: {
             const Transform* t = TransformOf(instance, fn, fn.node_of[pc - 1], r[in.b].AsEntity());

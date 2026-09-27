@@ -146,6 +146,10 @@ OpInfo Info(Op op) {
     case Op::SpawnOp: return {"SPAWN", "rrri"};
     case Op::GameTime: return {"GAMETIME", "r---"};
     case Op::DeltaTime: return {"DELTATIME", "r---"};
+    case Op::CallDispatcher: return {"CALLD", "---i"};
+    case Op::BindDispatcher: return {"BINDD", "---i"};
+    case Op::InterfaceCall: return {"CALLI", "---i"};
+    case Op::ImplementsOp: return {"IMPLEMENTS", "rr-i"};
     case Op::StateInit: return {"STATE_INIT", "zr--"};
     case Op::StateJmpIf: return {"STATE_JMPIF", "z-i@"};
     case Op::StateSet: return {"STATE_SET", "z-i-"};

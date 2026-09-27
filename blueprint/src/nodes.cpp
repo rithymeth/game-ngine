@@ -61,6 +61,22 @@ struct Registry {
     std::map<std::string, Family> families; // by prefix
 };
 
+struct InterfaceRegistry {
+    std::mutex mutex;
+    std::map<std::string, BlueprintInterface, std::less<>> interfaces;
+};
+InterfaceRegistry& Interfaces() {
+    static InterfaceRegistry registry;
+    return registry;
+}
+std::vector<std::string> InterfaceNames() {
+    InterfaceRegistry& r = Interfaces();
+    std::lock_guard<std::mutex> lock(r.mutex);
+    std::vector<std::string> names;
+    for (const auto& [name, iface] : r.interfaces) names.push_back(name);
+    return names;
+}
+
 void RegisterBuiltins(Registry& r);
 
 Registry& GetRegistry() {
@@ -214,6 +230,131 @@ void RegisterBuiltins(Registry& r) {
                         const std::string name = n.config.value("name", "");
                         entries.push_back({"Call.Custom:" + name, "Call " + name, "Events"});
                     }
+            return entries;
+        }};
+
+    // --- Event dispatchers (§10) -------------------------------------------
+    auto dispatcher_lister = [](const std::string& prefix, const std::string& verb) {
+        return [prefix, verb](const Blueprint& bp) {
+            std::vector<PaletteEntry> entries;
+            for (const Dispatcher& d : bp.dispatchers) entries.push_back({prefix + d.name, verb + " " + d.name, "Event Dispatchers"});
+            return entries;
+        };
+    };
+    auto find_dispatcher = [](const NodeContext& c, NodeError& error) -> const Dispatcher* {
+        const Dispatcher* d = c.blueprint.FindDispatcher(c.suffix);
+        if (d == nullptr) Fail(error, "BP004", "The event dispatcher '" + std::string(c.suffix) + "' no longer exists.");
+        return d;
+    };
+    r.families["Dispatch.Call:"] = {
+        [=](const NodeContext& c, NodeError& error) -> std::optional<NodeSignature> {
+            const Dispatcher* d = find_dispatcher(c, error);
+            if (d == nullptr) return std::nullopt;
+            std::vector<PinDesc> pins{ExecIn(), In("target", kEntity, Pin_Self)};
+            for (PinDesc& p : ParamsFrom(d->params, PinDir::In)) pins.push_back(std::move(p));
+            pins.push_back(ExecOut());
+            return Sig("Call " + d->name, "Event Dispatchers", NodeKind::Impure, std::move(pins));
+        },
+        dispatcher_lister("Dispatch.Call:", "Call")};
+    // Bind/Unbind: config {"event": "<Custom Event on this Blueprint>"}, whose
+    // parameters must match the dispatcher's (BP014).
+    auto bind_family = [=](const std::string& verb, bool needs_event) -> Family {
+        const std::string prefix = "Dispatch." + verb + ":";
+        return {[=](const NodeContext& c, NodeError& error) -> std::optional<NodeSignature> {
+                    // Usually another class's dispatcher: bound by name. When
+                    // this Blueprint declares one of that name, the handler must match it.
+                    const Dispatcher* d = c.blueprint.FindDispatcher(c.suffix);
+                    const std::string name(c.suffix);
+                    if (name.empty()) return Fail(error, "BP007", verb + " needs a dispatcher name.");
+                    if (needs_event) {
+                        const std::string event = c.node.config.value("event", "");
+                        const Node* handler = FindCustomEvent(c.blueprint, event);
+                        if (handler == nullptr) {
+                            return Fail(error, "BP004", verb + " " + name + ": the Custom Event '" + event + "' doesn't exist.");
+                        }
+                        std::vector<Variable> params;
+                        std::string message;
+                        CustomParams(handler->config, params, message);
+                        bool same = d == nullptr || params.size() == d->params.size();
+                        for (usize i = 0; d != nullptr && same && i < params.size(); ++i) {
+                            same = params[i].type == d->params[i].type;
+                        }
+                        if (!same) {
+                            return Fail(error, "BP014", "The Custom Event '" + event + "' doesn't take the same parameters as '" +
+                                                            name + "', so it can't be bound to it.");
+                        }
+                    }
+                    return Sig(verb + " " + name, "Event Dispatchers", NodeKind::Impure,
+                               {ExecIn(), In("target", kEntity, Pin_Self), ExecOut()});
+                },
+                dispatcher_lister(prefix, verb)};
+    };
+    r.families["Dispatch.Bind:"] = bind_family("Bind", true);
+    r.families["Dispatch.Unbind:"] = bind_family("Unbind", true);
+    r.families["Dispatch.UnbindAll:"] = bind_family("UnbindAll", false);
+
+    // --- Interfaces (§12.1, §8) ----------------------------------------------
+    auto find_interface_fn = [](std::string_view suffix, const BlueprintInterface*& iface, NodeError& error)
+        -> const InterfaceFunction* {
+        const usize dot = suffix.rfind('.');
+        iface = dot == std::string_view::npos ? nullptr : FindBlueprintInterface(suffix.substr(0, dot));
+        const InterfaceFunction* fn = iface != nullptr ? iface->Find(suffix.substr(dot + 1)) : nullptr;
+        if (fn == nullptr) Fail(error, "BP004", "The interface function '" + std::string(suffix) + "' no longer exists.");
+        return fn;
+    };
+    r.families["Event.Interface:"] = {
+        [=](const NodeContext& c, NodeError& error) -> std::optional<NodeSignature> {
+            const BlueprintInterface* iface = nullptr;
+            const InterfaceFunction* fn = find_interface_fn(c.suffix, iface, error);
+            if (fn == nullptr) return std::nullopt;
+            if (!c.blueprint.Implements(iface->name)) {
+                return Fail(error, "BP015", "This Blueprint doesn't implement '" + iface->name +
+                                                "'. Add it to the Class Settings' interfaces first.");
+            }
+            std::vector<PinDesc> pins{ExecOut()};
+            for (PinDesc& p : ParamsFrom(fn->params, PinDir::Out)) pins.push_back(std::move(p));
+            NodeSignature s = Sig("Event " + fn->name + " (" + iface->name + ")", "Interfaces", NodeKind::Event, std::move(pins));
+            s.event_key = "Event.Interface:" + std::string(c.suffix);
+            return s;
+        },
+        [](const Blueprint& bp) {
+            std::vector<PaletteEntry> entries;
+            for (const std::string& name : bp.interfaces)
+                if (const BlueprintInterface* iface = FindBlueprintInterface(name))
+                    for (const InterfaceFunction& fn : iface->functions)
+                        entries.push_back({"Event.Interface:" + name + "." + fn.name, "Event " + fn.name, "Interfaces"});
+            return entries;
+        }};
+    r.families["Interface.Call:"] = {
+        [=](const NodeContext& c, NodeError& error) -> std::optional<NodeSignature> {
+            const BlueprintInterface* iface = nullptr;
+            const InterfaceFunction* fn = find_interface_fn(c.suffix, iface, error);
+            if (fn == nullptr) return std::nullopt;
+            std::vector<PinDesc> pins{ExecIn(), In("target", kEntity)};
+            for (PinDesc& p : ParamsFrom(fn->params, PinDir::In)) pins.push_back(std::move(p));
+            pins.push_back(ExecOut());
+            return Sig(fn->name + " (Message)", "Interfaces", NodeKind::Impure, std::move(pins));
+        },
+        [](const Blueprint&) {
+            std::vector<PaletteEntry> entries;
+            for (const std::string& name : InterfaceNames())
+                if (const BlueprintInterface* iface = FindBlueprintInterface(name))
+                    for (const InterfaceFunction& fn : iface->functions)
+                        entries.push_back({"Interface.Call:" + name + "." + fn.name, fn.name + " (Message)", "Interfaces"});
+            return entries;
+        }};
+    r.families["Interface.Implements:"] = {
+        [kEntity, kBool](const NodeContext& c, NodeError& error) -> std::optional<NodeSignature> {
+            if (FindBlueprintInterface(c.suffix) == nullptr) {
+                return Fail(error, "BP004", "The interface '" + std::string(c.suffix) + "' no longer exists.");
+            }
+            return Sig("Does Implement " + std::string(c.suffix), "Interfaces", NodeKind::Pure,
+                       {In("target", kEntity), Out("result", kBool)});
+        },
+        [](const Blueprint&) {
+            std::vector<PaletteEntry> entries;
+            for (const std::string& name : InterfaceNames())
+                entries.push_back({"Interface.Implements:" + name, "Does Implement " + name, "Interfaces"});
             return entries;
         }};
 
@@ -772,6 +913,27 @@ void RegisterBuiltins(Registry& r) {
 }
 
 } // namespace
+
+const InterfaceFunction* BlueprintInterface::Find(std::string_view function) const {
+    for (const InterfaceFunction& fn : functions) {
+        if (fn.name == function) return &fn;
+    }
+    return nullptr;
+}
+
+void RegisterBlueprintInterface(BlueprintInterface interface_) {
+    InterfaceRegistry& r = Interfaces();
+    std::lock_guard<std::mutex> lock(r.mutex);
+    const std::string name = interface_.name;
+    r.interfaces[name] = std::move(interface_);
+}
+
+const BlueprintInterface* FindBlueprintInterface(std::string_view name) {
+    InterfaceRegistry& r = Interfaces();
+    std::lock_guard<std::mutex> lock(r.mutex);
+    auto it = r.interfaces.find(name);
+    return it != r.interfaces.end() ? &it->second : nullptr; // entries are never removed, so the pointer stays valid
+}
 
 std::vector<std::string> ParseFormatArgs(std::string_view format) {
     std::vector<std::string> args;

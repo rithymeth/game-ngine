@@ -274,6 +274,8 @@ parameter list.
 | BP011 | error | "The function '{fn}' needs exactly one Function Entry node (it has {n})." |
 | BP012 | error | "'{node}' uses a {type} value; Blueprints can't run {type} values yet." (types and nodes the compiler doesn't lower yet: structs, arrays, latent nodes before Phase 12 step 3) |
 | BP013 | error | "'{node}' changes an array, so its '{pin}' pin must be connected to an array variable (a Get node)." |
+| BP014 | error | "The Custom Event '{event}' doesn't take the same parameters as '{dispatcher}', so it can't be bound to it." |
+| BP015 | error | "This Blueprint doesn't implement '{interface}'. Add it to the Class Settings' interfaces first." |
 | BP101 | warning | "Input '{pin}' isn't connected and will use its default value ({default})." |
 | BP102 | warning | "This node's output isn't used, and it has no side effects. It can be removed." |
 | BP103 | warning | "'{node}' in Event Tick runs every frame and searches the whole world. Consider caching the result in BeginPlay." |

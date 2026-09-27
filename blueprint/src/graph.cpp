@@ -1,5 +1,6 @@
 #include "aether/blueprint/graph.h"
 
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 
@@ -109,6 +110,17 @@ Graph* Blueprint::FindGraph(std::string_view name) {
     return nullptr;
 }
 
+const Dispatcher* Blueprint::FindDispatcher(std::string_view name) const {
+    for (const Dispatcher& d : dispatchers) {
+        if (d.name == name) return &d;
+    }
+    return nullptr;
+}
+
+bool Blueprint::Implements(std::string_view interface_name) const {
+    return std::find(interfaces.begin(), interfaces.end(), interface_name) != interfaces.end();
+}
+
 json BlueprintToJson(const Blueprint& bp) {
     json variables = json::array();
     for (const Variable& v : bp.variables) variables.push_back(VariableToJson(v));
@@ -137,8 +149,19 @@ json BlueprintToJson(const Blueprint& bp) {
         }
         graphs.push_back(std::move(graph));
     }
-    return {{"$type", "Blueprint"}, {"$version", kFormatVersion}, {"parent", bp.parent},
-            {"variables", variables}, {"graphs", graphs}};
+    json out = {{"$type", "Blueprint"}, {"$version", kFormatVersion}, {"parent", bp.parent},
+                {"variables", variables}, {"graphs", graphs}};
+    if (!bp.dispatchers.empty()) {
+        json dispatchers = json::array();
+        for (const Dispatcher& d : bp.dispatchers) {
+            json params = json::array();
+            for (const Variable& v : d.params) params.push_back(VariableToJson(v));
+            dispatchers.push_back({{"name", d.name}, {"params", params}});
+        }
+        out["dispatchers"] = dispatchers;
+    }
+    if (!bp.interfaces.empty()) out["interfaces"] = bp.interfaces;
+    return out;
 }
 
 bool BlueprintFromJson(const json& j, Blueprint& out, std::string* error) {
@@ -160,6 +183,22 @@ bool BlueprintFromJson(const json& j, Blueprint& out, std::string* error) {
         if (!VariableFromJson(v, variable, message)) return fail(message);
         if (bp.FindVariable(variable.name) != nullptr) return fail("two variables are named '" + variable.name + "'");
         bp.variables.push_back(std::move(variable));
+    }
+    for (const json& d : j.value("dispatchers", json::array())) {
+        Dispatcher dispatcher;
+        dispatcher.name = d.value("name", "");
+        if (dispatcher.name.empty()) return fail("an event dispatcher needs a name");
+        for (const json& p : d.value("params", json::array())) {
+            Variable param;
+            if (!VariableFromJson(p, param, message)) return fail("dispatcher '" + dispatcher.name + "': " + message);
+            dispatcher.params.push_back(std::move(param));
+        }
+        if (bp.FindDispatcher(dispatcher.name) != nullptr) return fail("two event dispatchers are named '" + dispatcher.name + "'");
+        bp.dispatchers.push_back(std::move(dispatcher));
+    }
+    for (const json& i : j.value("interfaces", json::array())) {
+        if (!i.is_string() || i.get<std::string>().empty()) return fail("an implemented interface needs a name");
+        bp.interfaces.push_back(i.get<std::string>());
     }
     for (const json& g : j.value("graphs", json::array())) {
         Graph graph;

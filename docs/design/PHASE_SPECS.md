@@ -770,7 +770,23 @@ struct Blueprint{ std::string parent; std::vector<Variable> variables; std::vect
        sync.
      - **Not yet**: Transform has no scale, so there are no scale nodes.
        Expose-on-spawn pins come with part 4.
-   - Part 4: macros, event dispatchers and interfaces.
+   - ✅ **Part 4 done:** event dispatchers and interfaces.
+     - **Dispatchers** are declared on the Blueprint (`dispatchers` in
+       the .abp). Call is on this Blueprint's own dispatchers.
+       Bind/Unbind/Unbind All use a Custom Event handler (config `event`),
+       and go by dispatcher name, so a listener can bind to another
+       class's dispatcher. When the listener declares a dispatcher of that
+       name, the handler's parameters must match (BP014).
+     - **Bindings** live in the VM, per (target, dispatcher), and go away
+       with either side.
+     - **Interfaces** come from a registry (`RegisterBlueprintInterface`).
+       A Blueprint lists the ones it implements (`interfaces`) and
+       handles `Event.Interface:I.F` events (BP015 if unlisted).
+     - `Interface.Call` does nothing on non-implementers, and
+       `Interface.Implements` answers Does Implement.
+     - Interface functions have no return values yet.
+   - Part 5: macros, Sort/Filter with comparator functions, and
+     expose-on-spawn pins.
 5. Debugger: node breakpoints, stepping and call stack, exec trace for
    wire animation, watched pin values, and an instance filter.
 6. Graph editor widget and Blueprint editor panels (portable ImGui):

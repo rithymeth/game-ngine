@@ -569,6 +569,14 @@ private:
         if (type == "Quat.Multiply") return emit(Op::QuatMul, {Input(id, "a"), Input(id, "b")}), true;
         if (type == "Entity.HasTag") return emit(Op::HasTagOp, {Input(id, "target"), Input(id, "tag")}), true;
         if (type == "Entity.FindWithTag") return emit(Op::FindTagOp, {Input(id, "tag")}, "entities"), true;
+        if (type.rfind("Interface.Implements:", 0) == 0) {
+            const RegRef target = Input(id, "target");
+            const RegRef dst = Alloc(PinType::Of(ValueType::Bool), id);
+            out_.names.push_back(type.substr(21));
+            Emit({Op::ImplementsOp, dst.index, target.index, 0, static_cast<i32>(out_.names.size() - 1)}, id);
+            SetPure(id, "result", dst);
+            return true;
+        }
         if (type == "World.GameTime") return emit(Op::GameTime, {}, "seconds"), true;
         if (type == "World.DeltaSeconds") return emit(Op::DeltaTime, {}, "seconds"), true;
         if (type.rfind("Conv.ToString:", 0) == 0) {
@@ -771,6 +779,37 @@ private:
             const RegRef target = Input(id, "target");
             const u16 value = op.second != nullptr ? Input(id, op.second).index : 0;
             Emit({op.first, 0, target.index, value}, id);
+            return Chain(id, "then");
+        }
+        if (type.rfind("Dispatch.Call:", 0) == 0 || type.rfind("Interface.Call:", 0) == 0) {
+            const bool dispatcher = type.rfind("Dispatch.Call:", 0) == 0;
+            std::vector<TypedReg> args;
+            RegRef target;
+            for (const PinDesc& pin : sig.pins) {
+                if (pin.dir != PinDir::In || pin.type.IsExec()) continue;
+                if (pin.name == "target") target = Input(id, pin.name);
+                else args.push_back({Input(id, pin.name), pin.type});
+            }
+            if (dispatcher) {
+                out_.dispatcher_calls.push_back({type.substr(14), target, std::move(args)});
+                Emit({Op::CallDispatcher, 0, 0, 0, static_cast<i32>(out_.dispatcher_calls.size() - 1)}, id);
+            } else {
+                out_.interface_calls.push_back({type.substr(15), target, std::move(args)});
+                Emit({Op::InterfaceCall, 0, 0, 0, static_cast<i32>(out_.interface_calls.size() - 1)}, id);
+            }
+            return Chain(id, "then");
+        }
+        if (type.rfind("Dispatch.Bind:", 0) == 0 || type.rfind("Dispatch.Unbind:", 0) == 0 ||
+            type.rfind("Dispatch.UnbindAll:", 0) == 0) {
+            DispatcherBind bind;
+            bind.mode = type.rfind("Dispatch.Bind:", 0) == 0     ? DispatcherBind::Mode::Bind
+                        : type.rfind("Dispatch.Unbind:", 0) == 0 ? DispatcherBind::Mode::Unbind
+                                                                 : DispatcherBind::Mode::UnbindAll;
+            bind.dispatcher = type.substr(type.find(':') + 1);
+            bind.event = NodeOf(id).config.value("event", "");
+            bind.target = Input(id, "target");
+            out_.dispatcher_binds.push_back(std::move(bind));
+            Emit({Op::BindDispatcher, 0, 0, 0, static_cast<i32>(out_.dispatcher_binds.size() - 1)}, id);
             return Chain(id, "then");
         }
         if (type == "Entity.Spawn") {
@@ -997,6 +1036,7 @@ CompileResult CompileBlueprint(const Blueprint& blueprint) {
     }
     auto out = std::make_shared<CompiledBlueprint>();
 
+    out->interfaces = blueprint.interfaces;
     for (const Variable& v : blueprint.variables) {
         CompiledVariable var;
         var.name = v.name;

@@ -3,6 +3,7 @@
 #include "aether/blueprint/bytecode.h"
 
 #include <functional>
+#include <map>
 #include <random>
 #include <memory>
 #include <span>
@@ -172,6 +173,9 @@ private:
     std::vector<Entity> pending_destroy_;
     bool destroying_ = false;
     f32 last_delta_ = 0.0f;
+    // Event dispatcher bindings: (target, dispatcher) -> (listener, Custom Event).
+    std::map<std::pair<u64, std::string>, std::vector<std::pair<u64, std::string>>> bindings_;
+    std::vector<VmValue> ArgsOf(const std::vector<TypedReg>& args, const Frame& frame) const;
     std::vector<LatentAction> latent_;
     f64 time_ = 0.0;
     u64 frame_ = 0;

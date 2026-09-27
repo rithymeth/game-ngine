@@ -178,6 +178,11 @@ enum class Op : u8 {
     SpawnOp,      // a = dst entity, b = location, c = rotation, d = spawn index
     GameTime,     // a = dst float
     DeltaTime,    // a = dst float
+    // Event dispatchers and interfaces: d = table index.
+    CallDispatcher, // runs every Custom Event bound to the target's dispatcher
+    BindDispatcher, // Bind / Unbind / Unbind All (DispatcherBind::mode)
+    InterfaceCall,  // runs the target's interface event, if it implements it
+    ImplementsOp,   // a = dst bool, b = target, d = name index
     // Latent actions (§C.4): a = state slot, b = duration register, c =
     // LatentKind, d = latent index. Starts the action and carries on; its
     // "completed" code runs later from the latent's resume point.
@@ -226,6 +231,25 @@ struct FieldAccess {
     TypedReg value;
 };
 
+struct DispatcherCall {
+    std::string dispatcher;
+    RegRef target;
+    std::vector<TypedReg> args;
+};
+
+struct DispatcherBind {
+    enum class Mode : u8 { Bind, Unbind, UnbindAll } mode = Mode::Bind;
+    std::string dispatcher;
+    std::string event; // a Custom Event of this Blueprint (the handler)
+    RegRef target;     // whose dispatcher
+};
+
+struct InterfaceCallInfo {
+    std::string key; // "Interactable.Interact"
+    RegRef target;
+    std::vector<TypedReg> args;
+};
+
 // A call to one of this Blueprint's functions or custom events.
 struct FunctionCall {
     u32 function = 0;            // index into CompiledBlueprint::functions
@@ -271,6 +295,11 @@ struct CompiledBlueprint {
     std::vector<FunctionCall> calls;
     std::vector<LatentInfo> latents;
     std::vector<std::string> spawn_assets; // Spawn nodes' Blueprint asset GUIDs (text)
+    std::vector<DispatcherCall> dispatcher_calls;
+    std::vector<DispatcherBind> dispatcher_binds;
+    std::vector<InterfaceCallInfo> interface_calls;
+    std::vector<std::string> names;       // interface names for ImplementsOp
+    std::vector<std::string> interfaces;  // the interfaces this Blueprint implements
     u16 state_slots = 0; // per-instance node state (stateful flow nodes and latent nodes)
 
     const CompiledVariable* FindVariable(std::string_view name) const;

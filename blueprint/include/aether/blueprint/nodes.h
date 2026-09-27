@@ -102,6 +102,22 @@ std::optional<NodeSignature> ResolveNode(const Blueprint& blueprint, const Graph
 // by category then title.
 std::vector<PaletteEntry> ListNodeTypes(const Blueprint& blueprint);
 
+// Blueprint Interfaces (§12.1): named sets of functions any Blueprint can
+// implement (as "Event.Interface:Name.Function" events). Calling one on an
+// entity that doesn't implement it does nothing. Registered by the engine
+// or a game module (and by interface assets, later).
+struct InterfaceFunction {
+    std::string name;
+    std::vector<Variable> params;
+};
+struct BlueprintInterface {
+    std::string name; // "Interactable"
+    std::vector<InterfaceFunction> functions;
+    const InterfaceFunction* Find(std::string_view function) const;
+};
+void RegisterBlueprintInterface(BlueprintInterface interface_);
+const BlueprintInterface* FindBlueprintInterface(std::string_view name);
+
 // Format Text's placeholders, in order of first use: "Hi {name}, {n} left"
 // -> {"name", "n"}. "{{" and "}}" are literal braces.
 std::vector<std::string> ParseFormatArgs(std::string_view format);
