@@ -1,5 +1,6 @@
 #pragma once
 
+#include "aether/ui/animation.h"
 #include "aether/ui/binding.h"
 #include "aether/ui/theme.h"
 
@@ -35,8 +36,9 @@ std::unique_ptr<Widget> WidgetFromJson(const nlohmann::json& j, const TextureRes
 struct LayoutDocument {
     std::unique_ptr<Widget> root;
     std::vector<Binding> bindings;
+    std::vector<UIAnimation> animations; // (step 4)
 };
-std::string SaveLayout(const Widget& root, const std::vector<Binding>& bindings = {});
+std::string SaveLayout(const Widget& root, const std::vector<Binding>& bindings = {}, const std::vector<UIAnimation>& animations = {});
 bool LoadLayout(const std::string& text, LayoutDocument& out, const TextureResolver& textures = {}, std::string* error = nullptr);
 
 } // namespace aether::ui

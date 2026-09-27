@@ -2093,7 +2093,48 @@ Everything else runs and is tested headless.
     field, a property the widget lacks, or two-way on something that
     can't write back.
 
-### 18.4 PR breakdown
+### 18.4 Widget Blueprints and UI animations
+
+- **Render transforms**: each widget has `render_offset`, `render_scale`
+  and `render_pivot` (0..1 of its box, the centre by default).
+  - They change how the widget and its children draw and hit-test, but
+    not the layout, so a button can pop or slide without moving its
+    neighbours.
+  - The draw list keeps a transform stack that quads and clip rectangles
+    pass through. Hit testing maps the point back into the widget's
+    untransformed space.
+- **UI animations** (`UIAnimation`): named timelines of tracks. A track
+  animates one property of one widget (by name) through keys of
+  `{time, value, ease}`.
+  - Eases: Linear, Constant, EaseIn, EaseOut, EaseInOut and Back. A
+    key's ease shapes the segment that ends at it.
+  - Properties: `opacity`, `offset_x/y`, `scale`, `scale_x/y`,
+    `tint_r/g/b/a` (Image and Text colour), `position_x/y` and
+    `size_x/y` (the slot), `value` (Slider) and `percent` (ProgressBar).
+  - Saved in the `.aui` file under `animations`, keys as `[t, v, "Ease"]`.
+- **The animator** (`UIAnimator`) plays animations on a widget tree.
+  - `Play` takes a speed, a loop count (0 is forever), reverse and a
+    start time. It applies the first frame at once, so nothing flashes.
+  - `Tween` animates one property from its current value to a target;
+    a new tween of the same property replaces the old one.
+  - `Validate` reports tracks naming missing widgets or properties.
+  - Finished animations are listed after each `Tick`.
+- **Widget components**: a `WidgetComponent` names the layout an entity
+  shows, its z-order and whether it's visible.
+  - `UISystem` loads the layout, applies the theme and adds it to the
+    viewport. It re-points its bindings at the entity's reflected
+    components each update, and removes it with the entity.
+  - Control callbacks become `WidgetEvent`s: Clicked, ValueChanged,
+    CheckChanged, TextCommitted, SelectionChanged and
+    AnimationFinished. The game dispatches them to Blueprints as
+    `Event.OnWidgetClicked` and so on, with the widget's name.
+  - Missing layouts are reported once, not every frame.
+- **Blueprint library** (static `UI`): CreateWidget, RemoveWidget,
+  SetText (a button sets its first Text), GetText, SetVisible,
+  SetEnabled, SetValue, GetValue, PlayAnimation, StopAnimation and
+  SetFocus. All take the entity and a widget name.
+
+### 18.5 PR breakdown
 
 1. ✅ **Done.** The widget tree, the layout panels (Canvas with anchors,
    boxes, Grid, Overlay, SizeBox, Border, ScrollBox, Spacer), Text and
@@ -2105,7 +2146,7 @@ Everything else runs and is tested headless.
    navigation, and the UI input context taking input before gameplay.
 3. ✅ **Done.** Styles and themes as assets (per-state brushes, fonts and
    colours), `.aui` layout files, and data binding to reflected fields.
-4. Widget Blueprints (a layout plus an event graph on the Phase 12 VM,
+4. ✅ **Done.** Widget Blueprints (a layout plus an event graph on the Phase 12 VM,
    with Create Widget, Add to Viewport, Set Text and events such as
    OnClicked), and UI animations (tweens and keyframe timelines of
    position, scale, opacity and colour).

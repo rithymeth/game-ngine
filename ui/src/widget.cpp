@@ -97,15 +97,26 @@ void Widget::Paint(DrawList& list, const PaintContext& ctx) const {
     if (visibility == Visibility::Hidden || visibility == Visibility::Collapsed || opacity <= 0.0f) return;
     PaintContext mine = ctx;
     mine.opacity *= opacity;
+    const bool transformed = HasRenderTransform();
+    if (transformed) {
+        list.PushTransform(render_offset, render_scale, {geometry_.x + render_pivot.x * geometry_.w, geometry_.y + render_pivot.y * geometry_.h});
+    }
     PaintSelf(list, mine);
     if (clip_children) list.PushClip(geometry_);
     for (const Widget* c : PaintOrder()) c->Paint(list, mine);
     if (clip_children) list.PopClip();
     PaintOver(list, mine);
+    if (transformed) list.PopTransform();
 }
 
 Widget* Widget::HitTest(Vec2 p) {
     if (visibility == Visibility::Hidden || visibility == Visibility::Collapsed || visibility == Visibility::HitTestInvisible) return nullptr;
+    if (HasRenderTransform()) {
+        // Into the widget's own (untransformed) space.
+        if (render_scale.x == 0.0f || render_scale.y == 0.0f) return nullptr;
+        const Vec2 pivot{geometry_.x + render_pivot.x * geometry_.w, geometry_.y + render_pivot.y * geometry_.h};
+        p = {pivot.x + (p.x - render_offset.x - pivot.x) / render_scale.x, pivot.y + (p.y - render_offset.y - pivot.y) / render_scale.y};
+    }
     if (clip_children && !geometry_.Contains(p)) return nullptr;
     const std::vector<Widget*> order = PaintOrder();
     for (auto it = order.rbegin(); it != order.rend(); ++it) {

@@ -420,8 +420,13 @@ std::unique_ptr<Widget> WidgetFromJson(const json& j, const TextureResolver& tex
     }
 }
 
-std::string SaveLayout(const Widget& root, const std::vector<Binding>& bindings) {
+std::string SaveLayout(const Widget& root, const std::vector<Binding>& bindings, const std::vector<UIAnimation>& animations) {
     json j = {{"version", 1}, {"root", WidgetToJson(root)}};
+    if (!animations.empty()) {
+        json a = json::array();
+        for (const UIAnimation& x : animations) a.push_back(AnimationToJson(x));
+        j["animations"] = a;
+    }
     if (!bindings.empty()) {
         json b = json::array();
         for (const Binding& x : bindings) b.push_back(BindingToJson(x));
@@ -453,6 +458,15 @@ bool LoadLayout(const std::string& text, LayoutDocument& out, const TextureResol
         }
     } catch (const json::exception& e) {
         return Fail(error, std::string("malformed binding: ") + e.what());
+    }
+    try {
+        for (const json& a : j.value("animations", json::array())) {
+            UIAnimation anim;
+            if (!AnimationFromJson(a, anim, error)) return false;
+            doc.animations.push_back(std::move(anim));
+        }
+    } catch (const json::exception& e) {
+        return Fail(error, std::string("malformed animation: ") + e.what());
     }
     out = std::move(doc);
     return true;
