@@ -819,8 +819,23 @@ struct Blueprint{ std::string parent; std::vector<Variable> variables; std::vect
        input pin. The values reach the spawner as JSON and are applied at
        attach, before BeginPlay. Only variables marked `ExposeOnSpawn` (or
        instance-editable) take them.
-5. Debugger: node breakpoints, stepping and call stack, exec trace for
-   wire animation, watched pin values, and an instance filter.
+5. ✅ **Done.** Debugger: node breakpoints, stepping and call stack, exec
+   trace for wire animation, watched pin values, and an instance filter.
+   - **Debug info from the compiler**: each function records where each
+     node's code starts (`entries`; several nodes can share a pc, such as
+     a Sequence with no code of its own, or an impure node and its pure
+     inputs). It also records the register holding each pin's value
+     (`pin_values`).
+   - **The hook**: while a handler or the trace is on, the VM checks one
+     flag per instruction and runs the hook at node starts. A loop
+     re-entering a node counts as a new start.
+   - **Stepping**: Step Over/Into/Out compare call depths, as the Luau
+     debugger does. A stop reports the call stack, innermost first, with
+     every pin's current value per frame.
+   - **Wire animation**: the exec trace records `{entity, graph, node,
+     frame}` in a capped buffer the editor takes each frame.
+   - **Watches**: a watch is a pin value read at a stop. Continuous
+     watches (last value on hover while running) come with the editor.
 6. Graph editor widget and Blueprint editor panels (portable ImGui):
    palette, pin colors, links, comments and compile results.
 7. Samples (BP_Door, BP_Coin, BP_GameMode) and the 10,000-instance

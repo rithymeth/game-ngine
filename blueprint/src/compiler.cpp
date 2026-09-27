@@ -111,7 +111,17 @@ private:
     usize Emit(Instr instr, NodeId node) {
         fn_.code.push_back(instr);
         fn_.node_of.push_back(node);
+        fn_.is_entry.push_back(pending_entries_.empty() ? 0 : 1);
+        for (NodeId entered : pending_entries_) fn_.entries.push_back({static_cast<u32>(fn_.code.size() - 1), entered});
+        pending_entries_.clear();
         return fn_.code.size() - 1;
+    }
+
+    // The next instruction emitted is where `node`'s code starts.
+    void MarkEntry(NodeId node) {
+        if (std::find(pending_entries_.begin(), pending_entries_.end(), node) == pending_entries_.end()) {
+            pending_entries_.push_back(node);
+        }
     }
 
     void Error(const char* code, NodeId node, const std::string& message) {
@@ -196,7 +206,9 @@ private:
         const auto key = std::make_pair(node, pin.name);
         auto it = outputs_.find(key);
         if (it != outputs_.end()) return it->second;
-        return outputs_.emplace(key, Alloc(pin.type, node)).first->second;
+        const RegRef reg = outputs_.emplace(key, Alloc(pin.type, node)).first->second;
+        fn_.pin_values[key] = {reg, pin.type};
+        return reg;
     }
 
     RegRef Output(const PinRef& from) {
@@ -227,11 +239,15 @@ private:
         return LoadValue(value, pin->type, node);
     }
 
-    void SetPure(NodeId node, const std::string& pin, RegRef reg) { pure_[{node, pin}] = reg; }
+    void SetPure(NodeId node, const std::string& pin, RegRef reg) {
+        pure_[{node, pin}] = reg;
+        if (const PinDesc* desc = Sig(node).Find(pin, PinDir::Out)) fn_.pin_values[{node, pin}] = {reg, desc->type};
+    }
 
     // --- Pure nodes -----------------------------------------------------------
     void EvaluatePure(NodeId id) {
         if (!evaluated_.insert(id).second) return;
+        MarkEntry(id);
         const Node& node = NodeOf(id);
         const NodeSignature& sig = Sig(id);
         const std::string& type = node.type;
@@ -698,6 +714,7 @@ private:
     void EmitNode(NodeId id, const std::string& entry) {
         pure_.clear(); // pure values are cached per exec step
         evaluated_.clear();
+        MarkEntry(id);
         const Node& node = NodeOf(id);
         const NodeSignature& sig = Sig(id);
         const std::string& type = node.type;
@@ -1032,6 +1049,7 @@ private:
     std::map<std::pair<NodeId, std::string>, RegRef> outputs_; // impure node and entry outputs
     std::map<std::pair<NodeId, std::string>, RegRef> pure_;    // pure outputs in the current exec step
     std::set<NodeId> evaluated_;
+    std::vector<NodeId> pending_entries_; // nodes whose code starts at the next instruction
     std::map<std::pair<NodeId, std::string>, i32> on_path_; // (node, entry pin) being emitted -> first instruction
 };
 

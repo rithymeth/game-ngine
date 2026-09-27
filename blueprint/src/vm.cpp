@@ -479,6 +479,120 @@ std::vector<VmValue> BlueprintVM::ArgsOf(const std::vector<TypedReg>& args, cons
     return values;
 }
 
+void BlueprintVM::SetDebugHandler(std::function<BpAction(const BpStop&)> handler) {
+    debug_handler_ = std::move(handler);
+    debugging_ = static_cast<bool>(debug_handler_) || tracing_;
+    if (!debug_handler_) step_ = StepMode::None;
+}
+
+void BlueprintVM::SetTraceEnabled(bool enabled, usize capacity) {
+    tracing_ = enabled;
+    trace_capacity_ = std::max<usize>(1, capacity);
+    debugging_ = static_cast<bool>(debug_handler_) || tracing_;
+}
+
+std::vector<BpTraceEvent> BlueprintVM::TakeTrace() {
+    std::vector<BpTraceEvent> out;
+    out.swap(trace_);
+    return out;
+}
+
+bool BlueprintVM::SetBreakpoint(const CompiledBlueprint& blueprint, const std::string& graph, NodeId node, bool enabled) {
+    bool exists = false;
+    for (const CompiledFunction& fn : blueprint.functions) {
+        if (fn.graph != graph) continue;
+        for (const auto& [pc, entered] : fn.entries) exists |= entered == node;
+    }
+    const auto key = std::make_tuple(&blueprint, graph, node);
+    breakpoints_.erase(std::remove(breakpoints_.begin(), breakpoints_.end(), key), breakpoints_.end());
+    if (enabled && exists) breakpoints_.push_back(key);
+    return exists;
+}
+
+void BlueprintVM::DebugHook(Instance& instance, u32 function, usize pc) {
+    const CompiledBlueprint& bp = *instance.blueprint;
+    const CompiledFunction& fn = bp.functions[function];
+    auto first = std::lower_bound(fn.entries.begin(), fn.entries.end(), std::make_pair(static_cast<u32>(pc), NodeId{0}));
+    auto last = first;
+    while (last != fn.entries.end() && last->first == pc) ++last;
+    if (first == last) return;
+    if (!debug_stack_.empty()) debug_stack_.back().node = first->second;
+
+    if (tracing_) {
+        for (auto it = first; it != last; ++it) {
+            if (trace_.size() >= trace_capacity_) trace_.erase(trace_.begin());
+            trace_.push_back({instance.entity, fn.graph, it->second, frame_});
+        }
+    }
+    if (!debug_handler_ || in_handler_) return;
+    if (!debug_filter_.IsNull() && instance.entity != debug_filter_) return;
+
+    const usize depth = debug_stack_.size();
+    bool stop = false;
+    BpStopReason reason = BpStopReason::Step;
+    for (auto it = first; it != last && !stop; ++it) {
+        stop = std::find(breakpoints_.begin(), breakpoints_.end(), std::make_tuple(&bp, fn.graph, it->second)) !=
+               breakpoints_.end();
+        if (stop) {
+            reason = BpStopReason::Breakpoint;
+            debug_stack_.back().node = it->second;
+        }
+    }
+    if (!stop) {
+        switch (step_) {
+        case StepMode::None: break;
+        case StepMode::Pause: stop = true; reason = BpStopReason::Pause; break;
+        case StepMode::Into: stop = true; break;
+        case StepMode::Over: stop = depth <= step_depth_; break;
+        case StepMode::Out: stop = depth < step_depth_; break;
+        }
+    }
+    if (!stop) return;
+
+    ++debug_stops_;
+    const BpStop info = DescribeStop(reason, instance);
+    in_handler_ = true;
+    const BpAction action = debug_handler_(info);
+    in_handler_ = false;
+    step_depth_ = depth;
+    switch (action) {
+    case BpAction::Continue: step_ = StepMode::None; break;
+    case BpAction::StepInto: step_ = StepMode::Into; break;
+    case BpAction::StepOver: step_ = StepMode::Over; break;
+    case BpAction::StepOut: step_ = StepMode::Out; break;
+    }
+}
+
+BpStop BlueprintVM::DescribeStop(BpStopReason reason, const Instance& instance) const {
+    BpStop stop;
+    stop.reason = reason;
+    stop.entity = instance.entity;
+    for (auto it = debug_stack_.rbegin(); it != debug_stack_.rend(); ++it) {
+        const CompiledFunction& fn = it->instance->blueprint->functions[it->function];
+        BpFrame frame;
+        frame.entity = it->instance->entity;
+        frame.function = fn.name;
+        frame.graph = fn.graph;
+        frame.node = it->node;
+        for (const auto& [key, value] : fn.pin_values) {
+            BpPinValue pin;
+            pin.node = key.first;
+            pin.pin = key.second;
+            pin.type = TypeName(value.type);
+            if (value.reg.bank == Bank::String) pin.value = it->frame->s[value.reg.index];
+            else if (value.reg.bank == Bank::Array) pin.value = "[" + std::to_string(it->frame->a[value.reg.index].Size()) + " items]";
+            else pin.value = Text(it->frame->r[value.reg.index], value.type.type);
+            frame.values.push_back(std::move(pin));
+        }
+        stop.frames.push_back(std::move(frame));
+    }
+    if (!stop.frames.empty()) {
+        stop.graph = stop.frames.front().graph;
+        stop.node = stop.frames.front().node;
+    }
+    return stop;
+}
+
 void BlueprintVM::Warn(const char* code, const Instance& instance, const CompiledFunction& fn, NodeId node,
                        std::string message) {
     // Once per (function, node): a bad reference in Tick shouldn't flood the log.
@@ -610,6 +724,15 @@ bool BlueprintVM::Run(Instance& instance, u32 function, Frame& frame, u32 depth,
     std::string* s = frame.s.data();
     ArrayValue* arrays = frame.a.data();
     usize pc = start_pc;
+    const bool debugging = debugging_;
+    if (debugging) debug_stack_.push_back({&instance, function, &frame, 0});
+    struct PopDebug {
+        std::vector<DebugFrame>& stack;
+        bool active;
+        ~PopDebug() {
+            if (active && !stack.empty()) stack.pop_back();
+        }
+    } pop_debug{debug_stack_, debugging};
     for (;;) {
         if (options_.instruction_budget != 0) {
             if (budget_left_ == 0) {
@@ -624,6 +747,7 @@ bool BlueprintVM::Run(Instance& instance, u32 function, Frame& frame, u32 depth,
             --budget_left_;
         }
         ++instructions_;
+        if (debugging && fn.is_entry[pc]) DebugHook(instance, function, pc);
         const Instr& in = code[pc++];
         switch (in.op) {
         case Op::Nop: break;
