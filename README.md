@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–12 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Now: Phase 13 — physics events and character movement (in progress)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Next: Phase 14 — the unified renderer
 
 ### Phase 1 — Foundation
 
@@ -3382,7 +3382,7 @@ Phase 12 on the portable side.
 - 272/272 tests pass on GCC 13, on Clang and under ASan/UBSan, and 279/279
   with physics.
 
-### Phase 13 (in progress) — Physics events and character movement
+### Phase 13 (done on the portable side) — Physics events and character movement
 
 Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md),
 Phase 13.
@@ -3601,6 +3601,45 @@ Phase 13.
   creep down walkable slopes at about 7 cm/s. It now applies only in the
   air.
 - 301/301 tests pass with physics on GCC 13 (RelWithDebInfo and Debug)
+  and under ASan/UBSan, and 273/273 without physics on GCC 13, Clang and
+  ASan/UBSan.
+
+**Step 6: collider gizmos and the physics debug draw**. This completes
+Phase 13 on the portable side.
+
+- **Debug draw**: `DrawPhysicsDebug` (`physics/include/aether/physics/debug_draw.h`)
+  turns the physics world into colored line segments for a viewport or
+  game overlay.
+  - It draws colliders, triggers, characters and the last step's contacts,
+    each switchable in `PhysicsDebugOptions`, the viewport menu's toggle.
+  - Colors: static gray, kinematic blue, dynamic green (darker asleep),
+    triggers orange, characters cyan, contacts red.
+  - Boxes, spheres and capsules are exact. Convex and mesh colliders use
+    the triangles that really collide.
+- **Gizmo handles**: `ColliderHandles` gives the drag handles for a
+  selected collider, and `DragColliderHandle` resizes it.
+  - Boxes have one handle per face, and the opposite face stays put.
+  - Spheres have six radius handles.
+  - Capsules have four radius handles and two height handles.
+  - Handles turn with the entity.
+- **Still to come**: the Windows editor draws these and turns drags into
+  undoable edits, with its other window hookups.
+
+**Verified**: 3 new tests.
+
+- A box turned 90° has its corners in the right world places. An offset
+  sphere's circles lie on its surface, and a capsule spans exactly its
+  height and radius. A convex collider with no body shows a cross per
+  point.
+- The colors match each body, and the toggles hide each kind. A convex
+  rock's 12 triangles lie on its cube, and a character is drawn from its
+  feet. A landing ball's contact appears with its normal, and a sleeping
+  body turns dim.
+- Dragging a box face out by 1 m widens it with the far face unmoved;
+  shrinking stops at 1 cm. A rotated entity's handles point along its
+  turned axes. Sphere and capsule drags resize them, with the capsule's
+  bottom fixed and its radius capped at half its height.
+- 304/304 tests pass with physics on GCC 13 (RelWithDebInfo and Debug)
   and under ASan/UBSan, and 273/273 without physics on GCC 13, Clang and
   ASan/UBSan.
 

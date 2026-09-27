@@ -84,6 +84,7 @@ public:
     void AdoptBody(JPH::BodyID body, Entity entity);
     void ReleaseBody(JPH::BodyID body);
 
+    PhysicsWorld& Physics() const { return physics_; }
     JPH::BodyID BodyOf(Entity entity) const; // invalid if it has none
     Entity EntityOf(JPH::BodyID body) const; // null if it isn't one of ours
     usize BodyCount() const { return bodies_.size(); }
