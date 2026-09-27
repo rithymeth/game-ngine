@@ -599,7 +599,7 @@ comment above it adds metadata.
      succeeds.
    - The overlay is a portable ImGui widget; hooking it (and the toast)
      into the editor window is Windows editor work.
-6. Code editor panel with completion from reflection; DAP debugger.
+6. ✅ **Done** (portable side). Code editor panel with completion from reflection; DAP debugger.
    - ✅ **Part 1 done:** the engines behind them.
      - `ScriptDebugger` handles breakpoints, which survive reload and move
        to the next line with code, plus Into/Over/Out and Pause. Its stops
@@ -610,7 +610,14 @@ comment above it adds metadata.
      - It doesn't depend on a transport. The socket listener comes with the
        Windows editor hookup.
      - `evaluate` covers locals only.
-   - Next: the ImGui code editor panel (a portable widget).
+   - ✅ **Part 3 done:** the code editor panel.
+     - `CodeDocument` is the model: auto-indent, undo, find and Luau
+       tokens.
+     - `DrawCodeEditor` is the portable ImGui widget, with a breakpoint
+       gutter, execution and error lines, and a completion popup from a
+       callback.
+     - Docking it into the editor window and wiring completion, the
+       debugger and a DAP socket are Windows editor work.
 
 ---
 
