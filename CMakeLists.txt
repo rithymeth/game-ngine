@@ -22,6 +22,7 @@ option(AETHER_BUILD_PHYSICS "Build the Jolt-backed physics module" ON)
 option(AETHER_BUILD_EDITOR "Build the Dear ImGui editor app" ON)
 option(AETHER_BUILD_EDITOR_UI "Build the portable editor UI library (ImGui + reflection, no graphics backend; tested headless on every platform)" ON)
 option(AETHER_BUILD_VULKAN "Build the Vulkan RHI backend" ON)
+option(AETHER_BUILD_SCRIPTING "Build the Luau scripting module" ON)
 
 include(FetchContent)
 
@@ -161,6 +162,39 @@ else()
 endif()
 
 add_subdirectory(engine)
+
+if(AETHER_BUILD_SCRIPTING)
+    # Luau (MIT, luau-lang/luau): the scripting VM and compiler (Phase 11).
+    # Only the libraries; not its command-line tools or tests.
+    set(LUAU_BUILD_CLI OFF CACHE BOOL "" FORCE)
+    set(LUAU_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(LUAU_BUILD_WEB OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        luau
+        GIT_REPOSITORY https://github.com/luau-lang/luau.git
+        GIT_TAG 0.740
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(luau)
+    # Third-party code: don't hold it to our warning flags.
+    foreach(luau_target Luau.Common Luau.Ast Luau.Compiler Luau.VM Luau.Bytecode)
+        if(TARGET ${luau_target})
+            if(MSVC)
+                target_compile_options(${luau_target} PRIVATE /w)
+            else()
+                target_compile_options(${luau_target} PRIVATE -w)
+            endif()
+        endif()
+    endforeach()
+    # Only the VM and compiler are used; keep the rest (type checker, code
+    # generator, ...) out of the default build.
+    foreach(luau_target Luau.Analysis Luau.CodeGen Luau.Config Luau.Require Luau.RequireNavigator Luau.CLI.lib Luau.EqSat Luau.Inliner)
+        if(TARGET ${luau_target})
+            set_target_properties(${luau_target} PROPERTIES EXCLUDE_FROM_ALL ON)
+        endif()
+    endforeach()
+    add_subdirectory(scripting)
+endif()
 
 if(AETHER_BUILD_PHYSICS)
     add_subdirectory(physics)
