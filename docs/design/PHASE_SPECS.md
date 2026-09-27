@@ -855,8 +855,29 @@ struct Blueprint{ std::string parent; std::vector<Variable> variables; std::vect
        a dragged wire links its first fitting pin.
      - **Palette search** is fuzzy, prefix matches first, and filtered to
        nodes with a pin fitting the dragged one.
-   - **Part 2:** the Blueprint editor panels (My Blueprint, Details,
-     compile results, the palette popup, comments).
+   - ✅ **Part 2 done:** the Blueprint editor panels. Step 6 is complete.
+     - **Document** (`blueprint_document.h`, no ImGui): the open
+       Blueprint, its file, undo/redo as whole-Blueprint snapshots (edits
+       with the same merge key, like typing in one field, share a step),
+       and the compile status (not compiled, OK, warnings, errors, stale).
+     - **My Blueprint edits**: add, rename and remove variables,
+       functions, macros and event dispatchers. Renames update what refers
+       to them (Get/Set, calls, macro instances, Sort/Filter `by`,
+       dispatcher nodes). Removals take those nodes with them. A variable
+       type change breaks links that no longer fit.
+     - **Clipboard**: copy, cut, paste at the mouse and duplicate, as JSON
+       with the links between copied nodes.
+     - **Comment boxes** are part of the graph (`comments` in the .abp).
+       C boxes the selection; dragging the title moves the box and the
+       nodes inside it, and the corner resizes it.
+     - **Editor** (`blueprint_editor.h`): toolbar (Compile with its status,
+       Save, Undo/Redo, parent class), My Blueprint, graph tabs, Details
+       (variables, function and macro signatures, dispatcher parameters,
+       node comments and pin defaults, comment text and color), Compiler
+       Results (a row focuses its node) and the palette popup. Keys:
+       Ctrl+Z/Y/S, F7, and in the graph Tab, F, C and Ctrl+C/X/V/D.
+     - **Not yet**: the Class Defaults and Components tabs, the diff view,
+       the minimap and bookmarks, reroute nodes, and collapse to function.
 7. Samples (BP_Door, BP_Coin, BP_GameMode) and the 10,000-instance
    benchmark.
 

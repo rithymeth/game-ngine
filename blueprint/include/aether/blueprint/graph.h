@@ -53,6 +53,14 @@ struct Variable {
 
 enum class GraphKind : u8 { EventGraph, Function, Macro };
 
+// A comment box drawn behind nodes (the editor's C key). Moving it moves the
+// nodes inside it; it has no effect on compiling.
+struct CommentBox {
+    std::string text;
+    float x = 0.0f, y = 0.0f, width = 200.0f, height = 100.0f;
+    u32 color = 0x40FFFFFF; // ImGui order (ABGR), usually translucent
+};
+
 struct Graph {
     std::string name;
     GraphKind kind = GraphKind::EventGraph;
@@ -63,6 +71,7 @@ struct Graph {
     std::vector<Variable> inputs;
     std::vector<Variable> outputs;
     bool pure = false; // a pure function: called without exec pins
+    std::vector<CommentBox> comments;
 
     Node* Find(NodeId id);
     const Node* Find(NodeId id) const;

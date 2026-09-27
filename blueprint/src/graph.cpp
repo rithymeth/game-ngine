@@ -140,6 +140,13 @@ json BlueprintToJson(const Blueprint& bp) {
             links.push_back({{"from", json::array({l.from.node, l.from.pin})}, {"to", json::array({l.to.node, l.to.pin})}});
         }
         json graph = {{"name", g.name}, {"kind", KindName(g.kind)}, {"nodes", nodes}, {"links", links}};
+        if (!g.comments.empty()) {
+            json comments = json::array();
+            for (const CommentBox& c : g.comments) {
+                comments.push_back({{"text", c.text}, {"rect", json::array({c.x, c.y, c.width, c.height})}, {"color", c.color}});
+            }
+            graph["comments"] = comments;
+        }
         if (g.kind == GraphKind::Function || g.kind == GraphKind::Macro) {
             json inputs = json::array(), outputs = json::array();
             for (const Variable& v : g.inputs) inputs.push_back(VariableToJson(v));
@@ -246,6 +253,20 @@ bool BlueprintFromJson(const json& j, Blueprint& out, std::string* error) {
                 return fail("graph '" + graph.name + "' has a malformed link");
             }
             graph.links.push_back(std::move(link));
+        }
+        for (const json& c : g.value("comments", json::array())) {
+            CommentBox box;
+            const json rect = c.is_object() ? c.value("rect", json()) : json();
+            if (!rect.is_array() || rect.size() != 4 || !std::all_of(rect.begin(), rect.end(), [](const json& v) { return v.is_number(); })) {
+                return fail("graph '" + graph.name + "' has a malformed comment box");
+            }
+            box.text = c.value("text", "");
+            box.x = rect[0].get<float>();
+            box.y = rect[1].get<float>();
+            box.width = rect[2].get<float>();
+            box.height = rect[3].get<float>();
+            box.color = c.value("color", box.color);
+            graph.comments.push_back(std::move(box));
         }
         if (bp.FindGraph(graph.name) != nullptr) return fail("two graphs are named '" + graph.name + "'");
         bp.graphs.push_back(std::move(graph));

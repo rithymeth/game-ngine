@@ -86,6 +86,23 @@ NodeLayout LayoutNode(const GraphNodeView& node, float font_size) {
     return layout;
 }
 
+bool NodeBounds(const GraphViewModel& model, const std::set<u32>& nodes, float font_size, float& x0, float& y0, float& x1,
+                float& y1) {
+    x0 = y0 = 1e30f;
+    x1 = y1 = -1e30f;
+    bool any = false;
+    for (const GraphNodeView& n : model.nodes) {
+        if (!nodes.empty() && nodes.count(n.id) == 0) continue;
+        const NodeLayout l = LayoutNode(n, font_size);
+        x0 = std::min(x0, n.x);
+        y0 = std::min(y0, n.y);
+        x1 = std::max(x1, n.x + l.width);
+        y1 = std::max(y1, n.y + l.height);
+        any = true;
+    }
+    return any;
+}
+
 bool PinScreenPosition(const GraphViewModel& model, const GraphViewState& state, const GraphPinRef& pin, float& x,
                        float& y) {
     const GraphNodeView* node = model.Find(pin.node);
@@ -126,6 +143,27 @@ u32 HitTestNode(const GraphViewModel& model, const GraphViewState& state, float 
     return 0;
 }
 
+int HitTestCommentTitle(const GraphViewModel& model, const GraphViewState& state, float x, float y) {
+    const float cx = state.ScreenToCanvasX(x), cy = state.ScreenToCanvasY(y);
+    const float bar = state.font_size + 8.0f;
+    for (usize i = model.comments.size(); i-- > 0;) {
+        const GraphCommentView& c = model.comments[i];
+        if (cx >= c.x && cx <= c.x + c.width && cy >= c.y && cy <= c.y + bar) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+int HitTestCommentCorner(const GraphViewModel& model, const GraphViewState& state, float x, float y) {
+    const float cx = state.ScreenToCanvasX(x), cy = state.ScreenToCanvasY(y);
+    const float grip = 12.0f / state.zoom;
+    for (usize i = model.comments.size(); i-- > 0;) {
+        const GraphCommentView& c = model.comments[i];
+        const float rx = c.x + c.width, ry = c.y + c.height;
+        if (cx >= rx - grip && cx <= rx && cy >= ry - grip && cy <= ry) return static_cast<int>(i);
+    }
+    return -1;
+}
+
 int HitTestLink(const GraphViewModel& model, const GraphViewState& state, float x, float y, float tolerance) {
     for (usize i = 0; i < model.links.size(); ++i) {
         const GraphLinkView& l = model.links[i];
@@ -162,13 +200,11 @@ GraphViewResult DrawGraphView(const char* id, const GraphViewModel& model, Graph
 
     if (state.request_fit && !model.nodes.empty()) {
         state.request_fit = false;
-        float x0 = 1e30f, y0 = 1e30f, x1 = -1e30f, y1 = -1e30f;
-        for (const GraphNodeView& n : model.nodes) {
-            const NodeLayout l = LayoutNode(n, state.font_size);
-            x0 = std::min(x0, n.x);
-            y0 = std::min(y0, n.y);
-            x1 = std::max(x1, n.x + l.width);
-            y1 = std::max(y1, n.y + l.height);
+        const bool only_selected = state.request_fit_selection && !state.selection.empty();
+        state.request_fit_selection = false;
+        float x0, y0, x1, y1;
+        if (!NodeBounds(model, only_selected ? state.selection : std::set<u32>{}, state.font_size, x0, y0, x1, y1)) {
+            NodeBounds(model, {}, state.font_size, x0, y0, x1, y1);
         }
         const float margin = 40.0f;
         state.zoom = std::clamp(std::min(size.x / (x1 - x0 + 2 * margin), size.y / (y1 - y0 + 2 * margin)), kMinZoom, 1.0f);
@@ -213,10 +249,34 @@ GraphViewResult DrawGraphView(const char* id, const GraphViewModel& model, Graph
                 state.selection = {node};
             }
             result.selection_changed = true;
+            state.selected_comment = -1;
             state.dragging_nodes = true;
             state.drag_dx = state.drag_dy = 0.0f;
             if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) result.double_clicked = node;
+        } else if (const int corner = HitTestCommentCorner(model, state, mouse.x, mouse.y); corner >= 0) {
+            state.resizing_comment = corner;
+            state.selected_comment = corner;
+            state.drag_dx = state.drag_dy = 0.0f;
+        } else if (const int title = HitTestCommentTitle(model, state, mouse.x, mouse.y); title >= 0) {
+            // Selecting a comment box replaces the node selection; dragging
+            // it takes the nodes wholly inside it along.
+            state.dragging_comment = title;
+            state.selected_comment = title;
+            if (!state.selection.empty()) {
+                state.selection.clear();
+            }
+            result.selection_changed = true;
+            state.drag_dx = state.drag_dy = 0.0f;
+            state.comment_nodes.clear();
+            const GraphCommentView& c = model.comments[static_cast<usize>(title)];
+            for (const GraphNodeView& n : model.nodes) {
+                const NodeLayout l = LayoutNode(n, state.font_size);
+                if (n.x >= c.x && n.y >= c.y && n.x + l.width <= c.x + c.width && n.y + l.height <= c.y + c.height) {
+                    state.comment_nodes.insert(n.id);
+                }
+            }
         } else {
+            state.selected_comment = -1;
             state.box_selecting = true;
             state.box_x0 = state.ScreenToCanvasX(mouse.x);
             state.box_y0 = state.ScreenToCanvasY(mouse.y);
@@ -226,7 +286,8 @@ GraphViewResult DrawGraphView(const char* id, const GraphViewModel& model, Graph
             }
         }
     }
-    if (state.dragging_nodes && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+    if ((state.dragging_nodes || state.dragging_comment >= 0 || state.resizing_comment >= 0) &&
+        ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
         state.drag_dx += io.MouseDelta.x / state.zoom;
         state.drag_dy += io.MouseDelta.y / state.zoom;
     }
@@ -254,6 +315,24 @@ GraphViewResult DrawGraphView(const char* id, const GraphViewModel& model, Graph
                 }
             }
         }
+        if (state.dragging_comment >= 0 && static_cast<usize>(state.dragging_comment) < model.comments.size() &&
+            (state.drag_dx != 0.0f || state.drag_dy != 0.0f)) {
+            const GraphCommentView& c = model.comments[static_cast<usize>(state.dragging_comment)];
+            result.comments_changed.push_back(
+                {static_cast<usize>(state.dragging_comment), c.x + state.drag_dx, c.y + state.drag_dy, c.width, c.height});
+            for (u32 inside : state.comment_nodes) {
+                if (const GraphNodeView* n = model.Find(inside)) {
+                    result.moved.push_back({inside, {n->x + state.drag_dx, n->y + state.drag_dy}});
+                }
+            }
+        }
+        if (state.resizing_comment >= 0 && static_cast<usize>(state.resizing_comment) < model.comments.size() &&
+            (state.drag_dx != 0.0f || state.drag_dy != 0.0f)) {
+            const GraphCommentView& c = model.comments[static_cast<usize>(state.resizing_comment)];
+            result.comments_changed.push_back({static_cast<usize>(state.resizing_comment), c.x, c.y,
+                                               std::max(60.0f, c.width + state.drag_dx),
+                                               std::max(40.0f, c.height + state.drag_dy)});
+        }
         if (state.box_selecting) {
             const float x0 = std::min(state.box_x0, state.ScreenToCanvasX(mouse.x));
             const float x1 = std::max(state.box_x0, state.ScreenToCanvasX(mouse.x));
@@ -268,6 +347,8 @@ GraphViewResult DrawGraphView(const char* id, const GraphViewModel& model, Graph
             }
         }
         state.dragging_link = state.dragging_nodes = state.box_selecting = false;
+        state.dragging_comment = state.resizing_comment = -1;
+        state.comment_nodes.clear();
         state.drag_dx = state.drag_dy = 0.0f;
     }
     if (hovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right) && !ImGui::IsMouseDragging(ImGuiMouseButton_Right, 2.0f) &&
@@ -276,15 +357,37 @@ GraphViewResult DrawGraphView(const char* id, const GraphViewModel& model, Graph
         result.palette_x = state.ScreenToCanvasX(mouse.x);
         result.palette_y = state.ScreenToCanvasY(mouse.y);
     }
+    result.mouse_x = state.ScreenToCanvasX(mouse.x);
+    result.mouse_y = state.ScreenToCanvasY(mouse.y);
     if (hovered) {
-        if (ImGui::IsKeyPressed(ImGuiKey_Delete) && !state.selection.empty()) {
-            result.deleted.assign(state.selection.begin(), state.selection.end());
-            state.selection.clear();
+        if (ImGui::IsKeyPressed(ImGuiKey_Delete)) {
+            if (!state.selection.empty()) {
+                result.deleted.assign(state.selection.begin(), state.selection.end());
+                state.selection.clear();
+            } else if (state.selected_comment >= 0) {
+                result.deleted_comment = state.selected_comment;
+                state.selected_comment = -1;
+            }
         }
         if (ImGui::IsKeyPressed(ImGuiKey_Home)) state.request_fit = true;
-        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_A)) {
-            for (const GraphNodeView& n : model.nodes) state.selection.insert(n.id);
-            result.selection_changed = true;
+        if (!io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F) && !state.selection.empty()) {
+            state.request_fit = state.request_fit_selection = true;
+        }
+        if (!io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C) && !state.selection.empty()) result.comment_selection = true;
+        if (ImGui::IsKeyPressed(ImGuiKey_Tab)) {
+            result.open_palette = true;
+            result.palette_x = result.mouse_x;
+            result.palette_y = result.mouse_y;
+        }
+        if (io.KeyCtrl) {
+            if (ImGui::IsKeyPressed(ImGuiKey_A)) {
+                for (const GraphNodeView& n : model.nodes) state.selection.insert(n.id);
+                result.selection_changed = true;
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_C) && !state.selection.empty()) result.copy = true;
+            if (ImGui::IsKeyPressed(ImGuiKey_X) && !state.selection.empty()) result.cut = true;
+            if (ImGui::IsKeyPressed(ImGuiKey_V)) result.paste = true;
+            if (ImGui::IsKeyPressed(ImGuiKey_D) && !state.selection.empty()) result.duplicate = true;
         }
     }
 
@@ -301,7 +404,8 @@ GraphViewResult DrawGraphView(const char* id, const GraphViewModel& model, Graph
     draw->PushClipRect(origin, ImVec2(origin.x + size.x, origin.y + size.y), true);
 
     auto offset = [&](const GraphNodeView& n) {
-        const bool moving = state.dragging_nodes && state.selection.count(n.id) != 0;
+        const bool moving = (state.dragging_nodes && state.selection.count(n.id) != 0) ||
+                            (state.dragging_comment >= 0 && state.comment_nodes.count(n.id) != 0);
         return ImVec2(n.x + (moving ? state.drag_dx : 0.0f), n.y + (moving ? state.drag_dy : 0.0f));
     };
     auto pin_pos = [&](const GraphNodeView& n, const NodeLayout& l, bool output, usize i) {
@@ -317,6 +421,29 @@ GraphViewResult DrawGraphView(const char* id, const GraphViewModel& model, Graph
         return true;
     };
 
+    ImFont* font = ImGui::GetFont();
+    for (usize i = 0; i < model.comments.size(); ++i) {
+        const GraphCommentView& c = model.comments[i];
+        float x = c.x, y = c.y, w = c.width, h = c.height;
+        if (state.dragging_comment == static_cast<int>(i)) x += state.drag_dx, y += state.drag_dy;
+        if (state.resizing_comment == static_cast<int>(i)) {
+            w = std::max(60.0f, w + state.drag_dx);
+            h = std::max(40.0f, h + state.drag_dy);
+        }
+        const ImVec2 p0(state.CanvasToScreenX(x), state.CanvasToScreenY(y));
+        const ImVec2 p1(state.CanvasToScreenX(x + w), state.CanvasToScreenY(y + h));
+        const float bar = (state.font_size + 8.0f) * state.zoom;
+        draw->AddRectFilled(p0, p1, c.color, 4.0f * state.zoom);
+        draw->AddRectFilled(p0, ImVec2(p1.x, p0.y + bar), (c.color & 0x00FFFFFFu) | 0xA0000000u, 4.0f * state.zoom,
+                            ImDrawFlags_RoundCornersTop);
+        draw->AddText(font, state.font_size * state.zoom, ImVec2(p0.x + kPad * state.zoom, p0.y + 4.0f * state.zoom), kColText,
+                      c.text.c_str());
+        draw->AddRect(p0, p1, state.selected_comment == static_cast<int>(i) ? kColSelected : IM_COL32(0, 0, 0, 90),
+                      4.0f * state.zoom, 0, (state.selected_comment == static_cast<int>(i) ? 2.0f : 1.0f) * state.zoom);
+        const float g = 10.0f * state.zoom;
+        draw->AddTriangleFilled(ImVec2(p1.x - g, p1.y), ImVec2(p1.x, p1.y - g), p1, IM_COL32(200, 200, 200, 120));
+    }
+
     for (const GraphLinkView& l : model.links) {
         ImVec2 a, b, c1, c2;
         if (!pin_of(l.from_node, l.from_pin, true, a) || !pin_of(l.to_node, l.to_pin, false, b)) continue;
@@ -326,7 +453,6 @@ GraphViewResult DrawGraphView(const char* id, const GraphViewModel& model, Graph
         draw->AddBezierCubic(a, c1, c2, b, l.color, thickness);
     }
 
-    ImFont* font = ImGui::GetFont();
     for (const GraphNodeView& n : model.nodes) {
         const NodeLayout l = LayoutNode(n, state.font_size);
         const ImVec2 at = offset(n);

@@ -11,6 +11,8 @@ add_library(aether_editor_ui STATIC
     code_editor.cpp
     ../graph/graph_view.cpp
     ../graph/blueprint_graph.cpp
+    ../graph/blueprint_document.cpp
+    ../graph/blueprint_editor.cpp
     ../core/command_stack.cpp
     ../core/commands.cpp
     ../core/play_session.cpp
