@@ -29,9 +29,18 @@ struct View {
     Vec3 forward{0, 0, -1};
     f32 near_plane = 0.1f, far_plane = 1000.0f;
     f32 fov_degrees = 60.0f; // perspective
+    f32 ortho_height = 10.0f; // orthographic: world units top to bottom
     f32 aspect = 16.0f / 9.0f;
     bool perspective = true;
     Frustum frustum;
+
+    Vec3 Right() const { return Vec3(view.cols[0].x, view.cols[1].x, view.cols[2].x); }
+    Vec3 Up() const { return Vec3(view.cols[0].y, view.cols[1].y, view.cols[2].y); }
+    // A world point in view space (the camera looks down -Z).
+    Vec3 ToViewSpace(const Vec3& p) const {
+        const Vec4 v = view * Vec4(p.x, p.y, p.z, 1.0f);
+        return Vec3(v.x, v.y, v.z);
+    }
 };
 
 // A view from a camera at `world_transform` (rotation + translation).
