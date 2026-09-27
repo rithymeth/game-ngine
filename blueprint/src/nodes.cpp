@@ -831,6 +831,44 @@ void RegisterBuiltins(Registry& r) {
             return entries;
         }};
 
+    // --- Macros (§12) --------------------------------------------------------
+    // A macro graph's tunnels: Macro.Inputs' outputs are the macro's inputs,
+    // Macro.Outputs' inputs its outputs. Instances ("Macro:Name") are inlined
+    // by the compiler, so none of these ever reach the VM.
+    auto macro_pins = [](const std::vector<Variable>& vars, PinDir dir) {
+        std::vector<PinDesc> pins;
+        for (const Variable& v : vars) {
+            if (v.type.IsExec()) pins.push_back({v.name, dir, PinType::Exec(), {}, Pin_None});
+            else pins.push_back({v.name, dir, v.type, dir == PinDir::In ? v.default_value : Value{}, Pin_None});
+        }
+        return pins;
+    };
+    r.exact["Macro.Inputs"] = [=](const NodeContext& c, NodeError& error) -> std::optional<NodeSignature> {
+        if (c.graph.kind != GraphKind::Macro) return Fail(error, "BP010", "Macro inputs belong in a macro graph.");
+        return Sig("Inputs", "Macros", NodeKind::Tunnel, macro_pins(c.graph.inputs, PinDir::Out));
+    };
+    r.exact["Macro.Outputs"] = [=](const NodeContext& c, NodeError& error) -> std::optional<NodeSignature> {
+        if (c.graph.kind != GraphKind::Macro) return Fail(error, "BP010", "Macro outputs belong in a macro graph.");
+        return Sig("Outputs", "Macros", NodeKind::Tunnel, macro_pins(c.graph.outputs, PinDir::In));
+    };
+    r.families["Macro:"] = {
+        [=](const NodeContext& c, NodeError& error) -> std::optional<NodeSignature> {
+            const Graph* macro = c.blueprint.FindGraph(c.suffix);
+            if (macro == nullptr || macro->kind != GraphKind::Macro) {
+                return Fail(error, "BP004", "The macro '" + std::string(c.suffix) + "' no longer exists.");
+            }
+            std::vector<PinDesc> pins = macro_pins(macro->inputs, PinDir::In);
+            for (PinDesc& p : macro_pins(macro->outputs, PinDir::Out)) pins.push_back(std::move(p));
+            const bool has_exec = std::any_of(pins.begin(), pins.end(), [](const PinDesc& p) { return p.type.IsExec(); });
+            return Sig(macro->name, "Macros", has_exec ? NodeKind::Impure : NodeKind::Pure, std::move(pins));
+        },
+        [](const Blueprint& bp) {
+            std::vector<PaletteEntry> entries;
+            for (const Graph& g : bp.graphs)
+                if (g.kind == GraphKind::Macro) entries.push_back({"Macro:" + g.name, g.name, "Macros"});
+            return entries;
+        }};
+
     // --- Reflection: native calls and component fields (§12.3) -------------
     r.families["Call.Native:"] = {
         [kEntity](const NodeContext& c, NodeError& error) -> std::optional<NodeSignature> {
