@@ -232,8 +232,9 @@ bool PhysicsScene::Build(Entity e, Tracked& tracked, std::string& problem) {
             settings.mAllowedDOFs = dofs;
         }
     }
-    // Kinematic sensors should notice static geometry too (a trigger on a moving platform).
-    settings.mCollideKinematicVsNonDynamic = motion == BodyMotion::Kinematic && settings.mIsSensor;
+    // Triggers notice kinematic bodies too (characters' inner bodies, moving
+    // platforms), and kinematic triggers notice static geometry.
+    settings.mCollideKinematicVsNonDynamic = settings.mIsSensor;
 
     tracked.entity = e;
     tracked.body = physics_.CreateBody(settings, motion != BodyMotion::Static);
@@ -372,6 +373,17 @@ std::vector<Entity> PhysicsScene::OverlapSphere(const Vec3& center, f32 radius, 
         if (!e.IsNull()) out.push_back(e);
     }
     return out;
+}
+
+void PhysicsScene::AdoptBody(JPH::BodyID body, Entity entity) {
+    if (!body.IsInvalid()) by_body_[body.GetIndexAndSequenceNumber()] = EntityKey(entity);
+}
+
+void PhysicsScene::ReleaseBody(JPH::BodyID body) {
+    auto it = by_body_.find(body.GetIndexAndSequenceNumber());
+    if (it == by_body_.end()) return;
+    graveyard_[it->first] = it->second;
+    by_body_.erase(it);
 }
 
 Entity PhysicsScene::Owner(JPH::BodyID body) const {
