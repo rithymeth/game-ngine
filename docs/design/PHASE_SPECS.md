@@ -1280,3 +1280,48 @@ renders.
    shadows, sky, post (Windows).
 6. The editor viewport and the player on the renderer, view modes, and the
    screenshot parity test (Windows).
+
+---
+
+## Phase 15: materials and the material graph
+
+The concept is in [ROADMAP.md Phase 15](../ROADMAP.md). Materials are node
+graphs, like Blueprints, that compile to HLSL. The model, validation, code
+generation and instances are plain C++ in `Aether::Renderer` and are tested
+headless; compiling the HLSL (DXC) and the live preview need the GPU side.
+
+### 15.1 The material asset (`.amat`)
+
+```json
+{
+  "$type": "Material", "$version": 1,
+  "shading": "DefaultLit", "blend": "Opaque", "two_sided": false,
+  "parameters": [
+    {"name": "Roughness", "type": "float", "default": [0.7, 0, 0, 0]},
+    {"name": "Albedo", "type": "texture", "texture": "<asset guid>"}
+  ],
+  "nodes": [{"id": 1, "type": "Material.Output", "pos": [600, 0]}, ...],
+  "links": [{"from": [2, "rgb"], "to": [1, "BaseColor"]}]
+}
+```
+
+Pin types are float, float2, float3 and float4, plus texture. Math nodes are
+generic: their result is their widest input, and a float input broadcasts
+(so float3 × float works, float3 + float2 doesn't).
+
+### 15.2 PR breakdown
+
+1. ✅ **Done.** The material model: asset, graph, node library, type
+   inference, validation (MT001–MT010) and `.amat` save/load
+   (`aether/renderer/material.h`).
+2. HLSL generation: dead-node elimination, shared subexpressions,
+   parameter buffer layout (16-byte rules) and texture slots, and a
+   permutation key.
+3. Material instances: parameter overrides without recompiling, the
+   packed parameter buffer, and the Blueprint parameter nodes.
+4. Material functions (reusable subgraphs), a Custom HLSL node, Noise and
+   Triplanar.
+5. The material editor: the graph panel (Phase 12's widget), parameters,
+   details and stats.
+6. DXC compilation to DXIL and SPIR-V, the permutation cache in the DDC, and
+   the live preview (GPU).
