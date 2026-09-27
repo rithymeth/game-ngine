@@ -176,6 +176,7 @@ enum class Op : u8 {
     DetachOp,
     DestroyOp,    // deferred until the running event finishes; EndPlay first
     SpawnOp,      // a = dst entity, b = location, c = rotation, d = spawn index
+    TraceOp,      // d = trace index: a physics query (Phase 13 step 4)
     GameTime,     // a = dst float
     DeltaTime,    // a = dst float
     // Event dispatchers and interfaces: d = table index.
@@ -231,6 +232,14 @@ struct FieldAccess {
     const reflect::FieldInfo* field = nullptr;
     RegRef target;
     TypedReg value;
+};
+
+// Physics queries: which one, and the registers of its pins.
+struct TraceInfo {
+    enum class Kind : u8 { Line, Sphere, OverlapSphere } kind = Kind::Line;
+    RegRef start, end, radius, layers, ignore_self;   // start = center for overlaps; radius unused for lines
+    RegRef hit, entity, location, normal, distance;   // traces
+    RegRef entities;                                   // overlaps (array bank)
 };
 
 // Spawn Blueprint: the asset (GUID text) and the Expose on Spawn values.
@@ -316,6 +325,7 @@ struct CompiledBlueprint {
     std::vector<FunctionCall> calls;
     std::vector<LatentInfo> latents;
     std::vector<SpawnInfo> spawns;
+    std::vector<TraceInfo> traces;
     std::vector<SortInfo> sorts;
     std::vector<DispatcherCall> dispatcher_calls;
     std::vector<DispatcherBind> dispatcher_binds;

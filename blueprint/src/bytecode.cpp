@@ -144,6 +144,7 @@ OpInfo Info(Op op) {
     case Op::DetachOp: return {"DETACH", "-r--"};
     case Op::DestroyOp: return {"DESTROY", "-r--"};
     case Op::SpawnOp: return {"SPAWN", "rrri"};
+    case Op::TraceOp: return {"TRACE", "---i"};
     case Op::GameTime: return {"GAMETIME", "r---"};
     case Op::DeltaTime: return {"DELTATIME", "r---"};
     case Op::CallDispatcher: return {"CALLD", "---i"};

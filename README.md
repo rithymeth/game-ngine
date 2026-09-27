@@ -3516,6 +3516,43 @@ Phase 13.
   40 runs in a row) and under ASan/UBSan, and 273/273 without physics on
   GCC 13, Clang and ASan/UBSan.
 
+**Step 4: physics queries and their Blueprint nodes** (§13.2).
+
+- **Queries**: `PhysicsWorld` casts rays, sweeps shapes (spheres, or any
+  Jolt shape with a rotation), and finds overlaps. `PhysicsScene` does
+  the same with entities.
+  - Every query can be limited to some layers and can skip bodies, such
+    as the caller's own.
+  - Triggers are skipped unless asked for.
+  - Results give what was hit, where, the surface normal and the
+    distance.
+- **Blueprint nodes**: Line Trace, Sphere Trace and Overlap Sphere, in a
+  new Physics category.
+  - Outputs are "hit", "hit entity", "location", "normal" and "distance";
+    Overlap Sphere gives an entity array.
+  - "Ignore self" is on by default.
+  - The game connects them to its physics with
+    `BlueprintVM::SetPhysicsQueries`. Without that they find nothing and
+    warn (BP207).
+
+**Verified**: 3 new tests.
+
+- A ray straight down lands on the floor's top with an upward normal at
+  the right distance, and a ray sideways meets a wall's near face.
+- Layer masks, ignored entities and too-short rays miss. Triggers are
+  skipped until included.
+- A sphere swept down stops at the right height. A fat sphere catches
+  what a thin ray passes between. A sweep that starts inside something
+  hits at distance 0.
+- Overlaps list exactly what's touching, in body order, filtered the same
+  way.
+- A Blueprint's Line Trace, driven through the VM, hits the floor below
+  it and not itself, and its Overlap Sphere counts its two neighbours.
+  Without physics connected, the trace misses and warns BP207.
+- 295/295 tests pass with physics on GCC 13 (RelWithDebInfo and Debug)
+  and under ASan/UBSan, and 273/273 without physics on GCC 13, Clang and
+  ASan/UBSan.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
