@@ -4683,6 +4683,54 @@ renderer, so its layout, input and styles are tested headless.
 - 368/368 tests pass on GCC 13, Clang and ASan/UBSan, and 400/400 with
   physics.
 
+**Step 3: themes, layout files and data binding** (§18.3).
+
+- **Themes** (`.atheme`):
+  - A colour palette (names, hex or arrays).
+  - Styles per control type and class (`Button.Primary`) that extend each
+    other.
+  - Text styles, and 9-slice brushes whose images resolve to textures.
+  - Applied to a whole tree at once.
+- **Layout files** (`.aui`):
+  - The widget tree with every setting, only non-default slot fields,
+    and its bindings.
+  - Custom widget types by registration.
+  - Errors that name the path to the bad widget.
+- **Data binding**:
+  - Widget text, visibility, enabled, opacity, progress, slider values,
+    checks and selections follow reflected fields by path, through
+    nested structs.
+  - Ratios, formats, precision and inversion.
+  - Two-way for the editable controls.
+  - Only changed values are pushed, and text being typed is left alone.
+
+**Verified**: 3 new tests.
+
+- Themes:
+  - hex, palette and array colours, and the bad ones;
+  - brushes with resolved images, round-tripped;
+  - a theme whose styles extend in either order, and lookup fallbacks;
+  - save/load to the same file;
+  - loops, unknown bases, missing colours and newer versions refused;
+  - applied to buttons, text, progress bars and borders.
+- Layouts:
+  - a menu with every widget saved, loaded and saved again to the same
+    text, with its bindings and resolved textures;
+  - no default slots written;
+  - nine kinds of error with paths;
+  - a registered custom widget.
+- Binding:
+  - names, formatted numbers, precision, bools, ratios, inverted
+    visibility;
+  - updates only on change;
+  - two-way slider, toggle, dropdown and typing;
+  - text held while focused;
+  - six kinds of bad binding reported;
+  - direct path reads and writes;
+  - a removed source.
+- 371/371 tests pass on GCC 13, Clang and ASan/UBSan, and 403/403 with
+  physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,

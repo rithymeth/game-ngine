@@ -20,6 +20,7 @@ struct Brush {
     Kind kind = Kind::None;
     Color tint;
     u32 texture = 0;       // the renderer's texture id (0 = white)
+    std::string image;     // the texture's asset path, saved in themes and layouts (resolved to `texture` on load)
     Vec2 image_size;       // the texture's size in pixels (Image's natural size; 9-slice margins are in these pixels)
     Rect uv{0, 0, 1, 1};   // the part of the texture used
     Margin slice;          // 9-slice margins, in texture pixels

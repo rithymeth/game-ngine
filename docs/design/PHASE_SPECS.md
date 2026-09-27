@@ -2038,7 +2038,62 @@ Everything else runs and is tested headless.
   - `SetModal` adds a context that blocks lower-priority (gameplay)
     contexts while a menu is up.
 
-### 18.3 PR breakdown
+### 18.3 Themes, layout files and data binding
+
+- **Themes** (`.atheme`, JSON): a palette of named colours, control
+  styles, and text styles.
+  - Colours are `"@name"`, `"#RRGGBB"`/`"#RRGGBBAA"`, or `[r, g, b(, a)]`.
+    A bare colour where a brush goes is a solid brush.
+  - Brushes name their image by asset path; a resolver turns it into the
+    renderer's texture id when the theme loads.
+  - A style is a ControlStyle: the normal, hovered, pressed, disabled,
+    accent and focus brushes, focus width, text and hint colours, and
+    text size.
+  - Styles are keyed `"Type"` or `"Type.class"` and can `extends`
+    another in any order in the file. Loops and unknown bases are errors.
+  - Lookup goes `Type.class`, then `Type`, then `Default`, then the
+    built-in style.
+  - `ApplyTheme` styles a tree:
+    - controls take their style;
+    - Text takes `text.<class>` (or `Default`);
+    - progress bars take their style's normal and accent brushes;
+    - Borders with a class take their style's normal brush.
+- **Layout files** (`.aui`, JSON): `{version, root, bindings}`.
+  - Each widget records its type, name, class, tooltip, enabled,
+    visibility, opacity, clipping and navigation, only the slot fields
+    that differ from the defaults, its own properties, and its children.
+    A ListView's rows are code, not saved.
+  - Types come from a registry: every built-in widget, plus the game's
+    own through `RegisterWidgetType` (a maker, and save and load
+    functions).
+  - Errors name the path to the widget (`Menu/VerticalBox[0]/Buton[0]`):
+    unknown types or names, too many children, a newer version, or
+    malformed JSON.
+- **Data binding** (`DataBinder`): named sources are reflected objects. A
+  binding maps a widget (by name) and property to a path
+  (`player.stats.mana`, through nested structs).
+  - Properties: `text` (Text, TextInput), `visible` (Collapsed when
+    false), `enabled`, `opacity`, `percent` (ProgressBar), `value`
+    (Slider), `checked` (Toggle) and `selected` (Dropdown, ListView).
+  - Options:
+    - `divide_by` makes a ratio (health / max health);
+    - `format` puts the value in text ("HP {} / 100");
+    - `precision` sets digits (whole numbers show none by default);
+    - `invert` flips booleans.
+  - Strings and bools show as themselves; numbers of any reflected
+    scalar type convert.
+  - `Update` pushes only values that changed, so an edited widget is left
+    alone until its source changes. It sets controls directly, so their
+    `on_changed` doesn't fire. A focused text box keeps what's being
+    typed until it loses focus.
+  - `two_way` writes a slider's value, a toggle's check, a text box's text
+    (a number field takes what parses) and a dropdown's choice back to the
+    field, then calls the control's earlier `on_changed`.
+  - Bad bindings are reported and skipped: a missing widget, source or
+    field, a property the widget lacks, or two-way on something that
+    can't write back.
+
+### 18.4 PR breakdown
 
 1. ✅ **Done.** The widget tree, the layout panels (Canvas with anchors,
    boxes, Grid, Overlay, SizeBox, Border, ScrollBox, Spacer), Text and
@@ -2048,8 +2103,8 @@ Everything else runs and is tested headless.
    TextInput, Dropdown, virtualized ListView, Tooltip), and input: pointer and touch
    routing (hover, press, capture, wheel), focus with gamepad and keyboard
    navigation, and the UI input context taking input before gameplay.
-3. Styles and themes as assets (per-state brushes, fonts and colours),
-   `.aui` layout files, and data binding to reflected fields.
+3. ✅ **Done.** Styles and themes as assets (per-state brushes, fonts and
+   colours), `.aui` layout files, and data binding to reflected fields.
 4. Widget Blueprints (a layout plus an event graph on the Phase 12 VM,
    with Create Widget, Add to Viewport, Set Text and events such as
    OnClicked), and UI animations (tweens and keyframe timelines of
