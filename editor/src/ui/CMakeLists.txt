@@ -5,6 +5,7 @@
 add_library(aether_editor_ui STATIC
     reflected_inspector.cpp
     entity_inspector.cpp
+    script_inspector.cpp
     ../core/command_stack.cpp
     ../core/commands.cpp
     ../core/play_session.cpp
