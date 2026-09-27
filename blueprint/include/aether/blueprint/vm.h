@@ -132,6 +132,22 @@ public:
     // VM runs EndPlay, detaches the instance, and destroys the entity.
     void SetDestroyHandler(std::function<void(Entity)> handler) { destroy_ = std::move(handler); }
 
+    // Physics queries for the Line Trace, Sphere Trace and Overlap Sphere
+    // nodes (Phase 13 step 4). The game connects them to its physics scene;
+    // without them the nodes find nothing and warn (BP207). `radius` is 0
+    // for a line; `ignore` is the running instance when "ignore self" is set.
+    struct PhysicsHit {
+        bool hit = false;
+        Entity entity;
+        Vec3 location{0, 0, 0}, normal{0, 0, 0};
+        f32 distance = 0.0f;
+    };
+    struct PhysicsQueries {
+        std::function<PhysicsHit(const Vec3& from, const Vec3& to, f32 radius, u32 layers, Entity ignore)> trace;
+        std::function<std::vector<Entity>(const Vec3& center, f32 radius, u32 layers, Entity ignore)> overlap_sphere;
+    };
+    void SetPhysicsQueries(PhysicsQueries queries) { queries_ = std::move(queries); }
+
     // Where Print String goes (default: the engine log, category "Blueprint").
     void SetPrintHandler(std::function<void(Entity, const std::string&)> handler) { print_ = std::move(handler); }
 
@@ -235,6 +251,7 @@ private:
     std::unordered_map<u64, bool> warned_; // BP201 once per (function, node)
     GuidIndex* guids_ = nullptr;
     SpawnHandler spawn_;
+    PhysicsQueries queries_;
     std::function<void(Entity)> destroy_;
     std::vector<Entity> pending_destroy_;
     bool destroying_ = false;

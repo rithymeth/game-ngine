@@ -802,6 +802,20 @@ void RegisterBuiltins(Registry& r) {
             return Sig(title, category, NodeKind::Impure, pins);
         };
     };
+    // Physics queries (Phase 13 step 4): answered by the game's physics
+    // through BlueprintVM::SetPhysicsQueries. `layers` is a mask of layer
+    // indices (-1 = all); triggers are never hit.
+    const std::vector<PinDesc> kTraceHit{Out("hit", kBool), Out("hit_entity", kEntity), Out("location", kVec3),
+                                         Out("normal", kVec3), Out("distance", kFloat)};
+    impure("Physics.LineTrace", "Line Trace", "Physics",
+           {In("start", kVec3), In("end", kVec3), In("layers", kInt, i32{-1}), In("ignore_self", kBool, true)}, kTraceHit);
+    impure("Physics.SphereTrace", "Sphere Trace", "Physics",
+           {In("start", kVec3), In("end", kVec3), In("radius", kFloat, 0.5f), In("layers", kInt, i32{-1}),
+            In("ignore_self", kBool, true)},
+           kTraceHit);
+    impure("Physics.OverlapSphere", "Overlap Sphere", "Physics",
+           {In("center", kVec3), In("radius", kFloat, 1.0f), In("layers", kInt, i32{-1}), In("ignore_self", kBool, true)},
+           {Out("entities", PinType::ArrayOf(kEntity))});
     impure("Entity.SetLocation", "Set Location", "Entity|Transform",
            {In("target", kEntity, Pin_Self), In("location", kVec3)});
     impure("Entity.SetRotation", "Set Rotation", "Entity|Transform",

@@ -25,6 +25,16 @@ struct PhysicsEvent {
 // The Blueprint and script event for a type ("Event.OnTriggerEnter").
 const char* PhysicsEventName(PhysicsEventType type);
 
+// A query hit in entity terms (Phase 13 step 4). `entity` is null for a
+// body that isn't one of the scene's (e.g. made directly on the PhysicsWorld).
+struct SceneHit {
+    bool hit = false;
+    Entity entity;
+    Vec3 point{0, 0, 0};
+    Vec3 normal{0, 0, 0};
+    f32 distance = 0.0f;
+};
+
 // Keeps a PhysicsWorld's bodies in step with the ECS (Phase 13 step 1):
 // every entity with a collider has one Jolt body, shaped by its colliders
 // (several make a compound) and moved as its RigidBody says (none: static).
@@ -57,6 +67,16 @@ public:
     using EventHandler = std::function<void(const PhysicsEvent&)>;
     void SetEventHandler(EventHandler handler) { handler_ = std::move(handler); }
     const std::vector<PhysicsEvent>& Events() const { return events_; } // the last Step's delivered events
+
+    // Queries (Phase 13 step 4), on the bodies as of the last Sync or Step.
+    // `ignore` skips one entity's body (usually the caller's own).
+    SceneHit RayCast(const Vec3& from, const Vec3& to, LayerMask layers = kAllLayers, Entity ignore = kNullEntity,
+                     bool include_triggers = false) const;
+    SceneHit SphereCast(f32 radius, const Vec3& from, const Vec3& to, LayerMask layers = kAllLayers, Entity ignore = kNullEntity,
+                        bool include_triggers = false) const;
+    // Entities whose bodies touch the sphere, in BodyID order.
+    std::vector<Entity> OverlapSphere(const Vec3& center, f32 radius, LayerMask layers = kAllLayers, Entity ignore = kNullEntity,
+                                      bool include_triggers = false) const;
 
     JPH::BodyID BodyOf(Entity entity) const; // invalid if it has none
     Entity EntityOf(JPH::BodyID body) const; // null if it isn't one of ours

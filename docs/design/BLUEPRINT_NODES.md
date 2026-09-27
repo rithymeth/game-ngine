@@ -188,6 +188,13 @@ added (`A + B + C + …`) with +.
 | **Set Simulate Physics / Set Gravity Enabled / Set Collision Enabled** | `▶`, `● target`, `● value: bool` | `▶` |
 | **Launch Character** | `▶`, `● character`, `● velocity`, `● override XY`, `● override Z` | `▶` |
 
+Implemented so far (Phase 13 step 4): **Line Trace**, **Sphere Trace**
+(single) and **Overlap Sphere**. Their hit results are split into pins
+(`hit`, `hit entity`, `location`, `normal`, `distance`) instead of a
+HitResult struct. `layers` is an int mask (-1 = all), and triggers are
+never hit. They're impure, as in Unreal, and are answered by the game's
+physics through `BlueprintVM::SetPhysicsQueries`.
+
 ---
 
 ## 8. Casting, types and conversion (blue-gray header)
@@ -289,6 +296,7 @@ parameter list.
 | BP204 | runtime | "The call to '{fn}' was refused." (the native function rejected its arguments) |
 | BP205 | runtime | "Index {i} is out of range (the array has {n} items) in '{event}'. Check Is Valid Index first." (Get returns the default; Set does nothing; logged once per node) |
 | BP206 | runtime | "Spawn Blueprint in '{event}' has nothing to spawn with (no spawner is set up)." (the VM runs without a BlueprintSystem) |
+| BP207 | runtime | "A physics query in '{event}' has no physics to ask (no physics scene is connected)." (no `SetPhysicsQueries`; the trace finds nothing) |
 
 ---
 

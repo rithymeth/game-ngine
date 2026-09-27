@@ -7,7 +7,13 @@
 #include <Jolt/RegisterTypes.h>
 #include <Jolt/Core/Factory.h>
 #include <Jolt/Physics/Body/BodyActivationListener.h>
+#include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Collision/CollideShape.h>
+#include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
+#include <Jolt/Physics/Collision/NarrowPhaseQuery.h>
+#include <Jolt/Physics/Collision/RayCast.h>
+#include <Jolt/Physics/Collision/ShapeCast.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
@@ -302,6 +308,103 @@ void PhysicsWorld::Step(f32 dt) {
     contact_queue_->count.store(0, std::memory_order_relaxed);
     physics_system_->Update(dt, kCollisionSteps, temp_allocator_.get(), jolt_job_system_.get());
     ProcessContacts();
+}
+
+namespace {
+
+class LayerMaskFilter final : public JPH::ObjectLayerFilter {
+public:
+    explicit LayerMaskFilter(LayerMask mask) : mask_(mask) {}
+    bool ShouldCollide(JPH::ObjectLayer layer) const override { return (mask_ & (1u << ObjectLayers::GameLayer(layer))) != 0; }
+
+private:
+    LayerMask mask_;
+};
+
+class QueryBodyFilter final : public JPH::BodyFilter {
+public:
+    explicit QueryBodyFilter(const QueryFilter& filter) : filter_(filter) {}
+    bool ShouldCollide(const JPH::BodyID& body) const override {
+        return std::find(filter_.ignore.begin(), filter_.ignore.end(), body) == filter_.ignore.end();
+    }
+    bool ShouldCollideLocked(const JPH::Body& body) const override { return filter_.include_triggers || !body.IsSensor(); }
+
+private:
+    const QueryFilter& filter_;
+};
+
+Vec3 FromR(JPH::RVec3Arg v) { return Vec3(static_cast<f32>(v.GetX()), static_cast<f32>(v.GetY()), static_cast<f32>(v.GetZ())); }
+JPH::RVec3 ToR(const Vec3& v) { return JPH::RVec3(v.x, v.y, v.z); }
+JPH::Quat ToJoltQ(const Quaternion& q) { return JPH::Quat(q.x, q.y, q.z, q.w).Normalized(); }
+
+} // namespace
+
+QueryHit PhysicsWorld::RayCast(const Vec3& from, const Vec3& to, const QueryFilter& filter) const {
+    QueryHit out;
+    const JPH::RRayCast ray(ToR(from), ToJolt(to - from));
+    JPH::RayCastResult result;
+    const LayerMaskFilter layers(filter.layers);
+    const QueryBodyFilter bodies(filter);
+    if (!physics_system_->GetNarrowPhaseQuery().CastRay(ray, result, {}, layers, bodies)) return out;
+    out.hit = true;
+    out.body = result.mBodyID;
+    const JPH::RVec3 point = ray.GetPointOnRay(result.mFraction);
+    out.point = FromR(point);
+    out.distance = (to - from).Length() * result.mFraction;
+    JPH::BodyLockRead lock(physics_system_->GetBodyLockInterface(), result.mBodyID);
+    if (lock.Succeeded()) out.normal = ToAether(lock.GetBody().GetWorldSpaceSurfaceNormal(result.mSubShapeID2, point));
+    return out;
+}
+
+QueryHit PhysicsWorld::ShapeCast(const JPH::Shape& shape, const Vec3& from, const Vec3& to, const Quaternion& rotation,
+                                 const QueryFilter& filter) const {
+    QueryHit out;
+    const JPH::RShapeCast cast = JPH::RShapeCast::sFromWorldTransform(
+        &shape, JPH::Vec3::sReplicate(1.0f), JPH::RMat44::sRotationTranslation(ToJoltQ(rotation), ToR(from)), ToJolt(to - from));
+    JPH::ShapeCastSettings settings;
+    settings.mBackFaceModeTriangles = JPH::EBackFaceMode::IgnoreBackFaces;
+    JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> collector;
+    const LayerMaskFilter layers(filter.layers);
+    const QueryBodyFilter bodies(filter);
+    physics_system_->GetNarrowPhaseQuery().CastShape(cast, settings, JPH::RVec3::sZero(), collector, {}, layers, bodies);
+    if (!collector.HadHit()) return out;
+    const JPH::ShapeCastResult& hit = collector.mHit;
+    out.hit = true;
+    out.body = hit.mBodyID2;
+    out.point = ToAether(hit.mContactPointOn2);
+    const JPH::Vec3 axis = hit.mPenetrationAxis;
+    out.normal = axis.LengthSq() > 1e-12f ? ToAether(-axis.Normalized()) : Vec3(0, 0, 0);
+    out.distance = (to - from).Length() * std::max(0.0f, hit.mFraction);
+    return out;
+}
+
+QueryHit PhysicsWorld::SphereCast(f32 radius, const Vec3& from, const Vec3& to, const QueryFilter& filter) const {
+    const JPH::SphereShape sphere(std::max(radius, 0.001f));
+    sphere.SetEmbedded(); // on the stack: never reference-counted away
+    return ShapeCast(sphere, from, to, Quaternion::Identity(), filter);
+}
+
+std::vector<JPH::BodyID> PhysicsWorld::Overlap(const JPH::Shape& shape, const Vec3& position, const Quaternion& rotation,
+                                               const QueryFilter& filter) const {
+    JPH::CollideShapeSettings settings;
+    settings.mBackFaceMode = JPH::EBackFaceMode::CollideWithBackFaces;
+    JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> collector;
+    const LayerMaskFilter layers(filter.layers);
+    const QueryBodyFilter bodies(filter);
+    physics_system_->GetNarrowPhaseQuery().CollideShape(&shape, JPH::Vec3::sReplicate(1.0f),
+                                                        JPH::RMat44::sRotationTranslation(ToJoltQ(rotation), ToR(position)), settings,
+                                                        JPH::RVec3::sZero(), collector, {}, layers, bodies);
+    std::vector<JPH::BodyID> out;
+    for (const JPH::CollideShapeResult& hit : collector.mHits) out.push_back(hit.mBodyID2);
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
+std::vector<JPH::BodyID> PhysicsWorld::OverlapSphere(const Vec3& center, f32 radius, const QueryFilter& filter) const {
+    const JPH::SphereShape sphere(std::max(radius, 0.001f));
+    sphere.SetEmbedded();
+    return Overlap(sphere, center, Quaternion::Identity(), filter);
 }
 
 void PhysicsWorld::SetReportStay(JPH::BodyID body, bool report) {

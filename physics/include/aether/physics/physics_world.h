@@ -45,6 +45,22 @@ struct ContactEvent {
     f32 approach_speed = 0.0f;
 };
 
+// Scene queries (Phase 13 step 4). `layers` is a mask of game layers to
+// hit; `ignore` lists bodies to skip. Triggers (sensors) are skipped unless
+// `include_triggers` is set.
+struct QueryFilter {
+    LayerMask layers = kAllLayers;
+    std::vector<JPH::BodyID> ignore;
+    bool include_triggers = false;
+};
+struct QueryHit {
+    bool hit = false;
+    JPH::BodyID body;
+    Vec3 point{0, 0, 0};  // on the surface hit
+    Vec3 normal{0, 0, 0}; // the surface's, pointing back toward the query
+    f32 distance = 0.0f;  // from the start, along the path
+};
+
 class PhysicsWorld {
 public:
     explicit PhysicsWorld(JobSystem& job_system);
@@ -75,6 +91,19 @@ public:
     JPH::BodyID CreateBody(const JPH::BodyCreationSettings& settings, bool activate);
 
     void Step(f32 dt);
+
+    // --- Queries (Phase 13 step 4) --------------------------------------------
+    // Safe at any time outside Step. The nearest hit along `from` -> `to`.
+    QueryHit RayCast(const Vec3& from, const Vec3& to, const QueryFilter& filter = {}) const;
+    // Sweeps `shape` (at `rotation`) from `from` to `to`; the first hit.
+    // Starting inside something counts as a hit at distance 0.
+    QueryHit ShapeCast(const JPH::Shape& shape, const Vec3& from, const Vec3& to, const Quaternion& rotation = Quaternion::Identity(),
+                       const QueryFilter& filter = {}) const;
+    QueryHit SphereCast(f32 radius, const Vec3& from, const Vec3& to, const QueryFilter& filter = {}) const;
+    // Every body touching `shape` placed at `position` / `rotation`, sorted by BodyID.
+    std::vector<JPH::BodyID> Overlap(const JPH::Shape& shape, const Vec3& position, const Quaternion& rotation = Quaternion::Identity(),
+                                     const QueryFilter& filter = {}) const;
+    std::vector<JPH::BodyID> OverlapSphere(const Vec3& center, f32 radius, const QueryFilter& filter = {}) const;
 
     // --- Contacts (Phase 13 step 3) ---------------------------------------
     // Jolt reports contacts from worker threads during Step. They go into a
