@@ -13,6 +13,11 @@
 
 namespace aether {
 class World;
+class GuidIndex;
+struct Transform;
+} // namespace aether
+namespace aether::assets {
+struct AssetGuid;
 }
 
 namespace aether::bp {
@@ -75,6 +80,18 @@ public:
     std::vector<VmValue> GetArray(Entity entity, std::string_view name) const;
     bool SetArray(Entity entity, std::string_view name, const std::vector<VmValue>& items);
 
+    // Needed for the hierarchy nodes (Get Parent, Attach To, world locations).
+    void SetGuidIndex(GuidIndex* guids) { guids_ = guids; }
+    // Spawn Blueprint: creates an entity running `blueprint` at `transform`
+    // and returns it (BlueprintSystem sets this; without one, Spawn gives
+    // no entity and BP206).
+    using SpawnHandler = std::function<Entity(const assets::AssetGuid& blueprint, const Transform& transform)>;
+    void SetSpawnHandler(SpawnHandler handler) { spawn_ = std::move(handler); }
+    // Destroy Entity is deferred until the running event finishes. Then this
+    // runs, if set (BlueprintSystem: the lifecycle's Destroy). Otherwise the
+    // VM runs EndPlay, detaches the instance, and destroys the entity.
+    void SetDestroyHandler(std::function<void(Entity)> handler) { destroy_ = std::move(handler); }
+
     // Where Print String goes (default: the engine log, category "Blueprint").
     void SetPrintHandler(std::function<void(Entity, const std::string&)> handler) { print_ = std::move(handler); }
 
@@ -135,6 +152,9 @@ private:
     Frame& AcquireFrame(const CompiledFunction& fn, u32 depth);
 
     void RemoveDetached();
+    void ProcessDestroys();
+    void Finish(); // after an outermost run: detached instances, deferred destroys
+    Transform* TransformOf(Instance& instance, const CompiledFunction& fn, NodeId node, Entity target);
 
     World& world_;
     Options options_;
@@ -146,6 +166,12 @@ private:
     std::function<void(Entity, const std::string&)> print_;
     std::vector<RuntimeError> errors_;
     std::unordered_map<u64, bool> warned_; // BP201 once per (function, node)
+    GuidIndex* guids_ = nullptr;
+    SpawnHandler spawn_;
+    std::function<void(Entity)> destroy_;
+    std::vector<Entity> pending_destroy_;
+    bool destroying_ = false;
+    f32 last_delta_ = 0.0f;
     std::vector<LatentAction> latent_;
     f64 time_ = 0.0;
     u64 frame_ = 0;

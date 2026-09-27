@@ -156,6 +156,28 @@ enum class Op : u8 {
     VarClear,
     VarSetAt,     // b = item, c = index
     VarReverse,
+    // Entities and the world (BP201 when the entity is gone or lacks the
+    // component). b = entity register unless noted.
+    GetLoc,       // a = dst Vec3
+    SetLoc,       // c = Vec3
+    AddOffset,    // c = Vec3
+    GetRot,       // a = dst Quat
+    SetRot,       // c = Quat
+    WorldLoc,     // a = dst Vec3 (through the parent chain)
+    QuatRotate,   // a = dst Vec3, b = Quat, c = Vec3
+    QuatAxisAngle, // a = dst Quat, b = axis, c = degrees
+    QuatMul,      // a = dst, b, c
+    HasTagOp,     // a = dst bool, c = tag string
+    AddTagOp,     // c = tag string
+    RemoveTagOp,  // c = tag string
+    FindTagOp,    // a = dst Array<Entity>, b = tag string
+    GetParentOp,  // a = dst entity
+    AttachOp,     // c = parent entity
+    DetachOp,
+    DestroyOp,    // deferred until the running event finishes; EndPlay first
+    SpawnOp,      // a = dst entity, b = location, c = rotation, d = spawn index
+    GameTime,     // a = dst float
+    DeltaTime,    // a = dst float
     // Latent actions (§C.4): a = state slot, b = duration register, c =
     // LatentKind, d = latent index. Starts the action and carries on; its
     // "completed" code runs later from the latent's resume point.
@@ -248,6 +270,7 @@ struct CompiledBlueprint {
     std::vector<FieldAccess> field_accesses;
     std::vector<FunctionCall> calls;
     std::vector<LatentInfo> latents;
+    std::vector<std::string> spawn_assets; // Spawn nodes' Blueprint asset GUIDs (text)
     u16 state_slots = 0; // per-instance node state (stateful flow nodes and latent nodes)
 
     const CompiledVariable* FindVariable(std::string_view name) const;

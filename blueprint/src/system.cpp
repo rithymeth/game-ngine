@@ -1,6 +1,8 @@
 #include "aether/blueprint/system.h"
 
 #include "aether/core/log.h"
+#include "aether/scene/components.h"
+#include "aether/scene/entity_guid.h"
 
 namespace aether::bp {
 
@@ -59,6 +61,7 @@ std::shared_ptr<const CompiledBlueprint> BlueprintSystem::Get(const assets::Asse
 void BlueprintSystem::Start(Entity entity) {
     const BlueprintInstance* component = world_.GetComponent<BlueprintInstance>(entity);
     if (component == nullptr || !component->blueprint.IsSet()) return;
+    if (vm_.IsAttached(entity)) return; // spawned by a Blueprint: attached already
     if (std::shared_ptr<const CompiledBlueprint> compiled = Get(component->blueprint.guid)) {
         vm_.Attach(entity, std::move(compiled), component->OverridesJson());
     }
@@ -78,6 +81,27 @@ void BlueprintSystem::Register(Lifecycle& lifecycle) {
     callbacks.on_disable = [this](Entity e) { vm_.SetEnabled(e, false); };
     callbacks.on_destroy = [this](Entity e) { Stop(e); };
     lifecycle.Register<BlueprintInstance>(std::move(callbacks));
+
+    GuidIndex& guids = lifecycle.Guids();
+    vm_.SetGuidIndex(&guids);
+    // Spawn Blueprint: the entity is attached now (so the spawner can use it
+    // straight away); the lifecycle starts it (BeginPlay) at its next sync.
+    vm_.SetSpawnHandler([this, &guids](const assets::AssetGuid& blueprint, const Transform& transform) {
+        std::shared_ptr<const CompiledBlueprint> compiled = Get(blueprint);
+        if (!compiled) return kNullEntity;
+        BlueprintInstance instance;
+        instance.blueprint.guid = blueprint;
+        const Entity e = world_.CreateEntity(IdComponent{NewEntityGuid()}, transform, std::move(instance));
+        guids.Add(world_.GetComponent<IdComponent>(e)->guid, e);
+        vm_.Attach(e, std::move(compiled));
+        return e;
+    });
+    // EndPlay here too: the lifecycle only reports entities it's already
+    // tracking (one spawned this frame isn't yet).
+    vm_.SetDestroyHandler([this, &lifecycle](Entity e) {
+        Stop(e);
+        lifecycle.Destroy(e);
+    });
 }
 
 } // namespace aether::bp

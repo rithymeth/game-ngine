@@ -3033,6 +3033,59 @@ point 3, ROADMAP_DETAILS §C.4).
 - 243/243 tests pass on GCC 13, on Clang and under ASan/UBSan, and 250/250
   with physics.
 
+**Step 4, part 3: entity and world nodes** (BLUEPRINT_NODES.md §6).
+
+- **Transforms**:
+  - Get/Set Location and Rotation, and Add Offset, all relative to the
+    parent.
+  - Get World Location, through the parent chain.
+  - Rotate Vector, Rotation from Axis and Angle (degrees), and Combine
+    Rotations.
+  - An entity that's gone, or has no Transform, gives defaults and one
+    BP201 per node.
+- **Tags**: Has/Add/Remove Tag and Find Entities with Tag, which returns
+  an `Array<Entity>`.
+- **Hierarchy**: Get Parent, Attach To and Detach. They need
+  `SetGuidIndex`, which `BlueprintSystem` sets from the lifecycle. Attach To
+  refuses to make an entity its own ancestor (BP201).
+- **Lifetime**:
+  - **Destroy Entity** is deferred until the running event finishes, so
+    the nodes after it still run. Then EndPlay runs, the instance is
+    detached, and the entity is destroyed, through the lifecycle when
+    there is one.
+  - **Spawn Blueprint** takes the Blueprint asset from the node's config,
+    plus a location and rotation, and returns the spawned entity.
+    - It goes through a spawner hook. `BlueprintSystem` creates the entity
+      with an ID, a Transform and a `BlueprintInstance`, and attaches it at
+      once, so the spawner can use it straight away.
+    - The lifecycle runs its BeginPlay at the next sync.
+    - Without a spawner, the node gives no entity and the new BP206.
+- **Time**: Get Game Time and Get Delta Seconds.
+- **Robustness**:
+  - Instances whose entity was destroyed behind the VM's back are
+    dropped at the next Tick.
+  - An entity spawned and destroyed before the lifecycle saw it still
+    gets exactly one EndPlay.
+  - The engine's `Lifecycle` gets a `Guids()` accessor.
+
+**Verified**: 4 new tests.
+
+- **Transforms**: set, offset and read back, a 90° turn giving forward
+  (1, 0, 0), and BP201 for an entity without a Transform.
+- **Tags, hierarchy and time**:
+  - Tags on two entities, counted and removed.
+  - Attach/detach with the world location through the parent, and a
+    refused cycle.
+  - Game time and delta seconds.
+- **Destroy and spawn**:
+  - Destroy running the rest of the event before EndPlay.
+  - Spawn with and without a spawner (BP206).
+- **Through the lifecycle**: a gun Blueprint spawning a bullet Blueprint
+  through `BlueprintSystem`. The bullet starts at the next sync and is
+  destroyed with exactly one EndPlay.
+- 247/247 tests pass on GCC 13, on Clang and under ASan/UBSan, and 254/254
+  with physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
