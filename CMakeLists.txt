@@ -168,6 +168,8 @@ add_subdirectory(blueprint)
 add_subdirectory(renderer)
 # Animation (Phase 16); engine-only, no fetches.
 add_subdirectory(animation)
+# Audio (Phase 17): the mixer; engine-only, no fetches.
+add_subdirectory(audio)
 
 if(AETHER_BUILD_SCRIPTING)
     # Luau (MIT, luau-lang/luau): the scripting VM and compiler (Phase 11).

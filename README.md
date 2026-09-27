@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–15 (the unified renderer; materials and the material editor) up to their GPU parts. Now: Phase 16 — animation (in progress)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Now: Phase 17 — audio (in progress)
 
 ### Phase 1 — Foundation
 
@@ -4263,6 +4263,63 @@ Phase 16. The runtime is the new `Aether::Animation` library
 - Every panel and Details view draws. Palette placement of every node
   kind and a conduit, live highlighting, and a failed save.
 - 338/338 tests pass on GCC 13, Clang and ASan/UBSan, and 370/370 with
+  physics.
+
+### Phase 17 (in progress) — Audio
+
+Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md),
+Phase 17. The engine side is the new `Aether::Audio` library (`audio/`).
+It is a software mixer that renders into buffers, so it is tested
+headless; the device output backend (miniaudio) pulls from it and comes
+in step 5.
+
+**Step 1: sounds, voices, buses and effects** (§17.1).
+
+- **Sounds**:
+  - WAV decoding: 8-, 16-, 24- and 32-bit PCM and 32-bit float, mono or
+    stereo, including extensible headers.
+  - Unknown chunks are skipped. A data chunk that claims more than the
+    file holds plays what's there.
+  - WAV encoding, and a tone generator.
+- **Voices**:
+  - Cubic resampling from any rate, and pitch.
+  - Volume in dB, smoothed so changes don't click.
+  - Equal-power pan for mono sounds and balance for stereo.
+  - Linear fades in and out, looping, and starting part way in. A voice
+    frees itself when it ends or finishes fading out.
+- **Buses**:
+  - Master with Music, SFX, UI and Voice, plus any buses you nest under
+    them.
+  - Each has a volume, a mute that ramps without a click, and effects
+    in order.
+  - Peak and RMS meters per channel.
+- **Effects**:
+  - RBJ biquad filters (low- and high-pass, band-pass, notch, shelves,
+    peak), with their analytic response for the editor.
+  - A feed-forward compressor that reports its gain reduction.
+  - A Freeverb reverb.
+
+**Verified**: 4 new tests.
+
+- WAV:
+  - 16-bit and float round trips, and hand-made 8- and 24-bit files;
+  - extensible headers, junk chunks and a short data chunk;
+  - six kinds of bad file refused.
+- Voices:
+  - a 44.1 kHz tone at 48 kHz stays 440 Hz and ends on time; pitch 2 is
+    880 Hz at half the length;
+  - -6 dB, hard left, equal-power centre, a smoothed volume change;
+  - looping, fading out and in, starting at 0.5 s, and stereo balance.
+- Buses: volumes multiply down the tree, and the meters read each bus.
+  Muting ramps then silences, and nothing playing is silence.
+- Effects:
+  - filter responses at their key frequencies, and a tone through a bus
+    low-pass matching the analytic gain;
+  - bypass;
+  - the compressor reducing 12 dB over the threshold by 9 dB at 4:1, and
+    leaving quiet signals alone;
+  - a reverb tail that decays, and dry-only passthrough.
+- 342/342 tests pass on GCC 13, Clang and ASan/UBSan, and 374/374 with
   physics.
 
 ## Building

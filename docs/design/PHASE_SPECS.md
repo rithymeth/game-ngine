@@ -1628,3 +1628,55 @@ Jolt ragdolls come at the end of the phase.
     prefix ("mixamorig:").
   - `RetargetClip` resamples a whole clip and carries its notifies.
 
+
+---
+
+## Phase 17: audio
+
+The concept is in [ROADMAP.md Phase 17](../ROADMAP.md). The engine side is
+the `Aether::Audio` library (`audio/`): a software mixer (voices, buses,
+effects, 3D) that renders into a buffer, so it runs and is tested headless.
+An output backend (miniaudio first, behind an interface so FMOD or Wwise
+can be added later) pulls from the mixer on its own thread.
+
+### 17.1 Mixing
+
+- **SoundWave**: interleaved float samples, a sample rate and 1 or 2
+  channels. WAV files decode from 8-, 16-, 24- and 32-bit PCM and 32-bit
+  float, including `WAVE_FORMAT_EXTENSIBLE`, and other chunks are
+  skipped.
+- **Voices** play a sound on a bus:
+  - Sounds are resampled to the mixer's rate with cubic (Hermite)
+    interpolation, times the pitch.
+  - Volume changes are smoothed over a short ramp (no zipper noise), and
+    fades in and out are linear in gain.
+  - Mono sounds pan with equal power; stereo sounds pan by balance.
+  - A voice can loop. One that doesn't frees itself at its end, as does
+    one that finishes fading out.
+- **Buses** form a tree under Master (Music, SFX, UI and Voice by
+  default):
+  - Each bus has a volume in dB, a mute, and effects that run in order.
+  - Children mix into their parent after their own effects and volume.
+  - Each bus measures its peak and RMS per channel for the meters.
+- **Effects**: biquad filters (low-pass, high-pass, band-pass, notch,
+  shelves, peak, from the RBJ cookbook), a feed-forward compressor
+  (threshold, ratio, attack, release, makeup) and a Freeverb-style
+  reverb (8 comb and 4 all-pass filters per channel; room size, damping,
+  wet and dry, width).
+
+### 17.2 PR breakdown
+
+1. ✅ **Done.** Sounds (WAV), voices (resampling, pitch, loop, pan,
+   fades), the bus mixer with meters, and the DSP effects.
+2. 3D: listener, attenuation curves (inverse, linear, logarithmic,
+   custom), spatial blend, doppler, voice limiting by priority with
+   virtual voices, and an occlusion hook.
+3. Sound cues (random, sequence, modulate, concatenate, loop, mix) and
+   `.acue` files; OGG and FLAC decoding; streaming long sounds.
+4. Components (`AudioSource`, `AudioListener`, `ReverbZone`), the
+   `AudioSystem`, and the Blueprint nodes (Play Sound 2D/at Location,
+   Spawn Sound Attached, Fade In/Out, Set Bus Volume).
+5. The device backend (miniaudio) with a lock-free handoff to the audio
+   thread, and a null backend.
+6. Editors: the waveform preview, the sound cue graph and the mixer panel
+   with live meters.
