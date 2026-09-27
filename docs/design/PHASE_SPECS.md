@@ -1126,3 +1126,76 @@ flying, swimming).
    - **Waiting on Windows**: the viewport draws the lines and handles and
      records drags as undoable field edits, with the other editor window
      hookups.
+
+---
+
+## Phase 14: the unified renderer
+
+The concept is in [ROADMAP.md Phase 14](../ROADMAP.md): one `renderer/`
+library that both the editor viewport and the player use, on the RHI.
+Everything that doesn't need a GPU is plain C++ in `Aether::Renderer`, and
+tested headless. The CPU versions of the GPU passes (clustering, cascades,
+culling) are also the reference the GPU passes are checked against.
+
+### 14.1 Frame flow
+
+```
+game thread:  ExtractRenderScene(world)  -> RenderScene (flat arrays, a copy)
+              MakeView(camera)           -> View (matrices, frustum, jitter)
+render:       Cull(scene, view)          -> visible objects
+              BuildDrawList(...)         -> sorted, batched draws (instancing)
+              BuildLightClusters(...)    -> 16x9x24 froxels -> light lists
+              ComputeCascades(...)       -> 4 sun shadow cascades
+              RenderGraph (on the RHI)   -> passes, barriers, transient memory
+              post (exposure, tone map)  -> the swap chain / editor texture
+```
+
+The RenderScene is a copy, so the game can move on while the frame
+renders.
+
+### 14.2 PR breakdown
+
+1. ✅ **Done.** `renderer/` library: light and post-process components,
+   RenderScene extraction, views, CPU frustum culling, and sorted,
+   instanced draw lists.
+   - **Components**: `DirectionalLight`, `PointLight` (range), `SpotLight`
+     (inner and outer cone angles), `SkyLight` and `PostProcessVolume`
+     (global or a bounded box with a blend distance, a weight and a
+     priority: exposure compensation, bloom, vignette, saturation, and
+     the tone mapper). Lights point along their entity's -Z. Meshes are
+     today's `ModelRenderer`, so `MeshRenderer` with material slots waits
+     for material assets (Phase 15).
+   - **`ExtractRenderScene`** copies what's visible in the ECS into flat
+     arrays:
+     - active entities only (`IsActiveInHierarchy`), with world
+       transforms through the hierarchy, in entity order;
+     - world bounding boxes from a `mesh_bounds` provider (a unit cube
+       without one), transformed with Arvo's method;
+     - a `mesh_key` per mesh (the model GUID, or the path for older
+       data);
+     - light radiance (color × intensity), spot cone cosines with inner
+       clamped to outer, and the sky's sum.
+   - **Views**: `MakeView(camera, world transform, aspect)` gives the view,
+     projection and view-projection matrices, position, forward and
+     frustum. `MakeViewFromActiveCamera` uses the scene's active camera.
+     The frustum's six planes come from the view-projection matrix
+     (Gribb–Hartmann, for [0, 1] depth). It tests points, spheres and
+     boxes; boxes use the positive vertex, so the test is conservative.
+   - **`Cull` and `BuildDrawList`**: visible objects are grouped by mesh
+     into instanced batches. Instances are sorted front to back by the
+     nearest point of their box, and batches by their nearest instance,
+     for the depth pre-pass.
+   - **`BlendPostProcess(scene, position)`** applies volumes in priority
+     order. Numbers blend by weight × falloff outside bounded boxes; the
+     tone mapper switches at half weight.
+2. Light clustering (CPU reference for the compute pass) and cascaded
+   shadow splits (stable, texel-snapped).
+3. The render graph on the RHI: pass declarations, dependency order,
+   culling unused passes, barriers, and transient resource aliasing, with
+   the planning tested headless.
+4. Post-processing math: auto exposure, ACES/AgX tone mapping, bloom chain
+   sizes, TAA jitter, with CPU references.
+5. GPU passes on D3D12 and Vulkan: depth pre-pass, clustered forward PBR,
+   shadows, sky, post (Windows).
+6. The editor viewport and the player on the renderer, view modes, and the
+   screenshot parity test (Windows).
