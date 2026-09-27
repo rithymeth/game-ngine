@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Now: Phase 14 — the unified renderer (in progress)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phase 14 (the unified renderer) up to its GPU passes. Now: Phase 15 — materials (in progress)
 
 ### Phase 1 — Foundation
 
@@ -3805,6 +3805,57 @@ frame.
   exactly 0.25 and −0.4 pixels at every depth, for perspective and
   orthographic, without touching depth.
 - 286/286 tests pass on GCC 13, Clang and ASan/UBSan, and 317/317 with
+  physics.
+
+### Phase 15 (in progress) — Materials
+
+Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md),
+Phase 15. Materials are node graphs with typed pins that will compile to
+HLSL, like Unreal's material editor. They live in `Aether::Renderer`
+(`aether/renderer/material.h`, namespace `aether::mat`).
+
+**Step 1: the material model** (§15.2).
+
+- **Material**: shading model (Default Lit or Unlit), blend mode (Opaque,
+  Masked, Translucent, Additive), two-sided, the mask clip value, named
+  parameters (scalar, vector or texture, with defaults and groups),
+  nodes and links.
+- **Node library** (`ResolveNode`, `ListNodeTypes` for the palette):
+  - the Material Output node (BaseColor, Metallic, Roughness, Normal,
+    Emissive, AO, Opacity, OpacityMask, WorldPositionOffset);
+  - constants, and parameter nodes (`Param.Scalar:Roughness`);
+  - Texture Sample (a texture input is required; UVs default to UV0),
+    Unpack Normal;
+  - TexCoord, Time, World Position, Vertex Normal, Camera Vector;
+  - generic math (Add to Normalize, Lerp, Clamp, Dot, Length), Append,
+    Component Mask, Fresnel and Panner.
+- **Types**: generic math pins take the widest connected input, and a
+  float broadcasts to any size. A wider value into a narrower pin is
+  truncated, with a warning.
+- **Validation** (`Analyze`), with codes:
+  - MT001: no Material Output, or more than one.
+  - MT002: an unknown node or a bad config.
+  - MT003: incompatible types.
+  - MT004: a missing pin or node.
+  - MT005: a cycle.
+  - MT006: an unknown parameter.
+  - MT007: a required input left unconnected.
+  - MT008: an input with two links.
+  - MT009 (warning): a pin the material's settings ignore.
+  - MT010 (warning): truncation.
+- **Files**: `.amat` JSON with a version, via `SaveMaterial` and
+  `LoadMaterial`.
+
+**Verified**: 5 new tests.
+
+- Type names, parsing and every kind of fit.
+- Nodes resolve, and bad configs and parameters are refused. The palette
+  lists the library and the parameters.
+- Inference: float3 × float3, float3 × float, and float2 appended to a
+  float giving float3, which is then masked and dotted.
+- Each diagnostic code is produced by a graph that should produce it.
+- JSON and file round trips are exact, and bad files are refused.
+- 291/291 tests pass on GCC 13, Clang and ASan/UBSan, and 322/322 with
   physics.
 
 ## Building
