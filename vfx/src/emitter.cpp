@@ -454,6 +454,7 @@ json EmitterToJson(const Emitter& e) {
     if (!s.enabled) j["enabled"] = false;
     if (s.start_delay != 0.0f) j["start_delay"] = s.start_delay;
     if (s.warmup != 0.0f) j["warmup"] = s.warmup;
+    if (s.target != SimTarget::Auto) j["target"] = s.target == SimTarget::Cpu ? "Cpu" : "Gpu";
     j["spawn"] = StageToJson(e.spawn);
     j["init"] = StageToJson(e.init);
     j["update"] = StageToJson(e.update);
@@ -500,6 +501,13 @@ bool EmitterFromJson(const json& j, Emitter& out, std::string* error) {
         if (sp == "World") s.space = SimSpace::World;
         else if (sp == "Local") s.space = SimSpace::Local;
         else return Fail(error, "emitter '" + s.name + "': unknown space '" + sp + "'");
+    }
+    if (j.contains("target")) {
+        const std::string t = j["target"].is_string() ? j["target"].get<std::string>() : std::string();
+        if (t == "Auto") s.target = SimTarget::Auto;
+        else if (t == "Cpu") s.target = SimTarget::Cpu;
+        else if (t == "Gpu") s.target = SimTarget::Gpu;
+        else return Fail(error, "emitter '" + s.name + "': unknown target '" + t + "'");
     }
     std::string e2;
     if (!StageFromJson(j, "spawn", e.spawn, &e2) || !StageFromJson(j, "init", e.init, &e2) || !StageFromJson(j, "update", e.update, &e2) ||
