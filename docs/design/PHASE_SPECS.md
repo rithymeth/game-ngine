@@ -2689,13 +2689,70 @@ It all runs and is tested headless.
   paths, raycasts or random points: Detour is built with a virtual query
   filter for this.
 
-### 20.2 PR breakdown
+### 20.2 Obstacles, areas, links and the scene
+
+- **Volumes** (`NavVolume`) mark the ground inside them with an area:
+  - shapes: a box turned about Y by a yaw, an upright cylinder, or a
+    convex prism (points on the ground, between two heights);
+  - area 0 carves a hole (an obstacle). Carving happens before the agent's
+    radius is eroded, so agents keep their radius clear of obstacles as
+    they do of walls;
+  - any other area relabels the ground (water, a road), marked after
+    erosion so it doesn't shrink the mesh.
+- **Off-mesh links** (`NavLink`): a jump, ladder or drop from a start to an
+  end:
+  - each end must be within the link's radius of the mesh;
+  - a link is both ways or one way;
+  - it has an area whose cost and exclusion the filter applies, and a
+    user id;
+  - a link is stored in the tile where it starts (not in its border), and
+    Detour joins it to the end's tile.
+  - Path points flag where a link starts (`kNavPointLinkStart`), so an
+    agent knows when to jump or climb.
+  - `NavMesh::Links` lists the baked links (for the overlay).
+- **Baked in**: `NavGeometry` carries static volumes and links, and
+  `BuildNavMesh` bakes them in.
+- **Changes at runtime** (`DynamicNavMesh`):
+  - Volumes and links are added, updated and removed by id. An update
+    that changes nothing costs nothing.
+  - Each change marks dirty the tiles it can affect: those it overlaps,
+    widened by the tile border (`NavTilesTouching`). A move marks both its
+    old and new places; a link marks both its ends.
+  - `Update(max_tiles)` rebakes that many dirty tiles (0 is all), with the
+    static geometry plus every current volume and link. It spreads the
+    work over frames.
+  - `Revision` goes up whenever tiles change, so agents can replan.
+  - `Load` starts from a saved `.anav` and keeps the geometry for later
+    rebakes. Anything added before loading is baked by the first Update.
+  - The mesh's data follows the rebakes, so saving keeps them.
+- **Scene components**:
+  - `NavObstacle` carves with the entity. The shape is a box (turned by
+    the entity's yaw) or a cylinder, with an offset. It rebakes once the
+    entity has moved `move_threshold` or turned 5 degrees; shape edits
+    apply at once. With `carve` off, it makes no hole (agents steer round
+    it in step 3).
+  - `NavModifierVolume` sets an area over a box.
+  - `NavLinkProxy` is a link with both ends in the entity's space; it can
+    be enabled, and has a direction, area and user id.
+- **`NavWorld`** runs a world's navigation:
+  - `Gather` collects the static geometry: every `ModelRenderer`, through
+    a provider that turns a model into triangles, placed by the entity's
+    world pose (parents too, given a GUID index). Carving obstacles are
+    left out.
+  - `Bake` and `Load` build or load the mesh together with the current
+    volumes and links.
+  - Each `Update` follows the components (added, moved, edited,
+    disabled, destroyed or recycled entities), then rebakes a budget of
+    tiles.
+  - The last `NavWorld` made is the active one, for step 3's nodes.
+
+### 20.3 PR breakdown
 
 1. ✅ **Done.** Navmesh baking from geometry with Recast (tiles, agent
    settings, areas) and Detour queries (paths, nearest points, raycasts,
    random points, area costs and exclusion, `.anav` files, tile
    replacement).
-2. Runtime tile rebuilds for dynamic obstacles (boxes and cylinders that
+2. ✅ **Done.** Runtime tile rebuilds for dynamic obstacles (boxes and cylinders that
    carve), off-mesh links (jumps, ladders, drops), area volumes that
    mark areas, and gathering the geometry from the scene.
 3. The `NavAgent` component on Detour's crowd (steering, local avoidance,

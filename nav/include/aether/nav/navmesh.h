@@ -6,6 +6,7 @@
 #include <array>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 class dtNavMesh;
@@ -23,11 +24,48 @@ namespace aether::nav {
 constexpr u8 kAreaNull = 0;
 constexpr u8 kAreaWalkable = 63;
 
-// The triangles to bake from, with an area per triangle.
+// A volume that marks the ground inside it with an area (Phase 20 step 2):
+// kAreaNull carves a hole (an obstacle; the mesh also keeps the agent's
+// radius off it), any other area relabels the ground (water, a road).
+struct NavVolume {
+    enum class Shape : u8 {
+        Box,      // center, half_extents, turned by yaw_degrees about Y
+        Cylinder, // center (the middle), radius, height
+        Prism,    // points (their X and Z; convex), from min_y to max_y
+    };
+    Shape shape = Shape::Box;
+    Vec3 center;
+    Vec3 half_extents = Vec3(0.5f, 0.5f, 0.5f);
+    f32 yaw_degrees = 0.0f;
+    f32 radius = 0.5f, height = 2.0f;
+    std::vector<Vec3> points;
+    f32 min_y = 0.0f, max_y = 0.0f;
+    u8 area = kAreaNull;
+
+    static NavVolume Box(const Vec3& center, const Vec3& half_extents, u8 area = kAreaNull, f32 yaw_degrees = 0.0f);
+    static NavVolume Cylinder(const Vec3& center, f32 radius, f32 height, u8 area = kAreaNull);
+    static NavVolume Prism(const std::vector<Vec3>& points, f32 min_y, f32 max_y, u8 area = kAreaNull);
+    void Bounds(Vec3& min, Vec3& max) const;
+};
+
+// An off-mesh link (a jump, ladder or drop) joining two points the mesh
+// doesn't: paths may take it. One-way links go from start to end only.
+struct NavLink {
+    Vec3 start, end;
+    f32 radius = 0.5f; // how near the mesh each end must be
+    bool bidirectional = true;
+    u8 area = kAreaWalkable; // its cost comes from the filter's area costs
+    u32 user_id = 0;
+};
+
+// The triangles to bake from, with an area per triangle, and the volumes
+// and links baked in with them.
 struct NavGeometry {
     std::vector<Vec3> vertices;
     std::vector<u32> indices; // three per triangle
     std::vector<u8> areas;    // one per triangle
+    std::vector<NavVolume> volumes;
+    std::vector<NavLink> links;
 
     void AddTriangles(const std::vector<Vec3>& vertices, const std::vector<u32>& indices, u8 area = kAreaWalkable);
     // A flat rectangle facing up at `center` (half sizes on X and Z).
@@ -78,8 +116,12 @@ struct NavBuildStats {
 // Bakes `geometry`. False (with the reason) for no geometry or bad settings.
 bool BuildNavMesh(const NavGeometry& geometry, const NavMeshSettings& settings, NavMeshData& out, std::string* error = nullptr,
                   NavBuildStats* stats = nullptr);
-// Rebakes one tile (x, z) of an existing mesh's grid from `geometry` (step 2 uses it for obstacles).
-bool BuildNavTile(const NavGeometry& geometry, const NavMeshData& grid, i32 x, i32 z, NavMeshData::Tile& out, std::string* error = nullptr);
+// Rebakes one tile (x, z) of an existing mesh's grid from `geometry`, plus
+// `extra_volumes` and `extra_links` (the dynamic ones, for DynamicNavMesh).
+bool BuildNavTile(const NavGeometry& geometry, const NavMeshData& grid, i32 x, i32 z, NavMeshData::Tile& out, std::string* error = nullptr,
+                  const std::vector<NavVolume>* extra_volumes = nullptr, const std::vector<NavLink>* extra_links = nullptr);
+// The tiles of `grid` whose bake a box (in world space) can change: those it overlaps, widened by each tile's border.
+std::vector<std::pair<i32, i32>> NavTilesTouching(const NavMeshData& grid, const Vec3& min, const Vec3& max);
 
 // `.anav` files.
 std::vector<u8> SaveNavMesh(const NavMeshData& data);
@@ -101,9 +143,13 @@ enum class PathStatus : u8 {
     None,     // no start or goal on the mesh
 };
 
+// Flags per path point.
+constexpr u8 kNavPointLinkStart = 1; // the path takes an off-mesh link from here to the next point
+
 struct NavPath {
     PathStatus status = PathStatus::None;
     std::vector<Vec3> points; // corners from the start to the end, on the mesh
+    std::vector<u8> flags;    // one per point
     f32 Length() const;
 };
 
@@ -123,6 +169,7 @@ public:
 
     bool Load(const NavMeshData& data, std::string* error = nullptr);
     bool Loaded() const { return mesh_ != nullptr; }
+    void Unload();
     // Swaps one tile's data (a rebuilt tile); empty data removes it.
     bool ReplaceTile(const NavMeshData::Tile& tile, std::string* error = nullptr);
 
@@ -142,6 +189,7 @@ public:
     usize TileCount() const;
     usize PolygonCount() const;
     std::vector<NavPolygon> Polygons() const;
+    std::vector<NavLink> Links() const; // the off-mesh links in the loaded tiles
     const NavMeshData& Data() const { return data_; }
     dtNavMesh* Detour() const { return mesh_; }         // for crowds (step 3)
     dtNavMeshQuery* Query() const { return query_; }

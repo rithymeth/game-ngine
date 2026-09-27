@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 in progress (AI and navigation: navmesh baking and path queries)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 in progress (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components)
 
 ### Phase 1 — Foundation
 
@@ -5184,6 +5184,55 @@ Behavior Trees and perception come next. Spec:
 - Rebaking one tile for a crate, saved with the mesh, and removing a
   tile.
 - 404/404 tests pass on GCC 13, Clang and ASan/UBSan, and 436/436 with
+  physics.
+
+**Step 2: obstacles, areas, links and the scene** (§20.2).
+
+- **Volumes**: a box turned by a yaw, a cylinder, or a convex prism.
+  - Area 0 carves a hole, and the agent's radius is kept clear of it.
+  - Any other area relabels the ground inside.
+- **Off-mesh links**:
+  - jumps, ladders and drops, both ways or one way;
+  - each has an area (for costs and exclusion) and a user id;
+  - path points flag where a link starts;
+  - the baked links can be listed.
+- Both are baked in from `NavGeometry`, or changed at runtime with
+  `DynamicNavMesh`:
+  - adding, updating or removing marks only the tiles touched dirty;
+  - `Update` rebakes a budget of tiles per frame;
+  - a revision counter tells agents to replan;
+  - it can start from a loaded `.anav`.
+- **Components**:
+  - `NavObstacle`: a box or cylinder that carves with its entity, after
+    a move threshold or a 5° turn.
+  - `NavModifierVolume`: an area box.
+  - `NavLinkProxy`: a link in the entity's space.
+- **`NavWorld`**:
+  - gathers static geometry from models, placed by world pose;
+  - bakes or loads the mesh;
+  - follows the components as entities are added, moved, edited or
+    destroyed.
+
+**Verified**: 8 new tests.
+
+- An obstacle carving, keeping the agent's radius off it, moving and
+  being removed; unchanged updates are free.
+- Rebakes spread one tile per frame, and marking everything dirty.
+- Cylinders, turned boxes and prisms.
+- Baked and runtime area volumes (water, a road, a blocker).
+- Links:
+  - baked in, both ways, with path flags, listing and area costs;
+  - a one-way drop added and removed at runtime.
+- Starting from a loaded `.anav`, saving rebakes, and resetting.
+- The components:
+  - the crate left out of the geometry;
+  - move thresholds and turning;
+  - `carve` off and on;
+  - destroyed entities;
+  - a pond.
+- Placed pads, a turned link proxy that is enabled, disabled and made one
+  way, and loading.
+- 412/412 tests pass on GCC 13, Clang and ASan/UBSan, and 444/444 with
   physics.
 
 ## Building
