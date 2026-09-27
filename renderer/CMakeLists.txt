@@ -7,6 +7,8 @@ add_library(aether_renderer STATIC
     src/render_scene.cpp
     src/view.cpp
     src/draw_list.cpp
+    src/clusters.cpp
+    src/shadows.cpp
 )
 target_include_directories(aether_renderer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aether_renderer PUBLIC cxx_std_20)

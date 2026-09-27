@@ -64,6 +64,7 @@ View MakeView(const Camera& camera, const Mat4& world_transform, f32 aspect) {
     v.aspect = aspect > 0.0f ? aspect : 1.0f;
     v.perspective = camera.projection == Projection::Perspective;
     v.fov_degrees = camera.fov_degrees;
+    v.ortho_height = camera.ortho_height;
     v.near_plane = camera.near_plane;
     v.far_plane = camera.far_plane;
     v.projection = CameraProjection(camera, v.aspect);

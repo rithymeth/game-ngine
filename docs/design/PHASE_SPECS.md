@@ -1188,8 +1188,32 @@ renders.
    - **`BlendPostProcess(scene, position)`** applies volumes in priority
      order. Numbers blend by weight × falloff outside bounded boxes; the
      tone mapper switches at half weight.
-2. Light clustering (CPU reference for the compute pass) and cascaded
-   shadow splits (stable, texel-snapped).
+2. ✅ **Done.** Light clustering (CPU reference for the compute pass) and
+   cascaded shadow splits (stable, texel-snapped).
+   - **`BuildLightClusters(scene, view)`** divides the view into
+     16 × 9 × 24 froxels.
+     - Depth slices are exponential for perspective (thin near the
+       camera) and linear for orthographic views.
+     - Each froxel's view-space box is tested against the lights'
+       spheres: a point light's range, or the tightest sphere around a
+       spot light's cone (`SpotBoundingSphere`).
+     - Lists are packed: each cluster has an offset, then its point
+       indices, then its spot indices.
+     - A per-cluster cap (256) drops the extras and counts them.
+     - `ClusterOf(view, point)` and `SliceOf(depth)` find a point's
+       cluster, as the shader will.
+   - **`CascadeSplits`** uses the practical scheme: `lambda` blends
+     logarithmic and uniform splits.
+   - **`ComputeCascades(view, sun, settings)`**: 4 cascades up to
+     `shadow_distance` (100 m by default).
+     - Each covers its frustum slice with a bounding sphere, with the
+       radius rounded up to 1/16 m, so turning the camera never resizes
+       it.
+     - Its center is snapped to whole texels in light space, with two
+       texels of margin, so moving the camera shifts the map by whole
+       texels.
+     - Its orthographic light view reaches `depth_padding` further toward
+       the sun, for casters outside the view.
 3. The render graph on the RHI: pass declarations, dependency order,
    culling unused passes, barriers, and transient resource aliasing, with
    the planning tested headless.

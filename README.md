@@ -3692,6 +3692,41 @@ which builds and tests headless; the GPU passes come later in the phase.
 - 277/277 tests pass on GCC 13, Clang and ASan/UBSan, and 308/308 with
   physics.
 
+**Step 2: light clustering and shadow cascades** (§14.2). These are CPU
+references for GPU passes; the GPU versions will be checked against them.
+
+- **Light clusters**: `BuildLightClusters` splits the view into a
+  16 × 9 × 24 grid of cells, thin near the camera, and lists which point
+  and spot lights reach each one. The forward pass will then light a
+  pixel with only its cell's lights, which is what makes hundreds of
+  lights affordable.
+  - Spot lights are tested with the tightest sphere around their cone.
+  - A cell holds at most 256 lights; extras are counted.
+  - `ClusterOf` finds a point's cell the way the shader will.
+- **Sun shadow cascades**: `ComputeCascades` covers the first 100 m of the
+  view with 4 shadow maps, with more detail near the camera.
+  - Each map's size depends only on the view's shape, so turning the
+    camera never resizes it.
+  - Each map moves in whole texels, so walking doesn't make shadow edges
+    shimmer.
+  - Each map reaches further toward the sun, for shadow casters outside
+    the view.
+
+**Verified**: 3 new tests.
+
+- With 200 point and 40 spot lights, in perspective and orthographic
+  views, 3,000 random points each find their cell. Every light reaching a
+  point is listed there, and lights stay local.
+- A far cell doesn't list a small nearby light, and nothing behind the
+  camera has a cell. Over-full cells are capped and counted.
+- Spot light spheres hold the apex, tip and rim for cones from 10° to 85°.
+- Splits match the uniform and logarithmic formulas. Every cascade holds
+  its whole slice of the view, plus casters toward the sun.
+- Moving the camera 3 mm, 2 cm or 37 cm shifts a fixed point by whole
+  texels, and turning it keeps every cascade's size.
+- 280/280 tests pass on GCC 13, Clang and ASan/UBSan, and 311/311 with
+  physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
