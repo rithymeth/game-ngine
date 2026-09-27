@@ -3639,8 +3639,9 @@ Phase 13 on the portable side.
   shrinking stops at 1 cm. A rotated entity's handles point along its
   turned axes. Sphere and capsule drags resize them, with the capsule's
   bottom fixed and its radius capped at half its height.
-- 304/304 tests pass with physics on GCC 13, and 273/273 without physics
-  on GCC 13, Clang and ASan/UBSan.
+- 304/304 tests pass with physics on GCC 13 (RelWithDebInfo and Debug)
+  and under ASan/UBSan, and 273/273 without physics on GCC 13, Clang and
+  ASan/UBSan.
 
 ## Building
 
