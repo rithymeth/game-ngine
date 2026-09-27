@@ -101,4 +101,8 @@ std::optional<NodeSignature> ResolveNode(const Blueprint& blueprint, const Graph
 // by category then title.
 std::vector<PaletteEntry> ListNodeTypes(const Blueprint& blueprint);
 
+// Format Text's placeholders, in order of first use: "Hi {name}, {n} left"
+// -> {"name", "n"}. "{{" and "}}" are literal braces.
+std::vector<std::string> ParseFormatArgs(std::string_view format);
+
 } // namespace aether::bp

@@ -103,6 +103,25 @@ enum class Op : u8 {
     CountLess,   // jump to d if counter >= r[b] (int), else counter++
     CountGet,    // a = dst int, b = slot
     CountReset,  // counter = 0
+    // More math: a = dst, b (, c, d) = operands.
+    MathF,    // c = MathFn
+    Atan2F,   // b = y, c = x
+    PowF,     // b = base, c = exponent
+    RoundF,   // a = dst int, b = float, c = RoundMode
+    NegI, AbsI,
+    ClampI,   // b = value, c = min, d = max
+    NearEqF,  // b, c = values, d = tolerance
+    RandF,    // b = min, c = max
+    RandI,    // b = min, c = max (inclusive)
+    RandB,
+    // Strings: s registers unless noted.
+    ConcatS,   // a = dst, b, c
+    LenS,      // a = dst int, b = string
+    EmptyS,    // a = dst bool, b = string
+    ContainsS, // a = dst bool, b = text, c = substring, d = ignore-case bool register
+    StrFn,     // a = dst, b = src, c = StrFn
+    ParseI,    // a = dst int, b = string, c = dst success bool
+    ParseF,    // a = dst float, b = string, c = dst success bool
     // Latent actions (§C.4): a = state slot, b = duration register, c =
     // LatentKind, d = latent index. Starts the action and carries on; its
     // "completed" code runs later from the latent's resume point.
@@ -111,6 +130,9 @@ enum class Op : u8 {
 };
 
 enum class LatentKind : u8 { Delay, RetriggerableDelay, NextTick };
+enum class MathFn : u8 { Sin, Cos, Tan, Asin, Acos, Atan, Sqrt, Exp, Log, Frac, DegToRad, RadToDeg };
+enum class RoundMode : u8 { Floor, Ceil, Round, Truncate };
+enum class StrFnKind : u8 { Upper, Lower, Trim };
 
 struct LatentInfo {
     NodeId node = 0;
