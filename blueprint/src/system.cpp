@@ -86,14 +86,15 @@ void BlueprintSystem::Register(Lifecycle& lifecycle) {
     vm_.SetGuidIndex(&guids);
     // Spawn Blueprint: the entity is attached now (so the spawner can use it
     // straight away); the lifecycle starts it (BeginPlay) at its next sync.
-    vm_.SetSpawnHandler([this, &guids](const assets::AssetGuid& blueprint, const Transform& transform) {
+    vm_.SetSpawnHandler([this, &guids](const assets::AssetGuid& blueprint, const Transform& transform,
+                                       const nlohmann::json& exposed) {
         std::shared_ptr<const CompiledBlueprint> compiled = Get(blueprint);
         if (!compiled) return kNullEntity;
         BlueprintInstance instance;
         instance.blueprint.guid = blueprint;
         const Entity e = world_.CreateEntity(IdComponent{NewEntityGuid()}, transform, std::move(instance));
         guids.Add(world_.GetComponent<IdComponent>(e)->guid, e);
-        vm_.Attach(e, std::move(compiled));
+        vm_.Attach(e, std::move(compiled), exposed);
         return e;
     });
     // EndPlay here too: the lifecycle only reports entities it's already

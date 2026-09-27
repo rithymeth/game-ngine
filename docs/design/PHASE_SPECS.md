@@ -801,8 +801,24 @@ struct Blueprint{ std::string parent; std::vector<Variable> variables; std::vect
          (a latent node inlined into a function, say) are reported on the
          instance node.
        - Macros containing themselves are refused with BP016.
-   - Part 6: Sort/Filter with comparator functions, and expose-on-spawn
-     pins.
+   - ✅ **Part 6 done:** Sort/Filter with comparator functions, and
+     expose-on-spawn pins. Step 4 is complete.
+     - **Sort** sorts an array variable in place. It uses the natural order
+       for ints, floats and strings, or a function of the Blueprint
+       (config `by`, (a, b) -> bool "a comes before b").
+       - The merge sort is written by hand, so an inconsistent Blueprint
+         comparator can't hit `std::sort`'s undefined behaviour. It is
+         stable.
+     - **Filter** is pure and keeps the items a predicate (item) -> bool
+       accepts.
+     - **Errors**: a function with the wrong signature is refused with
+       BP017, a missing one with BP004, and sorting a type with no natural
+       order without a function with BP007.
+     - **Expose on Spawn**: the Spawn node's config `expose` lists the
+       spawned Blueprint's variables (the editor fills it in). Each gets an
+       input pin. The values reach the spawner as JSON and are applied at
+       attach, before BeginPlay. Only variables marked `ExposeOnSpawn` (or
+       instance-editable) take them.
 5. Debugger: node breakpoints, stepping and call stack, exec trace for
    wire animation, watched pin values, and an instance filter.
 6. Graph editor widget and Blueprint editor panels (portable ImGui):

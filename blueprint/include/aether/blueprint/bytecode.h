@@ -183,6 +183,8 @@ enum class Op : u8 {
     BindDispatcher, // Bind / Unbind / Unbind All (DispatcherBind::mode)
     InterfaceCall,  // runs the target's interface event, if it implements it
     ImplementsOp,   // a = dst bool, b = target, d = name index
+    SortVar, // d = sort index: sorts an array variable in place
+    FilterA, // a = dst array, b = source array, d = sort index (its function)
     // Latent actions (§C.4): a = state slot, b = duration register, c =
     // LatentKind, d = latent index. Starts the action and carries on; its
     // "completed" code runs later from the latent's resume point.
@@ -229,6 +231,18 @@ struct FieldAccess {
     const reflect::FieldInfo* field = nullptr;
     RegRef target;
     TypedReg value;
+};
+
+// Spawn Blueprint: the asset (GUID text) and the Expose on Spawn values.
+struct SpawnInfo {
+    std::string asset;
+    std::vector<std::pair<std::string, TypedReg>> exposed;
+};
+
+// Sort (in place, on an array variable) and Filter: the function they call.
+struct SortInfo {
+    i32 function = -1; // -1: Sort's natural order
+    i32 slot = 0;      // Sort: the array variable
 };
 
 struct DispatcherCall {
@@ -294,7 +308,8 @@ struct CompiledBlueprint {
     std::vector<FieldAccess> field_accesses;
     std::vector<FunctionCall> calls;
     std::vector<LatentInfo> latents;
-    std::vector<std::string> spawn_assets; // Spawn nodes' Blueprint asset GUIDs (text)
+    std::vector<SpawnInfo> spawns;
+    std::vector<SortInfo> sorts;
     std::vector<DispatcherCall> dispatcher_calls;
     std::vector<DispatcherBind> dispatcher_binds;
     std::vector<InterfaceCallInfo> interface_calls;

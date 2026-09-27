@@ -222,7 +222,7 @@ AETHER_TEST(BlueprintWorld_DestroyIsDeferredAndSpawnUsesTheSpawner) {
 
     printed.clear();
     std::vector<Entity> bullets;
-    vm.SetSpawnHandler([&](const assets::AssetGuid& guid, const Transform& t) {
+    vm.SetSpawnHandler([&](const assets::AssetGuid& guid, const Transform& t, const json&) {
         AETHER_CHECK(guid == bullet_guid);
         const Entity b = world.CreateEntity(t);
         vm.Attach(b, bullet_bp);

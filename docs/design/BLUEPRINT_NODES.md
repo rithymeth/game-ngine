@@ -277,6 +277,7 @@ parameter list.
 | BP014 | error | "The Custom Event '{event}' doesn't take the same parameters as '{dispatcher}', so it can't be bound to it." |
 | BP015 | error | "This Blueprint doesn't implement '{interface}'. Add it to the Class Settings' interfaces first." |
 | BP016 | error | "The macro '{macro}' ends up containing itself here. A macro can't be inlined into itself." |
+| BP017 | error | "'{fn}' can't be used by {Sort\|Filter}: it needs {two T inputs\|one T input} and one bool output." |
 | BP101 | warning | "Input '{pin}' isn't connected and will use its default value ({default})." |
 | BP102 | warning | "This node's output isn't used, and it has no side effects. It can be removed." |
 | BP103 | warning | "'{node}' in Event Tick runs every frame and searches the whole world. Consider caching the result in BeginPlay." |
