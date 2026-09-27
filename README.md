@@ -2871,6 +2871,73 @@ new `Aether::Blueprint` library (`blueprint/`) depends only on the engine.
 - 231/231 tests pass on GCC 13, on Clang and under ASan/UBSan, and 238/238
   with physics.
 
+**Step 3: latent actions, stateful flow nodes and the lifecycle** (§12.4
+point 3, ROADMAP_DETAILS §C.4).
+
+- **Latent nodes** (BLUEPRINT_NODES.md §3):
+  - Delay: calling it again while it waits is ignored.
+  - Retriggerable Delay: calling it again restarts the timer, keeping the
+    newer values.
+  - Delay Until Next Tick.
+  - How they run:
+    - The node starts a latent action and execution goes straight on,
+      so a Sequence runs its next output immediately.
+    - Its "completed" wire runs on a later frame, from a saved copy of
+      the event's registers, so event parameters survive the wait.
+    - A wire back into the Delay makes a repeating timer.
+  - Latent nodes in functions are refused with BP002.
+- **Stateful flow nodes** (§2): Do Once (with reset and start closed),
+  Do N (with its counter), Gate (enter, open, close, toggle, start closed)
+  and Flip Flop (A/B, with `is_a`).
+  - Their state is per instance.
+  - It's shared by all events of the graph, so one custom event can open
+    a Gate that another passes through.
+- **`BlueprintVM::Tick(dt)`** advances game time and resumes due actions
+  in wake order, then runs Event Tick.
+  - Disabled instances neither tick nor resume, so their timers pause.
+  - A detached or destroyed owner's actions are dropped.
+- **`BlueprintInstance`** is the component: a Blueprint asset reference
+  plus instance-editable overrides. The engine also gets a new
+  `BlueprintAsset` tag.
+- **`BlueprintSystem`** runs instances through the Phase 9 lifecycle.
+  - **Entering play**: the Blueprint is loaded and compiled once per
+    asset, and the entity attached with its overrides.
+  - **Start** runs BeginPlay. **Enable/disable** resumes or pauses the
+    instance.
+  - **Destroy or end of play** runs EndPlay, then detaches it.
+  - **Ticking**: `Update(dt)` ticks everything once per frame.
+  - **Compile failures** are reported once per asset in
+    `CompileErrors()`, and those entities don't run.
+- **Fix**: literal pin defaults such as Delay's 0.2 s, Clamp's max of 1
+  and Do N's n of 1 were being taken as pin flags by an overload, and
+  came out as 0. Clang's `-Wliteral-conversion` caught it. The flags
+  parameter is now a `PinFlags`, and a regression test checks the
+  defaults.
+
+**Verified**: 5 new tests, plus the defaults regression check.
+
+- **Delay**:
+  - A Sequence carrying on past it, and a second call ignored while
+    waiting.
+  - Resuming at the right time, with the event's parameter preserved.
+- **Retrigger, next tick and loops**:
+  - Retriggerable Delay restarting with the newer value.
+  - Next tick resuming before Event Tick.
+  - A Delay loop counting 4 ticks.
+- **Stateful nodes**:
+  - Do Once, Do N, Gate and Flip Flop sequences.
+  - State per instance, and Do Once starting closed.
+- **Owners and rules**:
+  - Pause while disabled, and actions dropped on detach and destroy.
+  - BP002 on its node.
+- **Lifecycle**:
+  - Overrides, compiled once per asset, and broken Blueprints reported
+    once and not run.
+  - Tick counts, and a disabled entity not ticking.
+  - EndPlay on destroy and at the end of play.
+- 236/236 tests pass on GCC 13, on Clang and under ASan/UBSan, and 243/243
+  with physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,

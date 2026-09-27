@@ -9,6 +9,7 @@ add_library(aether_blueprint STATIC
     src/bytecode.cpp
     src/compiler.cpp
     src/vm.cpp
+    src/system.cpp
 )
 target_include_directories(aether_blueprint PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aether_blueprint PUBLIC cxx_std_20)

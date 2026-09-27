@@ -706,10 +706,24 @@ struct Blueprint{ std::string parent; std::vector<Variable> variables; std::vect
    - **Instances**: they're attached to entities through
      `BlueprintVM::Attach`. The `BlueprintInstance` component and play
      start come with step 3's lifecycle integration.
-3. Latent actions (Delay, Retriggerable Delay, Delay Until Next Tick, Do
-   Once, Gate, Do N, Flip Flop), the LatentActionManager, the
-   `BlueprintInstance` component, and lifecycle and scheduler
-   integration.
+3. ✅ **Done.** Latent actions (Delay, Retriggerable Delay, Delay Until
+   Next Tick), the stateful flow nodes (Do Once, Gate, Do N, Flip Flop),
+   the latent action manager, the `BlueprintInstance` component, and
+   lifecycle integration.
+   - **Node state**: each stateful or latent node gets a per-instance
+     state slot, shared by the event functions of its graph. That's how
+     a Gate opened by one event affects another.
+   - **Latent resume**: a latent node compiles to `LATENT`, and
+     execution carries straight on (a Sequence runs its next output).
+     The node's "completed" code is compiled once per node, after the
+     function's body, and the saved frame resumes there.
+   - **Where it lives**: the latent action manager is part of
+     `BlueprintVM`. `Tick` advances game time, resumes due actions in
+     wake order, then runs Event Tick.
+   - **Lifecycle**: `BlueprintSystem` maps create, start,
+     enable/disable and destroy to attach, BeginPlay, pause/resume and
+     EndPlay. Ticking stays one `Update(dt)` per frame, not per-entity
+     lifecycle updates, so latent timers advance once per frame.
 4. The rest of the v1 node library: loops, switches, select, strings and
    arrays, entity and world nodes, conversions, Format Text, functions,
    macros, event dispatchers and interfaces.

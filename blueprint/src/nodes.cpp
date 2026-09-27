@@ -18,10 +18,12 @@ namespace {
 
 PinDesc ExecIn(const std::string& name = "exec") { return {name, PinDir::In, PinType::Exec(), {}, Pin_None}; }
 PinDesc ExecOut(const std::string& name = "then") { return {name, PinDir::Out, PinType::Exec(), {}, Pin_None}; }
-PinDesc In(const std::string& name, PinType type, u32 flags = Pin_None) {
+// The flags are a PinFlags, not an integer, so a literal default such as
+// 0.2f can't be taken for flags by the overload below it.
+PinDesc In(const std::string& name, PinType type, PinFlags flags = Pin_None) {
     return {name, PinDir::In, type, DefaultValue(type), flags};
 }
-PinDesc In(const std::string& name, PinType type, Value value, u32 flags = Pin_None) {
+PinDesc In(const std::string& name, PinType type, Value value, PinFlags flags = Pin_None) {
     return {name, PinDir::In, type, std::move(value), flags};
 }
 PinDesc Out(const std::string& name, PinType type) { return {name, PinDir::Out, type, {}, Pin_None}; }
@@ -226,6 +228,37 @@ void RegisterBuiltins(Registry& r) {
         std::vector<PinDesc> pins{ExecIn()};
         for (int i = 0; i < count.get<int>(); ++i) pins.push_back(ExecOut("then " + std::to_string(i)));
         return Sig("Sequence", "Flow Control", NodeKind::Impure, std::move(pins));
+    };
+
+    // Stateful flow nodes: their state lives per instance (a compiler "state slot").
+    r.exact["Flow.DoOnce"] = [kBool](const NodeContext&, NodeError&) -> std::optional<NodeSignature> {
+        return Sig("Do Once", "Flow Control", NodeKind::Impure,
+                   {ExecIn(), ExecIn("reset"), In("start_closed", kBool), ExecOut("completed")});
+    };
+    r.exact["Flow.DoN"] = [kInt](const NodeContext&, NodeError&) -> std::optional<NodeSignature> {
+        return Sig("Do N", "Flow Control", NodeKind::Impure,
+                   {ExecIn("enter"), In("n", kInt, i32{1}), ExecIn("reset"), ExecOut("exit"), Out("counter", kInt)});
+    };
+    r.exact["Flow.Gate"] = [kBool](const NodeContext&, NodeError&) -> std::optional<NodeSignature> {
+        return Sig("Gate", "Flow Control", NodeKind::Impure,
+                   {ExecIn("enter"), ExecIn("open"), ExecIn("close"), ExecIn("toggle"), In("start_closed", kBool),
+                    ExecOut("exit")});
+    };
+    r.exact["Flow.FlipFlop"] = [kBool](const NodeContext&, NodeError&) -> std::optional<NodeSignature> {
+        return Sig("Flip Flop", "Flow Control", NodeKind::Impure,
+                   {ExecIn(), ExecOut("A"), ExecOut("B"), Out("is_a", kBool)});
+    };
+
+    // --- Latent nodes (§3) -------------------------------------------------
+    r.exact["Latent.Delay"] = [kFloat](const NodeContext&, NodeError&) -> std::optional<NodeSignature> {
+        return Sig("Delay", "Latent", NodeKind::Latent, {ExecIn(), In("duration", kFloat, 0.2f), ExecOut("completed")});
+    };
+    r.exact["Latent.RetriggerableDelay"] = [kFloat](const NodeContext&, NodeError&) -> std::optional<NodeSignature> {
+        return Sig("Retriggerable Delay", "Latent", NodeKind::Latent,
+                   {ExecIn(), In("duration", kFloat, 0.2f), ExecOut("completed")});
+    };
+    r.exact["Latent.DelayNextTick"] = [](const NodeContext&, NodeError&) -> std::optional<NodeSignature> {
+        return Sig("Delay Until Next Tick", "Latent", NodeKind::Latent, {ExecIn(), ExecOut("completed")});
     };
 
     // --- Variables (§4) ----------------------------------------------------
