@@ -4628,6 +4628,61 @@ renderer, so its layout, input and styles are tested headless.
 - 365/365 tests pass on GCC 13, Clang and ASan/UBSan, and 397/397 with
   physics.
 
+**Step 2: controls and input** (§18.2).
+
+- **Controls**:
+  - Button, Toggle and Slider (drag, snap, arrow steps).
+  - ProgressBar (from any side).
+  - TextInput: cursor, selection, UTF-8 editing, length limits,
+    passwords, and scrolling long text.
+  - Dropdown, with a popup that keeps focus.
+  - ListView, which only makes widgets for the rows in view.
+  - Tooltips.
+- **Input router**:
+  - Mouse and multi-touch with hover and capture; the wheel bubbling to
+    scroll boxes.
+  - Focus with spatial and tab navigation, explicit targets, and
+    scroll-into-view.
+  - Accept and cancel, text editing, popups and tooltips.
+  - Each call says whether the UI used the input, so gameplay can skip
+    it.
+- **Device bridge**:
+  - Arrows, d-pad and stick navigation with key repeat; Tab; Enter, Space
+    and A accept; Escape and B cancel.
+  - Text-box-aware keys.
+  - A modal context that blocks gameplay input while a menu is up.
+
+**Verified**: 3 new tests.
+
+- Pointer:
+  - hover, press, capture, and release inside or outside;
+  - right-click, and accept;
+  - disabled controls and parents;
+  - toggles, and sliders dragged, clamped, snapped and stepped;
+  - two fingers on two sliders;
+  - progress fills;
+  - the wheel passing over a box with nothing to scroll.
+- Focus:
+  - spatial moves around a grid of buttons, edges, and Next/Previous
+    wrapping;
+  - explicit targets, and disabled and hidden buttons skipped;
+  - scroll-into-view.
+- Bridge: key repeat timing, stick, d-pad, Shift+Tab, non-repeating
+  accept; the modal context blocking a gameplay action.
+- Text box: UTF-8 editing, selection replacement, deletes, control
+  characters, commit, length limit, password, click and drag selection,
+  long-text scrolling, and typing-aware keys.
+- Dropdown:
+  - opening below (or above near the bottom), with focus kept inside;
+  - picking with keys or a click;
+  - cancel and clicking outside.
+- ListView: 5–6 row widgets for 1000 items, clicks, selection scrolling,
+  activation and the wheel.
+- Tooltips: delay, not catching clicks, hiding.
+- Removed widgets forgotten safely.
+- 368/368 tests pass on GCC 13, Clang and ASan/UBSan, and 400/400 with
+  physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
