@@ -138,7 +138,7 @@ bool BlueprintVM::Attach(Entity entity, std::shared_ptr<const CompiledBlueprint>
     for (const CompiledVariable& var : blueprint->variables) {
         Reg value = var.default_value;
         std::string text = var.default_string;
-        if ((var.flags & Var_InstanceEditable) && overrides.is_object() && overrides.contains(var.name)) {
+        if ((var.flags & (Var_InstanceEditable | Var_ExposeOnSpawn)) && overrides.is_object() && overrides.contains(var.name)) {
             Value parsed;
             if (ValueFromJson(overrides[var.name], var.type, parsed)) {
                 if (const std::string* s = std::get_if<std::string>(&parsed)) {
@@ -323,6 +323,27 @@ void BlueprintVM::ResumeDue() {
         Run(instance, action.function, frame, 0, action.resume_pc);
         Finish();
     }
+}
+
+bool BlueprintVM::CallPredicate(Instance& instance, u32 function, const ArrayValue& array, usize a, const usize* b,
+                                u32 depth, bool& result) {
+    const CompiledFunction& callee = instance.blueprint->functions[function];
+    if (depth + 1 >= frames_.size()) {
+        errors_.push_back({"BP203", instance.entity, callee.name, 0,
+                           "'" + callee.name + "' was called more than " + std::to_string(options_.max_call_depth) +
+                               " levels deep. Check for endless recursion."});
+        return false;
+    }
+    Frame& frame = AcquireFrame(callee, depth + 1);
+    for (usize k = 0; k < callee.params.size() && k < (b != nullptr ? 2u : 1u); ++k) {
+        const usize item = k == 0 ? a : *b;
+        const RegRef p = callee.params[k];
+        if (p.bank == Bank::String) frame.s[p.index] = array.texts[item];
+        else frame.r[p.index] = array.values[item];
+    }
+    if (!Run(instance, function, frame, depth + 1)) return false;
+    result = !callee.results.empty() && frame.r[callee.results[0].index].b;
+    return true;
 }
 
 void BlueprintVM::StartLatent(Instance& instance, u32 function, const Instr& in, Frame& frame) {
@@ -743,6 +764,61 @@ bool BlueprintVM::Run(Instance& instance, u32 function, Frame& frame, u32 depth,
         case Op::CountGet: r[in.a] = Reg::Int(instance.states[in.b].counter); break;
         case Op::CountReset: instance.states[in.a].counter = 0; break;
         case Op::Latent: StartLatent(instance, function, in, frame); break;
+        case Op::SortVar: {
+            const SortInfo& info = bp.sorts[static_cast<usize>(in.d)];
+            const ArrayValue items = instance.avars[static_cast<usize>(info.slot)]; // a copy: the comparator may read it
+            std::vector<usize> order(items.Size());
+            for (usize i = 0; i < order.size(); ++i) order[i] = i;
+            bool ok = true;
+            // Merge sort by hand: a Blueprint comparator may be inconsistent,
+            // which std::sort can't tolerate. Ties keep their order.
+            auto less = [&](usize x, usize y) {
+                if (!ok) return false;
+                if (info.function < 0) {
+                    if (items.strings) return items.texts[x] < items.texts[y];
+                    return items.type == ValueType::Float ? items.values[x].f < items.values[y].f
+                                                          : items.values[x].i < items.values[y].i;
+                }
+                bool before = false;
+                ok = CallPredicate(instance, static_cast<u32>(info.function), items, x, &y, depth, before);
+                return before;
+            };
+            std::vector<usize> scratch(order.size());
+            for (usize width = 1; width < order.size() && ok; width *= 2) {
+                for (usize lo = 0; lo < order.size(); lo += 2 * width) {
+                    const usize mid = std::min(lo + width, order.size()), hi = std::min(lo + 2 * width, order.size());
+                    usize i = lo, j = mid, k = lo;
+                    while (i < mid && j < hi) scratch[k++] = less(order[j], order[i]) ? order[j++] : order[i++];
+                    while (i < mid) scratch[k++] = order[i++];
+                    while (j < hi) scratch[k++] = order[j++];
+                }
+                order.swap(scratch);
+            }
+            if (!ok) return false; // the comparator failed (its error is recorded)
+            ArrayValue& target = instance.avars[static_cast<usize>(info.slot)];
+            target.Clear();
+            for (usize i : order) {
+                if (items.strings) target.texts.push_back(items.texts[i]);
+                else target.values.push_back(items.values[i]);
+            }
+            break;
+        }
+        case Op::FilterA: {
+            const SortInfo& info = bp.sorts[static_cast<usize>(in.d)];
+            const ArrayValue items = arrays[in.b];
+            ArrayValue kept;
+            kept.type = items.type;
+            kept.strings = items.strings;
+            for (usize i = 0; i < items.Size(); ++i) {
+                bool keep = false;
+                if (!CallPredicate(instance, static_cast<u32>(info.function), items, i, nullptr, depth, keep)) return false;
+                if (!keep) continue;
+                if (items.strings) kept.texts.push_back(items.texts[i]);
+                else kept.values.push_back(items.values[i]);
+            }
+            arrays[in.a] = std::move(kept); // callees run in the next frame: this one's banks stay put
+            break;
+        }
         case Op::CallDispatcher: {
             const DispatcherCall& call = bp.dispatcher_calls[static_cast<usize>(in.d)];
             const Entity target = r[call.target.index].AsEntity();
@@ -898,11 +974,27 @@ bool BlueprintVM::Run(Instance& instance, u32 function, Frame& frame, u32 depth,
             if (!spawn_) {
                 Warn("BP206", instance, fn, fn.node_of[pc - 1],
                      "Spawn Blueprint in '" + fn.name + "' has nothing to spawn with (no spawner is set up).");
-            } else if (assets::ParseAssetGuid(bp.spawn_assets[static_cast<usize>(in.d)], guid)) {
+            } else if (const SpawnInfo& info = bp.spawns[static_cast<usize>(in.d)]; assets::ParseAssetGuid(info.asset, guid)) {
                 Transform transform;
                 transform.position = r[in.b].AsVec3();
                 transform.rotation = r[in.c].AsQuat();
-                spawned = spawn_(guid, transform);
+                nlohmann::json exposed = nlohmann::json::object();
+                for (const auto& [name, value] : info.exposed) {
+                    if (value.reg.bank == Bank::String) {
+                        exposed[name] = s[value.reg.index];
+                    } else {
+                        const Reg& v = r[value.reg.index];
+                        switch (value.type.type) {
+                        case ValueType::Bool: exposed[name] = v.b; break;
+                        case ValueType::Int: exposed[name] = v.i; break;
+                        case ValueType::Float: exposed[name] = v.f; break;
+                        case ValueType::Vec3: exposed[name] = {v.v[0], v.v[1], v.v[2]}; break;
+                        case ValueType::Quat: exposed[name] = {v.v[0], v.v[1], v.v[2], v.v[3]}; break;
+                        default: break;
+                        }
+                    }
+                }
+                spawned = spawn_(guid, transform, exposed);
             }
             r[in.a] = Reg::EntityOf(spawned);
             break;

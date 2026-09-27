@@ -676,6 +676,50 @@ void RegisterBuiltins(Registry& r) {
             },
             element_lister(prefix, title, "Array")};
     }
+    // Sort (in place) and Filter take a function of this Blueprint (config
+    // "by"): Sort's "a comes before b" (a: T, b: T) -> bool, Filter's
+    // (item: T) -> bool. Sort without one uses the natural order of ints,
+    // floats and strings. BP017 when the function doesn't fit.
+    auto check_function = [](const NodeContext& c, const PinType& element, usize params, const std::string& what,
+                             NodeError& error) -> bool {
+        const std::string by = c.node.config.value("by", "");
+        const Graph* fn = c.blueprint.FindGraph(by);
+        if (fn == nullptr || fn->kind != GraphKind::Function) {
+            Fail(error, "BP004", what + " uses the function '" + by + "', which doesn't exist.");
+            return false;
+        }
+        bool fits = fn->inputs.size() == params && fn->outputs.size() == 1 &&
+                    fn->outputs[0].type == PinType::Of(ValueType::Bool);
+        for (usize i = 0; fits && i < params; ++i) fits = fn->inputs[i].type == element;
+        if (!fits) {
+            Fail(error, "BP017", "'" + by + "' can't be used by " + what + ": it needs " +
+                                     (params == 2 ? "two " + TypeName(element) + " inputs" : "one " + TypeName(element) + " input") +
+                                     " and one bool output.");
+        }
+        return fits;
+    };
+    r.families["Array.Sort:"] = {
+        [=](const NodeContext& c, NodeError& error) -> std::optional<NodeSignature> {
+            const std::optional<PinType> e = element_of(c.suffix, "Sort", error);
+            if (!e) return std::nullopt;
+            if (c.node.config.contains("by")) {
+                if (!check_function(c, *e, 2, "Sort", error)) return std::nullopt;
+            } else if (e->type != ValueType::Int && e->type != ValueType::Float && e->type != ValueType::String) {
+                return Fail(error, "BP007", "Sorting " + TypeName(*e) + " values needs a comparison function (\"by\").");
+            }
+            return Sig("Sort", "Array", NodeKind::Impure,
+                       {ExecIn(), In("array", PinType::ArrayOf(*e), Pin_ByRef), ExecOut()});
+        },
+        element_lister("Array.Sort:", "Sort", "Array")};
+    r.families["Array.Filter:"] = {
+        [=](const NodeContext& c, NodeError& error) -> std::optional<NodeSignature> {
+            const std::optional<PinType> e = element_of(c.suffix, "Filter", error);
+            if (!e) return std::nullopt;
+            if (!check_function(c, *e, 1, "Filter", error)) return std::nullopt;
+            const PinType array = PinType::ArrayOf(*e);
+            return Sig("Filter", "Array", NodeKind::Pure, {In("array", array), Out("result", array)});
+        },
+        element_lister("Array.Filter:", "Filter", "Array")};
     r.families["Flow.ForEach:"] = {
         [=](const NodeContext& c, NodeError& error) -> std::optional<NodeSignature> {
             const std::optional<PinType> e = element_of(c.suffix, "For Each", error);
@@ -786,8 +830,21 @@ void RegisterBuiltins(Registry& r) {
         if (!assets::ParseAssetGuid(c.node.config.value("blueprint", ""), guid) || guid.IsNull()) {
             return Fail(error, "BP007", "Spawn needs a Blueprint to spawn (its asset in the node's settings).");
         }
-        return Sig("Spawn Blueprint", "Entity", NodeKind::Impure,
-                   {ExecIn(), In("location", kVec3), In("rotation", kQuat), ExecOut(), Out("spawned", kEntity)});
+        // Expose on Spawn: the spawned Blueprint's variables the editor lists
+        // in config "expose" ([{"name", "type"}]), set before its BeginPlay.
+        std::vector<PinDesc> pins{ExecIn(), In("location", kVec3), In("rotation", kQuat)};
+        for (const json& e : c.node.config.value("expose", json::array())) {
+            const std::string name = e.value("name", "");
+            const std::optional<PinType> type = ParseType(e.value("type", ""));
+            if (name.empty() || name == "location" || name == "rotation" || !type || type->IsExec() ||
+                type->is_array || type->type == ValueType::Struct || type->type == ValueType::Entity) {
+                return Fail(error, "BP007", "Spawn can't expose '" + name + "' (a bool, number, string, Vec3 or Quat).");
+            }
+            pins.push_back(In(name, *type));
+        }
+        pins.push_back(ExecOut());
+        pins.push_back(Out("spawned", kEntity));
+        return Sig("Spawn Blueprint", "Entity", NodeKind::Impure, std::move(pins));
     };
     AddPure(r, "World.GameTime", "Get Game Time", "Utilities|Time", {Out("seconds", kFloat)});
     AddPure(r, "World.DeltaSeconds", "Get Delta Seconds", "Utilities|Time", {Out("seconds", kFloat)});
