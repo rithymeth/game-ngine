@@ -14,7 +14,9 @@
 #include <Jolt/Physics/Body/BodyInterface.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 
+#include <map>
 #include <memory>
+#include <vector>
 
 namespace aether {
 
@@ -26,6 +28,23 @@ namespace aether {
 // physics shares the same worker threads as the rest of the engine. Step()
 // (and anything else that reaches JPH::PhysicsSystem::Update) must be called
 // from a thread registered with that JobSystem; see JoltJobSystemAdapter.
+// A contact between two bodies, reported after a Step (Phase 13 step 3).
+// Body 1 has the lower BodyID. Begin and End come once per body pair (a
+// compound's several touching parts count once); Stay comes every step
+// while touching, only for bodies with SetReportStay. `trigger` is set when
+// either body is a sensor (triggers never Stay). `normal` points from body 1
+// to body 2 (the way to push body 2 out) and `approach_speed` is how fast
+// they were closing along it at Begin, in m/s (0 for End).
+enum class ContactType : u8 { Begin, Stay, End };
+struct ContactEvent {
+    JPH::BodyID body1, body2;
+    ContactType type = ContactType::Begin;
+    bool trigger = false;
+    Vec3 point{0, 0, 0};
+    Vec3 normal{0, 0, 0};
+    f32 approach_speed = 0.0f;
+};
+
 class PhysicsWorld {
 public:
     explicit PhysicsWorld(JobSystem& job_system);
@@ -57,6 +76,17 @@ public:
 
     void Step(f32 dt);
 
+    // --- Contacts (Phase 13 step 3) ---------------------------------------
+    // Jolt reports contacts from worker threads during Step. They go into a
+    // fixed-capacity lock-free buffer (no allocation; overflow is counted
+    // and logged), and after Step they're sorted into a deterministic order
+    // and turned into Begin/Stay/End per body pair here, on the calling
+    // thread. Sleeping bodies keep their contacts (no End while a pile
+    // rests); a destroyed body's contacts End at the next Step.
+    const std::vector<ContactEvent>& Contacts() const { return contacts_; }
+    void SetReportStay(JPH::BodyID body, bool report);
+    u64 DroppedContacts() const; // total contact callbacks that didn't fit the buffer
+
     Vec3 GetPosition(JPH::BodyID id) const;
     Quaternion GetRotation(JPH::BodyID id) const;
 
@@ -76,6 +106,19 @@ private:
     std::unique_ptr<JPH::JobSystem> jolt_job_system_;
     std::unique_ptr<Layers> layers_;
     std::unique_ptr<JPH::PhysicsSystem> physics_system_;
+
+    struct ContactQueue; // the Jolt listener and its buffer; defined in the .cpp
+    struct PairState {
+        u32 touching = 0; // sub-shape contacts currently reported
+        bool trigger = false;
+        bool dormant = false; // both bodies asleep: still in contact, no events
+        u64 stay_step = 0;
+    };
+    void ProcessContacts();
+    std::unique_ptr<ContactQueue> contact_queue_;
+    std::map<u64, PairState> pairs_; // by (body1, body2) ids; ordered, for deterministic Ends
+    std::vector<ContactEvent> contacts_;
+    u64 step_ = 0;
 };
 
 // Steps `physics` by `dt`, then writes each RigidBody entity's simulated
