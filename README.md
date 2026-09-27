@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Now: Phase 17 — audio (mixer, 3D, streaming and cues done; components and backend next)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Now: Phase 17 — audio (mixer, 3D, streaming, cues and components done; device backend next)
 
 ### Phase 1 — Foundation
 
@@ -4437,6 +4437,52 @@ in step 5.
   - 3D positions;
   - sequences across plays.
 - 350/350 tests pass on GCC 13, Clang and ASan/UBSan, and 382/382 with
+  physics.
+
+**Step 4: components, the audio system and Blueprint nodes** (§17.4).
+
+- **Components**:
+  - **AudioSource** plays a cue from an entity and follows it, with
+    doppler from its motion. Its Blueprint nodes are Play, Stop, Fade
+    In, Fade Out, Set Volume, Set Cue and Is Playing.
+  - **AudioListener** hears from its entity's position and facing.
+  - **ReverbZone** gives the listener a reverb that fades in towards the
+    zone. Overlapping zones go by priority.
+- **AudioSystem**:
+  - Runs the components on the mixer each frame.
+  - Follows the scene hierarchy.
+  - Reports cues that finish (as `Event OnAudioFinished`), and missing or
+    broken cues once each.
+  - Stops the sounds of entities that go away.
+- **Audio Blueprint library**: Play Sound 2D, Play Sound at Location,
+  Spawn Sound Attached (follows an entity and stops with it), Set Bus
+  Volume (with a fade) and Stop All Sounds.
+- **Blueprints**:
+  - Native functions can now take entities (Entity pins).
+  - Static function libraries get their own palette category.
+
+**Verified**: 3 new tests.
+
+- Sources and the listener:
+  - panning from a turned listener;
+  - distance and doppler from motion, and listener velocity;
+  - every command;
+  - the finished event, reported once;
+  - switching cues, auto-play off, and destroyed entities;
+  - missing and broken cues;
+  - parented sources.
+- The library:
+  - 2D against located sounds;
+  - attached sounds following, turning and stopping;
+  - bus volume at once and faded;
+  - the static functions with and without an active system.
+- Reverb zones:
+  - no effect without zones;
+  - dry outside and a tail inside;
+  - the blend at the edge, and priority over strength.
+- A Blueprint that plays a 2D sound, attaches a hum, fades a bus and fades
+  in its own source, then prints the cue from `Event OnAudioFinished`.
+- 353/353 tests pass on GCC 13, Clang and ASan/UBSan, and 385/385 with
   physics.
 
 ## Building

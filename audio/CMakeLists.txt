@@ -11,6 +11,7 @@ add_library(aether_audio STATIC
     src/codec_impl.cpp
     src/cue.cpp
     src/cue_player.cpp
+    src/audio_system.cpp
 )
 target_include_directories(aether_audio PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aether_audio PUBLIC cxx_std_20)
