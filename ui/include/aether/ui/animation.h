@@ -26,6 +26,7 @@ bool ParseEase(const std::string& name, Ease& out);
 bool SetProperty(Widget& widget, const std::string& property, f32 value);
 bool GetProperty(const Widget& widget, const std::string& property, f32& out);
 bool IsAnimatable(const std::string& property);
+std::vector<std::string> AnimatableProperties(); // every name IsAnimatable accepts
 
 struct UIKey {
     f32 time = 0.0f;
