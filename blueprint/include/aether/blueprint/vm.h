@@ -4,6 +4,7 @@
 
 #include <functional>
 #include <map>
+#include <tuple>
 #include <random>
 #include <memory>
 #include <span>
@@ -33,6 +34,41 @@ struct RuntimeError {
     std::string function; // the event or function running
     NodeId node = 0;
     std::string message;
+};
+
+// The Blueprint debugger (Phase 12 step 5, ROADMAP.md §12.5).
+enum class BpStopReason : u8 { Breakpoint, Step, Pause };
+enum class BpAction : u8 { Continue, StepInto, StepOver, StepOut };
+
+struct BpPinValue {
+    NodeId node = 0;
+    std::string pin;
+    std::string type;  // "float"
+    std::string value; // "2.5", "true", "(1, 0, 0)", "Entity(3v1)", "[4 items]"
+};
+
+struct BpFrame {
+    Entity entity;
+    std::string function; // "Event.BeginPlay", a function graph's name
+    std::string graph;
+    NodeId node = 0; // the node running in this frame
+    std::vector<BpPinValue> values; // this function's pins, as they are now
+};
+
+struct BpStop {
+    BpStopReason reason = BpStopReason::Breakpoint;
+    Entity entity;
+    std::string graph;
+    NodeId node = 0;
+    std::vector<BpFrame> frames; // innermost first
+};
+
+// One node starting to run, for the editor's wire animation.
+struct BpTraceEvent {
+    Entity entity;
+    std::string graph;
+    NodeId node = 0;
+    u64 frame = 0; // BlueprintVM::Tick count
 };
 
 // Runs compiled Blueprints on a world's entities (Phase 12 step 2,
@@ -99,6 +135,23 @@ public:
     // Where Print String goes (default: the engine log, category "Blueprint").
     void SetPrintHandler(std::function<void(Entity, const std::string&)> handler) { print_ = std::move(handler); }
 
+    // --- Debugging -----------------------------------------------------
+    // The handler runs at each stop, synchronously (PIE is paused inside it;
+    // it must not run Blueprints on this VM). Null detaches the debugger.
+    // Checks cost one test per instruction while a handler or the trace is on.
+    void SetDebugHandler(std::function<BpAction(const BpStop&)> handler);
+    // A breakpoint on a node of `blueprint` (F9). False if there's no such node.
+    bool SetBreakpoint(const CompiledBlueprint& blueprint, const std::string& graph, NodeId node, bool enabled = true);
+    void ClearBreakpoints() { breakpoints_.clear(); }
+    // Stops at the next node any Blueprint runs (the Pause button).
+    void RequestPause() { step_ = StepMode::Pause; }
+    // Only stop for this instance ("Debug: BP_Door_2"); kNullEntity = any.
+    void SetDebugFilter(Entity entity) { debug_filter_ = entity; }
+    // Records every node that starts running (up to `capacity`, oldest dropped).
+    void SetTraceEnabled(bool enabled, usize capacity = 4096);
+    std::vector<BpTraceEvent> TakeTrace();
+    usize DebugStops() const { return debug_stops_; }
+
     const std::vector<RuntimeError>& Errors() const { return errors_; }
     void ClearErrors() { errors_.clear(); warned_.clear(); }
     u64 InstructionsRun() const { return instructions_; }
@@ -160,6 +213,8 @@ private:
     Frame& AcquireFrame(const CompiledFunction& fn, u32 depth);
 
     void RemoveDetached();
+    void DebugHook(Instance& instance, u32 function, usize pc);
+    BpStop DescribeStop(BpStopReason reason, const Instance& instance) const;
     void ProcessDestroys();
     void Finish(); // after an outermost run: detached instances, deferred destroys
     Transform* TransformOf(Instance& instance, const CompiledFunction& fn, NodeId node, Entity target);
@@ -183,6 +238,25 @@ private:
     // Event dispatcher bindings: (target, dispatcher) -> (listener, Custom Event).
     std::map<std::pair<u64, std::string>, std::vector<std::pair<u64, std::string>>> bindings_;
     std::vector<VmValue> ArgsOf(const std::vector<TypedReg>& args, const Frame& frame) const;
+    enum class StepMode : u8 { None, Into, Over, Out, Pause };
+    struct DebugFrame {
+        Instance* instance = nullptr;
+        u32 function = 0;
+        const Frame* frame = nullptr;
+        NodeId node = 0;
+    };
+    std::function<BpAction(const BpStop&)> debug_handler_;
+    bool debugging_ = false; // a handler or the trace is on
+    bool in_handler_ = false;
+    std::vector<DebugFrame> debug_stack_;
+    std::vector<std::tuple<const CompiledBlueprint*, std::string, NodeId>> breakpoints_;
+    StepMode step_ = StepMode::None;
+    usize step_depth_ = 0;
+    Entity debug_filter_ = kNullEntity;
+    bool tracing_ = false;
+    usize trace_capacity_ = 4096;
+    std::vector<BpTraceEvent> trace_;
+    usize debug_stops_ = 0;
     std::vector<LatentAction> latent_;
     f64 time_ = 0.0;
     u64 frame_ = 0;
