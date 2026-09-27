@@ -16,3 +16,9 @@ target_include_directories(aether_blueprint PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/i
 target_compile_features(aether_blueprint PUBLIC cxx_std_20)
 target_link_libraries(aether_blueprint PUBLIC Aether::Engine)
 add_library(Aether::Blueprint ALIAS aether_blueprint)
+
+# The VM benchmark (Phase 12 step 7): aether_bp_bench [--count N] [--check MS].
+add_executable(aether_bp_bench bench/blueprint_bench.cpp)
+target_link_libraries(aether_bp_bench PRIVATE Aether::Blueprint)
+target_compile_definitions(aether_bp_bench PRIVATE
+    AETHER_BENCH_DEFAULT_BLUEPRINT="${CMAKE_SOURCE_DIR}/assets/blueprints/BP_Spinner.abp")

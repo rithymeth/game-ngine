@@ -1,0 +1,450 @@
+{
+  "$type": "Blueprint",
+  "$version": 1,
+  "parent": "native:Entity",
+  "variables": [
+    {
+      "name": "Speed",
+      "type": "float",
+      "default": 180.0,
+      "flags": [
+        "InstanceEditable"
+      ],
+      "tooltip": "Degrees per second",
+      "category": "Spinner"
+    },
+    {
+      "name": "Height",
+      "type": "float",
+      "default": 0.25,
+      "flags": [
+        "InstanceEditable"
+      ],
+      "tooltip": "How far it bobs",
+      "category": "Spinner"
+    },
+    {
+      "name": "Angle",
+      "type": "float",
+      "default": 0.0,
+      "category": "Spinner"
+    },
+    {
+      "name": "Laps",
+      "type": "int",
+      "default": 0,
+      "category": "Spinner"
+    }
+  ],
+  "graphs": [
+    {
+      "name": "EventGraph",
+      "kind": "EventGraph",
+      "nodes": [
+        {
+          "id": 1,
+          "type": "Event.Tick",
+          "pos": [
+            0,
+            0
+          ]
+        },
+        {
+          "id": 2,
+          "type": "Var.Get:Speed",
+          "pos": [
+            0,
+            140
+          ]
+        },
+        {
+          "id": 3,
+          "type": "Math.Multiply:float",
+          "pos": [
+            200,
+            140
+          ]
+        },
+        {
+          "id": 4,
+          "type": "Var.Get:Angle",
+          "pos": [
+            200,
+            260
+          ]
+        },
+        {
+          "id": 5,
+          "type": "Math.Add:float",
+          "pos": [
+            400,
+            180
+          ]
+        },
+        {
+          "id": 6,
+          "type": "Var.Set:Angle",
+          "pos": [
+            600,
+            0
+          ]
+        },
+        {
+          "id": 7,
+          "type": "Quat.FromAxisAngle",
+          "pos": [
+            800,
+            140
+          ]
+        },
+        {
+          "id": 8,
+          "type": "Entity.SetRotation",
+          "pos": [
+            1000,
+            0
+          ]
+        },
+        {
+          "id": 9,
+          "type": "World.GameTime",
+          "pos": [
+            800,
+            300
+          ]
+        },
+        {
+          "id": 10,
+          "type": "Math.Sin",
+          "pos": [
+            1000,
+            300
+          ]
+        },
+        {
+          "id": 11,
+          "type": "Var.Get:Height",
+          "pos": [
+            1000,
+            420
+          ]
+        },
+        {
+          "id": 12,
+          "type": "Math.Multiply:float",
+          "pos": [
+            1200,
+            320
+          ]
+        },
+        {
+          "id": 13,
+          "type": "Vec3.Make",
+          "pos": [
+            1400,
+            320
+          ]
+        },
+        {
+          "id": 14,
+          "type": "Entity.SetLocation",
+          "pos": [
+            1200,
+            0
+          ]
+        },
+        {
+          "id": 15,
+          "type": "Math.Greater:float",
+          "pos": [
+            1400,
+            140
+          ],
+          "defaults": {
+            "b": 360.0
+          }
+        },
+        {
+          "id": 16,
+          "type": "Flow.Branch",
+          "pos": [
+            1600,
+            0
+          ]
+        },
+        {
+          "id": 17,
+          "type": "Var.Get:Laps",
+          "pos": [
+            1600,
+            200
+          ]
+        },
+        {
+          "id": 18,
+          "type": "Math.Add:int",
+          "pos": [
+            1800,
+            200
+          ],
+          "defaults": {
+            "b": 1
+          }
+        },
+        {
+          "id": 19,
+          "type": "Var.Set:Laps",
+          "pos": [
+            1800,
+            0
+          ]
+        },
+        {
+          "id": 20,
+          "type": "Var.Set:Angle",
+          "pos": [
+            2000,
+            0
+          ],
+          "defaults": {
+            "value": 0.0
+          }
+        }
+      ],
+      "links": [
+        {
+          "from": [
+            1,
+            "then"
+          ],
+          "to": [
+            6,
+            "exec"
+          ]
+        },
+        {
+          "from": [
+            2,
+            "value"
+          ],
+          "to": [
+            3,
+            "a"
+          ]
+        },
+        {
+          "from": [
+            1,
+            "delta_seconds"
+          ],
+          "to": [
+            3,
+            "b"
+          ]
+        },
+        {
+          "from": [
+            4,
+            "value"
+          ],
+          "to": [
+            5,
+            "a"
+          ]
+        },
+        {
+          "from": [
+            3,
+            "result"
+          ],
+          "to": [
+            5,
+            "b"
+          ]
+        },
+        {
+          "from": [
+            5,
+            "result"
+          ],
+          "to": [
+            6,
+            "value"
+          ]
+        },
+        {
+          "from": [
+            6,
+            "value"
+          ],
+          "to": [
+            7,
+            "degrees"
+          ]
+        },
+        {
+          "from": [
+            6,
+            "then"
+          ],
+          "to": [
+            8,
+            "exec"
+          ]
+        },
+        {
+          "from": [
+            7,
+            "result"
+          ],
+          "to": [
+            8,
+            "rotation"
+          ]
+        },
+        {
+          "from": [
+            9,
+            "seconds"
+          ],
+          "to": [
+            10,
+            "a"
+          ]
+        },
+        {
+          "from": [
+            10,
+            "result"
+          ],
+          "to": [
+            12,
+            "a"
+          ]
+        },
+        {
+          "from": [
+            11,
+            "value"
+          ],
+          "to": [
+            12,
+            "b"
+          ]
+        },
+        {
+          "from": [
+            12,
+            "result"
+          ],
+          "to": [
+            13,
+            "y"
+          ]
+        },
+        {
+          "from": [
+            8,
+            "then"
+          ],
+          "to": [
+            14,
+            "exec"
+          ]
+        },
+        {
+          "from": [
+            13,
+            "result"
+          ],
+          "to": [
+            14,
+            "location"
+          ]
+        },
+        {
+          "from": [
+            6,
+            "value"
+          ],
+          "to": [
+            15,
+            "a"
+          ]
+        },
+        {
+          "from": [
+            14,
+            "then"
+          ],
+          "to": [
+            16,
+            "exec"
+          ]
+        },
+        {
+          "from": [
+            15,
+            "result"
+          ],
+          "to": [
+            16,
+            "condition"
+          ]
+        },
+        {
+          "from": [
+            16,
+            "true"
+          ],
+          "to": [
+            19,
+            "exec"
+          ]
+        },
+        {
+          "from": [
+            17,
+            "value"
+          ],
+          "to": [
+            18,
+            "a"
+          ]
+        },
+        {
+          "from": [
+            18,
+            "result"
+          ],
+          "to": [
+            19,
+            "value"
+          ]
+        },
+        {
+          "from": [
+            19,
+            "then"
+          ],
+          "to": [
+            20,
+            "exec"
+          ]
+        }
+      ],
+      "comments": [
+        {
+          "text": "Spin, bob, and count laps (the benchmark's 20-node Tick)",
+          "rect": [
+            -30,
+            -50,
+            2250,
+            540
+          ],
+          "color": 1086357568
+        }
+      ]
+    }
+  ]
+}

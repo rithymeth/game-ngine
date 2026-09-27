@@ -309,7 +309,7 @@ struct CompiledBlueprint {
     u16 string_vars = 0;
     u16 array_vars = 0;
     std::vector<CompiledFunction> functions;
-    std::map<std::string, u32> events;    // event key ("Event.Tick", "Event.Custom:Hit") -> function
+    std::map<std::string, u32, std::less<>> events; // event key ("Event.Tick", "Event.Custom:Hit") -> function
     std::map<std::string, u32> function_index; // function graph name -> function
     std::vector<NativeCall> native_calls;
     std::vector<FieldAccess> field_accesses;

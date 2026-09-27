@@ -213,6 +213,10 @@ private:
     Frame& AcquireFrame(const CompiledFunction& fn, u32 depth);
 
     void RemoveDetached();
+    // Runs one of an attached instance's functions as an event (Dispatch
+    // after the lookup).
+    bool Invoke(Instance& instance, u32 function, std::span<const VmValue> args);
+    std::vector<u64> detached_keys_; // instances detached while running, waiting for RemoveDetached
     void DebugHook(Instance& instance, u32 function, usize pc);
     BpStop DescribeStop(BpStopReason reason, const Instance& instance) const;
     void ProcessDestroys();

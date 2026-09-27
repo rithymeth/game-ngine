@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Now: Phase 12 — Blueprints (in progress)
+## Status: Phases 8–9 and 11–12 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Now: Phase 13 — physics events and character movement
 
 ### Phase 1 — Foundation
 
@@ -2727,7 +2727,7 @@ Windows editor work.
 - 221/221 tests pass on GCC 13, on Clang and under ASan/UBSan, and 228/228
   with physics.
 
-### Phase 12 (in progress) — Blueprints (visual scripting)
+### Phase 12 (done on the portable side) — Blueprints (visual scripting)
 
 Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md),
 Phase 12. The node reference is
@@ -3338,6 +3338,48 @@ step 6. Portable code in `aether_editor_ui`, tested headless.
   row focusing its node, the palette from a pin (filtered, placed and
   linked, closed with Esc), and the keys driven by simulated input.
 - 268/268 tests pass on GCC 13, on Clang and under ASan/UBSan, and 275/275
+  with physics.
+
+**Step 7: samples and the 10,000-instance benchmark**. This completes
+Phase 12 on the portable side.
+
+- **Samples** in `assets/blueprints/`, saved exactly as the editor saves
+  them, with comment boxes:
+  - `BP_Door` opens while an entity tagged Player stands in its trigger:
+    it swings at `Speed` degrees per second up to `OpenAngle` (both
+    instance-editable), and closes when the player leaves.
+  - `BP_Coin` calls its `OnCollected(value)` event dispatcher when the
+    player touches it (once), then destroys itself.
+  - `BP_GameMode` binds its `AddScore` event to every Coin at BeginPlay,
+    prints "Score: N", and prints "You win" once when the score reaches
+    `Goal` (10).
+  - `BP_Spinner` is the benchmark's 20-node Tick graph: spin, bob, and
+    count laps.
+- **Benchmark**: `aether_bp_bench [--count N] [--frames N] [--check MS]`
+  times `BlueprintVM::Tick` on BP_Spinner. 10,000 instances take about
+  1.4 ms per frame here; the target is under 2 ms.
+  - The first run took about a second per frame. After every dispatch
+    the VM scanned all instances for ones detached while running, so
+    cost grew with the square of the count. It now keeps a list of
+    those instances.
+  - Tick also calls each instance's Tick function directly, without
+    building a string to look it up.
+- **Not yet**: no Timeline node, so the door eases in Tick. Trigger
+  events come from the tests until Phase 13 sends physics contacts.
+
+**Verified**: 4 new tests.
+
+- Every sample validates with no errors or warnings, compiles, and
+  round-trips to the same JSON.
+- The door ignores a crate, opens for the player (45 degrees after half
+  a second, stopping at 90, with the matching rotation), and closes back
+  to 0.
+- Coins ignore a crate. Nine coins score 9 and disappear; the tenth
+  prints "You win", once. A coin worth 5 (an override) makes it 15.
+- 10,000 spinners tick 60 frames, each finishing one lap. Optimized
+  builds fail the test above 20 ms per frame, to catch large regressions
+  such as the quadratic one.
+- 272/272 tests pass on GCC 13, on Clang and under ASan/UBSan, and 279/279
   with physics.
 
 ## Building
