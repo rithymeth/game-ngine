@@ -9,6 +9,9 @@ add_library(aether_ui STATIC
     src/viewport.cpp
     src/controls.cpp
     src/input.cpp
+    src/theme.cpp
+    src/layout_file.cpp
+    src/binding.cpp
 )
 target_include_directories(aether_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aether_ui PUBLIC cxx_std_20)

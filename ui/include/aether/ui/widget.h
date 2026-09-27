@@ -69,6 +69,7 @@ public:
 
     std::string name;
     std::string tooltip; // shown after hovering a moment
+    std::string style_class; // the theme's "Type.class" style to use ("" = the type's own)
     bool enabled = true; // disabled widgets (and everything in them) ignore input and draw dimmed
     Visibility visibility = Visibility::Visible;
     f32 opacity = 1.0f;
