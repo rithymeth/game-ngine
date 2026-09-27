@@ -32,7 +32,7 @@ add_executable(aether_tests
 target_link_libraries(aether_tests PRIVATE Aether::Engine)
 
 if(TARGET aether_editor_ui)
-    target_sources(aether_tests PRIVATE test_editor_ui.cpp test_command_stack.cpp test_commands.cpp test_play_session.cpp test_editor_projects.cpp)
+    target_sources(aether_tests PRIVATE test_editor_ui.cpp test_command_stack.cpp test_commands.cpp test_play_session.cpp test_editor_projects.cpp test_script_inspector.cpp)
     target_link_libraries(aether_tests PRIVATE Aether::EditorUI)
 endif()
 target_include_directories(aether_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -62,7 +62,7 @@ if(TARGET Aether::Physics)
 endif()
 
 if(TARGET Aether::Scripting)
-    target_sources(aether_tests PRIVATE test_luau_host.cpp test_luau_bindings.cpp)
+    target_sources(aether_tests PRIVATE test_luau_host.cpp test_luau_bindings.cpp test_script_system.cpp)
     target_link_libraries(aether_tests PRIVATE Aether::Scripting)
 endif()
 

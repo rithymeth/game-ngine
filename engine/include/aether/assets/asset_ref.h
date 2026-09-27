@@ -22,6 +22,9 @@ struct PrefabAsset {
 struct SoundAsset {
     static constexpr const char* kImporter = "Sound";
 };
+struct ScriptAsset {
+    static constexpr const char* kImporter = "Script";
+};
 // Sub-assets split out of a model (ModelImporter).
 struct MeshAsset {
     static constexpr const char* kImporter = "Mesh";

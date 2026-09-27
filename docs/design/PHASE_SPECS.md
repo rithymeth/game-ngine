@@ -579,7 +579,14 @@ comment above it adds metadata.
      `BlueprintCallable` can come with the exposure rules of step 3.
    - `Quaternion` and other structs are tables for now. Only `Vec3` is a
      native vector.
-3. `ScriptComponent`, lifecycle, exposed variables in the Inspector.
+3. ✅ **Done.** `ScriptComponent`, lifecycle, exposed variables in the Inspector.
+   - The "PropertyBag" is the component's list of overridden variables
+     (JSON values). Variables the entity doesn't override follow the
+     script's current default.
+   - Classes are cached per script asset; recompiling on change is step 5
+     (hot reload).
+   - Inspector edits change the component in place. Recording them as
+     undoable commands comes with the Windows editor work.
 4. Events (`:Connect`) and Input/Physics/Timer APIs.
 5. Hot reload and the error overlay.
 6. Code editor panel with completion from reflection; DAP debugger.

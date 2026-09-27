@@ -2411,6 +2411,59 @@ Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 11
 - 194/194 tests pass on GCC 13, on Clang and under ASan/UBSan, and 201/201
   with physics.
 
+**Step 3: script components, the script lifecycle, and exposed variables**
+(§11.2).
+
+- **`ScriptComponent`** (`scene/script_component.h`, in the engine so scenes
+  load it without the scripting library) references a `.luau` script asset
+  and stores the entity's overridden variables as JSON values.
+- **`ScriptSystem`** (scripting library) plugs into the Phase 9 `Lifecycle`.
+  - A script is a module that returns a table, its "class". Each entity
+    gets its own instance, with `self.entity` set and its overrides applied.
+  - The class's `OnCreate`, `OnEnable`, `OnStart`, `OnUpdate(dt)`,
+    `OnFixedUpdate(dt)`, `OnLateUpdate(dt)`, `OnDisable` and `OnDestroy`
+    are called when defined.
+  - `CallMethod` and `GetField` reach an entity's instance from C++, for
+    events later.
+  - A runtime error in one script is recorded with its location, and every
+    other script keeps running.
+  - An override the script doesn't have, or of the wrong type, is reported
+    and the default is used. So is a missing script.
+- **Exposed variables**: the class's top-level number, bool, string and
+  vector fields.
+  - `--@range a b` and `--@tooltip text` comments above a field add
+    metadata.
+  - Fields starting with `_` stay private, and tables aren't exposed.
+  - `DescribeSource` lists them, along with the callbacks the class
+    defines.
+- **Inspector** (`editor/src/ui/script_inspector.h`, portable, tested
+  headless):
+  - A slider (clamped to the range), checkbox, text field or X/Y/Z row per
+    variable, showing the default until overridden.
+  - Overrides are marked like prefab overrides and have a right-click
+    **Reset to Default**. Typing the default back removes the override.
+  - A script with an error shows the error instead.
+
+**Verified**: 4 new tests.
+
+- **Describing a class**: variables, metadata, private fields and tables,
+  callbacks, and a script that returns something other than a table or has
+  a syntax error.
+- **Lifecycle on two entities with different overrides**: event order,
+  each entity moved by its own speed, independent per-instance state, a
+  method call, and destroy mid-play plus end of play releasing instances.
+- **Errors**: bad overrides and a missing script reported, and a runtime
+  error in one script not stopping another. The component survives a scene
+  round trip.
+- **Headless Inspector**: drawing records nothing, typing makes an override
+  and typing the default back removes it, a wrongly typed stored value
+  falls back to the default, and errors are displayed.
+- **Found while testing**: the variable text field appended to its text on
+  re-activation instead of replacing it. It now selects all when
+  activated.
+- 198/198 tests pass on GCC 13, on Clang and under ASan/UBSan, and 205/205
+  with physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
