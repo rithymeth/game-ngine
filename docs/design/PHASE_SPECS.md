@@ -1101,4 +1101,28 @@ flying, swimming).
      OnMovementModeChanged(new_mode). `CharacterEventName` gives the
      names to dispatch. Movement input nodes wait for the input system's
      Blueprint hookup.
-6. Collider gizmos and the physics debug draw toggle.
+6. ✅ **Done** (portable side). Collider gizmos and the physics debug draw
+   toggle. Phase 13 is complete on the portable side.
+   - **`DrawPhysicsDebug(world, scene, options, lines)`** produces
+     world-space `DebugLine`s for everything the options ask for:
+     colliders, triggers, characters, and the last step's contacts
+     (points and normals).
+     - `PhysicsDebugOptions` is reflected, for the viewport menu's toggle
+       and the editor settings.
+     - Colors: static gray, kinematic blue, dynamic green (darker
+       asleep), triggers orange, characters cyan, contacts red.
+   - **Wireframes**: boxes, spheres and capsules are drawn exactly,
+     following the entity's Transform and the collider's center. Convex
+     and mesh colliders use their body's triangles (what actually
+     collides), or a cross per point when there's no body yet.
+     `DrawColliderWireframe` draws one entity's colliders, for the
+     selection gizmo.
+   - **Handles**: `ColliderHandles` gives a box's six faces, a sphere's
+     six radius points, and a capsule's four radius points and two
+     ends, with world positions and outward directions.
+     `DragColliderHandle` applies a drag. A box face or capsule end moves
+     while the opposite one stays put, as in Unity. Sizes stay at least
+     1 cm, and a capsule's radius at most half its height.
+   - **Waiting on Windows**: the viewport draws the lines and handles and
+     records drags as undoable field edits, with the other editor window
+     hookups.
