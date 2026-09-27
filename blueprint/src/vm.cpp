@@ -109,6 +109,7 @@ bool BlueprintVM::Attach(Entity entity, std::shared_ptr<const CompiledBlueprint>
     auto instance = std::make_unique<Instance>();
     instance->entity = entity;
     instance->vars.resize(blueprint->value_vars);
+    instance->states.resize(blueprint->state_slots);
     instance->svars.resize(blueprint->string_vars);
     for (const CompiledVariable& var : blueprint->variables) {
         Reg value = var.default_value;
@@ -133,7 +134,12 @@ bool BlueprintVM::Attach(Entity entity, std::shared_ptr<const CompiledBlueprint>
     }
     instance->blueprint = std::move(blueprint);
     const u64 key = Key(entity);
-    if (instances_.count(key) == 0) order_.push_back(key);
+    if (instances_.count(key) == 0) {
+        order_.push_back(key);
+    } else {
+        latent_.erase(std::remove_if(latent_.begin(), latent_.end(), [&](const LatentAction& a) { return a.owner == key; }),
+                      latent_.end());
+    }
     instances_[key] = std::move(instance);
     return true;
 }
@@ -141,6 +147,9 @@ bool BlueprintVM::Attach(Entity entity, std::shared_ptr<const CompiledBlueprint>
 void BlueprintVM::Detach(Entity entity) {
     auto it = instances_.find(Key(entity));
     if (it == instances_.end()) return;
+    const u64 key = Key(entity);
+    latent_.erase(std::remove_if(latent_.begin(), latent_.end(), [&](const LatentAction& a) { return a.owner == key; }),
+                  latent_.end()); // an entity's pending actions go with it
     if (depth_ > 0) {
         it->second->detached = true; // it may be running: remove when the outermost run ends
         return;
@@ -198,12 +207,84 @@ bool BlueprintVM::Dispatch(Entity entity, std::string_view event, std::span<cons
     return ok;
 }
 
+void BlueprintVM::SetEnabled(Entity entity, bool enabled) {
+    if (Instance* instance = Find(entity)) instance->enabled = enabled;
+}
+
+void BlueprintVM::ResumeDue() {
+    // Take the due actions out first: resuming may start new ones.
+    std::vector<LatentAction> due;
+    for (auto it = latent_.begin(); it != latent_.end();) {
+        auto owner = instances_.find(it->owner);
+        const bool ready = it->wake_frame != 0 ? frame_ >= it->wake_frame : time_ >= it->wake_time;
+        if (owner == instances_.end() || owner->second->detached || !world_.IsAlive(owner->second->entity)) {
+            it = latent_.erase(it); // the owner is gone: dropped
+        } else if (ready && owner->second->enabled) {
+            due.push_back(std::move(*it));
+            it = latent_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    std::sort(due.begin(), due.end(), [](const LatentAction& a, const LatentAction& b) {
+        return a.wake_time != b.wake_time ? a.wake_time < b.wake_time : a.order < b.order;
+    });
+    for (LatentAction& action : due) {
+        auto owner = instances_.find(action.owner);
+        if (owner == instances_.end() || owner->second->detached) continue;
+        Instance& instance = *owner->second;
+        instance.states[action.slot].pending = false;
+        const CompiledFunction& fn = instance.blueprint->functions[action.function];
+        budget_left_ = options_.instruction_budget;
+        Frame& frame = AcquireFrame(fn, 0);
+        frame.r = std::move(action.r);
+        for (usize i = 0; i < action.s.size(); ++i) frame.s[i] = std::move(action.s[i]);
+        Run(instance, action.function, frame, 0, action.resume_pc);
+        RemoveDetached();
+    }
+}
+
+void BlueprintVM::StartLatent(Instance& instance, u32 function, const Instr& in, Frame& frame) {
+    const CompiledBlueprint& bp = *instance.blueprint;
+    NodeState& state = instance.states[in.a];
+    const LatentKind kind = static_cast<LatentKind>(in.c);
+    const u64 owner = Key(instance.entity);
+    const f32 duration = kind == LatentKind::NextTick ? 0.0f : std::max(0.0f, frame.r[in.b].f);
+    if (state.pending) {
+        if (kind != LatentKind::RetriggerableDelay) return; // calling again while waiting is ignored
+        for (LatentAction& action : latent_) {
+            if (action.owner == owner && action.slot == in.a) {
+                action.wake_time = time_ + duration; // restart the timer (with the new frame)
+                action.r = frame.r;
+                action.s.assign(frame.s.begin(), frame.s.begin() + bp.functions[function].string_regs);
+                return;
+            }
+        }
+    }
+    LatentAction action;
+    action.owner = owner;
+    action.function = function;
+    action.resume_pc = bp.latents[static_cast<usize>(in.d)].resume_pc;
+    action.slot = in.a;
+    action.node = bp.latents[static_cast<usize>(in.d)].node;
+    action.wake_time = time_ + duration;
+    action.wake_frame = kind == LatentKind::NextTick ? frame_ + 1 : 0;
+    action.order = latent_order_++;
+    action.r = frame.r;
+    action.s.assign(frame.s.begin(), frame.s.begin() + bp.functions[function].string_regs);
+    latent_.push_back(std::move(action));
+    state.pending = true;
+}
+
 void BlueprintVM::Tick(f32 delta_seconds) {
+    time_ += delta_seconds;
+    ++frame_;
+    ResumeDue();
     const VmValue dt = delta_seconds;
     const std::vector<u64> order = order_; // stable while events attach or detach
     for (u64 key : order) {
         auto it = instances_.find(key);
-        if (it == instances_.end() || it->second->detached) continue;
+        if (it == instances_.end() || it->second->detached || !it->second->enabled) continue;
         if (it->second->blueprint->events.count("Event.Tick") == 0) continue;
         Dispatch(it->second->entity, "Event.Tick", std::span<const VmValue>(&dt, 1));
     }
@@ -355,7 +436,7 @@ bool BlueprintVM::Call(Instance& instance, const FunctionCall& call, Frame& call
     return true;
 }
 
-bool BlueprintVM::Run(Instance& instance, u32 function, Frame& frame, u32 depth) {
+bool BlueprintVM::Run(Instance& instance, u32 function, Frame& frame, u32 depth, usize start_pc) {
     const CompiledBlueprint& bp = *instance.blueprint;
     const CompiledFunction& fn = bp.functions[function];
     const Instr* code = fn.code.data();
@@ -369,7 +450,7 @@ bool BlueprintVM::Run(Instance& instance, u32 function, Frame& frame, u32 depth)
 
     Reg* r = frame.r.data();
     std::string* s = frame.s.data();
-    usize pc = 0;
+    usize pc = start_pc;
     for (;;) {
         if (options_.instruction_budget != 0) {
             if (budget_left_ == 0) {
@@ -495,6 +576,35 @@ bool BlueprintVM::Run(Instance& instance, u32 function, Frame& frame, u32 depth)
         case Op::CallEvent:
             if (!Call(instance, bp.calls[static_cast<usize>(in.d)], frame, depth)) return false;
             break;
+        case Op::StateInit: {
+            NodeState& st = instance.states[in.a];
+            if (!st.init) {
+                st.init = true;
+                st.flag = r[in.b].b;
+            }
+            break;
+        }
+        case Op::StateJmpIf:
+            if (instance.states[in.a].flag == (in.c != 0)) pc = static_cast<usize>(in.d);
+            break;
+        case Op::StateSet:
+            instance.states[in.a].init = true;
+            instance.states[in.a].flag = in.c != 0;
+            break;
+        case Op::StateToggle:
+            instance.states[in.a].init = true;
+            instance.states[in.a].flag = !instance.states[in.a].flag;
+            break;
+        case Op::StateGet: r[in.a] = Reg::Bool(instance.states[in.b].flag); break;
+        case Op::CountLess: {
+            NodeState& st = instance.states[in.a];
+            if (st.counter >= r[in.b].i) pc = static_cast<usize>(in.d);
+            else ++st.counter;
+            break;
+        }
+        case Op::CountGet: r[in.a] = Reg::Int(instance.states[in.b].counter); break;
+        case Op::CountReset: instance.states[in.a].counter = 0; break;
+        case Op::Latent: StartLatent(instance, function, in, frame); break;
         case Op::Ret: return true;
         }
     }

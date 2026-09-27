@@ -33,6 +33,11 @@ struct GraphCheck {
                 Report(error.code.empty() ? "BP007" : error.code.c_str(), Severity::Error, node.id, "", error.message);
                 continue;
             }
+            if (s->kind == NodeKind::Latent && graph.kind == GraphKind::Function) {
+                Report("BP002", Severity::Error, node.id, "",
+                       "'" + s->title + "' is a latent node and can't be used in a function. Move it to the "
+                                        "Event Graph or a macro.");
+            }
             if (s->IsEvent() && graph.kind != GraphKind::EventGraph) {
                 Report("BP010", Severity::Error, node.id, "",
                        "'" + s->title + "' is an event and belongs in the Event Graph.");

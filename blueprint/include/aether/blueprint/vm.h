@@ -56,8 +56,14 @@ public:
     // (a runtime error is recorded). Arguments fill the event's outputs
     // (Tick's delta, a custom event's parameters) in order.
     bool Dispatch(Entity entity, std::string_view event, std::span<const VmValue> args = {});
-    // Tick to every instance that has Event Tick, in attach order.
+    // One frame (§C.4): advances game time, resumes the latent actions that
+    // are due (Delay's "completed", in wake-time order), then runs Event
+    // Tick on every enabled instance that has it, in attach order.
     void Tick(f32 delta_seconds);
+    // Disabled instances don't tick, and their latent actions wait (paused).
+    void SetEnabled(Entity entity, bool enabled);
+    f64 GameTime() const { return time_; }
+    usize PendingLatentActions() const { return latent_.size(); }
     // BeginPlay to every instance.
     void BeginPlay();
 
@@ -72,12 +78,33 @@ public:
     u64 InstructionsRun() const { return instructions_; }
 
 private:
+    struct NodeState {
+        bool init = false;
+        bool flag = false; // Do Once: done; Gate: closed; Flip Flop: took A last
+        bool pending = false; // a latent action is waiting
+        i32 counter = 0;   // Do N
+    };
+    // A suspended event (§C.4): its frame, and where to continue.
+    struct LatentAction {
+        u64 owner = 0;
+        u32 function = 0;
+        u32 resume_pc = 0;
+        u16 slot = 0;
+        NodeId node = 0;
+        f64 wake_time = 0.0;
+        u64 wake_frame = 0; // Delay Until Next Tick
+        u64 order = 0;      // ties resume in start order
+        std::vector<Reg> r;
+        std::vector<std::string> s;
+    };
     struct Instance {
         Entity entity;
         std::shared_ptr<const CompiledBlueprint> blueprint;
         std::vector<Reg> vars;
         std::vector<std::string> svars;
         bool detached = false; // detached while running: removed when the outermost run ends
+        bool enabled = true;
+        std::vector<NodeState> states; // CompiledBlueprint::state_slots
     };
     struct Frame {
         std::vector<Reg> r;
@@ -88,7 +115,9 @@ private:
     Instance* Find(Entity e);
     const Instance* Find(Entity e) const;
 
-    bool Run(Instance& instance, u32 function, Frame& frame, u32 depth);
+    bool Run(Instance& instance, u32 function, Frame& frame, u32 depth, usize start_pc = 0);
+    void StartLatent(Instance& instance, u32 function, const Instr& in, Frame& frame);
+    void ResumeDue();
     bool Call(Instance& instance, const FunctionCall& call, Frame& caller, u32 depth);
     void NativeCallOp(Instance& instance, const CompiledFunction& fn, const NativeCall& call, Frame& frame, NodeId node);
     void FieldOp(Instance& instance, const CompiledFunction& fn, const FieldAccess& access, Frame& frame, NodeId node,
@@ -109,6 +138,10 @@ private:
     std::function<void(Entity, const std::string&)> print_;
     std::vector<RuntimeError> errors_;
     std::unordered_map<u64, bool> warned_; // BP201 once per (function, node)
+    std::vector<LatentAction> latent_;
+    f64 time_ = 0.0;
+    u64 frame_ = 0;
+    u64 latent_order_ = 0;
     u64 budget_left_ = 0;
     u64 instructions_ = 0;
 };

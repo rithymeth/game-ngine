@@ -9,6 +9,7 @@ namespace aether::bp {
 namespace {
 
 // Operand layout per opcode, for the disassembler: letters for a, b, c, d.
+//   z = state slot, l = latent kind, L = latent resume point,
 //   r = value register, s = string register, k = constant, K = string
 //   constant, v = variable slot, @ = jump target, n/f/F/C = native call,
 //   field access, function call, event call, i = immediate, - = unused.
@@ -90,6 +91,15 @@ OpInfo Info(Op op) {
     case Op::SetField: return {"SETFIELD", "---f"};
     case Op::CallFunction: return {"CALLB", "---F"};
     case Op::CallEvent: return {"CALLE", "---C"};
+    case Op::StateInit: return {"STATE_INIT", "zr--"};
+    case Op::StateJmpIf: return {"STATE_JMPIF", "z-i@"};
+    case Op::StateSet: return {"STATE_SET", "z-i-"};
+    case Op::StateToggle: return {"STATE_TOGGLE", "z---"};
+    case Op::StateGet: return {"STATE_GET", "rz--"};
+    case Op::CountLess: return {"COUNT_LESS", "zr-@"};
+    case Op::CountGet: return {"COUNT_GET", "rz--"};
+    case Op::CountReset: return {"COUNT_RESET", "z---"};
+    case Op::Latent: return {"LATENT", "zrlL"};
     case Op::Ret: return {"RET", "----"};
     }
     return {"?", "----"};
@@ -117,6 +127,13 @@ std::string Disassemble(const CompiledBlueprint& bp, const CompiledFunction& fn)
             case 's': operands += "s" + std::to_string(v); break;
             case 'i': operands += std::to_string(v); break;
             case '@': operands += "@" + std::to_string(v); break;
+            case 'z': operands += "slot" + std::to_string(v); break;
+            case 'l': {
+                static const char* kKinds[] = {"delay", "retrigger", "next-tick"};
+                operands += v >= 0 && v < 3 ? kKinds[v] : "?";
+                break;
+            }
+            case 'L': operands += "resume@" + std::to_string(bp.latents[static_cast<usize>(v)].resume_pc); break;
             case 'k': operands += "k" + std::to_string(v); break;
             case 'K': operands += "\"" + bp.string_constants[static_cast<usize>(v)] + "\""; break;
             case 'v': {

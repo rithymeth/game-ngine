@@ -49,9 +49,10 @@ const BinaryOps kBinary[] = {
 
 class FunctionCompiler {
 public:
-    FunctionCompiler(const Graph& graph, const std::map<NodeId, NodeSignature>& sigs, CompiledBlueprint& out,
-                     CompiledFunction& fn, ValidationResult& diagnostics)
-        : graph_(graph), sigs_(sigs), out_(out), fn_(fn), diagnostics_(diagnostics) {}
+    FunctionCompiler(const Graph& graph, usize graph_index, u32 function_index,
+                     const std::map<NodeId, NodeSignature>& sigs, CompiledBlueprint& out, CompiledFunction& fn,
+                     ValidationResult& diagnostics, std::map<std::pair<usize, NodeId>, u16>& slots)
+        : graph_(graph), graph_index_(graph_index), function_index_(function_index), slots_(slots), sigs_(sigs), out_(out), fn_(fn), diagnostics_(diagnostics) {}
 
     void CompileEvent(const Node& event) {
         const NodeSignature& sig = sigs_.at(event.id);
@@ -63,6 +64,7 @@ public:
         }
         Chain(event.id, "then");
         Emit({Op::Ret}, event.id);
+        EmitResumeBlocks();
     }
 
     void CompileFunction() {
@@ -387,23 +389,121 @@ private:
     void Chain(NodeId node, const std::string& pin) {
         const Link* link = ExecFrom(node, pin);
         if (link == nullptr) return;
-        const NodeId target = link->to.node;
-        if (auto it = on_path_.find(target); it != on_path_.end()) {
+        const auto key = std::make_pair(link->to.node, link->to.pin);
+        if (auto it = on_path_.find(key); it != on_path_.end()) {
             Emit({Op::Jmp, 0, 0, 0, it->second}, node); // an exec loop
             return;
         }
-        on_path_[target] = Here();
-        EmitNode(target);
-        on_path_.erase(target);
+        on_path_[key] = Here();
+        EmitNode(link->to.node, link->to.pin);
+        on_path_.erase(key);
     }
 
-    void EmitNode(NodeId id) {
+    u16 Slot(NodeId node) {
+        const auto key = std::make_pair(graph_index_, node);
+        auto it = slots_.find(key);
+        if (it != slots_.end()) return it->second;
+        return slots_.emplace(key, out_.state_slots++).first->second;
+    }
+
+    // The "completed" code of each latent node, after the function's body:
+    // it runs when the action finishes, on a later frame, and ends there.
+    void EmitResumeBlocks() {
+        while (!pending_resume_.empty()) {
+            const NodeId node = pending_resume_.back();
+            pending_resume_.pop_back();
+            out_.latents[latent_index_.at(node)].resume_pc = static_cast<u32>(Here());
+            pure_.clear();
+            evaluated_.clear();
+            Chain(node, "completed");
+            Emit({Op::Ret}, node);
+        }
+    }
+
+    void EmitNode(NodeId id, const std::string& entry) {
         pure_.clear(); // pure values are cached per exec step
         evaluated_.clear();
         const Node& node = NodeOf(id);
         const NodeSignature& sig = Sig(id);
         const std::string& type = node.type;
 
+        if (type == "Flow.DoOnce") {
+            const u16 slot = Slot(id);
+            if (entry == "reset") {
+                Emit({Op::StateSet, slot, 0, 0}, id);
+                return;
+            }
+            const RegRef closed = Input(id, "start_closed");
+            Emit({Op::StateInit, slot, closed.index}, id);
+            const usize skip = Emit({Op::StateJmpIf, slot, 0, 1}, id); // already done (or closed)
+            Emit({Op::StateSet, slot, 0, 1}, id);
+            Chain(id, "completed");
+            fn_.code[skip].d = Here();
+            return;
+        }
+        if (type == "Flow.Gate") {
+            const u16 slot = Slot(id); // flag = closed
+            const RegRef closed = Input(id, "start_closed");
+            Emit({Op::StateInit, slot, closed.index}, id);
+            if (entry == "open") {
+                Emit({Op::StateSet, slot, 0, 0}, id);
+            } else if (entry == "close") {
+                Emit({Op::StateSet, slot, 0, 1}, id);
+            } else if (entry == "toggle") {
+                Emit({Op::StateToggle, slot}, id);
+            } else {
+                const usize skip = Emit({Op::StateJmpIf, slot, 0, 1}, id);
+                Chain(id, "exit");
+                fn_.code[skip].d = Here();
+            }
+            return;
+        }
+        if (type == "Flow.DoN") {
+            const u16 slot = Slot(id);
+            if (entry == "reset") {
+                Emit({Op::CountReset, slot}, id);
+                return;
+            }
+            const RegRef n = Input(id, "n");
+            const usize skip = Emit({Op::CountLess, slot, n.index}, id);
+            const RegRef counter = OutputReg(id, *sig.Find("counter", PinDir::Out));
+            Emit({Op::CountGet, counter.index, slot}, id);
+            Chain(id, "exit");
+            fn_.code[skip].d = Here();
+            return;
+        }
+        if (type == "Flow.FlipFlop") {
+            const u16 slot = Slot(id); // flag = "A" was taken last
+            Emit({Op::StateToggle, slot}, id);
+            const RegRef is_a = OutputReg(id, *sig.Find("is_a", PinDir::Out));
+            Emit({Op::StateGet, is_a.index, slot}, id);
+            const usize to_b = Emit({Op::StateJmpIf, slot, 0, 0}, id);
+            Chain(id, "A");
+            const usize end = Emit({Op::Jmp}, id);
+            fn_.code[to_b].d = Here();
+            Chain(id, "B");
+            fn_.code[end].d = Here();
+            return;
+        }
+        if (sig.kind == NodeKind::Latent) {
+            LatentKind kind = LatentKind::Delay;
+            if (type == "Latent.RetriggerableDelay") kind = LatentKind::RetriggerableDelay;
+            else if (type == "Latent.DelayNextTick") kind = LatentKind::NextTick;
+            else if (type != "Latent.Delay") {
+                Error("BP012", id, "'" + sig.title + "' is a latent node that can't run yet.");
+                return;
+            }
+            RegRef duration;
+            if (kind != LatentKind::NextTick) duration = Input(id, "duration");
+            auto it = latent_index_.find(id);
+            if (it == latent_index_.end()) {
+                it = latent_index_.emplace(id, static_cast<u32>(out_.latents.size())).first;
+                out_.latents.push_back({id, function_index_, 0});
+                pending_resume_.push_back(id);
+            }
+            Emit({Op::Latent, Slot(id), duration.index, static_cast<u16>(kind), static_cast<i32>(it->second)}, id);
+            return; // what follows (a Sequence's next output) runs now; "completed" runs later
+        }
         if (type == "Flow.Branch") {
             const RegRef cond = Input(id, "condition");
             const usize jump_false = Emit({Op::JmpF, 0, cond.index}, id);
@@ -458,14 +558,15 @@ private:
         if (type == "Function.Return") {
             return EmitReturn(node);
         }
-        if (sig.kind == NodeKind::Latent) {
-            Error("BP012", id, "'" + sig.title + "' is a latent node; latent nodes can't run yet.");
-            return;
-        }
         Error("BP012", id, "'" + sig.title + "' can't run yet.");
     }
 
     const Graph& graph_;
+    usize graph_index_;
+    u32 function_index_;
+    std::map<std::pair<usize, NodeId>, u16>& slots_; // shared by the graph's functions
+    std::map<NodeId, u32> latent_index_;             // latent node -> CompiledBlueprint::latents
+    std::vector<NodeId> pending_resume_;             // latent nodes whose "completed" code isn't emitted yet
     const std::map<NodeId, NodeSignature>& sigs_;
     CompiledBlueprint& out_;
     CompiledFunction& fn_;
@@ -473,7 +574,7 @@ private:
     std::map<std::pair<NodeId, std::string>, RegRef> outputs_; // impure node and entry outputs
     std::map<std::pair<NodeId, std::string>, RegRef> pure_;    // pure outputs in the current exec step
     std::set<NodeId> evaluated_;
-    std::map<NodeId, i32> on_path_; // nodes on the exec path being emitted -> their first instruction
+    std::map<std::pair<NodeId, std::string>, i32> on_path_; // (node, entry pin) being emitted -> first instruction
 };
 
 } // namespace
@@ -546,9 +647,10 @@ CompileResult CompileBlueprint(const Blueprint& blueprint) {
             }
         }
     }
+    std::map<std::pair<usize, NodeId>, u16> slots;
     for (usize i = 0; i < jobs.size(); ++i) {
         const Graph& graph = blueprint.graphs[jobs[i].graph];
-        FunctionCompiler compiler(graph, sigs[jobs[i].graph], *out, out->functions[i], result.diagnostics);
+        FunctionCompiler compiler(graph, jobs[i].graph, static_cast<u32>(i), sigs[jobs[i].graph], *out, out->functions[i], result.diagnostics, slots);
         if (jobs[i].event != nullptr) {
             compiler.CompileEvent(*jobs[i].event);
         } else {

@@ -66,7 +66,7 @@ if(TARGET Aether::Scripting)
     target_link_libraries(aether_tests PRIVATE Aether::Scripting)
 endif()
 
-target_sources(aether_tests PRIVATE test_blueprint_graph.cpp test_blueprint_vm.cpp)
+target_sources(aether_tests PRIVATE test_blueprint_graph.cpp test_blueprint_vm.cpp test_blueprint_latent.cpp)
 target_link_libraries(aether_tests PRIVATE Aether::Blueprint)
 
 add_test(NAME aether_tests COMMAND aether_tests)

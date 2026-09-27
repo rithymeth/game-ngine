@@ -246,6 +246,13 @@ AETHER_TEST(Blueprint_SignaturesFromConfigAndReflection) {
                  (std::vector<std::string>{"then", "amount"}));
     AETHER_CHECK(PinNames(Resolve(bp, "Function.Return", {}, "Damage"), PinDir::In) == std::vector<std::string>{"left"});
 
+    // Literal pin defaults (regression: a float default was once taken for pin flags).
+    AETHER_CHECK(std::get<f32>(Resolve(bp, "Latent.Delay").Find("duration", PinDir::In)->default_value) == 0.2f);
+    AETHER_CHECK(std::get<f32>(Resolve(bp, "Math.Clamp:float").Find("max", PinDir::In)->default_value) == 1.0f);
+    AETHER_CHECK(std::get<i32>(Resolve(bp, "Flow.DoN").Find("n", PinDir::In)->default_value) == 1);
+    AETHER_CHECK(Resolve(bp, "Flow.DoN").Find("n", PinDir::In)->flags == Pin_None);
+    AETHER_CHECK((Resolve(bp, "Flow.Branch").Find("condition", PinDir::In)->flags & Pin_WarnIfUnconnected) != 0);
+
     // Custom node types can be registered.
     RegisterNodeType("Test.Ping", [](const NodeContext&, NodeError&) -> std::optional<NodeSignature> {
         NodeSignature s;

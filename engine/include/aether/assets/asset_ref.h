@@ -22,6 +22,9 @@ struct PrefabAsset {
 struct SoundAsset {
     static constexpr const char* kImporter = "Sound";
 };
+struct BlueprintAsset {
+    static constexpr const char* kImporter = "Blueprint";
+};
 struct ScriptAsset {
     static constexpr const char* kImporter = "Script";
 };
