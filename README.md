@@ -5004,6 +5004,45 @@ shader later). Spec: [PHASE_SPECS.md, Phase 19](docs/design/PHASE_SPECS.md).
 - 385/385 tests pass on GCC 13, Clang and ASan/UBSan, and 417/417 with
   physics.
 
+**Step 4: the ParticleSystem component and Blueprint nodes** (§19.4).
+
+- **`ParticleSystem` component**:
+  - Settings: an asset, auto-activate, time scale, cull and LOD
+    distances, and destroy-when-finished.
+  - Blueprint methods: Activate, Deactivate, Restart, parameter
+    setters, SetAsset and IsActive.
+- **`ParticleWorld`**:
+  - Pooled instances that follow their entities.
+  - Distance culling (paused and hidden) and LOD (less spawning).
+  - Finished events for Blueprints (`Event.OnParticleSystemFinished`)
+    and one-shots that remove themselves.
+  - Draw data for what's visible, skipping what's off screen.
+- **`Particles` library**: Spawn Emitter at Location and Spawn Emitter
+  Attached, which follows its target and ends when the target goes.
+
+**Verified**: 3 new tests.
+
+- Components:
+  - auto activation, following the entity, and parameters;
+  - problems reported once;
+  - Deactivate and Activate, a system that waits to be activated, and
+    Restart.
+- One-shots:
+  - finish once and remove their entity;
+  - return to the pool and are reused.
+- Rotation from degrees.
+- Attached effects:
+  - follow a moving, turning target;
+  - end after the target goes.
+- New assets, removed components, missing assets and transforms.
+- Culling and LOD by camera distance, and paused culled systems.
+- Draw data, and off-screen skipping by the view-projection.
+- Time scale.
+- A Blueprint that activates, spawns and tints an effect and prints when
+  it finishes.
+- 388/388 tests pass on GCC 13, Clang and ASan/UBSan, and 420/420 with
+  physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,

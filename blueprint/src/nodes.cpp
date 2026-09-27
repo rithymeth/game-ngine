@@ -221,6 +221,8 @@ void RegisterBuiltins(Registry& r) {
     AddEvent(r, "Event.OnMontageEnded", "Event OnMontageEnded", {Out("montage", kString), Out("interrupted", kBool)});
     // Audio (Phase 17 step 4): an AudioSource's cue ended by itself.
     AddEvent(r, "Event.OnAudioFinished", "Event OnAudioFinished", {Out("cue", kString)});
+    // VFX (Phase 19 step 4): a ParticleSystem's effect is over.
+    AddEvent(r, "Event.OnParticleSystemFinished", "Event OnParticleSystemFinished", {Out("asset", kString)});
     // UI (Phase 18 step 4): a Widget Blueprint's controls and animations.
     AddEvent(r, "Event.OnWidgetClicked", "Event OnWidgetClicked", {Out("widget", kString)});
     AddEvent(r, "Event.OnWidgetValueChanged", "Event OnWidgetValueChanged", {Out("widget", kString), Out("value", kFloat)});
