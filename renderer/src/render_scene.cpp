@@ -80,6 +80,13 @@ RenderScene ExtractRenderScene(const World& world, const GuidIndex& guids, const
         object.world = ComputeWorldTransform(world, guids, e);
         object.bounds = local.Transformed(object.world);
         object.mesh_key = MeshKey(mesh);
+        if (const MaterialParameters* params = world.GetComponent<MaterialParameters>(e)) {
+            if (!params->material.empty()) object.material_key = Fnv1a(params->material.data(), params->material.size());
+            if (!params->values.empty()) {
+                object.parameters = static_cast<i32>(scene.material_parameters.size());
+                scene.material_parameters.push_back(*params);
+            }
+        }
         scene.objects.push_back(object);
     }
     for (Entity e : EntitiesWith<DirectionalLight>(world)) {
