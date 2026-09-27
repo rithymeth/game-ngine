@@ -132,6 +132,13 @@ AETHER_TEST(VFX_EmitterAssets) {
                 ColorOverLife{true, ColorGradient::Fade({1, 1, 1, 1}, {1, 1, 1, 0})}, SpeedOverLife{}};
     ParticleSystemAsset asset;
     asset.name = "Fire";
+    SpriteRenderer sprites;
+    sprites.material = "M_Spark";
+    sprites.facing = SpriteFacing::Velocity;
+    sprites.columns = 4, sprites.rows = 2;
+    RibbonRenderer ribbon;
+    ribbon.uv = RibbonUv::Distance;
+    e.render = {sprites, MeshRenderer{true, "SM_Rock", "M_Rock"}, ribbon, LightRenderer{}};
     asset.emitters = {e, Basic()};
     const std::string text = SaveParticleSystem(asset);
     ParticleSystemAsset loaded;
@@ -143,6 +150,9 @@ AETHER_TEST(VFX_EmitterAssets) {
     CHECK(std::get<SpawnBurst>(le.spawn[1]).count == FloatRange{5, 10} && std::get<SizeOverLife>(le.update[7]).curve == FloatCurve::Line(1, 0));
     // Names and the add menu.
     CHECK(std::string(ModuleName(le.update[3])) == "Vortex" && SpawnModuleNames().size() == 3 && InitModuleNames().size() == 7 && UpdateModuleNames().size() == 10);
+    CHECK(le.render.size() == 4 && std::get<SpriteRenderer>(le.render[0]).facing == SpriteFacing::Velocity && std::get<SpriteRenderer>(le.render[0]).columns == 4 &&
+          std::get<MeshRenderer>(le.render[1]).mesh == "SM_Rock" && std::get<RibbonRenderer>(le.render[2]).uv == RibbonUv::Distance &&
+          RenderModuleNames().size() == 4 && std::string(ModuleName(le.render[3])) == "LightRenderer");
     UpdateModule made;
     CHECK(MakeModule("Drag", made) && std::holds_alternative<Drag>(made) && !MakeModule("SpawnRate", made));
 
@@ -163,6 +173,7 @@ AETHER_TEST(VFX_EmitterAssets) {
     };
     Emitter ok = Basic();
     ok.spawn.push_back(SpawnRate{});
+    ok.render.push_back(SpriteRenderer{});
     CHECK(ValidateEmitter(ok).empty() && has(ValidateEmitter(Basic()), "FX001") && !ValidateEmitter(Basic())[0].error);
     Emitter bad = ok;
     bad.settings.max_particles = 0;
@@ -173,6 +184,16 @@ AETHER_TEST(VFX_EmitterAssets) {
     bad.update.push_back(SizeOverLife{true, FloatCurve{{{1, 0}, {0, 1}}, CurveInterp::Linear}});
     const auto d = ValidateEmitter(bad);
     for (const char* code : {"FX002", "FX003", "FX004", "FX005", "FX006", "FX007"}) CHECK(has(d, code));
+    // Renderers: none at all is a warning; a broken flipbook or a mesh renderer without a mesh are errors.
+    CHECK(has(ValidateEmitter(Basic()), "FX008") && !has(ValidateEmitter(ok), "FX008"));
+    Emitter drawn = ok;
+    SpriteRenderer no_cells;
+    no_cells.columns = 0;
+    SpriteRenderer too_many;
+    too_many.columns = 2, too_many.rows = 2, too_many.frames = 5;
+    drawn.render = {no_cells, too_many, MeshRenderer{}};
+    const auto dr = ValidateEmitter(drawn);
+    CHECK(std::count_if(dr.begin(), dr.end(), [](const EmitterDiagnostic& x) { return x.code == "FX009"; }) == 2 && has(dr, "FX010"));
     const auto backwards = std::find_if(d.begin(), d.end(), [](const EmitterDiagnostic& x) { return x.code == "FX004"; });
     CHECK(backwards->message == "init[3] (InitSize): size has its min over its max");
 }
