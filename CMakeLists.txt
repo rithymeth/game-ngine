@@ -181,7 +181,19 @@ FetchContent_Declare(
     SOURCE_SUBDIR headers_only
 )
 FetchContent_MakeAvailable(dr_libs)
-# Audio (Phase 17): the mixer, 3D, decoders, streaming and sound cues.
+# miniaudio (public domain / MIT-0, mackron/miniaudio) for the audio output
+# device (Phase 17 step 5). Header only, compiled once in
+# audio/src/miniaudio_impl.cpp; it loads the platform's audio API at run time.
+FetchContent_Declare(
+    miniaudio
+    GIT_REPOSITORY https://github.com/mackron/miniaudio.git
+    GIT_TAG 0.11.25
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR headers_only
+)
+FetchContent_MakeAvailable(miniaudio)
+# Audio (Phase 17): the mixer, 3D, decoders, streaming, sound cues,
+# components and the output device.
 add_subdirectory(audio)
 
 if(AETHER_BUILD_SCRIPTING)

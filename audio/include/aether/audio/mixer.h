@@ -3,11 +3,13 @@
 #include "aether/audio/dsp.h"
 #include "aether/audio/sound.h"
 #include "aether/audio/spatial.h"
+#include "aether/audio/spsc_queue.h"
 #include "aether/audio/stream.h"
 
 #include <algorithm>
+#include <atomic>
+#include <deque>
 #include <functional>
-
 #include <map>
 #include <memory>
 #include <string>
@@ -17,9 +19,9 @@ namespace aether::audio {
 
 // The software mixer (Phase 17 step 1, docs/design/PHASE_SPECS.md §17.1):
 // voices play sounds into buses, buses run their effects and mix into their
-// parents up to Master, and Render writes interleaved stereo. It isn't
-// thread-safe by itself; the device backend (step 5) hands commands to the
-// audio thread.
+// parents up to Master, and Render writes interleaved stereo. By default
+// everything happens on one thread; SetThreaded (step 5) splits it between
+// the game thread and an audio thread that renders.
 
 using BusId = u32;
 using VoiceId = u32; // 0 is no voice
@@ -74,11 +76,15 @@ struct BusMeter {
 class Mixer {
 public:
     explicit Mixer(u32 sample_rate = 48000);
+    ~Mixer();
+    Mixer(const Mixer&) = delete;
+    Mixer& operator=(const Mixer&) = delete;
 
     u32 SampleRate() const { return sample_rate_; }
 
     // --- Buses ------------------------------------------------------------------
-    // Master exists from the start; parents come before children.
+    // Master exists from the start; parents come before children. Buses are
+    // made before the mixer is threaded (kInvalidBus after).
     BusId AddBus(const std::string& name, BusId parent = kMasterBus);
     // Master with Music, SFX, UI and Voice under it.
     void AddDefaultBuses();
@@ -88,11 +94,12 @@ public:
     const std::string& BusName(BusId bus) const { return buses_[bus].name; }
     BusId BusParent(BusId bus) const { return buses_[bus].parent; }
     bool SetBusVolume(BusId bus, f32 db);
-    f32 BusVolume(BusId bus) const { return bus < buses_.size() ? buses_[bus].volume_db : 0.0f; }
+    f32 BusVolume(BusId bus) const;
     bool SetBusMuted(BusId bus, bool muted);
-    bool BusMuted(BusId bus) const { return bus < buses_.size() && buses_[bus].muted; }
+    bool BusMuted(BusId bus) const;
+    // Once threaded, change the returned effect's settings only through Post.
     AudioEffect* AddEffect(BusId bus, std::unique_ptr<AudioEffect> effect);
-    const BusMeter& Meter(BusId bus) const { return buses_[bus].meter; }
+    BusMeter Meter(BusId bus) const;
 
     // --- Voices -----------------------------------------------------------------
     // The sound must outlive the voice. Returns 0 for an empty sound or a bad bus.
@@ -107,12 +114,12 @@ public:
     bool SetPan(VoiceId voice, f32 pan);
     bool IsPlaying(VoiceId voice) const;
     f32 PlaybackTime(VoiceId voice) const; // seconds into the sound; -1 if not playing
-    usize VoiceCount() const { return voices_.size(); }
+    usize VoiceCount() const;
     bool GetVoiceInfo(VoiceId voice, VoiceInfo& out) const;
 
     // --- 3D (step 2) --------------------------------------------------------------
-    void SetListener(const Listener& listener) { listener_ = listener; }
-    const Listener& GetListener() const { return listener_; }
+    void SetListener(const Listener& listener);
+    const Listener& GetListener() const { return threaded_ ? game_listener_ : listener_; }
     bool SetPosition(VoiceId voice, const Vec3& position, const Vec3& velocity = {});
     f32 speed_of_sound = 343.0f; // world units per second
     // Occlusion: how blocked the path from the listener to a source is, 0..1
@@ -128,16 +135,30 @@ public:
     // --- Voice limiting (step 2) ----------------------------------------------------
     // At most this many voices mix; the rest go virtual by priority, then
     // audibility. Voices quieter than the threshold go virtual regardless.
-    void SetMaxVoices(u32 count) { max_voices_ = std::max(count, 1u); }
-    u32 MaxVoices() const { return max_voices_; }
+    void SetMaxVoices(u32 count);
+    u32 MaxVoices() const { return game_max_voices_; }
     f32 virtual_threshold_db = -80.0f;
     usize RealVoiceCount() const;
-    usize VirtualVoiceCount() const { return voices_.size() - RealVoiceCount(); }
+    usize VirtualVoiceCount() const;
 
     // Mixes `frames` of interleaved stereo into `out` (overwriting it).
     void Render(f32* out, u32 frames);
     // The mixer's clock: frames rendered so far.
-    u64 FramesRendered() const { return frames_rendered_; }
+    u64 FramesRendered() const;
+
+    // --- Threading (step 5) -----------------------------------------------------------
+    // Threaded, one audio thread calls Render while the game thread calls the
+    // rest. Changes become commands, handed over without locks and applied in
+    // order at the start of the next Render. Queries read what the last
+    // Render published, plus the game thread's own pending changes (a voice
+    // just played counts as playing). Plays remember the game's clock, so
+    // delays stay sample-accurate if they cover the output's latency. The
+    // public fields (speed_of_sound, ...) are set before threading or through
+    // Post. Switch only while nothing is rendering.
+    void SetThreaded(bool threaded);
+    bool Threaded() const { return threaded_; }
+    // Runs `edit` on the mixer: now, or on the audio thread before the next Render.
+    void Post(std::function<void(Mixer&)> edit);
 
 private:
     struct Bus {
@@ -189,7 +210,36 @@ private:
     // Advances a virtual voice without mixing it; false once it has finished.
     bool AdvanceVirtual(Voice& v, u32 frames);
     void Spatialize(Voice& v, u32 frames, const std::vector<f32>& bus_gains);
-    VoiceId Start(Voice v, const PlayParams& params);
+    // `issued_at`: the game's clock when it asked (threaded), to take off the delay.
+    void Start(Voice v, const PlayParams& params, VoiceId id, u64 issued_at);
+    VoiceId NewId();
+    bool DoStop(VoiceId voice, f32 fade_out);
+    bool DoSetBusVolume(BusId bus, f32 db);
+
+    // Threading.
+    struct Command {
+        u64 seq = 0;
+        std::function<void(Mixer&)> apply;
+    };
+    struct Snapshot {
+        struct VoiceState {
+            VoiceId id = 0;
+            VoiceInfo info;
+            f32 time = 0.0f;
+        };
+        u64 applied = 0; // the last command applied
+        u64 frames = 0;
+        std::vector<VoiceState> voices; // by id
+        std::vector<BusMeter> meters;
+        usize real = 0;
+    };
+    u64 Submit(std::function<void(Mixer&)> apply); // game thread
+    void ApplyCommands();                          // audio thread
+    void Publish();                                // audio thread
+    const Snapshot& View() const;                  // game thread
+    const Snapshot::VoiceState* Seen(VoiceId id) const;
+    bool PendingStop(VoiceId id) const;
+    void CollectGarbage() const;
     // Decodes a streamed voice's frames [from, to) into its window.
     static void Fill(Voice& v, i64 from, i64 to);
     static u64 Frames(const Voice& v) { return v.stream ? v.stream->Frames() : v.sound->Frames(); }
@@ -204,6 +254,30 @@ private:
     u64 frames_rendered_ = 0;
     Listener listener_;
     u32 max_voices_ = 64;
+
+    // Threading: the command queue in, used commands back, and the published
+    // snapshots (a triple buffer: the audio thread writes one, the game thread
+    // reads another, and they swap through `middle_`).
+    bool threaded_ = false;
+    std::unique_ptr<SpscQueue<Command*>> commands_, garbage_;
+    u64 next_seq_ = 1;
+    u64 applied_ = 0;
+    mutable Snapshot slots_[3];
+    mutable u32 front_ = 0;
+    u32 back_ = 2;
+    mutable std::atomic<u32> middle_{1};
+    static constexpr u32 kFresh = 4;
+    // The game thread's own view: bus settings, the listener, and changes not yet applied.
+    struct GameBus {
+        f32 volume_db = 0.0f;
+        bool muted = false;
+    };
+    std::vector<GameBus> game_buses_;
+    Listener game_listener_;
+    u32 game_max_voices_ = 64;
+    mutable std::deque<std::pair<u64, VoiceId>> pending_plays_, pending_stops_;
+    u64 stop_all_seq_ = 0;
+    std::map<VoiceId, Vec3> game_occluded_; // voices asking for occlusion, and where they are
 };
 
 } // namespace aether::audio

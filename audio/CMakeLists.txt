@@ -12,16 +12,25 @@ add_library(aether_audio STATIC
     src/cue.cpp
     src/cue_player.cpp
     src/audio_system.cpp
+    src/backend.cpp
+    src/miniaudio_impl.cpp
 )
 target_include_directories(aether_audio PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aether_audio PUBLIC cxx_std_20)
 target_link_libraries(aether_audio PUBLIC Aether::Engine)
 # stb_vorbis, dr_flac and dr_wav are single-file decoders, compiled once in
 # codec_impl.cpp. Third-party code: don't hold it to our warning flags.
-target_include_directories(aether_audio PRIVATE ${stb_SOURCE_DIR} ${dr_libs_SOURCE_DIR})
+# miniaudio (the output device) likewise, in miniaudio_impl.cpp.
+target_include_directories(aether_audio PRIVATE ${stb_SOURCE_DIR} ${dr_libs_SOURCE_DIR} ${miniaudio_SOURCE_DIR})
 if(MSVC)
-    set_source_files_properties(src/codec_impl.cpp PROPERTIES COMPILE_OPTIONS "/w")
+    set_source_files_properties(src/codec_impl.cpp src/miniaudio_impl.cpp PROPERTIES COMPILE_OPTIONS "/w")
 else()
-    set_source_files_properties(src/codec_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
+    set_source_files_properties(src/codec_impl.cpp src/miniaudio_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
+endif()
+# The audio thread; miniaudio also loads the platform's audio libraries at run time.
+find_package(Threads REQUIRED)
+target_link_libraries(aether_audio PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(aether_audio PRIVATE m)
 endif()
 add_library(Aether::Audio ALIAS aether_audio)

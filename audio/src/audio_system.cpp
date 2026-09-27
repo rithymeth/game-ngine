@@ -74,7 +74,7 @@ AudioSystem::AudioSystem(World& world, Mixer& mixer, const SoundBank& bank, std:
 
 AudioSystem::~AudioSystem() {
     StopAll();
-    if (reverb_ != nullptr) reverb_->wet = 0.0f; // the effect stays on the mixer's bus, silent
+    if (reverb_ != nullptr) SetReverb(0.0f, reverb_room_size_, reverb_damping_); // the effect stays on the mixer's bus, silent
     if (g_active == this) g_active = nullptr;
 }
 
@@ -329,14 +329,28 @@ void AudioSystem::UpdateReverb() {
         auto effect = std::make_unique<ReverbEffect>();
         effect->wet = 0.0f;
         effect->dry = 1.0f;
+        reverb_room_size_ = effect->room_size;
+        reverb_damping_ = effect->damping;
+        reverb_wet_ = 0.0f;
         reverb_ = static_cast<ReverbEffect*>(mixer_.AddEffect(bus, std::move(effect)));
     }
     reverb_strength_ = best_weight;
     if (best != nullptr) {
-        reverb_->room_size = best->room_size;
-        reverb_->damping = best->damping;
+        SetReverb(best->wet * best_weight, best->room_size, best->damping);
+    } else {
+        SetReverb(0.0f, reverb_room_size_, reverb_damping_);
     }
-    reverb_->wet = best != nullptr ? best->wet * best_weight : 0.0f;
+}
+
+void AudioSystem::SetReverb(f32 wet, f32 room_size, f32 damping) {
+    if (wet == reverb_wet_ && room_size == reverb_room_size_ && damping == reverb_damping_) return;
+    reverb_wet_ = wet, reverb_room_size_ = room_size, reverb_damping_ = damping;
+    // On the audio thread when the mixer is threaded.
+    mixer_.Post([effect = reverb_, wet, room_size, damping](Mixer&) {
+        effect->wet = wet;
+        effect->room_size = room_size;
+        effect->damping = damping;
+    });
 }
 
 void AudioSystem::Update(f32 dt) {
