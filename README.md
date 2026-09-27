@@ -2368,6 +2368,49 @@ Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 11
 - 191/191 tests pass on GCC 13, on Clang and under ASan/UBSan, and 198/198
   with physics.
 
+**Step 2: reflection-driven bindings** (`LuauHost::BindWorld`, §11.1).
+
+- Scripts get a **`world`** (`Spawn`, `Destroy`, `Find(guid)`,
+  `EntitiesWith(name)`) and **entities** with `:Get`, `:Add`, `:Has`,
+  `:Remove`, `:IsValid` and `:Guid`.
+- **Components** expose their reflected **fields** for reading and
+  writing, and their reflected **functions** as methods
+  (`health:Heal(25)`, through `FunctionInfo::Invoke`).
+  - Fields are looked up in a precomputed name map per type.
+  - There are fast paths for bool, every integer size (whole numbers only,
+    no negatives for unsigned), floats, strings, fixed-size strings
+    (truncated to fit), enums (by name) and `Vec3`.
+  - `Vec3` is Luau's native vector, so
+    `vector.create(1, 2, 3) * 2 + v` works.
+  - Structs and arrays go through the reflection JSON form as tables.
+  - A wrong type is a script error naming the field ("Health.max expects a
+    number, got string"), and nothing is written.
+- **Handles, never pointers**: entities and components carry the entity
+  and a binding generation, and are re-checked on every use. Each of these
+  is a clear script error rather than a crash or a read of freed memory:
+  - a destroyed entity, even one whose slot was reused
+  - a removed component
+  - a world that was re-bound or unbound
+- Entities also cross between C++ and scripts as `EntityRef` values, in
+  both directions.
+- Unreflected components can be tested for and removed by their
+  registered name, but not read.
+
+**Verified**: 3 new tests.
+
+- **Fields**: every kind of field read and written, vector maths,
+  truncation, and five kinds of refused write.
+- **Methods, entities and the world**: methods with argument checking, and
+  spawning, adding, finding, listing and removing. Entities are passed
+  both ways, and unreflected components are handled as described.
+- **Handle safety**: a removed and re-added component, an entity destroyed
+  and its slot reused, re-binding, unbinding, and a no-world entity
+  arriving as nil.
+- ASan's leak checker confirms that script errors raised from C++ binding
+  code unwind cleanly (Luau uses C++ exceptions here).
+- 194/194 tests pass on GCC 13, on Clang and under ASan/UBSan, and 201/201
+  with physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
