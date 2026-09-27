@@ -2938,6 +2938,59 @@ point 3, ROADMAP_DETAILS §C.4).
 - 236/236 tests pass on GCC 13, on Clang and under ASan/UBSan, and 243/243
   with physics.
 
+**Step 4, part 1: loops, switches, strings and more math** (BLUEPRINT_NODES.md
+§2, §5, §8, §9).
+
+- **Loops**:
+  - For Loop runs from first to last inclusive. An empty range runs no
+    body, but `completed` still fires.
+  - For Loop with Break: `break` is usually wired from inside the body,
+    and stops the loop after the current iteration.
+  - While Loop re-reads its condition every iteration.
+  - All compile to plain jumps, so they cost no calls. They run within
+    the event's instruction budget.
+- **Switches and Select**:
+  - Switch on Int and Switch on String have their cases in the node's
+    config, plus `default`. Duplicate cases, or a case named `default`,
+    are refused with BP007.
+  - Select picks one of 2 to 16 options of any type. An out-of-range
+    index gives the type's default.
+- **Strings**: Append (2 to 16 inputs), Length (in bytes), Is Empty,
+  Contains (optionally ignoring case), To Upper/Lower and Trim.
+  - String to Int and String to Float have a `success` pin, and reject
+    trailing junk such as `42abc`.
+  - **Format Text** gets one input pin per `{name}` placeholder, and
+    `{{`/`}}` are literal braces. Anything connected to a placeholder is
+    converted to text (numbers, vectors, entities).
+- **Conversions**: `Conv.ToString:<type>` for bool, int, float, Vec3, Quat
+  and Entity.
+- **Math**:
+  - Sin, Cos, Tan, Asin, Acos, Atan, Atan2, Sqrt, Exp, Log, Power and
+    Frac, plus degrees/radians conversion.
+  - Floor, Ceil, Round and Truncate return an int.
+  - Negate, Abs and Clamp for ints, Nearly Equal with a tolerance, and Map
+    Range Clamped.
+  - Random Float/Int in Range and Random Bool, seeded per VM
+    (`Options::random_seed`, so tests are reproducible).
+  - Math can't produce NaN or infinity: sqrt and log of negatives, and a
+    `pow` overflow, give 0.
+
+**Verified**: 4 new tests.
+
+- **Loops**: For Loop, the break at index 2, and a While loop counting
+  to 3.
+- **Switches and Select**: every case and the default, Select in range
+  and out of range, and bad configs refused with BP007.
+- **Strings**: all the string nodes and conversions, including Format
+  Text with a number, a vector and escaped braces, and byte length for
+  UTF-8.
+- **Math**:
+  - All the math nodes, including rounding direction and the safe
+    sqrt of a negative.
+  - Random values within range and identical for the same seed.
+- 240/240 tests pass on GCC 13, on Clang and under ASan/UBSan, and 247/247
+  with physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
