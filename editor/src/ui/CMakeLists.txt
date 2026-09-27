@@ -24,11 +24,13 @@ add_library(aether_editor_ui STATIC
     ../audio/cue_document.cpp
     ../audio/cue_editor.cpp
     ../audio/mixer_panel.cpp
+    ../uidesign/ui_layout_document.cpp
+    ../uidesign/ui_designer.cpp
     ../core/command_stack.cpp
     ../core/commands.cpp
     ../core/play_session.cpp
     ../core/recent_projects.cpp
 )
 target_include_directories(aether_editor_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
-target_link_libraries(aether_editor_ui PUBLIC Aether::Engine Aether::Blueprint Aether::Renderer Aether::Animation Aether::Audio imgui_core)
+target_link_libraries(aether_editor_ui PUBLIC Aether::Engine Aether::Blueprint Aether::Renderer Aether::Animation Aether::Audio Aether::UI imgui_core)
 add_library(Aether::EditorUI ALIAS aether_editor_ui)

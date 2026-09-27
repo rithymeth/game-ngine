@@ -50,6 +50,8 @@ bool ParseEase(const std::string& name, Ease& out) {
     return false;
 }
 
+std::vector<std::string> AnimatableProperties() { return {std::begin(kProperties), std::end(kProperties)}; }
+
 bool IsAnimatable(const std::string& p) { return std::find(std::begin(kProperties), std::end(kProperties), p) != std::end(kProperties); }
 
 bool SetProperty(Widget& w, const std::string& p, f32 v) {

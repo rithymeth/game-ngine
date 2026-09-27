@@ -2196,7 +2196,78 @@ Everything else runs and is tested headless.
     capture a press until it's released, and unhover when the pointer
     leaves.
 
-### 18.6 PR breakdown
+### 18.6 The UI Designer
+
+The editor for `.aui` layouts (`editor/src/uidesign/`). Like the other
+editors it is built on Dear ImGui alone and runs headless in tests.
+
+- **The document** (`UILayoutDocument`): the widget tree, its bindings
+  and animations, and its file.
+  - Undo is whole-document JSON snapshots. Drags and slider edits merge
+    into one step.
+  - Widgets are addressed by paths of child indices.
+  - Tree edits:
+    - Add any registered type, named `<Type><n>`. It goes only where it
+      fits (a Button takes one child, a Text none).
+    - Delete, not the root. Nested selections delete once. Bindings and
+      tracks of the widgets that go are dropped.
+    - Duplicate, renaming the copy and its children and moving a Canvas
+      child 16 units.
+    - Move and reorder, never into the widget itself.
+    - Rename, with unique names. Bindings and tracks follow the new name.
+  - Properties are edited through the widget's saved form. Setting a key
+    rebuilds the widget through its registered type, keeping its
+    children, so custom widget types work too. Bad values are refused
+    with the loader's reason; unchanged values add no undo step. Details
+    also lists the settings files leave out at their defaults.
+  - Canvas placement turns a rectangle into the slot under its anchors:
+    position and size on point axes, margins on stretched ones.
+    Resizing ends auto-size. Changing anchors (14 presets, or any
+    values) keeps the widget where it is.
+  - Bindings: add, edit and remove. Each widget type lists what it can
+    bind.
+  - Animations:
+    - add, rename and remove animations;
+    - one track per widget and property;
+    - keys kept in time order: a key at an existing key's time replaces
+      it, and moving a key onto another replaces that one.
+  - Diagnostics (cached per revision):
+    - UD001 duplicate names;
+    - UD002 a binding's widget missing, UD003 a property it can't bind,
+      UD004 no source;
+    - UD005 a track's widget missing, UD006 a property it can't animate;
+    - warnings: UD007 an empty animation, UD008 two tracks on one
+      property.
+- **The designer** (`UIDesigner`):
+  - A **palette** of registered types: click to add into the selection,
+    or drag onto the canvas or the hierarchy.
+  - The **hierarchy**: select, Ctrl+click for more, and drag to
+    reparent, or onto a leaf to put it before that leaf.
+  - The **canvas**:
+    - the layout at a resolution preset (desktop, 4K, tablet, handheld,
+      phones with safe areas) or a custom size, with the safe area
+      outlined;
+    - pan and zoom about the cursor, and fit;
+    - click to select the deepest widget, then drag to move Canvas
+      children and use eight handles to resize, with grid snapping;
+    - the anchors drawn in the parent;
+    - new widgets go into the container under the pointer, or past a
+      full one, sized for their type.
+  - **Details**: name, every property as a field (combos for enums,
+    colours, vectors, option lists, nested brushes), the slot for the
+    parent's kind, and the widget's bindings.
+  - The **timeline**:
+    - pick or make an animation, and add tracks;
+    - key the widget's current value at the playhead;
+    - drag keys in time, right-click to delete;
+    - scrub on the ruler, and play in a loop.
+  - It previews on a copy of the tree, with a theme and the animation
+    applied, so the document stays as it will be saved.
+  - **Diagnostics**: click one to select its widget.
+  - Keys: Delete, Ctrl+D, Ctrl+Z/Y, Ctrl+S, F to fit, and arrows to
+    nudge (Shift: by the grid).
+
+### 18.7 PR breakdown
 
 1. ✅ **Done.** The widget tree, the layout panels (Canvas with anchors,
    boxes, Grid, Overlay, SizeBox, Border, ScrollBox, Spacer), Text and
@@ -2214,5 +2285,5 @@ Everything else runs and is tested headless.
    position, scale, opacity and colour).
 5. ✅ **Done.** SDF text (font atlases from TrueType via stb_truetype), and world-space
    UI (health bars over enemies, projected or on 3D quads).
-6. The UI Designer: palette, hierarchy, canvas with selection, anchors and
+6. ✅ **Done** (portable part). The UI Designer: palette, hierarchy, canvas with selection, anchors and
    resolution preview, details, and the animation timeline.
