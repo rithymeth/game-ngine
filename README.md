@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Now: Phase 17 — audio (engine side done; editors next)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Next: Phase 18 — runtime game UI
 
 ### Phase 1 — Foundation
 
@@ -4265,7 +4265,7 @@ Phase 16. The runtime is the new `Aether::Animation` library
 - 338/338 tests pass on GCC 13, Clang and ASan/UBSan, and 370/370 with
   physics.
 
-### Phase 17 (in progress) — Audio
+### Phase 17 — Audio
 
 Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md),
 Phase 17. The engine side is the new `Aether::Audio` library (`audio/`).
@@ -4522,6 +4522,62 @@ in step 5.
 - miniaudio's null device pulling audio on its own thread and playing a
   sound through.
 - 357/357 tests pass on GCC 13, Clang and ASan/UBSan, and 389/389 with
+  physics.
+
+**Step 6: the audio editors** (§17.6).
+
+- **Waveform preview**:
+  - Peaks and RMS per column for each channel, zooming down to single
+    samples.
+  - Peak, RMS, DC offset and clipping statistics.
+  - A playhead, a selected region, and preview playback that loops the
+    selection.
+- **Sound cue editor**:
+  - The cue graph with an Output node, "+" pins to add inputs, error
+    outlines, and a searchable palette of node types and sounds.
+  - Details for every node type and for the output's settings, including
+    the attenuation curve plotted.
+  - Undo, diagnostics, save, and preview playback (Space).
+- **Mixer panel**:
+  - Channel strips with live L/R meters (peak hold, RMS), faders and mute.
+  - Effect settings and bypass, read and written on the audio thread when
+    the mixer is threaded.
+  - A live voice list (real or virtual, distance, gain, pan, pitch).
+- **Sync groups** for cues on a threaded mixer: a cue's sounds are placed
+  from a start frame the audio thread fixes. A lagging game clock can no
+  longer shift the first sound against the rest (ThreadSanitizer's slower
+  runs showed it).
+
+**Verified**: 5 new tests, headless, plus a sync-group check on the
+threaded mixer. Clean under ThreadSanitizer.
+
+- Waveform:
+  - peaks of a tone, DC, one channel and single samples;
+  - statistics and clipping;
+  - zoom about a point, scroll limits, playhead and selection clamps;
+  - preview following the voice and looping a selection.
+- Cue document:
+  - adding, linking (replace, append, and refused links with reasons);
+  - disconnecting with weights, deleting (and unhooking the output);
+  - undo/redo, no-op edits, unknown sounds, and save/load.
+- Cue graph:
+  - pins, titles and links;
+  - errors on nodes;
+  - every widget edit applied (connect either way, the output, refused
+    links, disconnects, moves, deletes);
+  - the attenuation plot.
+- Cue editor:
+  - every Details panel, the output's with a custom curve, and the
+    palette;
+  - selection dropped on undo;
+  - preview blocked by errors, then played and stopped.
+- Mixer panel:
+  - meter ballistics;
+  - effect parameters by kind;
+  - meters, faders, mute, effect settings and bypass;
+  - the voice list and every tab, on a single-threaded and a threaded
+    mixer.
+- 362/362 tests pass on GCC 13, Clang and ASan/UBSan, and 394/394 with
   physics.
 
 ## Building

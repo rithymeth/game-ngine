@@ -42,8 +42,9 @@ struct CuePlayParams {
 };
 
 // Plays cues on a mixer: evaluates each cue, schedules its sounds
-// sample-accurately with voice delays, and keeps endless loops going by
-// scheduling each repeat a little ahead of time. Call Update every frame.
+// sample-accurately (in a mixer sync group, so they keep their spacing on a
+// threaded mixer too), and keeps endless loops going by scheduling each
+// repeat a little ahead of time. Call Update every frame.
 class CuePlayer {
 public:
     CuePlayer(Mixer& mixer, const SoundBank& bank, u64 seed = 0x5EED5EEDull) : mixer_(mixer), bank_(bank), seed_(seed) {}
@@ -71,7 +72,8 @@ private:
         CueHandle handle = 0;
         const SoundCue* cue = nullptr;
         CuePlayParams params;
-        u64 start_frame = 0;
+        u64 start_frame = 0; // the game's view of it, for when to schedule repeats
+        u32 sync_group = 0;  // the mixer's time base for its sounds
         std::vector<std::pair<VoiceId, f32>> voices; // with each sound's own volume
         std::vector<CueTail> tails;
     };

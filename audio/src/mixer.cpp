@@ -96,6 +96,7 @@ bool Mixer::BusMuted(BusId bus) const { return bus < game_buses_.size() && game_
 AudioEffect* Mixer::AddEffect(BusId bus, std::unique_ptr<AudioEffect> effect) {
     if (bus >= buses_.size() || !effect) return nullptr;
     AudioEffect* raw = effect.release();
+    game_buses_[bus].effects.push_back(raw);
     if (!threaded_) {
         buses_[bus].effects.emplace_back(raw);
     } else {
@@ -183,10 +184,16 @@ void Mixer::Start(Voice v, const PlayParams& p, VoiceId id, u64 issued_at) {
     v.gain = v.current_gain = DbToGain(p.volume_db);
     v.pan = std::clamp(p.pan, -1.0f, 1.0f);
     v.loop = p.loop;
-    // The delay counts from when the game asked, so time spent in the queue comes off it.
+    // The delay counts from when the game asked (time spent in the queue comes
+    // off it), or from its sync group's start.
     const u64 delay = static_cast<u64>(std::llround(std::max(p.delay, 0.0) * sample_rate_));
-    const u64 queued = frames_rendered_ > issued_at ? frames_rendered_ - issued_at : 0;
-    v.delay_frames = delay > queued ? delay - queued : 0;
+    if (p.sync_group != 0) {
+        const u64 base = sync_bases_.try_emplace(p.sync_group, frames_rendered_).first->second;
+        v.delay_frames = base + delay > frames_rendered_ ? base + delay - frames_rendered_ : 0;
+    } else {
+        const u64 queued = frames_rendered_ > issued_at ? frames_rendered_ - issued_at : 0;
+        v.delay_frames = delay > queued ? delay - queued : 0;
+    }
     v.priority = p.priority;
     v.virtual_mode = p.virtual_mode;
     v.spatial = p.spatial;
@@ -357,9 +364,39 @@ f32 Mixer::PlaybackTime(VoiceId id) const {
     return static_cast<f32>(at / Rate(*v));
 }
 
+std::vector<Mixer::VoiceSummary> Mixer::Voices() const {
+    std::vector<VoiceSummary> out;
+    if (threaded_) {
+        const Snapshot& s = View();
+        if (stop_all_seq_ > s.applied) return out;
+        for (const auto& v : s.voices) {
+            if (!PendingStop(v.id)) out.push_back({v.id, v.info, v.time});
+        }
+        return out;
+    }
+    for (const Voice& v : voices_) {
+        VoiceSummary sum{v.id, v.info, PlaybackTime(v.id)};
+        sum.info.is_virtual = v.is_virtual;
+        out.push_back(sum);
+    }
+    std::sort(out.begin(), out.end(), [](const VoiceSummary& a, const VoiceSummary& b) { return a.id < b.id; });
+    return out;
+}
+
 u64 Mixer::FramesRendered() const { return threaded_ ? View().frames : frames_rendered_; }
 
 // --- Threading ----------------------------------------------------------------------------------
+
+u32 Mixer::BeginSyncGroup() {
+    const u32 group = next_sync_group_++;
+    if (next_sync_group_ == 0) next_sync_group_ = 1;
+    Post([group](Mixer& m) { m.sync_bases_[group] = m.frames_rendered_; });
+    return group;
+}
+
+void Mixer::EndSyncGroup(u32 group) {
+    if (group != 0) Post([group](Mixer& m) { m.sync_bases_.erase(group); });
+}
 
 void Mixer::Post(std::function<void(Mixer&)> edit) {
     if (!threaded_) {
@@ -449,7 +486,10 @@ void Mixer::SetThreaded(bool threaded) {
             garbage_ = std::make_unique<SpscQueue<Command*>>(8192);
         }
         game_listener_ = listener_;
-        for (usize i = 0; i < buses_.size(); ++i) game_buses_[i] = {buses_[i].volume_db, buses_[i].muted};
+        for (usize i = 0; i < buses_.size(); ++i) {
+            game_buses_[i].volume_db = buses_[i].volume_db;
+            game_buses_[i].muted = buses_[i].muted;
+        }
         game_max_voices_ = max_voices_;
         pending_plays_.clear();
         pending_stops_.clear();

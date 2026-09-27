@@ -44,6 +44,10 @@ struct PlayParams {
     f32 start_time = 0.0f; // seconds into the sound
     f32 fade_in = 0.0f;    // seconds
     f64 delay = 0.0;       // seconds after the next Render starts, sample-accurate (step 3)
+    // With a sync group (BeginSyncGroup), `delay` counts from the group's
+    // start instead, so a group's voices keep their spacing however late
+    // each one's command arrives (step 6).
+    u32 sync_group = 0;
     // Voice limiting: higher priorities keep their channels (0..255).
     u8 priority = 128;
     VirtualMode virtual_mode = VirtualMode::Continue;
@@ -100,6 +104,12 @@ public:
     // Once threaded, change the returned effect's settings only through Post.
     AudioEffect* AddEffect(BusId bus, std::unique_ptr<AudioEffect> effect);
     BusMeter Meter(BusId bus) const;
+    // A bus's effects, in order (for the mixer panel). Threaded, read or
+    // change their settings only through Post.
+    usize EffectCount(BusId bus) const { return bus < game_buses_.size() ? game_buses_[bus].effects.size() : 0; }
+    AudioEffect* EffectAt(BusId bus, usize index) const {
+        return bus < game_buses_.size() && index < game_buses_[bus].effects.size() ? game_buses_[bus].effects[index] : nullptr;
+    }
 
     // --- Voices -----------------------------------------------------------------
     // The sound must outlive the voice. Returns 0 for an empty sound or a bad bus.
@@ -140,6 +150,14 @@ public:
     f32 virtual_threshold_db = -80.0f;
     usize RealVoiceCount() const;
     usize VirtualVoiceCount() const;
+    // Every voice the last Render mixed (threaded) or that exists now, by id,
+    // with its state (the voice list in the mixer panel).
+    struct VoiceSummary {
+        VoiceId id = 0;
+        VoiceInfo info;
+        f32 time = 0.0f;
+    };
+    std::vector<VoiceSummary> Voices() const;
 
     // Mixes `frames` of interleaved stereo into `out` (overwriting it).
     void Render(f32* out, u32 frames);
@@ -156,6 +174,10 @@ public:
     // public fields (speed_of_sound, ...) are set before threading or through
     // Post. Switch only while nothing is rendering.
     void SetThreaded(bool threaded);
+    // A time base for voices that must stay in step (a cue's sounds): it
+    // starts at the frame the audio thread gets to it. End it when done.
+    u32 BeginSyncGroup();
+    void EndSyncGroup(u32 group);
     bool Threaded() const { return threaded_; }
     // Runs `edit` on the mixer: now, or on the audio thread before the next Render.
     void Post(std::function<void(Mixer&)> edit);
@@ -254,6 +276,8 @@ private:
     u64 frames_rendered_ = 0;
     Listener listener_;
     u32 max_voices_ = 64;
+    std::map<u32, u64> sync_bases_; // sync group -> its start frame (audio side)
+    u32 next_sync_group_ = 1;
 
     // Threading: the command queue in, used commands back, and the published
     // snapshots (a triple buffer: the audio thread writes one, the game thread
@@ -271,6 +295,7 @@ private:
     struct GameBus {
         f32 volume_db = 0.0f;
         bool muted = false;
+        std::vector<AudioEffect*> effects; // owned by the bus
     };
     std::vector<GameBus> game_buses_;
     Listener game_listener_;
