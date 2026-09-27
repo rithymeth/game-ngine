@@ -54,6 +54,7 @@ struct AnimNode {
     std::string bone;      // Layered
     u32 depth = 0;         // Layered: blend depth
     std::string slot;      // Slot
+    f32 x = 0.0f, y = 0.0f; // where the editor draws it
 };
 
 enum class CompareOp : u8 { Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, IsTrue, IsFalse, Triggered };
@@ -78,6 +79,7 @@ struct AnimState {
     std::string name;
     u32 pose = 0;         // the pose node it plays (a StateMachine node makes it a sub-machine)
     bool conduit = false; // no pose: passed straight through to one of its exits
+    f32 x = 0.0f, y = 0.0f; // where the editor draws it
 };
 
 struct StateMachine {

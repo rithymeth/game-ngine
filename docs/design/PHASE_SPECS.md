@@ -1458,8 +1458,9 @@ Jolt ragdolls come at the end of the phase.
    motion into `CharacterMovement` (§16.5).
 5. ✅ **Done.** IK (two-bone, look-at, FABRIK, foot placement) and
    retargeting between skeletons (§16.6).
-6. Editors (portable): the animation graph and state machine editor, the
-   blend space editor and the asset viewer.
+6. ✅ **Done.** Editors (portable): the animation graph and state
+   machine editor, the blend space editor and the asset viewer
+   (`editor/src/anim/`). The 3D preview needs the renderer (step 7).
 7. GPU skinning in the renderer, and ragdolls with blending to and from
    animation (GPU / Windows).
 
