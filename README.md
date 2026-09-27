@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Now: Phase 18 — runtime game UI (widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text and world-space UI done)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer)
 
 ### Phase 1 — Foundation
 
@@ -4811,6 +4811,53 @@ renderer, so its layout, input and styles are tested headless.
   - the UI library;
   - problems reported once, and removal.
 - 375/375 tests pass on GCC 13, Clang and ASan/UBSan, and 407/407 with
+  physics.
+
+**Step 6: the UI Designer** (§18.6, `editor/src/uidesign/`).
+
+- **The layout document**:
+  - Undoable tree edits: add, delete, duplicate, move and rename, with
+    unique names that bindings and animation tracks follow.
+  - Any widget's properties edited through its saved form, so custom
+    types work.
+  - Canvas placement and anchor changes that keep widgets in place.
+  - Bindings, animation tracks and keys.
+  - Eight checks (UD001–UD008).
+- **The designer panel**:
+  - A palette and a hierarchy with drag and drop.
+  - A canvas at desktop, 4K, tablet and phone resolutions with safe
+    areas, with pan and zoom, selection, move and resize handles, grid
+    snapping and anchors shown.
+  - Details with every property, the slot, anchor presets and bindings.
+  - An animation timeline: key the current value, drag keys, scrub, and
+    play on a preview copy.
+  - Diagnostics and keyboard shortcuts.
+- Like the other editors, it's hooked into the editor window with the
+  Windows build.
+
+**Verified**: 2 new tests.
+
+- The document:
+  - adding where widgets fit, and undo;
+  - renames followed by bindings and tracks;
+  - generic properties, including a Button keeping its label, and bad
+    values refused;
+  - Canvas placement, anchors kept across resolutions, stretched margins
+    and merged drags;
+  - moves, duplicates and deletes;
+  - keys ordered, replaced and moved;
+  - all eight diagnostics;
+  - files round-tripped.
+- The designer, drawn headless:
+  - placing with snapping;
+  - selecting, Ctrl+selecting, dragging and resizing with the mouse, each
+    as one undo step;
+  - nudging, and placing into containers;
+  - phone safe areas and 4K;
+  - themes on the preview only;
+  - keying, scrubbing and looping playback;
+  - Delete and Ctrl+Z keys, and selections that go stale.
+- 377/377 tests pass on GCC 13, Clang and ASan/UBSan, and 409/409 with
   physics.
 
 ## Building
