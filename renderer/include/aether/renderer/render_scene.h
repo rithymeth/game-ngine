@@ -2,6 +2,7 @@
 
 #include "aether/ecs/world.h"
 #include "aether/renderer/components.h"
+#include "aether/renderer/material_instance.h"
 #include "aether/scene/components.h"
 #include "aether/scene/entity_guid.h"
 
@@ -25,6 +26,11 @@ struct RenderObject {
     Mat4 world;
     Aabb bounds; // world space
     u64 mesh_key = 0;
+    // The material it draws with: a hash of MaterialParameters::material, 0
+    // for the model's own. Its per-object overrides, if any, are
+    // RenderScene::material_parameters[parameters].
+    u64 material_key = 0;
+    i32 parameters = -1;
     bool cast_shadows = true;
 };
 
@@ -73,6 +79,7 @@ struct RenderScene {
     std::vector<RenderSpotLight> spot_lights;
     Vec3 sky_radiance{0, 0, 0};
     std::vector<RenderPostVolume> post_volumes;
+    std::vector<MaterialParameters> material_parameters; // copies, for RenderObject::parameters
 };
 
 struct ExtractOptions {

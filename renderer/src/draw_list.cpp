@@ -1,7 +1,7 @@
 #include "aether/renderer/draw_list.h"
 
 #include <algorithm>
-#include <unordered_map>
+#include <map>
 
 namespace aether {
 
@@ -28,11 +28,11 @@ DrawList BuildDrawList(const RenderScene& scene, const View& view, const std::ve
         return (nearest - view.position).Length();
     };
     DrawList list;
-    std::unordered_map<u64, usize> batch_of;
+    std::map<std::pair<u64, u64>, usize> batch_of;
     for (u32 index : visible) {
-        const u64 key = scene.objects[index].mesh_key;
-        auto [it, added] = batch_of.try_emplace(key, list.batches.size());
-        if (added) list.batches.push_back({key, {}, 0.0f});
+        const RenderObject& o = scene.objects[index];
+        auto [it, added] = batch_of.try_emplace({o.mesh_key, o.material_key}, list.batches.size());
+        if (added) list.batches.push_back({o.mesh_key, o.material_key, {}, 0.0f});
         list.batches[it->second].instances.push_back(index);
     }
     for (DrawBatch& batch : list.batches) {
@@ -43,7 +43,8 @@ DrawList BuildDrawList(const RenderScene& scene, const View& view, const std::ve
         batch.nearest = sorted.empty() ? 0.0f : sorted.front().first;
     }
     std::stable_sort(list.batches.begin(), list.batches.end(), [](const DrawBatch& a, const DrawBatch& b) {
-        return a.nearest != b.nearest ? a.nearest < b.nearest : a.mesh_key < b.mesh_key;
+        if (a.nearest != b.nearest) return a.nearest < b.nearest;
+        return a.mesh_key != b.mesh_key ? a.mesh_key < b.mesh_key : a.material_key < b.material_key;
     });
     return list;
 }

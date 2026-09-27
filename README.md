@@ -3895,6 +3895,43 @@ HLSL, like Unreal's material editor. They live in `Aether::Renderer`
 - 296/296 tests pass on GCC 13, Clang and ASan/UBSan, and 327/327 with
   physics.
 
+**Step 3: material instances** (§15.4, `aether/renderer/material_instance.h`).
+
+- **`.amati` instances** override a parent's parameters. The parent is a
+  material or another instance. `LoadInstanceChain` follows parents up
+  to the material and reports loops, missing parents and chains that are
+  too deep (MI003–MI005).
+- **Resolution** applies the overrides parent first, and records where
+  each value came from. An override for a renamed or retyped parameter
+  is skipped with a warning (MI001 and MI002), so it doesn't break.
+- **No recompiling**: an instance only changes data. `PackParameters`
+  writes the MaterialParams bytes at the generated layout's offsets, and
+  `TextureBindings` gives each texture slot's GUID.
+- **`ParameterBlock`** is the runtime version, like Unreal's dynamic
+  material instance. You set values, it repacks on the next read, and
+  its revision changes only when a value actually does.
+- **`MaterialParameters` component**: the material or instance an entity
+  draws with, plus its own overrides. Its Blueprint-callable methods
+  become Blueprint nodes: Set Scalar, Set Vector and Set Texture
+  Parameter, Get Scalar and Get Vector Parameter, and Clear Parameter.
+- **Rendering**: extraction carries each object's material key and
+  overrides, and draw batches group by mesh and material.
+
+**Verified**: 4 new tests.
+
+- Overrides, JSON and file round trips, and five kinds of broken file.
+- A two-level chain resolves in order, with sources and both warnings.
+  The chain loads from an in-memory asset store, and a loop, a missing
+  parent, a non-material parent and a 20-deep chain are refused.
+- Packed bytes land at the layout's offsets. The block repacks, skips
+  unchanged values, refuses the wrong kinds, and resets. The shader key
+  is unchanged.
+- A Blueprint sets Roughness and Tint on an entity and reads Roughness
+  back. The overrides reach a block, and reapplying them costs nothing.
+  Extraction and batching split two materials over one mesh.
+- 300/300 tests pass on GCC 13, Clang and ASan/UBSan, and 331/331 with
+  physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
