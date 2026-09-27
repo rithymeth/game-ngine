@@ -108,9 +108,13 @@ public:
     CueHandle HandleOf(Entity source) const; // an AudioSource's playing cue
     const Listener& GetListener() const { return mixer_.GetListener(); }
     Entity ListenerEntity() const { return listener_entity_; }
-    // The reverb zones' current effect on `reverb_bus`, and its strength (0..1).
-    const ReverbEffect* Reverb() const { return reverb_; }
+    // The reverb zones' effect on `reverb_bus`: whether it exists (once any
+    // zone has), the zone's strength where the listener is (0..1), and what
+    // it was last set to. (The effect itself belongs to the mixer's thread.)
+    bool HasReverb() const { return reverb_ != nullptr; }
     f32 ReverbStrength() const { return reverb_strength_; }
+    f32 ReverbWet() const { return reverb_wet_; }
+    f32 ReverbRoomSize() const { return reverb_room_size_; }
     std::string reverb_bus = "SFX"; // Master if the mixer has no such bus
     // AudioSources whose cue ended by itself in the last Update.
     const std::vector<AudioFinishedEvent>& Events() const { return events_; }
@@ -165,8 +169,9 @@ private:
     Entity listener_entity_;
     Vec3 listener_last_;
     bool listener_seen_ = false;
-    ReverbEffect* reverb_ = nullptr;
-    f32 reverb_strength_ = 0.0f;
+    ReverbEffect* reverb_ = nullptr; // changed only through Mixer::Post
+    f32 reverb_strength_ = 0.0f, reverb_wet_ = 0.0f, reverb_room_size_ = 0.0f, reverb_damping_ = 0.0f;
+    void SetReverb(f32 wet, f32 room_size, f32 damping);
     u64 generation_ = 0;
 };
 
