@@ -2464,6 +2464,48 @@ Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 11
 - 198/198 tests pass on GCC 13, on Clang and under ASan/UBSan, and 205/205
   with physics.
 
+**Step 4: events, timers and input for scripts** (`scripting/src/script_api.cpp`).
+
+- **Events**:
+  - `Event.new()` gives an event, `event:Connect(fn)` a connection (with
+    `:Disconnect()` and `:IsConnected()`), and `event:Fire(...)` calls
+    every handler.
+  - A failing handler is reported and the rest still run.
+  - A handler can disconnect itself, or others, while the event is firing.
+- **Timers**:
+  - `Timer.After(s, fn)` runs once and `Timer.Every(s, fn)` repeats. Both
+    have `:Cancel()`.
+  - They run in game time through `ScriptSystem::Tick(dt)`.
+  - A long frame lets a repeating timer catch up (up to 100 runs a frame),
+    so `Every(1)` counts real seconds.
+- **Input** (bound with `BindInput`):
+  - `Input.IsTriggered` and `Input.GetAxis1D` / `GetAxis2D` / `GetAxis3D`
+    read actions, returning vectors for axes.
+  - `Input.OnStarted` / `OnTriggered` / `OnCompleted` / `OnCanceled(action)`
+    are events fired with the action's value.
+  - Without a bound input system, everything reads as released.
+- **Ownership (§11.2)**: connections and timers made while an entity's
+  callbacks run belong to that entity's script. They end when it's
+  destroyed, and ones made at top level stay.
+- **Entity events**: `SendEvent(entity, "OnHit", args)` calls a method on
+  the entity's script if it defines one. Physics collisions and triggers
+  will use this in Phase 13, along with raycasts and other physics
+  queries.
+
+**Verified**: 4 new tests.
+
+- **Events**: connecting, firing with arguments, disconnecting and
+  checking, a failing handler, a self-disconnecting handler, and argument
+  checks.
+- **Timers**: once, repeating with catch-up, a failing timer, cancelling,
+  and an invalid interval.
+- **Ownership**: an entity's connection and timer end when it's destroyed
+  while another entity's continue. Entity events are covered.
+- **Input**: events and axis polling from scripts, the unbound case, and
+  unbinding.
+- 202/202 tests pass on GCC 13, on Clang and under ASan/UBSan, and 209/209
+  with physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
