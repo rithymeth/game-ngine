@@ -856,6 +856,7 @@ json AnimGraphToJson(const AnimGraph& g) {
         if (!n.bone.empty()) j["bone"] = n.bone;
         if (n.depth != 0) j["depth"] = n.depth;
         if (!n.slot.empty()) j["slot"] = n.slot;
+        if (n.x != 0.0f || n.y != 0.0f) j["pos"] = json::array({n.x, n.y});
         nodes.push_back(std::move(j));
     }
     for (const StateMachine& m : g.machines) {
@@ -864,6 +865,7 @@ json AnimGraphToJson(const AnimGraph& g) {
             json j = {{"name", s.name}};
             if (s.conduit) j["conduit"] = true;
             else j["pose"] = s.pose;
+            if (s.x != 0.0f || s.y != 0.0f) j["pos"] = json::array({s.x, s.y});
             states.push_back(std::move(j));
         }
         auto state_name = [&](i32 i) { return i == kAnyState ? std::string("*") : m.states[static_cast<usize>(i)].name; };
@@ -933,6 +935,8 @@ bool AnimGraphFromJson(const json& j, AnimGraph& out, std::string* error) {
         node.bone = n.value("bone", "");
         node.depth = n.value("depth", 0u);
         node.slot = n.value("slot", "");
+        const json pos = n.value("pos", json::array({0, 0}));
+        if (pos.is_array() && pos.size() == 2 && pos[0].is_number() && pos[1].is_number()) node.x = pos[0].get<f32>(), node.y = pos[1].get<f32>();
         g.nodes.push_back(std::move(node));
     }
     for (const json& mj : j.value("machines", json::array())) {
@@ -944,6 +948,8 @@ bool AnimGraphFromJson(const json& j, AnimGraph& out, std::string* error) {
             st.name = s.value("name", "");
             st.conduit = s.value("conduit", false);
             st.pose = s.value("pose", 0u);
+            const json pos = s.value("pos", json::array({0, 0}));
+            if (pos.is_array() && pos.size() == 2 && pos[0].is_number() && pos[1].is_number()) st.x = pos[0].get<f32>(), st.y = pos[1].get<f32>();
             if (st.name.empty()) return fail("a state needs a name");
             m.states.push_back(std::move(st));
         }

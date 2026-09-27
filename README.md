@@ -4217,6 +4217,54 @@ Phase 16. The runtime is the new `Aether::Animation` library
 - 333/333 tests pass on GCC 13, Clang and ASan/UBSan, and 365/365 with
   physics.
 
+**Step 6: the animation editors** (portable, in `aether_editor_ui`, `editor/src/anim/`).
+
+- **`AnimGraphDocument`**:
+  - Undo and redo through JSON snapshots.
+  - Renaming a variable, machine or state updates everything that names
+    it. Retyping a variable drops conditions that no longer fit, and
+    removing one clears its uses.
+  - Removing a state fixes transition indices and the entry. New states
+    get a Clip node for their pose.
+  - Pose links refuse loops, and deleting a node unsets its users.
+  - Graphs save as `.aanim`, now with node and state positions.
+- **Graph editor** (`AnimGraphEditor`):
+  - The pose graph, with kind-specific input pins and an Output Pose
+    node.
+  - A tab per state machine, with Entry, Any State and conduit nodes and
+    transitions drawn as wires.
+  - During PIE the live state is highlighted and the blending
+    transition glows.
+  - Panels: Variables (with live values during PIE), Details for nodes,
+    states, transitions (conditions, blend, priority, when-finished) and
+    variables, and clickable Diagnostics.
+  - An add-node menu.
+- **Blend space editor**:
+  - A grid with the triangulation, and samples you drag with snapping.
+    Right-click adds a sample and Delete removes one.
+  - A preview dot shows live weights.
+  - The axes, sample details, validation, and undo.
+- **Clip viewer**: play, pause, loop, speed and scrubbing, and the bone
+  hierarchy. A notify track where you add, drag, rename, delete and
+  undo notifies. Translation curves for the selected bone.
+- The 3D preview comes with the renderer's skinning (step 7).
+
+**Verified**: 5 new tests (headless ImGui).
+
+- The document's cascading renames and removals, retypes, loop refusal,
+  node deletion, state removal index fixes, machine removal, and files.
+- The views' pins and pseudo nodes, and pose edits (named pins, the
+  output, breaks, moves). Machine edits: entry, any-state, a
+  self-transition refused, disconnects, and state deletion.
+- Blend space: snapped and clamped drags as one undo step, collinear
+  detection, and canvas mapping and hit testing.
+- Clip viewer: paused, playing with notifies, looping, stopping at the
+  end, notify editing with undo, and curves.
+- Every panel and Details view draws. Palette placement of every node
+  kind and a conduit, live highlighting, and a failed save.
+- 338/338 tests pass on GCC 13, Clang and ASan/UBSan, and 370/370 with
+  physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
