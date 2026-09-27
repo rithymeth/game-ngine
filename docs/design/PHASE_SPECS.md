@@ -1447,8 +1447,8 @@ Jolt ragdolls come at the end of the phase.
 1. ✅ **Done.** Skeletons, poses, clips (sampling, reduction,
    compression), blending, additive and bone masks
    (`aether/animation/*.h`).
-2. Blend spaces (1D, and 2D by triangulation) with synced playback, and
-   root motion extraction.
+2. ✅ **Done.** Blend spaces (1D, and 2D by triangulation) with synced
+   playback, and root motion extraction (§16.3).
 3. The animation graph model and its runtime: a state machine (states,
    transitions with conditions on graph variables, blend times,
    conduits, sub-machines) and the blend nodes. Diagnostics AG001 and up.
@@ -1461,3 +1461,36 @@ Jolt ragdolls come at the end of the phase.
    blend space editor and the asset viewer.
 7. GPU skinning in the renderer, and ragdolls with blending to and from
    animation (GPU / Windows).
+
+### 16.3 Blend spaces and root motion (`.ablend`)
+
+```json
+{
+  "$type": "BlendSpace", "$version": 1, "dimensions": 2,
+  "x": {"name": "Right", "min": -300, "max": 300},
+  "y": {"name": "Forward", "min": -300, "max": 300},
+  "samples": [{"clip": "<asset>", "x": 0, "y": 300, "rate": 1.0}]
+}
+```
+
+- **Weights**: 1D blends the two neighbouring samples. 2D uses a Delaunay
+  triangulation (Bowyer-Watson, over positions normalized by the axis
+  ranges) and barycentric weights. Outside the hull it uses the nearest
+  point on it. Collinear 2D samples blend along their line. Parameters
+  are clamped to the axes.
+- **Diagnostics**: BS001 no samples; BS002 two samples in one place;
+  BS003 collinear 2D samples; BS004 a bad axis or dimension count; BS005
+  (warning) a sample outside its axis; BS006 no clip, or a rate of 0 or
+  less.
+- **Synced playback**: every clip plays at the same normalized phase. A
+  cycle takes the weighted average of `duration / rate`, so changing the
+  parameters changes speed without popping the feet.
+- **Root motion**:
+  - It is the root bone's movement over the ground, and its heading
+    (yaw) about +Y. Vertical movement is included only on request.
+  - The movement is expressed in the root's frame at the start of the
+    step, and wrapping past the end of a loop is handled.
+  - `StripRootMotion` plays the clip in place: the root stays at its
+    start position and heading.
+  - A blend space's motion is the weighted sum of its clips' motion.
+
