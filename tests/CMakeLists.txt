@@ -62,7 +62,7 @@ if(TARGET Aether::Physics)
 endif()
 
 if(TARGET Aether::Scripting)
-    target_sources(aether_tests PRIVATE test_luau_host.cpp)
+    target_sources(aether_tests PRIVATE test_luau_host.cpp test_luau_bindings.cpp)
     target_link_libraries(aether_tests PRIVATE Aether::Scripting)
 endif()
 

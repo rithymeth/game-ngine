@@ -23,6 +23,14 @@ u64 HashSource(std::string_view source) {
     return hash;
 }
 
+} // namespace
+
+// Defined in world_bindings.cpp.
+void PushEntityValue(lua_State* L, Entity entity);
+bool ReadEntityValue(lua_State* L, int index, Entity& out);
+
+namespace {
+
 void Push(lua_State* L, const ScriptValue& value) {
     if (const bool* b = std::get_if<bool>(&value)) {
         lua_pushboolean(L, *b ? 1 : 0);
@@ -30,6 +38,8 @@ void Push(lua_State* L, const ScriptValue& value) {
         lua_pushnumber(L, *n);
     } else if (const std::string* s = std::get_if<std::string>(&value)) {
         lua_pushlstring(L, s->data(), s->size());
+    } else if (const EntityRef* e = std::get_if<EntityRef>(&value)) {
+        PushEntityValue(L, e->entity);
     } else {
         lua_pushnil(L);
     }
@@ -44,6 +54,13 @@ ScriptValue Read(lua_State* L, int index) {
         size_t length = 0;
         const char* text = lua_tolstring(L, index, &length);
         return std::string(text, length);
+    }
+    case LUA_TUSERDATA: {
+        Entity entity;
+        if (ReadEntityValue(L, index, entity)) {
+            return EntityRef{entity};
+        }
+        return std::monostate{};
     }
     default: return std::monostate{};
     }
@@ -81,6 +98,7 @@ LuauHost::LuauHost(Options options) : options_(options) {
     lua_setglobal(state_, "print");
 
     print_ = [](const std::string& text) { AETHER_LOG_INFO("Script", "%s", text.c_str()); };
+    InstallWorldBindings();
 }
 
 LuauHost::~LuauHost() {
