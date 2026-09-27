@@ -600,6 +600,14 @@ comment above it adds metadata.
    - The overlay is a portable ImGui widget; hooking it (and the toast)
      into the editor window is Windows editor work.
 6. Code editor panel with completion from reflection; DAP debugger.
+   - ✅ **Part 1 done:** the engines behind them.
+     - `ScriptDebugger` handles breakpoints, which survive reload and move
+       to the next line with code, plus Into/Over/Out and Pause. Its stops
+       report frames and locals, printed without running script code.
+     - `CompleteScript` does text-based completion from the script API and
+       reflection.
+   - Next: the ImGui code editor panel (portable widget) and the DAP
+     server over the debugger core.
 
 ---
 

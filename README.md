@@ -2546,6 +2546,70 @@ Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 11
 - 205/205 tests pass on GCC 13, on Clang and under ASan/UBSan, and 212/212
   with physics.
 
+**Step 6, part 1: the debugger core and code completion** (§11.5). These
+are the testable engines behind the code editor panel and the DAP server,
+which come next.
+
+- **`ScriptDebugger`** (`scripting/include/aether/script/debugger.h`)
+  attaches to a `LuauHost`. It is built on Luau's breakpoint instructions
+  and single-step callback.
+  - **Breakpoints** are set per chunk and line. They can be set before the
+    chunk loads, and are re-applied every time it's loaded, so they
+    survive hot reload. A line with no code moves to the next line that
+    has some, and the line actually used is returned.
+  - A line stops once per visit, not once per instruction.
+  - **Stepping**: Continue, Step Into, Step Over (calls run through),
+    Step Out, and `RequestPause` for the editor's Pause button.
+  - **Each stop** reports its frames, innermost first: function, chunk,
+    line, and named locals (temporaries left out).
+  - **Values are printed without running script code**, so a table's
+    `__tostring` can't loop or raise inside the debugger. Strings are
+    quoted and cut to 80 characters, vectors print as `(x, y, z)`, and
+    tables show their length.
+  - The handler runs synchronously on the script's thread. The editor will
+    run a nested UI loop there, and the DAP server will block on its
+    client.
+  - `LuauHost` now remembers each chunk's latest function (for late
+    breakpoints). With `allow_debug` it compiles with full debug info, so
+    locals have names.
+- **`CompleteScript(source, cursor)`**
+  (`scripting/include/aether/script/completion.h`) reads the text around
+  the cursor. There's no type checker. It offers:
+  - The engine API (`world:`, `Input.`, `Timer.`, `Event.`) and the Luau
+    libraries (`math.`, `string.`, `vector.`, ...), with signatures.
+  - **Component names from reflection** inside `:Get("`, `:Add("`,
+    `:Has("`, `:Remove("` and `EntitiesWith("`.
+  - A component's reflected fields after `.` (with their types) and its
+    functions after `:` (with signatures). This works inline
+    (`e:Get("Health").`) and through locals holding entities or
+    components. It goes one level into struct and vector fields
+    (`t.position.x`).
+  - Events, connections and timers (`:Connect`, `:Disconnect`, `:Cancel`).
+  - `self.` lists the class's fields, `self.entity` and fields the code
+    sets. `self:` lists its methods. `function Class:` lists the lifecycle
+    and physics callbacks.
+  - Otherwise, keywords, globals and the locals, parameters and loop
+    variables declared above the cursor.
+  - Prefix matching ignores case. Nothing is offered in comments, strings,
+    numbers, or names being declared.
+
+**Verified**: 7 new tests.
+
+- **Debugger**:
+  - A breakpoint set before loading stops once per call, with the right
+    locals in both frames.
+  - Late breakpoints on blank lines move to code, one past the end is
+    refused, and breakpoints are re-applied after a reload.
+  - Into, Over and Out take the expected path, and Pause stops.
+  - A table whose `__tostring` errors is printed safely.
+- **Completion**: modules, locals and loop variables, case-insensitive
+  prefixes, and the replace range. Also tested: no completion in
+  comments, strings or numbers; component names; fields and methods with
+  types, through locals and inline calls, and nested; events, timers and
+  connections; and `self` and callbacks.
+- 212/212 tests pass on GCC 13, on Clang and under ASan/UBSan, and 219/219
+  with physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
