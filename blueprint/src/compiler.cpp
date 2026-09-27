@@ -2,6 +2,8 @@
 
 #include "aether/reflection/reflection.h"
 
+#include "macros.h"
+
 #include <algorithm>
 #include <set>
 
@@ -1028,9 +1030,35 @@ const CompiledFunction* CompiledBlueprint::FindEvent(std::string_view key) const
     return it != events.end() ? &functions[it->second] : nullptr;
 }
 
-CompileResult CompileBlueprint(const Blueprint& blueprint) {
+CompileResult CompileBlueprint(const Blueprint& source) {
     CompileResult result;
-    result.diagnostics = ValidateBlueprint(blueprint);
+    result.diagnostics = ValidateBlueprint(source);
+    if (!result.diagnostics.Ok()) {
+        return result;
+    }
+    // Inline macros, then check the result (links a macro adds can clash
+    // with the graph around it). Problems inside an inlined macro are
+    // reported on its instance node.
+    Blueprint blueprint = source;
+    std::map<std::string, std::map<NodeId, NodeId>> origins;
+    for (Graph& g : blueprint.graphs) {
+        if (g.kind != GraphKind::Macro) ExpandMacros(source, g, origins[g.name]);
+    }
+    auto remap = [&](Diagnostic& d) {
+        auto graph = origins.find(d.graph);
+        if (graph == origins.end()) return;
+        auto node = graph->second.find(d.node);
+        if (node == graph->second.end()) return;
+        d.node = node->second;
+        d.message = "Inside the macro: " + d.message;
+    };
+    for (Diagnostic d : ValidateBlueprint(blueprint).diagnostics) {
+        const Graph* g = blueprint.FindGraph(d.graph);
+        if (d.severity != Severity::Error || (g != nullptr && g->kind == GraphKind::Macro)) continue;
+        remap(d);
+        result.diagnostics.diagnostics.push_back(std::move(d));
+        result.diagnostics.errors++;
+    }
     if (!result.diagnostics.Ok()) {
         return result;
     }
@@ -1097,6 +1125,7 @@ CompileResult CompileBlueprint(const Blueprint& blueprint) {
             compiler.CompileFunction();
         }
     }
+    for (Diagnostic& d : result.diagnostics.diagnostics) remap(d);
     if (result.diagnostics.Ok()) {
         result.blueprint = std::move(out);
     }

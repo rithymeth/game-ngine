@@ -785,8 +785,24 @@ struct Blueprint{ std::string parent; std::vector<Variable> variables; std::vect
      - `Interface.Call` does nothing on non-implementers, and
        `Interface.Implements` answers Does Implement.
      - Interface functions have no return values yet.
-   - Part 5: macros, Sort/Filter with comparator functions, and
-     expose-on-spawn pins.
+   - ✅ **Part 5 done:** macros.
+     - **Signatures**: macro graphs have `Macro.Inputs`/`Macro.Outputs`
+       tunnels, and their signatures may have exec pins (several in and
+       several out).
+     - **Inlining**: `CompileBlueprint` inlines every `Macro:Name`
+       instance, nested ones too, before compiling.
+       - Each copy has fresh node IDs, so stateful and latent nodes keep
+         separate state per instance.
+       - An unconnected macro input feeds its value (the instance's
+         default, else the macro's) through a literal node, so
+         conversions still apply.
+     - **Checks**:
+       - The expanded graphs are validated again, and problems there
+         (a latent node inlined into a function, say) are reported on the
+         instance node.
+       - Macros containing themselves are refused with BP016.
+   - Part 6: Sort/Filter with comparator functions, and expose-on-spawn
+     pins.
 5. Debugger: node breakpoints, stepping and call stack, exec trace for
    wire animation, watched pin values, and an instance filter.
 6. Graph editor widget and Blueprint editor panels (portable ImGui):

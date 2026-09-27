@@ -3130,6 +3130,44 @@ point 3, ROADMAP_DETAILS §C.4).
 - 250/250 tests pass on GCC 13, on Clang and under ASan/UBSan, and 257/257
   with physics.
 
+**Step 4, part 5: macros** (BLUEPRINT_NODES.md §12).
+
+- **Macro graphs** have an Inputs and an Outputs node (tunnels), and a
+  signature that can include exec pins. So a macro can have several exec
+  inputs and outputs, like Unreal's Gate-style macros. Macro graphs are
+  saved in the .abp like functions.
+- **A `Macro:Name` node** uses a macro. Its pins are the macro's
+  signature. It is pure if the macro has no exec pins.
+- **Inlining**: the compiler replaces every instance with a copy of the
+  macro's nodes, rewired through the tunnels, before compiling.
+  - Macros inside macros are expanded too, and values can pass straight
+    through.
+  - Each copy has its own node IDs, so a Do Once or Delay inside a macro
+    has separate state per instance (as in Unreal).
+  - Latent nodes are allowed in macros used from event graphs.
+  - An unconnected macro input feeds its value (the instance's default,
+    else the macro's) through a literal node, so conversions apply as
+    usual (an int macro input printed as text, for example).
+- **Errors**:
+  - Macros that contain themselves, directly or through others, are
+    refused with the new BP016.
+  - The expanded graphs are validated again. A problem that only appears
+    once inlined, such as a Delay macro used in a function (BP002), is
+    reported on the instance node as "Inside the macro: ...".
+
+**Verified**: 3 new tests.
+
+- **Inlining**: an exec macro running its output twice, and a pure macro
+  called with a link, with the instance default and with the macro
+  default. Also a macro nested in a macro, and a pass-through value into
+  a string pin.
+- **State and latent nodes**: a Do Once macro used twice with separate
+  state and reset, and a Delay macro resuming later.
+- **Errors**: BP016 for mutual recursion, BP004 and BP010, and BP002
+  from an inlined latent node, reported on the function's instance node.
+- 253/253 tests pass on GCC 13, on Clang and under ASan/UBSan, and 260/260
+  with physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,

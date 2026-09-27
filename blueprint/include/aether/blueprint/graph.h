@@ -59,6 +59,7 @@ struct Graph {
     std::vector<Node> nodes;
     std::vector<Link> links;
     // Function graphs: the signature (Function.Entry's outputs, Function.Return's inputs).
+    // Macro graphs: the same, and pins may be exec ("type": "exec").
     std::vector<Variable> inputs;
     std::vector<Variable> outputs;
     bool pure = false; // a pure function: called without exec pins

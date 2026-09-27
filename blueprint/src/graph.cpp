@@ -40,7 +40,8 @@ json VariableToJson(const Variable& v) {
     return j;
 }
 
-bool VariableFromJson(const json& j, Variable& v, std::string& error) {
+// `allow_exec`: macro signatures have exec pins too.
+bool VariableFromJson(const json& j, Variable& v, std::string& error, bool allow_exec = false) {
     if (!j.is_object() || !j.contains("name") || !j["name"].is_string()) {
         error = "a variable needs a name";
         return false;
@@ -48,7 +49,7 @@ bool VariableFromJson(const json& j, Variable& v, std::string& error) {
     v.name = j["name"].get<std::string>();
     const std::string type = j.value("type", "float");
     std::optional<PinType> parsed = ParseType(type);
-    if (!parsed || parsed->IsExec()) {
+    if (!parsed || (parsed->IsExec() && !allow_exec)) {
         error = "variable '" + v.name + "' has an unknown type '" + type + "'";
         return false;
     }
@@ -211,7 +212,9 @@ bool BlueprintFromJson(const json& j, Blueprint& out, std::string* error) {
         for (const char* side : {"inputs", "outputs"}) {
             for (const json& v : g.value(side, json::array())) {
                 Variable variable;
-                if (!VariableFromJson(v, variable, message)) return fail("graph '" + graph.name + "': " + message);
+                if (!VariableFromJson(v, variable, message, graph.kind == GraphKind::Macro)) {
+                    return fail("graph '" + graph.name + "': " + message);
+                }
                 (std::string(side) == "inputs" ? graph.inputs : graph.outputs).push_back(std::move(variable));
             }
         }
