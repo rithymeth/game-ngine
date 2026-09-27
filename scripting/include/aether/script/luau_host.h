@@ -52,6 +52,7 @@ public:
         // Interrupt checks (function calls and loop iterations, roughly) per
         // top-level run or call; 0 = no limit.
         u64 instruction_budget = 10'000'000;
+        // Also compiles with full debug info (local names), for the debugger.
         bool allow_debug = false;
     };
 
@@ -99,6 +100,19 @@ public:
     // for all). On failure the stack is restored and garbage collected.
     bool ProtectedCall(int args, int results, std::string* error);
 
+    // Called with each newly loaded chunk's function on top of the stack
+    // (the debugger applies breakpoints here), and the latest function
+    // loaded for a chunk name, as a registry ref (LUA_NOREF if none).
+    void SetChunkLoadedCallback(std::function<void(const std::string& chunk)> callback) {
+        on_chunk_loaded_ = std::move(callback);
+    }
+    int ChunkFunction(const std::string& chunk) const;
+
+    // The ScriptDebugger attached to this VM, if any (it installs Luau's
+    // debug callbacks, which find it through here).
+    void SetDebugger(void* debugger) { debugger_ = debugger; }
+    void* Debugger() const { return debugger_; }
+
 private:
     static void* Allocate(void* ud, void* ptr, size_t old_size, size_t new_size);
     static void Interrupt(lua_State* state, int gc);
@@ -119,6 +133,9 @@ private:
     bool budget_exceeded_ = false;
     std::function<void(const std::string&)> print_;
     std::unordered_map<u64, std::string> bytecode_;
+    std::unordered_map<std::string, int> chunk_functions_; // chunk name -> registry ref
+    std::function<void(const std::string& chunk)> on_chunk_loaded_;
+    void* debugger_ = nullptr;
 };
 
 } // namespace aether::script
