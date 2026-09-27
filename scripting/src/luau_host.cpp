@@ -1,0 +1,222 @@
+#include "aether/script/luau_host.h"
+
+#include "aether/core/log.h"
+#include "aether/platform/filesystem.h"
+
+#include <lua.h>
+#include <luacode.h>
+#include <lualib.h>
+
+#include <cstdlib>
+#include <cstring>
+
+namespace aether::script {
+
+namespace {
+
+u64 HashSource(std::string_view source) {
+    u64 hash = 0xcbf29ce484222325ull;
+    for (unsigned char c : source) {
+        hash ^= c;
+        hash *= 0x100000001b3ull;
+    }
+    return hash;
+}
+
+void Push(lua_State* L, const ScriptValue& value) {
+    if (const bool* b = std::get_if<bool>(&value)) {
+        lua_pushboolean(L, *b ? 1 : 0);
+    } else if (const f64* n = std::get_if<f64>(&value)) {
+        lua_pushnumber(L, *n);
+    } else if (const std::string* s = std::get_if<std::string>(&value)) {
+        lua_pushlstring(L, s->data(), s->size());
+    } else {
+        lua_pushnil(L);
+    }
+}
+
+// Other Luau types (tables, functions, userdata) come back as nil for now.
+ScriptValue Read(lua_State* L, int index) {
+    switch (lua_type(L, index)) {
+    case LUA_TBOOLEAN: return lua_toboolean(L, index) != 0;
+    case LUA_TNUMBER: return static_cast<f64>(lua_tonumber(L, index));
+    case LUA_TSTRING: {
+        size_t length = 0;
+        const char* text = lua_tolstring(L, index, &length);
+        return std::string(text, length);
+    }
+    default: return std::monostate{};
+    }
+}
+
+LuauHost* HostOf(lua_State* L) { return static_cast<LuauHost*>(lua_callbacks(L)->userdata); }
+
+} // namespace
+
+LuauHost::LuauHost() : LuauHost(Options{}) {}
+
+LuauHost::LuauHost(Options options) : options_(options) {
+    state_ = lua_newstate(&LuauHost::Allocate, this);
+    AETHER_ASSERT(state_ != nullptr);
+    lua_callbacks(state_)->userdata = this;
+    lua_callbacks(state_)->interrupt = &LuauHost::Interrupt;
+    luaL_openlibs(state_);
+
+    // Sandbox (§11.4): os only as os.clock; no debug (unless allowed); no loadstring.
+    lua_getglobal(state_, "os");
+    lua_getfield(state_, -1, "clock");
+    lua_newtable(state_);
+    lua_insert(state_, -2);
+    lua_setfield(state_, -2, "clock");
+    lua_setglobal(state_, "os");
+    lua_pop(state_, 1); // the original os table
+    if (!options_.allow_debug) {
+        lua_pushnil(state_);
+        lua_setglobal(state_, "debug");
+    }
+    lua_pushnil(state_);
+    lua_setglobal(state_, "loadstring");
+
+    lua_pushcfunction(state_, &LuauHost::Print, "print");
+    lua_setglobal(state_, "print");
+
+    print_ = [](const std::string& text) { AETHER_LOG_INFO("Script", "%s", text.c_str()); };
+}
+
+LuauHost::~LuauHost() {
+    if (state_ != nullptr) {
+        lua_close(state_);
+    }
+}
+
+void* LuauHost::Allocate(void* ud, void* ptr, size_t old_size, size_t new_size) {
+    LuauHost* host = static_cast<LuauHost*>(ud);
+    if (new_size == 0) {
+        std::free(ptr);
+        host->memory_used_ -= old_size;
+        return nullptr;
+    }
+    // Luau passes a type tag, not a size, as old_size for new blocks.
+    const usize previous = ptr != nullptr ? old_size : 0;
+    if (host->options_.memory_limit != 0 && new_size > previous && host->state_ != nullptr &&
+        host->memory_used_ + (new_size - previous) > host->options_.memory_limit) {
+        return nullptr; // Luau raises "not enough memory"
+    }
+    void* block = std::realloc(ptr, new_size);
+    if (block != nullptr) {
+        host->memory_used_ = host->memory_used_ - previous + new_size;
+    }
+    return block;
+}
+
+void LuauHost::Interrupt(lua_State* L, int gc) {
+    if (gc >= 0) {
+        return; // a GC step: must not raise errors
+    }
+    LuauHost* host = HostOf(L);
+    if (host->options_.instruction_budget != 0 && ++host->ticks_ > host->options_.instruction_budget) {
+        host->budget_exceeded_ = true;
+        luaL_error(L, "script exceeded its instruction budget (%llu); is there an endless loop?",
+                   static_cast<unsigned long long>(host->options_.instruction_budget));
+    }
+}
+
+int LuauHost::Print(lua_State* L) {
+    std::string line;
+    const int count = lua_gettop(L);
+    for (int i = 1; i <= count; ++i) {
+        size_t length = 0;
+        const char* text = luaL_tolstring(L, i, &length);
+        if (i > 1) {
+            line.push_back('\t');
+        }
+        line.append(text, length);
+        lua_pop(L, 1);
+    }
+    if (LuauHost* host = HostOf(L); host->print_) {
+        host->print_(line);
+    }
+    return 0;
+}
+
+ScriptResult LuauHost::CallTop(int args, const std::string& what) {
+    ScriptResult result;
+    const int base = lua_gettop(state_) - args - 1; // below the function
+    ticks_ = 0;
+    budget_exceeded_ = false;
+    const int status = lua_pcall(state_, args, LUA_MULTRET, 0);
+    if (status != LUA_OK) {
+        const char* message = lua_tostring(state_, -1);
+        result.error = message != nullptr ? message : "unknown error in " + what;
+        lua_settop(state_, base);
+        // Whatever the failed call allocated is garbage now; collect it, so
+        // a script that hit the memory limit doesn't leave the VM full.
+        lua_gc(state_, LUA_GCCOLLECT, 0);
+        return result;
+    }
+    for (int i = base + 1; i <= lua_gettop(state_); ++i) {
+        result.values.push_back(Read(state_, i));
+    }
+    lua_settop(state_, base);
+    result.ok = true;
+    return result;
+}
+
+ScriptResult LuauHost::Run(std::string_view source, const std::string& chunk_name) {
+    const u64 key = HashSource(source);
+    auto cached = bytecode_.find(key);
+    if (cached == bytecode_.end()) {
+        size_t size = 0;
+        char* code = luau_compile(source.data(), source.size(), nullptr, &size);
+        cached = bytecode_.emplace(key, std::string(code, size)).first;
+        std::free(code);
+    }
+    const std::string chunk = "=" + chunk_name;
+    if (luau_load(state_, chunk.c_str(), cached->second.data(), cached->second.size(), 0) != 0) {
+        ScriptResult result;
+        const char* message = lua_tostring(state_, -1);
+        result.error = message != nullptr ? message : "couldn't load " + chunk_name;
+        lua_pop(state_, 1);
+        bytecode_.erase(cached); // a syntax error: don't keep it
+        return result;
+    }
+    return CallTop(0, chunk_name);
+}
+
+ScriptResult LuauHost::RunFile(const std::filesystem::path& file) {
+    std::vector<u8> bytes;
+    if (!fs::ReadFileBytes(file.string(), bytes)) {
+        ScriptResult result;
+        result.error = "Couldn't read " + file.string();
+        return result;
+    }
+    return Run(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), file.filename().string());
+}
+
+ScriptResult LuauHost::Call(const std::string& function, const std::vector<ScriptValue>& args) {
+    lua_getglobal(state_, function.c_str());
+    if (lua_type(state_, -1) != LUA_TFUNCTION) {
+        lua_pop(state_, 1);
+        ScriptResult result;
+        result.error = "No function named '" + function + "'";
+        return result;
+    }
+    for (const ScriptValue& arg : args) {
+        Push(state_, arg);
+    }
+    return CallTop(static_cast<int>(args.size()), function);
+}
+
+ScriptValue LuauHost::GetGlobal(const std::string& name) {
+    lua_getglobal(state_, name.c_str());
+    ScriptValue value = Read(state_, -1);
+    lua_pop(state_, 1);
+    return value;
+}
+
+void LuauHost::SetGlobal(const std::string& name, const ScriptValue& value) {
+    Push(state_, value);
+    lua_setglobal(state_, name.c_str());
+}
+
+} // namespace aether::script
