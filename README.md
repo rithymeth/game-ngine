@@ -3434,8 +3434,8 @@ Phase 13.
   gameplay teleports a dynamic body. Static bodies stay put and a
   kinematic one follows its Transform. A bad hull reports why until it's
   fixed. Removing the collider or the entity removes the body.
-- 284/284 tests pass with physics on GCC 13, and 272/272 without physics
-  on GCC 13, Clang and ASan/UBSan.
+- 284/284 tests pass with physics on GCC 13 and under ASan/UBSan, and
+  272/272 without physics on GCC 13, Clang and ASan/UBSan.
 
 ## Building
 
