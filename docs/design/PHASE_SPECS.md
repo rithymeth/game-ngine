@@ -2546,7 +2546,62 @@ CPU simulation as its reference and as the path for small emitters.
   reference, and the path for small emitters and the unsupported
   features.
 
-### 19.6 PR breakdown
+### 19.6 The particle editor
+
+The editor for `.avfx` systems (`editor/src/vfx/`). Like the other
+editors it is built on Dear ImGui alone and runs headless in tests.
+
+- **The document** (`ParticleSystemDocument`): the asset, its file, and
+  whole-document undo (drags merge into one step).
+  - Emitters:
+    - add (with a basic stack), duplicate, move and remove;
+    - rename, keeping names unique, with sub-emitters that named them
+      following.
+  - Settings are edited through the emitter's saved form, including the
+    ones files leave out at their defaults.
+  - Modules:
+    - added by name into the right stage;
+    - enabled, moved and removed;
+    - fields set through the module's saved form, with the loader's
+      reason when a value is refused.
+    - Binding paths follow module moves; bindings to removed modules
+      go.
+  - Parameters: add, rename (bindings follow), change defaults and
+    remove (bindings go). Bindings and sub-emitters can be edited too.
+  - The system's checks are cached per revision.
+- **Curve and gradient keys**: added in time order (replacing a key at
+  the same time), moved, and removed, never the last one. Times are
+  clamped to 0..1.
+- **The preview** (`ParticlePreview`): the system on the CPU from a
+  fixed seed in 1/60 s steps.
+  - Seeking replays from the start, so the timeline scrubber always
+    shows the same particles. Seeks stop at 60 s.
+  - An orbit camera (yaw, pitch, distance) with projection.
+  - Per-emitter stats: particles, spawned, bounds, CPU time, and
+    whether it would run on the CPU or GPU.
+- **The editor** (`ParticleEditor`):
+  - Emitter list: enable, add, duplicate, remove, reorder.
+  - The stack: four stages of modules with enable boxes, move and
+    remove buttons, and an add menu per stage.
+  - Details:
+    - curves have a plot (click to add a key, drag to move, right-click
+      to remove), an interpolation choice and numeric keys;
+    - gradients have a preview bar and colour and alpha keys;
+    - ranges are edited as min and max; enums are combos;
+    - the emitter's settings, CPU/GPU placement with the reasons,
+      sub-emitters and bindings.
+  - The preview:
+    - drag to orbit, wheel to zoom, a ground grid;
+    - sprites, meshes, ribbons and lights drawn from their render data;
+    - play, pause, restart, speed and looping, and a time slider that
+      scrubs;
+    - edits show at once, at the same moment of the preview.
+  - Parameters, Stats and Diagnostics tabs.
+  - Keys: Space, Delete, Ctrl+Z/Y, Ctrl+S.
+- The editors share their JSON field widget (`core/json_edit.h`) with
+  the UI Designer.
+
+### 19.7 PR breakdown
 
 1. ✅ **Done.** Curves, gradients, noise and randomness; the emitter's module
    stacks (spawn, initialize, update) and their asset format and checks;
@@ -2564,6 +2619,6 @@ CPU simulation as its reference and as the path for small emitters.
 5. ✅ **Done** (portable part). The GPU path: the stack generated as a compute shader with the CPU
    simulation as its reference, and the choice between them per emitter
    (dispatch with the Windows renderer).
-6. The editor: the emitter stack with module details, curve and gradient
+6. ✅ **Done** (portable part). The editor: the emitter stack with module details, curve and gradient
    editors, and a live preview with a timeline scrubber and per-emitter
    stats.
