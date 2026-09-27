@@ -8,6 +8,7 @@
 #include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
 #include "aether/scene/prefab.h"
+#include "aether/scene/script_component.h"
 
 #include <algorithm>
 #include <bit>
@@ -32,6 +33,7 @@ void RegisterSceneComponents() {
     (void)GetComponentId<Camera>();
     (void)GetComponentId<Tags>();
     (void)GetComponentId<Layer>();
+    (void)GetComponentId<ScriptComponent>();
 }
 
 constexpr char kMagic[4] = {'A', 'E', 'S', 'C'};

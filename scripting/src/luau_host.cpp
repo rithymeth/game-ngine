@@ -1,5 +1,7 @@
 #include "aether/script/luau_host.h"
 
+#include "script_values.h"
+
 #include "aether/core/log.h"
 #include "aether/platform/filesystem.h"
 
@@ -25,13 +27,7 @@ u64 HashSource(std::string_view source) {
 
 } // namespace
 
-// Defined in world_bindings.cpp.
-void PushEntityValue(lua_State* L, Entity entity);
-bool ReadEntityValue(lua_State* L, int index, Entity& out);
-
-namespace {
-
-void Push(lua_State* L, const ScriptValue& value) {
+void PushScriptValue(lua_State* L, const ScriptValue& value) {
     if (const bool* b = std::get_if<bool>(&value)) {
         lua_pushboolean(L, *b ? 1 : 0);
     } else if (const f64* n = std::get_if<f64>(&value)) {
@@ -46,7 +42,7 @@ void Push(lua_State* L, const ScriptValue& value) {
 }
 
 // Other Luau types (tables, functions, userdata) come back as nil for now.
-ScriptValue Read(lua_State* L, int index) {
+ScriptValue ReadScriptValue(lua_State* L, int index) {
     switch (lua_type(L, index)) {
     case LUA_TBOOLEAN: return lua_toboolean(L, index) != 0;
     case LUA_TNUMBER: return static_cast<f64>(lua_tonumber(L, index));
@@ -65,6 +61,8 @@ ScriptValue Read(lua_State* L, int index) {
     default: return std::monostate{};
     }
 }
+
+namespace {
 
 LuauHost* HostOf(lua_State* L) { return static_cast<LuauHost*>(lua_callbacks(L)->userdata); }
 
@@ -157,30 +155,42 @@ int LuauHost::Print(lua_State* L) {
     return 0;
 }
 
-ScriptResult LuauHost::CallTop(int args, const std::string& what) {
-    ScriptResult result;
+bool LuauHost::ProtectedCall(int args, int results, std::string* error) {
     const int base = lua_gettop(state_) - args - 1; // below the function
     ticks_ = 0;
     budget_exceeded_ = false;
-    const int status = lua_pcall(state_, args, LUA_MULTRET, 0);
-    if (status != LUA_OK) {
-        const char* message = lua_tostring(state_, -1);
-        result.error = message != nullptr ? message : "unknown error in " + what;
-        lua_settop(state_, base);
-        // Whatever the failed call allocated is garbage now; collect it, so
-        // a script that hit the memory limit doesn't leave the VM full.
-        lua_gc(state_, LUA_GCCOLLECT, 0);
+    if (lua_pcall(state_, args, results, 0) == LUA_OK) {
+        return true;
+    }
+    const char* message = lua_tostring(state_, -1);
+    if (error != nullptr) {
+        *error = message != nullptr ? message : "unknown script error";
+    }
+    lua_settop(state_, base);
+    // Whatever the failed call allocated is garbage now; collect it, so
+    // a script that hit the memory limit doesn't leave the VM full.
+    lua_gc(state_, LUA_GCCOLLECT, 0);
+    return false;
+}
+
+ScriptResult LuauHost::CallTop(int args, const std::string& what) {
+    ScriptResult result;
+    const int base = lua_gettop(state_) - args - 1;
+    if (!ProtectedCall(args, LUA_MULTRET, &result.error)) {
+        if (result.error.empty()) {
+            result.error = "unknown error in " + what;
+        }
         return result;
     }
     for (int i = base + 1; i <= lua_gettop(state_); ++i) {
-        result.values.push_back(Read(state_, i));
+        result.values.push_back(ReadScriptValue(state_, i));
     }
     lua_settop(state_, base);
     result.ok = true;
     return result;
 }
 
-ScriptResult LuauHost::Run(std::string_view source, const std::string& chunk_name) {
+bool LuauHost::LoadChunk(std::string_view source, const std::string& chunk_name, std::string* error) {
     const u64 key = HashSource(source);
     auto cached = bytecode_.find(key);
     if (cached == bytecode_.end()) {
@@ -191,11 +201,20 @@ ScriptResult LuauHost::Run(std::string_view source, const std::string& chunk_nam
     }
     const std::string chunk = "=" + chunk_name;
     if (luau_load(state_, chunk.c_str(), cached->second.data(), cached->second.size(), 0) != 0) {
-        ScriptResult result;
         const char* message = lua_tostring(state_, -1);
-        result.error = message != nullptr ? message : "couldn't load " + chunk_name;
+        if (error != nullptr) {
+            *error = message != nullptr ? message : "couldn't load " + chunk_name;
+        }
         lua_pop(state_, 1);
         bytecode_.erase(cached); // a syntax error: don't keep it
+        return false;
+    }
+    return true;
+}
+
+ScriptResult LuauHost::Run(std::string_view source, const std::string& chunk_name) {
+    ScriptResult result;
+    if (!LoadChunk(source, chunk_name, &result.error)) {
         return result;
     }
     return CallTop(0, chunk_name);
@@ -220,20 +239,20 @@ ScriptResult LuauHost::Call(const std::string& function, const std::vector<Scrip
         return result;
     }
     for (const ScriptValue& arg : args) {
-        Push(state_, arg);
+        PushScriptValue(state_, arg);
     }
     return CallTop(static_cast<int>(args.size()), function);
 }
 
 ScriptValue LuauHost::GetGlobal(const std::string& name) {
     lua_getglobal(state_, name.c_str());
-    ScriptValue value = Read(state_, -1);
+    ScriptValue value = ReadScriptValue(state_, -1);
     lua_pop(state_, 1);
     return value;
 }
 
 void LuauHost::SetGlobal(const std::string& name, const ScriptValue& value) {
-    Push(state_, value);
+    PushScriptValue(state_, value);
     lua_setglobal(state_, name.c_str());
 }
 

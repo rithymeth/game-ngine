@@ -91,6 +91,14 @@ public:
     // The raw VM, for the binding layer.
     lua_State* State() { return state_; }
 
+    // Lower-level pieces for the binding layer (ScriptSystem):
+    // Compiles (cached) and pushes the chunk as a function. False with `error`.
+    bool LoadChunk(std::string_view source, const std::string& chunk_name, std::string* error);
+    // Calls the function below `args` arguments on the stack, with the
+    // instruction budget reset, leaving `results` values (LUA_MULTRET = -1
+    // for all). On failure the stack is restored and garbage collected.
+    bool ProtectedCall(int args, int results, std::string* error);
+
 private:
     static void* Allocate(void* ud, void* ptr, size_t old_size, size_t new_size);
     static void Interrupt(lua_State* state, int gc);

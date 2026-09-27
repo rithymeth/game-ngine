@@ -3,6 +3,8 @@
 
 #include "aether/script/luau_host.h"
 
+#include "script_values.h"
+
 #include "aether/ecs/world.h"
 #include "aether/reflection/serialize.h"
 #include "aether/scene/entity_guid.h"
@@ -29,8 +31,6 @@ struct BindingAccess {
     static GuidIndex* GuidsOf(LuauHost& h) { return h.guids_; }
     static u64 Generation(LuauHost& h) { return h.binding_generation_; }
 };
-
-void PushEntityValue(lua_State* L, Entity entity);
 
 namespace {
 
