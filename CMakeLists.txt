@@ -195,6 +195,8 @@ FetchContent_MakeAvailable(miniaudio)
 # Audio (Phase 17): the mixer, 3D, decoders, streaming, sound cues,
 # components and the output device.
 add_subdirectory(audio)
+# Runtime game UI (Phase 18): widgets, layout, input and a draw list; engine-only.
+add_subdirectory(ui)
 
 if(AETHER_BUILD_SCRIPTING)
     # Luau (MIT, luau-lang/luau): the scripting VM and compiler (Phase 11).

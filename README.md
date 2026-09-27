@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Next: Phase 18 — runtime game UI
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Now: Phase 18 — runtime game UI (in progress)
 
 ### Phase 1 — Foundation
 
@@ -4578,6 +4578,54 @@ threaded mixer. Clean under ThreadSanitizer.
   - the voice list and every tab, on a single-threaded and a threaded
     mixer.
 - 362/362 tests pass on GCC 13, Clang and ASan/UBSan, and 394/394 with
+  physics.
+
+### Phase 18 (in progress) — Runtime game UI
+
+Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md),
+Phase 18. The engine side is the new `Aether::UI` library (`ui/`): a
+retained widget tree that paints into a draw list of clipped quads for the
+renderer, so its layout, input and styles are tested headless.
+
+**Step 1: widgets, layout and drawing** (§18.1).
+
+- **Widget tree**:
+  - Names, visibility (visible, hidden, collapsed, and two kinds that let
+    clicks through), opacity down the tree, and clipping.
+  - Two-pass layout: children measure first, then parents arrange.
+- **Panels**:
+  - Canvas with Unity/UMG-style anchors: point or stretched per axis,
+    with a pivot, margins, auto-size and z order.
+  - Horizontal and Vertical boxes with fill weights and alignment.
+  - Grid with auto and weighted tracks and spans.
+  - Overlay, SizeBox, Border, Spacer.
+  - ScrollBox with clipping, a scroll bar and scroll-into-view.
+- **Text and Image**:
+  - Line breaks and word wrap, alignment, and UTF-8.
+  - Brushes: colour, image, and 9-slice box or frame.
+- **Draw list**: textured, tinted quads with nested clip rectangles,
+  culling the empty, transparent and clipped-away.
+- **Viewport**:
+  - Layers in z order laid out over the safe area.
+  - Resolution scaling against a reference resolution (shortest or
+    longest side, width, height, or a DPI curve).
+  - Painting in pixels, and hit testing top layer first.
+
+**Verified**: 3 new tests.
+
+- Text: widths, lines, wrapping (including a word too long for a line),
+  empty text and UTF-8.
+- Draw list: nested clips, culling, 9-slice rectangles and UVs, frames,
+  corners shrinking, glyph placement and alignment, and scaling to pixels.
+- Canvas: centred, stretched, bottom-bar and auto-sized children, a
+  canvas in a smaller rect, and z-ordered hits.
+- Boxes (weights, padding, alignment, collapsed against hidden), Grid
+  (auto, weighted and spanning), Overlay, SizeBox limits, Border, and
+  ScrollBox (limits, scroll-into-view, clipped hits and paint, scroll
+  bar).
+- Scale rules and clamping; a 4K screen with a 1080p layout and a safe
+  area; layer order and removal; every visibility; opacity; tree edits.
+- 365/365 tests pass on GCC 13, Clang and ASan/UBSan, and 397/397 with
   physics.
 
 ## Building
