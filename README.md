@@ -3964,6 +3964,58 @@ HLSL, like Unreal's material editor. They live in `Aether::Renderer`
 - 303/303 tests pass on GCC 13, Clang and ASan/UBSan, and 334/334 with
   physics.
 
+**Step 5: the material editor** (portable, in `aether_editor_ui`).
+
+- **`MaterialDocument`**: the open material or function, its file, and
+  whole-material undo/redo (drags merge into one step). The generated
+  shader is cached per revision.
+  - Parameters: add, rename (their nodes follow), retype (their nodes
+    change kind, and links that no longer fit are broken) and remove
+    (with their nodes).
+  - Node copy, paste and duplicate, keeping internal links. The Material
+    Output is never copied.
+- **Graph adapter** (`material_graph.h`): builds the Phase 12 widget's
+  view.
+  - Pins are colored by type; generic pins take their inferred type.
+  - Headers are colored by category, and errors show on their nodes.
+  - Links are type-checked. A texture into math, a narrower vector into
+    a wider one, and a link that would loop are refused with a reason.
+    A new link into an input replaces the old one.
+  - The Material Output can't be deleted.
+  - The palette is fuzzy-searched. When opened from a dragged wire, it
+    only lists nodes that could link to that pin.
+- **`MaterialEditor` panels**:
+  - toolbar: Save, Undo/Redo and the error count;
+  - Parameters: grouped, and draggable into the graph;
+  - the graph;
+  - Details: the material's settings, a parameter (name, type, default,
+    group), or a node (constants, mask channels, UV set, noise octaves,
+    reroute and function interface types, Custom node inputs and code,
+    and defaults for unconnected inputs);
+  - a bottom panel: Stats (live nodes, instructions, textures, buffer
+    size, permutation key, defines), Diagnostics (click to frame the
+    node) and the generated HLSL.
+- The live preview (a lit sphere) and the Windows editor hookup need the
+  GPU and come with step 6.
+
+**Verified**: 5 new tests (headless ImGui).
+
+- Document: undo, redo and merged drags, and the parameter edits with
+  their effect on nodes and links. The shader cache, the function
+  library surviving undo, and files.
+- Clipboard: internal links kept, the output skipped, bad pastes leaving
+  no undo step, and duplicates offset.
+- Graph: pin and wire colors, every refused link and its reason, and a
+  broadcast link replacing the old one. Output-safe deletes, wire-drop
+  auto-linking, and errors on nodes.
+- Palette: ranking, and filtering for a texture output and for a float3
+  input.
+- Panels: the palette places a linked Triplanar; every Details variant
+  and bottom tab draws. Parameter nodes, renames, forgetting undone
+  selections, a failed save, and a function document.
+- 308/308 tests pass on GCC 13, Clang and ASan/UBSan, and 339/339 with
+  physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,

@@ -24,6 +24,8 @@ const PinDesc* FindPin(const bp::NodeSignature& sig, const GraphPinRef& ref) {
     return sig.Find(ref.pin, ref.output ? PinDir::Out : PinDir::In);
 }
 
+} // namespace
+
 // Letters of `query` in order within `text`; higher is better (0 = no match).
 int FuzzyScore(std::string_view query, std::string_view text) {
     if (query.empty()) return 1;
@@ -57,8 +59,6 @@ int FuzzyScore(std::string_view query, std::string_view text) {
     else if (lower.find(q) != std::string::npos) score += 20;
     return score;
 }
-
-} // namespace
 
 u32 PinColor(const bp::PinType& type) {
     if (type.IsExec()) return IM_COL32(255, 255, 255, 255);

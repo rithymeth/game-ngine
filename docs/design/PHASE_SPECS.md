@@ -1323,8 +1323,10 @@ generic: their result is their widest input, and a float input broadcasts
    nodes (`aether/renderer/material_instance.h`, §15.4).
 4. ✅ **Done.** Material functions (reusable subgraphs), a Custom HLSL
    node, Noise and Triplanar (§15.5).
-5. The material editor: the graph panel (Phase 12's widget), parameters,
-   details and stats.
+5. ✅ **Done** (portable part). The material editor: the graph panel
+   (Phase 12's widget), parameters, details and stats
+   (`editor/src/graph/material_*`). The live preview sphere and the
+   Windows window hookup come with step 6.
 6. DXC compilation to DXIL and SPIR-V, the permutation cache in the DDC, and
    the live preview (GPU).
 
