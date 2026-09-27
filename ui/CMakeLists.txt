@@ -12,6 +12,8 @@ add_library(aether_ui STATIC
     src/theme.cpp
     src/layout_file.cpp
     src/binding.cpp
+    src/animation.cpp
+    src/widget_system.cpp
 )
 target_include_directories(aether_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aether_ui PUBLIC cxx_std_20)

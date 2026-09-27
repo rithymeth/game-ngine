@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Now: Phase 18 — runtime game UI (in progress)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Now: Phase 18 — runtime game UI (widgets, controls, themes, layouts, binding, Widget Blueprints and animations done)
 
 ### Phase 1 — Foundation
 
@@ -4729,6 +4729,37 @@ renderer, so its layout, input and styles are tested headless.
   - direct path reads and writes;
   - a removed source.
 - 371/371 tests pass on GCC 13, Clang and ASan/UBSan, and 403/403 with
+  physics.
+
+**Step 4: Widget Blueprints and UI animations** (§18.4).
+
+- **Render transforms**: offset, scale and pivot per widget, for drawing
+  and hit testing, without moving the layout.
+- **UI animations**:
+  - Keyframe timelines of opacity, offset, scale, tint, slot position
+    and size, slider values and progress.
+  - Six eases, speed, loops, reverse and start time.
+  - One-property tweens that replace each other.
+  - Saved in `.aui` files.
+- **Widget components**: an entity's `WidgetComponent` shows a layout,
+  bound to its own components.
+  - Control changes become events, dispatched to Blueprints as
+    `Event.OnWidgetClicked`, `OnWidgetValueChanged` and the rest.
+  - A `UI` Blueprint library to create and remove widgets, set text,
+    visibility, values and focus, and play animations.
+
+**Verified**: 2 new tests.
+
+- Transforms scale about the pivot and offset, for drawing and hits,
+  with the layout unchanged.
+- Eases, keyed tracks, loops, reverse, speed, tweens, validation, and
+  animations round-tripped through a layout file.
+- A widget entity bound to its own component; a click reaching a
+  compiled Blueprint that creates a widget, prints the button's name,
+  sets text and plays an animation.
+- The `UI` library directly, and hiding, removing, switching and missing
+  layouts.
+- 373/373 tests pass on GCC 13, Clang and ASan/UBSan, and 405/405 with
   physics.
 
 ## Building
