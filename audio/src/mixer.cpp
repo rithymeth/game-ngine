@@ -92,6 +92,15 @@ VoiceId Mixer::Play(const SoundWave* sound, const PlayParams& p) {
     v.gain = v.current_gain = DbToGain(p.volume_db);
     v.pan = std::clamp(p.pan, -1.0f, 1.0f);
     v.loop = p.loop;
+    v.priority = p.priority;
+    v.virtual_mode = p.virtual_mode;
+    v.spatial = p.spatial;
+    v.occlusion = p.occlusion;
+    v.position3d = p.position;
+    v.velocity = p.velocity;
+    v.spatial_blend = std::clamp(p.spatial_blend, 0.0f, 1.0f);
+    v.doppler = std::max(p.doppler, 0.0f);
+    v.attenuation = p.attenuation;
     if (p.fade_in > 0.0f) {
         v.fade = 0.0f;
         v.fade_step = 1.0f / (p.fade_in * static_cast<f32>(sample_rate_));
@@ -135,6 +144,40 @@ bool Mixer::SetPan(VoiceId id, f32 pan) {
     return true;
 }
 
+bool Mixer::SetPosition(VoiceId id, const Vec3& position, const Vec3& velocity) {
+    Voice* v = Find(id);
+    if (v == nullptr) return false;
+    v->position3d = position;
+    v->velocity = velocity;
+    return true;
+}
+
+bool Mixer::SetOcclusion(VoiceId id, f32 amount) {
+    Voice* v = Find(id);
+    if (v == nullptr) return false;
+    v->occlusion_target = std::clamp(amount, 0.0f, 1.0f);
+    return true;
+}
+
+void Mixer::UpdateOcclusion() {
+    if (!occlusion_query) return;
+    for (Voice& v : voices_) {
+        if (v.spatial && v.occlusion) v.occlusion_target = std::clamp(occlusion_query(listener_.position, v.position3d), 0.0f, 1.0f);
+    }
+}
+
+bool Mixer::GetVoiceInfo(VoiceId id, VoiceInfo& out) const {
+    const Voice* v = Find(id);
+    if (v == nullptr) return false;
+    out = v->info;
+    out.is_virtual = v->is_virtual;
+    return true;
+}
+
+usize Mixer::RealVoiceCount() const {
+    return static_cast<usize>(std::count_if(voices_.begin(), voices_.end(), [](const Voice& v) { return !v.is_virtual; }));
+}
+
 bool Mixer::IsPlaying(VoiceId id) const { return Find(id) != nullptr; }
 
 f32 Mixer::PlaybackTime(VoiceId id) const {
@@ -142,20 +185,86 @@ f32 Mixer::PlaybackTime(VoiceId id) const {
     return v == nullptr ? -1.0f : static_cast<f32>(v->position / v->sound->sample_rate);
 }
 
-bool Mixer::MixVoice(Voice& v, f32* out, u32 frames) {
+void Mixer::Spatialize(Voice& v, u32 frames, const std::vector<f32>& bus_gains) {
+    const f32 rate = static_cast<f32>(sample_rate_);
+    VoiceInfo& info = v.info;
+    // Occlusion follows its target smoothly (or jumps there on the first block).
+    const f32 follow = !v.started || occlusion_smoothing <= 0.0f ? 1.0f : 1.0f - std::exp(-static_cast<f32>(frames) / (occlusion_smoothing * rate));
+    info.occlusion += (v.occlusion_target - info.occlusion) * follow;
+    const f32 occlusion_gain = DbToGain(occlusion_volume_db * info.occlusion);
+    const f32 occlusion_cutoff = kOpenCutoff * std::pow(std::clamp(occlusion_lowpass_hz, 10.0f, kOpenCutoff) / kOpenCutoff, info.occlusion);
+    if (v.spatial) {
+        const f32 blend = v.spatial_blend;
+        info.distance = (v.position3d - listener_.position).Length();
+        info.attenuation = 1.0f + (Attenuate(v.attenuation, info.distance) - 1.0f) * blend;
+        info.pan = v.pan + (PanFromListener(listener_, v.position3d) - v.pan) * blend;
+        const f32 doppler = v.doppler > 0.0f ? DopplerRatio(listener_, v.position3d, v.velocity, v.doppler, speed_of_sound) : 1.0f;
+        info.pitch = v.pitch * (1.0f + (doppler - 1.0f) * blend);
+        const f32 air = kOpenCutoff * std::pow(AirAbsorptionCutoff(v.attenuation, info.distance) / kOpenCutoff, blend);
+        info.lowpass_hz = std::min(air, occlusion_cutoff);
+    } else {
+        info.distance = 0.0f;
+        info.attenuation = 1.0f;
+        info.pan = v.pan;
+        info.pitch = v.pitch;
+        info.lowpass_hz = occlusion_cutoff;
+    }
+    v.spatial_gain = info.attenuation * occlusion_gain;
+    info.audibility = v.gain * v.spatial_gain * bus_gains[v.bus];
+    if (!v.started) v.current_gain = v.gain * v.spatial_gain; // no glide from full volume on the first block
+}
+
+void Mixer::AssignChannels() {
+    const f32 threshold = DbToGain(virtual_threshold_db);
+    std::vector<Voice*> order;
+    order.reserve(voices_.size());
+    for (Voice& v : voices_) {
+        if (v.info.audibility < threshold) {
+            v.is_virtual = true;
+        } else {
+            order.push_back(&v);
+        }
+    }
+    std::stable_sort(order.begin(), order.end(), [](const Voice* a, const Voice* b) {
+        if (a->priority != b->priority) return a->priority > b->priority;
+        return a->info.audibility > b->info.audibility; // ties keep the older voice (stable)
+    });
+    for (usize i = 0; i < order.size(); ++i) order[i]->is_virtual = i >= max_voices_;
+}
+
+bool Mixer::AdvanceVirtual(Voice& v, u32 frames) {
+    const SoundWave& s = *v.sound;
+    const f64 n = static_cast<f64>(s.Frames());
+    if (v.virtual_mode == VirtualMode::Continue) {
+        v.position += static_cast<f64>(v.info.pitch) * s.sample_rate / sample_rate_ * frames;
+        if (v.position >= n) {
+            if (!v.loop) return false;
+            v.position = std::fmod(v.position, n);
+        }
+    }
+    v.fade = std::clamp(v.fade + v.fade_step * static_cast<f32>(frames), 0.0f, 1.0f);
+    if (v.fade_step > 0.0f && v.fade >= 1.0f) v.fade_step = 0.0f;
+    return !(v.stopping && v.fade <= 0.0f);
+}
+
+bool Mixer::MixVoice(Voice& v, f32* out, u32 frames, f32 ramp_from, f32 ramp_to) {
     const SoundWave& s = *v.sound;
     const i64 n = static_cast<i64>(s.Frames());
     const u32 ch = s.channels;
-    const f64 step = static_cast<f64>(v.pitch) * s.sample_rate / sample_rate_;
+    const f64 step = static_cast<f64>(v.info.pitch) * s.sample_rate / sample_rate_;
     const f32 smooth = 1.0f - std::exp(-1.0f / (kSmoothSeconds * static_cast<f32>(sample_rate_)));
+    const f32 target = v.gain * v.spatial_gain;
+    // One-pole low-pass for distance and occlusion; fully open passes the input through.
+    const f32 lp = v.info.lowpass_hz >= kOpenCutoff ? 1.0f : 1.0f - std::exp(-2.0f * kPi * v.info.lowpass_hz / static_cast<f32>(sample_rate_));
     // Pan: equal power for mono, balance for stereo.
     f32 pan_l, pan_r;
+    const f32 pan = std::clamp(v.info.pan, -1.0f, 1.0f);
     if (ch == 1) {
-        const f32 angle = (v.pan + 1.0f) * kPi / 4.0f;
+        const f32 angle = (pan + 1.0f) * kPi / 4.0f;
         pan_l = std::cos(angle), pan_r = std::sin(angle);
     } else {
-        pan_l = v.pan > 0.0f ? 1.0f - v.pan : 1.0f;
-        pan_r = v.pan < 0.0f ? 1.0f + v.pan : 1.0f;
+        pan_l = pan > 0.0f ? 1.0f - pan : 1.0f;
+        pan_r = pan < 0.0f ? 1.0f + pan : 1.0f;
     }
     auto at = [&](i64 frame, u32 c) -> f32 {
         if (v.loop) frame = ((frame % n) + n) % n;
@@ -169,12 +278,16 @@ bool Mixer::MixVoice(Voice& v, f32* out, u32 frames) {
         }
         const i64 base = static_cast<i64>(v.position);
         const f32 t = static_cast<f32>(v.position - static_cast<f64>(base));
-        v.current_gain += (v.gain - v.current_gain) * smooth;
+        v.current_gain += (target - v.current_gain) * smooth;
         v.fade = std::clamp(v.fade + v.fade_step, 0.0f, 1.0f);
         if (v.fade_step > 0.0f && v.fade >= 1.0f) v.fade_step = 0.0f;
-        const f32 g = v.current_gain * v.fade;
-        const f32 left = Hermite(at(base - 1, 0), at(base, 0), at(base + 1, 0), at(base + 2, 0), t);
-        const f32 right = ch == 1 ? left : Hermite(at(base - 1, 1), at(base, 1), at(base + 1, 1), at(base + 2, 1), t);
+        const f32 ramp = ramp_from + (ramp_to - ramp_from) * static_cast<f32>(i + 1) / static_cast<f32>(frames);
+        const f32 g = v.current_gain * v.fade * ramp;
+        f32 left = Hermite(at(base - 1, 0), at(base, 0), at(base + 1, 0), at(base + 2, 0), t);
+        f32 right = ch == 1 ? left : Hermite(at(base - 1, 1), at(base, 1), at(base + 1, 1), at(base + 2, 1), t);
+        v.lowpass[0] += lp * (left - v.lowpass[0]);
+        v.lowpass[1] += lp * (right - v.lowpass[1]);
+        left = v.lowpass[0], right = v.lowpass[1];
         out[2 * i] += left * g * pan_l;
         out[2 * i + 1] += right * g * pan_r;
         v.position += step;
@@ -186,9 +299,37 @@ bool Mixer::MixVoice(Voice& v, f32* out, u32 frames) {
 
 void Mixer::Render(f32* out, u32 frames) {
     for (Bus& b : buses_) b.buffer.assign(static_cast<usize>(frames) * 2, 0.0f);
+    // Each bus's gain all the way to Master, for audibility. Parents come first.
+    std::vector<f32> bus_gains(buses_.size(), 1.0f);
+    for (usize i = 0; i < buses_.size(); ++i) {
+        const f32 own = buses_[i].muted ? 0.0f : buses_[i].gain;
+        bus_gains[i] = i == kMasterBus ? own : own * bus_gains[buses_[i].parent];
+    }
+    for (Voice& v : voices_) Spatialize(v, frames, bus_gains);
+    AssignChannels();
     for (usize i = 0; i < voices_.size();) {
         Voice& v = voices_[i];
-        if (MixVoice(v, buses_[v.bus].buffer.data(), frames)) {
+        if (!v.started) v.was_virtual = v.is_virtual; // a new voice starts where it's put, without a ramp
+        v.started = true;
+        bool keep = true;
+        if (!v.is_virtual) {
+            if (v.was_virtual) {
+                // Back from virtual: fade in over this block.
+                if (v.virtual_mode == VirtualMode::Restart) v.position = 0.0;
+                v.current_gain = v.gain * v.spatial_gain;
+                v.lowpass[0] = v.lowpass[1] = 0.0f;
+                keep = MixVoice(v, buses_[v.bus].buffer.data(), frames, 0.0f, 1.0f);
+            } else {
+                keep = MixVoice(v, buses_[v.bus].buffer.data(), frames, 1.0f, 1.0f);
+            }
+        } else if (!v.was_virtual) {
+            // Just lost its channel: fade out over this block.
+            keep = MixVoice(v, buses_[v.bus].buffer.data(), frames, 1.0f, 0.0f) && v.virtual_mode != VirtualMode::Stop;
+        } else {
+            keep = v.virtual_mode != VirtualMode::Stop && AdvanceVirtual(v, frames);
+        }
+        v.was_virtual = v.is_virtual;
+        if (keep) {
             ++i;
         } else {
             voices_.erase(voices_.begin() + static_cast<std::ptrdiff_t>(i));

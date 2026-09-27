@@ -6,6 +6,7 @@ add_library(aether_audio STATIC
     src/sound.cpp
     src/dsp.cpp
     src/mixer.cpp
+    src/spatial.cpp
 )
 target_include_directories(aether_audio PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aether_audio PUBLIC cxx_std_20)

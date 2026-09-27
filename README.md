@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Now: Phase 17 — audio (in progress)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Now: Phase 17 — audio (mixer and 3D done; cues, components and backend next)
 
 ### Phase 1 — Foundation
 
@@ -4320,6 +4320,66 @@ in step 5.
     leaving quiet signals alone;
   - a reverb tail that decays, and dry-only passthrough.
 - 342/342 tests pass on GCC 13, Clang and ASan/UBSan, and 374/374 with
+  physics.
+
+**Step 2: 3D audio and voice limiting** (§17.2).
+
+- **Attenuation**:
+  - Inverse (with rolloff), linear, logarithmic, or a custom curve,
+    between a min and a max distance.
+  - Optional air absorption: a low-pass that closes from open at the min
+    distance to a set cutoff at the max, swept in octaves.
+- **3D voices**:
+  - Panned from the listener's position and facing.
+  - A spatial blend from plain 2D to fully 3D.
+  - Doppler from source and listener velocities (the OpenAL formula),
+    clamped, and multiplied with the voice's pitch.
+  - Gain changes from moving glide like volume changes; a voice starts
+    at its 3D level with no glide.
+- **Occlusion**:
+  - A hook the game fills (typically a raycast) that says how blocked a
+    source is, called by `UpdateOcclusion` on the game thread.
+  - It ducks (-12 dB) and low-passes (1.2 kHz) at full occlusion,
+    smoothed over 0.1 s. Hosts can also set it per voice.
+- **Voice limiting**:
+  - At most N voices mix, chosen by priority, then by how loud they'd
+    reach Master (including distance, occlusion and buses).
+  - Voices under -80 dB go virtual even when channels are free, including
+    those on a muted bus.
+  - A virtual voice keeps time (Continue), comes back from the start
+    (Restart), or ends (Stop). A voice fades over one block going virtual
+    or coming back, so there's no click.
+- `GetVoiceInfo` reports each voice's distance, gains, pan, pitch,
+  filter and whether it's virtual, for the editor and debugging.
+
+**Verified**: 4 new tests.
+
+- The maths:
+  - every attenuation model at known distances, and all four falling
+    monotonically;
+  - air-absorption cutoffs;
+  - panning, including a turned listener;
+  - doppler toward, away, sideways, with a moving listener, turned off,
+    and faster than sound.
+- 3D voices:
+  - a quarter of the level, all in the right ear, at 4 m;
+  - centred and at full level with no jump when the listener walks to the
+    source;
+  - half spatial blend, and blend 0 behaving as 2D;
+  - a tone 11% sharp approaching and flat receding;
+  - distance filtering of a high tone but not a low one.
+- Occlusion:
+  - a wall hook ducking and filtering only the voices that ask for it,
+    smoothly;
+  - clearing when the listener steps through;
+  - set directly on a 2D voice.
+- Voice limiting:
+  - priority and loudness deciding who plays;
+  - Continue coming back on time, Restart from the top, Stop ending, and
+    a one-shot freed while virtual;
+  - ramps with no click in and out;
+  - out-of-range and muted voices going virtual and coming back.
+- 346/346 tests pass on GCC 13, Clang and ASan/UBSan, and 378/378 with
   physics.
 
 ## Building
