@@ -22,14 +22,17 @@ namespace aether {
 
 namespace {
 
-// Two object layers (moving/non-moving) mapped onto two broadphase layers —
-// the simplest configuration Jolt supports, adequate for a demo scene of a
-// static floor plus dynamic spheres. A real game would likely add more
-// layers (e.g. triggers, characters) as gameplay needs grow.
+// Object layers (Phase 13 step 2): one per game layer (0..31) and motion,
+// `layer * 2 + moving`. Two broadphase trees, non-moving and moving, as
+// Jolt recommends. Whether two layers collide comes from the project's
+// CollisionMatrix; two non-moving bodies never do.
 namespace ObjectLayers {
-constexpr JPH::ObjectLayer kNonMoving = 0;
-constexpr JPH::ObjectLayer kMoving = 1;
-constexpr JPH::ObjectLayer kNumLayers = 2;
+constexpr JPH::ObjectLayer kNumLayers = kMaxLayers * 2;
+constexpr JPH::ObjectLayer Make(u8 layer, bool moving) { return static_cast<JPH::ObjectLayer>(layer * 2 + (moving ? 1 : 0)); }
+constexpr bool IsMoving(JPH::ObjectLayer l) { return (l & 1) != 0; }
+constexpr u8 GameLayer(JPH::ObjectLayer l) { return static_cast<u8>(l / 2); }
+constexpr JPH::ObjectLayer kNonMoving = Make(0, false);
+constexpr JPH::ObjectLayer kMoving = Make(0, true);
 } // namespace ObjectLayers
 
 namespace BroadPhaseLayers {
@@ -40,38 +43,37 @@ constexpr u32 kNumLayers = 2;
 
 class ObjectLayerPairFilterImpl final : public JPH::ObjectLayerPairFilter {
 public:
-    bool ShouldCollide(JPH::ObjectLayer object1, JPH::ObjectLayer object2) const override {
-        if (object1 == ObjectLayers::kNonMoving) {
-            return object2 == ObjectLayers::kMoving;
-        }
-        return true;
+    explicit ObjectLayerPairFilterImpl(const CollisionMatrix& matrix) : matrix_(matrix) {}
+    bool ShouldCollide(JPH::ObjectLayer a, JPH::ObjectLayer b) const override {
+        if (!ObjectLayers::IsMoving(a) && !ObjectLayers::IsMoving(b)) return false;
+        return matrix_.ShouldCollide(ObjectLayers::GameLayer(a), ObjectLayers::GameLayer(b));
     }
+
+private:
+    const CollisionMatrix& matrix_;
 };
 
 class BroadPhaseLayerInterfaceImpl final : public JPH::BroadPhaseLayerInterface {
 public:
-    BroadPhaseLayerInterfaceImpl() {
-        object_to_broad_phase_[ObjectLayers::kNonMoving] = BroadPhaseLayers::kNonMoving;
-        object_to_broad_phase_[ObjectLayers::kMoving] = BroadPhaseLayers::kMoving;
-    }
-
     u32 GetNumBroadPhaseLayers() const override { return BroadPhaseLayers::kNumLayers; }
 
     JPH::BroadPhaseLayer GetBroadPhaseLayer(JPH::ObjectLayer layer) const override {
-        return object_to_broad_phase_[layer];
+        return ObjectLayers::IsMoving(layer) ? BroadPhaseLayers::kMoving : BroadPhaseLayers::kNonMoving;
     }
 
-private:
-    JPH::BroadPhaseLayer object_to_broad_phase_[ObjectLayers::kNumLayers];
+#if defined(JPH_EXTERNAL_PROFILE) || defined(JPH_PROFILE_ENABLED)
+    // Jolt's profiler builds (Debug) require names.
+    const char* GetBroadPhaseLayerName(JPH::BroadPhaseLayer layer) const override {
+        return layer == BroadPhaseLayers::kMoving ? "Moving" : "NonMoving";
+    }
+#endif
 };
 
 class ObjectVsBroadPhaseLayerFilterImpl final : public JPH::ObjectVsBroadPhaseLayerFilter {
 public:
-    bool ShouldCollide(JPH::ObjectLayer layer1, JPH::BroadPhaseLayer layer2) const override {
-        if (layer1 == ObjectLayers::kNonMoving) {
-            return layer2 == BroadPhaseLayers::kMoving;
-        }
-        return true;
+    bool ShouldCollide(JPH::ObjectLayer layer, JPH::BroadPhaseLayer broad_phase) const override {
+        // Non-moving bodies only need the moving tree; the pair filter checks the matrix.
+        return ObjectLayers::IsMoving(layer) || broad_phase == BroadPhaseLayers::kMoving;
     }
 };
 
@@ -116,7 +118,8 @@ Quaternion ToAether(JPH::QuatArg q) { return Quaternion(q.GetX(), q.GetY(), q.Ge
 } // namespace
 
 struct PhysicsWorld::Layers {
-    ObjectLayerPairFilterImpl object_layer_pair_filter;
+    CollisionMatrix matrix; // read by the pair filter; SetCollisionMatrix changes it
+    ObjectLayerPairFilterImpl object_layer_pair_filter{matrix};
     BroadPhaseLayerInterfaceImpl broad_phase_layer_interface;
     ObjectVsBroadPhaseLayerFilterImpl object_vs_broad_phase_layer_filter;
 };
@@ -188,9 +191,17 @@ JPH::BodyID PhysicsWorld::CreateSphere(const Vec3& position, f32 radius, f32 mas
                                              is_static ? JPH::EActivation::DontActivate : JPH::EActivation::Activate);
 }
 
-JPH::ObjectLayer PhysicsWorld::ObjectLayerFor(bool moving) const {
-    return moving ? ObjectLayers::kMoving : ObjectLayers::kNonMoving;
+JPH::ObjectLayer PhysicsWorld::ObjectLayerFor(bool moving, u8 layer) const {
+    return ObjectLayers::Make(layer < kMaxLayers ? layer : 0, moving);
 }
+
+u8 PhysicsWorld::GameLayerOf(JPH::ObjectLayer layer) { return ObjectLayers::GameLayer(layer); }
+
+void PhysicsWorld::SetCollisionMatrix(const CollisionMatrix& matrix) {
+    layers_->matrix = matrix; // applies to pairs the broadphase finds from now on
+}
+
+const CollisionMatrix& PhysicsWorld::GetCollisionMatrix() const { return layers_->matrix; }
 
 JPH::BodyID PhysicsWorld::CreateBody(const JPH::BodyCreationSettings& settings, bool activate) {
     return BodyInterface().CreateAndAddBody(settings, activate ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);

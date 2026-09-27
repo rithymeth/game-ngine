@@ -158,6 +158,43 @@ u8 LayerOf(const World& world, Entity entity) {
     return layer != nullptr && layer->index < kMaxLayers ? layer->index : 0;
 }
 
+void CollisionMatrix::Set(u8 a, u8 b, bool collide) {
+    if (a >= kMaxLayers || b >= kMaxLayers) return;
+    if (collide) {
+        rows[a] |= 1u << b;
+        rows[b] |= 1u << a;
+    } else {
+        rows[a] &= ~(1u << b);
+        rows[b] &= ~(1u << a);
+    }
+}
+
+CollisionMatrix MakeCollisionMatrix(const ProjectSettings& settings) {
+    CollisionMatrix matrix;
+    for (usize i = 0; i < settings.collision_matrix.size() && i < kMaxLayers; ++i) matrix.rows[i] = settings.collision_matrix[i];
+    // Keep it symmetric even if the file isn't: a pair collides only if both rows say so.
+    for (u8 a = 0; a < kMaxLayers; ++a) {
+        for (u8 b = 0; b < kMaxLayers; ++b) {
+            if (!matrix.ShouldCollide(b, a)) matrix.rows[a] &= ~(1u << b);
+        }
+    }
+    return matrix;
+}
+
+bool SetLayersCollide(ProjectSettings& settings, u8 a, u8 b, bool collide) {
+    const usize count = std::min<usize>(settings.layers.size(), kMaxLayers);
+    if (a >= count || b >= count) return false;
+    CollisionMatrix matrix = MakeCollisionMatrix(settings);
+    matrix.Set(a, b, collide);
+    // Store rows up to the last one that isn't "everything", so untouched projects stay empty.
+    usize last = 0;
+    for (usize i = 0; i < kMaxLayers; ++i) {
+        if (matrix.rows[i] != kAllLayers) last = i + 1;
+    }
+    settings.collision_matrix.assign(matrix.rows.begin(), matrix.rows.begin() + static_cast<std::ptrdiff_t>(last));
+    return true;
+}
+
 bool IsInLayerMask(const World& world, Entity entity, LayerMask mask) {
     return (mask & (1u << LayerOf(world, entity))) != 0;
 }

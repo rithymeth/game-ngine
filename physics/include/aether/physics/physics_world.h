@@ -5,6 +5,7 @@
 #include "aether/job/job_system.h"
 #include "aether/math/math.h"
 #include "aether/physics/components.h"
+#include "aether/scene/gameplay.h"
 
 #include <Jolt/Jolt.h>
 #include <Jolt/Core/JobSystem.h>
@@ -43,10 +44,15 @@ public:
 
     void DestroyBody(JPH::BodyID id);
 
-    // For PhysicsScene: the object layer for a moving or non-moving body
-    // (the collision matrix of step 2 replaces this), and adding a body
-    // built from full Jolt settings.
-    JPH::ObjectLayer ObjectLayerFor(bool moving) const;
+    // Collision layers (Phase 13 step 2): which of the 32 game layers
+    // collide, usually MakeCollisionMatrix(project). All collide by default.
+    void SetCollisionMatrix(const CollisionMatrix& matrix);
+    const CollisionMatrix& GetCollisionMatrix() const;
+
+    // For PhysicsScene: the Jolt object layer for a body on game `layer`
+    // (moving or not) and back, and adding a body from full Jolt settings.
+    JPH::ObjectLayer ObjectLayerFor(bool moving, u8 layer = 0) const;
+    static u8 GameLayerOf(JPH::ObjectLayer layer);
     JPH::BodyID CreateBody(const JPH::BodyCreationSettings& settings, bool activate);
 
     void Step(f32 dt);

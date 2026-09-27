@@ -5,6 +5,7 @@
 #include "aether/reflection/reflection.h"
 #include "aether/scene/entity_guid.h"
 
+#include <array>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -97,6 +98,22 @@ i32 FindLayer(const ProjectSettings& settings, std::string_view name);
 LayerMask MakeLayerMask(const ProjectSettings& settings, const std::vector<std::string>& names,
                         std::vector<std::string>* unknown = nullptr);
 u8 LayerOf(const World& world, Entity entity);
+
+// Which layers collide with which (Phase 13 step 2), as 32 symmetric masks.
+// All layers collide by default.
+struct CollisionMatrix {
+    std::array<LayerMask, kMaxLayers> rows;
+
+    CollisionMatrix() { rows.fill(kAllLayers); }
+    bool ShouldCollide(u8 a, u8 b) const { return a < kMaxLayers && b < kMaxLayers && (rows[a] & (1u << b)) != 0; }
+    LayerMask CollidesWith(u8 layer) const { return layer < kMaxLayers ? rows[layer] : 0; }
+    // Sets both directions.
+    void Set(u8 a, u8 b, bool collide);
+};
+// The project's matrix (ProjectSettings::collision_matrix; missing rows collide with everything).
+CollisionMatrix MakeCollisionMatrix(const ProjectSettings& settings);
+// Updates the project's matrix for one pair, both ways. False if either isn't a layer index.
+bool SetLayersCollide(ProjectSettings& settings, u8 a, u8 b, bool collide);
 bool IsInLayerMask(const World& world, Entity entity, LayerMask mask);
 
 } // namespace aether

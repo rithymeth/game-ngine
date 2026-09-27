@@ -77,6 +77,7 @@ std::vector<u8> SettingsOf(const World& world, Entity e) {
     AppendSettings<ConvexCollider>(world, e, 4, out);
     AppendSettings<MeshCollider>(world, e, 5, out);
     AppendSettings<RigidBody>(world, e, 6, out);
+    AppendSettings<Layer>(world, e, 7, out); // a layer change moves the body to another object layer
     return out;
 }
 
@@ -196,7 +197,7 @@ bool PhysicsScene::Build(Entity e, Tracked& tracked, std::string& problem) {
                                   : motion == BodyMotion::Kinematic ? JPH::EMotionType::Kinematic
                                                                     : JPH::EMotionType::Dynamic;
     JPH::BodyCreationSettings settings(shape, JPH::RVec3(position.x, position.y, position.z), ToJolt(rotation), type,
-                                       physics_.ObjectLayerFor(motion != BodyMotion::Static));
+                                       physics_.ObjectLayerFor(motion != BodyMotion::Static, LayerOf(world_, e)));
     settings.mUserData = EntityKey(e);
     // A body is a trigger if any of its colliders is (Jolt's sensors are per body).
     settings.mIsSensor = std::any_of(parts.begin(), parts.end(), [](const Part& p) { return p.trigger; });

@@ -237,3 +237,36 @@ AETHER_TEST(PhysicsScene_FollowsEditsMotionAndRemoval) {
     s.scene.Sync();
     AETHER_CHECK(s.scene.BodyCount() == bodies - 2 && s.scene.EntityOf(gone).IsNull());
 }
+
+AETHER_TEST(PhysicsScene_LayersFollowTheCollisionMatrix) {
+    Sim s;
+    ProjectSettings project;
+    project.layers = {"Default", "Player", "Ghost"};
+    SetLayersCollide(project, 2, 0, false); // ghosts pass through the Default floor
+    s.physics.SetCollisionMatrix(MakeCollisionMatrix(project));
+    AETHER_CHECK(!s.physics.GetCollisionMatrix().ShouldCollide(2, 0));
+
+    s.Floor(); // Default
+    const Entity player = s.Body(Vec3(-2, 3, 0), Sphere(0.5f));
+    s.world.AddComponent(player, Layer{1});
+    const Entity ghost = s.Body(Vec3(2, 3, 0), Sphere(0.5f));
+    s.world.AddComponent(ghost, Layer{2});
+    s.scene.Sync();
+    AETHER_CHECK(PhysicsWorld::GameLayerOf(s.physics.BodyInterface().GetObjectLayer(s.scene.BodyOf(ghost))) == 2);
+    s.Run(90);
+    AETHER_CHECK_NEAR(s.Y(player), 1.0f, 0.03);
+    AETHER_CHECK(s.Y(ghost) < -2.0f); // fell through
+
+    // Changing an entity's layer moves its body to that layer.
+    s.world.GetComponent<Transform>(ghost)->position = Vec3(2, 3, 0);
+    s.world.GetComponent<Layer>(ghost)->index = 1;
+    s.Run(90);
+    AETHER_CHECK(PhysicsWorld::GameLayerOf(s.physics.BodyInterface().GetObjectLayer(s.scene.BodyOf(ghost))) == 1);
+    AETHER_CHECK_NEAR(s.Y(ghost), 1.0f, 0.03);
+
+    // Ghost vs Player still collide: a ghost dropped on the player rests on it.
+    const Entity haunt = s.Body(Vec3(-2, 4, 0), Sphere(0.5f));
+    s.world.AddComponent(haunt, Layer{2});
+    s.Run(120);
+    AETHER_CHECK(s.Y(haunt) > 1.5f); // stacked on the player (it may roll off later, but not through)
+}

@@ -33,6 +33,11 @@ struct ProjectSettings {
     Vec3 gravity{0.0f, -9.81f, 0.0f};
     // Named collision layers (up to 32); index 0 is always "Default".
     std::vector<std::string> layers{"Default"};
+    // Which layers collide (Phase 13 step 2): entry i is the mask of layers
+    // layer i collides with. Missing entries mean "all", so an empty list
+    // (every older project) has every layer colliding with every other.
+    // Edit through SetLayersCollide (gameplay.h), which keeps it symmetric.
+    std::vector<u32> collision_matrix;
 };
 
 inline constexpr const char* kProjectExtension = ".aproject";
@@ -80,5 +85,6 @@ AETHER_REFLECT(aether::ProjectSettings, 1,
     AETHER_FIELD(plugins, Field_EditAnywhere, {.category = "Project"}),
     AETHER_FIELD(fixed_timestep_hz, Field_EditAnywhere, {.category = "Physics", .range_min = 10, .range_max = 480, .units = "Hz"}),
     AETHER_FIELD(gravity, Field_EditAnywhere, {.category = "Physics", .units = "m/s2"}),
-    AETHER_FIELD(layers, Field_EditAnywhere, {.tooltip = "Collision layers; the first is always Default", .category = "Physics"})
+    AETHER_FIELD(layers, Field_EditAnywhere, {.tooltip = "Collision layers; the first is always Default", .category = "Physics"}),
+    AETHER_FIELD(collision_matrix, Field_ReadOnly, {.tooltip = "Per layer, the mask of layers it collides with (edit in the collision matrix)", .category = "Physics"})
 )

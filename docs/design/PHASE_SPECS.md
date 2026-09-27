@@ -993,7 +993,23 @@ flying, swimming).
      SphereCollider and migrates old scenes. It hasn't been compiled on
      Windows yet; moving it onto PhysicsScene waits with the other window
      hookups.
-2. Layers and the collision matrix.
+2. ✅ **Done.** Layers and the collision matrix.
+   - **Settings**: `ProjectSettings::collision_matrix` stores, per layer,
+     the mask of layers it collides with. A missing row means "all", so
+     older projects and untouched layers stay empty in the file.
+   - **API**: `SetLayersCollide(settings, a, b, collide)` edits both
+     directions, and `MakeCollisionMatrix` reads it. A lopsided file
+     collides only where both rows agree.
+   - **Jolt object layers** are `layer * 2 + moving`: 64 of them over two
+     broadphase trees (non-moving and moving). The pair filter reads the
+     matrix, and two non-moving bodies never collide.
+     `PhysicsWorld::SetCollisionMatrix` swaps the matrix at runtime; pairs
+     the broadphase finds from then on follow it.
+   - **Bodies**: `PhysicsScene` puts each body on its entity's `Layer`,
+     and rebuilds the body when the layer changes.
+   - **Debug fix**: the broadphase interface now implements
+     `GetBroadPhaseLayerName`, which Jolt's profiling builds need. Debug
+     builds with physics failed to compile without it.
 3. Contact listener queue and event dispatch, with a determinism test (same
    scene, same events in the same order across 10 runs).
 4. Queries with Blueprint nodes.
