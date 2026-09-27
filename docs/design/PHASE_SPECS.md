@@ -962,8 +962,37 @@ flying, swimming).
 
 ### 13.4 PR breakdown
 
-1. Collider components (box, sphere, capsule, convex, mesh) and the
-   `RigidBody` split, with the scene migration.
+1. ✅ **Done.** Collider components (box, sphere, capsule, convex, mesh)
+   and the `RigidBody` split, with the scene migration.
+   - **Colliders** each have a center offset, a trigger flag (the body
+     becomes a Jolt sensor), friction and restitution. Several on one
+     entity make a static compound shape. A mesh collider keeps its
+     triangles only on static bodies; moving ones get the convex hull of
+     its vertices, as in Unity and Unreal.
+   - **`RigidBody`** is motion only (schema version 2): Static, Kinematic
+     or Dynamic, mass, damping, gravity scale, CCD and rotation locks. An
+     entity with colliders and no RigidBody is static.
+   - **Migration**:
+     - Old binary payloads (radius, mass, is_static: 9 bytes) still load;
+       new ones start with a magic tag and hold the reflected binary
+       form.
+     - Version-1 JSON migrates through the reflection hook (is_static
+       becomes motion; radius becomes `legacy_radius`).
+     - `MigrateLegacyRigidBodies(World&)` then gives each such entity a
+       SphereCollider. The editor calls it after loading a scene.
+   - **`PhysicsScene`** keeps a PhysicsWorld in step with the ECS:
+     - creates, rebuilds (when collider or RigidBody settings change)
+       and destroys bodies;
+     - pushes gameplay's Transform changes in (kinematic bodies are moved
+       over the step, others teleported), and writes dynamic bodies
+       back;
+     - records why a collider couldn't make a body, such as a degenerate
+       hull;
+     - stores each body's entity in its user data, for step 3's events.
+   - **Editor**: `editor/main.cpp` now makes its spheres from RigidBody +
+     SphereCollider and migrates old scenes. It hasn't been compiled on
+     Windows yet; moving it onto PhysicsScene waits with the other window
+     hookups.
 2. Layers and the collision matrix.
 3. Contact listener queue and event dispatch, with a determinism test (same
    scene, same events in the same order across 10 runs).
