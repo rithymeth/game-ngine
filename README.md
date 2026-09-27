@@ -2324,6 +2324,50 @@ Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 10
 - 188/188 tests pass on GCC 13, on Clang and under ASan/UBSan, and 195/195
   with physics.
 
+Steps 3 (Win32 and XInput backends) and 4 (the input editor) need the
+Windows build.
+
+### Phase 11 (in progress) — Scripting (Luau)
+
+Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 11.
+
+**Step 1: the Luau VM** (`scripting/`, the `Aether::Scripting` library).
+
+- **Luau** (MIT) is fetched at configure time (tag `0.740`), behind the new
+  `AETHER_BUILD_SCRIPTING` option, which is on by default.
+  - Only its VM and compiler are built.
+  - Its code isn't held to the engine's warning flags.
+  - Luau's headers stay private to the scripting library.
+- **`LuauHost`** compiles and runs chunks and files, and calls global
+  functions with values (nil, bool, number, string).
+  - It reads and sets globals, and caches compiled bytecode by source
+    hash. Failed compiles aren't cached.
+  - Errors come back as `name:line: message`, and the VM stays usable
+    after one.
+  - `print` goes to a handler, which by default is the engine log.
+- **Sandbox (§11.4)**: no `io`, `os` reduced to `os.clock`, no `loadstring`,
+  and no `debug` unless allowed (editor builds, for the debugger).
+- **Limits**:
+  - An instruction budget per run or call, through Luau's interrupt hook.
+    An endless loop fails with a clear error instead of hanging.
+  - A memory cap, through the VM's allocator. After any failed call the
+    garbage is collected, so a script that hits the cap doesn't leave the
+    VM full.
+
+**Verified**: 3 new tests.
+
+- **Running and calling**: chunks and calls with typed results, globals
+  across runs, the bytecode cache, and print formatting.
+- **Errors**: syntax and runtime errors with line numbers, `error()`,
+  recovery afterwards, and running files.
+- **Sandbox and limits**: every removed library, the allowed ones, debug
+  in editor mode, the instruction budget (reset per run), and the memory
+  cap with recovery.
+- **Bug caught before merging**: after hitting the memory cap, the next run
+  failed too, because the failed script's garbage was still counted.
+- 191/191 tests pass on GCC 13, on Clang and under ASan/UBSan, and 198/198
+  with physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
