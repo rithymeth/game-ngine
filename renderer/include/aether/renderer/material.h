@@ -5,6 +5,8 @@
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
+#include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -50,7 +52,22 @@ struct Node {
     nlohmann::json defaults = nlohmann::json::object(); // unconnected inputs' constants: pin -> number or [x, y, z, w]
 };
 
+struct Material;
+// Material functions by name (Phase 15 step 4): reusable subgraphs that a
+// material calls with Function.Call:<name> nodes.
+struct FunctionLibrary {
+    std::map<std::string, Material> functions;
+    const Material* Find(const std::string& name) const;
+};
+
 struct Material {
+    // A material function (.amf): Function.Input and Function.Output nodes
+    // instead of a Material Output; the shading settings are unused.
+    bool is_function = false;
+    std::string description;
+    // The functions Function.Call nodes resolve against (not saved).
+    std::shared_ptr<const FunctionLibrary> functions;
+
     ShadingModel shading = ShadingModel::DefaultLit;
     BlendMode blend = BlendMode::Opaque;
     bool two_sided = false;
@@ -117,8 +134,17 @@ struct Analysis {
 // config; MT003 incompatible types on a link; MT004 a link to a pin that
 // doesn't exist; MT005 cycle; MT006 unknown parameter; MT007 required input
 // unconnected; MT008 input with two links; MT009 (warning) output pin the
-// material's settings ignore (Opacity on an Opaque material).
+// material's settings ignore (Opacity on an Opaque material); MT010
+// (warning) truncation; MT011 a function's interface (no output, a
+// duplicate input or output name, a Material Output in a function); MT012
+// an unknown function, or functions that call themselves; MT013 a called
+// function has errors of its own.
 Analysis Analyze(const Material& material);
+
+// A copy of the material with every Function.Call replaced by the
+// function's nodes (recursively). The function's inputs and outputs become
+// Utility.Reroute nodes of their declared types, so types are unchanged.
+bool InlineFunctions(const Material& material, Material& out, std::string* error = nullptr);
 
 // Whether an output of `from` can feed an input of `to`: same type, a
 // float broadcast, or truncation to fewer components (with a warning, MT010).
