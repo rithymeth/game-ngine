@@ -94,7 +94,28 @@ enum class Op : u8 {
     SetField,     // d = field access index
     CallFunction, // d = function call index
     CallEvent,    // d = event call index (a custom event on self)
+    // Per-instance node state (Do Once, Gate, Do N, Flip Flop): a = state slot.
+    StateInit,   // b = bool register: the flag's first value (once per instance)
+    StateJmpIf,  // jump to d if the flag equals c
+    StateSet,    // flag = c
+    StateToggle, // flag = !flag
+    StateGet,    // a = dst bool, b = slot
+    CountLess,   // jump to d if counter >= r[b] (int), else counter++
+    CountGet,    // a = dst int, b = slot
+    CountReset,  // counter = 0
+    // Latent actions (§C.4): a = state slot, b = duration register, c =
+    // LatentKind, d = latent index. Starts the action and carries on; its
+    // "completed" code runs later from the latent's resume point.
+    Latent,
     Ret,
+};
+
+enum class LatentKind : u8 { Delay, RetriggerableDelay, NextTick };
+
+struct LatentInfo {
+    NodeId node = 0;
+    u32 function = 0;
+    u32 resume_pc = 0; // where its "completed" code starts in the function
 };
 
 struct Instr {
@@ -168,6 +189,8 @@ struct CompiledBlueprint {
     std::vector<NativeCall> native_calls;
     std::vector<FieldAccess> field_accesses;
     std::vector<FunctionCall> calls;
+    std::vector<LatentInfo> latents;
+    u16 state_slots = 0; // per-instance node state (stateful flow nodes and latent nodes)
 
     const CompiledVariable* FindVariable(std::string_view name) const;
     const CompiledFunction* FindEvent(std::string_view key) const;
