@@ -2622,3 +2622,94 @@ editors it is built on Dear ImGui alone and runs headless in tests.
 6. ✅ **Done** (portable part). The editor: the emitter stack with module details, curve and gradient
    editors, and a live preview with a timeline scrubber and per-emitter
    stats.
+
+## Phase 20: AI and navigation
+
+The concept is in [ROADMAP.md Phase 20](../ROADMAP.md). The engine side is
+the `Aether::Nav` library (`nav/`). Navigation meshes are baked with
+Recast and queried with Detour (recastnavigation 1.6, zlib licence,
+fetched by CMake). Crowds, Behavior Trees and perception build on them.
+It all runs and is tested headless.
+
+### 20.1 Baking and path queries
+
+- **Geometry** (`NavGeometry`): triangles with an area per triangle:
+  - area 0 is not walkable, 63 is plain ground, and 1–62 are the game's
+    own (water, grass, road);
+  - helpers add planes and boxes;
+  - step 2 gathers it from the scene's colliders and static meshes.
+- **Settings** (`NavMeshSettings`), for one kind of agent:
+  - the voxel size (cell size and height);
+  - the agent's height, radius, maximum climb and maximum slope;
+  - region sizes: small islands are dropped and small regions merged;
+  - edge length and error, and vertices per polygon;
+  - the detail mesh's sampling;
+  - the tile size in cells (0 is one tile over everything).
+- **Baking** (`BuildNavMesh`):
+  - The world is cut into square tiles on a grid from the geometry's
+    corner. Each tile is baked apart, with a border of the agent's
+    radius plus three cells so the tiles meet cleanly.
+  - Per tile, the Recast pipeline runs in order:
+    1. rasterize the triangles that touch it, walkable by slope and
+       keeping their areas;
+    2. filter low obstacles, ledges and low ceilings;
+    3. erode by the agent's radius;
+    4. build the distance field and regions, then contours;
+    5. build the polygon mesh and the detail mesh;
+    6. make Detour's tile data.
+  - Empty tiles are skipped. The stats count tiles, polygons, vertices
+    and time.
+  - Failures give a reason: no geometry, bad settings, too many tiles,
+    or nothing walkable.
+  - `BuildNavTile` rebakes one tile of an existing grid (used for
+    obstacles in step 2).
+- **Files**: `.anav` holds the magic `ANAV`, a version, the settings, the
+  grid and each tile's Detour data. Loading refuses files that are cut
+  short, foreign or from a newer version.
+- **Queries** (`NavMesh`, over `dtNavMesh` and `dtNavMeshQuery`):
+  - `FindPath` gives the corners of the shortest path from the points on
+    the mesh nearest the start and the end:
+    - **Complete** when it reaches the goal;
+    - **Partial** when the goal is cut off, ending as near as it gets;
+    - it fails (status **None**) with no start or goal on the mesh.
+  - `NearestPoint` gives a point and its area.
+  - `Raycast` walks a straight line over the mesh. It stops at a wall,
+    the mesh's edge or an excluded area, and gives where and the wall's
+    normal.
+  - `RandomPoint` is weighted by area and seeded, so it's repeatable.
+  - `RandomPointNear` stays within the radius and connected to the
+    centre.
+  - `Reachable` is true when a complete path joins the two points.
+  - `ReplaceTile` swaps (or, when empty, removes) one tile, and the
+    mesh's data follows so saving keeps it.
+  - `Polygons` lists each polygon with its area and tile, for the
+    editor's overlay.
+- **Filters** (`NavQueryFilter`): a cost per area, which multiplies
+  distance, and excluded areas. An excluded area is never entered, by
+  paths, raycasts or random points: Detour is built with a virtual query
+  filter for this.
+
+### 20.2 PR breakdown
+
+1. ✅ **Done.** Navmesh baking from geometry with Recast (tiles, agent
+   settings, areas) and Detour queries (paths, nearest points, raycasts,
+   random points, area costs and exclusion, `.anav` files, tile
+   replacement).
+2. Runtime tile rebuilds for dynamic obstacles (boxes and cylinders that
+   carve), off-mesh links (jumps, ladders, drops), area volumes that
+   mark areas, and gathering the geometry from the scene.
+3. The `NavAgent` component on Detour's crowd (steering, local avoidance,
+   the agent moving the entity's transform), and Blueprint and Luau
+   nodes (Move To, Stop, Find Path, Random Reachable Point).
+4. Blackboards (typed keys) and Behavior Trees:
+   - composites: Selector, Sequence and Parallel;
+   - decorators: Blackboard condition, Cooldown, Loop and TimeLimit;
+   - services;
+   - tasks: Move To, Wait, Play Anim, and Blueprint or Luau tasks;
+   - their assets and checks.
+5. `AIPerception`: sight (a cone plus a line-of-sight raycast), hearing
+   (noise events), damage, and forgetting. Events go to Blueprints.
+6. The editor:
+   - a navmesh overlay in the viewport;
+   - the Behavior Tree graph editor;
+   - a BT debugger that shows the active path during Play in Editor.

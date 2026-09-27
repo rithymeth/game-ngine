@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 in progress (AI and navigation: navmesh baking and path queries)
 
 ### Phase 1 — Foundation
 
@@ -5128,6 +5128,62 @@ shader later). Spec: [PHASE_SPECS.md, Phase 19](docs/design/PHASE_SPECS.md).
   - stale selections dropped;
   - looping.
 - 393/393 tests pass on GCC 13, Clang and ASan/UBSan, and 425/425 with
+  physics.
+
+### Phase 20 (in progress) — AI and navigation
+
+The `Aether::Nav` library (`nav/`) bakes navigation meshes with Recast and
+queries them with Detour (recastnavigation 1.6, fetched by CMake). Crowds,
+Behavior Trees and perception come next. Spec:
+[PHASE_SPECS.md, Phase 20](docs/design/PHASE_SPECS.md).
+
+**Step 1: navmesh baking and path queries** (§20.1).
+
+- **Geometry**: triangles with an area each (0 blocked, 63 ground, 1–62
+  your own), with plane and box helpers.
+- **Settings** per agent:
+  - voxel sizes;
+  - the agent's height, radius, climb and slope;
+  - region, edge and detail settings;
+  - the tile size.
+- **Baking**:
+  - square tiles, each baked apart with a border;
+  - the full Recast pipeline, keeping areas;
+  - stats, and errors that say why;
+  - `BuildNavTile` rebakes a single tile.
+- **Files**: `.anav` files (Detour tile data plus the grid and
+  settings).
+- **Queries**:
+  - paths that are Complete or Partial, as corners;
+  - nearest points, with their area;
+  - raycasts over the mesh, giving the hit and the wall's normal;
+  - seeded random points (anywhere, or within a radius over connected
+    ground);
+  - reachability;
+  - swapping or removing a tile;
+  - polygons for drawing.
+- **Filters**: a cost per area, and excluded areas that are never
+  entered. Exclusion uses a Detour filter subclass, so Detour is built
+  with its virtual query filter.
+
+**Verified**: 11 new tests.
+
+- A straight path on a floor.
+- Bad input refused.
+- Paths around a wall.
+- Raycasts: stopped by a wall, clear alongside it, and at the floor's
+  edge.
+- A climbable step, and a block too high to climb, whose top gives a
+  Partial path.
+- The agent's radius keeping the mesh off edges, and closing a narrow
+  corridor.
+- Area costs choosing between wading and the bridge, and exclusion.
+- `.anav` round trips, and broken files refused.
+- Tiled meshes matching a single tile.
+- Random points: repeatable, and staying within their radius.
+- Rebaking one tile for a crate, saved with the mesh, and removing a
+  tile.
+- 404/404 tests pass on GCC 13, Clang and ASan/UBSan, and 436/436 with
   physics.
 
 ## Building
