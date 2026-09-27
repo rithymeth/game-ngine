@@ -46,6 +46,10 @@ public:
     Widget* Layer(usize i) const { return i < layers_.size() ? layers_[i].widget.get() : nullptr; }
     Widget* Find(const std::string& name) const;
 
+    // Named fonts for Text widgets that pick one (not owned).
+    void SetFonts(const FontLibrary* fonts) { fonts_ = fonts; }
+    const FontLibrary* Fonts() const { return fonts_; }
+
     void Layout(const Font& font);
     // Pixels (layout, then scaled).
     DrawList Paint(const Font& font) const;
@@ -60,6 +64,7 @@ private:
     Vec2 size_{1920.0f, 1080.0f};
     Margin safe_;
     std::vector<LayerEntry> layers_;
+    const FontLibrary* fonts_ = nullptr;
 };
 
 } // namespace aether::ui

@@ -75,7 +75,7 @@ Widget* Viewport::Find(const std::string& name) const {
 }
 
 void Viewport::Layout(const Font& font) {
-    LayoutContext ctx{&font};
+    LayoutContext ctx{&font, fonts_};
     const Rect area = SafeRect();
     for (LayerEntry& e : layers_) {
         e.widget->Measure(ctx);
@@ -85,7 +85,7 @@ void Viewport::Layout(const Font& font) {
 
 DrawList Viewport::Paint(const Font& font) const {
     DrawList list;
-    PaintContext ctx{&font, 1.0f};
+    PaintContext ctx{&font, 1.0f, fonts_};
     for (const LayerEntry& e : layers_) e.widget->Paint(list, ctx);
     list.Scale(Scale());
     return list;

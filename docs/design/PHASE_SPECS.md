@@ -2134,7 +2134,69 @@ Everything else runs and is tested headless.
   SetEnabled, SetValue, GetValue, PlayAnimation, StopAnimation and
   SetFocus. All take the entity and a widget name.
 
-### 18.5 PR breakdown
+### 18.5 Distance-field text and world-space UI
+
+- **SDF fonts** (`SdfFont`, `aether/ui/font.h`): TrueType or OpenType
+  fonts loaded through stb_truetype. Bad data is refused with a reason.
+  - Glyphs are rasterized the first time they're drawn, as signed
+    distance fields at one base size (48 px, 6 px of field around each
+    glyph). They go into a one-channel shelf-packed atlas. When the atlas
+    fills, it doubles in height up to a limit; glyphs that still don't
+    fit are reported.
+  - The renderer uploads the dirty rectangle, or the whole atlas when it
+    has been resized. `Prewarm` rasterizes text ahead of time.
+  - Metrics (ascent, line height, advances, kerning) scale from the base
+    size. Code points the font lacks draw as U+FFFD, else '?'. Control
+    characters take a space's room.
+- **Drawing SDF quads**: a quad carries the field's span on screen
+  (`sdf_range`, in pixels), its edge value and a softness. The shader's
+  coverage is `saturate((d - edge) / (1/range + softness) + 0.5)`
+  (`SdfCoverage`), so edges stay about a pixel wide at any size.
+  - Render transforms and the viewport's scale grow `sdf_range` with the
+    glyphs.
+- **Text effects** (`TextEffects`): an outline (width and colour) and a
+  drop shadow (offset, colour, softness), drawn in passes: shadow, then
+  outline, then fill.
+  - With SDF fonts the outline lowers the edge value, and the shadow
+    adds softness.
+  - With bitmap fonts the outline is four offset copies.
+  - Text widgets and theme text styles both have effects, and both are
+    saved.
+- **Font libraries**: `FontLibrary` names fonts. A viewport's library
+  lets a Text widget pick one by name (`font`); unknown or empty names
+  use the default. Theme text styles can set the font too.
+- **World widgets** (`WorldWidgetComponent`, `WorldUISystem`,
+  `aether/ui/world_ui.h`): a layout shown at an entity's place.
+  - Settings: an offset from the entity, a size in layout units and a
+    pivot.
+  - `Screen` widgets are projected and drawn flat in pixels, snapped to
+    whole pixels. Past `reference_distance` they shrink down to
+    `min_scale`, and they scale with the HUD's UI scale.
+  - `World` widgets are quads in the scene, `world_width` wide. They face
+    the camera or keep the entity's facing. Each comes with a transform
+    from layout units to world space and its corners. The renderer can
+    draw its list through the transform, depth-tested, or into a
+    texture.
+  - Widgets are hidden behind the camera, past `max_distance`, off
+    screen, or when not visible.
+  - Each widget has its own viewport and input router, so its controls
+    (even dropdowns) work as usual.
+  - Bindings read the entity's components. Control events come back as
+    `WidgetEvent`s for Blueprints. The UI library (SetText, PlayAnimation
+    and the rest) falls back to world widgets when the entity has no
+    screen one.
+  - Placement uses the entity's `Transform`, or its world transform when
+    given a GuidIndex.
+- **Picking**: `HitTest` finds the nearest widget with something hittable
+  under a pixel.
+  - Screen widgets use their rectangle; World widgets use a ray against
+    the quad's plane.
+  - Panels let clicks through to the game.
+  - `interactive` widgets take pointer moves, presses and releases,
+    capture a press until it's released, and unhover when the pointer
+    leaves.
+
+### 18.6 PR breakdown
 
 1. ✅ **Done.** The widget tree, the layout panels (Canvas with anchors,
    boxes, Grid, Overlay, SizeBox, Border, ScrollBox, Spacer), Text and
@@ -2150,7 +2212,7 @@ Everything else runs and is tested headless.
    with Create Widget, Add to Viewport, Set Text and events such as
    OnClicked), and UI animations (tweens and keyframe timelines of
    position, scale, opacity and colour).
-5. SDF text (font atlases from TrueType via stb_truetype), and world-space
+5. ✅ **Done.** SDF text (font atlases from TrueType via stb_truetype), and world-space
    UI (health bars over enemies, projected or on 3D quads).
 6. The UI Designer: palette, hierarchy, canvas with selection, anchors and
    resolution preview, details, and the animation timeline.
