@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <set>
 
 namespace aether::vfx {
 
@@ -26,6 +27,16 @@ constexpr const char* kFlipbooks[] = {"OverLife", "Rate", "Random"};
 constexpr const char* kOrientations[] = {"Rotation", "AlignVelocity", "FaceCamera"};
 constexpr const char* kRibbonFacings[] = {"Camera", "Axis"};
 constexpr const char* kRibbonUvs[] = {"Stretch", "Distance"};
+constexpr const char* kEvents[] = {"Birth", "Death", "Collision"};
+constexpr const char* kParamTypes[] = {"Float", "Vector", "Color"};
+
+template <usize N>
+int IndexIn(const char* const (&names)[N], const std::string& s) {
+    for (usize i = 0; i < N; ++i) {
+        if (s == names[i]) return static_cast<int>(i);
+    }
+    return -1;
+}
 
 // Each module lists its fields once, through a visitor: writing JSON,
 // reading it, and checking values all use the same list.
@@ -83,6 +94,9 @@ void Fields(CollisionPlane& m, Visitor& v) {
     v.Bool("world", m.world), v.Vector("normal", m.normal), v.Float("offset", m.offset), v.Float("bounce", m.bounce), v.Float("friction", m.friction),
         v.Float("lifetime_loss", m.lifetime_loss), v.Float("radius_scale", m.radius_scale);
 }
+void Fields(SceneCollision& m, Visitor& v) {
+    v.Float("bounce", m.bounce), v.Float("friction", m.friction), v.Float("lifetime_loss", m.lifetime_loss), v.Float("radius_scale", m.radius_scale);
+}
 void Fields(SizeOverLife& m, Visitor& v) { v.Curve("curve", m.curve); }
 void Fields(ColorOverLife& m, Visitor& v) { v.Gradient("gradient", m.gradient); }
 void Fields(SpeedOverLife& m, Visitor& v) { v.Curve("curve", m.curve); }
@@ -130,6 +144,7 @@ AETHER_VFX_NAME(CollisionPlane)
 AETHER_VFX_NAME(SizeOverLife)
 AETHER_VFX_NAME(ColorOverLife)
 AETHER_VFX_NAME(SpeedOverLife)
+AETHER_VFX_NAME(SceneCollision)
 AETHER_VFX_NAME(SpriteRenderer)
 AETHER_VFX_NAME(MeshRenderer)
 AETHER_VFX_NAME(RibbonRenderer)
@@ -239,6 +254,56 @@ public:
     }
 };
 
+// Sets the field named `key` from a parameter value (SetModuleField).
+class Setter final : public Visitor {
+public:
+    Setter(const std::string& key, const ParameterValue& value) : key_(key), value_(value) {}
+    bool found = false;
+    std::string error;
+    void Bool(const char* k, bool&) override { Refuse(k, "true or false"); }
+    void U32(const char* k, u32& v) override {
+        if (Take(k, ParameterType::Float, "a number")) v = static_cast<u32>(std::max(value_.f, 0.0f));
+    }
+    void Float(const char* k, f32& v) override {
+        if (Take(k, ParameterType::Float, "a number")) v = value_.f;
+    }
+    void Range(const char* k, FloatRange& v) override {
+        if (Take(k, ParameterType::Float, "a number")) v = FloatRange::Constant(value_.f);
+    }
+    void Curve(const char* k, FloatCurve& v) override {
+        if (Take(k, ParameterType::Float, "a number")) v = FloatCurve::Constant(value_.f);
+    }
+    void Vector(const char* k, Vec3& v) override {
+        if (Take(k, ParameterType::Vector, "a vector")) v = value_.v;
+    }
+    void Color(const char* k, LinearColor& v) override {
+        if (Take(k, ParameterType::Color, "a colour")) v = value_.c;
+    }
+    void Gradient(const char* k, ColorGradient& v) override {
+        if (Take(k, ParameterType::Color, "a colour")) v = ColorGradient::Constant(value_.c);
+    }
+    void String(const char* k, std::string&) override { Refuse(k, "a name"); }
+    void EnumIndex(const char* k, u32&, const char* const*, usize) override { Refuse(k, "a choice"); }
+
+private:
+    bool Take(const char* k, ParameterType type, const char* what) {
+        if (key_ != k) return false;
+        found = true;
+        if (value_.type != type) {
+            error = key_ + " takes " + what;
+            return false;
+        }
+        return true;
+    }
+    void Refuse(const char* k, const char* what) {
+        if (key_ != k) return;
+        found = true;
+        error = key_ + " is " + what + ", which parameters can't set";
+    }
+    std::string key_;
+    ParameterValue value_;
+};
+
 template <typename Variant>
 json ModuleToJson(const Variant& m) {
     return std::visit(
@@ -266,6 +331,11 @@ bool MakeByName(const std::string& name, Variant& out) {
     } else {
         return false;
     }
+}
+
+template <typename Variant>
+const char* ModuleNameOf(const Variant& m) {
+    return std::visit([](const auto& x) { return NameOf<std::decay_t<decltype(x)>>(); }, m);
 }
 
 template <typename Variant, usize I = 0>
@@ -388,6 +458,25 @@ json EmitterToJson(const Emitter& e) {
     j["init"] = StageToJson(e.init);
     j["update"] = StageToJson(e.update);
     j["render"] = StageToJson(e.render);
+    if (!e.sub_emitters.empty()) {
+        json subs = json::array();
+        for (const SubEmitter& sub : e.sub_emitters) {
+            subs.push_back({{"event", kEvents[static_cast<usize>(sub.event)]},
+                            {"emitter", sub.emitter},
+                            {"count", ToJson(sub.count)},
+                            {"probability", sub.probability},
+                            {"inherit_velocity", sub.inherit_velocity},
+                            {"inherit_color", sub.inherit_color},
+                            {"inherit_size", sub.inherit_size},
+                            {"max_per_frame", sub.max_per_frame}});
+        }
+        j["sub_emitters"] = subs;
+    }
+    if (!e.bindings.empty()) {
+        json binds = json::array();
+        for (const ParameterBinding& b : e.bindings) binds.push_back({{"parameter", b.parameter}, {"field", b.field}});
+        j["bindings"] = binds;
+    }
     return j;
 }
 
@@ -395,7 +484,6 @@ bool EmitterFromJson(const json& j, Emitter& out, std::string* error) {
     if (!j.is_object()) return Fail(error, "an emitter is an object");
     Emitter e;
     EmitterSettings& s = e.settings;
-    std::string where;
     try {
         s.name = j.value("name", s.name);
         s.enabled = j.value("enabled", s.enabled);
@@ -418,6 +506,41 @@ bool EmitterFromJson(const json& j, Emitter& out, std::string* error) {
         !StageFromJson(j, "render", e.render, &e2)) {
         return Fail(error, "emitter '" + s.name + "': " + e2);
     }
+    const std::string where = "emitter '" + s.name + "': ";
+    if (j.contains("sub_emitters")) {
+        if (!j["sub_emitters"].is_array()) return Fail(error, where + "sub_emitters should be a list");
+        for (usize i = 0; i < j["sub_emitters"].size(); ++i) {
+            const json& sj = j["sub_emitters"][i];
+            const std::string at = where + "sub_emitters[" + std::to_string(i) + "]: ";
+            if (!sj.is_object()) return Fail(error, at + "should be an object");
+            SubEmitter sub;
+            const int kind = IndexIn(kEvents, sj.value("event", std::string("Death")));
+            if (kind < 0) return Fail(error, at + "unknown event '" + sj.value("event", std::string()) + "'");
+            sub.event = static_cast<ParticleEventKind>(kind);
+            try {
+                sub.emitter = sj.value("emitter", std::string());
+                sub.probability = sj.value("probability", sub.probability);
+                sub.inherit_velocity = sj.value("inherit_velocity", sub.inherit_velocity);
+                sub.inherit_color = sj.value("inherit_color", sub.inherit_color);
+                sub.inherit_size = sj.value("inherit_size", sub.inherit_size);
+                sub.max_per_frame = sj.value("max_per_frame", sub.max_per_frame);
+            } catch (const json::exception&) {
+                return Fail(error, at + "a setting has the wrong type");
+            }
+            std::string ce;
+            if (sj.contains("count") && !FromJson(sj["count"], sub.count, &ce)) return Fail(error, at + "count: " + ce);
+            e.sub_emitters.push_back(std::move(sub));
+        }
+    }
+    if (j.contains("bindings")) {
+        if (!j["bindings"].is_array()) return Fail(error, where + "bindings should be a list");
+        for (const json& bj : j["bindings"]) {
+            if (!bj.is_object() || !bj.contains("parameter") || !bj.contains("field") || !bj["parameter"].is_string() || !bj["field"].is_string()) {
+                return Fail(error, where + "a binding is {\"parameter\": name, \"field\": \"stage[i].field\"}");
+            }
+            e.bindings.push_back({bj["parameter"].get<std::string>(), bj["field"].get<std::string>()});
+        }
+    }
     out = std::move(e);
     return true;
 }
@@ -427,6 +550,19 @@ std::string SaveParticleSystem(const ParticleSystemAsset& asset) {
     for (const Emitter& e : asset.emitters) emitters.push_back(EmitterToJson(e));
     json j = {{"version", 1}, {"emitters", emitters}};
     if (!asset.name.empty()) j["name"] = asset.name;
+    if (!asset.parameters.empty()) {
+        json params = json::array();
+        for (const ParticleParameter& p : asset.parameters) {
+            json pj = {{"name", p.name}, {"type", kParamTypes[static_cast<usize>(p.value.type)]}};
+            switch (p.value.type) {
+            case ParameterType::Float: pj["default"] = p.value.f; break;
+            case ParameterType::Vector: pj["default"] = ToJson(p.value.v); break;
+            case ParameterType::Color: pj["default"] = ToJson(p.value.c); break;
+            }
+            params.push_back(pj);
+        }
+        j["parameters"] = params;
+    }
     return j.dump(2);
 }
 
@@ -442,6 +578,34 @@ bool LoadParticleSystem(const std::string& text, ParticleSystemAsset& out, std::
             Emitter e;
             if (!EmitterFromJson(ej, e, error)) return false;
             a.emitters.push_back(std::move(e));
+        }
+    }
+    if (j.contains("parameters")) {
+        if (!j["parameters"].is_array()) return Fail(error, "parameters should be a list");
+        for (const json& pj : j["parameters"]) {
+            if (!pj.is_object() || !pj.contains("name") || !pj["name"].is_string()) return Fail(error, "a parameter needs a name");
+            ParticleParameter p;
+            p.name = pj["name"].get<std::string>();
+            const std::string where = "parameter '" + p.name + "': ";
+            const int type = IndexIn(kParamTypes, pj.value("type", std::string("Float")));
+            if (type < 0) return Fail(error, where + "unknown type '" + pj.value("type", std::string()) + "'");
+            p.value.type = static_cast<ParameterType>(type);
+            std::string e;
+            if (pj.contains("default")) {
+                const json& d = pj["default"];
+                bool ok = true;
+                switch (p.value.type) {
+                case ParameterType::Float:
+                    ok = d.is_number();
+                    if (ok) p.value.f = d.get<f32>();
+                    else e = "a number";
+                    break;
+                case ParameterType::Vector: ok = FromJson(d, p.value.v, &e); break;
+                case ParameterType::Color: ok = FromJson(d, p.value.c, &e); break;
+                }
+                if (!ok) return Fail(error, where + "default: " + e);
+            }
+            a.parameters.push_back(std::move(p));
         }
     }
     out = std::move(a);
@@ -483,6 +647,107 @@ std::vector<EmitterDiagnostic> ValidateEmitter(const Emitter& e) {
         }
     }
     if (s.duration <= 0.0f) out.push_back({"FX006", "the duration must be more than 0 seconds", true});
+    return out;
+}
+
+const ParticleParameter* ParticleSystemAsset::FindParameter(const std::string& name) const {
+    for (const ParticleParameter& p : parameters) {
+        if (p.name == name) return &p;
+    }
+    return nullptr;
+}
+
+i64 ParticleSystemAsset::FindEmitter(const std::string& name) const {
+    for (usize i = 0; i < emitters.size(); ++i) {
+        if (emitters[i].settings.name == name) return static_cast<i64>(i);
+    }
+    return -1;
+}
+
+namespace {
+template <typename Variant>
+bool SetIn(std::vector<Variant>& stage, usize index, const std::string& key, const ParameterValue& value, std::string& error) {
+    if (index >= stage.size()) {
+        error = "there's no module " + std::to_string(index);
+        return false;
+    }
+    Setter setter(key, value);
+    std::visit([&](auto& module) { Fields(module, setter); }, stage[index]);
+    if (!setter.found) {
+        error = std::string(ModuleNameOf(stage[index])) + " has no field '" + key + "'";
+        return false;
+    }
+    error = setter.error;
+    return error.empty();
+}
+} // namespace
+
+bool SetModuleField(Emitter& e, const std::string& field, const ParameterValue& value, std::string* error) {
+    // "stage[index].key"
+    const usize open = field.find('['), close = field.find(']'), dot = field.find('.', close == std::string::npos ? 0 : close);
+    if (open == std::string::npos || close == std::string::npos || dot != close + 1 || close < open + 2) {
+        return Fail(error, "'" + field + "' isn't stage[index].field");
+    }
+    const std::string stage = field.substr(0, open), key = field.substr(dot + 1), digits = field.substr(open + 1, close - open - 1);
+    if (!std::all_of(digits.begin(), digits.end(), [](char c) { return c >= '0' && c <= '9'; }) || key.empty()) {
+        return Fail(error, "'" + field + "' isn't stage[index].field");
+    }
+    const usize index = static_cast<usize>(std::stoul(digits));
+    std::string e2;
+    bool ok = false;
+    if (stage == "spawn") ok = SetIn(e.spawn, index, key, value, e2);
+    else if (stage == "init") ok = SetIn(e.init, index, key, value, e2);
+    else if (stage == "update") ok = SetIn(e.update, index, key, value, e2);
+    else if (stage == "render") ok = SetIn(e.render, index, key, value, e2);
+    else e2 = "unknown stage '" + stage + "' (spawn, init, update or render)";
+    if (!ok) return Fail(error, "'" + field + "': " + e2);
+    return true;
+}
+
+std::vector<EmitterDiagnostic> ValidateParticleSystem(const ParticleSystemAsset& asset) {
+    std::vector<EmitterDiagnostic> out;
+    std::set<std::string> names;
+    for (const Emitter& e : asset.emitters) {
+        const std::string prefix = "emitter '" + e.settings.name + "': ";
+        for (EmitterDiagnostic d : ValidateEmitter(e)) {
+            d.message = prefix + d.message;
+            out.push_back(std::move(d));
+        }
+        if (!names.insert(e.settings.name).second) out.push_back({"FX014", "two emitters are called '" + e.settings.name + "'", true});
+        for (const SubEmitter& sub : e.sub_emitters) {
+            if (sub.emitter == e.settings.name || asset.FindEmitter(sub.emitter) < 0) {
+                out.push_back({"FX011", prefix + "sub-emitter '" + sub.emitter + "' isn't another emitter of this system", true});
+            }
+        }
+        for (const ParameterBinding& b : e.bindings) {
+            const ParticleParameter* p = asset.FindParameter(b.parameter);
+            if (p == nullptr) {
+                out.push_back({"FX013", prefix + "binding to unknown parameter '" + b.parameter + "'", true});
+                continue;
+            }
+            Emitter scratch = e;
+            std::string why;
+            if (!SetModuleField(scratch, b.field, p->value, &why)) out.push_back({"FX013", prefix + "binding '" + b.parameter + "': " + why, true});
+        }
+    }
+    // Loops: an emitter whose events reach itself again.
+    const usize n = asset.emitters.size();
+    std::vector<int> state(n, 0); // 0 new, 1 on the path, 2 done
+    bool loop = false;
+    std::function<void(usize)> visit = [&](usize i) {
+        state[i] = 1;
+        for (const SubEmitter& sub : asset.emitters[i].sub_emitters) {
+            const i64 t = asset.FindEmitter(sub.emitter);
+            if (t < 0 || static_cast<usize>(t) == i) continue;
+            if (state[static_cast<usize>(t)] == 1) loop = true;
+            else if (state[static_cast<usize>(t)] == 0) visit(static_cast<usize>(t));
+        }
+        state[i] = 2;
+    };
+    for (usize i = 0; i < n; ++i) {
+        if (state[i] == 0) visit(i);
+    }
+    if (loop) out.push_back({"FX012", "sub-emitters trigger each other in a loop (max_per_frame caps it)", false});
     return out;
 }
 

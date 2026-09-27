@@ -2409,7 +2409,58 @@ CPU simulation as its reference and as the path for small emitters.
   sprites into plain triangles. The renderer's particle pass draws this
   on the GPU, with the Windows renderer.
 
-### 19.3 PR breakdown
+### 19.3 Events, sub-emitters, parameters and scene collision
+
+- **Events** (`ParticleEvent`): births, deaths (with whether it was old
+  age or a kill) and collisions (with the surface normal). Each carries
+  the particle's world position, velocity, colour, size and id.
+  - An instance keeps only the kinds asked for (`RecordEvents`), until
+    its next update.
+  - A system also asks for what its sub-emitters need, and gameplay can
+    add more.
+- **`EmitAt`**: births at a world point with added velocity, and the
+  colour and size taken from the event if given. The shape still
+  offsets from the point, and the emitter's own pose isn't changed.
+- **Sub-emitters**: on an emitter, "when mine are born / die / hit,
+  emitter X of this system emits here".
+  - Settings: a count, a probability, a share of the particle's
+    velocity, whether to take its colour and size, and `max_per_frame`.
+  - After all emitters update, the system feeds sub-emitters from the
+    frame's events. The births they cause can trigger more
+    sub-emitters, so it goes round until nothing new happens; the caps
+    end loops.
+  - An emitter with no spawn modules of its own counts as finished when
+    it's empty.
+- **Parameters**: declared on the system: a name, a type (float, vector
+  or colour) and a default.
+  - Emitters bind module fields to them by path: `spawn[0].rate`,
+    `init[2].speed` (a range becomes a constant), `update[0].acceleration`,
+    `init[3].color` (a gradient becomes one colour).
+  - `SetParameter` checks the type and sets each bound field on that
+    instance's copy of the emitter.
+  - `SetModuleField` says why a path or type is refused. Choices and
+    names can't be set.
+- **Scene collision** (`SceneCollision` module, `collision.h`): each
+  particle's move this frame, extended by its radius, is a ray against
+  the instance's `ParticleCollider`. Hits bounce with friction, can use
+  up life, and are collision events.
+  - `FunctionCollider` wraps any raycast (the physics world's).
+  - `DepthBufferCollider` tests against a depth buffer and the
+    view-projection it was drawn with, as the GPU path does. A particle
+    hits when it goes behind the surface by less than a thickness. The
+    normal comes from neighbouring depths, and only what's on screen
+    collides.
+- **System checks** (`ValidateParticleSystem`): every emitter's checks,
+  prefixed with its name, plus:
+  - FX011 a sub-emitter naming no other emitter;
+  - FX012 sub-emitters in a loop (warning);
+  - FX013 a binding to an unknown parameter, a missing field or the
+    wrong type;
+  - FX014 two emitters with one name.
+- The file saves `parameters`, and each emitter's `sub_emitters` and
+  `bindings`.
+
+### 19.4 PR breakdown
 
 1. ✅ **Done.** Curves, gradients, noise and randomness; the emitter's module
    stacks (spawn, initialize, update) and their asset format and checks;
@@ -2418,7 +2469,7 @@ CPU simulation as its reference and as the path for small emitters.
    fixed axes), flipbook animation, sorting, soft-particle parameters,
    mesh particles, ribbons and trails, and particle lights, as instance
    and vertex data for the renderer.
-3. Events and sub-emitters (on birth, death and collision), collision
+3. ✅ **Done.** Events and sub-emitters (on birth, death and collision), collision
    against the depth buffer and physics, and user parameters that modules
    read (Set Parameter).
 4. The `ParticleSystem` component and system (pooling, culling by distance

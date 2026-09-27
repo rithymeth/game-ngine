@@ -4962,6 +4962,48 @@ shader later). Spec: [PHASE_SPECS.md, Phase 19](docs/design/PHASE_SPECS.md).
 - 382/382 tests pass on GCC 13, Clang and ASan/UBSan, and 414/414 with
   physics.
 
+**Step 3: events, sub-emitters, parameters and scene collision** (§19.3).
+
+- **Events**: birth, death (old age or killed) and collision (with the
+  surface normal), in world space, recorded on request.
+- **Sub-emitters**: another emitter of the system emits where a particle
+  was born, died or hit.
+  - Counts, probabilities and inherited velocity, colour and size.
+  - Chains within a frame, and per-frame caps that stop loops.
+- **Parameters**: floats, vectors and colours declared on the system and
+  bound to module fields by path (`spawn[0].rate`), set at runtime.
+- **Scene collision**: particle moves as rays against a collider, either
+  any raycast (such as physics) or a depth buffer as the GPU does.
+- Four system checks (FX011–FX014), and all of it in `.avfx` files.
+
+**Verified**: 3 new tests.
+
+- Events:
+  - births and deaths in world space;
+  - kills against old age;
+  - collisions with their normals;
+  - masks.
+- `EmitAt`: overrides, and local space.
+- Sub-emitters:
+  - a firework bursting into sparks at the rocket's death, in its
+    colour;
+  - a system that finishes when its sparks are gone;
+  - caps, probabilities, three-level chains, and a loop that stops;
+  - splashes at collision points.
+- Parameters:
+  - rate, wind, tint and size bound and changed at runtime;
+  - type and name errors;
+  - six kinds of bad field path.
+- The system's checks and files, with their errors.
+- Scene collision:
+  - a raycast ground the ball stays on and bounces off;
+  - falling through with no collider;
+  - a depth buffer drawn from a camera (hits, normals, behind, off
+    screen);
+  - a system's collider.
+- 385/385 tests pass on GCC 13, Clang and ASan/UBSan, and 417/417 with
+  physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,

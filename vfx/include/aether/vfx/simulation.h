@@ -1,6 +1,7 @@
 #pragma once
 
 #include "aether/math/quaternion.h"
+#include "aether/vfx/collision.h"
 #include "aether/vfx/emitter.h"
 
 #include <memory>
@@ -45,6 +46,18 @@ struct EmitterPose {
     Vec3 DirectionToLocal(const Vec3& world) const;
 };
 
+// Something that happened to a particle this frame (step 3), in world space.
+struct ParticleEvent {
+    ParticleEventKind kind = ParticleEventKind::Death;
+    Vec3 position, velocity;
+    Vec3 normal;  // Collision: the surface's
+    LinearColor color;
+    f32 size = 0.0f;
+    u64 id = 0;
+    bool expired = false; // Death: of old age (not killed by a volume, attractor or hit)
+};
+constexpr u8 EventBit(ParticleEventKind k) { return static_cast<u8>(1u << static_cast<u8>(k)); }
+
 // One emitter playing: its clock, spawning, and the particle simulation.
 // The same asset, seed and time steps give the same particles.
 class EmitterInstance {
@@ -65,6 +78,22 @@ public:
     void Restart();
     // Births `count` particles now, outside the spawn modules (scripts, events). How many were born comes back.
     usize Emit(usize count);
+    // Births at a world point (a sub-emitter's event), with extra velocity,
+    // and the colour and size taken from the event if given.
+    usize EmitAt(usize count, const Vec3& world_position, const Vec3& add_velocity = {}, const LinearColor* color = nullptr, const f32* size = nullptr);
+
+    // --- Step 3 -----------------------------------------------------------------------
+    // What SceneCollision modules hit (not owned; null: they do nothing).
+    void SetCollider(const ParticleCollider* collider) { collider_ = collider; }
+    // Which events to keep (EventBit masks); this frame's, until the next Update (or ClearEvents).
+    void RecordEvents(u8 mask) { event_mask_ = mask; }
+    u8 EventMask() const { return event_mask_; }
+    const std::vector<ParticleEvent>& Events() const { return events_; }
+    void ClearEvents() { events_.clear(); }
+    // A system keeps events across its emitters' updates and clears them itself.
+    void SetAutoClearEvents(bool on) { auto_clear_events_ = on; }
+    // Sets a module field of this instance's copy of the emitter (parameters).
+    bool SetField(const std::string& field, const ParameterValue& value, std::string* error = nullptr);
 
     bool Spawning() const; // still in its loop, not stopped
     bool Finished() const { return !Spawning() && particles_.count == 0; }
@@ -88,6 +117,7 @@ private:
     // A module point or direction into simulation space.
     Vec3 PointIn(const Vec3& p, bool world) const;
     Vec3 DirectionIn(const Vec3& d, bool world) const;
+    void Record(ParticleEventKind kind, usize i, const Vec3& normal = {}, bool expired = false);
 
     Emitter emitter_;
     u64 seed_;
@@ -102,12 +132,26 @@ private:
     Vec3 emitter_velocity_;
     u64 next_id_ = 0;
     std::vector<f32> step_; // this frame's time step per particle (newborns only live part of it)
+    std::vector<Vec3> previous_; // positions before this frame's move (scene collisions)
+    const ParticleCollider* collider_ = nullptr;
+    u8 event_mask_ = 0;
+    bool auto_clear_events_ = true;
+    std::vector<ParticleEvent> events_;
 };
 
-// A whole particle system: its emitters, moved and ticked together.
+// A whole particle system: its emitters, moved and ticked together; its
+// sub-emitters fed from their events; its parameters.
 class ParticleSystemInstance {
 public:
     explicit ParticleSystemInstance(const ParticleSystemAsset& asset, u64 seed = 1);
+    // Sets a declared parameter (of its type) and every field bound to it.
+    bool SetParameter(const std::string& name, const ParameterValue& value, std::string* error = nullptr);
+    const ParameterValue* GetParameter(const std::string& name) const;
+    void SetCollider(const ParticleCollider* collider);
+    // Keep these events on every emitter too (for gameplay), besides what sub-emitters need.
+    void RecordEvents(u8 mask);
+    // Particles born through sub-emitters so far.
+    u64 SubEmitterSpawns() const { return sub_spawns_; }
     void SetPose(const EmitterPose& pose);
     void Teleport(const EmitterPose& pose);
     void Update(f32 dt);
@@ -120,7 +164,17 @@ public:
     const EmitterInstance& Emitter(usize i) const { return *emitters_[i]; }
 
 private:
+    struct ResolvedSub {
+        SubEmitter sub;
+        usize target = 0;
+    };
     std::vector<std::unique_ptr<EmitterInstance>> emitters_;
+    std::vector<std::vector<ResolvedSub>> subs_; // per emitter
+    std::vector<u8> needed_masks_;               // what each emitter's sub-emitters listen for
+    std::vector<ParticleParameter> parameters_;
+    std::vector<vfx::Emitter> assets_;           // for bindings
+    Random rng_;
+    u64 sub_spawns_ = 0;
 };
 
 } // namespace aether::vfx

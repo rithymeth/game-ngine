@@ -149,7 +149,7 @@ AETHER_TEST(VFX_EmitterAssets) {
     CHECK(!std::get<SpawnPerDistance>(le.spawn[2]).enabled && std::get<InitShape>(le.init[1]).shape == ShapeKind::Box && !std::get<KillVolume>(le.update[5]).kill_inside);
     CHECK(std::get<SpawnBurst>(le.spawn[1]).count == FloatRange{5, 10} && std::get<SizeOverLife>(le.update[7]).curve == FloatCurve::Line(1, 0));
     // Names and the add menu.
-    CHECK(std::string(ModuleName(le.update[3])) == "Vortex" && SpawnModuleNames().size() == 3 && InitModuleNames().size() == 7 && UpdateModuleNames().size() == 10);
+    CHECK(std::string(ModuleName(le.update[3])) == "Vortex" && SpawnModuleNames().size() == 3 && InitModuleNames().size() == 7 && UpdateModuleNames().size() == 11);
     CHECK(le.render.size() == 4 && std::get<SpriteRenderer>(le.render[0]).facing == SpriteFacing::Velocity && std::get<SpriteRenderer>(le.render[0]).columns == 4 &&
           std::get<MeshRenderer>(le.render[1]).mesh == "SM_Rock" && std::get<RibbonRenderer>(le.render[2]).uv == RibbonUv::Distance &&
           RenderModuleNames().size() == 4 && std::string(ModuleName(le.render[3])) == "LightRenderer");
