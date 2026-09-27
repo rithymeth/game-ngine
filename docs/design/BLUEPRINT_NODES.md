@@ -273,6 +273,7 @@ parameter list.
 | BP010 | error | "'{node}' is an event and belongs in the Event Graph." (and Function Entry/Return outside a function graph) |
 | BP011 | error | "The function '{fn}' needs exactly one Function Entry node (it has {n})." |
 | BP012 | error | "'{node}' uses a {type} value; Blueprints can't run {type} values yet." (types and nodes the compiler doesn't lower yet: structs, arrays, latent nodes before Phase 12 step 3) |
+| BP013 | error | "'{node}' changes an array, so its '{pin}' pin must be connected to an array variable (a Get node)." |
 | BP101 | warning | "Input '{pin}' isn't connected and will use its default value ({default})." |
 | BP102 | warning | "This node's output isn't used, and it has no side effects. It can be removed." |
 | BP103 | warning | "'{node}' in Event Tick runs every frame and searches the whole world. Consider caching the result in BeginPlay." |
@@ -282,6 +283,7 @@ parameter list.
 | BP202 | runtime | "'{event}' ran more than {budget} instructions and was stopped. Check for an infinite loop near '{node}'." |
 | BP203 | runtime | "'{fn}' was called more than {depth} levels deep. Check for endless recursion." |
 | BP204 | runtime | "The call to '{fn}' was refused." (the native function rejected its arguments) |
+| BP205 | runtime | "Index {i} is out of range (the array has {n} items) in '{event}'. Check Is Valid Index first." (Get returns the default; Set does nothing; logged once per node) |
 
 ---
 

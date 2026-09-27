@@ -9,6 +9,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 namespace aether::bp {
 
@@ -86,6 +87,21 @@ void StoreAny(const reflect::Any& any, const PinType& type, Reg& r, std::string&
     }
 }
 
+// Items compare by their bytes (registers are zero-filled, so unused lanes match).
+i32 FindValue(const ArrayValue& array, const Reg& item) {
+    for (usize i = 0; i < array.values.size(); ++i) {
+        if (std::memcmp(&array.values[i], &item, sizeof(Reg)) == 0) return static_cast<i32>(i);
+    }
+    return -1;
+}
+
+i32 FindText(const ArrayValue& array, const std::string& item) {
+    for (usize i = 0; i < array.texts.size(); ++i) {
+        if (array.texts[i] == item) return static_cast<i32>(i);
+    }
+    return -1;
+}
+
 } // namespace
 
 BlueprintVM::BlueprintVM(World& world, Options options)
@@ -114,6 +130,7 @@ bool BlueprintVM::Attach(Entity entity, std::shared_ptr<const CompiledBlueprint>
     instance->vars.resize(blueprint->value_vars);
     instance->states.resize(blueprint->state_slots);
     instance->svars.resize(blueprint->string_vars);
+    instance->avars.resize(blueprint->array_vars);
     for (const CompiledVariable& var : blueprint->variables) {
         Reg value = var.default_value;
         std::string text = var.default_string;
@@ -132,7 +149,11 @@ bool BlueprintVM::Attach(Entity entity, std::shared_ptr<const CompiledBlueprint>
                 }
             }
         }
-        if (var.slot.bank == Bank::String) instance->svars[var.slot.index] = std::move(text);
+        if (var.slot.bank == Bank::Array) {
+            ArrayValue& array = instance->avars[var.slot.index];
+            array.type = var.type.type;
+            array.strings = var.type.type == ValueType::String;
+        } else if (var.slot.bank == Bank::String) instance->svars[var.slot.index] = std::move(text);
         else instance->vars[var.slot.index] = value;
     }
     instance->blueprint = std::move(blueprint);
@@ -180,6 +201,8 @@ BlueprintVM::Frame& BlueprintVM::AcquireFrame(const CompiledFunction& fn, u32 de
     frame.r.assign(fn.value_regs, Reg{});
     if (frame.s.size() < fn.string_regs) frame.s.resize(fn.string_regs);
     for (u16 i = 0; i < fn.string_regs; ++i) frame.s[i].clear();
+    if (frame.a.size() < fn.array_regs) frame.a.resize(fn.array_regs);
+    for (u16 i = 0; i < fn.array_regs; ++i) frame.a[i] = ArrayValue{};
     return frame;
 }
 
@@ -199,7 +222,9 @@ bool BlueprintVM::Dispatch(Entity entity, std::string_view event, std::span<cons
     Frame& frame = AcquireFrame(fn, depth_);
     for (usize i = 0; i < fn.params.size() && i < args.size(); ++i) {
         const RegRef p = fn.params[i];
-        if (p.bank == Bank::String) {
+        if (p.bank == Bank::Array) {
+            continue; // arrays can't be passed in from C++ yet
+        } else if (p.bank == Bank::String) {
             if (const std::string* s = std::get_if<std::string>(&args[i])) frame.s[p.index] = *s;
         } else {
             frame.r[p.index] = RegOf(args[i], fn.param_types[i]);
@@ -242,6 +267,7 @@ void BlueprintVM::ResumeDue() {
         Frame& frame = AcquireFrame(fn, 0);
         frame.r = std::move(action.r);
         for (usize i = 0; i < action.s.size(); ++i) frame.s[i] = std::move(action.s[i]);
+        for (usize i = 0; i < action.a.size(); ++i) frame.a[i] = std::move(action.a[i]);
         Run(instance, action.function, frame, 0, action.resume_pc);
         RemoveDetached();
     }
@@ -260,6 +286,7 @@ void BlueprintVM::StartLatent(Instance& instance, u32 function, const Instr& in,
                 action.wake_time = time_ + duration; // restart the timer (with the new frame)
                 action.r = frame.r;
                 action.s.assign(frame.s.begin(), frame.s.begin() + bp.functions[function].string_regs);
+                action.a.assign(frame.a.begin(), frame.a.begin() + bp.functions[function].array_regs);
                 return;
             }
         }
@@ -275,6 +302,7 @@ void BlueprintVM::StartLatent(Instance& instance, u32 function, const Instr& in,
     action.order = latent_order_++;
     action.r = frame.r;
     action.s.assign(frame.s.begin(), frame.s.begin() + bp.functions[function].string_regs);
+    action.a.assign(frame.a.begin(), frame.a.begin() + bp.functions[function].array_regs);
     latent_.push_back(std::move(action));
     state.pending = true;
 }
@@ -306,6 +334,7 @@ VmValue BlueprintVM::GetVariable(Entity entity, std::string_view name) const {
     if (instance == nullptr) return std::monostate{};
     const CompiledVariable* var = instance->blueprint->FindVariable(name);
     if (var == nullptr) return std::monostate{};
+    if (var->slot.bank == Bank::Array) return std::monostate{}; // see GetArray
     if (var->slot.bank == Bank::String) return instance->svars[var->slot.index];
     return ValueOf(instance->vars[var->slot.index], var->type);
 }
@@ -315,6 +344,7 @@ bool BlueprintVM::SetVariable(Entity entity, std::string_view name, const VmValu
     if (instance == nullptr) return false;
     const CompiledVariable* var = instance->blueprint->FindVariable(name);
     if (var == nullptr) return false;
+    if (var->slot.bank == Bank::Array) return false; // see SetArray
     if (var->slot.bank == Bank::String) {
         const std::string* s = std::get_if<std::string>(&value);
         if (s == nullptr) return false;
@@ -322,6 +352,40 @@ bool BlueprintVM::SetVariable(Entity entity, std::string_view name, const VmValu
     } else {
         if (std::holds_alternative<std::string>(value) || std::holds_alternative<std::monostate>(value)) return false;
         instance->vars[var->slot.index] = RegOf(value, var->type);
+    }
+    return true;
+}
+
+std::vector<VmValue> BlueprintVM::GetArray(Entity entity, std::string_view name) const {
+    std::vector<VmValue> items;
+    const Instance* instance = Find(entity);
+    const CompiledVariable* var = instance != nullptr ? instance->blueprint->FindVariable(name) : nullptr;
+    if (var == nullptr || var->slot.bank != Bank::Array) return items;
+    const ArrayValue& array = instance->avars[var->slot.index];
+    const PinType element = PinType::Of(var->type.type);
+    if (array.strings) {
+        for (const std::string& text : array.texts) items.push_back(text);
+    } else {
+        for (const Reg& r : array.values) items.push_back(ValueOf(r, element));
+    }
+    return items;
+}
+
+bool BlueprintVM::SetArray(Entity entity, std::string_view name, const std::vector<VmValue>& items) {
+    Instance* instance = Find(entity);
+    const CompiledVariable* var = instance != nullptr ? instance->blueprint->FindVariable(name) : nullptr;
+    if (var == nullptr || var->slot.bank != Bank::Array) return false;
+    ArrayValue& array = instance->avars[var->slot.index];
+    array.Clear();
+    const PinType element = PinType::Of(var->type.type);
+    for (const VmValue& item : items) {
+        if (array.strings) {
+            const std::string* text = std::get_if<std::string>(&item);
+            if (text == nullptr) return false;
+            array.texts.push_back(*text);
+        } else {
+            array.values.push_back(RegOf(item, element));
+        }
     }
     return true;
 }
@@ -427,13 +491,15 @@ bool BlueprintVM::Call(Instance& instance, const FunctionCall& call, Frame& call
     Frame& frame = AcquireFrame(callee, depth + 1);
     for (usize i = 0; i < call.args.size() && i < callee.params.size(); ++i) {
         const RegRef from = call.args[i], to = callee.params[i];
-        if (to.bank == Bank::String) frame.s[to.index] = caller.s[from.index];
+        if (to.bank == Bank::Array) frame.a[to.index] = caller.a[from.index];
+        else if (to.bank == Bank::String) frame.s[to.index] = caller.s[from.index];
         else frame.r[to.index] = caller.r[from.index];
     }
     if (!Run(instance, call.function, frame, depth + 1)) return false;
     for (usize i = 0; i < call.results.size() && i < callee.results.size(); ++i) {
         const RegRef from = callee.results[i], to = call.results[i];
-        if (to.bank == Bank::String) caller.s[to.index] = frame.s[from.index];
+        if (to.bank == Bank::Array) caller.a[to.index] = frame.a[from.index];
+        else if (to.bank == Bank::String) caller.s[to.index] = frame.s[from.index];
         else caller.r[to.index] = frame.r[from.index];
     }
     return true;
@@ -453,6 +519,7 @@ bool BlueprintVM::Run(Instance& instance, u32 function, Frame& frame, u32 depth,
 
     Reg* r = frame.r.data();
     std::string* s = frame.s.data();
+    ArrayValue* arrays = frame.a.data();
     usize pc = start_pc;
     for (;;) {
         if (options_.instruction_budget != 0) {
@@ -608,6 +675,107 @@ bool BlueprintVM::Run(Instance& instance, u32 function, Frame& frame, u32 depth,
         case Op::CountGet: r[in.a] = Reg::Int(instance.states[in.b].counter); break;
         case Op::CountReset: instance.states[in.a].counter = 0; break;
         case Op::Latent: StartLatent(instance, function, in, frame); break;
+        case Op::NewA:
+            arrays[in.a] = ArrayValue{};
+            arrays[in.a].type = static_cast<ValueType>(in.c);
+            arrays[in.a].strings = arrays[in.a].type == ValueType::String;
+            break;
+        case Op::PushA:
+            if (arrays[in.a].strings) arrays[in.a].texts.push_back(s[in.b]);
+            else arrays[in.a].values.push_back(r[in.b]);
+            break;
+        case Op::MoveA: arrays[in.a] = arrays[in.b]; break;
+        case Op::GetVarA: arrays[in.a] = instance.avars[static_cast<usize>(in.d)]; break;
+        case Op::SetVarA: {
+            ArrayValue& var = instance.avars[static_cast<usize>(in.d)];
+            var.values = arrays[in.b].values;
+            var.texts = arrays[in.b].texts;
+            break;
+        }
+        case Op::LenA: r[in.a] = Reg::Int(static_cast<i32>(arrays[in.b].Size())); break;
+        case Op::GetA: {
+            const ArrayValue& array = arrays[in.b];
+            const i32 index = r[in.c].i;
+            if (index >= 0 && static_cast<usize>(index) < array.Size()) {
+                if (array.strings) s[in.a] = array.texts[static_cast<usize>(index)];
+                else r[in.a] = array.values[static_cast<usize>(index)];
+            } else {
+                if (array.strings) s[in.a].clear();
+                else r[in.a] = array.type == ValueType::Entity ? Reg::EntityOf(kNullEntity) : Reg{};
+                Warn("BP205", instance, fn, fn.node_of[pc - 1],
+                     "Index " + std::to_string(index) + " is out of range (the array has " +
+                         std::to_string(array.Size()) + " items) in '" + fn.name + "'. Check Is Valid Index first.");
+            }
+            break;
+        }
+        case Op::ValidIdxA: {
+            const i32 index = r[in.c].i;
+            r[in.a] = Reg::Bool(index >= 0 && static_cast<usize>(index) < arrays[in.b].Size());
+            break;
+        }
+        case Op::FindA: {
+            const ArrayValue& array = arrays[in.b];
+            r[in.a] = Reg::Int(array.strings ? FindText(array, s[in.c]) : FindValue(array, r[in.c]));
+            break;
+        }
+        case Op::VarAdd:
+        case Op::VarAddUnique: {
+            ArrayValue& array = instance.avars[static_cast<usize>(in.d)];
+            if (in.op == Op::VarAddUnique &&
+                (array.strings ? FindText(array, s[in.b]) : FindValue(array, r[in.b])) >= 0) {
+                r[in.a] = Reg::Int(-1);
+                break;
+            }
+            r[in.a] = Reg::Int(static_cast<i32>(array.Size()));
+            if (array.strings) array.texts.push_back(s[in.b]);
+            else array.values.push_back(r[in.b]);
+            break;
+        }
+        case Op::VarInsert: {
+            ArrayValue& array = instance.avars[static_cast<usize>(in.d)];
+            const i32 index = std::clamp(r[in.c].i, 0, static_cast<i32>(array.Size()));
+            if (array.strings) array.texts.insert(array.texts.begin() + index, s[in.b]);
+            else array.values.insert(array.values.begin() + index, r[in.b]);
+            break;
+        }
+        case Op::VarRemoveAt: {
+            ArrayValue& array = instance.avars[static_cast<usize>(in.d)];
+            const i32 index = r[in.c].i;
+            if (index < 0 || static_cast<usize>(index) >= array.Size()) break; // nothing to remove
+            if (array.strings) array.texts.erase(array.texts.begin() + index);
+            else array.values.erase(array.values.begin() + index);
+            break;
+        }
+        case Op::VarRemoveItem: {
+            ArrayValue& array = instance.avars[static_cast<usize>(in.d)];
+            const i32 index = array.strings ? FindText(array, s[in.b]) : FindValue(array, r[in.b]);
+            if (index >= 0) {
+                if (array.strings) array.texts.erase(array.texts.begin() + index);
+                else array.values.erase(array.values.begin() + index);
+            }
+            r[in.a] = Reg::Bool(index >= 0);
+            break;
+        }
+        case Op::VarClear: instance.avars[static_cast<usize>(in.d)].Clear(); break;
+        case Op::VarSetAt: {
+            ArrayValue& array = instance.avars[static_cast<usize>(in.d)];
+            const i32 index = r[in.c].i;
+            if (index < 0 || static_cast<usize>(index) >= array.Size()) {
+                Warn("BP205", instance, fn, fn.node_of[pc - 1],
+                     "Index " + std::to_string(index) + " is out of range (the array has " +
+                         std::to_string(array.Size()) + " items) in '" + fn.name + "'. Check Is Valid Index first.");
+                break;
+            }
+            if (array.strings) array.texts[static_cast<usize>(index)] = s[in.b];
+            else array.values[static_cast<usize>(index)] = r[in.b];
+            break;
+        }
+        case Op::VarReverse: {
+            ArrayValue& array = instance.avars[static_cast<usize>(in.d)];
+            std::reverse(array.values.begin(), array.values.end());
+            std::reverse(array.texts.begin(), array.texts.end());
+            break;
+        }
         case Op::MathF: {
             const f32 x = r[in.b].f;
             f32 y = 0.0f;

@@ -432,6 +432,118 @@ void RegisterBuiltins(Registry& r) {
             return entries;
         }};
 
+    // --- Arrays (§9) and For Each (§2) --------------------------------------
+    // One family per operation, by element type: "Array.Add:int".
+    struct ArrayOp {
+        const char* name;
+        const char* title;
+        NodeKind kind;
+        std::function<std::vector<PinDesc>(const PinType& element, const PinType& array)> pins;
+    };
+    const PinType kIntT = kInt, kBoolT = kBool;
+    const std::vector<ArrayOp> array_ops = {
+        {"Make", "Make Array", NodeKind::Pure, nullptr},
+        {"Length", "Length", NodeKind::Pure,
+         [=](const PinType&, const PinType& a) { return std::vector<PinDesc>{In("array", a), Out("result", kIntT)}; }},
+        {"LastIndex", "Last Index", NodeKind::Pure,
+         [=](const PinType&, const PinType& a) { return std::vector<PinDesc>{In("array", a), Out("result", kIntT)}; }},
+        {"Get", "Get (a copy)", NodeKind::Pure,
+         [=](const PinType& e, const PinType& a) {
+             return std::vector<PinDesc>{In("array", a), In("index", kIntT), Out("item", e)};
+         }},
+        {"IsValidIndex", "Is Valid Index", NodeKind::Pure,
+         [=](const PinType&, const PinType& a) {
+             return std::vector<PinDesc>{In("array", a), In("index", kIntT), Out("result", kBoolT)};
+         }},
+        {"Find", "Find", NodeKind::Pure,
+         [=](const PinType& e, const PinType& a) {
+             return std::vector<PinDesc>{In("array", a), In("item", e), Out("index", kIntT)};
+         }},
+        {"Contains", "Contains", NodeKind::Pure,
+         [=](const PinType& e, const PinType& a) {
+             return std::vector<PinDesc>{In("array", a), In("item", e), Out("result", kBoolT)};
+         }},
+        {"Add", "Add", NodeKind::Impure,
+         [=](const PinType& e, const PinType& a) {
+             return std::vector<PinDesc>{ExecIn(), In("array", a, Pin_ByRef), In("item", e), ExecOut(), Out("index", kIntT)};
+         }},
+        {"AddUnique", "Add Unique", NodeKind::Impure,
+         [=](const PinType& e, const PinType& a) {
+             return std::vector<PinDesc>{ExecIn(), In("array", a, Pin_ByRef), In("item", e), ExecOut(), Out("index", kIntT)};
+         }},
+        {"Insert", "Insert", NodeKind::Impure,
+         [=](const PinType& e, const PinType& a) {
+             return std::vector<PinDesc>{ExecIn(), In("array", a, Pin_ByRef), In("item", e), In("index", kIntT), ExecOut()};
+         }},
+        {"RemoveIndex", "Remove Index", NodeKind::Impure,
+         [=](const PinType&, const PinType& a) {
+             return std::vector<PinDesc>{ExecIn(), In("array", a, Pin_ByRef), In("index", kIntT), ExecOut()};
+         }},
+        {"RemoveItem", "Remove Item", NodeKind::Impure,
+         [=](const PinType& e, const PinType& a) {
+             return std::vector<PinDesc>{ExecIn(), In("array", a, Pin_ByRef), In("item", e), ExecOut(), Out("removed", kBoolT)};
+         }},
+        {"Clear", "Clear", NodeKind::Impure,
+         [=](const PinType&, const PinType& a) { return std::vector<PinDesc>{ExecIn(), In("array", a, Pin_ByRef), ExecOut()}; }},
+        {"Set", "Set Array Elem", NodeKind::Impure,
+         [=](const PinType& e, const PinType& a) {
+             return std::vector<PinDesc>{ExecIn(), In("array", a, Pin_ByRef), In("index", kIntT), In("item", e), ExecOut()};
+         }},
+        {"Reverse", "Reverse", NodeKind::Impure,
+         [=](const PinType&, const PinType& a) { return std::vector<PinDesc>{ExecIn(), In("array", a, Pin_ByRef), ExecOut()}; }},
+    };
+    auto element_of = [](std::string_view suffix, const std::string& title, NodeError& error) -> std::optional<PinType> {
+        const std::optional<PinType> e = ParseType(suffix);
+        if (!e || e->IsExec() || e->is_array || e->type == ValueType::Struct || e->type == ValueType::Wildcard) {
+            Fail(error, "BP007", "'" + title + "' can't hold " + std::string(suffix) + " values.");
+            return std::nullopt;
+        }
+        return e;
+    };
+    auto element_lister = [](const std::string& prefix, const std::string& title, const std::string& category) {
+        return [prefix, title, category](const Blueprint&) {
+            std::vector<PaletteEntry> entries;
+            for (const char* t : {"bool", "int", "float", "string", "Vec3", "Entity"})
+                entries.push_back({prefix + t, title + " (" + t + ")", category});
+            return entries;
+        };
+    };
+    for (const ArrayOp& op : array_ops) {
+        const std::string prefix = std::string("Array.") + op.name + ":";
+        const std::string title = op.title;
+        const NodeKind kind = op.kind;
+        const bool make = std::string(op.name) == "Make";
+        auto pins = op.pins;
+        r.families[prefix] = {
+            [=](const NodeContext& c, NodeError& error) -> std::optional<NodeSignature> {
+                const std::optional<PinType> e = element_of(c.suffix, title, error);
+                if (!e) return std::nullopt;
+                const PinType array = PinType::ArrayOf(*e);
+                std::vector<PinDesc> list;
+                if (make) {
+                    const json count = c.node.config.value("count", json(0));
+                    if (!count.is_number_integer() || count.get<int>() < 0 || count.get<int>() > 16) {
+                        return Fail(error, "BP007", "Make Array takes between 0 and 16 items.");
+                    }
+                    for (int i = 0; i < count.get<int>(); ++i) list.push_back(In("item " + std::to_string(i), *e));
+                    list.push_back(Out("array", array));
+                } else {
+                    list = pins(*e, array);
+                }
+                return Sig(title, "Array", kind, std::move(list));
+            },
+            element_lister(prefix, title, "Array")};
+    }
+    r.families["Flow.ForEach:"] = {
+        [=](const NodeContext& c, NodeError& error) -> std::optional<NodeSignature> {
+            const std::optional<PinType> e = element_of(c.suffix, "For Each", error);
+            if (!e) return std::nullopt;
+            return Sig("For Each", "Flow Control", NodeKind::Impure,
+                       {ExecIn(), In("array", PinType::ArrayOf(*e)), ExecOut("loop_body"), Out("element", *e),
+                        Out("index", kInt), ExecOut("completed")});
+        },
+        element_lister("Flow.ForEach:", "For Each", "Flow Control")};
+
     // --- Strings and text (§9) ----------------------------------------------
     r.exact["String.Append"] = [kString](const NodeContext& c, NodeError& error) -> std::optional<NodeSignature> {
         const json count = c.node.config.value("count", json(2));

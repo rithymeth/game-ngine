@@ -146,6 +146,20 @@ struct GraphCheck {
             auto it = signatures.find(node.id);
             if (it == signatures.end()) continue;
             for (const PinDesc& pin : it->second.pins) {
+                if (pin.flags & Pin_ByRef) {
+                    // BP013: the array a node changes must be a variable (the node edits it in place).
+                    const Link* link = nullptr;
+                    for (const Link& l : graph.links) {
+                        if (l.to.node == node.id && l.to.pin == pin.name) link = &l;
+                    }
+                    const Node* from = link != nullptr ? graph.Find(link->from.node) : nullptr;
+                    if (from == nullptr || from->type.rfind("Var.Get:", 0) != 0) {
+                        Report("BP013", Severity::Error, node.id, pin.name,
+                               "'" + it->second.title + "' changes an array, so its '" + pin.name +
+                                   "' pin must be connected to an array variable (a Get node).");
+                    }
+                    continue;
+                }
                 if ((pin.flags & Pin_WarnIfUnconnected) == 0 || pin.dir != PinDir::In || Linked(node.id, pin.name)) {
                     continue;
                 }
