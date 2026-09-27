@@ -190,6 +190,7 @@ void BlueprintVM::Detach(Entity entity) {
                   latent_.end()); // an entity's pending actions go with it
     if (depth_ > 0) {
         it->second->detached = true; // it may be running: remove when the outermost run ends
+        detached_keys_.push_back(it->first);
         return;
     }
     instances_.erase(it);
@@ -235,15 +236,22 @@ Transform* BlueprintVM::TransformOf(Instance& instance, const CompiledFunction& 
 }
 
 void BlueprintVM::RemoveDetached() {
-    for (auto it = instances_.begin(); it != instances_.end();) {
-        if (it->second->detached) {
-            const u64 key = it->first;
-            it = instances_.erase(it);
-            order_.erase(std::remove(order_.begin(), order_.end(), key), order_.end());
-        } else {
-            ++it;
-        }
+    // Only the instances detached while running are waiting: this runs after
+    // every outermost dispatch, so it must not scan every instance.
+    if (detached_keys_.empty()) return;
+    std::vector<u64> keys;
+    keys.swap(detached_keys_);
+    std::sort(keys.begin(), keys.end());
+    keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
+    for (u64 key : keys) {
+        auto it = instances_.find(key);
+        if (it != instances_.end() && it->second->detached) instances_.erase(it);
     }
+    order_.erase(std::remove_if(order_.begin(), order_.end(),
+                                [&](u64 key) {
+                                    return std::binary_search(keys.begin(), keys.end(), key) && instances_.count(key) == 0;
+                                }),
+                 order_.end());
 }
 
 bool BlueprintVM::IsAttached(Entity entity) const { return Find(entity) != nullptr; }
@@ -262,9 +270,15 @@ bool BlueprintVM::Dispatch(Entity entity, std::string_view event, std::span<cons
     Instance* instance = Find(entity);
     if (instance == nullptr) return false;
     const CompiledBlueprint& bp = *instance->blueprint;
-    auto it = bp.events.find(std::string(event));
+    auto it = bp.events.find(event);
     if (it == bp.events.end()) return false;
-    const CompiledFunction& fn = bp.functions[it->second];
+    return Invoke(*instance, it->second, args);
+}
+
+bool BlueprintVM::Invoke(Instance& instance_ref, u32 function, std::span<const VmValue> args) {
+    Instance* instance = &instance_ref;
+    const Entity entity = instance->entity;
+    const CompiledFunction& fn = instance->blueprint->functions[function];
     if (depth_ >= frames_.size()) {
         errors_.push_back({"BP203", entity, fn.name, 0, "Blueprint events nested too deeply."});
         return false;
@@ -282,7 +296,7 @@ bool BlueprintVM::Dispatch(Entity entity, std::string_view event, std::span<cons
             frame.r[p.index] = RegOf(args[i], fn.param_types[i]);
         }
     }
-    const bool ok = Run(*instance, it->second, frame, depth_);
+    const bool ok = Run(*instance, function, frame, depth_);
     if (outermost) Finish();
     return ok;
 }
@@ -395,8 +409,10 @@ void BlueprintVM::Tick(f32 delta_seconds) {
             continue;
         }
         if (!it->second->enabled) continue;
-        if (it->second->blueprint->events.count("Event.Tick") == 0) continue;
-        Dispatch(it->second->entity, "Event.Tick", std::span<const VmValue>(&dt, 1));
+        const auto& events = it->second->blueprint->events;
+        const auto tick = events.find(std::string_view("Event.Tick"));
+        if (tick == events.end()) continue;
+        Invoke(*it->second, tick->second, std::span<const VmValue>(&dt, 1));
     }
 }
 

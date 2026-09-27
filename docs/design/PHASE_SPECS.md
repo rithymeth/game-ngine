@@ -878,8 +878,29 @@ struct Blueprint{ std::string parent; std::vector<Variable> variables; std::vect
        Ctrl+Z/Y/S, F7, and in the graph Tab, F, C and Ctrl+C/X/V/D.
      - **Not yet**: the Class Defaults and Components tabs, the diff view,
        the minimap and bookmarks, reroute nodes, and collapse to function.
-7. Samples (BP_Door, BP_Coin, BP_GameMode) and the 10,000-instance
-   benchmark.
+7. ✅ **Done.** Samples (BP_Door, BP_Coin, BP_GameMode) and the
+   10,000-instance benchmark. Phase 12 is complete on the portable side.
+   - **Samples** in `assets/blueprints/`, in the editor's saved form (a
+     load and save gives the same JSON), each with comment boxes:
+     - `BP_Door` opens while an entity tagged Player is in its trigger,
+       swinging at `Speed` degrees per second up to `OpenAngle`, and
+       closes when it leaves. There's no Timeline node yet, so Tick moves
+       the angle.
+     - `BP_Coin` checks for the player, then (Do Once) calls its
+       `OnCollected(value)` dispatcher and destroys itself.
+     - `BP_GameMode` binds `AddScore` to every entity tagged Coin at
+       BeginPlay, prints the score, and prints "You win" once at `Goal`.
+     - `BP_Spinner` is the benchmark's 20-node Tick: spin, bob, count laps.
+   - **Trigger events** are dispatched by the tests for now; Phase 13's
+     contact events will send them.
+   - **Benchmark**: `aether_bp_bench [--count N] [--frames N] [--check MS]`
+     times `BlueprintVM::Tick`. 10,000 spinners take about 1.4 ms a frame
+     on the development container (target: under 2 ms).
+     - Getting there fixed a quadratic cost: after every dispatch the VM
+       scanned all instances for ones detached while running. It now
+       keeps a list of those.
+     - Tick also calls the Tick function directly, with no string
+       lookup per instance.
 
 ---
 
