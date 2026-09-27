@@ -8,6 +8,7 @@ add_library(aether_vfx STATIC
     src/simulation.cpp
     src/render.cpp
     src/collision.cpp
+    src/particle_system.cpp
 )
 target_include_directories(aether_vfx PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aether_vfx PUBLIC cxx_std_20)

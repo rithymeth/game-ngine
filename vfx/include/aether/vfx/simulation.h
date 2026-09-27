@@ -4,6 +4,7 @@
 #include "aether/vfx/collision.h"
 #include "aether/vfx/emitter.h"
 
+#include <algorithm>
 #include <memory>
 #include <vector>
 
@@ -92,6 +93,9 @@ public:
     void ClearEvents() { events_.clear(); }
     // A system keeps events across its emitters' updates and clears them itself.
     void SetAutoClearEvents(bool on) { auto_clear_events_ = on; }
+    // Scales every spawn module (rates, bursts, per distance): LOD for far-off effects (step 4).
+    void SetSpawnScale(f32 scale) { spawn_scale_ = std::max(scale, 0.0f); }
+    f32 SpawnScale() const { return spawn_scale_; }
     // Sets a module field of this instance's copy of the emitter (parameters).
     bool SetField(const std::string& field, const ParameterValue& value, std::string* error = nullptr);
 
@@ -135,6 +139,7 @@ private:
     std::vector<Vec3> previous_; // positions before this frame's move (scene collisions)
     const ParticleCollider* collider_ = nullptr;
     u8 event_mask_ = 0;
+    f32 spawn_scale_ = 1.0f;
     bool auto_clear_events_ = true;
     std::vector<ParticleEvent> events_;
 };
@@ -150,6 +155,7 @@ public:
     void SetCollider(const ParticleCollider* collider);
     // Keep these events on every emitter too (for gameplay), besides what sub-emitters need.
     void RecordEvents(u8 mask);
+    void SetSpawnScale(f32 scale);
     // Particles born through sub-emitters so far.
     u64 SubEmitterSpawns() const { return sub_spawns_; }
     void SetPose(const EmitterPose& pose);

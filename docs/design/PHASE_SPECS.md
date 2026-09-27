@@ -2460,7 +2460,47 @@ CPU simulation as its reference and as the path for small emitters.
 - The file saves `parameters`, and each emitter's `sub_emitters` and
   `bindings`.
 
-### 19.4 PR breakdown
+### 19.4 The ParticleSystem component and Blueprint nodes
+
+- **`ParticleSystem` component** (`particle_system.h`):
+  - Settings: the asset, auto-activate, time scale, a cull distance, a
+    LOD distance with a spawn scale, and destroy-when-finished.
+  - Its methods are Blueprint nodes that queue commands for the next
+    update:
+    - `Activate` (from the start if it had finished or never started);
+    - `Deactivate` (stop spawning; what's alive lives out);
+    - `Restart`;
+    - `SetFloatParameter`, `SetVectorParameter`, `SetColorParameter`;
+    - `SetAsset`;
+    - `IsActive`.
+- **`ParticleWorld`** runs a world's components:
+  - It gives each one an instance, taken from a pool per asset (up to 16
+    kept) and returned when the component or entity goes. Assets are
+    looked up by name.
+  - Instances follow their entity's world transform (through parents
+    with a GuidIndex) and are stepped by time scale.
+  - With a camera:
+    - past the cull distance, a system is paused and not drawn;
+    - past the LOD distance, all its spawning is scaled.
+  - A system is finished when it won't spawn more and everything has
+    died, or when it was deactivated and has emptied out. That raises
+    `Event.OnParticleSystemFinished` (argument: the asset) and removes
+    one-shots' entities.
+  - `BuildRenderData` draws what isn't culled. Given the
+    view-projection, it also skips emitters whose bounds are wholly off
+    screen.
+  - Missing assets, missing transforms and bad parameters are reported
+    once.
+- **The `Particles` library**:
+  - `SpawnEmitterAtLocation(asset, location, rotation)` makes an entity
+    that removes itself when done, and returns it (so its parameters can
+    be set).
+  - `SpawnEmitterAttached(asset, target, offset)` follows the target. If
+    the target goes, it stops spawning, finishes and goes too.
+- Emitters take a spawn scale (`SetSpawnScale`), which multiplies rates,
+  bursts and per-distance spawning.
+
+### 19.5 PR breakdown
 
 1. ✅ **Done.** Curves, gradients, noise and randomness; the emitter's module
    stacks (spawn, initialize, update) and their asset format and checks;
@@ -2472,7 +2512,7 @@ CPU simulation as its reference and as the path for small emitters.
 3. ✅ **Done.** Events and sub-emitters (on birth, death and collision), collision
    against the depth buffer and physics, and user parameters that modules
    read (Set Parameter).
-4. The `ParticleSystem` component and system (pooling, culling by distance
+4. ✅ **Done.** The `ParticleSystem` component and system (pooling, culling by distance
    and bounds, LOD), and Blueprint nodes (Spawn Emitter at Location or
    Attached, Set Parameter, OnSystemFinished).
 5. The GPU path: the stack generated as a compute shader with the CPU
