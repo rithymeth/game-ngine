@@ -168,7 +168,20 @@ add_subdirectory(blueprint)
 add_subdirectory(renderer)
 # Animation (Phase 16); engine-only, no fetches.
 add_subdirectory(animation)
-# Audio (Phase 17): the mixer; engine-only, no fetches.
+# dr_flac (public domain / MIT-0, mackron/dr_libs) for FLAC decoding in the
+# audio library; stb_vorbis (from the stb fetch above) handles Ogg Vorbis.
+# Header-only, compiled once in audio/src/decoders.cpp.
+FetchContent_Declare(
+    dr_libs
+    GIT_REPOSITORY https://github.com/mackron/dr_libs.git
+    GIT_TAG dfe8377631000664666519fdb83da193fd8037f4
+    GIT_SHALLOW FALSE
+    # Headers only: a subdirectory without a CMakeLists.txt keeps its own
+    # build (tests, sample programs) out of ours.
+    SOURCE_SUBDIR headers_only
+)
+FetchContent_MakeAvailable(dr_libs)
+# Audio (Phase 17): the mixer, 3D, decoders, streaming and sound cues.
 add_subdirectory(audio)
 
 if(AETHER_BUILD_SCRIPTING)

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace aether::audio {
 
@@ -81,17 +82,31 @@ const Mixer::Voice* Mixer::Find(VoiceId id) const {
 }
 
 VoiceId Mixer::Play(const SoundWave* sound, const PlayParams& p) {
-    if (sound == nullptr || sound->Frames() == 0 || sound->sample_rate == 0 || p.bus >= buses_.size()) return 0;
+    if (sound == nullptr || sound->Frames() == 0 || sound->sample_rate == 0) return 0;
     Voice v;
+    v.sound = sound;
+    return Start(std::move(v), p);
+}
+
+VoiceId Mixer::PlayStream(std::unique_ptr<AudioStream> stream, const PlayParams& p) {
+    if (stream == nullptr || stream->Frames() == 0 || stream->SampleRate() == 0 || stream->Channels() < 1 || stream->Channels() > 2) return 0;
+    Voice v;
+    v.stream = std::move(stream);
+    v.window_start = std::numeric_limits<i64>::min() / 2; // nothing decoded yet: the first Fill seeks
+    return Start(std::move(v), p);
+}
+
+VoiceId Mixer::Start(Voice v, const PlayParams& p) {
+    if (p.bus >= buses_.size()) return 0;
     v.id = next_id_++;
     if (next_id_ == 0) next_id_ = 1;
-    v.sound = sound;
     v.bus = p.bus;
-    v.position = std::clamp(static_cast<f64>(p.start_time) * sound->sample_rate, 0.0, static_cast<f64>(sound->Frames()));
+    v.position = std::clamp(static_cast<f64>(p.start_time) * Rate(v), 0.0, static_cast<f64>(Frames(v)));
     v.pitch = std::max(p.pitch, 0.0f);
     v.gain = v.current_gain = DbToGain(p.volume_db);
     v.pan = std::clamp(p.pan, -1.0f, 1.0f);
     v.loop = p.loop;
+    v.delay_frames = static_cast<u64>(std::llround(std::max(p.delay, 0.0) * sample_rate_));
     v.priority = p.priority;
     v.virtual_mode = p.virtual_mode;
     v.spatial = p.spatial;
@@ -105,8 +120,9 @@ VoiceId Mixer::Play(const SoundWave* sound, const PlayParams& p) {
         v.fade = 0.0f;
         v.fade_step = 1.0f / (p.fade_in * static_cast<f32>(sample_rate_));
     }
-    voices_.push_back(v);
-    return v.id;
+    const VoiceId id = v.id;
+    voices_.push_back(std::move(v));
+    return id;
 }
 
 bool Mixer::Stop(VoiceId id, f32 fade_out) {
@@ -182,7 +198,10 @@ bool Mixer::IsPlaying(VoiceId id) const { return Find(id) != nullptr; }
 
 f32 Mixer::PlaybackTime(VoiceId id) const {
     const Voice* v = Find(id);
-    return v == nullptr ? -1.0f : static_cast<f32>(v->position / v->sound->sample_rate);
+    if (v == nullptr) return -1.0f;
+    const f64 n = static_cast<f64>(Frames(*v));
+    const f64 at = v->stream && v->loop ? std::fmod(v->position, n) : v->position; // streams count past loops
+    return static_cast<f32>(at / Rate(*v));
 }
 
 void Mixer::Spatialize(Voice& v, u32 frames, const std::vector<f32>& bus_gains) {
@@ -233,13 +252,15 @@ void Mixer::AssignChannels() {
 }
 
 bool Mixer::AdvanceVirtual(Voice& v, u32 frames) {
-    const SoundWave& s = *v.sound;
-    const f64 n = static_cast<f64>(s.Frames());
+    const u64 wait = std::min<u64>(v.delay_frames, frames);
+    v.delay_frames -= wait;
+    frames -= static_cast<u32>(wait);
+    const f64 n = static_cast<f64>(Frames(v));
     if (v.virtual_mode == VirtualMode::Continue) {
-        v.position += static_cast<f64>(v.info.pitch) * s.sample_rate / sample_rate_ * frames;
+        v.position += static_cast<f64>(v.info.pitch) * Rate(v) / sample_rate_ * frames;
         if (v.position >= n) {
             if (!v.loop) return false;
-            v.position = std::fmod(v.position, n);
+            v.position = std::fmod(v.position, n); // a stream seeks when it's heard again
         }
     }
     v.fade = std::clamp(v.fade + v.fade_step * static_cast<f32>(frames), 0.0f, 1.0f);
@@ -247,11 +268,58 @@ bool Mixer::AdvanceVirtual(Voice& v, u32 frames) {
     return !(v.stopping && v.fade <= 0.0f);
 }
 
-bool Mixer::MixVoice(Voice& v, f32* out, u32 frames, f32 ramp_from, f32 ramp_to) {
-    const SoundWave& s = *v.sound;
+void Mixer::Fill(Voice& v, i64 from, i64 to) {
+    AudioStream& s = *v.stream;
+    const u32 ch = s.Channels();
     const i64 n = static_cast<i64>(s.Frames());
-    const u32 ch = s.channels;
-    const f64 step = static_cast<f64>(v.info.pitch) * s.sample_rate / sample_rate_;
+    i64 end = v.window_start + static_cast<i64>(v.window.size() / ch);
+    if (from < v.window_start || from > end) {
+        // Somewhere new (the start, back from virtual, a restart): seek.
+        v.window.clear();
+        v.window_start = end = from;
+        if (from < 0) {
+            v.window.assign(static_cast<usize>(-from) * ch, 0.0f); // before the start is silence
+            end = 0;
+        }
+        s.Seek(static_cast<u64>(v.loop ? end % n : std::min(end, n)));
+    } else if (from > v.window_start) {
+        v.window.erase(v.window.begin(), v.window.begin() + static_cast<std::ptrdiff_t>((from - v.window_start) * ch));
+        v.window_start = from;
+    }
+    constexpr i64 kChunk = 4096; // decode ahead in chunks, not per block
+    int dry = 0;                 // reads that returned nothing, to stop on a broken stream
+    while (end < to) {
+        const i64 want = std::max(to - end, kChunk);
+        const usize old = v.window.size();
+        v.window.resize(old + static_cast<usize>(want) * ch);
+        const u32 got = s.Read(v.window.data() + old, static_cast<u32>(want));
+        v.window.resize(old + static_cast<usize>(got) * ch);
+        end += got;
+        if (static_cast<i64>(got) < want) {
+            dry = got == 0 ? dry + 1 : 0;
+            if (v.loop && dry < 2) {
+                s.Seek(0);
+                continue;
+            }
+            v.window.resize(v.window.size() + static_cast<usize>(std::max<i64>(to - end, 0)) * ch, 0.0f); // past the end is silence
+            break;
+        }
+    }
+}
+
+bool Mixer::MixVoice(Voice& v, f32* out, u32 frames, f32 ramp_from, f32 ramp_to) {
+    // A delayed start: silence until it's due.
+    const u32 wait = static_cast<u32>(std::min<u64>(v.delay_frames, frames));
+    v.delay_frames -= wait;
+    const i64 n = static_cast<i64>(Frames(v));
+    const u32 ch = Channels(v);
+    const f64 step = static_cast<f64>(v.info.pitch) * Rate(v) / sample_rate_;
+    const bool streamed = v.stream != nullptr;
+    if (streamed && wait < frames) {
+        const i64 from = static_cast<i64>(std::floor(v.position)) - 1;
+        Fill(v, from, static_cast<i64>(std::floor(v.position + step * (frames - wait))) + 3);
+    }
+    const i64 window_frames = streamed ? static_cast<i64>(v.window.size() / ch) : 0;
     const f32 smooth = 1.0f - std::exp(-1.0f / (kSmoothSeconds * static_cast<f32>(sample_rate_)));
     const f32 target = v.gain * v.spatial_gain;
     // One-pole low-pass for distance and occlusion; fully open passes the input through.
@@ -267,12 +335,16 @@ bool Mixer::MixVoice(Voice& v, f32* out, u32 frames, f32 ramp_from, f32 ramp_to)
         pan_r = pan < 0.0f ? 1.0f + pan : 1.0f;
     }
     auto at = [&](i64 frame, u32 c) -> f32 {
+        if (streamed) {
+            const i64 k = frame - v.window_start;
+            return k >= 0 && k < window_frames ? v.window[static_cast<usize>(k) * ch + c] : 0.0f;
+        }
         if (v.loop) frame = ((frame % n) + n) % n;
         else if (frame < 0 || frame >= n) return 0.0f;
-        return s.samples[static_cast<usize>(frame) * ch + c];
+        return v.sound->samples[static_cast<usize>(frame) * ch + c];
     };
-    for (u32 i = 0; i < frames; ++i) {
-        if (v.position >= static_cast<f64>(n)) {
+    for (u32 i = wait; i < frames; ++i) {
+        if (v.position >= static_cast<f64>(n) && !(streamed && v.loop)) {
             if (!v.loop) return false;
             v.position = std::fmod(v.position, static_cast<f64>(n));
         }
@@ -291,7 +363,7 @@ bool Mixer::MixVoice(Voice& v, f32* out, u32 frames, f32 ramp_from, f32 ramp_to)
         out[2 * i] += left * g * pan_l;
         out[2 * i + 1] += right * g * pan_r;
         v.position += step;
-        if (v.loop && v.position >= static_cast<f64>(n)) v.position = std::fmod(v.position, static_cast<f64>(n)); // times stay inside the sound
+        if (v.loop && !streamed && v.position >= static_cast<f64>(n)) v.position = std::fmod(v.position, static_cast<f64>(n)); // times stay inside the sound
         if (v.stopping && v.fade <= 0.0f) return false;
     }
     return true;
@@ -335,6 +407,7 @@ void Mixer::Render(f32* out, u32 frames) {
             voices_.erase(voices_.begin() + static_cast<std::ptrdiff_t>(i));
         }
     }
+    frames_rendered_ += frames;
     // Children have higher ids than their parents: walk backwards so each bus is done before its parent.
     for (usize idx = buses_.size(); idx-- > 0;) {
         Bus& b = buses_[idx];
