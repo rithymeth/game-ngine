@@ -86,6 +86,9 @@ public:
     bool ClearBreakpoint(const std::string& chunk, int line);
     void ClearBreakpoints(const std::string& chunk);
     void ClearAllBreakpoints();
+    // Whether a chunk of this name has been loaded (so its breakpoints are
+    // resolved to real lines).
+    bool IsLoaded(const std::string& chunk) const;
     // Lines with a breakpoint in `chunk` (as landed, when known), sorted.
     std::vector<int> Breakpoints(const std::string& chunk) const;
 
