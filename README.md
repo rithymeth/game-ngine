@@ -2991,6 +2991,48 @@ point 3, ROADMAP_DETAILS §C.4).
 - 240/240 tests pass on GCC 13, on Clang and under ASan/UBSan, and 247/247
   with physics.
 
+**Step 4, part 2: arrays and For Each** (BLUEPRINT_NODES.md §9, §2).
+
+- **Array values** have their own register bank, and there are array
+  variables per instance (`Array<int>`, `Array<string>`,
+  `Array<Entity>`, ...).
+  - Frames, function calls and latent resumes carry them like other
+    values.
+  - From C++, `GetArray` and `SetArray` read and write them.
+- **Pure nodes**: Make Array (0 to 16 items), Length, Last Index, Get (a
+  copy), Is Valid Index, Find (-1 if absent) and Contains.
+- **Changing an array in place**: Add, Add Unique (-1 if already
+  present), Insert (the index is clamped), Remove Index, Remove Item,
+  Clear, Set Array Elem and Reverse.
+  - Like Unreal's by-reference pins, their `array` input must come from a
+    Get node of an array variable. Anything else, or leaving it
+    unconnected, is the new BP013, on that pin.
+- **For Each** iterates a copy with `element` and `index`, so changing
+  the array in the body doesn't change the loop.
+- **Out of range**:
+  - Get returns the element type's default (a null entity for entities)
+    and logs the new BP205 once per node. Set Array Elem does nothing and
+    logs BP205.
+  - Remove Index does nothing, silently.
+  - Elements compare by value, including strings (Find, Contains, Add
+    Unique, Remove Item).
+
+**Verified**: 3 new tests.
+
+- **Changing arrays**: in-place changes to int and string array
+  variables through every modifying node, the query nodes, and
+  `GetArray`/`SetArray`.
+- **Make and For Each**:
+  - A Make → Set → For Each sum, where the body appends to the same
+    array but still runs 3 times.
+  - An out-of-range Get giving 0 with one BP205 on the right node, and an
+    entity array defaulting to "no entity".
+- **Errors**: BP013 for an Add fed by Make Array and for an unconnected
+  pin, BP007 for bad element types and item counts, and BP001 between
+  array types.
+- 243/243 tests pass on GCC 13, on Clang and under ASan/UBSan, and 250/250
+  with physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,

@@ -739,7 +739,20 @@ struct Blueprint{ std::string parent; std::vector<Variable> variables; std::vect
        random numbers.
      - Loops compile to plain jumps, not calls. The loop body's
        registers stay live, so the index pin reads directly.
-   - Part 2: arrays (a new register kind) and For Each.
+   - ✅ **Part 2 done:** arrays and For Each.
+     - Storage: a third register bank of arrays, and array variables per
+       instance.
+     - Pure nodes: Make, Length, Last Index, Get, Is Valid Index, Find and
+       Contains.
+     - Modifying nodes, which edit an array variable in place: Add, Add
+       Unique, Insert, Remove Index, Remove Item, Clear, Set Array Elem
+       and Reverse. Their array pin must come from a Get node (BP013,
+       Unreal's by-reference pins).
+     - For Each iterates a copy.
+     - An out-of-range Get returns the default (with BP205), and an
+       out-of-range remove does nothing.
+     - Sort, Shuffle and Filter need comparator functions, so they wait
+       for part 4. So do arrays in native calls and Dispatch arguments.
    - Part 3: entity and world nodes (Spawn, Destroy, transforms, tags).
    - Part 4: macros, event dispatchers and interfaces.
 5. Debugger: node breakpoints, stepping and call stack, exec trace for

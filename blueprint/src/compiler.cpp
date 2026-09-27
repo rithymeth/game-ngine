@@ -9,11 +9,15 @@ namespace aether::bp {
 namespace {
 
 bool Unsupported(const PinType& type) {
-    return type.is_array || type.type == ValueType::Struct || type.type == ValueType::Wildcard ||
-           type.type == ValueType::None;
+    return type.type == ValueType::Struct || type.type == ValueType::Wildcard || type.type == ValueType::None;
 }
 
-Bank BankOf(const PinType& type) { return type.type == ValueType::String ? Bank::String : Bank::Value; }
+Bank BankOf(const PinType& type) {
+    if (type.is_array) return Bank::Array;
+    return type.type == ValueType::String ? Bank::String : Bank::Value;
+}
+
+Op MoveOp(Bank bank) { return bank == Bank::Array ? Op::MoveA : bank == Bank::String ? Op::MoveS : Op::Move; }
 
 Reg RegFromValue(const Value& value, const PinType& type) {
     if (const bool* b = std::get_if<bool>(&value)) return Reg::Bool(*b);
@@ -121,6 +125,7 @@ private:
             Error("BP012", node, "'" + Title(node) + "' uses a " + name + " value; Blueprints can't run " + name +
                                      " values yet.");
         }
+        if (BankOf(type) == Bank::Array) return {Bank::Array, fn_.array_regs++};
         if (BankOf(type) == Bank::String) return {Bank::String, fn_.string_regs++};
         return {Bank::Value, fn_.value_regs++};
     }
@@ -148,7 +153,9 @@ private:
 
     RegRef LoadValue(const Value& value, const PinType& type, NodeId node) {
         const RegRef dst = Alloc(type, node);
-        if (dst.bank == Bank::String) {
+        if (dst.bank == Bank::Array) {
+            Emit({Op::NewA, dst.index, 0, static_cast<u16>(type.type)}, node);
+        } else if (dst.bank == Bank::String) {
             const std::string* s = std::get_if<std::string>(&value);
             out_.string_constants.push_back(s != nullptr ? *s : std::string());
             Emit({Op::LoadKS, dst.index, 0, 0, static_cast<i32>(out_.string_constants.size() - 1)}, node);
@@ -312,7 +319,8 @@ private:
         if (type.rfind("Var.Get:", 0) == 0) {
             const CompiledVariable* var = out_.FindVariable(type.substr(8));
             const RegRef dst = Alloc(var->type, id);
-            Emit({dst.bank == Bank::String ? Op::GetVarS : Op::GetVar, dst.index, 0, 0, var->slot.index}, id);
+            const Op get = dst.bank == Bank::Array ? Op::GetVarA : dst.bank == Bank::String ? Op::GetVarS : Op::GetVar;
+            Emit({get, dst.index, 0, 0, var->slot.index}, id);
             return SetPure(id, "value", dst);
         }
         if (type.rfind("Comp.Get:", 0) == 0) {
@@ -328,6 +336,63 @@ private:
 
     RegRef Const(i32 value, NodeId node) { return LoadValue(value, PinType::Of(ValueType::Int), node); }
     RegRef ConstF(f32 value, NodeId node) { return LoadValue(value, PinType::Of(ValueType::Float), node); }
+
+    // Pure array nodes.
+    bool EvaluateArray(NodeId id, const NodeSignature& sig, const std::string& type) {
+        auto is = [&](const char* op) { return type.rfind(std::string("Array.") + op + ":", 0) == 0; };
+        const PinType i32t = PinType::Of(ValueType::Int), boolt = PinType::Of(ValueType::Bool);
+        if (is("Make")) {
+            const PinDesc& out = *sig.Find("array", PinDir::Out);
+            const RegRef dst = LoadValue({}, out.type, id); // NEWA
+            for (const PinDesc& pin : sig.pins) {
+                if (pin.dir != PinDir::In) continue;
+                const RegRef item = Input(id, pin.name);
+                Emit({Op::PushA, dst.index, item.index}, id);
+            }
+            SetPure(id, "array", dst);
+            return true;
+        }
+        const RegRef array = Input(id, "array");
+        if (is("Length") || is("LastIndex")) {
+            RegRef dst = Alloc(i32t, id);
+            Emit({Op::LenA, dst.index, array.index}, id);
+            if (is("LastIndex")) {
+                const RegRef one = Const(1, id), last = Alloc(i32t, id);
+                Emit({Op::SubI, last.index, dst.index, one.index}, id);
+                dst = last;
+            }
+            SetPure(id, "result", dst);
+            return true;
+        }
+        if (is("Get")) {
+            const RegRef index = Input(id, "index");
+            const RegRef dst = Alloc(sig.Find("item", PinDir::Out)->type, id);
+            Emit({Op::GetA, dst.index, array.index, index.index}, id);
+            SetPure(id, "item", dst);
+            return true;
+        }
+        if (is("IsValidIndex")) {
+            const RegRef index = Input(id, "index");
+            const RegRef dst = Alloc(boolt, id);
+            Emit({Op::ValidIdxA, dst.index, array.index, index.index}, id);
+            SetPure(id, "result", dst);
+            return true;
+        }
+        if (is("Find") || is("Contains")) {
+            const RegRef item = Input(id, "item");
+            const RegRef found = Alloc(i32t, id);
+            Emit({Op::FindA, found.index, array.index, item.index}, id);
+            if (is("Find")) {
+                SetPure(id, "index", found);
+            } else {
+                const RegRef none = Const(-1, id), dst = Alloc(boolt, id);
+                Emit({Op::NeI, dst.index, found.index, none.index}, id);
+                SetPure(id, "result", dst);
+            }
+            return true;
+        }
+        return false;
+    }
 
     // Math, select, strings and conversions (Phase 12 step 4).
     bool EvaluateMore(NodeId id, const NodeSignature& sig) {
@@ -399,7 +464,7 @@ private:
                 if (pin.dir == PinDir::In && pin.name.rfind("option ", 0) == 0) options.push_back(Input(id, pin.name));
             }
             const RegRef dst = LoadValue(DefaultValue(ret.type), ret.type, id);
-            const Op move = dst.bank == Bank::String ? Op::MoveS : Op::Move;
+            const Op move = MoveOp(dst.bank);
             std::vector<usize> to_end;
             for (usize i = 0; i < options.size(); ++i) {
                 const RegRef k = Const(static_cast<i32>(i), id);
@@ -483,6 +548,7 @@ private:
             SetPure(id, "success", ok);
             return true;
         }
+        if (type.rfind("Array.", 0) == 0) return EvaluateArray(id, sig, type);
         if (type.rfind("Conv.ToString:", 0) == 0) {
             const PinDesc& in = *sig.Find("value", PinDir::In);
             const RegRef value = Input(id, "value");
@@ -549,7 +615,7 @@ private:
         for (usize i = 0; i < graph_.outputs.size(); ++i) {
             const RegRef v = Input(node.id, graph_.outputs[i].name);
             const RegRef dst = fn_.results[i];
-            Emit({dst.bank == Bank::String ? Op::MoveS : Op::Move, dst.index, v.index}, node.id);
+            Emit({MoveOp(dst.bank), dst.index, v.index}, node.id);
         }
         Emit({Op::Ret}, node.id);
     }
@@ -673,6 +739,62 @@ private:
             Emit({Op::Latent, Slot(id), duration.index, static_cast<u16>(kind), static_cast<i32>(it->second)}, id);
             return; // what follows (a Sequence's next output) runs now; "completed" runs later
         }
+        if (type.rfind("Flow.ForEach:", 0) == 0) {
+            // Iterates a copy: changing the array in the body doesn't affect the loop.
+            const RegRef source = Input(id, "array");
+            const RegRef array = Alloc(sig.Find("array", PinDir::In)->type, id);
+            Emit({Op::MoveA, array.index, source.index}, id);
+            const RegRef index = OutputReg(id, *sig.Find("index", PinDir::Out));
+            const RegRef element = OutputReg(id, *sig.Find("element", PinDir::Out));
+            const PinType i32t = PinType::Of(ValueType::Int);
+            Emit({Op::Move, index.index, Const(0, id).index}, id);
+            const RegRef one = Const(1, id), length = Alloc(i32t, id);
+            Emit({Op::LenA, length.index, array.index}, id);
+            const i32 top = Here();
+            const RegRef more = Alloc(PinType::Of(ValueType::Bool), id);
+            Emit({Op::LtI, more.index, index.index, length.index}, id);
+            const usize exit = Emit({Op::JmpF, 0, more.index}, id);
+            Emit({Op::GetA, element.index, array.index, index.index}, id);
+            Chain(id, "loop_body");
+            Emit({Op::AddI, index.index, index.index, one.index}, id);
+            Emit({Op::Jmp, 0, 0, 0, top}, id);
+            fn_.code[exit].d = Here();
+            return Chain(id, "completed");
+        }
+        if (type.rfind("Array.", 0) == 0) {
+            // Changes an array variable in place (validation made sure it is one).
+            const Link* link = LinkInto(id, "array");
+            const CompiledVariable* var = out_.FindVariable(NodeOf(link->from.node).type.substr(8));
+            const i32 slot = var->slot.index;
+            auto is = [&](const char* op) { return type.rfind(std::string("Array.") + op + ":", 0) == 0; };
+            auto item = [&] { return Input(id, "item").index; };
+            auto index = [&] { return Input(id, "index").index; };
+            if (is("Add") || is("AddUnique")) {
+                const u16 value = item();
+                const RegRef dst = OutputReg(id, *sig.Find("index", PinDir::Out));
+                Emit({is("Add") ? Op::VarAdd : Op::VarAddUnique, dst.index, value, 0, slot}, id);
+            } else if (is("Insert")) {
+                const u16 value = item(), at = index();
+                Emit({Op::VarInsert, 0, value, at, slot}, id);
+            } else if (is("RemoveIndex")) {
+                Emit({Op::VarRemoveAt, 0, 0, index(), slot}, id);
+            } else if (is("RemoveItem")) {
+                const u16 value = item();
+                const RegRef dst = OutputReg(id, *sig.Find("removed", PinDir::Out));
+                Emit({Op::VarRemoveItem, dst.index, value, 0, slot}, id);
+            } else if (is("Clear")) {
+                Emit({Op::VarClear, 0, 0, 0, slot}, id);
+            } else if (is("Set")) {
+                const u16 at = index(), value = item();
+                Emit({Op::VarSetAt, 0, value, at, slot}, id);
+            } else if (is("Reverse")) {
+                Emit({Op::VarReverse, 0, 0, 0, slot}, id);
+            } else {
+                Error("BP012", id, "'" + sig.title + "' can't run yet.");
+                return;
+            }
+            return Chain(id, "then");
+        }
         if (type == "Flow.ForLoop" || type == "Flow.ForLoopWithBreak") {
             const bool breakable = type == "Flow.ForLoopWithBreak";
             const PinType b = PinType::Of(ValueType::Bool);
@@ -757,10 +879,10 @@ private:
         if (type.rfind("Var.Set:", 0) == 0) {
             const CompiledVariable* var = out_.FindVariable(type.substr(8));
             const RegRef v = Input(id, "value");
-            const bool str = v.bank == Bank::String;
-            Emit({str ? Op::SetVarS : Op::SetVar, 0, v.index, 0, var->slot.index}, id);
+            const Op set = v.bank == Bank::Array ? Op::SetVarA : v.bank == Bank::String ? Op::SetVarS : Op::SetVar;
+            Emit({set, 0, v.index, 0, var->slot.index}, id);
             const RegRef out = OutputReg(id, *sig.Find("value", PinDir::Out));
-            Emit({str ? Op::MoveS : Op::Move, out.index, v.index}, id);
+            Emit({MoveOp(v.bank), out.index, v.index}, id);
             return Chain(id, "then");
         }
         if (type == "Debug.Print") {
@@ -777,7 +899,7 @@ private:
             const RegRef value = Input(id, "value");
             EmitField(id, sig, Op::SetField, target, value);
             const RegRef out = OutputReg(id, *sig.Find("value", PinDir::Out));
-            Emit({value.bank == Bank::String ? Op::MoveS : Op::Move, out.index, value.index}, id);
+            Emit({MoveOp(value.bank), out.index, value.index}, id);
             return Chain(id, "then");
         }
         if (type.rfind("Call.Self:", 0) == 0) {
@@ -838,7 +960,9 @@ CompileResult CompileBlueprint(const Blueprint& blueprint) {
         var.name = v.name;
         var.type = v.type;
         var.flags = v.flags;
-        if (BankOf(v.type) == Bank::String) {
+        if (BankOf(v.type) == Bank::Array) {
+            var.slot = {Bank::Array, out->array_vars++};
+        } else if (BankOf(v.type) == Bank::String) {
             var.slot = {Bank::String, out->string_vars++};
             if (const std::string* s = std::get_if<std::string>(&v.default_value)) var.default_string = *s;
         } else {

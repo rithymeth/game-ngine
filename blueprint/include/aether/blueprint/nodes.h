@@ -32,6 +32,7 @@ enum PinFlags : u32 {
     Pin_None = 0,
     Pin_WarnIfUnconnected = 1u << 0, // BP101 when left unconnected (Branch's condition)
     Pin_Self = 1u << 1,              // an Entity input that defaults to the Blueprint's own entity
+    Pin_ByRef = 1u << 2,             // an array the node changes: must come from a Get <variable> (BP013)
 };
 
 struct PinDesc {
