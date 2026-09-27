@@ -4,9 +4,21 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace aether::ui {
+
+class UIInputRouter;
+
+// Input as widgets see it (Phase 18 step 2). Positions are in layout units.
+struct PointerEvent {
+    Vec2 position;
+    int button = 0;   // 0 left (or a touch), 1 right, 2 middle
+    u32 pointer = 0;  // which finger, for touch
+};
+enum class NavDirection : u8 { Up, Down, Left, Right, Next, Previous };
+enum class EditKey : u8 { Backspace, Delete, Left, Right, Home, End, SelectAll };
 
 enum class Visibility : u8 {
     Visible,              // drawn and hit
@@ -56,6 +68,8 @@ public:
     virtual const char* TypeName() const = 0;
 
     std::string name;
+    std::string tooltip; // shown after hovering a moment
+    bool enabled = true; // disabled widgets (and everything in them) ignore input and draw dimmed
     Visibility visibility = Visibility::Visible;
     f32 opacity = 1.0f;
     bool clip_children = false;
@@ -88,6 +102,33 @@ public:
     const Rect& Geometry() const { return geometry_; }
     bool TakesSpace() const { return visibility != Visibility::Collapsed; }
 
+    // --- Input (step 2) ---------------------------------------------------------------
+    // Explicit focus moves by widget name ("" = pick spatially).
+    struct Navigation {
+        std::string up, down, left, right;
+    } navigation;
+    bool IsHovered() const { return hovered_; }
+    bool IsFocused() const { return focused_; }
+    bool IsEnabled() const; // itself and every parent
+    // A control: the router sends it pointer events (hits inside go to the nearest one).
+    virtual bool Interactive() const { return false; }
+    virtual bool Focusable() const { return false; }
+    virtual bool WantsText() const { return false; } // a text box: Space and Left/Right edit it
+
+    // Handlers return true when they used the input. Pointer down returning
+    // true captures the pointer until it's released.
+    virtual bool OnPointerDown(const PointerEvent&, UIInputRouter&) { return false; }
+    virtual void OnPointerMove(const PointerEvent&, UIInputRouter&) {}
+    virtual void OnPointerUp(const PointerEvent&, bool /*inside*/, UIInputRouter&) {}
+    virtual bool OnWheel(f32, UIInputRouter&) { return false; } // bubbles to parents
+    virtual bool OnNavigate(NavDirection, UIInputRouter&) { return false; } // false: the router moves focus
+    virtual bool OnAccept(UIInputRouter&) { return false; }
+    virtual bool OnCancel(UIInputRouter&) { return false; } // bubbles to parents
+    virtual bool OnText(std::string_view, UIInputRouter&) { return false; }
+    virtual bool OnKey(EditKey, bool, UIInputRouter&) { return false; } // (key, shift)
+    virtual void OnHover(bool) {}
+    virtual void OnFocus(bool) {}
+
     // --- Painting and hit testing -----------------------------------------------------
     void Paint(DrawList& list, const PaintContext& ctx) const;
     // The deepest widget under `p` that can be hit (children in front first).
@@ -106,7 +147,9 @@ protected:
     std::vector<std::unique_ptr<Widget>> children_;
 
 private:
+    friend class UIInputRouter;
     Widget* parent_ = nullptr;
+    bool hovered_ = false, focused_ = false;
     Vec2 desired_;
     Rect geometry_;
 };

@@ -131,6 +131,8 @@ public:
     void ScrollBy(f32 delta) { ScrollTo(offset_ + delta); }
     // Scrolls just enough to show `r` (in layout units), e.g. a focused child.
     void ScrollIntoView(const Rect& r);
+    f32 wheel_step = 60.0f; // layout units per wheel notch
+    bool OnWheel(f32 delta, UIInputRouter&) override;
 
 protected:
     Vec2 ComputeDesired(const LayoutContext& ctx) override;

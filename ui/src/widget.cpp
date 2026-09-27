@@ -34,6 +34,13 @@ Widget* Widget::Find(const std::string& n) {
     return nullptr;
 }
 
+bool Widget::IsEnabled() const {
+    for (const Widget* w = this; w != nullptr; w = w->parent_) {
+        if (!w->enabled) return false;
+    }
+    return true;
+}
+
 Vec2 Widget::Measure(const LayoutContext& ctx) {
     for (auto& c : children_) c->Measure(ctx);
     desired_ = TakesSpace() ? ComputeDesired(ctx) : Vec2{};

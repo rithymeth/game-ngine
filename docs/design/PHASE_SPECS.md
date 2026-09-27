@@ -1983,14 +1983,69 @@ Everything else runs and is tested headless.
   - The safe area is insets in pixels (notches, overscan).
   - It paints to pixels, and hit tests the top layer first.
 
-### 18.2 PR breakdown
+### 18.2 Controls and input
+
+- **Controls** (a `ControlStyle` until themes arrive in step 3):
+
+  | Control | Behaviour |
+  |---|---|
+  | Button | pressed on pointer down, clicked on release inside or on accept; one child in `padding`; `on_clicked`, `on_pressed`, `on_released`, `on_hovered` |
+  | Toggle | flips on click or accept; `on_changed` only on a change |
+  | Slider | press sets the value from the pointer and drag follows; clamped, snapped to `step`; left/right step it while focused (up/down leave) |
+  | ProgressBar | filled to `percent` from any side |
+  | TextInput | one line; typing inserts at the cursor (replacing a selection); the edit keys move by code point, select with Shift, delete, Home/End, select all; a length limit; passwords shown as `*`; click and drag place and select; control characters are dropped; Enter commits; the text scrolls to keep the whole caret in view |
+  | Dropdown | opens a popup of option buttons below it (above when there's no room); focus starts on the selected option and stays in the popup; accept picks, cancel or a click outside closes |
+  | ListView | virtualized: `make_row` builds a row and `bind_row` fills it, only for the rows in view, reused as it scrolls; click, the wheel and up/down select and scroll; accept activates |
+
+- **UIInputRouter** (for one viewport; each call says whether the UI used
+  the input):
+  - **Pointers** (mouse and each touch): hover goes to the nearest
+    interactive widget under the pointer. Press focuses it and captures
+    the pointer if it takes it; release reports whether it ended inside.
+    A captured control counts as hovered only while the pointer is over
+    it. Disabled widgets and everything in them ignore input.
+  - **Wheel**: offered from the widget under the pointer outwards. A
+    scroll box with something to scroll takes it, even at an end.
+  - **Focus and navigation**: the focused widget sees navigation first
+    (a slider steps, a list moves its selection); otherwise focus moves.
+    - Candidates are focusable, enabled, shown, and not entirely clipped
+      away (a scroll box scrolled past them).
+    - An explicit target by name wins.
+    - Next/Previous go in tree order, wrapping.
+    - Directions pick the nearest candidate whose centre lies that way,
+      scoring distance + 2 × sideways offset.
+    - Focusing a widget scrolls it into view in its scroll boxes.
+  - **Accept / Cancel**: Accept goes to the focused widget. Cancel closes
+    a popup (focus back to its owner), else offers itself from the focused
+    widget outwards.
+  - **Text and edit keys** go to a focused widget that wants text.
+  - **Popups**: one at a time, over everything. A click outside only
+    closes it. Closing from inside a handler (an option's click) waits
+    until the event is done.
+  - **Tooltips**: after `tooltip_delay` hovering the nearest widget with
+    one, in a layer that doesn't catch clicks. Moving to another source
+    or pressing hides it.
+  - Widgets removed from the tree while hovered, focused or captured are
+    forgotten.
+- **UIInputBridge** (from the Phase 10 device state, each frame):
+  - Arrows, the d-pad and the left stick (past `stick_threshold`)
+    navigate, repeating after 0.4 s every 0.08 s. Tab and Shift+Tab step
+    through.
+  - Enter, A (and Space) accept; Escape and B cancel.
+  - While a text box has focus, Space types and the arrow keys and edit
+    keys (Backspace, Delete, Home, End, Ctrl+A) edit; the d-pad and stick
+    still navigate.
+  - `SetModal` adds a context that blocks lower-priority (gameplay)
+    contexts while a menu is up.
+
+### 18.3 PR breakdown
 
 1. ✅ **Done.** The widget tree, the layout panels (Canvas with anchors,
    boxes, Grid, Overlay, SizeBox, Border, ScrollBox, Spacer), Text and
    Image, the draw list (9-slice, clipping, text), resolution scaling,
    safe areas and hit testing.
-2. Interactive widgets (Button, Toggle, Slider, ProgressBar, TextInput,
-   Dropdown, virtualized ListView, Tooltip), and input: pointer and touch
+2. ✅ **Done.** Interactive widgets (Button, Toggle, Slider, ProgressBar,
+   TextInput, Dropdown, virtualized ListView, Tooltip), and input: pointer and touch
    routing (hover, press, capture, wheel), focus with gamepad and keyboard
    navigation, and the UI input context taking input before gameplay.
 3. Styles and themes as assets (per-state brushes, fonts and colours),

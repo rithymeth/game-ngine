@@ -196,6 +196,12 @@ f32 ScrollBox::MaxOffset() const { return std::max(0.0f, content_ - (horizontal 
 
 void ScrollBox::ScrollTo(f32 offset) { offset_ = std::clamp(offset, 0.0f, MaxOffset()); }
 
+bool ScrollBox::OnWheel(f32 delta, UIInputRouter&) {
+    if (MaxOffset() <= 0.0f) return false; // nothing to scroll: let a parent have it
+    ScrollBy(-delta * wheel_step);
+    return true; // even at an end, so the page behind doesn't scroll instead
+}
+
 void ScrollBox::ScrollIntoView(const Rect& r) {
     const Rect& g = Geometry();
     const f32 lo = horizontal ? r.x - g.x : r.y - g.y, len = horizontal ? r.w : r.h, view = horizontal ? g.w : g.h;
