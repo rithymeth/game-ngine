@@ -3512,8 +3512,9 @@ Phase 13.
   identical event sequence in 10 runs.
 - BP_Coin, collected by a falling player ball through a real trigger,
   destroys itself; a ball that isn't the player doesn't collect it.
-- 292/292 tests pass with physics on GCC 13, and 273/273 without physics
-  on GCC 13, Clang and ASan/UBSan.
+- 292/292 tests pass with physics on GCC 13 (RelWithDebInfo, and Debug
+  40 runs in a row) and under ASan/UBSan, and 273/273 without physics on
+  GCC 13, Clang and ASan/UBSan.
 
 ## Building
 
