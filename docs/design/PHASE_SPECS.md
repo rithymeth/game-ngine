@@ -838,6 +838,25 @@ struct Blueprint{ std::string parent; std::vector<Variable> variables; std::vect
      watches (last value on hover while running) come with the editor.
 6. Graph editor widget and Blueprint editor panels (portable ImGui):
    palette, pin colors, links, comments and compile results.
+   - ✅ **Part 1 done:** the graph widget and its Blueprint adapter.
+     - **Widget** (`editor/src/graph/graph_view.h`): generic, knows
+       nothing about Blueprints. It draws a view model (nodes, pins,
+       wires) and reports edits for the owner to apply. Pan, zoom about
+       the cursor, node drag, wire drag, box select, Alt+click to break a
+       wire, the palette (right-click, or a wire dropped on empty
+       canvas), Delete, Home (fit) and Ctrl+A. Hit testing is public
+       for tests.
+     - **Blueprint adapter** (`blueprint_graph.h`): pin colors from
+       BLUEPRINT_NODES.md, header colors by category, compile errors on
+       their nodes, the debugger's current node, breakpoints and glowing
+       wires from the exec trace.
+     - **Edits**: links are checked with `CanConnect`. Linking a data
+       input or an exec output replaces its old link. A node placed from
+       a dragged wire links its first fitting pin.
+     - **Palette search** is fuzzy, prefix matches first, and filtered to
+       nodes with a pin fitting the dragged one.
+   - **Part 2:** the Blueprint editor panels (My Blueprint, Details,
+     compile results, the palette popup, comments).
 7. Samples (BP_Door, BP_Coin, BP_GameMode) and the 10,000-instance
    benchmark.
 
