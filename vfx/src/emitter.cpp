@@ -19,6 +19,13 @@ constexpr const char* kShapes[] = {"Point", "Sphere", "Hemisphere", "Box", "Cone
 constexpr const char* kVelocityModes[] = {"Cone", "Radial", "Direction"};
 constexpr const char* kVolumeShapes[] = {"Sphere", "Box"};
 constexpr const char* kSpaces[] = {"World", "Local"};
+constexpr const char* kBlends[] = {"Alpha", "Additive", "Premultiplied", "Opaque"};
+constexpr const char* kSorts[] = {"None", "BackToFront", "FrontToBack", "OldestFirst", "NewestFirst"};
+constexpr const char* kFacings[] = {"Camera", "CameraPosition", "Velocity", "FixedAxis", "FixedPlane"};
+constexpr const char* kFlipbooks[] = {"OverLife", "Rate", "Random"};
+constexpr const char* kOrientations[] = {"Rotation", "AlignVelocity", "FaceCamera"};
+constexpr const char* kRibbonFacings[] = {"Camera", "Axis"};
+constexpr const char* kRibbonUvs[] = {"Stretch", "Distance"};
 
 // Each module lists its fields once, through a visitor: writing JSON,
 // reading it, and checking values all use the same list.
@@ -31,6 +38,8 @@ struct Visitor {
     virtual void Vector(const char* key, Vec3& v) = 0;
     virtual void Curve(const char* key, FloatCurve& v) = 0;
     virtual void Gradient(const char* key, ColorGradient& v) = 0;
+    virtual void String(const char* key, std::string& v) = 0;
+    virtual void Color(const char* key, LinearColor& v) = 0;
     template <typename E, usize N>
     void Enum(const char* key, E& v, const char* const (&names)[N]) {
         u32 i = static_cast<u32>(v);
@@ -77,6 +86,26 @@ void Fields(CollisionPlane& m, Visitor& v) {
 void Fields(SizeOverLife& m, Visitor& v) { v.Curve("curve", m.curve); }
 void Fields(ColorOverLife& m, Visitor& v) { v.Gradient("gradient", m.gradient); }
 void Fields(SpeedOverLife& m, Visitor& v) { v.Curve("curve", m.curve); }
+void Fields(SpriteRenderer& m, Visitor& v) {
+    v.String("material", m.material), v.Enum("blend", m.blend, kBlends), v.Enum("sort", m.sort, kSorts), v.Enum("facing", m.facing, kFacings);
+    v.Vector("axis", m.axis), v.Float("aspect", m.aspect), v.Float("stretch", m.stretch);
+    v.U32("columns", m.columns), v.U32("rows", m.rows), v.U32("frames", m.frames), v.Enum("flipbook", m.flipbook, kFlipbooks);
+    v.Float("cycles", m.cycles), v.Float("fps", m.fps), v.Bool("blend_frames", m.blend_frames), v.Float("soft_fade", m.soft_fade);
+    v.Float("camera_offset", m.camera_offset);
+}
+void Fields(MeshRenderer& m, Visitor& v) {
+    v.String("mesh", m.mesh), v.String("material", m.material), v.Enum("orientation", m.orientation, kOrientations), v.Vector("axis", m.axis);
+    v.Vector("scale", m.scale), v.Enum("sort", m.sort, kSorts);
+}
+void Fields(RibbonRenderer& m, Visitor& v) {
+    v.String("material", m.material), v.Enum("blend", m.blend, kBlends), v.Enum("facing", m.facing, kRibbonFacings), v.Vector("axis", m.axis);
+    v.Float("width_scale", m.width_scale), v.Enum("uv", m.uv, kRibbonUvs), v.Float("tile_length", m.tile_length);
+    v.Bool("attach_to_emitter", m.attach_to_emitter);
+}
+void Fields(LightRenderer& m, Visitor& v) {
+    v.Float("radius_scale", m.radius_scale), v.Float("intensity", m.intensity), v.Bool("use_particle_color", m.use_particle_color);
+    v.Color("color", m.color), v.U32("every_nth", m.every_nth), v.U32("max_lights", m.max_lights);
+}
 
 template <typename T> constexpr const char* NameOf();
 #define AETHER_VFX_NAME(T) \
@@ -101,6 +130,10 @@ AETHER_VFX_NAME(CollisionPlane)
 AETHER_VFX_NAME(SizeOverLife)
 AETHER_VFX_NAME(ColorOverLife)
 AETHER_VFX_NAME(SpeedOverLife)
+AETHER_VFX_NAME(SpriteRenderer)
+AETHER_VFX_NAME(MeshRenderer)
+AETHER_VFX_NAME(RibbonRenderer)
+AETHER_VFX_NAME(LightRenderer)
 #undef AETHER_VFX_NAME
 
 class Writer final : public Visitor {
@@ -113,6 +146,8 @@ public:
     void Vector(const char* k, Vec3& v) override { j[k] = ToJson(v); }
     void Curve(const char* k, FloatCurve& v) override { j[k] = ToJson(v); }
     void Gradient(const char* k, ColorGradient& v) override { j[k] = ToJson(v); }
+    void String(const char* k, std::string& v) override { j[k] = v; }
+    void Color(const char* k, LinearColor& v) override { j[k] = ToJson(v); }
     void EnumIndex(const char* k, u32& v, const char* const* names, usize count) override { j[k] = v < count ? names[v] : names[0]; }
 };
 
@@ -142,6 +177,13 @@ public:
     void Vector(const char* k, Vec3& v) override { Parse(k, v); }
     void Curve(const char* k, FloatCurve& v) override { Parse(k, v); }
     void Gradient(const char* k, ColorGradient& v) override { Parse(k, v); }
+    void Color(const char* k, LinearColor& v) override { Parse(k, v); }
+    void String(const char* k, std::string& v) override {
+        if (const json* x = Get(k)) {
+            if (x->is_string()) v = x->get<std::string>();
+            else Bad(k, "a string");
+        }
+    }
     void EnumIndex(const char* k, u32& v, const char* const* names, usize count) override {
         const json* x = Get(k);
         if (x == nullptr) return;
@@ -182,6 +224,8 @@ public:
     void U32(const char*, u32&) override {}
     void Vector(const char*, Vec3&) override {}
     void EnumIndex(const char*, u32&, const char* const*, usize) override {}
+    void String(const char*, std::string&) override {}
+    void Color(const char*, LinearColor&) override {}
     void Range(const char* k, FloatRange& v) override {
         if (v.min > v.max) backwards.push_back(k);
     }
@@ -300,6 +344,9 @@ const char* ModuleName(const InitModule& m) {
 const char* ModuleName(const UpdateModule& m) {
     return std::visit([](const auto& x) { return NameOf<std::decay_t<decltype(x)>>(); }, m);
 }
+const char* ModuleName(const RenderModule& m) {
+    return std::visit([](const auto& x) { return NameOf<std::decay_t<decltype(x)>>(); }, m);
+}
 
 std::vector<std::string> SpawnModuleNames() {
     std::vector<std::string> out;
@@ -320,6 +367,12 @@ std::vector<std::string> UpdateModuleNames() {
 bool MakeModule(const std::string& name, SpawnModule& out) { return MakeByName(name, out); }
 bool MakeModule(const std::string& name, InitModule& out) { return MakeByName(name, out); }
 bool MakeModule(const std::string& name, UpdateModule& out) { return MakeByName(name, out); }
+bool MakeModule(const std::string& name, RenderModule& out) { return MakeByName(name, out); }
+std::vector<std::string> RenderModuleNames() {
+    std::vector<std::string> out;
+    NamesOf<RenderModule>(out);
+    return out;
+}
 
 json EmitterToJson(const Emitter& e) {
     const EmitterSettings& s = e.settings;
@@ -334,6 +387,7 @@ json EmitterToJson(const Emitter& e) {
     j["spawn"] = StageToJson(e.spawn);
     j["init"] = StageToJson(e.init);
     j["update"] = StageToJson(e.update);
+    j["render"] = StageToJson(e.render);
     return j;
 }
 
@@ -360,7 +414,8 @@ bool EmitterFromJson(const json& j, Emitter& out, std::string* error) {
         else return Fail(error, "emitter '" + s.name + "': unknown space '" + sp + "'");
     }
     std::string e2;
-    if (!StageFromJson(j, "spawn", e.spawn, &e2) || !StageFromJson(j, "init", e.init, &e2) || !StageFromJson(j, "update", e.update, &e2)) {
+    if (!StageFromJson(j, "spawn", e.spawn, &e2) || !StageFromJson(j, "init", e.init, &e2) || !StageFromJson(j, "update", e.update, &e2) ||
+        !StageFromJson(j, "render", e.render, &e2)) {
         return Fail(error, "emitter '" + s.name + "': " + e2);
     }
     out = std::move(e);
@@ -409,6 +464,19 @@ std::vector<EmitterDiagnostic> ValidateEmitter(const Emitter& e) {
     Check(e.spawn, "spawn", out);
     Check(e.init, "init", out);
     Check(e.update, "update", out);
+    Check(e.render, "render", out);
+    const bool draws = std::any_of(e.render.begin(), e.render.end(), [](const RenderModule& m) { return std::visit([](const auto& x) { return x.enabled; }, m); });
+    if (!draws) out.push_back({"FX008", "nothing draws its particles: add a SpriteRenderer, MeshRenderer, RibbonRenderer or LightRenderer", false});
+    for (usize i = 0; i < e.render.size(); ++i) {
+        const std::string where = "render[" + std::to_string(i) + "] (" + ModuleName(e.render[i]) + ")";
+        if (const auto* sp = std::get_if<SpriteRenderer>(&e.render[i]); sp != nullptr && sp->enabled) {
+            if (sp->columns == 0 || sp->rows == 0 || sp->frames > sp->columns * sp->rows) {
+                out.push_back({"FX009", where + ": the flipbook needs columns and rows, and no more frames than cells", true});
+            }
+        } else if (const auto* me = std::get_if<MeshRenderer>(&e.render[i]); me != nullptr && me->enabled && me->mesh.empty()) {
+            out.push_back({"FX010", where + ": no mesh", true});
+        }
+    }
     for (const SpawnModule& m : e.spawn) {
         if (const auto* b = std::get_if<SpawnBurst>(&m); b != nullptr && b->enabled && b->count.max > static_cast<f32>(s.max_particles)) {
             out.push_back({"FX005", "a burst of " + std::to_string(static_cast<u64>(b->count.max)) + " is more than max_particles", false});
