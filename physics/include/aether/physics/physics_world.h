@@ -126,6 +126,7 @@ public:
     void SetPosition(JPH::BodyID id, const Vec3& position);
 
     JPH::PhysicsSystem& System() { return *physics_system_; }
+    JPH::TempAllocator& TempAllocator() { return *temp_allocator_; }
     JPH::BodyInterface& BodyInterface();
 
 private:

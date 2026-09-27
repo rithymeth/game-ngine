@@ -1070,5 +1070,35 @@ flying, swimming).
      Without hooks they find nothing and warn BP207. HitResult structs,
      multi-hit traces, box and capsule traces, and the force and velocity
      nodes come later.
-5. `CharacterMovement` with tests for slopes, steps, and jump buffering.
+5. ✅ **Done.** `CharacterMovement` with tests for slopes, steps, and jump
+   buffering.
+   - **The component** has the §13.3 settings (saved), plus per-step input
+     (`AddInput`, `Jump`, `run`) and read-only state: velocity, mode,
+     grounded, ground normal, and the coyote and buffer timers.
+   - **`CharacterSystem`** keeps one Jolt `CharacterVirtual` per entity.
+     The shape is a capsule offset so the Transform's position is the
+     feet. It's rebuilt when the size, mass, slope limit or layer
+     changes. Each fixed step:
+     - The timers update. A jump happens if one was pressed within the
+       buffer and the character is grounded or within coyote time.
+     - On the ground it accelerates toward the input or brakes. In the
+       air it moves toward only `air_control` of the input, at
+       `air_acceleration`.
+     - On the ground it takes the ground's velocity (moving platforms).
+       Gravity is added only in the air: on walkable ground it would
+       creep the character down slopes.
+     - `ExtendedUpdate` walks stairs up to `step_height` and sticks to
+       the floor while walking.
+     - The feet go back to the Transform. A Transform set by gameplay
+       teleports the character.
+     - Events: Landed (with impact speed), Jumped, MovementModeChanged
+       (Walking, Falling or Flying; Swimming comes with water).
+   - **Triggers and queries**: each character has Jolt's inner kinematic
+     body, which `PhysicsScene::AdoptBody` maps to its entity. Triggers
+     now notice kinematic bodies (`mCollideKinematicVsNonDynamic` on
+     sensors).
+   - **Blueprints**: the events OnLanded(impact_speed), OnJumped and
+     OnMovementModeChanged(new_mode). `CharacterEventName` gives the
+     names to dispatch. Movement input nodes wait for the input system's
+     Blueprint hookup.
 6. Collider gizmos and the physics debug draw toggle.

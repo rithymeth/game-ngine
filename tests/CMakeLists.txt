@@ -57,7 +57,7 @@ if(WIN32)
 endif()
 
 if(TARGET Aether::Physics)
-    target_sources(aether_tests PRIVATE test_physics.cpp test_physics_scene.cpp test_physics_events.cpp test_physics_queries.cpp)
+    target_sources(aether_tests PRIVATE test_physics.cpp test_physics_scene.cpp test_physics_events.cpp test_physics_queries.cpp test_character.cpp)
     target_link_libraries(aether_tests PRIVATE Aether::Physics)
 endif()
 
