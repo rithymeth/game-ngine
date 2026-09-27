@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Next: Phase 12 — Blueprints
+## Status: Phases 8–9 and 11 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Now: Phase 12 — Blueprints (in progress)
 
 ### Phase 1 — Foundation
 
@@ -2725,6 +2725,80 @@ Windows editor work.
     Escape and Ctrl+Space.
   - Losing focus on an outside click.
 - 221/221 tests pass on GCC 13, on Clang and under ASan/UBSan, and 228/228
+  with physics.
+
+### Phase 12 (in progress) — Blueprints (visual scripting)
+
+Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md),
+Phase 12. The node reference is
+[`docs/design/BLUEPRINT_NODES.md`](docs/design/BLUEPRINT_NODES.md).
+
+**Step 1: the graph model, node signatures and validation** (§12.2). The
+new `Aether::Blueprint` library (`blueprint/`) depends only on the engine.
+
+- **Types** (`types.h`):
+  - Pin types: exec, bool, int, float, string, Vec3, Quat, Entity, a
+    reflected struct, Wildcard, and `Array<T>`, each with a stable name.
+  - Literal values with JSON.
+  - `CanConnect` says whether a link works as is, needs a conversion
+    (int→float, or anything→string), or loses data (float→int, which
+    gets warning BP104).
+- **Graph data** (`graph.h`):
+  - Nodes, links, graphs (Event Graph, Function, Macro) and variables
+    (instance-editable, expose-on-spawn, tooltip, category).
+  - `.abp` JSON in the §A.4 shape; a round trip gives the same document.
+    Loading refuses newer formats, duplicate node IDs, unknown types and
+    malformed links, each with a message.
+  - `GraphBuilder` builds graphs in code.
+- **Node types** (`nodes.h`). Pins are never saved: `ResolveNode` works them
+  out from the node's type ID, its config and the Blueprint. So a
+  variable's type change, a Sequence's output count or a function's
+  signature can't leave stale pins in the file.
+  - **Built in**:
+    - events: BeginPlay, EndPlay, Tick, FixedTick, trigger and collision,
+      and Custom Events with parameters, plus their `Call.Custom:` nodes
+    - Branch and Sequence
+    - `Var.Get:`/`Var.Set:` per variable
+    - literals, and typed math families (`Math.Add:float`, comparisons,
+      boolean logic, clamp and lerp)
+    - Vec3 nodes, Get Self, Is Valid and Print String
+    - Function Entry/Return and `Call.Self:`
+  - **From reflection**:
+    - `Call.Native:Type.Fn` for every `BlueprintCallable` function;
+      `Pure` ones have no exec pins, and members get a `target` entity
+      that defaults to self.
+    - `Comp.Get:`/`Comp.Set:` for every `BlueprintReadWrite` field.
+  - **Custom node types** register through `RegisterNodeType` and
+    `RegisterNodeFamily`, the same way the built-ins do.
+  - **`ListNodeTypes`** is the palette: every node this Blueprint can use,
+    sorted by category.
+- **Validation** (`validate.h`) reports errors and warnings from the
+  catalog, each on its node and pin. The messages are the §13 wording.
+  - Errors:
+    - BP001 type mismatch
+    - BP003 pure loops (naming the chain)
+    - BP004 a function that no longer exists
+    - BP005 a deleted variable
+    - BP006 a duplicate event (custom events by name)
+    - new codes: BP007 unknown type or bad config, BP008 bad pin,
+      direction, default or node, BP009 too many links, BP010 an event
+      outside the Event Graph, BP011 a function's entry count
+  - Warnings: BP101 Branch's condition left unconnected (with the default
+    used), and BP104.
+
+**Verified**: 5 new tests.
+
+- Type names, parsing, conversions and values.
+- BP_Door from §A.4: it loads, round-trips through JSON and disk, and
+  validates clean, with the right pins. Load errors are checked too.
+- Signatures:
+  - from config: Sequence outputs, custom events and their calls, and
+    math operand types
+  - from reflection: callable, pure and hidden functions, and fields
+  - function graphs, a registered custom type, and the palette
+- Every validation code on its node, pin and severity, plus function
+  graph rules and allowed implicit conversions.
+- 226/226 tests pass on GCC 13, on Clang and under ASan/UBSan, and 233/233
   with physics.
 
 ## Building
