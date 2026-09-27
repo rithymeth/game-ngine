@@ -3,6 +3,7 @@
 #include "aether/blueprint/bytecode.h"
 
 #include <functional>
+#include <random>
 #include <memory>
 #include <span>
 #include <string>
@@ -36,6 +37,7 @@ public:
     struct Options {
         u64 instruction_budget = 1'000'000; // per dispatch (BP202); 0 = none
         u32 max_call_depth = 64;            // nested function and custom event calls (BP203)
+        u32 random_seed = 0;                // Random nodes; 0 = a different sequence each run
     };
 
     explicit BlueprintVM(World& world) : BlueprintVM(world, Options{}) {}
@@ -142,6 +144,7 @@ private:
     f64 time_ = 0.0;
     u64 frame_ = 0;
     u64 latent_order_ = 0;
+    std::mt19937 rng_;
     u64 budget_left_ = 0;
     u64 instructions_ = 0;
 };

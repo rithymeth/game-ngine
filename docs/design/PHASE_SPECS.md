@@ -724,9 +724,24 @@ struct Blueprint{ std::string parent; std::vector<Variable> variables; std::vect
      enable/disable and destroy to attach, BeginPlay, pause/resume and
      EndPlay. Ticking stays one `Update(dt)` per frame, not per-entity
      lifecycle updates, so latent timers advance once per frame.
-4. The rest of the v1 node library: loops, switches, select, strings and
-   arrays, entity and world nodes, conversions, Format Text, functions,
-   macros, event dispatchers and interfaces.
+4. The rest of the v1 node library, in parts:
+   - ✅ **Part 1 done:** loops, switches, select, strings, Format Text,
+     conversions, and more math.
+     - The nodes: For Loop and For Loop with Break, While Loop, Switch on
+       Int and on String, and Select (per type, 2 to 16 options).
+     - Strings and Format Text: Append (+pins), Length, Is Empty,
+       Contains (with ignore case), To Upper/Lower, Trim, String to
+       Int/Float (with success), and Format Text with `{name}`
+       placeholders and `{{ }}` escapes.
+     - Conversions: `Conv.ToString:<type>`.
+     - More math: trig, sqrt/exp/log/pow, Floor/Ceil/Round/Truncate to
+       int, int variants, Nearly Equal, Map Range Clamped, and seeded
+       random numbers.
+     - Loops compile to plain jumps, not calls. The loop body's
+       registers stay live, so the index pin reads directly.
+   - Part 2: arrays (a new register kind) and For Each.
+   - Part 3: entity and world nodes (Spawn, Destroy, transforms, tags).
+   - Part 4: macros, event dispatchers and interfaces.
 5. Debugger: node breakpoints, stepping and call stack, exec trace for
    wire animation, watched pin values, and an instance filter.
 6. Graph editor widget and Blueprint editor panels (portable ImGui):

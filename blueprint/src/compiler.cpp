@@ -322,7 +322,176 @@ private:
         }
         if (type.rfind("Call.Native:", 0) == 0) return EmitNative(id, sig, true);
         if (type.rfind("Call.Self:", 0) == 0) return EmitCall(id, sig, out_.function_index.at(type.substr(10)), true);
+        if (EvaluateMore(id, sig)) return;
         Error("BP012", id, "'" + sig.title + "' can't run yet.");
+    }
+
+    RegRef Const(i32 value, NodeId node) { return LoadValue(value, PinType::Of(ValueType::Int), node); }
+    RegRef ConstF(f32 value, NodeId node) { return LoadValue(value, PinType::Of(ValueType::Float), node); }
+
+    // Math, select, strings and conversions (Phase 12 step 4).
+    bool EvaluateMore(NodeId id, const NodeSignature& sig) {
+        const std::string& type = NodeOf(id).type;
+        auto out_type = [&](const std::string& pin) { return sig.Find(pin, PinDir::Out)->type; };
+        auto emit = [&](Op op, std::vector<RegRef> in, const char* out = "result", u16 c_immediate = 0,
+                        bool use_immediate = false) {
+            const RegRef dst = Alloc(out_type(out), id);
+            Instr instr{op, dst.index};
+            if (in.size() > 0) instr.b = in[0].index;
+            if (use_immediate) instr.c = c_immediate;
+            else if (in.size() > 1) instr.c = in[1].index;
+            if (in.size() > 2) instr.d = in[2].index;
+            Emit(instr, id);
+            SetPure(id, out, dst);
+            return dst;
+        };
+        static const std::pair<const char*, MathFn> kMathFns[] = {
+            {"Math.Sin", MathFn::Sin},   {"Math.Cos", MathFn::Cos},   {"Math.Tan", MathFn::Tan},
+            {"Math.Asin", MathFn::Asin}, {"Math.Acos", MathFn::Acos}, {"Math.Atan", MathFn::Atan},
+            {"Math.Sqrt", MathFn::Sqrt}, {"Math.Exp", MathFn::Exp},   {"Math.Log", MathFn::Log},
+            {"Math.Frac", MathFn::Frac}, {"Math.DegreesToRadians", MathFn::DegToRad},
+            {"Math.RadiansToDegrees", MathFn::RadToDeg}};
+        for (const auto& [name, fn] : kMathFns) {
+            if (type == name) return emit(Op::MathF, {Input(id, "a")}, "result", static_cast<u16>(fn), true), true;
+        }
+        static const std::pair<const char*, RoundMode> kRounding[] = {
+            {"Math.Floor", RoundMode::Floor}, {"Math.Ceil", RoundMode::Ceil},
+            {"Math.Round", RoundMode::Round}, {"Math.Truncate", RoundMode::Truncate}};
+        for (const auto& [name, mode] : kRounding) {
+            if (type == name) return emit(Op::RoundF, {Input(id, "a")}, "result", static_cast<u16>(mode), true), true;
+        }
+        if (type == "Math.Atan2") return emit(Op::Atan2F, {Input(id, "y"), Input(id, "x")}), true;
+        if (type == "Math.Power") return emit(Op::PowF, {Input(id, "base"), Input(id, "exponent")}), true;
+        if (type == "Math.Negate:int") return emit(Op::NegI, {Input(id, "a")}), true;
+        if (type == "Math.Abs:int") return emit(Op::AbsI, {Input(id, "a")}), true;
+        if (type == "Math.Clamp:int") {
+            return emit(Op::ClampI, {Input(id, "value"), Input(id, "min"), Input(id, "max")}), true;
+        }
+        if (type == "Math.NearlyEqual:float") {
+            return emit(Op::NearEqF, {Input(id, "a"), Input(id, "b"), Input(id, "tolerance")}), true;
+        }
+        if (type == "Math.MapRange:float") {
+            // out_min + clamp((value - in_min) / (in_max - in_min), 0, 1) * (out_max - out_min)
+            const PinType f = PinType::Of(ValueType::Float);
+            const RegRef v = Input(id, "value"), in_min = Input(id, "in_min"), in_max = Input(id, "in_max");
+            const RegRef out_min = Input(id, "out_min"), out_max = Input(id, "out_max");
+            const RegRef num = Alloc(f, id), den = Alloc(f, id), t = Alloc(f, id), ct = Alloc(f, id);
+            Emit({Op::SubF, num.index, v.index, in_min.index}, id);
+            Emit({Op::SubF, den.index, in_max.index, in_min.index}, id);
+            Emit({Op::DivF, t.index, num.index, den.index}, id);
+            const RegRef zero = ConstF(0.0f, id), one = ConstF(1.0f, id);
+            Emit({Op::ClampF, ct.index, t.index, zero.index, one.index}, id);
+            const RegRef dst = Alloc(f, id);
+            Emit({Op::LerpF, dst.index, out_min.index, out_max.index, ct.index}, id);
+            SetPure(id, "result", dst);
+            return true;
+        }
+        if (type == "Math.RandomFloatInRange") return emit(Op::RandF, {Input(id, "min"), Input(id, "max")}), true;
+        if (type == "Math.RandomIntInRange") return emit(Op::RandI, {Input(id, "min"), Input(id, "max")}), true;
+        if (type == "Math.RandomBool") return emit(Op::RandB, {}), true;
+
+        if (type.rfind("Flow.Select:", 0) == 0) {
+            // dst = option[index], or the type's default when out of range.
+            const PinDesc& ret = *sig.Find("return", PinDir::Out);
+            const RegRef index = Input(id, "index");
+            std::vector<RegRef> options;
+            for (const PinDesc& pin : sig.pins) {
+                if (pin.dir == PinDir::In && pin.name.rfind("option ", 0) == 0) options.push_back(Input(id, pin.name));
+            }
+            const RegRef dst = LoadValue(DefaultValue(ret.type), ret.type, id);
+            const Op move = dst.bank == Bank::String ? Op::MoveS : Op::Move;
+            std::vector<usize> to_end;
+            for (usize i = 0; i < options.size(); ++i) {
+                const RegRef k = Const(static_cast<i32>(i), id);
+                const RegRef hit = Alloc(PinType::Of(ValueType::Bool), id);
+                Emit({Op::EqI, hit.index, index.index, k.index}, id);
+                const usize skip = Emit({Op::JmpF, 0, hit.index}, id);
+                Emit({move, dst.index, options[i].index}, id);
+                to_end.push_back(Emit({Op::Jmp}, id));
+                fn_.code[skip].d = Here();
+            }
+            for (usize j : to_end) fn_.code[j].d = Here();
+            SetPure(id, "return", dst);
+            return true;
+        }
+
+        // Strings.
+        if (type == "String.Append") {
+            RegRef acc = Input(id, "a");
+            for (const PinDesc& pin : sig.pins) {
+                if (pin.dir != PinDir::In || pin.name == "a") continue;
+                const RegRef next = Input(id, pin.name);
+                const RegRef dst = Alloc(PinType::Of(ValueType::String), id);
+                Emit({Op::ConcatS, dst.index, acc.index, next.index}, id);
+                acc = dst;
+            }
+            SetPure(id, "result", acc);
+            return true;
+        }
+        if (type == "Text.Format") {
+            // Literal pieces and placeholders, concatenated in order.
+            const std::string format = NodeOf(id).config.value("format", "");
+            const PinType str = PinType::Of(ValueType::String);
+            RegRef acc = LoadValue(std::string(), str, id);
+            std::string literal;
+            auto flush = [&] {
+                if (literal.empty()) return;
+                const RegRef piece = LoadValue(literal, str, id);
+                const RegRef dst = Alloc(str, id);
+                Emit({Op::ConcatS, dst.index, acc.index, piece.index}, id);
+                acc = dst;
+                literal.clear();
+            };
+            for (usize i = 0; i < format.size(); ++i) {
+                const char c = format[i];
+                if ((c == '{' || c == '}') && i + 1 < format.size() && format[i + 1] == c) {
+                    literal.push_back(c); // "{{" and "}}"
+                    ++i;
+                    continue;
+                }
+                const usize end = c == '{' ? format.find('}', i + 1) : std::string::npos;
+                if (end == std::string::npos || end == i + 1) {
+                    literal.push_back(c);
+                    continue;
+                }
+                flush();
+                const RegRef value = Input(id, format.substr(i + 1, end - i - 1));
+                const RegRef dst = Alloc(str, id);
+                Emit({Op::ConcatS, dst.index, acc.index, value.index}, id);
+                acc = dst;
+                i = end;
+            }
+            flush();
+            SetPure(id, "result", acc);
+            return true;
+        }
+        if (type == "String.Length") return emit(Op::LenS, {Input(id, "text")}), true;
+        if (type == "String.IsEmpty") return emit(Op::EmptyS, {Input(id, "text")}), true;
+        if (type == "String.Contains") {
+            return emit(Op::ContainsS, {Input(id, "text"), Input(id, "substring"), Input(id, "ignore_case")}), true;
+        }
+        static const std::pair<const char*, StrFnKind> kStrFns[] = {
+            {"String.ToUpper", StrFnKind::Upper}, {"String.ToLower", StrFnKind::Lower}, {"String.Trim", StrFnKind::Trim}};
+        for (const auto& [name, fn] : kStrFns) {
+            if (type == name) return emit(Op::StrFn, {Input(id, "text")}, "result", static_cast<u16>(fn), true), true;
+        }
+        if (type == "String.ToInt" || type == "String.ToFloat") {
+            const RegRef text = Input(id, "text");
+            const RegRef value = Alloc(out_type("result"), id), ok = Alloc(out_type("success"), id);
+            Emit({type == "String.ToInt" ? Op::ParseI : Op::ParseF, value.index, text.index, ok.index}, id);
+            SetPure(id, "result", value);
+            SetPure(id, "success", ok);
+            return true;
+        }
+        if (type.rfind("Conv.ToString:", 0) == 0) {
+            const PinDesc& in = *sig.Find("value", PinDir::In);
+            const RegRef value = Input(id, "value");
+            const RegRef dst = Alloc(PinType::Of(ValueType::String), id);
+            Emit({Op::ToString, dst.index, value.index, static_cast<u16>(in.type.type)}, id);
+            SetPure(id, "result", dst);
+            return true;
+        }
+        return false;
     }
 
     void EmitField(NodeId id, const NodeSignature& sig, Op op, RegRef target, RegRef value) {
@@ -503,6 +672,71 @@ private:
             }
             Emit({Op::Latent, Slot(id), duration.index, static_cast<u16>(kind), static_cast<i32>(it->second)}, id);
             return; // what follows (a Sequence's next output) runs now; "completed" runs later
+        }
+        if (type == "Flow.ForLoop" || type == "Flow.ForLoopWithBreak") {
+            const bool breakable = type == "Flow.ForLoopWithBreak";
+            const PinType b = PinType::Of(ValueType::Bool);
+            const PinDesc break_flag{"$break", PinDir::Out, b, {}, Pin_None};
+            if (entry == "break") {
+                const RegRef yes = LoadValue(true, b, id);
+                Emit({Op::Move, OutputReg(id, break_flag).index, yes.index}, id);
+                return; // the loop checks the flag after this iteration's body
+            }
+            const RegRef first = Input(id, "first"), last = Input(id, "last");
+            const RegRef index = OutputReg(id, *sig.Find("index", PinDir::Out));
+            Emit({Op::Move, index.index, first.index}, id);
+            const RegRef one = Const(1, id);
+            RegRef stop;
+            if (breakable) {
+                stop = OutputReg(id, break_flag);
+                Emit({Op::Move, stop.index, LoadValue(false, b, id).index}, id);
+            }
+            const i32 top = Here();
+            const RegRef more = Alloc(b, id);
+            Emit({Op::LeI, more.index, index.index, last.index}, id);
+            const usize exit = Emit({Op::JmpF, 0, more.index}, id);
+            Chain(id, "loop_body");
+            usize broke = 0;
+            if (breakable) {
+                const usize go_on = Emit({Op::JmpF, 0, stop.index}, id);
+                broke = Emit({Op::Jmp}, id);
+                fn_.code[go_on].d = Here();
+            }
+            Emit({Op::AddI, index.index, index.index, one.index}, id);
+            Emit({Op::Jmp, 0, 0, 0, top}, id);
+            fn_.code[exit].d = Here();
+            if (breakable) fn_.code[broke].d = Here();
+            return Chain(id, "completed");
+        }
+        if (type == "Flow.WhileLoop") {
+            const i32 top = Here();
+            pure_.clear(); // the condition is evaluated again every iteration
+            evaluated_.clear();
+            const RegRef cond = Input(id, "condition");
+            const usize exit = Emit({Op::JmpF, 0, cond.index}, id);
+            Chain(id, "loop_body");
+            Emit({Op::Jmp, 0, 0, 0, top}, id);
+            fn_.code[exit].d = Here();
+            return Chain(id, "completed");
+        }
+        if (type == "Flow.SwitchInt" || type == "Flow.SwitchString") {
+            const bool strings = type == "Flow.SwitchString";
+            const RegRef selection = Input(id, "selection");
+            std::vector<usize> to_end;
+            for (const PinDesc& pin : sig.pins) {
+                if (pin.dir != PinDir::Out || pin.name == "default") continue;
+                const RegRef k = strings ? LoadValue(pin.name, PinType::Of(ValueType::String), id)
+                                         : Const(std::stoi(pin.name), id);
+                const RegRef hit = Alloc(PinType::Of(ValueType::Bool), id);
+                Emit({strings ? Op::EqS : Op::EqI, hit.index, selection.index, k.index}, id);
+                const usize skip = Emit({Op::JmpF, 0, hit.index}, id);
+                Chain(id, pin.name);
+                to_end.push_back(Emit({Op::Jmp}, id));
+                fn_.code[skip].d = Here();
+            }
+            Chain(id, "default");
+            for (usize j : to_end) fn_.code[j].d = Here();
+            return;
         }
         if (type == "Flow.Branch") {
             const RegRef cond = Input(id, "condition");

@@ -6,7 +6,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cctype>
 #include <cstdio>
+#include <cstdlib>
 
 namespace aether::bp {
 
@@ -86,7 +88,8 @@ void StoreAny(const reflect::Any& any, const PinType& type, Reg& r, std::string&
 
 } // namespace
 
-BlueprintVM::BlueprintVM(World& world, Options options) : world_(world), options_(options) {
+BlueprintVM::BlueprintVM(World& world, Options options)
+    : world_(world), options_(options), rng_(options.random_seed != 0 ? options.random_seed : std::random_device{}()) {
     frames_.resize(static_cast<usize>(options_.max_call_depth) + 1);
     print_ = [](Entity, const std::string& text) { AETHER_LOG_INFO("Blueprint", "%s", text.c_str()); };
 }
@@ -605,6 +608,116 @@ bool BlueprintVM::Run(Instance& instance, u32 function, Frame& frame, u32 depth,
         case Op::CountGet: r[in.a] = Reg::Int(instance.states[in.b].counter); break;
         case Op::CountReset: instance.states[in.a].counter = 0; break;
         case Op::Latent: StartLatent(instance, function, in, frame); break;
+        case Op::MathF: {
+            const f32 x = r[in.b].f;
+            f32 y = 0.0f;
+            switch (static_cast<MathFn>(in.c)) {
+            case MathFn::Sin: y = std::sin(x); break;
+            case MathFn::Cos: y = std::cos(x); break;
+            case MathFn::Tan: y = std::tan(x); break;
+            case MathFn::Asin: y = std::asin(std::clamp(x, -1.0f, 1.0f)); break;
+            case MathFn::Acos: y = std::acos(std::clamp(x, -1.0f, 1.0f)); break;
+            case MathFn::Atan: y = std::atan(x); break;
+            case MathFn::Sqrt: y = x > 0.0f ? std::sqrt(x) : 0.0f; break;
+            case MathFn::Exp: y = std::exp(x); break;
+            case MathFn::Log: y = x > 0.0f ? std::log(x) : 0.0f; break;
+            case MathFn::Frac: y = x - std::floor(x); break;
+            case MathFn::DegToRad: y = x * 0.017453292519943295f; break;
+            case MathFn::RadToDeg: y = x * 57.29577951308232f; break;
+            }
+            r[in.a] = Reg::Float(y);
+            break;
+        }
+        case Op::Atan2F: r[in.a] = Reg::Float(std::atan2(r[in.b].f, r[in.c].f)); break;
+        case Op::PowF: {
+            const f32 y = std::pow(r[in.b].f, r[in.c].f);
+            r[in.a] = Reg::Float(std::isfinite(y) ? y : 0.0f);
+            break;
+        }
+        case Op::RoundF: {
+            const f32 x = r[in.b].f;
+            f32 y = x;
+            switch (static_cast<RoundMode>(in.c)) {
+            case RoundMode::Floor: y = std::floor(x); break;
+            case RoundMode::Ceil: y = std::ceil(x); break;
+            case RoundMode::Round: y = std::round(x); break;
+            case RoundMode::Truncate: y = std::trunc(x); break;
+            }
+            r[in.a] = Reg::Int(std::isfinite(y) && std::fabs(y) < 2147483520.0f ? static_cast<i32>(y) : 0);
+            break;
+        }
+        case Op::NegI: r[in.a] = Reg::Int(static_cast<i32>(0u - static_cast<u32>(r[in.b].i))); break;
+        case Op::AbsI: r[in.a] = Reg::Int(r[in.b].i == INT32_MIN ? INT32_MAX : std::abs(r[in.b].i)); break;
+        case Op::ClampI: {
+            const i32 lo = r[in.c].i, hi = r[static_cast<usize>(in.d)].i;
+            r[in.a] = Reg::Int(std::max(lo, std::min(hi, r[in.b].i)));
+            break;
+        }
+        case Op::NearEqF:
+            r[in.a] = Reg::Bool(std::fabs(r[in.b].f - r[in.c].f) <= std::fabs(r[static_cast<usize>(in.d)].f));
+            break;
+        case Op::RandF: {
+            const f32 lo = r[in.b].f, hi = r[in.c].f;
+            r[in.a] = Reg::Float(lo + (hi - lo) * std::uniform_real_distribution<f32>(0.0f, 1.0f)(rng_));
+            break;
+        }
+        case Op::RandI: {
+            const i32 lo = std::min(r[in.b].i, r[in.c].i), hi = std::max(r[in.b].i, r[in.c].i);
+            r[in.a] = Reg::Int(std::uniform_int_distribution<i32>(lo, hi)(rng_));
+            break;
+        }
+        case Op::RandB: r[in.a] = Reg::Bool((rng_() & 1u) != 0); break;
+        case Op::ConcatS: s[in.a] = s[in.b] + s[in.c]; break;
+        case Op::LenS: r[in.a] = Reg::Int(static_cast<i32>(s[in.b].size())); break;
+        case Op::EmptyS: r[in.a] = Reg::Bool(s[in.b].empty()); break;
+        case Op::ContainsS: {
+            if (r[static_cast<usize>(in.d)].b) {
+                std::string text = s[in.b], sub = s[in.c];
+                for (char& ch : text) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+                for (char& ch : sub) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+                r[in.a] = Reg::Bool(text.find(sub) != std::string::npos);
+            } else {
+                r[in.a] = Reg::Bool(s[in.b].find(s[in.c]) != std::string::npos);
+            }
+            break;
+        }
+        case Op::StrFn: {
+            std::string text = s[in.b];
+            switch (static_cast<StrFnKind>(in.c)) {
+            case StrFnKind::Upper:
+                for (char& ch : text) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+                break;
+            case StrFnKind::Lower:
+                for (char& ch : text) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+                break;
+            case StrFnKind::Trim: {
+                const usize first = text.find_first_not_of(" \t\r\n");
+                const usize last = text.find_last_not_of(" \t\r\n");
+                text = first == std::string::npos ? std::string() : text.substr(first, last - first + 1);
+                break;
+            }
+            }
+            s[in.a] = std::move(text);
+            break;
+        }
+        case Op::ParseI:
+        case Op::ParseF: {
+            const std::string& text = s[in.b];
+            const char* begin = text.c_str();
+            char* end = nullptr;
+            bool ok = false;
+            if (in.op == Op::ParseI) {
+                const long long v = std::strtoll(begin, &end, 10);
+                ok = end != begin && *end == '\0' && v >= INT32_MIN && v <= INT32_MAX;
+                r[in.a] = Reg::Int(ok ? static_cast<i32>(v) : 0);
+            } else {
+                const f32 v = std::strtof(begin, &end);
+                ok = end != begin && *end == '\0' && std::isfinite(v);
+                r[in.a] = Reg::Float(ok ? v : 0.0f);
+            }
+            r[in.c] = Reg::Bool(ok);
+            break;
+        }
         case Op::Ret: return true;
         }
     }

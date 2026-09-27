@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <map>
 #include <mutex>
+#include <set>
 
 namespace aether::bp {
 
@@ -339,6 +340,148 @@ void RegisterBuiltins(Registry& r) {
     AddPure(r, "Vec3.Cross", "Cross", "Math|Vec3", {In("a", kVec3), In("b", kVec3), Out("result", kVec3)});
     AddPure(r, "Vec3.Normalize", "Normalize", "Math|Vec3", {In("vector", kVec3), Out("result", kVec3)});
 
+    // More math (§5): unary float functions, rounding to int, int variants,
+    // random numbers.
+    for (const char* name : {"Sin", "Cos", "Tan", "Asin", "Acos", "Atan", "Sqrt", "Exp", "Log", "Frac",
+                             "DegreesToRadians", "RadiansToDegrees"}) {
+        AddPure(r, std::string("Math.") + name, name, "Math|float", {In("a", kFloat), Out("result", kFloat)});
+    }
+    AddPure(r, "Math.Atan2", "Atan2", "Math|float", {In("y", kFloat), In("x", kFloat, 1.0f), Out("result", kFloat)});
+    AddPure(r, "Math.Power", "Power", "Math|float", {In("base", kFloat), In("exponent", kFloat, 1.0f), Out("result", kFloat)});
+    for (const char* name : {"Floor", "Ceil", "Round", "Truncate"}) {
+        AddPure(r, std::string("Math.") + name, name, "Math|float", {In("a", kFloat), Out("result", kInt)});
+    }
+    AddPure(r, "Math.Negate:int", "Negate (int)", "Math|int", {In("a", kInt), Out("result", kInt)});
+    AddPure(r, "Math.Abs:int", "Abs (int)", "Math|int", {In("a", kInt), Out("result", kInt)});
+    AddPure(r, "Math.Clamp:int", "Clamp (int)", "Math|int",
+            {In("value", kInt), In("min", kInt), In("max", kInt, i32{1}), Out("result", kInt)});
+    AddPure(r, "Math.NearlyEqual:float", "Nearly Equal (float)", "Math|float",
+            {In("a", kFloat), In("b", kFloat), In("tolerance", kFloat, 0.0001f), Out("result", kBool)});
+    AddPure(r, "Math.MapRange:float", "Map Range Clamped", "Math|float",
+            {In("value", kFloat), In("in_min", kFloat), In("in_max", kFloat, 1.0f), In("out_min", kFloat),
+             In("out_max", kFloat, 1.0f), Out("result", kFloat)});
+    AddPure(r, "Math.RandomFloatInRange", "Random Float in Range", "Math|Random",
+            {In("min", kFloat), In("max", kFloat, 1.0f), Out("result", kFloat)});
+    AddPure(r, "Math.RandomIntInRange", "Random Int in Range", "Math|Random",
+            {In("min", kInt), In("max", kInt, i32{1}), Out("result", kInt)});
+    AddPure(r, "Math.RandomBool", "Random Bool", "Math|Random", {Out("result", kBool)});
+
+    // --- Loops and switches (§2) --------------------------------------------
+    r.exact["Flow.ForLoop"] = [kInt](const NodeContext&, NodeError&) -> std::optional<NodeSignature> {
+        return Sig("For Loop", "Flow Control", NodeKind::Impure,
+                   {ExecIn(), In("first", kInt), In("last", kInt), ExecOut("loop_body"), Out("index", kInt),
+                    ExecOut("completed")});
+    };
+    r.exact["Flow.ForLoopWithBreak"] = [kInt](const NodeContext&, NodeError&) -> std::optional<NodeSignature> {
+        return Sig("For Loop with Break", "Flow Control", NodeKind::Impure,
+                   {ExecIn(), In("first", kInt), In("last", kInt), ExecIn("break"), ExecOut("loop_body"),
+                    Out("index", kInt), ExecOut("completed")});
+    };
+    r.exact["Flow.WhileLoop"] = [kBool](const NodeContext&, NodeError&) -> std::optional<NodeSignature> {
+        return Sig("While Loop", "Flow Control", NodeKind::Impure,
+                   {ExecIn(), In("condition", kBool, Pin_WarnIfUnconnected), ExecOut("loop_body"), ExecOut("completed")});
+    };
+    r.exact["Flow.SwitchInt"] = [kInt](const NodeContext& c, NodeError& error) -> std::optional<NodeSignature> {
+        const json cases = c.node.config.value("cases", json::array({0, 1}));
+        std::vector<PinDesc> pins{ExecIn(), In("selection", kInt)};
+        std::set<i32> seen;
+        if (!cases.is_array()) return Fail(error, "BP007", "Switch on Int needs a list of cases.");
+        for (const json& k : cases) {
+            if (!k.is_number_integer() || !seen.insert(k.get<i32>()).second) {
+                return Fail(error, "BP007", "Switch on Int's cases must be distinct whole numbers.");
+            }
+            pins.push_back(ExecOut(std::to_string(k.get<i32>())));
+        }
+        pins.push_back(ExecOut("default"));
+        return Sig("Switch on Int", "Flow Control", NodeKind::Impure, std::move(pins));
+    };
+    r.exact["Flow.SwitchString"] = [kString](const NodeContext& c, NodeError& error) -> std::optional<NodeSignature> {
+        const json cases = c.node.config.value("cases", json::array());
+        std::vector<PinDesc> pins{ExecIn(), In("selection", kString)};
+        std::set<std::string> seen;
+        if (!cases.is_array()) return Fail(error, "BP007", "Switch on String needs a list of cases.");
+        for (const json& k : cases) {
+            if (!k.is_string() || k.get<std::string>().empty() || k.get<std::string>() == "default" ||
+                !seen.insert(k.get<std::string>()).second) {
+                return Fail(error, "BP007", "Switch on String's cases must be distinct, non-empty, and not 'default'.");
+            }
+            pins.push_back(ExecOut(k.get<std::string>()));
+        }
+        pins.push_back(ExecOut("default"));
+        return Sig("Switch on String", "Flow Control", NodeKind::Impure, std::move(pins));
+    };
+    r.families["Flow.Select:"] = {
+        [kInt](const NodeContext& c, NodeError& error) -> std::optional<NodeSignature> {
+            const std::optional<PinType> type = ParseType(c.suffix);
+            if (!type || type->IsExec() || type->is_array || type->type == ValueType::Wildcard) {
+                return Fail(error, "BP007", "Select can't choose between " + std::string(c.suffix) + " values.");
+            }
+            const json count = c.node.config.value("count", json(2));
+            if (!count.is_number_integer() || count.get<int>() < 2 || count.get<int>() > 16) {
+                return Fail(error, "BP007", "Select needs between 2 and 16 options.");
+            }
+            std::vector<PinDesc> pins{In("index", kInt)};
+            for (int i = 0; i < count.get<int>(); ++i) pins.push_back(In("option " + std::to_string(i), *type));
+            pins.push_back(Out("return", *type));
+            return Sig("Select", "Flow Control", NodeKind::Pure, std::move(pins));
+        },
+        [](const Blueprint&) {
+            std::vector<PaletteEntry> entries;
+            for (const char* t : {"bool", "int", "float", "string", "Vec3", "Entity"})
+                entries.push_back({std::string("Flow.Select:") + t, std::string("Select (") + t + ")", "Flow Control"});
+            return entries;
+        }};
+
+    // --- Strings and text (§9) ----------------------------------------------
+    r.exact["String.Append"] = [kString](const NodeContext& c, NodeError& error) -> std::optional<NodeSignature> {
+        const json count = c.node.config.value("count", json(2));
+        if (!count.is_number_integer() || count.get<int>() < 2 || count.get<int>() > 16) {
+            return Fail(error, "BP007", "Append needs between 2 and 16 inputs.");
+        }
+        std::vector<PinDesc> pins;
+        for (int i = 0; i < count.get<int>(); ++i) pins.push_back(In(std::string(1, static_cast<char>('a' + i)), kString));
+        pins.push_back(Out("result", kString));
+        return Sig("Append", "String", NodeKind::Pure, std::move(pins));
+    };
+    AddPure(r, "String.Length", "Length", "String", {In("text", kString), Out("result", kInt)});
+    AddPure(r, "String.IsEmpty", "Is Empty", "String", {In("text", kString), Out("result", kBool)});
+    AddPure(r, "String.Contains", "Contains", "String",
+            {In("text", kString), In("substring", kString), In("ignore_case", kBool), Out("result", kBool)});
+    AddPure(r, "String.ToUpper", "To Upper", "String", {In("text", kString), Out("result", kString)});
+    AddPure(r, "String.ToLower", "To Lower", "String", {In("text", kString), Out("result", kString)});
+    AddPure(r, "String.Trim", "Trim", "String", {In("text", kString), Out("result", kString)});
+    AddPure(r, "String.ToInt", "String to Int", "String",
+            {In("text", kString), Out("result", kInt), Out("success", kBool)});
+    AddPure(r, "String.ToFloat", "String to Float", "String",
+            {In("text", kString), Out("result", kFloat), Out("success", kBool)});
+    r.exact["Text.Format"] = [kString](const NodeContext& c, NodeError& error) -> std::optional<NodeSignature> {
+        const json format = c.node.config.value("format", json(""));
+        if (!format.is_string()) return Fail(error, "BP007", "Format Text needs a format string.");
+        std::vector<PinDesc> pins;
+        for (const std::string& arg : ParseFormatArgs(format.get<std::string>())) {
+            if (arg == "result") return Fail(error, "BP007", "Format Text can't have a {result} placeholder.");
+            pins.push_back(In(arg, kString)); // anything connects: it's converted to text
+        }
+        pins.push_back(Out("result", kString));
+        return Sig("Format Text", "String", NodeKind::Pure, std::move(pins));
+    };
+    r.families["Conv.ToString:"] = {
+        [kString](const NodeContext& c, NodeError& error) -> std::optional<NodeSignature> {
+            const std::optional<PinType> type = ParseType(c.suffix);
+            if (!type || type->IsExec() || type->is_array || CanConnect(*type, PinType::Of(ValueType::String)) == Compat::No ||
+                type->type == ValueType::String) {
+                return Fail(error, "BP007", "There's no text form for " + std::string(c.suffix) + " values.");
+            }
+            return Sig("To String (" + TypeName(*type) + ")", "Conversions", NodeKind::Pure,
+                       {In("value", *type), Out("result", kString)});
+        },
+        [](const Blueprint&) {
+            std::vector<PaletteEntry> entries;
+            for (const char* t : {"bool", "int", "float", "Vec3", "Quat", "Entity"})
+                entries.push_back({std::string("Conv.ToString:") + t, std::string("To String (") + t + ")", "Conversions"});
+            return entries;
+        }};
+
     // --- Entity (§6) and debug (§11) ---------------------------------------
     AddPure(r, "Entity.Self", "Get Self", "Entity", {Out("self", kEntity)});
     AddPure(r, "Entity.IsValid", "Is Valid", "Entity", {In("entity", kEntity), Out("result", kBool)});
@@ -463,6 +606,23 @@ void RegisterBuiltins(Registry& r) {
 }
 
 } // namespace
+
+std::vector<std::string> ParseFormatArgs(std::string_view format) {
+    std::vector<std::string> args;
+    for (usize i = 0; i < format.size(); ++i) {
+        if (format[i] == '{' && i + 1 < format.size() && format[i + 1] == '{') {
+            ++i;
+            continue;
+        }
+        if (format[i] != '{') continue;
+        const usize end = format.find('}', i + 1);
+        if (end == std::string_view::npos) break;
+        const std::string name(format.substr(i + 1, end - i - 1));
+        if (!name.empty() && std::find(args.begin(), args.end(), name) == args.end()) args.push_back(name);
+        i = end;
+    }
+    return args;
+}
 
 const PinDesc* NodeSignature::Find(std::string_view pin, PinDir dir) const {
     for (const PinDesc& p : pins) {
