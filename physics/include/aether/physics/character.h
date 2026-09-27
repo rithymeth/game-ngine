@@ -42,6 +42,17 @@ struct CharacterMovement {
     bool jump_requested = false;
     void AddInput(const Vec3& direction) { input = input + direction; }
     void Jump() { jump_requested = true; }
+    // Root motion for the next step (Phase 16 step 4): a world-space
+    // displacement that replaces the input's horizontal movement (gravity
+    // and jumps still apply), and a turn about +Y applied to the Transform.
+    void AddRootMotion(const Vec3& displacement, f32 yaw_radians) {
+        root_motion = root_motion + displacement;
+        root_motion_yaw += yaw_radians;
+        has_root_motion = true;
+    }
+    Vec3 root_motion{0, 0, 0};
+    f32 root_motion_yaw = 0.0f;
+    bool has_root_motion = false;
 
     // State (read-only for gameplay).
     Vec3 velocity{0, 0, 0};
