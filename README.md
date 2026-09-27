@@ -4183,6 +4183,40 @@ Phase 16. The runtime is the new `Aether::Animation` library
 - 329/329 tests pass on GCC 13, Clang and ASan/UBSan, and 361/361 with
   physics.
 
+**Step 5: IK and retargeting** (§16.6, `ik.h`, `retarget.h`).
+
+- **Two-bone IK**: analytic, with a pole vector. It handles limbs that
+  start straight, straightens toward targets out of reach, and blends
+  by weight.
+- **Look-at**: an aim axis toward a target, within an angle limit.
+- **FABRIK** for chains such as tails and spines: it keeps the root and
+  the bone lengths.
+- **Foot placement** (`FootPlacer`): a ground trace per foot, the pelvis
+  dropped for the lowest foot, leg IK keeping each knee's bend plane,
+  feet tilted to the ground, and smoothing over time.
+- **Retargeting**:
+  - Rotations carry over in model space relative to each rig's rest
+    pose, so rigs with different bone axes still match.
+  - The root's movement scales by the rigs' hip heights.
+  - Bones pair automatically by name (`mixamorig:Hips` → `hips`), and
+    whole clips can be retargeted with their notifies.
+
+**Verified**: 4 new tests.
+
+- Two-bone IK: the hand reaches the target with bone lengths kept, and
+  the elbow follows the pole to either side. It also works from a bent
+  start, out of reach, too close, at half weight, and refuses a non-chain.
+- Look-at: aiming, and the angle limit. FABRIK on a five-bone tail: it
+  reaches, lengths hold, and it goes straight when out of reach.
+- Foot placement: flat ground, a 0.3 m step, a 0.2 m dip (the pelvis
+  drops 0.2 m), an out-of-range cliff, a slope tilting the foot, and
+  smoothing.
+- Retargeting between a 1 m and a 2 m rig with a twisted arm bone:
+  directions match, target lengths are kept, the root moves twice as
+  far, and rest maps to rest. Clip resampling and explicit mappings.
+- 333/333 tests pass on GCC 13, Clang and ASan/UBSan, and 365/365 with
+  physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,

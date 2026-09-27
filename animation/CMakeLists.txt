@@ -10,6 +10,8 @@ add_library(aether_animation STATIC
     src/anim_graph.cpp
     src/montage.cpp
     src/animator.cpp
+    src/ik.cpp
+    src/retarget.cpp
 )
 target_include_directories(aether_animation PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aether_animation PUBLIC cxx_std_20)

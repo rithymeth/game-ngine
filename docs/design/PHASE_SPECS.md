@@ -1456,8 +1456,8 @@ Jolt ragdolls come at the end of the phase.
 4. ✅ **Done.** The `Animator` component, evaluated in parallel jobs;
    montages (sections, slots); anim notifies as Blueprint events; root
    motion into `CharacterMovement` (§16.5).
-5. IK (two-bone, look-at, FABRIK, foot placement) and retargeting
-   between skeletons.
+5. ✅ **Done.** IK (two-bone, look-at, FABRIK, foot placement) and
+   retargeting between skeletons (§16.6).
 6. Editors (portable): the animation graph and state machine editor, the
    blend space editor and the asset viewer.
 7. GPU skinning in the renderer, and ragdolls with blending to and from
@@ -1590,4 +1590,40 @@ Jolt ragdolls come at the end of the phase.
 - **`CharacterMovement::AddRootMotion(displacement, yaw)`**: for one
   step, the displacement replaces the input's horizontal movement
   (gravity and jumps still apply), and the yaw turns the Transform.
+
+### 16.6 IK and retargeting
+
+- Solvers take model-space targets and change the pose's local
+  rotations. Foot placement also moves the pelvis.
+- **Two-bone IK**:
+  - The middle joint bends to the distance law-of-cosines gives, then
+    the root swings the end onto the target.
+  - The root then twists about the root-target line so the middle joint
+    faces the pole.
+  - A straight limb bends in the plane through it and the pole.
+  - Out of reach, the limb straightens toward the target. Too close, the
+    joint closes as far as the bone lengths allow.
+  - `weight` blends with the animated pose.
+- **Look-at**: turns a bone so a local aim axis points at the target,
+  limited to `max_angle` from the animated pose, and weighted.
+- **FABRIK**: backward and forward passes over a chain until the tip is
+  within `tolerance` of the target. It keeps the root and the bone
+  lengths, and goes straight at targets out of reach.
+- **Foot placement** (`FootPlacer`):
+  - It traces the ground under each foot and measures it against the
+    animation's ground (model y = 0), so lifted feet stay lifted.
+  - The pelvis drops to the lowest foot's offset, within
+    `max_step_down`. Each leg's two-bone IK uses its knee as the pole,
+    keeping the bend plane.
+  - Each foot tilts to its ground normal, up to `max_foot_angle`.
+  - Offsets ease in over `smoothing` seconds; the first frame snaps.
+- **Retargeting**:
+  - Each target bone takes its source bone's model-space rotation away
+    from rest, applied to its own model-space rest rotation. Limbs point
+    the same way even when the rigs' bone axes differ.
+  - Only the root translates, scaled by the ratio of the roots' rest
+    heights. Unmapped bones keep their rest pose.
+  - `AutoMapBones` pairs names ignoring case, `_`, `-`, spaces and a rig
+    prefix ("mixamorig:").
+  - `RetargetClip` resamples a whole clip and carries its notifies.
 
