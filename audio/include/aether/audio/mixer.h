@@ -3,6 +3,7 @@
 #include "aether/audio/dsp.h"
 #include "aether/audio/sound.h"
 #include "aether/audio/spatial.h"
+#include "aether/audio/stream.h"
 
 #include <algorithm>
 #include <functional>
@@ -40,6 +41,7 @@ struct PlayParams {
     bool loop = false;
     f32 start_time = 0.0f; // seconds into the sound
     f32 fade_in = 0.0f;    // seconds
+    f64 delay = 0.0;       // seconds after the next Render starts, sample-accurate (step 3)
     // Voice limiting: higher priorities keep their channels (0..255).
     u8 priority = 128;
     VirtualMode virtual_mode = VirtualMode::Continue;
@@ -95,6 +97,8 @@ public:
     // --- Voices -----------------------------------------------------------------
     // The sound must outlive the voice. Returns 0 for an empty sound or a bad bus.
     VoiceId Play(const SoundWave* sound, const PlayParams& params = {});
+    // Plays a stream, decoding as it goes (step 3). The voice owns it.
+    VoiceId PlayStream(std::unique_ptr<AudioStream> stream, const PlayParams& params = {});
     // Stops now, or fades out over `fade_out` seconds first.
     bool Stop(VoiceId voice, f32 fade_out = 0.0f);
     void StopAll();
@@ -132,6 +136,8 @@ public:
 
     // Mixes `frames` of interleaved stereo into `out` (overwriting it).
     void Render(f32* out, u32 frames);
+    // The mixer's clock: frames rendered so far.
+    u64 FramesRendered() const { return frames_rendered_; }
 
 private:
     struct Bus {
@@ -147,6 +153,12 @@ private:
     struct Voice {
         VoiceId id = 0;
         const SoundWave* sound = nullptr;
+        // Streamed voices: `position` counts frames from the start without
+        // wrapping at loops, and `window` holds decoded frames from `window_start`.
+        std::shared_ptr<AudioStream> stream;
+        std::vector<f32> window;
+        i64 window_start = 0;
+        u64 delay_frames = 0;
         BusId bus = kMasterBus;
         f64 position = 0.0; // in source frames
         f32 pitch = 1.0f;
@@ -177,12 +189,19 @@ private:
     // Advances a virtual voice without mixing it; false once it has finished.
     bool AdvanceVirtual(Voice& v, u32 frames);
     void Spatialize(Voice& v, u32 frames, const std::vector<f32>& bus_gains);
+    VoiceId Start(Voice v, const PlayParams& params);
+    // Decodes a streamed voice's frames [from, to) into its window.
+    static void Fill(Voice& v, i64 from, i64 to);
+    static u64 Frames(const Voice& v) { return v.stream ? v.stream->Frames() : v.sound->Frames(); }
+    static u32 Rate(const Voice& v) { return v.stream ? v.stream->SampleRate() : v.sound->sample_rate; }
+    static u32 Channels(const Voice& v) { return v.stream ? v.stream->Channels() : v.sound->channels; }
     void AssignChannels();
 
     u32 sample_rate_;
     std::vector<Bus> buses_;
     std::vector<Voice> voices_;
     VoiceId next_id_ = 1;
+    u64 frames_rendered_ = 0;
     Listener listener_;
     u32 max_voices_ = 64;
 };

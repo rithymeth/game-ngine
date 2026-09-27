@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Now: Phase 17 — audio (mixer and 3D done; cues, components and backend next)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Now: Phase 17 — audio (mixer, 3D, streaming and cues done; components and backend next)
 
 ### Phase 1 — Foundation
 
@@ -4380,6 +4380,63 @@ in step 5.
   - ramps with no click in and out;
   - out-of-range and muted voices going virtual and coming back.
 - 346/346 tests pass on GCC 13, Clang and ASan/UBSan, and 378/378 with
+  physics.
+
+**Step 3: decoding, streaming and sound cues** (§17.3).
+
+- **Formats**:
+  - Ogg Vorbis (stb_vorbis) and FLAC (dr_flac) alongside WAV, told apart
+    by their headers.
+  - They decode whole into a sound, or stream from memory or from disk.
+- **Streaming voices**:
+  - Decode ahead in chunks as they play, loop by seeking, and seek again
+    when they jump (start time, coming back from virtual, restart).
+  - They mix exactly the same samples as the decoded sound.
+- **Delayed starts**, to the sample, and a frame clock on the mixer.
+- **Sound cues** (`.acue`):
+  - Wave, Random (weights, no repeats), Sequence, Modulator (volume and
+    pitch ranges), Concatenator, Loop (a count or forever), Mix and Delay
+    nodes, with the output's volume, pitch, bus, priority and 3D
+    settings.
+  - Evaluating one gives the sounds to play and when. An endless loop
+    over a single sound is one looping voice; over anything else, it is
+    evaluated again each time round, so variations change.
+  - Validation (CU001–CU011) and JSON files.
+- **Cue player**:
+  - Plays cues from a sound bank (decoded or streamed sounds).
+  - Places every sound from the cue's start frame, so concatenations and
+    loops are seamless and don't drift.
+  - Schedules endless loops a quarter-second ahead.
+  - Stops, moves and changes the volume of each playing cue.
+
+**Verified**: 4 new tests, with an Ogg and a FLAC file in
+`assets/audio/`.
+
+- Decoding:
+  - the Ogg's pitch, length and level;
+  - the FLAC matching the source samples exactly;
+  - bad and cut-short files refused;
+  - streams read in chunks and seek to the same samples, from memory
+    and from disk.
+- Streamed voices mix the same samples as decoded ones:
+  - once through, looping, and Vorbis with a pitch and start time;
+  - losing and regaining a channel after wrapping while virtual.
+- Delayed starts land on the exact frame across blocks.
+- Cues:
+  - each node's timing, pitch and volume;
+  - counted, endless and intro-then-loop loops;
+  - weighted and no-repeat random choices, sequences and modulation,
+    repeatable from a seed;
+  - every validation code;
+  - `.acue` round trips and malformed files.
+- Cue player:
+  - concatenations and an endless loop that match the expected samples
+    exactly for a second;
+  - streamed cues;
+  - volumes, buses and fades;
+  - 3D positions;
+  - sequences across plays.
+- 350/350 tests pass on GCC 13, Clang and ASan/UBSan, and 382/382 with
   physics.
 
 ## Building
