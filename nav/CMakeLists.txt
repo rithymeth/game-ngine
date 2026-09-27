@@ -5,8 +5,9 @@ add_library(aether_nav STATIC
     src/navmesh.cpp
     src/dynamic.cpp
     src/components.cpp
+    src/crowd.cpp
 )
 target_include_directories(aether_nav PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aether_nav PUBLIC cxx_std_20)
-target_link_libraries(aether_nav PUBLIC Aether::Engine PRIVATE RecastNavigation::Recast RecastNavigation::Detour)
+target_link_libraries(aether_nav PUBLIC Aether::Engine PRIVATE RecastNavigation::Recast RecastNavigation::Detour RecastNavigation::DetourCrowd)
 add_library(Aether::Nav ALIAS aether_nav)
