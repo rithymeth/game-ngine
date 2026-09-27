@@ -99,6 +99,66 @@ void NavGeometry::AddBox(const Vec3& c, const Vec3& h, u8 area) {
     AddTriangles(v, {0, 1, 5, 0, 5, 4, 2, 7, 3, 2, 6, 7, 0, 6, 2, 0, 4, 6, 1, 3, 7, 1, 7, 5, 0, 2, 3, 0, 3, 1, 4, 5, 7, 4, 7, 6}, area);
 }
 
+NavVolume NavVolume::Box(const Vec3& c, const Vec3& h, u8 area, f32 yaw) {
+    NavVolume v;
+    v.shape = Shape::Box, v.center = c, v.half_extents = h, v.area = area, v.yaw_degrees = yaw;
+    return v;
+}
+
+NavVolume NavVolume::Cylinder(const Vec3& c, f32 r, f32 h, u8 area) {
+    NavVolume v;
+    v.shape = Shape::Cylinder, v.center = c, v.radius = r, v.height = h, v.area = area;
+    return v;
+}
+
+NavVolume NavVolume::Prism(const std::vector<Vec3>& pts, f32 lo, f32 hi, u8 area) {
+    NavVolume v;
+    v.shape = Shape::Prism, v.points = pts, v.min_y = lo, v.max_y = hi, v.area = area;
+    return v;
+}
+
+namespace {
+// A box's corners on the ground plane, turned by its yaw.
+std::array<Vec3, 4> BoxCorners(const NavVolume& v) {
+    const f32 a = v.yaw_degrees * 3.14159265f / 180.0f, c = std::cos(a), s = std::sin(a);
+    std::array<Vec3, 4> out;
+    const f32 sx[4] = {-1, 1, 1, -1}, sz[4] = {-1, -1, 1, 1};
+    for (int i = 0; i < 4; ++i) {
+        const f32 x = sx[i] * v.half_extents.x, z = sz[i] * v.half_extents.z;
+        out[static_cast<usize>(i)] = Vec3(v.center.x + x * c + z * s, v.center.y, v.center.z - x * s + z * c);
+    }
+    return out;
+}
+} // namespace
+
+void NavVolume::Bounds(Vec3& lo, Vec3& hi) const {
+    switch (shape) {
+    case Shape::Box: {
+        lo = hi = center;
+        for (const Vec3& p : BoxCorners(*this)) {
+            lo = Vec3(std::min(lo.x, p.x), 0, std::min(lo.z, p.z));
+            hi = Vec3(std::max(hi.x, p.x), 0, std::max(hi.z, p.z));
+        }
+        lo.y = center.y - half_extents.y;
+        hi.y = center.y + half_extents.y;
+        break;
+    }
+    case Shape::Cylinder:
+        lo = Vec3(center.x - radius, center.y - height * 0.5f, center.z - radius);
+        hi = Vec3(center.x + radius, center.y + height * 0.5f, center.z + radius);
+        break;
+    case Shape::Prism:
+        lo = Vec3(std::numeric_limits<f32>::max(), min_y, std::numeric_limits<f32>::max());
+        hi = Vec3(std::numeric_limits<f32>::lowest(), max_y, std::numeric_limits<f32>::lowest());
+        for (const Vec3& p : points) {
+            lo.x = std::min(lo.x, p.x), lo.z = std::min(lo.z, p.z);
+            hi.x = std::max(hi.x, p.x), hi.z = std::max(hi.z, p.z);
+        }
+        if (points.empty()) lo = hi = Vec3(0, min_y, 0);
+        break;
+    }
+}
+
 bool NavGeometry::Bounds(Vec3& lo, Vec3& hi) const {
     if (vertices.empty()) return false;
     lo = hi = vertices[0];
@@ -111,7 +171,48 @@ bool NavGeometry::Bounds(Vec3& lo, Vec3& hi) const {
 
 // --- Baking --------------------------------------------------------------------------------------------
 
-bool BuildNavTile(const NavGeometry& g, const NavMeshData& grid, i32 tx, i32 tz, NavMeshData::Tile& out, std::string* error) {
+namespace {
+void MarkVolume(rcContext& ctx, const NavVolume& v, rcCompactHeightfield& chf) {
+    switch (v.shape) {
+    case NavVolume::Shape::Box: {
+        float verts[12];
+        const auto corners = BoxCorners(v);
+        for (usize i = 0; i < 4; ++i) verts[i * 3] = corners[i].x, verts[i * 3 + 1] = corners[i].y, verts[i * 3 + 2] = corners[i].z;
+        rcMarkConvexPolyArea(&ctx, verts, 4, v.center.y - v.half_extents.y, v.center.y + v.half_extents.y, v.area, chf);
+        break;
+    }
+    case NavVolume::Shape::Cylinder: {
+        const float base[3] = {v.center.x, v.center.y - v.height * 0.5f, v.center.z};
+        rcMarkCylinderArea(&ctx, base, v.radius, v.height, v.area, chf);
+        break;
+    }
+    case NavVolume::Shape::Prism: {
+        if (v.points.size() < 3) break;
+        std::vector<float> verts;
+        for (const Vec3& p : v.points) verts.insert(verts.end(), {p.x, v.min_y, p.z});
+        rcMarkConvexPolyArea(&ctx, verts.data(), static_cast<int>(v.points.size()), v.min_y, v.max_y, v.area, chf);
+        break;
+    }
+    }
+}
+
+i32 BorderCells(const NavMeshSettings& s) { return static_cast<i32>(std::ceil(s.agent_radius / s.cell_size)) + 3; }
+} // namespace
+
+std::vector<std::pair<i32, i32>> NavTilesTouching(const NavMeshData& grid, const Vec3& lo, const Vec3& hi) {
+    std::vector<std::pair<i32, i32>> out;
+    if (grid.tile_world_size <= 0.0f) return out;
+    const f32 border = static_cast<f32>(BorderCells(grid.settings)) * grid.settings.cell_size;
+    const auto cell = [&](f32 v, f32 origin) { return static_cast<i32>(std::floor((v - origin) / grid.tile_world_size)); };
+    const i32 x0 = std::max(0, cell(lo.x - border, grid.origin.x)), x1 = std::min(grid.tiles_x - 1, cell(hi.x + border, grid.origin.x));
+    const i32 z0 = std::max(0, cell(lo.z - border, grid.origin.z)), z1 = std::min(grid.tiles_z - 1, cell(hi.z + border, grid.origin.z));
+    for (i32 z = z0; z <= z1; ++z)
+        for (i32 x = x0; x <= x1; ++x) out.emplace_back(x, z);
+    return out;
+}
+
+bool BuildNavTile(const NavGeometry& g, const NavMeshData& grid, i32 tx, i32 tz, NavMeshData::Tile& out, std::string* error,
+                  const std::vector<NavVolume>* extra_volumes, const std::vector<NavLink>* extra_links) {
     const NavMeshSettings& s = grid.settings;
     out = {tx, tz, {}};
     Vec3 gmin, gmax;
@@ -129,7 +230,7 @@ bool BuildNavTile(const NavGeometry& g, const NavMeshData& grid, i32 tx, i32 tz,
     cfg.mergeRegionArea = s.region_merge_size * s.region_merge_size;
     cfg.maxVertsPerPoly = s.verts_per_poly;
     cfg.tileSize = static_cast<int>(std::lround(grid.tile_world_size / cfg.cs));
-    cfg.borderSize = cfg.walkableRadius + 3;
+    cfg.borderSize = BorderCells(s);
     cfg.width = cfg.tileSize + cfg.borderSize * 2;
     cfg.height = cfg.tileSize + cfg.borderSize * 2;
     cfg.detailSampleDist = s.detail_sample_distance < 0.9f ? 0.0f : cfg.cs * s.detail_sample_distance;
@@ -173,7 +274,19 @@ bool BuildNavTile(const NavGeometry& g, const NavMeshData& grid, i32 tx, i32 tz,
     rcFilterWalkableLowHeightSpans(&ctx, cfg.walkableHeight, *hf.p);
     Owned<rcCompactHeightfield, rcFreeCompactHeightfield> chf{rcAllocCompactHeightfield()};
     if (!rcBuildCompactHeightfield(&ctx, cfg.walkableHeight, cfg.walkableClimb, *hf.p, *chf.p)) return Fail(error, "building the compact heightfield failed");
+    // Obstacles carve before eroding, so the agent's radius is kept off them too; areas are marked after.
+    const auto each_volume = [&](auto&& fn) {
+        for (const NavVolume& v : g.volumes) fn(v);
+        if (extra_volumes != nullptr)
+            for (const NavVolume& v : *extra_volumes) fn(v);
+    };
+    each_volume([&](const NavVolume& v) {
+        if (v.area == kAreaNull) MarkVolume(ctx, v, *chf.p);
+    });
     if (!rcErodeWalkableArea(&ctx, cfg.walkableRadius, *chf.p)) return Fail(error, "eroding the walkable area failed");
+    each_volume([&](const NavVolume& v) {
+        if (v.area != kAreaNull) MarkVolume(ctx, v, *chf.p);
+    });
     if (!rcBuildDistanceField(&ctx, *chf.p)) return Fail(error, "building the distance field failed");
     if (!rcBuildRegions(&ctx, *chf.p, cfg.borderSize, cfg.minRegionArea, cfg.mergeRegionArea)) return Fail(error, "building regions failed");
     Owned<rcContourSet, rcFreeContourSet> cset{rcAllocContourSet()};
@@ -186,7 +299,35 @@ bool BuildNavTile(const NavGeometry& g, const NavMeshData& grid, i32 tx, i32 tz,
     if (pmesh.p->npolys == 0) return true;
     for (int i = 0; i < pmesh.p->npolys; ++i) pmesh.p->flags[i] = pmesh.p->areas[i] != kAreaNull ? kWalkFlag : 0;
 
+    // The links that start in this tile (not its border, so each is in one tile only).
+    std::vector<float> link_verts, link_radii;
+    std::vector<u16> link_flags;
+    std::vector<u8> link_areas, link_dirs;
+    std::vector<u32> link_ids;
+    const f32 x0 = grid.origin.x + static_cast<f32>(tx) * grid.tile_world_size, z0 = grid.origin.z + static_cast<f32>(tz) * grid.tile_world_size;
+    const auto add_link = [&](const NavLink& l) {
+        if (l.start.x < x0 || l.start.x >= x0 + grid.tile_world_size || l.start.z < z0 || l.start.z >= z0 + grid.tile_world_size) return;
+        link_verts.insert(link_verts.end(), {l.start.x, l.start.y, l.start.z, l.end.x, l.end.y, l.end.z});
+        link_radii.push_back(l.radius);
+        link_flags.push_back(kWalkFlag);
+        link_areas.push_back(l.area);
+        link_dirs.push_back(l.bidirectional ? DT_OFFMESH_CON_BIDIR : 0);
+        link_ids.push_back(l.user_id);
+    };
+    for (const NavLink& l : g.links) add_link(l);
+    if (extra_links != nullptr)
+        for (const NavLink& l : *extra_links) add_link(l);
+
     dtNavMeshCreateParams params{};
+    if (!link_radii.empty()) {
+        params.offMeshConVerts = link_verts.data();
+        params.offMeshConRad = link_radii.data();
+        params.offMeshConFlags = link_flags.data();
+        params.offMeshConAreas = link_areas.data();
+        params.offMeshConDir = link_dirs.data();
+        params.offMeshConUserID = link_ids.data();
+        params.offMeshConCount = static_cast<int>(link_radii.size());
+    }
     params.verts = pmesh.p->verts;
     params.vertCount = pmesh.p->nverts;
     params.polys = pmesh.p->polys;
@@ -324,6 +465,11 @@ void NavMesh::Free() {
     mesh_ = nullptr;
 }
 
+void NavMesh::Unload() {
+    Free();
+    data_ = {};
+}
+
 bool NavMesh::Load(const NavMeshData& data, std::string* error) {
     Free();
     dtNavMeshParams params{};
@@ -414,9 +560,13 @@ bool NavMesh::FindPath(const Vec3& start, const Vec3& end, NavPath& out, const N
         query_->closestPointOnPoly(polys[npolys - 1], e, target, nullptr);
     }
     float straight[kMaxPathPolys * 3];
+    unsigned char straight_flags[kMaxPathPolys];
     int nstraight = 0;
-    if (dtStatusFailed(query_->findStraightPath(s, target, polys, npolys, straight, nullptr, nullptr, &nstraight, kMaxPathPolys))) return false;
-    for (int i = 0; i < nstraight; ++i) out.points.push_back(Vec3(straight[i * 3], straight[i * 3 + 1], straight[i * 3 + 2]));
+    if (dtStatusFailed(query_->findStraightPath(s, target, polys, npolys, straight, straight_flags, nullptr, &nstraight, kMaxPathPolys))) return false;
+    for (int i = 0; i < nstraight; ++i) {
+        out.points.push_back(Vec3(straight[i * 3], straight[i * 3 + 1], straight[i * 3 + 2]));
+        out.flags.push_back((straight_flags[i] & DT_STRAIGHTPATH_OFFMESH_CONNECTION) != 0 ? kNavPointLinkStart : 0);
+    }
     out.status = partial ? PathStatus::Partial : PathStatus::Complete;
     return true;
 }
@@ -531,6 +681,28 @@ std::vector<NavPolygon> NavMesh::Polygons() const {
                 np.vertices.push_back(Vec3(q[0], q[1], q[2]));
             }
             out.push_back(std::move(np));
+        }
+    }
+    return out;
+}
+
+std::vector<NavLink> NavMesh::Links() const {
+    std::vector<NavLink> out;
+    if (mesh_ == nullptr) return out;
+    const dtNavMesh* m = mesh_;
+    for (int i = 0; i < m->getMaxTiles(); ++i) {
+        const dtMeshTile* t = m->getTile(i);
+        if (t == nullptr || t->header == nullptr) continue;
+        for (int c = 0; c < t->header->offMeshConCount; ++c) {
+            const dtOffMeshConnection& con = t->offMeshCons[c];
+            NavLink l;
+            l.start = Vec3(con.pos[0], con.pos[1], con.pos[2]);
+            l.end = Vec3(con.pos[3], con.pos[4], con.pos[5]);
+            l.radius = con.rad;
+            l.bidirectional = (con.flags & DT_OFFMESH_CON_BIDIR) != 0;
+            l.area = t->polys[con.poly].getArea();
+            l.user_id = con.userId;
+            out.push_back(l);
         }
     }
     return out;

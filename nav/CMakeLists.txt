@@ -3,6 +3,8 @@
 # tests headless on every platform.
 add_library(aether_nav STATIC
     src/navmesh.cpp
+    src/dynamic.cpp
+    src/components.cpp
 )
 target_include_directories(aether_nav PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aether_nav PUBLIC cxx_std_20)
