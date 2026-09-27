@@ -592,7 +592,13 @@ comment above it adds metadata.
      friends call script methods). Raycasts and overlaps come with Phase
      13's character and query work.
    - Script-made events (`Event.new`) live as long as the script system.
-5. Hot reload and the error overlay.
+5. ✅ **Done.** Hot reload and the error overlay.
+   - Instance state lives on the instance table, so swapping its metatable
+     to the new class keeps it. No field copying is needed.
+   - Entities whose script failed to load during play start when a reload
+     succeeds.
+   - The overlay is a portable ImGui widget; hooking it (and the toast)
+     into the editor window is Windows editor work.
 6. Code editor panel with completion from reflection; DAP debugger.
 
 ---

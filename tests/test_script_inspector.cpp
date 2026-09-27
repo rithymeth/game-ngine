@@ -117,3 +117,21 @@ AETHER_TEST(ScriptInspector_EditsBecomeOverrides) {
         AETHER_CHECK(!editor::InspectScriptVariables(empty, component, "b"));
     });
 }
+
+#include "ui/error_overlay.h"
+
+AETHER_TEST(ErrorOverlay_DrawsToasts) {
+    HeadlessImGui ui;
+    std::vector<editor::ErrorOverlayItem> items;
+    int clicked = 0;
+    ui.Frame([&] { clicked = editor::DrawErrorOverlay(items); });
+    AETHER_CHECK(clicked == -1); // nothing to show
+    for (int i = 0; i < 8; ++i) {
+        items.push_back({"Mover.luau", i + 1, "attempt to index nil"});
+    }
+    items.push_back({"Boot.luau", 0, "not enough memory"}); // no line number
+    for (int i = 0; i < 2; ++i) {
+        ui.Frame([&] { clicked = editor::DrawErrorOverlay(items, 3); });
+    }
+    AETHER_CHECK(clicked == -1); // no click without input
+}
