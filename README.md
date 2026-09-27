@@ -4922,6 +4922,46 @@ shader later). Spec: [PHASE_SPECS.md, Phase 19](docs/design/PHASE_SPECS.md).
 - 380/380 tests pass on GCC 13, Clang and ASan/UBSan, and 412/412 with
   physics.
 
+**Step 2: rendering data** (§19.2, `aether/vfx/render.h`).
+
+- **Render modules**: a fourth stage on each emitter.
+  - Sprites in five facing modes (billboard, towards the camera,
+    stretched along velocity, about a fixed axis, flat in a plane), with
+    rotation, aspect, blend modes, soft-particle fade and camera offset.
+  - Flipbooks by life, rate or random frame, with frame blending.
+  - Mesh particles, oriented by rotation, velocity or the camera.
+  - Ribbons through the particles in birth order, stretched or tiled
+    UVs, joined to the emitter if wanted.
+  - Particle lights on every nth particle, up to a cap.
+- **Sorting**: back to front, front to back, oldest or newest first.
+- **Draw data**: world-space sprite, mesh, ribbon and light batches for
+  the renderer's particle pass (GPU drawing with the Windows renderer).
+- Three more checks (FX008–FX010).
+
+**Verified**: 2 new tests.
+
+- The camera from a view matrix.
+- Flipbook cells and frames: over life, cycles, rate, random, a frame
+  limit, and holding the last frame.
+- Sprites:
+  - batch settings and colours;
+  - all four sort orders;
+  - rotation and aspect;
+  - every facing mode checked by its axes;
+  - local-space emitters and camera offset;
+  - blended flipbook frames;
+  - expansion to triangles;
+  - nothing drawn when disabled or empty.
+- Meshes: transforms for each orientation.
+- Ribbons:
+  - vertex order, width and spread across the view;
+  - stretched and tiled UVs, a fixed axis and joining the emitter;
+  - no strip from one point.
+- Lights: every nth, caps, radius, colour and intensity.
+- A whole system's draw data.
+- 382/382 tests pass on GCC 13, Clang and ASan/UBSan, and 414/414 with
+  physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,

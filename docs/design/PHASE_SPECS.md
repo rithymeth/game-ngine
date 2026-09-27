@@ -2363,12 +2363,58 @@ CPU simulation as its reference and as the path for small emitters.
       bounds, spawn totals and loops.
   - `ParticleSystemInstance` plays a system's emitters together.
 
-### 19.2 PR breakdown
+### 19.2 Rendering data
+
+- **Render modules**: a fourth stage on the emitter (`render`). An
+  emitter can have several: sprites and a light, for example. They are
+  saved and checked like the others:
+  - FX008 nothing draws the emitter (warning);
+  - FX009 a flipbook with no columns or rows, or more frames than cells;
+  - FX010 a mesh renderer without a mesh.
+  - **`SpriteRenderer`**: material, blend (alpha, additive,
+    premultiplied, opaque), sort order, aspect, soft-particle fade
+    distance and camera offset. Facing modes:
+    - `Camera`: a billboard, turned in its plane by the particle's
+      rotation;
+    - `CameraPosition`: towards the camera's position;
+    - `Velocity`: along the velocity, stretched by speed;
+    - `FixedAxis`: up along an axis, turning about it to the camera;
+    - `FixedPlane`: flat, facing an axis.
+  - **Flipbooks**: `columns` x `rows` cells, optionally fewer `frames`.
+    Frames run over life (`cycles` times, holding the last frame at the
+    end), at a rate by age, or one random frame per particle. With frame
+    blending, the next cell and the blend amount come too.
+  - **`MeshRenderer`**: mesh and material, scale times the particle's
+    size, and an orientation: the particle's rotation about an axis,
+    +Y along the velocity, or +Z to the camera.
+  - **`RibbonRenderer`**: a strip through the particles in birth order,
+    optionally joined to the emitter.
+    - It is as wide as each particle's size times a scale, and spreads
+      across the view or along a fixed axis.
+    - u runs 0 to 1 along the strip, or repeats every `tile_length`.
+  - **`LightRenderer`**: point lights at every nth particle, up to a
+    cap. The radius is the particle's size times a scale, and the colour
+    is the particle's or a fixed one.
+- **Sorting**: none, back to front or front to back along the view
+  (for blending), or oldest or newest first.
+- **Draw data** (`render.h`): `BuildRenderData(instance or system,
+  camera)` appends:
+  - sprite batches: a centre, half-size right and up axes, colour, UV
+    and next UV with a blend amount;
+  - mesh batches: transforms and colours;
+  - ribbon strips: vertices and triangle indices;
+  - lights.
+  All of it is in world space: local-space emitters are transformed.
+  `ParticleCamera::FromView` takes a view matrix. `ExpandSprites` turns
+  sprites into plain triangles. The renderer's particle pass draws this
+  on the GPU, with the Windows renderer.
+
+### 19.3 PR breakdown
 
 1. ✅ **Done.** Curves, gradients, noise and randomness; the emitter's module
    stacks (spawn, initialize, update) and their asset format and checks;
    the CPU simulation.
-2. Rendering data: sprites and billboards (camera-facing, velocity-aligned,
+2. ✅ **Done.** Rendering data: sprites and billboards (camera-facing, velocity-aligned,
    fixed axes), flipbook animation, sorting, soft-particle parameters,
    mesh particles, ribbons and trails, and particle lights, as instance
    and vertex data for the renderer.

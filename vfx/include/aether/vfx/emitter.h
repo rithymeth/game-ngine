@@ -141,21 +141,107 @@ struct SpeedOverLife {
     FloatCurve curve = FloatCurve::Constant(1.0f); // times the velocity, when moving
 };
 
+// --- Render (step 2) --------------------------------------------------------------------------------------
+// How the live particles are drawn; an emitter can have several (sprites
+// and a light each). They turn particles into draw data (render.h).
+enum class BlendMode : u8 { Alpha, Additive, Premultiplied, Opaque };
+enum class SortMode : u8 {
+    None,
+    BackToFront, // by distance along the view (for alpha blending)
+    FrontToBack,
+    OldestFirst, // older particles under newer ones
+    NewestFirst,
+};
+enum class SpriteFacing : u8 {
+    Camera,          // square to the view (a billboard), turned by the particle's rotation
+    CameraPosition,  // towards the camera's position (no swimming at the edges of wide views)
+    Velocity,        // stretched along its velocity, face turned to the camera
+    FixedAxis,       // its up along `axis`, turning about it to face the camera (flames, beams)
+    FixedPlane,      // flat in the plane whose normal is `axis` (ripples, decals)
+};
+enum class FlipbookMode : u8 {
+    OverLife, // the frames across the particle's life, `cycles` times
+    Rate,     // `fps` frames per second of its age
+    Random,   // one random frame, kept
+};
+struct SpriteRenderer {
+    bool enabled = true;
+    std::string material;
+    BlendMode blend = BlendMode::Alpha;
+    SortMode sort = SortMode::BackToFront;
+    SpriteFacing facing = SpriteFacing::Camera;
+    Vec3 axis{0.0f, 1.0f, 0.0f}; // FixedAxis, FixedPlane (the emitter's frame unless the simulation is in the world)
+    f32 aspect = 1.0f;           // width / height
+    f32 stretch = 0.1f;          // Velocity: extra length per unit of speed
+    // A flipbook: the texture as `columns` x `rows` frames (1 x 1: none).
+    u32 columns = 1, rows = 1;
+    u32 frames = 0; // 0: all of them
+    FlipbookMode flipbook = FlipbookMode::OverLife;
+    f32 cycles = 1.0f, fps = 10.0f;
+    bool blend_frames = false; // cross-fade to the next frame (the shader samples both)
+    f32 soft_fade = 0.0f;      // soft particles: fade out within this distance of what's behind (0: off)
+    f32 camera_offset = 0.0f;  // pulled towards the camera, so big sprites don't cut into walls
+};
+enum class MeshOrientation : u8 {
+    Rotation,      // turned by the particle's rotation about `axis`
+    AlignVelocity, // +Y along its velocity
+    FaceCamera,    // +Z towards the camera
+};
+struct MeshRenderer {
+    bool enabled = true;
+    std::string mesh, material;
+    MeshOrientation orientation = MeshOrientation::Rotation;
+    Vec3 axis{0.0f, 1.0f, 0.0f};
+    Vec3 scale{1.0f, 1.0f, 1.0f}; // times the particle's size
+    SortMode sort = SortMode::None;
+};
+enum class RibbonFacing : u8 { Camera, Axis };
+enum class RibbonUv : u8 {
+    Stretch,  // u from 0 at the oldest point to 1 at the newest
+    Distance, // u repeats every `tile_length` along it
+};
+// A strip through the particles in birth order (a trail).
+struct RibbonRenderer {
+    bool enabled = true;
+    std::string material;
+    BlendMode blend = BlendMode::Alpha;
+    RibbonFacing facing = RibbonFacing::Camera;
+    Vec3 axis{0.0f, 1.0f, 0.0f}; // Axis: the strip spreads across this
+    f32 width_scale = 1.0f;      // times each particle's size
+    RibbonUv uv = RibbonUv::Stretch;
+    f32 tile_length = 1.0f;
+    bool attach_to_emitter = false; // the newest end runs to the emitter itself
+};
+// A point light at particles (sparks that light their surroundings).
+struct LightRenderer {
+    bool enabled = true;
+    f32 radius_scale = 5.0f; // times the particle's size
+    f32 intensity = 1.0f;
+    bool use_particle_color = true;
+    LinearColor color;       // otherwise
+    u32 every_nth = 1;       // only particles whose id is a multiple of this
+    u32 max_lights = 16;
+};
+
 using SpawnModule = std::variant<SpawnRate, SpawnBurst, SpawnPerDistance>;
 using InitModule = std::variant<InitLifetime, InitShape, InitVelocity, InitSize, InitColor, InitRotation, InheritVelocity>;
 using UpdateModule = std::variant<Gravity, Drag, CurlNoiseForce, Vortex, PointAttractor, KillVolume, CollisionPlane, SizeOverLife, ColorOverLife, SpeedOverLife>;
+using RenderModule = std::variant<SpriteRenderer, MeshRenderer, RibbonRenderer, LightRenderer>;
 
 // A module's type name ("SpawnRate"), and every name a stage takes (the editor's add menu).
 const char* ModuleName(const SpawnModule& m);
 const char* ModuleName(const InitModule& m);
 const char* ModuleName(const UpdateModule& m);
+const char* ModuleName(const RenderModule& m);
 std::vector<std::string> SpawnModuleNames();
 std::vector<std::string> InitModuleNames();
 std::vector<std::string> UpdateModuleNames();
+std::vector<std::string> RenderModuleNames();
 // A module with its defaults, by name (false if there's no such module in that stage).
 bool MakeModule(const std::string& name, SpawnModule& out);
 bool MakeModule(const std::string& name, InitModule& out);
 bool MakeModule(const std::string& name, UpdateModule& out);
+bool MakeModule(const std::string& name, RenderModule& out);
 
 enum class SimSpace : u8 {
     World, // particles stay where they were born when the emitter moves
@@ -178,6 +264,7 @@ struct Emitter {
     std::vector<SpawnModule> spawn;
     std::vector<InitModule> init;
     std::vector<UpdateModule> update;
+    std::vector<RenderModule> render;
 };
 
 // A particle system asset (.avfx): emitters that play together.
@@ -200,7 +287,9 @@ struct EmitterDiagnostic {
 // FX001 nothing spawns (warning); FX002 a lifetime that isn't positive;
 // FX003 max_particles 0 or over a million; FX004 a range whose min is over
 // its max; FX005 a burst bigger than max_particles (warning); FX006 a
-// duration that isn't positive; FX007 curve or gradient keys out of order.
+// duration that isn't positive; FX007 curve or gradient keys out of order;
+// FX008 nothing draws it (warning); FX009 a flipbook with no columns or
+// rows, or more frames than cells; FX010 a mesh renderer without a mesh.
 std::vector<EmitterDiagnostic> ValidateEmitter(const Emitter& e);
 
 } // namespace aether::vfx
