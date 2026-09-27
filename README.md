@@ -3251,6 +3251,43 @@ step 4, the v1 node library.
 - 259/259 tests pass on GCC 13, on Clang and under ASan/UBSan, and 266/266
   with physics.
 
+**Step 6, part 1: the graph editor widget** (§12.6). Portable ImGui code in
+`aether_editor_ui`, tested headless.
+
+- **The widget** (`editor/src/graph/graph_view.h`) is generic, so the
+  Material and Animation editors can reuse it. It draws a view model and
+  reports what the user asked for; the owner applies it.
+  - Mouse: drag nodes (Ctrl+click adds to the selection), drag between
+    pins to link, drop a wire on empty canvas or right-click for the
+    palette, drag on empty canvas to box-select, Alt+click a wire to
+    break it, middle- or right-drag to pan, wheel to zoom about the
+    cursor.
+  - Keys while hovered: Delete, Home (fit everything) and Ctrl+A.
+  - Drawing: exec pins as triangles, arrays as grids, filled when
+    connected; bezier wires; compile errors as red outlines; the
+    debugger's node highlighted; breakpoint dots; comment bubbles.
+- **The Blueprint adapter** (`blueprint_graph.h`):
+  - builds the view: pin colors from BLUEPRINT_NODES.md, header colors
+    for events, latent nodes, macros, flow, pure and call nodes, errors
+    from validation, and wires glowing from the exec trace;
+  - applies edits: links checked with `CanConnect` (direction, kind,
+    type), and a new link to a data input or exec output replaces the
+    old one, as in Unreal;
+  - searches the palette: fuzzy, prefix matches first, and only nodes
+    with a pin fitting the dragged one.
+
+**Verified**: 4 new tests.
+
+- The view's colors, labels and debug state.
+- Edits refusing bad links and replacing old ones, deletes taking their
+  links, and a node placed from a wire linking its first fitting pin.
+- Palette search ranking and pin-type filtering.
+- The widget driven by simulated input: node drag, wire link, palette
+  from a dropped wire and from right-click, Alt+click break, box select
+  and Delete, zoom keeping the point under the cursor, and fit.
+- 263/263 tests pass on GCC 13, on Clang and under ASan/UBSan, and 270/270
+  with physics.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
