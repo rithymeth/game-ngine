@@ -1664,13 +1664,45 @@ can be added later) pulls from the mixer on its own thread.
   reverb (8 comb and 4 all-pass filters per channel; room size, damping,
   wet and dry, width).
 
-### 17.2 PR breakdown
+### 17.2 3D audio
+
+- **Attenuation** by distance between `min_distance` (full volume) and
+  `max_distance` (no further falloff):
+  - Inverse: `min / (min + rolloff * (d - min))`.
+  - Linear: 1 to 0.
+  - Logarithmic: `1 - ln(d / min) / ln(max / min)`.
+  - Custom: a piecewise-linear curve over 0..1 of that range.
+  - Air absorption, when set, is a one-pole low-pass whose cutoff moves
+    from 20 kHz to `lowpass_at_max_hz`, interpolated in octaves.
+- **Listener**: position, forward, up and velocity. Pan is the source
+  direction along the listener's right (`forward × up`), fed into the
+  equal-power panner.
+- **Spatial blend** interpolates gain, pan, doppler and air absorption
+  between the 2D voice (0) and full 3D (1).
+- **Doppler**: `(c - f·v_listener) / (c - f·v_source)` along the line
+  between them; speeds are clamped below `c / f` and the ratio to 1/4..4.
+- **Occlusion**: `occlusion_query(listener, source)` returns 0..1 and is
+  called by `UpdateOcclusion` (game thread) for voices that opt in; it
+  can also be set per voice. Full occlusion is -12 dB and a 1.2 kHz
+  low-pass, both scaled log-linearly; the amount follows its target with
+  a 0.1 s time constant.
+- **Voice limiting**:
+  - Each Render, voices are ranked by priority, then audibility (voice
+    gain × distance and occlusion gain × bus gains down to Master).
+  - The first `max_voices` are real; the rest, and any voice below
+    `virtual_threshold_db` (-80), are virtual.
+  - Virtual behaviour per voice: Continue (keeps its position), Restart
+    (resumes from the start) or Stop (ends).
+  - A voice going virtual is mixed for one more block ramping down, and
+    one coming back ramps up over its first block.
+
+### 17.3 PR breakdown
 
 1. ✅ **Done.** Sounds (WAV), voices (resampling, pitch, loop, pan,
    fades), the bus mixer with meters, and the DSP effects.
-2. 3D: listener, attenuation curves (inverse, linear, logarithmic,
-   custom), spatial blend, doppler, voice limiting by priority with
-   virtual voices, and an occlusion hook.
+2. ✅ **Done.** 3D: listener, attenuation curves (inverse, linear,
+   logarithmic, custom) with air absorption, spatial blend, doppler,
+   voice limiting by priority with virtual voices, and an occlusion hook.
 3. Sound cues (random, sequence, modulate, concatenate, loop, mix) and
    `.acue` files; OGG and FLAC decoding; streaming long sounds.
 4. Components (`AudioSource`, `AudioListener`, `ReverbZone`), the
