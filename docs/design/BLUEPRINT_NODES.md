@@ -267,6 +267,11 @@ parameter list.
 | BP004 | error | "The function '{fn}' no longer exists on '{class}'. It may have been renamed; check CoreRedirects." |
 | BP005 | error | "The variable '{var}' was deleted. Replace or remove this node." |
 | BP006 | error | "Event '{event}' appears more than once in this graph." |
+| BP007 | error | "Unknown node type '{type}'." (also a node whose settings are invalid, such as a Sequence with 0 outputs) |
+| BP008 | error | "'{node}' has no pin '{pin}'." / "'{pin}' is an output; links go from an output to an input." / "The default for '{pin}' isn't a {type}." |
+| BP009 | error | "Input '{pin}' has {n} links; a data input takes one." / "Exec output '{pin}' has {n} links; it can only run one thing. Use a Sequence." |
+| BP010 | error | "'{node}' is an event and belongs in the Event Graph." (and Function Entry/Return outside a function graph) |
+| BP011 | error | "The function '{fn}' needs exactly one Function Entry node (it has {n})." |
 | BP101 | warning | "Input '{pin}' isn't connected and will use its default value ({default})." |
 | BP102 | warning | "This node's output isn't used, and it has no side effects. It can be removed." |
 | BP103 | warning | "'{node}' in Event Tick runs every frame and searches the whole world. Consider caching the result in BeginPlay." |

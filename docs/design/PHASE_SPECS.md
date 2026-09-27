@@ -621,6 +621,91 @@ comment above it adds metadata.
 
 ---
 
+## Phase 12: Blueprints (visual scripting)
+
+The concepts, VM design and UI are in [ROADMAP.md Phase 12](../ROADMAP.md),
+[ROADMAP_DETAILS.md §A.4, §C-D](../ROADMAP_DETAILS.md), and the node
+reference in [BLUEPRINT_NODES.md](BLUEPRINT_NODES.md). This section is the
+build plan.
+
+### 12.1 Library layout
+
+`blueprint/` builds `Aether::Blueprint`. It depends only on the engine, so
+it builds and tests headless everywhere. The editor's graph widget lives in
+`editor/src/graph/` (portable ImGui, like the other editor UI).
+
+### 12.2 Graph data (step 1)
+
+```cpp
+struct PinType  { PinKind kind; ValueType type; const reflect::TypeInfo* reflected; bool is_array; };
+struct PinDesc  { std::string name; PinDir dir; PinType type; Value default_value; u32 flags; };
+struct Node     { NodeId id; std::string type; float x, y; json config; json defaults; std::string comment; };
+struct Link     { PinRef from; PinRef to; };          // PinRef = {node id, pin name}
+struct Graph    { std::string name; GraphKind kind; std::vector<Node> nodes; std::vector<Link> links; };
+struct Blueprint{ std::string parent; std::vector<Variable> variables; std::vector<Graph> graphs; };
+```
+
+- **Pins aren't saved.** A node stores its type ID, its config and the
+  defaults of any inputs the user changed. Its pins come from
+  `ResolveNode(blueprint, node)`, which asks the node type (given the
+  config and the Blueprint's variables and functions). So renaming a
+  variable's type, or changing the number of `Sequence` outputs, never
+  leaves stale pins in the file.
+- **Node type IDs are stable strings**, as in §A.4:
+  - hand-written: `Flow.Branch`
+  - one per variable: `Var.Get:IsOpen`
+  - one per reflected function: `Call.Native:Health.Heal`
+  - one per operand type: `Math.Add:float`
+
+  The registry resolves the families by prefix.
+- **`.abp` files** are JSON in the §A.4 shape. Links are written as
+  `{"from": [1, "then"], "to": [2, "exec"]}`.
+- **Validation** covers what can be checked on the graph alone.
+  - Errors:
+    - unknown node types and pins
+    - wrong direction
+    - BP001 type mismatch (implicit int→float, anything→string for
+      Print, and Wildcard are allowed)
+    - more than one link into a data input, or out of an exec output
+    - BP003 pure loops
+    - BP005 deleted variables
+    - BP006 duplicate events
+  - Warnings:
+    - BP101 unconnected inputs that ask for it (Branch's condition)
+  - Each diagnostic names its node and pin.
+
+### 12.3 PR breakdown
+
+1. ✅ **Done.** Graph model, node signatures (core library: events, flow,
+   variables, math, literals, print, reflected native calls), `.abp`
+   save/load, validation, and a `GraphBuilder` for tests.
+   - Validation added five catalog codes: BP007 (unknown type or bad
+     config), BP008 (pins and defaults), BP009 (too many links), BP010
+     (an event outside the Event Graph) and BP011 (a function's entry
+     count).
+   - Custom node types register through `RegisterNodeType` and
+     `RegisterNodeFamily`, the §D mechanism, with the same factories the
+     built-ins use.
+2. Compiler and VM: lower to the §C.2 register bytecode, typed math
+   opcodes, pure nodes cached per exec step, native calls through
+   `FunctionInfo`, `BlueprintInstance` component, dispatch of BeginPlay,
+   Tick and custom events, the BP202 instruction budget, and a golden
+   bytecode test for BP_Door.
+3. Latent actions (Delay, Retriggerable Delay, Delay Until Next Tick, Do
+   Once, Gate, Do N, Flip Flop), the LatentActionManager, and lifecycle
+   and scheduler integration.
+4. The rest of the v1 node library: loops, switches, select, strings and
+   arrays, entity and world nodes, conversions, Format Text, functions,
+   macros, event dispatchers and interfaces.
+5. Debugger: node breakpoints, stepping and call stack, exec trace for
+   wire animation, watched pin values, and an instance filter.
+6. Graph editor widget and Blueprint editor panels (portable ImGui):
+   palette, pin colors, links, comments and compile results.
+7. Samples (BP_Door, BP_Coin, BP_GameMode) and the 10,000-instance
+   benchmark.
+
+---
+
 ## Phase 13: physics events and character movement
 
 ### 13.1 Contact and trigger events
