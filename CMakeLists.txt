@@ -200,6 +200,22 @@ add_subdirectory(ui)
 # Particle systems (Phase 19): emitters, modules and the simulation; engine-only.
 add_subdirectory(vfx)
 
+# Recast/Detour (zlib, recastnavigation/recastnavigation) for navigation
+# meshes, pathfinding and crowds (Phase 20). Only the libraries.
+set(RECASTNAVIGATION_DEMO OFF CACHE BOOL "" FORCE)
+set(RECASTNAVIGATION_TESTS OFF CACHE BOOL "" FORCE)
+set(RECASTNAVIGATION_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(RECASTNAVIGATION_DT_VIRTUAL_QUERYFILTER ON CACHE BOOL "" FORCE) # nav: per-area exclusion
+FetchContent_Declare(
+    recastnavigation
+    GIT_REPOSITORY https://github.com/recastnavigation/recastnavigation.git
+    GIT_TAG v1.6.0
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(recastnavigation)
+# AI and navigation (Phase 20): navmeshes, agents, behaviour trees, perception.
+add_subdirectory(nav)
+
 if(AETHER_BUILD_SCRIPTING)
     # Luau (MIT, luau-lang/luau): the scripting VM and compiler (Phase 11).
     # Only the libraries; not its command-line tools or tests.
