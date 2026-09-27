@@ -2,6 +2,7 @@ add_library(aether_scripting STATIC
     src/luau_host.cpp
     src/world_bindings.cpp
     src/script_system.cpp
+    src/script_api.cpp
 )
 
 target_include_directories(aether_scripting PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
