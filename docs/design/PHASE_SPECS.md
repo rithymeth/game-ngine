@@ -1039,6 +1039,12 @@ flying, swimming).
    - **Stay** is opt-in per collider (`report_stay`). `PhysicsEventName`
      gives the Blueprint event, and the Event OnCollisionStay node was
      added.
+   - **Fix** found by the determinism test's repeated worlds:
+     `JoltJobSystemAdapter`'s destructor now waits for the wrappers it
+     scheduled. A worker releases its job after marking it done, so a
+     world destroyed right after `Update` could free the job pool under
+     it. That tripped a Jolt assertion in Debug builds. Jolt's asserts
+     now log the failed expression.
    - **Not yet**: the impulse Jolt computes during solving isn't
      reported (approach speed stands in, as Jolt suggests for impact
      sounds). Events go to Blueprints through a handler the game sets up

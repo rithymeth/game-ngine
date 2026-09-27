@@ -49,9 +49,9 @@ private:
     JPH::FixedSizeFreeList<Job> jobs_;
 
     // Jolt's own Barrier (via JobHandle::IsDone()) tracks each job's real
-    // completion; aether::JobSystem::Schedule just needs *some* counter to
-    // increment/decrement, and every Jolt job sharing this one is safe since
-    // we never Wait() on it ourselves.
+    // completion. This counter counts the scheduled wrappers, which finish
+    // after the job's Release(); the destructor waits on it so no worker
+    // still holds a job when the pool is destroyed.
     JobCounter dummy_counter_{0};
 };
 

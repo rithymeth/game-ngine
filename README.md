@@ -3487,6 +3487,15 @@ Phase 13.
   entity destroyed by an earlier handler in the same batch are skipped.
 - **Blueprints**: `PhysicsEventName` gives the event to dispatch
   ("Event.OnTriggerEnter"), and there's a new Event OnCollisionStay node.
+- **Fix**: destroying a `PhysicsWorld` right after a step could trip a
+  Jolt assertion in Debug builds, about once in 15 runs.
+  - The cause: a worker thread marks a Jolt job done, which lets
+    `Update` return, and only then drops its reference to the job. The
+    job pool could be destroyed in between.
+  - The job-system adapter now waits for those last releases before it
+    goes away.
+  - Jolt's Debug assertions now log what failed instead of stopping at a
+    bare breakpoint trap.
 
 **Verified**: 6 new tests.
 

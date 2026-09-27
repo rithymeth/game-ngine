@@ -97,9 +97,22 @@ std::atomic<int>& JoltRefCount() {
 // Jolt's Factory/type registry is process-global; only the first
 // PhysicsWorld pays the init cost, and it's torn down only once the last one
 // is destroyed, so multiple PhysicsWorld instances (e.g. in tests) are safe.
+#ifdef JPH_ENABLE_ASSERTS
+// Jolt's own checks (Debug builds): log what failed before breaking, so a
+// failure says more than "trace/breakpoint trap".
+bool JoltAssertFailed(const char* expression, const char* message, const char* file, JPH::uint line) {
+    AETHER_LOG_ERROR("Jolt", "%s:%u: assertion failed: %s%s%s", file, line, expression, message != nullptr ? " - " : "",
+                     message != nullptr ? message : "");
+    return true; // break into the debugger
+}
+#endif
+
 void EnsureJoltInitialized() {
     if (JoltRefCount().fetch_add(1, std::memory_order_acq_rel) == 0) {
         JPH::Trace = JoltTraceImpl;
+#ifdef JPH_ENABLE_ASSERTS
+        JPH::AssertFailed = JoltAssertFailed;
+#endif
         JPH::RegisterDefaultAllocator();
         JPH::Factory::sInstance = new JPH::Factory();
         JPH::RegisterTypes();

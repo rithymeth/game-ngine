@@ -13,7 +13,13 @@ JoltJobSystemAdapter::JoltJobSystemAdapter(aether::JobSystem& job_system, JPH::u
     jobs_.Init(max_jobs, max_jobs);
 }
 
-JoltJobSystemAdapter::~JoltJobSystemAdapter() = default;
+JoltJobSystemAdapter::~JoltJobSystemAdapter() {
+    // A worker marks a job done (which is what PhysicsSystem::Update waits
+    // for) before it releases its reference to it, so Update can return
+    // while the last Release()s are still running. Wait for them before the
+    // job pool goes away.
+    job_system_.Wait(dummy_counter_);
+}
 
 int JoltJobSystemAdapter::GetMaxConcurrency() const {
     return static_cast<int>(job_system_.ThreadCount());
