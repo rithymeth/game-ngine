@@ -13,11 +13,14 @@ add_library(aether_editor_ui STATIC
     ../graph/blueprint_graph.cpp
     ../graph/blueprint_document.cpp
     ../graph/blueprint_editor.cpp
+    ../graph/material_document.cpp
+    ../graph/material_graph.cpp
+    ../graph/material_editor.cpp
     ../core/command_stack.cpp
     ../core/commands.cpp
     ../core/play_session.cpp
     ../core/recent_projects.cpp
 )
 target_include_directories(aether_editor_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
-target_link_libraries(aether_editor_ui PUBLIC Aether::Engine Aether::Blueprint imgui_core)
+target_link_libraries(aether_editor_ui PUBLIC Aether::Engine Aether::Blueprint Aether::Renderer imgui_core)
 add_library(Aether::EditorUI ALIAS aether_editor_ui)

@@ -32,7 +32,7 @@ add_executable(aether_tests
 target_link_libraries(aether_tests PRIVATE Aether::Engine)
 
 if(TARGET aether_editor_ui)
-    target_sources(aether_tests PRIVATE test_editor_ui.cpp test_command_stack.cpp test_commands.cpp test_play_session.cpp test_editor_projects.cpp test_script_inspector.cpp test_code_editor.cpp test_graph_editor.cpp test_blueprint_editor.cpp)
+    target_sources(aether_tests PRIVATE test_editor_ui.cpp test_command_stack.cpp test_commands.cpp test_play_session.cpp test_editor_projects.cpp test_script_inspector.cpp test_code_editor.cpp test_graph_editor.cpp test_blueprint_editor.cpp test_material_editor.cpp)
     target_link_libraries(aether_tests PRIVATE Aether::EditorUI)
 endif()
 target_include_directories(aether_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

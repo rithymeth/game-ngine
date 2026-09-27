@@ -4,6 +4,7 @@
 
 #include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace aether::editor {
@@ -164,5 +165,10 @@ int HitTestCommentTitle(const GraphViewModel& model, const GraphViewState& state
 int HitTestCommentCorner(const GraphViewModel& model, const GraphViewState& state, float x, float y);
 // The wire under (x, y), within `tolerance` pixels; -1 if none.
 int HitTestLink(const GraphViewModel& model, const GraphViewState& state, float x, float y, float tolerance = 5.0f);
+
+// Palette search: the letters of `query` in order within `text`, ignoring
+// case and spaces; higher is better, 0 is no match. Prefixes and whole
+// substrings rank first.
+int FuzzyScore(std::string_view query, std::string_view text);
 
 } // namespace aether::editor
