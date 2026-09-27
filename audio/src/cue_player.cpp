@@ -69,19 +69,17 @@ const CuePlayer::Instance* CuePlayer::Find(CueHandle h) const {
 
 void CuePlayer::Schedule(Instance& in, const CuePlan& plan) {
     const SoundCue& cue = *in.cue;
-    const f64 rate = mixer_.SampleRate();
     BusId bus = mixer_.FindBus(cue.bus);
     if (bus == Mixer::kInvalidBus) bus = kMasterBus;
     for (const CueItem& item : plan.items) {
-        // Every sound is placed from the cue's start frame, so nothing drifts however long it runs.
-        const u64 at = in.start_frame + static_cast<u64>(std::llround(std::max(item.offset, 0.0) * rate));
-        const u64 now = mixer_.FramesRendered();
+        // Every sound is placed from the cue's start (its sync group), so nothing drifts however long it runs.
         PlayParams p;
+        p.sync_group = in.sync_group;
         p.bus = bus;
         p.volume_db = cue.volume_db + in.params.volume_db + item.volume_db;
         p.pitch = cue.pitch * in.params.pitch * item.pitch;
         p.loop = item.loop;
-        p.delay = at > now ? static_cast<f64>(at - now) / rate : 0.0;
+        p.delay = std::max(item.offset, 0.0);
         p.fade_in = item.offset <= 0.0 ? in.params.fade_in : 0.0f;
         p.priority = cue.priority;
         p.virtual_mode = cue.virtual_mode;
@@ -110,8 +108,12 @@ CueHandle CuePlayer::Play(const SoundCue& cue, const CuePlayParams& params) {
     in.cue = &cue;
     in.params = params;
     in.start_frame = mixer_.FramesRendered();
+    in.sync_group = mixer_.BeginSyncGroup();
     Schedule(in, EvaluateCue(cue, StateOf(cue), Durations()));
-    if (in.voices.empty() && in.tails.empty()) return 0; // nothing to play
+    if (in.voices.empty() && in.tails.empty()) {
+        mixer_.EndSyncGroup(in.sync_group);
+        return 0; // nothing to play
+    }
     const CueHandle h = in.handle;
     instances_.push_back(std::move(in));
     Update();
@@ -146,6 +148,7 @@ void CuePlayer::Update() {
         }
         std::erase_if(in.voices, [&](const auto& v) { return !mixer_.IsPlaying(v.first); });
         if (in.voices.empty() && in.tails.empty()) {
+            mixer_.EndSyncGroup(in.sync_group);
             instances_.erase(instances_.begin() + static_cast<std::ptrdiff_t>(k));
         } else {
             ++k;
@@ -158,13 +161,17 @@ bool CuePlayer::Stop(CueHandle h, f32 fade_out) {
     if (in == nullptr) return false;
     for (const auto& [id, db] : in->voices) mixer_.Stop(id, fade_out);
     in->tails.clear();
-    if (fade_out <= 0.0f) instances_.erase(instances_.begin() + (in - instances_.data()));
+    if (fade_out <= 0.0f) {
+        mixer_.EndSyncGroup(in->sync_group);
+        instances_.erase(instances_.begin() + (in - instances_.data()));
+    }
     return true;
 }
 
 void CuePlayer::StopAll() {
     for (const Instance& in : instances_) {
         for (const auto& [id, db] : in.voices) mixer_.Stop(id);
+        mixer_.EndSyncGroup(in.sync_group);
     }
     instances_.clear();
 }
