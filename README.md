@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 in progress (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 in progress (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes; Blackboards and Behavior Trees)
 
 ### Phase 1 — Foundation
 
@@ -5276,6 +5276,55 @@ Behavior Trees and perception come next. Spec:
   OnMoveCompleted).
 - Luau calling the agent's methods.
 - 423/423 tests pass on GCC 13, Clang and ASan/UBSan, and 455/455 with
+  physics.
+
+**Step 4: Blackboards and Behavior Trees** (§20.4), in the new
+`Aether::AI` library (`ai/`).
+
+- **Blackboards**: typed keys (Bool, Int, Float, String, Vector, Entity)
+  with initial values, type checks, and revisions per key. Values set
+  before the tree is known are kept when they fit its keys.
+- **`.abt` assets** in JSON, with load errors that say where, and ten
+  checks (BT001–BT010).
+- **Composites**: Selector, Sequence, and Parallel (succeeding when all
+  or one of its children do).
+- **Decorators**:
+  - Blackboard conditions that compare values and abort their own
+    branch, lower priorities, or both;
+  - Cooldown, Loop, TimeLimit, Inverter, ForceSuccess and ForceFailure.
+- **Services**: Blueprint events, Luau functions, and DistanceTo, at
+  intervals.
+- **Tasks**:
+  - Wait (with deviation) and MoveTo (drives the NavAgent, and follows
+    a changing goal);
+  - Set and Clear Blackboard;
+  - Run Blueprint (ended by `Behavior Trees > Finish Task`) and Run
+    Luau (ticked);
+  - Log, Succeed and Fail.
+- **`BehaviorTreeComponent`**:
+  - Start, Stop and Restart;
+  - blackboard getters and setters per type;
+  - the active node;
+  - a tick interval.
+  - `BehaviorTreeWorld` runs these components. Debugger data: active
+    paths and each node's last status.
+
+**Verified**: 11 new tests.
+
+- Blackboards: types, adoption, revisions and JSON values.
+- Files: a round trip, load errors, and every check.
+- Composites and waits.
+- Conditions that abort: Self, LowerPriority and both, and comparisons.
+- Cooldowns, loops, time limits, and inverting and forcing.
+- Parallel, both ways.
+- Blackboard tasks and the DistanceTo service.
+- Blueprint and Luau hooks: waiting, finishing, aborts and services.
+- The component and world: kept values, typed setters, Stop, Start and
+  Restart, changing trees, tick intervals, and missing trees.
+- MoveTo with a real NavAgent: arriving, a changing goal, and halting.
+- Blueprint nodes (a Blueprint task finishing itself), and Luau tasks,
+  services and methods.
+- 435/435 tests pass on GCC 13, Clang and ASan/UBSan, and 467/467 with
   physics.
 
 ## Building
