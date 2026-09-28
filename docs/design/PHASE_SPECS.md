@@ -2879,7 +2879,49 @@ The `Aether::AI` library (`ai/`), on top of `Aether::Nav`.
     Destroyed entities drop their trees.
   - `BehaviorTrees.FinishTask` goes to the active world.
 
-### 20.5 PR breakdown
+### 20.5 Perception
+
+- **`AIPerception`** is an AI's senses:
+  - **Sight**:
+    - a sight radius to notice within, and a larger lose-sight radius
+      to keep tracking a seen actor within;
+    - a view cone (the whole angle, about the entity's +Z, measured on
+      the ground; 360 sees all round);
+    - eyes at `eye_height`, aiming at each source's `target_height`;
+    - line of sight through a callback, or over the navigation mesh
+      (`UseNavMeshLineOfSight`: a mesh raycast between the two, so
+      walls block and so do the gaps the agent radius leaves round
+      them).
+  - **Hearing**: noises within `hearing_radius` × loudness, from any
+    direction.
+  - **Damage**: the victim learns who hit it and where they are.
+  - **Teams**: 0 senses everyone. The AI's own team is ignored unless
+    `detect_friends`.
+- **Memory**: each known actor keeps its last location, age (seconds
+  since last sensed), whether it's visible now, the last sense, its
+  strength (the loudness or damage) and its distance.
+  - It is forgotten after `forget_after` seconds out of sense (0 is
+    never), or at once when it's destroyed.
+  - `GetTarget` gives what it's most aware of: the nearest it can see,
+    else what it sensed most recently.
+  - Blueprint and Luau methods: CanSee, IsAwareOf,
+    GetLastKnownLocation, GetTarget, GetKnownCount and ForgetAll.
+- **`AIStimuliSource`**: what can be seen (visible, target height,
+  team). Hearing and damage don't need one.
+- **`Perception`** is a Blueprint library: `ReportNoise(location,
+  loudness, instigator)` and `ReportDamage(victim, instigator, amount)`.
+  An AI doesn't hear its own noises, nor ones nobody made.
+- **`PerceptionWorld`** updates every AIPerception and reports events:
+  - `Event.OnTargetPerceived (actor, sense, sensed)` when an actor is
+    first seen (not every frame), lost from sight, heard or felt;
+  - `Event.OnTargetForgotten (actor)`.
+- **The blackboard**: with `target_key` (an Entity key) and
+  `location_key` (a Vector key), the AI writes its target and where it
+  was last sensed to its Behavior Tree's blackboard. Both are cleared
+  once it knows nothing, so a condition on the key switches the tree
+  between chasing and patrolling.
+
+### 20.6 PR breakdown
 
 1. ✅ **Done.** Navmesh baking from geometry with Recast (tiles, agent
    settings, areas) and Detour queries (paths, nearest points, raycasts,
@@ -2897,7 +2939,7 @@ The `Aether::AI` library (`ai/`), on top of `Aether::Nav`.
    - services;
    - tasks: Move To, Wait, Play Anim, and Blueprint or Luau tasks;
    - their assets and checks.
-5. `AIPerception`: sight (a cone plus a line-of-sight raycast), hearing
+5. ✅ **Done.** `AIPerception`: sight (a cone plus a line-of-sight raycast), hearing
    (noise events), damage, and forgetting. Events go to Blueprints.
 6. The editor:
    - a navmesh overlay in the viewport;
