@@ -2795,7 +2795,91 @@ It all runs and is tested headless.
   - `RandomReachablePoint` within a radius, and `Raycast` (where a
     straight walk stops).
 
-### 20.4 PR breakdown
+### 20.4 Blackboards and Behavior Trees
+
+The `Aether::AI` library (`ai/`), on top of `Aether::Nav`.
+
+- **Blackboards**:
+  - typed keys: Bool, Int, Float, String, Vector, Entity; each can have
+    an initial value and a description;
+  - `Set` refuses undeclared keys and the wrong types;
+  - without keys (before a tree is known), any name can be set. `Adopt`
+    then keeps the values that fit the tree's keys and starts the rest
+    at their initial values;
+  - revisions (overall and per key) move only on a real change;
+  - clearing is a change too.
+- **Assets** (`.abt`, JSON): `{version, name, blackboard: [{name, type,
+  initial}], root}`. Each node has a type, a name, decorators, services,
+  children and its own settings. Values are JSON typed by their key.
+  Load errors say where (`root/Selector[1]: unknown node type 'Dance'`).
+- **Composites**:
+  - **Selector** tries its children in order until one succeeds;
+  - **Sequence** runs them in order until one fails;
+  - **Parallel** runs them all at once: it succeeds when all do (or
+    when one does, with `succeed_on_one`), and fails the other way.
+    When the result is decided, the rest are aborted.
+- **Decorators**:
+  - **BlackboardCondition**: IsSet/IsNotSet, Equal/NotEqual, and
+    Less/LessEqual/Greater/GreaterEqual for numbers. A null entity
+    counts as unset. Conditions gate entering, and can abort:
+    - **Self**: the running branch ends when the condition turns false;
+    - **LowerPriority**: under a Selector, a running later sibling is
+      cut off when this branch's conditions come true;
+    - **Both**.
+  - **Cooldown**: can't run again for so many seconds after it ends or
+    is aborted.
+  - **Loop**: runs again on success, `count` times (0 is forever), from
+    the next tick.
+  - **TimeLimit**: fails after so many seconds.
+  - **Inverter**, **ForceSuccess**, **ForceFailure**.
+- **Services** run while their node is active: at once, then every
+  interval. They are a Blueprint event, a Luau function, or
+  **DistanceTo** (a Float key set to the distance to a Vector or
+  Entity key; cleared when the target goes).
+- **Tasks**:
+  - **Wait** (seconds, plus or minus a seeded deviation).
+  - **MoveTo**: sends the entity's NavAgent to a Vector or Entity key
+    within an acceptance distance (which becomes the agent's stopping
+    distance). It re-issues the move when a Vector goal changes, and an
+    abort stops the agent. It fails without an agent or a goal.
+  - **SetBlackboard** and **ClearBlackboard**.
+  - **RunBlueprint**: dispatches `Event.Custom:<event>` and waits until
+    `Behavior Trees > Finish Task (entity, success)`, which may be
+    called during the dispatch itself. An abort is reported to a hook.
+  - **RunLuau**: calls `<event>(entity, dt, first)` every tick, which
+    returns "running", "success" or "failure".
+  - **Log**, **Succeed** and **Fail**.
+- **Running a tree** (`BehaviorTreeInstance`):
+  - Each tick walks from the root down the running branch, re-checking
+    conditions that abort, and runs services and time limits.
+  - When the root ends, the tree starts over on the next tick.
+  - Hooks (`BtHooks`) carry logging and the Blueprint and Luau tasks
+    and services, so the library needs neither.
+  - For the debugger: the flattened nodes with paths, which are active,
+    each node's last status, the active path and the deepest active
+    label.
+- **Checks**:
+  - BT001 a composite without children;
+  - BT002 a task with children;
+  - BT003 an unknown key;
+  - BT004 a value or comparison that doesn't fit its key;
+  - BT005 a one-child Parallel (warning);
+  - BT006 a LowerPriority abort outside a Selector (warning);
+  - BT007 a negative time or count, or an interval that isn't positive;
+  - BT008 a Blueprint or Luau task or service without an event;
+  - BT009 a MoveTo or DistanceTo key that isn't a Vector or Entity;
+  - BT010 a duplicate key.
+- **`BehaviorTreeComponent`**: the tree, `auto_start`, and a tick
+  interval (time still adds up between ticks).
+  - Blueprint and Luau methods: Start, Stop, Restart (applied on the
+    next update), IsRunning, GetActiveNode, and blackboard getters and
+    setters per type, ClearValue and IsValueSet (at once).
+  - `BehaviorTreeWorld` runs them: an instance per component, a new
+    tree when `tree` changes, and a missing tree reported once.
+    Destroyed entities drop their trees.
+  - `BehaviorTrees.FinishTask` goes to the active world.
+
+### 20.5 PR breakdown
 
 1. ✅ **Done.** Navmesh baking from geometry with Recast (tiles, agent
    settings, areas) and Detour queries (paths, nearest points, raycasts,
@@ -2807,7 +2891,7 @@ It all runs and is tested headless.
 3. ✅ **Done.** The `NavAgent` component on Detour's crowd (steering, local avoidance,
    the agent moving the entity's transform), and Blueprint and Luau
    nodes (Move To, Stop, Find Path, Random Reachable Point).
-4. Blackboards (typed keys) and Behavior Trees:
+4. ✅ **Done.** Blackboards (typed keys) and Behavior Trees:
    - composites: Selector, Sequence and Parallel;
    - decorators: Blackboard condition, Cooldown, Loop and TimeLimit;
    - services;
