@@ -215,6 +215,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(recastnavigation)
 # AI and navigation (Phase 20): navmeshes, agents, behaviour trees, perception.
 add_subdirectory(nav)
+add_subdirectory(ai)
 
 if(AETHER_BUILD_SCRIPTING)
     # Luau (MIT, luau-lang/luau): the scripting VM and compiler (Phase 11).
