@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 in progress (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes; Blackboards and Behavior Trees; AI perception)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 done on the engine and portable-editor side (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes; Blackboards and Behavior Trees; AI perception; debug drawing, the Behavior Tree editor and debugger, and the Navigation panel)
 
 ### Phase 1 — Foundation
 
@@ -5130,7 +5130,7 @@ shader later). Spec: [PHASE_SPECS.md, Phase 19](docs/design/PHASE_SPECS.md).
 - 393/393 tests pass on GCC 13, Clang and ASan/UBSan, and 425/425 with
   physics.
 
-### Phase 20 (in progress) — AI and navigation
+### Phase 20 — AI and navigation
 
 The `Aether::Nav` library (`nav/`) bakes navigation meshes with Recast and
 queries them with Detour (recastnavigation 1.6, fetched by CMake). Crowds,
@@ -5359,6 +5359,55 @@ Behavior Trees and perception come next. Spec:
 - Blueprint events and the Report Noise node.
 - 442/442 tests pass on GCC 13, Clang and ASan/UBSan, and 474/474 with
   physics.
+
+**Step 6: the editor** (§20.6).
+
+- **Debug drawing**, as plain lines and triangles for the viewport:
+  - the navmesh by area, with its edges and tile grid;
+  - links as arcs;
+  - obstacles and area volumes;
+  - paths, and each agent's corners and goal;
+  - sight cones, hearing ranges, and lines to what each AI knows.
+- **The Behavior Tree document**:
+  - add, move, duplicate and remove nodes, and change their type;
+  - edit fields, decorators and services through the saved form;
+  - blackboard keys whose renames follow every reference;
+  - checks, undo and files.
+- **The Behavior Tree editor**:
+  - an automatic top-down layout with notes for decorators and
+    services, and errors on nodes;
+  - edits by wire (reparent), sideways drag (reorder), Delete and
+    Ctrl+D;
+  - a palette;
+  - Blackboard, Details and Diagnostics panels;
+  - a debugger: the active branch highlighted, results coloured, and
+    live blackboard values.
+- **The Navigation panel**: bake settings, Bake and Rebuild All, stats,
+  and the overlay's toggles.
+
+**Verified**: 7 new tests.
+
+- Navigation debug drawing: areas, toggles, the tile grid, the three
+  volume shapes, dynamic volumes, link arcs and paths.
+- AI debug drawing: corners, goals, sight cones (and all-round),
+  hearing, and what's seen.
+- The document:
+  - moves, including a later-sibling target, the root, and a node
+    under itself;
+  - duplicates, removal, and type changes;
+  - fields through the saved form, with merged drags and refusals;
+  - decorators, typed comparison values, and services;
+  - keys: renames following references, type changes, initial values
+    and descriptions, removal showing up in the checks;
+  - undo and files.
+- The layout, titles and notes, the view's pins, wires and errors, and
+  the debugger's highlights.
+- Graph edits: reparenting, refusals, reordering by drag, and Delete.
+- The editor drawn headless: selection, the palette, dropped
+  selections, the debugger, and Ctrl+Z.
+- The Navigation panel: settings JSON, baking, the overlay, and a
+  failed bake.
+- COUNTS
 
 ## Building
 
