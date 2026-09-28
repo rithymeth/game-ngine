@@ -6,6 +6,7 @@ add_library(aether_ai STATIC
     src/behavior_tree.cpp
     src/bt_runtime.cpp
     src/bt_world.cpp
+    src/perception.cpp
 )
 target_include_directories(aether_ai PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aether_ai PUBLIC cxx_std_20)

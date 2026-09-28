@@ -225,6 +225,9 @@ void RegisterBuiltins(Registry& r) {
     AddEvent(r, "Event.OnParticleSystemFinished", "Event OnParticleSystemFinished", {Out("asset", kString)});
     // Navigation (Phase 20 step 3): a NavAgent's move ended (arrived, or failed).
     AddEvent(r, "Event.OnMoveCompleted", "Event OnMoveCompleted", {Out("success", kBool)});
+    // AI perception (Phase 20 step 5): an AIPerception sensed (or lost sight of) an actor, or forgot it.
+    AddEvent(r, "Event.OnTargetPerceived", "Event OnTargetPerceived", {Out("actor", kEntity), Out("sense", kString), Out("sensed", kBool)});
+    AddEvent(r, "Event.OnTargetForgotten", "Event OnTargetForgotten", {Out("actor", kEntity)});
     // UI (Phase 18 step 4): a Widget Blueprint's controls and animations.
     AddEvent(r, "Event.OnWidgetClicked", "Event OnWidgetClicked", {Out("widget", kString)});
     AddEvent(r, "Event.OnWidgetValueChanged", "Event OnWidgetValueChanged", {Out("widget", kString), Out("value", kFloat)});
