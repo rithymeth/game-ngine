@@ -28,11 +28,13 @@ public:
     bool RemoveVolume(Id id);
     const NavVolume* Volume(Id id) const;
     usize VolumeCount() const { return volumes_.size(); }
+    const std::map<Id, NavVolume>& Volumes() const { return volumes_; }
 
     Id AddLink(const NavLink& link);
     bool UpdateLink(Id id, const NavLink& link);
     bool RemoveLink(Id id);
     usize LinkCount() const { return links_.size(); }
+    const std::map<Id, NavLink>& Links() const { return links_; }
 
     // Rebakes up to `max_tiles` changed tiles (0: all of them). The count rebaked.
     usize Update(usize max_tiles = 4, std::string* error = nullptr);

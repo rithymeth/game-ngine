@@ -6,6 +6,7 @@ add_library(aether_nav STATIC
     src/dynamic.cpp
     src/components.cpp
     src/crowd.cpp
+    src/debug_draw.cpp
 )
 target_include_directories(aether_nav PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aether_nav PUBLIC cxx_std_20)
