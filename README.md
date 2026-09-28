@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 in progress (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes; Blackboards and Behavior Trees)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 in progress (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes; Blackboards and Behavior Trees; AI perception)
 
 ### Phase 1 — Foundation
 
@@ -5325,6 +5325,39 @@ Behavior Trees and perception come next. Spec:
 - Blueprint nodes (a Blueprint task finishing itself), and Luau tasks,
   services and methods.
 - 435/435 tests pass on GCC 13, Clang and ASan/UBSan, and 467/467 with
+  physics.
+
+**Step 5: perception** (§20.5).
+
+- **`AIPerception`**:
+  - sight, with a notice radius and a larger keep-track radius, a view
+    cone, eye and target heights, and line of sight (a callback, or
+    over the navmesh);
+  - hearing noises scaled by loudness;
+  - learning attackers from damage;
+  - teams;
+  - forgetting after a while, or at once when the actor is destroyed.
+- **Memory**: last known location, age, visibility, sense and strength
+  per actor, and the target it's most aware of.
+- **Other components**: `AIStimuliSource` (what can be seen), and the
+  `Perception` Blueprint library (`ReportNoise`, `ReportDamage`).
+- **Events**: `Event.OnTargetPerceived (actor, sense, sensed)` and
+  `Event.OnTargetForgotten (actor)`.
+- **Blackboard sync**: the target and its last location are written to
+  the Behavior Tree's blackboard.
+
+**Verified**: 7 new tests.
+
+- Sight: radii, keeping track, the cone, turning, all-round vision,
+  hidden sources, and not seeing itself.
+- Line of sight, by callback and over the navmesh.
+- Hearing (loudness, its own noises) and damage.
+- Teams, forgetting, and destroyed actors.
+- Which target it picks.
+- A Behavior Tree switching between patrolling and chasing through the
+  blackboard.
+- Blueprint events and the Report Noise node.
+- 442/442 tests pass on GCC 13, Clang and ASan/UBSan, and 474/474 with
   physics.
 
 ## Building
