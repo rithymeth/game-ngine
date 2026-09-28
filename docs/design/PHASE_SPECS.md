@@ -2921,7 +2921,74 @@ The `Aether::AI` library (`ai/`), on top of `Aether::Nav`.
   once it knows nothing, so a condition on the key switches the tree
   between chasing and patrolling.
 
-### 20.6 PR breakdown
+### 20.6 The editor
+
+- **Debug drawing** (plain world-space lines and triangles, tested
+  headless; the viewport draws them):
+  - **navigation** (`nav/debug_draw.h`):
+    - the mesh's polygons filled by area (walkable is blue, other areas
+      a steady colour each) and outlined, lifted off the ground;
+    - the tile grid;
+    - links as arcs (one-way ones with an arrowhead) with circles at
+      their ends;
+    - obstacles (red) and area volumes as wireframes, both static and
+      dynamic;
+    - paths.
+  - **AI** (`ai/debug_draw.h`):
+    - each agent's corners ahead and its goal;
+    - each perception's sight cone (a circle for all-round vision) and
+      hearing range;
+    - a line to what it sees now, and a dimmer one to where it last
+      sensed the rest.
+- **The Behavior Tree document**:
+  - nodes addressed by their path of child indices; children only under
+    composites;
+  - moves, which refuse the root and moving a node under itself, and
+    keep the target's index right when it's a later sibling;
+  - duplicates, removal, and type changes (a node with children stays a
+    composite);
+  - fields, decorators and services edited through their saved form, so
+    whatever doesn't load is refused with the loader's reason;
+  - blackboard keys with unique names:
+    - renames follow every reference (tasks, conditions, services);
+    - a type change clears the values that no longer fit;
+    - initial values and descriptions;
+    - which nodes use a key;
+  - checks cached per revision, whole-document undo (drags merge), and
+    files.
+- **The Behavior Tree editor**:
+  - The tree is laid out automatically: leaves in slots left to right,
+    parents centred over their children, a row per depth. Node ids are
+    the depth-first order that `BehaviorTreeInstance` uses.
+  - Nodes show a title (with their settings) and their decorators and
+    services as notes; errors show on their nodes.
+  - Edits in the graph:
+    - a wire from a composite to a node moves the node under it;
+    - dragging a node sideways reorders it among its siblings;
+    - Delete removes (never the root, and a node with its descendants
+      once);
+    - Ctrl+D duplicates;
+    - breaking a wire is refused with a hint.
+  - The palette offers composites and tasks under a composite.
+  - Panels:
+    - the Blackboard (keys, types, initial values, uses);
+    - Details (name, type, fields, decorators with ordering, services);
+    - Diagnostics (a click selects the node).
+  - The debugger, given a live instance: active nodes highlighted and
+    their wires lit, finished nodes green or red, the active path, and
+    the blackboard's values.
+  - Undo, Redo and Save are on the toolbar and keys.
+- **The Navigation panel**:
+  - the bake settings (edited as JSON), Bake and Rebuild All;
+  - the mesh's stats: tiles and grid, polygons, tiles waiting,
+    rebakes, revision, volumes, links and agents;
+  - the overlay's toggles;
+  - `BuildOverlay` gives the viewport the navigation and AI debug
+    drawing.
+- Like the other editors, these are hooked into the editor window with
+  the Windows build.
+
+### 20.7 PR breakdown
 
 1. ✅ **Done.** Navmesh baking from geometry with Recast (tiles, agent
    settings, areas) and Detour queries (paths, nearest points, raycasts,
@@ -2941,7 +3008,7 @@ The `Aether::AI` library (`ai/`), on top of `Aether::Nav`.
    - their assets and checks.
 5. ✅ **Done.** `AIPerception`: sight (a cone plus a line-of-sight raycast), hearing
    (noise events), damage, and forgetting. Events go to Blueprints.
-6. The editor:
+6. ✅ **Done** (portable part). The editor:
    - a navmesh overlay in the viewport;
    - the Behavior Tree graph editor;
    - a BT debugger that shows the active path during Play in Editor.

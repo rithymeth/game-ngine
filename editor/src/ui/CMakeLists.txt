@@ -29,6 +29,9 @@ add_library(aether_editor_ui STATIC
     ../vfx/vfx_document.cpp
     ../vfx/vfx_preview.cpp
     ../vfx/vfx_editor.cpp
+    ../ai/bt_document.cpp
+    ../ai/bt_editor.cpp
+    ../ai/nav_panel.cpp
     ../core/command_stack.cpp
     ../core/commands.cpp
     ../core/play_session.cpp
@@ -36,5 +39,5 @@ add_library(aether_editor_ui STATIC
     ../core/json_edit.cpp
 )
 target_include_directories(aether_editor_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
-target_link_libraries(aether_editor_ui PUBLIC Aether::Engine Aether::Blueprint Aether::Renderer Aether::Animation Aether::Audio Aether::UI Aether::VFX imgui_core)
+target_link_libraries(aether_editor_ui PUBLIC Aether::Engine Aether::Blueprint Aether::Renderer Aether::Animation Aether::Audio Aether::UI Aether::VFX Aether::AI imgui_core)
 add_library(Aether::EditorUI ALIAS aether_editor_ui)
