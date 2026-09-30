@@ -3,6 +3,7 @@ add_library(aether_terrain STATIC
     src/splat.cpp
     src/renderer.cpp
     src/foliage.cpp
+    src/spline.cpp
 )
 
 target_include_directories(aether_terrain PUBLIC /include)
