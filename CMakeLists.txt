@@ -199,6 +199,8 @@ add_subdirectory(audio)
 add_subdirectory(ui)
 # Particle systems (Phase 19): emitters, modules and the simulation; engine-only.
 add_subdirectory(vfx)
+# Terrain (Phase 21): heightmap-based terrain with chunked meshes and LOD.
+add_subdirectory(terrain)
 
 # Recast/Detour (zlib, recastnavigation/recastnavigation) for navigation
 # meshes, pathfinding and crowds (Phase 20). Only the libraries.
