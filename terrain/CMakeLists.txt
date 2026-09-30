@@ -1,5 +1,6 @@
 add_library(aether_terrain STATIC
     src/terrain.cpp
+    src/splat.cpp
 )
 
 target_include_directories(aether_terrain PUBLIC /include)
