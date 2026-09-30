@@ -5410,6 +5410,31 @@ Behavior Trees and perception come next. Spec:
 - 449/449 tests pass on GCC 13, Clang and ASan/UBSan, and 481/481 with
   physics.
 
+
+### Phase 21 (in progress) — World Building
+
+Build spec: [docs/design/PHASE_SPECS.md](docs/design/PHASE_SPECS.md), Phase 21.
+
+**Step 1: heightmap terrain** (	errain/).
+
+- **Heightmap**: procedural Perlin noise generation (multi-octave), bilinear sampling.
+- **TerrainData**: chunk layout from heightmap dimensions, LOD distances.
+- **TerrainChunk**: one chunk per tile, LOD 0 built from heightmap; central-difference normals.
+- **Vertex generation**: position (3) + normal (3) + UV (2) = 8 floats/vertex.
+- **Index generation**: indexed triangle list for the RHI.
+- **LOD selection**: distance-based level of detail switching.
+
+**Step 2: splatmap material layers and terrain painting**.
+
+- **SplatmapLayer**: name, albedo/normal textures, albedo tint, metallic, roughness, tile scale.
+- **SplatmapData**: RGBA8 splatmap pixels (R=layer0, G=layer1, B=layer2, A=layer3).
+- **Pack/unpack**: encode/decode weights to/from RGBA8 pixels.
+- **Brush**: circular falloff, strength and radius; apply to splatmap or heightmap.
+- **Paint modes**: raise/lower (default), flatten (lerp toward center height), smooth (neighbor average).
+- **Layer normalization**: blend weights to sum to 1.0.
+
+**Verified**: 13 new tests (7 terrain, 6 splat).
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
