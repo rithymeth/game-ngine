@@ -3627,13 +3627,60 @@ in-game overlays too.
   - **Counters**: the frame's counters and GPU passes.
   - **Memory**: memory by category.
 
-### 23.3 PR breakdown
+### 23.3 Debug drawing and stat overlays
+
+- **`DebugDrawList`** (`aether/debug/debug_draw.h`): thread-safe drawing
+  requests.
+  - Shapes: `Line` (with or without depth testing), `Arrow`, `Box`
+    (oriented, 12 lines), `Sphere` (three great circles), `Circle`,
+    `Point` and `Axes` (x red, y green, z blue). All shapes are stored
+    as lines, so a consumer only draws lines and text.
+  - Text: `Text` in the world and `ScreenText` stacked top-left.
+  - Colors are 0xAABBGGRR (`DebugColor(r, g, b, a)`).
+  - **Duration**: 0 means this frame only; otherwise the item stays
+    for that many seconds. `Tick(dt)` once per frame ages items and drops
+    the expired ones. Screen text closes up the gaps.
+  - The `debug.draw` CVar switches it off. `max_lines` (200,000) caps
+    it, and dropped lines are counted.
+- **Every language**:
+  - **C++**: `DebugDrawList::Get()` or `DebugDraw::*`.
+  - **Blueprints**: `DebugDraw` is a reflected struct of static
+    BlueprintCallable functions (Line, Arrow, Box, Sphere, Point, Text,
+    ScreenText; 0..1 RGB colors and a duration), so they appear as
+    Call.Native nodes.
+  - **Luau**: the read-only global `Draw` table: `line`, `arrow`, `box`,
+    `sphere`, `point`, `text` and `screen`. Arguments are vectors, with
+    an optional color (default white) and duration (default 0).
+- **Stat overlays** (`aether/debug/stats.h`): `StatGroups` are named
+  providers of coloured text lines, shown in the order they were turned
+  on.
+  - **Built in**:
+    - `fps`: fps, average, min and max over 60 frames;
+    - `zones`: the top 10 zones per frame, with self time;
+    - `counters`: the last frame's counters and gauges;
+    - `gpu`: pass times;
+    - `memory`: by category.
+  - **`net::NetStatGroup(host)`** adds `net` (peers, RTT, loss and
+    traffic) while it exists.
+  - **The `stat` console command**: `stat fps memory` toggles groups,
+    `stat none` hides them all, and `stat` lists them.
+- **`DebugOverlay`** (editor; also usable in game builds): draws over a
+  viewport with ImGui, given a view-projection matrix:
+  - lines, clipped at the near plane;
+  - world text centred on its projected point;
+  - screen text;
+  - the shown stat groups top-right on a dark backing.
+
+  `ProjectToScreen` is the projection it uses. The renderer's debug pass
+  can draw the same lines with depth testing.
+
+### 23.4 PR breakdown
 
 1. ✅ **Done.** Console variables and the console (§23.1).
 2. ✅ **Done.** The profiler (§23.2): CPU zones per thread and frame, counters, memory by
    category, with Tracy forwarding as an option (`AETHER_TRACY`), and
    the editor's profiler panel (frame graph, per-zone times, counters).
-3. The debug draw API (lines, boxes, spheres, arrows and world text,
+3. ✅ **Done.** The debug draw API (§23.3) (lines, boxes, spheres, arrows and world text,
    with a duration) from C++, Luau and Blueprints, and stat overlays
    (`stat fps`, `stat memory`, `stat net`).
 4. Crash handling: signal and exception handlers, captured log lines,

@@ -62,6 +62,8 @@ ScriptValue ReadScriptValue(lua_State* L, int index) {
     }
 }
 
+void InstallDebugDrawBindings(lua_State* L); // debug_bindings.cpp
+
 namespace {
 
 LuauHost* HostOf(lua_State* L) { return static_cast<LuauHost*>(lua_callbacks(L)->userdata); }
@@ -97,6 +99,7 @@ LuauHost::LuauHost(Options options) : options_(options) {
 
     print_ = [](const std::string& text) { AETHER_LOG_INFO("Script", "%s", text.c_str()); };
     InstallWorldBindings();
+    InstallDebugDrawBindings(state_);
 }
 
 LuauHost::~LuauHost() {
