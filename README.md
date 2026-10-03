@@ -5481,7 +5481,8 @@ in #96 and #97, which also fixed:
 - Budgets with nearest-first loading, failures, and pins.
 - Files (and replacing stale cells), and the floating origin with
   streaming.
-- COUNTS
+- 497/497 tests pass on GCC 13, Clang and ASan/UBSan, and 529/529 with
+  physics.
 
 ## Building
 
