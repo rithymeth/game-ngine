@@ -5515,7 +5515,15 @@ Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md), Phase 22. The module (`net/`, optio
 
 **Verified (step 6)**: 14 new tests (7 UDP on this machine's loopback interface, including a full connection with 20 reliable messages each way over real sockets and a discovery exchange; 7 discovery over the simulated network).
 
-Remaining for Phase 22: Blueprint/Luau access to RPCs, session lifecycle (a game-level lobby on top of discovery) and the editor's network tools (multi-client play in editor, profiler, simulated latency).
+**Step 7: editor network tools** (`editor/src/net/`).
+
+- **NetPlaySession**: multi-client Play-in-Editor. A server world is loaded from a snapshot of the edited scene (`SaveSceneToMemory`) and N client worlds, each its own `World`, fill by replication over a simulated network; entities with a `NetIdentity` replicate and their Transforms travel as interpolated snapshots. Clients can be added, disconnected and reconnected live, entities can be given an owner, and non-replication messages (RPCs, game messages) reach `on_server_message` / `on_client_message`.
+- **Simulated link**: latency, jitter, loss and duplication adjustable while running, with presets (None, LAN, Good broadband, Mobile, Poor, Terrible); seeded, so a run is reproducible.
+- **NetworkPanel**: the link controls, the client table (state, RTT, lost packets, traffic, entities, disconnect/reconnect), the server's send rate over time, replication counters and a profiler of where bandwidth goes. `ReplicationServer::Profile()` attributes every replicated byte to its (component, field) and entity, summed over peers; the panel lists the most expensive fields and entities and the share of the total. Draws headless like the other panels.
+
+**Verified (step 7)**: 9 new tests, including two clients filling from a scene snapshot, a unit followed smoothly by interpolation, rejoining, a 250 ms / 15% loss link that still converges, and exact per-field send counts in the profiler.
+
+Remaining for Phase 22: Blueprint/Luau access to RPCs, a game-level session lifecycle (lobby on top of discovery), and wiring Play-in-Editor's "N clients" option and the Network panel into the editor window.
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
 or GCC), and network access the first time you configure (to fetch Jolt
