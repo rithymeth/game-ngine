@@ -42,8 +42,8 @@ inline void SetModelPath(ModelRenderer& renderer, const std::string& path) {
 } // namespace aether
 
 AETHER_REFLECT(aether::Transform, 1,
-    AETHER_FIELD(position, Field_EditAnywhere, {.units = "m"}),
-    AETHER_FIELD(rotation, Field_EditAnywhere)
+    AETHER_FIELD(position, Field_EditAnywhere | Field_Replicated, {.units = "m"}),
+    AETHER_FIELD(rotation, Field_EditAnywhere | Field_Replicated)
 )
 
 AETHER_REFLECT(aether::ModelRenderer, 1,

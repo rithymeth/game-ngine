@@ -5469,6 +5469,17 @@ Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md), Phase 22. The module (`net/`, optio
 
 **Verified**: 25 new tests (3 byte, 5 loopback, 17 endpoint), including 300 reliable messages in order over 30% loss with jitter and duplication, and sequence-number wrap past 65,536 packets.
 
+**Step 2: state replication** (`replication.h`, `components.h`).
+
+- **NetIdentity**: marks an entity as replicated. The server assigns its network id (never reused); `owner` is the controlling client's address, itself a replicated field.
+- **Field_Replicated**: every flagged field of every component on an entity with a NetIdentity goes to clients (`Transform` is flagged). Components are named on the wire by a hash of their reflected name, so clients must have the types registered (`RegisterReplicatedComponent<T>()`).
+- **Codec**: reflection-driven (`EncodeValue`/`DecodeValue`): integers as varints, floats raw, strings, fixed strings, enums, nested structs and arrays; decoding is bounds-checked and rejects malformed or oversized data.
+- **ReplicationServer::Replicate()**: per connected peer, sends Spawn (full state), Update (only the changed fields of the changed components, adding components the client lacks), RemoveComponent and Despawn records, batched into reliable ordered messages, against a per-peer baseline of what that peer last received, so late joiners get everything and nothing is resent when nothing changed.
+- **Relevancy and budget**: an optional `relevancy(peer, entity)` filter (out of range = despawned on that client, respawned with current state when back); `bytes_per_peer` caps update bytes per pass, with waiting records gaining priority and spawns/despawns always going first. A record too big for one message is skipped (counted as `oversized`) without blocking others; a big update to a known entity is split per component.
+- **ReplicationClient**: `Apply` creates, updates and destroys entities from replication messages (`IsReplicationMessage` tells them apart from game messages); `Clear` on disconnect.
+
+**Verified (step 2)**: 17 new tests (3 codec, 14 replication), including convergence of 10 changing entities over 30% loss with reordering and duplication, a 100-entity late join, relevancy, the byte budget and malformed input.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,

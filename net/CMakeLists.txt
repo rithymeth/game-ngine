@@ -1,6 +1,7 @@
 add_library(aether_net STATIC
     src/loopback.cpp
     src/endpoint.cpp
+    src/replication.cpp
 )
 
 target_include_directories(aether_net PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
