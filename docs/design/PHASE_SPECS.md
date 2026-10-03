@@ -3127,7 +3127,49 @@ were then repaired so they build and match their documentation (#96,
   - The streamer works in whole-world positions through the offset, and
     shifts the cells it loads into local positions.
 
-### 21.7 PR breakdown
+### 21.7 The world-building editors
+
+- **Terrain** (`TerrainEditDocument`, `TerrainToolPanel`):
+  - Tools: Raise, Lower (`raise_height` per full-weight dab), Smooth,
+    Flatten and Paint (a splatmap layer).
+  - The brush has a radius, strength and falloff, and paint radii are in
+    world units.
+  - A stroke is a series of dabs and is one undo step. It stores only
+    the rectangle of heights it changed, or the splatmap for paint, and
+    a stroke that changes nothing isn't kept.
+  - Touched chunks wait in a dirty set for the renderer. Normals reach
+    one sample out, so a dab on a shared edge dirties both chunks.
+  - The brush cursor is a ring that follows the ground.
+  - The viewport drives the panel with `Pointer(down, x, z)`. Dabs are
+    spaced a quarter radius apart along a drag, so the drag speed
+    doesn't change the result.
+- **Foliage** (`FoliagePaintDocument`, `FoliagePanel`):
+  - paint or erase over a radius; painted instances are set on the
+    ground through a height sampler, plus their type's anchor offset;
+  - one undo step per stroke;
+  - types edited with undo (removing one removes its instances and
+    renumbers the rest);
+  - density, and an instance cap that truncates;
+  - counts per type.
+  - Painting dabs every half radius along a drag.
+- **Splines** (`SplineEditDocument`, `SplinePanel`):
+  - add a point, insert one halfway after another, remove, move (a drag
+    is one undo step), and set width and roll;
+  - picking the nearest point within a radius;
+  - the curve and the road's edges for the viewport.
+  - In the viewport, Ctrl+click adds a point, a click picks one, and a
+    drag moves it.
+- **World partition map** (`WorldPartitionPanel`):
+  - every cell of the index, coloured by state (loaded, unloaded,
+    failed), with pins outlined and entity counts;
+  - the streaming sources and their reach;
+  - stats and problems.
+  - Clicking a cell pins or unpins it, and hovering it shows its
+    details.
+- Like the other editors, these are hooked into the editor window with
+  the Windows build.
+
+### 21.8 PR breakdown
 
 1. ✅ **Done.** Heightmap terrain, chunks and LOD.
 2. ✅ **Done.** Splatmaps and brushes.
@@ -3137,7 +3179,7 @@ were then repaired so they build and match their documentation (#96,
    culling with the renderer).
 5. ✅ **Done.** Splines, meshes along them and road markings.
 6. ✅ **Done.** World partition, cell streaming and the floating origin.
-7. The editor:
+7. ✅ **Done** (portable part). The editor:
    - the terrain sculpt and paint panel with a viewport brush cursor;
    - the foliage panel;
    - spline editing;
