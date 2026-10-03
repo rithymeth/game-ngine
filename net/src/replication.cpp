@@ -50,6 +50,11 @@ struct Reader {
     }
 };
 
+struct FieldCost {
+    u32 hash, field;
+    usize bytes;
+};
+
 const ReplicatedComponent* FindComponent(const ReplicatedEntity& e, u32 hash) {
     for (const ReplicatedComponent& c : e.components)
         if (c.hash == hash) return &c;
@@ -58,8 +63,10 @@ const ReplicatedComponent* FindComponent(const ReplicatedEntity& e, u32 hash) {
 
 // The entity's entry in a snapshot: what `cur` has that `base` (null: the
 // client has not got it) does not. False when there is nothing to send.
-bool WriteDelta(u32 net_id, const ReplicatedEntity& cur, const ReplicatedEntity* base, std::vector<u8>& out) {
+bool WriteDelta(u32 net_id, const ReplicatedEntity& cur, const ReplicatedEntity* base, std::vector<u8>& out,
+                std::vector<FieldCost>* costs = nullptr) {
     out.clear();
+    if (costs) costs->clear();
     Writer w{out};
     w.U32(net_id);
     const bool owner_changed = base && base->owner != cur.owner;
@@ -81,7 +88,10 @@ bool WriteDelta(u32 net_id, const ReplicatedEntity& cur, const ReplicatedEntity*
         if (mask == 0) continue;
         w.U32(c.hash), w.U32(mask);
         for (usize f = 0; f < c.fields.size() && f < 32; ++f)
-            if (mask & (1u << f)) w.U16(static_cast<u16>(c.fields[f].size())), w.Bytes(c.fields[f]);
+            if (mask & (1u << f)) {
+                w.U16(static_cast<u16>(c.fields[f].size())), w.Bytes(c.fields[f]);
+                if (costs) costs->push_back({c.hash, static_cast<u32>(f), 2 + c.fields[f].size()});
+            }
         ++count;
     }
     if (base)
@@ -171,6 +181,16 @@ const std::vector<ReplicatedComponentType>& ReplicatedComponentTypes() {
         seen = count;
     }
     return types;
+}
+
+const char* ReplicatedComponentName(u32 hash) {
+    const ReplicatedComponentType* t = FindReplicatedComponentType(hash);
+    return t ? GetComponentInfo(t->id).name : "?";
+}
+
+const char* ReplicatedFieldName(u32 hash, u32 field) {
+    const ReplicatedComponentType* t = FindReplicatedComponentType(hash);
+    return t && field < t->fields.size() ? t->fields[field]->name : "?";
 }
 
 const ReplicatedComponentType* FindReplicatedComponentType(u32 hash) {
@@ -353,19 +373,22 @@ void ReplicationServer::SendTo(PeerId id, Peer& peer, const ReplicatedState& cur
         u32 net_id;
         f32 score;
         std::vector<u8> bytes;
+        std::vector<FieldCost> costs;
+        bool spawn;
     };
     std::vector<Candidate> candidates;
     std::vector<u8> entry;
     for (const auto& [net_id, e] : current) {
         if (!relevant(net_id, e)) continue;
         auto b = base_state.find(net_id);
-        if (!WriteDelta(net_id, e, b == base_state.end() ? nullptr : &b->second, entry)) {
+        std::vector<FieldCost> costs;
+        if (!WriteDelta(net_id, e, b == base_state.end() ? nullptr : &b->second, entry, &costs)) {
             peer.accumulators.erase(net_id);
             continue;
         }
         f32& acc = peer.accumulators[net_id];
         acc += std::max(meta_[net_id].priority, 0.001f);
-        candidates.push_back({net_id, acc, entry});
+        candidates.push_back({net_id, acc, entry, std::move(costs), b == base_state.end()});
     }
     std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
         return a.score != b.score ? a.score > b.score : a.net_id < b.net_id;
@@ -380,6 +403,17 @@ void ReplicationServer::SendTo(PeerId id, Peer& peer, const ReplicatedState& cur
             continue;
         }
         w.Bytes(c.bytes);
+        NetProfile::EntityCost& ec = profile_.entities[c.net_id];
+        ec.archetype = current.at(c.net_id).archetype;
+        ec.bytes += c.bytes.size();
+        ++ec.updates;
+        if (c.spawn) ++ec.spawns;
+        for (const FieldCost& fc : c.costs) {
+            NetProfile::ComponentCost& cc = ec.components[fc.hash];
+            cc.bytes += fc.bytes;
+            cc.fields[fc.field].bytes += fc.bytes;
+            ++cc.fields[fc.field].sends;
+        }
         record.state[c.net_id] = current.at(c.net_id);
         peer.accumulators.erase(c.net_id);
         ++updates;
@@ -387,6 +421,9 @@ void ReplicationServer::SendTo(PeerId id, Peer& peer, const ReplicatedState& cur
     msg[update_count_at] = static_cast<u8>(updates), msg[update_count_at + 1] = static_cast<u8>(updates >> 8);
 
     host_.Send(id, config_.snapshot_channel, msg);
+    profile_.snapshot_bytes += msg.size();
+    ++profile_.snapshots;
+    profile_.despawns += despawns;
     peer.stats.last_snapshot = snapshot;
     peer.stats.last_bytes = msg.size();
     peer.stats.total_bytes += msg.size();
