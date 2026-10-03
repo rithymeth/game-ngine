@@ -55,6 +55,9 @@ public:
     bool IsLoaded(CellCoord cell) const { return loaded_.count(cell) != 0; }
     usize LoadedCount() const { return loaded_.size(); }
     void Reset() { loaded_.clear(); }
+    // Drops a cell from the loaded set without reporting an unload, so the next
+    // Update loads it again if it is in range (a retry after a failed load).
+    void Forget(CellCoord cell) { loaded_.erase(cell); }
 
 private:
     f64 DistanceToCell(CellCoord cell, f64 x, f64 z) const;

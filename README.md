@@ -5447,9 +5447,14 @@ Build spec: [docs/design/PHASE_SPECS.md](docs/design/PHASE_SPECS.md), Phase 21.
 - **Viewport**: `Pick` casts the mouse ray against the heightfield; `BuildCursor` drapes the brush ring over the surface; `TakeDirtyChunks` lists the chunks whose meshes need rebuilding (a stroke on a seam marks both).
 - **Fixes**: Smooth mode is honored by `ApplySculptBrush`, and a negative strength now lowers (the weight used to be applied twice and negative weights were skipped); noise amplitude no longer squares the strength.
 
-Still open for Phase 21: scene streaming hookups (additive scenes) for `WorldPartition`, and the later items (foliage impostors, lighting bake).
+**Step 11: scene streaming** (`streaming.h`).
 
-**Verified**: 14 new tests (6 heightfield queries, 5 partition, 1 floating origin, 2 physics heightfield colliders) plus 1 debug-draw test, and 7 editor panel tests.
+- **CellSceneStreamer**: drives a `WorldPartition`; each cell has an optional scene file (`CellScenePath` gives `<dir>/cell_<x>_<z>.aesc`), loaded additively when the cell comes in range. It records exactly the entities each load created, so unloading destroys those and nothing else (entities gameplay already destroyed are skipped).
+- **Failures**: a scene that fails to load leaves the cell empty, is reported in `Failed()` and is not retried until `Retry()`; `UnloadAll` and `on_loaded`/`on_unloaded` callbacks round it out. Scenes keep their authored world-space positions, and entities are destroyed directly (no OnDestroy).
+
+Phase 21's remaining items are the ones the roadmap marks as later: foliage impostors and the lighting bake.
+
+**Verified**: 14 new tests (6 heightfield queries, 5 partition, 1 floating origin, 2 physics heightfield colliders) plus 1 debug-draw test, 7 editor panel tests and 4 streaming tests.
 **Validation**: terrain library and the full test binary build in the RelWithDebInfo Visual Studio configuration. Focused terrain and splat test sources cover heightmaps, layers, brush modes, renderer buffers, foliage, and splines.
 
 ## Building

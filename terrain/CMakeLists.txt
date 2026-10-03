@@ -6,6 +6,7 @@ add_library(aether_terrain STATIC
     src/spline.cpp
     src/heightfield.cpp
     src/world.cpp
+    src/streaming.cpp
 )
 
 target_include_directories(aether_terrain PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
