@@ -220,6 +220,15 @@ Entity ReplicationServer::FindEntity(u32 net_id) const {
     return it == entities_.end() || !world_.IsAlive(it->second) ? Entity{} : it->second;
 }
 
+bool ReplicationServer::PeerHas(PeerId peer, u32 net_id) const {
+    auto it = peers_.find(peer);
+    if (it == peers_.end() || it->second.history.empty()) return false;
+    const Peer& p = it->second;
+    const u16 last = p.stats.last_snapshot;
+    const History& h = p.history[last % p.history.size()];
+    return h.id == last && h.state.count(net_id) > 0;
+}
+
 ReplicationServer::PeerStats ReplicationServer::Stats(PeerId peer) const {
     auto it = peers_.find(peer);
     return it == peers_.end() ? PeerStats{} : it->second.stats;

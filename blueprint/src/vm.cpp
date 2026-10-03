@@ -1,6 +1,7 @@
 #include "aether/blueprint/vm.h"
 
 #include "aether/core/log.h"
+#include "aether/ecs/remote_call.h"
 #include "aether/ecs/world.h"
 #include "aether/reflection/reflection.h"
 #include "aether/assets/asset_guid.h"
@@ -652,10 +653,15 @@ void BlueprintVM::NativeCallOp(Instance& instance, const CompiledFunction& fn, c
                              arg.reg.bank == Bank::String ? frame.s[arg.reg.index] : std::string(), arg.type));
     }
     reflect::Any result;
-    if (!call.function->Invoke(self, args, call.has_result ? &result : nullptr)) {
+    const bool ok = call.has_target && call.owner != nullptr
+                        ? CallFunction(world_, frame.r[call.target.index].AsEntity(), *call.owner, *call.function, self,
+                                       args, call.has_result ? &result : nullptr)
+                        : call.function->Invoke(self, args, call.has_result ? &result : nullptr);
+    if (!ok) {
         Warn("BP204", instance, fn, node, std::string("The call to '") + call.function->name + "' was refused.");
         return;
     }
+    if (call.has_result && !result.HasValue()) return; // a remote call that was sent
     if (call.has_result) {
         const RegRef r = call.result.reg;
         Reg scratch;

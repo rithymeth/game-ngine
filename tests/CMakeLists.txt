@@ -62,7 +62,7 @@ if(TARGET Aether::Physics)
 endif()
 
 if(TARGET Aether::Scripting)
-    target_sources(aether_tests PRIVATE test_luau_host.cpp test_luau_bindings.cpp test_script_system.cpp test_script_api.cpp test_script_reload.cpp test_script_debugger.cpp test_script_dap.cpp test_nav_script.cpp test_ai_script.cpp)
+    target_sources(aether_tests PRIVATE test_luau_host.cpp test_luau_bindings.cpp test_script_system.cpp test_script_api.cpp test_script_reload.cpp test_script_debugger.cpp test_script_dap.cpp test_nav_script.cpp test_ai_script.cpp test_net_rpc_script.cpp)
     target_link_libraries(aether_tests PRIVATE Aether::Scripting)
 endif()
 
@@ -71,7 +71,7 @@ target_sources(aether_tests PRIVATE test_blueprint_graph.cpp test_blueprint_vm.c
     test_terrain_splat.cpp
     test_terrain_renderer.cpp
     test_terrain_foliage.cpp
-    test_terrain_spline.cpp test_ai_perception.cpp test_streaming.cpp test_net_transport.cpp test_net_replication.cpp)
+    test_terrain_spline.cpp test_ai_perception.cpp test_streaming.cpp test_net_transport.cpp test_net_replication.cpp test_net_rpc.cpp)
 target_link_libraries(aether_tests PRIVATE Aether::Blueprint Aether::Renderer Aether::Animation Aether::Audio Aether::UI Aether::VFX Aether::Nav Aether::AI Aether::Terrain Aether::Streaming Aether::Net)
 
 add_test(NAME aether_tests COMMAND aether_tests)
