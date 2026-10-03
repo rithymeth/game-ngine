@@ -3294,7 +3294,51 @@ networked entities, in the manner of Quake 3 (`ReplicationServer` and
   - The server keeps a full copy of the state per remembered snapshot;
     sharing it is for later.
 
-### 22.3 PR breakdown
+### 22.3 Remote calls
+
+Remote procedure calls in the manner of Unreal's RPCs
+(`net/include/aether/net/rpc.h`, `engine/include/aether/ecs/remote_call.h`).
+
+- **Flags** on reflected member functions:
+  - `Fn_Server`: a client asks the server to run it.
+  - `Fn_Client`: the server runs it on the owning client.
+  - `Fn_Multicast`: the server runs it, and so does every client that
+    has the entity.
+  - `Fn_Unreliable`: may be lost. The default is reliable and in order.
+- **One path for every caller**: C++ calls go through `CallFunction`,
+  and the Blueprint VM's native calls and Luau's method calls now do
+  too. `CallFunction` asks the world's `RemoteCallRouter`:
+  - **RunLocally**: run it here;
+  - **Sent**: it went over the network, and nothing runs here;
+  - **Refused**: not allowed. Blueprints report BP204, and Luau raises
+    "was refused".
+
+  A world without a router runs everything where it is called, as a
+  single-player game would.
+- **`net::RpcRouter`**: one on the server and one per client. Each
+  installs itself as its world's router and removes itself when
+  destroyed.
+
+  | Called on | `Fn_Server` | `Fn_Client` | `Fn_Multicast` |
+  |---|---|---|---|
+  | the server | runs | sent to the owner (runs here if nobody owns it) | runs here and is sent to every peer whose last snapshot had the entity |
+  | a client | sent if this client owns it (`locally_owned`), refused otherwise | runs here | runs here only |
+
+- **Checks on arrival**:
+  - The server runs only `Fn_Server` calls, and only from the entity's
+    owner. Others are rejected and logged.
+  - Clients run only client and multicast calls.
+  - Calls for an unknown entity, component or function are counted, as
+    are malformed ones.
+  - `Caller()` names the sender while a call runs.
+- **Wire format**: kind 3, then the net id, an FNV-1a hash of the
+  component name and of the function name, the argument count, and
+  each argument in reflection's binary form with a 16-bit length. Calls
+  go on the reliable channel, or on the unreliable one for
+  `Fn_Unreliable`. Arguments must match the parameters exactly.
+- **Return values**: remote calls send nothing back.
+
+### 22.4 PR breakdown
 
 1. ✅ **Done.** The transport: sockets (UDP and the simulated network),
    connections with reliable, unreliable and sequenced channels, and
@@ -3306,7 +3350,7 @@ networked entities, in the manner of Quake 3 (`ReplicationServer` and
    - spawning and despawning on clients;
    - relevancy by distance, and per-connection priority within a
      bandwidth budget.
-3. RPCs: `Server`, `Client` and `Multicast` function flags, called from
+3. ✅ **Done.** RPCs (§22.3): `Server`, `Client` and `Multicast` function flags, called from
    C++, Blueprints and Luau, with ownership checks.
 4. Client-side prediction and reconciliation for character movement,
    and snapshot interpolation for everything else.

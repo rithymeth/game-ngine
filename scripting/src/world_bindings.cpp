@@ -5,6 +5,7 @@
 
 #include "script_values.h"
 
+#include "aether/ecs/remote_call.h"
 #include "aether/ecs/world.h"
 #include "aether/reflection/serialize.h"
 #include "aether/scene/entity_guid.h"
@@ -393,7 +394,12 @@ int CallMethod(lua_State* L) {
         ReadValue(L, static_cast<int>(i) + 2, *param.type, args.back().Data(), what.c_str());
     }
     reflect::Any ret;
-    if (!function->Invoke(function->HasFlag(reflect::Fn_Static) ? nullptr : self, args, &ret)) {
+    RemoteCallResult routed = RemoteCallResult::RunLocally;
+    if (!CallFunction(RequireWorld(L), handle->entity, *GetComponentInfo(handle->component).reflected, *function, self,
+                      args, &ret, &routed)) {
+        if (routed == RemoteCallResult::Refused)
+            luaL_error(L, "%s:%s was refused: this machine may not call it on this entity", ComponentName(handle->component),
+                       function->name);
         luaL_error(L, "calling %s failed", function->name);
     }
     if (function->return_type == nullptr || !ret.HasValue()) {

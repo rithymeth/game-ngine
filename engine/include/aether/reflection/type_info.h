@@ -90,7 +90,14 @@ enum FunctionFlags : u32 {
     Fn_Pure = 1u << 1,              // no side effects: a pure node with no exec pins
     Fn_Const = 1u << 2,             // set automatically for const member functions
     Fn_Static = 1u << 3,            // set automatically for static/free functions; no `self`
+    // Remote calls (Phase 22): with a RemoteCallRouter on the world (ecs/remote_call.h),
+    // the call is routed over the network; without one it just runs.
+    Fn_Server = 1u << 4,     // a client asks the server to run it (only the entity's owner may)
+    Fn_Client = 1u << 5,     // the server runs it on the owning client
+    Fn_Multicast = 1u << 6,  // the server runs it, and on every client that has the entity
+    Fn_Unreliable = 1u << 7, // may be lost (default: reliable and in order)
 };
+inline constexpr u32 kFn_Remote = Fn_Server | Fn_Client | Fn_Multicast;
 
 struct ParamInfo {
     const char* name = "";
@@ -112,6 +119,7 @@ struct FunctionInfo {
     void (*thunk)(void* self, Any* args, Any* ret) = nullptr;
 
     bool HasFlag(FunctionFlags flag) const { return (flags & flag) != 0; }
+    bool IsRemote() const { return (flags & kFn_Remote) != 0; }
 
     // Returns false (and calls nothing) if the argument count or any argument
     // type doesn't match, or if a member function is given a null `self`.

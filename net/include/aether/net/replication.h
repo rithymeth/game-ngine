@@ -81,6 +81,8 @@ public:
     void Update(f64 now);
 
     Entity FindEntity(u32 net_id) const;
+    // Whether the last snapshot sent to `peer` had the entity (so it has, or is about to have, it).
+    bool PeerHas(PeerId peer, u32 net_id) const;
 
     struct PeerStats {
         u16 last_snapshot = 0;
