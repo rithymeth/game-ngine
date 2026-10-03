@@ -5623,7 +5623,8 @@ Unreal.
   calls.
 - A Blueprint, and a Luau script, calling through the network: the
   owner's calls get through, and others get BP204 or a script error.
-- COUNTS
+- 520/520 tests pass on GCC 13, Clang and ASan/UBSan, and 552/552 with
+  physics.
 
 ## Building
 
