@@ -1,4 +1,5 @@
-#include ""aether/terrain/spline.h""
+#include "aether/terrain/spline.h"
+#include "terrain_math.h"
 
 #include <algorithm>
 #include <cmath>
@@ -67,6 +68,14 @@ void Spline::RemovePoint(u32 index) {
     RecomputeTangents();
 }
 
+void Spline::SetWidth(u32 index, f32 width) {
+    if (index < points_.size()) points_[index].width = width;
+}
+
+void Spline::SetRoll(u32 index, f32 roll) {
+    if (index < points_.size()) points_[index].roll = roll;
+}
+
 void Spline::SetPoint(u32 index, Vec3 position) {
     if (index >= points_.size()) return;
     points_[index].position = position;
@@ -102,7 +111,7 @@ f32 Spline::Length() const {
     for (u32 i = 1; i <= kSamples; ++i) {
         const f32 t = static_cast<f32>(i) / kSamples;
         Vec3 cur = Evaluate(t);
-        len += Length(cur - prev);
+        len += (cur - prev).Length();
         prev = cur;
     }
     return len;
@@ -340,7 +349,7 @@ std::vector<f32> BuildRoadMask(const Spline& spline, u32 verts_per_segment, f32 
 
     for (usize s = 0; s <= segs; ++s) {
         const f32 y_along = arc_lengths[s] / total_len;
-        const f32 dash_t = std::fract(arc_lengths[s] / dash_length);
+        const f32 dash_t = Fract(arc_lengths[s] / dash_length);
         const f32 center_mask = (dash_t < 0.5f) ? 1.0f : 0.0f;
 
         // Left and right vertices at x=0 (left edge) and x=1 (right edge)

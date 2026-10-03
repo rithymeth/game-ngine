@@ -1,4 +1,5 @@
-#include ""aether/terrain/foliage.h""
+#include "aether/terrain/foliage.h"
+#include "terrain_math.h"
 
 #include <algorithm>
 #include <cmath>

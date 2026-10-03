@@ -1,12 +1,15 @@
 #pragma once
 
-#include ""aether/core/base.h""
-#include ""aether/math/math.h""
+#include "aether/core/base.h"
+#include "aether/math/math.h"
 
+#include <span>
 #include <vector>
 
 namespace aether {
 namespace terrain {
+
+using std::span;
 
 // Phase 21 step 5: spline tools for roads, rivers and fences placed
 // along curves. Splines are Catmull-Rom curves with control points.
@@ -22,6 +25,7 @@ struct SplinePoint {
 // Supports road/river placement and mesh generation along the curve.
 class Spline {
 public:
+    usize SegmentCount() const { return points_.size() >= 2 ? points_.size() - 1 : 0; }
     Spline() = default;
     explicit Spline(span<const Vec3> control_points);
 
@@ -39,6 +43,8 @@ public:
 
     // Move a control point.
     void SetPoint(u32 index, Vec3 position);
+    void SetWidth(u32 index, f32 width); // ignored for an index past the end
+    void SetRoll(u32 index, f32 roll);
 
     // Recompute tangents (called after any point change).
     void RecomputeTangents();
@@ -61,7 +67,7 @@ public:
     std::vector<Vec3> SamplePerSegment(u32 points_per_segment) const;
 
     // Find the closest point on the spline to a world position.
-    // Returns (t, distance?).
+    // Returns (t, distance).
     std::pair<f32, f32> ClosestPoint(Vec3 pos) const;
 
     // Get the tangent at parameter t.
@@ -79,7 +85,6 @@ public:
 private:
     std::vector<SplinePoint> points_;
 
-    usize SegmentCount() const { return points_.size() >= 2 ? points_.size() - 1 : 0; }
     f32 SegmentT(f32 t) const;
 };
 
