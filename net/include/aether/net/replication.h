@@ -143,7 +143,15 @@ public:
     // Takes the snapshots out of the host's events; true when `event` was one.
     bool HandleEvent(const NetEvent& event);
 
+    // Components this client predicts itself (Phase 22 step 4): replication
+    // writes them on an entity it owns only when spawning it.
+    void PredictLocally(ComponentId component) { predicted_.push_back(component); }
+    // The last applied snapshot's value of a replicated component, read into
+    // `out` (a live component of that type); false if it doesn't have one.
+    bool ReadReplicated(u32 net_id, ComponentId component, void* out) const;
+
     Entity FindEntity(u32 net_id) const;
+    const std::unordered_map<u32, Entity>& Entities() const { return entities_; }
     usize EntityCount() const { return entities_.size(); }
     u16 LastSnapshot() const { return last_; }
     f64 ServerTime() const { return server_time_; }
@@ -173,6 +181,7 @@ private:
     std::unordered_map<u32, Entity> entities_;
     std::unordered_map<std::string, SpawnFn> on_spawn_;
     DespawnFn on_despawn_;
+    std::vector<ComponentId> predicted_;
     u16 last_ = 0xFFFF;
     bool any_ = false;
     f64 server_time_ = 0;
