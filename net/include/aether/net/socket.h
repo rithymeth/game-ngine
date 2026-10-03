@@ -17,6 +17,9 @@ struct Address {
     u32 ip = 0; // host order: 127.0.0.1 is 0x7F000001
     u16 port = 0;
     static Address Loopback(u16 port) { return {0x7F000001u, port}; }
+    static Address Broadcast(u16 port) { return {0xFFFFFFFFu, port}; } // every host on the local network
+    static constexpr u32 IPv4(u32 a, u32 b, u32 c, u32 d) { return (a << 24) | (b << 16) | (c << 8) | d; }
+    bool IsBroadcast() const { return ip == 0xFFFFFFFFu; }
     static std::optional<Address> Parse(const std::string& text); // "a.b.c.d:port"
     std::string ToString() const;
     bool operator==(const Address&) const = default;
@@ -70,6 +73,10 @@ public:
     explicit LoopbackNetwork(u64 seed = 1) : rng_(seed) {}
     // A socket at 127.0.0.1:port (0: the next free port); null if the port is taken.
     std::unique_ptr<DatagramSocket> Open(u16 port = 0);
+    // A socket on a simulated host at `ip` (10.0.0.2, say), so one process
+    // can stand in for several machines; datagrams to Address::Broadcast(port)
+    // reach every socket bound to that port (but the sender's own).
+    std::unique_ptr<DatagramSocket> OpenAt(u32 ip, u16 port = 0);
     LinkConditions conditions;
     void Advance(f64 seconds) { now_ += seconds; }
     f64 Now() const { return now_; }
@@ -86,14 +93,15 @@ private:
         std::vector<u8> data;
     };
     void Post(const Address& from, const Address& to, std::span<const u8> data);
+    void Deliver(const Address& from, const Address& to, std::span<const u8> data);
     bool Take(const Address& to, Address& from, std::vector<u8>& data);
-    void Close(u16 port);
+    void Close(const Address& address);
 
     std::mt19937_64 rng_;
     f64 now_ = 0.0;
     u64 order_ = 0, sent_ = 0, dropped_ = 0;
     u16 next_port_ = 40000;
-    std::map<u16, bool> open_;
+    std::map<Address, bool> open_;
     std::vector<Datagram> in_flight_;
 };
 
