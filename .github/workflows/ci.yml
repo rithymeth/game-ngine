@@ -1,0 +1,155 @@
+# Continuous integration (Phase 24 step 1, docs/design/PHASE_SPECS.md §24.1).
+#
+# Linux: the portable engine, editor UI, scripting and tests with GCC,
+# Clang, ASan/UBSan and the physics module; runs the unit tests and the
+# functional tests (aether_functional), and keeps the JUnit report.
+#
+# Windows: MSVC builds everything, the D3D12 editor included, runs the
+# tests, and packages the editor (aether_editor.exe, its DLLs and the
+# assets) as a downloadable artifact. Pushing a tag v* also attaches the
+# package to a GitHub release.
+name: CI
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC
+            cc: gcc
+            cxx: g++
+            type: RelWithDebInfo
+            flags: ""
+            physics: "OFF"
+          - name: Clang
+            cc: clang
+            cxx: clang++
+            type: RelWithDebInfo
+            flags: ""
+            physics: "OFF"
+          - name: ASan+UBSan
+            cc: gcc
+            cxx: g++
+            type: Debug
+            flags: "-fsanitize=address,undefined -fno-omit-frame-pointer"
+            physics: "OFF"
+          - name: Physics
+            cc: gcc
+            cxx: g++
+            type: RelWithDebInfo
+            flags: ""
+            physics: "ON"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Cache fetched dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-linux-${{ matrix.name }}-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: deps-linux-${{ matrix.name }}-
+      - name: Configure
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ matrix.type }}
+          "-DCMAKE_CXX_FLAGS=${{ matrix.flags }}"
+          -DAETHER_BUILD_PHYSICS=${{ matrix.physics }}
+          -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_SANDBOX=OFF -DAETHER_BUILD_VULKAN=OFF
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Unit tests
+        run: ./build/tests/aether_tests
+      - name: Functional tests
+        run: ./build/tools/functional/aether_functional --quiet --junit functional-results.xml
+      - name: Keep the functional report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: functional-results-linux-${{ matrix.name }}
+          path: functional-results.xml
+          if-no-files-found: ignore
+
+  windows:
+    name: Windows (MSVC, D3D12 editor)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache fetched dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-windows-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: deps-windows-
+      - name: Configure
+        # Vulkan is off: hosted runners have no Vulkan loader to link
+        # against. The D3D12 editor and the rest build as usual.
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DAETHER_BUILD_VULKAN=OFF
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Unit tests
+        # Hosted runners have no GPU; tests that need a D3D12 device may fail
+        # there, so this step reports without failing the job (for now).
+        continue-on-error: true
+        run: .\build\tests\Release\aether_tests.exe
+      - name: Functional tests
+        run: .\build\tools\functional\Release\aether_functional.exe --quiet --junit functional-results.xml
+      - name: Package the editor
+        shell: pwsh
+        run: |
+          $out = "dist/AetherEditor"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item build/editor/Release/aether_editor.exe $out/
+          Get-ChildItem build/editor/Release -Filter *.dll | Copy-Item -Destination $out/
+          Copy-Item -Recurse assets $out/assets
+          Copy-Item README.md $out/
+          Compress-Archive -Path "$out/*" -DestinationPath dist/AetherEditor-windows-x64.zip -Force
+      - name: Upload the editor
+        uses: actions/upload-artifact@v4
+        with:
+          name: AetherEditor-windows-x64
+          path: dist/AetherEditor-windows-x64.zip
+      - name: Keep the functional report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: functional-results-windows
+          path: functional-results.xml
+          if-no-files-found: ignore
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: AetherEditor-windows-x64
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: AetherEditor-windows-x64.zip
+          generate_release_notes: true
