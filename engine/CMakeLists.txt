@@ -5,6 +5,7 @@ add_library(aether_engine STATIC
     src/core/profiler.cpp
     src/debug/debug_draw.cpp
     src/debug/stats.cpp
+    src/debug/crash.cpp
     src/memory/linear_allocator.cpp
     src/memory/pool_allocator.cpp
     src/memory/frame_allocator.cpp
@@ -170,4 +171,9 @@ if(AETHER_TRACY)
     FetchContent_MakeAvailable(tracy)
     target_link_libraries(aether_engine PUBLIC Tracy::TracyClient)
     target_compile_definitions(aether_engine PUBLIC AETHER_TRACY)
+endif()
+
+# Phase 23: the crash handler writes minidumps on Windows.
+if(WIN32)
+    target_link_libraries(aether_engine PRIVATE dbghelp)
 endif()
