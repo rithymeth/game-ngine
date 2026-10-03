@@ -5741,7 +5741,7 @@ Spec: [PHASE_SPECS.md, Phase 23](docs/design/PHASE_SPECS.md).
 - Log sinks, the recent-lines buffer, and capture from another thread.
 - The panel's history and Tab completion, and drawing docked and as an
   overlay.
-- COUNTS
+- 541/541 tests pass on GCC 13.
 
 ## Building
 
