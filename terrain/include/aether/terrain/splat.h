@@ -42,8 +42,11 @@ struct SplatmapData {
     std::array<f32, 4> GetWeights(f32 u, f32 v) const;
 };
 
-// Build a splatmap for a given terrain chunk.
-// layers must have at least 1 entry. Uses the chunk's UV space.
+// Build a splatmap (up to 4 layers) at `resolution` x `resolution`:
+// - `layer_weights` empty: the first layer everywhere;
+// - one weight per layer: that mix everywhere;
+// - one weight per layer per pixel (row-major, a pixel's layers together): painted.
+// Weights are normalized to sum to 1 per pixel.
 SplatmapData BuildSplatmap(u32 resolution, span<const SplatmapLayer> layers,
                            const std::vector<f32>& layer_weights);
 

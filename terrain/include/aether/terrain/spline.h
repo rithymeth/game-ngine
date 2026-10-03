@@ -96,9 +96,9 @@ std::vector<f32> BuildSplineMesh(const Spline& spline, f32 half_width, u32 verts
 // Build a road mesh: two-sided strip with the center line at UV.y=0.5.
 std::vector<f32> BuildRoadMesh(const Spline& spline, u32 verts_per_segment);
 
-// Get road markings: dashed center line texture UV (alternating on/off).
-// UV: x = along length, y = across width (0=center, 1=edge).
-// A value of 1.0 = painted, 0.0 = no paint.
+// Road markings, per vertex of BuildRoadMesh (left then right per cross-section):
+// (1 where the dashed centre line is painted, else 0; distance along the road, 0..1).
+// Dashes are painted for the first half of every dash_length.
 std::vector<f32> BuildRoadMask(const Spline& spline, u32 verts_per_segment, f32 dash_length);
 
 // Closest point on a single Catmull-Rom segment.

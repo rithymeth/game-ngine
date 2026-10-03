@@ -113,3 +113,25 @@ AETHER_TEST(Spline_MoveControlPoint) {
 
     AETHER_CHECK(after.x > before.x); // t=0.5 should now be further right
 }
+
+AETHER_TEST(Spline_MeshAndRoadMask) {
+    Spline sp;
+    sp.AddPoint({0, 0, 0});
+    sp.AddPoint({10, 0, 0});
+    sp.AddPoint({20, 0, 0});
+    // 2 segments x 4 cross-sections each, plus the end: 9, two vertices each.
+    const auto mesh = BuildSplineMesh(sp, 1.0f, 4);
+    AETHER_CHECK(mesh.size() == 9u * 2u * 8u);
+    // Every cross-section is filled in (none left at the origin past the start), ending at the last point.
+    for (usize v = 2; v < 18; ++v) AETHER_CHECK(mesh[v * 8 + 0] > 0.5f);
+    AETHER_CHECK(NearEqual(mesh[16 * 8 + 0], 20.0f, 0.5f));
+    AETHER_CHECK(NearEqual(mesh[17 * 8 + 7], 1.0f, 1e-5f)); // v at the end
+    // The mask matches the mesh's vertices; 5 m dashes over 20 m: on, off, on, off...
+    const auto mask = BuildRoadMask(sp, 4, 5.0f);
+    AETHER_CHECK(mask.size() == 9u * 2u * 2u);
+    AETHER_CHECK(mask[0] == 1.0f && mask[2] == 1.0f);       // the start is painted, on both sides
+    AETHER_CHECK(NearEqual(mask[mask.size() - 1], 1.0f, 1e-5f)); // distance along reaches 1
+    bool gap = false;
+    for (usize i = 0; i < mask.size(); i += 4) gap = gap || mask[i] == 0.0f;
+    AETHER_CHECK(gap);
+}
