@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 done on the engine and portable-editor side (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes; Blackboards and Behavior Trees; AI perception; debug drawing, the Behavior Tree editor and debugger, and the Navigation panel). Phase 21 done on the engine and portable-editor side (world building: heightmap terrain, splatmaps and brushes, terrain rendering data, foliage, splines, world partition with cell streaming and a floating origin, and the terrain, foliage, spline and partition editors). Phase 22 done on the engine and portable-editor side (networking: a UDP transport with reliable, unreliable and sequenced channels; delta-snapshot replication with relevancy and a bandwidth budget; RPCs from C++, Blueprints and Luau; client-side prediction and snapshot interpolation; sessions with LAN discovery and lobbies; networked Play-in-Editor and a network profiler). Phase 23 done on the engine and portable-editor side (developer tools: console variables and the console; the profiler with Tracy forwarding and its panel; debug drawing and stat overlays; crash reports and the crash reporter; headless functional tests with JUnit reports)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 done on the engine and portable-editor side (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes; Blackboards and Behavior Trees; AI perception; debug drawing, the Behavior Tree editor and debugger, and the Navigation panel). Phase 21 done on the engine and portable-editor side (world building: heightmap terrain, splatmaps and brushes, terrain rendering data, foliage, splines, world partition with cell streaming and a floating origin, and the terrain, foliage, spline and partition editors). Phase 22 done on the engine and portable-editor side (networking: a UDP transport with reliable, unreliable and sequenced channels; delta-snapshot replication with relevancy and a bandwidth budget; RPCs from C++, Blueprints and Luau; client-side prediction and snapshot interpolation; sessions with LAN discovery and lobbies; networked Play-in-Editor and a network profiler). Phase 23 done on the engine and portable-editor side (developer tools: console variables and the console; the profiler with Tracy forwarding and its panel; debug drawing and stat overlays; crash reports and the crash reporter; headless functional tests with JUnit reports). Phase 24 in progress (cross-platform: CI on Linux and Windows, and a packaged Windows editor)
 
 ### Phase 1 — Foundation
 
@@ -5847,6 +5847,23 @@ Spec: [PHASE_SPECS.md, Phase 23](docs/design/PHASE_SPECS.md).
 - Scenes from files, the registry's filters, tags and stop-on-failure,
   the JUnit and JSON reports, and the console commands.
 - 557/557 tests pass on GCC 13, and `aether_functional` passes 2/2.
+
+### Phase 24 (in progress) — Cross-platform
+
+Spec: [PHASE_SPECS.md, Phase 24](docs/design/PHASE_SPECS.md).
+
+**Step 1: continuous integration** (§24.1).
+
+- **GitHub Actions on every push and pull request**:
+  - Linux: GCC, Clang, ASan+UBSan and physics builds, each running the
+    unit and functional tests.
+  - Windows: an MSVC build of everything, the D3D12 editor included.
+- **The packaged editor**: the Windows job packages
+  `AetherEditor-windows-x64.zip` (`aether_editor.exe`, its DLLs and the
+  assets) as a download on each run.
+- **Releases**: a `v*` tag publishes the zip as a GitHub release.
+- **Assets**: the editor finds `assets/` next to its executable, so the
+  zip runs anywhere.
 
 ## Building
 
