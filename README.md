@@ -5563,7 +5563,8 @@ network.
 - A full server refusing, and a missing server.
 - Keepalives over 20 idle seconds, timeouts, and foreign protocols.
 - Real UDP on localhost.
-- COUNTS
+- 510/510 tests pass on GCC 13, Clang and ASan/UBSan, and 542/542 with
+  physics.
 
 ## Building
 
