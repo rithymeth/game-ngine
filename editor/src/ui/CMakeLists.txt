@@ -47,7 +47,27 @@ add_library(aether_editor_ui STATIC
     ../core/play_session.cpp
     ../core/recent_projects.cpp
     ../core/json_edit.cpp
+    ../host/imgui_window_input.cpp
 )
 target_include_directories(aether_editor_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(aether_editor_ui PUBLIC Aether::Engine Aether::Blueprint Aether::Renderer Aether::Animation Aether::Audio Aether::UI Aether::VFX Aether::AI Aether::Terrain Aether::Streaming Aether::Net imgui_core)
 add_library(Aether::EditorUI ALIAS aether_editor_ui)
+
+# Phase 24 step 5: Dear ImGui on the RHI's Vulkan backend (imgui_impl_vulkan
+# on the engine's own device), for the portable editor shell and its tests.
+if(AETHER_BUILD_VULKAN)
+    add_library(aether_editor_vulkan STATIC
+        ../host/imgui_vulkan_host.cpp
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp
+    )
+    target_include_directories(aether_editor_vulkan PUBLIC ${imgui_SOURCE_DIR}/backends)
+    target_link_libraries(aether_editor_vulkan PUBLIC aether_editor_ui PRIVATE ${AETHER_VULKAN_LIBRARY})
+    # Third-party code: don't hold it to our warning flags.
+    if(MSVC)
+        set_source_files_properties(${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp PROPERTIES COMPILE_OPTIONS /w)
+    else()
+        set_source_files_properties(${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp PROPERTIES COMPILE_OPTIONS -w)
+        set_source_files_properties(../host/imgui_vulkan_host.cpp PROPERTIES COMPILE_OPTIONS -Wno-missing-field-initializers)
+    endif()
+    add_library(Aether::EditorVulkan ALIAS aether_editor_vulkan)
+endif()

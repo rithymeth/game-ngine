@@ -66,7 +66,7 @@ jobs:
         run: >
           sudo apt-get update && sudo apt-get install -y ninja-build xvfb
           libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
-          libvulkan-dev glslang-dev mesa-vulkan-drivers
+          libvulkan-dev glslang-dev glslang-tools spirv-tools mesa-vulkan-drivers
       - name: Cache fetched dependencies
         uses: actions/cache@v4
         with:
@@ -95,6 +95,23 @@ jobs:
         run: xvfb-run -a ./build/tests/aether_tests
       - name: Functional tests
         run: ./build/tools/functional/aether_functional --quiet --junit functional-results.xml
+      - name: Screenshot the editor shell
+        # The portable editor (editor/shell) in a real window under Xvfb,
+        # drawn through Vulkan on lavapipe; the last frame is kept.
+        if: matrix.name == 'GCC'
+        env:
+          AETHER_EDITOR_MAX_FRAMES: "30"
+          AETHER_EDITOR_SCREENSHOT: ${{ github.workspace }}/editor-screenshot-linux.png
+        run: |
+          xvfb-run -a -s "-screen 0 1920x1080x24" ./build/editor/shell/aether_editor_shell
+          test -s editor-screenshot-linux.png
+      - name: Upload the editor screenshot
+        if: matrix.name == 'GCC' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: editor-screenshot-linux
+          path: editor-screenshot-linux.png
+          if-no-files-found: ignore
       - name: Keep the functional report
         if: always()
         uses: actions/upload-artifact@v4

@@ -3906,7 +3906,53 @@ headless, which is what lets CI test rendering with no GPU.
 - **MSVC**: the missing standard includes it reported (`<array>`,
   `<numeric>` in terrain) are added, along with the others a scan found.
 
-### 24.4 PR breakdown
+### 24.4 The editor on Vulkan
+
+The editor's panels now run wherever Vulkan does. The D3D12 editor
+(`editor/main.cpp`, with its 3D viewport) stays the Windows editor.
+
+- **ImGui on the RHI** (`editor/src/host/imgui_vulkan_host.h`,
+  `Aether::EditorVulkan`): `ImGuiVulkanHost` runs `imgui_impl_vulkan` on
+  the engine's own `VkDevice` and queue.
+  - Its pipeline is built for the swap chain's default render pass.
+  - Each frame's draw data is recorded into an RHI command list between
+    `BeginRenderPass` and `EndRenderPass`.
+  - Window and offscreen swap chains work alike.
+- **Input from the engine's windows** (`host/imgui_window_input.h`):
+  `FeedImGuiEvents` turns the platform-neutral `WindowEvent`s into ImGui
+  input: keys with modifiers, mouse position, buttons and wheel,
+  characters, focus and size. `ToImGuiKey` maps `input::Key`. This
+  replaces a per-platform ImGui backend, so Win32 and GLFW windows drive
+  the editor the same way.
+- **The editor shell** (`editor/shell`, `aether_editor_shell`), built
+  wherever the Vulkan backend is:
+  - **Panels**: the Blueprint, Material, Animation (graph, blend space,
+    clip viewer) and Behavior Tree editors in tabs; the terrain tools;
+    the console and profiler. Each opens on a sample document.
+  - **Window**: GLFW (Win32 on Windows), resizable, with VSync.
+  - **Offscreen**: set `AETHER_EDITOR_HEADLESS=1`. It also renders
+    offscreen when there's no display.
+  - **Automation**: `AETHER_EDITOR_MAX_FRAMES` and
+    `AETHER_EDITOR_SCREENSHOT` (a PNG of the last frame, through
+    `ISwapChain::ReadBack`) work as in the Windows editor;
+    `AETHER_EDITOR_SIZE=WxH` sets the size.
+- **Tests**:
+  - Key mapping.
+  - Window events driving ImGui: mouse, buttons, Ctrl+S chords,
+    left/right modifiers, wheel, characters, resize.
+  - ImGui drawn through Vulkan offscreen and read back: origin at the top
+    left, solid shapes, and a window.
+- **CI**: the Linux GCC job runs the shell in an Xvfb window on lavapipe
+  and uploads the last frame as `editor-screenshot-linux`.
+- **Fixes**:
+  - Jolt's own Vulkan compute (`JPH_USE_VK`) is off, because with the
+    loader present but no shader compiler it tried to build its shaders.
+  - Linux CI installs `glslang-tools`, which Ubuntu's glslang CMake
+    package references.
+  - A raw string in a macro argument that MSVC rejects
+    (`test_console.cpp`) is now an ordinary string.
+
+### 24.5 PR breakdown
 
 1. ✅ **Done.** Continuous integration (§24.1), and the packaged Windows
    editor.
@@ -3917,6 +3963,7 @@ headless, which is what lets CI test rendering with no GPU.
 4. ✅ **Done.** The Vulkan backend off Windows (§24.3): glslang shaders,
    GLFW surfaces, offscreen swap chains with read-back, and rendering
    tests on lavapipe in Linux CI.
-5. The editor on Vulkan, through the RHI-hosted ImGui, so it runs on
-   Linux, with screenshot tests on lavapipe.
+5. ✅ **Done.** The editor on Vulkan (§24.4): RHI-hosted ImGui, window
+   events as ImGui input, and the portable editor shell, screenshotted
+   on lavapipe in Linux CI.
 6. macOS through MoltenVK, and a plugin structure for Android and consoles.
