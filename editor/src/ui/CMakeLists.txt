@@ -38,6 +38,11 @@ add_library(aether_editor_ui STATIC
     ../core/recent_projects.cpp
     ../core/json_edit.cpp
 )
+# The terrain tools need the terrain module (Phase 21).
+if(TARGET aether_terrain)
+    target_sources(aether_editor_ui PRIVATE ../world/terrain_panel.cpp)
+    target_link_libraries(aether_editor_ui PUBLIC Aether::Terrain)
+endif()
 target_include_directories(aether_editor_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(aether_editor_ui PUBLIC Aether::Engine Aether::Blueprint Aether::Renderer Aether::Animation Aether::Audio Aether::UI Aether::VFX Aether::AI imgui_core)
 add_library(Aether::EditorUI ALIAS aether_editor_ui)

@@ -222,13 +222,15 @@ void ApplyHeightBrush(Heightmap& heightmap,
             const f32 wz = static_cast<f32>(z) * world_per_sample;
             const f32 dx = wx - center_wx;
             const f32 dz = wz - center_wz;
-            const f32 w = BrushWeight(dx, dz, brush.radius, brush.strength, brush.falloff);
+            // Signed: a negative strength lowers; blend modes only use the magnitude.
+            const f32 signed_w = BrushWeight(dx, dz, brush.radius, brush.strength, brush.falloff);
+            const f32 w = std::fabs(signed_w);
             if (w < 1e-6f) continue;
 
             const usize idx = static_cast<usize>(z) * heightmap.width + static_cast<usize>(x);
             f32& h = heightmap.heights[idx];
 
-            if (brush.smooth) {
+            if (brush.smooth || brush.mode == SculptMode::Smooth) {
                 // Average with neighbors.
                 f32 sum = 0.0f;
                 i32 count = 0;
@@ -250,7 +252,7 @@ void ApplyHeightBrush(Heightmap& heightmap,
             } else {
                 // Default: raise/lower (mode from direction of brush strength).
                 // strength > 0 = raise, strength < 0 = lower.
-                h = h + (brush.strength * w) * vertical_scale;
+                h = h + signed_w * vertical_scale;
             }
         }
     }
@@ -307,7 +309,7 @@ void ForEachBrushSample(const Heightmap& heightmap, f32 center_wx, f32 center_wz
             const f32 dx = wx - center_wx;
             const f32 dz = wz - center_wz;
             const f32 w = BrushWeight(dx, dz, brush.radius, brush.strength, brush.falloff);
-            if (w < 1e-6f) continue;
+            if (std::fabs(w) < 1e-6f) continue;
             fn(x, z, w);
         }
     }
@@ -321,7 +323,7 @@ void ApplyNoiseBrush(Heightmap& heightmap,
                       f32 vertical_scale) {
     if (heightmap.width == 0 || heightmap.height == 0) return;
     const f32 feature = std::max(brush.noise_scale, 0.1f);
-    const f32 amp = brush.strength * vertical_scale;
+    const f32 amp = vertical_scale; // the (signed) strength is already in the weight
 
     ForEachBrushSample(heightmap, center_wx, center_wz, brush,
         [&](i32 x, i32 z, f32 w) {
@@ -351,7 +353,8 @@ void ApplyErosionBrush(Heightmap& heightmap,
         const std::vector<f32> src = heightmap.heights;
         std::vector<f32> delta(src.size(), 0.0f);
         ForEachBrushSample(heightmap, center_wx, center_wz, brush,
-            [&](i32 x, i32 z, f32 w) {
+            [&](i32 x, i32 z, f32 signed_w) {
+                const f32 w = std::fabs(signed_w);
                 const usize idx = static_cast<usize>(z) * heightmap.width + static_cast<usize>(x);
                 f32 total_diff = 0.0f;
                 i32 lower_neighbours = 0;

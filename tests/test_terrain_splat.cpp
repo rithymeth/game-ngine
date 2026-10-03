@@ -160,6 +160,7 @@ AETHER_TEST(TerrainSculptRaiseLower) {
     ApplySculptBrush(hm, 16.0f, 16.0f, brush, 1.0f);
     const usize center = 16 * 33 + 16;
     AETHER_CHECK(hm.heights[center] > 0.5f); // raised
+    const f32 raised = hm.heights[center];
 
     // Lower mode lowers the terrain back toward the brush center height
     // relative to the surrounding average.
@@ -169,7 +170,7 @@ AETHER_TEST(TerrainSculptRaiseLower) {
     lower.falloff = 0.0f;
     lower.mode = SculptMode::Raise;
     ApplySculptBrush(hm, 16.0f, 16.0f, lower, 1.0f);
-    AETHER_CHECK(hm.heights[center] < 5.0f); // came down from the raised value
+    AETHER_CHECK(hm.heights[center] < raised - 0.5f); // came down from the raised value
 }
 
 AETHER_TEST(TerrainSculptNoise) {
