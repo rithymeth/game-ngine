@@ -129,6 +129,29 @@ jobs:
         with:
           name: AetherEditor-windows-x64
           path: dist/AetherEditor-windows-x64.zip
+      - name: Screenshot the packaged editor
+        # Runs the zip's editor for 120 frames on WARP (hosted runners have
+        # no GPU; the editor falls back to the software device) and saves
+        # the last frame, so every run shows what the editor looks like.
+        continue-on-error: true
+        timeout-minutes: 10
+        shell: pwsh
+        env:
+          AETHER_EDITOR_MAX_FRAMES: "120"
+          AETHER_EDITOR_SCREENSHOT: ${{ github.workspace }}/editor-screenshot.png
+        run: |
+          Expand-Archive dist/AetherEditor-windows-x64.zip -DestinationPath run -Force
+          Push-Location run
+          ./aether_editor.exe
+          Pop-Location
+          if (-not (Test-Path editor-screenshot.png)) { throw "the editor wrote no screenshot" }
+      - name: Upload the screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: editor-screenshot-windows
+          path: editor-screenshot.png
+          if-no-files-found: ignore
       - name: Keep the functional report
         if: always()
         uses: actions/upload-artifact@v4
