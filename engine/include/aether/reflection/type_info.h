@@ -90,6 +90,11 @@ enum FunctionFlags : u32 {
     Fn_Pure = 1u << 1,              // no side effects: a pure node with no exec pins
     Fn_Const = 1u << 2,             // set automatically for const member functions
     Fn_Static = 1u << 3,            // set automatically for static/free functions; no `self`
+    // Network calls (Phase 22, net/rpc.h), on a component of a replicated entity.
+    Fn_ServerRPC = 1u << 4,         // a client calls it; runs on the server, only for the entity's owner
+    Fn_ClientRPC = 1u << 5,         // the server calls it; runs on the client that owns the entity
+    Fn_MulticastRPC = 1u << 6,      // the server calls it; runs on every client that has the entity
+    Fn_RpcUnreliable = 1u << 7,     // sent without the reliable channel: may be lost, never resent
 };
 
 struct ParamInfo {

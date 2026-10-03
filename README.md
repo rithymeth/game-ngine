@@ -5482,6 +5482,14 @@ Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md), Phase 22. The module (`net/`, optio
 
 ## Building
 
+**Step 3: RPCs** (`rpc.h`).
+
+- **Flags**: a reflected method on a component of a replicated entity marked `Fn_ServerRPC` (a client calls it, it runs on the server), `Fn_ClientRPC` (the server calls it, it runs on the owning client) or `Fn_MulticastRPC` (the server calls it, it runs on every client that has the entity); add `Fn_RpcUnreliable` to skip the reliable channel. Arguments are encoded with the replication codec, so any reflected type works; return values are dropped.
+- **RpcServer / RpcClient**: `Call(entity, "Component", "function", args...)` type-checks the arguments against the function's parameters and the message size before sending; a Server RPC called on the server just runs. `IsRpcMessage` routes incoming messages to `Handle`.
+- **Server-side checks**: the function must be a Server RPC (a forged call to a Client-only or non-RPC function is refused), the caller must own the entity (`NetIdentity::owner`), arguments must decode exactly, and each peer is rate limited (`max_calls_per_second`, default 100). Results are reported as `RpcResult` and counted in `RpcStats`.
+
+**Verified (step 3)**: 12 new tests, including ownership, direction and rate-limit enforcement, forged and malformed messages, Multicast skipping a client that doesn't have the entity, and 50 reliable calls run exactly once in order over a lossy link.
+
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
 or GCC), and network access the first time you configure (to fetch Jolt
 Physics, Dear ImGui, Vulkan-Headers, stb_image, nlohmann/json, and — on a
