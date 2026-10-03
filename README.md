@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 done on the engine and portable-editor side (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes; Blackboards and Behavior Trees; AI perception; debug drawing, the Behavior Tree editor and debugger, and the Navigation panel). Phase 21 in progress (world building: heightmap terrain, splatmaps and brushes, terrain rendering data, foliage, splines, world partition with cell streaming and a floating origin)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 done on the engine and portable-editor side (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes; Blackboards and Behavior Trees; AI perception; debug drawing, the Behavior Tree editor and debugger, and the Navigation panel). Phase 21 done on the engine and portable-editor side (world building: heightmap terrain, splatmaps and brushes, terrain rendering data, foliage, splines, world partition with cell streaming and a floating origin, and the terrain, foliage, spline and partition editors)
 
 ### Phase 1 — Foundation
 
@@ -5411,7 +5411,7 @@ Behavior Trees and perception come next. Spec:
   physics.
 
 
-### Phase 21 (in progress) — World Building
+### Phase 21 — World Building
 
 Build spec: [docs/design/PHASE_SPECS.md](docs/design/PHASE_SPECS.md), Phase 21.
 
@@ -5482,6 +5482,45 @@ in #96 and #97, which also fixed:
 - Files (and replacing stale cells), and the floating origin with
   streaming.
 - 497/497 tests pass on GCC 13, Clang and ASan/UBSan, and 529/529 with
+  physics.
+
+**Step 7: the world-building editors** (§21.7).
+
+- **Terrain**:
+  - raise, lower, smooth, flatten and paint;
+  - strokes as single undo steps that store only the changed region;
+  - dirty chunks for the renderer;
+  - a cursor ring that follows the ground;
+  - dabs spaced along a drag.
+- **Foliage**:
+  - paint and erase, with instances set onto the ground;
+  - undo per stroke;
+  - type editing, density, the instance cap, and counts.
+- **Splines**:
+  - add, insert, remove and drag points (each drag is one undo step);
+  - width and roll;
+  - picking, and the curve and road edges for the viewport.
+- **World partition map**: cell states, pins, entity counts, and
+  streaming sources with their reach.
+- Like the other editors, they're hooked into the editor window with
+  the Windows build.
+
+**Verified**: 5 new tests.
+
+- Terrain strokes:
+  - one undo step per stroke, exact undo and redo;
+  - dirty chunks, including both chunks on a shared edge;
+  - lower, flatten and smooth;
+  - strokes that change nothing aren't kept;
+  - paint, and the cursor.
+- Pointer-driven dab spacing.
+- Foliage: on the ground with anchors, erase, undo, types, density and
+  the cap.
+- Splines: insert, drags as one step, width and roll, picking, the
+  curve and road edges, selection, and the viewport gestures.
+- Every panel drawn headless, and the partition map's hit testing and
+  pins.
+- 502/502 tests pass on GCC 13, Clang and ASan/UBSan, and 534/534 with
   physics.
 
 ## Building
