@@ -5704,7 +5704,8 @@ Unreal.
 - The profiler ranks the moving player first, with Transform.position
   its costliest field, and still scenery costs nothing.
 - Both panels drawn headless before, during and after play.
-- COUNTS
+- 534/534 tests pass on GCC 13, Clang and ASan/UBSan, and 566/566 with
+  physics.
 
 ## Building
 
