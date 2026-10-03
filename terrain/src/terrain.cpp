@@ -1,5 +1,6 @@
 #include "aether/terrain/terrain.h"
 #include "terrain_math.h"
+#include "terrain_noise.h"
 
 #include <algorithm>
 #include <cmath>
@@ -35,39 +36,7 @@ f32 Heightmap::SampleLinear(f32 wx, f32 wz) const {
     return h0 + (h1 - h0) * fz;
 }
 
-// --- Noise ---
-
-namespace {
-
-f32 Smoothstep(f32 t) { return t * t * (3.0f - 2.0f * t); }
-
-i32 Hash(i32 x, i32 z) {
-    i32 n = x + z * 57;
-    n = (n << 13) ^ n;
-    return n * (n * n * 15731 + 789221) + 1376312589;
-}
-
-f32 FloatFromHash(i32 h) {
-    return static_cast<f32>(static_cast<i32>(h & 0x0fffffff) ^ 0x40000000) / 2147483648.0f;
-}
-
-f32 Noise2D(i32 x, i32 z) {
-    const f32 fx = static_cast<f32>(x) - std::floor(static_cast<f32>(x));
-    const f32 fz = static_cast<f32>(z) - std::floor(static_cast<f32>(z));
-    const f32 sx = Smoothstep(fx);
-    const f32 sz = Smoothstep(fz);
-
-    const f32 n00 = FloatFromHash(Hash(x,     z));
-    const f32 n10 = FloatFromHash(Hash(x + 1, z));
-    const f32 n01 = FloatFromHash(Hash(x,     z + 1));
-    const f32 n11 = FloatFromHash(Hash(x + 1, z + 1));
-
-    const f32 nx0 = n00 + (n10 - n00) * sx;
-    const f32 nx1 = n01 + (n11 - n01) * sx;
-    return nx0 + (nx1 - nx0) * sz;
-}
-
-} // namespace
+// --- Procedural heights ---
 
 Heightmap CreateProceduralHeightmap(u32 width, u32 height, f32 cell_size,
                                      u32 octaves, f32 persistence, f32 scale) {
@@ -76,25 +45,12 @@ Heightmap CreateProceduralHeightmap(u32 width, u32 height, f32 cell_size,
     hm.height = height;
     hm.cell_size = cell_size;
     hm.heights.resize(static_cast<usize>(width) * height, 0.0f);
-
+    // Features about 16 samples across at the first octave; heights in -scale..scale.
+    constexpr f32 kFeature = 16.0f;
     for (u32 z = 0; z < height; ++z) {
         for (u32 x = 0; x < width; ++x) {
-            f32 height_value = 0.0f;
-            f32 amplitude = 1.0f;
-            f32 frequency = 1.0f;
-            f32 max_val = 0.0f;
-
-            for (u32 o = 0; o < octaves; ++o) {
-                height_value += amplitude * Noise2D(
-                    static_cast<i32>(x) * static_cast<i32>(frequency),
-                    static_cast<i32>(z) * static_cast<i32>(frequency));
-                max_val += amplitude;
-                amplitude *= persistence;
-                frequency *= 2.0f;
-            }
-
             hm.heights[static_cast<usize>(z) * width + x] =
-                (height_value / max_val) * scale;
+                FractalNoise(static_cast<f32>(x) / kFeature, static_cast<f32>(z) / kFeature, octaves, persistence, 0u) * scale;
         }
     }
     return hm;
@@ -153,8 +109,6 @@ void ComputeChunkBounds(const TerrainData& data, const TerrainSettings& settings
 
     const f32 origin_x = static_cast<f32>(chunk.chunk_x) * world_size;
     const f32 origin_z = static_cast<f32>(chunk.chunk_z) * world_size;
-    const f32 step_x = world_size / static_cast<f32>(step);
-    const f32 step_z = world_size / static_cast<f32>(step);
     const f32 vs = settings.vertical_scale;
 
     f32 min_h =  1e9f;

@@ -184,3 +184,20 @@ AETHER_TEST(TerrainHeightBrushRaiseLowerSmooth) {
     AETHER_CHECK_NEAR(hm.heights[c - 1], 1.0f, 1e-4f);    // left and right neighbours got the same share
     AETHER_CHECK_NEAR(hm.heights[c + 1], 1.0f, 1e-4f);
 }
+
+AETHER_TEST(SplatmapFromWeights) {
+    std::vector<SplatmapLayer> layers(3);
+    // None: the first layer.
+    SplatmapData base = BuildSplatmap(4, layers, {});
+    AETHER_CHECK(base.pixels[0] == 255 && base.pixels[1] == 0 && base.pixels[2] == 0);
+    // One per layer: that mix everywhere, normalized.
+    SplatmapData mix = BuildSplatmap(4, layers, {1.0f, 1.0f, 2.0f});
+    AETHER_CHECK(mix.pixels[0] == 64 && mix.pixels[1] == 64 && mix.pixels[2] == 128 && mix.pixels[3] == 0);
+    AETHER_CHECK(mix.pixels[15 * 4 + 2] == 128);
+    // Per pixel: pixel 1 is all rock, the rest grass.
+    std::vector<f32> painted(4u * 4u * 3u, 0.0f);
+    for (usize p = 0; p < 16; ++p) painted[p * 3] = 1.0f;
+    painted[1 * 3] = 0.0f, painted[1 * 3 + 1] = 1.0f;
+    SplatmapData pm = BuildSplatmap(4, layers, painted);
+    AETHER_CHECK(pm.pixels[0] == 255 && pm.pixels[4] == 0 && pm.pixels[5] == 255);
+}
