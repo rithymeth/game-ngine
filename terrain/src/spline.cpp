@@ -288,13 +288,13 @@ std::vector<f32> BuildSplineMesh(const Spline& spline, f32 half_width, u32 verts
     const usize segs = spline.SegmentCount();
     if (segs == 0) return {};
 
-    // verts: (segs * verts_per_segment + 1) * 2 (left + right strip)
-    const usize verts = (segs * verts_per_segment + 1) * 2;
-    std::vector<f32> mesh(verts * 8, 0.0f); // pos(3)+normal(3)+uv(2)
+    // Cross-sections: verts_per_segment per segment, plus the end; two vertices each (left, right).
+    const usize samples = segs * std::max<u32>(verts_per_segment, 1) + 1;
+    std::vector<f32> mesh(samples * 2 * 8, 0.0f); // pos(3)+normal(3)+uv(2)
 
     usize vidx = 0;
-    for (usize s = 0; s <= segs; ++s) {
-        const f32 t = static_cast<f32>(s) / static_cast<f32>(segs);
+    for (usize s = 0; s < samples; ++s) {
+        const f32 t = static_cast<f32>(s) / static_cast<f32>(samples - 1);
         Vec3 pos = spline.Evaluate(t);
         Vec3 tangent{1,0,0}, up{0,1,0}, right{1,0,0};
         spline.Frame(t, &tangent, &up, &right);
@@ -302,23 +302,17 @@ std::vector<f32> BuildSplineMesh(const Spline& spline, f32 half_width, u32 verts
         const f32 w = spline.Width(t) * half_width;
         const Vec3 left = pos - right * w;
         const Vec3 right_v = pos + right * w;
-
-        // Two vertices per cross-section: left and right.
-        // Normal is up (for a road it's (0, 1, 0) world-normalized).
         const Vec3 normal{0, 1, 0};
-        const f32 v_coord = static_cast<f32>(s) / static_cast<f32>(segs);
+        const f32 v_coord = t;
 
-        // Left vertex
         mesh[vidx++] = left.x;  mesh[vidx++] = left.y;  mesh[vidx++] = left.z;
         mesh[vidx++] = normal.x; mesh[vidx++] = normal.y; mesh[vidx++] = normal.z;
         mesh[vidx++] = 0.0f;    mesh[vidx++] = v_coord;
 
-        // Right vertex
         mesh[vidx++] = right_v.x; mesh[vidx++] = right_v.y; mesh[vidx++] = right_v.z;
         mesh[vidx++] = normal.x; mesh[vidx++] = normal.y; mesh[vidx++] = normal.z;
         mesh[vidx++] = 1.0f;    mesh[vidx++] = v_coord;
     }
-
     return mesh;
 }
 
@@ -327,38 +321,25 @@ std::vector<f32> BuildRoadMesh(const Spline& spline, u32 verts_per_segment) {
 }
 
 std::vector<f32> BuildRoadMask(const Spline& spline, u32 verts_per_segment, f32 dash_length) {
-    // Mask: UV x = along road (0=left, 1=right), y = along length
-    // Dashed center line: at UV x=0.5, dash pattern along y.
+    // Per vertex of BuildRoadMesh (left, right per cross-section): (centre line painted 0/1, distance along 0..1).
     const usize segs = spline.SegmentCount();
     if (segs == 0) return {};
-    const usize verts = (segs * verts_per_segment + 1) * 2;
-    std::vector<f32> mask(verts * 2, 0.0f); // x = mask(0/1), y = along length
-
-    usize vidx = 0;
-    f32 total_len = 0.0f;
-    std::vector<f32> arc_lengths(segs + 1, 0.0f);
-
-    for (usize s = 0; s <= segs; ++s) {
-        if (s > 0) {
-            Vec3 a = spline.Evaluate(static_cast<f32>(s-1) / static_cast<f32>(segs));
-            Vec3 b = spline.Evaluate(static_cast<f32>(s) / static_cast<f32>(segs));
-            total_len += Length(b - a);
-            arc_lengths[s] = total_len;
-        }
+    const usize samples = segs * std::max<u32>(verts_per_segment, 1) + 1;
+    std::vector<f32> arc(samples, 0.0f);
+    Vec3 prev = spline.Evaluate(0.0f);
+    for (usize s = 1; s < samples; ++s) {
+        const Vec3 cur = spline.Evaluate(static_cast<f32>(s) / static_cast<f32>(samples - 1));
+        arc[s] = arc[s - 1] + (cur - prev).Length();
+        prev = cur;
     }
-
-    for (usize s = 0; s <= segs; ++s) {
-        const f32 y_along = arc_lengths[s] / total_len;
-        const f32 dash_t = Fract(arc_lengths[s] / dash_length);
-        const f32 center_mask = (dash_t < 0.5f) ? 1.0f : 0.0f;
-
-        // Left and right vertices at x=0 (left edge) and x=1 (right edge)
-        // The dashed center line at x=0.5 gets mask 0 or 1.
-        // We output mask at 3 points: left(0), center(0.5), right(1)
-        // But for simplicity: left vertex = 0, right vertex = 0, and we output
-        // a separate "center line" vertex pair.
-        mask[vidx++] = 0.0f;    mask[vidx++] = y_along;
-        mask[vidx++] = 0.0f;    mask[vidx++] = y_along; // center as separate...
+    const f32 total = arc.back() > 0.0f ? arc.back() : 1.0f;
+    std::vector<f32> mask;
+    mask.reserve(samples * 4);
+    for (usize s = 0; s < samples; ++s) {
+        // Dashes: painted for the first half of every dash_length.
+        const f32 painted = dash_length > 0.0f && Fract(arc[s] / dash_length) < 0.5f ? 1.0f : 0.0f;
+        const f32 along = arc[s] / total;
+        mask.insert(mask.end(), {painted, along, painted, along});
     }
     return mask;
 }

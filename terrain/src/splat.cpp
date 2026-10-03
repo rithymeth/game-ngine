@@ -93,40 +93,20 @@ SplatmapData BuildSplatmap(u32 resolution, span<const SplatmapLayer> layers,
     sm.width = resolution;
     sm.height = resolution;
     sm.pixels.resize(static_cast<usize>(resolution) * resolution * 4, 0);
-
-    const u32 layer_count = static_cast<u32>(layers.size());
-    const usize wp_count = layer_weights.size();
-
-    for (u32 z = 0; z < resolution; ++z) {
-        for (u32 x = 0; x < resolution; ++x) {
-            const f32 u = static_cast<f32>(x) / static_cast<f32>(resolution - 1);
-            const f32 v = static_cast<f32>(z) / static_cast<f32>(resolution - 1);
-
-            // Bilinear interpolation of layer weights.
-            std::array<f32, 4> weights{0.0f, 0.0f, 0.0f, 0.0f};
-            if (wp_count > 0) {
-                // weights are stored flat: layer0_u0v0, layer0_u1v0, ...
-                // But here we generate a simple gradient for testing.
-                weights[0] = (layers.size() > 0) ? 1.0f - v : 0.0f;
-                weights[1] = (layers.size() > 1) ? v : 0.0f;
-                weights[2] = 0.0f;
-                weights[3] = 0.0f;
-            }
-
-            // Add noise variation for natural look.
-            const f32 noise = u * 17.3f + v * 31.7f;
-            const f32 n = Fract(noise * 0.5f) * 2.0f - 1.0f; // -1..1
-            weights[0] = std::clamp(weights[0] + n * 0.05f, 0.0f, 1.0f);
-            weights[1] = std::clamp(1.0f - weights[0], 0.0f, 1.0f);
-
+    const usize layer_count = std::min<usize>(std::max<usize>(layers.size(), 1), 4);
+    const usize pixel_count = static_cast<usize>(resolution) * resolution;
+    // One weight per layer: the same mix everywhere. One per layer per pixel: painted. Otherwise the base layer.
+    const bool constant = layer_weights.size() == layer_count;
+    const bool painted = layer_weights.size() == layer_count * pixel_count && pixel_count > 0;
+    for (usize i = 0; i < pixel_count; ++i) {
+        std::array<f32, 4> weights{1.0f, 0.0f, 0.0f, 0.0f};
+        if (constant || painted) {
+            const f32* w = layer_weights.data() + (painted ? i * layer_count : 0);
+            for (usize l = 0; l < 4; ++l) weights[l] = l < layer_count ? std::max(0.0f, w[l]) : 0.0f;
+            if (weights[0] + weights[1] + weights[2] + weights[3] <= 1e-6f) weights = {1.0f, 0.0f, 0.0f, 0.0f};
             NormalizeWeights(weights);
-
-            const usize idx = static_cast<usize>(z * resolution + x) * 4;
-            sm.pixels[idx + 0] = static_cast<u8>(weights[0] * 255.0f);
-            sm.pixels[idx + 1] = static_cast<u8>(weights[1] * 255.0f);
-            sm.pixels[idx + 2] = static_cast<u8>(weights[2] * 255.0f);
-            sm.pixels[idx + 3] = static_cast<u8>(weights[3] * 255.0f);
         }
+        for (usize l = 0; l < 4; ++l) sm.pixels[i * 4 + l] = static_cast<u8>(std::lround(std::clamp(weights[l], 0.0f, 1.0f) * 255.0f));
     }
     return sm;
 }
