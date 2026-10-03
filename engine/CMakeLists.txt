@@ -11,6 +11,7 @@ add_library(aether_engine STATIC
     src/memory/pool_allocator.cpp
     src/memory/frame_allocator.cpp
     src/platform/filesystem.cpp
+    src/platform/window_events.cpp
     src/math/math.cpp
     src/job/job_system.cpp
     src/ecs/archetype.cpp
@@ -65,6 +66,25 @@ if(WIN32)
         src/gfx/rhi/d3d12/d3d12_backend.cpp
         src/assets/asset_manager.cpp
     )
+endif()
+
+if(WIN32)
+    target_compile_definitions(aether_engine PUBLIC AETHER_HAS_WINDOW)
+elseif(AETHER_BUILD_WINDOWING)
+    include(FetchContent)
+    FetchContent_Declare(glfw GIT_REPOSITORY https://github.com/glfw/glfw.git GIT_TAG 3.4 GIT_SHALLOW TRUE)
+    set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_WAYLAND ${AETHER_GLFW_WAYLAND} CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(glfw)
+    target_sources(aether_engine PRIVATE src/platform/window_glfw.cpp)
+    target_link_libraries(aether_engine PRIVATE glfw)
+    target_compile_definitions(aether_engine PUBLIC AETHER_HAS_WINDOW)
+    if(AETHER_GLFW_WAYLAND)
+        target_compile_definitions(aether_engine PRIVATE AETHER_GLFW_WAYLAND)
+    endif()
 endif()
 
 if(AETHER_BUILD_VULKAN)

@@ -13,6 +13,10 @@ option(AETHER_BUILD_TESTS "Build Aether unit tests" ON)
 
 if(MSVC)
     add_compile_options(/W4 /permissive- /arch:AVX2 /Zc:__cplusplus)
+    # Over-aligned types (16-byte math types) in std::stable_sort's temporary
+    # buffers instantiate aligned_storage with an extended alignment; opt in
+    # to the conforming behaviour rather than MSVC's old static_assert.
+    add_compile_definitions(_ENABLE_EXTENDED_ALIGNED_STORAGE)
 else()
     add_compile_options(-Wall -Wextra -mavx2 -mfma)
 endif()
@@ -23,6 +27,11 @@ option(AETHER_BUILD_EDITOR "Build the Dear ImGui editor app" ON)
 option(AETHER_BUILD_EDITOR_UI "Build the portable editor UI library (ImGui + reflection, no graphics backend; tested headless on every platform)" ON)
 option(AETHER_BUILD_VULKAN "Build the Vulkan RHI backend" ON)
 option(AETHER_BUILD_SCRIPTING "Build the Luau scripting module" ON)
+# Phase 24: windows on Linux and macOS through GLFW (Windows uses Win32).
+# Needs the X11 development headers on Linux (libx11-dev, libxrandr-dev,
+# libxinerama-dev, libxcursor-dev, libxi-dev).
+option(AETHER_BUILD_WINDOWING "Build the GLFW window backend on Linux and macOS" ON)
+option(AETHER_GLFW_WAYLAND "Also build GLFW's Wayland backend (needs the Wayland development packages)" OFF)
 
 include(FetchContent)
 
