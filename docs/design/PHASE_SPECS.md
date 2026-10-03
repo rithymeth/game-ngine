@@ -3823,14 +3823,46 @@ on version tags, and by hand.
   executable first, then in the working directory, then in the source
   tree, so the packaged editor runs from wherever it's unzipped.
 
-### 24.2 PR breakdown
+### 24.2 A portable window and input layer
+
+`platform::Window` is now one interface over two backends: Win32 on
+Windows and GLFW 3.4 (fetched by CMake) on Linux and macOS, with X11,
+optionally Wayland (`AETHER_GLFW_WAYLAND`), and Cocoa.
+`AETHER_BUILD_WINDOWING` turns the GLFW backend off for builds with no
+windowing (`AETHER_HAS_WINDOW` tells code which it has).
+
+- **Events**: every backend reports the same `WindowEvent`s, in
+  `input::Key` terms: keys and mouse buttons (left and right modifiers
+  told apart), mouse movement and position, the wheel, typed
+  characters, gamepad axes and buttons (GLFW's gamepad mappings, Y axes
+  pointing up, triggers 0..1), focus, resizes and the close request.
+  `TakeEvents()` drains them each frame.
+- **Input**: `ApplyWindowEvents` feeds a frame's events into
+  `input::InputState`; losing focus releases every key and axis, so
+  nothing sticks down after Alt-Tab.
+- **Key maps**: `KeyFromVirtualKey` (Win32), `KeyFromGlfwKey`,
+  `KeyFromGlfwMouseButton`, `KeyFromGlfwGamepadButton`,
+  `KeyFromGlfwGamepadAxis`; keys with no engine name map to `Key::None`.
+- **Native handles**: `NativeHandle()` (HWND, X11 Window, NSWindow),
+  `NativeDisplay()` (the X11 or Wayland display) and, on GLFW,
+  `PlatformWindow()` for `glfwCreateWindowSurface`. Also `Backend()`,
+  `SetTitle`, `RequestClose`, and `WindowDesc::visible` for hidden
+  windows.
+- **Tests**: the key maps and event application everywhere; a real GLFW
+  window (created hidden, pumped, a second window alongside, closed)
+  wherever there is a display - Linux CI runs the tests under Xvfb.
+- **Windows build fix**: MSVC builds with
+  `_ENABLE_EXTENDED_ALIGNED_STORAGE`, needed for sorting 16-byte-aligned
+  types.
+
+### 24.3 PR breakdown
 
 1. ✅ **Done.** Continuous integration (§24.1), and the packaged Windows
    editor.
 2. Fix what the first Windows builds report, until the Windows job is
    green and the editor package launches.
-3. A portable window and input layer: GLFW on Linux and macOS behind
-   `platform::Window`, alongside Win32.
+3. ✅ **Done.** A portable window and input layer (§24.2): GLFW on
+   Linux and macOS behind `platform::Window`, alongside Win32.
 4. The editor on Vulkan, through the RHI-hosted ImGui, so it runs on
    Linux.
 5. Headless screenshot tests with lavapipe (software Vulkan) in Linux CI.
