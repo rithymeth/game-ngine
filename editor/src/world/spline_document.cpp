@@ -1,5 +1,6 @@
 #include "world/spline_document.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace aether::editor {

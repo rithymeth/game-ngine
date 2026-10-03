@@ -2,6 +2,7 @@
 #include "aether/net/prediction.h"
 #include "test_framework.h"
 
+#include <algorithm>
 #include <cmath>
 
 // Phase 22 step 4: the interpolation buffer, snapshot interpolation that

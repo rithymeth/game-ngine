@@ -2,6 +2,7 @@
 
 #include "aether/core/base.h"
 
+#include <algorithm>
 #include <cmath>
 
 // Value noise for the terrain and foliage generators. The lattice hash is

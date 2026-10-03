@@ -1,6 +1,7 @@
 #include "aether/animation/anim_graph.h"
 #include "test_framework.h"
 
+#include <algorithm>
 #include <cmath>
 #include <map>
 

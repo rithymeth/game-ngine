@@ -3,9 +3,17 @@
 #include "aether/core/log.h"
 #include "aether/gfx/shader_compiler.h"
 
+#include <algorithm>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 #include <vector>
+
+#if !defined(_WIN32) && defined(AETHER_HAS_GLFW)
+#define GLFW_INCLUDE_NONE
+#define GLFW_INCLUDE_VULKAN
+#include <GLFW/glfw3.h>
+#endif
 
 namespace aether::gfx::rhi::vulkan_backend {
 
@@ -64,12 +72,37 @@ VkInstance CreateInstance(bool /*enable_debug_layer*/) {
     app_info.engineVersion = VK_MAKE_VERSION(1, 0, 0);
     app_info.apiVersion = VK_API_VERSION_1_2; // timeline semaphores are core here
 
-    const char* extensions[] = {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_EXTENSION_NAME};
+#if defined(_WIN32)
+    std::vector<const char*> extensions = {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_EXTENSION_NAME};
+#else
+    // Elsewhere, every window-system surface extension the loader offers
+    // (GLFW picks between X11 through xcb or Xlib, and Wayland, at run
+    // time), and none at all on a machine with no window system - offscreen
+    // swap chains don't need them.
+    u32 available_count = 0;
+    vkEnumerateInstanceExtensionProperties(nullptr, &available_count, nullptr);
+    std::vector<VkExtensionProperties> available(available_count);
+    vkEnumerateInstanceExtensionProperties(nullptr, &available_count, available.data());
+    static const char* const kWanted[] = {"VK_KHR_surface", "VK_KHR_xcb_surface", "VK_KHR_xlib_surface",
+                                          "VK_KHR_wayland_surface", "VK_EXT_metal_surface"};
+    std::vector<const char*> extensions;
+    for (const char* wanted : kWanted) {
+        for (const VkExtensionProperties& ext : available) {
+            if (std::strcmp(ext.extensionName, wanted) == 0) {
+                extensions.push_back(wanted);
+                break;
+            }
+        }
+    }
+    if (extensions.size() == 1) {
+        extensions.clear(); // VK_KHR_surface alone is of no use
+    }
+#endif
 
     VkInstanceCreateInfo create_info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     create_info.pApplicationInfo = &app_info;
-    create_info.enabledExtensionCount = static_cast<u32>(std::size(extensions));
-    create_info.ppEnabledExtensionNames = extensions;
+    create_info.enabledExtensionCount = static_cast<u32>(extensions.size());
+    create_info.ppEnabledExtensionNames = extensions.data();
 
     VkInstance instance = VK_NULL_HANDLE;
     AETHER_VK_CHECK(vkCreateInstance(&create_info, nullptr, &instance));
@@ -107,7 +140,13 @@ PhysicalDeviceChoice PickPhysicalDevice(VkInstance instance) {
 
         for (u32 i = 0; i < queue_family_count; ++i) {
             bool graphics = (families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0;
+#if defined(_WIN32)
             bool present = vkGetPhysicalDeviceWin32PresentationSupportKHR(device, i) == VK_TRUE;
+#else
+            // Checked against the real surface when a window swap chain is
+            // created; graphics queues present on every desktop driver.
+            bool present = true;
+#endif
             if (!graphics || !present) {
                 continue;
             }
@@ -773,7 +812,8 @@ u64 VulkanDevice::Submit(ICommandList& cmd, ISwapChain* wait_on_swap_chain) {
     std::vector<VkSemaphore> signal_semaphores;
     std::vector<u64> signal_values;
 
-    if (wait_on_swap_chain) {
+    if (wait_on_swap_chain &&
+        !static_cast<VulkanSwapChain*>(wait_on_swap_chain->NativeHandle())->IsOffscreen()) {
         auto* vk_swap_chain = static_cast<VulkanSwapChain*>(wait_on_swap_chain->NativeHandle());
         wait_semaphores.push_back(vk_swap_chain->CurrentImageAvailableSemaphore());
         wait_stages.push_back(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
@@ -847,16 +887,27 @@ void VulkanDevice::UpdateTexture(TextureHandle handle, VkImage image) {
 
 VulkanSwapChain::VulkanSwapChain(VulkanDevice& device, void* native_window_handle, u32 width, u32 height,
                                   u32 buffer_count)
-    : device_(device), hwnd_(native_window_handle), requested_buffer_count_(buffer_count) {
-    VkWin32SurfaceCreateInfoKHR surface_info{VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR};
-    surface_info.hinstance = GetModuleHandleW(nullptr);
-    surface_info.hwnd = static_cast<HWND>(hwnd_);
-    AETHER_VK_CHECK(vkCreateWin32SurfaceKHR(device_.Instance(), &surface_info, nullptr, &surface_));
+    : device_(device), window_(native_window_handle), requested_buffer_count_(buffer_count) {
+    offscreen_ = window_ == nullptr;
+    if (!offscreen_) {
+#if defined(_WIN32)
+        VkWin32SurfaceCreateInfoKHR surface_info{VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR};
+        surface_info.hinstance = GetModuleHandleW(nullptr);
+        surface_info.hwnd = static_cast<HWND>(window_);
+        AETHER_VK_CHECK(vkCreateWin32SurfaceKHR(device_.Instance(), &surface_info, nullptr, &surface_));
+#elif defined(AETHER_HAS_GLFW)
+        AETHER_VK_CHECK(
+            glfwCreateWindowSurface(device_.Instance(), static_cast<GLFWwindow*>(window_), nullptr, &surface_));
+#else
+        AETHER_LOG_FATAL("Vulkan", "Window swap chains need the GLFW window backend (AETHER_BUILD_WINDOWING)");
+        throw std::runtime_error("no window surface support");
+#endif
 
-    VkBool32 present_supported = VK_FALSE;
-    vkGetPhysicalDeviceSurfaceSupportKHR(device_.PhysicalDevice(), device_.QueueFamilyIndex(), surface_,
-                                          &present_supported);
-    AETHER_ASSERT(present_supported == VK_TRUE);
+        VkBool32 present_supported = VK_FALSE;
+        vkGetPhysicalDeviceSurfaceSupportKHR(device_.PhysicalDevice(), device_.QueueFamilyIndex(), surface_,
+                                              &present_supported);
+        AETHER_ASSERT(present_supported == VK_TRUE);
+    }
 
     CreateDefaultRenderPass();
     CreateSwapchainAndImages(width, height);
@@ -1010,7 +1061,66 @@ void VulkanSwapChain::DestroyFramebuffers() {
     framebuffers_.clear();
 }
 
+std::vector<VkImage> VulkanSwapChain::CreateOffscreenImages(u32 width, u32 height) {
+    extent_ = {std::max(width, 1u), std::max(height, 1u)};
+    can_read_back_ = true;
+    std::vector<VkImage> images(std::max(requested_buffer_count_, 1u));
+    offscreen_memory_.resize(images.size());
+    for (usize i = 0; i < images.size(); ++i) {
+        VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        image_info.imageType = VK_IMAGE_TYPE_2D;
+        image_info.format = format_;
+        image_info.extent = {extent_.width, extent_.height, 1};
+        image_info.mipLevels = 1;
+        image_info.arrayLayers = 1;
+        image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+        image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+        image_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                           VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        AETHER_VK_CHECK(vkCreateImage(device_.Handle(), &image_info, nullptr, &images[i]));
+
+        VkMemoryRequirements mem_reqs{};
+        vkGetImageMemoryRequirements(device_.Handle(), images[i], &mem_reqs);
+        VkMemoryAllocateInfo alloc_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        alloc_info.allocationSize = mem_reqs.size;
+        alloc_info.memoryTypeIndex =
+            FindMemoryType(device_.PhysicalDevice(), mem_reqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        AETHER_VK_CHECK(vkAllocateMemory(device_.Handle(), &alloc_info, nullptr, &offscreen_memory_[i]));
+        AETHER_VK_CHECK(vkBindImageMemory(device_.Handle(), images[i], offscreen_memory_[i], 0));
+    }
+    offscreen_images_ = images;
+    return images;
+}
+
 void VulkanSwapChain::CreateSwapchainAndImages(u32 width, u32 height) {
+    if (offscreen_) {
+        std::vector<VkImage> images = CreateOffscreenImages(width, height);
+        const bool first = handles_.empty();
+        image_views_.clear();
+        for (usize i = 0; i < images.size(); ++i) {
+            // Keep the device's texture handles stable across resizes.
+            if (first) {
+                handles_.push_back(device_.RegisterTexture(images[i]));
+            } else {
+                device_.UpdateTexture(handles_[i], images[i]);
+            }
+            VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+            view_info.image = images[i];
+            view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            view_info.format = format_;
+            view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            VkImageView view = VK_NULL_HANDLE;
+            AETHER_VK_CHECK(vkCreateImageView(device_.Handle(), &view_info, nullptr, &view));
+            image_views_.push_back(view);
+        }
+        current_image_index_ = 0;
+        CreateDepthResources();
+        CreateFramebuffers();
+        return;
+    }
+
     VkSurfaceCapabilitiesKHR capabilities{};
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device_.PhysicalDevice(), surface_, &capabilities);
 
@@ -1036,6 +1146,12 @@ void VulkanSwapChain::CreateSwapchainAndImages(u32 width, u32 height) {
     // supported for swapchain images, so requesting both up front avoids
     // needing two different swapchains depending on how the demo is run.
     swapchain_info.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    // TRANSFER_SRC, where the surface allows it, lets ReadBack copy the
+    // back buffer out (editor screenshots).
+    can_read_back_ = (capabilities.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
+    if (can_read_back_) {
+        swapchain_info.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    }
     swapchain_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     swapchain_info.preTransform = capabilities.currentTransform;
     swapchain_info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
@@ -1075,6 +1191,14 @@ void VulkanSwapChain::DestroySwapchainAndImages() {
         vkDestroyImageView(device_.Handle(), view, nullptr);
     }
     image_views_.clear();
+    for (VkImage image : offscreen_images_) {
+        vkDestroyImage(device_.Handle(), image, nullptr);
+    }
+    for (VkDeviceMemory memory : offscreen_memory_) {
+        vkFreeMemory(device_.Handle(), memory, nullptr);
+    }
+    offscreen_images_.clear();
+    offscreen_memory_.clear();
     if (swapchain_ != VK_NULL_HANDLE) {
         vkDestroySwapchainKHR(device_.Handle(), swapchain_, nullptr);
         swapchain_ = VK_NULL_HANDLE;
@@ -1123,6 +1247,10 @@ void VulkanSwapChain::Resize(u32 width, u32 height) {
 
 void VulkanSwapChain::AcquireNextImage() {
     frame_index_ = (frame_index_ + 1) % static_cast<u32>(image_available_semaphores_.size());
+    if (offscreen_) {
+        current_image_index_ = (current_image_index_ + 1) % static_cast<u32>(handles_.size());
+        return;
+    }
     VkResult result = vkAcquireNextImageKHR(device_.Handle(), swapchain_, UINT64_MAX,
                                              image_available_semaphores_[frame_index_], VK_NULL_HANDLE,
                                              &current_image_index_);
@@ -1138,6 +1266,9 @@ void VulkanSwapChain::AcquireNextImage() {
 
 void VulkanSwapChain::Present(bool vsync) {
     (void)vsync; // FIFO present mode (always used here) already is the vsync-equivalent
+    if (offscreen_) {
+        return; // nothing to show; the image stays readable until the next AcquireNextImage
+    }
 
     VkSemaphore wait_semaphore = render_finished_semaphores_[frame_index_];
     VkPresentInfoKHR present_info{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
@@ -1153,6 +1284,97 @@ void VulkanSwapChain::Present(bool vsync) {
     } else {
         AETHER_VK_CHECK(result);
     }
+}
+
+bool VulkanSwapChain::ReadBack(std::vector<u8>& rgba8) {
+    if (!can_read_back_ || handles_.empty()) {
+        return false;
+    }
+    VkDevice device = device_.Handle();
+    AETHER_VK_CHECK(vkQueueWaitIdle(device_.Queue()));
+
+    const VkDeviceSize size = static_cast<VkDeviceSize>(extent_.width) * extent_.height * 4;
+    VkBufferCreateInfo buffer_info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    buffer_info.size = size;
+    buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VkBuffer buffer = VK_NULL_HANDLE;
+    AETHER_VK_CHECK(vkCreateBuffer(device, &buffer_info, nullptr, &buffer));
+    VkMemoryRequirements mem_reqs{};
+    vkGetBufferMemoryRequirements(device, buffer, &mem_reqs);
+    VkMemoryAllocateInfo alloc_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    alloc_info.allocationSize = mem_reqs.size;
+    alloc_info.memoryTypeIndex =
+        FindMemoryType(device_.PhysicalDevice(), mem_reqs.memoryTypeBits,
+                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    AETHER_VK_CHECK(vkAllocateMemory(device, &alloc_info, nullptr, &memory));
+    AETHER_VK_CHECK(vkBindBufferMemory(device, buffer, memory, 0));
+
+    VkCommandPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+    pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+    pool_info.queueFamilyIndex = device_.QueueFamilyIndex();
+    VkCommandPool pool = VK_NULL_HANDLE;
+    AETHER_VK_CHECK(vkCreateCommandPool(device, &pool_info, nullptr, &pool));
+    VkCommandBufferAllocateInfo cmd_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    cmd_info.commandPool = pool;
+    cmd_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cmd_info.commandBufferCount = 1;
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    AETHER_VK_CHECK(vkAllocateCommandBuffers(device, &cmd_info, &cmd));
+
+    VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    AETHER_VK_CHECK(vkBeginCommandBuffer(cmd, &begin));
+    // Both ways of drawing a frame (the default render pass, and
+    // TransitionTexture to Present) leave the image in PRESENT_SRC.
+    VkImage image = device_.GetTexture(handles_[current_image_index_]);
+    VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = image;
+    barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                         nullptr, 1, &barrier);
+    VkBufferImageCopy region{};
+    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.imageExtent = {extent_.width, extent_.height, 1};
+    vkCmdCopyImageToBuffer(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, 1, &region);
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    barrier.dstAccessMask = 0;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr,
+                         0, nullptr, 1, &barrier);
+    AETHER_VK_CHECK(vkEndCommandBuffer(cmd));
+
+    VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &cmd;
+    AETHER_VK_CHECK(vkQueueSubmit(device_.Queue(), 1, &submit, VK_NULL_HANDLE));
+    AETHER_VK_CHECK(vkQueueWaitIdle(device_.Queue()));
+
+    void* mapped = nullptr;
+    AETHER_VK_CHECK(vkMapMemory(device, memory, 0, size, 0, &mapped));
+    rgba8.resize(static_cast<usize>(size));
+    const u8* src = static_cast<const u8*>(mapped);
+    const bool bgra = format_ == VK_FORMAT_B8G8R8A8_UNORM || format_ == VK_FORMAT_B8G8R8A8_SRGB;
+    for (usize i = 0; i < rgba8.size(); i += 4) {
+        rgba8[i + 0] = src[i + (bgra ? 2 : 0)];
+        rgba8[i + 1] = src[i + 1];
+        rgba8[i + 2] = src[i + (bgra ? 0 : 2)];
+        rgba8[i + 3] = src[i + 3];
+    }
+    vkUnmapMemory(device, memory);
+
+    vkDestroyCommandPool(device, pool, nullptr);
+    vkDestroyBuffer(device, buffer, nullptr);
+    vkFreeMemory(device, memory, nullptr);
+    return true;
 }
 
 // --------------------------------------------------------------------------

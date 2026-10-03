@@ -3,6 +3,7 @@
 #include "aether/reflection/serialize.h"
 #include "test_framework.h"
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 
