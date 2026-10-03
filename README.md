@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 done on the engine and portable-editor side (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes; Blackboards and Behavior Trees; AI perception; debug drawing, the Behavior Tree editor and debugger, and the Navigation panel). Phase 21 done on the engine and portable-editor side (world building: heightmap terrain, splatmaps and brushes, terrain rendering data, foliage, splines, world partition with cell streaming and a floating origin, and the terrain, foliage, spline and partition editors). Phase 22 in progress (networking: the transport, with reliable, unreliable and sequenced channels over UDP or a simulated network; replication with delta snapshots, relevancy and a bandwidth budget)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 done on the engine and portable-editor side (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes; Blackboards and Behavior Trees; AI perception; debug drawing, the Behavior Tree editor and debugger, and the Navigation panel). Phase 21 done on the engine and portable-editor side (world building: heightmap terrain, splatmaps and brushes, terrain rendering data, foliage, splines, world partition with cell streaming and a floating origin, and the terrain, foliage, spline and partition editors). Phase 22 in progress (networking: the transport, with reliable, unreliable and sequenced channels over UDP or a simulated network; replication with delta snapshots, relevancy and a bandwidth budget; remote calls from C++, Blueprints and Luau with ownership checks)
 
 ### Phase 1 — Foundation
 
@@ -5597,6 +5597,33 @@ delta snapshots in the manner of Quake 3.
   entity keeping up.
 - 515/515 tests pass on GCC 13, Clang and ASan/UBSan, and 547/547 with
   physics.
+
+**Step 3: remote calls** (§22.3). These are RPCs in the manner of
+Unreal.
+
+- **Flags**: `Fn_Server`, `Fn_Client`, `Fn_Multicast` and
+  `Fn_Unreliable` on reflected functions.
+- **Every call goes through `CallFunction`**: this is how C++ calls
+  them, and the Blueprint VM and Luau now do too. The world's router
+  then runs the call, sends it, or refuses it.
+- **`net::RpcRouter`**:
+  - server calls are sent only by their owner and run only from it;
+  - client calls go to the owner;
+  - multicasts go to every client that has the entity.
+  Without a router, everything runs locally (single player).
+
+**Verified**: 5 new tests.
+
+- Server calls from the owner, refused for others, rejected from a
+  client that lies about owning the entity, and following an ownership
+  handover; unreliable calls; mismatched arguments.
+- Client calls to the owner only; multicasts limited by relevancy; local
+  calls on clients; non-remote functions.
+- Single-player worlds, the router's lifetime, and malformed or unknown
+  calls.
+- A Blueprint, and a Luau script, calling through the network: the
+  owner's calls get through, and others get BP204 or a script error.
+- COUNTS
 
 ## Building
 
