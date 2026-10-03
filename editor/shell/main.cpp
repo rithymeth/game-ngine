@@ -12,6 +12,8 @@
 //   AETHER_EDITOR_MAX_FRAMES=N   quit after N frames
 //   AETHER_EDITOR_SCREENSHOT=p   save the last frame as a PNG at p
 //   AETHER_EDITOR_SIZE=WxH       the window or offscreen size (default 1600x960)
+//   AETHER_EDITOR_TAB=name       the editor tab to open on (blueprint, material,
+//                                animation, behavior)
 
 #include "ai/bt_editor.h"
 #include "anim/anim_graph_editor.h"
@@ -39,6 +41,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -165,6 +168,13 @@ struct SampleProject {
         });
         doc.AddTransition(machine, 1, 2);
         doc.AddTransition(machine, 2, 0);
+        doc.Edit("Clips", [&](AnimGraph& g) {
+            const auto& states = g.machines[0].states;
+            for (AnimNode& n : g.nodes) {
+                if (n.kind != AnimNodeKind::Clip) continue;
+                n.asset = n.id == states[0].pose ? "Idle" : n.id == states[1].pose ? "Walk" : "Fall";
+            }
+        });
         anim_editor = std::make_unique<AnimGraphEditor>(doc);
         anim_editor->OpenTab(machine);
 
@@ -246,6 +256,28 @@ void ApplyEditorStyle() {
 const char* const kEditorTabs[] = {"Blueprint - BP_Door", "Material - M_Lit", "Animation - ABP_Character",
                                    "Behavior Tree - BT_Guard"};
 
+// The tab AETHER_EDITOR_TAB asks for (matched against the start of the tab
+// names, case-insensitively), selected on the first frame only; -1 for none.
+int g_open_tab = -1;
+
+int TabFromName(const char* name) {
+    if (!name || !*name) return -1;
+    for (int i = 0; i < 4; ++i) {
+        const char* tab = kEditorTabs[i];
+        usize k = 0;
+        while (name[k] && tab[k] && std::tolower(static_cast<unsigned char>(name[k])) ==
+                                        std::tolower(static_cast<unsigned char>(tab[k]))) {
+            ++k;
+        }
+        if (!name[k]) return i;
+    }
+    return -1;
+}
+
+ImGuiTabItemFlags TabFlags(int index) {
+    return g_open_tab == index ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
+}
+
 void DrawEditor(SampleProject& project, ConsolePanel& console_panel, ProfilerPanel& profiler_panel,
                 const char* backend_label, bool& quit) {
     const ImGuiIO& io = ImGui::GetIO();
@@ -272,15 +304,15 @@ void DrawEditor(SampleProject& project, ConsolePanel& console_panel, ProfilerPan
     ImGui::SetNextWindowSize(ImVec2(main_w, main_h));
     ImGui::Begin("Editors", nullptr, kFixed | ImGuiWindowFlags_NoTitleBar);
     if (ImGui::BeginTabBar("##editors")) {
-        if (ImGui::BeginTabItem(kEditorTabs[0])) {
+        if (ImGui::BeginTabItem(kEditorTabs[0], nullptr, TabFlags(0))) {
             project.blueprint_editor->Draw();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem(kEditorTabs[1])) {
+        if (ImGui::BeginTabItem(kEditorTabs[1], nullptr, TabFlags(1))) {
             project.material_editor->Draw();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem(kEditorTabs[2])) {
+        if (ImGui::BeginTabItem(kEditorTabs[2], nullptr, TabFlags(2))) {
             const ImVec2 avail = ImGui::GetContentRegionAvail();
             if (ImGui::BeginChild("##graph", ImVec2(avail.x, avail.y * 0.6f), ImGuiChildFlags_Borders)) {
                 project.anim_editor->Draw();
@@ -297,13 +329,14 @@ void DrawEditor(SampleProject& project, ConsolePanel& console_panel, ProfilerPan
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem(kEditorTabs[3])) {
+        if (ImGui::BeginTabItem(kEditorTabs[3], nullptr, TabFlags(3))) {
             project.bt_editor->Draw();
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();
     }
     ImGui::End();
+    g_open_tab = -1;
 
     ImGui::SetNextWindowPos(ImVec2(main_w, top));
     ImGui::SetNextWindowSize(ImVec2(side, main_h * 0.5f));
@@ -348,6 +381,8 @@ int main() {
         unsigned w = 0, h = 0;
         if (std::sscanf(env, "%ux%u", &w, &h) == 2 && w >= 320 && h >= 240) width = w, height = h;
     }
+
+    g_open_tab = TabFromName(std::getenv("AETHER_EDITOR_TAB"));
 
     try {
         std::unique_ptr<Window> window;
