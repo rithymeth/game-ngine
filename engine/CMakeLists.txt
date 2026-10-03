@@ -6,6 +6,7 @@ add_library(aether_engine STATIC
     src/debug/debug_draw.cpp
     src/debug/stats.cpp
     src/debug/crash.cpp
+    src/testing/functional_test.cpp
     src/memory/linear_allocator.cpp
     src/memory/pool_allocator.cpp
     src/memory/frame_allocator.cpp

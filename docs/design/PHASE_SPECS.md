@@ -3507,6 +3507,8 @@ Networked Play-in-Editor and the network profiler (`editor/src/net/`).
 
 ## Phase 23: Profiling, debugging and developer tools
 
+✅ **Done** on the engine and portable-editor side.
+
 The concept is in [ROADMAP.md Phase 23](../ROADMAP.md). The core pieces
 (console variables, the console, the profiler's zones and counters,
 debug drawing, crash capture) live in the engine, so every module can
@@ -3719,7 +3721,59 @@ in-game overlays too.
     context, backtrace and log.
   - Buttons: Copy report, Dismiss, Delete and Dismiss all.
 
-### 23.5 PR breakdown
+### 23.5 Functional tests
+
+Whole-game scenarios, run headless (`aether/testing/functional_test.h`).
+
+- **`FunctionalTest(name)`** is built from steps and runs them in order
+  on a fresh World, SystemScheduler and FrameLoop with a fixed step
+  (1/60 s by default; `FixedStep` changes it). The steps:
+  - `Scene(path)`: loads a binary or JSON scene;
+  - `Setup` and `Do`: arbitrary code that builds the world and adds
+    systems;
+  - `Simulate(seconds, each_frame)`;
+  - `SimulateUntil(description, done, timeout)`;
+  - `Check(description, predicate)`;
+  - `ExpectReaches(tag, center, half_extents, timeout)`: "entity X
+    reached trigger Y". It checks the first entity with the tag against
+    the box.
+  - Options: `Tag`, and `Timeout` (simulated seconds across the whole
+    test, 600 by default).
+- **`FunctionalContext`**: `world`, `scheduler`, the simulated `time` and
+  `frame`, `FindTagged` and `AllTagged`, `Position`, `Inside`, `Log`,
+  `Fail` and `Expect`.
+- **Failures**: the first failing step ends the test. Its result names
+  the step and why it failed:
+  - a check that didn't hold;
+  - not done after N s;
+  - where the entity got to;
+  - no entity with the tag;
+  - a scene that couldn't load;
+  - an exception;
+  - the overall time budget running out.
+
+  Log lines written during the test, from any thread, are kept in the
+  result.
+- **Registry and reports**:
+  - `AETHER_FUNCTIONAL_TEST(Name) { return FunctionalTest(...)...; }`
+    registers a test.
+  - `FunctionalTestRegistry::Run(options)` runs them sorted by name,
+    filtered by name substrings and tags, optionally stopping at the
+    first failure.
+  - Reports: `WriteJUnitXml` (for CI), `WriteJsonReport` and
+    `FormatFunctionalSummary`.
+- **`aether_functional`** (`tools/functional`): a headless runner.
+  - Options: `--list`, `--filter`, `--tag`, `--stop-on-failure`,
+    `--junit FILE`, `--json FILE` and `--quiet`.
+  - It exits 0 when everything passes, 1 on a failure and 2 on bad
+    arguments.
+  - It's registered with CTest, and runs two sample scenarios: a seeker
+    reaching its goal, and a spawner.
+  - Games link their own scenarios into a runner like it.
+- **Console**: `functional.run [filter ...]` and `functional.list` run and
+  list the tests in game builds and the editor.
+
+### 23.6 PR breakdown
 
 1. ✅ **Done.** Console variables and the console (§23.1).
 2. ✅ **Done.** The profiler (§23.2): CPU zones per thread and frame, counters, memory by
@@ -3731,6 +3785,6 @@ in-game overlays too.
 4. ✅ **Done.** Crash handling (§23.4): signal and exception handlers, captured log lines,
    and a crash report file (a minidump on Windows); the editor's crash
    reporter dialog.
-5. Functional tests: scenarios ("load the scene, simulate 5 s, assert
+5. ✅ **Done.** Functional tests (§23.5): scenarios ("load the scene, simulate 5 s, assert
    that entity X reached trigger Y") run headless, with a CLI runner
    and reports for CI.
