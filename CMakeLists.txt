@@ -267,6 +267,9 @@ if(AETHER_BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 
+# Phase 23: the functional test runner (headless, any platform).
+add_subdirectory(tools/functional)
+
 if(AETHER_BUILD_SANDBOX)
     add_subdirectory(sandbox)
 endif()

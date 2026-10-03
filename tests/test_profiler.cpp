@@ -10,6 +10,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <thread>
@@ -145,11 +146,20 @@ AETHER_TEST(Profiler_ThreadsSchedulerAndJobs) {
 
     // Systems and phases are zoned by the scheduler; workers are named.
     SystemScheduler scheduler;
+    // Movement and Ai share a level and wait for each other, so (the main
+    // thread running one job at a time) one of them runs on a worker.
+    std::atomic<int> started{0};
     for (const char* name : {"Test.Movement", "Test.Ai", "Test.Render"}) {
         SystemDesc d;
         d.name = name;
         d.main_thread_only = std::string(name) == "Test.Render";
-        d.run = [](World&, const FrameContext&) { Spin(100); };
+        d.run = [&started, render = d.main_thread_only](World&, const FrameContext&) {
+            if (render) return Spin(100);
+            ++started;
+            const u64 give_up = Profiler::NowNs() + 2'000'000'000ull;
+            while (started.load() < 2 && Profiler::NowNs() < give_up) {
+            }
+        };
         CHECK(scheduler.Add(d));
     }
     World world;

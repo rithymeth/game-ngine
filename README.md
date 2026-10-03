@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 done on the engine and portable-editor side (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes; Blackboards and Behavior Trees; AI perception; debug drawing, the Behavior Tree editor and debugger, and the Navigation panel). Phase 21 done on the engine and portable-editor side (world building: heightmap terrain, splatmaps and brushes, terrain rendering data, foliage, splines, world partition with cell streaming and a floating origin, and the terrain, foliage, spline and partition editors). Phase 22 done on the engine and portable-editor side (networking: a UDP transport with reliable, unreliable and sequenced channels; delta-snapshot replication with relevancy and a bandwidth budget; RPCs from C++, Blueprints and Luau; client-side prediction and snapshot interpolation; sessions with LAN discovery and lobbies; networked Play-in-Editor and a network profiler). Phase 23 in progress (developer tools: console variables and the console; the profiler with zones, counters, memory, a trace export and its panel; debug drawing from C++, Blueprints and Luau, and stat overlays; crash reports and the crash reporter)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 done on the engine and portable-editor side (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes; Blackboards and Behavior Trees; AI perception; debug drawing, the Behavior Tree editor and debugger, and the Navigation panel). Phase 21 done on the engine and portable-editor side (world building: heightmap terrain, splatmaps and brushes, terrain rendering data, foliage, splines, world partition with cell streaming and a floating origin, and the terrain, foliage, spline and partition editors). Phase 22 done on the engine and portable-editor side (networking: a UDP transport with reliable, unreliable and sequenced channels; delta-snapshot replication with relevancy and a bandwidth budget; RPCs from C++, Blueprints and Luau; client-side prediction and snapshot interpolation; sessions with LAN discovery and lobbies; networked Play-in-Editor and a network profiler). Phase 23 done on the engine and portable-editor side (developer tools: console variables and the console; the profiler with Tracy forwarding and its panel; debug drawing and stat overlays; crash reports and the crash reporter; headless functional tests with JUnit reports)
 
 ### Phase 1 — Foundation
 
@@ -5707,7 +5707,7 @@ Unreal.
 - 534/534 tests pass on GCC 13, Clang and ASan/UBSan, and 566/566 with
   physics.
 
-### Phase 23 (in progress) — Profiling, debugging and developer tools
+### Phase 23 (done) — Profiling, debugging and developer tools
 
 Spec: [PHASE_SPECS.md, Phase 23](docs/design/PHASE_SPECS.md).
 
@@ -5820,6 +5820,33 @@ Spec: [PHASE_SPECS.md, Phase 23](docs/design/PHASE_SPECS.md).
 - The reporter dialog opening, its report text, dismissing and
   deleting, and drawing headless.
 - 554/554 tests pass on GCC 13.
+
+**Step 5: functional tests** (§23.5).
+
+- **Scenarios** run headless with a fixed step, built from steps:
+  - load a scene;
+  - set up;
+  - simulate, or simulate until a condition holds;
+  - check;
+  - "reaches": an entity with a tag reaches a box in time.
+- **Failures**: the first failing step ends the test, and the result
+  says why and where. Log lines are captured.
+- **Registry**: tests register with `AETHER_FUNCTIONAL_TEST` and are
+  filtered by name or tag.
+- **Reports**: JUnit XML (for CI), JSON, and a summary.
+- **`aether_functional`**: a command-line runner, registered with CTest,
+  with sample scenarios.
+- **Console**: the `functional.run` and `functional.list` commands.
+- **A fix**: the profiler's worker-thread test no longer depends on how
+  the scheduler happens to split jobs (it failed once under ASan).
+
+**Verified**: 3 new tests, and the runner's 2 sample scenarios.
+
+- Steps in order, fixed-step simulation, "reaches", and the log.
+- Every kind of failure and its explanation.
+- Scenes from files, the registry's filters, tags and stop-on-failure,
+  the JUnit and JSON reports, and the console commands.
+- 557/557 tests pass on GCC 13, and `aether_functional` passes 2/2.
 
 ## Building
 
