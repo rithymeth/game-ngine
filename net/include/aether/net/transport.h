@@ -28,6 +28,12 @@ public:
     // False if the datagram is too big or the address is unknown; true does not mean delivered.
     virtual bool Send(NetAddress to, std::span<const u8> data) = 0;
     virtual bool Receive(Datagram& out) = 0;
+    // Sends to every other host on the local network that listens on `port`
+    // (LAN discovery). False if the transport can't broadcast.
+    virtual bool Broadcast(u16 port, std::span<const u8> data) {
+        (void)port, (void)data;
+        return false;
+    }
 };
 
 // How the simulated link treats datagrams.
@@ -46,6 +52,8 @@ public:
     usize MaxDatagramSize() const override { return 1200; }
     bool Send(NetAddress to, std::span<const u8> data) override;
     bool Receive(Datagram& out) override;
+    // To every other endpoint of the network (the port is ignored).
+    bool Broadcast(u16 port, std::span<const u8> data) override;
 
 private:
     friend class LoopbackNetwork;

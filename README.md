@@ -5507,7 +5507,15 @@ Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md), Phase 22. The module (`net/`, optio
 
 **Verified (step 5)**: 11 new tests, including a mover tracked within 0.25 m of the server's past position with no per-frame jump over 10% loss and jitter, the owned entity left alone, and spawn-only replication keeping updates to a handful.
 
-Remaining for Phase 22: sessions and LAN discovery, a UDP socket transport, Blueprint/Luau access to RPCs, and the editor's network tools (multi-client play in editor, profiler, simulated latency).
+**Step 6: UDP transport and LAN discovery** (`udp.h`, `discovery.h`).
+
+- **UdpTransport**: a non-blocking IPv4 UDP socket as a `Transport` (Winsock on Windows, POSIX elsewhere). A `NetAddress` is a handle for an (IP, port) pair (`AddressFor("host", port)`, `Describe`, `AddressWithPort` for a host's game port from its discovery reply); the handle table is bounded and drops the quietest pair first, so spoofed source addresses can't grow memory and live connections are unaffected. Datagrams over the size limit are never sent or accepted; Windows' ICMP "connection reset" receive errors are ignored.
+- **Transport::Broadcast**: sends to everyone on the LAN listening on a port (a no-op for transports that can't); `LoopbackTransport` implements it for tests.
+- **LanHost / LanBrowser**: a host answers `Query` datagrams with its session (name, map, game version, game port, players/slots), only for the same game id and only while advertising, with a reply rate limit so it can't be used as a reflector; a browser broadcasts (`Search`) or queries one known host (`SearchHost`), lists the answers with round-trip time, refreshes entries in place and `Prune`s quiet hosts. Malformed queries and responses (wrong magic, trailing bytes, over-long strings, no game port, more players than slots) are counted and ignored.
+
+**Verified (step 6)**: 14 new tests (7 UDP on this machine's loopback interface, including a full connection with 20 reliable messages each way over real sockets and a discovery exchange; 7 discovery over the simulated network).
+
+Remaining for Phase 22: Blueprint/Luau access to RPCs, session lifecycle (a game-level lobby on top of discovery) and the editor's network tools (multi-client play in editor, profiler, simulated latency).
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
 or GCC), and network access the first time you configure (to fetch Jolt

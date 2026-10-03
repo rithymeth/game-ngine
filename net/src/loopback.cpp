@@ -10,6 +10,15 @@ bool LoopbackTransport::Send(NetAddress to, std::span<const u8> data) {
     return true;
 }
 
+bool LoopbackTransport::Broadcast(u16 port, std::span<const u8> data) {
+    (void)port;
+    if (data.size() > MaxDatagramSize()) return false;
+    for (NetAddress to = 1; to <= network_.endpoints_.size(); ++to) {
+        if (to != address_) network_.Enqueue(address_, to, data);
+    }
+    return true;
+}
+
 bool LoopbackTransport::Receive(Datagram& out) {
     if (inbox_.empty()) return false;
     out = std::move(inbox_.front());
