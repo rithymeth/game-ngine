@@ -65,6 +65,10 @@ if(AETHER_BUILD_PHYSICS)
     # into a /MD executable is a hard CRT conflict (duplicate symbols). Force
     # Jolt onto the dynamic runtime to match before it configures.
     set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF CACHE BOOL "" FORCE)
+    # Jolt's GPU compute (hair, soft bodies on the GPU) isn't used; with the
+    # Vulkan SDK half-installed (loader and headers but no glslc/dxc, as on
+    # Linux CI) it would still try to compile its shaders.
+    set(JPH_USE_VK OFF CACHE BOOL "" FORCE)
     # Jolt builds without C++ RTTI by default, but JoltJobSystemAdapter derives
     # from JPH::JobSystemWithBarrier in our own (RTTI-enabled) code, so its
     # vtable references Jolt's typeinfo. MSVC tolerates the mismatch; GCC and
@@ -284,6 +288,12 @@ endif()
 
 if(AETHER_BUILD_EDITOR_UI)
     add_subdirectory(editor/src/ui)
+endif()
+
+# Phase 24 step 5: the portable editor shell - the editor's panels in a
+# GLFW (or Win32) window, or offscreen, drawn through the Vulkan RHI.
+if(AETHER_BUILD_EDITOR_UI AND AETHER_BUILD_VULKAN)
+    add_subdirectory(editor/shell)
 endif()
 
 if(AETHER_BUILD_TESTS)
