@@ -6,6 +6,7 @@
 #include "aether/net/endpoint.h"
 
 #include <functional>
+#include <map>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -72,6 +73,21 @@ struct ReplicationStats {
     u64 oversized = 0; // records too big for one message (never sent)
 };
 
+// Where replication bandwidth goes (summed over every peer sent to): per
+// replicated field, per entity, and the total. Headers and record framing count
+// toward the entity and the total but not toward any field.
+struct FieldTraffic {
+    u64 bytes = 0;
+    u64 sends = 0;
+};
+
+struct ReplicationProfile {
+    std::map<std::pair<u32, u32>, FieldTraffic> fields; // (component hash, replicated field index)
+    std::unordered_map<u32, u64> entity_bytes;          // by network id
+    u64 total_bytes = 0;                                // every byte of every replication message
+    void Reset() { *this = {}; }
+};
+
 class ReplicationServer {
 public:
     ReplicationServer(World& world, NetEndpoint& endpoint);
@@ -102,6 +118,8 @@ public:
     Entity EntityOf(u32 net_id) const;
     bool Knows(NetAddress peer, u32 net_id) const;
     const ReplicationStats& Stats() const { return stats_; }
+    const ReplicationProfile& Profile() const { return profile_; }
+    void ResetProfile() { profile_.Reset(); }
 
 private:
     using FieldBytes = std::vector<std::vector<u8>>; // one encoding per replicated field
@@ -134,6 +152,7 @@ private:
     std::unordered_map<u32, Entity> by_id_;
     std::unordered_map<NetAddress, PeerState> peers_;
     ReplicationStats stats_;
+    ReplicationProfile profile_;
 };
 
 // --- client -----------------------------------------------------------------

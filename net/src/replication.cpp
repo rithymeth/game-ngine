@@ -175,6 +175,10 @@ struct ReplicationServer::Record {
     std::vector<u8> bytes;
     const Snapshot* snapshot = nullptr;
     std::vector<u32> hashes; // components an Update or Remove covers
+    struct Cost {
+        u32 hash, field, bytes;
+    };
+    std::vector<Cost> costs; // the bytes each field of the record takes
 };
 
 ReplicationServer::ReplicationServer(World& world, NetEndpoint& endpoint) : world_(world), endpoint_(endpoint) {
@@ -287,7 +291,10 @@ void ReplicationServer::ReplicateTo(NetAddress peer, PeerState& state, const std
             w.U8(kSpawn);
             w.Varint(snap.net_id);
             w.U8(static_cast<u8>(snap.components.size()));
-            for (const Component& c : snap.components) WriteComponent(w, c.hash, kFullComponent, AllFields(c.fields.size()), c.fields);
+            for (const Component& c : snap.components) {
+                WriteComponent(w, c.hash, kFullComponent, AllFields(c.fields.size()), c.fields);
+                for (usize i = 0; i < c.fields.size(); ++i) r.costs.push_back({c.hash, static_cast<u32>(i), static_cast<u32>(c.fields[i].size())});
+            }
             r.bytes = w.Take();
             records.push_back(std::move(r));
             continue;
@@ -327,6 +334,10 @@ void ReplicationServer::ReplicateTo(NetAddress peer, PeerState& state, const std
             for (usize i = first; i < last; ++i) {
                 WriteComponent(w, changes[i].comp->hash, changes[i].flags, changes[i].mask, changes[i].comp->fields);
                 r.hashes.push_back(changes[i].comp->hash);
+                const auto& fields = changes[i].comp->fields;
+                for (usize f = 0; f < fields.size(); ++f) {
+                    if (changes[i].mask & (1ull << f)) r.costs.push_back({changes[i].comp->hash, static_cast<u32>(f), static_cast<u32>(fields[f].size())});
+                }
             }
             r.bytes = w.Take();
             return r;
@@ -402,6 +413,12 @@ void ReplicationServer::ReplicateTo(NetAddress peer, PeerState& state, const std
         }
         state.priority.erase(r.net_id);
         ++stats_.records_sent;
+        profile_.entity_bytes[r.net_id] += r.bytes.size();
+        for (const Record::Cost& cost : r.costs) {
+            FieldTraffic& t = profile_.fields[{cost.hash, cost.field}];
+            t.bytes += cost.bytes;
+            ++t.sends;
+        }
     };
 
     auto flush = [&]() {
@@ -410,6 +427,7 @@ void ReplicationServer::ReplicateTo(NetAddress peer, PeerState& state, const std
             blocked = true; // send queue full: everything after waits too
         } else {
             stats_.bytes_sent += batch.size();
+            profile_.total_bytes += batch.size();
             for (usize i : batch_members) {
                 sent[i] = true;
                 commit(records[i]);
