@@ -1,14 +1,17 @@
 #pragma once
 
-#include ""aether/core/base.h""
-#include ""aether/math/math.h""
-#include ""aether/reflection/reflection.h""
+#include "aether/core/base.h"
+#include "aether/math/math.h"
+#include "aether/reflection/reflection.h"
 
 #include <random>
+#include <span>
 #include <vector>
 
 namespace aether {
 namespace terrain {
+
+using std::span;
 
 // Phase 21 step 4: GPU-culled foliage instancing with LOD and impostors.
 
@@ -45,7 +48,7 @@ struct FoliageInstance {
 };
 
 // One foliage layer: a set of foliage types and their placed instances.
-// One layer per terrain (e.g. ""Forest"", ""Desert"").
+// One layer per terrain (e.g. "Forest", "Desert").
 struct FoliageLayer {
     std::string name;
     std::vector<FoliageType> types;

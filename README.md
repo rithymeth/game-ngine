@@ -1147,9 +1147,9 @@ pure UI/UX pass, no new editor functionality.
   symbols don't exist in this build — reverted in favor of the
   `SetNextWindowPos` approach above rather than repointing the whole
   project at a different ImGui branch for one follow-up.)
-- **Friendlier visual style** (`ApplyFriendlyEditorStyle`): a soft blue-teal
-  accent color (buttons, headers, checkmarks, tabs) in place of ImGui's
-  default blue, rounded corners, and more breathing room between widgets.
+- **Editor visual style** (`ApplyFriendlyEditorStyle`): a graphite panel
+  palette with a restrained blue selection/focus accent, consistent input
+  and tab states, subtle borders, rounded corners, and roomier widget spacing.
   `ImGui::SeparatorText` section headers ("Controls", "Bodies", "Models")
   replace the old plain `Text` + `Separator` pairs. Bodies/models are
   color-coded by type and selection state (blue for a body, orange for a
@@ -5415,7 +5415,7 @@ Behavior Trees and perception come next. Spec:
 
 Build spec: [docs/design/PHASE_SPECS.md](docs/design/PHASE_SPECS.md), Phase 21.
 
-**Step 1: heightmap terrain** (	errain/).
+**Step 1: heightmap terrain** (`terrain/`).
 
 - **Heightmap**: procedural Perlin noise generation (multi-octave), bilinear sampling.
 - **TerrainData**: chunk layout from heightmap dimensions, LOD distances.
@@ -5430,10 +5430,31 @@ Build spec: [docs/design/PHASE_SPECS.md](docs/design/PHASE_SPECS.md), Phase 21.
 - **SplatmapData**: RGBA8 splatmap pixels (R=layer0, G=layer1, B=layer2, A=layer3).
 - **Pack/unpack**: encode/decode weights to/from RGBA8 pixels.
 - **Brush**: circular falloff, strength and radius; apply to splatmap or heightmap.
-- **Paint modes**: raise/lower (default), flatten (lerp toward center height), smooth (neighbor average).
+- **Paint modes**: raise/lower (default), flatten (lerp toward the brush-weighted mean height), smooth (neighbor average).
 - **Layer normalization**: blend weights to sum to 1.0.
 
-**Verified**: 13 new tests (7 terrain, 6 splat).
+**Step 3: GPU terrain rendering**.
+
+- **TerrainRenderer**: builds visible terrain chunks and uploads generated vertex/index data through `gfx::Buffer`.
+- **Chunk culling**: distance-based visibility selection with per-chunk bounds.
+- **LOD-aware rebuilds**: regenerates mesh buffers when the selected terrain level changes.
+
+**Step 4: foliage instancing**.
+
+- **FoliageLayer**: per-type instance placement, density map generation, scale/rotation variation, and terrain alignment.
+- **Chunk filtering and ordering**: groups instances for efficient renderer submission.
+
+**Step 5: spline world tools**.
+
+- **Spline**: Catmull-Rom evaluation, arc-length sampling, closest-point queries, frames, roll, and point-width interpolation.
+- **Spline mesh generation**: strip and road meshes plus road masks for terrain blending.
+
+**Step 6: sculpt and paint brushes**.
+
+- **Sculpt modes**: raise/lower, flatten, smooth, procedural noise, and erosion.
+- **Material painting**: applies normalized splatmap weights with the same brush falloff controls.
+
+**Validation**: terrain library and the full test binary build in the RelWithDebInfo Visual Studio configuration. Focused terrain and splat test sources cover heightmaps, layers, brush modes, renderer buffers, foliage, and splines.
 
 ## Building
 

@@ -1,5 +1,5 @@
-#include ""aether/terrain/foliage.h""
-#include ""test_framework.h""
+#include "aether/terrain/foliage.h"
+#include "test_framework.h"
 
 using namespace aether;
 using namespace aether::terrain;
@@ -59,9 +59,9 @@ AETHER_TEST(FoliageSortByType) {
     insts[4].type_index = 2;
 
     auto order = SortInstancesByType(insts);
-    // 1,3,2,0,4 in index order (types 0,0,1,2,2)
-    AETHER_CHECK(insts[order[0]].type_index == 2); // wait, sort stable
-    // Let's just check it's sorted.
+    // Stable sort by type: indices 1,3 (type 0), 2 (type 1), 0,4 (type 2).
+    AETHER_CHECK(order.size() == 5);
+    AETHER_CHECK(order[0] == 1 && order[1] == 3 && order[2] == 2 && order[3] == 0 && order[4] == 4);
     for (usize i = 1; i < order.size(); ++i) {
         AETHER_CHECK(insts[order[i-1]].type_index <= insts[order[i]].type_index);
     }

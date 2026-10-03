@@ -1,5 +1,5 @@
-#include ""aether/terrain/spline.h""
-#include ""test_framework.h""
+#include "aether/terrain/spline.h"
+#include "test_framework.h"
 
 using namespace aether;
 using namespace aether::terrain;
@@ -51,9 +51,9 @@ AETHER_TEST(Spline_Frame) {
     Vec3 tangent{1,0,0}, up{0,1,0}, right{1,0,0};
     sp.Frame(0.5f, &tangent, &up, &right);
 
-    AETHER_CHECK(NearEqual(Length(tangent), 1.0f, 1e-4f));
-    AETHER_CHECK(NearEqual(Length(up), 1.0f, 1e-4f));
-    AETHER_CHECK(NearEqual(Length(right), 1.0f, 1e-4f));
+    AETHER_CHECK(NearEqual(tangent.Length(), 1.0f, 1e-4f));
+    AETHER_CHECK(NearEqual(up.Length(), 1.0f, 1e-4f));
+    AETHER_CHECK(NearEqual(right.Length(), 1.0f, 1e-4f));
     // tangent should be roughly in the XZ plane.
     AETHER_CHECK(std::abs(tangent.y) < 0.5f);
 }
@@ -86,8 +86,8 @@ AETHER_TEST(Spline_UniformSample) {
 
 AETHER_TEST(Spline_WidthInterpolation) {
     Spline sp;
-    sp.AddPoint({0, 0, 0});    sp.points_[0].width = 2.0f;
-    sp.AddPoint({10, 0, 0});   sp.points_[1].width = 6.0f;
+    sp.AddPoint({0, 0, 0});   sp.SetPointWidth(0, 2.0f);
+    sp.AddPoint({10, 0, 0});  sp.SetPointWidth(1, 6.0f);
     AETHER_CHECK(NearEqual(sp.Width(0.0f), 2.0f, 1e-4f));
     AETHER_CHECK(NearEqual(sp.Width(1.0f), 6.0f, 1e-4f));
     // Halfway: average of 2 and 6.

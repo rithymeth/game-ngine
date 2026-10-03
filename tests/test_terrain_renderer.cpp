@@ -1,6 +1,6 @@
-#include ""aether/terrain/renderer.h""
-#include ""aether/terrain/terrain.h""
-#include ""test_framework.h""
+#include "aether/terrain/renderer.h"
+#include "aether/terrain/terrain.h"
+#include "test_framework.h"
 
 using namespace aether;
 using namespace aether::terrain;
@@ -21,8 +21,8 @@ AETHER_TEST(TerrainRenderChunks_BuildLayout) {
     AETHER_CHECK(chunks.size() == 9);
 
     for (const auto& c : chunks) {
-        AETHER_CHECK(c.vertex_buffer == 0); // no GPU buffers yet
-        AETHER_CHECK(c.index_buffer == 0);
+        AETHER_CHECK(!c.vertex_buffer); // no GPU buffers yet
+        AETHER_CHECK(!c.index_buffer);
         AETHER_CHECK(c.dirty == true);
         AETHER_CHECK(c.lod_level == 0);
         AETHER_CHECK(c.verts_per_side == 32);
@@ -30,7 +30,7 @@ AETHER_TEST(TerrainRenderChunks_BuildLayout) {
 }
 
 AETHER_TEST(TerrainRenderChunks_BoundsConsistent) {
-    Heightmap hm = CreateProceduralHeightmap(33, 33, 1.0f, 1, 0.5f, 4.0f);
+    Heightmap hm = CreateProceduralHeightmap(32, 32, 1.0f, 1, 0.5f, 4.0f);
     TerrainSettings settings;
     settings.verts_per_chunk = 32;
     settings.chunk_world_size = 31.0f;
@@ -58,7 +58,7 @@ AETHER_TEST(TerrainRenderChunks_LODLevels) {
     data.chunk_count_z = 2;
     data.lod_distances = {32.0f, 64.0f, 128.0f};
     data.max_lod = 3;
-    data.heightmap = CreateProceduralHeightmap(33, 33, 1.0f, 1, 0.5f, 4.0f);
+    data.heightmap = CreateProceduralHeightmap(32, 32, 1.0f, 1, 0.5f, 4.0f);
 
     TerrainSettings settings;
     settings.chunk_world_size = 31.0f;
@@ -76,7 +76,7 @@ AETHER_TEST(TerrainRenderChunks_LODLevels) {
 
 AETHER_TEST(TerrainChunks_VertexIndexCountConsistency) {
     // One 32x32 chunk.
-    Heightmap hm = CreateProceduralHeightmap(33, 33, 1.0f, 1, 0.5f, 4.0f);
+    Heightmap hm = CreateProceduralHeightmap(32, 32, 1.0f, 1, 0.5f, 4.0f);
     TerrainSettings settings;
     settings.verts_per_chunk = 32;
     settings.chunk_world_size = 31.0f;
@@ -86,14 +86,16 @@ AETHER_TEST(TerrainChunks_VertexIndexCountConsistency) {
     InitTerrainData(data, hm, settings);
     auto chunks = BuildChunks(data, settings);
 
-    // At LOD 0: 32x32 = 1024 vertices, (32-1)*(32-1)*6 = 5766 indices
+    // At LOD 0: 32x32 = 1024 vertices, (32-1)*(32-1)*6 = 5766 indices.
     const auto& c = chunks[0];
-    AETHER_CHECK(c.vertex_count == 1024);  // 32*32
-    AETHER_CHECK(c.index_count == 5766);   // 31*31*6
+    const auto vertices = GenerateChunkVertices(data, settings, c);
+    const auto indices = GenerateChunkIndices(data, c);
+    AETHER_CHECK(vertices.size() / 8 == 1024);  // 32*32
+    AETHER_CHECK(indices.size() == 5766);       // 31*31*6
 }
 
 AETHER_TEST(TerrainRenderer_MarkAllDirty) {
-    Heightmap hm = CreateProceduralHeightmap(33, 33, 1.0f, 1, 0.5f, 4.0f);
+    Heightmap hm = CreateProceduralHeightmap(32, 32, 1.0f, 1, 0.5f, 4.0f);
     TerrainSettings settings;
     settings.verts_per_chunk = 32;
     settings.chunk_world_size = 31.0f;

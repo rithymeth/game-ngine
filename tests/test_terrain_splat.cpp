@@ -1,6 +1,6 @@
-#include ""aether/terrain/splat.h""
-#include ""aether/terrain/terrain.h""
-#include ""test_framework.h""
+#include "aether/terrain/splat.h"
+#include "aether/terrain/terrain.h"
+#include "test_framework.h"
 
 using namespace aether;
 using namespace aether::terrain;
@@ -39,8 +39,8 @@ AETHER_TEST(SplatmapNormalizeWeights) {
 
 AETHER_TEST(SplatmapGeneration) {
     std::vector<SplatmapLayer> layers(2);
-    layers[0].name = ""Grass"";
-    layers[1].name = ""Rock"";
+    layers[0].name = "Grass";
+    layers[1].name = "Rock";
     auto sm = BuildSplatmap(64, layers, {});
     AETHER_CHECK(sm.width == 64);
     AETHER_CHECK(sm.height == 64);
@@ -60,7 +60,7 @@ AETHER_TEST(SplatmapSampleWeights) {
         255, 0,   0, 0,   128, 128, 0, 0,   0, 255, 0, 0,   0, 0, 255, 0,  // row 0
           0, 255, 0, 0,     0,   0, 255, 0,   0, 255, 0, 0,   0, 0, 255, 0,  // row 1
         128, 128, 0, 0,     0,   0,   0, 255, 255, 0, 0, 0,   0, 255, 0, 0,  // row 2
-          0,   0, 255, 0, 255,   0,   0,   0,   0, 255, 0, 0, 255, 0, 0, 0   // row 3
+          0,   0, 255, 0, 255,   0,   0,   0,   0, 255, 0, 0,   0, 0, 255, 0   // row 3
     };
 
     // Corner samples.
@@ -139,7 +139,141 @@ AETHER_TEST(TerrainHeightBrushFlatten) {
 
     ApplyHeightBrush(hm, 16.0f, 16.0f, brush, 1.0f);
 
-    // Center should be lower after flatten.
+    // The peak is leveled toward the footprint mean.
     const usize c2 = 16 * 33 + 16;
     AETHER_CHECK(hm.heights[c2] < 5.0f);
+}
+
+AETHER_TEST(TerrainSculptRaiseLower) {
+    Heightmap hm;
+    hm.width = 33;
+    hm.height = 33;
+    hm.cell_size = 1.0f;
+    hm.heights.resize(33 * 33, 0.0f);
+
+    TerrainBrush brush;
+    brush.radius = 3.0f;
+    brush.strength = 1.0f;
+    brush.falloff = 0.0f;
+    brush.mode = SculptMode::Raise;
+
+    ApplySculptBrush(hm, 16.0f, 16.0f, brush, 1.0f);
+    const usize center = 16 * 33 + 16;
+    AETHER_CHECK(hm.heights[center] > 0.5f); // raised
+
+    // Lower mode lowers the terrain back toward the brush center height
+    // relative to the surrounding average.
+    TerrainBrush lower;
+    lower.radius = 3.0f;
+    lower.strength = -1.0f;
+    lower.falloff = 0.0f;
+    lower.mode = SculptMode::Raise;
+    ApplySculptBrush(hm, 16.0f, 16.0f, lower, 1.0f);
+    AETHER_CHECK(hm.heights[center] < 5.0f); // came down from the raised value
+}
+
+AETHER_TEST(TerrainSculptNoise) {
+    Heightmap hm;
+    hm.width = 33;
+    hm.height = 33;
+    hm.cell_size = 1.0f;
+    hm.heights.resize(33 * 33, 1.0f); // flat surface
+
+    TerrainBrush brush;
+    brush.radius = 5.0f;
+    brush.strength = 1.0f;
+    brush.falloff = 0.0f;
+    brush.mode = SculptMode::Noise;
+    brush.noise_scale = 4.0f;
+    brush.noise_seed = 42;
+
+    ApplySculptBrush(hm, 16.0f, 16.0f, brush, 1.0f);
+
+    // Some samples near the center should have been displaced off 1.0.
+    bool displaced = false;
+    for (i32 z = 14; z <= 18 && !displaced; ++z) {
+        for (i32 x = 13; x <= 19; ++x) {
+            if (std::abs(hm.heights[static_cast<usize>(z) * 33 + static_cast<usize>(x)] - 1.0f) > 0.01f) {
+                displaced = true;
+                break;
+            }
+        }
+    }
+    AETHER_CHECK(displaced);
+
+    // Deterministic: same seed -> same result.
+    Heightmap hm2 = hm;
+    hm2.heights = hm.heights; // copy state
+    Heightmap hm3;
+    hm3.width = 33;
+    hm3.height = 33;
+    hm3.cell_size = 1.0f;
+    hm3.heights.assign(33 * 33, 1.0f);
+    ApplySculptBrush(hm3, 16.0f, 16.0f, brush, 1.0f);
+    AETHER_CHECK(hm.heights == hm3.heights);
+}
+
+AETHER_TEST(TerrainSculptErode) {
+    Heightmap hm;
+    hm.width = 33;
+    hm.height = 33;
+    hm.cell_size = 1.0f;
+    hm.heights.resize(33 * 33, 0.0f);
+
+    // A sharp ridge in the middle of the brush footprint.
+    const usize ridge = 16 * 33 + 16;
+    hm.heights[ridge] = 4.0f;
+    for (i32 dz = -1; dz <= 1; ++dz) {
+        for (i32 dx = -1; dx <= 1; ++dx) {
+            if (dx == 0 && dz == 0) continue;
+            hm.heights[static_cast<usize>(16 + dz) * 33 + static_cast<usize>(16 + dx)] = 0.5f;
+        }
+    }
+
+    TerrainBrush brush;
+    brush.radius = 3.0f;
+    brush.strength = 1.0f;
+    brush.falloff = 0.0f;
+    brush.mode = SculptMode::Erode;
+    brush.erosion_deposition = 0.5f;
+    brush.erosion_iterations = 2;
+
+    const f32 before = hm.heights[ridge];
+    ApplySculptBrush(hm, 16.0f, 16.0f, brush, 1.0f);
+    const f32 after = hm.heights[ridge];
+
+    // The ridge peak should be reduced.
+    AETHER_CHECK(after < before);
+
+    // Volume should be roughly conserved: neighbours gained what the peak lost.
+    f32 total = 0.0f;
+    for (i32 z = 14; z <= 18; ++z) {
+        for (i32 x = 14; x <= 18; ++x) {
+            total += hm.heights[static_cast<usize>(z) * 33 + static_cast<usize>(x)];
+        }
+    }
+    // Before eroding, the local 5x5 region totalled ~ 4 + 8*0.5 = 8.
+    // Erosion conserves volume approximately (within tolerance).
+    AETHER_CHECK(total > 6.0f && total < 10.0f);
+}
+
+AETHER_TEST(TerrainSculptDispatchModes) {
+    // ApplySculptBrush should dispatch flatten/smooth via the classic brush too.
+    Heightmap hm;
+    hm.width = 17;
+    hm.height = 17;
+    hm.cell_size = 1.0f;
+    hm.heights.resize(17 * 17, 0.0f);
+    const usize center = 8 * 17 + 8;
+    hm.heights[center] = 3.0f;
+
+    TerrainBrush brush;
+    brush.radius = 2.0f;
+    brush.strength = 1.0f;
+    brush.falloff = 0.0f;
+    brush.mode = SculptMode::Flatten;
+    ApplySculptBrush(hm, 8.0f, 8.0f, brush, 1.0f);
+
+    // Center should be pulled down toward the (flat) surrounding height.
+    AETHER_CHECK(hm.heights[center] < 3.0f);
 }

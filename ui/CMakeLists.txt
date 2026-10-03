@@ -19,6 +19,7 @@ add_library(aether_ui STATIC
 )
 target_include_directories(aether_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aether_ui PUBLIC cxx_std_20)
+target_compile_definitions(aether_ui PRIVATE _ENABLE_EXTENDED_ALIGNED_STORAGE)
 target_link_libraries(aether_ui PUBLIC Aether::Engine)
 # stb_truetype (the stb repo the engine already fetches) for SdfFont.
 target_include_directories(aether_ui PRIVATE ${stb_SOURCE_DIR})
