@@ -59,7 +59,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install tools
-        run: sudo apt-get update && sudo apt-get install -y ninja-build
+        # The X11 development packages build GLFW's window backend; Xvfb gives
+        # the window tests a display.
+        run: >
+          sudo apt-get update && sudo apt-get install -y ninja-build xvfb
+          libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
       - name: Cache fetched dependencies
         uses: actions/cache@v4
         with:
@@ -79,7 +83,7 @@ jobs:
       - name: Build
         run: cmake --build build --parallel
       - name: Unit tests
-        run: ./build/tests/aether_tests
+        run: xvfb-run -a ./build/tests/aether_tests
       - name: Functional tests
         run: ./build/tools/functional/aether_functional --quiet --junit functional-results.xml
       - name: Keep the functional report
