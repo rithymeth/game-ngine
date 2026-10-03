@@ -5435,9 +5435,14 @@ Build spec: [docs/design/PHASE_SPECS.md](docs/design/PHASE_SPECS.md), Phase 21.
 - **WorldPartition**: grid-cell streaming that reports cells to load (nearest first, capped per update) and unload (farthest first); the unload radius exceeds the load radius so cells on the boundary do not thrash.
 - **FloatingOrigin**: double-precision `WorldPosition` with a rebase that returns the shift to apply to local-space objects, keeping float precision far from the world origin.
 
-Still open for Phase 21: the editor brush tool panel and viewport cursor, scene streaming hookups (additive scenes), and the GPU-side heightfield shape for the physics backend.
+**Step 9: physics heightfield shape** (`physics/`).
 
-**Verified**: 12 new tests (6 heightfield, 5 partition, 1 floating origin).
+- **HeightfieldCollider**: row-major height grid with cell size, vertical scale and offset; builds a Jolt `HeightFieldShape` for static bodies (non-square grids are padded with no-collision samples), and reports why a moving body, a mismatched grid or a non-finite height has no body.
+- **Debug draw**: the footprint's bounding box, not every triangle.
+
+Still open for Phase 21: the editor brush tool panel and viewport cursor, and scene streaming hookups (additive scenes).
+
+**Verified**: 14 new tests (6 heightfield queries, 5 partition, 1 floating origin, 2 physics heightfield colliders) plus 1 debug-draw test.
 **Validation**: terrain library and the full test binary build in the RelWithDebInfo Visual Studio configuration. Focused terrain and splat test sources cover heightmaps, layers, brush modes, renderer buffers, foliage, and splines.
 
 ## Building

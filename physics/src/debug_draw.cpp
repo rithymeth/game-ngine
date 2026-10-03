@@ -136,7 +136,7 @@ bool IsTrigger(const World& world, Entity e) {
     auto trig = [](const auto* c) { return c != nullptr && c->is_trigger; };
     return trig(world.GetComponent<BoxCollider>(e)) || trig(world.GetComponent<SphereCollider>(e)) ||
            trig(world.GetComponent<CapsuleCollider>(e)) || trig(world.GetComponent<ConvexCollider>(e)) ||
-           trig(world.GetComponent<MeshCollider>(e));
+           trig(world.GetComponent<MeshCollider>(e)) || trig(world.GetComponent<HeightfieldCollider>(e));
 }
 
 } // namespace
@@ -147,6 +147,17 @@ void DrawColliderWireframe(const World& world, const PhysicsScene* scene, Entity
     if (const SphereCollider* c = world.GetComponent<SphereCollider>(e)) Sphere(out, pose, c->center, c->radius, color);
     if (const CapsuleCollider* c = world.GetComponent<CapsuleCollider>(e)) {
         Capsule(out, pose, c->center - Vec3(0, 0.5f * c->height, 0), c->radius, c->height, color);
+    }
+    if (const HeightfieldCollider* c = world.GetComponent<HeightfieldCollider>(e)) {
+        // The footprint's bounding box: drawing every triangle of a terrain would flood the lines.
+        if (c->width > 0 && c->depth > 0 && c->heights.size() == static_cast<usize>(c->width) * c->depth) {
+            const auto [lo, hi] = std::minmax_element(c->heights.begin(), c->heights.end());
+            const f32 y0 = std::min(*lo * c->vertical_scale, *hi * c->vertical_scale);
+            const f32 y1 = std::max(*lo * c->vertical_scale, *hi * c->vertical_scale);
+            const Vec3 half(0.5f * static_cast<f32>(c->width - 1) * c->cell_size, 0.5f * (y1 - y0),
+                            0.5f * static_cast<f32>(c->depth - 1) * c->cell_size);
+            Box(out, pose, c->center + Vec3(half.x, 0.5f * (y0 + y1), half.z), half, color);
+        }
     }
     const ConvexCollider* convex = world.GetComponent<ConvexCollider>(e);
     const MeshCollider* mesh = world.GetComponent<MeshCollider>(e);
@@ -168,6 +179,7 @@ void DrawPhysicsDebug(const World& world, const PhysicsScene* scene, const Physi
     colliders.set(GetComponentId<CapsuleCollider>());
     colliders.set(GetComponentId<ConvexCollider>());
     colliders.set(GetComponentId<MeshCollider>());
+    colliders.set(GetComponentId<HeightfieldCollider>());
     for (Entity e : With(world, colliders)) {
         const bool trigger = IsTrigger(world, e);
         if (trigger ? !options.triggers : !options.colliders) continue;
