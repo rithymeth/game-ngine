@@ -3012,3 +3012,134 @@ The `Aether::AI` library (`ai/`), on top of `Aether::Nav`.
    - a navmesh overlay in the viewport;
    - the Behavior Tree graph editor;
    - a BT debugger that shows the active path during Play in Editor.
+
+## Phase 21: World building
+
+The concept is in [ROADMAP.md Phase 21](../ROADMAP.md). Two libraries make
+up the engine side:
+- `Aether::Terrain` (`terrain/`): heightmap terrain, splatmap layers,
+  brushes, foliage and splines;
+- `Aether::Streaming` (`streaming/`): world partition, cell streaming and
+  the floating origin.
+
+Both build and test headless. Steps 1–5 landed on master directly; they
+were then repaired so they build and match their documentation (#96,
+#97).
+
+### 21.1 Heightmap terrain
+
+- `Heightmap`: samples on a grid with a cell size, and bilinear sampling.
+- Procedural heights are fractal value noise (deterministic, smooth,
+  in -scale..scale).
+- `TerrainData` splits the heightmap into square chunks of `chunk_size`
+  vertices. Chunks share their edge vertices, so N samples need
+  ceil((N - 1) / (chunk_size - 1)) chunks per side.
+- Each chunk's mesh comes from its own part of the heightmap. A vertex
+  is position, normal (central differences) and UV: 8 floats.
+- Indices form a triangle list. A LOD level takes every 2^lod-th sample,
+  and the LOD is picked by distance.
+
+### 21.2 Splatmaps and brushes
+
+- **Splatmaps**: up to four layers as RGBA8 weights, with bilinear
+  sampling over UV.
+- **`BuildSplatmap`**:
+  - with no weights, the base layer everywhere;
+  - with one weight per layer, a constant mix;
+  - with one weight per layer per pixel, a painted map.
+- **Brushes**: full strength inside a core, fading smoothly over the
+  outer `falloff` share of the radius (0 is a hard edge).
+  - Painting raises the target layer and lowers the others, then
+    renormalizes.
+  - Height brushes: raise or lower by up to `vertical_scale` units at
+    full weight (a negative strength lowers); smooth (from the heights
+    before the stroke); flatten (toward the height under the center).
+
+### 21.3 Terrain rendering
+
+- `TerrainRenderer` keeps a render chunk per terrain chunk:
+  - it uploads vertex and index buffers through a `TerrainGpu`
+    (create and destroy a buffer), which the renderer implements over
+    the RHI;
+  - it rebuilds dirty chunks, and re-uploads a chunk whose LOD changes;
+  - it frees everything when destroyed;
+  - it estimates VRAM.
+
+### 21.4 Foliage
+
+- Foliage types each have:
+  - a mesh and LOD and impostor distances;
+  - a scale range and Y-rotation range;
+  - alignment to the ground normal, and an anchor offset.
+- **Generation**: each sample point is kept with the density map's
+  probability under it (1 m cells), up to `max_instances`. Its type is
+  picked at random.
+- **Painting**: `layer.density` instances per m² are scattered uniformly
+  over the brush disc and thinned by the map. The eraser removes
+  instances within a radius.
+- Instances can be filtered by chunk, sorted by type for instanced
+  draws, and bounded.
+
+### 21.5 Splines
+
+- Catmull-Rom splines whose control points carry a width and a roll.
+  They give positions, frames, arc lengths, uniform samples and closest
+  points.
+- **Meshes**: a strip with `verts_per_segment` cross-sections per
+  segment. Road markings give each strip vertex a dash flag (painted for
+  the first half of every dash length) and its distance along the road.
+
+### 21.6 Large worlds
+
+- **Partition**: a level is split into square grid cells on the ground
+  plane (`cell_size`, from an origin).
+  - A root entity with a Transform goes to the cell its position is in.
+  - Its descendants, found through Parent GUIDs, go with it.
+  - Entities with no Transform, AlwaysLoaded ones, and streaming
+    sources go to the persistent scene.
+  - Cells are additive binary scenes. `CopyEntity` moves an entity
+    between worlds through each component's serializer.
+- **The index** (`world.aworld`, JSON): the cell size and origin, the
+  persistent entity count, and each cell's entity count and position
+  bounds.
+  - Files: `persistent.aesc`, plus `cells/<x_z>.aesc`.
+  - Saving again removes stale cell files.
+- **Streaming** (`WorldStreamer`):
+  - `StreamingSource` components (a radius) say where to load.
+  - A cell loads once it's within a source's radius, nearest first, at
+    most `max_loads_per_update` per update.
+  - It unloads once it's beyond every source's radius × `unload_margin`
+    (1.25), so standing on a border doesn't thrash. At most
+    `max_unloads_per_update` unload per update.
+  - A pinned cell stays loaded regardless.
+  - A cell that can't be read is reported once and not retried.
+  - Loading adds the cell's entities to the world (and the GUID index),
+    so parents resolve across cells.
+  - Unloading destroys the entities it added that still exist; changes
+    to them aren't kept. Entities spawned at runtime aren't touched.
+  - The events say which cells loaded or unloaded and how many entities
+    they held.
+- **Floating origin**: once the focus is more than `threshold` from the
+  origin on the ground plane, every root Transform shifts back by whole
+  `step`s.
+  - The offset (a double-precision whole-world position) grows by the
+    same amount.
+  - The streamer works in whole-world positions through the offset, and
+    shifts the cells it loads into local positions.
+
+### 21.7 PR breakdown
+
+1. ✅ **Done.** Heightmap terrain, chunks and LOD.
+2. ✅ **Done.** Splatmaps and brushes.
+3. ✅ **Done** (portable part). Terrain rendering through `TerrainGpu`
+   (the RHI implementation with the Windows renderer).
+4. ✅ **Done** (portable part). Foliage generation and painting (GPU
+   culling with the renderer).
+5. ✅ **Done.** Splines, meshes along them and road markings.
+6. ✅ **Done.** World partition, cell streaming and the floating origin.
+7. The editor:
+   - the terrain sculpt and paint panel with a viewport brush cursor;
+   - the foliage panel;
+   - spline editing;
+   - the world partition map (cells loaded, entity counts, and the
+     sources' reach).

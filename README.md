@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 done on the engine and portable-editor side (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes; Blackboards and Behavior Trees; AI perception; debug drawing, the Behavior Tree editor and debugger, and the Navigation panel). Now: Phase 21 -- World Building (terrain, foliage, splines)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 done on the engine and portable-editor side (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes; Blackboards and Behavior Trees; AI perception; debug drawing, the Behavior Tree editor and debugger, and the Navigation panel). Phase 21 in progress (world building: heightmap terrain, splatmaps and brushes, terrain rendering data, foliage, splines, world partition with cell streaming and a floating origin)
 
 ### Phase 1 — Foundation
 
@@ -5434,6 +5434,55 @@ Build spec: [docs/design/PHASE_SPECS.md](docs/design/PHASE_SPECS.md), Phase 21.
 - **Layer normalization**: blend weights to sum to 1.0.
 
 **Verified**: 13 new tests (7 terrain, 6 splat).
+
+**Steps 3–5: terrain rendering, foliage and splines**.
+
+- **Rendering**: chunks upload through a `TerrainGpu` interface (the
+  renderer implements it over the RHI). Dirty chunks rebuild, LOD
+  changes re-upload, and VRAM is estimated.
+- **Foliage**:
+  - generated from sample points through a density map, with random
+    types, scale, rotation, normal alignment and anchor offsets;
+  - painted over a brush disc at a density per m², and erased;
+  - filtered by chunk and sorted by type.
+- **Splines**: Catmull-Rom curves with width and roll, strip meshes,
+  and dashed road markings.
+
+The terrain module didn't compile when it first landed. It was repaired
+in #96 and #97, which also fixed:
+- every chunk using the first chunk's heights;
+- lowering never working;
+- noise that wasn't smooth and overflowed signed integers;
+- the stub functions.
+
+**Step 6: large worlds** (`streaming/`, §21.6).
+
+- **Partition**: a level splits into grid-cell scenes plus a persistent
+  scene (no Transform, AlwaysLoaded, streaming sources). Children go
+  with their parents.
+- **Index and files**: `world.aworld` (JSON) and binary cell scenes.
+- **`WorldStreamer`**:
+  - loads cells within each `StreamingSource`'s radius, nearest first;
+  - unloads past radius × 1.25, so cells on a border don't thrash;
+  - has load and unload budgets per update, and pins;
+  - reports cells that fail;
+  - adds GUIDs to the index, so parents resolve across cells.
+- **Floating origin**: shifts root Transforms back near zero in whole
+  steps and keeps a double-precision offset. The streamer works in
+  whole-world positions through it.
+
+**Verified**: 5 new tests.
+
+- Cell coordinates and bounds.
+- Partitioning: cells, children following parents, the persistent
+  scene, the index round trip, and copying entities.
+- Streaming around a moving player: hysteresis, destroyed and spawned
+  entities, and GUIDs.
+- Budgets with nearest-first loading, failures, and pins.
+- Files (and replacing stale cells), and the floating origin with
+  streaming.
+- 497/497 tests pass on GCC 13, Clang and ASan/UBSan, and 529/529 with
+  physics.
 
 ## Building
 
