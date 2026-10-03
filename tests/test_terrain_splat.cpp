@@ -1,6 +1,6 @@
-#include ""aether/terrain/splat.h""
-#include ""aether/terrain/terrain.h""
-#include ""test_framework.h""
+#include "aether/terrain/splat.h"
+#include "aether/terrain/terrain.h"
+#include "test_framework.h"
 
 using namespace aether;
 using namespace aether::terrain;
@@ -39,8 +39,8 @@ AETHER_TEST(SplatmapNormalizeWeights) {
 
 AETHER_TEST(SplatmapGeneration) {
     std::vector<SplatmapLayer> layers(2);
-    layers[0].name = ""Grass"";
-    layers[1].name = ""Rock"";
+    layers[0].name = "Grass";
+    layers[1].name = "Rock";
     auto sm = BuildSplatmap(64, layers, {});
     AETHER_CHECK(sm.width == 64);
     AETHER_CHECK(sm.height == 64);
@@ -67,8 +67,12 @@ AETHER_TEST(SplatmapSampleWeights) {
     auto w00 = sm.GetWeights(0.0f, 0.0f);
     AETHER_CHECK_NEAR(w00[0], 1.0f, 0.05f);
 
+    // UV (1, 1) is the far corner: pixel (3, 3).
     auto w11 = sm.GetWeights(1.0f, 1.0f);
-    AETHER_CHECK_NEAR(w11[2], 1.0f, 0.05f);
+    AETHER_CHECK_NEAR(w11[0], 1.0f, 0.05f);
+    // Pixel (1, 1) is at UV (1/3, 1/3).
+    auto w_px11 = sm.GetWeights(1.0f / 3.0f, 1.0f / 3.0f);
+    AETHER_CHECK_NEAR(w_px11[2], 1.0f, 0.05f);
 
     // Bilinear sample in center.
     auto wct = sm.GetWeights(0.5f, 0.5f);
@@ -80,8 +84,11 @@ AETHER_TEST(BrushWeightAtRadius) {
     AETHER_CHECK_NEAR(BrushWeight(0.0f, 0.0f, 2.0f, 0.5f, 0.5f), 0.5f, 1e-4f);
     // Beyond radius, weight should be zero.
     AETHER_CHECK_NEAR(BrushWeight(3.0f, 0.0f, 2.0f, 0.5f, 0.5f), 0.0f, 1e-6f);
-    // At edge, lower than center (soft brush).
-    AETHER_CHECK(BrushWeight(1.0f, 0.0f, 2.0f, 1.0f, 0.0f) < 1.0f);
+    // Halfway out, a soft brush (falloff 1) is lower than its center; a hard one (falloff 0) isn't.
+    AETHER_CHECK(BrushWeight(1.0f, 0.0f, 2.0f, 1.0f, 1.0f) < 1.0f);
+    AETHER_CHECK_NEAR(BrushWeight(1.0f, 0.0f, 2.0f, 1.0f, 0.0f), 1.0f, 1e-6f);
+    // A negative strength (lowering) keeps its sign.
+    AETHER_CHECK_NEAR(BrushWeight(0.0f, 0.0f, 2.0f, -0.5f, 0.5f), -0.5f, 1e-6f);
 }
 
 AETHER_TEST(TerrainBrushStroke) {
@@ -139,7 +146,41 @@ AETHER_TEST(TerrainHeightBrushFlatten) {
 
     ApplyHeightBrush(hm, 16.0f, 16.0f, brush, 1.0f);
 
-    // Center should be lower after flatten.
+    // Flattening pulls the slope toward the height under the center (5): the peak stays, the slope rises.
     const usize c2 = 16 * 33 + 16;
-    AETHER_CHECK(hm.heights[c2] < 5.0f);
+    AETHER_CHECK_NEAR(hm.heights[c2], 5.0f, 1e-4f);
+    const usize side = 16 * 33 + 18; // 2 cells out: 4.0 before
+    AETHER_CHECK(hm.heights[side] > 4.0f && hm.heights[side] <= 5.0f);
+}
+
+AETHER_TEST(TerrainHeightBrushRaiseLowerSmooth) {
+    Heightmap hm;
+    hm.width = 17, hm.height = 17, hm.cell_size = 1.0f;
+    hm.heights.assign(17u * 17u, 0.0f);
+    TerrainBrush brush;
+    brush.radius = 4.0f;
+    brush.strength = 1.0f;
+    brush.falloff = 0.5f;
+    // Flat ground at height 0 can be raised...
+    ApplyHeightBrush(hm, 8.0f, 8.0f, brush, 2.0f);
+    const usize c = 8 * 17 + 8;
+    AETHER_CHECK_NEAR(hm.heights[c], 2.0f, 1e-4f);  // full strength x vertical_scale
+    AETHER_CHECK(hm.heights[8 * 17 + 11] > 0.0f && hm.heights[8 * 17 + 11] < 2.0f); // the fading rim
+    AETHER_CHECK_NEAR(hm.heights[0], 0.0f, 1e-6f);  // outside the brush
+    // ...and lowered.
+    brush.strength = -1.0f;
+    ApplyHeightBrush(hm, 8.0f, 8.0f, brush, 2.0f);
+    AETHER_CHECK_NEAR(hm.heights[c], 0.0f, 1e-4f);
+    // Smoothing a spike spreads it evenly (it reads the heights from before the stroke).
+    hm.heights.assign(17u * 17u, 0.0f);
+    hm.heights[c] = 9.0f;
+    TerrainBrush smooth;
+    smooth.radius = 3.0f;
+    smooth.strength = 1.0f;
+    smooth.falloff = 0.0f;
+    smooth.smooth = true;
+    ApplyHeightBrush(hm, 8.0f, 8.0f, smooth, 1.0f);
+    AETHER_CHECK_NEAR(hm.heights[c], 1.0f, 1e-4f);        // the 3x3 average
+    AETHER_CHECK_NEAR(hm.heights[c - 1], 1.0f, 1e-4f);    // left and right neighbours got the same share
+    AETHER_CHECK_NEAR(hm.heights[c + 1], 1.0f, 1e-4f);
 }

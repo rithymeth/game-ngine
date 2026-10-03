@@ -1,14 +1,23 @@
-#include ""aether/terrain/renderer.h""
+#include "aether/terrain/renderer.h"
+#include "terrain_math.h"
 
-#include ""aether/core/log.h""
-#include ""aether/gfx/buffer.h""
+#include "aether/core/log.h"
 
 #include <algorithm>
 
 namespace aether {
 namespace terrain {
 
-using namespace gfx;
+namespace {
+// A render chunk's bounds, through the terrain chunk it draws.
+void ComputeChunkBounds(const TerrainData& data, const TerrainSettings& settings, RenderChunk& chunk) {
+    TerrainChunk t = chunk.AsTerrainChunk();
+    terrain::ComputeChunkBounds(data, settings, t);
+    chunk.world_min = t.world_min;
+    chunk.world_max = t.world_max;
+}
+} // namespace
+
 
 // --- Key utils ---
 
@@ -21,80 +30,63 @@ u64 TerrainRenderer::MakeKey(i32 cx, i32 cz, u32 lod) const {
 
 // --- Chunk upload ---
 
-bool UploadChunkData(Device& device, RenderChunk& chunk,
-                     span<const f32> vertices, span<const u32> indices) {
+bool UploadChunkData(TerrainGpu& gpu, RenderChunk& chunk,
+                     std::span<const f32> vertices, std::span<const u32> indices) {
     if (vertices.empty() || indices.empty()) return false;
 
     const u64 vb_size = static_cast<u64>(vertices.size()) * sizeof(f32);
     const u64 ib_size = static_cast<u64>(indices.size()) * sizeof(u32);
 
-    // Create vertex buffer (structured: pos+normal+uv, 8 floats = 32 bytes/vertex).
-    BufferInfo vb_info{};
-    vb_info.size = vb_size;
-    vb_info.stride = 8 * sizeof(f32);
-    vb_info.usage = BufferUsage_Vertex | BufferUsage_Upload;
-    auto vb_result = device.CreateBuffer(vb_info);
-    if (!vb_result.ok) {
-        AETHER_LOG_ERROR(Terrain, ""Failed to create vertex buffer: %s"", vb_result.error.c_str());
+    // Vertex buffer: pos+normal+uv, 8 floats = 32 bytes per vertex.
+    chunk.vertex_buffer = gpu.CreateBuffer(vertices.data(), vb_size, false);
+    if (chunk.vertex_buffer == 0) {
+        AETHER_LOG_ERROR("Terrain", "Failed to create a terrain vertex buffer (%llu bytes)", static_cast<unsigned long long>(vb_size));
         return false;
     }
-    chunk.vertex_buffer = vb_result.id;
     chunk.vertex_count = static_cast<u32>(vertices.size()) / 8;
 
-    // Create index buffer (32-bit indices).
-    BufferInfo ib_info{};
-    ib_info.size = ib_size;
-    ib_info.stride = sizeof(u32);
-    ib_info.usage = BufferUsage_Index | BufferUsage_Upload;
-    auto ib_result = device.CreateBuffer(ib_info);
-    if (!ib_result.ok) {
-        AETHER_LOG_ERROR(Terrain, ""Failed to create index buffer: %s"", ib_result.error.c_str());
-        device.DestroyBuffer(chunk.vertex_buffer);
+    // Index buffer (32-bit indices).
+    chunk.index_buffer = gpu.CreateBuffer(indices.data(), ib_size, true);
+    if (chunk.index_buffer == 0) {
+        AETHER_LOG_ERROR("Terrain", "Failed to create a terrain index buffer (%llu bytes)", static_cast<unsigned long long>(ib_size));
+        gpu.DestroyBuffer(chunk.vertex_buffer);
         chunk.vertex_buffer = 0;
+        chunk.vertex_count = 0;
         return false;
     }
-    chunk.index_buffer = ib_result.id;
     chunk.index_count = static_cast<u32>(indices.size());
-
-    // Upload data.
-    void* vb_map = device.MapBuffer(chunk.vertex_buffer, 0, vb_size);
-    if (vb_map) {
-        std::memcpy(vb_map, vertices.data(), vb_size);
-        device.UnmapBuffer(chunk.vertex_buffer, vb_size);
-    }
-    void* ib_map = device.MapBuffer(chunk.index_buffer, 0, ib_size);
-    if (ib_map) {
-        std::memcpy(ib_map, indices.data(), ib_size);
-        device.UnmapBuffer(chunk.index_buffer, ib_size);
-    }
 
     chunk.dirty = false;
     return true;
 }
 
-bool RebuildChunk(Device& device, RenderChunk& chunk,
+bool UploadChunk(TerrainGpu& gpu, RenderChunk& chunk,
+                 std::span<const f32> vertices, std::span<const u32> indices) {
+    FreeChunk(gpu, chunk);
+    return UploadChunkData(gpu, chunk, vertices, indices);
+}
+
+bool RebuildChunk(TerrainGpu& gpu, RenderChunk& chunk,
                   const TerrainData& data, const TerrainSettings& settings) {
     // Free existing buffers.
-    if (chunk.vertex_buffer) device.DestroyBuffer(chunk.vertex_buffer);
-    if (chunk.index_buffer)  device.DestroyBuffer(chunk.index_buffer);
+    if (chunk.vertex_buffer) gpu.DestroyBuffer(chunk.vertex_buffer);
+    if (chunk.index_buffer)  gpu.DestroyBuffer(chunk.index_buffer);
     chunk.vertex_buffer = 0;
     chunk.index_buffer = 0;
 
     // Generate geometry.
-    auto verts = GenerateChunkVertices(data, settings, chunk);
-    auto idxs  = GenerateChunkIndices(data, chunk);
+    auto verts = GenerateChunkVertices(data, settings, chunk.AsTerrainChunk());
+    auto idxs  = GenerateChunkIndices(data, chunk.AsTerrainChunk());
 
     // Update bounds from the new geometry.
     ComputeChunkBounds(data, settings, chunk);
 
-    return UploadChunkData(device, chunk,
-                            {verts.data(), verts.size()},
-                            {idxs.data(), idxs.size()});
+    return UploadChunkData(gpu, chunk, std::span<const f32>(verts), std::span<const u32>(idxs));
 }
 
-void FreeChunk(Device& device, RenderChunk& chunk) {
-    if (chunk.vertex_buffer) { device.DestroyBuffer(chunk.vertex_buffer); chunk.vertex_buffer = 0; }
-    if (chunk.index_buffer)  { device.DestroyBuffer(chunk.index_buffer);  chunk.index_buffer = 0; }
+void FreeChunk(TerrainGpu& gpu, RenderChunk& chunk) {
+    if (chunk.vertex_buffer) { gpu.DestroyBuffer(chunk.vertex_buffer); chunk.vertex_buffer = 0; }
+    if (chunk.index_buffer)  { gpu.DestroyBuffer(chunk.index_buffer);  chunk.index_buffer = 0; }
     chunk.dirty = true;
 }
 
@@ -122,7 +114,7 @@ std::vector<RenderChunk> BuildRenderChunks(const TerrainData& data,
 
 // --- TerrainRenderer ---
 
-TerrainRenderer::TerrainRenderer(Device& device) : device_(device) {}
+TerrainRenderer::TerrainRenderer(TerrainGpu& gpu) : gpu_(gpu) {}
 
 TerrainRenderer::~TerrainRenderer() { Destroy(); }
 
@@ -140,7 +132,7 @@ void TerrainRenderer::Build(const TerrainData& data, const TerrainSettings& sett
     for (RenderChunk& c : chunks_) {
         RebuildImpl(c, data, settings);
     }
-    AETHER_LOG_INFO(Terrain, ""Built %zu terrain chunks (%zu KB VRAM)"",
+    AETHER_LOG_INFO("Terrain", "Built %zu terrain chunks (%zu KB VRAM)",
         chunks_.size(), EstimatedVRAM() / 1024);
 }
 
@@ -175,6 +167,7 @@ void TerrainRenderer::UpdateLOD(const TerrainData& data, const TerrainSettings& 
             const u32 lod_step = 1u << target_lod;
             c.verts_per_side = (vps - 1) / lod_step + 1;
             ComputeChunkBounds(data, settings, c);
+            c.dirty = true; // its mesh is for the old LOD
             RebuildImpl(c, data, settings);
 
             u64 new_key = MakeKey(c.chunk_x, c.chunk_z, c.lod_level);
@@ -191,7 +184,7 @@ void TerrainRenderer::MarkAllDirty() {
 
 void TerrainRenderer::Destroy() {
     for (RenderChunk& c : chunks_) {
-        FreeChunk(device_, c);
+        FreeChunk(gpu_, c);
     }
     chunks_.clear();
     chunk_by_key_.clear();
@@ -228,9 +221,9 @@ void TerrainRenderer::RebuildImpl(RenderChunk& chunk, const TerrainData& data,
                                   const TerrainSettings& settings) {
     // Rebuild if dirty or no GPU buffers.
     if (chunk.vertex_buffer == 0) {
-        RebuildChunk(device_, chunk, data, settings);
+        RebuildChunk(gpu_, chunk, data, settings);
     } else if (chunk.dirty) {
-        RebuildChunk(device_, chunk, data, settings);
+        RebuildChunk(gpu_, chunk, data, settings);
     }
 }
 
