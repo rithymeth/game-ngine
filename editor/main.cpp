@@ -81,6 +81,22 @@
 #include <unordered_map>
 #include <vector>
 
+// Where the assets are (Phase 24): an assets folder next to the executable
+// (a packaged editor), then one in the working directory, then the source
+// tree's (a developer build). Set once at startup by FindAssetDir.
+static std::string g_asset_dir = AETHER_ASSET_DIR;
+static const std::string& AssetDir() { return g_asset_dir; }
+static void FindAssetDir(const char* argv0) {
+    std::error_code ec;
+    const std::filesystem::path exe_dir = std::filesystem::absolute(argv0 ? argv0 : "", ec).parent_path();
+    for (const std::filesystem::path& dir : {exe_dir / "assets", std::filesystem::current_path(ec) / "assets"}) {
+        if (std::filesystem::is_directory(dir, ec)) {
+            g_asset_dir = (dir / "").string();
+            return;
+        }
+    }
+}
+
 using namespace aether;
 using namespace aether::gfx;
 
@@ -842,7 +858,7 @@ GltfRenderData& GetOrLoadGltfRenderData(Device& device, assets::AssetManager& as
     }
 
     auto data = std::make_unique<GltfRenderData>();
-    std::string full_path = std::string(AETHER_ASSET_DIR) + path;
+    std::string full_path = AssetDir() + path;
     bool ok = assets::LoadGltf(full_path, data->scene) && !data->scene.meshes.empty() &&
               !data->scene.meshes[0].primitives.empty();
     if (!ok) {
@@ -911,7 +927,7 @@ GltfRenderData& GetOrLoadGltfRenderData(Device& device, assets::AssetManager& as
 // path hardcoded in source.
 std::vector<std::string> ListAvailableGltfModels() {
     std::vector<std::string> paths;
-    std::filesystem::path models_dir = std::filesystem::path(AETHER_ASSET_DIR) / "models";
+    std::filesystem::path models_dir = std::filesystem::path(AssetDir()) / "models";
     if (!std::filesystem::exists(models_dir)) {
         return paths;
     }
@@ -1000,7 +1016,8 @@ void SaveBackbufferScreenshot(Device& device, SwapChain& swap_chain, u32 buffer_
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    FindAssetDir(argc > 0 ? argv[0] : nullptr);
     i32 max_frames = -1;
     if (const char* env = std::getenv("AETHER_EDITOR_MAX_FRAMES")) {
         max_frames = std::atoi(env);

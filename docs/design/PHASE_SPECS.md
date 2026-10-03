@@ -3788,3 +3788,50 @@ Whole-game scenarios, run headless (`aether/testing/functional_test.h`).
 5. ✅ **Done.** Functional tests (§23.5): scenarios ("load the scene, simulate 5 s, assert
    that entity X reached trigger Y") run headless, with a CLI runner
    and reports for CI.
+
+## Phase 24: Cross-platform
+
+The concept is in [ROADMAP.md Phase 24](../ROADMAP.md). Until now the
+engine was tested on Linux in this repository's sessions, while the
+Windows-only parts (the D3D12 renderer and editor, Win32 windows and
+input) were written for Windows without a Windows build to check them.
+Phase 24 starts by making every platform build on every change.
+
+### 24.1 Continuous integration
+
+`.github/workflows/ci.yml` runs on pushes to master, on pull requests,
+on version tags, and by hand.
+
+- **Linux** (Ubuntu 24.04, Ninja), four jobs: GCC, Clang, ASan+UBSan
+  (Debug), and with physics (Jolt).
+  - Each builds the portable engine, editor UI, scripting and tests.
+  - Each runs `aether_tests`, then `aether_functional`, whose JUnit
+    report is kept as an artifact.
+  - Fetched dependencies are cached.
+- **Windows** (windows-2022, MSVC, Visual Studio generator):
+  - **Build**: everything, the D3D12 editor included. Vulkan is off,
+    because hosted runners have no Vulkan loader.
+  - **Tests**: the unit tests run but don't fail the job yet, because
+    hosted runners have no GPU for the D3D12 device tests. The
+    functional tests do fail the job.
+  - **Package**: `AetherEditor-windows-x64.zip`, containing
+    `aether_editor.exe`, its DLLs (dxcompiler), the assets and the
+    README, uploaded as an artifact.
+- **Release**: a `v*` tag attaches that zip to a GitHub release, with
+  generated notes, once both platforms pass.
+- **Assets**: the editor now looks for its assets next to the
+  executable first, then in the working directory, then in the source
+  tree, so the packaged editor runs from wherever it's unzipped.
+
+### 24.2 PR breakdown
+
+1. ✅ **Done.** Continuous integration (§24.1), and the packaged Windows
+   editor.
+2. Fix what the first Windows builds report, until the Windows job is
+   green and the editor package launches.
+3. A portable window and input layer: GLFW on Linux and macOS behind
+   `platform::Window`, alongside Win32.
+4. The editor on Vulkan, through the RHI-hosted ImGui, so it runs on
+   Linux.
+5. Headless screenshot tests with lavapipe (software Vulkan) in Linux CI.
+6. macOS through MoltenVK, and a plugin structure for Android and consoles.
