@@ -5440,9 +5440,16 @@ Build spec: [docs/design/PHASE_SPECS.md](docs/design/PHASE_SPECS.md), Phase 21.
 - **HeightfieldCollider**: row-major height grid with cell size, vertical scale and offset; builds a Jolt `HeightFieldShape` for static bodies (non-square grids are padded with no-collision samples), and reports why a moving body, a mismatched grid or a non-finite height has no body.
 - **Debug draw**: the footprint's bounding box, not every triangle.
 
-Still open for Phase 21: the editor brush tool panel and viewport cursor, and scene streaming hookups (additive scenes).
+**Step 10: Terrain editor panel** (`editor/src/world/`).
 
-**Verified**: 14 new tests (6 heightfield queries, 5 partition, 1 floating origin, 2 physics heightfield colliders) plus 1 debug-draw test.
+- **TerrainPanel**: Sculpt and Paint tools with brush radius, strength (negative lowers), falloff, mode, noise and erosion parameters and the paint layer; draws headless like the other panels.
+- **Strokes and undo**: each stroke is one undo step holding only the samples it changed (heights or splat pixels); redo, a bounded history, and the terrain bounds follow undo/redo.
+- **Viewport**: `Pick` casts the mouse ray against the heightfield; `BuildCursor` drapes the brush ring over the surface; `TakeDirtyChunks` lists the chunks whose meshes need rebuilding (a stroke on a seam marks both).
+- **Fixes**: Smooth mode is honored by `ApplySculptBrush`, and a negative strength now lowers (the weight used to be applied twice and negative weights were skipped); noise amplitude no longer squares the strength.
+
+Still open for Phase 21: scene streaming hookups (additive scenes) for `WorldPartition`, and the later items (foliage impostors, lighting bake).
+
+**Verified**: 14 new tests (6 heightfield queries, 5 partition, 1 floating origin, 2 physics heightfield colliders) plus 1 debug-draw test, and 7 editor panel tests.
 **Validation**: terrain library and the full test binary build in the RelWithDebInfo Visual Studio configuration. Focused terrain and splat test sources cover heightmaps, layers, brush modes, renderer buffers, foliage, and splines.
 
 ## Building
