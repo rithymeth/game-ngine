@@ -6,7 +6,19 @@
 #include <string>
 #include <vector>
 
-namespace aether::test {
+#include "aether/math/vec.h"
+
+namespace aether {
+
+inline bool NearEqual(f32 a, f32 b, f32 eps) {
+    return std::fabs(static_cast<double>(a) - static_cast<double>(b)) <= static_cast<double>(eps);
+}
+
+inline bool NearEqual(const Vec3& a, const Vec3& b, f32 eps) {
+    return (a - b).Length() <= eps;
+}
+
+namespace test {
 
 struct TestCase {
     std::string name;
@@ -45,7 +57,8 @@ inline int RunAll() {
     return FailureCount() == 0 ? 0 : 1;
 }
 
-} // namespace aether::test
+} // namespace test
+} // namespace aether
 
 #define AETHER_TEST(name)                                                                         \
     static void name();                                                                           \

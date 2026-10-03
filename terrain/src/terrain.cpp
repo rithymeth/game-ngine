@@ -1,4 +1,4 @@
-#include ""aether/terrain/terrain.h""
+#include "aether/terrain/terrain.h"
 
 #include <algorithm>
 #include <cmath>
@@ -113,8 +113,10 @@ void InitTerrainData(TerrainData& data, const Heightmap& hm, const TerrainSettin
 
     // Overlap by 1 vertex at the edges so chunks stitch together.
     const u32 step = vpc > 1 ? vpc - 1 : 1;
-    data.chunk_count_x = (verts_x + step - 1) / step;
-    data.chunk_count_z = (verts_z + step - 1) / step;
+    const u32 cells_x = verts_x > 1 ? verts_x - 1 : 1;
+    const u32 cells_z = verts_z > 1 ? verts_z - 1 : 1;
+    data.chunk_count_x = (cells_x + step - 1) / step;
+    data.chunk_count_z = (cells_z + step - 1) / step;
 
     // Compute bounds from heightmap.
     f32 min_h =  1e9f;
@@ -131,7 +133,7 @@ void InitTerrainData(TerrainData& data, const Heightmap& hm, const TerrainSettin
     // Default layer.
     if (data.layers.empty()) {
         data.layers.push_back(TerrainLayer{
-            .name = ""Default"",
+            .name = "Default",
             .albedo = Vec3(0.5f, 0.7f, 0.3f), // grass green
             .metallic = 0.0f,
             .roughness = 0.9f
@@ -236,7 +238,7 @@ std::vector<f32> GenerateChunkVertices(const TerrainData& data,
             const f32 ds = step * static_cast<f32>(lod_step);
             const Vec3 tangent{2.0f * ds, hx1 - hx0, 0.0f};
             const Vec3 bitan{0.0f, hz1 - hz0, 2.0f * ds};
-            const Vec3 normal = Normalize(Cross(tangent, bitan));
+            const Vec3 normal = tangent.Cross(bitan).Normalized();
 
             const usize i = static_cast<usize>(z * lvps + x) * 8;
             vertices[i + 0] = lx;

@@ -1,7 +1,8 @@
-#include ""aether/terrain/foliage.h""
+#include "aether/terrain/foliage.h"
 
 #include <algorithm>
 #include <cmath>
+#include <numeric>
 #include <random>
 
 namespace aether {
@@ -138,7 +139,7 @@ void RemoveInstancesNear(FoliageLayer& layer, const Vec3& position, f32 radius) 
     const f32 r2 = radius * radius;
     std::erase_if(layer.instances, [&](const FoliageInstance& inst) {
         const Vec3 diff = inst.position - position;
-        return Dot(diff, diff) <= r2;
+        return diff.Dot(diff) <= r2;
     });
 }
 
@@ -180,8 +181,12 @@ void ComputeBounds(span<const FoliageInstance> instances,
     Vec3 mn{1e9f, 1e9f, 1e9f};
     Vec3 mx{-1e9f, -1e9f, -1e9f};
     for (const auto& inst : instances) {
-        mn = Min(mn, inst.position);
-        mx = Max(mx, inst.position);
+        mn.x = std::min(mn.x, inst.position.x);
+        mn.y = std::min(mn.y, inst.position.y);
+        mn.z = std::min(mn.z, inst.position.z);
+        mx.x = std::max(mx.x, inst.position.x);
+        mx.y = std::max(mx.y, inst.position.y);
+        mx.z = std::max(mx.z, inst.position.z);
     }
     *out_min = mn;
     *out_max = mx;

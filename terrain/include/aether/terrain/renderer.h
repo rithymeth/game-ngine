@@ -1,15 +1,19 @@
 #pragma once
 
-#include ""aether/core/base.h""
-#include ""aether/gfx/device.h""
-#include ""aether/terrain/terrain.h""
+#include "aether/core/base.h"
+#include "aether/gfx/buffer.h"
+#include "aether/gfx/device.h"
+#include "aether/terrain/terrain.h"
 
 #include <memory>
+#include <span>
 #include <unordered_map>
 #include <vector>
 
 namespace aether {
 namespace terrain {
+
+using std::span;
 
 // Phase 21 step 3: terrain rendering ? GPU buffer upload and indexed draw
 // calls. The terrain module knows about the RHI (Device) for buffer creation,
@@ -21,13 +25,14 @@ struct RenderChunk {
     i32 chunk_x = 0;
     i32 chunk_z = 0;
     u32 lod_level = 0;
+    u32 verts_per_side = 0;
     Vec3 world_min{0, 0, 0};
     Vec3 world_max{0, 0, 0};
 
-    // RHI resource IDs (Device::CreateBuffer / CreateIndexBuffer).
-    // These are opaque u64 handles from gfx::Device.
-    u64 vertex_buffer = 0;
-    u64 index_buffer = 0;
+    // GPU buffers (created lazily on the Device during upload).
+    // nullptr until the chunk has been uploaded.
+    std::unique_ptr<gfx::Buffer> vertex_buffer;
+    std::unique_ptr<gfx::Buffer> index_buffer;
 
     u32 vertex_count = 0;
     u32 index_count = 0;

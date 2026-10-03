@@ -1,12 +1,16 @@
 #pragma once
 
-#include ""aether/core/base.h""
-#include ""aether/math/math.h""
+#include "aether/core/base.h"
+#include "aether/math/math.h"
 
+#include <span>
+#include <utility>
 #include <vector>
 
 namespace aether {
 namespace terrain {
+
+using std::span;
 
 // Phase 21 step 5: spline tools for roads, rivers and fences placed
 // along curves. Splines are Catmull-Rom curves with control points.
@@ -39,6 +43,9 @@ public:
 
     // Move a control point.
     void SetPoint(u32 index, Vec3 position);
+
+    // Set the width of a control point.
+    void SetPointWidth(u32 index, f32 width);
 
     // Recompute tangents (called after any point change).
     void RecomputeTangents();
@@ -76,10 +83,12 @@ public:
     // Get the forward frame (tangent, up, right) at t.
     void Frame(f32 t, Vec3* out_tangent, Vec3* out_up, Vec3* out_right) const;
 
+    // Number of curve segments (control points - 1, or 0 if fewer than 2).
+    usize SegmentCount() const { return points_.size() >= 2 ? points_.size() - 1 : 0; }
+
 private:
     std::vector<SplinePoint> points_;
 
-    usize SegmentCount() const { return points_.size() >= 2 ? points_.size() - 1 : 0; }
     f32 SegmentT(f32 t) const;
 };
 

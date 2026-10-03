@@ -1,4 +1,4 @@
-#include ""aether/terrain/spline.h""
+#include "aether/terrain/spline.h"
 
 #include <algorithm>
 #include <cmath>
@@ -18,8 +18,8 @@ Vec3 CatmullRom(f32 t, const SplinePoint& p0, const SplinePoint& p1,
     const f32 b1 =  1.5f * t3 - 2.5f * t2 + 1.0f;
     const f32 b2 = -1.5f * t3 + 2.0f * t2 + 0.5f * t;
     const f32 b3 =  0.5f * t3 - 0.5f * t2;
-    return b0 * p0.position + b1 * p1.position
-         + b2 * p2.position + b3 * p3.position;
+    return p0.position * b0 + p1.position * b1
+         + p2.position * b2 + p3.position * b3;
 }
 
 Vec3 CatmullRomTangent(const SplinePoint& p0, const SplinePoint& p1,
@@ -30,7 +30,7 @@ Vec3 CatmullRomTangent(const SplinePoint& p0, const SplinePoint& p1,
     const f32 eps = 1e-4f;
     Vec3 a = CatmullRom(0.0f - eps, p0, p1, p2, p3);
     Vec3 b = CatmullRom(0.0f + eps, p1, p2, p3, p0);
-    return Normalize(b - a);
+    return (b - a).Normalized();
 }
 
 // --- Spline construction ---
@@ -47,7 +47,7 @@ void Spline::AddPoint(Vec3 position) {
     // Recompute last 2 tangents.
     if (points_.size() >= 2) {
         const usize n = points_.size() - 1;
-        Vec3 t = Normalize(points_[n].position - points_[n-1].position);
+        Vec3 t = (points_[n].position - points_[n-1].position).Normalized();
         points_[n-1].tangent = t;
         points_[n].tangent = t;
     }
@@ -73,6 +73,11 @@ void Spline::SetPoint(u32 index, Vec3 position) {
     RecomputeTangents();
 }
 
+void Spline::SetPointWidth(u32 index, f32 width) {
+    if (index >= points_.size()) return;
+    points_[index].width = width;
+}
+
 void Spline::RecomputeTangents() {
     const usize n = points_.size();
     if (n < 2) return;
@@ -83,11 +88,11 @@ void Spline::RecomputeTangents() {
         // Non-periodic: use forward/backward difference at endpoints.
         Vec3 t;
         if (i == 0) {
-            t = Normalize(points_[1].position - points_[0].position);
+            t = (points_[1].position - points_[0].position).Normalized();
         } else if (i == n - 1) {
-            t = Normalize(points_[n-1].position - points_[n-2].position);
+            t = (points_[n-1].position - points_[n-2].position).Normalized();
         } else {
-            t = Normalize(points_[next].position - points_[prev].position);
+            t = (points_[next].position - points_[prev].position).Normalized();
         }
         points_[i].tangent = t;
     }
@@ -102,7 +107,7 @@ f32 Spline::Length() const {
     for (u32 i = 1; i <= kSamples; ++i) {
         const f32 t = static_cast<f32>(i) / kSamples;
         Vec3 cur = Evaluate(t);
-        len += Length(cur - prev);
+        len += (cur - prev).Length();
         prev = cur;
     }
     return len;
@@ -177,8 +182,8 @@ void Spline::Frame(f32 t, Vec3* out_tangent, Vec3* out_up, Vec3* out_right) cons
     const f32 roll = Roll(t);
     // Apply roll around the tangent axis.
     Vec3 up{0, 1, 0};
-    Vec3 right = Normalize(Cross(tangent, up));
-    up = Normalize(Cross(right, tangent));
+    Vec3 right = tangent.Cross(up).Normalized();
+    up = right.Cross(tangent).Normalized();
     // Simple roll: rotate up/right around tangent.
     const f32 cr = std::cos(roll);
     const f32 sr = std::sin(roll);
@@ -264,7 +269,7 @@ std::pair<f32, f32> ClosestPointOnSegment(Vec3 pos, const SplinePoint& p0,
         const f32 t = static_cast<f32>(i) / kSamples;
         const Vec3 sp = CatmullRom(t, p0, p1, p2, p3);
         const Vec3 diff = sp - pos;
-        const f32 d2 = Dot(diff, diff);
+        const f32 d2 = diff.Dot(diff);
         if (d2 < best_dist2) {
             best_dist2 = d2;
             best_t = t;
@@ -333,14 +338,16 @@ std::vector<f32> BuildRoadMask(const Spline& spline, u32 verts_per_segment, f32 
         if (s > 0) {
             Vec3 a = spline.Evaluate(static_cast<f32>(s-1) / static_cast<f32>(segs));
             Vec3 b = spline.Evaluate(static_cast<f32>(s) / static_cast<f32>(segs));
-            total_len += Length(b - a);
+            total_len += (b - a).Length();
             arc_lengths[s] = total_len;
         }
     }
 
     for (usize s = 0; s <= segs; ++s) {
-        const f32 y_along = arc_lengths[s] / total_len;
-        const f32 dash_t = std::fract(arc_lengths[s] / dash_length);
+        const f32 y_along = total_len > 0.0f ? arc_lengths[s] / total_len : 0.0f;
+        const f32 dash_t = dash_length > 0.0f
+            ? arc_lengths[s] / dash_length - std::floor(arc_lengths[s] / dash_length)
+            : 0.0f;
         const f32 center_mask = (dash_t < 0.5f) ? 1.0f : 0.0f;
 
         // Left and right vertices at x=0 (left edge) and x=1 (right edge)
@@ -349,7 +356,8 @@ std::vector<f32> BuildRoadMask(const Spline& spline, u32 verts_per_segment, f32 
         // But for simplicity: left vertex = 0, right vertex = 0, and we output
         // a separate "center line" vertex pair.
         mask[vidx++] = 0.0f;    mask[vidx++] = y_along;
-        mask[vidx++] = 0.0f;    mask[vidx++] = y_along; // center as separate...
+        mask[vidx++] = center_mask; mask[vidx++] = y_along; // center line
+        (void)center_mask;
     }
     return mask;
 }

@@ -23,6 +23,7 @@ option(AETHER_BUILD_EDITOR "Build the Dear ImGui editor app" ON)
 option(AETHER_BUILD_EDITOR_UI "Build the portable editor UI library (ImGui + reflection, no graphics backend; tested headless on every platform)" ON)
 option(AETHER_BUILD_VULKAN "Build the Vulkan RHI backend" ON)
 option(AETHER_BUILD_SCRIPTING "Build the Luau scripting module" ON)
+option(AETHER_BUILD_TERRAIN "Build the terrain module" ON)
 
 include(FetchContent)
 
@@ -200,7 +201,9 @@ add_subdirectory(ui)
 # Particle systems (Phase 19): emitters, modules and the simulation; engine-only.
 add_subdirectory(vfx)
 # Terrain (Phase 21): heightmap-based terrain with chunked meshes and LOD.
-add_subdirectory(terrain)
+if(AETHER_BUILD_TERRAIN)
+    add_subdirectory(terrain)
+endif()
 
 # Recast/Detour (zlib, recastnavigation/recastnavigation) for navigation
 # meshes, pathfinding and crowds (Phase 20). Only the libraries.
