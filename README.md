@@ -1124,56 +1124,26 @@ the glTF root signature already sets for the same reason (its PSO also has
 a real vertex input layout, unlike the billboard-sphere pipeline). 81/81
 tests unchanged; 6 quick runs plus one 2000-frame stability run, all clean.
 
-### Follow-up: friendlier UI (layout, style, confirmations, help)
+### Follow-up: editor workspace redesign
 
-The previous two follow-ups added real functionality (camera, picking,
-gizmo, hierarchy, asset browser) but left the UI itself exactly as
-default-ImGui-gray as it always was, with every panel spawning at the same
-default position — the screenshots showed Hierarchy, Inspector, and the
-main panel all stacked directly on top of each other. This follow-up is a
-pure UI/UX pass, no new editor functionality.
+The editor now opens into a composed workspace instead of a collection of
+floating debug panels. A compact scene toolbar groups Play/Pause/Step/Stop,
+spawn, save and load actions; the Hierarchy and Content Browser share the
+left rail; the Inspector fills the right rail; and the 3D scene remains the
+focus in the center. A slim status bar keeps camera and selection shortcuts
+visible. The layout uses the regular ImGui release and scales its panel
+positions and sizes to the available viewport without relying on ImGui's
+separate docking branch.
 
-- **Non-overlapping default layout.** Every panel (`Aether Editor`, `Asset
-  Browser`, `Hierarchy`, `Inspector`) now gets an explicit default
-  position/size via `ImGui::SetNextWindowPos`/`SetNextWindowSize` with
-  `ImGuiCond_FirstUseEver` — a simple left-column stack (main panel → Asset
-  Browser → Hierarchy) plus Inspector on the right, leaving the 3D viewport
-  visible in between. `ImGuiCond_FirstUseEver` means this only applies
-  before a window has a saved position in `imgui.ini`; once a user drags a
-  panel themselves, their own layout persists across runs. (A real docked
-  layout via `ImGui::DockBuilder`/`DockSpace` was the first approach tried,
-  but this project's vendored ImGui is pinned to a plain release tag
-  (`v1.92.9`) rather than the separate `docking` git branch, so those
-  symbols don't exist in this build — reverted in favor of the
-  `SetNextWindowPos` approach above rather than repointing the whole
-  project at a different ImGui branch for one follow-up.)
-- **Editor visual style** (`ApplyFriendlyEditorStyle`): a graphite panel
-  palette with a restrained blue selection/focus accent, consistent input
-  and tab states, subtle borders, rounded corners, and roomier widget spacing.
-  `ImGui::SeparatorText` section headers ("Controls", "Bodies", "Models")
-  replace the old plain `Text` + `Separator` pairs. Bodies/models are
-  color-coded by type and selection state (blue for a body, orange for a
-  model, gold when selected) instead of a bare `#N`.
-- **Friendlier controls**: field labels now carry units ("Position (m)",
-  "Radius (m)", "Mass (kg)", "Static (doesn't fall)") instead of bare nouns.
-  Every **Delete** button (Bodies, Models, and the Hierarchy panel) now
-  opens a shared "Are you sure?" confirmation modal instead of deleting
-  immediately and irreversibly on a single misclick.
-- **Onboarding**: a new **Help** window, shown by default on first run,
-  centered on screen, with a plain-language quick reference for the camera
-  controls, selecting/moving, and the scene hierarchy — the one thing the
-  camera/picking/gizmo follow-up left completely undocumented in-app. A
-  **View** menu (new main menu bar) can re-show it, or any panel closed via
-  its title-bar X, without restarting.
+The Inspector is always present, with a useful empty state until an entity
+is selected. Reflected component edits remain undoable and continue to use
+the editor's physics hooks. Hierarchy deletion still uses a confirmation
+dialog. The Help window no longer covers the scene at startup; it is
+available from the Help menu. The graphite theme carries through the shell,
+controls and graph editor with a restrained blue focus/selection color.
 
-**Verified by actual execution**: screenshots (with `imgui.ini` cleared to
-force first-run defaults) confirm all five panels lay out without
-overlapping, the accent color/section headers/unit labels render correctly,
-and — with a temporary env-var-gated self-test forcing a selection, removed
-before commit — that the Inspector's default top-right position doesn't
-collide with the left-column stack even when populated with real model
-data. 81/81 tests unchanged; 6 quick runs plus one 2000-frame stability
-run, all clean.
+**Verified by actual execution**: the editor builds, starts, renders the
+workspace at 1280×800, and exits cleanly after a three-frame screenshot run.
 
 ### Phase 6 — Reflection & Property System
 
@@ -5454,6 +5424,20 @@ Build spec: [docs/design/PHASE_SPECS.md](docs/design/PHASE_SPECS.md), Phase 21.
 - **Sculpt modes**: raise/lower, flatten, smooth, procedural noise, and erosion.
 - **Material painting**: applies normalized splatmap weights with the same brush falloff controls.
 
+**Step 7: heightfield collider** (`heightfield.h`).
+
+- **Queries**: footprint test, scaled bilinear height, central-difference normal.
+- **Raycast**: sub-cell stepping with bisection refinement; one-sided (a ray starting below the surface misses) and enters from the side of the footprint.
+- **Sphere penetration**: depth along the surface normal for ground contact resolution.
+
+**Step 8: large worlds** (`world.h`).
+
+- **WorldPartition**: grid-cell streaming that reports cells to load (nearest first, capped per update) and unload (farthest first); the unload radius exceeds the load radius so cells on the boundary do not thrash.
+- **FloatingOrigin**: double-precision `WorldPosition` with a rebase that returns the shift to apply to local-space objects, keeping float precision far from the world origin.
+
+Still open for Phase 21: the editor brush tool panel and viewport cursor, scene streaming hookups (additive scenes), and the GPU-side heightfield shape for the physics backend.
+
+**Verified**: 12 new tests (6 heightfield, 5 partition, 1 floating origin).
 **Validation**: terrain library and the full test binary build in the RelWithDebInfo Visual Studio configuration. Focused terrain and splat test sources cover heightmaps, layers, brush modes, renderer buffers, foliage, and splines.
 
 ## Building
