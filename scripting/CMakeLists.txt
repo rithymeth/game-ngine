@@ -7,6 +7,7 @@ add_library(aether_scripting STATIC
     src/debugger.cpp
     src/completion.cpp
     src/dap.cpp
+    src/debug_bindings.cpp
 )
 
 target_include_directories(aether_scripting PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

@@ -1,4 +1,5 @@
 #include "aether/blueprint/nodes.h"
+#include "aether/debug/debug_draw.h" // its functions are nodes (Phase 23)
 
 #include "aether/assets/asset_guid.h"
 #include "aether/reflection/reflection.h"

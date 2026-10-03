@@ -12,6 +12,7 @@ add_library(aether_net STATIC
     src/interpolation.cpp
     src/prediction.cpp
     src/session.cpp
+    src/net_stats.cpp
 )
 target_include_directories(aether_net PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aether_net PUBLIC cxx_std_20)

@@ -3,6 +3,8 @@ add_library(aether_engine STATIC
     src/core/cvar.cpp
     src/core/console.cpp
     src/core/profiler.cpp
+    src/debug/debug_draw.cpp
+    src/debug/stats.cpp
     src/memory/linear_allocator.cpp
     src/memory/pool_allocator.cpp
     src/memory/frame_allocator.cpp
