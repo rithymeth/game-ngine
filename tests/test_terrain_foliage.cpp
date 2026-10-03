@@ -1,8 +1,15 @@
-#include ""aether/terrain/foliage.h""
-#include ""test_framework.h""
+#include "aether/terrain/foliage.h"
+#include "test_framework.h"
+
+#include <cmath>
 
 using namespace aether;
 using namespace aether::terrain;
+
+namespace {
+bool NearEqual(f32 a, f32 b, f32 tol) { return std::fabs(a - b) <= tol; }
+bool NearEqual(const Vec3& a, const Vec3& b, f32 tol) { return (a - b).Length() <= tol; }
+} // namespace
 
 AETHER_TEST(FoliageDensityMapGeneration) {
     auto dm = GenerateDensityMap(64, 64, 64.0f, 4, 0.5f, 123.0f);
@@ -60,7 +67,7 @@ AETHER_TEST(FoliageSortByType) {
 
     auto order = SortInstancesByType(insts);
     // 1,3,2,0,4 in index order (types 0,0,1,2,2)
-    AETHER_CHECK(insts[order[0]].type_index == 2); // wait, sort stable
+    AETHER_CHECK(insts[order[0]].type_index == 0);
     // Let's just check it's sorted.
     for (usize i = 1; i < order.size(); ++i) {
         AETHER_CHECK(insts[order[i-1]].type_index <= insts[order[i]].type_index);
@@ -104,7 +111,7 @@ AETHER_TEST(FoliageRandomRotationIsYOnly) {
 
     for (int i = 0; i < 50; ++i) {
         Quaternion q = RandomRotation(rng, type);
-        // Only Y rotation: x,z ? 0, w in [-1,1]
+        // Only Y rotation: x,z ~ 0, w in [-1,1]
         AETHER_CHECK(std::abs(q.x) < 1e-3f);
         AETHER_CHECK(std::abs(q.z) < 1e-3f);
         // Should be normalized.

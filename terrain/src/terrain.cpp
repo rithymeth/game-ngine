@@ -1,4 +1,5 @@
-#include ""aether/terrain/terrain.h""
+#include "aether/terrain/terrain.h"
+#include "terrain_math.h"
 
 #include <algorithm>
 #include <cmath>
@@ -113,8 +114,9 @@ void InitTerrainData(TerrainData& data, const Heightmap& hm, const TerrainSettin
 
     // Overlap by 1 vertex at the edges so chunks stitch together.
     const u32 step = vpc > 1 ? vpc - 1 : 1;
-    data.chunk_count_x = (verts_x + step - 1) / step;
-    data.chunk_count_z = (verts_z + step - 1) / step;
+    // Enough chunks to cover the cells (verts - 1 of them), each chunk `step` cells wide.
+    data.chunk_count_x = verts_x > 1 ? (verts_x - 1 + step - 1) / step : 1;
+    data.chunk_count_z = verts_z > 1 ? (verts_z - 1 + step - 1) / step : 1;
 
     // Compute bounds from heightmap.
     f32 min_h =  1e9f;
@@ -131,7 +133,7 @@ void InitTerrainData(TerrainData& data, const Heightmap& hm, const TerrainSettin
     // Default layer.
     if (data.layers.empty()) {
         data.layers.push_back(TerrainLayer{
-            .name = ""Default"",
+            .name = "Default",
             .albedo = Vec3(0.5f, 0.7f, 0.3f), // grass green
             .metallic = 0.0f,
             .roughness = 0.9f
@@ -141,8 +143,8 @@ void InitTerrainData(TerrainData& data, const Heightmap& hm, const TerrainSettin
 
 // --- Chunk bounds ---
 
-static void ComputeChunkBounds(const TerrainData& data, const TerrainSettings& settings,
-                               TerrainChunk& chunk) {
+void ComputeChunkBounds(const TerrainData& data, const TerrainSettings& settings,
+                        TerrainChunk& chunk) {
     const f32 world_size = settings.chunk_world_size;
     const u32 vps = data.chunk_size;
     const u32 lod_step = 1u << chunk.lod_level;
@@ -158,10 +160,15 @@ static void ComputeChunkBounds(const TerrainData& data, const TerrainSettings& s
     f32 min_h =  1e9f;
     f32 max_h = -1e9f;
 
+    // This chunk's corner in the heightmap (chunks share their edge samples).
+    const u32 base_x = static_cast<u32>(chunk.chunk_x) * step;
+    const u32 base_z = static_cast<u32>(chunk.chunk_z) * step;
+    const u32 last_x = data.heightmap.width > 0 ? data.heightmap.width - 1 : 0;
+    const u32 last_z = data.heightmap.height > 0 ? data.heightmap.height - 1 : 0;
     for (u32 z = 0; z < lvps; ++z) {
         for (u32 x = 0; x < lvps; ++x) {
-            const u32 hx = std::min(x * lod_step, step);
-            const u32 hz = std::min(z * lod_step, step);
+            const u32 hx = std::min(base_x + std::min(x * lod_step, step), last_x);
+            const u32 hz = std::min(base_z + std::min(z * lod_step, step), last_z);
             const f32 h = data.heightmap.GetHeight(hx, hz) * vs;
             min_h = std::min(min_h, h);
             max_h = std::max(max_h, h);
@@ -214,20 +221,25 @@ std::vector<f32> GenerateChunkVertices(const TerrainData& data,
     const f32 origin_x = static_cast<f32>(chunk.chunk_x) * world_size;
     const f32 origin_z = static_cast<f32>(chunk.chunk_z) * world_size;
     const u32 edge_verts = vps - 1;
+    // This chunk's corner in the heightmap (chunks share their edge samples), and its last samples.
+    const u32 base_x = static_cast<u32>(chunk.chunk_x) * edge_verts;
+    const u32 base_z = static_cast<u32>(chunk.chunk_z) * edge_verts;
+    const u32 last_x = data.heightmap.width > 0 ? data.heightmap.width - 1 : 0;
+    const u32 last_z = data.heightmap.height > 0 ? data.heightmap.height - 1 : 0;
 
     for (u32 z = 0; z < lvps; ++z) {
         for (u32 x = 0; x < lvps; ++x) {
-            const u32 hx = std::min(x * lod_step, edge_verts);
-            const u32 hz = std::min(z * lod_step, edge_verts);
+            const u32 hx = std::min(base_x + std::min(x * lod_step, edge_verts), last_x);
+            const u32 hz = std::min(base_z + std::min(z * lod_step, edge_verts), last_z);
             const f32 lx = origin_x + static_cast<f32>(x * lod_step) * step;
             const f32 lz = origin_z + static_cast<f32>(z * lod_step) * step;
             const f32 ly = data.heightmap.GetHeight(hx, hz) * vs;
 
             // Central-difference normal.
             const u32 hxm = hx > 0 ? hx - 1 : 0;
-            const u32 hxp = std::min(hx + 1, edge_verts);
+            const u32 hxp = std::min(hx + 1, last_x);
             const u32 hzm = hz > 0 ? hz - 1 : 0;
-            const u32 hzp = std::min(hz + 1, edge_verts);
+            const u32 hzp = std::min(hz + 1, last_z);
             const f32 hx0 = data.heightmap.GetHeight(hxm, hz) * vs;
             const f32 hx1 = data.heightmap.GetHeight(hxp, hz) * vs;
             const f32 hz0 = data.heightmap.GetHeight(hx, hzm) * vs;

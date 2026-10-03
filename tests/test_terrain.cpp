@@ -1,5 +1,5 @@
-#include ""aether/terrain/terrain.h""
-#include ""test_framework.h""
+#include "aether/terrain/terrain.h"
+#include "test_framework.h"
 
 using namespace aether;
 using namespace aether::terrain;
@@ -70,7 +70,7 @@ AETHER_TEST(TerrainChunks_BuildAndBounds) {
 }
 
 AETHER_TEST(TerrainChunks_VertexGeneration) {
-    Heightmap hm = CreateProceduralHeightmap(33, 33, 1.0f, 1, 0.5f, 4.0f);
+    Heightmap hm = CreateProceduralHeightmap(32, 32, 1.0f, 1, 0.5f, 4.0f);
     TerrainSettings settings;
     settings.verts_per_chunk = 32;
     settings.chunk_world_size = 31.0f;
