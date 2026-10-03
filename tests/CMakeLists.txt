@@ -32,7 +32,7 @@ add_executable(aether_tests
 target_link_libraries(aether_tests PRIVATE Aether::Engine)
 
 if(TARGET aether_editor_ui)
-    target_sources(aether_tests PRIVATE test_editor_ui.cpp test_command_stack.cpp test_commands.cpp test_play_session.cpp test_editor_projects.cpp test_script_inspector.cpp test_code_editor.cpp test_graph_editor.cpp test_blueprint_editor.cpp test_material_editor.cpp test_anim_editors.cpp test_audio_editors.cpp test_ui_designer.cpp test_vfx_editor.cpp test_ai_editor.cpp test_world_editor.cpp test_net_editor.cpp test_console_panel.cpp test_profiler_panel.cpp test_debug_overlay.cpp)
+    target_sources(aether_tests PRIVATE test_editor_ui.cpp test_command_stack.cpp test_commands.cpp test_play_session.cpp test_editor_projects.cpp test_script_inspector.cpp test_code_editor.cpp test_graph_editor.cpp test_blueprint_editor.cpp test_material_editor.cpp test_anim_editors.cpp test_audio_editors.cpp test_ui_designer.cpp test_vfx_editor.cpp test_ai_editor.cpp test_world_editor.cpp test_net_editor.cpp test_console_panel.cpp test_profiler_panel.cpp test_debug_overlay.cpp test_crash_reporter.cpp)
     target_link_libraries(aether_tests PRIVATE Aether::EditorUI)
 endif()
 target_include_directories(aether_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -71,7 +71,7 @@ target_sources(aether_tests PRIVATE test_blueprint_graph.cpp test_blueprint_vm.c
     test_terrain_splat.cpp
     test_terrain_renderer.cpp
     test_terrain_foliage.cpp
-    test_terrain_spline.cpp test_ai_perception.cpp test_streaming.cpp test_net_transport.cpp test_net_replication.cpp test_net_rpc.cpp test_net_prediction.cpp test_net_session.cpp test_console.cpp test_profiler.cpp test_debug_draw.cpp)
+    test_terrain_spline.cpp test_ai_perception.cpp test_streaming.cpp test_net_transport.cpp test_net_replication.cpp test_net_rpc.cpp test_net_prediction.cpp test_net_session.cpp test_console.cpp test_profiler.cpp test_debug_draw.cpp test_crash.cpp)
 target_link_libraries(aether_tests PRIVATE Aether::Blueprint Aether::Renderer Aether::Animation Aether::Audio Aether::UI Aether::VFX Aether::Nav Aether::AI Aether::Terrain Aether::Streaming Aether::Net)
 
 add_test(NAME aether_tests COMMAND aether_tests)

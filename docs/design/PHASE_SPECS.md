@@ -3674,7 +3674,52 @@ in-game overlays too.
   `ProjectToScreen` is the projection it uses. The renderer's debug pass
   can draw the same lines with depth testing.
 
-### 23.4 PR breakdown
+### 23.4 Crash handling
+
+- **`CrashHandler::Install(config)`** (`aether/debug/crash.h`) handles:
+  - fatal signals on POSIX (SIGSEGV, SIGABRT, SIGFPE, SIGILL and
+    SIGBUS), on an alternate stack so a stack overflow can still be
+    reported;
+  - unhandled SEH exceptions on Windows;
+  - uncaught C++ exceptions everywhere, through the terminate handler.
+- **The report** is `crash-<unix time>-<pid>.txt` in the configured
+  directory. It holds:
+  - the app, build, reason (a signal name, an exception code, or the
+    uncaught exception's `what()`), fault address, time, process and
+    thread;
+  - the game's context;
+  - a backtrace (`backtrace_symbols_fd` on glibc, raw frames
+    elsewhere);
+  - the last 200 log lines.
+
+  On Windows, `MiniDumpWriteDump` also writes `crash-....dmp` next to it.
+- **Signal safety**: the handler does only async-signal-safe work.
+  - Log lines are copied into a fixed ring as they're logged (through a
+    log sink).
+  - Up to 16 context pairs (`SetContext("level", "Docks")`) live in
+    fixed buffers.
+  - The report is written with plain `write()` calls and hand-rolled
+    number formatting.
+  - Then the default action is restored and the signal raised again,
+    so the process still dies as it would have (a core dump, an exit
+    status).
+  - A second fault while reporting isn't reported again.
+- **Reading reports**:
+  - `ParseCrashReport` returns the fields (`context.*` included), the
+    backtrace and the log.
+  - `ListCrashReports(dir)` lists the unseen ones, newest first.
+  - `MarkCrashReportSeen` renames a report to `.seen.txt`.
+  - `DeleteCrashReport` removes it and its minidump.
+  - `CrashHandler::WriteReport(reason)` writes one on purpose (for "report
+    a problem" and tests).
+- **`CrashReporterDialog`** (editor): `Refresh` at startup opens the
+  dialog when unseen reports exist.
+  - It lists the reports by time and reason.
+  - The selected report shows its reason, build and process, its
+    context, backtrace and log.
+  - Buttons: Copy report, Dismiss, Delete and Dismiss all.
+
+### 23.5 PR breakdown
 
 1. ✅ **Done.** Console variables and the console (§23.1).
 2. ✅ **Done.** The profiler (§23.2): CPU zones per thread and frame, counters, memory by
@@ -3683,7 +3728,7 @@ in-game overlays too.
 3. ✅ **Done.** The debug draw API (§23.3) (lines, boxes, spheres, arrows and world text,
    with a duration) from C++, Luau and Blueprints, and stat overlays
    (`stat fps`, `stat memory`, `stat net`).
-4. Crash handling: signal and exception handlers, captured log lines,
+4. ✅ **Done.** Crash handling (§23.4): signal and exception handlers, captured log lines,
    and a crash report file (a minidump on Windows); the editor's crash
    reporter dialog.
 5. Functional tests: scenarios ("load the scene, simulate 5 s, assert

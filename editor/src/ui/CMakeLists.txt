@@ -41,6 +41,7 @@ add_library(aether_editor_ui STATIC
     ../devtools/console_panel.cpp
     ../devtools/profiler_panel.cpp
     ../devtools/debug_overlay.cpp
+    ../devtools/crash_reporter.cpp
     ../core/command_stack.cpp
     ../core/commands.cpp
     ../core/play_session.cpp
