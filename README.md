@@ -5490,6 +5490,14 @@ Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md), Phase 22. The module (`net/`, optio
 
 **Verified (step 3)**: 12 new tests, including ownership, direction and rate-limit enforcement, forged and malformed messages, Multicast skipping a client that doesn't have the entity, and 50 reliable calls run exactly once in order over a lossy link.
 
+**Step 4: client-side prediction** (`prediction.h`).
+
+- **Movement step**: `MoveStepFn` is a pluggable, deterministic `(MoveState, MoveInput)` step; `StepMovement` is the kinematic default (acceleration and braking, air control, gravity, jumping, a ground-height function). A move built on Jolt's CharacterVirtual can't be rewound, so networked players use a step of this shape. `Sanitize` clamps the move vector and quantizes it to what survives the wire, and both sides step the sanitized input.
+- **PredictionClient**: `Predict` applies the input at once and returns the unreliable message to send, which repeats the latest unacknowledged inputs so a lost packet doesn't lose one. On a state report, `Reconcile` compares the server's state with what it predicted at that input; if they differ it takes the server's state and replays the unacknowledged inputs. The visible position (`VisualPosition`) eases out the error instead of jumping, and a correction over `snap_distance` snaps.
+- **PredictionServer**: queues each peer's inputs by sequence (reordered ones run in order, duplicates and stale ones are dropped), runs one step per input with a credit budget (one per tick on average plus a small burst, so a stalled link can catch up but a client flooding inputs can't move faster), clamps over-long move vectors, validates every message, and reports `BuildStateMessage` (last processed sequence plus state).
+
+**Verified (step 4)**: 13 new tests, including no corrections at all when client and server agree over a 50 ms link, a server-only wall corrected without a visible jump, replay arithmetic, 30% loss with jitter, a 16-inputs-per-tick speed hack, and malformed input.
+
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
 or GCC), and network access the first time you configure (to fetch Jolt
 Physics, Dear ImGui, Vulkan-Headers, stb_image, nlohmann/json, and — on a

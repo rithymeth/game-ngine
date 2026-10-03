@@ -78,7 +78,8 @@ target_sources(aether_tests PRIVATE test_blueprint_graph.cpp test_blueprint_vm.c
     test_net_transport.cpp
     test_net_endpoint.cpp
     test_net_replication.cpp
-    test_net_rpc.cpp)
+    test_net_rpc.cpp
+    test_net_prediction.cpp)
 target_link_libraries(aether_tests PRIVATE Aether::Blueprint Aether::Renderer Aether::Animation Aether::Audio Aether::UI Aether::VFX Aether::Nav Aether::AI Aether::Terrain Aether::Net)
 
 add_test(NAME aether_tests COMMAND aether_tests)
