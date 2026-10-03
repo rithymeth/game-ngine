@@ -1,11 +1,13 @@
 # Aether Net (Phase 22, docs/design/PHASE_SPECS.md): the network transport -
 # datagram sockets (UDP, and an in-memory network with simulated latency
 # and loss for tests and the editor), connections with reliable and
-# unreliable channels, and hosts that accept or make connections.
+# unreliable channels, and hosts that accept or make connections - and
+# replication: delta snapshots of networked entities.
 add_library(aether_net STATIC
     src/socket.cpp
     src/connection.cpp
     src/host.cpp
+    src/replication.cpp
 )
 target_include_directories(aether_net PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aether_net PUBLIC cxx_std_20)
