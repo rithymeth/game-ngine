@@ -3338,7 +3338,57 @@ Remote procedure calls in the manner of Unreal's RPCs
   `Fn_Unreliable`. Arguments must match the parameters exactly.
 - **Return values**: remote calls send nothing back.
 
-### 22.4 PR breakdown
+### 22.4 Prediction and interpolation
+
+Things a client owns are predicted. Everything else is shown slightly in
+the past, between two snapshots (`net/include/aether/net/prediction.h`,
+`interpolation.h`).
+
+- **Snapshot interpolation** (`SnapshotInterpolation`):
+  - On each snapshot, every replicated entity's authoritative Transform
+    is read from the snapshot (`ReplicationClient::ReadReplicated`, not
+    from the world, which shows interpolated values) and pushed into
+    its `InterpolationBuffer` at the snapshot's server time. A buffer
+    holds 32 samples.
+  - Each frame, entities are shown at render time = the estimated
+    server time − `delay` (0.1 s, two snapshots at 20 Hz). Position is
+    lerped and rotation nlerped along the shorter arc. Outside the
+    buffer, the oldest or newest sample holds; the frames where that
+    happens are counted as starved.
+  - The server-time estimate follows the snapshots' arrival, smoothed
+    (it snaps when off by more than 0.25 s), and the render time never
+    runs backwards.
+  - Entities this client owns are left alone, and buffers go with their
+    entities.
+- **Predicted movement**:
+  - `NetMovement`: velocity and grounded replicate; speed,
+    acceleration, jump speed, gravity and ground height don't.
+  - `MovementInput`: a sequence number, dt, a move direction and jump.
+  - `StepMovement` is the deterministic rule both sides run: horizontal
+    velocity eases towards the input's, then jump, gravity and landing.
+    `MovementServer::SetStep` and `MovementClient::SetStep` replace it,
+    for example with a physics character controller.
+  - **`MovementClient::Predict`**:
+    - runs the step at once and keeps the input;
+    - sends the last 8 unacknowledged inputs on an unreliable channel,
+      so losses are covered by redundancy;
+    - registers Transform and NetMovement with `PredictLocally`, so
+      replication writes them on owned entities only when spawning.
+  - **`MovementServer`**:
+    - runs inputs from the entity's owner only, each sequence number
+      once and in order, at most 32 per entity per update;
+    - sanitizes them: dt is clamped to (0, 0.1], the direction to unit
+      length, and NaNs are zeroed. The client sanitizes the same way, so
+      a speed hack replays identically on both sides and gains nothing;
+    - after each batch, acknowledges the last sequence number it ran,
+      with the resulting position, velocity and grounded state.
+  - **Reconciliation**: on an acknowledgement newer than the last, the
+    client drops the inputs it covers, resets to the server's state and
+    replays the rest. The distance the prediction moved is the error.
+    Errors over 1 cm count as corrections, for example when the server
+    knocks the character back.
+
+### 22.5 PR breakdown
 
 1. ✅ **Done.** The transport: sockets (UDP and the simulated network),
    connections with reliable, unreliable and sequenced channels, and
@@ -3352,8 +3402,8 @@ Remote procedure calls in the manner of Unreal's RPCs
      bandwidth budget.
 3. ✅ **Done.** RPCs (§22.3): `Server`, `Client` and `Multicast` function flags, called from
    C++, Blueprints and Luau, with ownership checks.
-4. Client-side prediction and reconciliation for character movement,
-   and snapshot interpolation for everything else.
+4. ✅ **Done.** Client-side prediction and reconciliation for character movement,
+   and snapshot interpolation for everything else (§22.4).
 5. Sessions: hosting, joining and LAN discovery (broadcast); a lobby
    abstraction for platform services later.
 6. The editor:

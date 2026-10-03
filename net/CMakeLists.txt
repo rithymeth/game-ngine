@@ -9,6 +9,8 @@ add_library(aether_net STATIC
     src/host.cpp
     src/replication.cpp
     src/rpc.cpp
+    src/interpolation.cpp
+    src/prediction.cpp
 )
 target_include_directories(aether_net PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aether_net PUBLIC cxx_std_20)
