@@ -306,6 +306,7 @@ void ReplicationServer::ReplicateTo(NetAddress peer, PeerState& state, const std
                 changes.push_back({&c, kFullComponent, AllFields(c.fields.size())});
                 continue;
             }
+            if (spawn_only_.count(c.hash) != 0) continue; // kept current by something else
             u64 mask = 0;
             for (usize i = 0; i < c.fields.size(); ++i) {
                 if (old->fields[i] != c.fields[i]) mask |= 1ull << i;
