@@ -3388,7 +3388,55 @@ the past, between two snapshots (`net/include/aether/net/prediction.h`,
     Errors over 1 cm count as corrections, for example when the server
     knocks the character back.
 
-### 22.5 PR breakdown
+### 22.5 Sessions and discovery
+
+Finding, hosting and joining games (`net/include/aether/net/session.h`).
+
+- **The simulated network gains hosts**:
+  - `LoopbackNetwork::OpenAt(ip, port)` binds sockets on simulated
+    machines (10.0.0.x), so one process can stand in for a LAN.
+  - `Address::Broadcast(port)` reaches every socket on that port except
+    the sender's own.
+  - UDP sockets set `SO_BROADCAST`.
+- **`SessionInfo`**: name, map, mode, the game port, players and
+  maximum, the build, whether a password is needed (the password itself
+  is never advertised), and key/value properties. It has a compact
+  binary encoding, and strings are cut to 255 bytes.
+- **LAN discovery**:
+  - `LanBeacon` listens on the discovery port (7778) and answers
+    queries carrying our protocol id with the session's info. The
+    query's nonce is echoed back so the browser can time it. A disabled
+    beacon reads queries and ignores them.
+  - `LanBrowser::Search` broadcasts a query. Answers to our own nonces
+    become results, one per game address (the beacon's host plus
+    `info.port`), with the ping and whether the build matches. Results
+    are sorted by ping, expire after `expiry` (5 s), and can be
+    refreshed every `auto_search` seconds.
+- **Hosting and joining**:
+  - `SessionClient::Join` connects, then asks to join over the reliable
+    channel with its build, a player name and the password.
+  - `SessionHost` checks, in order: the build, then the password, then
+    room (`max_players`, or the host's peer limit). If a check fails,
+    the peer is told why and dropped once the refusal is acknowledged
+    (or after 1 s).
+  - Peers that connect but never ask within 3 s are refused with
+    NoRequest.
+  - Accepted players get a unique name ("Ada", "Ada (2)") and the
+    session's info, and the host keeps `info.players` current.
+  - `Kick` refuses with Kicked.
+  - Events: PlayerJoined, PlayerLeft and JoinRefused, each with a
+    reason.
+  - The client ends Joined, or Failed with one of: WrongPassword,
+    BuildMismatch, Full (including the transport's own refusal),
+    NoRequest, Kicked, ConnectFailed or Lost.
+  - The password travels in the clear and is meant for the LAN; secure
+    authentication comes with platform services.
+- **Lobbies**: `LobbyService` is the interface games and the editor use:
+  advertise or update a session, stop, search, results and update.
+  `LanLobbyService` implements it with a beacon and a browser. Steam,
+  EOS and console services implement the same interface later.
+
+### 22.6 PR breakdown
 
 1. ✅ **Done.** The transport: sockets (UDP and the simulated network),
    connections with reliable, unreliable and sequenced channels, and
@@ -3404,7 +3452,7 @@ the past, between two snapshots (`net/include/aether/net/prediction.h`,
    C++, Blueprints and Luau, with ownership checks.
 4. ✅ **Done.** Client-side prediction and reconciliation for character movement,
    and snapshot interpolation for everything else (§22.4).
-5. Sessions: hosting, joining and LAN discovery (broadcast); a lobby
+5. ✅ **Done.** Sessions (§22.5): hosting, joining and LAN discovery (broadcast); a lobby
    abstraction for platform services later.
 6. The editor:
    - Play in Editor with N clients and a listen or dedicated server;
