@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 done on the engine and portable-editor side (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes; Blackboards and Behavior Trees; AI perception; debug drawing, the Behavior Tree editor and debugger, and the Navigation panel). Phase 21 done on the engine and portable-editor side (world building: heightmap terrain, splatmaps and brushes, terrain rendering data, foliage, splines, world partition with cell streaming and a floating origin, and the terrain, foliage, spline and partition editors). Phase 22 in progress (networking: the transport, with reliable, unreliable and sequenced channels over UDP or a simulated network)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 done on the engine and portable-editor side (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes; Blackboards and Behavior Trees; AI perception; debug drawing, the Behavior Tree editor and debugger, and the Navigation panel). Phase 21 done on the engine and portable-editor side (world building: heightmap terrain, splatmaps and brushes, terrain rendering data, foliage, splines, world partition with cell streaming and a floating origin, and the terrain, foliage, spline and partition editors). Phase 22 in progress (networking: the transport, with reliable, unreliable and sequenced channels over UDP or a simulated network; replication with delta snapshots, relevancy and a bandwidth budget)
 
 ### Phase 1 — Foundation
 
@@ -5564,6 +5564,38 @@ network.
 - Keepalives over 20 idle seconds, timeouts, and foreign protocols.
 - Real UDP on localhost.
 - 510/510 tests pass on GCC 13, Clang and ASan/UBSan, and 542/542 with
+  physics.
+
+**Step 2: replication** (§22.2). The server is authoritative and sends
+delta snapshots in the manner of Quake 3.
+
+- **`NetIdentity`**: a net id, owner, archetype, relevancy radius and
+  priority.
+- **What is sent**: `Field_Replicated` fields (and all of `Transform`),
+  per component, with masks of the fields that changed since the last
+  snapshot the client acknowledged. An idle world costs a 17-byte
+  header, and a lost snapshot costs only latency.
+- **Spawns and despawns**: spawns carry everything, and an `OnSpawn`
+  hook per archetype adds what isn't replicated. Despawns are explicit.
+- **Ownership**: `locally_owned` on the client.
+- **Relevancy**: by distance from the client's viewer (its pawn, or one
+  set with `SetViewer`).
+- **Bandwidth**: a byte budget per snapshot, shared by accumulated
+  priority.
+
+**Verified**: 5 new tests.
+
+- Spawns (with hooks), updates (positions, rotations, strings, and
+  non-replicated fields left alone), removed components and despawns.
+- Header-only idle snapshots, one small entry for one move, and only
+  changed fields written.
+- Convergence through 30% loss, jitter and duplication, with spawns and
+  despawns along the way.
+- Relevancy as viewers move, ownership and its handover, and
+  disconnects.
+- The budget kept, everything arriving in the end, and a high-priority
+  entity keeping up.
+- 515/515 tests pass on GCC 13, Clang and ASan/UBSan, and 547/547 with
   physics.
 
 ## Building

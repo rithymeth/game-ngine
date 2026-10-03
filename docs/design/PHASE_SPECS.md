@@ -3243,12 +3243,63 @@ yojimbo, over a datagram socket interface. That way:
   - Send, Broadcast (with an exception) and peer info, including the
     connection's stats.
 
-### 22.2 PR breakdown
+### 22.2 Replication
+
+The server is authoritative. It sends each client snapshots of the
+networked entities, in the manner of Quake 3 (`ReplicationServer` and
+`ReplicationClient`, `net/include/aether/net/replication.h`).
+
+- **What replicates**:
+  - Entities with a `NetIdentity`: a net id (the server assigns it), an
+    owner (the server's id for a client, or none), an archetype name,
+    a relevancy radius and a priority.
+  - Their components' `Field_Replicated` fields, in reflection's binary
+    form. `Transform` always replicates whole.
+  - Components are named on the wire by an FNV-1a hash of their name,
+    and fields by their index among the replicated ones (up to 32).
+- **Snapshots**:
+  - Every `send_interval` (20 Hz), each client gets one on an
+    UnreliableSequenced channel. It holds a snapshot id, a baseline id,
+    the server time, despawns, and updates.
+  - An update holds, per component, a mask of the fields that differ
+    from the baseline and their bytes. A mask of 0 means the component
+    was removed. New entities carry everything, plus their owner and
+    archetype.
+  - The baseline is the newest snapshot the client acknowledged (on an
+    Unreliable channel). The server remembers 64 snapshots per client
+    as "the baseline plus what was sent". A lost snapshot therefore
+    costs only latency, and an idle world costs a 17-byte header.
+  - The client rebuilds each snapshot from its own copy of the baseline.
+    It drops one whose baseline it has forgotten. It writes only the
+    fields that changed since the snapshot it last applied.
+- **Spawning**: the client creates an entity with the `NetIdentity`,
+  then runs the `OnSpawn` hook for its archetype (or the "" hook), which
+  adds what isn't replicated (a mesh, a collider). Then it writes the
+  fields. `locally_owned` is set when the owner is this client.
+  Despawns are explicit, and an `OnDespawn` hook runs first.
+- **Relevancy**: an entity goes to a client when its radius is 0, the
+  client owns it, or it is within its radius of the client's viewer.
+  The viewer is set with `SetViewer`, or else is the Transform of an
+  entity the client owns; with neither, everything is relevant. An
+  entity that stops being relevant is despawned on that client.
+- **Bandwidth**: each snapshot fits a byte budget (1000 bytes, at most
+  one unreliable message). Entities with changes add their priority to
+  an accumulator each snapshot and are sent highest first. Those that
+  don't fit wait, with their accumulators growing, so everything gets
+  through in the end and important entities keep up best.
+- **Known limits**:
+  - A snapshot with no baseline (one that falls out of the 64 kept)
+    that the budget cuts short leaves out entities. The client then
+    drops them until they are sent again.
+  - The server keeps a full copy of the state per remembered snapshot;
+    sharing it is for later.
+
+### 22.3 PR breakdown
 
 1. ✅ **Done.** The transport: sockets (UDP and the simulated network),
    connections with reliable, unreliable and sequenced channels, and
    hosts.
-2. Replication:
+2. ✅ **Done.** Replication (§22.2):
    - the `Replicated` field flag and `NetIdentity`;
    - server-authoritative snapshots of reflected fields, with delta
      compression against acked baselines;
