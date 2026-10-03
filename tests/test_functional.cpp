@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
+#include <algorithm>
 
 // Phase 23 step 5: functional tests - steps in order, simulation with a
 // fixed step, "reaches" checks, failures (checks, timeouts, exceptions,

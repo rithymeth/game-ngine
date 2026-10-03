@@ -4,6 +4,7 @@
 #include "aether/math/math.h"
 #include "aether/terrain/terrain.h"
 
+#include <array>
 #include <span>
 #include <vector>
 

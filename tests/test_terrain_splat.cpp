@@ -2,6 +2,9 @@
 #include "aether/terrain/terrain.h"
 #include "test_framework.h"
 
+#include <algorithm>
+#include <array>
+
 using namespace aether;
 using namespace aether::terrain;
 

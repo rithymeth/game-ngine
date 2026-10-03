@@ -2,6 +2,7 @@
 #include "terrain_math.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace aether {

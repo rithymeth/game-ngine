@@ -3,6 +3,7 @@
 #include "aether/nav/crowd.h"
 #include "test_framework.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
