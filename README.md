@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 done on the engine and portable-editor side (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes; Blackboards and Behavior Trees; AI perception; debug drawing, the Behavior Tree editor and debugger, and the Navigation panel). Now: Phase 21 -- World Building (terrain, foliage, splines)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 done on the engine and portable-editor side (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes; Blackboards and Behavior Trees; AI perception; debug drawing, the Behavior Tree editor and debugger, and the Navigation panel). Phase 21 done on the engine and portable-editor side (World Building: terrain, splatmap painting and sculpting, foliage, splines, heightfield collider, world partition streaming with a floating origin and the Terrain panel). Now: Phase 22 -- Networking and Multiplayer
 
 ### Phase 1 — Foundation
 
@@ -5381,7 +5381,7 @@ Behavior Trees and perception come next. Spec:
   physics.
 
 
-### Phase 21 (in progress) — World Building
+### Phase 21 (done) — World Building
 
 Build spec: [docs/design/PHASE_SPECS.md](docs/design/PHASE_SPECS.md), Phase 21.
 
@@ -5456,6 +5456,18 @@ Phase 21's remaining items are the ones the roadmap marks as later: foliage impo
 
 **Verified**: 14 new tests (6 heightfield queries, 5 partition, 1 floating origin, 2 physics heightfield colliders) plus 1 debug-draw test, 7 editor panel tests and 4 streaming tests.
 **Validation**: terrain library and the full test binary build in the RelWithDebInfo Visual Studio configuration. Focused terrain and splat test sources cover heightmaps, layers, brush modes, renderer buffers, foliage, and splines.
+
+### Phase 22 (in progress) — Networking and Multiplayer
+
+Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md), Phase 22. The module (`net/`, option `AETHER_BUILD_NET`) is engine-only and tested headless over a simulated network.
+
+**Step 1: transport and connections** (`aether/net/`).
+
+- **ByteWriter / ByteReader** (`bytes.h`): little-endian fields, varints and strings; the reader never reads out of bounds and reports failure once.
+- **Transport** (`transport.h`): an abstract unreliable datagram transport. `LoopbackNetwork` is an in-process network with a manual clock and a seeded random generator: latency, jitter (which reorders), loss and duplication, so tests and the editor's simulated latency are reproducible.
+- **NetEndpoint** (`endpoint.h`): a server (`Listen`) or a client (`Connect`) with a handshake that rejects a protocol-version mismatch or a full server and survives loss. Per peer it keeps packet sequence numbers with acknowledgement bits, drops duplicate datagrams, and offers a reliable ordered channel (resent after a round-trip-based timeout until acknowledged, delivered once and in order, with a pending cap for backpressure) and an unreliable channel. It tracks RTT and packet statistics, sends keepalives, and times out silent peers; disconnects are explicit and tolerate loss.
+
+**Verified**: 25 new tests (3 byte, 5 loopback, 17 endpoint), including 300 reliable messages in order over 30% loss with jitter and duplication, and sequence-number wrap past 65,536 packets.
 
 ## Building
 

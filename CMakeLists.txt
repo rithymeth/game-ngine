@@ -24,6 +24,7 @@ option(AETHER_BUILD_EDITOR_UI "Build the portable editor UI library (ImGui + ref
 option(AETHER_BUILD_VULKAN "Build the Vulkan RHI backend" ON)
 option(AETHER_BUILD_SCRIPTING "Build the Luau scripting module" ON)
 option(AETHER_BUILD_TERRAIN "Build the terrain module" ON)
+option(AETHER_BUILD_NET "Build the networking module" ON)
 
 include(FetchContent)
 
@@ -203,6 +204,10 @@ add_subdirectory(vfx)
 # Terrain (Phase 21): heightmap-based terrain with chunked meshes and LOD.
 if(AETHER_BUILD_TERRAIN)
     add_subdirectory(terrain)
+endif()
+# Networking (Phase 22): transport, connections and replication; engine-only.
+if(AETHER_BUILD_NET)
+    add_subdirectory(net)
 endif()
 
 # Recast/Detour (zlib, recastnavigation/recastnavigation) for navigation
