@@ -3504,3 +3504,89 @@ Networked Play-in-Editor and the network profiler (`editor/src/net/`).
    - Play in Editor with N clients and a listen or dedicated server;
    - simulated latency and loss;
    - a network profiler (bandwidth per entity and field).
+
+## Phase 23: Profiling, debugging and developer tools
+
+The concept is in [ROADMAP.md Phase 23](../ROADMAP.md). The core pieces
+(console variables, the console, the profiler's zones and counters,
+debug drawing, crash capture) live in the engine, so every module can
+use them. Their panels are in the portable editor library and work as
+in-game overlays too.
+
+### 23.1 Console variables and the console
+
+- **Logger** (`aether/core/log.h`):
+  - sinks: listeners for every line that passes the level, called
+    outside the logger's lock;
+  - the 512 most recent lines;
+  - stdout can be switched off.
+- **CVars** (`aether/core/cvar.h`): named, typed settings declared where
+  they're used.
+  - Declared like
+    `static AutoCVar<int> cascades("r.shadows.cascades", 4, "Shadow cascades", CVar_Archive, 1, 4);`.
+  - Types: bool, int, float and string.
+  - Names are case-insensitive and dotted by system.
+  - Reads are atomic, so any thread can read while the console writes.
+  - **Parsing**:
+    - bools take 1/0, true/false, on/off and yes/no;
+    - ints take decimal, hex, octal, and whole-number floats such as
+      "3.0";
+    - floats reject NaN and infinity;
+    - values outside the range are clamped.
+  - **Floats print** in their shortest round-trip form ("0.1").
+  - **Defaults**: `IsDefault` and `Reset`.
+  - **Flags**:
+    - ReadOnly;
+    - Cheat (changed only while cheats are allowed);
+    - Archive (saved by `writeconfig` when not at its default);
+    - RequiresRestart (the console says so).
+  - **Changes**: `OnChange` callbacks, plus a generation counter for
+    cheap polling.
+  - **`CVarRegistry`** also holds console commands (`AutoConsoleCommand`).
+    - Registering a name again returns the existing variable when the
+      type matches, and fails on a type clash.
+    - A name can't be both a variable and a command.
+- **`Console`** (`aether/core/console.h`):
+  - **Syntax**:
+    - `name` describes a variable (value, type, range, default, flags,
+      help);
+    - `name value` sets it (strings take the rest of the line);
+    - `command args` runs a command;
+    - statements are separated by `;`;
+    - `//` and `#` start comments;
+    - quotes, with `\"`, group arguments.
+  - **Built-in commands**: help [prefix], find text (names and help),
+    cvarlist [prefix], set, reset, toggle, echo, exec file (nested up
+    to 8 deep), writeconfig file, history, clear.
+  - **Errors**: unknown names suggest close matches; Execute returns
+    false if any statement failed.
+  - **History**: newest last, no repeats, bounded at 64.
+  - **Completion**: `Complete(prefix)` lists sorted variables, commands
+    and built-ins. `CompleteLine` extends the word being typed to the
+    candidates' common prefix, adding a space when only one remains.
+  - **The command line**: `+name value +command args`.
+  - **Log capture**: log lines from any thread wait in a queue until
+    `Pump`.
+- **`ConsolePanel`** (editor):
+  - output coloured by level, with a filter;
+  - Clear, "Show log" and "Cheats" toggles;
+  - the input line: Up/Down walk the history; Tab completes, and a
+    second Tab lists the candidates.
+  - `Overlay(toggle, width)` draws the same panel as a drop-down window
+    for game builds, toggled with the tilde key.
+
+### 23.2 PR breakdown
+
+1. ✅ **Done.** Console variables and the console (§23.1).
+2. The profiler: CPU zones per thread and frame, counters, memory by
+   category, with Tracy forwarding as an option (`AETHER_TRACY`), and
+   the editor's profiler panel (frame graph, per-zone times, counters).
+3. The debug draw API (lines, boxes, spheres, arrows and world text,
+   with a duration) from C++, Luau and Blueprints, and stat overlays
+   (`stat fps`, `stat memory`, `stat net`).
+4. Crash handling: signal and exception handlers, captured log lines,
+   and a crash report file (a minidump on Windows); the editor's crash
+   reporter dialog.
+5. Functional tests: scenarios ("load the scene, simulate 5 s, assert
+   that entity X reached trigger Y") run headless, with a CLI runner
+   and reports for CI.
