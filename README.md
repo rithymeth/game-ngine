@@ -5520,7 +5520,8 @@ in #96 and #97, which also fixed:
   curve and road edges, selection, and the viewport gestures.
 - Every panel drawn headless, and the partition map's hit testing and
   pins.
-- COUNTS
+- 502/502 tests pass on GCC 13, Clang and ASan/UBSan, and 534/534 with
+  physics.
 
 ## Building
 
