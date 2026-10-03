@@ -402,6 +402,20 @@ ReplicationClient::ReplicationClient(World& world, NetHost& host, PeerId server,
     history_.resize(std::max<u32>(config_.history, 2));
 }
 
+bool ReplicationClient::ReadReplicated(u32 net_id, ComponentId component, void* out) const {
+    auto it = applied_.find(net_id);
+    if (it == applied_.end()) return false;
+    const ComponentInfo& info = GetComponentInfo(component);
+    if (!info.reflected) return false;
+    const ReplicatedComponentType* t = FindReplicatedComponentType(ComponentNameHash(info.name));
+    const ReplicatedComponent* c = t ? FindComponent(it->second, t->hash) : nullptr;
+    if (!c) return false;
+    for (usize f = 0; f < c->fields.size() && f < t->fields.size(); ++f)
+        if (!c->fields[f].empty())
+            reflect::ReadBinary(*t->fields[f]->type, t->fields[f]->Ptr(out), c->fields[f].data(), c->fields[f].size());
+    return true;
+}
+
 void ReplicationClient::OnSpawn(const std::string& archetype, SpawnFn fn) { on_spawn_[archetype] = std::move(fn); }
 
 Entity ReplicationClient::FindEntity(u32 net_id) const {
@@ -508,6 +522,9 @@ void ReplicationClient::Apply(const ReplicatedState& state) {
             if (!t) continue; // a component this build does not know
             if (!world_.HasComponentRaw(entity, t->id)) world_.AddComponentRaw(entity, t->id);
             const ReplicatedComponent* old = prev ? FindComponent(*prev, c.hash) : nullptr;
+            if (prev && e.owner != kNoPeer && e.owner == my_id &&
+                std::find(predicted_.begin(), predicted_.end(), t->id) != predicted_.end())
+                continue; // ours to predict
             void* comp = world_.GetComponentRaw(entity, t->id);
             for (usize f = 0; f < c.fields.size() && f < t->fields.size(); ++f) {
                 if (c.fields[f].empty() || (old && f < old->fields.size() && old->fields[f] == c.fields[f])) continue;

@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 done on the engine and portable-editor side (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes; Blackboards and Behavior Trees; AI perception; debug drawing, the Behavior Tree editor and debugger, and the Navigation panel). Phase 21 done on the engine and portable-editor side (world building: heightmap terrain, splatmaps and brushes, terrain rendering data, foliage, splines, world partition with cell streaming and a floating origin, and the terrain, foliage, spline and partition editors). Phase 22 in progress (networking: the transport, with reliable, unreliable and sequenced channels over UDP or a simulated network; replication with delta snapshots, relevancy and a bandwidth budget; remote calls from C++, Blueprints and Luau with ownership checks)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 done on the engine and portable-editor side (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes; Blackboards and Behavior Trees; AI perception; debug drawing, the Behavior Tree editor and debugger, and the Navigation panel). Phase 21 done on the engine and portable-editor side (world building: heightmap terrain, splatmaps and brushes, terrain rendering data, foliage, splines, world partition with cell streaming and a floating origin, and the terrain, foliage, spline and partition editors). Phase 22 in progress (networking: the transport, with reliable, unreliable and sequenced channels over UDP or a simulated network; replication with delta snapshots, relevancy and a bandwidth budget; remote calls from C++, Blueprints and Luau with ownership checks; client-side prediction with reconciliation and snapshot interpolation)
 
 ### Phase 1 — Foundation
 
@@ -5624,6 +5624,33 @@ Unreal.
 - A Blueprint, and a Luau script, calling through the network: the
   owner's calls get through, and others get BP204 or a script error.
 - 520/520 tests pass on GCC 13, Clang and ASan/UBSan, and 552/552 with
+  physics.
+
+**Step 4: prediction and interpolation** (§22.4).
+
+- **Snapshot interpolation**: other machines' entities are shown 0.1 s
+  in the past, between two snapshots, against a smoothed server clock.
+- **Predicted character movement**:
+  - **`NetMovement`** and a deterministic `StepMovement` (which can be
+    replaced).
+  - **The owner** moves at once and sends its inputs redundantly.
+  - **The server** runs inputs only from the owner, once each and
+    sanitized, and acknowledges them.
+  - **Reconciliation**: the owner rewinds to the acknowledged state and
+    replays the inputs since.
+
+**Verified**: 5 new tests.
+
+- Buffer sampling: lerp, the shorter-arc nlerp, clamping and capacity.
+- Interpolated motion every frame (not 0.25 m snapshot steps), with a
+  steady lag and no starvation.
+- Prediction that responds the same frame, jumps, and ends exactly where
+  the server does with no corrections; other clients agree.
+- 20% loss with jitter, covered by the input redundancy, and a
+  server-side knockback reconciled.
+- The movement rule, sanitized speed hacks that replay identically, and
+  inputs from someone else rejected.
+- 525/525 tests pass on GCC 13, Clang and ASan/UBSan, and 557/557 with
   physics.
 
 ## Building
