@@ -604,7 +604,7 @@ usize MigrateLegacyRigidBodies(World& world) {
 bool HasCollider(const World& world, Entity entity) {
     return world.HasComponent<BoxCollider>(entity) || world.HasComponent<SphereCollider>(entity) ||
            world.HasComponent<CapsuleCollider>(entity) || world.HasComponent<ConvexCollider>(entity) ||
-           world.HasComponent<MeshCollider>(entity);
+           world.HasComponent<MeshCollider>(entity) || world.HasComponent<HeightfieldCollider>(entity);
 }
 
 } // namespace aether

@@ -7,12 +7,14 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
+#include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 
 #include <algorithm>
+#include <cmath>
 #include <unordered_set>
 
 namespace aether {
@@ -77,6 +79,7 @@ std::vector<u8> SettingsOf(const World& world, Entity e) {
     AppendSettings<ConvexCollider>(world, e, 4, out);
     AppendSettings<MeshCollider>(world, e, 5, out);
     AppendSettings<RigidBody>(world, e, 6, out);
+    AppendSettings<HeightfieldCollider>(world, e, 8, out);
     AppendSettings<Layer>(world, e, 7, out); // a layer change moves the body to another object layer
     return out;
 }
@@ -185,6 +188,36 @@ bool PhysicsScene::Build(Entity e, Tracked& tracked, std::string& problem) {
         part.center = c->center, part.trigger = c->is_trigger, part.friction = c->friction, part.restitution = c->restitution;
         parts.push_back(std::move(part));
     }
+    if (const HeightfieldCollider* c = world_.GetComponent<HeightfieldCollider>(e)) {
+        if (motion != BodyMotion::Static) {
+            problem = "Heightfield collider: only static bodies can use a heightfield";
+            return false;
+        }
+        if (c->width < 2 || c->depth < 2 || c->heights.size() != static_cast<usize>(c->width) * c->depth || !(c->cell_size > 0.0f)) {
+            problem = "Heightfield collider: needs at least 2 x 2 samples, one height per sample and a positive cell size";
+            return false;
+        }
+        // Jolt's grid is square; samples past the real edge don't collide.
+        const u32 n = std::max({c->width, c->depth, 4u}); // Jolt needs at least two blocks per side
+        JPH::Array<float> samples(static_cast<usize>(n) * n, JPH::HeightFieldShapeConstants::cNoCollisionValue);
+        for (u32 z = 0; z < c->depth; ++z) {
+            for (u32 x = 0; x < c->width; ++x) {
+                const f32 h = c->heights[static_cast<usize>(z) * c->width + x] * c->vertical_scale;
+                if (!std::isfinite(h)) {
+                    problem = "Heightfield collider: a height is not finite";
+                    return false;
+                }
+                samples[static_cast<usize>(z) * n + x] = h;
+            }
+        }
+        JPH::HeightFieldShapeSettings settings(samples.data(), JPH::Vec3::sZero(), JPH::Vec3(c->cell_size, 1.0f, c->cell_size), n);
+        settings.mBlockSize = n >= 8 ? 4 : 2;
+        settings.mBitsPerSample = 16;
+        Part part;
+        if (!Make(settings, part.shape, problem, "Heightfield collider")) return false;
+        part.center = c->center, part.trigger = c->is_trigger, part.friction = c->friction, part.restitution = c->restitution;
+        parts.push_back(std::move(part));
+    }
     if (parts.empty()) {
         problem = "no collider";
         return false;
@@ -250,7 +283,8 @@ bool PhysicsScene::Build(Entity e, Tracked& tracked, std::string& problem) {
     physics_.SetReportStay(tracked.body, stay(world_.GetComponent<BoxCollider>(e)) || stay(world_.GetComponent<SphereCollider>(e)) ||
                                              stay(world_.GetComponent<CapsuleCollider>(e)) ||
                                              stay(world_.GetComponent<ConvexCollider>(e)) ||
-                                             stay(world_.GetComponent<MeshCollider>(e)));
+                                             stay(world_.GetComponent<MeshCollider>(e)) ||
+                                             stay(world_.GetComponent<HeightfieldCollider>(e)));
     if (RigidBody* body = world_.GetComponent<RigidBody>(e)) body->body_id = tracked.body;
     return true;
 }
@@ -263,6 +297,7 @@ void PhysicsScene::Sync() {
     colliders.set(GetComponentId<CapsuleCollider>());
     colliders.set(GetComponentId<ConvexCollider>());
     colliders.set(GetComponentId<MeshCollider>());
+    colliders.set(GetComponentId<HeightfieldCollider>());
     std::vector<Entity> entities;
     world_.ForEachArchetype([&](Archetype& archetype) {
         if ((archetype.Mask() & colliders).none()) return;
