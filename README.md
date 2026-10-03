@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 done on the engine and portable-editor side (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes; Blackboards and Behavior Trees; AI perception; debug drawing, the Behavior Tree editor and debugger, and the Navigation panel). Phase 21 done on the engine and portable-editor side (world building: heightmap terrain, splatmaps and brushes, terrain rendering data, foliage, splines, world partition with cell streaming and a floating origin, and the terrain, foliage, spline and partition editors)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 done on the engine and portable-editor side (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes; Blackboards and Behavior Trees; AI perception; debug drawing, the Behavior Tree editor and debugger, and the Navigation panel). Phase 21 done on the engine and portable-editor side (world building: heightmap terrain, splatmaps and brushes, terrain rendering data, foliage, splines, world partition with cell streaming and a floating origin, and the terrain, foliage, spline and partition editors). Phase 22 in progress (networking: the transport, with reliable, unreliable and sequenced channels over UDP or a simulated network)
 
 ### Phase 1 — Foundation
 
@@ -5522,6 +5522,48 @@ in #96 and #97, which also fixed:
   pins.
 - 502/502 tests pass on GCC 13, Clang and ASan/UBSan, and 534/534 with
   physics.
+
+### Phase 22 (in progress) — Networking and multiplayer
+
+The `Aether::Net` library (`net/`). Spec:
+[PHASE_SPECS.md, Phase 22](docs/design/PHASE_SPECS.md).
+
+**Step 1: the transport** (§22.1). It's our own small protocol over a
+datagram interface, so the same code runs over UDP and over a simulated
+network.
+
+- **Sockets**:
+  - `UdpSocket`: non-blocking, POSIX or WinSock;
+  - `LoopbackNetwork`: in memory, with seeded latency, jitter (so
+    packets reorder), loss and duplication, and time you advance.
+- **`Connection`**:
+  - sequence numbers with 33 acks per packet;
+  - reliable ordered messages, resent on an RTT-based timer and
+    delivered once and in order;
+  - fragments for large messages, up to 256 KB;
+  - unreliable and sequenced channels;
+  - bounded queues;
+  - RTT and loss stats.
+- **`NetHost`**:
+  - listen, connect with retries, and refuse when full;
+  - keepalives, timeouts and goodbyes;
+  - protocol ids;
+  - events for connect, disconnect (with a reason) and messages;
+  - Send and Broadcast.
+
+**Verified**: 8 new tests.
+
+- Addresses and wrapping sequence numbers.
+- The simulated network: latency, closed ports, and loss rates.
+- Handshakes, messages both ways, and goodbyes.
+- 500 reliable messages, all delivered once and in order, over 20%
+  loss, 5% duplication and jitter; unreliable and sequenced delivery;
+  resends, losses and RTT.
+- A 100 KB message in fragments, and the limits.
+- A full server refusing, and a missing server.
+- Keepalives over 20 idle seconds, timeouts, and foreign protocols.
+- Real UDP on localhost.
+- COUNTS
 
 ## Building
 
