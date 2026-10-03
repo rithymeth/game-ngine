@@ -2,6 +2,7 @@
 
 #include "core/json_edit.h"
 
+#include <cstdio>
 #include <imgui.h>
 
 namespace aether::editor {

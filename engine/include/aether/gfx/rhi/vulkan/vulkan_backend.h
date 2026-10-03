@@ -2,6 +2,7 @@
 
 #include "aether/gfx/rhi/device.h"
 
+#if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -9,6 +10,7 @@
 #include <Windows.h>
 
 #define VK_USE_PLATFORM_WIN32_KHR
+#endif
 #include <vulkan/vulkan.h>
 
 #include <vector>
@@ -171,6 +173,13 @@ private:
     SampledTextureRecord UploadTextureRecord(u32 width, u32 height, const u8* rgba8_pixels);
 };
 
+// A window swap chain (VkSurfaceKHR + VkSwapchainKHR) or, when created
+// with a null window handle, an offscreen one: the same render pass,
+// framebuffers and depth buffer around plain device-local images, with no
+// surface, no acquire/present semaphores and a no-op Present - what
+// headless tools and the screenshot tests render into (lavapipe in CI).
+// The window handle is an HWND on Windows and a GLFWwindow* elsewhere
+// (aether::Window::PlatformWindow()).
 class VulkanSwapChain final : public ISwapChain {
 public:
     VulkanSwapChain(VulkanDevice& device, void* native_window_handle, u32 width, u32 height, u32 buffer_count);
@@ -184,11 +193,18 @@ public:
     u32 Height() const override { return extent_.height; }
     u32 BufferCount() const override { return static_cast<u32>(handles_.size()); }
     void* NativeHandle() const override { return const_cast<VulkanSwapChain*>(this); }
+    bool ReadBack(std::vector<u8>& rgba8) override;
+    bool IsOffscreen() const { return offscreen_; }
 
     // Used by VulkanDevice::Submit to wire up the acquire/present semaphores
     // for whichever frame-in-flight slot is current.
-    VkSemaphore CurrentImageAvailableSemaphore() const { return image_available_semaphores_[frame_index_]; }
-    VkSemaphore CurrentRenderFinishedSemaphore() const { return render_finished_semaphores_[frame_index_]; }
+    // VK_NULL_HANDLE for an offscreen swap chain, which has nothing to wait on.
+    VkSemaphore CurrentImageAvailableSemaphore() const {
+        return offscreen_ ? VK_NULL_HANDLE : image_available_semaphores_[frame_index_];
+    }
+    VkSemaphore CurrentRenderFinishedSemaphore() const {
+        return offscreen_ ? VK_NULL_HANDLE : render_finished_semaphores_[frame_index_];
+    }
 
     // Escape hatch for backend-specific rendering beyond clear-to-color
     // (e.g. a real render pass + framebuffer + pipeline): the abstract
@@ -211,6 +227,7 @@ public:
 
 private:
     void CreateSwapchainAndImages(u32 width, u32 height);
+    std::vector<VkImage> CreateOffscreenImages(u32 width, u32 height);
     void DestroySwapchainAndImages();
     void CreateSyncObjects();
     void DestroySyncObjects();
@@ -221,7 +238,11 @@ private:
     void DestroyDepthResources();
 
     VulkanDevice& device_;
-    void* hwnd_ = nullptr;
+    void* window_ = nullptr; // HWND or GLFWwindow*; null when offscreen
+    bool offscreen_ = false;
+    bool can_read_back_ = false;
+    std::vector<VkImage> offscreen_images_;          // offscreen only: the images...
+    std::vector<VkDeviceMemory> offscreen_memory_;   // ...and their memory
     VkSurfaceKHR surface_ = VK_NULL_HANDLE;
     VkSwapchainKHR swapchain_ = VK_NULL_HANDLE;
     VkFormat format_ = VK_FORMAT_B8G8R8A8_UNORM;

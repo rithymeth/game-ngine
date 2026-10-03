@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <map>
+#include <cmath>
 
 namespace aether::editor {
 

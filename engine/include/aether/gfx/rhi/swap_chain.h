@@ -2,6 +2,8 @@
 
 #include "aether/gfx/rhi/types.h"
 
+#include <vector>
+
 namespace aether::gfx::rhi {
 
 class ISwapChain {
@@ -35,6 +37,17 @@ public:
     // acquire/present semaphores without a backend-specific parameter type
     // in the abstract Submit() signature.
     virtual void* NativeHandle() const = 0;
+
+    // Copies the current back buffer into `rgba8` (Width() x Height(), 4
+    // bytes a pixel, rows top to bottom), waiting for the GPU first. Call it
+    // between Submit and Present. False where the backend or swap chain
+    // can't read back (Phase 24, docs/design/PHASE_SPECS.md §24.3: the
+    // Vulkan backend's offscreen swap chains, and its window swap chains
+    // where the surface allows it).
+    virtual bool ReadBack(std::vector<u8>& rgba8) {
+        (void)rgba8;
+        return false;
+    }
 };
 
 } // namespace aether::gfx::rhi

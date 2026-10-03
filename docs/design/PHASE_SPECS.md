@@ -3855,7 +3855,58 @@ windowing (`AETHER_HAS_WINDOW` tells code which it has).
   `_ENABLE_EXTENDED_ALIGNED_STORAGE`, needed for sorting 16-byte-aligned
   types.
 
-### 24.3 PR breakdown
+### 24.3 The Vulkan backend off Windows
+
+The RHI's Vulkan backend (`gfx/rhi/vulkan`) used to build only on
+Windows. It now builds on Linux (and is ready for macOS) and renders
+headless, which is what lets CI test rendering with no GPU.
+
+- **Build**: on Linux and macOS, CMake uses the system Vulkan loader and
+  headers (`libvulkan-dev`) and glslang (`glslang-dev`). If either is
+  missing, the backend is left out and nothing else changes.
+  `rhi::CreateDevice(Backend::Vulkan)` works off Windows;
+  `Backend::D3D12` reports itself unavailable there.
+- **Shaders**: `CompileHLSLToSPIRV` uses glslang's HLSL front end off
+  Windows, in place of DXC. It compiles the same HLSL with DXC's mapping:
+  `register(tN, spaceM)` becomes set M, binding N; `[[vk::push_constant]]`
+  becomes push constants; entry points keep their names.
+- **Instance**: on Windows the Win32 surface extension. Elsewhere,
+  whichever window-system surface extensions the loader offers (xcb,
+  Xlib, Wayland, Metal), or none on a machine with no window system.
+- **Window swap chains**: `CreateSwapChain` takes an HWND on Windows and
+  a `GLFWwindow*` (`Window::PlatformWindow()`) elsewhere. The surface
+  comes from `glfwCreateWindowSurface`, and present support is checked
+  against it.
+- **Offscreen swap chains**: `CreateSwapChain(nullptr, w, h, n)` creates
+  n device-local images behind the same render pass, framebuffers and
+  depth buffer.
+  - It has no surface and no acquire or present semaphores, and
+    `Present` does nothing.
+  - Pipelines, bindless textures, push constants and draws all work as
+    they do with a window.
+  - Texture handles stay stable across `Resize`.
+- **Read back**: `ISwapChain::ReadBack(rgba8)` copies the current back
+  buffer to memory (RGBA, rows top to bottom). Call it between Submit
+  and Present.
+  - Offscreen swap chains always support it, and window swap chains do
+    where the surface allows `TRANSFER_SRC`.
+  - Other backends return false, for now.
+- **Tests**, on any Vulkan driver (lavapipe in CI):
+  - glslang output (SPIR-V magic number, entry-point names, errors
+    reported).
+  - An offscreen frame: a push-constant-coloured triangle that checks
+    +Y is up, image rotation, and resizing.
+  - A textured quad through the bindless table.
+  - A window swap chain under Xvfb.
+- **CI**: the Linux jobs install the Vulkan loader, glslang and Mesa's
+  lavapipe, and build with Vulkan on.
+  - The ASan+UBSan job hides the driver, because LeakSanitizer reports
+    lavapipe's own thread allocations after unload. Its device tests
+    skip; the other jobs run them.
+- **MSVC**: the missing standard includes it reported (`<array>`,
+  `<numeric>` in terrain) are added, along with the others a scan found.
+
+### 24.4 PR breakdown
 
 1. ✅ **Done.** Continuous integration (§24.1), and the packaged Windows
    editor.
@@ -3863,7 +3914,9 @@ windowing (`AETHER_HAS_WINDOW` tells code which it has).
    green and the editor package launches.
 3. ✅ **Done.** A portable window and input layer (§24.2): GLFW on
    Linux and macOS behind `platform::Window`, alongside Win32.
-4. The editor on Vulkan, through the RHI-hosted ImGui, so it runs on
-   Linux.
-5. Headless screenshot tests with lavapipe (software Vulkan) in Linux CI.
+4. ✅ **Done.** The Vulkan backend off Windows (§24.3): glslang shaders,
+   GLFW surfaces, offscreen swap chains with read-back, and rendering
+   tests on lavapipe in Linux CI.
+5. The editor on Vulkan, through the RHI-hosted ImGui, so it runs on
+   Linux, with screenshot tests on lavapipe.
 6. macOS through MoltenVK, and a plugin structure for Android and consoles.

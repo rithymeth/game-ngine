@@ -1,6 +1,7 @@
 #include "aether/animation/compression.h"
 #include "test_framework.h"
 
+#include <algorithm>
 #include <cmath>
 
 using namespace aether;

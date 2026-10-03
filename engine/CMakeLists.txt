@@ -81,7 +81,7 @@ elseif(AETHER_BUILD_WINDOWING)
     FetchContent_MakeAvailable(glfw)
     target_sources(aether_engine PRIVATE src/platform/window_glfw.cpp)
     target_link_libraries(aether_engine PRIVATE glfw)
-    target_compile_definitions(aether_engine PUBLIC AETHER_HAS_WINDOW)
+    target_compile_definitions(aether_engine PUBLIC AETHER_HAS_WINDOW PRIVATE AETHER_HAS_GLFW)
     if(AETHER_GLFW_WAYLAND)
         target_compile_definitions(aether_engine PRIVATE AETHER_GLFW_WAYLAND)
     endif()
@@ -89,6 +89,20 @@ endif()
 
 if(AETHER_BUILD_VULKAN)
     target_sources(aether_engine PRIVATE src/gfx/rhi/vulkan/vulkan_backend.cpp)
+    if(NOT WIN32)
+        # Off Windows: the RHI's device factory, and glslang for HLSL to
+        # SPIR-V (DXC's role on Windows).
+        target_sources(aether_engine PRIVATE src/gfx/rhi/device_factory.cpp src/gfx/shader_compiler_glslang.cpp)
+        target_link_libraries(aether_engine PRIVATE ${AETHER_GLSLANG_LIBRARIES})
+        # `VkFooInfo info{VK_STRUCTURE_TYPE_...}` leaves the rest zeroed on
+        # purpose, which -Wextra reports member by member.
+        set_source_files_properties(src/gfx/rhi/vulkan/vulkan_backend.cpp PROPERTIES
+                                    COMPILE_OPTIONS -Wno-missing-field-initializers)
+        # Distribution glslang builds have no RTTI, which UBSan's vptr check
+        # (the ASan+UBSan CI job) would need for glslang's classes.
+        set_source_files_properties(src/gfx/shader_compiler_glslang.cpp PROPERTIES
+                                    COMPILE_OPTIONS -fno-sanitize=vptr)
+    endif()
     # PUBLIC, not PRIVATE: rhi_demo includes vulkan_backend.h directly (the
     # same NativeHandle()-based escape hatch the D3D12 backend header already
     # supports), so Vulkan-Headers' include dir must propagate to consumers.
