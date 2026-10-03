@@ -71,7 +71,9 @@ target_sources(aether_tests PRIVATE test_blueprint_graph.cpp test_blueprint_vm.c
     test_terrain_splat.cpp
     test_terrain_renderer.cpp
     test_terrain_foliage.cpp
-    test_terrain_spline.cpp test_ai_perception.cpp)
+    test_terrain_spline.cpp
+    test_terrain_heightfield.cpp
+    test_terrain_world.cpp test_ai_perception.cpp)
 target_link_libraries(aether_tests PRIVATE Aether::Blueprint Aether::Renderer Aether::Animation Aether::Audio Aether::UI Aether::VFX Aether::Nav Aether::AI Aether::Terrain)
 
 add_test(NAME aether_tests COMMAND aether_tests)
