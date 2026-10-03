@@ -5523,7 +5523,16 @@ Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md), Phase 22. The module (`net/`, optio
 
 **Verified (step 7)**: 9 new tests, including two clients filling from a scene snapshot, a unit followed smoothly by interpolation, rejoining, a 250 ms / 15% loss link that still converges, and exact per-field send counts in the profiler.
 
-Remaining for Phase 22: Blueprint/Luau access to RPCs, a game-level session lifecycle (lobby on top of discovery), and wiring Play-in-Editor's "N clients" option and the Network panel into the editor window.
+**Step 8: sessions and the lobby** (`session.h`).
+
+- **SessionHost / SessionClient**: hosting and joining on top of `NetEndpoint`. Both feed their endpoint's events to `HandleEvent`, which consumes session messages and passes everything else (including Connected/Disconnected) back to the game. A client sends a `JoinRequest` (name, game version, password); the host answers `JoinAccept` with a player id or `JoinReject` with why: `Full`, `VersionMismatch`, `BadPassword`, `BadName` (empty, too long or control characters) or `InProgress`. Duplicate names get a suffix inside the length limit, ids are never reused, and a listen-server host can play too (`host_player_name`).
+- **Lobby**: the host keeps the player list, map and phase, and sends every change to all players as a whole-state message; clients see the same `LobbyState` and receive `Joined`, `Rejected`, `LobbyChanged`, `GameStarting` (map and a shared seed), `Kicked` and `Disconnected` events. Players toggle ready; `StartGame` needs everyone ready unless forced; late joiners are refused or, with `allow_join_in_progress`, told to start at once.
+- **Hardening**: a connection that doesn't send its JoinRequest within `join_timeout` is dropped, and nothing but a JoinRequest is accepted from it; rejected and kicked peers are cut off after a short grace if they don't leave; client messages that only the host may send (start, kick, lobby, unknown kinds) are ignored and counted, and a client discards malformed host messages (bad phase, empty names, truncation, over-limit counts).
+- **Discovery**: `SessionHost::Advertisement(game_port)` gives the `SessionInfo` for a `LanHost`, so browsers see the live player count and map.
+
+**Verified (step 8)**: 14 new tests, including joining over 30% loss with duplication (one Joined event), every refusal reason, kick/leave, a late join, a client posing as the host and a host sending garbage.
+
+Remaining for Phase 22: Blueprint/Luau access to RPCs, and wiring Play-in-Editor's "N clients" option and the Network panel into the editor window.
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
 or GCC), and network access the first time you configure (to fetch Jolt
