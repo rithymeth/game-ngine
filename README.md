@@ -5415,7 +5415,7 @@ Behavior Trees and perception come next. Spec:
 
 Build spec: [docs/design/PHASE_SPECS.md](docs/design/PHASE_SPECS.md), Phase 21.
 
-**Step 1: heightmap terrain** (	errain/).
+**Step 1: heightmap terrain** (`terrain/`).
 
 - **Heightmap**: procedural Perlin noise generation (multi-octave), bilinear sampling.
 - **TerrainData**: chunk layout from heightmap dimensions, LOD distances.
