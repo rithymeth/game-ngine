@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 done on the engine and portable-editor side (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes; Blackboards and Behavior Trees; AI perception; debug drawing, the Behavior Tree editor and debugger, and the Navigation panel). Phase 21 done on the engine and portable-editor side (world building: heightmap terrain, splatmaps and brushes, terrain rendering data, foliage, splines, world partition with cell streaming and a floating origin, and the terrain, foliage, spline and partition editors). Phase 22 in progress (networking: the transport, with reliable, unreliable and sequenced channels over UDP or a simulated network; replication with delta snapshots, relevancy and a bandwidth budget; remote calls from C++, Blueprints and Luau with ownership checks; client-side prediction with reconciliation and snapshot interpolation)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 done on the engine and portable-editor side (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes; Blackboards and Behavior Trees; AI perception; debug drawing, the Behavior Tree editor and debugger, and the Navigation panel). Phase 21 done on the engine and portable-editor side (world building: heightmap terrain, splatmaps and brushes, terrain rendering data, foliage, splines, world partition with cell streaming and a floating origin, and the terrain, foliage, spline and partition editors). Phase 22 in progress (networking: the transport, with reliable, unreliable and sequenced channels over UDP or a simulated network; replication with delta snapshots, relevancy and a bandwidth budget; remote calls from C++, Blueprints and Luau with ownership checks; client-side prediction with reconciliation and snapshot interpolation; sessions with LAN discovery, joining and a lobby interface)
 
 ### Phase 1 — Foundation
 
@@ -5651,6 +5651,35 @@ Unreal.
 - The movement rule, sanitized speed hacks that replay identically, and
   inputs from someone else rejected.
 - 525/525 tests pass on GCC 13, Clang and ASan/UBSan, and 557/557 with
+  physics.
+
+**Step 5: sessions** (§22.5).
+
+- **The simulated network gains hosts**: virtual machines (10.0.0.x)
+  and broadcast, and UDP sockets can broadcast.
+- **`SessionInfo`**: name, map, mode, port, players, build, a password
+  flag and properties.
+- **LAN discovery**: `LanBeacon` answers broadcast queries; `LanBrowser`
+  collects sessions with their ping and build compatibility, and expires
+  them.
+- **Hosting and joining**: `SessionHost` admits players by build,
+  password and room, drops silent peers, keeps names unique, and can
+  kick. `SessionClient` ends Joined or Failed with a reason.
+- **`LobbyService`**: an interface for platform services later, with a
+  LAN implementation now.
+
+**Verified**: 5 new tests.
+
+- Simulated hosts, ports and broadcast delivery.
+- Session info round trips, cut-short data, and long strings.
+- Discovering two servers (one with another build), updated player
+  counts, other protocols ignored, expiry, auto-search, and disabled
+  beacons.
+- Joining with the right password; refused for a wrong password, a wrong
+  build, or a full session; duplicate names, silent peers dropped,
+  leaving, kicking, and no server at all.
+- The LAN lobby service advertising, finding and stopping.
+- 530/530 tests pass on GCC 13, Clang and ASan/UBSan, and 562/562 with
   physics.
 
 ## Building

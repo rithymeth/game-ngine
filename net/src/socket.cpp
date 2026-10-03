@@ -77,6 +77,8 @@ bool UdpSocket::Open(u16 port, std::string* error) {
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
     addr.sin_port = htons(port);
     if (bind(s, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) != 0) return fail("couldn't bind the port (in use?)");
+    const int yes = 1; // so LAN discovery can broadcast
+    setsockopt(s, SOL_SOCKET, SO_BROADCAST, reinterpret_cast<const char*>(&yes), sizeof(yes));
 #ifdef _WIN32
     u_long nonblocking = 1;
     if (ioctlsocket(s, FIONBIO, &nonblocking) != 0) return fail("couldn't make the socket non-blocking");
@@ -128,41 +130,56 @@ Address UdpSocket::LocalAddress() const { return Address::Loopback(port_); }
 
 class LoopbackSocket final : public DatagramSocket {
 public:
-    LoopbackSocket(LoopbackNetwork& net, u16 port) : net_(net), port_(port) {}
-    ~LoopbackSocket() override { net_.Close(port_); }
+    LoopbackSocket(LoopbackNetwork& net, Address address) : net_(net), address_(address) {}
+    ~LoopbackSocket() override { net_.Close(address_); }
     bool Send(const Address& to, std::span<const u8> data) override {
-        net_.Post(LocalAddress(), to, data);
+        net_.Post(address_, to, data);
         return true;
     }
-    bool Receive(Address& from, std::vector<u8>& data) override { return net_.Take(LocalAddress(), from, data); }
-    Address LocalAddress() const override { return Address::Loopback(port_); }
+    bool Receive(Address& from, std::vector<u8>& data) override { return net_.Take(address_, from, data); }
+    Address LocalAddress() const override { return address_; }
 
 private:
     LoopbackNetwork& net_;
-    u16 port_;
+    Address address_;
 };
 
-std::unique_ptr<DatagramSocket> LoopbackNetwork::Open(u16 port) {
+std::unique_ptr<DatagramSocket> LoopbackNetwork::Open(u16 port) { return OpenAt(0x7F000001u, port); }
+
+std::unique_ptr<DatagramSocket> LoopbackNetwork::OpenAt(u32 ip, u16 port) {
     if (port == 0) {
-        while (open_.count(next_port_) != 0) ++next_port_;
+        while (open_.count(Address{ip, next_port_}) != 0) ++next_port_;
         port = next_port_++;
     }
-    if (open_.count(port) != 0) return nullptr;
-    open_[port] = true;
-    return std::make_unique<LoopbackSocket>(*this, port);
+    const Address address{ip, port};
+    if (open_.count(address) != 0) return nullptr;
+    open_[address] = true;
+    return std::make_unique<LoopbackSocket>(*this, address);
 }
 
-void LoopbackNetwork::Close(u16 port) {
-    open_.erase(port);
-    std::erase_if(in_flight_, [&](const Datagram& d) { return d.to.port == port; });
+void LoopbackNetwork::Close(const Address& address) {
+    open_.erase(address);
+    std::erase_if(in_flight_, [&](const Datagram& d) { return d.to == address; });
 }
 
 void LoopbackNetwork::Post(const Address& from, const Address& to, std::span<const u8> data) {
     ++sent_;
-    if (to.ip != 0x7F000001u || open_.count(to.port) == 0) { // nobody there: gone, as with UDP
+    if (to.IsBroadcast()) {
+        std::vector<Address> targets;
+        for (const auto& [address, open] : open_)
+            if (address.port == to.port && !(address == from)) targets.push_back(address);
+        if (targets.empty()) ++dropped_;
+        for (const Address& t : targets) Deliver(from, t, data);
+        return;
+    }
+    if (open_.count(to) == 0) { // nobody there: gone, as with UDP
         ++dropped_;
         return;
     }
+    Deliver(from, to, data);
+}
+
+void LoopbackNetwork::Deliver(const Address& from, const Address& to, std::span<const u8> data) {
     std::uniform_real_distribution<f64> u(0.0, 1.0);
     if (u(rng_) < conditions.loss) {
         ++dropped_;
