@@ -3188,6 +3188,8 @@ were then repaired so they build and match their documentation (#96,
 
 ## Phase 22: Networking and multiplayer
 
+✅ **Done** on the engine and portable-editor side.
+
 The concept is in [ROADMAP.md Phase 22](../ROADMAP.md). The engine side
 starts with the `Aether::Net` library (`net/`).
 
@@ -3436,7 +3438,51 @@ Finding, hosting and joining games (`net/include/aether/net/session.h`).
   `LanLobbyService` implements it with a beacon and a browser. Steam,
   EOS and console services implement the same interface later.
 
-### 22.6 PR breakdown
+### 22.6 The editor
+
+Networked Play-in-Editor and the network profiler (`editor/src/net/`).
+
+- **`NetPlaySession`**:
+  - Copies the edited world into a server world through the binary
+    scene format. The edited world is never touched.
+  - Starts N client worlds that connect over a `LoopbackNetwork`, in
+    one process and deterministic for a seed.
+  - Its latency, jitter, loss and duplication can change while playing.
+  - **Modes**: a listen server, which is also a player (its pawn is
+    moved directly on the server), or a dedicated server, which isn't.
+  - **Options**:
+    - **Replicate the scene**: every scene entity with a Transform gets
+      a NetIdentity ("scene").
+    - **Spawn players**: a predicted "player" pawn (Transform and
+      NetMovement) for each connecting client, placed `spawn_spacing`
+      apart and removed when it disconnects.
+  - **Each frame**:
+    - the network advances;
+    - the server runs replication, RPCs and movement;
+    - every client runs replication, RPCs, movement prediction and
+      interpolation.
+  - **Client spawns**: a newly spawned client entity is given copies of
+    the server entity's other components (models, lights), as if the
+    client had loaded the same level. Shipped games do this through
+    `OnSpawn` instead.
+  - **Input**: `MoveClient` (predicted) and `MoveListenPlayer`.
+  - **Per-client views**: connected, RTT, loss, bytes each way, entity
+    count and prediction corrections.
+- **`NetProfile`** (kept by `ReplicationServer`): bytes per entity (with
+  updates and spawns), per component and per field since `Reset`, plus
+  snapshot totals and despawns.
+  - **`BuildEntityRows`** lists entities by cost, each with its
+    components by cost.
+  - **`BuildFieldRows`** lists fields by cost over all entities.
+  - Both give rates in bytes per second.
+- **Panels**:
+  - **`NetPlayPanel`**: the mode, the client count, scene and player
+    options, the network sliders (live while playing), Play and Stop,
+    and a table of the clients.
+  - **`NetProfilerPanel`**: totals and rate, Reset, and "By entity"
+    (tree) and "By field" (table) views.
+
+### 22.7 PR breakdown
 
 1. ✅ **Done.** The transport: sockets (UDP and the simulated network),
    connections with reliable, unreliable and sequenced channels, and
@@ -3454,7 +3500,7 @@ Finding, hosting and joining games (`net/include/aether/net/session.h`).
    and snapshot interpolation for everything else (§22.4).
 5. ✅ **Done.** Sessions (§22.5): hosting, joining and LAN discovery (broadcast); a lobby
    abstraction for platform services later.
-6. The editor:
+6. ✅ **Done.** The editor (§22.6):
    - Play in Editor with N clients and a listen or dedicated server;
    - simulated latency and loss;
    - a network profiler (bandwidth per entity and field).

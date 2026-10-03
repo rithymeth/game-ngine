@@ -5,6 +5,7 @@
 #include "aether/net/host.h"
 
 #include <functional>
+#include <map>
 #include <string>
 #include <unordered_map>
 
@@ -56,6 +57,34 @@ struct ReplicatedComponentType {
 const std::vector<ReplicatedComponentType>& ReplicatedComponentTypes();
 const ReplicatedComponentType* FindReplicatedComponentType(u32 hash);
 u32 ComponentNameHash(const char* name);
+const char* ReplicatedComponentName(u32 hash);
+const char* ReplicatedFieldName(u32 hash, u32 field);
+
+// Where the server's snapshot bytes went (Phase 22 step 6): per entity,
+// per component and per field, since the last Reset. Entity bytes are
+// whole entries (ids, masks, lengths and values); field bytes are a
+// field's length and value.
+struct NetProfile {
+    struct FieldCost {
+        u64 bytes = 0;
+        u32 sends = 0;
+    };
+    struct ComponentCost {
+        u64 bytes = 0;
+        std::map<u32, FieldCost> fields; // by replicated-field index
+    };
+    struct EntityCost {
+        std::string archetype;
+        u64 bytes = 0;
+        u32 updates = 0, spawns = 0;
+        std::map<u32, ComponentCost> components; // by name hash
+    };
+    std::unordered_map<u32, EntityCost> entities; // by net id
+    u64 snapshot_bytes = 0; // everything, headers and despawns included
+    u32 snapshots = 0, despawns = 0;
+    f64 since = 0.0; // when it was reset (the caller's clock)
+    void Reset(f64 now) { *this = NetProfile{}, since = now; }
+};
 
 // Sends the world to clients as delta snapshots (Phase 22 step 2,
 // docs/design/PHASE_SPECS.md §22.2). Every send_interval each connected
@@ -92,6 +121,8 @@ public:
         u64 total_bytes = 0;
     };
     PeerStats Stats(PeerId peer) const;
+    const NetProfile& Profile() const { return profile_; }
+    NetProfile& MutableProfile() { return profile_; }
 
 private:
     struct History {
@@ -123,6 +154,7 @@ private:
     std::unordered_map<u32, Entity> entities_;
     std::unordered_map<u32, Meta> meta_;
     std::unordered_map<PeerId, Peer> peers_;
+    NetProfile profile_;
 };
 
 // Rebuilds the server's world from its snapshots (Phase 22 step 2): spawns
