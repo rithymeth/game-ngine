@@ -3575,10 +3575,62 @@ in-game overlays too.
   - `Overlay(toggle, width)` draws the same panel as a drop-down window
     for game builds, toggled with the tilde key.
 
-### 23.2 PR breakdown
+### 23.2 The profiler
+
+- **Zones** (`aether/core/profiler.h`): `AETHER_PROFILE_ZONE("Physics")`
+  or `AETHER_PROFILE_FUNCTION()`.
+  - Each zone is recorded on its own thread without a lock: two clock
+    reads, and a push when it ends.
+  - It carries its nesting depth and thread.
+  - `Intern` gives stable names for zones named at runtime.
+  - `SetThreadName` names a thread; job workers name themselves
+    "Worker N".
+- **Frames**: `BeginFrame`/`EndFrame` on the main thread. `EndFrame`
+  gathers the following into a `ProfileFrame`, and the last `history`
+  (300) frames are kept:
+  - every thread's zones since the last frame;
+  - the per-frame counts (`Count`: summed over the frame, then reset);
+  - the gauges (`Gauge`: they keep their last value);
+  - the GPU pass timings the render backend submitted.
+  - **Enabled**: off records nothing.
+  - **Paused**: frames still run but aren't kept.
+- **Statistics**: `Aggregate(frames)` gives per zone: calls, total, self
+  (total minus direct children on the same thread), max, and per-frame
+  average, sorted by total.
+- **Export**: `WriteChromeTrace` writes Chrome trace JSON for
+  chrome://tracing and Perfetto, containing:
+  - a "Frames" track;
+  - zones as complete events per thread, with thread names;
+  - counters as counter events.
+- **Tracy**: with `-DAETHER_TRACY=ON`, Tracy's client is fetched and the
+  same macros also emit Tracy zones and frame marks.
+- **Instrumented already**:
+  - every scheduler phase ("Update", "FixedUpdate", ...);
+  - every system, on whichever thread runs it.
+- **Memory by category**: `MemoryTracker` keeps bytes in use, the peak,
+  and allocation and free counts per category.
+  - `LinearAllocator` and `PoolAllocator` report under the category set
+    with `SetMemoryCategory`.
+  - `FrameAllocator` reports its reserved buffers.
+- **Console**:
+  - CVars `profiler.enabled` and `profiler.history`;
+  - commands `profiler.pause`, `profiler.clear` and
+    `profiler.dump [file]` (a Chrome trace).
+- **`ProfilerPanel`** (editor): Record, Pause and Clear toggles, trace
+  export, and the average, fps and worst frame time.
+  - **Frame graph**: green, yellow or red against 60 and 30 fps, with
+    budget lines. Click a frame to inspect it; right-click to follow the
+    newest again.
+  - **Zones**: a table of this frame or all kept frames.
+  - **Timeline**: per-thread lanes, zones nested by depth, with hover
+    times.
+  - **Counters**: the frame's counters and GPU passes.
+  - **Memory**: memory by category.
+
+### 23.3 PR breakdown
 
 1. ✅ **Done.** Console variables and the console (§23.1).
-2. The profiler: CPU zones per thread and frame, counters, memory by
+2. ✅ **Done.** The profiler (§23.2): CPU zones per thread and frame, counters, memory by
    category, with Tracy forwarding as an option (`AETHER_TRACY`), and
    the editor's profiler panel (frame graph, per-zone times, counters).
 3. The debug draw API (lines, boxes, spheres, arrows and world text,

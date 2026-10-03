@@ -39,6 +39,7 @@ add_library(aether_editor_ui STATIC
     ../net/net_play.cpp
     ../net/net_panels.cpp
     ../devtools/console_panel.cpp
+    ../devtools/profiler_panel.cpp
     ../core/command_stack.cpp
     ../core/commands.cpp
     ../core/play_session.cpp

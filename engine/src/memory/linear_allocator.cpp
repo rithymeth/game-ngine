@@ -1,5 +1,7 @@
 #include "aether/memory/linear_allocator.h"
 
+#include "aether/core/profiler.h"
+
 #include <cstring>
 #include <utility>
 
@@ -10,7 +12,7 @@ LinearAllocator::LinearAllocator(void* memory, usize size_bytes) {
 }
 
 LinearAllocator::LinearAllocator(LinearAllocator&& other) noexcept
-    : base_(other.base_), capacity_(other.capacity_), offset_(other.offset_) {
+    : base_(other.base_), capacity_(other.capacity_), offset_(other.offset_), category_(other.category_) {
     other.base_ = nullptr;
     other.capacity_ = 0;
     other.offset_ = 0;
@@ -21,6 +23,7 @@ LinearAllocator& LinearAllocator::operator=(LinearAllocator&& other) noexcept {
         base_ = std::exchange(other.base_, nullptr);
         capacity_ = std::exchange(other.capacity_, 0);
         offset_ = std::exchange(other.offset_, 0);
+        category_ = std::exchange(other.category_, nullptr);
     }
     return *this;
 }
@@ -44,10 +47,12 @@ void* LinearAllocator::Allocate(usize size_bytes, usize alignment) {
     }
 
     offset_ += padding + size_bytes;
+    if (category_) MemoryTracker::Get().Alloc(category_, padding + size_bytes);
     return base_ + offset_ - size_bytes;
 }
 
 void LinearAllocator::Reset() {
+    if (category_ && offset_ > 0) MemoryTracker::Get().Free(category_, offset_);
     offset_ = 0;
 }
 

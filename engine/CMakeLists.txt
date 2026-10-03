@@ -2,6 +2,7 @@ add_library(aether_engine STATIC
     src/core/log.cpp
     src/core/cvar.cpp
     src/core/console.cpp
+    src/core/profiler.cpp
     src/memory/linear_allocator.cpp
     src/memory/pool_allocator.cpp
     src/memory/frame_allocator.cpp
@@ -155,3 +156,16 @@ else()
 endif()
 
 add_library(Aether::Engine ALIAS aether_engine)
+
+# Phase 23: profiler zones can also feed Tracy (https://github.com/wolfpld/tracy).
+# Off by default; when on, Tracy's client is fetched and AETHER_PROFILE_ZONE
+# records into both the engine's profiler and Tracy.
+option(AETHER_TRACY "Forward profiler zones to Tracy" OFF)
+if(AETHER_TRACY)
+    include(FetchContent)
+    FetchContent_Declare(tracy GIT_REPOSITORY https://github.com/wolfpld/tracy.git GIT_TAG v0.11.1 GIT_SHALLOW TRUE)
+    set(TRACY_ENABLE ON CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(tracy)
+    target_link_libraries(aether_engine PUBLIC Tracy::TracyClient)
+    target_compile_definitions(aether_engine PUBLIC AETHER_TRACY)
+endif()
