@@ -117,7 +117,7 @@ AETHER_TEST(Console_RunsStatements) {
     CHECK(name->GetString() == "Grace Hopper" && cascades->GetInt() == 3);
     CHECK(c.Execute("player.name Ada Lovelace") && name->GetString() == "Ada Lovelace"); // strings take the rest
     CHECK(c.Execute("give \"health pack\" 3 # a comment") && got == (std::vector<std::string>{"health pack", "3"}));
-    CHECK(Console::Tokenize(R"(echo "a \"quoted\" word" b)") == (std::vector<std::string>{"echo", "a \"quoted\" word", "b"}));
+    CHECK(Console::Tokenize("echo \"a \\\"quoted\\\" word\" b") == (std::vector<std::string>{"echo", "a \"quoted\" word", "b"}));
     CHECK(Console::SplitStatements("a 1; b \"x;y\"; ;  ") == (std::vector<std::string>{"a 1", " b \"x;y\""}));
     // Refusals.
     CHECK(!c.Execute("app.version 2.0") && version->GetString() == "1.2" && Has(c, "read-only"));
