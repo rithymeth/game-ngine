@@ -39,8 +39,11 @@ public:
     // intended for POD/transient data or externally-managed lifetimes.
     void Reset();
 
-    usize Capacity() const { return capacity_; }
+    // Reports what's in use to the MemoryTracker under `category` (Phase 23; null: off).
+    void SetMemoryCategory(const char* category) { category_ = category; }
     usize Used() const { return offset_; }
+
+    usize Capacity() const { return capacity_; }
     usize Remaining() const { return capacity_ - offset_; }
     void* Base() const { return base_; }
 
@@ -48,6 +51,7 @@ private:
     u8* base_ = nullptr;
     usize capacity_ = 0;
     usize offset_ = 0;
+    const char* category_ = nullptr;
 };
 
 } // namespace aether

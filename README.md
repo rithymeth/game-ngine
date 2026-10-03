@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 done on the engine and portable-editor side (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes; Blackboards and Behavior Trees; AI perception; debug drawing, the Behavior Tree editor and debugger, and the Navigation panel). Phase 21 done on the engine and portable-editor side (world building: heightmap terrain, splatmaps and brushes, terrain rendering data, foliage, splines, world partition with cell streaming and a floating origin, and the terrain, foliage, spline and partition editors). Phase 22 done on the engine and portable-editor side (networking: a UDP transport with reliable, unreliable and sequenced channels; delta-snapshot replication with relevancy and a bandwidth budget; RPCs from C++, Blueprints and Luau; client-side prediction and snapshot interpolation; sessions with LAN discovery and lobbies; networked Play-in-Editor and a network profiler). Phase 23 in progress (developer tools: console variables and the console)
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 done on the engine and portable-editor side (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes; Blackboards and Behavior Trees; AI perception; debug drawing, the Behavior Tree editor and debugger, and the Navigation panel). Phase 21 done on the engine and portable-editor side (world building: heightmap terrain, splatmaps and brushes, terrain rendering data, foliage, splines, world partition with cell streaming and a floating origin, and the terrain, foliage, spline and partition editors). Phase 22 done on the engine and portable-editor side (networking: a UDP transport with reliable, unreliable and sequenced channels; delta-snapshot replication with relevancy and a bandwidth budget; RPCs from C++, Blueprints and Luau; client-side prediction and snapshot interpolation; sessions with LAN discovery and lobbies; networked Play-in-Editor and a network profiler). Phase 23 in progress (developer tools: console variables and the console; the profiler with zones, counters, memory, a trace export and its panel)
 
 ### Phase 1 — Foundation
 
@@ -5742,6 +5742,33 @@ Spec: [PHASE_SPECS.md, Phase 23](docs/design/PHASE_SPECS.md).
 - The panel's history and Tab completion, and drawing docked and as an
   overlay.
 - 541/541 tests pass on GCC 13.
+
+**Step 2: the profiler** (§23.2).
+
+- **Zones**: `AETHER_PROFILE_ZONE` records per thread without a lock.
+  Frames gather zones, per-frame counters, gauges and GPU pass times;
+  the last 300 frames are kept.
+- **Statistics**: total, self and max time per zone.
+- **Export**: a Chrome or Perfetto trace.
+- **Tracy**: optional forwarding (`-DAETHER_TRACY=ON`).
+- **Instrumented**: scheduler phases and every system; job workers are
+  named.
+- **Memory by category**: the allocators report their usage.
+- **Console**: profiler variables and commands.
+- **The profiler panel**: a frame graph (click a frame to inspect it),
+  zone tables, a per-thread timeline, counters and GPU passes, memory,
+  and export.
+
+**Verified**: 4 new tests.
+
+- Nesting and self time, counters, gauges and GPU timings, and the
+  enabled, paused and history settings.
+- Named threads, and the scheduler's and workers' zones.
+- The Chrome trace's contents, the allocators' memory, and the console
+  commands.
+- The panel's frame selection, zone statistics per frame and across
+  all frames, export, and drawing.
+- 545/545 tests pass on GCC 13.
 
 ## Building
 
