@@ -7,6 +7,7 @@
 
 #include <functional>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace aether::net {
@@ -80,6 +81,14 @@ public:
     // spawned again when it becomes relevant.
     std::function<bool(NetAddress peer, Entity entity)> relevancy;
 
+    // A component that is sent in full when an entity spawns on a client but
+    // never updated after that, because something else keeps it current (a
+    // moving entity's Transform, owned by snapshot interpolation).
+    template <typename T>
+    void ReplicateOnlyOnSpawn() {
+        spawn_only_.insert(ComponentHash(GetComponentInfo(GetComponentId<T>()).name));
+    }
+
     // Most bytes of records sent to one peer per Replicate call (0 = unlimited).
     // Records beyond it wait for the next call; the longer one waits, the
     // higher its priority, and new spawns always go first.
@@ -121,6 +130,7 @@ private:
     World& world_;
     NetEndpoint& endpoint_;
     u32 next_net_id_ = 1;
+    std::unordered_set<u32> spawn_only_;
     std::unordered_map<u32, Entity> by_id_;
     std::unordered_map<NetAddress, PeerState> peers_;
     ReplicationStats stats_;

@@ -4,6 +4,7 @@ add_library(aether_net STATIC
     src/replication.cpp
     src/rpc.cpp
     src/prediction.cpp
+    src/interpolation.cpp
 )
 
 target_include_directories(aether_net PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

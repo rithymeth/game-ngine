@@ -5498,6 +5498,17 @@ Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md), Phase 22. The module (`net/`, optio
 
 **Verified (step 4)**: 13 new tests, including no corrections at all when client and server agree over a 50 ms link, a server-only wall corrected without a visible jump, replay arithmetic, 30% loss with jitter, a 16-inputs-per-tick speed hack, and malformed input.
 
+**Step 5: snapshot interpolation** (`interpolation.h`).
+
+- **Snapshots**: the server captures every replicated entity's Transform (`CaptureSnapshots`) and sends it timestamped and unreliable at a modest rate (`BuildSnapshotMessages` splits to the size limit; position as floats, rotation as three 16-bit components with w rebuilt). Parsing rejects truncation, length bombs, non-finite values and trailing bytes.
+- **ClockSync**: estimates the server's clock from the timestamps, trusting the least delayed packet, following drift slowly and adopting a restarted server's clock at once.
+- **InterpolationBuffer / SnapshotInterpolator**: each entity is shown `delay` (100 ms) in the past, blending the two snapshots around that moment (rotation the short way round); a late snapshot is slotted in, and when the buffer runs dry the entity extrapolates for up to `max_extrapolation`, then holds. `Apply` writes Transforms, skips entities owned by this client (those are predicted), and lets snapshots for not-yet-spawned entities wait.
+- **ReplicationServer::ReplicateOnlyOnSpawn<Transform>()**: a component sent in full at spawn and never updated, so a moving entity's Transform isn't also streamed reliably.
+
+**Verified (step 5)**: 11 new tests, including a mover tracked within 0.25 m of the server's past position with no per-frame jump over 10% loss and jitter, the owned entity left alone, and spawn-only replication keeping updates to a handful.
+
+Remaining for Phase 22: sessions and LAN discovery, a UDP socket transport, Blueprint/Luau access to RPCs, and the editor's network tools (multi-client play in editor, profiler, simulated latency).
+
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
 or GCC), and network access the first time you configure (to fetch Jolt
 Physics, Dear ImGui, Vulkan-Headers, stb_image, nlohmann/json, and — on a
