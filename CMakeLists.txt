@@ -202,6 +202,7 @@ add_subdirectory(vfx)
 # Terrain (Phase 21): heightmap-based terrain with chunked meshes and LOD.
 add_subdirectory(terrain)
 add_subdirectory(streaming)
+add_subdirectory(net)
 
 # Recast/Detour (zlib, recastnavigation/recastnavigation) for navigation
 # meshes, pathfinding and crowds (Phase 20). Only the libraries.

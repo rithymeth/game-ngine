@@ -3185,3 +3185,83 @@ were then repaired so they build and match their documentation (#96,
    - spline editing;
    - the world partition map (cells loaded, entity counts, and the
      sources' reach).
+
+## Phase 22: Networking and multiplayer
+
+The concept is in [ROADMAP.md Phase 22](../ROADMAP.md). The engine side
+starts with the `Aether::Net` library (`net/`).
+
+The transport is our own small protocol, in the manner of ENet and
+yojimbo, over a datagram socket interface. That way:
+- the same code runs over UDP and over an in-memory network that
+  simulates latency, jitter, loss and duplication;
+- tests are deterministic;
+- the editor gets simulated bad networks for free.
+
+### 22.1 The transport
+
+- **Sockets** (`DatagramSocket`):
+  - `UdpSocket`: non-blocking, POSIX or WinSock, bound to a port (0 for
+    any free one).
+  - `LoopbackNetwork`: sockets on 127.0.0.1 ports in one process.
+    Datagrams are delivered at now + latency + random jitter (so they
+    can reorder), lost, or duplicated, by seeded chance. Time moves
+    only with `Advance`, and datagrams to a closed port are dropped as
+    with UDP.
+- **Addresses**: IPv4 and a port, parsed from and printed as
+  `a.b.c.d:port`.
+- **Connections** (`Connection`):
+  - Packets: a 16-bit sequence number (wrapping) and acks of the newest
+    packet received plus a bit for each of the 32 before it. Duplicate
+    packets are dropped. Payloads are at most 1200 bytes.
+  - Channels, by type:
+    - **ReliableOrdered**: messages ride packets until one carrying them
+      is acked, resent after max(0.1 s, RTT × 1.25 + 20 ms), delivered
+      once and in order. A window of 256 messages per channel is in
+      flight, and messages larger than 1024 bytes are split into
+      fragments and joined (up to `max_message`, 256 KB).
+    - **Unreliable**: messages go once and fit one packet.
+    - **UnreliableSequenced**: unreliable, and never older than one
+      already delivered (for state).
+  - Queues are bounded per channel. Sends that don't fit are refused,
+    as are messages to a channel that doesn't exist.
+  - Stats: RTT (smoothed from acks), packet loss (a packet unacked
+    after max(1 s, 4 × RTT) counts as lost), packets and bytes, and
+    resends.
+- **Hosts** (`NetHost`):
+  - A server listens and accepts peers up to `max_peers`, refusing the
+    rest. A client connects with a nonce, retrying every 0.25 s until it
+    is accepted, refused, or 5 s pass.
+  - A lost Accept is sent again on a repeated request. A new request
+    from a known address (a restarted client) replaces the old peer.
+  - Connected peers keep alive (at least every 0.25 s) and time out
+    after 5 s of silence.
+  - Goodbyes are sent three times, unacknowledged.
+  - Packets with another protocol id are ignored.
+  - Events: Connected, Disconnected (with a reason: Local, Remote,
+    Timeout, Denied, ConnectFailed) and Message (peer, channel, bytes).
+  - Send, Broadcast (with an exception) and peer info, including the
+    connection's stats.
+
+### 22.2 PR breakdown
+
+1. ✅ **Done.** The transport: sockets (UDP and the simulated network),
+   connections with reliable, unreliable and sequenced channels, and
+   hosts.
+2. Replication:
+   - the `Replicated` field flag and `NetIdentity`;
+   - server-authoritative snapshots of reflected fields, with delta
+     compression against acked baselines;
+   - spawning and despawning on clients;
+   - relevancy by distance, and per-connection priority within a
+     bandwidth budget.
+3. RPCs: `Server`, `Client` and `Multicast` function flags, called from
+   C++, Blueprints and Luau, with ownership checks.
+4. Client-side prediction and reconciliation for character movement,
+   and snapshot interpolation for everything else.
+5. Sessions: hosting, joining and LAN discovery (broadcast); a lobby
+   abstraction for platform services later.
+6. The editor:
+   - Play in Editor with N clients and a listen or dedicated server;
+   - simulated latency and loss;
+   - a network profiler (bandwidth per entity and field).
