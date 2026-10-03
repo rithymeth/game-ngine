@@ -3936,6 +3936,8 @@ The editor's panels now run wherever Vulkan does. The D3D12 editor
     `AETHER_EDITOR_SCREENSHOT` (a PNG of the last frame, through
     `ISwapChain::ReadBack`) work as in the Windows editor;
     `AETHER_EDITOR_SIZE=WxH` sets the size.
+    `AETHER_EDITOR_TAB` (`blueprint`, `material`, `animation`,
+    `behavior`; any prefix) picks the editor tab it opens on.
 - **Tests**:
   - Key mapping.
   - Window events driving ImGui: mouse, buttons, Ctrl+S chords,
