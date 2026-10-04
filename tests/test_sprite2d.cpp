@@ -769,3 +769,230 @@ AETHER_TEST(Physics2D_ComponentsSaveThroughReflection) {
     CHECK(rb_back.type == BodyType2D::Kinematic && Near(rb_back.velocity.y, 2.0f));
     CHECK(Near(Vec2{3, 4}.Length(), 5.0f));
 }
+
+// --- 2D lights ----------------------------------------------------------------
+
+#include "aether/sprite2d/lights2d.h"
+
+namespace {
+
+Entity LightAtPos(World& w, Vec3 at, Light2D light) {
+    const Entity e = w.CreateEntity();
+    w.AddComponent<Transform>(e, Transform{at, Quaternion::Identity()});
+    w.AddComponent<Light2D>(e, light);
+    return e;
+}
+
+Entity Caster(World& w, Vec3 at, Vec2 half) {
+    const Entity e = w.CreateEntity();
+    w.AddComponent<Transform>(e, Transform{at, Quaternion::Identity()});
+    ShadowCaster2D c;
+    c.half_extents = half;
+    w.AddComponent<ShadowCaster2D>(e, c);
+    return e;
+}
+
+bool InsidePolygon(const std::vector<Vec2>& poly, Vec2 p) {
+    bool inside = false;
+    for (usize i = 0, j = poly.size() - 1; i < poly.size(); j = i++) {
+        if (((poly[i].y > p.y) != (poly[j].y > p.y)) &&
+            (p.x < (poly[j].x - poly[i].x) * (p.y - poly[i].y) / (poly[j].y - poly[i].y) + poly[i].x)) {
+            inside = !inside;
+        }
+    }
+    return inside;
+}
+
+Entity FindLamp(World& w) {
+    Entity found;
+    w.ForEachArchetype([&](const Archetype& a) {
+        for (usize c = 0; c < a.ChunkCount(); ++c) {
+            for (u32 i = 0; i < a.ChunkEntityCount(c); ++i) {
+                if (w.GetComponent<Light2D>(a.EntityArray(c)[i])) found = a.EntityArray(c)[i];
+            }
+        }
+    });
+    return found;
+}
+
+struct TileWorld {
+    World world;
+    Tileset ts;
+    TilemapData map;
+    Resolvers2D resolvers;
+    TileWorld() {
+        RegisterSprite2DComponents();
+        RegisterLight2DComponents();
+        ts.texture_width = ts.texture_height = 32;
+        ts.tile_width = ts.tile_height = 16;
+        ts.SetSolid(1, true);
+        map.Resize(20, 10);
+        map.AddLayer("L");
+        resolvers.tilemaps = [this](const assets::AssetGuid&) { return &map; };
+        resolvers.tilesets = [this](const assets::AssetGuid&) { return &ts; };
+        const Entity level = world.CreateEntity();
+        world.AddComponent<Transform>(level, Transform{Vec3(0, 0, 0), Quaternion::Identity()});
+        TilemapRenderer r;
+        r.pixels_per_unit = 16.0f; // a tile is a unit
+        world.AddComponent<TilemapRenderer>(level, r);
+    }
+};
+
+} // namespace
+
+AETHER_TEST(Lights2D_PointLightFalloffAndColor) {
+    RegisterLight2DComponents();
+    World world;
+    Light2D lamp;
+    lamp.radius = 4.0f;
+    lamp.falloff = 1.0f;
+    lamp.color = {1.0f, 0.5f, 0.25f, 1.0f};
+    lamp.intensity = 2.0f;
+    const Entity e = LightAtPos(world, Vec3(1, 1, 0), lamp);
+    const std::vector<Segment2D> none;
+    LightColor c = LightAt(world, none, {1, 1});
+    CHECK(Near(c.r, 2.0f) && Near(c.g, 1.0f) && Near(c.b, 0.5f)); // at the lamp: full, tinted
+    c = LightAt(world, none, {3, 1});                              // halfway out
+    CHECK(Near(c.r, 1.0f) && Near(c.g, 0.5f) && Near(c.b, 0.25f));
+    c = LightAt(world, none, {5, 1});                              // at the radius
+    CHECK(Near(c.r, 0.0f) && Near(c.g, 0.0f));
+    CHECK(Near(LightAt(world, none, {9, 9}).r, 0.0f));
+
+    world.GetComponent<Light2D>(e)->falloff = 2.0f; // steeper: (1 - 0.5)^2 * 2
+    CHECK(Near(LightAt(world, none, {3, 1}).r, 0.5f));
+    world.GetComponent<Light2D>(e)->enabled = false;
+    CHECK(Near(LightAt(world, none, {1, 1}).r, 0.0f));
+
+    // A global light adds the same everywhere, and lights add up.
+    world.GetComponent<Light2D>(e)->enabled = true;
+    Light2D ambient;
+    ambient.type = Light2DType::Global;
+    ambient.color = {0.2f, 0.2f, 0.4f, 1.0f};
+    ambient.intensity = 1.0f;
+    LightAtPos(world, Vec3(100, 100, 0), ambient);
+    c = LightAt(world, none, {1, 1});
+    CHECK(Near(c.r, 2.2f) && Near(c.b, 0.4f + 0.5f));
+    c = LightAt(world, none, {50, 50});
+    CHECK(Near(c.r, 0.2f) && Near(c.g, 0.2f) && Near(c.b, 0.4f));
+}
+
+AETHER_TEST(Lights2D_SpotConeAndRotation) {
+    RegisterLight2DComponents();
+    World world;
+    Light2D spot;
+    spot.type = Light2DType::Spot;
+    spot.radius = 10.0f;
+    spot.falloff = 1.0f;
+    spot.direction_degrees = 0.0f; // along +x
+    spot.inner_angle = 10.0f;
+    spot.outer_angle = 30.0f;
+    const Entity e = LightAtPos(world, Vec3(0, 0, 0), spot);
+    const std::vector<Segment2D> none;
+    const f32 along = LightAt(world, none, {5, 0}).r;
+    CHECK(Near(along, 0.5f));
+    // 5 units out at 20 degrees (halfway across the soft edge: smoothstep(0.5) = 0.5).
+    const f32 ang = 20.0f * 3.14159265f / 180.0f;
+    const f32 half = LightAt(world, none, {5 * std::cos(ang), 5 * std::sin(ang)}).r;
+    CHECK(half > 0.0f && half < along);
+    CHECK(Near(LightAt(world, none, {5 * std::cos(0.1f), 5 * std::sin(0.1f)}).r, 0.5f * (1.0f - 0.0f), 0.01f)); // inside the inner cone
+    CHECK(Near(LightAt(world, none, {0, 5}).r, 0.0f));   // 90 degrees off: dark
+    CHECK(Near(LightAt(world, none, {-5, 0}).r, 0.0f));  // behind
+    // Turn the entity a quarter turn about z: the cone now points up.
+    const f32 s = std::sqrt(0.5f);
+    world.GetComponent<Transform>(e)->rotation = Quaternion(0, 0, s, s);
+    CHECK(Near(LightAt(world, none, {0, 5}).r, 0.5f, 0.01f) && Near(LightAt(world, none, {5, 0}).r, 0.0f));
+    world.GetComponent<Transform>(e)->rotation = Quaternion::Identity();
+    world.GetComponent<Light2D>(e)->direction_degrees = 180.0f; // and the light's own direction adds
+    CHECK(Near(LightAt(world, none, {-5, 0}).r, 0.5f, 0.01f));
+}
+
+AETHER_TEST(Lights2D_ShadowCastersBlockLight) {
+    RegisterLight2DComponents();
+    World world;
+    Light2D lamp;
+    lamp.radius = 10.0f;
+    lamp.falloff = 1.0f;
+    const Entity e = LightAtPos(world, Vec3(0, 0, 0), lamp);
+    Caster(world, Vec3(3, 0, 0), Vec2{0.5f, 0.5f});
+    const std::vector<Segment2D> occluders = GatherOccluders(world, {}, {-20, -20}, {20, 20});
+    CHECK(occluders.size() == 4); // one box
+    CHECK(LightAt(world, occluders, {5, 0}).r == 0.0f);          // behind the box
+    CHECK(LightAt(world, occluders, {5, 3}).r > 0.2f);           // beside it
+    CHECK(LightAt(world, occluders, {2, 0}).r > 0.7f);           // in front
+    world.GetComponent<Light2D>(e)->cast_shadows = false;
+    CHECK(LightAt(world, occluders, {5, 0}).r > 0.3f);           // this lamp ignores casters
+    CHECK(Occluded(occluders, {0, 0}, {5, 0}) && !Occluded(occluders, {0, 0}, {2, 0}) && !Occluded(occluders, {0, 0}, {0, 5}));
+    CHECK(GatherOccluders(world, {}, {-20, 10}, {20, 20}).empty()); // out of the region
+}
+
+AETHER_TEST(Lights2D_TileWallsAreLinesNotGrids) {
+    TileWorld tw;
+    tw.map.Fill(0, 4, 2, 6, 4, 1); // a 3x3 block
+    const std::vector<Segment2D> segs = GatherOccluders(tw.world, tw.resolvers, {0, 0}, {20, 10});
+    CHECK(segs.size() == 12); // the perimeter: 3 edges a side
+    const std::vector<Segment2D> culled = GatherOccluders(tw.world, tw.resolvers, {10, 0}, {20, 10});
+    CHECK(culled.empty());
+    tw.map.Set(0, 5, 3, kEmpty); // a hole in the middle: its four faces are exposed too
+    CHECK(GatherOccluders(tw.world, tw.resolvers, {0, 0}, {20, 10}).size() == 16);
+}
+
+AETHER_TEST(Lights2D_LightMapShadowsAndWalls) {
+    TileWorld tw;
+    tw.map.Fill(0, 10, 0, 10, 9, 1); // a wall the full height at x = 10
+    Light2D lamp;
+    lamp.radius = 12.0f;
+    lamp.falloff = 1.0f;
+    LightAtPos(tw.world, Vec3(5.5f, 5.5f, 0), lamp);
+    const LightMap lit = BuildLightMap(tw.world, tw.resolvers, {0, 0}, {20, 10}, 1.0f);
+    CHECK(lit.width == 20 && lit.height == 10 && lit.cells.size() == 200);
+    CHECK(lit.At(5, 5).r > 0.95f);        // at the lamp
+    CHECK(lit.At(8, 5).r > 0.3f);         // in front of the wall
+    CHECK(lit.At(12, 5).r == 0.0f);       // behind it: in shadow
+    CHECK(lit.At(15, 5).r == 0.0f);
+    // The wall's own cells take the light of the air in front of them.
+    CHECK(lit.At(10, 5).r > 0.3f && Near(lit.At(10, 5).r, lit.At(9, 5).r, 0.01f));
+    // Sampling blends cells and clamps at the edges.
+    const LightColor mid = lit.Sample(6.0f, 5.5f);
+    CHECK(mid.r < lit.At(5, 5).r && mid.r > lit.At(6, 5).r);
+    CHECK(Near(lit.Sample(-5, 5.5f).r, lit.At(0, 5).r) && Near(lit.Sample(99, 99).r, lit.At(19, 9).r));
+    // Without shadows the back of the wall is lit as well.
+    tw.world.GetComponent<Light2D>(FindLamp(tw.world))->cast_shadows = false;
+    CHECK(BuildLightMap(tw.world, tw.resolvers, {0, 0}, {20, 10}, 1.0f).At(12, 5).r > 0.2f);
+    // Bad regions and sizes give an empty map.
+    CHECK(BuildLightMap(tw.world, tw.resolvers, {0, 0}, {20, 10}, 0.0f).cells.empty());
+    CHECK(BuildLightMap(tw.world, tw.resolvers, {5, 5}, {5, 9}, 1.0f).cells.empty());
+}
+
+AETHER_TEST(Lights2D_VisibilityPolygon) {
+    // No occluders: the square round the light (rays stop at it).
+    std::vector<Vec2> poly = VisibilityPolygon({0, 0}, 5.0f, {});
+    CHECK(poly.size() >= 8);
+    for (const Vec2& p : poly) CHECK(p.Length() <= 5.0f * 1.4143f + 1e-3f && p.Length() >= 5.0f - 1e-3f);
+    CHECK(InsidePolygon(poly, {4, 4}) && InsidePolygon(poly, {-4, 3}) && !InsidePolygon(poly, {6, 0}));
+
+    // A wall across the way casts a shadow behind it.
+    std::vector<Segment2D> wall = {{{2, -1}, {2, 1}}};
+    poly = VisibilityPolygon({0, 0}, 5.0f, wall);
+    CHECK(InsidePolygon(poly, {1, 0}) && InsidePolygon(poly, {1.9f, 0.5f}));
+    CHECK(!InsidePolygon(poly, {3, 0}) && !InsidePolygon(poly, {4, 0.5f}));
+    CHECK(InsidePolygon(poly, {3, 3}) && InsidePolygon(poly, {-3, 0}));
+    // Every ray's end is at the wall or the bounds: nothing reaches past the wall inside its shadow.
+    for (const Vec2& p : poly) CHECK(!(p.x > 2.01f && std::fabs(p.y) < 0.4f));
+    CHECK(VisibilityPolygon({0, 0}, 0.0f, wall).empty());
+}
+
+AETHER_TEST(Lights2D_ComponentsSaveThroughReflection) {
+    Light2D spot;
+    spot.type = Light2DType::Spot;
+    spot.color = {0.1f, 0.2f, 0.3f, 1.0f};
+    spot.radius = 7.0f;
+    spot.outer_angle = 55.0f;
+    spot.cast_shadows = false;
+    Light2D back;
+    CHECK(reflect::FromJson(back, reflect::ToJson(spot)));
+    CHECK(back.type == Light2DType::Spot && Near(back.color.g, 0.2f) && Near(back.radius, 7.0f) && Near(back.outer_angle, 55.0f) && !back.cast_shadows);
+    ShadowCaster2D box;
+    box.half_extents = {2, 3};
+    ShadowCaster2D box_back;
+    CHECK(reflect::FromJson(box_back, reflect::ToJson(box)) && Near(box_back.half_extents.y, 3.0f));
+}
