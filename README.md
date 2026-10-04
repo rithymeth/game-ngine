@@ -5885,8 +5885,7 @@ runs the window tests under Xvfb.
 editor's panels on any platform with Vulkan, in a GLFW window or
 offscreen:
 
-- **Panels**: the Blueprint, Material, Animation and Behavior Tree
-  editors, the terrain tools, the console and the profiler.
+- **Panels**: every tool editor (see "Every tool in both editors" below).
 - **Rendering**: Dear ImGui is drawn through the engine's own Vulkan
   device.
 - **Input**: comes from the engine's portable window events.
@@ -5928,6 +5927,25 @@ textures (BC1, BC3, BC4, BC5, BC7) with sRGB-correct mips. Normal maps
 use BC5, with renormalized mips. The results are stored in `.atex`
 files that GPUs can sample directly.
 
+**Every tool in both editors.** The Windows editor (`aether_editor.exe`,
+D3D12) and the portable shell (`aether_editor_shell`, Vulkan) host the
+same set of tool editors (`editor/src/workspace`). Each one opens on a
+sample document:
+
+- **Scripting**: the Blueprint editor and the Luau code editor.
+- **Rendering**: the Material editor and the particle system (VFX) editor.
+- **Animation**: the anim graph, blend space and clip viewer.
+- **AI**: the Behavior Tree editor and the Navigation panel (baked).
+- **Audio**: the Sound Cue editor and the mixer.
+- **UI**: the UI Designer.
+- **World**: terrain, foliage, spline and world partition tools.
+- **Networking**: networked Play-in-Editor and the network profiler.
+- **Debug**: the console, the profiler and the crash reports.
+
+They're in the **Tools** window (a list by category, with the selected
+tool beside it) and the **Tools** menu, which pops a tool out into its
+own window. `AETHER_EDITOR_TAB=<name>` picks the tool to open on.
+
 ## Building
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
@@ -5939,7 +5957,7 @@ Vulkan-enabled Windows build — a SPIR-V-capable `dxcompiler.dll` release).
 cmake -S . -B build
 cmake --build build --config RelWithDebInfo
 ./build/sandbox/aether_sandbox.exe          # Windows only; Phase 3/4 bindless + GPU-culling demo
-./build/editor/aether_editor.exe            # Windows only; Phase 5 ImGui editor + physics
+./build/editor/aether_editor.exe            # Windows only; the D3D12 editor: 3D view, physics and every tool editor
 AETHER_RHI_BACKEND=vulkan ./build/rhi_demo/aether_rhi_demo.exe   # or =d3d12 (default); swappable RHI proof
 ctest --test-dir build --output-on-failure
 ```
