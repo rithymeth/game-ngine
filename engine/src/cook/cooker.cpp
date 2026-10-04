@@ -7,6 +7,7 @@
 #include "aether/cook/texture_cook.h"
 #include "aether/core/log.h"
 #include "aether/platform/filesystem.h"
+#include "aether/plugin/plugin.h"
 #include "aether/project/project.h"
 #include "aether/reflection/registry.h"
 #include "aether/reflection/serialize.h"
@@ -170,6 +171,14 @@ CookReport Cook(const CookOptions& options) {
     AssetDatabase database(paths.content);
     const assets::ScanResult scan = database.Scan();
     report.warnings.insert(report.warnings.end(), scan.warnings.begin(), scan.warnings.end());
+
+    // The project's plugins: what the game starts, and their content.
+    plugin::PluginManager plugins;
+    if (!plugin::ResolveProjectPlugins(options.project_file, plugins, &error, &report.warnings)) {
+        return fail("Plugins: " + error);
+    }
+    for (const plugin::PluginInfo* p : plugins.Enabled()) report.plugins.push_back(p->descriptor.name);
+    report.modules = plugins.ModuleOrder(/*runtime=*/true, /*editor=*/false);
 
     const bool dlc = !options.dlc_name.empty();
     if (dlc && pak::NormalizePath(options.dlc_name) != options.dlc_name) return fail("Invalid DLC name '" + options.dlc_name + "'");
@@ -341,6 +350,12 @@ CookReport Cook(const CookOptions& options) {
         report.extra_files.push_back(path);
     }
 
+    if (!dlc) {
+        for (const auto& [dir, mount] : plugins.ContentMounts()) {
+            const usize added = writer.AddDirectory(dir.string(), "Content/" + mount.substr(0, mount.size() - 1));
+            if (added == 0) report.warnings.push_back("The plugin content folder " + dir.string() + " is empty");
+        }
+    }
     json files = json::array();
     for (const std::string& path : extra) files.push_back(path);
     json presets = json::array();
@@ -364,6 +379,8 @@ CookReport Cook(const CookOptions& options) {
           {"vsync", settings.vsync}}},
         {"quality_presets", std::move(presets)},
         {"default_quality", settings.default_quality},
+        {"plugins", report.plugins},
+        {"modules", report.modules},
         {"assets", std::move(manifest_assets)},
         {"files", std::move(files)},
     };

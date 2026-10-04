@@ -18,6 +18,7 @@ add_library(aether_engine STATIC
     src/pak/vfs.cpp
     src/cook/cooker.cpp
     src/cook/package.cpp
+    src/plugin/plugin.cpp
     src/cook/texture_cook.cpp
     src/math/math.cpp
     src/job/job_system.cpp
@@ -225,3 +226,6 @@ endif()
 # Phase 25 step 5: packaging finds the player this engine was built with
 # (player/), when there's none beside the running executable.
 target_compile_definitions(aether_engine PRIVATE AETHER_PLAYER_BUILD_PATH="$<TARGET_FILE:aether_player>")
+# Phase 26 step 1: the engine's own plugins (plugins/: physics, audio, AI,
+# networking), found by PluginManager::EnginePluginsDir().
+target_compile_definitions(aether_engine PRIVATE AETHER_ENGINE_PLUGINS_DIR="${CMAKE_SOURCE_DIR}/plugins")
