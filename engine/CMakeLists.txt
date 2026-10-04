@@ -15,6 +15,7 @@ add_library(aether_engine STATIC
     src/platform/platform_plugin.cpp
     src/pak/pak.cpp
     src/pak/vfs.cpp
+    src/cook/cooker.cpp
     src/math/math.cpp
     src/job/job_system.cpp
     src/ecs/archetype.cpp

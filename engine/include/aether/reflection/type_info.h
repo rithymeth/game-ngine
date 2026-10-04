@@ -49,6 +49,7 @@ enum FieldFlags : u32 {
     Field_Transient = 1u << 2,          // never serialized
     Field_BlueprintReadWrite = 1u << 3, // Get/Set nodes generated (Phase 12)
     Field_Replicated = 1u << 4,         // sent to clients (Phase 22)
+    Field_EditorOnly = 1u << 5,         // saved in the editor, stripped by the cooker (Phase 25)
 };
 
 struct TypeInfo;

@@ -361,8 +361,9 @@ endif()
 
 # Phase 23: the functional test runner (headless, any platform).
 add_subdirectory(tools/functional)
-# Phase 25: the .apak archive tool.
+# Phase 25: the .apak archive tool and the cooker.
 add_subdirectory(tools/pak)
+add_subdirectory(tools/cook)
 
 if(AETHER_BUILD_SANDBOX)
     add_subdirectory(sandbox)

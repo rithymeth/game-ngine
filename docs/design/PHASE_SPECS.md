@@ -4076,13 +4076,64 @@ everything else writes and reads.
 - **CI**: the GCC job packs `assets/` with `aether_pak`, verifies the
   archive, extracts it and compares the result with the original.
 
-### 25.2 PR breakdown
+### 25.2 The cooker
+
+- **`aether::cook::Cook`** (`aether/cook/cooker.h`) turns a project into
+  one `.apak` archive (`<out>/<pak_name>.apak`), plus
+  `CookManifest.json` beside it.
+- **What gets cooked** (`CollectCookSet`):
+  - **Roots**: the startup scene, the project's new `always_cook` list
+    (asset paths, or folders ending in `/`), and any extra roots passed on
+    the command line.
+  - **Walk**: from the roots it follows the asset database's
+    dependencies transitively. A sub-asset brings its source file.
+  - **Reasons**: each asset records why it was cooked ("startup scene",
+    "always cook", "used by `<path>`").
+  - **Skipped**: unreachable assets are left out and counted. Unknown
+    roots and missing dependencies become warnings.
+- **Editor-only data**:
+  - A new reflection flag, `Field_EditorOnly`, marks fields the editor
+    saves but the game never reads.
+  - `StripEditorOnly` removes them from scene and prefab components,
+    which it looks up by their reflected names, including inside nested
+    structs and arrays.
+  - Scenes and prefabs are then written minified.
+- **The archive**:
+  - `Content/<path>`: each cooked asset, plus the helper files `.gltf`
+    models refer to (buffers, images that aren't assets themselves).
+  - `Imported/<guid>.bin`: each asset's and sub-asset's importer output,
+    served from the derived data cache when it's current.
+  - `Manifest.json`: the configuration, the project's runtime settings
+    (startup scene, timestep, gravity, layers, collision matrix), and
+    every cooked asset with its GUID, path, importer, dependencies,
+    imported flag and sub-assets.
+  - No `.ameta` files ship.
+- **Configurations**: `BuildConfiguration` is Debug, Development or
+  Shipping. Shipping writes its manifest minified.
+- **`aether_cook`** (`tools/cook`): `--out`, `--config`, `--always`,
+  `--compression`, `--no-imported`, `--pak-name`, and `--verbose`, which
+  lists every asset with its reason.
+- **Tests**:
+  - Configuration names.
+  - Stripping, top level and nested, and leaving unreflected components
+    alone.
+  - A full cook of a test project: startup scene → prefab → texture, a
+    model kept by `always_cook` with its `.bin`, and an unused texture.
+    It checks the cook set, the reasons, the skip count, the stripped
+    field count, the archive's minified and stripped scene, the manifest
+    and the imported data.
+  - The refusals.
+- **The test runner**: output is now line-buffered, and a crash prints
+  the name of the test that was running, so a CI crash points somewhere.
+
+### 25.3 PR breakdown
 
 1. ✅ **Done.** `.apak` archives, compression, the virtual file system
    and `aether_pak` (§25.1).
-2. The cooker (`tools/aether-cook`): walk dependencies from the startup
-   scene and "always cook" assets, strip editor-only data, precompile
-   Blueprints, and write paks.
+2. ✅ **Done.** The cooker (§25.2): the cook set from the startup scene
+   and `always_cook`, editor-only stripping, imported data, the
+   manifest, and `aether_cook`. Blueprint bytecode precompilation comes
+   with the player, which runs it.
 3. Cooked asset formats: block-compressed textures (BC7, ASTC) and
    precompiled shaders (DXIL, SPIR-V).
 4. The player (`player/`): the game without the editor, running the
