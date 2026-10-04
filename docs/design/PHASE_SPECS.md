@@ -4126,7 +4126,56 @@ everything else writes and reads.
 - **The test runner**: output is now line-buffered, and a crash prints
   the name of the test that was running, so a CI crash points somewhere.
 
-### 25.3 PR breakdown
+### 25.3 Cooked textures
+
+Packaged games load textures in the form GPUs sample directly:
+block-compressed, with a full mip chain. They stay compressed in GPU
+memory too: BC1 at 8:1, BC3, BC5 and BC7 at 4:1, and BC4 at 2:1 against
+RGBA8.
+
+- **Encoders**: `bc7enc_rdo` by Rich Geldreich (MIT), fetched by CMake.
+  `rgbcx` encodes BC1–BC5 and `bc7enc` encodes BC7, each with a decoder.
+  Only the library sources are built, as `aether_bcenc`.
+- **`aether/cook/texture_cook.h`**:
+  - **Formats**: `TextureFormat` is RGBA8, BC1, BC3, BC4, BC5 or BC7.
+    `BlockBytes` and `MipBytes` give sizes.
+  - **Mips**: `GenerateMips` builds the chain down to 1×1, for any size,
+    not only powers of two.
+    - It uses a 2×2 box filter in linear light for sRGB colour, so a
+      black/white checker averages to sRGB 188, not 128.
+    - For normal maps it averages the normals and renormalizes them.
+  - **Auto format**: `ChooseTextureFormat` picks BC5 for normal maps,
+    BC4 for grey images without alpha, and BC7 otherwise.
+  - **`CookTexture`**: takes RGBA8 of any size. Edge blocks repeat the
+    last row and column. Quality runs from 0 to 4 and controls BC7's uber
+    level and partitions, and rgbcx's level. BC4 and BC5 hold data, not
+    colour, so they're never sRGB.
+  - **`DecodeMip`**: decodes a mip back to RGBA8. For BC5 normal maps it
+    rebuilds z from x and y.
+  - **The `.atex` container**: format, sRGB and normal-map flags, size,
+    and the mip chain. `LoadAtex` checks every mip's size against its
+    format.
+- **The cooker**:
+  - Each texture asset is decoded and cooked according to its `.ameta`
+    settings: `cook_format` (auto or a format name), `normal_map`, `srgb`
+    and `mips`.
+  - The result is stored as `Cooked/<guid>.atex`, and the manifest
+    records `cooked` and `cooked_format` for it.
+  - `CookOptions` gets `cook_textures` and `texture_quality`.
+- **Tests**:
+  - Formats and sizes.
+  - Mips: sRGB versus linear averaging, odd chains, and normal
+    renormalization.
+  - Quality, against PSNR bounds on a gradient:
+    - BC1 and BC3: 32 dB.
+    - BC4 and BC5: 38 dB.
+    - BC7: 40 dB, and 38 dB at an odd size, which checks the partial edge
+      blocks.
+  - The automatic format choice, the normal map's rebuilt z, and the
+    `.atex` round trip and damage checks.
+  - The full cook test now checks both of its textures' cooked forms.
+
+### 25.4 PR breakdown
 
 1. ✅ **Done.** `.apak` archives, compression, the virtual file system
    and `aether_pak` (§25.1).
@@ -4134,8 +4183,10 @@ everything else writes and reads.
    and `always_cook`, editor-only stripping, imported data, the
    manifest, and `aether_cook`. Blueprint bytecode precompilation comes
    with the player, which runs it.
-3. Cooked asset formats: block-compressed textures (BC7, ASTC) and
-   precompiled shaders (DXIL, SPIR-V).
+3. ✅ **Done.** Cooked textures (§25.3): BC1/3/4/5/7 with mips in
+   `.atex`. Still to do from this step: ASTC for mobile, which comes with
+   Phase 33's mobile targets, and precompiled shaders (DXIL, SPIR-V),
+   which come with the player that loads them.
 4. The player (`player/`): the game without the editor, running the
    startup scene from the mounted paks; Debug, Development and Shipping
    configurations.

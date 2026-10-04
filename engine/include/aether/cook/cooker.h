@@ -29,6 +29,11 @@ struct CookOptions {
     std::vector<std::string> always_cook;
     pak::CompressionPolicy compression = pak::CompressionPolicy::Auto;
     bool include_imported = true;        // run importers and store their output
+    // Textures: block-compressed with mips (Cooked/<guid>.atex), per their
+    // .ameta settings ("cook_format": auto|rgba8|bc1|bc3|bc4|bc5|bc7,
+    // "normal_map", "srgb", "mips").
+    bool cook_textures = true;
+    u32 texture_quality = 2;             // 0 (fastest) .. 4 (best)
     std::string pak_name = "Game";
     std::string platform = "default";    // for the derived data cache
 };
@@ -40,6 +45,8 @@ struct CookedAsset {
     std::string reason;    // "startup scene", "always cook", "used by <path>"
     u64 bytes = 0;         // as stored in the archive, before compression
     bool imported = false; // its importer's output is in the archive too
+    std::string cooked;    // its cooked form in the archive ("Cooked/<guid>.atex"), if any
+    u64 cooked_bytes = 0;
 };
 
 struct CookReport {
@@ -61,6 +68,7 @@ struct CookReport {
 //                          and minified), and the helper files .gltf models
 //                          reference
 //   Imported/<guid>.bin   each asset's (and sub-asset's) importer output
+//   Cooked/<guid>.atex    each texture, block-compressed with its mips
 //   Manifest.json         the project's runtime settings, the configuration,
 //                          and every cooked asset: GUID, path, importer,
 //                          dependencies, whether it has imported data
