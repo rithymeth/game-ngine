@@ -7,6 +7,7 @@
 #include "anim/blend_space_editor.h"
 #include "audio/cue_editor.h"
 #include "audio/mixer_panel.h"
+#include "content/content_browser_panel.h"
 #include "devtools/console_panel.h"
 #include "ui/editor_scripts.h"
 #include "ui/extensions.h"
@@ -210,6 +211,7 @@ struct EditorWorkspace::Impl {
     std::unique_ptr<ProjectSettingsPanel> project_settings;
     std::unique_ptr<BuildPackageWindow> build_window;
     std::unique_ptr<PluginsPanel> plugins_panel;
+    std::unique_ptr<ContentBrowserPanel> content_browser;
     NewProjectPanel new_project;
     plugin::PluginManager plugins; // the project's, with their modules started
 
@@ -251,6 +253,13 @@ struct EditorWorkspace::Impl {
             {"Console", "Debug", [this] { console_panel->Draw(); }},
             {"Profiler", "Debug", [this] { profiler_panel->Draw(); }},
             {"Crash Reports", "Debug", [this] { DrawCrashReports(); }},
+            {"Content Browser", "Project", [this] {
+                 if (content_browser) {
+                     content_browser->Draw();
+                 } else {
+                     ImGui::TextDisabled("No project is open.");
+                 }
+             }},
             {"New Project", "Project", [this] { new_project.Draw(); }},
             {"Project Settings", "Project", [this] { DrawProjectTool(true); }},
             {"Build and Package", "Project", [this] { DrawProjectTool(false); }},
@@ -582,6 +591,7 @@ struct EditorWorkspace::Impl {
         project_settings = std::make_unique<ProjectSettingsPanel>(project_file);
         build_window = std::make_unique<BuildPackageWindow>(project_file);
         plugins_panel = std::make_unique<PluginsPanel>(project_file);
+        content_browser = std::make_unique<ContentBrowserPanel>(project_file);
         // The project's plugins: their runtime and editor modules run in the editor.
         if (plugin::ResolveProjectPlugins(project_file, plugins, &error)) plugins.StartModules(true, true);
         // The project's editor scripts (Content/Editor/*.luau, §26.5).
