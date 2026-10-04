@@ -4637,10 +4637,10 @@ say, not only its lifecycle callbacks and physics (§25.4).
 3. ✅ **Done.** The editor extensibility API (§26.5): panels, menu
    items, property drawers and asset types from C++, and panels, menu
    items and asset types from Luau editor scripts.
-4. The 2D toolkit. ✅ **Done so far** (§26.6): sprite atlases and
+4. ✅ **Done.** The 2D toolkit (§26.6): sprite atlases and
    animation, tilesets, tilemaps with autotiles, render batching and the
    pixel-perfect camera, the tilemap editor, 2D physics, the platformer
-   controller and the 2D Platformer template. Still to do: 2D lights.
+   controller, the 2D Platformer template and 2D lights.
 5. Documentation: the API reference from reflection, the manual, and
    sample projects; version control status in the Content Browser.
 
@@ -4837,3 +4837,33 @@ and the components through reflection.
   and playing it in the player: landing, acceleration and stopping, held and
   tapped jumps, falling into the pit, facing, crossing the pit with a
   jump, and stopping at the end wall.
+
+**2D lights** (`sprite2d/lights2d.h`). The module computes the lighting; a
+renderer uploads the light map or draws the polygons.
+- **`Light2D`**: a global light (the same everywhere: ambient), a point
+  light (colour, intensity, a radius where it reaches 0, and a falloff
+  power: 1 is linear) or a spot light (a direction in degrees added to the
+  entity's rotation, a full-bright inner half angle and an outer one where
+  it reaches 0, with a smooth edge). Lights can be disabled, can skip
+  shadows, and carry a layer mask.
+- **`ShadowCaster2D`**: a box that blocks light. Solid tilemap cells block
+  it too; `GatherOccluders` turns them into segments, emitting only the
+  edges that face an empty cell, so a wall is a line and a 3 x 3 block has
+  12 edges, not 36.
+- **`LightAt`** sums the global lights and each light that reaches the point
+  (distance falloff, spot cone, and shadow: `Occluded` tests the line from
+  the light). **`BuildLightMap`** evaluates it over a grid of cells: empty
+  cells at their centres, and a solid cell takes the brightest of its empty
+  neighbours so a wall's face glows like the air in front of it. `Sample`
+  blends bilinearly and clamps at the edges.
+- **`VisibilityPolygon`**: what a light can see, by casting rays at every
+  occluder end (and a hair either side) and keeping the nearest hit, bounded
+  by a square round the light; for drawing the lit area or its shadow.
+
+Tests (`Lights2D_*`): point falloff, tint, steeper falloff, disabled and
+global lights adding; spot cones, the soft edge, the entity's rotation and
+the light's own direction; casters blocking, passing beside, ignoring
+shadow-free lights and region culling; tile walls as lines; a light map
+with a shadow behind a wall, lit wall faces, sampling and refused regions;
+the visibility polygon with and without a wall; and the components through
+reflection.
