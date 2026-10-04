@@ -1,5 +1,7 @@
 #include "reflected_inspector.h"
 
+#include "extensions.h"
+
 #include <imgui.h>
 #include <misc/cpp/imgui_stdlib.h>
 
@@ -170,6 +172,13 @@ void DrawStructFields(const TypeInfo& type, void* object, DrawContext& ctx, bool
 }
 
 void DrawValue(const TypeInfo& type, void* ptr, const reflect::Meta& meta, DrawContext& ctx) {
+    // A property drawer an extension registered for this type (§26.5).
+    if (const ExtensionRegistry* extensions = ExtensionRegistry::Active()) {
+        if (const ExtensionPropertyDrawer* drawer = extensions->FindPropertyDrawer(type.name); drawer && drawer->draw) {
+            NoteEdit(ctx, drawer->draw(ptr, meta));
+            return;
+        }
+    }
     switch (type.kind) {
     case TypeKind::Bool:
         NoteEdit(ctx, ImGui::Checkbox("##v", static_cast<bool*>(ptr)));
