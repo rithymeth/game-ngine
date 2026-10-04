@@ -17,6 +17,7 @@ add_library(aether_engine STATIC
     src/pak/pak.cpp
     src/pak/vfs.cpp
     src/cook/cooker.cpp
+    src/docs/api_docs.cpp
     src/cook/package.cpp
     src/plugin/plugin.cpp
     src/cook/texture_cook.cpp
@@ -51,6 +52,7 @@ add_library(aether_engine STATIC
     src/assets/hot_reload.cpp
     src/assets/gltf_references.cpp
     src/assets/content_browser.cpp
+    src/assets/vcs.cpp
 )
 
 target_include_directories(aether_engine PRIVATE ${stb_SOURCE_DIR})

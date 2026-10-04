@@ -39,7 +39,7 @@ target_compile_definitions(aether_tests PRIVATE AETHER_TEST_PLAYER_PATH="$<TARGE
 aether_link_platform_plugins(aether_tests)
 
 if(TARGET aether_editor_ui)
-    target_sources(aether_tests PRIVATE test_editor_ui.cpp test_command_stack.cpp test_commands.cpp test_play_session.cpp test_editor_projects.cpp test_script_inspector.cpp test_code_editor.cpp test_graph_editor.cpp test_blueprint_editor.cpp test_material_editor.cpp test_anim_editors.cpp test_audio_editors.cpp test_ui_designer.cpp test_vfx_editor.cpp test_ai_editor.cpp test_world_editor.cpp test_net_editor.cpp test_console_panel.cpp test_profiler_panel.cpp test_debug_overlay.cpp test_crash_reporter.cpp test_editor_host.cpp test_editor_workspace.cpp test_build_window.cpp test_extensions.cpp test_tilemap_editor.cpp)
+    target_sources(aether_tests PRIVATE test_editor_ui.cpp test_command_stack.cpp test_commands.cpp test_play_session.cpp test_editor_projects.cpp test_script_inspector.cpp test_code_editor.cpp test_graph_editor.cpp test_blueprint_editor.cpp test_material_editor.cpp test_anim_editors.cpp test_audio_editors.cpp test_ui_designer.cpp test_vfx_editor.cpp test_ai_editor.cpp test_world_editor.cpp test_net_editor.cpp test_console_panel.cpp test_profiler_panel.cpp test_debug_overlay.cpp test_crash_reporter.cpp test_editor_host.cpp test_editor_workspace.cpp test_build_window.cpp test_extensions.cpp test_tilemap_editor.cpp test_vcs.cpp)
     target_link_libraries(aether_tests PRIVATE Aether::EditorUI)
     if(TARGET aether_editor_vulkan)
         target_link_libraries(aether_tests PRIVATE Aether::EditorVulkan)
@@ -49,7 +49,7 @@ endif()
 target_include_directories(aether_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 # Absolute path of the repo's sample assets, so tests can import real files
 # regardless of the working directory they run from.
-target_compile_definitions(aether_tests PRIVATE AETHER_REPO_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+target_compile_definitions(aether_tests PRIVATE AETHER_REPO_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets" AETHER_REPO_DOCS_DIR="${CMAKE_SOURCE_DIR}/docs")
 
 if(WIN32)
     target_sources(aether_tests PRIVATE test_render_graph.cpp test_rhi.cpp test_asset_manager.cpp test_material.cpp)
@@ -84,7 +84,7 @@ target_sources(aether_tests PRIVATE test_blueprint_graph.cpp test_blueprint_vm.c
     test_terrain_splat.cpp
     test_terrain_renderer.cpp
     test_terrain_foliage.cpp
-    test_terrain_spline.cpp test_ai_perception.cpp test_streaming.cpp test_sprite2d.cpp test_net_transport.cpp test_net_replication.cpp test_net_rpc.cpp test_net_prediction.cpp test_net_session.cpp test_console.cpp test_profiler.cpp test_debug_draw.cpp test_crash.cpp test_functional.cpp test_window.cpp test_vulkan_rhi.cpp test_platform_plugin.cpp test_pak.cpp test_cook.cpp test_texture_cook.cpp)
+    test_terrain_spline.cpp test_ai_perception.cpp test_streaming.cpp test_sprite2d.cpp test_api_docs.cpp test_manual.cpp test_net_transport.cpp test_net_replication.cpp test_net_rpc.cpp test_net_prediction.cpp test_net_session.cpp test_console.cpp test_profiler.cpp test_debug_draw.cpp test_crash.cpp test_functional.cpp test_window.cpp test_vulkan_rhi.cpp test_platform_plugin.cpp test_pak.cpp test_cook.cpp test_texture_cook.cpp)
 target_link_libraries(aether_tests PRIVATE Aether::Blueprint Aether::Renderer Aether::Animation Aether::Audio Aether::UI Aether::VFX Aether::Nav Aether::AI Aether::Terrain Aether::Streaming Aether::Sprite2D Aether::Net)
 
 add_test(NAME aether_tests COMMAND aether_tests)
