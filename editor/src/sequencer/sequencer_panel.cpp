@@ -19,7 +19,7 @@ constexpr f32 kRowHeight = 22.0f;
 constexpr f32 kLabelWidth = 200.0f;
 constexpr f32 kRulerHeight = 24.0f;
 
-const char* kTrackTypeNames[] = {"Transform", "Property", "Event", "Visibility", "Spawn", "Camera Cut", "Audio", "Animation"};
+const char* kTrackTypeNames[] = {"Transform", "Property", "Event", "Visibility", "Spawn", "Camera Cut", "Audio", "Animation", "Fade", "Subsequence"};
 const char* kInterpNames[] = {"Constant", "Linear", "Bezier"};
 
 struct Lane {
@@ -40,6 +40,7 @@ std::vector<Lane> LanesOf(const Track& t) {
     if (t.type == TrackType::CameraCut) lanes.push_back({KeyRef::Lane::Cut, 0, "cuts"});
     if (t.type == TrackType::Audio) lanes.push_back({KeyRef::Lane::Audio, 0, "audio"});
     if (t.type == TrackType::Animation) lanes.push_back({KeyRef::Lane::Animation, 0, "animation"});
+    if (t.type == TrackType::Subsequence) lanes.push_back({KeyRef::Lane::Sub, 0, "subsequences"});
     return lanes;
 }
 
@@ -139,7 +140,7 @@ void SequencerPanel::DrawToolbar() {
     ImGui::SameLine();
     if (ImGui::Button("Add Track")) ImGui::OpenPopup("##addtrack");
     if (ImGui::BeginPopup("##addtrack")) {
-        for (int t = 0; t < 8; ++t) {
+        for (int t = 0; t < 10; ++t) {
             if (ImGui::MenuItem(kTrackTypeNames[t])) {
                 selected_track_ = doc_.AddTrack(static_cast<TrackType>(t), kTrackTypeNames[t]);
             }

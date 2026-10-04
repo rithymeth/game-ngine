@@ -95,7 +95,18 @@ struct AnimKey {
     f32 rate = 1.0f;
 };
 
-enum class TrackType : u8 { Transform, Property, Event, Visibility, Spawn, CameraCut, Audio, Animation };
+// Another sequence played inside this one for [time, time + duration): the
+// child's own time is (t - time) * scale + offset. `duration` is required (and
+// above 0), so a sequence's length never needs the child loaded.
+struct SubKey {
+    f32 time = 0.0f;
+    f32 duration = 0.0f;
+    std::string sequence; // the child's asset path, found by the host's resolver
+    f32 offset = 0.0f;    // where in the child it starts, seconds
+    f32 scale = 1.0f;     // child seconds per parent second (above 0)
+};
+
+enum class TrackType : u8 { Transform, Property, Event, Visibility, Spawn, CameraCut, Audio, Animation, Fade, Subsequence };
 
 struct Track {
     std::string id;   // unique in the sequence
@@ -124,6 +135,11 @@ struct Track {
     std::vector<CutKey> cuts;
     std::vector<AudioKey> audio;
     std::vector<AnimKey> anims;
+    // Fade: one channel of 0..1 keys (named "amount"), the fade's strength; the
+    // colour it fades to is `fade_color`. No entity is needed.
+    // Subsequence: `subs`, the nested sequences.
+    Vec4 fade_color{0.0f, 0.0f, 0.0f, 1.0f};
+    std::vector<SubKey> subs;
     std::string component;
     std::string field;
 
@@ -160,8 +176,12 @@ Quaternion EvaluateRotation(const std::vector<RotationKey>& keys, f32 time);
 // binding is optional, so SQ008 doesn't apply to it (nor to Spawn, CameraCut
 // and Audio tracks). SQ014 a Spawn key with no prefab; SQ015 a Spawn key
 // with a negative duration; SQ016 a cut to no camera; SQ017 an Audio key with
-// no cue; SQ018 an Animation key with no montage. SQ002 and SQ003 cover every
-// key list's order and range.
+// no cue; SQ018 an Animation key with no montage; SQ019 a Fade track without
+// exactly one channel; SQ020 a fade key outside 0..1; SQ021 a Subsequence key
+// with no sequence; SQ022 one whose duration isn't above 0; SQ023 one whose
+// scale isn't above 0 (a Subsequence that loops back on itself is found when
+// it plays, since that needs the files). A Fade or Subsequence track needs no
+// entity. SQ002 and SQ003 cover every key list's order and range.
 std::vector<std::string> ValidateSequence(const LevelSequence& sequence);
 
 // .asequence files. FromJson leaves `out` unchanged on failure.

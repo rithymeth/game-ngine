@@ -87,6 +87,7 @@ void SequenceSystem::StopAll() {
 
 void SequenceSystem::Update(f32 dt) {
     events_.clear();
+    fade_ = FadeState{};
     const u64 now = ++generation_;
     std::vector<Entity> entities;
     world_.ForEachArchetype([&](Archetype& archetype) {
@@ -113,7 +114,7 @@ void SequenceSystem::Update(f32 dt) {
             slot.player.reset();
             slot.sequence = comp.sequence.empty() || !find_ ? nullptr : find_(comp.sequence);
             if (slot.sequence) {
-                slot.player = std::make_unique<SequencePlayer>(*slot.sequence, world_, guids_);
+                slot.player = std::make_unique<SequencePlayer>(*slot.sequence, world_, guids_, find_, comp.sequence);
                 SequencePlayer* player = slot.player.get();
                 Slot* slot_ptr = &slot; // std::map nodes don't move
                 player->loop = comp.loop;
@@ -200,6 +201,7 @@ void SequenceSystem::Update(f32 dt) {
         slot.finished = false;
         player->Update(dt);
         for (const std::string& p : player->Problems()) Report("Sequence '" + comp.sequence + "': " + p);
+        if (player->Fade().amount > fade_.amount) fade_ = player->Fade();
         comp.time = player->Time();
         comp.playing = player->Playing();
         if (slot.finished) {

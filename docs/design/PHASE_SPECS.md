@@ -5180,13 +5180,64 @@ forwards them (below).
   (it needs scene loading and a draw path), and depth of field using the
   aperture and focus distance.
 
-### 27.7 PR breakdown
+### 27.7 Fade and Subsequence tracks
+
+- **Fade track**: one channel named `amount` (0 to 1, any interpolation) and a
+  `fade_color` (RGBA, default opaque black); no entity. The player's `Fade()`
+  is the strongest fade at the playhead: the highest amount among the
+  unmuted Fade tracks and the sequences playing inside this one, with that
+  track's colour. `on_fade` is called when it changes, and `Stop` clears it.
+  `SequenceSystem::Fade()` is the strongest across every playing sequence
+  (a finished one holds its last value, so a fade-out stays out). Drawing it
+  over the screen is the host's (the UI module has no screen fade yet);
+  `RenderMovie`'s sink reads it from the player it got through `setup`.
+- **Subsequence track**: `subs` of (time, duration, sequence path, offset,
+  scale); no entity. While the playhead is in [time, time + duration) the
+  child plays at its own time `(t - time) * scale + offset`, so a child can
+  start part way in or run faster. `duration` is required (above 0), so a
+  sequence's length never needs the child loaded. The child is found by a
+  `SequenceResolver` the player is given (the `SequenceSystem` passes its
+  lookup, `RenderMovie` takes one in its options); without one the track
+  reports a problem and plays nothing.
+- **A child is a player of its own**, made when the parent is bound, that
+  reports through the parent's hooks as they are when they fire (events,
+  audio, animation, spawns, camera cuts, visibility). Its events fire once
+  each as the parent's playhead crosses them, scaled and offset, and those at
+  the child's start fire as it enters the range. Leaving the range the child's
+  last pose is applied (its first, going backward), then what it spawned is
+  removed and its cuts and fade released; destroying or stopping the parent
+  does the same. A child's fade merges into the parent's.
+- **Cycles and depth**: a child whose path is already in the chain of
+  parents is refused ("plays itself"), as is nesting deeper than
+  `kMaxSubsequenceDepth` (4); both, a child that isn't found, and a child's
+  own problems are in the parent's `Problems()`. Pass the sequence's own path
+  to the player (the system does) to catch a sequence that plays itself
+  straight away; without it the cycle is caught one level later.
+- **JSON**: `"type": "fade"` (with `fade_color` and one `amount` channel) and
+  `"type": "subsequence"` (with `subs`); `$version` stays 1.
+- **Diagnostics**: SQ019 a Fade track without exactly one channel; SQ020 a
+  fade amount outside 0..1; SQ021 a subsequence key with no sequence; SQ022 a
+  duration not above 0; SQ023 a scale not above 0.
+- **Editor**: Fade and Subsequence are in the Add Track menu (Fade gets its
+  amount channel; subsequence keys show on a timeline lane and can be moved
+  and deleted, their fields are set in the file for now).
+- **Tests** (`test_sequence_fade_sub.cpp`): the fade's amount, colour,
+  change notifications and Stop; the strongest of several tracks and muting;
+  JSON and every new diagnostic; a child at its local time, scale and offset
+  (and back and forth); events forwarded once and spawns removed on leaving;
+  the destructor releasing spawns, cuts and fade; self reference, mutual
+  cycles, the depth limit, missing sequences and no resolver; a child's own
+  problems; the system's strongest fade and nested playback; and rendering a
+  movie with a subsequence and a fade.
+
+### 27.8 PR breakdown
 
 1. Level sequences and the player core (done, §27.1).
 2. Event and Visibility tracks, the SequenceComponent and system (done, §27.2).
 3. Spawn, Camera Cut, Audio and Animation tracks (done, §27.3).
 4. Sequences in the player and asset pipeline (done, §27.4).
 5. The sequencer editor (done, §27.5).
-6. CineCamera and the movie-render loop (this step, §27.6).
-7. Fade and Subsequence tracks; then a release (v0.27.0) that carries the
-   Phase 26 documentation and lights and all of Phase 27.
+6. CineCamera and the movie-render loop (done, §27.6).
+7. Fade and Subsequence tracks (this step, §27.7).
+8. A release (v0.27.0) that carries the Phase 26 documentation and lights and
+   all of Phase 27.

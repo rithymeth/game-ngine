@@ -108,6 +108,9 @@ public:
     void StopAll();
 
     const std::vector<SequenceEvent>& Events() const { return events_; }
+    // The strongest fade any playing sequence asks for this frame (Fade
+    // tracks): amount 0 is none. Drawing it over the screen is the host's.
+    const FadeState& Fade() const { return fade_; }
     // Missing sequences and the players' own problems, reported once each.
     const std::vector<std::string>& Problems() const { return problems_; }
     // The player behind a component's entity (null before its first Update).
@@ -140,6 +143,7 @@ private:
     Lifecycle* lifecycle_;
     std::map<u32, Slot> slots_; // by entity index
     std::vector<SequenceEvent> events_;
+    FadeState fade_;
     std::vector<std::string> problems_;
     std::map<std::string, bool> reported_;
     u64 generation_ = 0;
