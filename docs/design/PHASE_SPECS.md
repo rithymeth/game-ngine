@@ -3954,12 +3954,60 @@ The editor's panels now run wherever Vulkan does. The D3D12 editor
   - A raw string in a macro argument that MSVC rejects
     (`test_console.cpp`) is now an ordinary string.
 
-### 24.5 PR breakdown
+### 24.5 macOS, ARM and platform plugins
+
+- **ARM**: the SIMD math (`math/vec.h`, `mat4.h`, `quaternion.h`) uses
+  basic SSE intrinsics. On ARM64 (Apple Silicon, Android) they compile
+  through sse2neon, fetched by CMake, which maps them to NEON. x86 builds
+  keep `-mavx2 -mfma`; ARM builds don't get them.
+- **Apple's libc++** has no floating-point `std::from_chars`. Where it's
+  missing, the reflection serializer reads its shortest round-trip floats
+  back through a classic-locale stream, which is just as
+  locale-independent.
+- **MoltenVK**: the Vulkan backend works on macOS through MoltenVK,
+  Vulkan on Metal.
+  - When the loader offers `VK_KHR_portability_enumeration`, the instance
+    enables it and sets the enumerate-portability flag.
+  - On devices that have `VK_KHR_portability_subset`, the device enables
+    it.
+  - Surfaces come from GLFW through `VK_EXT_metal_surface`.
+- **Platform plugins** (`aether/platform/platform_plugin.h`,
+  `cmake/AetherPlatform.cmake`, `platforms/README.md`): a platform the
+  engine doesn't build in (Android, a console) plugs in from its own
+  directory.
+  - **Build**: `aether_platform_plugin(NAME ... SOURCES ...)` builds the
+    plugin as an OBJECT library, so its self-registration is never dropped
+    by the linker. `AETHER_PLATFORM_PLUGINS` lists the plugin directories.
+    `aether_link_platform_plugins(target)` links them into the tests, the
+    functional runner and the editor shell.
+  - **Code**: `AETHER_PLATFORM_PLUGIN(id)` registers a `PlatformPlugin`
+    with optional hooks: `startup` and `shutdown` (shutdown runs in
+    reverse order, and a plugin registered after startup starts at once),
+    `user_data_dir`, and `create_device`, an RHI device for a graphics API
+    the engine doesn't build in.
+  - **Example**: `platforms/example` is a working template.
+- **Tests**:
+  - Registry: duplicates refused, start/stop order, a late registration,
+    user-data fallthrough, device factories.
+  - The example plugin registering itself from its own library.
+- **CI**:
+  - A macOS job (Apple Silicon, `macos-15`, Homebrew MoltenVK, the Vulkan
+    loader and glslang) builds the engine, physics, scripting, the Vulkan
+    backend and the editor shell, and runs the unit and functional tests.
+    It also tries an offscreen editor screenshot; that step doesn't fail
+    the job, because hosted runners may have no Metal device.
+  - The Linux jobs build `platforms/example` into the tests.
+  - The release job waits for macOS too.
+
+### 24.6 PR breakdown
 
 1. ✅ **Done.** Continuous integration (§24.1), and the packaged Windows
    editor.
-2. Fix what the first Windows builds report, until the Windows job is
-   green and the editor package launches.
+2. ✅ **Done.** Fix what the first Windows builds report, until the
+   Windows job is green and the editor package launches: MSVC's extended
+   aligned storage, missing standard includes, and a raw string in a
+   macro. The packaged editor now builds, passes its tests, and starts and
+   screenshots itself on WARP in CI.
 3. ✅ **Done.** A portable window and input layer (§24.2): GLFW on
    Linux and macOS behind `platform::Window`, alongside Win32.
 4. ✅ **Done.** The Vulkan backend off Windows (§24.3): glslang shaders,
@@ -3968,4 +4016,6 @@ The editor's panels now run wherever Vulkan does. The D3D12 editor
 5. ✅ **Done.** The editor on Vulkan (§24.4): RHI-hosted ImGui, window
    events as ImGui input, and the portable editor shell, screenshotted
    on lavapipe in Linux CI.
-6. macOS through MoltenVK, and a plugin structure for Android and consoles.
+6. ✅ **Done.** macOS through MoltenVK, ARM through sse2neon, and the
+   platform plugin structure for Android and consoles (§24.5). Phase 24
+   is complete.

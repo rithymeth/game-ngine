@@ -5,6 +5,8 @@
 #include "aether/core/log.h"
 
 #include <charconv>
+#include <locale>
+#include <sstream>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -124,7 +126,15 @@ double ShortestF32(f32 value) {
     char buffer[32];
     auto written = std::to_chars(buffer, buffer + sizeof(buffer), value);
     double result = value;
+#if defined(__cpp_lib_to_chars) && __cpp_lib_to_chars >= 201611L
     std::from_chars(buffer, written.ptr, result);
+#else
+    // Apple's libc++ has no floating-point from_chars; a classic-locale
+    // stream reads it back just as locale-independently.
+    std::istringstream in(std::string(buffer, written.ptr));
+    in.imbue(std::locale::classic());
+    in >> result;
+#endif
     return result;
 }
 

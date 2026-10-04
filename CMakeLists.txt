@@ -18,7 +18,26 @@ if(MSVC)
     # to the conforming behaviour rather than MSVC's old static_assert.
     add_compile_definitions(_ENABLE_EXTENDED_ALIGNED_STORAGE)
 else()
-    add_compile_options(-Wall -Wextra -mavx2 -mfma)
+    add_compile_options(-Wall -Wextra)
+endif()
+
+# x86 builds target AVX2/FMA. ARM builds (Apple Silicon, Android) take the
+# same SSE intrinsics through sse2neon, which maps them to NEON.
+set(_aether_arch "${CMAKE_SYSTEM_PROCESSOR}")
+if(APPLE AND CMAKE_OSX_ARCHITECTURES)
+    set(_aether_arch "${CMAKE_OSX_ARCHITECTURES}")
+endif()
+if(_aether_arch MATCHES "^(arm64|aarch64|ARM64)")
+    include(FetchContent)
+    FetchContent_Declare(sse2neon
+        GIT_REPOSITORY https://github.com/DLTcollab/sse2neon.git
+        GIT_TAG v1.9.1
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(sse2neon)
+    include_directories(SYSTEM ${sse2neon_SOURCE_DIR})
+elseif(NOT MSVC)
+    add_compile_options(-mavx2 -mfma)
 endif()
 
 option(AETHER_BUILD_SANDBOX "Build the Aether sandbox app" ON)
@@ -190,6 +209,11 @@ else()
 endif()
 
 add_subdirectory(engine)
+# Platform plugins (platforms/README.md): directories listed here are built
+# and linked into the tests, the functional runner and the editor shell.
+set(AETHER_PLATFORM_PLUGINS "" CACHE STRING "Platform plugin directories (;-separated)")
+include(cmake/AetherPlatform.cmake)
+aether_add_platform_plugins()
 # Blueprints (Phase 12): graph model, compiler and VM; engine-only, no fetches.
 add_subdirectory(blueprint)
 # The renderer's CPU side (Phase 14); engine-only, no fetches.

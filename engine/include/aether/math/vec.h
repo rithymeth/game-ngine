@@ -3,7 +3,12 @@
 #include "aether/core/base.h"
 
 #include <cmath>
+#if defined(__aarch64__) || defined(_M_ARM64)
+// ARM (Apple Silicon, Android): the same SSE intrinsics, mapped to NEON.
+#include <sse2neon.h>
+#else
 #include <immintrin.h>
+#endif
 
 namespace aether {
 
