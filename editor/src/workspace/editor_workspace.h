@@ -2,12 +2,14 @@
 
 #include "aether/core/base.h"
 
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <string_view>
 
 // Every tool editor the engine has, in one place: the Blueprint, Material,
-// animation, AI, audio, VFX, UI, world, networking and debug tools, each on
+// animation, AI, audio, VFX, UI, world, networking, debug and project
+// (Project Settings, Build and Package) tools, each on
 // a sample document so it opens on something real. The Windows editor
 // (D3D12) and the portable editor shell (Vulkan) both host it, so neither
 // shows less than the other.
@@ -21,7 +23,9 @@ namespace aether::editor {
 
 class EditorWorkspace {
 public:
-    EditorWorkspace();
+    // `project_file`: the .aproject the Project tools (Project Settings,
+    // Build and Package) work on; empty for a sample project (SampleProject()).
+    explicit EditorWorkspace(std::filesystem::path project_file = {});
     ~EditorWorkspace();
     EditorWorkspace(const EditorWorkspace&) = delete;
     EditorWorkspace& operator=(const EditorWorkspace&) = delete;
@@ -29,6 +33,11 @@ public:
     // Per frame, before drawing: runs the networked play session and the
     // console's queued log lines.
     void Update(f32 dt);
+
+    // A small project with a startup scene, made under the temp folder the
+    // first time and reused after; empty if it can't be made.
+    static std::filesystem::path SampleProject(std::string* error = nullptr);
+    const std::filesystem::path& ProjectFile() const;
 
     usize ToolCount() const;
     const char* ToolName(usize tool) const;

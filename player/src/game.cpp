@@ -1,6 +1,7 @@
 #include "aether/player/game.h"
 
 #include "aether/core/log.h"
+#include "aether/reflection/serialize.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/serialization.h"
 
@@ -53,6 +54,24 @@ bool ParseGameManifest(std::string_view text, GameManifest& out, std::string* er
         }
         g.layers = m.value("layers", std::vector<std::string>{});
         g.collision_matrix = m.value("collision_matrix", std::vector<u32>{});
+        g.window_title = g.project;
+        if (const auto it = m.find("window"); it != m.end() && it->is_object()) {
+            g.window_title = it->value("title", g.project);
+            g.window_width = it->value("width", 1280u);
+            g.window_height = it->value("height", 720u);
+            g.vsync = it->value("vsync", true);
+            if (g.window_width == 0 || g.window_height == 0) return Fail(error, "Manifest.json's window has no size");
+        }
+        if (const auto it = m.find("quality_presets"); it != m.end() && it->is_array()) {
+            for (const json& p : *it) {
+                QualityPreset preset;
+                if (!p.is_object() || !reflect::FromJson(reflect::Reflect<QualityPreset>(), &preset, p) || preset.name.empty()) {
+                    return Fail(error, "Manifest.json has a quality preset that can't be read");
+                }
+                g.quality_presets.push_back(std::move(preset));
+            }
+        }
+        g.default_quality = m.value("default_quality", "");
         if (const auto it = m.find("assets"); it != m.end() && it->is_array()) {
             for (const json& a : *it) {
                 GameManifest::Asset asset;
@@ -71,6 +90,15 @@ bool ParseGameManifest(std::string_view text, GameManifest& out, std::string* er
         return Fail(error, std::string("Manifest.json: ") + e.what());
     }
     return true;
+}
+
+const QualityPreset* ChooseQuality(const GameManifest& manifest, const std::string& requested) {
+    for (const std::string& name : {requested, manifest.default_quality}) {
+        for (const QualityPreset& p : manifest.quality_presets) {
+            if (!name.empty() && p.name == name) return &p;
+        }
+    }
+    return manifest.quality_presets.empty() ? nullptr : &manifest.quality_presets.front();
 }
 
 // ---------------------------------------------------------------------------

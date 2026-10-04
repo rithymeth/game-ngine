@@ -15,3 +15,13 @@ add_library(Aether::Game ALIAS aether_game)
 add_executable(aether_player main.cpp)
 target_link_libraries(aether_player PRIVATE Aether::Game)
 aether_link_platform_plugins(aether_player)
+
+# See sandbox/CMakeLists.txt: dxcompiler.dll is a load-time dependency of
+# anything linking aether_engine on Windows, so it goes beside the player
+# (and Package copies it along with the player).
+if(AETHER_DXCOMPILER_DLL)
+    add_custom_command(TARGET aether_player POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${AETHER_DXCOMPILER_DLL}" "$<TARGET_FILE_DIR:aether_player>/dxcompiler.dll"
+    )
+endif()

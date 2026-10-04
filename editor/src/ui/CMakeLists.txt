@@ -49,6 +49,7 @@ add_library(aether_editor_ui STATIC
     ../core/json_edit.cpp
     ../host/imgui_window_input.cpp
     ../workspace/editor_workspace.cpp
+    ../build/build_window.cpp
 )
 target_include_directories(aether_editor_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(aether_editor_ui PUBLIC Aether::Engine Aether::Blueprint Aether::Renderer Aether::Animation Aether::Audio Aether::UI Aether::VFX Aether::AI Aether::Terrain Aether::Streaming Aether::Net imgui_core)
