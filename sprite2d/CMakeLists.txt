@@ -8,6 +8,7 @@ add_library(aether_sprite2d STATIC
     src/tilemap.cpp
     src/batch.cpp
     src/pixel_camera.cpp
+    src/physics2d.cpp
 )
 target_include_directories(aether_sprite2d PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aether_sprite2d PUBLIC cxx_std_20)
