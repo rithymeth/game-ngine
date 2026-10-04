@@ -52,6 +52,7 @@ add_library(aether_engine STATIC
     src/assets/hot_reload.cpp
     src/assets/gltf_references.cpp
     src/assets/content_browser.cpp
+    src/assets/vcs.cpp
 )
 
 target_include_directories(aether_engine PRIVATE ${stb_SOURCE_DIR})
