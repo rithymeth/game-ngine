@@ -27,6 +27,9 @@ struct ProjectSettings {
     // Scene to open at startup, relative to Content/. Becomes an asset GUID
     // with the asset database (Phase 8).
     std::string startup_scene;
+    // Content cooked even when nothing the startup scene reaches refers to
+    // it (Phase 25): asset paths, or folders ending in '/'.
+    std::vector<std::string> always_cook;
     std::vector<std::string> plugins;
     // Physics
     f32 fixed_timestep_hz = 60.0f;
@@ -82,6 +85,7 @@ AETHER_REFLECT(aether::ProjectSettings, 1,
     AETHER_FIELD(name, Field_EditAnywhere, {.category = "Project"}),
     AETHER_FIELD(engine_version, Field_ReadOnly, {.category = "Project"}),
     AETHER_FIELD(startup_scene, Field_EditAnywhere, {.tooltip = "Scene opened at startup, relative to Content/", .category = "Project"}),
+    AETHER_FIELD(always_cook, Field_EditAnywhere, {.tooltip = "Content cooked even if unreferenced: asset paths, or folders ending in /", .category = "Packaging"}),
     AETHER_FIELD(plugins, Field_EditAnywhere, {.category = "Project"}),
     AETHER_FIELD(fixed_timestep_hz, Field_EditAnywhere, {.category = "Physics", .range_min = 10, .range_max = 480, .units = "Hz"}),
     AETHER_FIELD(gravity, Field_EditAnywhere, {.category = "Physics", .units = "m/s2"}),
