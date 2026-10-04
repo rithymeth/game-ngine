@@ -8,6 +8,7 @@
 #include <atomic>
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <map>
 #include <string>
 #include <vector>
@@ -44,6 +45,18 @@ struct CookOptions {
     // Set (from any thread) to stop between assets; the cook then fails
     // with "Cancelled" and writes nothing.
     const std::atomic<bool>* cancel = nullptr;
+
+    // Phase 25 step 6 (§25.6).
+    // Encrypts the archive (see pak::PakKey); also opens an encrypted base.
+    std::optional<pak::PakKey> encryption_key;
+    // A patch: the full cook is compared with this earlier archive, and only
+    // what's new or changed is written (with the removed paths listed).
+    std::filesystem::path patch_base;
+    // A DLC: only `always_cook` (not the startup scene or the project's
+    // always_cook) is cooked, skipping assets `dlc_base` already has, and
+    // the manifest goes to DLC/<dlc_name>.json, which the game merges.
+    std::string dlc_name;
+    std::filesystem::path dlc_base;
 };
 
 struct CookedAsset {
@@ -69,6 +82,11 @@ struct CookReport {
     u64 pak_bytes = 0;                        // the archive on disk
     std::filesystem::path pak_file;
     std::filesystem::path manifest_file;
+    // A patch cook: what the patch archive holds against its base.
+    bool is_patch = false;
+    pak::PatchReport patch;
+    // A DLC cook: assets left out because the base archive has them.
+    usize in_base = 0;
 };
 
 // Cooks a project. The archive holds:

@@ -2,7 +2,9 @@
 
 #include "aether/core/base.h"
 
+#include <array>
 #include <span>
+#include <string_view>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -20,6 +22,28 @@
 //            no leading '/'), u8 compression, u8 0, u16 0, u64 offset,
 //            u64 stored size, u64 original size, u32 CRC-32
 namespace aether::pak {
+
+// Encryption (Phase 25 step 6, §25.6): with a key, every entry's stored
+// bytes and the index are encrypted with ChaCha20 (RFC 8439), each under its
+// own nonce (its offset). The header's flags mark the archive encrypted and
+// its last field holds the key's id, so a wrong key is reported as such.
+// It keeps content from being read with an archive tool; it isn't DRM: the
+// key ships with the game.
+struct PakKey {
+    std::array<u8, 32> bytes{};
+
+    // 64 hex digits; false for anything else.
+    static bool FromHex(std::string_view hex, PakKey& out);
+    std::string ToHex() const;
+    // A new random key.
+    static PakKey Generate();
+    // A fingerprint of the key (not the key): what archives record.
+    u32 Id() const;
+};
+
+// XORs `data` with the ChaCha20 keystream for (key, nonce, counter): it both
+// encrypts and decrypts.
+void ChaCha20Xor(const PakKey& key, const std::array<u8, 12>& nonce, u32 counter, std::span<u8> data);
 
 enum class Compression : u8 { None = 0, LZ4 = 1, Zstd = 2 };
 const char* CompressionName(Compression c);
@@ -48,6 +72,12 @@ public:
     explicit PakWriter(CompressionPolicy policy = CompressionPolicy::Auto, int zstd_level = 9)
         : policy_(policy), zstd_level_(zstd_level) {}
 
+    // Encrypts the archive with `key` (see PakKey).
+    void SetEncryption(const PakKey& key) {
+        key_ = key;
+        encrypt_ = true;
+    }
+
     // Adds (or replaces) an entry. False for an invalid path.
     bool Add(const std::string& path, std::span<const u8> bytes);
     bool Add(const std::string& path, const std::string& text);
@@ -72,6 +102,8 @@ private:
     CompressionPolicy policy_;
     int zstd_level_;
     std::vector<Pending> pending_;
+    PakKey key_;
+    bool encrypt_ = false;
 };
 
 class PakReader {
@@ -82,11 +114,13 @@ public:
 
     // Opens an archive, checking the header and the index CRC; the entries'
     // data stays on disk until read. False (and `error`) when it isn't one.
-    bool Open(const std::string& file, std::string* error = nullptr);
+    // An encrypted archive needs its key: `keys` are tried by their id.
+    bool Open(const std::string& file, std::string* error = nullptr, std::span<const PakKey> keys = {});
     // The same over bytes already in memory (kept by the reader).
-    bool OpenMemory(std::vector<u8> bytes, std::string* error = nullptr);
+    bool OpenMemory(std::vector<u8> bytes, std::string* error = nullptr, std::span<const PakKey> keys = {});
 
     bool IsOpen() const { return open_; }
+    bool IsEncrypted() const { return encrypted_; }
     const std::string& File() const { return file_; }
     const std::vector<PakEntry>& Entries() const { return entries_; }
     const PakEntry* Find(const std::string& path) const;
@@ -100,15 +134,34 @@ public:
     std::vector<std::string> Verify() const;
 
 private:
-    bool Parse(std::string* error);
+    bool Parse(std::string* error, std::span<const PakKey> keys);
     bool ReadStored(const PakEntry& entry, std::vector<u8>& out) const;
 
     bool open_ = false;
+    bool encrypted_ = false;
+    PakKey key_;
     std::string file_;
     std::vector<u8> memory_;   // when opened from memory
     bool in_memory_ = false;
     std::vector<PakEntry> entries_;
     std::unordered_map<std::string, usize> index_;
 };
+
+// Patches (§25.6): what changed between two builds of an archive. A patch
+// archive holds the entries that are new or differ in `updated`, and lists
+// the ones `updated` no longer has in kRemovedListPath (a JSON array), which
+// the virtual file system hides in the archives mounted below it.
+inline constexpr const char* kRemovedListPath = "PatchRemoved.json";
+
+struct PatchReport {
+    std::vector<std::string> added;
+    std::vector<std::string> changed;
+    std::vector<std::string> removed;
+    usize unchanged = 0;
+};
+
+// Fills `patch` (which keeps its compression and encryption) with what
+// turns `base` into `updated`. Entries are compared by size and CRC.
+PatchReport MakePatch(const PakReader& base, const PakReader& updated, PakWriter& patch);
 
 } // namespace aether::pak
