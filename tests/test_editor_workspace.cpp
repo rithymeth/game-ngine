@@ -59,7 +59,7 @@ AETHER_TEST(EditorWorkspace_HasEveryTool) {
     }
     for (const char* t : {"Blueprint", "Luau", "Material", "Particle", "Animation", "Behavior", "Navigation", "Sound Cue",
                           "Mixer", "UI Designer", "Terrain", "Foliage", "Spline", "World Partition", "Net Play",
-                          "Net Profiler", "Console", "Profiler", "Crash"}) {
+                          "Net Profiler", "Console", "Profiler", "Crash", "Sequencer"}) {
         CHECK(ws.FindTool(t) >= 0);
     }
     CHECK(ws.FindTool("material") == ws.FindTool("Material - M_Lit")); // any case, a prefix
