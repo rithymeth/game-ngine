@@ -18,6 +18,7 @@
 #include "graph/blueprint_editor.h"
 #include "graph/material_editor.h"
 #include "net/net_panels.h"
+#include "sprite2d/tilemap_panel.h"
 #include "ui/code_editor.h"
 #include "uidesign/ui_designer.h"
 #include "vfx/vfx_editor.h"
@@ -36,6 +37,7 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstring>
 #include <fstream>
@@ -176,6 +178,9 @@ struct EditorWorkspace::Impl {
     // UI.
     std::unique_ptr<UILayoutDocument> ui_doc;
     std::unique_ptr<UIDesigner> ui_designer;
+    // 2D.
+    std::unique_ptr<TilemapEditDocument> tilemap_doc;
+    std::unique_ptr<TilemapPanel> tilemap_panel;
     // World.
     terrain::TerrainData terrain_data;
     terrain::TerrainSettings terrain_settings;
@@ -220,6 +225,7 @@ struct EditorWorkspace::Impl {
         BuildAudio();
         BuildUI();
         BuildWorld();
+        BuildTilemap();
         BuildNetworking();
         BuildDebug();
         BuildProject();
@@ -239,6 +245,7 @@ struct EditorWorkspace::Impl {
             {"Foliage", "World", [this] { foliage_panel->Draw(); }},
             {"Spline", "World", [this] { spline_panel->Draw(); }},
             {"World Partition", "World", [this] { partition_panel->Draw(); }},
+            {"Tilemap - Level 1", "2D", [this] { tilemap_panel->Draw(); }},
             {"Net Play", "Networking", [this] { net_panel->Draw(); }},
             {"Net Profiler", "Networking", [this] { net_profiler->Draw(); }},
             {"Console", "Debug", [this] { console_panel->Draw(); }},
@@ -452,6 +459,37 @@ struct EditorWorkspace::Impl {
             if (const auto label = ui_doc->AddWidget("Text", *quit)) ui_doc->SetProperty(*label, "text", "Quit");
         }
         ui_designer = std::make_unique<UIDesigner>(*ui_doc);
+    }
+
+    // A small platform level over an 8x4-tile sheet: tiles 16-31 are the
+    // ground autotile's sixteen shapes, all solid.
+    void BuildTilemap() {
+        using namespace aether::sprite2d;
+        Tileset tileset;
+        tileset.texture_width = 128;
+        tileset.texture_height = 64;
+        tileset.tile_width = tileset.tile_height = 16;
+        std::array<i32, 16> shapes;
+        for (int m = 0; m < 16; ++m) {
+            shapes[static_cast<usize>(m)] = 16 + m;
+            tileset.SetSolid(16 + m, true);
+        }
+        const usize ground = tileset.AddAutotile("Ground", shapes);
+        tileset.SetSolid(8, true); // a crate
+        TilemapData map;
+        map.Resize(24, 14);
+        map.AddLayer("Ground");
+        map.AddLayer("Decor");
+        map.layers[1].collides = false;
+        map.Fill(0, 0, 0, 23, 1, AutotileCell(ground));
+        map.Fill(0, 6, 4, 11, 4, AutotileCell(ground));
+        map.Fill(0, 14, 7, 19, 7, AutotileCell(ground));
+        map.Set(0, 3, 2, 8);
+        map.Set(1, 8, 2, 4);
+        map.Set(1, 15, 8, 5);
+        tilemap_doc = std::make_unique<TilemapEditDocument>(std::move(map), std::move(tileset));
+        tilemap_doc->brush = AutotileCell(ground);
+        tilemap_panel = std::make_unique<TilemapPanel>(*tilemap_doc);
     }
 
     void BuildWorld() {
