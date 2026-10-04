@@ -12,6 +12,7 @@
 #include "aether/scene/lifecycle.h"
 #include "aether/scene/prefab.h"
 #include "aether/scene/scheduler.h"
+#include "aether/sprite2d/tilemap.h"
 
 #include <filesystem>
 #include <memory>
@@ -26,6 +27,10 @@
 // scene from them (prefab instances resolved from the archives too) and
 // runs it on the fixed-timestep frame loop, with physics when the engine
 // has it. The aether_player executable puts a window around this.
+
+namespace aether::sprite2d {
+class Physics2D;
+}
 
 namespace aether::player {
 
@@ -151,6 +156,12 @@ public:
     // Whether this player was built with Luau scripting.
     static bool HasScripting();
 
+    // 2D physics (§26.6): bodies and colliders in the scene, with the solid
+    // cells of its tilemaps, step with the 3D physics each fixed step, and
+    // PlatformerController2D entities are driven by the "Move" (x axis) and
+    // "Jump" actions. Null before a scene is loaded.
+    sprite2d::Physics2D* Physics2D() { return physics2d_.get(); }
+
     // Input (§26.4). The host (the window, or a test) sets keys, buttons and
     // mouse movement here before each Tick; the game's actions come from the
     // cooked .aaction and .amapping assets (every context is active, in name
@@ -185,6 +196,9 @@ private:
     GameStats stats_;
     struct Physics;
     std::unique_ptr<Physics> physics_;
+    std::unique_ptr<sprite2d::Physics2D> physics2d_;
+    std::unordered_map<assets::AssetGuid, std::unique_ptr<sprite2d::TilemapData>> tilemaps_;
+    std::unordered_map<assets::AssetGuid, std::unique_ptr<sprite2d::Tileset>> tilesets_;
     std::vector<std::pair<std::string, std::unique_ptr<plugin::IModule>>> modules_;
     bool modules_started_ = false;
 

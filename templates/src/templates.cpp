@@ -14,9 +14,14 @@
 #include "aether/scene/entity_guid.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/script_component.h"
+#include "aether/sprite2d/components.h"
+#include "aether/sprite2d/physics2d.h"
+#include "aether/sprite2d/platformer.h"
+#include "aether/sprite2d/tilemap.h"
 
 #include <nlohmann/json.hpp>
 
+#include <array>
 #include <cmath>
 
 namespace aether::templates {
@@ -28,7 +33,7 @@ namespace {
 
 constexpr f32 kPi = 3.14159265358979f;
 
-enum class Kind { Blank, FirstPerson, ThirdPerson, TopDown, Vehicle };
+enum class Kind { Blank, FirstPerson, ThirdPerson, TopDown, Vehicle, Platformer2D };
 
 struct Entry {
     ProjectTemplate info;
@@ -74,12 +79,13 @@ const std::vector<Entry>& Entries() {
                       {"Throttle and brake on W and S, steering on A and D, steering that needs speed",
                        "Acceleration, braking, drag and turn rate settings", "BP_Pickup markers to drive through"}),
                      Kind::Vehicle});
-        ProjectTemplate platformer = Info("platformer_2d", "2D Platformer", "Platformer",
-                                          "Run and jump through a side-scrolling level.",
-                                          {"Sprites, tilemaps and 2D physics"});
-        platformer.available = false;
-        platformer.unavailable_reason = "It needs the 2D toolkit (sprites, tilemaps and 2D physics), which isn't built yet";
-        e.push_back({platformer, Kind::Blank});
+        e.push_back({Info("platformer_2d", "2D Platformer", "Platformer",
+                      "Run and jump through a side-scrolling level made of tiles.",
+                      {"A tilemap level with ground, platforms, a pit and a step, on a tileset with an autotile",
+                       "A character with 2D physics: A and D or the left stick to run, Space, W or A to jump",
+                       "Coyote time, jump buffering, variable jump height; settings in the Inspector",
+                       "A camera that follows the player, with pixel-perfect-friendly units (16 pixels a tile)"}),
+                     Kind::Platformer2D});
         return e;
     }();
     return entries;
@@ -256,6 +262,124 @@ Quaternion PitchDown(f32 radians) {
     return Quaternion::FromAxisAngle(Vec3(1, 0, 0), -radians);
 }
 
+// --- The 2D Platformer ---------------------------------------------------------
+
+void RegisterSprite2DTemplateComponents() {
+    sprite2d::RegisterSprite2DComponents();
+    sprite2d::RegisterPhysics2DComponents();
+    sprite2d::RegisterPlatformerComponents();
+}
+
+// Move: A and D, the left stick. Jump: Space, W, A button; held (the jump
+// is as high as the button is held), so no Pressed trigger.
+bool WritePlatformerInput(const stdfs::path& content, std::string* error) {
+    using namespace input;
+    InputModifier dead = Modifier(ModifierType::DeadZone);
+    dead.lower = 0.2f;
+    InputMappingContext c;
+    c.name = "Gameplay";
+    c.bindings = {Bind("Move", Key::D), Bind("Move", Key::A, {Modifier(ModifierType::Negate)}),
+                  Bind("Move", Key::Right), Bind("Move", Key::Left, {Modifier(ModifierType::Negate)}),
+                  Bind("Move", Key::GamepadLeftStickX, {dead}),
+                  Bind("Jump", Key::Space), Bind("Jump", Key::W), Bind("Jump", Key::Up), Bind("Jump", Key::GamepadA)};
+    const stdfs::path dir = content / "Input";
+    std::error_code ec;
+    stdfs::create_directories(dir, ec);
+    if (!SaveInputAction({"Move", ActionValueType::Axis2D}, dir / "Move.aaction", error)) return false;
+    if (!SaveInputAction({"Jump", ActionValueType::Bool}, dir / "Jump.aaction", error)) return false;
+    return SaveMappingContext(c, dir / "Gameplay.amapping", error);
+}
+
+// A level over an 8x4-tile sheet (tiles 16-31 are the ground autotile's sixteen
+// shapes, all solid), 16 pixels a tile and a world unit a tile.
+bool WritePlatformer(const ProjectPaths& paths, std::string* error) {
+    using namespace sprite2d;
+    const stdfs::path content = paths.content;
+    if (!WritePlatformerInput(content, error)) return false;
+
+    Tileset tileset;
+    tileset.texture_width = 128;
+    tileset.texture_height = 64;
+    tileset.tile_width = tileset.tile_height = 16;
+    std::array<i32, 16> shapes;
+    for (int m = 0; m < 16; ++m) {
+        shapes[static_cast<usize>(m)] = 16 + m;
+        tileset.SetSolid(16 + m, true);
+    }
+    const usize ground = tileset.AddAutotile("Ground", shapes);
+    if (!SaveTileset(content / "Tiles/Level.atileset", tileset, error)) return false;
+    assets::AssetGuid tileset_guid;
+    {
+        assets::AssetDatabase database(content);
+        database.Scan();
+        const assets::AssetRecord* t = database.FindByPath("Tiles/Level.atileset");
+        if (!t) return Fail(error, "The tileset wasn't picked up by the asset database");
+        tileset_guid = t->guid;
+    }
+
+    TilemapData map;
+    map.tileset = tileset_guid;
+    map.Resize(48, 16);
+    map.AddLayer("Ground");
+    const i32 cell = AutotileCell(ground);
+    map.Fill(0, 0, 0, 19, 1, cell);   // the ground, up to a pit
+    map.Fill(0, 23, 0, 47, 1, cell);  // and after it
+    map.Fill(0, 8, 5, 12, 5, cell);   // a platform
+    map.Fill(0, 15, 8, 19, 8, cell);  // a higher one
+    map.Fill(0, 26, 6, 31, 6, cell);
+    map.Fill(0, 37, 2, 38, 3, cell);  // a step up
+    map.Fill(0, 40, 2, 47, 5, cell);  // a tall block to the end
+    if (!SaveTilemap(content / "Tiles/Level1.atilemap", map, error)) return false;
+    assets::AssetGuid map_guid;
+    {
+        assets::AssetDatabase database(content);
+        database.Scan();
+        const assets::AssetRecord* m = database.FindByPath("Tiles/Level1.atilemap");
+        if (!m) return Fail(error, "The tilemap wasn't picked up by the asset database");
+        map_guid = m->guid;
+    }
+
+    SceneBuilder scene;
+    const auto add = [&](Vec3 at, const char* tag, json extra) {
+        json components = {{"Transform", reflect::ToJson(Transform{at, Quaternion::Identity()})}};
+        if (tag) {
+            Tags t;
+            t.names = {tag};
+            components["Tags"] = reflect::ToJson(t);
+        }
+        for (auto it = extra.begin(); it != extra.end(); ++it) components[it.key()] = it.value();
+        scene.entities.push_back({{"guid", ToString(NewEntityGuid())}, {"components", std::move(components)}});
+    };
+    Camera camera;
+    camera.projection = Projection::Orthographic;
+    camera.ortho_height = 11.25f; // a 320x180 view at 16 pixels a tile
+    camera.near_plane = -50.0f;
+    camera.far_plane = 50.0f;
+    CameraFollow2D follow;
+    follow.use_bounds = true;
+    follow.min_bounds = {10.0f, 5.6f};
+    follow.max_bounds = {38.0f, 10.4f};
+    add(Vec3(10, 6, 10), "MainCamera", {{"Camera", reflect::ToJson(camera)}, {"CameraFollow2D", reflect::ToJson(follow)}});
+    TilemapRenderer renderer;
+    renderer.tilemap.guid = map_guid;
+    renderer.pixels_per_unit = 16.0f;
+    add(Vec3(0, 0, 0), "Level", {{"TilemapRenderer", reflect::ToJson(renderer)}});
+    Collider2D body;
+    body.half_extents = {0.4f, 0.5f};
+    body.friction = 0.0f; // the controller sets the speed, so the floor shouldn't fight it
+    add(Vec3(3, 3, 0), "Player",
+        {{"Rigidbody2D", reflect::ToJson(Rigidbody2D{})},
+         {"Collider2D", reflect::ToJson(body)},
+         {"PlatformerController2D", reflect::ToJson(PlatformerController2D{})}});
+    if (!scene.Write(content / "Scenes/Main.ascene", error)) return false;
+
+    ProjectSettings settings;
+    if (!LoadProject(paths.file, settings, error)) return false;
+    settings.startup_scene = "Scenes/Main.ascene";
+    settings.always_cook = {"Input/"};
+    return SaveProject(paths.file, settings, error);
+}
+
 } // namespace
 
 const std::vector<ProjectTemplate>& ProjectTemplates() {
@@ -288,6 +412,14 @@ bool CreateProjectFromTemplate(const stdfs::path& parent_dir, const std::string&
     if (!CreateProject(parent_dir, name, &paths, error)) return false;
     const stdfs::path content = paths.content;
     const Kind kind = entry->kind;
+    if (kind == Kind::Platformer2D) {
+        RegisterSprite2DTemplateComponents();
+        if (!WritePlatformer(paths, error)) return false;
+        AETHER_LOG_INFO("Templates", "Created %s from the %s template in %s", name.c_str(), entry->info.name.c_str(),
+                        paths.root.string().c_str());
+        if (out_paths) *out_paths = paths;
+        return true;
+    }
 
     // Scripts, the pickup Blueprint and the input bindings.
     const char* script_source = nullptr;
