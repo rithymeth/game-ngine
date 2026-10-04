@@ -24,6 +24,7 @@ struct MovieOptions {
     u32 start_frame = 0;    // the first frame rendered (events before it don't fire)
     u32 end_frame = 0;      // the last frame rendered; 0: the last frame of the sequence
     bool fire_events = true; // Event, Audio and Animation keys reach the player's hooks
+    SequenceResolver resolver; // finds the sequences Subsequence tracks play (without one they report a problem)
 };
 
 // Called for each frame, after the tracks and the CineCameras were applied.

@@ -24,7 +24,7 @@ MovieResult RenderMovie(const LevelSequence& sequence, World& world, const GuidI
         result.problems.push_back("movie: the sequence has no tracks");
         return result;
     }
-    SequencePlayer player(sequence, world, guids);
+    SequencePlayer player(sequence, world, guids, options.resolver);
     result.total_frames = MovieFrameCount(player.Duration(), fps);
     const u32 last = options.end_frame == 0 ? result.total_frames - 1 : std::min(options.end_frame, result.total_frames - 1);
     if (options.start_frame > last) {

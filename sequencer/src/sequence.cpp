@@ -49,6 +49,8 @@ const char* TrackTypeName(TrackType t) {
     case TrackType::CameraCut: return "cameracut";
     case TrackType::Audio: return "audio";
     case TrackType::Animation: return "animation";
+    case TrackType::Fade: return "fade";
+    case TrackType::Subsequence: return "subsequence";
     }
     return "transform";
 }
@@ -120,6 +122,7 @@ void Track::Normalize() {
     std::stable_sort(cuts.begin(), cuts.end(), by_time);
     std::stable_sort(audio.begin(), audio.end(), by_time);
     std::stable_sort(anims.begin(), anims.end(), by_time);
+    std::stable_sort(subs.begin(), subs.end(), by_time);
 }
 
 void LevelSequence::Normalize() {
@@ -145,6 +148,7 @@ f32 LevelSequence::EffectiveDuration() const {
         if (!t.cuts.empty()) last = std::max(last, t.cuts.back().time);
         if (!t.audio.empty()) last = std::max(last, t.audio.back().time);
         if (!t.anims.empty()) last = std::max(last, t.anims.back().time);
+        for (const SubKey& k : t.subs) last = std::max(last, k.time + k.duration);
     }
     return duration > 0.0f ? std::max(duration, last) : last;
 }
@@ -191,7 +195,8 @@ std::vector<std::string> ValidateSequence(const LevelSequence& s) {
         const std::string label = "track '" + (t.id.empty() ? t.name : t.id) + "'";
         if (t.id.empty()) add("SQ007", label + " has no id");
         else if (!ids.insert(t.id).second) add("SQ005", label + " repeats an id");
-        const bool optional_binding = t.type == TrackType::Event || t.type == TrackType::Spawn || t.type == TrackType::CameraCut || t.type == TrackType::Audio;
+        const bool optional_binding = t.type == TrackType::Event || t.type == TrackType::Spawn || t.type == TrackType::CameraCut || t.type == TrackType::Audio ||
+                                      t.type == TrackType::Fade || t.type == TrackType::Subsequence;
         if (t.binding.IsNull() && !optional_binding) add("SQ008", label + " is bound to no entity");
 
         // Keys on a track of the wrong kind.
@@ -204,13 +209,14 @@ std::vector<std::string> ValidateSequence(const LevelSequence& s) {
         wrong(!t.cuts.empty(), TrackType::CameraCut, "camera cut");
         wrong(!t.audio.empty(), TrackType::Audio, "audio");
         wrong(!t.anims.empty(), TrackType::Animation, "animation");
+        wrong(!t.subs.empty(), TrackType::Subsequence, "subsequence");
 
         const auto ordered = [&](const auto& keys, const char* what) {
             if (!StrictlyIncreasing(keys)) add("SQ002", label + ", " + what + ": keys aren't in increasing time order");
             if (s.duration > 0.0f && OutsideDuration(keys, s.duration)) add("SQ003", label + ", " + what + ": a key is outside the duration");
         };
         const bool key_list_track = t.type == TrackType::Event || t.type == TrackType::Spawn || t.type == TrackType::CameraCut ||
-                                    t.type == TrackType::Audio || t.type == TrackType::Animation;
+                                    t.type == TrackType::Audio || t.type == TrackType::Animation || t.type == TrackType::Subsequence;
         if (key_list_track && !t.channels.empty()) add("SQ013", label + " has value channels but isn't a value track");
 
         switch (t.type) {
@@ -255,6 +261,23 @@ std::vector<std::string> ValidateSequence(const LevelSequence& s) {
                 if (k.montage.empty()) add("SQ018", label + " has an animation key with no montage");
             }
             ordered(t.anims, "animations");
+            break;
+        case TrackType::Fade: {
+            bool bad = false;
+            if (t.channels.size() != 1) add("SQ019", label + " needs exactly one channel of fade amounts");
+            else {
+                for (const Key& k : t.channels[0].keys) bad = bad || k.value < 0.0f || k.value > 1.0f;
+            }
+            if (bad) add("SQ020", label + " has a fade amount outside 0 to 1");
+            break;
+        }
+        case TrackType::Subsequence:
+            for (const SubKey& k : t.subs) {
+                if (k.sequence.empty()) add("SQ021", label + " has a subsequence key with no sequence");
+                if (!(k.duration > 0.0f)) add("SQ022", label + " has a subsequence key whose duration isn't above 0");
+                if (!(k.scale > 0.0f)) add("SQ023", label + " has a subsequence key whose scale isn't above 0");
+            }
+            ordered(t.subs, "subsequences");
             break;
         case TrackType::Property:
             if (t.component.empty() || t.field.empty()) add("SQ004", label + " names no component or field");
@@ -318,6 +341,14 @@ nlohmann::json SequenceToJson(const LevelSequence& s) {
                 keys.push_back({{"time", k.time}, {"cue", k.cue}, {"action", AudioActionName(k.action)}, {"volume_db", k.volume_db}, {"fade", k.fade}});
             }
             track["audio"] = std::move(keys);
+        } else if (t.type == TrackType::Fade) {
+            track["fade_color"] = {t.fade_color.x, t.fade_color.y, t.fade_color.z, t.fade_color.w};
+        } else if (t.type == TrackType::Subsequence) {
+            nlohmann::json subs = nlohmann::json::array();
+            for (const SubKey& k : t.subs) {
+                subs.push_back({{"time", k.time}, {"duration", k.duration}, {"sequence", k.sequence}, {"offset", k.offset}, {"scale", k.scale}});
+            }
+            track["subs"] = std::move(subs);
         } else if (t.type == TrackType::Animation) {
             nlohmann::json keys = nlohmann::json::array();
             for (const AnimKey& k : t.anims) {
@@ -363,9 +394,16 @@ bool SequenceFromJson(const nlohmann::json& j, LevelSequence& out, std::string* 
         else if (type == "cameracut") t.type = TrackType::CameraCut;
         else if (type == "audio") t.type = TrackType::Audio;
         else if (type == "animation") t.type = TrackType::Animation;
+        else if (type == "fade") t.type = TrackType::Fade;
+        else if (type == "subsequence") t.type = TrackType::Subsequence;
         else return fail("track '" + t.id + "' has an unknown type '" + type + "'");
         const bool optional_binding = t.type != TrackType::Transform && t.type != TrackType::Property && t.type != TrackType::Visibility &&
                                       t.type != TrackType::Animation && tj.value("binding", "").empty();
+        if (t.type == TrackType::Fade && tj.contains("fade_color")) {
+            const nlohmann::json& c = tj["fade_color"];
+            if (!c.is_array() || c.size() != 4) return fail("track '" + t.id + "': a fade colour needs four numbers");
+            t.fade_color = Vec4(c[0].get<f32>(), c[1].get<f32>(), c[2].get<f32>(), c[3].get<f32>());
+        }
         if (!optional_binding && !ParseEntityGuid(tj.value("binding", ""), t.binding)) return fail("track '" + t.id + "' has a bad entity GUID");
         t.mute = tj.value("mute", false);
         t.locked = tj.value("locked", false);
@@ -451,6 +489,18 @@ bool SequenceFromJson(const nlohmann::json& j, LevelSequence& out, std::string* 
             else return fail("track '" + t.id + "': unknown animation action '" + action + "'");
             k.rate = kj.value("rate", 1.0f);
             t.anims.push_back(std::move(k));
+        }
+        for (const nlohmann::json& kj : tj.value("subs", nlohmann::json::array())) {
+            if (!kj.contains("time") || !kj["time"].is_number() || !kj.contains("duration") || !kj["duration"].is_number()) {
+                return fail("track '" + t.id + "': a subsequence key needs a time and a duration");
+            }
+            SubKey k;
+            k.time = kj["time"].get<f32>();
+            k.duration = kj["duration"].get<f32>();
+            k.sequence = kj.value("sequence", "");
+            k.offset = kj.value("offset", 0.0f);
+            k.scale = kj.value("scale", 1.0f);
+            t.subs.push_back(std::move(k));
         }
         s.tracks.push_back(std::move(t));
     }
