@@ -5135,13 +5135,58 @@ forwards them (below).
   stopping, looping and following edits and undo; preview spawns removed with
   the panel; drawing and selection headless; and the workspace tool.
 
-### 27.6 PR breakdown
+### 27.6 CineCamera and movie render
+
+- **`CineCamera`** (`scene/gameplay.h`): a lens beside a `Camera`:
+  `focal_length_mm` (35), `sensor_width_mm` (36), `sensor_height_mm` (20.25, a
+  16:9 gate), `aperture_f` and `focus_distance` (stored for depth of field).
+  `CineFovDegrees` is the vertical field of view, 2 * atan(sensor_height / (2 *
+  focal_length)), kept to 1..170 degrees and safe for zero or negative
+  values. `ApplyCineCameras(world)` writes it into each entity's `Camera`
+  (making it perspective; a CineCamera without a Camera is left alone) and
+  returns how many it updated. The renderer and `CameraProjection` are
+  unchanged: the CineCamera wins over a hand-edited `Camera.fov_degrees`.
+  Every field is a reflected float, so a Property track can zoom the lens
+  (component `CineCamera`, field `focal_length_mm`); the `SequenceSystem`
+  applies the lenses at the end of each update, and the movie loop after each
+  frame. No `.asequence` change.
+- **`SequencePlayer::AdvanceTo(time)`**: moves the playhead forward in one
+  step, firing the Event, Audio and Animation keys on the way (once each, the
+  one at t = 0 included on the first call) and applying the tracks. Backward
+  fires nothing.
+- **`RenderMovie(sequence, world, guids, options, sink, setup)`**
+  (`sequencer/movie.h`): the headless frame loop. Frame i is at exactly i /
+  fps seconds (from the integer, so nothing drifts); a sequence has
+  `MovieFrameCount` = floor(duration * fps) + 1 frames, the last at the end
+  (2 s at 24 fps: 49). For each frame it advances the player, applies the
+  CineCameras and calls `sink(frame, time, world)`; returning false stops
+  (stopping on the last frame still counts as complete). Options: `fps`
+  (0: the sequence's), `start_frame` and `end_frame` (events before the
+  range don't fire), `fire_events`. `setup` gets the player first, for its
+  hooks (the Spawn spawner, `on_event`, `on_audio` ...). The result has the
+  frames rendered, the total, whether it completed, and the problems (a bad
+  frame rate, no tracks, a start past the end, and what couldn't be bound).
+  The same sequence on the same world renders the same frames every time.
+  Camera Cuts and spawns are undone when the render ends. What a sink does with
+  a frame (draw it, write an image, encode) is the caller's.
+- **Tests** (`test_cine_movie.cpp`): the field of view for known lenses and
+  bad values; writing the Camera and leaving others alone; a Property track
+  zooming the lens; reflection; frame counts and exact times; determinism, the
+  frame range and another frame rate; stopping and bad options (and an orphan
+  track reported while the rest renders); events once each, from a later start
+  and silenced; and camera cuts and a lens zoom in force on the right frames,
+  with the cut undone afterwards.
+- Still to come: Fade and Subsequence tracks, a command-line movie renderer
+  (it needs scene loading and a draw path), and depth of field using the
+  aperture and focus distance.
+
+### 27.7 PR breakdown
 
 1. Level sequences and the player core (done, §27.1).
 2. Event and Visibility tracks, the SequenceComponent and system (done, §27.2).
 3. Spawn, Camera Cut, Audio and Animation tracks (done, §27.3).
 4. Sequences in the player and asset pipeline (done, §27.4).
-5. The sequencer editor (this step, §27.5).
-6. `CineCamera`, Fade and Subsequence tracks.
-7. Movie render (a headless fixed-step loop with a frame sink) and the
-   release.
+5. The sequencer editor (done, §27.5).
+6. CineCamera and the movie-render loop (this step, §27.6).
+7. Fade and Subsequence tracks; then a release (v0.27.0) that carries the
+   Phase 26 documentation and lights and all of Phase 27.

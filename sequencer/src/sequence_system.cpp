@@ -220,6 +220,7 @@ void SequenceSystem::Update(f32 dt) {
         if (lifecycle_) lifecycle_->Destroy(e);
         else world_.DestroyEntity(e);
     }
+    ApplyCineCameras(world_); // lens animation (a Property track on a CineCamera) reaches the Camera this frame
 }
 
 } // namespace aether::seq

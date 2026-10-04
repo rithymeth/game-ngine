@@ -320,6 +320,14 @@ void SequencePlayer::Evaluate() {
     }
 }
 
+void SequencePlayer::AdvanceTo(f32 time) {
+    const f32 target = std::clamp(time, 0.0f, duration_);
+    if (target > time_ || (fresh_ && target >= time_)) FireEvents(time_, target, fresh_);
+    fresh_ = false;
+    time_ = target;
+    Evaluate();
+}
+
 void SequencePlayer::Update(f32 dt) {
     if (!playing_) return;
     const f32 before = time_;
