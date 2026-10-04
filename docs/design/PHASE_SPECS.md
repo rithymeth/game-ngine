@@ -5015,13 +5015,56 @@ playback core, in its own module, `sequencer/` (`aether::seq`).
   visibility, destroy-when-finished and the library, once-only problems,
   dropped players, and the reflected Blueprint surface.
 
-### 27.3 PR breakdown
+### 27.3 Spawn, Camera Cut, Audio and Animation tracks
+
+The player drives these through callbacks, so the sequencer module links no
+audio, animation or prefab code and tests headless; the `SequenceSystem`
+forwards them (below).
+
+- **Spawn track**: `spawns` of (time, duration, prefab, position, rotation).
+  A prefab is alive exactly while the playhead is in [time, time + duration)
+  (duration 0: to the end). `on_spawn(track, parent, key)` makes it (the
+  binding, when it has one, is the parent), `on_despawn(entity)` removes it.
+  Leaving the range, `Stop` and destroying the player despawn it; scrubbing
+  back in respawns it; evaluating twice inside the range spawns once; one
+  that gameplay destroyed isn't remade while the playhead stays inside.
+- **Camera Cut track** (no binding): `cuts` of (time, camera GUID). The cut in
+  force at the playhead gives its camera priority `kCutPriority` (1000) so
+  `FindActiveCamera` picks it; the previous camera gets its own priority back,
+  as does the one cut away from, before the first cut, and when the player is
+  destroyed. `on_camera_cut(camera)` is told of each change (null before the
+  first cut).
+- **Audio track**: `audio` keys of (time, cue, action Play / Stop / FadeIn /
+  FadeOut, volume_db, fade). **Animation track**: `anims` of (time, montage,
+  action Play / Stop, rate), bound to the animated entity. Both fire like
+  Event keys (once, forward only) through `on_audio` / `on_animation`.
+- **JSON**: `"type": "spawn" | "cameracut" | "audio" | "animation"` with the
+  key arrays `spawns`, `cuts`, `audio` and `animation`; `$version` stays 1.
+- **Diagnostics**: SQ014 a Spawn key with no prefab; SQ015 a negative spawn
+  duration; SQ016 a cut to no camera; SQ017 an Audio key with no cue; SQ018 an
+  Animation key with no montage. SQ002 and SQ003 cover every key list, SQ013
+  keys on the wrong kind of track. Spawn, Camera Cut and Audio tracks need no
+  binding; an Animation track does.
+- **`SequenceSystem`**: `SetSpawner(fn)` is how a host instantiates prefabs;
+  despawning goes through `Lifecycle::Destroy`. Audio and Animation keys come
+  out of `Events()` as `Kind::Audio` (name = the cue, payload = the action,
+  `value` = volume dB, `fade`) and `Kind::Animation` (name = the montage,
+  payload = the action, `value` = the rate), with `subject` the track's
+  entity, for the host to give to its audio and animation systems.
+- **Tests**: JSON round trip and refused actions; every new diagnostic;
+  spawn range, scrubbing, Stop, destructor and externally destroyed spawns;
+  camera cuts against `FindActiveCamera`, restoring priorities and the
+  destructor; audio and animation firing once and forward only; and the
+  system's forwarding and Lifecycle despawn.
+
+### 27.4 PR breakdown
 
 1. Level sequences and the player core (done, §27.1).
-2. Event and Visibility tracks, the SequenceComponent and system (§27.2).
-3. Spawn tracks (instantiate a prefab for a time range), Animation, Camera
-   Cut (switching `Camera::priority`) and Audio tracks, a `CineCamera`
-   component, and wiring the system into the player.
-4. Fade and Subsequence tracks, `SequenceDocument` and the sequencer panel.
-5. Movie render (a headless fixed-step loop with a frame sink), cook and
+2. Event and Visibility tracks, the SequenceComponent and system (done, §27.2).
+3. Spawn, Camera Cut, Audio and Animation tracks (this step, §27.3).
+4. Wiring into the player: register `.asequence` as an asset type, a
+   `Game::FindSequence` loader, the prefab spawner, the system in the
+   scheduler, and a `CineCamera` component.
+5. Fade and Subsequence tracks, `SequenceDocument` and the sequencer panel.
+6. Movie render (a headless fixed-step loop with a frame sink), cook and
    player integration.

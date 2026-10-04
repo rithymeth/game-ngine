@@ -9,6 +9,7 @@
 #include "aether/sequencer/player.h"
 #include "aether/sequencer/sequence.h"
 #include "aether/sequencer/sequence_system.h"
+#include "aether/scene/gameplay.h"
 
 #include <cmath>
 #include <map>
@@ -402,4 +403,311 @@ AETHER_TEST(SequenceSystem_ComponentsAreReflectedForBlueprintsAndScripts) {
     }
     const reflect::TypeInfo* library = reflect::TypeRegistry::Find("Sequencer");
     CHECK(library != nullptr && library->functions.size() == 2);
+}
+
+// ---------------------------------------------------------------------------
+// Step 3: Spawn, Camera Cut, Audio and Animation tracks
+// ---------------------------------------------------------------------------
+
+namespace {
+
+Track SpawnTrack(std::vector<SpawnKey> keys, const EntityGuid& parent = {}) {
+    Track t;
+    t.id = "spawn";
+    t.type = TrackType::Spawn;
+    t.binding = parent;
+    t.spawns = std::move(keys);
+    return t;
+}
+
+SpawnKey Sp(f32 time, f32 duration, const char* prefab) {
+    SpawnKey k;
+    k.time = time;
+    k.duration = duration;
+    k.prefab = prefab;
+    return k;
+}
+
+Track CutTrack(std::vector<CutKey> keys) {
+    Track t;
+    t.id = "cuts";
+    t.type = TrackType::CameraCut;
+    t.cuts = std::move(keys);
+    return t;
+}
+
+} // namespace
+
+AETHER_TEST(SequenceTracks_SpawnCutAudioAnimationJsonRoundTrip) {
+    Scene scene;
+    LevelSequence s;
+    s.name = "Big";
+    s.duration = 6;
+    SpawnKey sp = Sp(1, 2, "Props/Crate.aprefab");
+    sp.position = Vec3(1, 2, 3);
+    sp.rotation = Quaternion::FromAxisAngle(Vec3(0, 1, 0), 1.0f);
+    Track audio;
+    audio.id = "sfx";
+    audio.type = TrackType::Audio;
+    audio.audio = {AudioKey{0.5f, "Boom", AudioAction::FadeIn, -6.0f, 0.25f}, AudioKey{4, "Boom", AudioAction::Stop, 0, 0}};
+    Track anim;
+    anim.id = "anim";
+    anim.type = TrackType::Animation;
+    anim.binding = scene.actor_guid;
+    anim.anims = {AnimKey{2, "Wave", AnimAction::Play, 1.5f}, AnimKey{3, "Wave", AnimAction::Stop, 1}};
+    s.tracks = {SpawnTrack({sp}, scene.actor_guid), CutTrack({CutKey{0, scene.actor_guid}}), audio, anim};
+    CHECK(ValidateSequence(s).empty());
+    LevelSequence back;
+    std::string error;
+    CHECK(SequenceFromJson(SequenceToJson(s), back, &error));
+    CHECK(back.tracks.size() == 4);
+    const SpawnKey& b = back.tracks[0].spawns[0];
+    CHECK(b.prefab == "Props/Crate.aprefab" && Near(b.duration, 2.0f) && Near(b.position.z, 3.0f) && Near(b.rotation.y, sp.rotation.y));
+    CHECK(back.tracks[1].cuts[0].camera == scene.actor_guid && back.tracks[1].binding.IsNull());
+    CHECK(back.tracks[2].audio[0].action == AudioAction::FadeIn && Near(back.tracks[2].audio[0].volume_db, -6.0f) && Near(back.tracks[2].audio[0].fade, 0.25f));
+    CHECK(back.tracks[3].anims[0].montage == "Wave" && Near(back.tracks[3].anims[0].rate, 1.5f) && back.tracks[3].anims[1].action == AnimAction::Stop);
+
+    // A bad action is refused and leaves the output alone.
+    nlohmann::json j = SequenceToJson(s);
+    j["tracks"][2]["audio"][0]["action"] = "explode";
+    LevelSequence untouched;
+    untouched.name = "keep";
+    CHECK(!SequenceFromJson(j, untouched, &error) && untouched.name == "keep" && error.find("audio action") != std::string::npos);
+    j = SequenceToJson(s);
+    j["tracks"][3]["animation"][0]["action"] = "spin";
+    CHECK(!SequenceFromJson(j, untouched, &error));
+}
+
+AETHER_TEST(SequenceTracks_NewDiagnostics) {
+    Scene scene;
+    const auto has = [](const LevelSequence& s, const char* code) {
+        for (const std::string& m : ValidateSequence(s)) {
+            if (m.rfind(code, 0) == 0) return true;
+        }
+        return false;
+    };
+    LevelSequence s;
+    s.duration = 6;
+    s.tracks = {SpawnTrack({Sp(1, 1, "")})};
+    CHECK(has(s, "SQ014") && !has(s, "SQ008"));
+    s.tracks = {SpawnTrack({Sp(1, -1, "P")})};
+    CHECK(has(s, "SQ015"));
+    s.tracks = {SpawnTrack({Sp(2, 1, "P"), Sp(1, 1, "P")})};
+    CHECK(has(s, "SQ002"));
+    s.tracks = {SpawnTrack({Sp(9, 1, "P")})};
+    CHECK(has(s, "SQ003"));
+    s.tracks = {CutTrack({CutKey{0, EntityGuid{}}})};
+    CHECK(has(s, "SQ016"));
+    Track audio;
+    audio.id = "a";
+    audio.type = TrackType::Audio;
+    audio.audio = {AudioKey{0, "", AudioAction::Play, 0, 0}};
+    s.tracks = {audio};
+    CHECK(has(s, "SQ017") && !has(s, "SQ008")); // 2D audio needs no entity
+    Track anim;
+    anim.id = "n";
+    anim.type = TrackType::Animation;
+    anim.anims = {AnimKey{0, "", AnimAction::Play, 1}};
+    s.tracks = {anim};
+    CHECK(has(s, "SQ018") && has(s, "SQ008")); // an animation needs its entity
+    Track wrong = EventTrack({E(0, "X")});
+    wrong.spawns = {Sp(0, 1, "P")};
+    wrong.cuts = {CutKey{0, scene.actor_guid}};
+    s.tracks = {wrong};
+    CHECK(has(s, "SQ013"));
+}
+
+AETHER_TEST(SequencePlayer_SpawnLivesExactlyWhileTheRangeDoes) {
+    Scene scene;
+    LevelSequence s;
+    s.duration = 6;
+    s.tracks = {SpawnTrack({Sp(1, 2, "A"), Sp(4, 0, "B")}, scene.actor_guid)};
+    SequencePlayer player(s, scene.world, scene.guids);
+    std::vector<std::string> log;
+    player.on_spawn = [&](const Track&, Entity parent, const SpawnKey& k) {
+        CHECK(parent == scene.actor);
+        log.push_back("+" + k.prefab);
+        return scene.world.CreateEntity(Transform{Vec3(), Quaternion::Identity()});
+    };
+    player.on_despawn = [&](Entity e) {
+        log.push_back("-");
+        scene.world.DestroyEntity(e);
+    };
+    const auto at = [&](f32 t) {
+        player.SetTime(t);
+        player.Evaluate();
+    };
+    at(0.5f);
+    CHECK(log.empty());
+    at(1.0f);
+    at(1.5f); // repeated evaluation inside the range doesn't spawn twice
+    CHECK(log == std::vector<std::string>{"+A"});
+    at(3.0f); // range is [1, 3): gone
+    CHECK((log == std::vector<std::string>{"+A", "-"}));
+    at(5.0f); // B lasts to the end
+    at(6.0f);
+    CHECK((log == std::vector<std::string>{"+A", "-", "+B"}));
+    at(1.2f); // scrubbing back out of B and into A
+    CHECK((log == std::vector<std::string>{"+A", "-", "+B", "+A", "-"})); // A spawns (key order), then B is left
+    player.Stop(); // Stop removes what's alive
+    CHECK((log == std::vector<std::string>{"+A", "-", "+B", "+A", "-", "-"}));
+}
+
+AETHER_TEST(SequencePlayer_SpawnsAreRemovedWithThePlayerAndNotRemadeAfterBeingDestroyed) {
+    Scene scene;
+    LevelSequence s;
+    s.duration = 4;
+    s.tracks = {SpawnTrack({Sp(0, 0, "A")})};
+    Entity made;
+    int spawns = 0;
+    {
+        SequencePlayer player(s, scene.world, scene.guids);
+        player.on_spawn = [&](const Track&, Entity, const SpawnKey&) {
+            ++spawns;
+            made = scene.world.CreateEntity(Transform{Vec3(), Quaternion::Identity()});
+            return made;
+        };
+        player.on_despawn = [&](Entity e) { scene.world.DestroyEntity(e); };
+        player.SetTime(1.0f);
+        player.Evaluate();
+        CHECK(spawns == 1 && scene.world.IsAlive(made));
+        scene.world.DestroyEntity(made); // gameplay destroyed it
+        player.Evaluate();
+        player.Evaluate();
+        CHECK(spawns == 1); // still inside the range: not remade
+        player.SetTime(2.0f);
+        player.Evaluate();
+        CHECK(spawns == 1);
+        player.Update(0.0f);
+        // Another spawn then goes away with the player.
+        player.SetTime(0.0f);
+        player.Evaluate();
+    }
+    // (the first was destroyed by gameplay, the second removed by the destructor)
+    CHECK(!scene.world.IsAlive(made));
+}
+
+AETHER_TEST(SequencePlayer_CameraCutsSwitchThePriorityAndRestoreIt) {
+    Scene scene;
+    (void)GetComponentId<Camera>();
+    const Entity cam_a = scene.world.CreateEntity(Transform{Vec3(), Quaternion::Identity()}, Camera{});
+    const Entity cam_b = scene.world.CreateEntity(Transform{Vec3(), Quaternion::Identity()}, Camera{});
+    scene.world.GetComponent<Camera>(cam_a)->priority = 5;
+    scene.world.GetComponent<Camera>(cam_b)->priority = 2;
+    const EntityGuid ga = EnsureGuid(scene.world, cam_a, &scene.guids);
+    const EntityGuid gb = EnsureGuid(scene.world, cam_b, &scene.guids);
+    const Entity gameplay = scene.world.CreateEntity(Transform{Vec3(), Quaternion::Identity()}, Camera{});
+    scene.world.GetComponent<Camera>(gameplay)->priority = 10;
+    (void)EnsureGuid(scene.world, gameplay, &scene.guids);
+
+    LevelSequence s;
+    s.duration = 6;
+    s.tracks = {CutTrack({CutKey{1, ga}, CutKey{3, gb}})};
+    SequencePlayer player(s, scene.world, scene.guids);
+    std::vector<Entity> cuts;
+    player.on_camera_cut = [&](Entity e) { cuts.push_back(e); };
+    const auto at = [&](f32 t) {
+        player.SetTime(t);
+        player.Evaluate();
+    };
+    at(0.0f);
+    CHECK(FindActiveCamera(scene.world, scene.guids) == gameplay);
+    at(1.5f);
+    CHECK(FindActiveCamera(scene.world, scene.guids) == cam_a);
+    CHECK(scene.world.GetComponent<Camera>(cam_a)->priority == SequencePlayer::kCutPriority);
+    at(2.0f);
+    CHECK(cuts.size() == 2); // none, then A: evaluating inside a cut doesn't repeat it
+    at(4.0f);
+    CHECK(FindActiveCamera(scene.world, scene.guids) == cam_b);
+    CHECK(scene.world.GetComponent<Camera>(cam_a)->priority == 5); // A got its own priority back
+    at(0.0f); // before the first cut: back to the game's camera
+    CHECK(FindActiveCamera(scene.world, scene.guids) == gameplay && scene.world.GetComponent<Camera>(cam_b)->priority == 2);
+    CHECK(cuts.size() == 4 && cuts.back() == kNullEntity);
+    at(1.5f);
+    // Dropping the player gives the camera back too.
+    {
+        SequencePlayer other(s, scene.world, scene.guids);
+        other.SetTime(4.0f);
+        other.Evaluate();
+        CHECK(scene.world.GetComponent<Camera>(cam_b)->priority == SequencePlayer::kCutPriority);
+    }
+    CHECK(scene.world.GetComponent<Camera>(cam_b)->priority == 2);
+}
+
+AETHER_TEST(SequencePlayer_AudioAndAnimationKeysFireOnceForwardOnly) {
+    Scene scene;
+    LevelSequence s;
+    s.duration = 4;
+    Track audio;
+    audio.id = "sfx";
+    audio.type = TrackType::Audio;
+    audio.binding = scene.actor_guid;
+    audio.audio = {AudioKey{1, "Boom", AudioAction::Play, -3, 0}, AudioKey{3, "Boom", AudioAction::FadeOut, 0, 0.5f}};
+    Track anim;
+    anim.id = "anim";
+    anim.type = TrackType::Animation;
+    anim.binding = scene.actor_guid;
+    anim.anims = {AnimKey{2, "Wave", AnimAction::Play, 2.0f}};
+    Track muted = anim;
+    muted.id = "muted";
+    muted.mute = true;
+    s.tracks = {audio, anim, muted};
+    SequencePlayer player(s, scene.world, scene.guids);
+    std::vector<std::string> log;
+    player.on_audio = [&](const Track&, Entity e, const AudioKey& k) {
+        CHECK(e == scene.actor);
+        log.push_back("audio:" + k.cue + ":" + std::to_string(static_cast<int>(k.action)));
+    };
+    player.on_animation = [&](const Track&, Entity e, const AnimKey& k) {
+        CHECK(e == scene.actor && Near(k.rate, 2.0f));
+        log.push_back("anim:" + k.montage);
+    };
+    player.SetTime(3.5f);
+    player.Evaluate();
+    CHECK(log.empty()); // scrubbing fires nothing
+    player.SetTime(0.0f);
+    player.Play();
+    player.Update(1.5f);
+    player.Update(1.0f);
+    player.Update(1.0f);
+    CHECK((log == std::vector<std::string>{"audio:Boom:0", "anim:Wave", "audio:Boom:3"}));
+    player.SetRate(-1.0f);
+    player.Play();
+    player.Update(3.0f); // backward: nothing
+    CHECK(log.size() == 3);
+}
+
+AETHER_TEST(SequenceSystem_ForwardsAudioAnimationAndSpawns) {
+    Host h;
+    LevelSequence s;
+    s.duration = 4;
+    Track audio;
+    audio.id = "sfx";
+    audio.type = TrackType::Audio;
+    audio.audio = {AudioKey{0.5f, "Boom", AudioAction::FadeIn, -6, 0.25f}};
+    Track anim;
+    anim.id = "anim";
+    anim.type = TrackType::Animation;
+    anim.binding = h.scene.actor_guid;
+    anim.anims = {AnimKey{0.5f, "Wave", AnimAction::Play, 1.5f}};
+    s.tracks = {audio, anim, SpawnTrack({Sp(1, 1, "Crate")}, h.scene.actor_guid)};
+    h.sequences["Show.asequence"] = s;
+    int spawned = 0;
+    Entity last;
+    h.system.SetSpawner([&](const Track&, Entity parent, const SpawnKey& k) {
+        CHECK(parent == h.scene.actor && k.prefab == "Crate");
+        ++spawned;
+        last = h.scene.world.CreateEntity(Transform{Vec3(), Quaternion::Identity()});
+        return last;
+    });
+    const Entity e = h.Add("Show.asequence", true);
+    h.system.Update(0.6f);
+    const auto& events = h.system.Events();
+    CHECK(events.size() == 2);
+    CHECK(events[0].kind == SequenceEvent::Kind::Audio && events[0].name == "Boom" && events[0].payload == "fade_in" && Near(events[0].value, -6.0f) && Near(events[0].fade, 0.25f) && events[0].entity == e);
+    CHECK(events[1].kind == SequenceEvent::Kind::Animation && events[1].name == "Wave" && events[1].payload == "play" && events[1].subject == h.scene.actor && Near(events[1].value, 1.5f));
+    h.system.Update(0.6f); // 1.2: inside the spawn range
+    CHECK(spawned == 1 && h.scene.world.IsAlive(last));
+    h.system.Update(1.0f); // 2.2: out of it, removed through Lifecycle
+    CHECK(!h.scene.world.IsAlive(last));
 }
