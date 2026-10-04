@@ -4632,9 +4632,68 @@ say, not only its lifecycle callbacks and physics (§25.4).
    Person, Top Down and Vehicle, each a small starter game, and New
    Project from a template. The 2D Platformer waits for the 2D toolkit.
    The player runs their scripts, Blueprints and input too (§26.3).
-3. The editor extensibility API: custom panels, property drawers, asset
-   types and menu items from C++ and from Luau editor scripts.
+3. ✅ **Done.** The editor extensibility API (§26.5): panels, menu
+   items, property drawers and asset types from C++, and panels, menu
+   items and asset types from Luau editor scripts.
 4. The 2D toolkit: sprites, atlases, tilemaps and the tileset editor,
    2D physics, 2D lights and a pixel-perfect camera.
 5. Documentation: the API reference from reflection, the manual, and
    sample projects; version control status in the Content Browser.
+
+### 26.5 The editor extensibility API
+
+What a plugin, a game module or a project adds to the editor without
+editing it. `ExtensionRegistry` (`editor/src/ui/extensions.h`) holds four
+kinds of entry, each registered under an owner (a plugin or script name) so
+one owner's entries leave together:
+
+- **Panels**: a name, a category (default "Extensions") and a draw
+  function. The workspace lists them as tools after the built-in ones, in
+  the Tools menu and the hub, and a popped-out panel stays open when the
+  list is rebuilt.
+- **Menu items**: a "Menu/Sub/Item" path, an optional shortcut
+  ("Ctrl+Shift+B") and an optional enabled check. Paths under `Tools/`
+  join the Tools menu; any other root gets a menu of its own beside it.
+  `PollShortcuts()` fires the pressed ones, except while a text field has
+  focus.
+- **Property drawers**: for a reflected type's name; the Inspector draws
+  that widget in the value column instead of its own, for every field of
+  the type. A drawer returns whether it changed the value, which feeds
+  the Inspector's changed-field and undo result as any edit does.
+- **Asset types**: an extension, a display name, the text of a new file
+  and an opener for double-click in the Content Browser.
+
+`ExtensionRegistry::Active()` is the registry the editor made active, so a
+plugin's editor module (`ModuleType::Editor`) registers into it from
+`Startup` and removes itself in `Shutdown`.
+
+**Editor scripts.** Every `.luau` file under a project's `Content/Editor/`
+runs when the project opens (and on `Reload`), with these globals:
+`editor.AddPanel(name, fn)`, `editor.AddMenuItem(path, fn [, shortcut])`,
+`editor.AddAssetType(name, ext, newText [, fn(path)])`, `editor.Log(text)`,
+and in a panel `ui.Text`, `TextDisabled`, `Button`, `Checkbox`,
+`SliderFloat`, `InputText`, `CollapsingHeader`, `SameLine`, `Separator` and
+`Spacing`. Widgets that edit a value return the new one (and whether it
+changed). The VM is sandboxed as game scripts are, with a smaller
+instruction budget since a panel runs every frame. A script that fails to
+load leaves nothing registered; an error in a callback shows in its panel
+and in `Errors()` and clears when it next succeeds. Property drawers are
+C++ only for now.
+
+`LuauHost::RegisterNative` and `NativeCall` are the general piece beneath
+this: a host adds its own functions to a VM, and keeps a Luau function
+argument as a reference to call later.
+
+**Tests** (`test_extensions.cpp`):
+
+- Panels and menus: replace by owner and name, remove by owner, shortcuts,
+  a disabled item, and drawing the menus headless.
+- A property drawer replaces the Inspector's widget and reports the
+  change; unregistering restores it; the active registry clears when it
+  is destroyed.
+- Asset types: extension normalising, new files numbered, and the opener.
+- The workspace shows panels as tools and keeps a popped-out one open.
+- Editor scripts: panels, menus and asset types register; a script that
+  fails to load or is called wrongly is reported; menu actions and openers
+  run Luau; every `ui.*` widget draws; reload replaces the old entries; a
+  runaway callback stops at its budget; the sample project's script loads.
