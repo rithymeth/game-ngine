@@ -93,6 +93,38 @@ bool StartsWithNoCase(const char* text, std::string_view prefix) {
     return k == prefix.size();
 }
 
+// An editor script (§26.5): a panel, a menu item and an asset type. Written
+// into a sample project that doesn't have it yet (an older one gains it).
+void WriteSampleEditorScript(const std::filesystem::path& content) {
+    namespace stdfs = std::filesystem;
+    std::error_code ec;
+    if (stdfs::exists(content / "Editor" / "Hello.luau", ec)) return;
+    stdfs::create_directories(content / "Editor", ec);
+    std::ofstream(content / "Editor" / "Hello.luau", std::ios::binary) << R"(-- An editor script: Content/Editor/*.luau runs when the project opens.
+local clicks = 0
+local scale = 1.0
+local note = "type here"
+
+editor.AddPanel("Hello Panel", function()
+    ui.Text("This panel is a Luau editor script.")
+    if ui.Button("Click me") then
+        clicks += 1
+        editor.Log("clicked " .. clicks)
+    end
+    ui.SameLine()
+    ui.Text("clicks: " .. clicks)
+    scale = ui.SliderFloat("Scale", scale, 0, 4)
+    note = ui.InputText("Note", note)
+end)
+
+editor.AddMenuItem("Tools/Hello/Say hello", function()
+    editor.Log("Hello from an editor script")
+end, "Ctrl+Shift+H")
+
+editor.AddAssetType("Dialogue", ".dialogue", "{\"lines\": []}\n")
+)";
+}
+
 } // namespace
 
 struct EditorWorkspace::Impl {
@@ -591,7 +623,10 @@ std::filesystem::path EditorWorkspace::SampleProject(std::string* error) {
     std::error_code ec;
     const stdfs::path parent = stdfs::temp_directory_path(ec) / "aether_editor";
     const ProjectPaths paths = ProjectPaths::ForFile(parent / "SampleGame" / "SampleGame.aproject");
-    if (stdfs::is_regular_file(paths.file, ec)) return paths.file;
+    if (stdfs::is_regular_file(paths.file, ec)) {
+        WriteSampleEditorScript(paths.content);
+        return paths.file;
+    }
     stdfs::create_directories(parent, ec);
     stdfs::remove_all(paths.root, ec); // a half-made one from an earlier run
     std::string why;
@@ -626,31 +661,7 @@ std::filesystem::path EditorWorkspace::SampleProject(std::string* error) {
         if (error) *error = why;
         return {};
     }
-    // An editor script (§26.5): a panel, a menu item and an asset type.
-    stdfs::create_directories(paths.content / "Editor", ec);
-    std::ofstream(paths.content / "Editor" / "Hello.luau", std::ios::binary) << R"(-- An editor script: Content/Editor/*.luau runs when the project opens.
-local clicks = 0
-local scale = 1.0
-local note = "type here"
-
-editor.AddPanel("Hello Panel", function()
-    ui.Text("This panel is a Luau editor script.")
-    if ui.Button("Click me") then
-        clicks += 1
-        editor.Log("clicked " .. clicks)
-    end
-    ui.SameLine()
-    ui.Text("clicks: " .. clicks)
-    scale = ui.SliderFloat("Scale", scale, 0, 4)
-    note = ui.InputText("Note", note)
-end)
-
-editor.AddMenuItem("Tools/Hello/Say hello", function()
-    editor.Log("Hello from an editor script")
-end, "Ctrl+Shift+H")
-
-editor.AddAssetType("Dialogue", ".dialogue", "{\"lines\": []}\n")
-)";
+    WriteSampleEditorScript(paths.content);
     return paths.file;
 }
 EditorWorkspace::~EditorWorkspace() = default;
