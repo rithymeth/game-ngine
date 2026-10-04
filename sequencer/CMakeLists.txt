@@ -5,6 +5,7 @@
 add_library(aether_sequencer STATIC
     src/sequence.cpp
     src/player.cpp
+    src/sequence_system.cpp
 )
 target_include_directories(aether_sequencer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aether_sequencer PUBLIC cxx_std_20)

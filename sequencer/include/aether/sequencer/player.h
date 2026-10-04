@@ -46,8 +46,18 @@ public:
     // a looping sequence calls it at every wrap.
     std::function<void()> on_finished;
 
-    // Advances a playing sequence by `dt` seconds and applies it.
+    // Advances a playing sequence by `dt` seconds, fires the event keys the
+    // playhead crossed and applies it. Events fire once each, forward only
+    // (scrubbing, `SetTime` and playing backward fire none); a loop fires the
+    // keys at the end and then those at the start.
     void Update(f32 dt);
+
+    // Called for each Event key crossed, in time order.
+    std::function<void(const Track&, const EventKey&)> on_event;
+    // How a Visibility track shows or hides its entity; called only when the
+    // value changes. The default sets the entity's Active component (adding
+    // one if it has none); a host can route it through Lifecycle::SetActive.
+    std::function<void(Entity, bool)> set_active;
 
     // What went wrong binding or applying, each reported once: a missing
     // entity or component, an unknown field, a field type that can't be keyed.
@@ -59,6 +69,7 @@ private:
         ComponentId component = kInvalidComponentId; // Property
         const reflect::TypeInfo* field_type = nullptr;
         u32 field_offset = 0;
+        int shown = -1;       // Visibility: the last value applied (-1 none yet)
         bool bound = false;   // resolved and usable
         bool reported = false; // its problem has been reported
     };
@@ -66,6 +77,9 @@ private:
     void Report(usize index, const std::string& message);
     void ApplyTransform(const Track& track, Target& target);
     void ApplyProperty(const Track& track, Target& target);
+    void ApplyVisibility(const Track& track, Target& target);
+    // Fires the Event keys in (from, to] (or [from, to] when `include_from`).
+    void FireEvents(f32 from, f32 to, bool include_from);
 
     const LevelSequence& sequence_;
     World& world_;
@@ -76,6 +90,7 @@ private:
     f32 duration_ = 0.0f;
     f32 rate_ = 1.0f;
     bool playing_ = false;
+    bool fresh_ = true; // nothing played yet from the start: an event at t = 0 still fires
 };
 
 } // namespace aether::seq
