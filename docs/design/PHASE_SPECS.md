@@ -4280,7 +4280,7 @@ library, and `aether_player`, the executable.
     reports whether it's running, waits for its exit code, and kills it.
     It uses `CreateProcessW` on Windows and `posix_spawn` elsewhere.
 - **The editor**:
-  - **Build and Package window** (`editor/src/build`):
+  - **Build and Package window** (`editor/src/packaging`):
     - **Settings**: the configuration, the compression, the texture
       quality, the output folder (by default
       `Saved/Packaged/<Configuration>`) and the player.
