@@ -4,6 +4,9 @@
 # Clang, ASan/UBSan and the physics module; runs the unit tests and the
 # functional tests (aether_functional), and keeps the JUnit report.
 #
+# macOS (Apple Silicon): the engine, scripting, physics, the Vulkan backend
+# on MoltenVK and the editor shell; runs the unit and functional tests.
+#
 # Windows: MSVC builds everything, the D3D12 editor included, runs the
 # tests, and packages the editor (aether_editor.exe, its DLLs and the
 # assets) as a downloadable artifact. Pushing a tag v* also attaches the
@@ -83,6 +86,7 @@ jobs:
           "-DCMAKE_CXX_FLAGS=${{ matrix.flags }}"
           -DAETHER_BUILD_PHYSICS=${{ matrix.physics }}
           -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_SANDBOX=OFF
+          -DAETHER_PLATFORM_PLUGINS=platforms/example
       - name: Build
         run: cmake --build build --parallel
       - name: Unit tests
@@ -117,6 +121,63 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: functional-results-linux-${{ matrix.name }}
+          path: functional-results.xml
+          if-no-files-found: ignore
+
+  macos:
+    name: macOS (Apple Silicon, MoltenVK)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        # MoltenVK (Vulkan on Metal) with the Vulkan loader and headers, and
+        # glslang for HLSL to SPIR-V.
+        run: |
+          brew install ninja molten-vk vulkan-loader vulkan-headers glslang
+          for f in "$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json" \
+                   "$(brew --prefix)/share/vulkan/icd.d/MoltenVK_icd.json" \
+                   "$(brew --prefix molten-vk)/etc/vulkan/icd.d/MoltenVK_icd.json" \
+                   "$(brew --prefix molten-vk)/share/vulkan/icd.d/MoltenVK_icd.json"; do
+            if [ -f "$f" ]; then echo "VK_ICD_FILENAMES=$f" >> "$GITHUB_ENV"; break; fi
+          done
+      - name: Cache fetched dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-macos-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: deps-macos-
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          "-DCMAKE_PREFIX_PATH=$(brew --prefix)"
+          -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_SANDBOX=OFF
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Unit tests
+        run: ./build/tests/aether_tests
+      - name: Functional tests
+        run: ./build/tools/functional/aether_functional --quiet --junit functional-results.xml
+      - name: Screenshot the editor shell
+        # Offscreen through MoltenVK; hosted runners may have no Metal
+        # device, so this reports without failing the job.
+        continue-on-error: true
+        env:
+          AETHER_EDITOR_HEADLESS: "1"
+          AETHER_EDITOR_MAX_FRAMES: "10"
+          AETHER_EDITOR_SCREENSHOT: ${{ github.workspace }}/editor-screenshot-macos.png
+        run: ./build/editor/shell/aether_editor_shell
+      - name: Upload the editor screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: editor-screenshot-macos
+          path: editor-screenshot-macos.png
+          if-no-files-found: ignore
+      - name: Keep the functional report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: functional-results-macos
           path: functional-results.xml
           if-no-files-found: ignore
 
@@ -193,7 +254,7 @@ jobs:
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux, windows]
+    needs: [linux, macos, windows]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

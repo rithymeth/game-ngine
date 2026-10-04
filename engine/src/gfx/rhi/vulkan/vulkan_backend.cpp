@@ -97,9 +97,23 @@ VkInstance CreateInstance(bool /*enable_debug_layer*/) {
     if (extensions.size() == 1) {
         extensions.clear(); // VK_KHR_surface alone is of no use
     }
+    // macOS: MoltenVK is a "portability" implementation, which the loader
+    // only lists when asked to (VK_KHR_portability_enumeration).
+    bool portability = false;
+    for (const VkExtensionProperties& ext : available) {
+        if (std::strcmp(ext.extensionName, "VK_KHR_portability_enumeration") == 0) portability = true;
+    }
+    if (portability) {
+        extensions.push_back("VK_KHR_portability_enumeration");
+    }
 #endif
 
     VkInstanceCreateInfo create_info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+#if !defined(_WIN32)
+    if (portability) {
+        create_info.flags |= 0x00000001; // VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR
+    }
+#endif
     create_info.pApplicationInfo = &app_info;
     create_info.enabledExtensionCount = static_cast<u32>(extensions.size());
     create_info.ppEnabledExtensionNames = extensions.data();
@@ -237,14 +251,24 @@ VkDevice CreateLogicalDevice(VkPhysicalDevice physical_device, const PhysicalDev
     VkPhysicalDeviceVulkan12Features features_12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
     features_12.timelineSemaphore = VK_TRUE;
 
-    const char* extensions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    std::vector<const char*> extensions = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    // A portability implementation (MoltenVK) must have its subset enabled.
+    u32 ext_count = 0;
+    vkEnumerateDeviceExtensionProperties(physical_device, nullptr, &ext_count, nullptr);
+    std::vector<VkExtensionProperties> device_exts(ext_count);
+    vkEnumerateDeviceExtensionProperties(physical_device, nullptr, &ext_count, device_exts.data());
+    for (const VkExtensionProperties& ext : device_exts) {
+        if (std::strcmp(ext.extensionName, "VK_KHR_portability_subset") == 0) {
+            extensions.push_back("VK_KHR_portability_subset");
+        }
+    }
 
     VkDeviceCreateInfo device_info{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
     device_info.pNext = &features_12;
     device_info.queueCreateInfoCount = static_cast<u32>(queue_infos.size());
     device_info.pQueueCreateInfos = queue_infos.data();
-    device_info.enabledExtensionCount = static_cast<u32>(std::size(extensions));
-    device_info.ppEnabledExtensionNames = extensions;
+    device_info.enabledExtensionCount = static_cast<u32>(extensions.size());
+    device_info.ppEnabledExtensionNames = extensions.data();
 
     VkDevice device = VK_NULL_HANDLE;
     AETHER_VK_CHECK(vkCreateDevice(physical_device, &device_info, nullptr, &device));
