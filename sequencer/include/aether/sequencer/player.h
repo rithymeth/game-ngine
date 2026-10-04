@@ -20,6 +20,9 @@ class SequencePlayer {
 public:
     // `sequence`, `world` and `guids` must outlive the player.
     SequencePlayer(const LevelSequence& sequence, World& world, const GuidIndex& guids);
+    ~SequencePlayer();
+    SequencePlayer(const SequencePlayer&) = delete;
+    SequencePlayer& operator=(const SequencePlayer&) = delete;
 
     // Resolves every track's entity and, for a Property track, its component
     // and field; clears the problems and reports what couldn't be resolved.
@@ -54,6 +57,23 @@ public:
 
     // Called for each Event key crossed, in time order.
     std::function<void(const Track&, const EventKey&)> on_event;
+    // Audio and Animation keys, fired like events (forward only, once each).
+    // `entity` is the track's bound entity (null for none).
+    std::function<void(const Track&, Entity entity, const AudioKey&)> on_audio;
+    std::function<void(const Track&, Entity entity, const AnimKey&)> on_animation;
+    // Spawn tracks: `on_spawn` makes the key's prefab (placed relative to
+    // `parent`, null for none) and returns its root; `on_despawn` removes it.
+    // The player keeps the handle, so a key is alive exactly while the
+    // playhead is inside its range: leaving it (or Stop, or destroying the
+    // player) despawns, scrubbing back in respawns.
+    std::function<Entity(const Track&, Entity parent, const SpawnKey&)> on_spawn;
+    std::function<void(Entity)> on_despawn;
+    // Camera Cut tracks: the cut in force at the playhead makes its camera
+    // the highest-priority one (kCutPriority) so FindActiveCamera picks it;
+    // the previous one gets its own priority back. `on_camera_cut` is also
+    // told, with kNullEntity before the first cut.
+    static constexpr i32 kCutPriority = 1000;
+    std::function<void(Entity)> on_camera_cut;
     // How a Visibility track shows or hides its entity; called only when the
     // value changes. The default sets the entity's Active component (adding
     // one if it has none); a host can route it through Lifecycle::SetActive.
@@ -69,6 +89,11 @@ private:
         ComponentId component = kInvalidComponentId; // Property
         const reflect::TypeInfo* field_type = nullptr;
         u32 field_offset = 0;
+        std::vector<Entity> spawned; // Spawn: the live root of each key (null when not alive)
+        std::vector<char> spawn_done; // Spawn: this key's range was entered and handled (so a destroyed spawn isn't remade while inside)
+        int cut = -2;         // CameraCut: the index of the cut in force (-1 before the first, -2 none yet)
+        Entity cut_camera;    // CameraCut: the camera holding the cut priority
+        i32 cut_saved = 0;    // ... and the priority it had
         int shown = -1;       // Visibility: the last value applied (-1 none yet)
         bool bound = false;   // resolved and usable
         bool reported = false; // its problem has been reported
@@ -78,7 +103,12 @@ private:
     void ApplyTransform(const Track& track, Target& target);
     void ApplyProperty(const Track& track, Target& target);
     void ApplyVisibility(const Track& track, Target& target);
-    // Fires the Event keys in (from, to] (or [from, to] when `include_from`).
+    void ApplySpawns(const Track& track, Target& target);
+    void ApplyCuts(const Track& track, Target& target);
+    void ReleaseCut(Target& target);
+    void DespawnAll();
+    // Fires the Event, Audio and Animation keys in (from, to] (or [from, to]
+    // when `include_from`).
     void FireEvents(f32 from, f32 to, bool include_from);
 
     const LevelSequence& sequence_;

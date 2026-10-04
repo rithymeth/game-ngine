@@ -56,7 +56,46 @@ struct EventKey {
     std::string payload; // free text for the receiver
 };
 
-enum class TrackType : u8 { Transform, Property, Event, Visibility };
+// A prefab alive for a range of the sequence: it appears when the playhead
+// enters [time, time + duration) and is removed when it leaves (scrubbing
+// out of the range removes it too). A duration of 0 keeps it to the end.
+struct SpawnKey {
+    f32 time = 0.0f;
+    f32 duration = 0.0f;
+    std::string prefab; // the prefab asset (guid or path, the host resolves it)
+    Vec3 position{0, 0, 0}; // relative to the track's binding when it has one
+    Quaternion rotation = Quaternion::Identity();
+};
+
+// From `time` on, this camera is the one the game renders from (until the
+// next cut).
+struct CutKey {
+    f32 time = 0.0f;
+    EntityGuid camera;
+};
+
+enum class AudioAction : u8 { Play, Stop, FadeIn, FadeOut };
+// A sound cue started or stopped at a moment, from the track's entity (or
+// 2D when it has none). Fires like an Event key.
+struct AudioKey {
+    f32 time = 0.0f;
+    std::string cue;
+    AudioAction action = AudioAction::Play;
+    f32 volume_db = 0.0f;
+    f32 fade = 0.0f; // seconds, for FadeIn / FadeOut
+};
+
+enum class AnimAction : u8 { Play, Stop };
+// An animation montage started or stopped on the track's entity. Fires like
+// an Event key.
+struct AnimKey {
+    f32 time = 0.0f;
+    std::string montage;
+    AnimAction action = AnimAction::Play;
+    f32 rate = 1.0f;
+};
+
+enum class TrackType : u8 { Transform, Property, Event, Visibility, Spawn, CameraCut, Audio, Animation };
 
 struct Track {
     std::string id;   // unique in the sequence
@@ -78,6 +117,13 @@ struct Track {
     std::vector<Channel> channels;
     std::vector<RotationKey> rotation;
     std::vector<EventKey> events;
+    // Spawn, CameraCut, Audio and Animation: their keys (the binding is the
+    // parent for Spawn, the emitter for Audio, the animated entity for
+    // Animation; CameraCut has none).
+    std::vector<SpawnKey> spawns;
+    std::vector<CutKey> cuts;
+    std::vector<AudioKey> audio;
+    std::vector<AnimKey> anims;
     std::string component;
     std::string field;
 
@@ -111,7 +157,11 @@ Quaternion EvaluateRotation(const std::vector<RotationKey>& keys, f32 time);
 // Event key with no name; SQ012 a Visibility track that doesn't have exactly
 // one channel of 0 and 1 values; SQ013 keys on a track of the wrong kind
 // (events on a Transform, rotation keys on a Property...). A Event track's
-// binding is optional, so SQ008 doesn't apply to it.
+// binding is optional, so SQ008 doesn't apply to it (nor to Spawn, CameraCut
+// and Audio tracks). SQ014 a Spawn key with no prefab; SQ015 a Spawn key
+// with a negative duration; SQ016 a cut to no camera; SQ017 an Audio key with
+// no cue; SQ018 an Animation key with no montage. SQ002 and SQ003 cover every
+// key list's order and range.
 std::vector<std::string> ValidateSequence(const LevelSequence& sequence);
 
 // .asequence files. FromJson leaves `out` unchanged on failure.
