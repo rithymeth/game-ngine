@@ -33,7 +33,10 @@ struct EditorScripts::Impl {
 
     // Runs a callback; a failure becomes the owner's error (cleared on success).
     bool Invoke(const std::string& owner, int ref, const std::vector<script::ScriptValue>& args = {}) {
+        const std::string previous = current_owner;
+        current_owner = owner; // what the callback registers belongs to its script
         const script::ScriptResult result = host->CallRef(ref, args);
+        current_owner = previous;
         if (result.ok) {
             errors.erase(owner);
         } else {

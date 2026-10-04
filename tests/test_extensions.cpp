@@ -177,6 +177,7 @@ AETHER_TEST(Extensions_AssetTypes) {
 AETHER_TEST(Extensions_WorkspaceShowsPanelsAsTools) {
     HeadlessImGui ui;
     EditorWorkspace ws;
+    ws.Update(0.0f); // the sample project's own editor script panel joins first
     const usize built_in = ws.ToolCount();
     int draws = 0;
     ws.Extensions().AddPanel({"My Panel", "", [&] { ++draws; ImGui::TextUnformatted("hi"); }, "test"});
