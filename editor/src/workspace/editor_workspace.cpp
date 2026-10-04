@@ -8,6 +8,7 @@
 #include "audio/cue_editor.h"
 #include "audio/mixer_panel.h"
 #include "devtools/console_panel.h"
+#include "packaging/build_window.h"
 #include "devtools/crash_reporter.h"
 #include "devtools/profiler_panel.h"
 #include "graph/blueprint_editor.h"
@@ -22,6 +23,9 @@
 #include "aether/core/console.h"
 #include "aether/nav/components.h"
 #include "aether/nav/crowd.h"
+#include "aether/project/project.h"
+#include "aether/reflection/serialize.h"
+#include "aether/scene/gameplay.h"
 #include "aether/scene/components.h"
 #include "aether/streaming/partition.h"
 
@@ -29,6 +33,7 @@
 
 #include <cctype>
 #include <cstring>
+#include <fstream>
 #include <functional>
 #include <vector>
 
@@ -152,8 +157,12 @@ struct EditorWorkspace::Impl {
     std::unique_ptr<ConsolePanel> console_panel;
     std::unique_ptr<ProfilerPanel> profiler_panel;
     std::unique_ptr<CrashReporterDialog> crash_dialog;
+    // Project.
+    std::filesystem::path project_file;
+    std::unique_ptr<ProjectSettingsPanel> project_settings;
+    std::unique_ptr<BuildPackageWindow> build_window;
 
-    Impl() {
+    explicit Impl(std::filesystem::path project) : project_file(std::move(project)) {
         BuildBlueprint();
         BuildScript();
         BuildMaterial();
@@ -166,6 +175,7 @@ struct EditorWorkspace::Impl {
         BuildWorld();
         BuildNetworking();
         BuildDebug();
+        BuildProject();
 
         tools = {
             {"Blueprint - BP_Door", "Scripting", [this] { blueprint_editor->Draw(); }},
@@ -187,6 +197,8 @@ struct EditorWorkspace::Impl {
             {"Console", "Debug", [this] { console_panel->Draw(); }},
             {"Profiler", "Debug", [this] { profiler_panel->Draw(); }},
             {"Crash Reports", "Debug", [this] { DrawCrashReports(); }},
+            {"Project Settings", "Project", [this] { DrawProjectTool(true); }},
+            {"Build and Package", "Project", [this] { DrawProjectTool(false); }},
         };
     }
 
@@ -455,6 +467,26 @@ struct EditorWorkspace::Impl {
         crash_dialog = std::make_unique<CrashReporterDialog>(CrashConfig{}.directory);
     }
 
+    void BuildProject() {
+        std::string error;
+        if (project_file.empty()) project_file = EditorWorkspace::SampleProject(&error);
+        if (project_file.empty()) return;
+        project_settings = std::make_unique<ProjectSettingsPanel>(project_file);
+        build_window = std::make_unique<BuildPackageWindow>(project_file);
+    }
+
+    void DrawProjectTool(bool settings) {
+        if (!project_settings) {
+            ImGui::TextDisabled("No project is open.");
+            return;
+        }
+        if (settings) {
+            project_settings->Draw();
+        } else {
+            build_window->Draw();
+        }
+    }
+
     void DrawCrashReports() {
         ImGui::TextWrapped("Crash reports from earlier runs are kept in \"%s\".", CrashConfig{}.directory.c_str());
         if (ImGui::Button("Check for crash reports")) {
@@ -470,7 +502,53 @@ struct EditorWorkspace::Impl {
     }
 };
 
-EditorWorkspace::EditorWorkspace() : impl_(std::make_unique<Impl>()) {}
+EditorWorkspace::EditorWorkspace(std::filesystem::path project_file)
+    : impl_(std::make_unique<Impl>(std::move(project_file))) {}
+
+const std::filesystem::path& EditorWorkspace::ProjectFile() const { return impl_->project_file; }
+
+std::filesystem::path EditorWorkspace::SampleProject(std::string* error) {
+    namespace stdfs = std::filesystem;
+    std::error_code ec;
+    const stdfs::path parent = stdfs::temp_directory_path(ec) / "aether_editor";
+    const ProjectPaths paths = ProjectPaths::ForFile(parent / "SampleGame" / "SampleGame.aproject");
+    if (stdfs::is_regular_file(paths.file, ec)) return paths.file;
+    stdfs::create_directories(parent, ec);
+    stdfs::remove_all(paths.root, ec); // a half-made one from an earlier run
+    std::string why;
+    if (!CreateProject(parent, "SampleGame", nullptr, &why)) {
+        if (error) *error = why;
+        return {};
+    }
+    // A startup scene: a tagged player, a camera and a few crates.
+    nlohmann::json entities = nlohmann::json::array();
+    const auto add = [&](Vec3 at, const char* tag, bool camera) {
+        nlohmann::json components = {{"Transform", reflect::ToJson(Transform{at, Quaternion::Identity()})}};
+        Tags tags;
+        tags.names = {tag};
+        components["Tags"] = reflect::ToJson(tags);
+        if (camera) components["Camera"] = reflect::ToJson(Camera{});
+        entities.push_back({{"components", components}});
+    };
+    add(Vec3(0, 1, 0), "Player", false);
+    add(Vec3(0, 3, 8), "MainCamera", true);
+    for (int i = 0; i < 3; ++i) add(Vec3(static_cast<f32>(i) * 2.0f - 2.0f, 0.5f, -4.0f), "Crate", false);
+    const nlohmann::json scene = {{"$type", "Scene"}, {"$version", 1}, {"entities", entities}};
+    stdfs::create_directories(paths.content / "Scenes", ec);
+    std::ofstream(paths.content / "Scenes" / "Main.ascene", std::ios::binary) << scene.dump(2);
+    ProjectSettings settings;
+    if (!LoadProject(paths.file, settings, &why)) {
+        if (error) *error = why;
+        return {};
+    }
+    settings.startup_scene = "Scenes/Main.ascene";
+    settings.window_title = "Sample Game";
+    if (!SaveProject(paths.file, settings, &why)) {
+        if (error) *error = why;
+        return {};
+    }
+    return paths.file;
+}
 EditorWorkspace::~EditorWorkspace() = default;
 
 void EditorWorkspace::Update(f32 dt) {

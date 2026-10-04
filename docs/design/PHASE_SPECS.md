@@ -4238,7 +4238,78 @@ library, and `aether_player`, the executable.
   - With physics: a ball dropped onto a floor falls to about 8.8 m after
     0.5 s and comes to rest on the floor.
 
-### 25.5 PR breakdown
+### 25.5 Project settings, packaging and the Build and Package window
+
+- **Project settings** (`ProjectSettings`):
+  - **Window**: `window_title` (empty means the project name),
+    `window_width`, `window_height` and `vsync`.
+  - **Quality presets**: `QualityPreset` has a name, a resolution scale,
+    the shadow resolution and cascades, the view distance, the MSAA
+    samples and bloom.
+  - `DefaultQualityPresets()` gives Low, Medium, High and Epic.
+    `default_quality` is High, and `FindQualityPreset` looks one up by
+    name.
+  - Projects saved before these settings existed load with the defaults.
+- **The cooker**:
+  - The manifest now carries `window`, `quality_presets` and
+    `default_quality`. It warns when the default isn't one of the presets.
+  - `CookOptions::progress` reports the fraction done and the current
+    stage ("Cooking `<path>`", then "Writing", then "Done").
+  - `CookOptions::cancel` stops the cook between assets. It then fails
+    with "Cancelled" and writes nothing.
+- **The player**:
+  - `GameManifest` reads the window and quality settings.
+  - `ChooseQuality` picks the requested preset, else the default, else
+    the first.
+  - `aether_player` opens its window with the project's title, size and
+    vsync. `--size` overrides the size, and `--quality <preset>` picks a
+    preset.
+- **Packaging** (`aether/cook/package.h`):
+  - **`Package`** cooks into `<output>/Paks/` and copies the player in
+    beside it, named for the project (`GameExecutableName`). On Windows it
+    copies the player's DLLs too.
+  - Old paks are removed first, so a stale one can't mount over the new
+    one. The result runs on its own: the player finds `Paks/` beside
+    itself.
+  - **`FindPlayerExecutable`** looks for `aether_player` beside the
+    running executable (a packaged editor), else uses the one the engine
+    was built with.
+- **Processes** (`aether/platform/process.h`):
+  - `ExecutablePath()` gives the running executable's path.
+  - `ChildProcess` starts a program with arguments in a working folder,
+    reports whether it's running, waits for its exit code, and kills it.
+    It uses `CreateProcessW` on Windows and `posix_spawn` elsewhere.
+- **The editor**:
+  - **Build and Package window** (`editor/src/packaging`):
+    - **Settings**: the configuration, the compression, the texture
+      quality, the output folder (by default
+      `Saved/Packaged/<Configuration>`) and the player.
+    - **Buttons**: Cook, Package, Cancel, and Launch, with arguments for
+      the player.
+    - **While it runs**: the build runs on a worker thread while a
+      progress bar and the log (stages and warnings) update.
+  - **Project Settings panel**: the settings in the reflected property
+    table, with Save and Revert. It warns when the default quality isn't
+    a preset.
+  - **The workspace**: both are in a new Project category of the
+    editor's tools, on the project the editor was given. Without one,
+    they use a sample project made under the temp folder: a startup scene
+    with a player, a camera and crates.
+- **Tests**:
+  - **Settings**: the window and quality settings round trip, and old
+    projects get the defaults.
+  - **Cook**: progress is monotonic from 0 to 1, the manifest carries the
+    settings, `ChooseQuality` falls back correctly, and a cancelled cook
+    writes nothing.
+  - **Packaging**: the staged player and pak, stale pak removal, and the
+    refusals.
+  - **Processes**: exit codes, the working folder, and a missing program.
+  - **Build and Package window**: it packages the sample project with the
+    real player and launches the packaged game headless, which exits with
+    0. A cook, a failed cook, a missing player, and the settings panel's
+    edits, saves and reverts are tested too.
+
+### 25.6 PR breakdown
 
 1. ✅ **Done.** `.apak` archives, compression, the virtual file system
    and `aether_pak` (§25.1).
@@ -4255,7 +4326,8 @@ library, and `aether_player`, the executable.
    the Debug, Development and Shipping configurations. Still to do:
    drawing the scene, with the renderer's RHI path, and running Blueprint
    bytecode and scripts.
-5. Project settings (startup scene, window defaults, quality presets)
-   and the editor's Build and Package window, with progress, logs and
-   Launch.
+5. ✅ **Done.** Project settings (window defaults, quality presets), the
+   cook's progress and cancel, packaging with the player, and the
+   editor's Build and Package window with progress, logs and Launch
+   (§25.5).
 6. Patching and DLC paks, and optional archive encryption.

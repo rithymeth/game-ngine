@@ -6,6 +6,10 @@
 //
 //   aether_player [--pak <file|dir>]... [--scene <path>] [--frames <n>]
 //                 [--headless] [--backend d3d12|vulkan] [--size <w>x<h>]
+//                 [--quality <preset>]
+//
+// The window's title, size and vsync, and the quality preset, come from the
+// project's settings (§25.5) unless given here.
 //
 // With no --pak it mounts every .apak in Paks/ beside the executable (then
 // in the working directory). The manifest's configuration sets the log
@@ -41,13 +45,14 @@ struct Options {
     i64 frames = -1;
     bool headless = false;
     std::string backend;
-    u32 width = 1280, height = 720;
+    u32 width = 0, height = 0; // 0: the project's
+    std::string quality;
 };
 
 void Usage() {
     std::fprintf(stderr,
                  "usage: aether_player [--pak <file|dir>]... [--scene <path>] [--frames <n>] [--headless]\n"
-                 "                     [--backend d3d12|vulkan] [--size <w>x<h>]\n");
+                 "                     [--backend d3d12|vulkan] [--size <w>x<h>] [--quality <preset>]\n");
 }
 
 bool ParseArgs(int argc, char** argv, Options& o) {
@@ -62,6 +67,8 @@ bool ParseArgs(int argc, char** argv, Options& o) {
             o.frames = std::atoll(argv[++i]);
         } else if (a == "--headless") {
             o.headless = true;
+        } else if (a == "--quality" && has_value) {
+            o.quality = argv[++i];
         } else if (a == "--backend" && has_value) {
             o.backend = argv[++i];
         } else if (a == "--size" && has_value) {
@@ -130,6 +137,16 @@ int main(int argc, char** argv) {
     AETHER_LOG_INFO("Player", "%s (%s), %zu archive(s), %zu assets", manifest.project.c_str(),
                     cook::ConfigurationName(config), paks.size(), manifest.assets.size());
 
+    const QualityPreset* quality = ChooseQuality(manifest, options.quality);
+    if (!options.quality.empty() && (!quality || quality->name != options.quality)) {
+        AETHER_LOG_WARN("Player", "No quality preset '%s'", options.quality.c_str());
+    }
+    if (quality) {
+        AETHER_LOG_INFO("Player", "Quality: %s (resolution x%.2f, %u shadow cascades at %u, MSAA x%u)", quality->name.c_str(),
+                        quality->resolution_scale, quality->shadow_cascades, quality->shadow_resolution,
+                        quality->msaa_samples);
+    }
+
     Game game(package);
     const bool loaded = options.scene.empty() ? game.LoadStartupScene(&error) : game.LoadScene(options.scene, &error);
     if (!loaded) {
@@ -145,11 +162,14 @@ int main(int argc, char** argv) {
         bool resized = false;
         if (!options.headless) {
             WindowDesc desc;
-            desc.title = manifest.project.empty() ? "Aether" : manifest.project;
+            desc.title = !manifest.window_title.empty() ? manifest.window_title
+                         : manifest.project.empty()    ? "Aether"
+                                                       : manifest.project;
             if (config != cook::BuildConfiguration::Shipping) {
                 desc.title += std::string(" (") + cook::ConfigurationName(config) + ")";
             }
-            desc.width = options.width, desc.height = options.height;
+            desc.width = options.width ? options.width : manifest.window_width;
+            desc.height = options.height ? options.height : manifest.window_height;
             window = std::make_unique<Window>(desc);
             if (!window->IsValid()) {
                 AETHER_LOG_WARN("Player", "No window could be opened; running headless");
@@ -203,7 +223,7 @@ int main(int argc, char** argv) {
                 cmd->EndRenderPass();
                 cmd->Close();
                 fence = device->Submit(*cmd, swap_chain.get());
-                swap_chain->Present(true);
+                swap_chain->Present(manifest.vsync);
             }
             if (config != cook::BuildConfiguration::Shipping && now - last_stats >= std::chrono::seconds(1)) {
                 last_stats = now;

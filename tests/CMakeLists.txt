@@ -31,12 +31,15 @@ add_executable(aether_tests
 
 target_link_libraries(aether_tests PRIVATE Aether::Engine)
 # Phase 25 step 4: the player's runtime.
-target_sources(aether_tests PRIVATE test_player.cpp)
+target_sources(aether_tests PRIVATE test_player.cpp test_package.cpp)
 target_link_libraries(aether_tests PRIVATE Aether::Game)
+# The Build and Package window's test packages and launches the real player.
+add_dependencies(aether_tests aether_player)
+target_compile_definitions(aether_tests PRIVATE AETHER_TEST_PLAYER_PATH="$<TARGET_FILE:aether_player>")
 aether_link_platform_plugins(aether_tests)
 
 if(TARGET aether_editor_ui)
-    target_sources(aether_tests PRIVATE test_editor_ui.cpp test_command_stack.cpp test_commands.cpp test_play_session.cpp test_editor_projects.cpp test_script_inspector.cpp test_code_editor.cpp test_graph_editor.cpp test_blueprint_editor.cpp test_material_editor.cpp test_anim_editors.cpp test_audio_editors.cpp test_ui_designer.cpp test_vfx_editor.cpp test_ai_editor.cpp test_world_editor.cpp test_net_editor.cpp test_console_panel.cpp test_profiler_panel.cpp test_debug_overlay.cpp test_crash_reporter.cpp test_editor_host.cpp test_editor_workspace.cpp)
+    target_sources(aether_tests PRIVATE test_editor_ui.cpp test_command_stack.cpp test_commands.cpp test_play_session.cpp test_editor_projects.cpp test_script_inspector.cpp test_code_editor.cpp test_graph_editor.cpp test_blueprint_editor.cpp test_material_editor.cpp test_anim_editors.cpp test_audio_editors.cpp test_ui_designer.cpp test_vfx_editor.cpp test_ai_editor.cpp test_world_editor.cpp test_net_editor.cpp test_console_panel.cpp test_profiler_panel.cpp test_debug_overlay.cpp test_crash_reporter.cpp test_editor_host.cpp test_editor_workspace.cpp test_build_window.cpp)
     target_link_libraries(aether_tests PRIVATE Aether::EditorUI)
     if(TARGET aether_editor_vulkan)
         target_link_libraries(aether_tests PRIVATE Aether::EditorVulkan)

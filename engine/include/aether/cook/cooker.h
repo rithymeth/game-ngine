@@ -5,7 +5,9 @@
 
 #include <nlohmann/json.hpp>
 
+#include <atomic>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -36,6 +38,12 @@ struct CookOptions {
     u32 texture_quality = 2;             // 0 (fastest) .. 4 (best)
     std::string pak_name = "Game";
     std::string platform = "default";    // for the derived data cache
+    // Called as the cook goes (from the cooking thread): the fraction done,
+    // 0..1, and what it's doing now ("Cooking Textures/a.png").
+    std::function<void(f32 fraction, const std::string& stage)> progress;
+    // Set (from any thread) to stop between assets; the cook then fails
+    // with "Cancelled" and writes nothing.
+    const std::atomic<bool>* cancel = nullptr;
 };
 
 struct CookedAsset {
