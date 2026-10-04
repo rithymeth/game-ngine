@@ -51,12 +51,14 @@ add_library(aether_editor_ui STATIC
     extensions.cpp
     editor_scripts.cpp
     ../workspace/editor_workspace.cpp
+    ../sprite2d/tilemap_document.cpp
+    ../sprite2d/tilemap_panel.cpp
     ../packaging/build_window.cpp
     ../packaging/plugins_panel.cpp
     ../packaging/new_project_panel.cpp
 )
 target_include_directories(aether_editor_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
-target_link_libraries(aether_editor_ui PUBLIC Aether::Engine Aether::Blueprint Aether::Renderer Aether::Animation Aether::Audio Aether::UI Aether::VFX Aether::AI Aether::Terrain Aether::Streaming Aether::Net Aether::Templates imgui_core)
+target_link_libraries(aether_editor_ui PUBLIC Aether::Engine Aether::Blueprint Aether::Renderer Aether::Animation Aether::Audio Aether::UI Aether::VFX Aether::AI Aether::Terrain Aether::Streaming Aether::Net Aether::Templates Aether::Sprite2D imgui_core)
 if(TARGET Aether::Scripting)
     target_link_libraries(aether_editor_ui PUBLIC Aether::Scripting)
     target_compile_definitions(aether_editor_ui PUBLIC AETHER_EDITOR_SCRIPTING=1)
