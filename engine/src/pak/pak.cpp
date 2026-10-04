@@ -3,13 +3,16 @@
 #include "aether/core/log.h"
 
 #include <lz4.h>
+#include <nlohmann/json.hpp>
 #include <zstd.h>
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <random>
 
 namespace aether::pak {
 
@@ -50,6 +53,58 @@ u64 Get(const u8* p, int bytes) {
     for (int i = 0; i < bytes; ++i) v |= static_cast<u64>(p[i]) << (8 * i);
     return v;
 }
+
+// --- ChaCha20 (RFC 8439) -------------------------------------------------------
+
+inline u32 Rotl(u32 v, int n) { return (v << n) | (v >> (32 - n)); }
+
+inline void QuarterRound(u32* x, int a, int b, int c, int d) {
+    x[a] += x[b]; x[d] ^= x[a]; x[d] = Rotl(x[d], 16);
+    x[c] += x[d]; x[b] ^= x[c]; x[b] = Rotl(x[b], 12);
+    x[a] += x[b]; x[d] ^= x[a]; x[d] = Rotl(x[d], 8);
+    x[c] += x[d]; x[b] ^= x[c]; x[b] = Rotl(x[b], 7);
+}
+
+u32 Load32(const u8* p) {
+    return static_cast<u32>(p[0]) | (static_cast<u32>(p[1]) << 8) | (static_cast<u32>(p[2]) << 16) |
+           (static_cast<u32>(p[3]) << 24);
+}
+
+void ChaChaBlock(const PakKey& key, const std::array<u8, 12>& nonce, u32 counter, u8 out[64]) {
+    u32 state[16] = {0x61707865u, 0x3320646eu, 0x79622d32u, 0x6b206574u};
+    for (int i = 0; i < 8; ++i) state[4 + i] = Load32(key.bytes.data() + 4 * i);
+    state[12] = counter;
+    for (int i = 0; i < 3; ++i) state[13 + i] = Load32(nonce.data() + 4 * i);
+    u32 x[16];
+    std::memcpy(x, state, sizeof(x));
+    for (int round = 0; round < 10; ++round) {
+        QuarterRound(x, 0, 4, 8, 12);
+        QuarterRound(x, 1, 5, 9, 13);
+        QuarterRound(x, 2, 6, 10, 14);
+        QuarterRound(x, 3, 7, 11, 15);
+        QuarterRound(x, 0, 5, 10, 15);
+        QuarterRound(x, 1, 6, 11, 12);
+        QuarterRound(x, 2, 7, 8, 13);
+        QuarterRound(x, 3, 4, 9, 14);
+    }
+    for (int i = 0; i < 16; ++i) {
+        const u32 v = x[i] + state[i];
+        out[4 * i] = static_cast<u8>(v);
+        out[4 * i + 1] = static_cast<u8>(v >> 8);
+        out[4 * i + 2] = static_cast<u8>(v >> 16);
+        out[4 * i + 3] = static_cast<u8>(v >> 24);
+    }
+}
+
+// An entry's (or the index's) nonce: its offset in the file and a tag.
+std::array<u8, 12> NonceFor(u64 offset, const char tag[4]) {
+    std::array<u8, 12> n{};
+    for (int i = 0; i < 8; ++i) n[static_cast<usize>(i)] = static_cast<u8>(offset >> (8 * i));
+    std::memcpy(n.data() + 8, tag, 4);
+    return n;
+}
+
+constexpr u32 kFlagEncrypted = 1u;
 
 void SetError(std::string* error, const std::string& message) {
     if (error) *error = message;
@@ -97,6 +152,60 @@ bool Decompress(Compression method, std::span<const u8> in, u64 size, std::vecto
 }
 
 } // namespace
+
+void ChaCha20Xor(const PakKey& key, const std::array<u8, 12>& nonce, u32 counter, std::span<u8> data) {
+    u8 block[64];
+    for (usize at = 0; at < data.size(); at += 64, ++counter) {
+        ChaChaBlock(key, nonce, counter, block);
+        const usize n = std::min<usize>(64, data.size() - at);
+        for (usize i = 0; i < n; ++i) data[at + i] ^= block[i];
+    }
+}
+
+bool PakKey::FromHex(std::string_view hex, PakKey& out) {
+    if (hex.size() != 64) return false;
+    const auto digit = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    };
+    PakKey key;
+    for (usize i = 0; i < 32; ++i) {
+        const int hi = digit(hex[2 * i]), lo = digit(hex[2 * i + 1]);
+        if (hi < 0 || lo < 0) return false;
+        key.bytes[i] = static_cast<u8>(hi * 16 + lo);
+    }
+    out = key;
+    return true;
+}
+
+std::string PakKey::ToHex() const {
+    static const char* digits = "0123456789abcdef";
+    std::string hex;
+    for (u8 b : bytes) {
+        hex.push_back(digits[b >> 4]);
+        hex.push_back(digits[b & 15]);
+    }
+    return hex;
+}
+
+PakKey PakKey::Generate() {
+    std::random_device rd;
+    PakKey key;
+    for (usize i = 0; i < 32; i += 4) {
+        const u32 v = rd();
+        for (usize k = 0; k < 4; ++k) key.bytes[i + k] = static_cast<u8>(v >> (8 * k));
+    }
+    return key;
+}
+
+u32 PakKey::Id() const {
+    u8 block[64];
+    ChaChaBlock(*this, NonceFor(~0ull, "KYID"), 0, block);
+    const u32 id = Load32(block);
+    return id == 0 ? 1 : id;
+}
 
 const char* CompressionName(Compression c) {
     switch (c) {
@@ -219,6 +328,10 @@ std::vector<u8> PakWriter::Build() const {
             e.stored_size = packed.size();
             out.insert(out.end(), packed.begin(), packed.end());
         }
+        if (encrypt_) {
+            ChaCha20Xor(key_, NonceFor(e.offset, "DATA"), 0,
+                        std::span<u8>(out.data() + e.offset, static_cast<usize>(e.stored_size)));
+        }
         entries.push_back(std::move(e));
     }
 
@@ -235,17 +348,18 @@ std::vector<u8> PakWriter::Build() const {
         Put32(index, e.crc32);
     }
     const u64 index_offset = out.size();
+    if (encrypt_) ChaCha20Xor(key_, NonceFor(index_offset, "INDX"), 0, index);
     out.insert(out.end(), index.begin(), index.end());
 
     std::vector<u8> header;
     header.insert(header.end(), kMagic, kMagic + 4);
     Put32(header, kVersion);
     Put32(header, static_cast<u32>(entries.size()));
-    Put32(header, 0);
+    Put32(header, encrypt_ ? kFlagEncrypted : 0u);
     Put64(header, index_offset);
     Put64(header, index.size());
-    Put32(header, Crc32(index));
-    Put32(header, 0);
+    Put32(header, Crc32(index)); // of the index as stored (encrypted or not)
+    Put32(header, encrypt_ ? key_.Id() : 0u);
     std::memcpy(out.data(), header.data(), kHeaderSize);
     return out;
 }
@@ -280,21 +394,21 @@ bool PakWriter::Write(const std::string& file, std::string* error) const {
 
 // --- PakReader ---------------------------------------------------------------
 
-bool PakReader::Open(const std::string& file, std::string* error) {
+bool PakReader::Open(const std::string& file, std::string* error, std::span<const PakKey> keys) {
     *this = PakReader();
     file_ = file;
-    return Parse(error);
+    return Parse(error, keys);
 }
 
-bool PakReader::OpenMemory(std::vector<u8> bytes, std::string* error) {
+bool PakReader::OpenMemory(std::vector<u8> bytes, std::string* error, std::span<const PakKey> keys) {
     *this = PakReader();
     memory_ = std::move(bytes);
     in_memory_ = true;
     file_ = "<memory>";
-    return Parse(error);
+    return Parse(error, keys);
 }
 
-bool PakReader::Parse(std::string* error) {
+bool PakReader::Parse(std::string* error, std::span<const PakKey> keys) {
     // The header, and the total size.
     u8 header[kHeaderSize];
     u64 file_size = 0;
@@ -329,6 +443,23 @@ bool PakReader::Parse(std::string* error) {
         SetError(error, "unsupported archive version " + std::to_string(Get(header + 4, 4)));
         return false;
     }
+    const u64 flags = Get(header + 12, 4);
+    if (flags & ~static_cast<u64>(kFlagEncrypted)) {
+        SetError(error, "the archive uses features this engine doesn't know (flags " + std::to_string(flags) + ")");
+        return false;
+    }
+    if (flags & kFlagEncrypted) {
+        const u32 key_id = static_cast<u32>(Get(header + 36, 4));
+        const auto key = std::find_if(keys.begin(), keys.end(), [&](const PakKey& k) { return k.Id() == key_id; });
+        if (key == keys.end()) {
+            char id[16];
+            std::snprintf(id, sizeof(id), "%08x", key_id);
+            SetError(error, std::string("the archive is encrypted, and no key given is its key (key id ") + id + ")");
+            return false;
+        }
+        encrypted_ = true;
+        key_ = *key;
+    }
     const u64 count = Get(header + 8, 4);
     const u64 index_offset = Get(header + 16, 8);
     const u64 index_size = Get(header + 24, 8);
@@ -351,6 +482,7 @@ bool PakReader::Parse(std::string* error) {
         SetError(error, "the index is damaged (CRC mismatch)");
         return false;
     }
+    if (encrypted_) ChaCha20Xor(key_, NonceFor(index_offset, "INDX"), 0, index);
 
     usize p = 0;
     entries_.reserve(static_cast<usize>(count));
@@ -401,13 +533,17 @@ bool PakReader::ReadStored(const PakEntry& entry, std::vector<u8>& out) const {
     out.resize(static_cast<usize>(entry.stored_size));
     if (in_memory_) {
         if (entry.stored_size) std::memcpy(out.data(), memory_.data() + entry.offset, out.size());
-        return true;
+    } else {
+        std::ifstream in(file_, std::ios::binary);
+        if (!in) return false;
+        in.seekg(static_cast<std::streamoff>(entry.offset));
+        if (entry.stored_size != 0 &&
+            !in.read(reinterpret_cast<char*>(out.data()), static_cast<std::streamsize>(out.size()))) {
+            return false;
+        }
     }
-    std::ifstream in(file_, std::ios::binary);
-    if (!in) return false;
-    in.seekg(static_cast<std::streamoff>(entry.offset));
-    return entry.stored_size == 0 || static_cast<bool>(in.read(reinterpret_cast<char*>(out.data()),
-                                                               static_cast<std::streamsize>(out.size())));
+    if (encrypted_) ChaCha20Xor(key_, NonceFor(entry.offset, "DATA"), 0, out);
+    return true;
 }
 
 bool PakReader::Read(const std::string& path, std::vector<u8>& out, std::string* error) const {
@@ -446,6 +582,29 @@ std::vector<std::string> PakReader::Verify() const {
         if (!Read(e.path, scratch)) damaged.push_back(e.path);
     }
     return damaged;
+}
+
+// --- Patches -----------------------------------------------------------------
+
+PatchReport MakePatch(const PakReader& base, const PakReader& updated, PakWriter& patch) {
+    PatchReport report;
+    std::vector<u8> bytes;
+    for (const PakEntry& e : updated.Entries()) {
+        if (e.path == kRemovedListPath) continue;
+        const PakEntry* old = base.Find(e.path);
+        if (old && old->size == e.size && old->crc32 == e.crc32) {
+            ++report.unchanged;
+            continue;
+        }
+        if (!updated.Read(e.path, bytes)) continue; // damaged: Verify reports it
+        patch.Add(e.path, bytes);
+        (old ? report.changed : report.added).push_back(e.path);
+    }
+    for (const PakEntry& e : base.Entries()) {
+        if (e.path != kRemovedListPath && !updated.Find(e.path)) report.removed.push_back(e.path);
+    }
+    if (!report.removed.empty()) patch.Add(kRemovedListPath, nlohmann::json(report.removed).dump(1));
+    return report;
 }
 
 } // namespace aether::pak

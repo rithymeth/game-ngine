@@ -4309,7 +4309,69 @@ library, and `aether_player`, the executable.
     0. A cook, a failed cook, a missing player, and the settings panel's
     edits, saves and reverts are tested too.
 
-### 25.6 PR breakdown
+### 25.6 Patches, DLCs and encryption
+
+- **Encryption** (`pak::PakKey`):
+  - A 32-byte key, read and written as 64 hex digits. `Generate()` makes
+    a random one.
+  - `Id()` is a fingerprint of the key (a ChaCha20 block under a fixed
+    nonce), not the key itself.
+  - With `PakWriter::SetEncryption`, each entry's stored bytes (after
+    compression) are encrypted with ChaCha20 (RFC 8439, implemented in
+    `pak.cpp`, checked against the RFC's test vector). So is the index.
+    Each gets its own nonce, from its offset and a tag.
+  - The header's flags mark the archive as encrypted, and its last field
+    holds the key id. The index CRC covers the bytes as stored.
+  - `PakReader::Open` takes keys and uses the one whose id matches. No
+    key, or a wrong one, fails with "the archive is encrypted, and no key
+    given is its key". Unknown flags are refused.
+  - Neither the content nor the paths are readable on disk.
+  - It keeps content from being opened with an archive tool. It isn't
+    DRM: the game ships with the key.
+- **Patches**:
+  - `MakePatch(base, updated, patch)` writes the entries that are new or
+    differ in size or CRC.
+  - Removed paths are listed in `PatchRemoved.json`. The virtual file
+    system hides them in the mounts below the patch, in reads and in
+    `List`. A mount above the patch can still provide them.
+  - `PatchReport` lists what was added, changed and removed, and counts
+    what's unchanged.
+  - A patch named to sort after its base (`Game_p1.apak` after
+    `Game.apak`) mounts on top of it in the player.
+- **DLCs**: the cooker's `dlc_name` mode cooks only the `--always`
+  roots, leaving out what `dlc_base` already has. It writes
+  `DLC/<name>.json` (a `DlcManifest`) instead of `Manifest.json`.
+  `GamePackage::LoadManifest` merges every mounted DLC's assets, and
+  `Dlcs()` names them.
+- **The cooker**:
+  - `encryption_key` encrypts the archive, and opens encrypted bases.
+  - `patch_base` cooks in full, then writes only the patch against the
+    base. `CookReport::patch` says what it holds.
+  - `CookReport::in_base` counts what a DLC left out.
+- **The tools**:
+  - **`aether_cook`**: `--key`, `--patch-of` and `--dlc`/`--dlc-base`.
+  - **`aether_pak`**: `keygen`, and `patch <base> <updated> <out>`.
+    `--key` (anywhere) encrypts what it writes and opens what's
+    encrypted.
+- **The player**: keys come from `--key`, from `AETHER_PAK_KEY`, or from
+  the key a game's player was built with (`AETHER_GAME_PAK_KEY`). It logs
+  the DLCs it found.
+- **The editor**: the Build and Package window has an Encrypt option,
+  with a key field and Generate. Launch passes the key to the game.
+- **Tests**:
+  - **Keys**: the RFC 8439 vector, and keys' hex form and ids.
+  - **Encrypted archives**: nothing readable on disk, a missing or wrong
+    key refused, and reads through the virtual file system with the key.
+  - **Patches**: added, changed and removed entries, read and listed
+    through the virtual file system, with a loose folder bringing a
+    removed file back.
+  - **A full cook**: an encrypted 1.0, a 1.1 patch (a changed scene, a
+    removed one), and a DLC that leaves out the base's assets, all played
+    together. The archives refuse to mount without the key.
+  - **The editor**: packaging encrypted, then launching with the key
+    (exit code 0) and without it (it fails).
+
+### 25.7 PR breakdown
 
 1. ✅ **Done.** `.apak` archives, compression, the virtual file system
    and `aether_pak` (§25.1).
@@ -4330,4 +4392,9 @@ library, and `aether_player`, the executable.
    cook's progress and cancel, packaging with the player, and the
    editor's Build and Package window with progress, logs and Launch
    (§25.5).
-6. Patching and DLC paks, and optional archive encryption.
+6. ✅ **Done.** Patch and DLC paks, and optional archive encryption
+   (§25.6). With this, every Phase 25 step is done. Still to come, as
+   the notes on steps 2–4 say: ASTC textures (with Phase 33's mobile
+   targets), precompiled shaders and Blueprint bytecode (with the
+   renderer's RHI path and the player running them), and drawing the
+   scene in the player.

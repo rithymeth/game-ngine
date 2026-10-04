@@ -171,19 +171,43 @@ CookReport Cook(const CookOptions& options) {
     const assets::ScanResult scan = database.Scan();
     report.warnings.insert(report.warnings.end(), scan.warnings.begin(), scan.warnings.end());
 
+    const bool dlc = !options.dlc_name.empty();
+    if (dlc && pak::NormalizePath(options.dlc_name) != options.dlc_name) return fail("Invalid DLC name '" + options.dlc_name + "'");
+    std::vector<pak::PakKey> keys;
+    if (options.encryption_key) keys.push_back(*options.encryption_key);
+
     std::vector<std::pair<std::string, std::string>> roots;
-    if (settings.startup_scene.empty()) {
-        report.warnings.push_back("The project has no startup scene");
+    if (dlc) {
+        for (const std::string& path : options.always_cook) roots.push_back({path, "DLC " + options.dlc_name});
+        if (roots.empty()) return fail("Nothing to cook: a DLC cooks its always_cook roots, and none were given");
     } else {
-        roots.push_back({settings.startup_scene, "startup scene"});
+        if (settings.startup_scene.empty()) {
+            report.warnings.push_back("The project has no startup scene");
+        } else {
+            roots.push_back({settings.startup_scene, "startup scene"});
+        }
+        for (const std::string& path : settings.always_cook) roots.push_back({path, "always cook"});
+        for (const std::string& path : options.always_cook) roots.push_back({path, "always cook"});
+        if (roots.empty()) return fail("Nothing to cook: set a startup scene or always_cook");
     }
-    for (const std::string& path : settings.always_cook) roots.push_back({path, "always cook"});
-    for (const std::string& path : options.always_cook) roots.push_back({path, "always cook"});
-    if (roots.empty()) return fail("Nothing to cook: set a startup scene or always_cook");
 
     std::map<AssetGuid, std::string> reasons;
-    const std::vector<AssetGuid> cook_set = CollectCookSet(database, roots, reasons, report.warnings);
-    if (cook_set.empty()) return fail("Nothing to cook: none of the roots is an asset");
+    std::vector<AssetGuid> cook_set = CollectCookSet(database, roots, reasons, report.warnings);
+    if (dlc && !options.dlc_base.empty()) {
+        // What the base game ships already stays out of the DLC.
+        pak::PakReader base;
+        if (!base.Open(options.dlc_base.string(), &error, keys)) return fail("Can't open the base archive: " + error);
+        std::vector<AssetGuid> kept;
+        for (const AssetGuid& guid : cook_set) {
+            if (base.Contains("Content/" + database.Find(guid)->path)) {
+                ++report.in_base;
+            } else {
+                kept.push_back(guid);
+            }
+        }
+        cook_set = std::move(kept);
+    }
+    if (cook_set.empty()) return fail("Nothing to cook: none of the roots is an asset" + std::string(report.in_base ? " the base doesn't have" : ""));
 
     usize sources = 0;
     for (const AssetRecord* record : database.All()) {
@@ -192,6 +216,7 @@ CookReport Cook(const CookOptions& options) {
     report.skipped = sources - cook_set.size();
 
     pak::PakWriter writer(options.compression);
+    if (options.encryption_key) writer.SetEncryption(*options.encryption_key);
     const assets::ImporterRegistry importers = assets::ImporterRegistry::WithBuiltins();
     assets::DerivedDataCache cache(paths.intermediate / "DerivedDataCache");
     std::set<std::string> extra;
@@ -342,12 +367,35 @@ CookReport Cook(const CookOptions& options) {
         {"assets", std::move(manifest_assets)},
         {"files", std::move(files)},
     };
-    writer.Add("Manifest.json", manifest.dump(options.configuration == BuildConfiguration::Shipping ? -1 : 2));
+    const int indent = options.configuration == BuildConfiguration::Shipping ? -1 : 2;
+    if (dlc) {
+        const json dlc_manifest = {{"$type", "DlcManifest"},
+                                   {"$version", 1},
+                                   {"name", options.dlc_name},
+                                   {"project", settings.name},
+                                   {"assets", manifest["assets"]},
+                                   {"files", manifest["files"]}};
+        writer.Add("DLC/" + options.dlc_name + ".json", dlc_manifest.dump(indent));
+    } else {
+        writer.Add("Manifest.json", manifest.dump(indent));
+    }
 
     std::error_code ec;
     stdfs::create_directories(options.output_dir, ec);
     report.pak_file = options.output_dir / (options.pak_name + ".apak");
-    if (!writer.Write(report.pak_file.string(), &error)) return fail(error);
+    if (!options.patch_base.empty()) {
+        // Only what differs from the earlier archive.
+        pak::PakReader base, full;
+        if (!base.Open(options.patch_base.string(), &error, keys)) return fail("Can't open the patch base: " + error);
+        if (!full.OpenMemory(writer.Build(), &error, keys)) return fail(error);
+        pak::PakWriter patch(options.compression);
+        if (options.encryption_key) patch.SetEncryption(*options.encryption_key);
+        report.patch = pak::MakePatch(base, full, patch);
+        report.is_patch = true;
+        if (!patch.Write(report.pak_file.string(), &error)) return fail(error);
+    } else if (!writer.Write(report.pak_file.string(), &error)) {
+        return fail(error);
+    }
     report.pak_bytes = stdfs::file_size(report.pak_file, ec);
     report.manifest_file = options.output_dir / "CookManifest.json";
     const std::string text = manifest.dump(2);

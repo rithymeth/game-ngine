@@ -4,6 +4,7 @@
 #include "aether/pak/pak.h"
 
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -14,8 +15,14 @@ namespace aether::pak {
 // first. A path is read from the first mount that has it, so a patch or
 // DLC pak mounted above the base pak overrides its files, and a loose
 // directory above both overrides everything (for iterating on content).
+//
+// Patches (§25.6): a mounted archive's kRemovedListPath hides those paths in
+// the mounts below it. Encrypted archives open with a key given to AddKey.
 class VirtualFileSystem {
 public:
+    // A key for the encrypted archives mounted after this (tried by id).
+    void AddKey(const PakKey& key) { keys_.push_back(key); }
+
     // Mounts a directory or an archive (by its .apak extension) at
     // `mount_point` ("" for the root). Higher priority wins; equal
     // priorities go by mount order, later first. False when it can't be
@@ -44,12 +51,17 @@ private:
         u64 order = 0;
         bool is_pak = false;
         std::shared_ptr<PakReader> pak;
+        std::set<std::string> removed; // virtual paths a patch archive removes
     };
+    void LoadRemoved(MountEntry& m);
+    // The mount a path resolves to (and the path inside it), or null.
+    const MountEntry* Locate(const std::string& normalized, std::string& inner) const;
     // The path inside the mount, or false when the path isn't under it.
     static bool Inner(const MountEntry& m, const std::string& path, std::string& inner);
     void Sort();
 
     std::vector<MountEntry> mounts_;
+    std::vector<PakKey> keys_;
     u64 next_order_ = 0;
 };
 

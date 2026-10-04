@@ -50,6 +50,14 @@ bool BuildPackageWindow::StartPackage() { return Start(true); }
 
 bool BuildPackageWindow::Start(bool package) {
     if (busy_.load()) return false;
+    pak::PakKey key;
+    if (encrypt && !pak::PakKey::FromHex(encryption_key, key)) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        log_ = {{true, "The encryption key must be 64 hex digits"}};
+        stage_ = "Failed: the encryption key must be 64 hex digits";
+        result_ = Result::Failed;
+        return false;
+    }
     WaitForBuild(); // the last one's thread
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -67,6 +75,7 @@ bool BuildPackageWindow::Start(bool package) {
     cook_options.compression = compression;
     cook_options.texture_quality = texture_quality;
     cook_options.cancel = &cancel_;
+    if (encrypt) cook_options.encryption_key = key;
     cook_options.progress = [this](f32 fraction, const std::string& stage) {
         std::lock_guard<std::mutex> lock(mutex_);
         progress_ = fraction;
@@ -158,7 +167,12 @@ bool BuildPackageWindow::Launch(std::string* error) {
     } else if (game_.Running()) {
         why = "The game is already running";
     } else {
-        ok = game_.Start(game, SplitArgs(launch_args), game.parent_path(), &why);
+        std::vector<std::string> args = SplitArgs(launch_args);
+        if (encrypt) {
+            args.push_back("--key");
+            args.push_back(encryption_key);
+        }
+        ok = game_.Start(game, args, game.parent_path(), &why);
     }
     launch_error_ = ok ? std::string() : why;
     if (!ok && error) *error = why;
@@ -189,6 +203,15 @@ void BuildPackageWindow::Draw() {
     const std::string found = cook::FindPlayerExecutable().string();
     if (ImGui::InputTextWithHint("Player", found.empty() ? "(aether_player not found)" : found.c_str(), buffer, sizeof(buffer))) {
         player_path = buffer;
+    }
+    ImGui::Checkbox("Encrypt", &encrypt);
+    if (encrypt) {
+        ImGui::SameLine();
+        std::snprintf(buffer, sizeof(buffer), "%s", encryption_key.c_str());
+        ImGui::SetNextItemWidth(-90);
+        if (ImGui::InputTextWithHint("##key", "64 hex digits", buffer, sizeof(buffer))) encryption_key = buffer;
+        ImGui::SameLine();
+        if (ImGui::Button("Generate")) encryption_key = pak::PakKey::Generate().ToHex();
     }
     ImGui::EndDisabled();
 
