@@ -1,0 +1,29 @@
+{
+  "$type": "Plugin",
+  "$v": 1,
+  "name": "AI",
+  "friendly_name": "AI",
+  "version": "1.0.0",
+  "description": "Blackboards, Behavior Trees and AI perception.",
+  "category": "AI",
+  "created_by": "Aether",
+  "engine_version": "",
+  "enabled_by_default": true,
+  "has_content": false,
+  "dependencies": [
+    {
+      "$v": 1,
+      "name": "Navigation",
+      "min_version": "",
+      "optional": false
+    }
+  ],
+  "modules": [
+    {
+      "$v": 1,
+      "name": "AI",
+      "type": "Runtime",
+      "phase": "PreDefault"
+    }
+  ]
+}

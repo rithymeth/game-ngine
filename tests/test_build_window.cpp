@@ -1,4 +1,5 @@
 #include "packaging/build_window.h"
+#include "packaging/plugins_panel.h"
 #include "test_framework.h"
 #include "workspace/editor_workspace.h"
 
@@ -159,4 +160,34 @@ AETHER_TEST(BuildWindow_PackagesEncryptedAndLaunchesWithTheKey) {
     window.encrypt = false;
     CHECK(window.Launch(&error));
     CHECK(window.Game().Wait(&code) && code != 0);
+}
+
+AETHER_TEST(PluginsPanel_EnablesCreatesAndRefuses) {
+    HeadlessImGui imgui;
+    const stdfs::path project = FreshProject("Plugins");
+    PluginsPanel panel(project);
+    CHECK(panel.Error().empty() && panel.Manager().Find("AI") && panel.Manager().Find("AI")->enabled);
+    for (int i = 0; i < 2; ++i) imgui.Frame([&] { panel.Draw(); });
+
+    // A default plugin can't be turned off from the project.
+    std::string error;
+    CHECK(!panel.SetEnabled("Navigation", false, &error) && error.find("default") != std::string::npos);
+
+    // A new project plugin, enabled: saved in the project.
+    CHECK(panel.CreatePlugin("Lanterns", &error) && panel.Manager().Find("Lanterns") && !panel.Manager().Find("Lanterns")->enabled);
+    CHECK(panel.SetEnabled("Lanterns", true, &error) && panel.Manager().Find("Lanterns")->enabled);
+    ProjectSettings saved;
+    CHECK(LoadProject(project, saved, nullptr) && saved.plugins == std::vector<std::string>{"Lanterns"});
+    CHECK(!panel.CreatePlugin("Lanterns", &error) && error.find("already exists") != std::string::npos);
+
+    // One whose dependency is missing doesn't get enabled; the project stays as it was.
+    plugin::PluginDescriptor needy;
+    needy.name = "Needy";
+    needy.dependencies.push_back({"Nowhere", "", false});
+    CHECK(plugin::SavePluginDescriptor(project.parent_path() / "Plugins/Needy/Needy.aplugin", needy));
+    CHECK(panel.Refresh());
+    CHECK(!panel.SetEnabled("Needy", true, &error) && error.find("Nowhere") != std::string::npos);
+    CHECK(LoadProject(project, saved, nullptr) && saved.plugins == std::vector<std::string>{"Lanterns"});
+    CHECK(panel.SetEnabled("Lanterns", false, &error) && panel.Requested().empty());
+    imgui.Frame([&] { panel.Draw(); });
 }
