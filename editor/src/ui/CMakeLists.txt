@@ -53,6 +53,7 @@ add_library(aether_editor_ui STATIC
     ../workspace/editor_workspace.cpp
     ../sprite2d/tilemap_document.cpp
     ../sprite2d/tilemap_panel.cpp
+    ../content/content_browser_panel.cpp
     ../packaging/build_window.cpp
     ../packaging/plugins_panel.cpp
     ../packaging/new_project_panel.cpp

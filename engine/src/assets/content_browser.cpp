@@ -125,6 +125,23 @@ std::vector<ContentEntry> ListContent(const AssetDatabase& database, const Conte
     return folders;
 }
 
+usize ApplyVcsStatus(std::vector<ContentEntry>& entries, const VcsStatus& status) {
+    usize changed = 0;
+    for (ContentEntry& entry : entries) {
+        entry.vcs = VcsState::Clean;
+        if (!status.available) continue;
+        if (entry.is_folder) {
+            entry.vcs = status.OfLocalFolder(entry.path);
+        } else {
+            std::string source = entry.path;
+            if (const usize hash = source.find('#'); hash != std::string::npos) source.resize(hash); // a sub-asset's source
+            entry.vcs = WorseVcsState(status.OfLocal(source), status.OfLocal(source + ".ameta"));
+        }
+        if (entry.vcs != VcsState::Clean) ++changed;
+    }
+    return changed;
+}
+
 // ---------------------------------------------------------------------------
 // Rename, move, create
 // ---------------------------------------------------------------------------

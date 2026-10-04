@@ -4641,8 +4641,10 @@ say, not only its lifecycle callbacks and physics (§25.4).
    animation, tilesets, tilemaps with autotiles, render batching and the
    pixel-perfect camera, the tilemap editor, 2D physics, the platformer
    controller, the 2D Platformer template and 2D lights.
-5. Documentation: the API reference from reflection, the manual, and
-   sample projects; version control status in the Content Browser.
+5. ✅ **Done.** Documentation (§26.7): the API reference generated from
+   reflection (`aether_docgen`), the manual (`docs/manual`), the sample
+   projects (the templates), and version control status in the Content
+   Browser.
 
 ### 26.5 The editor extensibility API
 
@@ -4867,3 +4869,62 @@ shadow-free lights and region culling; tile walls as lines; a light map
 with a shadow behind a wall, lit wall faces, sampling and refused regions;
 the visibility polygon with and without a wall; and the components through
 reflection.
+
+### 26.7 Documentation
+
+- **The API reference** (`engine/src/docs/api_docs.cpp`, `tools/docgen`).
+  `docs::GenerateApiMarkdown`, `GenerateApiJson` and `WriteApiDocs` document
+  every type in the reflection registry: components (registered with the
+  ECS by name), structs and enums, each with a table of its fields (type,
+  editable / read-only / internal, not saved, editor only, replicated,
+  Blueprint, then tooltip, range, unit and group), its functions with
+  signatures and flags, and an enum's values. Types link to their entries;
+  `AssetRef<T>` is written where it's used, and plain data types (numbers,
+  strings, arrays) have no entries unless `skip_scalars` is off. Entries are
+  sorted by name and the output is deterministic. `aether_docgen --out <dir>`
+  registers all the engine's modules and writes `API.md` and `api.json`;
+  the Windows release zip carries the manual and the reference generated
+  from that build (with physics). A game or plugin documents its own types
+  by registering them and calling `WriteApiDocs`.
+- **The manual** (`docs/manual`): getting started, projects and assets,
+  scripting, input, 2D, packaging and shipping, plugins and editor
+  extensions, and the API reference. The templates are the sample projects.
+- **Tests**: `test_api_docs.cpp` (a reflected type's table, its escaped
+  tooltip, ranges, units, flags, functions and enum values; the JSON with the
+  same facts; sorted, one entry per name, links; both files written,
+  deterministically; type names) and `test_manual.cpp` (every chapter exists
+  and is in the contents, every relative link resolves, and the manual names
+  the real templates, tools and flags).
+
+**Version control status in the Content Browser** (`engine/include/aether/assets/vcs.h`,
+`editor/src/content`).
+- **`VcsStatus`**: the repository's changed files by repository-relative
+  path, each Untracked, Renamed, Added, Modified, Deleted or Conflicted,
+  with the queried folder's `prefix` inside the repository. `Of`, `OfLocal`
+  (a path relative to the queried folder) and `OfFolder` / `OfLocalFolder`
+  (the worst state of everything under a folder; whole folder names only).
+  States combine by severity: Conflicted, Deleted, Modified, Renamed, Added,
+  Untracked, Clean.
+- **`ParseGitStatus`** reads `git status --porcelain=v1 -z`: the two status
+  letters decide the state (a conflict is a `U`, `AA` or `DD`; then
+  deleted, renamed, added, modified), a rename also marks the old name
+  Deleted, ignored entries are left out and malformed ones skipped.
+  **`QueryGitStatus(dir)`** runs `git rev-parse --show-prefix` and
+  `git status` there (untracked files listed one by one); outside a
+  repository, or with no git, it returns `available == false` with the reason.
+- **`ApplyVcsStatus`** sets each `ContentEntry::vcs`: an asset takes the worse
+  of its own file and its `.ameta` sidecar (a new asset's sidecar is
+  untracked before the asset is committed), a sub-asset follows its source,
+  a folder shows its worst child.
+- **The Content Browser tool** (Project category): a folder tree and a
+  listing, each with a coloured badge (M, A, ?, D, R, !), a search that
+  looks in subfolders, a "Changed only" filter, Refresh (which asks git
+  again), a count of changed files, and a "not under version control" note
+  otherwise. Double-clicking a folder opens it, and an asset whose extension an
+  editor extension registered runs its opener (§26.5).
+- **Tests** (`test_vcs.cpp`): parsing every status pair, rename, ignored and
+  malformed input; local paths, folder aggregation and severity; badges on a
+  real content folder, including a sidecar-only change; a real `git init`
+  repository with modified, untracked and deleted files (skipped where git
+  isn't installed), queried from a subfolder and from the root; the panel's
+  listing, filter, navigation, search and drawing; and the workspace tool.
