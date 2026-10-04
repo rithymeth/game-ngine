@@ -4519,8 +4519,10 @@ a Blueprint, so the starter is wired up and runs, and yours to dress.
   - **Vehicle**: `VehicleController.luau` is an arcade car with
     throttle, braking, drag, and steering that needs speed (reversed going
     backwards), with a chase camera. Pickups are placed along a line ahead.
-  - **2D Platformer**: listed, but unavailable until the 2D toolkit
-    (step 4 in the breakdown below) exists.
+  - **2D Platformer** (§26.6): a tilemap level, a platformer character
+    with 2D physics and a following camera. No scripts: the controller is a
+    component, so it creates `Tiles/Level.atileset`, `Tiles/Level1.atilemap`
+    and the Move and Jump bindings, not scripts or Blueprints.
 - **What a playable template creates**:
   - `Scenes/Main.ascene`, set as the project's startup scene.
   - `Scripts/<Controller>.luau`, whose top-level fields are the settings
@@ -4630,15 +4632,15 @@ say, not only its lifecycle callbacks and physics (§25.4).
    player and editor wiring.
 2. ✅ **Done.** Project templates (§26.2): Blank, First Person, Third
    Person, Top Down and Vehicle, each a small starter game, and New
-   Project from a template. The 2D Platformer waits for the 2D toolkit.
+   Project from a template (the 2D Platformer joined with the 2D toolkit).
    The player runs their scripts, Blueprints and input too (§26.3).
 3. ✅ **Done.** The editor extensibility API (§26.5): panels, menu
    items, property drawers and asset types from C++, and panels, menu
    items and asset types from Luau editor scripts.
 4. The 2D toolkit. ✅ **Done so far** (§26.6): sprite atlases and
    animation, tilesets, tilemaps with autotiles, render batching and the
-   pixel-perfect camera, the tilemap editor and 2D physics. Still to do:
-   2D lights, and the 2D Platformer template.
+   pixel-perfect camera, the tilemap editor, 2D physics, the platformer
+   controller and the 2D Platformer template. Still to do: 2D lights.
 5. Documentation: the API reference from reflection, the manual, and
    sample projects; version control status in the Content Browser.
 
@@ -4807,3 +4809,31 @@ trigger enter and exit; contact begin and end events; tile floors, running
 along seams at full speed, stopping at a wall with its side, and tile
 contact events; ray and overlap queries against boxes, circles and tiles;
 and the components through reflection.
+
+**The platformer controller and the template** (`sprite2d/platformer.h`).
+- **`PlatformerController2D`** on an entity with a Rigidbody2D and a
+  Collider2D: run speed with ground and air acceleration, a jump speed,
+  coyote time (a jump still works shortly after leaving a ledge), jump
+  buffering (a press just before landing counts), variable height (letting
+  go early keeps `jump_cut` of the rise), a faster fall (`fall_gravity_scale`)
+  and a terminal speed. It flips a Sprite on the entity to face the way it
+  runs. The host sets `input_move` and `input_jump` each fixed step;
+  `UpdatePlatformers` runs before `Physics2D::Step`, which supplies grounding.
+- **`CameraFollow2D`**: eases a camera toward the first controller's entity
+  (plus an offset), optionally inside bounds; `UpdateCameraFollow2D`.
+- **In the player**: `Game` creates a `Physics2D` for each scene, reading the
+  scene's tilemaps and tilesets from the package, and steps it each fixed
+  step after the 3D physics: the controllers get the "Move" x axis and the
+  "Jump" action, then the bodies and the following cameras move.
+  `Game::Physics2D()` exposes it.
+- **The 2D Platformer template**: a 48 x 16 tile level (ground with a pit,
+  platforms, a step and a tall block at the end) on a tileset whose ground
+  is an autotile, a player with a body and the controller, and an
+  orthographic camera 11.25 units high (a 320 x 180 view at 16 pixels a
+  tile) that follows it. Move is A and D, the arrow keys and the left
+  stick; Jump is Space, W, Up and the A button, held for height.
+- **Tests**: the template's files, dependencies and scene components; cooking
+  it (the tilemap and tileset are packaged because the scene refers to them);
+  and playing it in the player: landing, acceleration and stopping, held and
+  tapped jumps, falling into the pit, facing, crossing the pit with a
+  jump, and stopping at the end wall.

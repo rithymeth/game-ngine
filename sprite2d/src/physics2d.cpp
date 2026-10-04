@@ -189,6 +189,17 @@ void Physics2D::Step(f32 dt) {
     events_.clear();
     dt = std::min(dt, settings.max_step);
     if (dt <= 0.0f) return;
+    bool any = false;
+    world_.ForEachChunk<Collider2D>([&](u32, Collider2D*) { any = true; });
+    if (!any) { // nothing 2D here: skip the walk, and end what was touching
+        body_count_ = 0;
+        pairs_.clear();
+        last_info_.clear();
+        grounded_.clear();
+        left_wall_.clear();
+        right_wall_.clear();
+        return;
+    }
 
     // Gather the bodies.
     std::vector<Body> bodies;

@@ -5989,7 +5989,7 @@ pickup Blueprint:
 - **First Person**, **Third Person**, **Top Down** and **Vehicle**: the
   controller reads the bindings it ships, and is tested by running it with
   simulated keys and mouse.
-- **2D Platformer**: listed, waiting on the 2D toolkit.
+- **2D Platformer**: a tilemap level, a character with coyote time, jump buffering and variable jump height, and a camera that follows it, all on the 2D toolkit and playable in the packaged player.
 - **Editor**: the **New Project** tool creates one and opens it.
 - **Playing**: the packaged player runs them, with scripts, Blueprints and
   input: `aether_player --press W --report` holds a key in a headless run
