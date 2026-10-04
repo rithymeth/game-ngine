@@ -295,6 +295,7 @@ void Game::BuildFrame() {
 #if AETHER_GAME_PHYSICS
         if (physics_) physics_->scene->Step(frame.fixed_dt);
 #else
+        (void)this; // no physics module: the step does nothing
         (void)frame;
 #endif
     };
