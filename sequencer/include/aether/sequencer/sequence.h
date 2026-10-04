@@ -48,7 +48,15 @@ struct RotationKey {
     Interp interp = Interp::Linear; // Constant holds; Linear and Bezier are a slerp the short way round
 };
 
-enum class TrackType : u8 { Transform, Property };
+// A named moment: the player reports it when the playhead crosses it, and
+// the host turns it into a Blueprint event, a sound, a script call...
+struct EventKey {
+    f32 time = 0.0f;
+    std::string name;
+    std::string payload; // free text for the receiver
+};
+
+enum class TrackType : u8 { Transform, Property, Event, Visibility };
 
 struct Track {
     std::string id;   // unique in the sequence
@@ -63,8 +71,13 @@ struct Track {
     // Property: `component` and `field` name what is animated; `channels` are
     // its values: one for a number, bool or enum, one per member for a
     // struct of floats (Vec3: x, y, z; a colour: r, g, b, a).
+    // Event: `events` fire as the playhead crosses them; the binding is
+    // optional (the entity the event is about; none for a global one).
+    // Visibility: one channel of 0 (hidden) and 1 (shown) keys, held until
+    // the next key; it switches the entity's Active flag.
     std::vector<Channel> channels;
     std::vector<RotationKey> rotation;
+    std::vector<EventKey> events;
     std::string component;
     std::string field;
 
@@ -94,7 +107,11 @@ Quaternion EvaluateRotation(const std::vector<RotationKey>& keys, f32 time);
 // no component or field; SQ005 two tracks with one id; SQ006 a negative
 // duration or an fps that isn't positive; SQ007 a track with no id; SQ008 a
 // track bound to no entity; SQ009 a Transform track without its three
-// position channels; SQ010 a Property track with no channels.
+// position channels; SQ010 a Property track with no channels; SQ011 an
+// Event key with no name; SQ012 a Visibility track that doesn't have exactly
+// one channel of 0 and 1 values; SQ013 keys on a track of the wrong kind
+// (events on a Transform, rotation keys on a Property...). A Event track's
+// binding is optional, so SQ008 doesn't apply to it.
 std::vector<std::string> ValidateSequence(const LevelSequence& sequence);
 
 // .asequence files. FromJson leaves `out` unchanged on failure.

@@ -21,6 +21,16 @@ const char* InterpName(Interp i) {
     return "linear";
 }
 
+const char* TrackTypeName(TrackType t) {
+    switch (t) {
+    case TrackType::Transform: return "transform";
+    case TrackType::Property: return "property";
+    case TrackType::Event: return "event";
+    case TrackType::Visibility: return "visibility";
+    }
+    return "transform";
+}
+
 bool ParseInterp(const std::string& s, Interp& out) {
     if (s == "constant") out = Interp::Constant;
     else if (s == "linear") out = Interp::Linear;
@@ -82,6 +92,7 @@ f32 Channel::Evaluate(f32 time) const {
 void Track::Normalize() {
     for (Channel& c : channels) c.Normalize();
     std::stable_sort(rotation.begin(), rotation.end(), [](const RotationKey& a, const RotationKey& b) { return a.time < b.time; });
+    std::stable_sort(events.begin(), events.end(), [](const EventKey& a, const EventKey& b) { return a.time < b.time; });
 }
 
 void LevelSequence::Normalize() {
@@ -102,6 +113,7 @@ f32 LevelSequence::EffectiveDuration() const {
             if (!c.keys.empty()) last = std::max(last, c.keys.back().time);
         }
         if (!t.rotation.empty()) last = std::max(last, t.rotation.back().time);
+        if (!t.events.empty()) last = std::max(last, t.events.back().time);
     }
     return duration > 0.0f ? std::max(duration, last) : last;
 }
@@ -148,9 +160,24 @@ std::vector<std::string> ValidateSequence(const LevelSequence& s) {
         const std::string label = "track '" + (t.id.empty() ? t.name : t.id) + "'";
         if (t.id.empty()) add("SQ007", label + " has no id");
         else if (!ids.insert(t.id).second) add("SQ005", label + " repeats an id");
-        if (t.binding.IsNull()) add("SQ008", label + " is bound to no entity");
+        if (t.binding.IsNull() && t.type != TrackType::Event) add("SQ008", label + " is bound to no entity");
+        if (t.type != TrackType::Event && !t.events.empty()) add("SQ013", label + " has event keys but isn't an Event track");
+        if (t.type != TrackType::Transform && !t.rotation.empty()) add("SQ013", label + " has rotation keys but isn't a Transform track");
         if (t.type == TrackType::Transform) {
             if (t.channels.size() != 3) add("SQ009", label + " needs three position channels (x, y, z)");
+        } else if (t.type == TrackType::Event) {
+            if (!t.channels.empty()) add("SQ013", label + " has value channels but is an Event track");
+            for (const EventKey& e : t.events) {
+                if (e.name.empty()) add("SQ011", label + " has an event key with no name");
+            }
+            if (!StrictlyIncreasing(t.events)) add("SQ002", label + ", events: keys aren't in increasing time order");
+            if (s.duration > 0.0f && OutsideDuration(t.events, s.duration)) add("SQ003", label + ", events: a key is outside the duration");
+        } else if (t.type == TrackType::Visibility) {
+            bool bad = t.channels.size() != 1;
+            if (!bad) {
+                for (const Key& k : t.channels[0].keys) bad = bad || (k.value != 0.0f && k.value != 1.0f);
+            }
+            if (bad) add("SQ012", label + " needs exactly one channel of 0 (hidden) and 1 (shown) keys");
         } else {
             if (t.component.empty() || t.field.empty()) add("SQ004", label + " names no component or field");
             if (t.channels.empty()) add("SQ010", label + " has no channels");
@@ -183,7 +210,7 @@ nlohmann::json SequenceToJson(const LevelSequence& s) {
         }
         nlohmann::json track = {{"id", t.id},
                                 {"name", t.name},
-                                {"type", t.type == TrackType::Transform ? "transform" : "property"},
+                                {"type", TrackTypeName(t.type)},
                                 {"binding", ToString(t.binding)},
                                 {"mute", t.mute},
                                 {"locked", t.locked},
@@ -191,7 +218,11 @@ nlohmann::json SequenceToJson(const LevelSequence& s) {
         if (t.type == TrackType::Property) {
             track["component"] = t.component;
             track["field"] = t.field;
-        } else {
+        } else if (t.type == TrackType::Event) {
+            nlohmann::json events = nlohmann::json::array();
+            for (const EventKey& e : t.events) events.push_back({{"time", e.time}, {"name", e.name}, {"payload", e.payload}});
+            track["events"] = std::move(events);
+        } else if (t.type == TrackType::Transform) {
             nlohmann::json rotation = nlohmann::json::array();
             for (const RotationKey& r : t.rotation) {
                 rotation.push_back({{"time", r.time}, {"value", {r.value.x, r.value.y, r.value.z, r.value.w}}, {"interp", InterpName(r.interp)}});
@@ -224,8 +255,11 @@ bool SequenceFromJson(const nlohmann::json& j, LevelSequence& out, std::string* 
         const std::string type = tj.value("type", "");
         if (type == "transform") t.type = TrackType::Transform;
         else if (type == "property") t.type = TrackType::Property;
+        else if (type == "event") t.type = TrackType::Event;
+        else if (type == "visibility") t.type = TrackType::Visibility;
         else return fail("track '" + t.id + "' has an unknown type '" + type + "'");
-        if (!ParseEntityGuid(tj.value("binding", ""), t.binding)) return fail("track '" + t.id + "' has a bad entity GUID");
+        const bool optional_binding = t.type == TrackType::Event && tj.value("binding", "").empty();
+        if (!optional_binding && !ParseEntityGuid(tj.value("binding", ""), t.binding)) return fail("track '" + t.id + "' has a bad entity GUID");
         t.mute = tj.value("mute", false);
         t.locked = tj.value("locked", false);
         t.component = tj.value("component", "");
@@ -254,6 +288,14 @@ bool SequenceFromJson(const nlohmann::json& j, LevelSequence& out, std::string* 
             r.value = Quaternion(rj["value"][0].get<f32>(), rj["value"][1].get<f32>(), rj["value"][2].get<f32>(), rj["value"][3].get<f32>());
             if (!ParseInterp(rj.value("interp", "linear"), r.interp)) return fail("track '" + t.id + "': unknown interpolation");
             t.rotation.push_back(r);
+        }
+        for (const nlohmann::json& ej : tj.value("events", nlohmann::json::array())) {
+            if (!ej.contains("time") || !ej["time"].is_number()) return fail("track '" + t.id + "': an event key needs a time");
+            EventKey e;
+            e.time = ej["time"].get<f32>();
+            e.name = ej.value("name", "");
+            e.payload = ej.value("payload", "");
+            t.events.push_back(std::move(e));
         }
         s.tracks.push_back(std::move(t));
     }

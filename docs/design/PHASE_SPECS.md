@@ -4977,13 +4977,51 @@ playback core, in its own module, `sequencer/` (`aether::seq`).
   transform and property tracks; once-only problems; rebinding after a
   destroyed entity; playback, looping and `on_finished`; determinism.
 
-### 27.2 PR breakdown
+### 27.2 Events, visibility and the scene component
 
-1. Level sequences and the player core (this step).
-2. A `SequencePlayer` component and system, Blueprint and Luau functions, and
-   Event, Visibility and Spawn tracks.
-3. Animation, Camera Cut (switching `Camera::priority`) and Audio tracks, and
-   a `CineCamera` component.
+- **Event track**: `events` of (time, name, payload). The player calls
+  `on_event` for each key the playhead crosses while playing forward: once
+  each, in time order, an event at t = 0 on the first frame, and a loop fires
+  the keys at the end and then those at the start. Scrubbing (`SetTime`),
+  `Evaluate` and backward playback fire nothing, so `Evaluate` stays a pure
+  function of time. The binding is optional (the entity the event is about).
+- **Visibility track**: one channel of 0 and 1 keys (held until the next); it
+  sets the bound entity's `Active` flag, calling `set_active(entity, on)`
+  only when the value changes. A host routes that through
+  `Lifecycle::SetActive`, so OnEnable/OnDisable fire.
+- **Diagnostics**: SQ011 an event key with no name; SQ012 a Visibility track
+  without exactly one channel of 0/1 values; SQ013 keys on a track of the
+  wrong kind. SQ008 doesn't apply to an Event track.
+- **`SequenceComponent`**: `sequence` (asset path), `auto_play`, `loop`,
+  `rate`, `destroy_when_finished`, and `time` and `playing` written back (not
+  saved). Its methods `Play`, `Pause`, `Stop`, `SetTime`, `SetRate`,
+  `SetLoop`, `IsPlaying` and `GetTime` are reflected as Blueprint nodes and
+  Luau calls, and queue commands like `AudioSource`. The **`Sequencer`**
+  library has `PlaySequence(sequence, loop)` (an entity that plays and is
+  destroyed at the end) and `StopAll`.
+- **`SequenceSystem`**: a player per component (made when it appears or its
+  `sequence` changes), queued commands, Update, time written back, players of
+  destroyed entities dropped, problems reported once. `Events()` is what
+  happened in the last Update: a Marker (name, payload, the track's entity) or
+  Finished (the sequence). The host dispatches them to Blueprints as
+  `Event.OnSequenceEvent` (name, payload) and `Event.OnSequenceFinished`.
+  Wiring it into the player's scheduler comes with the asset loading in a
+  later step, as the audio system's does.
+- **Physics note**: a body the sequence moves should be kinematic.
+- **Tests** (`test_sequence_system.cpp`): both new tracks' JSON and
+  diagnostics; events once, not on scrub or backward, across a loop wrap, with
+  muted tracks and bound events; visibility and its change-only hook;
+  auto-play, every command, event and finished collection, Lifecycle
+  visibility, destroy-when-finished and the library, once-only problems,
+  dropped players, and the reflected Blueprint surface.
+
+### 27.3 PR breakdown
+
+1. Level sequences and the player core (done, §27.1).
+2. Event and Visibility tracks, the SequenceComponent and system (§27.2).
+3. Spawn tracks (instantiate a prefab for a time range), Animation, Camera
+   Cut (switching `Camera::priority`) and Audio tracks, a `CineCamera`
+   component, and wiring the system into the player.
 4. Fade and Subsequence tracks, `SequenceDocument` and the sequencer panel.
 5. Movie render (a headless fixed-step loop with a frame sink), cook and
    player integration.
