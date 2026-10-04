@@ -31,6 +31,7 @@ void RegisterSceneComponents() {
     (void)GetComponentId<PrefabLink>();
     (void)GetComponentId<Active>();
     (void)GetComponentId<Camera>();
+    (void)GetComponentId<CineCamera>();
     (void)GetComponentId<Tags>();
     (void)GetComponentId<Layer>();
     (void)GetComponentId<ScriptComponent>();
