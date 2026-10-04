@@ -8,6 +8,10 @@
 #include "aether/project/project.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/serialization.h"
+#include "aether/sprite2d/components.h"
+#include "aether/sprite2d/physics2d.h"
+#include "aether/sprite2d/platformer.h"
+#include "aether/sprite2d/tilemap.h"
 #include "aether/templates/templates.h"
 #include "test_framework.h"
 
@@ -64,19 +68,17 @@ const std::vector<std::string> kPlayable = {"first_person", "third_person", "top
 AETHER_TEST(Templates_ListsEveryTemplateAndWhatIsMissing) {
     const std::vector<ProjectTemplate>& all = ProjectTemplates();
     CHECK(all.size() == 6);
+    for (const ProjectTemplate& t : all) CHECK(t.available);
     for (const char* id : {"blank", "first_person", "third_person", "top_down", "vehicle", "platformer_2d"}) {
         const ProjectTemplate* t = FindProjectTemplate(id);
         CHECK(t != nullptr && !t->name.empty() && !t->genre.empty() && !t->description.empty() && !t->features.empty());
     }
     CHECK(FindProjectTemplate("nothing") == nullptr);
-    const ProjectTemplate* platformer = FindProjectTemplate("platformer_2d");
-    CHECK(!platformer->available && platformer->unavailable_reason.find("2D toolkit") != std::string::npos);
     for (const std::string& id : kPlayable) CHECK(FindProjectTemplate(id)->available);
 
     std::string error;
     const stdfs::path parent = Dir("Refusals");
     CHECK(!CreateProjectFromTemplate(parent, "A", "nothing", nullptr, &error) && error.find("no project template") != std::string::npos);
-    CHECK(!CreateProjectFromTemplate(parent, "A", "platformer_2d", nullptr, &error) && error.find("isn't available") != std::string::npos);
     CHECK(!CreateProjectFromTemplate(parent, "bad/name", "blank", nullptr, &error) && error.find("valid project name") != std::string::npos);
     CHECK(CreateProjectFromTemplate(parent, "Fine", "blank", nullptr, &error));
     CHECK(!CreateProjectFromTemplate(parent, "Fine", "blank", nullptr, &error) && error.find("isn't empty") != std::string::npos);
@@ -189,6 +191,163 @@ AETHER_TEST(Templates_PickupBlueprintCompiles) {
     const bp::Variable* speed = blueprint.FindVariable("SpinSpeed");
     CHECK(speed && (speed->flags & bp::Var_InstanceEditable) && std::get<f32>(speed->default_value) == 90.0f);
     CHECK(blueprint.FindVariable("Angle") != nullptr);
+}
+
+namespace {
+
+// The 2D Platformer, cooked and played in the player.
+struct PlatformerRun {
+    ProjectPaths paths;
+    player::GamePackage package;
+    std::unique_ptr<player::Game> game;
+    Entity hero, camera;
+
+    PlatformerRun() {
+        // Each run its own folder: a mounted pak is read as the game plays, so another run must not rewrite it.
+        static int counter = 0;
+        std::string error;
+        AETHER_CHECK(CreateProjectFromTemplate(Dir("platformer_2d_" + std::to_string(counter++)), "Run2D", "platformer_2d", &paths, &error));
+        cook::CookOptions options;
+        options.project_file = paths.file;
+        options.output_dir = paths.root / "Paks";
+        options.configuration = cook::BuildConfiguration::Shipping;
+        const cook::CookReport report = cook::Cook(options);
+        AETHER_CHECK(report.ok);
+        AETHER_CHECK(package.Mount(report.pak_file.string()) && package.LoadManifest(&error));
+        game = std::make_unique<player::Game>(package);
+        AETHER_CHECK(game->LoadStartupScene(&error));
+        hero = FindEntitiesWithTag(game->GetWorld(), "Player")[0];
+        camera = FindEntitiesWithTag(game->GetWorld(), "MainCamera")[0];
+        game->BeginPlay();
+    }
+    ~PlatformerRun() = default;
+    void Frames(int n) {
+        for (int i = 0; i < n; ++i) game->Tick(1.0f / 60.0f);
+    }
+    void Hold(input::Key key, bool down) { game->Input().SetButton(key, down); }
+    Vec3 Position() { return game->GetWorld().GetComponent<Transform>(hero)->position; }
+    Vec3 Velocity() {
+        const sprite2d::Vec2 v = game->GetWorld().GetComponent<sprite2d::Rigidbody2D>(hero)->velocity;
+        return Vec3(v.x, v.y, 0);
+    }
+    bool Grounded() { return game->Physics2D()->IsGrounded(hero); }
+    // Holds Space for `frames` frames from the ground and returns the highest the hero got.
+    f32 JumpPeak(int frames) {
+        Hold(input::Key::Space, true);
+        f32 peak = Position().y;
+        for (int i = 0; i < 90; ++i) {
+            if (i == frames) Hold(input::Key::Space, false);
+            Frames(1);
+            peak = std::max(peak, Position().y);
+        }
+        Hold(input::Key::Space, false);
+        return peak;
+    }
+};
+
+} // namespace
+
+AETHER_TEST(Templates_PlatformerIsACompleteTilemapGame) {
+    const ProjectPaths paths = Create("platformer_2d", "Tiles");
+    ProjectSettings settings;
+    std::string error;
+    CHECK(LoadProject(paths.file, settings, &error));
+    CHECK(settings.startup_scene == "Scenes/Main.ascene" && settings.always_cook == std::vector<std::string>{"Input/"});
+    assets::AssetDatabase db(paths.content);
+    db.Scan();
+    CHECK(db.FindByPath("Tiles/Level.atileset") && db.FindByPath("Tiles/Level.atileset")->importer == "Tileset");
+    CHECK(db.FindByPath("Tiles/Level1.atilemap") && db.FindByPath("Tiles/Level1.atilemap")->importer == "Tilemap");
+    CHECK(db.FindByPath("Input/Move.aaction") && db.FindByPath("Input/Jump.aaction") && db.FindByPath("Input/Gameplay.amapping"));
+    CHECK(!db.FindByPath("Input/Look.aaction") && !stdfs::exists(paths.content / "Scripts") && !stdfs::exists(paths.content / "Blueprints"));
+    // The tilemap names its tileset, which the database sees as a dependency.
+    sprite2d::TilemapData map;
+    CHECK(sprite2d::LoadTilemap(paths.content / "Tiles/Level1.atilemap", map, &error));
+    CHECK(map.tileset == db.FindByPath("Tiles/Level.atileset")->guid && map.width == 48 && map.layers.size() == 1);
+    CHECK(!db.Referencers(db.FindByPath("Tiles/Level.atileset")->guid).empty());
+    CHECK(!db.Referencers(db.FindByPath("Tiles/Level1.atilemap")->guid).empty()); // the scene
+
+    sprite2d::RegisterSprite2DComponents();
+    sprite2d::RegisterPhysics2DComponents();
+    sprite2d::RegisterPlatformerComponents();
+    World world;
+    CHECK(LoadSceneJson(world, (paths.content / "Scenes/Main.ascene").string()));
+    CHECK(CountTagged(world, "Player") == 1 && CountTagged(world, "Level") == 1 && CountTagged(world, "MainCamera") == 1);
+    const Entity hero = FindEntitiesWithTag(world, "Player")[0];
+    CHECK(world.HasComponent<sprite2d::Rigidbody2D>(hero) && world.HasComponent<sprite2d::Collider2D>(hero) &&
+          world.HasComponent<sprite2d::PlatformerController2D>(hero));
+    const Entity camera = FindEntitiesWithTag(world, "MainCamera")[0];
+    CHECK(world.GetComponent<Camera>(camera)->projection == Projection::Orthographic);
+    CHECK(Near(world.GetComponent<Camera>(camera)->ortho_height, 11.25f) && world.HasComponent<sprite2d::CameraFollow2D>(camera));
+    CHECK(FindProjectTemplate("platformer_2d")->available);
+}
+
+AETHER_TEST(Templates_PlatformerRunsJumpsAndFalls) {
+    PlatformerRun r;
+    // It lands on the ground (its top is y = 2, the hero's half height 0.5 above).
+    r.Frames(90);
+    CHECK(Near(r.Position().y, 2.5f, 0.05f) && r.Grounded());
+    CHECK(Near(r.Position().x, 3.0f, 0.05f)); // no input, no drift
+    const Vec3 camera_start = r.game->GetWorld().GetComponent<Transform>(r.camera)->position;
+
+    // Running: acceleration to full speed, and the camera follows.
+    r.Hold(input::Key::D, true);
+    r.Frames(30);
+    CHECK(r.Velocity().x > 5.5f && r.Position().x > 5.5f && r.Grounded());
+    r.Hold(input::Key::D, false);
+    r.Frames(40);
+    CHECK(std::fabs(r.Velocity().x) < 0.1f); // it stops
+    const Vec3 camera_now = r.game->GetWorld().GetComponent<Transform>(r.camera)->position;
+    CHECK(camera_now.x > camera_start.x - 0.001f && Near(camera_now.z, camera_start.z, 0.001f));
+
+    // Running left against the map's left edge isn't a wall here: it runs to the edge of the ground only.
+    // A held jump rises higher than a tapped one.
+    const f32 floor_y = r.Position().y;
+    PlatformerRun full, tap;
+    full.Frames(90);
+    tap.Frames(90);
+    const f32 high = full.JumpPeak(60);
+    const f32 low = tap.JumpPeak(4);
+    CHECK(high > floor_y + 5.0f);
+    CHECK(low > floor_y + 0.5f && low < high - 2.0f);
+    full.Frames(60);
+    CHECK(full.Grounded() && Near(full.Position().y, 2.5f, 0.05f)); // it comes back down
+
+    // Into the pit: running right without jumping, it falls through the gap and keeps falling.
+    r.Hold(input::Key::D, true);
+    r.Frames(240);
+    CHECK(r.Position().y < -5.0f);
+    CHECK(r.Velocity().y < -5.0f);
+}
+
+AETHER_TEST(Templates_PlatformerStopsAtTheStepAndFacesWhereItRuns) {
+    PlatformerRun r;
+    r.Frames(90);
+    // A short hop onto the first platform's level isn't needed: run right then jump over the pit to the far side.
+    r.Hold(input::Key::D, true);
+    r.Frames(15);
+    CHECK(r.game->GetWorld().GetComponent<sprite2d::PlatformerController2D>(r.hero)->facing == 1);
+    r.Hold(input::Key::D, false);
+    r.Hold(input::Key::A, true);
+    r.Frames(10);
+    CHECK(r.game->GetWorld().GetComponent<sprite2d::PlatformerController2D>(r.hero)->facing == -1);
+    CHECK(r.Velocity().x < -2.0f);
+    r.Hold(input::Key::A, false);
+    // Running at the tall block at the end of the map needs the pit crossed: jump it at full speed.
+    r.Frames(30);
+    r.Hold(input::Key::D, true);
+    bool crossed = false;
+    for (int i = 0; i < 300 && !crossed; ++i) {
+        r.Frames(1);
+        const Vec3 p = r.Position();
+        if (r.Grounded() && p.x > 17.0f && p.x < 19.0f && !r.game->Input().IsDown(input::Key::Space)) r.Hold(input::Key::Space, true);
+        if (p.x > 17.0f) r.Hold(input::Key::Space, p.x < 19.5f);
+        crossed = r.Grounded() && p.x > 24.0f;
+    }
+    CHECK(crossed);
+    CHECK(Near(r.Position().y, 2.5f, 0.1f));
+    // The block's wall at x = 40 stops it.
+    for (int i = 0; i < 200; ++i) r.Frames(1);
+    CHECK(r.Position().x < 40.0f - 0.4f + 0.1f && r.Position().x > 36.0f);
 }
 
 #if AETHER_TEST_HAS_SCRIPTING

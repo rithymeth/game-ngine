@@ -214,11 +214,8 @@ AETHER_TEST(NewProjectPanel_CreatesFromATemplateAndOpensIt) {
     CHECK(announced == where / "Racer" / "Racer.aproject" && stdfs::exists(where / "Racer/Content/Scripts/VehicleController.luau"));
     imgui.Frame([&] { panel.Draw(); });
 
-    // The same name again, a template that isn't built, and a bad name each say why.
+    // The same name again and a bad name each say why.
     CHECK(!panel.Create(&error) && panel.StatusIsError() && error.find("isn't empty") != std::string::npos);
-    panel.name = "Jumper";
-    panel.template_id = "platformer_2d";
-    CHECK(!panel.Create(&error) && error.find("2D toolkit") != std::string::npos);
     panel.template_id = "blank";
     panel.name = "no/slash";
     CHECK(!panel.Create(&error) && error.find("valid project name") != std::string::npos);

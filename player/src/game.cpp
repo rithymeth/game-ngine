@@ -6,6 +6,7 @@
 #include "aether/scene/serialization.h"
 #include "aether/sprite2d/components.h"
 #include "aether/sprite2d/physics2d.h"
+#include "aether/sprite2d/platformer.h"
 
 #include <nlohmann/json.hpp>
 
@@ -222,6 +223,7 @@ Game::Game(GamePackage& package) : package_(package), world_(std::make_unique<Wo
 Game::~Game() {
     EndPlay();
     runtime_.reset(); // scripts and Blueprints before the world, lifecycle and input they use
+    physics2d_.reset();
     physics_.reset(); // its bodies before the world they belong to
     while (!modules_.empty()) {
         modules_.back().second->Shutdown();
@@ -280,6 +282,7 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     StartModules(); // their components, before the scene names them
     sprite2d::RegisterSprite2DComponents(); // sprites and tilemaps (§26.6)
     sprite2d::RegisterPhysics2DComponents(); // 2D bodies and colliders
+    sprite2d::RegisterPlatformerComponents();
     std::vector<u8> bytes;
     std::string read_error;
     if (!package_.ReadContent(path, bytes, &read_error)) {
@@ -288,6 +291,7 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     LoadInputAssets();
     EndPlay();
     runtime_.reset();
+    physics2d_.reset();
     physics_.reset();
     auto world = std::make_unique<World>();
     // JSON scenes start with '{' (after any whitespace); binary ones with "AESC".
@@ -311,6 +315,39 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     guids_.Rebuild(*world_);
     lifecycle_ = std::make_unique<Lifecycle>(*world_, guids_);
     StartRuntime();
+    // 2D physics: the scene's tilemaps are read from the package when first needed.
+    tilemaps_.clear();
+    tilesets_.clear();
+    sprite2d::Resolvers2D tiles;
+    const auto read_json = [this](const assets::AssetGuid& guid) -> nlohmann::json {
+        const GameManifest::Asset* asset = package_.FindAssetByGuid(assets::ToString(guid));
+        std::vector<u8> bytes;
+        if (!asset || !package_.ReadContent(asset->path, bytes)) return {};
+        return nlohmann::json::parse(bytes.begin(), bytes.end(), nullptr, false);
+    };
+    tiles.tilemaps = [this, read_json](const assets::AssetGuid& guid) -> const sprite2d::TilemapData* {
+        auto it = tilemaps_.find(guid);
+        if (it == tilemaps_.end()) {
+            auto map = std::make_unique<sprite2d::TilemapData>();
+            const nlohmann::json data = read_json(guid);
+            std::string why;
+            if (data.is_discarded() || data.is_null() || !sprite2d::TilemapFromJson(data, *map, &why)) map.reset();
+            it = tilemaps_.emplace(guid, std::move(map)).first;
+        }
+        return it->second.get();
+    };
+    tiles.tilesets = [this, read_json](const assets::AssetGuid& guid) -> const sprite2d::Tileset* {
+        auto it = tilesets_.find(guid);
+        if (it == tilesets_.end()) {
+            auto set = std::make_unique<sprite2d::Tileset>();
+            const nlohmann::json data = read_json(guid);
+            std::string why;
+            if (data.is_discarded() || data.is_null() || !sprite2d::TilesetFromJson(data, *set, &why)) set.reset();
+            it = tilesets_.emplace(guid, std::move(set)).first;
+        }
+        return it->second.get();
+    };
+    physics2d_ = std::make_unique<sprite2d::Physics2D>(*world_, std::move(tiles));
 #if AETHER_GAME_PHYSICS
     physics_ = std::make_unique<Physics>();
     physics_->world.SetGravity(package_.Manifest().gravity);
@@ -422,10 +459,29 @@ void Game::BuildFrame() {
 #endif
     };
     scheduler_.Add(std::move(physics));
+    // 2D: the platformer controllers read the player's input, then the bodies step.
+    SystemDesc physics2d;
+    physics2d.name = "Player.Physics2D";
+    physics2d.phase = SystemPhase::FixedUpdate;
+    physics2d.after = {"Player.Physics"};
+    physics2d.main_thread_only = true;
+    physics2d.run = [this](World& world, const FrameContext& frame) {
+        if (!physics2d_) return;
+        const f32 move = input_.GetAxis2D("Move").x;
+        const bool jump = input_.GetAction("Jump").phase == input::ActionPhase::Triggered;
+        world.ForEach<sprite2d::PlatformerController2D>([&](sprite2d::PlatformerController2D& pc) {
+            pc.input_move = move;
+            pc.input_jump = jump;
+        });
+        sprite2d::UpdatePlatformers(world, *physics2d_, frame.fixed_dt);
+        physics2d_->Step(frame.fixed_dt);
+        sprite2d::UpdateCameraFollow2D(world, frame.fixed_dt);
+    };
+    scheduler_.Add(std::move(physics2d));
     SystemDesc fixed;
     fixed.name = "Player.FixedUpdate";
     fixed.phase = SystemPhase::FixedUpdate;
-    fixed.after = {"Player.Physics"};
+    fixed.after = {"Player.Physics", "Player.Physics2D"};
     fixed.main_thread_only = true;
     fixed.run = [this](World&, const FrameContext& frame) { lifecycle_->FixedUpdate(frame.fixed_dt); };
     scheduler_.Add(std::move(fixed));
