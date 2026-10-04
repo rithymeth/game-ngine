@@ -9,6 +9,7 @@
 #include "audio/mixer_panel.h"
 #include "devtools/console_panel.h"
 #include "packaging/build_window.h"
+#include "packaging/new_project_panel.h"
 #include "packaging/plugins_panel.h"
 #include "devtools/crash_reporter.h"
 #include "devtools/profiler_panel.h"
@@ -163,6 +164,7 @@ struct EditorWorkspace::Impl {
     std::unique_ptr<ProjectSettingsPanel> project_settings;
     std::unique_ptr<BuildPackageWindow> build_window;
     std::unique_ptr<PluginsPanel> plugins_panel;
+    NewProjectPanel new_project;
     plugin::PluginManager plugins; // the project's, with their modules started
 
     explicit Impl(std::filesystem::path project) : project_file(std::move(project)) {
@@ -200,6 +202,7 @@ struct EditorWorkspace::Impl {
             {"Console", "Debug", [this] { console_panel->Draw(); }},
             {"Profiler", "Debug", [this] { profiler_panel->Draw(); }},
             {"Crash Reports", "Debug", [this] { DrawCrashReports(); }},
+            {"New Project", "Project", [this] { new_project.Draw(); }},
             {"Project Settings", "Project", [this] { DrawProjectTool(true); }},
             {"Build and Package", "Project", [this] { DrawProjectTool(false); }},
             {"Plugins", "Project", [this] {
@@ -477,10 +480,25 @@ struct EditorWorkspace::Impl {
         crash_dialog = std::make_unique<CrashReporterDialog>(CrashConfig{}.directory);
     }
 
+    // A project made from a template becomes the one the Project tools work on.
     void BuildProject() {
+        new_project.on_created = [this](const std::filesystem::path& file) { OpenProject(file); };
         std::string error;
         if (project_file.empty()) project_file = EditorWorkspace::SampleProject(&error);
         if (project_file.empty()) return;
+        LoadProjectTools();
+    }
+
+    // Points the Project tools (and the plugins' modules) at `file`.
+    void OpenProject(const std::filesystem::path& file) {
+        // The running build, if any, is cancelled and joined by its window's destructor.
+        build_window.reset();
+        project_file = file;
+        LoadProjectTools();
+    }
+
+    void LoadProjectTools() {
+        std::string error;
         project_settings = std::make_unique<ProjectSettingsPanel>(project_file);
         build_window = std::make_unique<BuildPackageWindow>(project_file);
         plugins_panel = std::make_unique<PluginsPanel>(project_file);
@@ -519,6 +537,13 @@ EditorWorkspace::EditorWorkspace(std::filesystem::path project_file)
     : impl_(std::make_unique<Impl>(std::move(project_file))) {}
 
 const std::filesystem::path& EditorWorkspace::ProjectFile() const { return impl_->project_file; }
+
+bool EditorWorkspace::OpenProject(const std::filesystem::path& project_file) {
+    ProjectSettings settings;
+    if (!LoadProject(project_file, settings, nullptr)) return false;
+    impl_->OpenProject(project_file);
+    return true;
+}
 
 std::filesystem::path EditorWorkspace::SampleProject(std::string* error) {
     namespace stdfs = std::filesystem;

@@ -31,8 +31,8 @@ add_executable(aether_tests
 
 target_link_libraries(aether_tests PRIVATE Aether::Engine)
 # Phase 25 step 4: the player's runtime.
-target_sources(aether_tests PRIVATE test_player.cpp test_package.cpp test_pak_patch.cpp test_plugin.cpp)
-target_link_libraries(aether_tests PRIVATE Aether::Game)
+target_sources(aether_tests PRIVATE test_player.cpp test_package.cpp test_pak_patch.cpp test_plugin.cpp test_templates.cpp)
+target_link_libraries(aether_tests PRIVATE Aether::Game Aether::Templates Aether::Blueprint)
 # The Build and Package window's test packages and launches the real player.
 add_dependencies(aether_tests aether_player)
 target_compile_definitions(aether_tests PRIVATE AETHER_TEST_PLAYER_PATH="$<TARGET_FILE:aether_player>")
@@ -74,6 +74,7 @@ if(TARGET Aether::Physics)
 endif()
 
 if(TARGET Aether::Scripting)
+    target_compile_definitions(aether_tests PRIVATE AETHER_TEST_HAS_SCRIPTING=1)
     target_sources(aether_tests PRIVATE test_luau_host.cpp test_luau_bindings.cpp test_script_system.cpp test_script_api.cpp test_script_reload.cpp test_script_debugger.cpp test_script_dap.cpp test_nav_script.cpp test_ai_script.cpp test_net_rpc_script.cpp test_debug_draw_script.cpp)
     target_link_libraries(aether_tests PRIVATE Aether::Scripting)
 endif()

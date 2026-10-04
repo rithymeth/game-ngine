@@ -1,4 +1,5 @@
 #include "packaging/build_window.h"
+#include "packaging/new_project_panel.h"
 #include "packaging/plugins_panel.h"
 #include "test_framework.h"
 #include "workspace/editor_workspace.h"
@@ -190,4 +191,46 @@ AETHER_TEST(PluginsPanel_EnablesCreatesAndRefuses) {
     CHECK(LoadProject(project, saved, nullptr) && saved.plugins == std::vector<std::string>{"Lanterns"});
     CHECK(panel.SetEnabled("Lanterns", false, &error) && panel.Requested().empty());
     imgui.Frame([&] { panel.Draw(); });
+}
+
+AETHER_TEST(NewProjectPanel_CreatesFromATemplateAndOpensIt) {
+    HeadlessImGui imgui;
+    const stdfs::path where = stdfs::temp_directory_path() / "aether_new_project_tests";
+    stdfs::remove_all(where);
+    EditorWorkspace workspace;
+    const stdfs::path before = workspace.ProjectFile();
+    CHECK(!before.empty());
+
+    NewProjectPanel panel;
+    CHECK(panel.location.find("AetherProjects") != std::string::npos && panel.template_id == "first_person");
+    for (int i = 0; i < 2; ++i) imgui.Frame([&] { panel.Draw(); });
+    panel.location = where.string();
+    panel.name = "Racer";
+    panel.template_id = "vehicle";
+    stdfs::path announced;
+    panel.on_created = [&](const stdfs::path& file) { announced = file; };
+    std::string error;
+    CHECK(panel.Create(&error) && !panel.StatusIsError() && announced == panel.Created());
+    CHECK(announced == where / "Racer" / "Racer.aproject" && stdfs::exists(where / "Racer/Content/Scripts/VehicleController.luau"));
+    imgui.Frame([&] { panel.Draw(); });
+
+    // The same name again, a template that isn't built, and a bad name each say why.
+    CHECK(!panel.Create(&error) && panel.StatusIsError() && error.find("isn't empty") != std::string::npos);
+    panel.name = "Jumper";
+    panel.template_id = "platformer_2d";
+    CHECK(!panel.Create(&error) && error.find("2D toolkit") != std::string::npos);
+    panel.template_id = "blank";
+    panel.name = "no/slash";
+    CHECK(!panel.Create(&error) && error.find("valid project name") != std::string::npos);
+    imgui.Frame([&] { panel.Draw(); });
+
+    // The workspace's Project tools follow a project it opens.
+    CHECK(workspace.OpenProject(announced) && workspace.ProjectFile() == announced);
+    CHECK(!workspace.OpenProject(where / "Nope.aproject") && workspace.ProjectFile() == announced);
+    const i64 tool = workspace.FindTool("Project Settings");
+    CHECK(tool >= 0 && workspace.FindTool("New Project") >= 0);
+    workspace.Select(static_cast<usize>(tool));
+    for (int i = 0; i < 2; ++i) imgui.Frame([&] { workspace.DrawHub(); });
+    workspace.Select(static_cast<usize>(workspace.FindTool("New Project")));
+    imgui.Frame([&] { workspace.DrawHub(); });
 }
