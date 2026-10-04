@@ -51,9 +51,10 @@ add_library(aether_editor_ui STATIC
     ../workspace/editor_workspace.cpp
     ../packaging/build_window.cpp
     ../packaging/plugins_panel.cpp
+    ../packaging/new_project_panel.cpp
 )
 target_include_directories(aether_editor_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
-target_link_libraries(aether_editor_ui PUBLIC Aether::Engine Aether::Blueprint Aether::Renderer Aether::Animation Aether::Audio Aether::UI Aether::VFX Aether::AI Aether::Terrain Aether::Streaming Aether::Net imgui_core)
+target_link_libraries(aether_editor_ui PUBLIC Aether::Engine Aether::Blueprint Aether::Renderer Aether::Animation Aether::Audio Aether::UI Aether::VFX Aether::AI Aether::Terrain Aether::Streaming Aether::Net Aether::Templates imgui_core)
 add_library(Aether::EditorUI ALIAS aether_editor_ui)
 
 # Phase 24 step 5: Dear ImGui on the RHI's Vulkan backend (imgui_impl_vulkan

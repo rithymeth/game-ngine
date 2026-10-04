@@ -38,6 +38,9 @@ public:
     // first time and reused after; empty if it can't be made.
     static std::filesystem::path SampleProject(std::string* error = nullptr);
     const std::filesystem::path& ProjectFile() const;
+    // Points the Project tools (settings, Build and Package, Plugins) and
+    // the plugins' modules at another project. False if it isn't one.
+    bool OpenProject(const std::filesystem::path& project_file);
 
     usize ToolCount() const;
     const char* ToolName(usize tool) const;
