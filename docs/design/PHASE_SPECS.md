@@ -4385,9 +4385,9 @@ library, and `aether_player`, the executable.
    which come with the player that loads them.
 4. ✅ **Done.** The player (§25.4): `aether_game` and `aether_player`,
    the startup scene from the mounted paks with prefabs and physics, and
-   the Debug, Development and Shipping configurations. Still to do:
-   drawing the scene, with the renderer's RHI path, and running Blueprint
-   bytecode and scripts.
+   the Debug, Development and Shipping configurations. Scripts, Blueprints
+   and input run in the player since §26.3. Still to do: drawing the scene,
+   with the renderer's RHI path.
 5. ✅ **Done.** Project settings (window defaults, quality presets), the
    cook's progress and cancel, packaging with the player, and the
    editor's Build and Package window with progress, logs and Launch
@@ -4544,11 +4544,8 @@ a Blueprint, so the starter is wired up and runs, and yours to dress.
   created project becomes the one the Project tools (settings, Build and
   Package, Plugins) and the plugins' modules work on
   (`EditorWorkspace::OpenProject`).
-- **Not yet**: the player doesn't run scripts, Blueprints or input yet (the
-  step 4 player only runs its lifecycle callbacks and physics), so a
-  packaged template shows the clear colour. The scripts and Blueprint run in
-  the tests with the scripting module, and in the editor's play mode once
-  it hosts them.
+- **Playing them**: the packaged player runs a template's controller,
+  Blueprint and bindings (§26.3).
 - **Tests** (`test_templates.cpp`):
   - The list, including the unavailable template, and every refusal.
   - Blank's contents. Each playable template creates a project that loads,
@@ -4572,7 +4569,61 @@ a Blueprint, so the starter is wired up and runs, and yours to dress.
     name, the unavailable template and a bad name, and the workspace opens
     it.
 
-### 26.3 PR breakdown
+### 26.3 The player runs scripts, Blueprints and input
+
+A packaged game now plays what a project's scripts, Blueprints and bindings
+say, not only its lifecycle callbacks and physics (§25.4).
+
+- **Input**:
+  - `InputAssetLibrary::AddFromText` adds an `.aaction` or `.amapping` from
+    its text, without a database on disk (a bad one is refused, and listed
+    in `Errors()`).
+  - `Game` loads the manifest's input assets from the archives, registers
+    the actions, and activates every mapping context, in name order.
+  - The host sets keys, buttons and mouse movement on `Game::Input()`
+    before each `Tick`. The window's events go in with `ApplyWindowEvents`.
+    `Tick` turns them into this frame's actions, and clears the per-frame
+    movement deltas after it.
+- **Scripts** (when the player is built with Luau; `Game::HasScripting()`):
+  - A `ScriptSystem` reads each script's source from the archives, runs
+    its callbacks through the lifecycle, and ticks timers each frame.
+  - It's bound to the game's input, so `Input.GetAxis2D("Move")` and the
+    rest work.
+- **Blueprints**: a `BlueprintSystem` loads each `.abp` from the archives
+  and runs its entities' events (BeginPlay, Tick, ...) through the same
+  lifecycle.
+- **A scene load rebuilds all of it**: a fresh Luau host, script system and
+  Blueprint system per scene, torn down before the world, lifecycle and
+  input they refer to, so a level change leaves no state behind.
+- **Errors don't stop play**: they're counted in `GameStats`
+  (`script_errors`, `blueprint_errors`) and listed by `ScriptErrors()` and
+  `BlueprintErrors()`. `GameStats` also has the running script and
+  Blueprint instance counts.
+- **`aether_player`**:
+  - The window's events feed the game's input.
+  - `--press <Key>` holds a key for the whole run, which makes a headless
+    run exercise the controls, and `--report` prints where the
+    Player-tagged entity ended up.
+  - It logs script and Blueprint errors and exits with 3 if there were any.
+  - Checked by hand with the real binary on the four cooked templates, 120
+    headless frames holding W: first person ends at z = -10 (5 m/s for 2
+    s), third person and top down at -12 (6 m/s), the vehicle at -28.2.
+- **Not yet**: physics events (collisions and triggers) aren't passed to
+  scripts or Blueprints, and the window still shows the clear colour
+  (drawing waits on the renderer's RHI path).
+- **Tests** (in `test_templates.cpp`):
+  - Each playable template is created, cooked and run by `Game`: its input
+    assets are loaded and the `Gameplay` context is active, one script and
+    one Blueprint per pickup are running, a second of W moves the player as
+    each controller says, the pickups have spun a quarter turn, and nothing
+    errored.
+  - A first person run driven by window events: a mouse move and a key
+    down turn it right and move it that way.
+  - `AddFromText` loads real shipped bindings, refuses bad text, the wrong
+    kind and a non-input asset, and the loaded `Move` action reads WASD and
+    a gamepad stick (negative Y forward) the same.
+
+### 26.4 PR breakdown
 
 1. ✅ **Done.** Plugins (§26.1): descriptors, discovery, resolution,
    modules, the engine's optional modules as plugins, and the cook,
@@ -4580,7 +4631,7 @@ a Blueprint, so the starter is wired up and runs, and yours to dress.
 2. ✅ **Done.** Project templates (§26.2): Blank, First Person, Third
    Person, Top Down and Vehicle, each a small starter game, and New
    Project from a template. The 2D Platformer waits for the 2D toolkit.
-   Still to do: the player running scripts, Blueprints and input.
+   The player runs their scripts, Blueprints and input too (§26.3).
 3. The editor extensibility API: custom panels, property drawers, asset
    types and menu items from C++ and from Luau editor scripts.
 4. The 2D toolkit: sprites, atlases, tilemaps and the tileset editor,

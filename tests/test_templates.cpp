@@ -3,6 +3,7 @@
 #include "aether/blueprint/system.h"
 #include "aether/cook/cooker.h"
 #include "aether/input/bindings.h"
+#include "aether/platform/window.h"
 #include "aether/player/game.h"
 #include "aether/project/project.h"
 #include "aether/scene/gameplay.h"
@@ -145,6 +146,36 @@ AETHER_TEST(Templates_EachCreatesAProjectThatCooksAndLoads) {
         CHECK(game.LoadStartupScene(&error));
         CHECK(game.GetWorld().EntityCount() == world.EntityCount() && game.Warnings().empty());
     }
+}
+
+AETHER_TEST(Templates_InputAssetsLoadFromText) {
+    // What the player does with cooked bindings: no database, no files.
+    const ProjectPaths paths = Create("third_person", "Bindings");
+    input::InputAssetLibrary library;
+    const auto read = [&](const char* rel) {
+        std::ifstream in(paths.content / rel, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    };
+    std::string error;
+    CHECK(library.AddFromText("InputAction", "Input/Move.aaction", read("Input/Move.aaction"), &error));
+    CHECK(library.AddFromText("InputMapping", "Input/Gameplay.amapping", read("Input/Gameplay.amapping"), &error));
+    CHECK(library.Actions().size() == 1 && library.FindContext("Gameplay") != nullptr);
+    CHECK(!library.AddFromText("InputAction", "Input/Bad.aaction", "{ not json", &error) && error.find("isn't InputAction") != std::string::npos);
+    CHECK(!library.AddFromText("InputAction", "Input/Wrong.aaction", read("Input/Gameplay.amapping"), &error));
+    CHECK(!library.AddFromText("Texture", "a.png", "x", &error) && error.find("isn't an input asset") != std::string::npos);
+    CHECK(library.Errors().size() == 2);
+    input::InputSystem system;
+    library.RegisterActions(system);
+    CHECK(library.Activate(system, "Gameplay", 0));
+    input::InputState state;
+    state.SetButton(input::Key::W, true);
+    system.Update(state, 1.0f / 60.0f);
+    CHECK(Near(system.GetAxis2D("Move").y, 1.0f, 0.001f));
+    // The gamepad: a stick pushed forward is negative Y.
+    input::InputState pad;
+    pad.SetAxis(input::Key::GamepadLeftStickY, -1.0f);
+    system.Update(pad, 1.0f / 60.0f);
+    CHECK(Near(system.GetAxis2D("Move").y, 1.0f, 0.001f));
 }
 
 AETHER_TEST(Templates_PickupBlueprintCompiles) {
@@ -386,6 +417,81 @@ AETHER_TEST(Templates_PlacedPickupsSpinInTheScene) {
     }
     // A second at 90 degrees a second is a quarter turn about +Y.
     CHECK(Near(r.Rotation(pickup).y, std::sin(3.14159265f / 4.0f), 0.02f) && Near(r.Rotation(pickup).w, std::cos(3.14159265f / 4.0f), 0.02f));
+}
+
+// The packaged game (§26.4): the same projects, cooked and run by the
+// player's Game, which hosts the scripts, the Blueprints and the input.
+AETHER_TEST(Templates_ThePlayerRunsThemCooked) {
+    CHECK(player::Game::HasScripting());
+    const f32 expected_z[] = {-5.0f, -6.0f, -6.0f, -7.0f}; // after a second of W, by template
+    for (usize i = 0; i < kPlayable.size(); ++i) {
+        const std::string& id = kPlayable[i];
+        const ProjectPaths paths = Create(id, "Cooked");
+        cook::CookOptions options;
+        options.project_file = paths.file;
+        options.output_dir = paths.root / "Paks";
+        options.configuration = cook::BuildConfiguration::Shipping;
+        const cook::CookReport report = cook::Cook(options);
+        CHECK(report.ok);
+        player::GamePackage package;
+        std::string error;
+        CHECK(package.Mount(report.pak_file.string()) && package.LoadManifest(&error));
+        player::Game game(package);
+        CHECK(game.LoadStartupScene(&error) && game.Warnings().empty());
+        // The bindings the template shipped are the game's actions.
+        CHECK(game.InputAssets().Errors().empty() && game.InputActions().FindAction("Move") != nullptr);
+        CHECK(game.InputAssets().FindContext("Gameplay") != nullptr && game.InputActions().HasContext("Gameplay"));
+        game.BeginPlay();
+        const usize pickups = CountTagged(game.GetWorld(), "Pickup");
+        player::GameStats stats = game.Stats();
+        CHECK(stats.script_instances == 1 && stats.blueprint_instances == pickups && pickups >= 6);
+
+        const Entity hero = FindEntitiesWithTag(game.GetWorld(), "Player")[0];
+        game.Input().SetButton(input::Key::W, true);
+        for (int f = 0; f < 60; ++f) game.Tick(1.0f / 60.0f);
+        const Vec3 p = game.GetWorld().GetComponent<Transform>(hero)->position;
+        CHECK(Near(p.z, expected_z[i], 0.4f) && Near(p.x, 0.0f, 0.01f));
+
+        // The Blueprint spun the pickups: a quarter turn in that second.
+        const Entity pickup = FindEntitiesWithTag(game.GetWorld(), "Pickup")[0];
+        CHECK(Near(game.GetWorld().GetComponent<Transform>(pickup)->rotation.y, std::sin(3.14159265f / 4.0f), 0.03f));
+        stats = game.Stats();
+        CHECK(stats.script_errors == 0 && stats.blueprint_errors == 0 && stats.fixed_steps == 60);
+        game.Input().SetButton(input::Key::W, false);
+        game.EndPlay();
+    }
+}
+
+// The player's mouse path: events from a window become the game's input.
+AETHER_TEST(Templates_FirstPersonLooksFromWindowEvents) {
+    const ProjectPaths paths = Create("first_person", "Looking");
+    cook::CookOptions options;
+    options.project_file = paths.file;
+    options.output_dir = paths.root / "Paks";
+    const cook::CookReport report = cook::Cook(options);
+    CHECK(report.ok);
+    player::GamePackage package;
+    CHECK(package.Mount(report.pak_file.string()) && package.LoadManifest());
+    player::Game game(package);
+    CHECK(game.LoadStartupScene());
+    game.BeginPlay();
+    const Entity hero = FindEntitiesWithTag(game.GetWorld(), "Player")[0];
+    std::vector<WindowEvent> events;
+    WindowEvent move;
+    move.type = WindowEventType::MouseMove;
+    move.dx = 500.0f;
+    events.push_back(move);
+    WindowEvent key;
+    key.type = WindowEventType::Key;
+    key.key = input::Key::W;
+    key.down = true;
+    events.push_back(key);
+    ApplyWindowEvents(events, game.Input());
+    game.Tick(1.0f / 60.0f);
+    for (int f = 0; f < 30; ++f) game.Tick(1.0f / 60.0f); // the mouse moved once; W stays down
+    const Transform* t = game.GetWorld().GetComponent<Transform>(hero);
+    CHECK(t->rotation.y < -0.2f && t->position.x > 1.0f && t->position.z < -1.0f); // turned right, and went that way
+    CHECK(game.Stats().script_errors == 0);
 }
 
 #endif // AETHER_TEST_HAS_SCRIPTING
