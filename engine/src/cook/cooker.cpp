@@ -2,7 +2,9 @@
 
 #include "aether/assets/derived_data_cache.h"
 #include "aether/assets/gltf_references.h"
+#include "aether/assets/image.h"
 #include "aether/assets/importer.h"
+#include "aether/cook/texture_cook.h"
 #include "aether/core/log.h"
 #include "aether/platform/filesystem.h"
 #include "aether/project/project.h"
@@ -242,6 +244,39 @@ CookReport Cook(const CookOptions& options) {
             }
         }
 
+        // Textures: the GPU-ready form.
+        std::string cooked_format;
+        if (options.cook_textures && record.importer == "Texture") {
+            assets::AssetMeta meta;
+            json settings_json = json::object();
+            if (assets::LoadAssetMeta(database.MetaPath(guid), meta)) settings_json = meta.settings;
+            TextureCookSettings tex;
+            tex.quality = options.texture_quality;
+            tex.normal_map = settings_json.value("normal_map", false);
+            tex.srgb = settings_json.value("srgb", !tex.normal_map);
+            tex.mips = settings_json.value("mips", true);
+            const std::string format = settings_json.value("cook_format", std::string("auto"));
+            if (format != "auto") {
+                if (ParseTextureFormat(format, tex.format)) {
+                    tex.auto_format = false;
+                } else {
+                    report.warnings.push_back(record.path + ": unknown cook_format '" + format + "', using auto");
+                }
+            }
+            assets::ImageData image;
+            if (assets::DecodeImageFile(database.SourcePath(guid).string(), image)) {
+                const CookedTexture cooked_texture = CookTexture(image.pixels, image.width, image.height, tex);
+                const std::vector<u8> atex = SaveAtex(cooked_texture);
+                cooked.cooked = "Cooked/" + assets::ToString(guid) + ".atex";
+                cooked.cooked_bytes = atex.size();
+                cooked_format = TextureFormatName(cooked_texture.format);
+                writer.Add(cooked.cooked, atex);
+                report.original_bytes += atex.size();
+            } else {
+                report.warnings.push_back("Can't decode " + record.path + " to cook it");
+            }
+        }
+
         json deps = json::array();
         for (const AssetGuid& d : record.dependencies) deps.push_back(assets::ToString(d));
         manifest_assets.push_back({{"guid", assets::ToString(guid)},
@@ -249,6 +284,8 @@ CookReport Cook(const CookOptions& options) {
                                    {"importer", record.importer},
                                    {"dependencies", std::move(deps)},
                                    {"imported", cooked.imported},
+                                   {"cooked", cooked.cooked},
+                                   {"cooked_format", cooked_format},
                                    {"sub_assets", std::move(sub_assets)}});
         report.assets.push_back(std::move(cooked));
     }

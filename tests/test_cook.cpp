@@ -1,4 +1,5 @@
 #include "aether/cook/cooker.h"
+#include "aether/cook/texture_cook.h"
 #include "aether/pak/pak.h"
 #include "aether/project/project.h"
 #include "aether/reflection/reflection.h"
@@ -195,6 +196,18 @@ AETHER_TEST(Cook_CooksWhatTheGameReaches) {
         }
     }
     CHECK(imported >= 2); // the two textures at least
+    // Textures are cooked too: block-compressed, with mips.
+    usize cooked_textures = 0;
+    for (const json& a : manifest["assets"]) {
+        if (a["importer"] != "Texture") continue;
+        ++cooked_textures;
+        const std::string cooked = a["cooked"].get<std::string>();
+        CHECK(!cooked.empty() && reader.Contains(cooked) && !a["cooked_format"].get<std::string>().empty());
+        std::vector<u8> atex;
+        cook::CookedTexture texture;
+        CHECK(reader.Read(cooked, atex) && cook::LoadAtex(atex, texture) && texture.mips.size() > 1);
+    }
+    CHECK(cooked_textures == 2);
     CHECK(stdfs::exists(report.manifest_file) && report.pak_bytes > 0 && report.pak_bytes == stdfs::file_size(report.pak_file));
 }
 
