@@ -38,6 +38,13 @@
 // waiting for the window to be closed, for scripted/automated verification.
 // Set AETHER_EDITOR_SCREENSHOT=<path> to dump the final frame to a PNG on
 // exit, for visual verification without a human watching the window live.
+// Set AETHER_EDITOR_TAB=<name> to pick the tool the Tools window opens on
+// (the start of its name: blueprint, material, particle, sound, ...).
+//
+// Every tool editor (Blueprint, Luau, Material, VFX, animation, AI, audio,
+// UI, world, networking and debug tools; editor/src/workspace) is in the
+// Tools window and the Tools menu, the same set the portable editor shell
+// (editor/shell) shows.
 
 #include "aether/assets/asset_manager.h"
 #include "aether/assets/gltf_loader.h"
@@ -61,6 +68,7 @@
 #include "core/play_session.h"
 #include "ui/entity_inspector.h"
 #include "ui/reflected_inspector.h"
+#include "workspace/editor_workspace.h"
 
 #include <imgui.h>
 #include <imgui_impl_dx12.h>
@@ -1034,9 +1042,9 @@ int main(int argc, char** argv) {
         RegisterComponentAlias<ModelRenderer>("N12_GLOBAL__N_113ModelRendererE");
 
         WindowDesc window_desc;
-        window_desc.title = "Aether Editor - Phase 5";
-        window_desc.width = 1280;
-        window_desc.height = 800;
+        window_desc.title = "Aether Editor";
+        window_desc.width = 1600;
+        window_desc.height = 960;
         Window window(window_desc);
 
         Device device(/*enable_debug_layer=*/true);
@@ -1240,6 +1248,13 @@ int main(int argc, char** argv) {
         bool show_inspector = true;
         bool show_asset_browser = true;
         bool show_help = true;
+        bool show_tools = true;
+        // Every tool editor, each on a sample document (after ImGui's context: some build fonts or state).
+        editor::EditorWorkspace workspace;
+        if (const char* tab = std::getenv("AETHER_EDITOR_TAB")) {
+            const i64 tool = workspace.FindTool(tab);
+            if (tool >= 0) workspace.Select(static_cast<usize>(tool));
+        }
         Entity delete_confirm_target = kNullEntity;
         std::string delete_confirm_name;
 
@@ -1343,10 +1358,12 @@ int main(int argc, char** argv) {
                     ImGui::MenuItem("Hierarchy", nullptr, &show_hierarchy);
                     ImGui::MenuItem("Inspector", nullptr, &show_inspector);
                     ImGui::MenuItem("Asset Browser", nullptr, &show_asset_browser);
+                    ImGui::MenuItem("Tools", nullptr, &show_tools);
                     ImGui::Separator();
                     ImGui::MenuItem("Help", nullptr, &show_help);
                     ImGui::EndMenu();
                 }
+                workspace.DrawToolsMenu();
                 if (ImGui::BeginMenu("Help")) {
                     if (ImGui::MenuItem("Show Help Window")) {
                         show_help = true;
@@ -1917,6 +1934,21 @@ int main(int argc, char** argv) {
                 }
                 ImGui::End();
             }
+
+            // The Tools window: every tool editor, below the 3D view and
+            // right of the left-hand panels; and any popped out on their own.
+            workspace.Update(kDt);
+            if (show_tools) {
+                const f32 w = static_cast<f32>(swap_chain.Width());
+                const f32 h = static_cast<f32>(swap_chain.Height());
+                const f32 x = kPanelMargin + kLeftPanelWidth + kPanelMargin;
+                const f32 y = std::max(kMenuBarHeight + kPanelMargin, h * 0.42f);
+                ImGui::SetNextWindowPos(ImVec2(x, y), ImGuiCond_FirstUseEver);
+                ImGui::SetNextWindowSize(ImVec2(std::max(w - x - kPanelMargin, 400.0f), std::max(h - y - kPanelMargin, 300.0f)),
+                                         ImGuiCond_FirstUseEver);
+                workspace.DrawHub("Tools", &show_tools);
+            }
+            workspace.DrawWindows();
 
             ImGui::Render();
 
