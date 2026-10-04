@@ -6,6 +6,7 @@
 #include "aether/sequencer/sequence.h"
 
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -16,10 +17,25 @@
 
 namespace aether::seq {
 
+// Finds a sequence by asset path, for Subsequence tracks. The sequences it
+// returns must outlive the player.
+using SequenceResolver = std::function<const LevelSequence*(const std::string&)>;
+
+// What a Fade track asks the screen to show: `amount` 0 (nothing) to 1 (all
+// of `color`).
+struct FadeState {
+    f32 amount = 0.0f;
+    Vec4 color{0.0f, 0.0f, 0.0f, 1.0f};
+    bool operator==(const FadeState& o) const { return amount == o.amount && color.x == o.color.x && color.y == o.color.y && color.z == o.color.z && color.w == o.color.w; }
+};
+
 class SequencePlayer {
 public:
-    // `sequence`, `world` and `guids` must outlive the player.
-    SequencePlayer(const LevelSequence& sequence, World& world, const GuidIndex& guids);
+    // `sequence`, `world` and `guids` must outlive the player. `resolver`
+    // finds the sequences Subsequence tracks play (without one they report a
+    // problem and play nothing); `path` is this sequence's own asset path,
+    // which lets a sequence that plays itself be caught at once.
+    SequencePlayer(const LevelSequence& sequence, World& world, const GuidIndex& guids, SequenceResolver resolver = {}, std::string path = {});
     ~SequencePlayer();
     SequencePlayer(const SequencePlayer&) = delete;
     SequencePlayer& operator=(const SequencePlayer&) = delete;
@@ -85,6 +101,13 @@ public:
     // one if it has none); a host can route it through Lifecycle::SetActive.
     std::function<void(Entity, bool)> set_active;
 
+    // Fade tracks: the strongest fade at the playhead (the highest amount
+    // among the unmuted Fade tracks and the sequences playing inside this one;
+    // its colour). `on_fade` is called when it changes. Stop clears it.
+    const FadeState& Fade() const { return fade_; }
+    std::function<void(const FadeState&)> on_fade;
+    static constexpr int kMaxSubsequenceDepth = 4;
+
     // What went wrong binding or applying, each reported once: a missing
     // entity or component, an unknown field, a field type that can't be keyed.
     const std::vector<std::string>& Problems() const { return problems_; }
@@ -100,6 +123,8 @@ private:
         int cut = -2;         // CameraCut: the index of the cut in force (-1 before the first, -2 none yet)
         Entity cut_camera;    // CameraCut: the camera holding the cut priority
         i32 cut_saved = 0;    // ... and the priority it had
+        std::vector<std::unique_ptr<SequencePlayer>> children; // Subsequence: one per key (null when it couldn't be made)
+        std::vector<char> child_active; // Subsequence: the playhead is inside this key's range
         int shown = -1;       // Visibility: the last value applied (-1 none yet)
         bool bound = false;   // resolved and usable
         bool reported = false; // its problem has been reported
@@ -111,8 +136,11 @@ private:
     void ApplyVisibility(const Track& track, Target& target);
     void ApplySpawns(const Track& track, Target& target);
     void ApplyCuts(const Track& track, Target& target);
+    void ApplySubsequences(const Track& track, Target& target);
+    void Deactivate(); // despawns, releases camera cuts and clears the fade (a child leaving its range, Stop, the destructor)
     void ReleaseCut(Target& target);
     void DespawnAll();
+    SequencePlayer(const LevelSequence& sequence, World& world, const GuidIndex& guids, SequenceResolver resolver, std::vector<std::string> path);
     // Fires the Event, Audio and Animation keys in (from, to] (or [from, to]
     // when `include_from`).
     void FireEvents(f32 from, f32 to, bool include_from);
@@ -120,6 +148,11 @@ private:
     const LevelSequence& sequence_;
     World& world_;
     const GuidIndex& guids_;
+    SequenceResolver resolver_;
+    std::vector<std::string> path_; // the sequences this one is nested in, outermost first, then itself (when known)
+    FadeState fade_;
+    FadeState pending_fade_;
+    bool final_pose_ = false; // evaluating a child's first or last pose as it leaves its range: no spawns, cuts or hooks
     std::vector<Target> targets_;
     std::vector<std::string> problems_;
     f32 time_ = 0.0f;

@@ -16,7 +16,7 @@ namespace aether::editor {
 
 // Which key list of a track a key is in, and where.
 struct KeyRef {
-    enum class Lane : u8 { Channel, Rotation, Event, Spawn, Cut, Audio, Animation };
+    enum class Lane : u8 { Channel, Rotation, Event, Spawn, Cut, Audio, Animation, Sub };
     usize track = 0;
     Lane lane = Lane::Channel;
     usize channel = 0; // Lane::Channel: which channel
