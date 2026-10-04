@@ -21,12 +21,34 @@ const char* InterpName(Interp i) {
     return "linear";
 }
 
+const char* AudioActionName(AudioAction a) {
+    switch (a) {
+    case AudioAction::Play: return "play";
+    case AudioAction::Stop: return "stop";
+    case AudioAction::FadeIn: return "fade_in";
+    case AudioAction::FadeOut: return "fade_out";
+    }
+    return "play";
+}
+bool ParseAudioAction(const std::string& s, AudioAction& out) {
+    if (s == "play") out = AudioAction::Play;
+    else if (s == "stop") out = AudioAction::Stop;
+    else if (s == "fade_in") out = AudioAction::FadeIn;
+    else if (s == "fade_out") out = AudioAction::FadeOut;
+    else return false;
+    return true;
+}
+
 const char* TrackTypeName(TrackType t) {
     switch (t) {
     case TrackType::Transform: return "transform";
     case TrackType::Property: return "property";
     case TrackType::Event: return "event";
     case TrackType::Visibility: return "visibility";
+    case TrackType::Spawn: return "spawn";
+    case TrackType::CameraCut: return "cameracut";
+    case TrackType::Audio: return "audio";
+    case TrackType::Animation: return "animation";
     }
     return "transform";
 }
@@ -92,7 +114,12 @@ f32 Channel::Evaluate(f32 time) const {
 void Track::Normalize() {
     for (Channel& c : channels) c.Normalize();
     std::stable_sort(rotation.begin(), rotation.end(), [](const RotationKey& a, const RotationKey& b) { return a.time < b.time; });
-    std::stable_sort(events.begin(), events.end(), [](const EventKey& a, const EventKey& b) { return a.time < b.time; });
+    const auto by_time = [](const auto& a, const auto& b) { return a.time < b.time; };
+    std::stable_sort(events.begin(), events.end(), by_time);
+    std::stable_sort(spawns.begin(), spawns.end(), by_time);
+    std::stable_sort(cuts.begin(), cuts.end(), by_time);
+    std::stable_sort(audio.begin(), audio.end(), by_time);
+    std::stable_sort(anims.begin(), anims.end(), by_time);
 }
 
 void LevelSequence::Normalize() {
@@ -114,6 +141,10 @@ f32 LevelSequence::EffectiveDuration() const {
         }
         if (!t.rotation.empty()) last = std::max(last, t.rotation.back().time);
         if (!t.events.empty()) last = std::max(last, t.events.back().time);
+        for (const SpawnKey& k : t.spawns) last = std::max(last, k.time + k.duration);
+        if (!t.cuts.empty()) last = std::max(last, t.cuts.back().time);
+        if (!t.audio.empty()) last = std::max(last, t.audio.back().time);
+        if (!t.anims.empty()) last = std::max(last, t.anims.back().time);
     }
     return duration > 0.0f ? std::max(duration, last) : last;
 }
@@ -160,34 +191,81 @@ std::vector<std::string> ValidateSequence(const LevelSequence& s) {
         const std::string label = "track '" + (t.id.empty() ? t.name : t.id) + "'";
         if (t.id.empty()) add("SQ007", label + " has no id");
         else if (!ids.insert(t.id).second) add("SQ005", label + " repeats an id");
-        if (t.binding.IsNull() && t.type != TrackType::Event) add("SQ008", label + " is bound to no entity");
-        if (t.type != TrackType::Event && !t.events.empty()) add("SQ013", label + " has event keys but isn't an Event track");
-        if (t.type != TrackType::Transform && !t.rotation.empty()) add("SQ013", label + " has rotation keys but isn't a Transform track");
-        if (t.type == TrackType::Transform) {
+        const bool optional_binding = t.type == TrackType::Event || t.type == TrackType::Spawn || t.type == TrackType::CameraCut || t.type == TrackType::Audio;
+        if (t.binding.IsNull() && !optional_binding) add("SQ008", label + " is bound to no entity");
+
+        // Keys on a track of the wrong kind.
+        const auto wrong = [&](bool has, TrackType owner, const char* what) {
+            if (has && t.type != owner) add("SQ013", label + " has " + what + " keys but isn't that kind of track");
+        };
+        wrong(!t.events.empty(), TrackType::Event, "event");
+        wrong(!t.rotation.empty(), TrackType::Transform, "rotation");
+        wrong(!t.spawns.empty(), TrackType::Spawn, "spawn");
+        wrong(!t.cuts.empty(), TrackType::CameraCut, "camera cut");
+        wrong(!t.audio.empty(), TrackType::Audio, "audio");
+        wrong(!t.anims.empty(), TrackType::Animation, "animation");
+
+        const auto ordered = [&](const auto& keys, const char* what) {
+            if (!StrictlyIncreasing(keys)) add("SQ002", label + ", " + what + ": keys aren't in increasing time order");
+            if (s.duration > 0.0f && OutsideDuration(keys, s.duration)) add("SQ003", label + ", " + what + ": a key is outside the duration");
+        };
+        const bool key_list_track = t.type == TrackType::Event || t.type == TrackType::Spawn || t.type == TrackType::CameraCut ||
+                                    t.type == TrackType::Audio || t.type == TrackType::Animation;
+        if (key_list_track && !t.channels.empty()) add("SQ013", label + " has value channels but isn't a value track");
+
+        switch (t.type) {
+        case TrackType::Transform:
             if (t.channels.size() != 3) add("SQ009", label + " needs three position channels (x, y, z)");
-        } else if (t.type == TrackType::Event) {
-            if (!t.channels.empty()) add("SQ013", label + " has value channels but is an Event track");
+            break;
+        case TrackType::Event:
             for (const EventKey& e : t.events) {
                 if (e.name.empty()) add("SQ011", label + " has an event key with no name");
             }
-            if (!StrictlyIncreasing(t.events)) add("SQ002", label + ", events: keys aren't in increasing time order");
-            if (s.duration > 0.0f && OutsideDuration(t.events, s.duration)) add("SQ003", label + ", events: a key is outside the duration");
-        } else if (t.type == TrackType::Visibility) {
+            ordered(t.events, "events");
+            break;
+        case TrackType::Visibility: {
             bool bad = t.channels.size() != 1;
             if (!bad) {
                 for (const Key& k : t.channels[0].keys) bad = bad || (k.value != 0.0f && k.value != 1.0f);
             }
             if (bad) add("SQ012", label + " needs exactly one channel of 0 (hidden) and 1 (shown) keys");
-        } else {
+            break;
+        }
+        case TrackType::Spawn:
+            for (const SpawnKey& k : t.spawns) {
+                if (k.prefab.empty()) add("SQ014", label + " has a spawn key with no prefab");
+                if (k.duration < 0.0f) add("SQ015", label + " has a spawn key with a negative duration");
+            }
+            ordered(t.spawns, "spawns");
+            break;
+        case TrackType::CameraCut:
+            for (const CutKey& k : t.cuts) {
+                if (k.camera.IsNull()) add("SQ016", label + " has a cut to no camera");
+            }
+            ordered(t.cuts, "cuts");
+            break;
+        case TrackType::Audio:
+            for (const AudioKey& k : t.audio) {
+                if (k.cue.empty()) add("SQ017", label + " has an audio key with no cue");
+            }
+            ordered(t.audio, "audio");
+            break;
+        case TrackType::Animation:
+            for (const AnimKey& k : t.anims) {
+                if (k.montage.empty()) add("SQ018", label + " has an animation key with no montage");
+            }
+            ordered(t.anims, "animations");
+            break;
+        case TrackType::Property:
             if (t.component.empty() || t.field.empty()) add("SQ004", label + " names no component or field");
             if (t.channels.empty()) add("SQ010", label + " has no channels");
+            break;
         }
         for (const Channel& c : t.channels) {
             if (!StrictlyIncreasing(c.keys)) add("SQ002", label + ", channel '" + c.name + "': keys aren't in increasing time order");
             if (s.duration > 0.0f && OutsideDuration(c.keys, s.duration)) add("SQ003", label + ", channel '" + c.name + "': a key is outside the duration");
         }
-        if (!StrictlyIncreasing(t.rotation)) add("SQ002", label + ", rotation: keys aren't in increasing time order");
-        if (s.duration > 0.0f && OutsideDuration(t.rotation, s.duration)) add("SQ003", label + ", rotation: a key is outside the duration");
+        ordered(t.rotation, "rotation");
     }
     return out;
 }
@@ -222,6 +300,30 @@ nlohmann::json SequenceToJson(const LevelSequence& s) {
             nlohmann::json events = nlohmann::json::array();
             for (const EventKey& e : t.events) events.push_back({{"time", e.time}, {"name", e.name}, {"payload", e.payload}});
             track["events"] = std::move(events);
+        } else if (t.type == TrackType::Spawn) {
+            nlohmann::json spawns = nlohmann::json::array();
+            for (const SpawnKey& k : t.spawns) {
+                spawns.push_back({{"time", k.time}, {"duration", k.duration}, {"prefab", k.prefab},
+                                  {"position", {k.position.x, k.position.y, k.position.z}},
+                                  {"rotation", {k.rotation.x, k.rotation.y, k.rotation.z, k.rotation.w}}});
+            }
+            track["spawns"] = std::move(spawns);
+        } else if (t.type == TrackType::CameraCut) {
+            nlohmann::json cuts = nlohmann::json::array();
+            for (const CutKey& k : t.cuts) cuts.push_back({{"time", k.time}, {"camera", ToString(k.camera)}});
+            track["cuts"] = std::move(cuts);
+        } else if (t.type == TrackType::Audio) {
+            nlohmann::json keys = nlohmann::json::array();
+            for (const AudioKey& k : t.audio) {
+                keys.push_back({{"time", k.time}, {"cue", k.cue}, {"action", AudioActionName(k.action)}, {"volume_db", k.volume_db}, {"fade", k.fade}});
+            }
+            track["audio"] = std::move(keys);
+        } else if (t.type == TrackType::Animation) {
+            nlohmann::json keys = nlohmann::json::array();
+            for (const AnimKey& k : t.anims) {
+                keys.push_back({{"time", k.time}, {"montage", k.montage}, {"action", k.action == AnimAction::Play ? "play" : "stop"}, {"rate", k.rate}});
+            }
+            track["animation"] = std::move(keys);
         } else if (t.type == TrackType::Transform) {
             nlohmann::json rotation = nlohmann::json::array();
             for (const RotationKey& r : t.rotation) {
@@ -257,8 +359,13 @@ bool SequenceFromJson(const nlohmann::json& j, LevelSequence& out, std::string* 
         else if (type == "property") t.type = TrackType::Property;
         else if (type == "event") t.type = TrackType::Event;
         else if (type == "visibility") t.type = TrackType::Visibility;
+        else if (type == "spawn") t.type = TrackType::Spawn;
+        else if (type == "cameracut") t.type = TrackType::CameraCut;
+        else if (type == "audio") t.type = TrackType::Audio;
+        else if (type == "animation") t.type = TrackType::Animation;
         else return fail("track '" + t.id + "' has an unknown type '" + type + "'");
-        const bool optional_binding = t.type == TrackType::Event && tj.value("binding", "").empty();
+        const bool optional_binding = t.type != TrackType::Transform && t.type != TrackType::Property && t.type != TrackType::Visibility &&
+                                      t.type != TrackType::Animation && tj.value("binding", "").empty();
         if (!optional_binding && !ParseEntityGuid(tj.value("binding", ""), t.binding)) return fail("track '" + t.id + "' has a bad entity GUID");
         t.mute = tj.value("mute", false);
         t.locked = tj.value("locked", false);
@@ -296,6 +403,54 @@ bool SequenceFromJson(const nlohmann::json& j, LevelSequence& out, std::string* 
             e.name = ej.value("name", "");
             e.payload = ej.value("payload", "");
             t.events.push_back(std::move(e));
+        }
+        const auto vec3 = [](const nlohmann::json& j, Vec3& v) {
+            if (!j.is_array() || j.size() != 3) return false;
+            v = Vec3(j[0].get<f32>(), j[1].get<f32>(), j[2].get<f32>());
+            return true;
+        };
+        for (const nlohmann::json& kj : tj.value("spawns", nlohmann::json::array())) {
+            if (!kj.contains("time") || !kj["time"].is_number()) return fail("track '" + t.id + "': a spawn key needs a time");
+            SpawnKey k;
+            k.time = kj["time"].get<f32>();
+            k.duration = kj.value("duration", 0.0f);
+            k.prefab = kj.value("prefab", "");
+            if (kj.contains("position") && !vec3(kj["position"], k.position)) return fail("track '" + t.id + "': a spawn position needs three numbers");
+            if (kj.contains("rotation")) {
+                const nlohmann::json& r = kj["rotation"];
+                if (!r.is_array() || r.size() != 4) return fail("track '" + t.id + "': a spawn rotation needs four numbers");
+                k.rotation = Quaternion(r[0].get<f32>(), r[1].get<f32>(), r[2].get<f32>(), r[3].get<f32>());
+            }
+            t.spawns.push_back(std::move(k));
+        }
+        for (const nlohmann::json& kj : tj.value("cuts", nlohmann::json::array())) {
+            if (!kj.contains("time") || !kj["time"].is_number()) return fail("track '" + t.id + "': a cut needs a time");
+            CutKey k;
+            k.time = kj["time"].get<f32>();
+            if (!ParseEntityGuid(kj.value("camera", ""), k.camera)) return fail("track '" + t.id + "': a cut has a bad camera GUID");
+            t.cuts.push_back(k);
+        }
+        for (const nlohmann::json& kj : tj.value("audio", nlohmann::json::array())) {
+            if (!kj.contains("time") || !kj["time"].is_number()) return fail("track '" + t.id + "': an audio key needs a time");
+            AudioKey k;
+            k.time = kj["time"].get<f32>();
+            k.cue = kj.value("cue", "");
+            if (!ParseAudioAction(kj.value("action", "play"), k.action)) return fail("track '" + t.id + "': unknown audio action '" + kj.value("action", "") + "'");
+            k.volume_db = kj.value("volume_db", 0.0f);
+            k.fade = kj.value("fade", 0.0f);
+            t.audio.push_back(std::move(k));
+        }
+        for (const nlohmann::json& kj : tj.value("animation", nlohmann::json::array())) {
+            if (!kj.contains("time") || !kj["time"].is_number()) return fail("track '" + t.id + "': an animation key needs a time");
+            AnimKey k;
+            k.time = kj["time"].get<f32>();
+            k.montage = kj.value("montage", "");
+            const std::string action = kj.value("action", "play");
+            if (action == "play") k.action = AnimAction::Play;
+            else if (action == "stop") k.action = AnimAction::Stop;
+            else return fail("track '" + t.id + "': unknown animation action '" + action + "'");
+            k.rate = kj.value("rate", 1.0f);
+            t.anims.push_back(std::move(k));
         }
         s.tracks.push_back(std::move(t));
     }

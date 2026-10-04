@@ -132,6 +132,35 @@ void SequenceSystem::Update(f32 dt) {
                     ev.subject = track.binding.IsNull() ? kNullEntity : guids_.Find(world_, track.binding);
                     events_.push_back(std::move(ev));
                 };
+                player->on_audio = [this, e](const Track&, Entity subject, const AudioKey& key) {
+                    static const char* const kActions[] = {"play", "stop", "fade_in", "fade_out"};
+                    SequenceEvent ev;
+                    ev.kind = SequenceEvent::Kind::Audio;
+                    ev.entity = e;
+                    ev.name = key.cue;
+                    ev.payload = kActions[static_cast<int>(key.action)];
+                    ev.subject = subject;
+                    ev.value = key.volume_db;
+                    ev.fade = key.fade;
+                    events_.push_back(std::move(ev));
+                };
+                player->on_animation = [this, e](const Track&, Entity subject, const AnimKey& key) {
+                    SequenceEvent ev;
+                    ev.kind = SequenceEvent::Kind::Animation;
+                    ev.entity = e;
+                    ev.name = key.montage;
+                    ev.payload = key.action == AnimAction::Play ? "play" : "stop";
+                    ev.subject = subject;
+                    ev.value = key.rate;
+                    events_.push_back(std::move(ev));
+                };
+                player->on_spawn = [this](const Track& track, Entity parent, const SpawnKey& key) {
+                    return spawner_ ? spawner_(track, parent, key) : kNullEntity;
+                };
+                player->on_despawn = [this](Entity spawned) {
+                    if (lifecycle_) lifecycle_->Destroy(spawned);
+                    else if (world_.IsAlive(spawned)) world_.DestroyEntity(spawned);
+                };
                 player->on_finished = [slot_ptr] { slot_ptr->finished = true; };
                 for (const std::string& p : player->Problems()) Report("Sequence '" + comp.sequence + "': " + p);
                 if (comp.auto_play) {

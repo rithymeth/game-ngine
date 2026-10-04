@@ -63,16 +63,23 @@ void RegisterSequenceComponents();
 namespace aether::seq {
 
 // What a playing sequence reported in the last Update: a Marker is an Event
-// key the playhead crossed; Finished is the sequence reaching its end.
+// key the playhead crossed; Audio and Animation are those keys crossed (for
+// the host to act on with its audio and animation systems); Finished is the
+// sequence reaching its end.
 struct SequenceEvent {
-    enum class Kind : u8 { Marker, Finished };
+    enum class Kind : u8 { Marker, Finished, Audio, Animation };
     Kind kind = Kind::Marker;
     Entity entity;       // the SequenceComponent's entity
-    std::string name;    // Marker: the key's name; Finished: the sequence asset
-    std::string payload; // Marker: the key's payload
-    Entity subject;      // Marker: the track's bound entity, if any
+    std::string name;    // Marker: the key's name; Finished: the sequence asset; Audio: the cue; Animation: the montage
+    std::string payload; // Marker: the key's payload; Audio and Animation: the action ("play", "stop", "fade_in", "fade_out")
+    Entity subject;      // Marker, Audio, Animation: the track's bound entity, if any
+    f32 value = 0.0f;    // Audio: volume in dB; Animation: the rate
+    f32 fade = 0.0f;     // Audio: fade seconds
 };
 
+// Makes a Spawn key's prefab (placed relative to `parent`, null for none) and
+// returns its root, or null.
+using SequenceSpawner = std::function<Entity(const Track&, Entity parent, const SpawnKey&)>;
 using SequenceLookup = std::function<const LevelSequence*(const std::string&)>;
 
 // Runs every SequenceComponent: a player each (made when the component
@@ -90,6 +97,10 @@ public:
     SequenceSystem& operator=(const SequenceSystem&) = delete;
 
     void Update(f32 dt);
+
+    // How Spawn tracks make their prefab (the host instantiates it); without
+    // one they spawn nothing. Despawning goes through Lifecycle when given.
+    void SetSpawner(SequenceSpawner spawner) { spawner_ = std::move(spawner); }
 
     // What the Sequencer library calls: a new entity that plays `sequence`
     // and is destroyed when it ends. Null if the sequence can't be found.
@@ -125,6 +136,7 @@ private:
     World& world_;
     GuidIndex& guids_;
     SequenceLookup find_;
+    SequenceSpawner spawner_;
     Lifecycle* lifecycle_;
     std::map<u32, Slot> slots_; // by entity index
     std::vector<SequenceEvent> events_;

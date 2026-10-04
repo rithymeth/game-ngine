@@ -83,6 +83,11 @@ SequencePlayer::SequencePlayer(const LevelSequence& sequence, World& world, cons
     Bind();
 }
 
+SequencePlayer::~SequencePlayer() {
+    DespawnAll();
+    for (Target& t : targets_) ReleaseCut(t);
+}
+
 void SequencePlayer::Report(usize index, const std::string& message) {
     Target& t = targets_[index];
     if (t.reported) return;
@@ -94,16 +99,24 @@ bool SequencePlayer::ResolveTrack(usize index) {
     const Track& track = sequence_.tracks[index];
     Target& t = targets_[index];
     t.bound = false;
-    if (track.type == TrackType::Event) {
-        t.bound = true; // fires without an entity
+    if (track.type == TrackType::Spawn) {
+        t.spawned.assign(track.spawns.size(), kNullEntity);
+        t.spawn_done.assign(track.spawns.size(), 0);
+    }
+    t.entity = track.binding.IsNull() ? kNullEntity : guids_.Find(world_, track.binding);
+    const bool entity_optional = track.type == TrackType::Event || track.type == TrackType::Spawn || track.type == TrackType::CameraCut ||
+                                 track.type == TrackType::Audio;
+    if (entity_optional) {
+        // These work without their entity (a bound one that is missing is
+        // simply treated as none).
+        t.bound = true;
         return true;
     }
-    t.entity = guids_.Find(world_, track.binding);
     if (t.entity.IsNull()) {
         Report(index, "no entity has the GUID " + ToString(track.binding));
         return false;
     }
-    if (track.type == TrackType::Visibility) {
+    if (track.type == TrackType::Visibility || track.type == TrackType::Animation) {
         t.shown = -1;
         t.bound = true;
         return true;
@@ -159,6 +172,64 @@ void SequencePlayer::Stop() {
     playing_ = false;
     time_ = 0.0f;
     fresh_ = true;
+    DespawnAll();
+}
+
+void SequencePlayer::DespawnAll() {
+    for (Target& t : targets_) {
+        for (Entity& e : t.spawned) {
+            if (!e.IsNull() && on_despawn) on_despawn(e);
+            e = kNullEntity;
+        }
+        std::fill(t.spawn_done.begin(), t.spawn_done.end(), 0);
+    }
+}
+
+void SequencePlayer::ApplySpawns(const Track& track, Target& target) {
+    if (target.spawned.size() != track.spawns.size()) {
+        target.spawned.assign(track.spawns.size(), kNullEntity);
+        target.spawn_done.assign(track.spawns.size(), 0);
+    }
+    const Entity parent = target.entity.IsNull() || !world_.IsAlive(target.entity) ? kNullEntity : target.entity;
+    for (usize i = 0; i < track.spawns.size(); ++i) {
+        const SpawnKey& k = track.spawns[i];
+        const bool inside = time_ >= k.time && (k.duration <= 0.0f || time_ < k.time + k.duration);
+        Entity& live = target.spawned[i];
+        if (!live.IsNull() && !world_.IsAlive(live)) live = kNullEntity; // destroyed by someone else: not respawned until it leaves and re-enters
+        if (inside && live.IsNull() && !target.spawn_done[i]) {
+            if (on_spawn) live = on_spawn(track, parent, k);
+            target.spawn_done[i] = 1;
+        } else if (!inside) {
+            if (!live.IsNull() && on_despawn) on_despawn(live);
+            live = kNullEntity;
+            target.spawn_done[i] = 0;
+        }
+    }
+}
+
+void SequencePlayer::ReleaseCut(Target& target) {
+    if (!target.cut_camera.IsNull() && world_.IsAlive(target.cut_camera)) {
+        if (Camera* c = world_.GetComponent<Camera>(target.cut_camera)) c->priority = target.cut_saved;
+    }
+    target.cut_camera = kNullEntity;
+}
+
+void SequencePlayer::ApplyCuts(const Track& track, Target& target) {
+    int index = -1;
+    for (usize i = 0; i < track.cuts.size() && track.cuts[i].time <= time_; ++i) index = static_cast<int>(i);
+    if (index == target.cut) return;
+    target.cut = index;
+    ReleaseCut(target);
+    Entity camera = kNullEntity;
+    if (index >= 0) {
+        camera = guids_.Find(world_, track.cuts[static_cast<usize>(index)].camera);
+        if (Camera* c = camera.IsNull() ? nullptr : world_.GetComponent<Camera>(camera)) {
+            target.cut_camera = camera;
+            target.cut_saved = c->priority;
+            c->priority = kCutPriority;
+        }
+    }
+    if (on_camera_cut) on_camera_cut(camera);
 }
 
 void SequencePlayer::ApplyVisibility(const Track& track, Target& target) {
@@ -176,12 +247,27 @@ void SequencePlayer::ApplyVisibility(const Track& track, Target& target) {
 }
 
 void SequencePlayer::FireEvents(f32 from, f32 to, bool include_from) {
-    if (!on_event) return;
-    for (const Track& track : sequence_.tracks) {
-        if (track.type != TrackType::Event || track.mute) continue;
-        for (const EventKey& e : track.events) {
-            if (e.time > to) break;
-            if (e.time > from || (include_from && e.time >= from)) on_event(track, e);
+    const auto crossed = [&](f32 time) { return time > from || (include_from && time >= from); };
+    for (usize i = 0; i < sequence_.tracks.size(); ++i) {
+        const Track& track = sequence_.tracks[i];
+        if (track.mute) continue;
+        if (track.type == TrackType::Event && on_event) {
+            for (const EventKey& e : track.events) {
+                if (e.time > to) break;
+                if (crossed(e.time)) on_event(track, e);
+            }
+        } else if (track.type == TrackType::Audio && on_audio) {
+            const Entity entity = track.binding.IsNull() ? kNullEntity : guids_.Find(world_, track.binding);
+            for (const AudioKey& k : track.audio) {
+                if (k.time > to) break;
+                if (crossed(k.time)) on_audio(track, entity, k);
+            }
+        } else if (track.type == TrackType::Animation && on_animation) {
+            const Entity entity = targets_[i].bound ? targets_[i].entity : kNullEntity;
+            for (const AnimKey& k : track.anims) {
+                if (k.time > to) break;
+                if (crossed(k.time)) on_animation(track, entity, k);
+            }
         }
     }
 }
@@ -218,7 +304,7 @@ void SequencePlayer::Evaluate() {
         if (track.mute) continue;
         Target& target = targets_[i];
         // A target whose entity was destroyed is looked up again (it may have been recreated).
-        if (target.bound && !world_.IsAlive(target.entity)) {
+        if (target.bound && !target.entity.IsNull() && !world_.IsAlive(target.entity)) {
             target.reported = false;
             target.bound = false;
         }
@@ -226,7 +312,9 @@ void SequencePlayer::Evaluate() {
             if (target.reported) continue; // already reported: try again only after Bind()
             if (!ResolveTrack(i)) continue;
         }
-        if (track.type == TrackType::Transform) ApplyTransform(track, target);
+        if (track.type == TrackType::Spawn) ApplySpawns(track, target);
+        else if (track.type == TrackType::CameraCut) ApplyCuts(track, target);
+        else if (track.type == TrackType::Transform) ApplyTransform(track, target);
         else if (track.type == TrackType::Property) ApplyProperty(track, target);
         else if (track.type == TrackType::Visibility) ApplyVisibility(track, target);
     }
