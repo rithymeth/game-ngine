@@ -4637,8 +4637,8 @@ say, not only its lifecycle callbacks and physics (§25.4).
    items and asset types from Luau editor scripts.
 4. The 2D toolkit. ✅ **Done so far** (§26.6): sprite atlases and
    animation, tilesets, tilemaps with autotiles, render batching and the
-   pixel-perfect camera. Still to do: the tileset editor, 2D physics, 2D
-   lights, and the 2D Platformer template.
+   pixel-perfect camera, and the tilemap editor. Still to do: 2D physics,
+   2D lights, and the 2D Platformer template.
 5. Documentation: the API reference from reflection, the manual, and
    sample projects; version control status in the Content Browser.
 
@@ -4750,3 +4750,22 @@ solidity; the JSON round trip and its errors; batch order and merging;
 quad geometry for pivots, flips and a quarter turn; culling; the animator;
 components through reflection; and the pixel-perfect viewport at several
 window sizes.
+
+**The tilemap editor** (`editor/src/sprite2d`). `TilemapEditDocument` edits a
+tilemap and its tileset: Paint, Erase, Rectangle, Fill (a 4-connected flood
+fill) and Pick tools with a brush that is a tile or an autotile; strokes
+that change nothing record nothing and one that does is one undo step;
+layers (add, remove down to one, rename, "blocks movement"), resizing, the
+tileset's solid flags and autotile rules (the tile shown per neighbour
+mask), and saving both files. `TilemapPanel` draws it: layers, the tiles as
+numbered colour swatches (solid ones outlined red), the autotile masks, and
+the map as a grid (drag to paint, right-drag to erase, wheel to zoom,
+middle drag to pan). It needs no texture, so it runs headless and in every
+host. The workspace lists it under a new **2D** category on a sample
+platform level whose ground is an autotile.
+
+Its tests (`test_tilemap_editor.cpp`): strokes as single undo steps, empty
+strokes, rectangles with corners in any order, flood fill regions and
+refilling with the same value, picking, autotile painting and rules,
+layers, solids and resizing with undo, saving both files, the panel
+drawing without editing anything, and the workspace's 2D tool.
