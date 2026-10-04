@@ -10,6 +10,12 @@
 #include <algorithm>
 #include <system_error>
 
+#include "aether/blueprint/graph.h"
+#include "aether/blueprint/system.h"
+#if AETHER_GAME_SCRIPTING
+#include "aether/script/script_system.h"
+#endif
+
 #if AETHER_GAME_PHYSICS
 #include "aether/job/job_system.h"
 #include "aether/physics/components.h"
@@ -185,6 +191,18 @@ struct Game::Physics {};
 #endif
 
 bool Game::HasPhysics() { return AETHER_GAME_PHYSICS != 0; }
+bool Game::HasScripting() { return AETHER_GAME_SCRIPTING != 0; }
+
+// What runs the scene's scripts and Blueprints. Its parts refer to the
+// world, the GUID index and the input, so it's built per scene and torn down
+// before any of them.
+struct Game::Runtime {
+#if AETHER_GAME_SCRIPTING
+    script::LuauHost host;
+    std::unique_ptr<script::ScriptSystem> scripts;
+#endif
+    std::unique_ptr<bp::BlueprintSystem> blueprints;
+};
 
 Game::Game(GamePackage& package) : package_(package), world_(std::make_unique<World>()) {
     lifecycle_ = std::make_unique<Lifecycle>(*world_, guids_);
@@ -201,6 +219,7 @@ Game::Game(GamePackage& package) : package_(package), world_(std::make_unique<Wo
 
 Game::~Game() {
     EndPlay();
+    runtime_.reset(); // scripts and Blueprints before the world, lifecycle and input they use
     physics_.reset(); // its bodies before the world they belong to
     while (!modules_.empty()) {
         modules_.back().second->Shutdown();
@@ -262,7 +281,9 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     if (!package_.ReadContent(path, bytes, &read_error)) {
         return Fail(error, "Can't read the scene " + path + (read_error.empty() ? "" : ": " + read_error));
     }
+    LoadInputAssets();
     EndPlay();
+    runtime_.reset();
     physics_.reset();
     auto world = std::make_unique<World>();
     // JSON scenes start with '{' (after any whitespace); binary ones with "AESC".
@@ -285,6 +306,7 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     }
     guids_.Rebuild(*world_);
     lifecycle_ = std::make_unique<Lifecycle>(*world_, guids_);
+    StartRuntime();
 #if AETHER_GAME_PHYSICS
     physics_ = std::make_unique<Physics>();
     physics_->world.SetGravity(package_.Manifest().gravity);
@@ -299,6 +321,72 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     AETHER_LOG_INFO("Player", "Loaded %s: %zu entities, %zu prefab instances", path.c_str(), world_->EntityCount(),
                     prefab_instances_);
     return true;
+}
+
+// The cooked input assets: actions registered, and every mapping context
+// active (in name order, later ones on top).
+void Game::LoadInputAssets() {
+    if (input_loaded_) return;
+    input_loaded_ = true;
+    for (const GameManifest::Asset& asset : package_.Manifest().assets) {
+        if (asset.importer != "InputAction" && asset.importer != "InputMapping") continue;
+        std::vector<u8> bytes;
+        std::string error;
+        if (!package_.ReadContent(asset.path, bytes, &error)) {
+            warnings_.push_back(error);
+            continue;
+        }
+        input_library_.AddFromText(asset.importer, asset.path,
+                                   std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+    }
+    for (const std::string& e : input_library_.Errors()) AETHER_LOG_WARN("Player", "%s", e.c_str());
+    input_library_.RegisterActions(input_);
+    i32 priority = 0;
+    for (const std::string& name : input_library_.ContextNames()) input_library_.Activate(input_, name, priority++);
+}
+
+void Game::StartRuntime() {
+    runtime_ = std::make_unique<Runtime>();
+    runtime_->blueprints = std::make_unique<bp::BlueprintSystem>(*world_);
+    runtime_->blueprints->SetLoader([this](const assets::AssetGuid& guid, bp::Blueprint& out, std::string& name) {
+        const GameManifest::Asset* asset = package_.FindAssetByGuid(assets::ToString(guid));
+        std::vector<u8> bytes;
+        if (!asset || !package_.ReadContent(asset->path, bytes)) return false;
+        name = asset->path;
+        const json j = json::parse(bytes.begin(), bytes.end(), nullptr, /*allow_exceptions=*/false);
+        return !j.is_discarded() && bp::BlueprintFromJson(j, out);
+    });
+    runtime_->blueprints->Register(*lifecycle_);
+#if AETHER_GAME_SCRIPTING
+    runtime_->scripts = std::make_unique<script::ScriptSystem>(
+        runtime_->host, *world_, guids_, [this](const assets::AssetGuid& guid, std::string& source, std::string& name) {
+            const GameManifest::Asset* asset = package_.FindAssetByGuid(assets::ToString(guid));
+            std::vector<u8> bytes;
+            if (!asset || !package_.ReadContent(asset->path, bytes)) return false;
+            source.assign(bytes.begin(), bytes.end());
+            name = asset->path;
+            return true;
+        });
+    runtime_->scripts->Register(*lifecycle_);
+    runtime_->scripts->BindInput(&input_);
+#endif
+}
+
+std::vector<std::string> Game::ScriptErrors() const {
+#if AETHER_GAME_SCRIPTING
+    if (runtime_ && runtime_->scripts) return runtime_->scripts->Errors();
+#endif
+    return {};
+}
+
+std::vector<std::string> Game::BlueprintErrors() const {
+    std::vector<std::string> errors;
+    if (!runtime_ || !runtime_->blueprints) return errors;
+    for (const auto& e : runtime_->blueprints->CompileErrors()) {
+        for (const auto& d : e.diagnostics) errors.push_back(e.name + ": " + d.code + " " + d.message);
+    }
+    for (const auto& e : runtime_->blueprints->VM().Errors()) errors.push_back(e.code + ": " + e.message);
+    return errors;
 }
 
 void Game::BeginPlay() {
@@ -343,6 +431,18 @@ void Game::BuildFrame() {
     update.main_thread_only = true;
     update.run = [this](World&, const FrameContext& frame) { lifecycle_->Update(frame.dt); };
     scheduler_.Add(std::move(update));
+    // Timers and Blueprint ticks run with the frame's Update.
+    SystemDesc scripting;
+    scripting.name = "Player.Scripting";
+    scripting.phase = SystemPhase::Update;
+    scripting.main_thread_only = true;
+    scripting.run = [this](World&, const FrameContext& frame) {
+#if AETHER_GAME_SCRIPTING
+        if (runtime_ && runtime_->scripts) runtime_->scripts->Tick(frame.dt);
+#endif
+        if (runtime_ && runtime_->blueprints) runtime_->blueprints->Update(frame.dt);
+    };
+    scheduler_.Add(std::move(scripting));
     SystemDesc late;
     late.name = "Player.LateUpdate";
     late.phase = SystemPhase::LateUpdate;
@@ -354,7 +454,9 @@ void Game::BuildFrame() {
 
 FrameContext Game::Tick(f32 dt) {
     if (!loop_) BuildFrame();
+    input_.Update(input_state_, dt); // the host's keys and mouse, as this frame's actions
     const FrameContext frame = loop_->Tick(*world_, dt);
+    input_state_.EndFrame();         // movement deltas are per frame; held keys stay
     stats_.frames = frame.frame + 1;
     stats_.fixed_steps = frame.fixed_step;
     stats_.time = frame.time;
@@ -368,6 +470,14 @@ GameStats Game::Stats() const {
 #if AETHER_GAME_PHYSICS
     if (physics_) s.physics_bodies = physics_->scene->BodyCount();
 #endif
+    if (runtime_) {
+        if (runtime_->blueprints) s.blueprint_instances = runtime_->blueprints->VM().InstanceCount();
+#if AETHER_GAME_SCRIPTING
+        if (runtime_->scripts) s.script_instances = runtime_->scripts->InstanceCount();
+#endif
+    }
+    s.script_errors = ScriptErrors().size();
+    s.blueprint_errors = BlueprintErrors().size();
     return s;
 }
 

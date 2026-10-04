@@ -2,6 +2,8 @@
 
 #include "aether/cook/cooker.h"
 #include "aether/ecs/world.h"
+#include "aether/input/actions.h"
+#include "aether/input/bindings.h"
 #include "aether/math/math.h"
 #include "aether/pak/vfs.h"
 #include "aether/plugin/plugin.h"
@@ -106,6 +108,12 @@ struct GameStats {
     usize entities = 0;
     usize prefab_instances = 0;
     usize physics_bodies = 0;
+    // Scripts and Blueprints (§26.4): what's running, and what has gone wrong
+    // (a compile error, a runtime error in a callback). Errors don't stop play.
+    usize script_instances = 0;
+    usize script_errors = 0;
+    usize blueprint_instances = 0;
+    usize blueprint_errors = 0;
 };
 
 class Game {
@@ -140,6 +148,19 @@ public:
     // Problems found while loading (an unresolved prefab instance, ...).
     const std::vector<std::string>& Warnings() const { return warnings_; }
     static bool HasPhysics();
+    // Whether this player was built with Luau scripting.
+    static bool HasScripting();
+
+    // Input (§26.4). The host (the window, or a test) sets keys, buttons and
+    // mouse movement here before each Tick; the game's actions come from the
+    // cooked .aaction and .amapping assets (every context is active, in name
+    // order), and scripts read them through Input.*.
+    input::InputState& Input() { return input_state_; }
+    input::InputSystem& InputActions() { return input_; }
+    const input::InputAssetLibrary& InputAssets() const { return input_library_; }
+    // Script and Blueprint problems, as text.
+    std::vector<std::string> ScriptErrors() const;
+    std::vector<std::string> BlueprintErrors() const;
     // The manifest's runtime modules, started before the first scene loads
     // (and shut down with the game). Missing ones are warnings.
     std::vector<std::string> StartModules();
@@ -148,6 +169,8 @@ public:
 private:
     const PrefabData* FindPrefab(const assets::AssetGuid& guid);
     void BuildFrame();
+    void LoadInputAssets();
+    void StartRuntime(); // scripts and Blueprints for the loaded scene
 
     GamePackage& package_;
     std::unique_ptr<World> world_;
@@ -164,6 +187,14 @@ private:
     std::unique_ptr<Physics> physics_;
     std::vector<std::pair<std::string, std::unique_ptr<plugin::IModule>>> modules_;
     bool modules_started_ = false;
+
+    // Declared before the scripts, which subscribe to it.
+    input::InputSystem input_;
+    input::InputState input_state_;
+    input::InputAssetLibrary input_library_;
+    bool input_loaded_ = false;
+    struct Runtime;
+    std::unique_ptr<Runtime> runtime_; // last: it holds references to the above
 };
 
 } // namespace aether::player
