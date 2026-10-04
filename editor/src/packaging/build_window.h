@@ -60,6 +60,10 @@ public:
     std::string player_path; // empty: FindPlayerExecutable()
     // Extra player arguments for Launch, e.g. "--quality Low".
     std::string launch_args;
+    // Encrypts the paks with `encryption_key` (64 hex digits); Launch passes
+    // the key to the game.
+    bool encrypt = false;
+    std::string encryption_key;
 
     std::filesystem::path OutputDir() const;
 

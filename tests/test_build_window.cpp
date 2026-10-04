@@ -136,3 +136,27 @@ AETHER_TEST(ProjectSettingsPanel_EditsSavesAndReverts) {
     imgui.Frame([&] { panel.Draw(); });
     CHECK(panel.Reload() && panel.Settings().default_quality == "High");
 }
+
+AETHER_TEST(BuildWindow_PackagesEncryptedAndLaunchesWithTheKey) {
+    BuildPackageWindow window(FreshProject("Encrypted"));
+    window.player_path = AETHER_TEST_PLAYER_PATH;
+    window.encrypt = true;
+    window.encryption_key = "not a key";
+    CHECK(!window.StartPackage() && window.LastResult() == BuildPackageWindow::Result::Failed);
+    window.encryption_key = pak::PakKey::Generate().ToHex();
+    CHECK(window.StartPackage());
+    window.WaitForBuild();
+    CHECK(window.LastResult() == BuildPackageWindow::Result::Succeeded);
+    pak::PakReader reader;
+    CHECK(!reader.Open((window.StagedGame().parent_path() / "Paks" / "Game.apak").string()));
+
+    // The game gets the key on its command line; without it, it can't start.
+    window.launch_args = "--headless --frames 5";
+    std::string error;
+    CHECK(window.Launch(&error));
+    int code = -1;
+    CHECK(window.Game().Wait(&code) && code == 0);
+    window.encrypt = false;
+    CHECK(window.Launch(&error));
+    CHECK(window.Game().Wait(&code) && code != 0);
+}

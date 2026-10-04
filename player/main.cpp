@@ -6,7 +6,11 @@
 //
 //   aether_player [--pak <file|dir>]... [--scene <path>] [--frames <n>]
 //                 [--headless] [--backend d3d12|vulkan] [--size <w>x<h>]
-//                 [--quality <preset>]
+//                 [--quality <preset>] [--key <64 hex digits>]
+//
+// Encrypted archives (§25.6) open with --key, or AETHER_PAK_KEY in the
+// environment, or the key a game's player was built with
+// (-DAETHER_GAME_PAK_KEY=<hex>).
 //
 // The window's title, size and vsync, and the quality preset, come from the
 // project's settings (§25.5) unless given here.
@@ -47,12 +51,14 @@ struct Options {
     std::string backend;
     u32 width = 0, height = 0; // 0: the project's
     std::string quality;
+    std::vector<std::string> keys;
 };
 
 void Usage() {
     std::fprintf(stderr,
                  "usage: aether_player [--pak <file|dir>]... [--scene <path>] [--frames <n>] [--headless]\n"
-                 "                     [--backend d3d12|vulkan] [--size <w>x<h>] [--quality <preset>]\n");
+                 "                     [--backend d3d12|vulkan] [--size <w>x<h>] [--quality <preset>]\n"
+                 "                     [--key <64 hex digits>]\n");
 }
 
 bool ParseArgs(int argc, char** argv, Options& o) {
@@ -67,6 +73,8 @@ bool ParseArgs(int argc, char** argv, Options& o) {
             o.frames = std::atoll(argv[++i]);
         } else if (a == "--headless") {
             o.headless = true;
+        } else if (a == "--key" && has_value) {
+            o.keys.push_back(argv[++i]);
         } else if (a == "--quality" && has_value) {
             o.quality = argv[++i];
         } else if (a == "--backend" && has_value) {
@@ -113,6 +121,19 @@ int main(int argc, char** argv) {
     if (std::getenv("AETHER_PLAYER_HEADLESS")) options.headless = true;
 
     GamePackage package;
+    std::vector<std::string> keys = options.keys;
+    if (const char* env = std::getenv("AETHER_PAK_KEY")) keys.push_back(env);
+#ifdef AETHER_GAME_PAK_KEY
+    keys.push_back(AETHER_GAME_PAK_KEY);
+#endif
+    for (const std::string& hex : keys) {
+        pak::PakKey key;
+        if (!pak::PakKey::FromHex(hex, key)) {
+            std::fprintf(stderr, "aether_player: a key must be 64 hex digits\n");
+            return 2;
+        }
+        package.AddKey(key);
+    }
     const std::vector<std::string> paks = PaksToMount(options, argv[0]);
     if (paks.empty()) {
         std::fprintf(stderr, "aether_player: no .apak to mount (pass --pak, or put them in Paks/)\n");
@@ -136,6 +157,7 @@ int main(int argc, char** argv) {
                                                                                     : LogLevel::Warn);
     AETHER_LOG_INFO("Player", "%s (%s), %zu archive(s), %zu assets", manifest.project.c_str(),
                     cook::ConfigurationName(config), paks.size(), manifest.assets.size());
+    for (const std::string& dlc : package.Dlcs()) AETHER_LOG_INFO("Player", "DLC: %s", dlc.c_str());
 
     const QualityPreset* quality = ChooseQuality(manifest, options.quality);
     if (!options.quality.empty() && (!quality || quality->name != options.quality)) {
