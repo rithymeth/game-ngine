@@ -12,6 +12,7 @@ add_library(aether_engine STATIC
     src/memory/frame_allocator.cpp
     src/platform/filesystem.cpp
     src/platform/window_events.cpp
+    src/platform/platform_plugin.cpp
     src/math/math.cpp
     src/job/job_system.cpp
     src/ecs/archetype.cpp
