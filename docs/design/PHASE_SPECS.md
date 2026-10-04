@@ -4641,8 +4641,10 @@ say, not only its lifecycle callbacks and physics (§25.4).
    animation, tilesets, tilemaps with autotiles, render batching and the
    pixel-perfect camera, the tilemap editor, 2D physics, the platformer
    controller, the 2D Platformer template and 2D lights.
-5. Documentation: the API reference from reflection, the manual, and
-   sample projects; version control status in the Content Browser.
+5. Documentation. ✅ **Done so far** (§26.7): the API reference
+   generated from reflection (`aether_docgen`), the manual (`docs/manual`)
+   and the sample projects (the templates). Still to do: version control
+   status in the Content Browser.
 
 ### 26.5 The editor extensibility API
 
@@ -4867,3 +4869,29 @@ shadow-free lights and region culling; tile walls as lines; a light map
 with a shadow behind a wall, lit wall faces, sampling and refused regions;
 the visibility polygon with and without a wall; and the components through
 reflection.
+
+### 26.7 Documentation
+
+- **The API reference** (`engine/src/docs/api_docs.cpp`, `tools/docgen`).
+  `docs::GenerateApiMarkdown`, `GenerateApiJson` and `WriteApiDocs` document
+  every type in the reflection registry: components (registered with the
+  ECS by name), structs and enums, each with a table of its fields (type,
+  editable / read-only / internal, not saved, editor only, replicated,
+  Blueprint, then tooltip, range, unit and group), its functions with
+  signatures and flags, and an enum's values. Types link to their entries;
+  `AssetRef<T>` is written where it's used, and plain data types (numbers,
+  strings, arrays) have no entries unless `skip_scalars` is off. Entries are
+  sorted by name and the output is deterministic. `aether_docgen --out <dir>`
+  registers all the engine's modules and writes `API.md` and `api.json`;
+  the Windows release zip carries the manual and the reference generated
+  from that build (with physics). A game or plugin documents its own types
+  by registering them and calling `WriteApiDocs`.
+- **The manual** (`docs/manual`): getting started, projects and assets,
+  scripting, input, 2D, packaging and shipping, plugins and editor
+  extensions, and the API reference. The templates are the sample projects.
+- **Tests**: `test_api_docs.cpp` (a reflected type's table, its escaped
+  tooltip, ranges, units, flags, functions and enum values; the JSON with the
+  same facts; sorted, one entry per name, links; both files written,
+  deterministically; type names) and `test_manual.cpp` (every chapter exists
+  and is in the contents, every relative link resolves, and the manual names
+  the real templates, tools and flags).

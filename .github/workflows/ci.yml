@@ -229,6 +229,10 @@ jobs:
           Copy-Item build/tools/cook/Release/aether_cook.exe $out/
           Copy-Item build/tools/pak/Release/aether_pak.exe $out/
           Copy-Item build/player/Release/aether_player.exe $out/
+          # The manual, and the API reference generated from the engine's reflection.
+          Copy-Item -Recurse docs/manual $out/manual
+          & build/tools/docgen/Release/aether_docgen.exe --out $out/api
+          if ($LASTEXITCODE -ne 0) { throw "aether_docgen failed" }
           Get-ChildItem build/editor/Release -Filter *.dll | Copy-Item -Destination $out/
           Copy-Item -Recurse assets $out/assets
           Copy-Item README.md $out/
