@@ -460,3 +460,312 @@ AETHER_TEST(Sprite2D_PixelPerfectCamera) {
     CHECK(Near(p.x, 1.0f) && Near(p.y, -2.5f) && Near(p.z, 5.5f));
     CHECK(Near(SnapToPixelGrid(Vec3(0.1f, 0.2f, 0), 0.0f).x, 0.1f)); // no grid: unchanged
 }
+
+// --- 2D physics ---------------------------------------------------------------
+
+#include "aether/sprite2d/physics2d.h"
+
+namespace {
+
+Entity Box(World& w, Vec3 at, Vec2 half, BodyType2D type, bool with_body = true) {
+    const Entity e = w.CreateEntity();
+    w.AddComponent<Transform>(e, Transform{at, Quaternion::Identity()});
+    Collider2D c;
+    c.half_extents = half;
+    w.AddComponent<Collider2D>(e, c);
+    if (with_body) {
+        Rigidbody2D rb;
+        rb.type = type;
+        w.AddComponent<Rigidbody2D>(e, rb);
+    }
+    return e;
+}
+
+void Run(Physics2D& p, int steps, f32 dt = 1.0f / 60.0f) {
+    for (int i = 0; i < steps; ++i) p.Step(dt);
+}
+
+} // namespace
+
+AETHER_TEST(Physics2D_FallsAndRestsOnAFloor) {
+    World world;
+    const Entity floor = Box(world, Vec3(0, -0.5f, 0), Vec2{10, 0.5f}, BodyType2D::Static, false);
+    (void)floor;
+    const Entity ball = Box(world, Vec3(0, 3, 0), Vec2{0.5f, 0.5f}, BodyType2D::Dynamic);
+    Physics2D physics(world);
+    Run(physics, 20);
+    CHECK(world.GetComponent<Transform>(ball)->position.y < 3.0f); // it fell
+    Run(physics, 120);
+    const Transform* t = world.GetComponent<Transform>(ball);
+    CHECK(Near(t->position.y, 0.5f, 0.03f)); // resting on the floor's top (y = 0), its half height up
+    CHECK(std::fabs(world.GetComponent<Rigidbody2D>(ball)->velocity.y) < 0.2f);
+    CHECK(physics.IsGrounded(ball));
+    CHECK(physics.WallSide(ball) == 0);
+    CHECK(Near(t->position.z, 0.0f)); // z untouched
+}
+
+AETHER_TEST(Physics2D_BoxesStackAndBodiesPush) {
+    World world;
+    Box(world, Vec3(0, -0.5f, 0), Vec2{10, 0.5f}, BodyType2D::Static, false);
+    const Entity low = Box(world, Vec3(0, 0.6f, 0), Vec2{0.5f, 0.5f}, BodyType2D::Dynamic);
+    const Entity high = Box(world, Vec3(0, 2.0f, 0), Vec2{0.5f, 0.5f}, BodyType2D::Dynamic);
+    Physics2D physics(world);
+    Run(physics, 240);
+    CHECK(Near(world.GetComponent<Transform>(low)->position.y, 0.5f, 0.05f));
+    CHECK(Near(world.GetComponent<Transform>(high)->position.y, 1.5f, 0.08f)); // on top of the low one
+    CHECK(physics.IsGrounded(high) && physics.IsGrounded(low));
+    CHECK(std::fabs(world.GetComponent<Transform>(high)->position.x) < 0.05f);
+
+    // A heavier box shoves a light one along when moving into it.
+    World w2;
+    Rigidbody2D heavy;
+    heavy.mass = 10.0f;
+    heavy.gravity_scale = 0.0f;
+    heavy.velocity = {4, 0};
+    const Entity a = Box(w2, Vec3(0, 0, 0), Vec2{0.5f, 0.5f}, BodyType2D::Dynamic);
+    *w2.GetComponent<Rigidbody2D>(a) = heavy;
+    Rigidbody2D light;
+    light.gravity_scale = 0.0f;
+    const Entity b = Box(w2, Vec3(1.2f, 0, 0), Vec2{0.5f, 0.5f}, BodyType2D::Dynamic);
+    *w2.GetComponent<Rigidbody2D>(b) = light;
+    Physics2D p2(w2);
+    p2.settings.gravity = {0, 0};
+    Run(p2, 30);
+    CHECK(w2.GetComponent<Transform>(b)->position.x > 2.0f); // moved on
+    CHECK(w2.GetComponent<Rigidbody2D>(b)->velocity.x > 3.0f);
+    CHECK(w2.GetComponent<Transform>(a)->position.x < w2.GetComponent<Transform>(b)->position.x - 0.9f); // never overlapping
+}
+
+AETHER_TEST(Physics2D_BounceFrictionAndKinematic) {
+    World world;
+    Box(world, Vec3(0, -0.5f, 0), Vec2{10, 0.5f}, BodyType2D::Static, false);
+    const Entity ball = Box(world, Vec3(0, 4, 0), Vec2{0.5f, 0.5f}, BodyType2D::Dynamic);
+    world.GetComponent<Collider2D>(ball)->shape = Shape2D::Circle;
+    world.GetComponent<Collider2D>(ball)->radius = 0.5f;
+    world.GetComponent<Collider2D>(ball)->restitution = 0.8f;
+    Physics2D physics(world);
+    f32 peak_after = 0.0f;
+    bool hit = false;
+    for (int i = 0; i < 240; ++i) {
+        physics.Step(1.0f / 60.0f);
+        const f32 y = world.GetComponent<Transform>(ball)->position.y;
+        const f32 vy = world.GetComponent<Rigidbody2D>(ball)->velocity.y;
+        if (!hit && vy > 1.0f) hit = true; // it bounced back up
+        if (hit) peak_after = std::max(peak_after, y);
+    }
+    CHECK(hit && peak_after > 1.5f && peak_after < 4.0f); // a lively bounce that loses height
+
+    // Friction slows a box sliding on the floor; zero friction doesn't.
+    World w2;
+    Box(w2, Vec3(0, -0.5f, 0), Vec2{50, 0.5f}, BodyType2D::Static, false);
+    const Entity rough = Box(w2, Vec3(0, 0.5f, 0), Vec2{0.5f, 0.5f}, BodyType2D::Dynamic);
+    const Entity ice = Box(w2, Vec3(0, 0.5f, 0), Vec2{0.5f, 0.5f}, BodyType2D::Dynamic);
+    w2.GetComponent<Collider2D>(rough)->friction = 1.0f;
+    w2.GetComponent<Collider2D>(ice)->friction = 0.0f;
+    w2.GetComponent<Collider2D>(rough)->mask = 1u; // they must not hit each other: one layer each
+    w2.GetComponent<Collider2D>(rough)->layer = 2u;
+    w2.GetComponent<Collider2D>(rough)->mask = 1u;
+    w2.GetComponent<Collider2D>(ice)->layer = 4u;
+    w2.GetComponent<Collider2D>(ice)->mask = 1u;
+    w2.GetComponent<Rigidbody2D>(rough)->velocity = {6, 0};
+    w2.GetComponent<Rigidbody2D>(ice)->velocity = {6, 0};
+    Physics2D p2(w2);
+    Run(p2, 60);
+    CHECK(w2.GetComponent<Rigidbody2D>(rough)->velocity.x < 3.0f);
+    CHECK(w2.GetComponent<Rigidbody2D>(ice)->velocity.x > 5.5f);
+
+    // A kinematic platform carries nothing by itself but pushes bodies it moves into, and ignores gravity.
+    World w3;
+    const Entity platform = Box(w3, Vec3(0, 0, 0), Vec2{1, 0.25f}, BodyType2D::Kinematic);
+    w3.GetComponent<Rigidbody2D>(platform)->velocity = {0, 1};
+    Physics2D p3(w3);
+    Run(p3, 60);
+    CHECK(Near(w3.GetComponent<Transform>(platform)->position.y, 1.0f, 0.05f));
+    CHECK(Near(w3.GetComponent<Rigidbody2D>(platform)->velocity.y, 1.0f)); // gravity never touched it
+}
+
+AETHER_TEST(Physics2D_LayersAndTriggers) {
+    World world;
+    Box(world, Vec3(0, -0.5f, 0), Vec2{10, 0.5f}, BodyType2D::Static, false);
+    const Entity ghost = Box(world, Vec3(0, 3, 0), Vec2{0.5f, 0.5f}, BodyType2D::Dynamic);
+    world.GetComponent<Collider2D>(ghost)->layer = 2u;
+    world.GetComponent<Collider2D>(ghost)->mask = 4u; // collides with nothing that is here
+    Physics2D physics(world);
+    Run(physics, 90);
+    CHECK(world.GetComponent<Transform>(ghost)->position.y < -2.0f); // fell through the floor on layer 1
+
+    // A trigger volume reports enter and exit without pushing.
+    World w2;
+    const Entity zone = Box(w2, Vec3(0, 0, 0), Vec2{1, 1}, BodyType2D::Static, false);
+    w2.GetComponent<Collider2D>(zone)->trigger = true;
+    const Entity body = Box(w2, Vec3(-3, 0, 0), Vec2{0.25f, 0.25f}, BodyType2D::Dynamic);
+    w2.GetComponent<Rigidbody2D>(body)->gravity_scale = 0.0f;
+    w2.GetComponent<Rigidbody2D>(body)->velocity = {2, 0};
+    Physics2D p2(w2);
+    int enters = 0, exits = 0;
+    for (int i = 0; i < 240; ++i) {
+        p2.Step(1.0f / 60.0f);
+        for (const Event2D& e : p2.Events()) {
+            if (e.kind == Event2D::Kind::TriggerEnter) {
+                ++enters;
+                CHECK((e.a == body && e.b == zone) || (e.a == zone && e.b == body));
+            }
+            if (e.kind == Event2D::Kind::TriggerExit) {
+                ++exits;
+                CHECK((e.a == body && e.b == zone) || (e.a == zone && e.b == body));
+            }
+        }
+    }
+    CHECK(enters == 1 && exits == 1);
+    CHECK(Near(w2.GetComponent<Rigidbody2D>(body)->velocity.x, 2.0f)); // not slowed by passing through
+    CHECK(w2.GetComponent<Transform>(body)->position.x > 4.0f);
+}
+
+AETHER_TEST(Physics2D_ContactEventsBeginAndEnd) {
+    World world;
+    Box(world, Vec3(0, -0.5f, 0), Vec2{10, 0.5f}, BodyType2D::Static, false);
+    const Entity box = Box(world, Vec3(0, 1.5f, 0), Vec2{0.5f, 0.5f}, BodyType2D::Dynamic);
+    Physics2D physics(world);
+    int begins = 0, ends = 0;
+    bool end_named = false;
+    for (int i = 0; i < 120; ++i) {
+        physics.Step(1.0f / 60.0f);
+        for (const Event2D& e : physics.Events()) {
+            if (e.kind == Event2D::Kind::Begin) {
+                ++begins;
+                CHECK(e.a == box || e.b == box);
+                CHECK(e.normal.y < -0.7f); // from the box, down at the floor
+            }
+        }
+    }
+    CHECK(begins == 1); // it lands once and rests, which isn't a new contact every frame
+    // Launch it upward: the contact ends, naming the box.
+    world.GetComponent<Rigidbody2D>(box)->velocity = {0, 8};
+    for (int i = 0; i < 20; ++i) {
+        physics.Step(1.0f / 60.0f);
+        for (const Event2D& e : physics.Events()) {
+            if (e.kind == Event2D::Kind::End) {
+                ++ends;
+                end_named = end_named || e.a == box || e.b == box;
+            }
+        }
+    }
+    CHECK(ends == 1 && end_named);
+    CHECK(!physics.IsGrounded(box));
+}
+
+AETHER_TEST(Physics2D_TilemapCollisionAndWalls) {
+    World world;
+    Tileset ts;
+    ts.texture = Guid();
+    ts.texture_width = ts.texture_height = 32;
+    ts.tile_width = ts.tile_height = 16;
+    ts.SetSolid(1, true);
+    TilemapData map;
+    map.tileset = Guid();
+    map.Resize(12, 6);
+    map.AddLayer("L");
+    map.Fill(0, 0, 0, 11, 1, 1); // a floor two tiles thick (top at y = 2)
+    map.Fill(0, 8, 2, 8, 4, 1);  // a wall at x = 8 (spans x 8..9)
+    Resolvers2D resolvers;
+    resolvers.tilemaps = [&](const assets::AssetGuid&) { return &map; };
+    resolvers.tilesets = [&](const assets::AssetGuid&) { return &ts; };
+    const Entity level = world.CreateEntity();
+    world.AddComponent<Transform>(level, Transform{Vec3(0, 0, 0), Quaternion::Identity()});
+    TilemapRenderer r;
+    r.pixels_per_unit = 16.0f; // a tile is one unit
+    world.AddComponent<TilemapRenderer>(level, r);
+
+    const Entity hero = Box(world, Vec3(2, 5, 0), Vec2{0.4f, 0.5f}, BodyType2D::Dynamic);
+    Physics2D physics(world, resolvers);
+    Run(physics, 120);
+    CHECK(Near(world.GetComponent<Transform>(hero)->position.y, 2.5f, 0.04f)); // standing on the floor's top
+    CHECK(physics.IsGrounded(hero));
+
+    // Run right along the floor: seams between tiles don't catch it, the wall stops it.
+    world.GetComponent<Collider2D>(hero)->friction = 0.0f;
+    world.GetComponent<Rigidbody2D>(hero)->velocity = {6, 0};
+    f32 min_speed = 100.0f;
+    for (int i = 0; i < 90; ++i) {
+        physics.Step(1.0f / 60.0f);
+        const f32 x = world.GetComponent<Transform>(hero)->position.x;
+        if (x > 3.0f && x < 6.5f) min_speed = std::min(min_speed, world.GetComponent<Rigidbody2D>(hero)->velocity.x);
+    }
+    CHECK(min_speed > 5.9f); // no catching on the seams between tiles
+    const f32 x = world.GetComponent<Transform>(hero)->position.x;
+    CHECK(x < 8.0f - 0.4f + 0.05f && x > 7.0f); // against the wall's left face
+    CHECK(physics.WallSide(hero) == 1);
+    CHECK(physics.IsGrounded(hero));
+    bool tile_begin = false;
+    // Falling into the map's floor again from above registers a tile contact event.
+    world.GetComponent<Transform>(hero)->position = {4, 6, 0};
+    world.GetComponent<Rigidbody2D>(hero)->velocity = {0, 0};
+    for (int i = 0; i < 90; ++i) {
+        physics.Step(1.0f / 60.0f);
+        for (const Event2D& e : physics.Events()) {
+            if (e.kind == Event2D::Kind::Begin && e.a == hero && e.b.IsNull()) tile_begin = true;
+        }
+    }
+    CHECK(tile_begin);
+}
+
+AETHER_TEST(Physics2D_RaycastsAndOverlaps) {
+    World world;
+    Tileset ts;
+    ts.texture_width = ts.texture_height = 32;
+    ts.tile_width = ts.tile_height = 16;
+    ts.SetSolid(1, true);
+    TilemapData map;
+    map.Resize(6, 3);
+    map.AddLayer("L");
+    map.Fill(0, 4, 0, 4, 2, 1);
+    Resolvers2D resolvers;
+    resolvers.tilemaps = [&](const assets::AssetGuid&) { return &map; };
+    resolvers.tilesets = [&](const assets::AssetGuid&) { return &ts; };
+    const Entity level = world.CreateEntity();
+    world.AddComponent<Transform>(level, Transform{Vec3(0, 0, 0), Quaternion::Identity()});
+    TilemapRenderer r;
+    r.pixels_per_unit = 16.0f;
+    world.AddComponent<TilemapRenderer>(level, r);
+    const Entity crate = Box(world, Vec3(2, 1, 0), Vec2{0.5f, 0.5f}, BodyType2D::Static, false);
+    const Entity orb = Box(world, Vec3(2, 2.5f, 0), Vec2{0.5f, 0.5f}, BodyType2D::Static, false);
+    world.GetComponent<Collider2D>(orb)->shape = Shape2D::Circle;
+    world.GetComponent<Collider2D>(orb)->radius = 0.4f;
+    Physics2D physics(world, resolvers);
+
+    RayHit2D hit;
+    CHECK(physics.Raycast({0, 1}, {1, 0}, 20, hit)); // along y = 1: the crate (x 1.5) comes before the wall (x 4)
+    CHECK(hit.entity == crate && !hit.tile && Near(hit.distance, 1.5f) && Near(hit.normal.x, -1.0f) && Near(hit.point.x, 1.5f));
+    CHECK(physics.Raycast({3, 1}, {1, 0}, 20, hit)); // past the crate: the wall tile
+    CHECK(hit.tile && hit.tile_x == 4 && Near(hit.distance, 1.0f) && Near(hit.normal.x, -1.0f));
+    CHECK(!physics.Raycast({3, 1}, {1, 0}, 0.5f, hit)); // out of range
+    CHECK(!physics.Raycast({0, 5}, {1, 0}, 20, hit));   // above everything
+    CHECK(physics.Raycast({2, 6}, {0, -1}, 20, hit) && hit.entity == orb && Near(hit.distance, 6 - 2.9f)); // the circle's top
+    CHECK(!physics.Raycast({0, 1}, {1, 0}, 20, hit, 2u)); // a layer mask that matches nothing
+    CHECK(!physics.Raycast({0, 1}, {0, 0}, 20, hit));
+
+    const std::vector<Entity> near_crate = physics.OverlapBox({2, 1}, {0.2f, 0.2f});
+    CHECK(near_crate.size() == 1 && near_crate[0] == crate);
+    CHECK(physics.OverlapBox({2, 1.8f}, {1, 1}).size() == 2);
+    CHECK(physics.OverlapBox({-5, -5}, {1, 1}).empty());
+}
+
+AETHER_TEST(Physics2D_ComponentsSaveThroughReflection) {
+    RegisterPhysics2DComponents();
+    Collider2D c;
+    c.shape = Shape2D::Circle;
+    c.radius = 0.25f;
+    c.trigger = true;
+    c.layer = 8;
+    const nlohmann::json j = reflect::ToJson(c);
+    Collider2D back;
+    CHECK(reflect::FromJson(back, j));
+    CHECK(back.shape == Shape2D::Circle && Near(back.radius, 0.25f) && back.trigger && back.layer == 8);
+    Rigidbody2D rb;
+    rb.type = BodyType2D::Kinematic;
+    rb.velocity = {1, 2};
+    Rigidbody2D rb_back;
+    CHECK(reflect::FromJson(rb_back, reflect::ToJson(rb)));
+    CHECK(rb_back.type == BodyType2D::Kinematic && Near(rb_back.velocity.y, 2.0f));
+    CHECK(Near(Vec2{3, 4}.Length(), 5.0f));
+}
