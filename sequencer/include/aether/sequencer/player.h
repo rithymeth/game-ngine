@@ -55,6 +55,12 @@ public:
     // keys at the end and then those at the start.
     void Update(f32 dt);
 
+    // Moves the playhead forward to `time` (clamped to the duration) in one
+    // step, firing the Event, Audio and Animation keys on the way, then applies
+    // the tracks. For rendering frame by frame: the keys of each frame fire
+    // exactly once however the frames fall. Going backward fires nothing.
+    void AdvanceTo(f32 time);
+
     // Called for each Event key crossed, in time order.
     std::function<void(const Track&, const EventKey&)> on_event;
     // Audio and Animation keys, fired like events (forward only, once each).
