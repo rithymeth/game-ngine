@@ -13,6 +13,8 @@ add_library(aether_engine STATIC
     src/platform/filesystem.cpp
     src/platform/window_events.cpp
     src/platform/platform_plugin.cpp
+    src/pak/pak.cpp
+    src/pak/vfs.cpp
     src/math/math.cpp
     src/job/job_system.cpp
     src/ecs/archetype.cpp
@@ -50,6 +52,8 @@ target_include_directories(aether_engine PRIVATE ${stb_SOURCE_DIR})
 # PUBLIC: reflection/serialize.h exposes nlohmann::json (the in-memory form
 # of the JSON archive, and what schema migration hooks edit).
 target_link_libraries(aether_engine PUBLIC nlohmann_json::nlohmann_json)
+# .apak compression (Phase 25).
+target_link_libraries(aether_engine PRIVATE lz4_static libzstd_static)
 
 if(WIN32)
     target_sources(aether_engine PRIVATE
