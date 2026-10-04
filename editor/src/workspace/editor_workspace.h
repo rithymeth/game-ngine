@@ -21,6 +21,9 @@
 
 namespace aether::editor {
 
+class ExtensionRegistry;
+class EditorScripts;
+
 class EditorWorkspace {
 public:
     // `project_file`: the .aproject the Project tools (Project Settings,
@@ -41,6 +44,12 @@ public:
     // Points the Project tools (settings, Build and Package, Plugins) and
     // the plugins' modules at another project. False if it isn't one.
     bool OpenProject(const std::filesystem::path& project_file);
+
+    // What plugins, game modules and the project's editor scripts add (§26.5):
+    // panels (tools under "Extensions"), menus, property drawers, asset types.
+    ExtensionRegistry& Extensions();
+    // The project's Luau editor scripts (Content/Editor/*.luau).
+    EditorScripts& Scripts();
 
     usize ToolCount() const;
     const char* ToolName(usize tool) const;

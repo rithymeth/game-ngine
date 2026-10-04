@@ -8,6 +8,8 @@
 #include "audio/cue_editor.h"
 #include "audio/mixer_panel.h"
 #include "devtools/console_panel.h"
+#include "ui/editor_scripts.h"
+#include "ui/extensions.h"
 #include "packaging/build_window.h"
 #include "packaging/new_project_panel.h"
 #include "packaging/plugins_panel.h"
@@ -33,6 +35,7 @@
 
 #include <imgui.h>
 
+#include <algorithm>
 #include <cctype>
 #include <cstring>
 #include <fstream>
@@ -94,11 +97,17 @@ bool StartsWithNoCase(const char* text, std::string_view prefix) {
 
 struct EditorWorkspace::Impl {
     struct Tool {
-        const char* name;
-        const char* category;
+        std::string name;
+        std::string category;
         std::function<void()> draw;
         bool window_open = false;
+        bool extension = false; // a panel an extension registered
     };
+    // Declared first, so they outlive the plugins' editor modules, which
+    // register into the registry and remove themselves at shutdown.
+    ExtensionRegistry extensions;
+    EditorScripts editor_scripts{extensions};
+    u64 extensions_seen = 0;
     std::vector<Tool> tools;
     usize selected = 0;
 
@@ -168,6 +177,7 @@ struct EditorWorkspace::Impl {
     plugin::PluginManager plugins; // the project's, with their modules started
 
     explicit Impl(std::filesystem::path project) : project_file(std::move(project)) {
+        extensions.MakeActive();
         BuildBlueprint();
         BuildScript();
         BuildMaterial();
@@ -504,6 +514,37 @@ struct EditorWorkspace::Impl {
         plugins_panel = std::make_unique<PluginsPanel>(project_file);
         // The project's plugins: their runtime and editor modules run in the editor.
         if (plugin::ResolveProjectPlugins(project_file, plugins, &error)) plugins.StartModules(true, true);
+        // The project's editor scripts (Content/Editor/*.luau, §26.5).
+        editor_scripts.Load(ProjectPaths::ForFile(project_file).content / "Editor");
+    }
+
+    // The registry's panels become tools at the end of the list (so the
+    // built-in tools keep their numbers), under their own category.
+    void SyncExtensions() {
+        if (extensions_seen == extensions.Version()) return;
+        extensions_seen = extensions.Version();
+        std::vector<std::string> open;
+        for (const Tool& t : tools) {
+            if (t.extension && t.window_open) open.push_back(t.name);
+        }
+        tools.erase(std::remove_if(tools.begin(), tools.end(), [](const Tool& t) { return t.extension; }), tools.end());
+        std::vector<const ExtensionPanel*> panels;
+        for (const ExtensionPanel& p : extensions.Panels()) panels.push_back(&p);
+        std::stable_sort(panels.begin(), panels.end(),
+                         [](const ExtensionPanel* a, const ExtensionPanel* b) { return a->category < b->category; });
+        for (const ExtensionPanel* p : panels) {
+            Tool tool;
+            tool.name = p->name;
+            tool.category = p->category;
+            tool.extension = true;
+            tool.window_open = std::find(open.begin(), open.end(), p->name) != open.end();
+            const std::string name = p->name;
+            tool.draw = [this, name] {
+                if (const ExtensionPanel* panel = extensions.FindPanel(name); panel && panel->draw) panel->draw();
+            };
+            tools.push_back(std::move(tool));
+        }
+        if (selected >= tools.size()) selected = 0;
     }
 
     void DrawProjectTool(bool settings) {
@@ -585,23 +626,52 @@ std::filesystem::path EditorWorkspace::SampleProject(std::string* error) {
         if (error) *error = why;
         return {};
     }
+    // An editor script (§26.5): a panel, a menu item and an asset type.
+    stdfs::create_directories(paths.content / "Editor", ec);
+    std::ofstream(paths.content / "Editor" / "Hello.luau", std::ios::binary) << R"(-- An editor script: Content/Editor/*.luau runs when the project opens.
+local clicks = 0
+local scale = 1.0
+local note = "type here"
+
+editor.AddPanel("Hello Panel", function()
+    ui.Text("This panel is a Luau editor script.")
+    if ui.Button("Click me") then
+        clicks += 1
+        editor.Log("clicked " .. clicks)
+    end
+    ui.SameLine()
+    ui.Text("clicks: " .. clicks)
+    scale = ui.SliderFloat("Scale", scale, 0, 4)
+    note = ui.InputText("Note", note)
+end)
+
+editor.AddMenuItem("Tools/Hello/Say hello", function()
+    editor.Log("Hello from an editor script")
+end, "Ctrl+Shift+H")
+
+editor.AddAssetType("Dialogue", ".dialogue", "{\"lines\": []}\n")
+)";
     return paths.file;
 }
 EditorWorkspace::~EditorWorkspace() = default;
 
 void EditorWorkspace::Update(f32 dt) {
+    impl_->SyncExtensions();
     if (impl_->net_session->Running()) impl_->net_session->Tick(static_cast<f64>(dt));
     impl_->console.Pump();
 }
 
+ExtensionRegistry& EditorWorkspace::Extensions() { return impl_->extensions; }
+EditorScripts& EditorWorkspace::Scripts() { return impl_->editor_scripts; }
+
 usize EditorWorkspace::ToolCount() const { return impl_->tools.size(); }
-const char* EditorWorkspace::ToolName(usize tool) const { return impl_->tools[tool].name; }
-const char* EditorWorkspace::ToolCategory(usize tool) const { return impl_->tools[tool].category; }
+const char* EditorWorkspace::ToolName(usize tool) const { return impl_->tools[tool].name.c_str(); }
+const char* EditorWorkspace::ToolCategory(usize tool) const { return impl_->tools[tool].category.c_str(); }
 
 i64 EditorWorkspace::FindTool(std::string_view name) const {
     if (name.empty()) return -1;
     for (usize i = 0; i < impl_->tools.size(); ++i) {
-        if (StartsWithNoCase(impl_->tools[i].name, name)) return static_cast<i64>(i);
+        if (StartsWithNoCase(impl_->tools[i].name.c_str(), name)) return static_cast<i64>(i);
     }
     return -1;
 }
@@ -622,23 +692,28 @@ void EditorWorkspace::DrawTool(usize tool) {
 }
 
 void EditorWorkspace::DrawToolsMenu() {
-    if (!ImGui::BeginMenu("Tools")) return;
-    const char* category = nullptr;
-    bool category_open = false;
-    for (usize i = 0; i < impl_->tools.size(); ++i) {
-        Impl::Tool& t = impl_->tools[i];
-        if (!category || std::strcmp(category, t.category) != 0) {
-            if (category_open) ImGui::EndMenu();
-            category = t.category;
-            category_open = ImGui::BeginMenu(category);
+    impl_->extensions.PollShortcuts();
+    if (ImGui::BeginMenu("Tools")) {
+        const char* category = nullptr;
+        bool category_open = false;
+        for (usize i = 0; i < impl_->tools.size(); ++i) {
+            Impl::Tool& t = impl_->tools[i];
+            if (!category || std::strcmp(category, t.category.c_str()) != 0) {
+                if (category_open) ImGui::EndMenu();
+                category = t.category.c_str();
+                category_open = ImGui::BeginMenu(category);
+            }
+            if (category_open && ImGui::MenuItem(t.name.c_str(), nullptr, t.window_open)) {
+                t.window_open = !t.window_open;
+                if (t.window_open) ImGui::SetWindowFocus(t.name.c_str());
+            }
         }
-        if (category_open && ImGui::MenuItem(t.name, nullptr, t.window_open)) {
-            t.window_open = !t.window_open;
-            if (t.window_open) ImGui::SetWindowFocus(t.name);
-        }
+        if (category_open) ImGui::EndMenu();
+        // Items extensions put under "Tools/...", then the menus of their own roots.
+        impl_->extensions.DrawMenuItemsOf("Tools");
+        ImGui::EndMenu();
     }
-    if (category_open) ImGui::EndMenu();
-    ImGui::EndMenu();
+    impl_->extensions.DrawMenus("Tools");
 }
 
 void EditorWorkspace::DrawHubContents() {
@@ -647,11 +722,11 @@ void EditorWorkspace::DrawHubContents() {
         const char* category = nullptr;
         for (usize i = 0; i < impl_->tools.size(); ++i) {
             const Impl::Tool& t = impl_->tools[i];
-            if (!category || std::strcmp(category, t.category) != 0) {
-                category = t.category;
+            if (!category || std::strcmp(category, t.category.c_str()) != 0) {
+                category = t.category.c_str();
                 ImGui::SeparatorText(category);
             }
-            if (ImGui::Selectable(t.name, impl_->selected == i)) impl_->selected = i;
+            if (ImGui::Selectable(t.name.c_str(), impl_->selected == i)) impl_->selected = i;
             if (ImGui::BeginPopupContextItem()) {
                 if (ImGui::MenuItem("Open in its own window")) impl_->tools[i].window_open = true;
                 ImGui::EndPopup();
@@ -664,9 +739,9 @@ void EditorWorkspace::DrawHubContents() {
         const usize sel = impl_->selected;
         if (ImGui::SmallButton("Pop out")) impl_->tools[sel].window_open = true;
         ImGui::SameLine();
-        ImGui::TextUnformatted(impl_->tools[sel].name);
+        ImGui::TextUnformatted(impl_->tools[sel].name.c_str());
         ImGui::SameLine();
-        ImGui::TextDisabled("(%s)", impl_->tools[sel].category);
+        ImGui::TextDisabled("(%s)", impl_->tools[sel].category.c_str());
         ImGui::Separator();
         // A popped-out tool draws in its own window, not twice.
         if (impl_->tools[sel].window_open) {
@@ -692,7 +767,7 @@ void EditorWorkspace::DrawWindows() {
         const f32 offset = 30.0f * static_cast<f32>(cascade++ % 8);
         ImGui::SetNextWindowPos(ImVec2(120.0f + offset, 80.0f + offset), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize(ImVec2(900, 600), ImGuiCond_FirstUseEver);
-        if (ImGui::Begin(t.name, &t.window_open)) DrawTool(i);
+        if (ImGui::Begin(t.name.c_str(), &t.window_open)) DrawTool(i);
         ImGui::End();
     }
     impl_->crash_dialog->Draw();

@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -35,6 +36,40 @@ struct ScriptResult {
     std::string error; // "chunk:line: message" for script errors
     std::vector<ScriptValue> values; // what the chunk or function returned
 };
+
+// The arguments of a native function a host registered (RegisterNative),
+// and where it puts its results. Arguments are 0-based; a missing or
+// differently typed one reads as its fallback.
+int NativeTrampoline(lua_State* state); // runs a RegisterNative function
+
+class NativeCall {
+public:
+    usize Count() const;
+    bool IsString(usize i) const;
+    bool IsNumber(usize i) const;
+    bool IsBool(usize i) const;
+    bool IsFunction(usize i) const;
+    std::string String(usize i, const std::string& fallback = {}) const;
+    f64 Number(usize i, f64 fallback = 0.0) const;
+    bool Bool(usize i, bool fallback = false) const;
+    // A Luau function argument kept alive as a reference, for the host to
+    // call later (LuauHost::CallRef); -1 if the argument isn't a function.
+    // The host releases it with LuauHost::Release.
+    int Function(usize i) const;
+    // Adds a return value (nil, boolean, number, string).
+    void Return(const ScriptValue& value);
+    // Raises a script error from the call, once the function returns.
+    void Fail(const std::string& message) { error_ = message; }
+
+private:
+    friend class LuauHost;
+    friend int NativeTrampoline(lua_State* state);
+    explicit NativeCall(lua_State* state) : state_(state) {}
+    lua_State* state_;
+    int returns_ = 0;
+    std::string error_;
+};
+using NativeFunction = std::function<void(NativeCall&)>;
 
 // One Luau VM (Phase 11 step 1, docs/design/PHASE_SPECS.md §11.1-11.4).
 //
@@ -69,6 +104,15 @@ public:
 
     // Calls a global function.
     ScriptResult Call(const std::string& function, const std::vector<ScriptValue>& args = {});
+
+    // Adds a function written in C++ to the VM, as `table.name` (a global
+    // table, made if missing; empty `table` = a global function). The host
+    // behind editor scripts (§26.5) builds its `editor` and `ui` APIs on this.
+    void RegisterNative(const std::string& table, const std::string& name, NativeFunction function);
+    // Calls a function kept with NativeCall::Function; the instruction
+    // budget applies as for any call.
+    ScriptResult CallRef(int ref, const std::vector<ScriptValue>& args = {});
+    void Release(int ref);
 
     ScriptValue GetGlobal(const std::string& name);
     void SetGlobal(const std::string& name, const ScriptValue& value);
@@ -135,6 +179,7 @@ private:
     std::unordered_map<u64, std::string> bytecode_;
     std::unordered_map<std::string, int> chunk_functions_; // chunk name -> registry ref
     std::function<void(const std::string& chunk)> on_chunk_loaded_;
+    std::vector<std::unique_ptr<NativeFunction>> natives_;
     void* debugger_ = nullptr;
 };
 
