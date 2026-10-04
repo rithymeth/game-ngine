@@ -3,6 +3,7 @@
 #include "aether/ecs/component.h"
 #include "aether/reflection/registry.h"
 #include "aether/scene/components.h"
+#include "aether/scene/gameplay.h"
 
 #include <algorithm>
 #include <cmath>
@@ -93,10 +94,19 @@ bool SequencePlayer::ResolveTrack(usize index) {
     const Track& track = sequence_.tracks[index];
     Target& t = targets_[index];
     t.bound = false;
+    if (track.type == TrackType::Event) {
+        t.bound = true; // fires without an entity
+        return true;
+    }
     t.entity = guids_.Find(world_, track.binding);
     if (t.entity.IsNull()) {
         Report(index, "no entity has the GUID " + ToString(track.binding));
         return false;
+    }
+    if (track.type == TrackType::Visibility) {
+        t.shown = -1;
+        t.bound = true;
+        return true;
     }
     if (track.type == TrackType::Transform) {
         if (!world_.GetComponent<Transform>(t.entity)) {
@@ -140,11 +150,40 @@ void SequencePlayer::Bind() {
     time_ = std::clamp(time_, 0.0f, duration_);
 }
 
-void SequencePlayer::SetTime(f32 time) { time_ = std::clamp(time, 0.0f, duration_); }
+void SequencePlayer::SetTime(f32 time) {
+    time_ = std::clamp(time, 0.0f, duration_);
+    fresh_ = time_ <= 0.0f;
+}
 
 void SequencePlayer::Stop() {
     playing_ = false;
     time_ = 0.0f;
+    fresh_ = true;
+}
+
+void SequencePlayer::ApplyVisibility(const Track& track, Target& target) {
+    if (track.channels.empty() || track.channels[0].Empty()) return;
+    const int shown = track.channels[0].Evaluate(time_) >= 0.5f ? 1 : 0;
+    if (shown == target.shown) return;
+    target.shown = shown;
+    if (set_active) {
+        set_active(target.entity, shown == 1);
+    } else if (Active* a = world_.GetComponent<Active>(target.entity)) {
+        a->active = shown == 1;
+    } else if (shown == 0) {
+        world_.AddComponent(target.entity, Active{false});
+    }
+}
+
+void SequencePlayer::FireEvents(f32 from, f32 to, bool include_from) {
+    if (!on_event) return;
+    for (const Track& track : sequence_.tracks) {
+        if (track.type != TrackType::Event || track.mute) continue;
+        for (const EventKey& e : track.events) {
+            if (e.time > to) break;
+            if (e.time > from || (include_from && e.time >= from)) on_event(track, e);
+        }
+    }
 }
 
 void SequencePlayer::ApplyTransform(const Track& track, Target& target) {
@@ -188,22 +227,32 @@ void SequencePlayer::Evaluate() {
             if (!ResolveTrack(i)) continue;
         }
         if (track.type == TrackType::Transform) ApplyTransform(track, target);
-        else ApplyProperty(track, target);
+        else if (track.type == TrackType::Property) ApplyProperty(track, target);
+        else if (track.type == TrackType::Visibility) ApplyVisibility(track, target);
     }
 }
 
 void SequencePlayer::Update(f32 dt) {
     if (!playing_) return;
+    const f32 before = time_;
+    const bool include_start = fresh_;
+    fresh_ = false;
     time_ += dt * rate_;
     bool finished = false;
     if (rate_ >= 0.0f && time_ >= duration_) {
         finished = true;
-        if (loop && duration_ > 0.0f) time_ = std::fmod(time_, duration_);
-        else {
+        if (loop && duration_ > 0.0f) {
+            FireEvents(before, duration_, include_start);
+            time_ = std::fmod(time_, duration_);
+            FireEvents(0.0f, time_, true);
+        } else {
+            FireEvents(before, duration_, include_start);
             time_ = duration_;
             playing_ = false;
         }
-    } else if (rate_ < 0.0f && time_ <= 0.0f) {
+    } else if (rate_ >= 0.0f) {
+        FireEvents(before, time_, include_start);
+    } else if (time_ <= 0.0f) {
         finished = true;
         if (loop && duration_ > 0.0f) time_ = duration_ + std::fmod(time_, duration_);
         else {
