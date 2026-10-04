@@ -10,6 +10,15 @@ if(TARGET Aether::Physics)
 else()
     target_compile_definitions(aether_game PRIVATE AETHER_GAME_PHYSICS=0)
 endif()
+# Scenes' scripts and Blueprints run in the player (Phase 26 step 4); Luau
+# only when the build has it.
+target_link_libraries(aether_game PUBLIC Aether::Blueprint)
+if(TARGET Aether::Scripting)
+    target_link_libraries(aether_game PRIVATE Aether::Scripting)
+    target_compile_definitions(aether_game PRIVATE AETHER_GAME_SCRIPTING=1)
+else()
+    target_compile_definitions(aether_game PRIVATE AETHER_GAME_SCRIPTING=0)
+endif()
 add_library(Aether::Game ALIAS aether_game)
 
 add_executable(aether_player main.cpp)
