@@ -28,6 +28,7 @@ class HeadlessImGui {
 public:
     HeadlessImGui() {
         context_ = ImGui::CreateContext();
+        ImGui::GetIO().ConfigMacOSXBehaviors = false; // tests press Ctrl on every platform
         ImGuiIO& io = ImGui::GetIO();
         io.IniFilename = nullptr;
         io.DisplaySize = ImVec2(1400, 900);

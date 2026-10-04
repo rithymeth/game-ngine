@@ -27,6 +27,7 @@ namespace {
 struct ImGuiContextScope {
     ImGuiContextScope() {
         ImGui::CreateContext();
+        ImGui::GetIO().ConfigMacOSXBehaviors = false; // tests press Ctrl on every platform
         ImGuiIO& io = ImGui::GetIO();
         io.IniFilename = nullptr;
         io.DisplaySize = ImVec2(320, 240);
@@ -113,6 +114,7 @@ AETHER_TEST(EditorHost_ImGuiDrawsThroughVulkan) {
     constexpr u32 kWidth = 200, kHeight = 120;
     std::unique_ptr<rhi::ISwapChain> target = device->CreateSwapChain(nullptr, kWidth, kHeight, 2);
     ImGui::CreateContext();
+    ImGui::GetIO().ConfigMacOSXBehaviors = false; // tests press Ctrl on every platform
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr;
     {
