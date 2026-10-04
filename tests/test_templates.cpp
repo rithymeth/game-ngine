@@ -179,6 +179,12 @@ struct Run {
     input::InputAssetLibrary library;
     Entity player, camera;
 
+    // The script system holds subscriptions on `input`, so it goes first.
+    ~Run() {
+        scripts.reset();
+        life.reset();
+    }
+
     explicit Run(const std::string& id) {
         paths = Create(id, "Run");
         db = std::make_unique<assets::AssetDatabase>(paths.content);
