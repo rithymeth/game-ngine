@@ -8,7 +8,7 @@
 #include "audio/cue_editor.h"
 #include "audio/mixer_panel.h"
 #include "devtools/console_panel.h"
-#include "build/build_window.h"
+#include "packaging/build_window.h"
 #include "devtools/crash_reporter.h"
 #include "devtools/profiler_panel.h"
 #include "graph/blueprint_editor.h"
