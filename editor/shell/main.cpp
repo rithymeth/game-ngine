@@ -420,6 +420,9 @@ int main() {
         ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO();
         io.IniFilename = nullptr;
+        // Shortcuts use Ctrl everywhere: the engine's key set has no Cmd key
+        // yet, so ImGui's macOS Ctrl/Cmd swap would leave none reachable.
+        io.ConfigMacOSXBehaviors = false;
         ApplyEditorStyle();
         ImGuiVulkanHost host(*device, *swap_chain);
 

@@ -25,6 +25,7 @@ AETHER_TEST(DebugOverlay_ProjectsAndDraws) {
     CHECK(!ProjectToScreen(vp, Vec3(0, 0, 20), ImVec2(0, 0), ImVec2(800, 600), at));                 // behind
 
     ImGuiContext* ctx = ImGui::CreateContext();
+    ImGui::GetIO().ConfigMacOSXBehaviors = false; // tests press Ctrl on every platform
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr;
     io.DisplaySize = ImVec2(800, 600);

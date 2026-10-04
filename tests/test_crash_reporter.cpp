@@ -36,6 +36,7 @@ AETHER_TEST(CrashReporter_ShowsAndDismissesReports) {
     CHECK(dialog.ReportText(9).empty());
 
     ImGuiContext* ctx = ImGui::CreateContext();
+    ImGui::GetIO().ConfigMacOSXBehaviors = false; // tests press Ctrl on every platform
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr;
     io.DisplaySize = ImVec2(1200, 800);
