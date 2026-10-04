@@ -269,6 +269,7 @@ add_subdirectory(engine)
 # and linked into the tests, the functional runner and the editor shell.
 set(AETHER_PLATFORM_PLUGINS "" CACHE STRING "Platform plugin directories (;-separated)")
 include(cmake/AetherPlatform.cmake)
+include(cmake/AetherModules.cmake)
 aether_add_platform_plugins()
 # Blueprints (Phase 12): graph model, compiler and VM; engine-only, no fetches.
 add_subdirectory(blueprint)
@@ -376,6 +377,9 @@ if(AETHER_BUILD_EDITOR_UI AND AETHER_BUILD_VULKAN)
     add_subdirectory(editor/shell)
 endif()
 
+# Phase 26 step 1: the engine's own plugins (their modules).
+add_subdirectory(plugins)
+
 # Phase 25 step 4: the player (the game without the editor).
 add_subdirectory(player)
 
@@ -403,3 +407,11 @@ if(WIN32)
     add_subdirectory(pbr_demo)
     add_subdirectory(gltf_demo)
 endif()
+
+# Phase 26 step 1: the executables that host plugins get every module this
+# build has (each registers itself; the project's plugins decide which start).
+foreach(host aether_player aether_editor_shell aether_editor aether_tests)
+    if(TARGET ${host})
+        aether_link_modules(${host})
+    endif()
+endforeach()
