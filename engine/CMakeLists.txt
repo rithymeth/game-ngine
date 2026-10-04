@@ -17,6 +17,7 @@ add_library(aether_engine STATIC
     src/pak/pak.cpp
     src/pak/vfs.cpp
     src/cook/cooker.cpp
+    src/docs/api_docs.cpp
     src/cook/package.cpp
     src/plugin/plugin.cpp
     src/cook/texture_cook.cpp
