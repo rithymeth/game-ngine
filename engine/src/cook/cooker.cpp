@@ -9,6 +9,7 @@
 #include "aether/platform/filesystem.h"
 #include "aether/project/project.h"
 #include "aether/reflection/registry.h"
+#include "aether/reflection/serialize.h"
 
 #include <algorithm>
 #include <deque>
@@ -154,6 +155,12 @@ CookReport Cook(const CookOptions& options) {
         return report;
     };
 
+    const auto progress = [&](f32 fraction, const std::string& stage) {
+        if (options.progress) options.progress(fraction, stage);
+    };
+    const auto cancelled = [&] { return options.cancel && options.cancel->load(); };
+
+    progress(0.0f, "Scanning the project");
     ProjectSettings settings;
     std::string error;
     if (!LoadProject(options.project_file, settings, &error, &report.warnings)) {
@@ -190,8 +197,16 @@ CookReport Cook(const CookOptions& options) {
     std::set<std::string> extra;
     json manifest_assets = json::array();
 
-    for (const AssetGuid& guid : cook_set) {
+    if (!settings.quality_presets.empty() && !FindQualityPreset(settings, settings.default_quality)) {
+        report.warnings.push_back("The default quality '" + settings.default_quality + "' isn't a preset; the game starts on '" +
+                                  settings.quality_presets.front().name + "'");
+    }
+
+    for (usize index = 0; index < cook_set.size(); ++index) {
+        const AssetGuid& guid = cook_set[index];
         const AssetRecord& record = *database.Find(guid);
+        if (cancelled()) return fail("Cancelled");
+        progress(0.05f + 0.85f * static_cast<f32>(index) / static_cast<f32>(cook_set.size()), "Cooking " + record.path);
         CookedAsset cooked;
         cooked.guid = guid;
         cooked.path = record.path;
@@ -303,6 +318,10 @@ CookReport Cook(const CookOptions& options) {
 
     json files = json::array();
     for (const std::string& path : extra) files.push_back(path);
+    json presets = json::array();
+    for (const QualityPreset& p : settings.quality_presets) presets.push_back(reflect::ToJson(p));
+    if (cancelled()) return fail("Cancelled");
+    progress(0.92f, "Writing " + options.pak_name + ".apak");
     const json manifest = {
         {"$type", "CookManifest"},
         {"$version", 1},
@@ -313,6 +332,13 @@ CookReport Cook(const CookOptions& options) {
         {"gravity", {settings.gravity.x, settings.gravity.y, settings.gravity.z}},
         {"layers", settings.layers},
         {"collision_matrix", settings.collision_matrix},
+        {"window",
+         {{"title", settings.window_title.empty() ? settings.name : settings.window_title},
+          {"width", settings.window_width},
+          {"height", settings.window_height},
+          {"vsync", settings.vsync}}},
+        {"quality_presets", std::move(presets)},
+        {"default_quality", settings.default_quality},
         {"assets", std::move(manifest_assets)},
         {"files", std::move(files)},
     };
@@ -329,6 +355,7 @@ CookReport Cook(const CookOptions& options) {
         return fail("Can't write " + report.manifest_file.string());
     }
     report.ok = true;
+    progress(1.0f, "Done");
     AETHER_LOG_INFO("Cook", "Cooked %zu assets (%zu skipped) into %s: %llu bytes -> %llu bytes",
                     report.assets.size(), report.skipped, report.pak_file.string().c_str(),
                     static_cast<unsigned long long>(report.original_bytes),
