@@ -77,15 +77,35 @@ void StoreScalar(const TypeInfo& type, void* ptr, f32 value) {
 
 } // namespace
 
-SequencePlayer::SequencePlayer(const LevelSequence& sequence, World& world, const GuidIndex& guids)
-    : sequence_(sequence), world_(world), guids_(guids) {
+SequencePlayer::SequencePlayer(const LevelSequence& sequence, World& world, const GuidIndex& guids, SequenceResolver resolver, std::string path)
+    : sequence_(sequence), world_(world), guids_(guids), resolver_(std::move(resolver)) {
+    if (!path.empty()) path_.push_back(std::move(path));
     duration_ = sequence.EffectiveDuration();
     Bind();
 }
 
-SequencePlayer::~SequencePlayer() {
+SequencePlayer::SequencePlayer(const LevelSequence& sequence, World& world, const GuidIndex& guids, SequenceResolver resolver, std::vector<std::string> path)
+    : sequence_(sequence), world_(world), guids_(guids), resolver_(std::move(resolver)), path_(std::move(path)) {
+    duration_ = sequence.EffectiveDuration();
+    Bind();
+}
+
+SequencePlayer::~SequencePlayer() { Deactivate(); }
+
+void SequencePlayer::Deactivate() {
     DespawnAll();
-    for (Target& t : targets_) ReleaseCut(t);
+    for (Target& t : targets_) {
+        ReleaseCut(t);
+        t.cut = -2;
+        for (usize i = 0; i < t.children.size(); ++i) {
+            if (t.children[i]) t.children[i]->Deactivate();
+            if (i < t.child_active.size()) t.child_active[i] = 0;
+        }
+    }
+    if (!(fade_ == FadeState{})) {
+        fade_ = FadeState{};
+        if (on_fade) on_fade(fade_);
+    }
 }
 
 void SequencePlayer::Report(usize index, const std::string& message) {
@@ -103,9 +123,53 @@ bool SequencePlayer::ResolveTrack(usize index) {
         t.spawned.assign(track.spawns.size(), kNullEntity);
         t.spawn_done.assign(track.spawns.size(), 0);
     }
+    if (track.type == TrackType::Subsequence) {
+        t.children.clear();
+        t.children.resize(track.subs.size());
+        t.child_active.assign(track.subs.size(), 0);
+        for (usize k = 0; k < track.subs.size(); ++k) {
+            const std::string where = "Track '" + track.id + "': subsequence '" + track.subs[k].sequence + "' ";
+            if (track.subs[k].sequence.empty()) continue; // SQ021
+            if (!resolver_) {
+                problems_.push_back(where + "can't be played: this player has no way to find sequences");
+                continue;
+            }
+            if (std::find(path_.begin(), path_.end(), track.subs[k].sequence) != path_.end()) {
+                problems_.push_back(where + "plays itself (a sequence can't contain itself, directly or through others)");
+                continue;
+            }
+            if (static_cast<int>(path_.size()) >= kMaxSubsequenceDepth) {
+                problems_.push_back(where + "is nested too deep (the limit is " + std::to_string(kMaxSubsequenceDepth) + " levels)");
+                continue;
+            }
+            const LevelSequence* child = resolver_(track.subs[k].sequence);
+            if (!child) {
+                problems_.push_back(where + "wasn't found");
+                continue;
+            }
+            std::vector<std::string> path = path_;
+            path.push_back(track.subs[k].sequence);
+            auto player = std::unique_ptr<SequencePlayer>(new SequencePlayer(*child, world_, guids_, resolver_, std::move(path)));
+            // The child reports through this player's hooks, as they are when it fires.
+            SequencePlayer* me = this;
+            player->on_event = [me](const Track& tr, const EventKey& e) { if (me->on_event) me->on_event(tr, e); };
+            player->on_audio = [me](const Track& tr, Entity en, const AudioKey& a) { if (me->on_audio) me->on_audio(tr, en, a); };
+            player->on_animation = [me](const Track& tr, Entity en, const AnimKey& a) { if (me->on_animation) me->on_animation(tr, en, a); };
+            player->on_spawn = [me](const Track& tr, Entity parent, const SpawnKey& key) { return me->on_spawn ? me->on_spawn(tr, parent, key) : kNullEntity; };
+            player->on_despawn = [me](Entity e) { if (me->on_despawn) me->on_despawn(e); };
+            player->on_camera_cut = [me](Entity e) { if (me->on_camera_cut) me->on_camera_cut(e); };
+            player->set_active = [me](Entity e, bool on) {
+                if (me->set_active) me->set_active(e, on);
+                else if (Active* a = me->world_.GetComponent<Active>(e)) a->active = on;
+                else if (!on) me->world_.AddComponent(e, Active{false});
+            };
+            for (const std::string& p : player->Problems()) problems_.push_back(where + "has a problem: " + p);
+            t.children[k] = std::move(player);
+        }
+    }
     t.entity = track.binding.IsNull() ? kNullEntity : guids_.Find(world_, track.binding);
     const bool entity_optional = track.type == TrackType::Event || track.type == TrackType::Spawn || track.type == TrackType::CameraCut ||
-                                 track.type == TrackType::Audio;
+                                 track.type == TrackType::Audio || track.type == TrackType::Fade || track.type == TrackType::Subsequence;
     if (entity_optional) {
         // These work without their entity (a bound one that is missing is
         // simply treated as none).
@@ -157,7 +221,8 @@ bool SequencePlayer::ResolveTrack(usize index) {
 
 void SequencePlayer::Bind() {
     problems_.clear();
-    targets_.assign(sequence_.tracks.size(), Target{});
+    targets_.clear();
+    targets_.resize(sequence_.tracks.size());
     duration_ = sequence_.EffectiveDuration();
     for (usize i = 0; i < sequence_.tracks.size(); ++i) ResolveTrack(i);
     time_ = std::clamp(time_, 0.0f, duration_);
@@ -172,7 +237,33 @@ void SequencePlayer::Stop() {
     playing_ = false;
     time_ = 0.0f;
     fresh_ = true;
-    DespawnAll();
+    Deactivate();
+}
+
+void SequencePlayer::ApplySubsequences(const Track& track, Target& target) {
+    for (usize i = 0; i < track.subs.size() && i < target.children.size(); ++i) {
+        const SubKey& k = track.subs[i];
+        SequencePlayer* child = target.children[i].get();
+        if (!child) continue;
+        const f32 end = k.time + k.duration;
+        const bool inside = time_ >= k.time && (time_ < end || (time_ >= duration_ && time_ <= end));
+        if (inside) {
+            child->SetTime((time_ - k.time) * k.scale + k.offset);
+            child->Evaluate();
+            target.child_active[i] = 1;
+            if (child->Fade().amount > pending_fade_.amount) pending_fade_ = child->Fade();
+        } else if (target.child_active[i]) {
+            // Leaving the range: the child's last pose (or its first, going back) is
+            // applied, then what it spawned goes, and its cuts and fade.
+            const bool after = time_ >= end;
+            child->SetTime(after ? k.duration * k.scale + k.offset : k.offset);
+            child->final_pose_ = true;
+            child->Evaluate();
+            child->final_pose_ = false;
+            child->Deactivate();
+            target.child_active[i] = 0;
+        }
+    }
 }
 
 void SequencePlayer::DespawnAll() {
@@ -186,6 +277,7 @@ void SequencePlayer::DespawnAll() {
 }
 
 void SequencePlayer::ApplySpawns(const Track& track, Target& target) {
+    if (final_pose_) return;
     if (target.spawned.size() != track.spawns.size()) {
         target.spawned.assign(track.spawns.size(), kNullEntity);
         target.spawn_done.assign(track.spawns.size(), 0);
@@ -215,6 +307,7 @@ void SequencePlayer::ReleaseCut(Target& target) {
 }
 
 void SequencePlayer::ApplyCuts(const Track& track, Target& target) {
+    if (final_pose_) return;
     int index = -1;
     for (usize i = 0; i < track.cuts.size() && track.cuts[i].time <= time_; ++i) index = static_cast<int>(i);
     if (index == target.cut) return;
@@ -262,6 +355,18 @@ void SequencePlayer::FireEvents(f32 from, f32 to, bool include_from) {
                 if (k.time > to) break;
                 if (crossed(k.time)) on_audio(track, entity, k);
             }
+        } else if (track.type == TrackType::Subsequence) {
+            for (usize k = 0; k < track.subs.size() && k < targets_[i].children.size(); ++k) {
+                const SubKey& key = track.subs[k];
+                SequencePlayer* child = targets_[i].children[k].get();
+                if (!child) continue;
+                const f32 lo = std::max(from, key.time), hi = std::min(to, key.time + key.duration);
+                if (hi < lo) continue;
+                // Entering the range fires the child's keys at its start; otherwise the same rule as here.
+                const bool inc = include_from || from < key.time;
+                if (hi == lo && !inc) continue;
+                child->FireEvents((lo - key.time) * key.scale + key.offset, (hi - key.time) * key.scale + key.offset, inc);
+            }
         } else if (track.type == TrackType::Animation && on_animation) {
             const Entity entity = targets_[i].bound ? targets_[i].entity : kNullEntity;
             for (const AnimKey& k : track.anims) {
@@ -299,6 +404,7 @@ void SequencePlayer::ApplyProperty(const Track& track, Target& target) {
 }
 
 void SequencePlayer::Evaluate() {
+    pending_fade_ = FadeState{};
     for (usize i = 0; i < sequence_.tracks.size(); ++i) {
         const Track& track = sequence_.tracks[i];
         if (track.mute) continue;
@@ -317,6 +423,18 @@ void SequencePlayer::Evaluate() {
         else if (track.type == TrackType::Transform) ApplyTransform(track, target);
         else if (track.type == TrackType::Property) ApplyProperty(track, target);
         else if (track.type == TrackType::Visibility) ApplyVisibility(track, target);
+        else if (track.type == TrackType::Subsequence) ApplySubsequences(track, target);
+        else if (track.type == TrackType::Fade && !track.channels.empty() && !track.channels[0].Empty()) {
+            const f32 amount = std::clamp(track.channels[0].Evaluate(time_), 0.0f, 1.0f);
+            if (amount > pending_fade_.amount) {
+                pending_fade_.amount = amount;
+                pending_fade_.color = track.fade_color;
+            }
+        }
+    }
+    if (!(pending_fade_ == fade_)) {
+        fade_ = pending_fade_;
+        if (on_fade) on_fade(fade_);
     }
 }
 

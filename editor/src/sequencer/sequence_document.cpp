@@ -86,6 +86,7 @@ usize SequenceDocument::AddTrack(TrackType type, const std::string& name, const 
     case TrackType::Transform: t.channels = {Channel{"position.x", {}}, Channel{"position.y", {}}, Channel{"position.z", {}}}; break;
     case TrackType::Property: t.channels = {Channel{"value", {}}}; break;
     case TrackType::Visibility: t.channels = {Channel{"visible", {}}}; break;
+    case TrackType::Fade: t.channels = {Channel{"amount", {}}}; break;
     default: break;
     }
     sequence_.tracks.push_back(std::move(t));
@@ -209,6 +210,7 @@ f32 SequenceDocument::KeyTime(const KeyRef& key) const {
     case KeyRef::Lane::Cut: return key.index < t.cuts.size() ? t.cuts[key.index].time : 0.0f;
     case KeyRef::Lane::Audio: return key.index < t.audio.size() ? t.audio[key.index].time : 0.0f;
     case KeyRef::Lane::Animation: return key.index < t.anims.size() ? t.anims[key.index].time : 0.0f;
+    case KeyRef::Lane::Sub: return key.index < t.subs.size() ? t.subs[key.index].time : 0.0f;
     }
     return 0.0f;
 }
@@ -224,6 +226,7 @@ usize SequenceDocument::KeyCount(usize track, KeyRef::Lane lane, usize channel) 
     case KeyRef::Lane::Cut: return t.cuts.size();
     case KeyRef::Lane::Audio: return t.audio.size();
     case KeyRef::Lane::Animation: return t.anims.size();
+    case KeyRef::Lane::Sub: return t.subs.size();
     }
     return 0;
 }
@@ -257,6 +260,7 @@ i32 SequenceDocument::MoveKey(const KeyRef& key, f32 time) {
     case KeyRef::Lane::Cut: return move(t.cuts, false);
     case KeyRef::Lane::Audio: return move(t.audio, true);
     case KeyRef::Lane::Animation: return move(t.anims, true);
+    case KeyRef::Lane::Sub: return move(t.subs, true);
     }
     return -1;
 }
@@ -306,6 +310,7 @@ bool SequenceDocument::RemoveKey(const KeyRef& key) {
     case KeyRef::Lane::Cut: t.cuts.erase(t.cuts.begin() + at); break;
     case KeyRef::Lane::Audio: t.audio.erase(t.audio.begin() + at); break;
     case KeyRef::Lane::Animation: t.anims.erase(t.anims.begin() + at); break;
+    case KeyRef::Lane::Sub: t.subs.erase(t.subs.begin() + at); break;
     }
     Changed();
     return true;
