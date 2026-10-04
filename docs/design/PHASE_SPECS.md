@@ -5091,13 +5091,57 @@ forwards them (below).
   sensor and aperture that derives the field of view), cooker following of
   scene sequence paths, and audio and animation in the player.
 
-### 27.5 PR breakdown
+### 27.5 The sequencer editor
+
+- **`SequenceDocument`** (`editor/src/sequencer/`): a `LevelSequence` being
+  edited, with whole-sequence undo and redo (a sequence is small), a dirty
+  flag and the diagnostics. A drag is one undo step (`BeginEdit` ..
+  `EndEdit`). Tracks: add (with the channels its kind needs and a unique
+  id), remove, rename, bind, mute, lock, and the Property track's component
+  and field. Keys: add a value key (one at the same time has its value
+  replaced), move any key (value, rotation, event, spawn, cut, audio,
+  animation; the list is re-sorted and the new index returned, and a move onto
+  another value, rotation or cut key's time is refused), set a value or
+  interpolation, add and edit rotation and event keys, remove. Duration, fps
+  and name. A locked track refuses every edit, including removal, until it is
+  unlocked. `Load` replaces the document (and clears the history), and leaves
+  it unchanged when the file can't be read; `Save` clears the dirty flag.
+- **`SequencerPanel`**: a toolbar (undo, redo, add a track of any kind,
+  play / pause / stop, loop, the time, zoom, a count of problems), a timeline
+  (a ruler with a tick each second, a header per track with mute and lock
+  toggles, a row per value channel and key list with the keys as diamonds,
+  and a red playhead; click the ruler to scrub, snapped to the frame rate;
+  click a key to select it and drag it to move it), and an inspector (the
+  track's name, entity and property target, the selected key's time, value,
+  interpolation or event name and payload, delete, and the diagnostics).
+  The panel draws without textures, so it runs headless.
+- **Preview**: the panel scrubs and plays a `SequencePlayer` on the world
+  and GUID index the host gives it (the sample scene in the workspace),
+  rebuilt whenever the document changes so undo and edits show at once.
+  Spawn tracks make empty entities there and remove them again, including
+  when the panel is destroyed; audio and animation keys do nothing in the
+  preview.
+- **Workspace**: the **Sequencer - Intro** tool (category Cinematics) opens a
+  sample cutscene: a door that slides open on a curve, markers, and a light
+  that switches on.
+- Not yet: editing the keys of Spawn, Camera Cut, Audio and Animation tracks
+  (they show on the timeline and can be moved and deleted, but their fields
+  are changed in the file), curve and tangent editing, multi-key selection,
+  and previewing in the Viewport of an open level.
+- **Tests** (`test_sequencer_editor.cpp`): track edits with undo and redo;
+  sorted keys, replace, move, remove; rotation and event keys; a drag as one
+  undo step; locked tracks; diagnostics following edits; save, load, dirty and
+  a failed load; the panel scrubbing deterministically, playing, pausing,
+  stopping, looping and following edits and undo; preview spawns removed with
+  the panel; drawing and selection headless; and the workspace tool.
+
+### 27.6 PR breakdown
 
 1. Level sequences and the player core (done, §27.1).
 2. Event and Visibility tracks, the SequenceComponent and system (done, §27.2).
 3. Spawn, Camera Cut, Audio and Animation tracks (done, §27.3).
-4. Sequences in the player and asset pipeline (this step, §27.4).
-5. `CineCamera`, Fade and Subsequence tracks, `SequenceDocument` and the
-   sequencer panel.
-6. Movie render (a headless fixed-step loop with a frame sink) and the
+4. Sequences in the player and asset pipeline (done, §27.4).
+5. The sequencer editor (this step, §27.5).
+6. `CineCamera`, Fade and Subsequence tracks.
+7. Movie render (a headless fixed-step loop with a frame sink) and the
    release.

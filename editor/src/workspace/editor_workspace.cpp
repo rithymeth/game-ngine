@@ -19,6 +19,7 @@
 #include "graph/blueprint_editor.h"
 #include "graph/material_editor.h"
 #include "net/net_panels.h"
+#include "sequencer/sequencer_panel.h"
 #include "sprite2d/tilemap_panel.h"
 #include "ui/code_editor.h"
 #include "uidesign/ui_designer.h"
@@ -182,6 +183,11 @@ struct EditorWorkspace::Impl {
     // 2D.
     std::unique_ptr<TilemapEditDocument> tilemap_doc;
     std::unique_ptr<TilemapPanel> tilemap_panel;
+    // Cinematics.
+    World sequence_level;
+    GuidIndex sequence_guids;
+    std::unique_ptr<SequenceDocument> sequence_doc;
+    std::unique_ptr<SequencerPanel> sequencer_panel;
     // World.
     terrain::TerrainData terrain_data;
     terrain::TerrainSettings terrain_settings;
@@ -228,6 +234,7 @@ struct EditorWorkspace::Impl {
         BuildUI();
         BuildWorld();
         BuildTilemap();
+        BuildSequencer();
         BuildNetworking();
         BuildDebug();
         BuildProject();
@@ -248,6 +255,7 @@ struct EditorWorkspace::Impl {
             {"Spline", "World", [this] { spline_panel->Draw(); }},
             {"World Partition", "World", [this] { partition_panel->Draw(); }},
             {"Tilemap - Level 1", "2D", [this] { tilemap_panel->Draw(); }},
+            {"Sequencer - Intro", "Cinematics", [this] { sequencer_panel->Draw(); }},
             {"Net Play", "Networking", [this] { net_panel->Draw(); }},
             {"Net Profiler", "Networking", [this] { net_profiler->Draw(); }},
             {"Console", "Debug", [this] { console_panel->Draw(); }},
@@ -499,6 +507,46 @@ struct EditorWorkspace::Impl {
         tilemap_doc = std::make_unique<TilemapEditDocument>(std::move(map), std::move(tileset));
         tilemap_doc->brush = AutotileCell(ground);
         tilemap_panel = std::make_unique<TilemapPanel>(*tilemap_doc);
+    }
+
+    // A small cutscene over a door and a light: the door slides open (a
+    // position curve) while a marker event fires and the light switches on.
+    void BuildSequencer() {
+        using namespace aether::seq;
+        (void)GetComponentId<Transform>();
+        (void)GetComponentId<Tags>();
+        const auto actor = [&](const char* tag, Vec3 at) {
+            Tags tags;
+            tags.names = {tag};
+            const Entity e = sequence_level.CreateEntity(Transform{at, Quaternion::Identity()}, tags);
+            return EnsureGuid(sequence_level, e, &sequence_guids);
+        };
+        const EntityGuid door = actor("Door", Vec3(0, 0, 0));
+        const EntityGuid light = actor("Light", Vec3(0, 3, 0));
+        LevelSequence s;
+        s.name = "Intro";
+        s.duration = 4.0f;
+        Track slide;
+        slide.id = "door";
+        slide.name = "Door slide";
+        slide.type = TrackType::Transform;
+        slide.binding = door;
+        slide.channels = {Channel{"position.x", {Key{0.0f, 0.0f, Interp::Bezier, 0, 0}, Key{2.0f, 3.0f, Interp::Linear, 0, 0}}},
+                          Channel{"position.y", {}}, Channel{"position.z", {}}};
+        Track marker;
+        marker.id = "events";
+        marker.name = "Markers";
+        marker.type = TrackType::Event;
+        marker.events = {EventKey{1.0f, "DoorOpening", ""}, EventKey{3.0f, "Done", ""}};
+        Track lamp;
+        lamp.id = "lamp";
+        lamp.name = "Light";
+        lamp.type = TrackType::Visibility;
+        lamp.binding = light;
+        lamp.channels = {Channel{"visible", {Key{0.0f, 0.0f, Interp::Constant, 0, 0}, Key{1.0f, 1.0f, Interp::Constant, 0, 0}}}};
+        s.tracks = {slide, marker, lamp};
+        sequence_doc = std::make_unique<SequenceDocument>(std::move(s));
+        sequencer_panel = std::make_unique<SequencerPanel>(*sequence_doc, sequence_level, sequence_guids);
     }
 
     void BuildWorld() {
