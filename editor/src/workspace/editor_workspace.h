@@ -1,0 +1,62 @@
+#pragma once
+
+#include "aether/core/base.h"
+
+#include <memory>
+#include <string>
+#include <string_view>
+
+// Every tool editor the engine has, in one place: the Blueprint, Material,
+// animation, AI, audio, VFX, UI, world, networking and debug tools, each on
+// a sample document so it opens on something real. The Windows editor
+// (D3D12) and the portable editor shell (Vulkan) both host it, so neither
+// shows less than the other.
+//
+// Drawing: DrawToolsMenu() goes inside the host's BeginMainMenuBar(),
+// DrawHub() is one window with every tool (a list by category and the
+// selected tool), and DrawWindows() draws the tools popped out into their
+// own windows. All of it is plain Dear ImGui, so it runs headless too.
+
+namespace aether::editor {
+
+class EditorWorkspace {
+public:
+    EditorWorkspace();
+    ~EditorWorkspace();
+    EditorWorkspace(const EditorWorkspace&) = delete;
+    EditorWorkspace& operator=(const EditorWorkspace&) = delete;
+
+    // Per frame, before drawing: runs the networked play session and the
+    // console's queued log lines.
+    void Update(f32 dt);
+
+    usize ToolCount() const;
+    const char* ToolName(usize tool) const;
+    const char* ToolCategory(usize tool) const;
+    // The tool whose name starts with `name` (case-insensitive), or -1.
+    i64 FindTool(std::string_view name) const;
+
+    // The tool the hub shows.
+    usize Selected() const;
+    void Select(usize tool);
+    // Popped out into its own window.
+    bool IsWindowOpen(usize tool) const;
+    void SetWindowOpen(usize tool, bool open);
+
+    // The tool's contents, into the current window.
+    void DrawTool(usize tool);
+    // A "Tools" menu: each category's tools; picking one pops it out.
+    void DrawToolsMenu();
+    // A window with every tool. `open` (optional) gets the title-bar X.
+    void DrawHub(const char* title = "Tools", bool* open = nullptr);
+    // The hub's contents into the current window (the shell fills its main area with this).
+    void DrawHubContents();
+    // The popped-out tool windows.
+    void DrawWindows();
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
+} // namespace aether::editor
