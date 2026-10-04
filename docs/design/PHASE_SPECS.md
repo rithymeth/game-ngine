@@ -5057,14 +5057,47 @@ forwards them (below).
   destructor; audio and animation firing once and forward only; and the
   system's forwarding and Lifecycle despawn.
 
-### 27.4 PR breakdown
+### 27.4 Sequences in the player
+
+- **Asset type**: `.asequence` imports as "Sequence". Its GUID strings (a Spawn
+  key's prefab, a Camera Cut's camera is an *entity* GUID, so not that) are
+  scanned as dependencies, so cooking a sequence cooks the prefabs it spawns.
+- **`Game::FindSequence(path)`**: reads the sequence from the package by
+  asset path, once per scene (a miss is remembered), with a warning when it
+  isn't in the package or can't be parsed.
+- **Cooking a sequence**: a scene names its sequences by path
+  (`SequenceComponent.sequence`), which the cooker doesn't follow yet, so a
+  project lists its sequence folder under `always_cook` (for example
+  `Sequences/`), as the platformer template does for `Input/`.
+- **The system**: each scene's runtime owns a `SequenceSystem` (so it goes
+  with the scene), registered as the `Sequencer` library's active one. The
+  `Player.Sequencer` system runs in Update after `Player.Update` and before
+  `Player.Scripting`, so scripts and Blueprints see this frame's events.
+- **Spawn tracks** resolve their `prefab` as a GUID or an asset path, and
+  place it at the key's position and rotation (relative to the track's
+  entity when it has one, by its position and rotation), through
+  `InstantiatePrefab` on the same cached prefab data the scene uses. A prefab
+  that isn't in the package is a warning.
+- **Events**: Marker keys reach Blueprints as `Event.OnSequenceEvent` (name,
+  payload) and the end as `Event.OnSequenceFinished` (the sequence), on the
+  `SequenceComponent`'s entity. Audio and Animation keys are collected in the
+  system's `Events()` but the player has no audio or animation runtime to hand
+  them to yet.
+- **Tests** (`test_player.cpp`): a sequence played from a hand-built pak (the
+  moved entity, a prefab spawned at its time and position, the final pose, no
+  warnings); a missing sequence warned about once; and a project cooked with
+  `always_cook` that imports the sequence as "Sequence" and plays it.
+- Not in this step: `CineCamera` (a camera component with focal length,
+  sensor and aperture that derives the field of view), cooker following of
+  scene sequence paths, and audio and animation in the player.
+
+### 27.5 PR breakdown
 
 1. Level sequences and the player core (done, §27.1).
 2. Event and Visibility tracks, the SequenceComponent and system (done, §27.2).
-3. Spawn, Camera Cut, Audio and Animation tracks (this step, §27.3).
-4. Wiring into the player: register `.asequence` as an asset type, a
-   `Game::FindSequence` loader, the prefab spawner, the system in the
-   scheduler, and a `CineCamera` component.
-5. Fade and Subsequence tracks, `SequenceDocument` and the sequencer panel.
-6. Movie render (a headless fixed-step loop with a frame sink), cook and
-   player integration.
+3. Spawn, Camera Cut, Audio and Animation tracks (done, §27.3).
+4. Sequences in the player and asset pipeline (this step, §27.4).
+5. `CineCamera`, Fade and Subsequence tracks, `SequenceDocument` and the
+   sequencer panel.
+6. Movie render (a headless fixed-step loop with a frame sink) and the
+   release.
