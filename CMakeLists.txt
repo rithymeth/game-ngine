@@ -376,6 +376,9 @@ if(AETHER_BUILD_EDITOR_UI AND AETHER_BUILD_VULKAN)
     add_subdirectory(editor/shell)
 endif()
 
+# Phase 25 step 4: the player (the game without the editor).
+add_subdirectory(player)
+
 if(AETHER_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
