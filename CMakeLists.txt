@@ -314,6 +314,7 @@ add_subdirectory(vfx)
 add_subdirectory(terrain)
 add_subdirectory(streaming)
 add_subdirectory(sprite2d)
+add_subdirectory(sequencer)
 add_subdirectory(net)
 
 # Recast/Detour (zlib, recastnavigation/recastnavigation) for navigation

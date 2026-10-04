@@ -4928,3 +4928,62 @@ reflection.
   repository with modified, untracked and deleted files (skipped where git
   isn't installed), queried from a subfolder and from the root; the panel's
   listing, filter, navigation, search and drawing; and the workspace tool.
+
+---
+
+# Phase 27: Cinematics (sequencer)
+
+The concept is in [ROADMAP.md Phase 27](../ROADMAP.md). Step 1 is the data and
+playback core, in its own module, `sequencer/` (`aether::seq`).
+
+### 27.1 Level sequences
+
+- **`LevelSequence`** (`.asequence`, JSON, `kVersion = 1`): a name, `duration`
+  in seconds, `fps` (for frame snapping and rendering) and a list of tracks.
+  `EffectiveDuration` is the duration, or the last key's time when the
+  duration is 0.
+- **Tracks** are bound to an entity by `EntityGuid`, so a sequence survives
+  scene reloads and prefab instancing. Two kinds so far:
+  - **Transform**: three position channels (x, y, z) plus a list of
+    rotation keys (quaternions) blended by slerp the short way round. It
+    writes the entity's `Transform` position and rotation; a channel with no
+    keys leaves its axis alone.
+  - **Property**: a reflected `component` and `field`, written through the
+    reflection registry's field offset. It can key floats (f32/f64),
+    integers (rounded and clamped to the type), bool, enums (by their
+    underlying type) and structs whose members are all floats (one channel
+    per member).
+- **Channels** hold keys (time, value, interpolation). `Constant` holds the
+  value until the next key, `Linear` blends, `Bezier` is a cubic Hermite
+  segment with in and out tangents. Before the first key and after the last,
+  the value holds.
+- **Diagnostics** (`ValidateSequence`): SQ001 no tracks; SQ002 keys not in
+  increasing time order; SQ003 a key outside the duration; SQ004 a property
+  track with no component or field; SQ005 a repeated track id; SQ006 bad
+  duration or fps; SQ007 a track without an id; SQ008 a track bound to no
+  entity; SQ009 a transform track without three channels; SQ010 a property
+  track without channels. `SequenceFromJson` refuses malformed files with
+  a message and leaves its output untouched.
+- **`SequencePlayer(sequence, world, guid index)`**: `Bind` resolves every
+  track once (problems, such as a missing entity, component or field, are
+  reported once through `Problems()` while the other tracks still play); an
+  entity that dies is re-resolved when it comes back. `SetTime` clamps to the
+  duration, `Evaluate` writes the state at the current time and depends only
+  on the time, so two players on the same sequence agree exactly. `Play`,
+  `Pause`, `Stop`, `SetRate` (negative plays backwards), `loop` and
+  `on_finished`, driven by `Update(dt)`.
+- **Tests** (`test_sequence_core.cpp`): channel interpolation in every mode;
+  slerp the short way; each diagnostic; JSON round trip and refusals;
+  transform and property tracks; once-only problems; rebinding after a
+  destroyed entity; playback, looping and `on_finished`; determinism.
+
+### 27.2 PR breakdown
+
+1. Level sequences and the player core (this step).
+2. A `SequencePlayer` component and system, Blueprint and Luau functions, and
+   Event, Visibility and Spawn tracks.
+3. Animation, Camera Cut (switching `Camera::priority`) and Audio tracks, and
+   a `CineCamera` component.
+4. Fade and Subsequence tracks, `SequenceDocument` and the sequencer panel.
+5. Movie render (a headless fixed-step loop with a frame sink), cook and
+   player integration.
