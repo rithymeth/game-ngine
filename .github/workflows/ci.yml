@@ -225,6 +225,10 @@ jobs:
           $out = "dist/AetherEditor"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
           Copy-Item build/editor/Release/aether_editor.exe $out/
+          # The build tools and the player: cook a project, pack it, play it.
+          Copy-Item build/tools/cook/Release/aether_cook.exe $out/
+          Copy-Item build/tools/pak/Release/aether_pak.exe $out/
+          Copy-Item build/player/Release/aether_player.exe $out/
           Get-ChildItem build/editor/Release -Filter *.dll | Copy-Item -Destination $out/
           Copy-Item -Recurse assets $out/assets
           Copy-Item README.md $out/

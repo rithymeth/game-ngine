@@ -4175,7 +4175,70 @@ RGBA8.
     `.atex` round trip and damage checks.
   - The full cook test now checks both of its textures' cooked forms.
 
-### 25.4 PR breakdown
+### 25.4 The player
+
+The game without the editor: `player/` builds `aether_game`, the runtime
+library, and `aether_player`, the executable.
+
+- **`GameManifest`** (`aether/player/game.h`): `ParseGameManifest` reads
+  the cooker's `Manifest.json`:
+  - the project name and configuration;
+  - the startup scene, the fixed timestep, gravity, the layers and the
+    collision matrix;
+  - every cooked asset's GUID, path, importer and cooked form.
+
+  It refuses text that isn't a cook manifest, an unknown configuration, a
+  timestep of 0 Hz or less, and an asset with no GUID or path.
+- **`GamePackage`**:
+  - Mounts `.apak` archives, or folders for a loose cook, into a virtual
+    file system. A higher priority wins, so a patch pak replaces files.
+  - `FindPaks` lists a folder's archives sorted by name, so later names
+    (patches) mount on top.
+  - Reads the manifest, finds assets by path or GUID, and reads
+    `Content/<path>`.
+- **`Game`**:
+  - **Loading**: the startup scene, or any cooked scene, JSON or binary,
+    from the package. Its prefab instances are resolved from the
+    package's prefabs, read once and cached.
+  - **Play**: `BeginPlay` and `EndPlay` drive the scene's lifecycle
+    callbacks. `Tick(dt)` runs the fixed-timestep frame loop at the
+    manifest's rate: physics, then the lifecycle's FixedUpdate in each
+    fixed step, then Update and LateUpdate.
+  - **Physics**: when the engine has its physics module, gravity and the
+    collision matrix come from the manifest, and a `PhysicsScene` makes
+    bodies for the scene's colliders.
+  - **Game systems**: added through `Systems()`.
+  - **Stats**: frames, fixed steps, game time, entities, prefab instances
+    and physics bodies.
+- **`aether_player`**:
+  - **Mounting**: every `--pak` given (a folder means all its archives),
+    or else `Paks/` beside the executable, then in the working directory.
+  - **Running**: loads the startup scene (or `--scene`) and runs it in a
+    window, through the RHI (D3D12 on Windows, Vulkan elsewhere), or with
+    `--headless`. Headless runs step at the fixed rate, so a run is
+    reproducible. `--frames` stops after that many frames.
+  - **Configurations**: Debug logs everything and turns on the graphics
+    debug layer. Development logs info plus a stats line every second, and
+    puts the configuration in the window title. Shipping logs only
+    warnings and errors.
+  - **Drawing**: the window shows the clear colour for now. Drawing the
+    scene comes with the renderer's RHI path.
+- **Packaging**: the Windows zip now carries `aether_cook.exe`,
+  `aether_pak.exe` and `aether_player.exe` next to the editor.
+- **Tests**:
+  - The manifest, and its refusals.
+  - A pak with a startup scene and a prefab: the prefab's entity comes
+    from the pak, the lifecycle runs, and 1 s at 60 Hz is 60 fixed steps
+    and 60 updates.
+  - A 30 Hz base pak, and a patch pak that replaces its scene.
+  - The refusals: nothing mounted, no manifest, a missing pak, a missing
+    scene.
+  - A project cooked by the cooker and then played: its 50 Hz timestep
+    and the entity's position come through.
+  - With physics: a ball dropped onto a floor falls to about 8.8 m after
+    0.5 s and comes to rest on the floor.
+
+### 25.5 PR breakdown
 
 1. ✅ **Done.** `.apak` archives, compression, the virtual file system
    and `aether_pak` (§25.1).
@@ -4187,9 +4250,11 @@ RGBA8.
    `.atex`. Still to do from this step: ASTC for mobile, which comes with
    Phase 33's mobile targets, and precompiled shaders (DXIL, SPIR-V),
    which come with the player that loads them.
-4. The player (`player/`): the game without the editor, running the
-   startup scene from the mounted paks; Debug, Development and Shipping
-   configurations.
+4. ✅ **Done.** The player (§25.4): `aether_game` and `aether_player`,
+   the startup scene from the mounted paks with prefabs and physics, and
+   the Debug, Development and Shipping configurations. Still to do:
+   drawing the scene, with the renderer's RHI path, and running Blueprint
+   bytecode and scripts.
 5. Project settings (startup scene, window defaults, quality presets)
    and the editor's Build and Package window, with progress, logs and
    Launch.
