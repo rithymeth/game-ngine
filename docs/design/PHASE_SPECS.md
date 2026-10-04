@@ -4635,8 +4635,10 @@ say, not only its lifecycle callbacks and physics (§25.4).
 3. ✅ **Done.** The editor extensibility API (§26.5): panels, menu
    items, property drawers and asset types from C++, and panels, menu
    items and asset types from Luau editor scripts.
-4. The 2D toolkit: sprites, atlases, tilemaps and the tileset editor,
-   2D physics, 2D lights and a pixel-perfect camera.
+4. The 2D toolkit. ✅ **Done so far** (§26.6): sprite atlases and
+   animation, tilesets, tilemaps with autotiles, render batching and the
+   pixel-perfect camera. Still to do: the tileset editor, 2D physics, 2D
+   lights, and the 2D Platformer template.
 5. Documentation: the API reference from reflection, the manual, and
    sample projects; version control status in the Content Browser.
 
@@ -4697,3 +4699,54 @@ argument as a reference to call later.
   fails to load or is called wrongly is reported; menu actions and openers
   run Luau; every `ui.*` widget draws; reload replaces the old entries; a
   runaway callback stops at its budget; the sample project's script loads.
+
+### 26.6 The 2D toolkit: sprites, tilemaps and the pixel-perfect camera
+
+The `sprite2d` module (`sprite2d/`) holds the 2D toolkit's data and its
+render batching. It is engine-only, so it builds and tests headless. 2D
+physics, 2D lights and the tileset editor are the next steps (§26.4).
+
+- **Sprite atlases** (`.aatlas`, JSON): one texture, referenced by GUID so
+  the cooker follows it, holding named frames (a pixel rectangle and a
+  pivot as a fraction of the frame, from its top left) and named clips
+  (frame names, frames per second, loop). Loading refuses a frame without
+  a size, a repeated name, and a clip naming a missing frame.
+  `PackRects` shelf-packs rectangles into the smallest power-of-two
+  texture up to a limit, `ComposeAtlasImage` draws the images into it, and
+  `AtlasFromGrid` cuts a sprite sheet into numbered frames.
+- **Components**: `Sprite` (atlas, frame, tint, flips, sorting layer and
+  order, pixels per unit), `SpriteAnimator` (clip, time, speed, playing;
+  `UpdateSpriteAnimations` advances it, a clip that doesn't loop holds its
+  last frame and sets `finished`) and `TilemapRenderer`. They sit on the
+  entity's Transform: x and y position, z depth, rotation about z.
+- **Tilesets** (`.atileset`): a texture cut into tiles (size, margin,
+  spacing), a solid flag per tile, and autotiles: 16 tile numbers indexed
+  by which of the four neighbours hold the same autotile (north 1, east 2,
+  south 4, west 8).
+- **Tilemaps** (`.atilemap`): layers of cells, row 0 at the bottom; a cell
+  is a tile number, empty (-1), or an autotile reference (-2 - index),
+  which resolves by its neighbours' mask when drawn or queried.
+  `IsSolidAt` asks the colliding layers; `LocalToCell` maps positions to
+  cells.
+- **Batches**: `BuildSpriteBatches` turns every sprite and tilemap layer
+  into quads, sorts them by sorting layer, order, then z, and merges runs
+  that share a texture into `SpriteBatch`es (vertices and indices), with an
+  optional view rectangle that culls (a tilemap only visits the visible
+  cells).
+- **Pixel-perfect camera**: `ComputePixelViewport` shows the reference
+  resolution at the largest whole-number scale the window allows, centred
+  with bars (or filling the window, still at a whole scale), and gives
+  the orthographic size in world units; `SnapToPixelGrid` rounds a
+  position to the art's pixels.
+- The asset database knows the three extensions, and scans them for the
+  GUIDs they hold (a tilemap's tileset, a tileset's and an atlas's texture),
+  so the cooker packages what a 2D scene reaches.
+
+**Tests** (`test_sprite2d.cpp`): atlas frames, UVs and JSON (and refusing bad
+data); clip frames, looping and holding; packing with no overlaps, padding
+and composing the image; tileset geometry with margin and spacing;
+tilemap editing, resizing and autotile masks (corners, edges, holes);
+solidity; the JSON round trip and its errors; batch order and merging;
+quad geometry for pivots, flips and a quarter turn; culling; the animator;
+components through reflection; and the pixel-perfect viewport at several
+window sizes.
