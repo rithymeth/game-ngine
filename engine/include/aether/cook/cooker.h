@@ -87,6 +87,10 @@ struct CookReport {
     pak::PatchReport patch;
     // A DLC cook: assets left out because the base archive has them.
     usize in_base = 0;
+    // Phase 26 step 1: the enabled plugins (dependency order), and the
+    // runtime modules the game starts, in start order.
+    std::vector<std::string> plugins;
+    std::vector<std::string> modules;
 };
 
 // Cooks a project. The archive holds:

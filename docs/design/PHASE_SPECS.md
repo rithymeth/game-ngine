@@ -4398,3 +4398,110 @@ library, and `aether_player`, the executable.
    targets), precompiled shaders and Blueprint bytecode (with the
    renderer's RHI path and the player running them), and drawing the
    scene in the player.
+
+## Phase 26: Ecosystem (templates, plugins, docs)
+
+The concept is in [ROADMAP.md Phase 26](../ROADMAP.md). Step 1 is the
+plugin system that templates, editor extensions and the 2D toolkit plug
+into.
+
+### 26.1 Plugins
+
+- **Descriptors** (`aether/plugin/plugin.h`): a plugin is a folder,
+  `<Name>/<Name>.aplugin`. The descriptor is JSON with `$type` "Plugin",
+  read through reflection, and holds:
+  - the plugin's name (an identifier that matches the folder), friendly
+    name, version, description, category and author;
+  - the oldest engine version it works with;
+  - whether it's enabled by default, and whether it has content;
+  - its dependencies (each with a name, a minimum version, and whether
+    it's optional);
+  - its modules (each with a name, Runtime or Editor, and a loading phase:
+    PreDefault, Default or PostDefault).
+
+  `CompareVersions` compares dotted versions. `CreatePluginScaffold` makes
+  a new plugin folder: a descriptor with one runtime module, and an empty
+  `Content/`.
+- **Modules** are code compiled into the executables that host plugins:
+  - A module class derives from `IModule` (`Startup`, `Shutdown`).
+  - It registers a factory under its name with `AETHER_MODULE`.
+  - `aether_module()` in `cmake/AetherModules.cmake` builds it as an
+    OBJECT library, so the registration links in. The player, both
+    editors and the tests get every module the build has
+    (`aether_link_modules`).
+- **`PluginManager`**:
+  - **Discovery**: it searches the engine's `plugins/` folder and the
+    project's `Plugins/`. A project plugin replaces an engine plugin of
+    the same name. Misnamed or unreadable plugins are skipped with
+    warnings.
+  - **Resolution**: it enables the project's `plugins`, those enabled by
+    default, and everything they need (each records why it's enabled). It
+    refuses:
+    - an unknown plugin;
+    - a missing or too-old required dependency (optional ones only warn);
+    - a plugin that needs a newer engine;
+    - a dependency cycle, named in the error ("A -> B -> C -> A").
+  - **Order**: enabled plugins come after their dependencies.
+  - **Modules**: they start by loading phase, then in plugin order. A game
+    gets runtime modules only, the editor both kinds. A module the
+    executable wasn't built with is a warning. The manager shuts its
+    modules down in reverse order.
+  - **Content**: `ContentMounts()` gives each enabled plugin's `Content/`
+    and its mount point, `Plugins/<Name>/`.
+  - `ResolveProjectPlugins` does all of this for a project.
+- **The engine's own plugins** (`plugins/`): Physics, Audio, Navigation,
+  AI (which needs Navigation) and Networking.
+  - Each has a descriptor (enabled by default) and a PreDefault runtime
+    module that registers its components, so scenes can name them.
+  - Each is built when its module is: a build without physics lists the
+    Physics plugin, but its module isn't there.
+- **The cooker**: it resolves the project's plugins, and fails when they
+  don't resolve. The manifest lists the enabled `plugins` and the runtime
+  `modules` in start order. Each enabled plugin's content is cooked into
+  `Content/Plugins/<Name>/`.
+- **The player**: before loading its first scene, `Game` starts the
+  manifest's modules, and shuts them down with the game. A module the
+  player wasn't built with is a warning.
+- **The editor**:
+  - The workspace resolves its project's plugins and runs their runtime
+    and editor modules.
+  - A new **Plugins** panel in the Project tools lists every plugin. Each
+    row has an enabled checkbox and shows the plugin's version, source,
+    category, modules (built in or not), description and dependencies.
+    It has a search box.
+  - Turning a plugin on saves it in the project, and what it needs comes
+    along. A change that doesn't resolve leaves the project as it was.
+    Plugins enabled by default, or needed by another, stay on.
+  - **New Plugin** makes one in the project's `Plugins/`.
+- **Tests**:
+  - **Descriptors**: they round trip, and bad types and names are
+    refused. Versions compare correctly, and scaffolding works.
+  - **Discovery and resolution**: a project plugin overrides an engine
+    one, and broken plugins are skipped. Dependencies come first, each
+    plugin records why it's enabled, and an optional dependency only
+    warns. An unknown plugin, an old dependency, a newer engine and a
+    cycle are each refused.
+  - **Modules**: they start by phase and dependency, editor modules start
+    only when asked, a missing module warns, and shutdown runs in reverse.
+  - **The engine's plugins**: they're found, and they resolve.
+  - **A project plugin, end to end**: one with a module, content and an
+    engine dependency is cooked. The cook reports it, refuses a missing
+    plugin, and the player starts the module and stops it with the game.
+  - **The Plugins panel**: default plugins stay on, New Plugin works, and
+    enabling saves to the project. A plugin with a missing dependency is
+    refused, leaving the project as it was.
+
+### 26.2 PR breakdown
+
+1. ✅ **Done.** Plugins (§26.1): descriptors, discovery, resolution,
+   modules, the engine's optional modules as plugins, and the cook,
+   player and editor wiring.
+2. Project templates (Blank, First-Person, Third-Person, Top-Down,
+   Vehicle; 2D Platformer after the 2D toolkit), each a small starter game,
+   and New Project from a template.
+3. The editor extensibility API: custom panels, property drawers, asset
+   types and menu items from C++ and from Luau editor scripts.
+4. The 2D toolkit: sprites, atlases, tilemaps and the tileset editor,
+   2D physics, 2D lights and a pixel-perfect camera.
+5. Documentation: the API reference from reflection, the manual, and
+   sample projects; version control status in the Content Browser.

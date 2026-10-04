@@ -4,6 +4,7 @@
 #include "aether/ecs/world.h"
 #include "aether/math/math.h"
 #include "aether/pak/vfs.h"
+#include "aether/plugin/plugin.h"
 #include "aether/project/project.h"
 #include "aether/scene/entity_guid.h"
 #include "aether/scene/lifecycle.h"
@@ -50,6 +51,9 @@ struct GameManifest {
     bool vsync = true;
     std::vector<QualityPreset> quality_presets;
     std::string default_quality;
+    // The enabled plugins, and the runtime modules to start, in order (§26.1).
+    std::vector<std::string> plugins;
+    std::vector<std::string> modules;
     std::vector<Asset> assets;
 };
 
@@ -136,6 +140,10 @@ public:
     // Problems found while loading (an unresolved prefab instance, ...).
     const std::vector<std::string>& Warnings() const { return warnings_; }
     static bool HasPhysics();
+    // The manifest's runtime modules, started before the first scene loads
+    // (and shut down with the game). Missing ones are warnings.
+    std::vector<std::string> StartModules();
+    std::vector<std::string> StartedModules() const;
 
 private:
     const PrefabData* FindPrefab(const assets::AssetGuid& guid);
@@ -154,6 +162,8 @@ private:
     GameStats stats_;
     struct Physics;
     std::unique_ptr<Physics> physics_;
+    std::vector<std::pair<std::string, std::unique_ptr<plugin::IModule>>> modules_;
+    bool modules_started_ = false;
 };
 
 } // namespace aether::player

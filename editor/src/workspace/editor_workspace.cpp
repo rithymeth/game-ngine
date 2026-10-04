@@ -9,6 +9,7 @@
 #include "audio/mixer_panel.h"
 #include "devtools/console_panel.h"
 #include "packaging/build_window.h"
+#include "packaging/plugins_panel.h"
 #include "devtools/crash_reporter.h"
 #include "devtools/profiler_panel.h"
 #include "graph/blueprint_editor.h"
@@ -161,6 +162,8 @@ struct EditorWorkspace::Impl {
     std::filesystem::path project_file;
     std::unique_ptr<ProjectSettingsPanel> project_settings;
     std::unique_ptr<BuildPackageWindow> build_window;
+    std::unique_ptr<PluginsPanel> plugins_panel;
+    plugin::PluginManager plugins; // the project's, with their modules started
 
     explicit Impl(std::filesystem::path project) : project_file(std::move(project)) {
         BuildBlueprint();
@@ -199,6 +202,13 @@ struct EditorWorkspace::Impl {
             {"Crash Reports", "Debug", [this] { DrawCrashReports(); }},
             {"Project Settings", "Project", [this] { DrawProjectTool(true); }},
             {"Build and Package", "Project", [this] { DrawProjectTool(false); }},
+            {"Plugins", "Project", [this] {
+                 if (plugins_panel) {
+                     plugins_panel->Draw();
+                 } else {
+                     ImGui::TextDisabled("No project is open.");
+                 }
+             }},
         };
     }
 
@@ -473,6 +483,9 @@ struct EditorWorkspace::Impl {
         if (project_file.empty()) return;
         project_settings = std::make_unique<ProjectSettingsPanel>(project_file);
         build_window = std::make_unique<BuildPackageWindow>(project_file);
+        plugins_panel = std::make_unique<PluginsPanel>(project_file);
+        // The project's plugins: their runtime and editor modules run in the editor.
+        if (plugin::ResolveProjectPlugins(project_file, plugins, &error)) plugins.StartModules(true, true);
     }
 
     void DrawProjectTool(bool settings) {

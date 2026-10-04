@@ -72,6 +72,8 @@ bool ParseGameManifest(std::string_view text, GameManifest& out, std::string* er
             }
         }
         g.default_quality = m.value("default_quality", "");
+        g.plugins = m.value("plugins", std::vector<std::string>{});
+        g.modules = m.value("modules", std::vector<std::string>{});
         if (const auto it = m.find("assets"); it != m.end() && it->is_array()) {
             for (const json& a : *it) {
                 GameManifest::Asset asset;
@@ -200,6 +202,33 @@ Game::Game(GamePackage& package) : package_(package), world_(std::make_unique<Wo
 Game::~Game() {
     EndPlay();
     physics_.reset(); // its bodies before the world they belong to
+    while (!modules_.empty()) {
+        modules_.back().second->Shutdown();
+        modules_.pop_back();
+    }
+}
+
+std::vector<std::string> Game::StartModules() {
+    std::vector<std::string> warnings;
+    if (modules_started_) return warnings;
+    modules_started_ = true;
+    for (const std::string& name : package_.Manifest().modules) {
+        std::unique_ptr<plugin::IModule> module = plugin::ModuleRegistry::Get().Create(name);
+        if (!module) {
+            warnings.push_back("The module '" + name + "' isn't built into this player");
+            AETHER_LOG_WARN("Player", "%s", warnings.back().c_str());
+            continue;
+        }
+        module->Startup(plugin::ModuleContext{});
+        modules_.push_back({name, std::move(module)});
+    }
+    return warnings;
+}
+
+std::vector<std::string> Game::StartedModules() const {
+    std::vector<std::string> names;
+    for (const auto& m : modules_) names.push_back(m.first);
+    return names;
 }
 
 const PrefabData* Game::FindPrefab(const assets::AssetGuid& guid) {
@@ -227,6 +256,7 @@ bool Game::LoadStartupScene(std::string* error) {
 }
 
 bool Game::LoadScene(const std::string& path, std::string* error) {
+    StartModules(); // their components, before the scene names them
     std::vector<u8> bytes;
     std::string read_error;
     if (!package_.ReadContent(path, bytes, &read_error)) {
