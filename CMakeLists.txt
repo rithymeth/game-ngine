@@ -107,6 +107,28 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
     SOURCE_SUBDIR build/cmake
 )
+# Phase 25: block-compressed textures (BC1-BC5 through rgbcx, BC7 through
+# bc7enc, with their decoders) - Rich Geldreich's bc7enc_rdo, MIT. Only the
+# library sources are built (its own CMakeLists builds command-line tools).
+FetchContent_Declare(
+    bc7enc
+    GIT_REPOSITORY https://github.com/richgel999/bc7enc_rdo.git
+    GIT_TAG b9438627eef73a1157e84201b6fa6eb2ffd6d9f0
+    SOURCE_SUBDIR do-not-build
+)
+FetchContent_MakeAvailable(bc7enc)
+add_library(aether_bcenc STATIC
+    ${bc7enc_SOURCE_DIR}/bc7enc.cpp
+    ${bc7enc_SOURCE_DIR}/bc7decomp.cpp
+    ${bc7enc_SOURCE_DIR}/rgbcx.cpp
+)
+target_include_directories(aether_bcenc SYSTEM PUBLIC ${bc7enc_SOURCE_DIR})
+if(MSVC)
+    target_compile_options(aether_bcenc PRIVATE /w)
+else()
+    target_compile_options(aether_bcenc PRIVATE -w)
+endif()
+
 set(_aether_shared_libs ${BUILD_SHARED_LIBS})
 set(BUILD_SHARED_LIBS OFF)
 FetchContent_MakeAvailable(lz4 zstd)

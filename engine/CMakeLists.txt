@@ -16,6 +16,7 @@ add_library(aether_engine STATIC
     src/pak/pak.cpp
     src/pak/vfs.cpp
     src/cook/cooker.cpp
+    src/cook/texture_cook.cpp
     src/math/math.cpp
     src/job/job_system.cpp
     src/ecs/archetype.cpp
@@ -54,7 +55,7 @@ target_include_directories(aether_engine PRIVATE ${stb_SOURCE_DIR})
 # of the JSON archive, and what schema migration hooks edit).
 target_link_libraries(aether_engine PUBLIC nlohmann_json::nlohmann_json)
 # .apak compression (Phase 25).
-target_link_libraries(aether_engine PRIVATE lz4_static libzstd_static)
+target_link_libraries(aether_engine PRIVATE lz4_static libzstd_static aether_bcenc)
 
 if(WIN32)
     target_sources(aether_engine PRIVATE

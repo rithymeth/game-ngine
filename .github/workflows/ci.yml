@@ -9,8 +9,9 @@
 #
 # Windows: MSVC builds everything, the D3D12 editor included, runs the
 # tests, and packages the editor (aether_editor.exe, its DLLs and the
-# assets) as a downloadable artifact. Pushing a tag v* also attaches the
-# package to a GitHub release.
+# assets) as a downloadable artifact. Pushing a tag v* - or running the
+# workflow by hand with a release_tag - also publishes the package as a
+# GitHub release.
 name: CI
 
 on:
@@ -19,6 +20,11 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Publish a GitHub release with this tag (e.g. v0.24.0), created on the commit being built; empty for a plain run"
+        required: false
+        default: ""
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -261,7 +267,9 @@ jobs:
 
   release:
     name: Release
-    if: startsWith(github.ref, 'refs/tags/v')
+    # A pushed v* tag, or a manual run given a release_tag (which creates
+    # the tag on the commit it built).
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
     needs: [linux, macos, windows]
     runs-on: ubuntu-24.04
     permissions:
@@ -275,3 +283,5 @@ jobs:
         with:
           files: AetherEditor-windows-x64.zip
           generate_release_notes: true
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          target_commitish: ${{ github.sha }}
