@@ -4,6 +4,7 @@
 #include "aether/reflection/serialize.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/serialization.h"
+#include "aether/sprite2d/components.h"
 
 #include <nlohmann/json.hpp>
 
@@ -276,6 +277,7 @@ bool Game::LoadStartupScene(std::string* error) {
 
 bool Game::LoadScene(const std::string& path, std::string* error) {
     StartModules(); // their components, before the scene names them
+    sprite2d::RegisterSprite2DComponents(); // sprites and tilemaps (§26.6)
     std::vector<u8> bytes;
     std::string read_error;
     if (!package_.ReadContent(path, bytes, &read_error)) {
