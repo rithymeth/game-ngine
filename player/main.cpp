@@ -7,6 +7,7 @@
 //   aether_player [--pak <file|dir>]... [--scene <path>] [--frames <n>]
 //                 [--headless] [--backend d3d12|vulkan] [--size <w>x<h>]
 //                 [--quality <preset>] [--key <64 hex digits>]
+//                 [--press <Key>]... [--report]
 //
 // Encrypted archives (§25.6) open with --key, or AETHER_PAK_KEY in the
 // environment, or the key a game's player was built with
@@ -25,6 +26,8 @@
 #include "aether/core/log.h"
 #include "aether/gfx/rhi/device.h"
 #include "aether/platform/window.h"
+#include "aether/scene/components.h"
+#include "aether/scene/gameplay.h"
 
 #include <algorithm>
 #include <chrono>
@@ -52,13 +55,15 @@ struct Options {
     u32 width = 0, height = 0; // 0: the project's
     std::string quality;
     std::vector<std::string> keys;
+    std::vector<std::string> pressed; // keys held for the whole run (headless runs, smoke tests)
+    bool report = false;              // print where the Player-tagged entity ended up
 };
 
 void Usage() {
     std::fprintf(stderr,
                  "usage: aether_player [--pak <file|dir>]... [--scene <path>] [--frames <n>] [--headless]\n"
                  "                     [--backend d3d12|vulkan] [--size <w>x<h>] [--quality <preset>]\n"
-                 "                     [--key <64 hex digits>]\n");
+                 "                     [--key <64 hex digits>] [--press <Key>]... [--report]\n");
 }
 
 bool ParseArgs(int argc, char** argv, Options& o) {
@@ -73,6 +78,10 @@ bool ParseArgs(int argc, char** argv, Options& o) {
             o.frames = std::atoll(argv[++i]);
         } else if (a == "--headless") {
             o.headless = true;
+        } else if (a == "--press" && has_value) {
+            o.pressed.push_back(argv[++i]);
+        } else if (a == "--report") {
+            o.report = true;
         } else if (a == "--key" && has_value) {
             o.keys.push_back(argv[++i]);
         } else if (a == "--quality" && has_value) {
@@ -216,6 +225,14 @@ int main(int argc, char** argv) {
             }
         }
 
+        for (const std::string& name : options.pressed) {
+            const input::Key key = input::KeyFromName(name);
+            if (key == input::Key::None) {
+                std::fprintf(stderr, "aether_player: no key named '%s'\n", name.c_str());
+                return 2;
+            }
+            game.Input().SetButton(key, true);
+        }
         game.BeginPlay();
         u64 fence = 0;
         auto last = std::chrono::steady_clock::now();
@@ -223,7 +240,7 @@ int main(int argc, char** argv) {
         for (i64 frame = 0; options.frames < 0 || frame < options.frames; ++frame) {
             if (window) {
                 if (!window->PumpMessages()) break;
-                (void)window->TakeEvents();
+                ApplyWindowEvents(window->TakeEvents(), game.Input());
                 if (window->IsMinimized()) continue;
             }
             const auto now = std::chrono::steady_clock::now();
@@ -250,17 +267,28 @@ int main(int argc, char** argv) {
             if (config != cook::BuildConfiguration::Shipping && now - last_stats >= std::chrono::seconds(1)) {
                 last_stats = now;
                 const GameStats s = game.Stats();
-                AETHER_LOG_INFO("Player", "frame %llu, %.1f s, %llu fixed steps, %zu entities, %zu bodies",
+                AETHER_LOG_INFO("Player", "frame %llu, %.1f s, %llu fixed steps, %zu entities, %zu bodies, %zu scripts, %zu Blueprints",
                                 static_cast<unsigned long long>(s.frames), s.time,
-                                static_cast<unsigned long long>(s.fixed_steps), s.entities, s.physics_bodies);
+                                static_cast<unsigned long long>(s.fixed_steps), s.entities, s.physics_bodies,
+                                s.script_instances, s.blueprint_instances);
             }
         }
         if (device) device->WaitForFence(fence);
+        if (options.report) {
+            for (const Entity e : FindEntitiesWithTag(game.GetWorld(), "Player")) {
+                if (const Transform* t = game.GetWorld().GetComponent<Transform>(e)) {
+                    std::printf("Player at (%.3f, %.3f, %.3f)\n", t->position.x, t->position.y, t->position.z);
+                }
+            }
+        }
         game.EndPlay();
         const GameStats s = game.Stats();
         AETHER_LOG_INFO("Player", "Ran %llu frames (%.2f s of game time, %llu fixed steps)",
                         static_cast<unsigned long long>(s.frames), s.time,
                         static_cast<unsigned long long>(s.fixed_steps));
+        for (const std::string& e : game.ScriptErrors()) AETHER_LOG_ERROR("Player", "script: %s", e.c_str());
+        for (const std::string& e : game.BlueprintErrors()) AETHER_LOG_ERROR("Player", "blueprint: %s", e.c_str());
+        if (s.script_errors + s.blueprint_errors > 0) return 3; // the game ran with errors
     } catch (const std::exception& e) {
         std::fprintf(stderr, "aether_player: %s\n", e.what());
         return 1;
