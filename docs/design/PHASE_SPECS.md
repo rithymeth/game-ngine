@@ -4019,3 +4019,76 @@ The editor's panels now run wherever Vulkan does. The D3D12 editor
 6. ✅ **Done.** macOS through MoltenVK, ARM through sse2neon, and the
    platform plugin structure for Android and consoles (§24.5). Phase 24
    is complete.
+
+## Phase 25: Build, cook and package
+
+The concept is in [ROADMAP.md Phase 25](../ROADMAP.md). A shipped game
+reads its content from a few archives through a virtual file system,
+cooked from the project by a command-line cooker and run by a player
+executable with no editor code. Step 1 is the archive format that
+everything else writes and reads.
+
+### 25.1 .apak archives and the virtual file system
+
+- **Format** (`aether/pak/pak.h`):
+  - **Header**: magic, version, entry count, and the index's offset,
+    size and CRC-32.
+  - **Data**: each entry's stored bytes, back to back.
+  - **Index**: at the end; per entry, its path, compression, offset,
+    stored and original sizes, and the CRC-32 of its original bytes.
+  - **Paths** are normalized to `/`-separated with no leading slash;
+    `..` is rejected.
+- **Compression**: LZ4 1.10 and zstd 1.5.7, both fetched by CMake and
+  BSD-licensed.
+  - Policies: `None`, `LZ4`, `Zstd`, or `Auto`, which uses zstd for
+    entries of 16 KiB and up and LZ4 below that.
+  - An entry that doesn't shrink by at least 1/32 is stored raw.
+- **Writing** (`PakWriter`):
+  - `Add` takes bytes or text, `AddFile` a file, `AddDirectory` a whole
+    tree, sorted so the archives are deterministic.
+  - `Write` writes a temporary file and renames it, so a crash never
+    leaves half an archive.
+  - `Build` returns the archive in memory.
+- **Reading** (`PakReader`):
+  - `Open` (a file) or `OpenMemory` checks the magic, the version, the
+    index bounds and the index CRC, and the bounds of every entry. Entry
+    data stays on disk until read.
+  - `Read` decompresses an entry and checks its CRC.
+  - `Verify` reads everything and lists the damaged entries.
+- **Virtual file system** (`aether/pak/vfs.h`):
+  - Directories and archives mount at mount points, each with a
+    priority. The highest priority wins; ties go to the later mount.
+  - So patch and DLC paks override the base pak, and a loose directory
+    on top overrides everything, for iterating on content.
+  - `Read`, `Exists`, `Resolve` (which mount a path comes from), and
+    `List` (every visible path, each once).
+- **`aether_pak`** (`tools/pak`): `create` (from a directory, with a
+  prefix and a compression policy), `list`, `extract` and `verify`.
+- **Tests**:
+  - Path normalization, and the CRC-32 check value.
+  - Round trips under every policy, including raw fallback for
+    incompressible data and empty entries.
+  - Damage: bad magic, truncation, a damaged index, a flipped data byte
+    (CRC), damaged zstd data.
+  - Files on disk, and deterministic order.
+  - The VFS's overrides, unmounting, mount points and in-memory
+    archives.
+- **CI**: the GCC job packs `assets/` with `aether_pak`, verifies the
+  archive, extracts it and compares the result with the original.
+
+### 25.2 PR breakdown
+
+1. ✅ **Done.** `.apak` archives, compression, the virtual file system
+   and `aether_pak` (§25.1).
+2. The cooker (`tools/aether-cook`): walk dependencies from the startup
+   scene and "always cook" assets, strip editor-only data, precompile
+   Blueprints, and write paks.
+3. Cooked asset formats: block-compressed textures (BC7, ASTC) and
+   precompiled shaders (DXIL, SPIR-V).
+4. The player (`player/`): the game without the editor, running the
+   startup scene from the mounted paks; Debug, Development and Shipping
+   configurations.
+5. Project settings (startup scene, window defaults, quality presets)
+   and the editor's Build and Package window, with progress, logs and
+   Launch.
+6. Patching and DLC paks, and optional archive encryption.
