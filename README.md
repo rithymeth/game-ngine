@@ -6000,7 +6000,7 @@ animation clips, packed or cut from a sheet), `Sprite` and `SpriteAnimator`
 components, tilesets (`.atileset`, with solid tiles and four-neighbour
 autotiles), tilemaps (`.atilemap`), draw batches sorted by layer, order and
 depth with view culling, and a pixel-perfect camera (whole-number scaling,
-snapping). The tileset editor, 2D physics and 2D lights come next.
+snapping). The **Tilemap** tool (under **2D**) paints, fills and erases on layers, sets solid tiles and edits autotile rules. 2D physics and 2D lights come next.
 
 **Extending the editor** (§26.5). Plugins, game modules and a project's
 own Luau scripts add panels, menus, Inspector property drawers and asset
