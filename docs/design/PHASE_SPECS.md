@@ -4491,14 +4491,96 @@ into.
     enabling saves to the project. A plugin with a missing dependency is
     refused, leaving the project as it was.
 
-### 26.2 PR breakdown
+### 26.2 Project templates
+
+New Project starts from a template: a project with a startup scene, a
+controller script, input bindings and a Blueprint. The templates have no
+art; each scene is entities with transforms, tags, a camera, a script and
+a Blueprint, so the starter is wired up and runs, and yours to dress.
+
+- **`aether/templates/templates.h`** (`templates/`, `Aether::Templates`):
+  - `ProjectTemplates()` lists them; `FindProjectTemplate` looks one up by id.
+  - Each has an id, name, genre, description and a list of its features.
+  - A template can be unavailable, with the reason. `CreateProjectFromTemplate`
+    refuses those, unknown ids, and whatever `CreateProject` refuses (a bad
+    name, a folder that isn't empty).
+- **The templates**:
+  - **Blank**: a Main scene with a camera and a Player Start, and nothing else.
+  - **First Person**: the player is the camera, at eye height.
+    `FirstPersonController.luau` walks, looks with the mouse or right stick,
+    and jumps.
+  - **Third Person**: a character, and a camera that orbits behind it.
+    `ThirdPersonController.luau` moves it relative to where the camera
+    looks, turns it to face where it runs, and keeps the camera at a set
+    distance.
+  - **Top Down**: `TopDownController.luau` moves a character along the
+    world's axes (up the screen is -Z), faces where it goes, and a tilted
+    camera follows from above.
+  - **Vehicle**: `VehicleController.luau` is an arcade car with
+    throttle, braking, drag, and steering that needs speed (reversed going
+    backwards), with a chase camera. Pickups are placed along a line ahead.
+  - **2D Platformer**: listed, but unavailable until the 2D toolkit
+    (step 4 in the breakdown below) exists.
+- **What a playable template creates**:
+  - `Scenes/Main.ascene`, set as the project's startup scene.
+  - `Scripts/<Controller>.luau`, whose top-level fields are the settings
+    the Inspector shows (speed, look speed, jump, gravity, camera distance).
+  - `Blueprints/BP_Pickup.abp`, a Blueprint that spins (Angle plus
+    delta times the instance-editable SpinSpeed, applied as a rotation
+    about +Y). The scene places pickups: a ring in the first three, a line
+    in the vehicle one.
+  - `Input/`: the Move action (WASD and the left stick), and for the
+    first and third person templates Look (mouse and right stick) and Jump
+    (Space and the A button), plus the `Gameplay` mapping context. The
+    stick Y axes are negated or swizzled to match the keys, since the
+    window layer reports GLFW's axes.
+  - `always_cook` lists `Input/`, since nothing in a scene refers to it.
+- **The asset database** now knows `.abp` files (as "Blueprint"). Before
+  this, a Blueprint in a project had no GUID, so a scene couldn't refer to
+  one, and the cooker wouldn't have found it.
+- **The editor**: a **New Project** tool in the Project category lists the
+  templates with their features and, for an unavailable one, why. It takes a
+  name and a folder (`AetherProjects` in the home folder by default). A
+  created project becomes the one the Project tools (settings, Build and
+  Package, Plugins) and the plugins' modules work on
+  (`EditorWorkspace::OpenProject`).
+- **Not yet**: the player doesn't run scripts, Blueprints or input yet (the
+  step 4 player only runs its lifecycle callbacks and physics), so a
+  packaged template shows the clear colour. The scripts and Blueprint run in
+  the tests with the scripting module, and in the editor's play mode once
+  it hosts them.
+- **Tests** (`test_templates.cpp`):
+  - The list, including the unavailable template, and every refusal.
+  - Blank's contents. Each playable template creates a project that loads,
+    whose assets are in the database under their GUIDs, whose scene refers
+    to them, that cooks (scene, script, Blueprint and bindings), and that
+    the player loads with no warnings.
+  - The Blueprint compiles and has its variables.
+  - **With scripting, each controller is run from its own bindings**:
+    - First person: a second of W at 5 m/s covers 5 m along -Z, diagonals
+      aren't faster, mouse and look turn it, and a jump leaves the floor and
+      lands back on it.
+    - Third person: the camera trails behind and above, running right
+      faces +X, orbiting the camera changes forward, and the distance holds.
+    - Top down: movement on the map's axes, facing, and the camera settling
+      above and behind at its tilt.
+    - Vehicle: no steering when still, 14 m/s after a second, a top speed,
+      turning right at speed, braking, reversing to the limit, and the chase
+      camera's distance.
+    - The scene's pickups spin a quarter turn in a second.
+  - The New Project panel creates a project, announces it, refuses a taken
+    name, the unavailable template and a bad name, and the workspace opens
+    it.
+
+### 26.3 PR breakdown
 
 1. ✅ **Done.** Plugins (§26.1): descriptors, discovery, resolution,
    modules, the engine's optional modules as plugins, and the cook,
    player and editor wiring.
-2. Project templates (Blank, First-Person, Third-Person, Top-Down,
-   Vehicle; 2D Platformer after the 2D toolkit), each a small starter game,
-   and New Project from a template.
+2. ✅ **Done.** Project templates (§26.2): Blank, First Person, Third
+   Person, Top Down and Vehicle, each a small starter game, and New
+   Project from a template. The 2D Platformer waits for the 2D toolkit.
+   Still to do: the player running scripts, Blueprints and input.
 3. The editor extensibility API: custom panels, property drawers, asset
    types and menu items from C++ and from Luau editor scripts.
 4. The 2D toolkit: sprites, atlases, tilemaps and the tileset editor,

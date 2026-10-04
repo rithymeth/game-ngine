@@ -273,6 +273,8 @@ include(cmake/AetherModules.cmake)
 aether_add_platform_plugins()
 # Blueprints (Phase 12): graph model, compiler and VM; engine-only, no fetches.
 add_subdirectory(blueprint)
+# Phase 26 step 2: project templates (they place Blueprints).
+add_subdirectory(templates)
 # The renderer's CPU side (Phase 14); engine-only, no fetches.
 add_subdirectory(renderer)
 # Animation (Phase 16); engine-only, no fetches.
