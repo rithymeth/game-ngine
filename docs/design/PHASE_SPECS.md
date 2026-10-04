@@ -4637,7 +4637,7 @@ say, not only its lifecycle callbacks and physics (§25.4).
    items and asset types from Luau editor scripts.
 4. The 2D toolkit. ✅ **Done so far** (§26.6): sprite atlases and
    animation, tilesets, tilemaps with autotiles, render batching and the
-   pixel-perfect camera, and the tilemap editor. Still to do: 2D physics,
+   pixel-perfect camera, the tilemap editor and 2D physics. Still to do:
    2D lights, and the 2D Platformer template.
 5. Documentation: the API reference from reflection, the manual, and
    sample projects; version control status in the Content Browser.
@@ -4769,3 +4769,41 @@ strokes, rectangles with corners in any order, flood fill regions and
 refilling with the same value, picking, autotile painting and rules,
 layers, solids and resizing with undo, saving both files, the panel
 drawing without editing anything, and the workspace's 2D tool.
+
+**2D physics** (`sprite2d/physics2d.h`). Box2D v3 was the plan; a compact
+solver of our own does what 2D games here need without another dependency
+to build on every platform. `Physics2D` steps a world's bodies:
+
+- **Components**: `Rigidbody2D` (static, kinematic or dynamic; mass, gravity
+  scale, damping, velocity) and `Collider2D` (a box of half extents or a
+  circle, an offset, friction, restitution, a trigger flag, a layer and a
+  mask). A collider with no body is static. Bodies move the Transform's x
+  and y; its z and rotation are left alone, and bodies don't rotate.
+- **Step**: gravity and damping, then movement, then candidate pairs by a
+  sweep along x, then sequential impulses over `iterations` passes with
+  positional correction (restitution only for impacts above 1 m/s, so a
+  resting body doesn't jitter, and friction limited by the normal impulse).
+  Frames longer than `max_step` are cut. Kinematic bodies move by their
+  velocity and push dynamic ones.
+- **Layers**: two colliders meet only if each one's layer is in the other's
+  mask.
+- **Triggers**: overlaps are reported and nothing is pushed.
+- **Tilemaps**: solid cells of every `TilemapRenderer`'s map collide as
+  static boxes (with the entity's position and pixels per unit). A contact
+  face whose neighbouring cell is also solid is dropped, so a body slides
+  over the seams between tiles without catching.
+- **Events**: `Events()` lists the last step's transitions: Begin, End,
+  TriggerEnter and TriggerExit, naming the moving body first (a tile
+  contact has a null second entity). A resting contact isn't a new Begin
+  every frame, and all the tiles a body touches count as one contact.
+- **Queries**: `IsGrounded` and `WallSide` for platformer controllers,
+  `Raycast` (bodies and solid tiles, with a layer mask; tiles are layer 1)
+  and `OverlapBox`.
+
+Tests (`test_sprite2d.cpp`, `Physics2D_*`): falling and resting on a floor
+with grounding; stacking; a heavy box pushing a light one; a circle's
+bounce, friction against none, and a kinematic platform; layer masks and
+trigger enter and exit; contact begin and end events; tile floors, running
+along seams at full speed, stopping at a wall with its side, and tile
+contact events; ray and overlap queries against boxes, circles and tiles;
+and the components through reflection.
