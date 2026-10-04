@@ -1,5 +1,7 @@
 #include "aether/player/game.h"
 
+#include "aether/sequencer/sequence_system.h"
+
 #include "aether/core/log.h"
 #include "aether/reflection/serialize.h"
 #include "aether/scene/gameplay.h"
@@ -201,6 +203,7 @@ bool Game::HasScripting() { return AETHER_GAME_SCRIPTING != 0; }
 // world, the GUID index and the input, so it's built per scene and torn down
 // before any of them.
 struct Game::Runtime {
+    std::unique_ptr<seq::SequenceSystem> sequences;
 #if AETHER_GAME_SCRIPTING
     script::LuauHost host;
     std::unique_ptr<script::ScriptSystem> scripts;
@@ -273,6 +276,26 @@ const PrefabData* Game::FindPrefab(const assets::AssetGuid& guid) {
     return slot.get();
 }
 
+const seq::LevelSequence* Game::FindSequence(const std::string& path) {
+    if (const auto it = sequences_.find(path); it != sequences_.end()) return it->second.get();
+    std::unique_ptr<seq::LevelSequence>& slot = sequences_[path]; // a miss is remembered as null
+    const GameManifest::Asset* asset = package_.FindAsset(path);
+    std::vector<u8> bytes;
+    if (!asset || !package_.ReadContent(asset->path, bytes)) {
+        warnings_.push_back("Sequence " + path + " isn't in the package (cook it: list its folder under always_cook)");
+        return nullptr;
+    }
+    const json j = json::parse(bytes.begin(), bytes.end(), nullptr, /*allow_exceptions=*/false);
+    auto data = std::make_unique<seq::LevelSequence>();
+    std::string error;
+    if (j.is_discarded() || !seq::SequenceFromJson(j, *data, &error)) {
+        warnings_.push_back("Sequence " + path + " can't be read" + (error.empty() ? "" : ": " + error));
+        return nullptr;
+    }
+    slot = std::move(data);
+    return slot.get();
+}
+
 bool Game::LoadStartupScene(std::string* error) {
     if (!package_.HasManifest() && !package_.LoadManifest(error)) return false;
     if (package_.Manifest().startup_scene.empty()) return Fail(error, "The game has no startup scene");
@@ -281,6 +304,8 @@ bool Game::LoadStartupScene(std::string* error) {
 
 bool Game::LoadScene(const std::string& path, std::string* error) {
     StartModules(); // their components, before the scene names them
+    RegisterSequenceComponents(); // SequenceComponent (§27.2)
+    sequences_.clear(); // the old scene's sequences go with its runtime (below)
     sprite2d::RegisterSprite2DComponents(); // sprites and tilemaps (§26.6)
     sprite2d::RegisterPhysics2DComponents(); // 2D bodies and colliders
     sprite2d::RegisterPlatformerComponents();
@@ -400,6 +425,32 @@ void Game::StartRuntime() {
         return !j.is_discarded() && bp::BlueprintFromJson(j, out);
     });
     runtime_->blueprints->Register(*lifecycle_);
+    // Sequences (§27): the system finds .asequence files by path, and spawns
+    // a Spawn key's prefab (a GUID or a path) at its place.
+    runtime_->sequences = std::make_unique<seq::SequenceSystem>(
+        *world_, guids_, [this](const std::string& path) { return FindSequence(path); }, lifecycle_.get());
+    runtime_->sequences->SetSpawner([this](const seq::Track&, Entity parent, const seq::SpawnKey& key) -> Entity {
+        assets::AssetGuid guid;
+        const GameManifest::Asset* asset = assets::ParseAssetGuid(key.prefab, guid) ? package_.FindAssetByGuid(key.prefab) : package_.FindAsset(key.prefab);
+        if (asset && !assets::ParseAssetGuid(asset->guid, guid)) asset = nullptr;
+        const PrefabData* data = asset ? FindPrefab(guid) : nullptr;
+        if (!data) {
+            warnings_.push_back("A sequence spawns '" + key.prefab + "', which isn't a prefab in the package");
+            return kNullEntity;
+        }
+        Transform placed{key.position, key.rotation};
+        if (!parent.IsNull()) {
+            if (const Transform* base = world_->GetComponent<Transform>(parent)) {
+                const Quaternion& q = base->rotation;
+                const Vec3 u(q.x, q.y, q.z);
+                const Vec3 rotated = key.position + u.Cross(u.Cross(key.position) + key.position * q.w) * 2.0f;
+                placed.position = base->position + rotated;
+                placed.rotation = base->rotation * key.rotation;
+            }
+        }
+        return InstantiatePrefab(*world_, guids_, guid, *data, &placed);
+    });
+    runtime_->sequences->MakeActive();
 #if AETHER_GAME_SCRIPTING
     runtime_->scripts = std::make_unique<script::ScriptSystem>(
         runtime_->host, *world_, guids_, [this](const assets::AssetGuid& guid, std::string& source, std::string& name) {
@@ -493,10 +544,34 @@ void Game::BuildFrame() {
     update.main_thread_only = true;
     update.run = [this](World&, const FrameContext& frame) { lifecycle_->Update(frame.dt); };
     scheduler_.Add(std::move(update));
+    // Level sequences (§27) animate after gameplay's Update and before
+    // scripts and Blueprints see their events.
+    SystemDesc sequencer;
+    sequencer.name = "Player.Sequencer";
+    sequencer.phase = SystemPhase::Update;
+    sequencer.after = {"Player.Update"};
+    sequencer.main_thread_only = true;
+    sequencer.run = [this](World&, const FrameContext& frame) {
+        if (!runtime_ || !runtime_->sequences) return;
+        runtime_->sequences->Update(frame.dt);
+        if (!runtime_->blueprints) return;
+        for (const seq::SequenceEvent& e : runtime_->sequences->Events()) {
+            if (e.kind == seq::SequenceEvent::Kind::Marker) {
+                const bp::VmValue args[] = {e.name, e.payload};
+                runtime_->blueprints->VM().Dispatch(e.entity, seq::SequenceSystem::kMarkerEvent, args);
+            } else if (e.kind == seq::SequenceEvent::Kind::Finished) {
+                const bp::VmValue args[] = {e.name};
+                runtime_->blueprints->VM().Dispatch(e.entity, seq::SequenceSystem::kFinishedEvent, args);
+            }
+            // Audio and Animation keys are collected for hosts with those systems; the player has none yet.
+        }
+    };
+    scheduler_.Add(std::move(sequencer));
     // Timers and Blueprint ticks run with the frame's Update.
     SystemDesc scripting;
     scripting.name = "Player.Scripting";
     scripting.phase = SystemPhase::Update;
+    scripting.after = {"Player.Sequencer"};
     scripting.main_thread_only = true;
     scripting.run = [this](World&, const FrameContext& frame) {
 #if AETHER_GAME_SCRIPTING

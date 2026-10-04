@@ -5,6 +5,8 @@
 #include "aether/project/project.h"
 #include "aether/scene/components.h"
 #include "aether/scene/gameplay.h"
+#include "aether/sequencer/sequence.h"
+#include "aether/sequencer/sequence_system.h"
 #include "aether/reflection/serialize.h"
 #include "test_framework.h"
 
@@ -236,6 +238,154 @@ AETHER_TEST(Player_PlaysWhatTheCookerCooked) {
     game.BeginPlay();
     for (int i = 0; i < 10; ++i) game.Tick(0.1f);
     CHECK(game.Stats().fixed_steps == 50); // 1 s at 50 Hz
+}
+
+// ---------------------------------------------------------------------------
+// Level sequences in the player (Phase 27 step 4, §27.4)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+seq::LevelSequence ShowSequence(const EntityGuid& actor, const std::string& prefab_path) {
+    seq::LevelSequence s;
+    s.duration = 2.0f;
+    seq::Track move;
+    move.id = "move";
+    move.type = seq::TrackType::Transform;
+    move.binding = actor;
+    move.channels = {seq::Channel{"x", {seq::Key{0, 0, seq::Interp::Linear, 0, 0}, seq::Key{1, 10, seq::Interp::Linear, 0, 0}}},
+                     seq::Channel{"y", {}}, seq::Channel{"z", {}}};
+    seq::Track spawn;
+    spawn.id = "crate";
+    spawn.type = seq::TrackType::Spawn;
+    seq::SpawnKey key;
+    key.time = 0.5f;
+    key.duration = 0.0f;
+    key.prefab = prefab_path;
+    key.position = Vec3(7, 8, 9);
+    spawn.spawns = {key};
+    s.tracks = {move, spawn};
+    return s;
+}
+
+} // namespace
+
+AETHER_TEST(Player_PlaysASequenceFromAPak) {
+    const stdfs::path dir = TestDir("Sequence");
+    const std::string prefab = assets::ToString(assets::NewAssetGuid());
+    const EntityGuid actor{0xA11CE, 0xB0B};
+    const json crate = {{"$type", "Prefab"},
+                        {"$version", 1},
+                        {"entities", json::array({{{"id", 1}, {"parent", 0}, {"components", {{"Transform", Transform3(0, 0, 0)}, {"Tags", TagsJson("Crate")}}}}})}};
+    SequenceComponent player_sequence;
+    player_sequence.sequence = "Sequences/Show.asequence";
+    player_sequence.auto_play = true;
+    const json scene = {{"$type", "Scene"},
+                        {"$version", 1},
+                        {"entities", json::array({{{"guid", ToString(actor)}, {"components", {{"Transform", Transform3(0, 0, 0)}, {"Tags", TagsJson("Actor")}}}},
+                                                  {{"components", {{"SequenceComponent", reflect::ToJson(player_sequence)}}}}})}};
+    json manifest = Manifest("Scenes/start.ascene", prefab);
+    manifest["assets"] = json::array({{{"guid", prefab}, {"path", "Prefabs/crate.aprefab"}, {"importer", "Prefab"}},
+                                      {{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/start.ascene"}, {"importer", "Scene"}},
+                                      {{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Sequences/Show.asequence"}, {"importer", "Sequence"}}});
+    pak::PakWriter writer;
+    writer.Add("Manifest.json", manifest.dump(2));
+    writer.Add("Content/Scenes/start.ascene", scene.dump(2));
+    writer.Add("Content/Prefabs/crate.aprefab", crate.dump(2));
+    writer.Add("Content/Sequences/Show.asequence", seq::SequenceToJson(ShowSequence(actor, "Prefabs/crate.aprefab")).dump(2));
+    const stdfs::path file = dir / "Game.apak";
+    std::string error;
+    CHECK(writer.Write(file.string(), &error));
+
+    GamePackage package;
+    CHECK(package.Mount(file.string(), 0, &error));
+    CHECK(package.LoadManifest(&error));
+    Game game(package);
+    CHECK(game.LoadStartupScene(&error));
+    game.BeginPlay();
+    const Entity mover = FindTagged(game.GetWorld(), "Actor");
+    CHECK(!mover.IsNull());
+    CHECK(FindTagged(game.GetWorld(), "Crate").IsNull()); // the prefab appears at t = 0.5
+    for (int i = 0; i < 4; ++i) game.Tick(0.25f); // t = 1.0
+    CHECK(std::fabs(game.GetWorld().GetComponent<Transform>(mover)->position.x - 10.0f) < 0.01f);
+    const Entity crate_entity = FindTagged(game.GetWorld(), "Crate");
+    CHECK(!crate_entity.IsNull());
+    if (!crate_entity.IsNull()) {
+        const Transform* t = game.GetWorld().GetComponent<Transform>(crate_entity);
+        CHECK(t->position.x == 7.0f && t->position.y == 8.0f && t->position.z == 9.0f);
+    }
+    for (int i = 0; i < 4; ++i) game.Tick(0.25f); // past the end: it stays at the last key
+    CHECK(std::fabs(game.GetWorld().GetComponent<Transform>(mover)->position.x - 10.0f) < 0.01f);
+    CHECK(game.Warnings().empty());
+}
+
+AETHER_TEST(Player_WarnsAboutAMissingSequence) {
+    const stdfs::path dir = TestDir("MissingSequence");
+    const std::string prefab = assets::ToString(assets::NewAssetGuid());
+    SequenceComponent c;
+    c.sequence = "Sequences/Nope.asequence";
+    c.auto_play = true;
+    const json scene = {{"$type", "Scene"},
+                        {"$version", 1},
+                        {"entities", json::array({{{"components", {{"SequenceComponent", reflect::ToJson(c)}}}}})}};
+    pak::PakWriter writer;
+    writer.Add("Manifest.json", Manifest("Scenes/start.ascene", prefab).dump(2));
+    writer.Add("Content/Scenes/start.ascene", scene.dump(2));
+    const stdfs::path file = dir / "Game.apak";
+    std::string error;
+    CHECK(writer.Write(file.string(), &error));
+    GamePackage package;
+    CHECK(package.Mount(file.string(), 0, &error));
+    CHECK(package.LoadManifest(&error));
+    Game game(package);
+    CHECK(game.LoadStartupScene(&error));
+    game.BeginPlay();
+    for (int i = 0; i < 3; ++i) game.Tick(0.1f);
+    CHECK(game.Warnings().size() == 1 && game.Warnings()[0].find("Nope.asequence") != std::string::npos); // once, not each frame
+}
+
+AETHER_TEST(Player_CooksSequencesAsAnAssetType) {
+    const stdfs::path dir = TestDir("CookedSequence");
+    ProjectPaths paths;
+    std::string error;
+    CHECK(CreateProject(dir, "Cinematic", &paths, &error));
+    const EntityGuid actor{0xCAFE, 0xF00D};
+    SequenceComponent c;
+    c.sequence = "Sequences/Move.asequence";
+    c.auto_play = true;
+    const json scene = {{"$type", "Scene"},
+                        {"$version", 1},
+                        {"entities", json::array({{{"guid", ToString(actor)}, {"components", {{"Transform", Transform3(0, 0, 0)}, {"Tags", TagsJson("Actor")}}}},
+                                                  {{"components", {{"SequenceComponent", reflect::ToJson(c)}}}}})}};
+    stdfs::create_directories(paths.content / "Scenes");
+    stdfs::create_directories(paths.content / "Sequences");
+    std::ofstream(paths.content / "Scenes/main.ascene", std::ios::binary) << scene.dump(2);
+    seq::LevelSequence s = ShowSequence(actor, "none");
+    s.tracks.pop_back(); // just the move
+    std::ofstream(paths.content / "Sequences/Move.asequence", std::ios::binary) << seq::SequenceToJson(s).dump(2);
+    ProjectSettings settings;
+    CHECK(LoadProject(paths.file, settings, &error));
+    settings.startup_scene = "Scenes/main.ascene";
+    settings.always_cook = {"Sequences/"}; // a scene names its sequences by path, which the cooker doesn't follow yet
+    CHECK(SaveProject(paths.file, settings, &error));
+    cook::CookOptions options;
+    options.project_file = paths.file;
+    options.output_dir = dir / "Build";
+    options.configuration = cook::BuildConfiguration::Shipping;
+    CHECK(cook::Cook(options).ok);
+
+    GamePackage package;
+    for (const std::string& pak : GamePackage::FindPaks(dir / "Build")) CHECK(package.Mount(pak));
+    CHECK(package.LoadManifest(&error));
+    const GameManifest::Asset* asset = package.FindAsset("Sequences/Move.asequence");
+    CHECK(asset != nullptr && asset->importer == "Sequence");
+    Game game(package);
+    CHECK(game.LoadStartupScene(&error));
+    game.BeginPlay();
+    for (int i = 0; i < 10; ++i) game.Tick(0.1f);
+    const Entity mover = FindTagged(game.GetWorld(), "Actor");
+    CHECK(!mover.IsNull() && std::fabs(game.GetWorld().GetComponent<Transform>(mover)->position.x - 10.0f) < 0.01f);
+    CHECK(game.Warnings().empty());
 }
 
 #if AETHER_TEST_PLAYER_PHYSICS
