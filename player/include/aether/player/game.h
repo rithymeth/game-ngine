@@ -4,6 +4,7 @@
 #include "aether/ecs/world.h"
 #include "aether/math/math.h"
 #include "aether/pak/vfs.h"
+#include "aether/project/project.h"
 #include "aether/scene/entity_guid.h"
 #include "aether/scene/lifecycle.h"
 #include "aether/scene/prefab.h"
@@ -42,10 +43,21 @@ struct GameManifest {
     Vec3 gravity{0.0f, -9.81f, 0.0f};
     std::vector<std::string> layers;
     std::vector<u32> collision_matrix;
+    // The window (§25.5): the title is the project's name unless set.
+    std::string window_title;
+    u32 window_width = 1280;
+    u32 window_height = 720;
+    bool vsync = true;
+    std::vector<QualityPreset> quality_presets;
+    std::string default_quality;
     std::vector<Asset> assets;
 };
 
 bool ParseGameManifest(std::string_view text, GameManifest& out, std::string* error = nullptr);
+
+// The preset to run with: `requested` if it names one, else the manifest's
+// default, else the first; null when there are none.
+const QualityPreset* ChooseQuality(const GameManifest& manifest, const std::string& requested = "");
 
 // The cooked game's files: one or more mounted .apak archives (or folders,
 // for a loose cook), later mounts with a higher priority winning.

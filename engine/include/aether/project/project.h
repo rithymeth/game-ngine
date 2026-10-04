@@ -21,6 +21,22 @@ namespace aether {
 //     Source/        C++ game module (optional)
 //     Saved/         layout, logs, autosaves      (not committed)
 //     Intermediate/  derived data cache, builds   (not committed)
+// A named set of rendering quality settings (Phase 25 step 5). The player
+// picks the project's default_quality, or the one given on its command line;
+// the renderer reads these when it draws through the RHI.
+struct QualityPreset {
+    std::string name;
+    f32 resolution_scale = 1.0f;  // of the window's size
+    u32 shadow_resolution = 2048; // per cascade, texels
+    u32 shadow_cascades = 4;
+    f32 view_distance = 1000.0f;  // metres
+    u32 msaa_samples = 1;         // 1, 2, 4 or 8
+    bool bloom = true;
+};
+
+// Low, Medium, High and Epic.
+std::vector<QualityPreset> DefaultQualityPresets();
+
 struct ProjectSettings {
     std::string name;
     std::string engine_version = kEngineVersion; // engine that last saved the project
@@ -41,7 +57,19 @@ struct ProjectSettings {
     // (every older project) has every layer colliding with every other.
     // Edit through SetLayersCollide (gameplay.h), which keeps it symmetric.
     std::vector<u32> collision_matrix;
+    // The packaged game's window (Phase 25 step 5). An empty title means the
+    // project's name.
+    std::string window_title;
+    u32 window_width = 1280;
+    u32 window_height = 720;
+    bool vsync = true;
+    // Rendering quality presets, and the one a packaged game starts with.
+    std::vector<QualityPreset> quality_presets = DefaultQualityPresets();
+    std::string default_quality = "High";
 };
+
+// The preset named `name` (exact), or null.
+const QualityPreset* FindQualityPreset(const ProjectSettings& settings, const std::string& name);
 
 inline constexpr const char* kProjectExtension = ".aproject";
 
@@ -81,6 +109,16 @@ bool EnsureProjectFolders(const ProjectPaths& paths, std::string* error);
 
 } // namespace aether
 
+AETHER_REFLECT(aether::QualityPreset, 1,
+    AETHER_FIELD(name, Field_EditAnywhere),
+    AETHER_FIELD(resolution_scale, Field_EditAnywhere, {.range_min = 0.25, .range_max = 2.0}),
+    AETHER_FIELD(shadow_resolution, Field_EditAnywhere, {.range_min = 256, .range_max = 8192, .units = "px"}),
+    AETHER_FIELD(shadow_cascades, Field_EditAnywhere, {.range_min = 1, .range_max = 4}),
+    AETHER_FIELD(view_distance, Field_EditAnywhere, {.range_min = 50, .range_max = 100000, .units = "m"}),
+    AETHER_FIELD(msaa_samples, Field_EditAnywhere, {.range_min = 1, .range_max = 8}),
+    AETHER_FIELD(bloom, Field_EditAnywhere)
+)
+
 AETHER_REFLECT(aether::ProjectSettings, 1,
     AETHER_FIELD(name, Field_EditAnywhere, {.category = "Project"}),
     AETHER_FIELD(engine_version, Field_ReadOnly, {.category = "Project"}),
@@ -90,5 +128,11 @@ AETHER_REFLECT(aether::ProjectSettings, 1,
     AETHER_FIELD(fixed_timestep_hz, Field_EditAnywhere, {.category = "Physics", .range_min = 10, .range_max = 480, .units = "Hz"}),
     AETHER_FIELD(gravity, Field_EditAnywhere, {.category = "Physics", .units = "m/s2"}),
     AETHER_FIELD(layers, Field_EditAnywhere, {.tooltip = "Collision layers; the first is always Default", .category = "Physics"}),
-    AETHER_FIELD(collision_matrix, Field_ReadOnly, {.tooltip = "Per layer, the mask of layers it collides with (edit in the collision matrix)", .category = "Physics"})
+    AETHER_FIELD(collision_matrix, Field_ReadOnly, {.tooltip = "Per layer, the mask of layers it collides with (edit in the collision matrix)", .category = "Physics"}),
+    AETHER_FIELD(window_title, Field_EditAnywhere, {.tooltip = "The packaged game's window title; empty for the project name", .category = "Window"}),
+    AETHER_FIELD(window_width, Field_EditAnywhere, {.category = "Window", .range_min = 320, .range_max = 7680, .units = "px"}),
+    AETHER_FIELD(window_height, Field_EditAnywhere, {.category = "Window", .range_min = 240, .range_max = 4320, .units = "px"}),
+    AETHER_FIELD(vsync, Field_EditAnywhere, {.tooltip = "Wait for the display's refresh when presenting", .category = "Window"}),
+    AETHER_FIELD(quality_presets, Field_EditAnywhere, {.category = "Quality"}),
+    AETHER_FIELD(default_quality, Field_EditAnywhere, {.tooltip = "The preset a packaged game starts with", .category = "Quality"})
 )

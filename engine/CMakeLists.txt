@@ -13,9 +13,11 @@ add_library(aether_engine STATIC
     src/platform/filesystem.cpp
     src/platform/window_events.cpp
     src/platform/platform_plugin.cpp
+    src/platform/process.cpp
     src/pak/pak.cpp
     src/pak/vfs.cpp
     src/cook/cooker.cpp
+    src/cook/package.cpp
     src/cook/texture_cook.cpp
     src/math/math.cpp
     src/job/job_system.cpp
@@ -219,3 +221,7 @@ endif()
 if(WIN32)
     target_link_libraries(aether_engine PRIVATE dbghelp)
 endif()
+
+# Phase 25 step 5: packaging finds the player this engine was built with
+# (player/), when there's none beside the running executable.
+target_compile_definitions(aether_engine PRIVATE AETHER_PLAYER_BUILD_PATH="$<TARGET_FILE:aether_player>")
