@@ -99,6 +99,14 @@ jobs:
         run: xvfb-run -a ./build/tests/aether_tests
       - name: Functional tests
         run: ./build/tools/functional/aether_functional --quiet --junit functional-results.xml
+      - name: Pack the assets
+        # Phase 25: assets/ into an .apak archive and back, byte for byte.
+        if: matrix.name == 'GCC'
+        run: |
+          ./build/tools/pak/aether_pak create assets.apak assets --prefix assets
+          ./build/tools/pak/aether_pak verify assets.apak
+          ./build/tools/pak/aether_pak extract assets.apak unpacked
+          diff -r assets unpacked/assets
       - name: Screenshot the editor shell
         # The portable editor (editor/shell) in a real window under Xvfb,
         # drawn through Vulkan on lavapipe; the last frame is kept.
