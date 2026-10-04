@@ -63,13 +63,18 @@ const QualityPreset* ChooseQuality(const GameManifest& manifest, const std::stri
 // for a loose cook), later mounts with a higher priority winning.
 class GamePackage {
 public:
+    // A key for encrypted archives (§25.6); give it before mounting them.
+    void AddKey(const pak::PakKey& key) { vfs_.AddKey(key); }
     // Mounts an archive or a folder; false (and `error`) if it can't.
     bool Mount(const std::string& source, int priority = 0, std::string* error = nullptr);
     // Every .apak in `directory`, sorted by name, so a later name (a patch) wins.
     static std::vector<std::string> FindPaks(const std::filesystem::path& directory);
 
-    // Reads and parses Manifest.json from the mounts.
+    // Reads and parses Manifest.json from the mounts, then merges each
+    // mounted DLC's DLC/<name>.json (its assets join the manifest's).
     bool LoadManifest(std::string* error = nullptr);
+    // The DLCs merged, by name.
+    const std::vector<std::string>& Dlcs() const { return dlcs_; }
     const GameManifest& Manifest() const { return manifest_; }
     bool HasManifest() const { return has_manifest_; }
 
@@ -86,6 +91,7 @@ private:
     pak::VirtualFileSystem vfs_;
     GameManifest manifest_;
     bool has_manifest_ = false;
+    std::vector<std::string> dlcs_;
     std::unordered_map<std::string, usize> by_path_, by_guid_;
 };
 

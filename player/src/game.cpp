@@ -126,6 +126,23 @@ bool GamePackage::LoadManifest(std::string* error) {
     }
     GameManifest manifest;
     if (!ParseGameManifest(text, manifest, error)) return false;
+    // DLCs: their manifests list their assets.
+    std::vector<std::string> dlcs;
+    for (const std::string& path : vfs_.List("DLC/")) {
+        if (path.size() < 5 || path.compare(path.size() - 5, 5, ".json") != 0) continue;
+        std::string dlc_text;
+        if (!vfs_.ReadText(path, dlc_text, &read_error)) return Fail(error, read_error);
+        const json d = json::parse(dlc_text, nullptr, /*allow_exceptions=*/false);
+        if (d.is_discarded() || !d.is_object() || d.value("$type", "") != "DlcManifest") {
+            return Fail(error, path + " isn't a DLC manifest");
+        }
+        GameManifest part;
+        json as_base = {{"$type", "CookManifest"}, {"$version", 1}, {"assets", d.value("assets", json::array())}};
+        if (!ParseGameManifest(as_base.dump(), part, error)) return false;
+        for (GameManifest::Asset& asset : part.assets) manifest.assets.push_back(std::move(asset));
+        dlcs.push_back(d.value("name", path.substr(4, path.size() - 9)));
+    }
+    dlcs_ = std::move(dlcs);
     manifest_ = std::move(manifest);
     by_path_.clear();
     by_guid_.clear();
@@ -278,6 +295,7 @@ void Game::BuildFrame() {
 #if AETHER_GAME_PHYSICS
         if (physics_) physics_->scene->Step(frame.fixed_dt);
 #else
+        (void)this; // no physics module: the step does nothing
         (void)frame;
 #endif
     };

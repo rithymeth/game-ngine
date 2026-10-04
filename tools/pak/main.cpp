@@ -5,6 +5,12 @@
 //   aether_pak list <archive.apak>
 //   aether_pak extract <archive.apak> <out-directory>
 //   aether_pak verify <archive.apak>
+//   aether_pak patch <base.apak> <updated.apak> <out.apak>
+//   aether_pak keygen
+//
+// Phase 25 step 6 (§25.6): --key <64 hex digits> (anywhere) encrypts what
+// create and patch write, and opens encrypted archives; keygen prints a new
+// random key.
 #include "aether/pak/pak.h"
 
 #include <cstdio>
@@ -25,13 +31,18 @@ int Usage() {
                  "  aether_pak create <out.apak> <directory> [--prefix p] [--compression auto|lz4|zstd|none]\n"
                  "  aether_pak list <archive.apak>\n"
                  "  aether_pak extract <archive.apak> <out-directory>\n"
-                 "  aether_pak verify <archive.apak>\n");
+                 "  aether_pak verify <archive.apak>\n"
+                 "  aether_pak patch <base.apak> <updated.apak> <out.apak>\n"
+                 "  aether_pak keygen\n"
+                 "  (any command takes --key <64 hex digits>)\n");
     return 2;
 }
 
+std::vector<PakKey> g_keys;
+
 bool Open(PakReader& reader, const char* file) {
     std::string error;
-    if (!reader.Open(file, &error)) {
+    if (!reader.Open(file, &error, g_keys)) {
         std::fprintf(stderr, "aether_pak: %s: %s\n", file, error.c_str());
         return false;
     }
@@ -40,9 +51,50 @@ bool Open(PakReader& reader, const char* file) {
 
 } // namespace
 
-int main(int argc, char** argv) {
+int main(int raw_argc, char** raw_argv) {
+    // --key <hex> may come anywhere; the rest are positional as before.
+    std::vector<char*> args;
+    for (int i = 0; i < raw_argc; ++i) {
+        if (std::strcmp(raw_argv[i], "--key") == 0 && i + 1 < raw_argc) {
+            PakKey key;
+            if (!PakKey::FromHex(raw_argv[++i], key)) {
+                std::fprintf(stderr, "aether_pak: --key takes 64 hex digits\n");
+                return 2;
+            }
+            g_keys.push_back(key);
+        } else {
+            args.push_back(raw_argv[i]);
+        }
+    }
+    const int argc = static_cast<int>(args.size());
+    char** argv = args.data();
+    if (argc >= 2 && std::strcmp(argv[1], "keygen") == 0) {
+        const PakKey key = PakKey::Generate();
+        std::printf("%s\n", key.ToHex().c_str());
+        return 0;
+    }
     if (argc < 3) return Usage();
     const std::string command = argv[1];
+
+    if (command == "patch") {
+        if (argc < 5) return Usage();
+        PakReader base, updated;
+        if (!Open(base, argv[2]) || !Open(updated, argv[3])) return 1;
+        PakWriter patch;
+        if (!g_keys.empty()) patch.SetEncryption(g_keys.front());
+        const PatchReport report = MakePatch(base, updated, patch);
+        std::string error;
+        if (!patch.Write(argv[4], &error)) {
+            std::fprintf(stderr, "aether_pak: %s\n", error.c_str());
+            return 1;
+        }
+        for (const std::string& p : report.added) std::printf("  added    %s\n", p.c_str());
+        for (const std::string& p : report.changed) std::printf("  changed  %s\n", p.c_str());
+        for (const std::string& p : report.removed) std::printf("  removed  %s\n", p.c_str());
+        std::printf("%s: %zu added, %zu changed, %zu removed, %zu unchanged\n", argv[4], report.added.size(),
+                    report.changed.size(), report.removed.size(), report.unchanged);
+        return 0;
+    }
 
     if (command == "create") {
         if (argc < 4) return Usage();
@@ -62,6 +114,7 @@ int main(int argc, char** argv) {
             }
         }
         PakWriter writer(policy);
+        if (!g_keys.empty()) writer.SetEncryption(g_keys.front());
         const usize added = writer.AddDirectory(argv[3], prefix);
         if (added == 0) {
             std::fprintf(stderr, "aether_pak: no files under %s\n", argv[3]);
