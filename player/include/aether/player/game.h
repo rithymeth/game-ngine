@@ -12,6 +12,7 @@
 #include "aether/scene/lifecycle.h"
 #include "aether/scene/prefab.h"
 #include "aether/scene/scheduler.h"
+#include "aether/sequencer/sequence.h"
 #include "aether/sprite2d/tilemap.h"
 
 #include <filesystem>
@@ -179,6 +180,8 @@ public:
 
 private:
     const PrefabData* FindPrefab(const assets::AssetGuid& guid);
+    // A level sequence by asset path (cached for the scene; null with a warning if unreadable).
+    const seq::LevelSequence* FindSequence(const std::string& path);
     void BuildFrame();
     void LoadInputAssets();
     void StartRuntime(); // scripts and Blueprints for the loaded scene
@@ -190,6 +193,7 @@ private:
     SystemScheduler scheduler_;
     std::unique_ptr<FrameLoop> loop_;
     std::unordered_map<assets::AssetGuid, std::unique_ptr<PrefabData>> prefabs_;
+    std::unordered_map<std::string, std::unique_ptr<seq::LevelSequence>> sequences_;
     std::string scene_;
     std::vector<std::string> warnings_;
     usize prefab_instances_ = 0;
