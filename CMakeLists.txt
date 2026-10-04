@@ -84,6 +84,34 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(nlohmann_json)
 
+# Phase 25: compression for .apak archives - LZ4 (fast) and zstd (small).
+# Both are BSD-licensed and built static with no command-line tools.
+set(LZ4_BUILD_CLI OFF CACHE BOOL "" FORCE)
+set(LZ4_BUILD_LEGACY_LZ4C OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    lz4
+    GIT_REPOSITORY https://github.com/lz4/lz4.git
+    GIT_TAG v1.10.0
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR build/cmake
+)
+set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_STATIC ON CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(ZSTD_LEGACY_SUPPORT OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    zstd
+    GIT_REPOSITORY https://github.com/facebook/zstd.git
+    GIT_TAG v1.5.7
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR build/cmake
+)
+set(_aether_shared_libs ${BUILD_SHARED_LIBS})
+set(BUILD_SHARED_LIBS OFF)
+FetchContent_MakeAvailable(lz4 zstd)
+set(BUILD_SHARED_LIBS ${_aether_shared_libs})
+
 if(AETHER_BUILD_PHYSICS)
     # Jolt defaults to the static MSVC runtime (/MT) on MSVC; our own targets
     # use the default dynamic runtime (/MD), and linking a /MT static lib
@@ -333,6 +361,8 @@ endif()
 
 # Phase 23: the functional test runner (headless, any platform).
 add_subdirectory(tools/functional)
+# Phase 25: the .apak archive tool.
+add_subdirectory(tools/pak)
 
 if(AETHER_BUILD_SANDBOX)
     add_subdirectory(sandbox)
