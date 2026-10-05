@@ -33,6 +33,13 @@ if(TARGET Aether::Interaction)
 else()
     target_compile_definitions(aether_game PUBLIC AETHER_KIT_INTERACTION=0)
 endif()
+# The quests genre kit (Phase 30 step 7c), when built.
+if(TARGET Aether::Quests)
+    target_link_libraries(aether_game PUBLIC Aether::Quests)
+    target_compile_definitions(aether_game PUBLIC AETHER_KIT_QUESTS=1)
+else()
+    target_compile_definitions(aether_game PUBLIC AETHER_KIT_QUESTS=0)
+endif()
 add_library(Aether::Game ALIAS aether_game)
 
 add_executable(aether_player main.cpp)
