@@ -3,6 +3,7 @@
 #include "aether/cook/cooker.h"
 #include "aether/ecs/world.h"
 #include "aether/input/actions.h"
+#include "aether/gameplay/gameplay_ability.h"
 #include "aether/gameplay/gameplay_effect.h"
 #include "aether/input/bindings.h"
 #include "aether/math/math.h"
@@ -222,6 +223,7 @@ private:
     void WatchSettingsLanguage(); // the settings' language is the Localization's
     void LoadLocalization(); // every StringTable asset in the package, once
     void LoadEffects();      // every GameplayEffect asset in the package
+    void LoadAbilities();    // every GameplayAbility asset (after the effects)
     // (Re)activates every input context with the settings' rebinds applied.
     void ActivateInputContexts();
     void StartRuntime(); // scripts and Blueprints for the loaded scene
@@ -253,6 +255,8 @@ private:
     gas::EffectLibrary effects_; // declared before runtime_, whose effect system refers to it
     std::vector<std::string> effect_warnings_;
     bool effects_loaded_ = false;
+    gas::AbilityLibrary abilities_;
+    bool abilities_loaded_ = false;
     bool input_loaded_ = false;
     struct Runtime;
     std::unique_ptr<Runtime> runtime_; // it holds references to the above

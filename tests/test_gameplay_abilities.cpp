@@ -1,11 +1,19 @@
 #include "test_framework.h"
 
 #include "aether/ecs/world.h"
+#include "aether/gameplay/ability_library.h"
 #include "aether/gameplay/ability_system.h"
+#include "aether/reflection/registry.h"
 #include "aether/gameplay/tag_container.h"
+#include "aether/assets/asset_guid.h"
+#include "aether/pak/pak.h"
+#include "aether/player/game.h"
 #include "aether/scene/components.h"
 
+#include <nlohmann/json.hpp>
+
 #include <cmath>
+#include <filesystem>
 
 // Phase 30 step 4a (§30.4): abilities, their activation checks, cost and
 // cooldown through effects, cancel and block by tags, and JSON.
@@ -234,4 +242,71 @@ AETHER_TEST(Ability_JsonRoundTripAndErrors) {
     good.cost = "ManaCost";
     good.cooldown = "ManaCost";
     CHECK(AbilityLibrary::CheckEffects(good, r.effects).rfind("ability.cooldown_not_timed", 0) == 0);
+}
+
+AETHER_TEST(Ability_BlueprintLibraryActsOnTheActiveSystem) {
+    const reflect::TypeInfo* type = reflect::TypeRegistry::Find("Abilities");
+    CHECK(type != nullptr && type->functions.size() == 9);
+    World world;
+    const Entity e = world.CreateEntity(Transform{Vec3(), Quaternion::Identity()});
+    CHECK(AbilitySystem::Active() == nullptr);
+    CHECK(!Abilities::GrantAbility(e, "Fireball") && Abilities::TryActivateAbility(e, "Fireball") == 0 && !Abilities::CanActivateAbility(e, "Fireball") && !Abilities::EndAbility(1));
+    Rig r;
+    CHECK(AbilitySystem::Active() == &r.ab);
+    CHECK(Abilities::IsAbilityGranted(r.e, "Fireball") && Abilities::CanActivateAbility(r.e, "Fireball") && !Abilities::IsAbilityActive(r.e, "Fireball"));
+    const i32 h = Abilities::TryActivateAbility(r.e, "Fireball");
+    CHECK(h > 0 && Abilities::IsAbilityActive(r.e, "Fireball") && Abilities::TryActivateAbility(r.e, "Fireball") == 0 && Abilities::CommitAbility(h));
+    CHECK(Abilities::EndAbility(h) && !Abilities::EndAbility(h) && !Abilities::CancelAbility(h));
+    CHECK(Abilities::RevokeAbility(r.e, "Fireball") && !Abilities::IsAbilityGranted(r.e, "Fireball"));
+    CHECK(std::string(FailReasonName(FailReason::CannotAfford)) == "cannot_afford");
+}
+
+AETHER_TEST(Ability_PlayerLoadsAssetsAndRunsThem) {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "aether_gameplay_ability_tests";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const nlohmann::json scene = {{"$type", "Scene"}, {"$version", 1}, {"entities", nlohmann::json::array()}};
+    const auto asset = [](const char* path, const char* importer) {
+        return nlohmann::json{{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", path}, {"importer", importer}};
+    };
+    const nlohmann::json manifest = {{"$type", "CookManifest"}, {"$version", 1}, {"project", "Demo"}, {"configuration", "Development"},
+                                     {"startup_scene", "Scenes/start.ascene"}, {"fixed_timestep_hz", 60.0}, {"gravity", {0.0, -9.81, 0.0}},
+                                     {"layers", {"Default"}}, {"collision_matrix", nlohmann::json::array()},
+                                     {"assets", nlohmann::json::array({asset("Scenes/start.ascene", "Scene"), asset("Effects/cost.aeffect", "GameplayEffect"),
+                                                                        asset("Abilities/dash.aability", "GameplayAbility"), asset("Abilities/bad.aability", "GameplayAbility")})},
+                                     {"files", nlohmann::json::array()}};
+    const nlohmann::json cost = {{"name", "DashCost"}, {"modifiers", nlohmann::json::array({{{"attribute", "Stamina"}, {"op", "add"}, {"magnitude", -10}}})}};
+    const nlohmann::json dash = {{"name", "Dash"}, {"cost", "DashCost"}, {"max_duration", 0.05}};
+    const nlohmann::json bad = {{"name", "Bad"}, {"cost", "NoSuchEffect"}};
+    pak::PakWriter writer;
+    writer.Add("Manifest.json", manifest.dump(2));
+    writer.Add("Content/Scenes/start.ascene", scene.dump(2));
+    writer.Add("Content/Effects/cost.aeffect", cost.dump(2));
+    writer.Add("Content/Abilities/dash.aability", dash.dump(2));
+    writer.Add("Content/Abilities/bad.aability", bad.dump(2));
+    const std::filesystem::path file = dir / "Game.apak";
+    std::string error;
+    CHECK(writer.Write(file.string(), &error));
+    player::GamePackage package;
+    CHECK(package.Mount(file.string(), 0, &error) && package.LoadManifest(&error));
+    player::Game game(package);
+    CHECK(game.LoadStartupScene(&error));
+    bool warned = false;
+    for (const std::string& w : game.Warnings()) warned = warned || (w.find("bad.aability") != std::string::npos && w.find("ability.unknown_effect") != std::string::npos);
+    CHECK(warned); // the ability naming a missing effect is reported
+    AbilitySystem* ab = AbilitySystem::Active();
+    CHECK(ab != nullptr && AttributeSystem::Active() != nullptr);
+    if (!ab) return;
+    AttributeSystem* attrs = AttributeSystem::Active();
+    const Entity e = game.GetWorld().CreateEntity(Transform{Vec3(), Quaternion::Identity()});
+    CHECK(attrs->Define(e, "Stamina", 30, 0, 30) && ab->Grant(e, "Dash") && !ab->Grant(e, "Bad"));
+    game.BeginPlay();
+    const auto res = ab->TryActivate(e, "Dash");
+    CHECK(res.handle != 0 && Near(attrs->Get(e, "Stamina"), 20));
+    game.Tick(0.016f);
+    CHECK(ab->Events().empty() && ab->IsActive(e, "Dash")); // Player.Abilities drained the events
+    for (int i = 0; i < 5; ++i) game.Tick(0.016f);
+    CHECK(!ab->IsActive(e, "Dash")); // timed out by the player's own tick
+    // The gameplay Blueprint libraries are registered in a program that only links the gameplay systems.
+    CHECK(reflect::TypeRegistry::Find("Effects") != nullptr && reflect::TypeRegistry::Find("Attributes") != nullptr && reflect::TypeRegistry::Find("GameplayTags") != nullptr);
 }

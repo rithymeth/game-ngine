@@ -18,6 +18,22 @@ TagContainer TagsOf(const GameplayAbility& def) {
 }
 } // namespace
 
+const char* FailReasonName(FailReason reason) {
+    switch (reason) {
+    case FailReason::None: return "none";
+    case FailReason::UnknownAbility: return "unknown_ability";
+    case FailReason::NotGranted: return "not_granted";
+    case FailReason::DeadOwner: return "dead_owner";
+    case FailReason::AlreadyActive: return "already_active";
+    case FailReason::MissingRequired: return "missing_required";
+    case FailReason::Blocked: return "blocked";
+    case FailReason::BlockedByAbility: return "blocked_by_ability";
+    case FailReason::Cooldown: return "cooldown";
+    case FailReason::CannotAfford: return "cannot_afford";
+    }
+    return "none";
+}
+
 AbilitySystem::AbilitySystem(World& world, AttributeSystem& attributes, EffectSystem& effects, const AbilityLibrary& abilities, const EffectLibrary& effect_library)
     : world_(world), attributes_(attributes), effects_(effects), abilities_(abilities), effect_library_(effect_library) {
     RegisterGameplayComponents();

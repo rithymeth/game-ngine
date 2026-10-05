@@ -3,6 +3,7 @@
 #include "aether/sequencer/sequence_system.h"
 
 #include "aether/core/log.h"
+#include "aether/gameplay/ability_system.h"
 #include "aether/gameplay/attribute_system.h"
 #include "aether/gameplay/effect_system.h"
 #include "aether/loc/localized_path.h"
@@ -220,6 +221,7 @@ struct Game::Runtime {
     std::unique_ptr<seq::SequenceSystem> sequences;
     std::unique_ptr<gas::AttributeSystem> attributes; // Phase 30
     std::unique_ptr<gas::EffectSystem> effects;
+    std::unique_ptr<gas::AbilitySystem> abilities;
 #if AETHER_GAME_SCRIPTING
     script::LuauHost host;
     std::unique_ptr<script::ScriptSystem> scripts;
@@ -392,6 +394,7 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     LoadInputAssets();
     LoadLocalization();
     LoadEffects();
+    LoadAbilities(); // after the effects they name
     EndPlay();
     runtime_.reset();
     physics2d_.reset();
@@ -536,6 +539,26 @@ void Game::LoadEffects() {
     }
 }
 
+void Game::LoadAbilities() {
+    if (abilities_loaded_) return;
+    abilities_loaded_ = true;
+    for (const GameManifest::Asset& asset : package_.Manifest().assets) {
+        if (asset.importer != "GameplayAbility") continue;
+        std::vector<u8> bytes;
+        std::string error;
+        if (!package_.ReadContent(asset.path, bytes, &error)) {
+            warnings_.push_back(error);
+            continue;
+        }
+        gas::GameplayAbility ability;
+        if (!gas::AbilityFromJson(std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size()), ability, &error) ||
+            !(error = gas::AbilityLibrary::CheckEffects(ability, effects_)).empty() || !abilities_.Register(std::move(ability), &error)) {
+            effect_warnings_.push_back(asset.path + ": " + error);
+            AETHER_LOG_WARN("Player", "%s: %s", asset.path.c_str(), error.c_str());
+        }
+    }
+}
+
 void Game::ActivateInputContexts() {
     const input::UserBindings* user = settings_ && !settings_->Get().bindings.overrides.empty() ? &settings_->Get().bindings : nullptr;
     i32 priority = 0;
@@ -558,6 +581,7 @@ void Game::StartRuntime() {
     // a Spawn key's prefab (a GUID or a path) at its place.
     runtime_->attributes = std::make_unique<gas::AttributeSystem>(*world_); // attributes of this scene's entities
     runtime_->effects = std::make_unique<gas::EffectSystem>(*world_, *runtime_->attributes, effects_);
+    runtime_->abilities = std::make_unique<gas::AbilitySystem>(*world_, *runtime_->attributes, *runtime_->effects, abilities_, effects_);
     runtime_->sequences = std::make_unique<seq::SequenceSystem>(
         *world_, guids_, [this](const std::string& path) { return FindSequence(path); }, lifecycle_.get());
     runtime_->sequences->SetSpawner([this](const seq::Track&, Entity parent, const seq::SpawnKey& key) -> Entity {
@@ -736,6 +760,42 @@ void Game::BuildFrame() {
         }
     };
     scheduler_.Add(std::move(effects));
+    // Abilities (§30.4) run after this frame's effects, so cooldown tags are current when scripts activate.
+    SystemDesc abilities;
+    abilities.name = "Player.Abilities";
+    abilities.phase = SystemPhase::Update;
+    abilities.after = {"Player.Update", "Player.Sequencer", "Player.Effects"};
+    abilities.main_thread_only = true;
+    abilities.run = [this](World&, const FrameContext& frame) {
+        if (!runtime_ || !runtime_->abilities) return;
+        runtime_->abilities->Update(frame.dt);
+        const std::vector<gas::AbilityEvent> events = runtime_->abilities->Events();
+        runtime_->abilities->ClearEvents();
+        if (!runtime_->blueprints) return;
+        for (const gas::AbilityEvent& e : events) {
+            using Kind = gas::AbilityEvent::Kind;
+            const i32 handle = static_cast<i32>(e.handle);
+            switch (e.kind) {
+            case Kind::Activated: {
+                const bp::VmValue args[] = {e.ability, handle};
+                runtime_->blueprints->VM().Dispatch(e.entity, gas::AbilitySystem::kActivatedEvent, args);
+                break;
+            }
+            case Kind::Ended:
+            case Kind::Cancelled: {
+                const bp::VmValue args[] = {e.ability, handle, e.kind == Kind::Cancelled};
+                runtime_->blueprints->VM().Dispatch(e.entity, gas::AbilitySystem::kEndedEvent, args);
+                break;
+            }
+            case Kind::Failed: {
+                const bp::VmValue args[] = {e.ability, std::string(gas::FailReasonName(e.reason))};
+                runtime_->blueprints->VM().Dispatch(e.entity, gas::AbilitySystem::kFailedEvent, args);
+                break;
+            }
+            }
+        }
+    };
+    scheduler_.Add(std::move(abilities));
     SystemDesc attributes;
     attributes.name = "Player.Attributes";
     attributes.phase = SystemPhase::Update;
@@ -757,7 +817,7 @@ void Game::BuildFrame() {
     SystemDesc scripting;
     scripting.name = "Player.Scripting";
     scripting.phase = SystemPhase::Update;
-    scripting.after = {"Player.Sequencer", "Player.Save", "Player.Attributes", "Player.Effects"};
+    scripting.after = {"Player.Sequencer", "Player.Save", "Player.Attributes", "Player.Effects", "Player.Abilities"};
     scripting.main_thread_only = true;
     scripting.run = [this](World&, const FrameContext& frame) {
 #if AETHER_GAME_SCRIPTING

@@ -229,6 +229,10 @@ void RegisterBuiltins(Registry& r) {
     // Gameplay (Phase 30 step 3): a lasting effect started or ended on an entity.
     AddEvent(r, "Event.OnEffectApplied", "Event OnEffectApplied", {Out("effect", kString), Out("handle", kInt)});
     AddEvent(r, "Event.OnEffectRemoved", "Event OnEffectRemoved", {Out("effect", kString), Out("handle", kInt)});
+    // Gameplay (Phase 30 step 4): an ability started, ended (or was cancelled) or couldn't activate.
+    AddEvent(r, "Event.OnAbilityActivated", "Event OnAbilityActivated", {Out("ability", kString), Out("handle", kInt)});
+    AddEvent(r, "Event.OnAbilityEnded", "Event OnAbilityEnded", {Out("ability", kString), Out("handle", kInt), Out("cancelled", kBool)});
+    AddEvent(r, "Event.OnAbilityFailed", "Event OnAbilityFailed", {Out("ability", kString), Out("reason", kString)});
     // VFX (Phase 19 step 4): a ParticleSystem's effect is over.
     AddEvent(r, "Event.OnParticleSystemFinished", "Event OnParticleSystemFinished", {Out("asset", kString)});
     // Navigation (Phase 20 step 3): a NavAgent's move ended (arrived, or failed).
