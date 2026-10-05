@@ -6,6 +6,7 @@
 #include "aether/input/bindings.h"
 #include "aether/math/math.h"
 #include "aether/pak/vfs.h"
+#include "aether/loc/localization.h"
 #include "aether/plugin/plugin.h"
 #include "aether/player/settings_apply.h"
 #include "aether/player/user_paths.h"
@@ -191,6 +192,10 @@ public:
     // the first write. Call before the first scene is loaded.
     void SetUserPaths(const UserPaths& paths);
     save::SaveSystem* Saves() { return saves_.get(); }
+    // The game's text (§29.2): the cooked `.astrings` tables merged, and the
+    // language, which follows Settings().language both ways. Always there; made
+    // the active Localization (the one Blueprints and scripts use) for this game's life.
+    loc::Localization& Localization() { return *localization_; }
     // The player's settings (always there; Load/Save are the host's to call).
     save::SettingsStore<save::GameSettings>& Settings() { return *settings_; }
     // Loads the settings file and applies it through `targets` (kept: later
@@ -204,6 +209,8 @@ private:
     const seq::LevelSequence* FindSequence(const std::string& path);
     void BuildFrame();
     void LoadInputAssets();
+    void WatchSettingsLanguage(); // the settings' language is the Localization's
+    void LoadLocalization(); // every StringTable asset in the package, once
     // (Re)activates every input context with the settings' rebinds applied.
     void ActivateInputContexts();
     void StartRuntime(); // scripts and Blueprints for the loaded scene
@@ -237,6 +244,10 @@ private:
     std::unique_ptr<Runtime> runtime_; // it holds references to the above
     // Saving: the world context points into the world, guids and lifecycle
     // above, so it is cleared before any of them goes.
+    std::unique_ptr<loc::Localization> localization_;
+    u64 localization_listener_ = 0;
+    bool localization_loaded_ = false;
+    std::vector<std::string> localization_warnings_;
     UserPaths user_paths_;
     std::unique_ptr<save::SaveSystem> saves_;
     std::unique_ptr<save::SettingsStore<save::GameSettings>> settings_;
