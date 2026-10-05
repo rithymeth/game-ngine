@@ -51,6 +51,10 @@ public:
     bool SetBase(Entity entity, const std::string& name, f32 base);
     bool AddBase(Entity entity, const std::string& name, f32 delta);
 
+    // Sets the effect modifiers on an attribute (§30.3) and recomputes its
+    // current value; an event is queued if that moved. False if it doesn't exist.
+    bool SetModifiers(Entity entity, const std::string& name, f32 add, f32 mul, bool has_override, f32 override_value);
+
     const std::vector<AttributeEvent>& Events() const { return events_; }
     void ClearEvents() { events_.clear(); }
 
