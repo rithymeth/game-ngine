@@ -6023,6 +6023,8 @@ snapping). The **Tilemap** tool (under **2D**) paints, fills and erases on layer
 
 **Font fallback** (§29.6). A font name can be a comma-separated chain, `"Roboto, NotoSansCJK, NotoEmoji"`: each character is drawn from the first font that has it, with that font's own atlas, so one line can mix scripts. A character in no font shows the first font's replacement glyph. UTF-8 decoding now rejects overlong and surrogate forms.
 
+**Localized assets** (§29.6). `Textures/logo.png` can have `Textures/logo.fr.png` and `Textures/logo.pt-BR.png`: `Game::LocalizedAsset(path)` (and `GamePackage::LocalizedPath`) gives the variant for the current language, following the fallback chain (pt-BR, pt, then the base). Variants are ordinary assets and cook as usual; a variant with no base asset is a player warning.
+
 **Documentation** (§26.7). The manual is in [docs/manual](docs/manual/README.md).
 The API reference is generated from the engine's reflection: run
 `aether_docgen --out api` for `API.md` (every component, struct and enum with

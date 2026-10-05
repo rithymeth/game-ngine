@@ -101,6 +101,12 @@ public:
     const GameManifest::Asset* FindAssetByGuid(std::string_view guid) const;
     // Content/<path>: an asset's (or a helper file's) bytes.
     bool ReadContent(const std::string& path, std::vector<u8>& out, std::string* error = nullptr) const;
+    // The path of `path`'s variant for `language` (Textures/logo.fr.png for
+    // Textures/logo.png), trying the language's fallback chain (§29.6), else `path`
+    // itself. Only cooked assets count.
+    std::string LocalizedPath(const std::string& path, const std::string& language, const std::string& default_language = "en") const;
+    // ReadContent of LocalizedPath.
+    bool ReadContentLocalized(const std::string& path, const std::string& language, std::vector<u8>& out, std::string* error = nullptr) const;
 
     pak::VirtualFileSystem& Files() { return vfs_; }
     const pak::VirtualFileSystem& Files() const { return vfs_; }
@@ -196,6 +202,9 @@ public:
     // language, which follows Settings().language both ways. Always there; made
     // the active Localization (the one Blueprints and scripts use) for this game's life.
     loc::Localization& Localization() { return *localization_; }
+    // A cooked asset's path for the game's current language (§29.6): its variant if
+    // there is one, else the asset itself.
+    std::string LocalizedAsset(const std::string& path) const { return package_.LocalizedPath(path, localization_->Language()); }
     // The player's settings (always there; Load/Save are the host's to call).
     save::SettingsStore<save::GameSettings>& Settings() { return *settings_; }
     // Loads the settings file and applies it through `targets` (kept: later
