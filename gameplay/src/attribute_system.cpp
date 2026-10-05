@@ -1,7 +1,11 @@
 #include "aether/gameplay/attribute_system.h"
 
 #include "aether/ecs/component.h"
+#include "aether/gameplay/ability_library.h"
 #include "aether/gameplay/ability_system.h"
+#include "aether/gameplay/attribute_library.h"
+#include "aether/gameplay/effect_library.h"
+#include "aether/gameplay/tag_library.h"
 #include "aether/gameplay/effect_system.h"
 #include "aether/gameplay/tag_container.h"
 
@@ -11,6 +15,9 @@ namespace {
 AttributeSystem* g_active = nullptr;
 }
 
+// The Blueprint libraries register where their headers are included, and take their
+// functions' addresses, so including them here is what links them in and makes them
+// available to any program that uses the gameplay systems (the player).
 void RegisterGameplayComponents() {
     (void)GetComponentId<AttributeSet>();
     (void)GetComponentId<TagContainer>();
