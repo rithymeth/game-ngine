@@ -5977,9 +5977,19 @@ at activation, so nothing extra is stored. Owned tags are reference-counted with
 effect-granted ones. `Update(dt)` ends an ability at its `max_duration` (event marked
 `timed_out`). Events: Activated, Ended, Cancelled, Failed (with the reason).
 
-Not done (step 4b): the `.aability` asset type and cook root, the player loading abilities and
-its `Player.Abilities` stage, the `Abilities` Blueprint library and
-`Event.OnAbilityActivated` / `OnAbilityEnded`. Deferred: latent tasks (wait for delay,
+Step 4b wires it in. `.aability` is an asset type (importer `GameplayAbility`) the cooker roots
+automatically. The player loads abilities after effects (an ability naming a missing effect,
+a non-instant cost or a cooldown that is not a timed tag-granting effect is a warning naming
+the asset), gives each scene an `AbilitySystem`, and a `Player.Abilities` stage (after
+`Player.Effects`) ticks it and sends the owner's Blueprint `Event.OnAbilityActivated`
+(ability, handle), `Event.OnAbilityEnded` (ability, handle, cancelled) and
+`Event.OnAbilityFailed` (ability, reason name). An ability's logic is the owner's graph: it
+hears Activated, does its work (the latent nodes included) and calls `EndAbility`. The
+`Abilities` Blueprint library has `GrantAbility`, `RevokeAbility`, `TryActivateAbility`
+(the handle, 0 on failure), `CanActivateAbility`, `CommitAbility`, `EndAbility`,
+`CancelAbility`, `IsAbilityActive` and `IsAbilityGranted`. The gameplay Blueprint libraries
+(tags, attributes, effects, abilities) now register wherever the gameplay systems are linked.
+Deferred: latent tasks (wait for delay,
 attribute change or gameplay event; a Blueprint graph can already use its latent nodes),
 a dedicated ability graph asset (an ability's logic runs in the owner's script graph),
 replication.
@@ -5993,8 +6003,8 @@ replication.
    and the system (done, §30.3); 3b assets, the player stage and the Blueprint library
    (done, §30.3).
 4. Abilities (`.aability`): cost, cooldown, required / blocked / cancel tags,
-   activate, commit, end. 4a data and system (done, §30.4); 4b assets, the player stage and
-   the Blueprint library; the latent tasks are deferred.
+   activate, commit, end. 4a data and system, 4b assets, the player stage and the Blueprint
+   library (done, §30.4); the latent tasks are deferred.
 5. Blueprint and Luau faces, the `Player.Gameplay` system, cook roots and a sample.
 6. The editor's attribute and effect debugger.
 7. Genre kits as optional plugins: inventory and items, the dialogue graph,
