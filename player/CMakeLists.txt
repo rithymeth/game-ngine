@@ -19,6 +19,13 @@ if(TARGET Aether::Scripting)
 else()
     target_compile_definitions(aether_game PRIVATE AETHER_GAME_SCRIPTING=0)
 endif()
+# The inventory genre kit (Phase 30 step 7a), when built.
+if(TARGET Aether::Inventory)
+    target_link_libraries(aether_game PUBLIC Aether::Inventory)
+    target_compile_definitions(aether_game PUBLIC AETHER_KIT_INVENTORY=1)
+else()
+    target_compile_definitions(aether_game PUBLIC AETHER_KIT_INVENTORY=0)
+endif()
 add_library(Aether::Game ALIAS aether_game)
 
 add_executable(aether_player main.cpp)

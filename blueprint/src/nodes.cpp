@@ -233,6 +233,12 @@ void RegisterBuiltins(Registry& r) {
     AddEvent(r, "Event.OnAbilityActivated", "Event OnAbilityActivated", {Out("ability", kString), Out("handle", kInt)});
     AddEvent(r, "Event.OnAbilityEnded", "Event OnAbilityEnded", {Out("ability", kString), Out("handle", kInt), Out("cancelled", kBool)});
     AddEvent(r, "Event.OnAbilityFailed", "Event OnAbilityFailed", {Out("ability", kString), Out("reason", kString)});
+    // Inventory kit (Phase 30 step 7a): items added, removed, equipped, unequipped and used.
+    AddEvent(r, "Event.OnItemAdded", "Event OnItemAdded", {Out("item", kString), Out("count", kInt)});
+    AddEvent(r, "Event.OnItemRemoved", "Event OnItemRemoved", {Out("item", kString), Out("count", kInt)});
+    AddEvent(r, "Event.OnItemEquipped", "Event OnItemEquipped", {Out("item", kString), Out("slot", kString)});
+    AddEvent(r, "Event.OnItemUnequipped", "Event OnItemUnequipped", {Out("item", kString), Out("slot", kString)});
+    AddEvent(r, "Event.OnItemUsed", "Event OnItemUsed", {Out("item", kString)});
     // VFX (Phase 19 step 4): a ParticleSystem's effect is over.
     AddEvent(r, "Event.OnParticleSystemFinished", "Event OnParticleSystemFinished", {Out("asset", kString)});
     // Navigation (Phase 20 step 3): a NavAgent's move ended (arrived, or failed).
