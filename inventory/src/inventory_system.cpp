@@ -1,6 +1,7 @@
 #include "aether/inventory/inventory_system.h"
 
 #include "aether/ecs/component.h"
+#include "aether/inventory/inventory_library.h" // registers the Blueprint library wherever the system is linked
 
 #include <algorithm>
 #include <cmath>

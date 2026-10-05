@@ -2,14 +2,24 @@
 
 #ifdef AETHER_TEST_HAS_INVENTORY
 
+#include "aether/assets/asset_guid.h"
 #include "aether/ecs/world.h"
 #include "aether/inventory/inventory_library.h"
 #include "aether/inventory/inventory_system.h"
 #include "aether/reflection/registry.h"
 #include "aether/reflection/serialize.h"
+#include "aether/pak/pak.h"
+#include "aether/player/game.h"
 #include "aether/scene/components.h"
+#if AETHER_TEST_HAS_SCRIPTING
+#include "aether/script/script_system.h"
+#endif
+
+#include <nlohmann/json.hpp>
+#include <filesystem>
 
 #include <cmath>
+#include <tuple>
 
 // Phase 30 step 7a (§30.8): item definitions, inventories, equipment and use.
 
@@ -234,5 +244,149 @@ AETHER_TEST(Inventory_BlueprintLibraryActsOnTheActiveSystem) {
     CHECK(Items::EquipItem(r.e, 1) || Items::EquipItem(r.e, 3) || Items::EquipItem(r.e, 0));
     CHECK(Items::GetEquippedItem(r.e, "Head") == "Helm" && Items::UnequipItem(r.e, "Head") && !Items::UseItem(r.e, 0));
 }
+
+namespace {
+
+nlohmann::json AssetEntry(const char* path, const char* importer, const assets::AssetGuid& guid = assets::NewAssetGuid()) {
+    return {{"guid", assets::ToString(guid)}, {"path", path}, {"importer", importer}};
+}
+
+// A package with a scene, a heal effect, a potion, and a bad item; `extra` adds assets (path, importer, content).
+std::filesystem::path MakePackage(const char* dir_name, const std::vector<std::tuple<std::string, std::string, std::string, assets::AssetGuid>>& extra) {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / dir_name;
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const nlohmann::json scene = {{"$type", "Scene"}, {"$version", 1}, {"entities", nlohmann::json::array()}};
+    nlohmann::json assets_json = nlohmann::json::array({AssetEntry("Scenes/start.ascene", "Scene"), AssetEntry("Effects/heal.aeffect", "GameplayEffect"),
+                                                        AssetEntry("Items/potion.aitem", "ItemDefinition"), AssetEntry("Items/bad.aitem", "ItemDefinition")});
+    for (const auto& [path, importer, content, guid] : extra) {
+        (void)content;
+        assets_json.push_back(AssetEntry(path.c_str(), importer.c_str(), guid));
+    }
+    const nlohmann::json manifest = {{"$type", "CookManifest"}, {"$version", 1}, {"project", "Demo"}, {"configuration", "Development"},
+                                     {"startup_scene", "Scenes/start.ascene"}, {"fixed_timestep_hz", 60.0}, {"gravity", {0.0, -9.81, 0.0}},
+                                     {"layers", {"Default"}}, {"collision_matrix", nlohmann::json::array()}, {"assets", assets_json}, {"files", nlohmann::json::array()}};
+    pak::PakWriter writer;
+    writer.Add("Manifest.json", manifest.dump(2));
+    writer.Add("Content/Scenes/start.ascene", scene.dump(2));
+    writer.Add("Content/Effects/heal.aeffect", nlohmann::json{{"name", "Heal"}, {"modifiers", nlohmann::json::array({{{"attribute", "Health"}, {"op", "add"}, {"magnitude", 25}}})}}.dump());
+    writer.Add("Content/Items/potion.aitem", nlohmann::json{{"name", "Potion"}, {"max_stack", 5}, {"use_effect", "Heal"}}.dump());
+    writer.Add("Content/Items/bad.aitem", nlohmann::json{{"name", "Bad"}, {"use_effect", "NoSuchEffect"}}.dump());
+    for (const auto& [path, importer, content, guid] : extra) {
+        (void)importer;
+        (void)guid;
+        writer.Add("Content/" + path, content);
+    }
+    const std::filesystem::path file = dir / "Game.apak";
+    std::string error;
+    writer.Write(file.string(), &error);
+    return file;
+}
+
+} // namespace
+
+AETHER_TEST(Inventory_PlayerLoadsItemsAndRunsTheSystem) {
+    const std::filesystem::path file = MakePackage("aether_inventory_player_tests", {});
+    std::string error;
+    player::GamePackage package;
+    CHECK(package.Mount(file.string(), 0, &error) && package.LoadManifest(&error));
+    player::Game game(package);
+    CHECK(game.LoadStartupScene(&error));
+    bool warned = false;
+    for (const std::string& w : game.Warnings()) warned = warned || (w.find("bad.aitem") != std::string::npos && w.find("item.unknown_effect") != std::string::npos);
+    CHECK(warned); // the item naming a missing effect is reported, the good one loads
+    InventorySystem* sys = InventorySystem::Active();
+    CHECK(sys != nullptr && gas::AttributeSystem::Active() != nullptr);
+    if (!sys) return;
+    gas::AttributeSystem* attrs = gas::AttributeSystem::Active();
+    const Entity e = game.GetWorld().CreateEntity(Transform{Vec3(), Quaternion::Identity()});
+    attrs->Define(e, "Health", 40, 0, 100);
+    game.BeginPlay();
+    CHECK(sys->Add(e, "Potion", 3) == 3 && sys->Add(e, "Bad", 1) == 0 && sys->Use(e, 0) && Near(attrs->GetBase(e, "Health"), 65));
+    game.Tick(0.016f);
+    CHECK(sys->Events().empty()); // Player.Inventory took them
+}
+
+#if AETHER_TEST_HAS_SCRIPTING
+AETHER_TEST(Inventory_ScriptsHearItemsAndUseTheTable) {
+    const assets::AssetGuid script_guid = assets::NewAssetGuid();
+    // The script counts what it hears in the entity's attributes, which the test reads back.
+    const std::string source = R"(
+local Hero = {}
+function Hero:OnItemAdded(item, count) Attributes.AddBase(self.entity, 'Added', count) end
+function Hero:OnItemUsed(item) Attributes.AddBase(self.entity, 'Used', 1) end
+function Hero:OnItemEquipped(item, slot) Attributes.AddBase(self.entity, 'Worn', 1) end
+function Hero:Run()
+    local e = self.entity
+    Inventory.Configure(e, 4, 0)
+    self.added = Inventory.Add(e, 'Potion', 4)
+    self.count = Inventory.Count(e, 'Potion')
+    self.has = Inventory.Has(e, 'Potion', 4) and not Inventory.Has(e, 'Potion', 5)
+    self.item = Inventory.GetSlotItem(e, 0)
+    self.slotCount = Inventory.GetSlotCount(e, 0)
+    self.split = Inventory.Split(e, 0, 1, 1)
+    self.moved = Inventory.Move(e, 1, 2)
+    self.used = Inventory.Use(e, 0)
+    self.weight = Inventory.GetWeight(e)
+    self.removed = Inventory.Remove(e, 'Potion', 1)
+    self.equipped = Inventory.GetEquipped(e, 'Head')
+end
+return Hero
+)";
+    const std::filesystem::path file = MakePackage("aether_inventory_script_tests", {{"Scripts/Hero.luau", "Script", source, script_guid}});
+    std::string error;
+    player::GamePackage package;
+    CHECK(package.Mount(file.string(), 0, &error) && package.LoadManifest(&error));
+    player::Game game(package);
+    CHECK(game.LoadStartupScene(&error));
+    ScriptComponent component;
+    component.script.guid = script_guid;
+    const Entity e = game.GetWorld().CreateEntity(IdComponent{NewEntityGuid()}, std::move(component));
+    game.BeginPlay();
+    gas::AttributeSystem* attrs = gas::AttributeSystem::Active();
+    InventorySystem* sys = InventorySystem::Active();
+    CHECK(attrs != nullptr && sys != nullptr && game.ScriptErrors().empty());
+    if (!attrs || !sys) return;
+    attrs->Define(e, "Health", 40, 0, 100);
+    attrs->Define(e, "Added", 0);
+    attrs->Define(e, "Used", 0);
+    attrs->Define(e, "Worn", 0);
+    // Drive the script's Run through the player's own script system: its methods run on events.
+    sys->Add(e, "Potion", 2);
+    sys->Use(e, 0);
+    game.Tick(0.016f);
+    CHECK(game.ScriptErrors().empty());
+    CHECK(Near(attrs->Get(e, "Added"), 2) && Near(attrs->Get(e, "Used"), 1)); // the script heard OnItemAdded and OnItemUsed
+}
+
+AETHER_TEST(Inventory_LuauTableActsOnTheSystem) {
+    Rig r;
+    script::LuauHost host;
+    // Entities come from scripts; use a ScriptSystem to give the host an entity value.
+    GuidIndex guids;
+    const assets::AssetGuid hero = assets::NewAssetGuid();
+    (void)GetComponentId<ScriptComponent>();
+    script::ScriptSystem scripts(host, r.world, guids, [&](const assets::AssetGuid& g, std::string& source, std::string& name) {
+        if (g != hero) return false;
+        source = "local H = {} function H:Run() local e = self.entity; Inventory.Configure(e, 3, 0); self.a = Inventory.Add(e, 'Coin', 150); self.n = Inventory.Count(e, 'Coin'); "
+                 "self.s = Inventory.GetSlotItem(e, 0); self.h = Inventory.Has(e, 'Coin', 150); self.r = Inventory.Remove(e, 'Coin', 50); self.w = Inventory.GetWeight(e) end return H";
+        name = "H.luau";
+        return true;
+    });
+    ScriptComponent component;
+    component.script.guid = hero;
+    const Entity e = r.world.CreateEntity(IdComponent{NewEntityGuid()}, std::move(component));
+    guids.Add(r.world.GetComponent<IdComponent>(e)->guid, e);
+    Lifecycle life(r.world, guids);
+    scripts.Register(life);
+    life.BeginPlay();
+    CHECK(!host.Run("return Inventory.Add(5, 'Coin', 1)").ok && !host.Run("return Inventory.Count(nil, 'Coin')").ok); // wrong-typed arguments are script errors
+    CHECK(scripts.SendEvent(e, "Run") && scripts.Errors().empty());
+    const auto num = [&](const char* f) { const auto v = scripts.GetField(e, f); return std::holds_alternative<f64>(v) ? std::get<f64>(v) : -999.0; };
+    CHECK(num("a") == 150.0 && num("n") == 150.0 && num("w") == 0.0 && r.sys.Count(e, "Coin") == 100);
+    CHECK(std::holds_alternative<std::string>(scripts.GetField(e, "s")) && std::get<std::string>(scripts.GetField(e, "s")) == "Coin");
+    life.EndPlay();
+}
+#endif
 
 #endif
