@@ -1,0 +1,53 @@
+// aether_mcp_server: a Model Context Protocol server for the Aether editor's
+// scene, over stdio. Point an MCP client at it, e.g. in Claude Code:
+//
+//   claude mcp add aether -- aether_mcp_server [--scene scene.json]
+//
+// stdout carries the protocol only; engine logging below Error is switched
+// off (errors go to stderr).
+
+#include "aether/core/log.h"
+#include "aether/scene/serialization.h"
+#include "core/commands.h"
+#include "editor_tools.h"
+
+#include <cstdio>
+#include <cstring>
+#include <iostream>
+
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
+
+int main(int argc, char** argv) {
+    using namespace aether;
+
+    Logger::Instance().SetMinLevel(LogLevel::Error);
+#ifdef _WIN32
+    _setmode(_fileno(stdin), _O_BINARY); // no CRLF translation on the protocol streams
+    _setmode(_fileno(stdout), _O_BINARY);
+#endif
+
+    mcp::RegisterBuiltinComponents();
+    mcp::EditorSession session;
+
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--scene") == 0 && i + 1 < argc) {
+            const char* path = argv[++i];
+            if (!LoadSceneJson(session.world, path)) {
+                std::fprintf(stderr, "aether_mcp_server: could not load scene %s\n", path);
+                return 1;
+            }
+            editor::EnsureAllGuids(session.world, session.guids);
+        } else {
+            std::fprintf(stderr, "usage: aether_mcp_server [--scene scene.json]\n");
+            return 1;
+        }
+    }
+
+    mcp::McpServer server("aether-editor", "0.1.0");
+    mcp::RegisterEditorTools(server, session);
+    server.RunStdio(std::cin, std::cout);
+    return 0;
+}

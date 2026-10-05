@@ -32,9 +32,6 @@ add_library(aether_editor_ui STATIC
     ../ai/bt_document.cpp
     ../ai/bt_editor.cpp
     ../ai/nav_panel.cpp
-    ../core/command_stack.cpp
-    ../core/commands.cpp
-    ../core/play_session.cpp
     ../core/recent_projects.cpp
     ../core/json_edit.cpp
 )
@@ -49,5 +46,5 @@ if(TARGET aether_net)
     target_link_libraries(aether_editor_ui PUBLIC Aether::Net)
 endif()
 target_include_directories(aether_editor_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
-target_link_libraries(aether_editor_ui PUBLIC Aether::Engine Aether::Blueprint Aether::Renderer Aether::Animation Aether::Audio Aether::UI Aether::VFX Aether::AI imgui_core)
+target_link_libraries(aether_editor_ui PUBLIC aether_editor_core Aether::Engine Aether::Blueprint Aether::Renderer Aether::Animation Aether::Audio Aether::UI Aether::VFX Aether::AI imgui_core)
 add_library(Aether::EditorUI ALIAS aether_editor_ui)
