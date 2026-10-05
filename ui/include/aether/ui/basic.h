@@ -14,6 +14,12 @@ public:
     explicit Text(std::string text = {}) : text(std::move(text)) {}
     const char* TypeName() const override { return "Text"; }
     std::string text;
+    // A string table key (Phase 29, §29.3). With one, the text shown is the
+    // key's translation in the current language (Localization::Active()),
+    // `text` being the source text it falls back to; with none, `text` is shown
+    // as it is. Setting `text` at runtime (UI.SetText, a binding) clears the key.
+    std::string text_key;
+    std::string Shown() const;
     f32 size = 24.0f;
     Color color;
     TextAlign justify = TextAlign::Left;

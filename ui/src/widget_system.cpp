@@ -36,6 +36,7 @@ void UI::SetText(const Entity& target, const std::string& widget, const std::str
     ui::Widget* w = Target(target, widget);
     if (auto* t = dynamic_cast<ui::Text*>(w)) {
         t->text = text;
+        t->text_key.clear(); // runtime text wins over a table key
     } else if (auto* ti = dynamic_cast<ui::TextInput*>(w)) {
         ti->SetText(text);
     } else if (w != nullptr) {
@@ -43,9 +44,22 @@ void UI::SetText(const Entity& target, const std::string& widget, const std::str
         for (usize i = 0; i < w->ChildCount(); ++i) {
             if (auto* inner = dynamic_cast<ui::Text*>(w->Child(i))) {
                 inner->text = text;
+                inner->text_key.clear();
                 return;
             }
         }
+    }
+}
+
+void UI::SetTextKey(const Entity& target, const std::string& widget, const std::string& key, const std::string& fallback) {
+    ui::Widget* w = Target(target, widget);
+    ui::Text* t = dynamic_cast<ui::Text*>(w);
+    if (t == nullptr && w != nullptr) {
+        for (usize i = 0; i < w->ChildCount() && t == nullptr; ++i) t = dynamic_cast<ui::Text*>(w->Child(i));
+    }
+    if (t != nullptr) {
+        t->text_key = key;
+        t->text = fallback;
     }
 }
 
