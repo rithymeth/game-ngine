@@ -5650,16 +5650,54 @@ node), localizing a binding's `format` string, tooltip and dropdown option keys,
 and a `LocText` JSON converter for scene and component fields (the gather step
 needs it).
 
-### 29.4 PR breakdown
+### 29.4 Gather, merge and .po files
+
+The gather step is `aether_loc` (tool in `tools/loc/`; the work is in
+`loc/` so it is tested headless):
+
+- **Gather** (`loc::GatherContent`) reads the JSON of every `.ascene`,
+  `.aprefab`, `.aui` and `.abp` under `Content/` and finds: a `text_key` /
+  `hint_key` (source: the sibling `text` / `hint`); a reflected `LocText` (an
+  object with a non-empty string `key` and `source` and nothing else but `$v`);
+  and a Blueprint `Localize.GetText` / `FormatInt` / `FormatString` or
+  `UI.SetTextKey` node whose `key` pin has a literal default (source: its
+  `default`). A key that comes from a linked pin can't be known and is a
+  warning. Keys are merged: the same key with two different texts is a
+  warning (the first by path is kept). It is a JSON walk, not the reflection
+  registry, so it needs no `LocText` converter; the `LocText` shape is the
+  heuristic.
+- **Merge** (`loc::MergeKeys`): a new key gets its text in the source language;
+  a changed source text is updated; **no translation is touched and no key is
+  removed**: keys nothing uses are only listed.
+- **PO** (`loc::ExportPo` / `ImportPo` / `PoLanguage`): one file per language,
+  `msgctxt` = the key, `msgid` = the source text, `msgstr` = the translation,
+  with a UTF-8 header and `Language:`. Import skips empty and `fuzzy`
+  entries (fuzzy with a warning) and obsolete ones, accepts the split-string
+  form and a `.po` with no `msgctxt` (the msgid is the key), and reports a
+  bad line by number. Plural forms are not used: write plurals inside the string (§29.1).
+- **`aether_loc <project.aproject>`**: `--strings` (default
+  `Localization/strings.astrings` under Content), `--source-language en`,
+  `--languages fr,de`, `--po-out <dir>`, `--po-in <dir|file.po>`, `--check`
+  (write nothing). It applies returned `.po` files, merges, writes the CSV back
+  and the `.po` files out, and prints the counts and the unused keys. Files are
+  deterministic, so a run with nothing new rewrites identical ones.
+
+Tests (`test_loc_tools.cpp`): gathering from each kind of content, merging
+and conflicts; the merge rules; `.po` export, round trip with escapes, and
+every import rule and error; and the whole sync (new strings, a returned
+translation, the second run changing nothing, `--check`, a damaged table).
+
+### 29.5 PR breakdown
 
 1. The core (done, §29.1).
 2. `.astrings` as a cooked asset type; a `Localization` service with a runtime
    language switch and a change event, wired to `GameSettings::language`
    (done, §29.2).
 3. Runtime UI text takes a key beside its text; Blueprints set it with
-   `UI.SetTextKey` (this step, §29.3).
-4. The gather step (every `LocText` in scenes, prefabs, Blueprints and
-   widgets), PO import and export, and a command-line tool.
+   `UI.SetTextKey` (done, §29.3).
+4. The gather step (every localizable string in scenes, prefabs, Blueprints
+   and widgets), PO import and export, and a command-line tool (this step,
+   §29.4).
 5. The editor's Localization dashboard (languages, completion, missing keys,
    pseudo-localization).
 6. Font fallback (Latin, then CJK, then emoji), localized assets, and
