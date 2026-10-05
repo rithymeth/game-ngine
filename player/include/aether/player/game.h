@@ -7,7 +7,12 @@
 #include "aether/math/math.h"
 #include "aether/pak/vfs.h"
 #include "aether/plugin/plugin.h"
+#include "aether/player/settings_apply.h"
+#include "aether/player/user_paths.h"
 #include "aether/project/project.h"
+#include "aether/save/save_system.h"
+#include "aether/save/settings.h"
+#include "aether/save/world_state.h"
 #include "aether/scene/entity_guid.h"
 #include "aether/scene/lifecycle.h"
 #include "aether/scene/prefab.h"
@@ -178,6 +183,21 @@ public:
     std::vector<std::string> StartModules();
     std::vector<std::string> StartedModules() const;
 
+    // Saving (Phase 28 step 6, §28.7). Give the game its player folders and it
+    // opens a SaveSystem (made the active one, which SaveGames in Blueprints
+    // and Luau use) over `paths.saves`, its world context following each
+    // loaded scene, and a settings store over `paths.settings`. Without this
+    // call there is no save system (Saves() is null). The folders are made on
+    // the first write. Call before the first scene is loaded.
+    void SetUserPaths(const UserPaths& paths);
+    save::SaveSystem* Saves() { return saves_.get(); }
+    // The player's settings (always there; Load/Save are the host's to call).
+    save::SettingsStore<save::GameSettings>& Settings() { return *settings_; }
+    // Loads the settings file and applies it through `targets` (kept: later
+    // changes made with Settings().Set apply to them too). Returns the
+    // warnings (a damaged file gives the defaults, with a line saying so).
+    std::vector<std::string> LoadSettings(const SettingsTargets& targets);
+
 private:
     const PrefabData* FindPrefab(const assets::AssetGuid& guid);
     // A level sequence by asset path (cached for the scene; null with a warning if unreadable).
@@ -212,7 +232,16 @@ private:
     input::InputAssetLibrary input_library_;
     bool input_loaded_ = false;
     struct Runtime;
-    std::unique_ptr<Runtime> runtime_; // last: it holds references to the above
+    std::unique_ptr<Runtime> runtime_; // it holds references to the above
+    // Saving: the world context points into the world, guids and lifecycle
+    // above, so it is cleared before any of them goes.
+    UserPaths user_paths_;
+    std::unique_ptr<save::SaveSystem> saves_;
+    std::unique_ptr<save::SettingsStore<save::GameSettings>> settings_;
+    save::WorldTracker tracker_;
+    SettingsTargets settings_targets_;
+    u64 settings_observer_ = 0;
+    void RefreshSaveContext();
 };
 
 } // namespace aether::player
