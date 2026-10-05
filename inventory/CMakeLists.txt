@@ -10,4 +10,5 @@ add_library(aether_inventory STATIC
 target_include_directories(aether_inventory PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aether_inventory PUBLIC cxx_std_20)
 target_link_libraries(aether_inventory PUBLIC Aether::Gameplay)
+aether_warnings_as_errors(aether_inventory)
 add_library(Aether::Inventory ALIAS aether_inventory)

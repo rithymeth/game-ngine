@@ -93,6 +93,14 @@ jobs:
           -DAETHER_BUILD_PHYSICS=${{ matrix.physics }}
           -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_SANDBOX=OFF
           -DAETHER_PLATFORM_PLUGINS=platforms/example
+      - name: Module graph
+        # Phase 37 step 2: no dependency cycles, and links go down the layers in
+        # docs/design/module_layers.txt. Advisory for now (it becomes required
+        # once it has been green for a while).
+        continue-on-error: true
+        run: |
+          cmake --graphviz=build/graph.dot build
+          python3 tools/check_module_graph.py --dot build/graph.dot
       - name: Build
         run: cmake --build build --parallel
       - name: Unit tests
@@ -105,6 +113,18 @@ jobs:
         run: xvfb-run -a ./build/tests/aether_tests
       - name: Functional tests
         run: ./build/tools/functional/aether_functional --quiet --junit functional-results.xml
+      - name: Benchmarks
+        # Phase 38 step 1: the report is kept as an artifact; the regression gate comes with
+        # the baselines (step 6).
+        if: matrix.name == 'GCC'
+        run: ./build/bench/aether_bench --repeat 5 --json bench-report.json
+      - name: Upload the benchmark report
+        if: matrix.name == 'GCC' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-report
+          path: bench-report.json
+          if-no-files-found: ignore
       - name: Pack the assets
         # Phase 25: assets/ into an .apak archive and back, byte for byte.
         if: matrix.name == 'GCC'
@@ -271,6 +291,114 @@ jobs:
         with:
           name: functional-results-windows
           path: functional-results.xml
+          if-no-files-found: ignore
+
+  # Phase 37 step 6 (docs/design/UPGRADE_PLAN.md): extra analysis gates. They are advisory
+  # (continue-on-error) until they have been clean for a while, then they become required.
+  tsan:
+    name: Linux (TSan, advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: >
+          sudo apt-get update && sudo apt-get install -y ninja-build xvfb
+          libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+          libvulkan-dev glslang-dev glslang-tools spirv-tools mesa-vulkan-drivers
+      - name: Cache fetched dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-linux-tsan-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: deps-linux-tsan-
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          "-DCMAKE_CXX_FLAGS=-fsanitize=thread -fno-omit-frame-pointer"
+          -DAETHER_BUILD_PHYSICS=OFF -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_SANDBOX=OFF
+      - name: Build the tests
+        run: cmake --build build --target aether_tests --parallel
+      - name: Threaded tests under TSan
+        env:
+          AETHER_TEST_FILTER: JobSystem_,Audio_SpscQueue,Audio_ThreadedMixer,Net_,NetPlay_,Streaming_
+          TSAN_OPTIONS: halt_on_error=1 second_deadlock_stack=1 suppressions=${{ github.workspace }}/tools/tsan_suppressions.txt
+        run: xvfb-run -a ./build/tests/aether_tests
+
+  clang-tidy:
+    name: clang-tidy (changed files, advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install tools
+        run: >
+          sudo apt-get update && sudo apt-get install -y ninja-build clang clang-tidy
+          libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+          libvulkan-dev glslang-dev glslang-tools spirv-tools
+      - name: Cache fetched dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-linux-tidy-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: deps-linux-tidy-
+      - name: Configure
+        env:
+          CC: clang
+          CXX: clang++
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+          -DAETHER_BUILD_PHYSICS=OFF -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_SANDBOX=OFF
+      - name: Tidy the changed files
+        run: |
+          files=$(git diff --name-only --diff-filter=d origin/${{ github.base_ref }}...HEAD -- '*.cpp' | grep -E '^(engine|gameplay|inventory|interaction|quests|save|loc)/' || true)
+          if [ -z "$files" ]; then echo "no engine or kit sources changed"; exit 0; fi
+          clang-tidy -p build $files
+
+  # Phase 47 step 1 (docs/design/UPGRADE_PLAN.md): libFuzzer on the loaders, for a fixed time each. Advisory
+  # for now; the checked-in corpus also runs as a regression test (ctest fuzz_replay_*) in every job.
+  fuzz:
+    name: Fuzz (Clang, advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: >
+          sudo apt-get update && sudo apt-get install -y ninja-build clang libclang-rt-dev
+          libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+          libvulkan-dev glslang-dev glslang-tools spirv-tools
+      - name: Cache fetched dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-linux-fuzz-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: deps-linux-fuzz-
+      - name: Configure
+        env:
+          CC: clang
+          CXX: clang++
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DAETHER_BUILD_FUZZERS=ON
+          -DAETHER_BUILD_PHYSICS=OFF -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_SANDBOX=OFF -DAETHER_BUILD_TESTS=OFF
+      - name: Build the fuzzers
+        run: cmake --build build --target aether_fuzz_pak aether_fuzz_scene aether_fuzz_blueprint aether_fuzz_gameplay --parallel
+      - name: Fuzz
+        run: |
+          for t in pak scene blueprint gameplay; do
+            mkdir -p work/$t
+            cp -r tools/fuzz/corpus/$t/. work/$t/
+            ./build/tools/fuzz/aether_fuzz_$t -max_total_time=60 -rss_limit_mb=2048 -timeout=10 work/$t
+          done
+      - name: Keep any crash inputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes
+          path: crash-*
           if-no-files-found: ignore
 
   release:

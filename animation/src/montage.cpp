@@ -1,4 +1,5 @@
 #include "aether/animation/montage.h"
+#include "aether/core/json_util.h"
 
 #include <algorithm>
 #include <set>
@@ -69,7 +70,7 @@ bool MontageFromJson(const json& j, Montage& out, std::string* error) {
         return false;
     };
     if (!j.is_object() || j.value("$type", "") != "Montage") return fail("not a montage file");
-    if (j.value("$version", 0) > kFormatVersion) return fail("saved by a newer version of the engine");
+    if (JsonVersion(j) > kFormatVersion) return fail("saved by a newer version of the engine");
     Montage m;
     m.name = j.value("name", "");
     m.clip = j.value("clip", "");

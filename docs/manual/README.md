@@ -17,6 +17,8 @@ it works inside.
 11. [Interaction](11-interaction.md): the interaction genre kit.
 12. [Quests](12-quests.md): the quests genre kit.
 
+Also: [API stability](api_stability.md), what "stable", "experimental" and "internal" mean and how to deprecate.
+
 The sample projects are the templates: **Blank**, **First Person**, **Third
 Person**, **Top Down**, **Vehicle** and **2D Platformer**, in the editor's
 **New Project** tool. Each one is a small game that runs, so read them as

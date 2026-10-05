@@ -2,6 +2,8 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstddef>
+#include <cstdlib>
 #include <functional>
 #include <string>
 #include <vector>
@@ -35,9 +37,28 @@ inline const char*& CurrentTest() {
     return name;
 }
 
+// AETHER_TEST_FILTER=Job,Audio runs only the tests whose name contains one of the comma-separated
+// pieces (used by the thread-sanitizer job to run the threaded tests); unset runs everything.
+inline bool Selected(const std::string& name) {
+    const char* filter = std::getenv("AETHER_TEST_FILTER");
+    if (filter == nullptr || *filter == '\0') return true;
+    const std::string list = filter;
+    std::size_t begin = 0;
+    while (begin <= list.size()) {
+        const std::size_t end = list.find(',', begin) == std::string::npos ? list.size() : list.find(',', begin);
+        const std::string piece = list.substr(begin, end - begin);
+        if (!piece.empty() && name.find(piece) != std::string::npos) return true;
+        begin = end + 1;
+    }
+    return false;
+}
+
 inline int RunAll() {
     int passed = 0;
+    std::size_t ran = 0;
     for (auto& test : Registry()) {
+        if (!Selected(test.name)) continue;
+        ++ran;
         int before = FailureCount();
         CurrentTest() = test.name.c_str();
         test.fn();
@@ -49,7 +70,7 @@ inline int RunAll() {
             std::printf("[FAIL] %s\n", test.name.c_str());
         }
     }
-    std::printf("\n%d/%zu tests passed\n", passed, Registry().size());
+    std::printf("\n%d/%zu tests passed\n", passed, ran);
     return FailureCount() == 0 ? 0 : 1;
 }
 
