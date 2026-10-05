@@ -1,0 +1,4 @@
+digraph "fixture" {
+    "node0" -> "node1"  // aether_a -> aether_b
+    "node1" -> "node0"  // aether_b -> aether_a
+}

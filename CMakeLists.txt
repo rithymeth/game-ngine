@@ -18,6 +18,19 @@ endif()
 option(AETHER_BUILD_TESTS "Build Aether unit tests" ON)
 option(AETHER_BUILD_MCP "Build the MCP (Model Context Protocol) editor server" ON)
 
+# Phase 37 step 6: -Werror for the engine and the gameplay kits, off by default (the four gameplay libraries build clean with GCC under it; CI will turn it on once Clang and MSVC are checked).
+option(AETHER_WARNINGS_AS_ERRORS "Treat warnings as errors in the engine and the gameplay kits" OFF)
+function(aether_warnings_as_errors target)
+    if(AETHER_WARNINGS_AS_ERRORS)
+        if(MSVC)
+            target_compile_options(${target} PRIVATE /WX)
+        else()
+            target_compile_options(${target} PRIVATE -Werror)
+        endif()
+    endif()
+endfunction()
+
+
 if(MSVC)
     add_compile_options(/W4 /permissive- /arch:AVX2 /Zc:__cplusplus)
     # Over-aligned types (16-byte math types) in std::stable_sort's temporary
@@ -324,6 +337,22 @@ add_subdirectory(loc)
 
 # Gameplay ability system and RPG toolkit (Phase 30): tags, attributes, effects, abilities; engine-only.
 add_subdirectory(gameplay)
+option(AETHER_BUILD_BENCH "Build the benchmark harness" ON)
+if(AETHER_BUILD_BENCH)
+    add_subdirectory(bench)
+endif()
+
+# The module dependency check (Phase 37 step 2, docs/design/UPGRADE_PLAN.md): `cmake --build <dir> --target check_module_graph`.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_custom_target(check_module_graph
+        COMMAND ${CMAKE_COMMAND} --graphviz=${CMAKE_BINARY_DIR}/module_graph.dot ${CMAKE_BINARY_DIR}
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_module_graph.py --dot ${CMAKE_BINARY_DIR}/module_graph.dot
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        COMMENT "Checking the module dependency graph"
+        VERBATIM)
+endif()
+
 # Genre kits (Phase 30 step 7, docs/design/PHASE_SPECS.md §30.8): optional libraries on the gameplay module.
 option(AETHER_KIT_INVENTORY "Build the inventory and items genre kit" ON)
 if(AETHER_KIT_INVENTORY)
@@ -427,6 +456,7 @@ endif()
 
 # Phase 23: the functional test runner (headless, any platform).
 add_subdirectory(tools/functional)
+add_subdirectory(tools/fuzz)
 # Phase 25: the .apak archive tool and the cooker.
 add_subdirectory(tools/pak)
 add_subdirectory(tools/cook)

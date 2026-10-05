@@ -54,11 +54,11 @@ gates the world work, `43.1` gates all editor work.
 | Step | Work | Needs |
 |---|---|---|
 | **37.1** | `IKit` interface and registry (`engine/include/aether/kit/kit.h`, `engine/src/kit/kit_registry.cpp`): `Name`, `Deps`, `RegisterComponents`, `LoadAssets(ctx)` (reads the package, reports problems), `CreateRuntime(ctx)`, `Systems(scheduler)` (stages with `after` from the kit's names), `InstallBlueprintNodes`, `InstallScriptApi`. Cross-kit coupling goes through a typed `KitEventBus` (inventory publishes `ItemEvent`, quests subscribes) instead of kit-to-kit includes. `AETHER_KIT(Type)` static registrar and an `aether_kit()` CMake function beside `aether_module()` that makes the `AETHER_KIT_<NAME>` option, links the kit and exposes `AETHER_KITS` to the player, scripting and the editor. Design and registry only, no migration. Test: `tests/test_kit_registry.cpp` (dependency order, duplicate name, missing dependency, deterministic stage order). | - |
-| **37.2** | Module dependency check: `tools/check_module_graph.py` plus a `check_module_graph` target and a CI step. It reads `cmake --graphviz`, fails on a cycle or on an edge not in the checked-in `docs/design/module_layers.txt`, and scans `#include "aether/<module>/..."` against the same layer file. Acceptance: clean today; a seeded-cycle fixture fails. | - |
-| **37.3** | Stability annotations: `engine/include/aether/core/api.h` with `AETHER_DEPRECATED(version, replacement)`, `AETHER_STABLE`, `AETHER_EXPERIMENTAL`, `AETHER_INTERNAL` (documentation only, no export). `tools/docgen` prints the level; `tests/test_api_docs.cpp` fails for a public header with none; `docs/manual/api_stability.md`. Tagging the existing headers is split per module group (engine core, `engine/gfx`, the rest). | - |
+| **37.2** *(done)* | Module dependency check: `tools/check_module_graph.py` plus a `check_module_graph` target and a CI step. It reads `cmake --graphviz`, fails on a cycle or on an edge not in the checked-in `docs/design/module_layers.txt`, and scans `#include "aether/<module>/..."` against the same layer file. Acceptance: clean today; a seeded-cycle fixture fails. | - |
+| **37.3** *(done)* | Stability annotations: `engine/include/aether/core/api.h` (`AETHER_DEPRECATED(version, replacement)` as a real `[[deprecated]]`, `AETHER_STABLE`, `AETHER_EXPERIMENTAL`, `AETHER_INTERNAL`); a level per public module in `docs/design/api_stability.txt` (everything experimental until the 48.3 freeze) with an optional `// @stability:` override per header; `tools/check_api_stability.py` as a test; `docs/manual/api_stability.md`. (`tools/docgen` documents reflected types, not headers, so levels are per module and header, not in the generated reference.) | - |
 | **37.4** | Migrate gameplay, inventory, interaction and quests to `IKit` (a `*_kit.cpp` each), delete the `AETHER_KIT_*` `#if`s from `game.cpp`, move the `quests->Notify` coupling to the event bus. Acceptance: `tests/test_coin_run.cpp` and the functional scenarios pass unchanged, a stage-order snapshot test matches today's order, and dropping then re-adding a kit option doesn't touch `game.cpp`. **Highest risk in the phase** (stage order, lazy loading). | 37.1 |
 | **37.5** | The editor, scripting and tests consume the registry (`editor/main.cpp`, `editor/src/workspace`, `tests/CMakeLists.txt`). | 37.4 |
-| **37.6** | Analysis gates (`.github/workflows/ci.yml`, new `.clang-tidy`): a TSan Linux job scoped to the job-system and audio tests (with a suppressions file for lavapipe), clang-tidy on changed files (`bugprone-*`, `performance-*`, `clang-analyzer-*`), `-Werror` for engine and gameplay behind `AETHER_WARNINGS_AS_ERRORS`. All advisory first. | - |
+| **37.6** *(done, advisory)* | Analysis gates: an advisory TSan CI job that runs the threaded tests (`AETHER_TEST_FILTER=JobSystem_,Audio_,Net_,NetPlay_,Streaming_`, a new comma-separated name filter in the test runner), an advisory clang-tidy job on the engine and kit sources a PR changes (`.clang-tidy`: `bugprone-*`, `performance-*`, `clang-analyzer-*`), and the `AETHER_WARNINGS_AS_ERRORS` option (off by default; the four gameplay libraries build clean under it with GCC; it is not on in CI yet because Clang and MSVC haven't been checked). Promote each to required after about two weeks clean. | - |
 | **37.7** | API audit sweep, one PR per module group: naming, `const`-ness, `[[nodiscard]]`, an error-return convention, a narrower public surface. `||` across groups. | 37.3 |
 
 **Decisions for the user:** the error-handling convention (`std::expected` against the current
@@ -69,9 +69,9 @@ when advisory gates become required.
 
 | Step | Work | Needs |
 |---|---|---|
-| **38.1** | Benchmark harness (`bench/`, `Aether::Bench`): generalises `blueprint_bench.cpp`; JSON reports and a baseline format; frame-time histograms and a per-system memory table. | - |
-| **38.2** | ECS bench: iteration, structural change, queries; decide whether 256 component types is enough or make it dynamic. `||` | 38.1 |
-| **38.3** | Job-system bench. `||` | 38.1 |
+| **38.1** *(done)* | Benchmark harness (`bench/`, `Aether::Bench`): generalises `blueprint_bench.cpp`; JSON reports and a baseline format; frame-time histograms and a per-system memory table. | - |
+| **38.2** *(started: iteration, create/destroy, add/remove component benches)* | ECS bench: iteration, structural change, queries; decide whether 256 component types is enough or make it dynamic. `||` | 38.1 |
+| **38.3** *(started: a 1024-job batch bench)* | Job-system bench. `||` | 38.1 |
 | **38.4** | Scene load, save/load and cook benches, including the 10k-entity under 2 s budget. `||` | 38.1 |
 | **38.5** | Physics, Blueprint VM and Luau call benches. `||` | 38.1 |
 | **38.6** | Baselines and the CI regression gate. Shared runners are noisy, so gate on instruction counts or on a ratio against a calibration loop. | 38.2-38.5 |
@@ -181,7 +181,7 @@ when advisory gates become required.
 
 | Step | Work | Needs |
 |---|---|---|
-| **47.1** | libFuzzer harnesses (`tools/fuzz/`, `AETHER_BUILD_FUZZERS`, Clang): pak reader, scene, Blueprint and save loaders, the net protocol, importers. One PR per target, runnable here. `||` | - |
+| **47.1** *(started: pak, scene, Blueprint and gameplay-data targets; found and fixed two real crashes)* | libFuzzer harnesses (`tools/fuzz/`, `AETHER_BUILD_FUZZERS`, Clang): pak reader, scene, Blueprint and save loaders, the net protocol, importers. One PR per target, runnable here. `||` | - |
 | **47.2** | A corpus and a fixed-budget fuzz job in CI. | 47.1 |
 | **47.3** | Editor autosave and crash recovery (extends the crash reporter). | - |
 | **47.4** | Crash-dump symbolication. The Windows dump path is Windows-CI-only. | - |

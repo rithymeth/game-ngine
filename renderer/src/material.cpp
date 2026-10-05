@@ -1,4 +1,5 @@
 #include "aether/renderer/material.h"
+#include "aether/core/json_util.h"
 
 #include <algorithm>
 #include <cctype>
@@ -700,7 +701,7 @@ bool MaterialFromJson(const json& j, Material& out, std::string* error) {
     };
     const std::string type = j.is_object() ? j.value("$type", "") : "";
     if (type != "Material" && type != "MaterialFunction") return fail("not a material file");
-    if (j.value("$version", 0) > kFormatVersion) return fail("saved by a newer version of the engine");
+    if (JsonVersion(j) > kFormatVersion) return fail("saved by a newer version of the engine");
     Material m;
     m.is_function = type == "MaterialFunction";
     m.description = j.value("description", "");
