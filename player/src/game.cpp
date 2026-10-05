@@ -753,8 +753,12 @@ void Game::BuildFrame() {
         runtime_->effects->Update(frame.dt);
         const std::vector<gas::EffectEvent> events = runtime_->effects->Events();
         runtime_->effects->ClearEvents();
-        if (!runtime_->blueprints) return;
         for (const gas::EffectEvent& e : events) {
+#if AETHER_GAME_SCRIPTING
+            // A script hears it as OnEffectApplied / OnEffectRemoved (effect, handle).
+            if (runtime_->scripts) runtime_->scripts->SendEvent(e.entity, e.applied ? "OnEffectApplied" : "OnEffectRemoved", {e.effect, static_cast<f64>(e.handle)});
+#endif
+            if (!runtime_->blueprints) continue;
             const bp::VmValue args[] = {e.effect, static_cast<i32>(e.handle)};
             runtime_->blueprints->VM().Dispatch(e.entity, e.applied ? gas::EffectSystem::kAppliedEvent : gas::EffectSystem::kRemovedEvent, args);
         }
@@ -771,10 +775,21 @@ void Game::BuildFrame() {
         runtime_->abilities->Update(frame.dt);
         const std::vector<gas::AbilityEvent> events = runtime_->abilities->Events();
         runtime_->abilities->ClearEvents();
-        if (!runtime_->blueprints) return;
         for (const gas::AbilityEvent& e : events) {
             using Kind = gas::AbilityEvent::Kind;
             const i32 handle = static_cast<i32>(e.handle);
+#if AETHER_GAME_SCRIPTING
+            if (runtime_->scripts) {
+                const f64 h = static_cast<f64>(e.handle);
+                switch (e.kind) {
+                case Kind::Activated: runtime_->scripts->SendEvent(e.entity, "OnAbilityActivated", {e.ability, h}); break;
+                case Kind::Ended:
+                case Kind::Cancelled: runtime_->scripts->SendEvent(e.entity, "OnAbilityEnded", {e.ability, h, e.kind == Kind::Cancelled}); break;
+                case Kind::Failed: runtime_->scripts->SendEvent(e.entity, "OnAbilityFailed", {e.ability, std::string(gas::FailReasonName(e.reason))}); break;
+                }
+            }
+#endif
+            if (!runtime_->blueprints) continue;
             switch (e.kind) {
             case Kind::Activated: {
                 const bp::VmValue args[] = {e.ability, handle};
@@ -806,8 +821,12 @@ void Game::BuildFrame() {
         // Take the queue first: a handler that changes an attribute queues the next event for next frame.
         const std::vector<gas::AttributeEvent> events = runtime_->attributes->Events();
         runtime_->attributes->ClearEvents();
-        if (!runtime_->blueprints) return;
         for (const gas::AttributeEvent& e : events) {
+#if AETHER_GAME_SCRIPTING
+            // A script hears it as OnAttributeChanged (name, old, new).
+            if (runtime_->scripts) runtime_->scripts->SendEvent(e.entity, "OnAttributeChanged", {e.name, static_cast<f64>(e.old_value), static_cast<f64>(e.new_value)});
+#endif
+            if (!runtime_->blueprints) continue;
             const bp::VmValue args[] = {e.name, e.old_value, e.new_value};
             runtime_->blueprints->VM().Dispatch(e.entity, gas::AttributeSystem::kChangedEvent, args);
         }

@@ -274,6 +274,16 @@ bool NativeCall::IsNumber(usize i) const { return lua_type(state_, static_cast<i
 bool NativeCall::IsBool(usize i) const { return lua_type(state_, static_cast<int>(i) + 1) == LUA_TBOOLEAN; }
 bool NativeCall::IsFunction(usize i) const { return lua_type(state_, static_cast<int>(i) + 1) == LUA_TFUNCTION; }
 
+bool NativeCall::IsEntity(usize i) const {
+    Entity unused;
+    return ReadEntityValue(state_, static_cast<int>(i) + 1, unused);
+}
+
+Entity NativeCall::EntityArg(usize i) const {
+    Entity entity;
+    return ReadEntityValue(state_, static_cast<int>(i) + 1, entity) ? entity : Entity{};
+}
+
 std::string NativeCall::String(usize i, const std::string& fallback) const {
     if (!IsString(i)) return fallback;
     size_t length = 0;

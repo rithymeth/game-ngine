@@ -2,6 +2,7 @@
 // :Connect, timers, and input.
 
 #include "aether/script/script_system.h"
+#include "aether/script/gameplay_api.h"
 #include "aether/script/loc_api.h"
 #include "aether/script/save_api.h"
 
@@ -207,6 +208,7 @@ void ScriptSystem::InstallApi() {
 
     InstallSaveApi(host_); // SaveGames (Phase 28 step 4)
     InstallLocApi(host_);  // Localization (Phase 29 step 2)
+    InstallGameplayApi(host_); // GameplayTags, Attributes, Effects, Abilities (Phase 30 step 5)
 }
 
 void ScriptSystem::RecordError(const std::string& error) {

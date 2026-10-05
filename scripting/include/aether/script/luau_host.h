@@ -49,8 +49,11 @@ public:
     bool IsNumber(usize i) const;
     bool IsBool(usize i) const;
     bool IsFunction(usize i) const;
+    bool IsEntity(usize i) const;
     std::string String(usize i, const std::string& fallback = {}) const;
     f64 Number(usize i, f64 fallback = 0.0) const;
+    // An entity argument; the null entity if it isn't one.
+    Entity EntityArg(usize i) const;
     bool Bool(usize i, bool fallback = false) const;
     // A Luau function argument kept alive as a reference, for the host to
     // call later (LuauHost::CallRef); -1 if the argument isn't a function.
