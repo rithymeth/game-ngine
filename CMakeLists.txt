@@ -317,6 +317,9 @@ add_subdirectory(sprite2d)
 add_subdirectory(sequencer)
 # Save games (Phase 28): save slots, versioned and atomic; engine-only.
 add_subdirectory(save)
+
+# Localization (Phase 29): LocText, string tables and message formatting; engine-only.
+add_subdirectory(loc)
 add_subdirectory(net)
 
 # Recast/Detour (zlib, recastnavigation/recastnavigation) for navigation
