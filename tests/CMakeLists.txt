@@ -118,3 +118,9 @@ if(TARGET aether_inventory)
 endif()
 
 add_test(NAME aether_tests COMMAND aether_tests)
+# The module-graph check must catch a cycle (Phase 37 step 2).
+if(Python3_Interpreter_FOUND)
+    add_test(NAME module_graph_catches_a_cycle
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_module_graph.py --dot ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/module_graph_cycle.dot --no-includes)
+    set_tests_properties(module_graph_catches_a_cycle PROPERTIES WILL_FAIL TRUE)
+endif()
