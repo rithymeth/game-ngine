@@ -93,6 +93,14 @@ jobs:
           -DAETHER_BUILD_PHYSICS=${{ matrix.physics }}
           -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_SANDBOX=OFF
           -DAETHER_PLATFORM_PLUGINS=platforms/example
+      - name: Module graph
+        # Phase 37 step 2: no dependency cycles, and links go down the layers in
+        # docs/design/module_layers.txt. Advisory for now (it becomes required
+        # once it has been green for a while).
+        continue-on-error: true
+        run: |
+          cmake --graphviz=build/graph.dot build
+          python3 tools/check_module_graph.py --dot build/graph.dot
       - name: Build
         run: cmake --build build --parallel
       - name: Unit tests
