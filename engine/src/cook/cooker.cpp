@@ -122,6 +122,8 @@ std::vector<AssetGuid> CollectCookSet(const AssetDatabase& database,
     // to be listed by hand and a forgotten one would silently lose its text.
     for (const AssetRecord* record : all) {
         if (!record->IsSubAsset() && !record->missing && record->importer == "StringTable") include(record->guid, "localization");
+        // Gameplay effects are applied by name from Blueprints, so nothing references them either.
+        if (!record->IsSubAsset() && !record->missing && record->importer == "GameplayEffect") include(record->guid, "gameplay");
     }
     std::vector<AssetGuid> result;
     while (!queue.empty()) {
