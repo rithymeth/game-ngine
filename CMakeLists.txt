@@ -337,6 +337,11 @@ add_subdirectory(loc)
 
 # Gameplay ability system and RPG toolkit (Phase 30): tags, attributes, effects, abilities; engine-only.
 add_subdirectory(gameplay)
+option(AETHER_BUILD_BENCH "Build the benchmark harness" ON)
+if(AETHER_BUILD_BENCH)
+    add_subdirectory(bench)
+endif()
+
 # The module dependency check (Phase 37 step 2, docs/design/UPGRADE_PLAN.md): `cmake --build <dir> --target check_module_graph`.
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
