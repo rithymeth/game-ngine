@@ -35,7 +35,7 @@ AETHER_TEST(Manual_ChaptersExistAndEveryLinkResolves) {
     CHECK(!index.empty());
     const std::vector<std::string> chapters = {"01-getting-started.md", "02-projects-and-assets.md", "03-scripting.md",
                                                "04-input.md",           "05-2d.md",                  "06-packaging.md",
-                                               "07-extending.md",       "08-api-reference.md"};
+                                               "07-extending.md",       "08-api-reference.md",  "09-gameplay.md"};
     const std::regex link(R"(\]\(([^)\s]+)\))");
     usize checked = 0;
     for (const std::string& name : chapters) {
