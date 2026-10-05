@@ -5839,3 +5839,62 @@ boxes still move by logical position), embeddings and isolates, and mirrored ico
    run-reversing BiDi-lite for Hebrew, Start/End alignment, mirrored
    layout; Arabic joining needs shaping and waits for step 7) (done, §29.6).
 7. Optional: HarfBuzz shaping behind a CMake option, and gender selectors.
+
+---
+
+## Phase 30: the gameplay ability system and RPG toolkit
+
+### 30.1 Gameplay tags (`gameplay/`, `aether::gas`)
+
+The foundation everything else in the phase uses: stats, effects and abilities
+block, require and cancel each other with tags. A small, engine-only, headless
+library (`Aether::Gameplay`).
+
+- **`GameplayTag`**: a dotted name like `State.Stunned` or `Damage.Fire.Burning`;
+  segments are non-empty and made of letters, digits and `_`. An invalid name is
+  the empty tag, which matches nothing. A tag *matches* itself and every tag
+  below it (`Damage.Fire.Burning` matches `Damage.Fire` and `Damage`; a parent
+  doesn't match its child), and the match is on segment boundaries, so
+  `State.Stunned` does not match `State.Stun` and `StateX` is not under `State`.
+  `Parent()`, `Depth()`, `MatchesExact`.
+- **`TagContainer`**: the tags something has now, each with a **reference count**
+  (two effects that both grant `State.Stunned` keep an entity stunned until both
+  are removed), kept sorted so it saves and compares deterministically. `Add`,
+  `Remove` (the tag goes when its count reaches zero), `RemoveAll`, hierarchical
+  `HasTag`, `HasTagExact`, `Count`, and `HasAny` / `HasAll` / `HasNone` over a
+  list. It is a reflected struct and an ordinary component (an entity's tags).
+- **`TagQuery`**: a condition tree for effects and abilities: `Any`, `All`,
+  `None` over tags, and `And` / `Or` over child queries; saved as JSON
+  (`{"op":"and","children":[{"op":"all","tags":["State.Alive"]},
+  {"op":"none","tags":["State.Stunned"]}]}`); a bad op, tag name or shape is an
+  error naming it, and nesting is limited to 32 levels.
+- **Blueprint library** `GameplayTags` (`Call.Native:GameplayTags.Matches`,
+  `MatchesExact`, `IsValid`, `GetParent`, `GetDepth`): tags are plain strings
+  there. Tags on an entity, and Luau, come with the attribute and ability
+  systems.
+
+There is no tag registry yet: tags are free-form strings. A validated registry
+(an editor-managed `.atags` list, with completion) can be added later if wanted.
+Tag names are `std::string`s for now; interning them is an optimisation for when
+profiling asks.
+
+Tests (`test_gameplay_tags.cpp`): validation, parent and depth, hierarchical
+matching and the prefix traps, reference counting, sorted queries, `TagQuery`
+nesting, JSON round trips and every error, reflection and use as a component,
+and the library as Blueprint nodes in a real graph.
+
+### 30.2 PR breakdown
+
+1. Gameplay tags (this step, §30.1).
+2. `AttributeSet`: base and current values with clamps, change events
+   (`Event.OnAttributeChanged`), save and Blueprint access.
+3. Gameplay Effects (`.aeffect`): instant, duration and infinite; add, multiply
+   and override modifiers; stacking; periodic ticks; tag conditions and granted tags.
+4. Abilities (`.aability`): cost, cooldown, required / blocked / cancel tags,
+   activate, commit, end, and the latent tasks.
+5. Blueprint and Luau faces, the `Player.Gameplay` system, cook roots and a sample.
+6. The editor's attribute and effect debugger.
+7. Genre kits as optional plugins: inventory and items, the dialogue graph,
+   quests, interaction.
+8. Networking (prediction keys) waits for the networking integration; tag counts
+   are the replication unit.
