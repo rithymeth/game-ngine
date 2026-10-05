@@ -5955,7 +5955,36 @@ name, handle) to the target's Blueprint. The `Effects` Blueprint library has `Ap
 `RemoveEffectsByTag`, `HasActiveEffect` and `GetActiveEffectCount`. Deferred: attribute-based conditions, magnitude curves, cues, effects that
 change min / max, replication.
 
-### 30.4 PR breakdown
+### 30.4 Abilities (`gameplay/`, step 4a)
+
+`GameplayAbility` (`.aability`, JSON, `AbilityFromJson` / `AbilityToJson`, errors
+`ability.name_empty`, `bad_json`, `bad_duration`, `bad_tag`) names the tags it has,
+`activation_required` / `activation_blocked` queries on the owner,
+`cancel_abilities_with_tags` and `block_abilities_with_tags` queries over other abilities'
+tags, `activation_owned_tags` (on the owner while it runs), a `cost` (an instant effect), a
+`cooldown` (a timed effect that grants a tag), a `max_duration`, and `commit_on_activate`.
+`AbilityLibrary::CheckEffects` reports `ability.unknown_effect`, `cost_not_instant` and
+`cooldown_not_timed` against an `EffectLibrary` (the library can't, at parse time).
+
+`AbilitySystem` keeps a saved `AbilityContainer` (granted names and running instances).
+`CanActivate` returns a `FailReason` (unknown, not granted, dead owner, already active,
+missing required, blocked, ability-blocked, cooldown, cannot afford; the cost is a dry run).
+`TryActivate` cancels what it cancels, adds the owned tags, commits and queues an Activated
+event; `Commit` applies the cost and cooldown through the `EffectSystem` (once; callable
+later when `commit_on_activate` is false); `End`, `Cancel`, `CancelByTag` and `Revoke`
+release exactly what activation added. Blocking is evaluated against the running abilities
+at activation, so nothing extra is stored. Owned tags are reference-counted with
+effect-granted ones. `Update(dt)` ends an ability at its `max_duration` (event marked
+`timed_out`). Events: Activated, Ended, Cancelled, Failed (with the reason).
+
+Not done (step 4b): the `.aability` asset type and cook root, the player loading abilities and
+its `Player.Abilities` stage, the `Abilities` Blueprint library and
+`Event.OnAbilityActivated` / `OnAbilityEnded`. Deferred: latent tasks (wait for delay,
+attribute change or gameplay event; a Blueprint graph can already use its latent nodes),
+a dedicated ability graph asset (an ability's logic runs in the owner's script graph),
+replication.
+
+### 30.5 PR breakdown
 
 1. Gameplay tags (done, §30.1).
 2. `AttributeSet`: base and current values with clamps, change events
@@ -5964,7 +5993,8 @@ change min / max, replication.
    and the system (done, §30.3); 3b assets, the player stage and the Blueprint library
    (done, §30.3).
 4. Abilities (`.aability`): cost, cooldown, required / blocked / cancel tags,
-   activate, commit, end, and the latent tasks.
+   activate, commit, end. 4a data and system (done, §30.4); 4b assets, the player stage and
+   the Blueprint library; the latent tasks are deferred.
 5. Blueprint and Luau faces, the `Player.Gameplay` system, cook roots and a sample.
 6. The editor's attribute and effect debugger.
 7. Genre kits as optional plugins: inventory and items, the dialogue graph,
