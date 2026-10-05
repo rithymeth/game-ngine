@@ -5923,13 +5923,40 @@ the queue each frame and giving a new scene a fresh system.
 Not done: Luau (with abilities, step 5), modifiers and effects (step 3), and
 Blueprint access to an attribute set as a whole.
 
-### 30.3 PR breakdown
+### 30.3 Gameplay effects (`gameplay/`, step 3a)
+
+`GameplayEffect` (`.aeffect`, JSON, `EffectFromJson` / `EffectToJson` with named errors
+`effect.name_empty`, `bad_duration`, `bad_modifier`, `bad_op`, `bad_period`,
+`period_on_instant`, `bad_stack`, `bad_tag`, `bad_json`) has a duration policy
+(instant, timed, infinite), modifiers (`add`, `multiply`, `override` on an attribute),
+stacking (none, refresh, stack with `max_stacks`, optionally `per_source`), an optional
+period with `execute_on_apply`, `require` / `blocked` tag queries on the target, tags it
+grants while active, and tags that remove it. An `EffectLibrary` finds definitions by name.
+
+`EffectSystem` (with the `AttributeSystem` and a library) applies them. Instant effects
+change the base through the attribute system, so events fire. Timed and infinite effects
+keep modifiers on `current` only: `current = clamp(latest override, or (base + sum add) *
+product multiply)`, stacks scaling add linearly and multiply as a power. Periodic effects
+change the base each period instead (poison of -5 per second for 3 s is -15; with
+`execute_on_apply` it is -20). `Apply` is rejected for an unknown effect, a dead target, a
+modifier on an attribute the target lacks, unmet tags, or an already-applied
+`none`-stacking effect. Granted tags are reference-counted in the target's `TagContainer`.
+Active effects live in a saved `EffectContainer` component; `Rebuild()` re-derives modifiers
+after a load (the modifier fields on `Attribute` are not saved). `Update(dt)` is
+deterministic (entities, then effects, in order).
+
+Not done (step 3b): the `.aeffect` asset type and cook root, the player loading effects and
+its `Player.Effects` stage, the `Effects` Blueprint library and `Event.OnEffectApplied` /
+`OnEffectRemoved`. Deferred: attribute-based conditions, magnitude curves, cues, effects that
+change min / max, replication.
+
+### 30.4 PR breakdown
 
 1. Gameplay tags (done, §30.1).
 2. `AttributeSet`: base and current values with clamps, change events
-   (`Event.OnAttributeChanged`), save and Blueprint access (this step, §30.2).
-3. Gameplay Effects (`.aeffect`): instant, duration and infinite; add, multiply
-   and override modifiers; stacking; periodic ticks; tag conditions and granted tags.
+   (`Event.OnAttributeChanged`), save and Blueprint access (done, §30.2).
+3. Gameplay Effects (`.aeffect`): 3a data, modifier math, stacking, periodic ticks, tags
+   and the system (done, §30.3); 3b assets, the player stage and the Blueprint library.
 4. Abilities (`.aability`): cost, cooldown, required / blocked / cancel tags,
    activate, commit, end, and the latent tasks.
 5. Blueprint and Luau faces, the `Player.Gameplay` system, cook roots and a sample.

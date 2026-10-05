@@ -1,6 +1,7 @@
 #include "aether/gameplay/attribute_system.h"
 
 #include "aether/ecs/component.h"
+#include "aether/gameplay/effect_system.h"
 #include "aether/gameplay/tag_container.h"
 
 namespace aether::gas {
@@ -12,6 +13,7 @@ AttributeSystem* g_active = nullptr;
 void RegisterGameplayComponents() {
     (void)GetComponentId<AttributeSet>();
     (void)GetComponentId<TagContainer>();
+    (void)GetComponentId<EffectContainer>();
 }
 
 AttributeSystem::AttributeSystem(World& world) : world_(world) {
@@ -80,6 +82,19 @@ bool AttributeSystem::Define(Entity entity, const std::string& name, f32 base, f
 
 bool AttributeSystem::SetBase(Entity entity, const std::string& name, f32 base) {
     return Mutate(entity, name, [&](AttributeSet& s) { return s.SetBase(name, base); });
+}
+
+bool AttributeSystem::SetModifiers(Entity entity, const std::string& name, f32 add, f32 mul, bool has_override, f32 override_value) {
+    return Mutate(entity, name, [&](AttributeSet& s) {
+        Attribute* a = s.Find(name);
+        if (a == nullptr) return false;
+        a->add = add;
+        a->mul = mul;
+        a->has_override = has_override;
+        a->override_value = override_value;
+        AttributeSet::RecomputeCurrent(*a);
+        return true;
+    });
 }
 
 bool AttributeSystem::AddBase(Entity entity, const std::string& name, f32 delta) {

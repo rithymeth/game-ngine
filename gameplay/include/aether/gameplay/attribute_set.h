@@ -18,6 +18,12 @@ struct Attribute {
     f32 current = 0.0f;
     f32 min = -3.0e38f;
     f32 max = 3.0e38f;
+    // Modifiers from active effects (§30.3), set by the EffectSystem and not
+    // saved (it rebuilds them from the entity's active effects).
+    f32 add = 0.0f;
+    f32 mul = 1.0f;
+    bool has_override = false;
+    f32 override_value = 0.0f;
 };
 
 // An entity's attributes, sorted by name so it saves and compares
@@ -43,8 +49,8 @@ struct AttributeSet {
 
     // `value` clamped into the attribute's bounds.
     static f32 Clamp(const Attribute& a, f32 value);
-    // current = the clamped base. This is where step 3 applies effect modifiers.
-    static void RecomputeCurrent(Attribute& a) { a.current = Clamp(a, a.base); }
+    // current = clamp(override, or (base + add) * mul). With no modifiers that is the clamped base.
+    static void RecomputeCurrent(Attribute& a) { a.current = Clamp(a, a.has_override ? a.override_value : (a.base + a.add) * a.mul); }
     // Repairs a set loaded from hand-edited data: bounds in order, base and current re-derived.
     void Normalize();
 };
