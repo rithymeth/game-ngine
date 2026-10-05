@@ -1,6 +1,7 @@
 #pragma once
 
 #include "aether/core/base.h"
+#include "aether/save/save_result.h"
 #include "aether/reflection/reflection.h"
 #include "aether/reflection/serialize.h"
 
@@ -33,23 +34,6 @@
 // from a newer version than the code knows is refused, not guessed at.
 
 namespace aether::save {
-
-enum class SaveError : u8 {
-    None,
-    InvalidSlot,   // a slot name must be 1-64 of A-Z a-z 0-9 _ -
-    IoError,       // couldn't read or write the file
-    Corrupt,       // not a save file, truncated, or its checksum doesn't match
-    WrongType,     // the slot holds a different struct
-    FutureVersion, // saved by a newer version of the struct than this code has
-    NotFound,
-};
-
-struct SaveResult {
-    bool ok = false;
-    SaveError error = SaveError::None;
-    std::string message;
-    std::vector<std::string> warnings; // what loading skipped or changed (and a note when the backup was used)
-};
 
 struct SlotInfo {
     std::string slot;
@@ -123,7 +107,6 @@ private:
     std::filesystem::path PathOf(std::string_view slot) const;
     std::string Envelope(std::string_view slot, const reflect::TypeInfo& type, const void* object) const;
     SaveResult Write(std::string_view slot, const std::string& contents);
-    SaveResult LoadFile(const std::filesystem::path& file, const reflect::TypeInfo& type, void* object) const;
     void Worker();
 
     std::filesystem::path directory_;

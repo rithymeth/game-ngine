@@ -5342,12 +5342,57 @@ in its own module, `save/` (`aether::save`, `Aether::Save`).
   destruction; runtime entities skipped; every restore problem reported;
   capture warnings; and a snapshot saved and loaded through a slot.
 
-### 28.3 PR breakdown
+### 28.3 Settings
+
+- **Apart from saves**: what the options menu sets lives in its own file,
+  `<directory>/settings.asettings`, an `aether.settings` file (a save slot
+  can't be mistaken for it, and the other way round), written like a save:
+  atomically, with the previous file kept as `.bak`, a CRC-32, the struct's
+  version and migration hooks. `save/envelope.h` is the shared mechanics
+  (`Make`, `Write`, `Read`, `ReadWithBackup`); `SaveSystem` and
+  `SettingsStore` both use it.
+- **`SettingsStore<T>`** works for any reflected struct (a game's own options
+  struct, `GameSettings` by default): `Load` (defaults when the file is
+  missing, which is normal and gives no warning; defaults plus an `error`
+  (`Corrupt`, `WrongType`, `FutureVersion`) and a warning when the file, and
+  then its backup, can't be used, leaving the bad file alone until the next
+  `Save`; `ok` means `Get()` is usable), `Save`, `Get`, `Set` (validated; true
+  if anything changed), `ResetToDefaults`, and observers `fn(now, before)`
+  called only for real changes (a `Set` from inside an observer takes effect
+  without notifying again). One thread (the main one) owns a store; there is
+  no worker, since settings are written rarely.
+- **`GameSettings`**: `quality` (a project quality preset's name, a string so
+  a project can define its own presets), `width`, `height`, `fullscreen`,
+  `vsync`, `master` / `music` / `sfx` / `voice` volumes (0 to 1), `language`,
+  and `bindings` (`input::UserBindings`: the player's key rebinds, reused as
+  they are, with their stale-override and conflict handling; they replace
+  the separate `Saved/Config/Input.json`, whose one-time migration comes with
+  the player wiring).
+- **Validation**: `Validate(GameSettings&, warnings)` clamps volumes to 0..1
+  (NaN back to 1), the window size to 320..16384, and resets an empty or
+  over-long language or quality name; one warning each. The store runs it on
+  load, `Set` and `Save`; a game's own struct gets its own `Validate`,
+  found by ADL. A hand edit has to recompute the checksum or the file is
+  treated as damaged (defaults, with the backup tried first).
+- **`BusVolumeDb(linear)`**: 20 * log10(v) for the mixer's dB, with 0 (or
+  anything below -80 dB) the floor of -80.
+- Applying settings (the mixer's bus volumes, the quality preset, the
+  window) belongs to the player and comes with its wiring, so `save/` stays
+  engine-only.
+- **Tests** (`test_settings.cpp`): defaults for a missing file; a round trip
+  including key rebinds and the separation from saves; the backup and the
+  defaults for damaged files; validation and the checksum guard; observers; a
+  game's own struct with its own validation and a newer-version file; the dB
+  conversion; and the backup and no stray temp file. The save tests ran
+  unchanged on the refactored mechanics.
+
+### 28.4 PR breakdown
 
 1. Save slots (done, §28.1).
-2. World state (this step, §28.2).
-3. Settings, stored apart from game saves.
+2. World state (done, §28.2).
+3. Settings, stored apart from game saves (this step, §28.3).
 4. Blueprint and Luau nodes (Save Game to Slot, Load Game from Slot, Does
    Save Game Exist, Create Save Game Object).
 5. The Save Inspector panel for `.asav`.
-6. Player wiring (the per-user save folder, a `Player.Save` stage) and docs.
+6. Player wiring (the per-user save and settings folders, a `Player.Save`
+   stage, applying settings) and docs.
