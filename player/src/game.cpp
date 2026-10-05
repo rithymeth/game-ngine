@@ -4,6 +4,9 @@
 
 #include "aether/core/log.h"
 #include "aether/gameplay/ability_system.h"
+#if AETHER_KIT_INVENTORY
+#include "aether/inventory/inventory_system.h"
+#endif
 #include "aether/gameplay/attribute_system.h"
 #include "aether/gameplay/effect_system.h"
 #include "aether/loc/localized_path.h"
@@ -222,6 +225,9 @@ struct Game::Runtime {
     std::unique_ptr<gas::AttributeSystem> attributes; // Phase 30
     std::unique_ptr<gas::EffectSystem> effects;
     std::unique_ptr<gas::AbilitySystem> abilities;
+#if AETHER_KIT_INVENTORY
+    std::unique_ptr<inv::InventorySystem> inventory;
+#endif
 #if AETHER_GAME_SCRIPTING
     script::LuauHost host;
     std::unique_ptr<script::ScriptSystem> scripts;
@@ -395,6 +401,7 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     LoadLocalization();
     LoadEffects();
     LoadAbilities(); // after the effects they name
+    LoadItems();
     EndPlay();
     runtime_.reset();
     physics2d_.reset();
@@ -539,6 +546,28 @@ void Game::LoadEffects() {
     }
 }
 
+void Game::LoadItems() {
+    if (items_loaded_) return;
+    items_loaded_ = true;
+#if AETHER_KIT_INVENTORY
+    for (const GameManifest::Asset& asset : package_.Manifest().assets) {
+        if (asset.importer != "ItemDefinition") continue;
+        std::vector<u8> bytes;
+        std::string error;
+        if (!package_.ReadContent(asset.path, bytes, &error)) {
+            warnings_.push_back(error);
+            continue;
+        }
+        inv::ItemDef item;
+        if (!inv::ItemFromJson(std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size()), item, &error) ||
+            !(error = inv::ItemLibrary::CheckEffects(item, effects_)).empty() || !items_.Register(std::move(item), &error)) {
+            effect_warnings_.push_back(asset.path + ": " + error);
+            AETHER_LOG_WARN("Player", "%s: %s", asset.path.c_str(), error.c_str());
+        }
+    }
+#endif
+}
+
 void Game::LoadAbilities() {
     if (abilities_loaded_) return;
     abilities_loaded_ = true;
@@ -581,6 +610,9 @@ void Game::StartRuntime() {
     // a Spawn key's prefab (a GUID or a path) at its place.
     runtime_->attributes = std::make_unique<gas::AttributeSystem>(*world_); // attributes of this scene's entities
     runtime_->effects = std::make_unique<gas::EffectSystem>(*world_, *runtime_->attributes, effects_);
+#if AETHER_KIT_INVENTORY
+    runtime_->inventory = std::make_unique<inv::InventorySystem>(*world_, runtime_->effects.get(), items_);
+#endif
     runtime_->abilities = std::make_unique<gas::AbilitySystem>(*world_, *runtime_->attributes, *runtime_->effects, abilities_, effects_);
     runtime_->sequences = std::make_unique<seq::SequenceSystem>(
         *world_, guids_, [this](const std::string& path) { return FindSequence(path); }, lifecycle_.get());
@@ -811,6 +843,59 @@ void Game::BuildFrame() {
         }
     };
     scheduler_.Add(std::move(abilities));
+#if AETHER_KIT_INVENTORY
+    // Inventory changes (§30.7) reach the owner's script and Blueprint, after effects have run.
+    SystemDesc inventory;
+    inventory.name = "Player.Inventory";
+    inventory.phase = SystemPhase::Update;
+    inventory.after = {"Player.Update", "Player.Sequencer", "Player.Effects"};
+    inventory.main_thread_only = true;
+    inventory.run = [this](World&, const FrameContext&) {
+        if (!runtime_ || !runtime_->inventory) return;
+        const std::vector<inv::ItemEvent> events = runtime_->inventory->Events();
+        runtime_->inventory->ClearEvents();
+        for (const inv::ItemEvent& e : events) {
+            using Kind = inv::ItemEvent::Kind;
+#if AETHER_GAME_SCRIPTING
+            if (runtime_->scripts) {
+                const f64 n = static_cast<f64>(e.count);
+                switch (e.kind) {
+                case Kind::Added: runtime_->scripts->SendEvent(e.entity, "OnItemAdded", {e.item, n}); break;
+                case Kind::Removed: runtime_->scripts->SendEvent(e.entity, "OnItemRemoved", {e.item, n}); break;
+                case Kind::Equipped: runtime_->scripts->SendEvent(e.entity, "OnItemEquipped", {e.item, e.slot}); break;
+                case Kind::Unequipped: runtime_->scripts->SendEvent(e.entity, "OnItemUnequipped", {e.item, e.slot}); break;
+                case Kind::Used: runtime_->scripts->SendEvent(e.entity, "OnItemUsed", {e.item}); break;
+                }
+            }
+#endif
+            if (!runtime_->blueprints) continue;
+            switch (e.kind) {
+            case Kind::Added: {
+                const bp::VmValue args[] = {e.item, e.count};
+                runtime_->blueprints->VM().Dispatch(e.entity, inv::InventorySystem::kAddedEvent, args);
+                break;
+            }
+            case Kind::Removed: {
+                const bp::VmValue args[] = {e.item, e.count};
+                runtime_->blueprints->VM().Dispatch(e.entity, inv::InventorySystem::kRemovedEvent, args);
+                break;
+            }
+            case Kind::Equipped:
+            case Kind::Unequipped: {
+                const bp::VmValue args[] = {e.item, e.slot};
+                runtime_->blueprints->VM().Dispatch(e.entity, e.kind == Kind::Equipped ? inv::InventorySystem::kEquippedEvent : inv::InventorySystem::kUnequippedEvent, args);
+                break;
+            }
+            case Kind::Used: {
+                const bp::VmValue args[] = {e.item};
+                runtime_->blueprints->VM().Dispatch(e.entity, inv::InventorySystem::kUsedEvent, args);
+                break;
+            }
+            }
+        }
+    };
+    scheduler_.Add(std::move(inventory));
+#endif
     SystemDesc attributes;
     attributes.name = "Player.Attributes";
     attributes.phase = SystemPhase::Update;
@@ -836,7 +921,11 @@ void Game::BuildFrame() {
     SystemDesc scripting;
     scripting.name = "Player.Scripting";
     scripting.phase = SystemPhase::Update;
-    scripting.after = {"Player.Sequencer", "Player.Save", "Player.Attributes", "Player.Effects", "Player.Abilities"};
+    scripting.after = {"Player.Sequencer", "Player.Save", "Player.Attributes", "Player.Effects", "Player.Abilities"
+#if AETHER_KIT_INVENTORY
+        ,"Player.Inventory"
+#endif
+    };
     scripting.main_thread_only = true;
     scripting.run = [this](World&, const FrameContext& frame) {
 #if AETHER_GAME_SCRIPTING

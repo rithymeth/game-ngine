@@ -6047,9 +6047,15 @@ room for it), and applies the item's effects to the wearer; `Unequip` removes th
 use effect and consumes. Changes queue `ItemEvent`s (Added, Removed, Equipped, Unequipped, Used).
 The `Items` Blueprint library acts on the active system.
 
-Not done yet (step 7a, second part): the player loading `.aitem` assets and running a `Player.Inventory`
-stage that sends `Event.OnItem*` to scripts and Blueprints, the Luau `Inventory` table, and a manual
-chapter. Then 7b interaction, 7c quests and 7d the dialogue graph. Deferred: containers shared between
+The player (when the kit is built: `AETHER_KIT_INVENTORY` is a public definition of `aether_game`)
+loads `.aitem` assets after the effects they name (a broken item, or one naming a missing effect, is a
+warning naming the asset), gives each scene an `InventorySystem`, and a `Player.Inventory` stage
+(after `Player.Effects`) sends the owner's Blueprint `Event.OnItemAdded` / `OnItemRemoved` (item, count),
+`Event.OnItemEquipped` / `OnItemUnequipped` (item, slot) and `Event.OnItemUsed` (item), and calls the same
+names as methods on its script. Luau gets an `Inventory` table (`scripting/src/inventory_api.cpp`) with
+the same functions as the `Items` library. The manual chapter is `docs/manual/10-inventory.md`.
+
+Next: 7b interaction, 7c quests and 7d the dialogue graph. Deferred: containers shared between
 entities, item instances with their own state (durability), crafting, an inventory editor panel.
 
 ### 30.8 PR breakdown
@@ -6066,7 +6072,7 @@ entities, item instances with their own state (durability), crafting, an invento
 5. Luau face, script events, and the manual chapter with a sample (done, §30.5); the
    Blueprint face, player systems and cook roots came with steps 2-4.
 6. The editor's attribute and effect debugger (done, §30.6).
-7. Genre kits as optional libraries (7a inventory started, §30.7): inventory and items, the dialogue graph,
+7. Genre kits as optional libraries (7a inventory done, §30.7): inventory and items, the dialogue graph,
    quests, interaction.
 8. Networking (prediction keys) waits for the networking integration; tag counts
    are the replication unit.
