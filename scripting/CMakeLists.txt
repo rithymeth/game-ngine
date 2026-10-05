@@ -13,6 +13,7 @@ add_library(aether_scripting STATIC
     src/gameplay_api.cpp
     src/inventory_api.cpp
     src/interaction_api.cpp
+    src/quests_api.cpp
 )
 
 target_include_directories(aether_scripting PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -31,5 +32,11 @@ if(TARGET Aether::Interaction)
     target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_INTERACTION=1)
 else()
     target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_INTERACTION=0)
+endif()
+if(TARGET Aether::Quests)
+    target_link_libraries(aether_scripting PRIVATE Aether::Quests)
+    target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_QUESTS=1)
+else()
+    target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_QUESTS=0)
 endif()
 add_library(Aether::Scripting ALIAS aether_scripting)
