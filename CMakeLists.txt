@@ -315,6 +315,8 @@ add_subdirectory(terrain)
 add_subdirectory(streaming)
 add_subdirectory(sprite2d)
 add_subdirectory(sequencer)
+# Save games (Phase 28): save slots, versioned and atomic; engine-only.
+add_subdirectory(save)
 add_subdirectory(net)
 
 # Recast/Detour (zlib, recastnavigation/recastnavigation) for navigation
