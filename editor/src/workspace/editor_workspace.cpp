@@ -19,6 +19,7 @@
 #include "graph/blueprint_editor.h"
 #include "graph/material_editor.h"
 #include "net/net_panels.h"
+#include "save/save_inspector_panel.h"
 #include "sequencer/sequencer_panel.h"
 #include "sprite2d/tilemap_panel.h"
 #include "ui/code_editor.h"
@@ -30,8 +31,12 @@
 #include "aether/core/console.h"
 #include "aether/nav/components.h"
 #include "aether/nav/crowd.h"
+#include "aether/platform/filesystem.h"
 #include "aether/project/project.h"
 #include "aether/reflection/serialize.h"
+#include "aether/save/save_bag.h"
+#include "aether/save/save_system.h"
+#include "aether/save/settings.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/components.h"
 #include "aether/streaming/partition.h"
@@ -188,6 +193,10 @@ struct EditorWorkspace::Impl {
     GuidIndex sequence_guids;
     std::unique_ptr<SequenceDocument> sequence_doc;
     std::unique_ptr<SequencerPanel> sequencer_panel;
+    // Data.
+    std::filesystem::path save_sample_dir;
+    std::unique_ptr<SaveInspectorDocument> save_doc;
+    std::unique_ptr<SaveInspectorPanel> save_panel;
     // World.
     terrain::TerrainData terrain_data;
     terrain::TerrainSettings terrain_settings;
@@ -235,6 +244,7 @@ struct EditorWorkspace::Impl {
         BuildWorld();
         BuildTilemap();
         BuildSequencer();
+        BuildSaveInspector();
         BuildNetworking();
         BuildDebug();
         BuildProject();
@@ -256,6 +266,7 @@ struct EditorWorkspace::Impl {
             {"World Partition", "World", [this] { partition_panel->Draw(); }},
             {"Tilemap - Level 1", "2D", [this] { tilemap_panel->Draw(); }},
             {"Sequencer - Intro", "Cinematics", [this] { sequencer_panel->Draw(); }},
+            {"Save Inspector", "Data", [this] { save_panel->Draw(); }},
             {"Net Play", "Networking", [this] { net_panel->Draw(); }},
             {"Net Profiler", "Networking", [this] { net_profiler->Draw(); }},
             {"Console", "Debug", [this] { console_panel->Draw(); }},
@@ -547,6 +558,60 @@ struct EditorWorkspace::Impl {
         s.tracks = {slide, marker, lamp};
         sequence_doc = std::make_unique<SequenceDocument>(std::move(s));
         sequencer_panel = std::make_unique<SequencerPanel>(*sequence_doc, sequence_level, sequence_guids);
+    }
+
+    // A folder of sample saves to look at: a Blueprint-style save bag (with a
+    // world snapshot), a settings file, and a damaged copy (bad checksum).
+    void BuildSaveInspector() {
+        using namespace aether::save;
+        std::error_code ec;
+        save_sample_dir = std::filesystem::temp_directory_path() / "aether_editor_save_samples";
+        std::filesystem::remove_all(save_sample_dir, ec);
+        SaveSystem saves(save_sample_dir);
+        SaveBag bag;
+        bag.SetBool("tutorial_done", true);
+        bag.SetInt("coins", 42);
+        bag.SetFloat("health", 87.5f);
+        bag.SetString("checkpoint", "Cave_2");
+        bag.SetVector("respawn", Vec3(12.0f, 0.5f, -3.0f));
+        SavedEntity door;
+        door.guid = EntityGuid{0xD00A, 1};
+        door.tag = "cave_door";
+        door.components.push_back({"Door", "{\"open\":true}"});
+        bag.world.entities.push_back(door);
+        bag.world.destroyed.push_back(EntityGuid{0xE4E4, 2});
+        bag.has_world = true;
+        saves.Save("slot1", bag);
+        saves.Save("slot1", bag); // twice: the second write keeps the first as a backup
+        SettingsStore<> settings(save_sample_dir);
+        GameSettings s;
+        s.quality = "Medium";
+        s.master = 0.8f;
+        settings.Set(s);
+        settings.Save();
+        // A damaged copy: one value changed without fixing the checksum.
+        std::string text;
+        if (fs::ReadFileText((save_sample_dir / "slot1.asav").string(), text)) {
+            const usize at = text.find("\"i\": 42");
+            if (at != std::string::npos) text.replace(at + 5, 2, "99");
+            std::ofstream(save_sample_dir / "damaged.asav", std::ios::binary) << text;
+        }
+        save_doc = std::make_unique<SaveInspectorDocument>();
+        save_panel = std::make_unique<SaveInspectorPanel>(*save_doc);
+        save_panel->SetDirectory(save_sample_dir);
+        save_doc->Open(save_sample_dir / "slot1.asav");
+        // Double-clicking a save in the Content Browser opens it here.
+        for (const char* ext : {".asav", ".asettings"}) {
+            ExtensionAssetType type;
+            type.name = ext[1] == 'a' && ext[2] == 's' && ext[3] == 'a' ? "Save Game" : "Settings";
+            type.extension = ext;
+            type.open = [this](const std::filesystem::path& file) {
+                save_doc->Open(file);
+                save_panel->SetDirectory(file.parent_path());
+            };
+            type.owner = "editor.save";
+            extensions.AddAssetType(std::move(type));
+        }
     }
 
     void BuildWorld() {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "aether/reflection/reflection.h"
+#include "aether/reflection/serialize.h"
 #include "aether/save/save_result.h"
 
 #include <filesystem>
@@ -31,6 +32,26 @@ SaveResult Read(const std::filesystem::path& file, std::string_view kind, const 
 
 // Read, then on NotFound or Corrupt the `.bak` (with a note in the warnings).
 SaveResult ReadWithBackup(const std::filesystem::path& file, std::string_view kind, const reflect::TypeInfo& type, void* object);
+
+// What a file claims to be, without loading it into a struct (for tools: the
+// editor's Save Inspector). Never throws and never touches a game object.
+struct EnvelopeInfo {
+    bool ok = false;          // an envelope was read (even a damaged one: see checksum_ok)
+    std::string error;        // why not, when !ok
+    std::string kind;         // "aether.save", "aether.settings"
+    u32 format = 0;
+    std::string type;         // the saved struct's name
+    u32 type_version = 0;
+    std::string slot;
+    u64 timestamp = 0;        // unix seconds
+    std::string checksum_stored;
+    bool checksum_ok = false; // the stored checksum matches the data, as the loader computes it
+    u64 bytes = 0;            // the file's size
+    std::string raw_text;     // the file as text
+    reflect::Json data;       // the saved struct's JSON (null when !ok)
+};
+// Reads and checks a file's envelope. Files over 64 MB are refused.
+EnvelopeInfo Inspect(const std::filesystem::path& file);
 
 SaveResult Fail(SaveError error, std::string message);
 SaveResult Ok();
