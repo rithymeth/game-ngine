@@ -5584,11 +5584,47 @@ CSV round trips of hard cells, BOM/CRLF/comment columns, and every reported
 problem; the plural rules; formatting and escapes, including malformed
 patterns; the localizer's resolution order; and `LocText` as a reflected field.
 
-### 29.2 PR breakdown
+### 29.2 Assets, the runtime service and the language switch
 
-1. The core (this step, §29.1).
+- **`.astrings`** is a cooked asset type, importer `StringTable`: plain CSV in
+  the format of §29.1 (`key,en,pt-BR,...`), so translators and spreadsheets
+  open it as it is. Nothing references a string table, so the cooker adds
+  every `StringTable` asset to the cook set on its own (reason
+  "localization"); a table can't be forgotten and silently lose all text.
+- **`loc::Localization`** is the running game's text: every table merged
+  (a later file's entry replaces an earlier one's for the same key and
+  language), the current language, and listeners told when it changes (only on
+  a real change). `Text(key, fallback, args)` follows §29.1's order (the
+  chain, then the source text, then the key). One can be made the active
+  one, like `SaveSystem`.
+- **In the player**, `Game::Localization()` is always there and active for
+  the game's life. The first scene load reads every `StringTable` asset in the
+  package (a bad table is a warning, the rest still load; the warnings stay
+  across scene loads). The language and `GameSettings::language` follow each
+  other: a settings change switches the language, and a language chosen in play
+  (`Localization.SetLanguage`) is written into the settings, so it is saved on
+  exit like any other change. `LoadSettings` applies the loaded language.
+- **Blueprints and Luau**: the reflected `Localize` library
+  (`Call.Native:Localize.GetText`, `FormatInt`, `FormatString`, `HasText`,
+  `SetLanguage`, `GetLanguage`) and Luau's `Localization` table
+  (`GetText(key, default)`, `Format(key, default, name, value)` with a number or
+  a string, `HasText`, `SetLanguage`, `GetLanguage`). With no active
+  Localization they return the default (or the key), so text never blanks.
+
+Tests (`test_loc_runtime.cpp`): `.astrings` cooked without `always_cook` and
+read by the player; merging and a bad table's warning; the language following
+the settings both ways, with a listener firing once per real change; a saved
+language applied on load; the library with and without a service, with
+plural rules per language; its reflected functions; and the Luau table.
+
+Not done: UI and Blueprint text pins taking `LocText` (§29.3).
+
+### 29.3 PR breakdown
+
+1. The core (done, §29.1).
 2. `.astrings` as a cooked asset type; a `Localization` service with a runtime
-   language switch and a change event, wired to `GameSettings::language`.
+   language switch and a change event, wired to `GameSettings::language`
+   (this step, §29.2).
 3. Runtime UI and Blueprint text take `LocText` (raw strings still load).
 4. The gather step (every `LocText` in scenes, prefabs, Blueprints and
    widgets), PO import and export, and a command-line tool.

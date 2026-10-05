@@ -214,6 +214,17 @@ struct Game::Runtime {
 Game::Game(GamePackage& package)
     : package_(package), world_(std::make_unique<World>()), settings_(std::make_unique<save::SettingsStore<save::GameSettings>>(std::filesystem::path())) {
     lifecycle_ = std::make_unique<Lifecycle>(*world_, guids_);
+    localization_ = std::make_unique<loc::Localization>();
+    localization_->MakeActive();
+    // A language chosen in play (Localization.SetLanguage) is the player's setting too.
+    WatchSettingsLanguage();
+    localization_listener_ = localization_->AddListener([this](const std::string& now, const std::string&) {
+        if (settings_ && settings_->Get().language != now) {
+            save::GameSettings next = settings_->Get();
+            next.language = now;
+            settings_->Set(next);
+        }
+    });
 #if AETHER_GAME_PHYSICS
     // Registered by name, so scenes can name them.
     (void)GetComponentId<RigidBody>();
@@ -227,6 +238,7 @@ Game::Game(GamePackage& package)
 
 Game::~Game() {
     EndPlay();
+    localization_.reset();
     saves_.reset(); // drains queued saves; its world context points into what's below
     runtime_.reset(); // scripts and Blueprints before the world, lifecycle and input they use
     physics2d_.reset();
@@ -243,6 +255,12 @@ void Game::RefreshSaveContext() {
     saves_->SetWorldContext({world_.get(), &guids_, &tracker_, lifecycle_.get()});
 }
 
+void Game::WatchSettingsLanguage() {
+    settings_->AddObserver([this](const save::GameSettings& now, const save::GameSettings& before) {
+        if (now.language != before.language) localization_->SetLanguage(now.language);
+    });
+}
+
 void Game::SetUserPaths(const UserPaths& paths) {
     user_paths_ = paths;
     saves_ = std::make_unique<save::SaveSystem>(paths.saves);
@@ -252,6 +270,7 @@ void Game::SetUserPaths(const UserPaths& paths) {
     settings_ = std::make_unique<save::SettingsStore<save::GameSettings>>(paths.settings);
     settings_->Set(keep);
     settings_observer_ = 0;
+    WatchSettingsLanguage();
     RefreshSaveContext();
 }
 
@@ -269,6 +288,7 @@ std::vector<std::string> Game::LoadSettings(const SettingsTargets& targets) {
     });
     for (const std::string& line : ApplySettings(settings_->Get(), settings_targets_)) AETHER_LOG_INFO("Player", "Settings: applied %s", line.c_str());
     if (input_loaded_) ActivateInputContexts(); // the loaded file's rebinds
+    localization_->SetLanguage(settings_->Get().language);
     return warnings;
 }
 
@@ -353,6 +373,7 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
         return Fail(error, "Can't read the scene " + path + (read_error.empty() ? "" : ": " + read_error));
     }
     LoadInputAssets();
+    LoadLocalization();
     EndPlay();
     runtime_.reset();
     physics2d_.reset();
@@ -368,7 +389,7 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     world_ = std::move(world);
     guids_.Clear();
     guids_.Rebuild(*world_);
-    warnings_.clear();
+    warnings_ = localization_warnings_; // found once, before any scene
     const auto results = ResolveAllPrefabInstances(*world_, guids_, [this](const assets::AssetGuid& g) { return FindPrefab(g); });
     prefab_instances_ = results.size();
     for (const auto& [root, report] : results) {
@@ -449,6 +470,26 @@ void Game::LoadInputAssets() {
     for (const std::string& e : input_library_.Errors()) AETHER_LOG_WARN("Player", "%s", e.c_str());
     input_library_.RegisterActions(input_);
     ActivateInputContexts();
+}
+
+void Game::LoadLocalization() {
+    if (localization_loaded_) return;
+    localization_loaded_ = true;
+    for (const GameManifest::Asset& asset : package_.Manifest().assets) {
+        if (asset.importer != "StringTable") continue;
+        std::vector<u8> bytes;
+        std::string error;
+        if (!package_.ReadContent(asset.path, bytes, &error)) {
+            localization_warnings_.push_back(error);
+            continue;
+        }
+        std::vector<std::string> problems;
+        localization_->AddFromCsv(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), &problems);
+        for (const std::string& p : problems) {
+            localization_warnings_.push_back(asset.path + ": " + p);
+            AETHER_LOG_WARN("Player", "%s: %s", asset.path.c_str(), p.c_str());
+        }
+    }
 }
 
 void Game::ActivateInputContexts() {

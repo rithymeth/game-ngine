@@ -2,6 +2,7 @@
 // :Connect, timers, and input.
 
 #include "aether/script/script_system.h"
+#include "aether/script/loc_api.h"
 #include "aether/script/save_api.h"
 
 #include "aether/core/log.h"
@@ -205,6 +206,7 @@ void ScriptSystem::InstallApi() {
     lua_setglobal(L, "Input");
 
     InstallSaveApi(host_); // SaveGames (Phase 28 step 4)
+    InstallLocApi(host_);  // Localization (Phase 29 step 2)
 }
 
 void ScriptSystem::RecordError(const std::string& error) {
