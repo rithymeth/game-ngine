@@ -31,6 +31,11 @@ struct ScaleSettings {
 class Viewport {
 public:
     ScaleSettings scale_settings;
+    // Right-to-left layout (§29.6): the layers are laid out as usual, then mirrored
+    // about the safe area's centre, so boxes run right to left, Left-aligned
+    // children sit on the right, and so on. Text widgets resolve their Start / End
+    // alignment against it.
+    FlowDirection direction = FlowDirection::LeftToRight;
 
     void SetSize(Vec2 pixels) { size_ = pixels; }
     Vec2 Size() const { return size_; }

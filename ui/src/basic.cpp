@@ -26,7 +26,10 @@ Vec2 Text::ComputeDesired(const LayoutContext& ctx) {
 
 void Text::PaintSelf(DrawList& list, const PaintContext& ctx) const {
     const Font* f = Pick(font, ctx.font, ctx.fonts);
-    if (f != nullptr) list.AddText(*f, Shown(), size, Geometry(), color.WithAlpha(ctx.opacity), justify, wrap_width, effects.Any() ? &effects : nullptr);
+    TextAlign align = justify;
+    if (align == TextAlign::Start) align = ctx.direction == FlowDirection::RightToLeft ? TextAlign::Right : TextAlign::Left;
+    else if (align == TextAlign::End) align = ctx.direction == FlowDirection::RightToLeft ? TextAlign::Left : TextAlign::Right;
+    if (f != nullptr) list.AddText(*f, Shown(), size, Geometry(), color.WithAlpha(ctx.opacity), align, wrap_width, effects.Any() ? &effects : nullptr);
 }
 
 } // namespace aether::ui

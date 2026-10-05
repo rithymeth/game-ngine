@@ -167,7 +167,9 @@ TextLayout LayoutText(const Font& font, std::string_view text, f32 size, f32 wra
 // Next code point of UTF-8 text at `i` (invalid bytes read as U+FFFD).
 u32 DecodeUtf8(std::string_view text, usize& i);
 
-enum class TextAlign : u8 { Left, Center, Right };
+// Start and End are the side a line starts and ends on in the reading direction
+// (Text resolves them against the viewport's FlowDirection before drawing).
+enum class TextAlign : u8 { Left, Center, Right, Start, End };
 
 // What the renderer draws: quads in order, each with a clip rectangle. Clip
 // 0 is everything. Quads wholly outside their clip, empty or transparent are
