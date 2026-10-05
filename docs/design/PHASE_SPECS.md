@@ -5386,13 +5386,64 @@ in its own module, `save/` (`aether::save`, `Aether::Save`).
   conversion; and the backup and no stray temp file. The save tests ran
   unchanged on the refactored mechanics.
 
-### 28.4 PR breakdown
+### 28.4 Blueprints and Luau: the save bag and the SaveGames library
+
+- **The problem**: a game's save struct is a C++ type Blueprints and Luau
+  can't name. So they keep their save state in a **`SaveBag`**: named values
+  (bool, int, float, string, vector) plus an optional `WorldSnapshot`. It is an
+  ordinary reflected struct (`SaveEntry` list, the snapshot, `has_world`), so
+  C++ code can `Save("slot", bag)` and `Load("slot", bag)` and share slots with
+  Blueprint saves. A bag has no schema and no migration: nothing checks that a
+  key keeps its type between versions of the game, and a get of the wrong kind
+  gives its default (loosely typed by design). Keys are unique; a Set replaces
+  an entry of any kind; lookup is a linear scan (bags are small).
+- **`SaveSystem`** owns the bag (`Bag()`), the world the capture and restore
+  nodes act on (`SetWorldContext`: world, GUID index, a `WorldTracker`, a
+  `Lifecycle`, all set by the host), the last error (`LastError()`), and the
+  async saves that finished (`TakeFinishedSaves()`). Main thread only.
+- **`SaveGames`** (a reflected static library, so every function is a
+  Blueprint node under `Call.Native:SaveGames.*`): `CreateSaveObject`,
+  `SetBool / SetInt / SetFloat / SetString / SetVector`, the matching pure
+  `Get...(key, default)`, `HasKey`, `RemoveKey`, `SaveToSlot`,
+  `SaveToSlotAsync`, `LoadFromSlot` (replaces the bag; unchanged on failure),
+  `DoesSaveExist`, `DeleteSave`, `GetSlotCount`, `GetSlotName(index)`,
+  `GetLastError`, `CaptureWorld` and `RestoreWorld`. All act on
+  `SaveSystem::Active()`; without one they do nothing (false, the default,
+  empty). A function that can fail returns false and leaves the reason in
+  `GetLastError` (a success clears it). `CaptureWorld` needs a world
+  context and stores the snapshot in the bag; `RestoreWorld` puts it back,
+  returns false if something couldn't be restored, and lists what in the
+  error.
+- **Async**: `SaveToSlotAsync` copies the bag now; after the host calls
+  `Pump()` it takes `TakeFinishedSaves()` and dispatches **`Event.OnSaveFinished`**
+  (slot, success) to the Blueprint instances, as it does
+  `Event.OnSequenceFinished`.
+- **Luau**: a `SaveGames` table with the same functions
+  (`scripting/save_api.h`): `SetNumber` (stored as an int when it has no
+  fractional part, else a float, so Blueprint's Get Int and Get Float read
+  what a script saved), `GetNumber` (reads either), `SetVector(key, x, y, z)`
+  and `GetVector(key, dx, dy, dz)` returning three numbers, the others as
+  their Blueprint twins. Installed by `ScriptSystem`; a missing or wrongly
+  typed argument raises a script error. Only this table is hand-registered:
+  a generic binding of every reflected static library is a possible later step.
+- **Not here**: settings access from Blueprints and Luau, and wiring a
+  `SaveSystem` into the player (PR 6): a host makes one active, sets its world
+  context, pumps it and dispatches the event.
+- **Tests** (`test_save_games.cpp`): the bag's set, get, replace and remove; a
+  bag saved and loaded by C++ with its world; the library's save, load, exists,
+  delete, list and errors; no active system; capture and restore through a
+  slot (and a vanished entity reported); async finishing through the host; the
+  reflected function list; a real Blueprint graph that saves, clears and loads
+  back, and handles `Event.OnSaveFinished`; and the Luau table including
+  errors.
+
+### 28.5 PR breakdown
 
 1. Save slots (done, §28.1).
 2. World state (done, §28.2).
-3. Settings, stored apart from game saves (this step, §28.3).
-4. Blueprint and Luau nodes (Save Game to Slot, Load Game from Slot, Does
-   Save Game Exist, Create Save Game Object).
+3. Settings (done, §28.3).
+4. The save bag and the Blueprint and Luau library (this step, §28.4).
 5. The Save Inspector panel for `.asav`.
 6. Player wiring (the per-user save and settings folders, a `Player.Save`
-   stage, applying settings) and docs.
+   stage, applying settings, the world context and the finished-save event)
+   and docs.
