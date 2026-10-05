@@ -258,6 +258,12 @@ AETHER_TEST(UI_WidgetBlueprintsAndSystem) {
     AETHER_CHECK(Near(UI::GetValue(player, "Volume"), 100) && Near(UI::GetValue(player, "HPBar"), 0.4f)); // clamped to the slider
     UI::SetText(player, "Pause", "Resume"); // a button's label
     AETHER_CHECK(UI::GetText(player, "Pause").empty() && static_cast<Text*>(sys.FindWidget(player, "Pause")->Child(0))->text == "Resume");
+    // A string table key (§29.3): set by key, cleared by setting text.
+    UI::SetTextKey(player, "Pause", "pause.label", "Pause");
+    AETHER_CHECK(static_cast<Text*>(sys.FindWidget(player, "Pause")->Child(0))->text_key == "pause.label" &&
+                 static_cast<Text*>(sys.FindWidget(player, "Pause")->Child(0))->text == "Pause");
+    UI::SetText(player, "Pause", "Resume");
+    AETHER_CHECK(static_cast<Text*>(sys.FindWidget(player, "Pause")->Child(0))->text_key.empty());
     UI::SetVisible(player, "Status", false);
     UI::SetEnabled(player, "Pause", false);
     AETHER_CHECK(sys.FindWidget(player, "Status")->visibility == Visibility::Collapsed && !sys.FindWidget(player, "Pause")->enabled);

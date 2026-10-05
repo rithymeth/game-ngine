@@ -360,7 +360,8 @@ json UILayoutDocument::EditableProperties(const WidgetPath& path) const {
     if (type == "Grid") full["column_spacing"] = 0.0f, full["row_spacing"] = 0.0f;
     if (type == "Border") full["padding"] = {0.0f, 0.0f, 0.0f, 0.0f}, full["hit_test"] = true;
     if (type == "ScrollBox") full["horizontal"] = false, full["wheel_step"] = 60.0f;
-    if (type == "Text") full["justify"] = "Left", full["wrap_width"] = 0.0f, full["font"] = "";
+    if (type == "Text") full["justify"] = "Left", full["wrap_width"] = 0.0f, full["font"] = "", full["text_key"] = "";
+    if (type == "TextInput") full["hint_key"] = "";
     if (type == "Image") full["desired_size"] = {0.0f, 0.0f}, full["hit_test"] = true;
     if (dynamic_cast<const ui::Control*>(w) != nullptr) full["focusable"] = true;
     if (type == "Slider") full["step"] = 0.0f, full["nav_step"] = 0.0f;

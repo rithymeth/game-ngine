@@ -5617,15 +5617,47 @@ the settings both ways, with a listener firing once per real change; a saved
 language applied on load; the library with and without a service, with
 plural rules per language; its reflected functions; and the Luau table.
 
-Not done: UI and Blueprint text pins taking `LocText` (§29.3).
+UI and Blueprint text are §29.3.
 
-### 29.3 PR breakdown
+### 29.3 Runtime UI and Blueprint text
+
+Widget text is localized with a **key beside the text**, not by changing the
+field's type: `Text::text_key` and `TextInput::hint_key`, with `text` / `hint`
+as the source text. This keeps every existing layout, binding, script and
+test working, and no call site had to change.
+
+- `Text::Shown()` (and `TextInput::ShownHint()`) is what is measured and
+  drawn: with a key and an active `Localization`, the key's text in the current
+  language (the fallback chain of §29.1, then the source text); otherwise the
+  text as it is. Layout and drawing ask each frame, so a language change shows
+  at the next layout and paint with nothing to subscribe to.
+- Layout files write `text_key` / `hint_key` only when set; a file without
+  them loads as before. The UI Designer lists them as properties ("Text key",
+  "Hint key") and its canvas preview shows the translated text.
+- Runtime text wins over a key: `UI.SetText` and a binding to `text` clear
+  `text_key`. `UI.SetTextKey(target, widget, key, default)` sets one (on a
+  Text, or on a button's first Text), so Blueprints localize a widget without
+  a new pin type. `Localize.GetText` into `UI.SetText` also works.
+- `aether_ui` now links `Aether::Loc` (no cycle: `loc` needs only the engine).
+
+Tests (`test_ui_loc.cpp`, and the UI library test): the shown text with and
+without a service, a key and a translation; layout width changing with the
+language; JSON round trips, old files, and keys written only when set; and
+`SetTextKey` / `SetText`.
+
+Not done (later, as needed): a Blueprint `Text` pin type (a `Make LocText`
+node), localizing a binding's `format` string, tooltip and dropdown option keys,
+and a `LocText` JSON converter for scene and component fields (the gather step
+needs it).
+
+### 29.4 PR breakdown
 
 1. The core (done, §29.1).
 2. `.astrings` as a cooked asset type; a `Localization` service with a runtime
    language switch and a change event, wired to `GameSettings::language`
-   (this step, §29.2).
-3. Runtime UI and Blueprint text take `LocText` (raw strings still load).
+   (done, §29.2).
+3. Runtime UI text takes a key beside its text; Blueprints set it with
+   `UI.SetTextKey` (this step, §29.3).
 4. The gather step (every `LocText` in scenes, prefabs, Blueprints and
    widgets), PO import and export, and a command-line tool.
 5. The editor's Localization dashboard (languages, completion, missing keys,
