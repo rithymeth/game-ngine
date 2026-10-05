@@ -1201,6 +1201,8 @@ edits made in the viewport or Inspector into keys automatically.
 
 ## Phase 28: Save Game and Persistence
 
+**Status:** done except the cloud-save plugins and the player applying volumes and fullscreen (see `docs/design/PHASE_SPECS.md` §28.7).
+
 - `SaveGame` object: a reflected struct the game defines
   (`AETHER_REFLECT(MySave, ...)`) and saves to a slot using the Phase 6
   archive; versioned, with migration hooks.

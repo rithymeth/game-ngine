@@ -72,7 +72,7 @@ struct KeyOverride {
 };
 
 // A player's rebinds, saved separately from the project's defaults (in
-// Saved/Config/Input.json) so defaults can change without losing them.
+// the player's settings, §28.7) so defaults can change without losing them.
 struct UserBindings {
     std::vector<KeyOverride> overrides;
 
