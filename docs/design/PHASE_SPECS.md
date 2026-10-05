@@ -5945,9 +5945,14 @@ Active effects live in a saved `EffectContainer` component; `Rebuild()` re-deriv
 after a load (the modifier fields on `Attribute` are not saved). `Update(dt)` is
 deterministic (entities, then effects, in order).
 
-Not done (step 3b): the `.aeffect` asset type and cook root, the player loading effects and
-its `Player.Effects` stage, the `Effects` Blueprint library and `Event.OnEffectApplied` /
-`OnEffectRemoved`. Deferred: attribute-based conditions, magnitude curves, cues, effects that
+Step 3b wires it in. `.aeffect` is an asset type (importer `GameplayEffect`) and the cooker
+roots every one, since effects are applied by name and nothing references them. The player
+loads them into its `EffectLibrary` once (a broken file is a warning naming the asset and the
+error code), gives each scene an `EffectSystem`, and a `Player.Effects` stage ticks it before
+`Player.Attributes`, sending `Event.OnEffectApplied` and `Event.OnEffectRemoved` (effect
+name, handle) to the target's Blueprint. The `Effects` Blueprint library has `ApplyEffect`
+(returns the handle, 0 for an instant or rejected effect), `RemoveEffect`,
+`RemoveEffectsByTag`, `HasActiveEffect` and `GetActiveEffectCount`. Deferred: attribute-based conditions, magnitude curves, cues, effects that
 change min / max, replication.
 
 ### 30.4 PR breakdown
@@ -5956,7 +5961,8 @@ change min / max, replication.
 2. `AttributeSet`: base and current values with clamps, change events
    (`Event.OnAttributeChanged`), save and Blueprint access (done, §30.2).
 3. Gameplay Effects (`.aeffect`): 3a data, modifier math, stacking, periodic ticks, tags
-   and the system (done, §30.3); 3b assets, the player stage and the Blueprint library.
+   and the system (done, §30.3); 3b assets, the player stage and the Blueprint library
+   (done, §30.3).
 4. Abilities (`.aability`): cost, cooldown, required / blocked / cancel tags,
    activate, commit, end, and the latent tasks.
 5. Blueprint and Luau faces, the `Player.Gameplay` system, cook roots and a sample.

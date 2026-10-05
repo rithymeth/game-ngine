@@ -4,6 +4,7 @@
 
 #include "aether/core/log.h"
 #include "aether/gameplay/attribute_system.h"
+#include "aether/gameplay/effect_system.h"
 #include "aether/loc/localized_path.h"
 #include "aether/reflection/serialize.h"
 #include "aether/scene/gameplay.h"
@@ -218,6 +219,7 @@ bool Game::HasScripting() { return AETHER_GAME_SCRIPTING != 0; }
 struct Game::Runtime {
     std::unique_ptr<seq::SequenceSystem> sequences;
     std::unique_ptr<gas::AttributeSystem> attributes; // Phase 30
+    std::unique_ptr<gas::EffectSystem> effects;
 #if AETHER_GAME_SCRIPTING
     script::LuauHost host;
     std::unique_ptr<script::ScriptSystem> scripts;
@@ -389,6 +391,7 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     }
     LoadInputAssets();
     LoadLocalization();
+    LoadEffects();
     EndPlay();
     runtime_.reset();
     physics2d_.reset();
@@ -405,6 +408,7 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     guids_.Clear();
     guids_.Rebuild(*world_);
     warnings_ = localization_warnings_; // found once, before any scene
+    warnings_.insert(warnings_.end(), effect_warnings_.begin(), effect_warnings_.end());
     const auto results = ResolveAllPrefabInstances(*world_, guids_, [this](const assets::AssetGuid& g) { return FindPrefab(g); });
     prefab_instances_ = results.size();
     for (const auto& [root, report] : results) {
@@ -513,6 +517,25 @@ void Game::LoadLocalization() {
     }
 }
 
+void Game::LoadEffects() {
+    if (effects_loaded_) return;
+    effects_loaded_ = true;
+    for (const GameManifest::Asset& asset : package_.Manifest().assets) {
+        if (asset.importer != "GameplayEffect") continue;
+        std::vector<u8> bytes;
+        std::string error;
+        if (!package_.ReadContent(asset.path, bytes, &error)) {
+            warnings_.push_back(error);
+            continue;
+        }
+        gas::GameplayEffect effect;
+        if (!gas::EffectFromJson(std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size()), effect, &error) || !effects_.Register(std::move(effect), &error)) {
+            effect_warnings_.push_back(asset.path + ": " + error);
+            AETHER_LOG_WARN("Player", "%s: %s", asset.path.c_str(), error.c_str());
+        }
+    }
+}
+
 void Game::ActivateInputContexts() {
     const input::UserBindings* user = settings_ && !settings_->Get().bindings.overrides.empty() ? &settings_->Get().bindings : nullptr;
     i32 priority = 0;
@@ -534,6 +557,7 @@ void Game::StartRuntime() {
     // Sequences (§27): the system finds .asequence files by path, and spawns
     // a Spawn key's prefab (a GUID or a path) at its place.
     runtime_->attributes = std::make_unique<gas::AttributeSystem>(*world_); // attributes of this scene's entities
+    runtime_->effects = std::make_unique<gas::EffectSystem>(*world_, *runtime_->attributes, effects_);
     runtime_->sequences = std::make_unique<seq::SequenceSystem>(
         *world_, guids_, [this](const std::string& path) { return FindSequence(path); }, lifecycle_.get());
     runtime_->sequences->SetSpawner([this](const seq::Track&, Entity parent, const seq::SpawnKey& key) -> Entity {
@@ -694,10 +718,28 @@ void Game::BuildFrame() {
     scheduler_.Add(std::move(save_system));
     // Attribute changes (§30.2) reach the changed entity's Blueprint as
     // Event.OnAttributeChanged (name, old, new), after gameplay has run.
+    // Lasting effects (§30.3) tick before the attributes they change are reported.
+    SystemDesc effects;
+    effects.name = "Player.Effects";
+    effects.phase = SystemPhase::Update;
+    effects.after = {"Player.Update", "Player.Sequencer"};
+    effects.main_thread_only = true;
+    effects.run = [this](World&, const FrameContext& frame) {
+        if (!runtime_ || !runtime_->effects) return;
+        runtime_->effects->Update(frame.dt);
+        const std::vector<gas::EffectEvent> events = runtime_->effects->Events();
+        runtime_->effects->ClearEvents();
+        if (!runtime_->blueprints) return;
+        for (const gas::EffectEvent& e : events) {
+            const bp::VmValue args[] = {e.effect, static_cast<i32>(e.handle)};
+            runtime_->blueprints->VM().Dispatch(e.entity, e.applied ? gas::EffectSystem::kAppliedEvent : gas::EffectSystem::kRemovedEvent, args);
+        }
+    };
+    scheduler_.Add(std::move(effects));
     SystemDesc attributes;
     attributes.name = "Player.Attributes";
     attributes.phase = SystemPhase::Update;
-    attributes.after = {"Player.Update", "Player.Sequencer"};
+    attributes.after = {"Player.Update", "Player.Sequencer", "Player.Effects"};
     attributes.main_thread_only = true;
     attributes.run = [this](World&, const FrameContext&) {
         if (!runtime_ || !runtime_->attributes) return;
@@ -715,7 +757,7 @@ void Game::BuildFrame() {
     SystemDesc scripting;
     scripting.name = "Player.Scripting";
     scripting.phase = SystemPhase::Update;
-    scripting.after = {"Player.Sequencer", "Player.Save", "Player.Attributes"};
+    scripting.after = {"Player.Sequencer", "Player.Save", "Player.Attributes", "Player.Effects"};
     scripting.main_thread_only = true;
     scripting.run = [this](World&, const FrameContext& frame) {
 #if AETHER_GAME_SCRIPTING

@@ -6031,7 +6031,7 @@ snapping). The **Tilemap** tool (under **2D**) paints, fills and erases on layer
 
 **Attributes** (§30.2). `AttributeSet` holds an entity's stats (Health, Mana, ...), each with a base, a current value and min/max bounds (the base is clamped too, so a capped Health doesn't hide later damage). Changes made through the `AttributeSystem` or the `Attributes` Blueprint library queue one event per real change, which the player sends to the entity's Blueprint as `Event.OnAttributeChanged` (name, old, new).
 
-**Gameplay effects** (§30.3). `GameplayEffect` (`.aeffect` JSON) changes attributes instantly or while it lasts: add, multiply and override modifiers, stacking, periodic ticks (poison), tag requirements and granted tags. The `EffectSystem` applies and ticks them deterministically; timed modifiers affect an attribute's current value and leave its base alone. Assets, the player stage and Blueprint nodes follow in the next step.
+**Gameplay effects** (§30.3). `GameplayEffect` (`.aeffect` JSON) changes attributes instantly or while it lasts: add, multiply and override modifiers, stacking, periodic ticks (poison), tag requirements and granted tags. The `EffectSystem` applies and ticks them deterministically; timed modifiers affect an attribute's current value and leave its base alone. `.aeffect` assets are cooked automatically and loaded by the player, which ticks effects each frame and sends `Event.OnEffectApplied` / `Event.OnEffectRemoved` to the target's Blueprint; the `Effects` Blueprint library applies and removes them.
 
 **Documentation** (§26.7). The manual is in [docs/manual](docs/manual/README.md).
 The API reference is generated from the engine's reflection: run

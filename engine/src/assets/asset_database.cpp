@@ -178,7 +178,7 @@ std::string ImporterForExtension(const stdfs::path& file) {
     static const std::map<std::string, std::string> kImporters = {
         {".aesc", "Scene"},   {".png", "Texture"},  {".jpg", "Texture"}, {".jpeg", "Texture"}, {".tga", "Texture"}, {".bmp", "Texture"},
         {".hdr", "Texture"},  {".gltf", "Model"},  {".glb", "Model"},    {".ascene", "Scene"}, {".aprefab", "Prefab"}, {".aaction", "InputAction"}, {".amapping", "InputMapping"},
-        {".abp", "Blueprint"}, {".aatlas", "SpriteAtlas"}, {".atileset", "Tileset"}, {".atilemap", "Tilemap"}, {".asequence", "Sequence"}, {".astrings", "StringTable"}, {".wav", "Sound"},    {".ogg", "Sound"},   {".flac", "Sound"},   {".mp3", "Sound"},    {".luau", "Script"},
+        {".abp", "Blueprint"}, {".aatlas", "SpriteAtlas"}, {".atileset", "Tileset"}, {".atilemap", "Tilemap"}, {".asequence", "Sequence"}, {".astrings", "StringTable"}, {".aeffect", "GameplayEffect"}, {".wav", "Sound"},    {".ogg", "Sound"},   {".flac", "Sound"},   {".mp3", "Sound"},    {".luau", "Script"},
         {".hlsl", "Shader"},  {".ttf", "Font"},    {".otf", "Font"},
     };
     auto it = kImporters.find(ToLower(file.extension().string()));
