@@ -10,6 +10,9 @@
 #if AETHER_KIT_INTERACTION
 #include "aether/interaction/interaction_system.h"
 #endif
+#if AETHER_KIT_QUESTS
+#include "aether/quests/quest_system.h"
+#endif
 #include "aether/gameplay/attribute_system.h"
 #include "aether/gameplay/effect_system.h"
 #include "aether/loc/localized_path.h"
@@ -234,6 +237,9 @@ struct Game::Runtime {
 #if AETHER_KIT_INTERACTION
     std::unique_ptr<interact::InteractionSystem> interaction;
 #endif
+#if AETHER_KIT_QUESTS
+    std::unique_ptr<quest::QuestSystem> quests;
+#endif
 #if AETHER_GAME_SCRIPTING
     script::LuauHost host;
     std::unique_ptr<script::ScriptSystem> scripts;
@@ -408,6 +414,7 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     LoadEffects();
     LoadAbilities(); // after the effects they name
     LoadItems();
+    LoadQuests();
     EndPlay();
     runtime_.reset();
     physics2d_.reset();
@@ -552,6 +559,32 @@ void Game::LoadEffects() {
     }
 }
 
+void Game::LoadQuests() {
+    if (quests_loaded_) return;
+    quests_loaded_ = true;
+#if AETHER_KIT_QUESTS
+    for (const GameManifest::Asset& asset : package_.Manifest().assets) {
+        if (asset.importer != "QuestDefinition") continue;
+        std::vector<u8> bytes;
+        std::string error;
+        if (!package_.ReadContent(asset.path, bytes, &error)) {
+            warnings_.push_back(error);
+            continue;
+        }
+        quest::QuestDef def;
+        if (!quest::QuestFromJson(std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size()), def, &error) || !quests_.Register(std::move(def), &error)) {
+            effect_warnings_.push_back(asset.path + ": " + error);
+            AETHER_LOG_WARN("Player", "%s: %s", asset.path.c_str(), error.c_str());
+        }
+    }
+    // Problems across the quests (a prerequisite that isn't one, a cycle, a missing reward effect).
+    for (const std::string& problem : quests_.Check(&effects_)) {
+        effect_warnings_.push_back(problem);
+        AETHER_LOG_WARN("Player", "%s", problem.c_str());
+    }
+#endif
+}
+
 void Game::LoadItems() {
     if (items_loaded_) return;
     items_loaded_ = true;
@@ -620,6 +653,9 @@ void Game::StartRuntime() {
     runtime_->inventory = std::make_unique<inv::InventorySystem>(*world_, runtime_->effects.get(), items_);
 #endif
     runtime_->abilities = std::make_unique<gas::AbilitySystem>(*world_, *runtime_->attributes, *runtime_->effects, abilities_, effects_);
+#if AETHER_KIT_QUESTS
+    runtime_->quests = std::make_unique<quest::QuestSystem>(*world_, runtime_->effects.get(), quests_);
+#endif
 #if AETHER_KIT_INTERACTION
     runtime_->interaction = std::make_unique<interact::InteractionSystem>(*world_, runtime_->effects.get(), runtime_->abilities.get());
 #endif
@@ -865,6 +901,12 @@ void Game::BuildFrame() {
         runtime_->inventory->ClearEvents();
         for (const inv::ItemEvent& e : events) {
             using Kind = inv::ItemEvent::Kind;
+#if AETHER_KIT_QUESTS
+            // Items picked up and put down advance "count" objectives that name the item.
+            if (runtime_->quests && (e.kind == Kind::Added || e.kind == Kind::Removed)) {
+                runtime_->quests->Notify(e.entity, quest::Objective::Kind::Count, e.item, e.kind == Kind::Added ? e.count : -e.count);
+            }
+#endif
 #if AETHER_GAME_SCRIPTING
             if (runtime_->scripts) {
                 const f64 n = static_cast<f64>(e.count);
@@ -938,6 +980,73 @@ void Game::BuildFrame() {
     };
     scheduler_.Add(std::move(interaction));
 #endif
+#if AETHER_KIT_QUESTS
+    // Quest changes (§30.10) reach the owner's script and Blueprint; reward items go to the inventory kit.
+    SystemDesc quests;
+    quests.name = "Player.Quests";
+    quests.phase = SystemPhase::Update;
+    quests.after = {"Player.Update", "Player.Sequencer", "Player.Effects"
+#if AETHER_KIT_INVENTORY
+                    , "Player.Inventory"
+#endif
+#if AETHER_KIT_INTERACTION
+                    , "Player.Interaction"
+#endif
+    };
+    quests.main_thread_only = true;
+    quests.run = [this](World&, const FrameContext&) {
+        if (!runtime_ || !runtime_->quests) return;
+        const std::vector<quest::QuestEvent> events = runtime_->quests->Events();
+        runtime_->quests->ClearEvents();
+        for (const quest::QuestEvent& e : events) {
+            using Kind = quest::QuestEvent::Kind;
+#if AETHER_KIT_INVENTORY
+            if (e.kind == Kind::Completed && runtime_->inventory) {
+                for (const quest::RewardItem& r : e.reward_items) runtime_->inventory->Add(e.entity, r.item, r.count);
+            }
+#endif
+#if AETHER_GAME_SCRIPTING
+            if (runtime_->scripts) {
+                const f64 progress = static_cast<f64>(e.progress), required = static_cast<f64>(e.required);
+                switch (e.kind) {
+                case Kind::Started: runtime_->scripts->SendEvent(e.entity, "OnQuestStarted", {e.quest}); break;
+                case Kind::ObjectiveProgress: runtime_->scripts->SendEvent(e.entity, "OnQuestProgress", {e.quest, e.objective, progress, required}); break;
+                case Kind::ObjectiveCompleted: runtime_->scripts->SendEvent(e.entity, "OnQuestObjectiveCompleted", {e.quest, e.objective}); break;
+                case Kind::Completed: runtime_->scripts->SendEvent(e.entity, "OnQuestCompleted", {e.quest}); break;
+                case Kind::Failed: runtime_->scripts->SendEvent(e.entity, "OnQuestFailed", {e.quest}); break;
+                case Kind::Abandoned: runtime_->scripts->SendEvent(e.entity, "OnQuestAbandoned", {e.quest}); break;
+                }
+            }
+#endif
+            if (!runtime_->blueprints) continue;
+            switch (e.kind) {
+            case Kind::Started: {
+                const bp::VmValue args[] = {e.quest};
+                runtime_->blueprints->VM().Dispatch(e.entity, "Event.OnQuestStarted", args);
+                break;
+            }
+            case Kind::ObjectiveProgress: {
+                const bp::VmValue args[] = {e.quest, e.objective, e.progress, e.required};
+                runtime_->blueprints->VM().Dispatch(e.entity, "Event.OnQuestProgress", args);
+                break;
+            }
+            case Kind::Completed: {
+                const bp::VmValue args[] = {e.quest};
+                runtime_->blueprints->VM().Dispatch(e.entity, "Event.OnQuestCompleted", args);
+                break;
+            }
+            case Kind::Failed: {
+                const bp::VmValue args[] = {e.quest};
+                runtime_->blueprints->VM().Dispatch(e.entity, "Event.OnQuestFailed", args);
+                break;
+            }
+            case Kind::ObjectiveCompleted:
+            case Kind::Abandoned: break; // scripts hear these; Blueprints have the progress and failed events
+            }
+        }
+    };
+    scheduler_.Add(std::move(quests));
+#endif
     SystemDesc attributes;
     attributes.name = "Player.Attributes";
     attributes.phase = SystemPhase::Update;
@@ -969,6 +1078,9 @@ void Game::BuildFrame() {
 #endif
 #if AETHER_KIT_INTERACTION
         ,"Player.Interaction"
+#endif
+#if AETHER_KIT_QUESTS
+        ,"Player.Quests"
 #endif
     };
     scripting.main_thread_only = true;
