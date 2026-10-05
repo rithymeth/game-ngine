@@ -5883,11 +5883,51 @@ matching and the prefix traps, reference counting, sorted queries, `TagQuery`
 nesting, JSON round trips and every error, reflection and use as a component,
 and the library as Blueprint nodes in a real graph.
 
-### 30.2 PR breakdown
+### 30.2 Attributes
 
-1. Gameplay tags (this step, §30.1).
+`AttributeSet` (a component) holds an entity's stats: Health, Mana, Stamina,
+AttackPower... Each `Attribute` has a `base` (what the game sets and saves),
+a `current` (what the rest of the game reads) and `min` / `max` bounds. Today
+`current` is the clamped `base`; `AttributeSet::RecomputeCurrent` is the one
+place step 3 applies effect modifiers, so nothing else changes then.
+
+- The set is sorted by name, so it saves and compares deterministically, and it
+  reflects like any component (`current` is saved; `Normalize` repairs
+  hand-edited data: bounds in order, NaN removed, base and current re-derived).
+- `Define(name, base, min, max)` creates or redefines (an upside-down range is
+  the range the other way round); `SetBase` / `AddBase` clamp the **base** too, so
+  a capped Health doesn't hide later damage. A NaN or an unknown attribute is
+  refused and changes nothing.
+- **`AttributeSystem`** (like the sequencer's: owns the world, can be the active
+  one) is where changes go through, and queues an `AttributeEvent` (entity, name,
+  old, new) **once per real change** to `current`, never for a write that leaves it
+  as it was; a new attribute appears as a change from 0, and narrowing the bounds
+  re-clamps and says so. The host drains the queue.
+- **Blueprints**: the `Attributes` library (`GetAttribute`, `GetAttributeBase`,
+  `GetAttributeMin`, `GetAttributeMax`, `HasAttribute`, `DefineAttribute`,
+  `SetAttributeBase`, `AddAttributeBase`; entity-targeted, acting on the active system, defaults
+  and no effect without one) and **`Event.OnAttributeChanged`** (name, old, new),
+  declared generically in the Blueprint module, so Blueprint doesn't depend on gameplay.
+- **The player** links `Aether::Gameplay`, registers the gameplay components,
+  gives each loaded scene its own `AttributeSystem`, and its `Player.Attributes`
+  stage (after `Player.Update` and `Player.Sequencer`, before `Player.Scripting`)
+  sends each queued change to that entity's Blueprint. The queue is taken first, so a
+  handler that changes an attribute is heard next frame, not in a loop.
+
+Tests (`test_gameplay_attributes.cpp`): define, sorted order and bad input; clamping,
+the capped-base case, NaN and repair; events once per real change, redefining,
+refused writes, dead and attribute-less entities; reflection and a save round trip;
+the library with and without a system and as nodes in a graph; and the player draining
+the queue each frame and giving a new scene a fresh system.
+
+Not done: Luau (with abilities, step 5), modifiers and effects (step 3), and
+Blueprint access to an attribute set as a whole.
+
+### 30.3 PR breakdown
+
+1. Gameplay tags (done, §30.1).
 2. `AttributeSet`: base and current values with clamps, change events
-   (`Event.OnAttributeChanged`), save and Blueprint access.
+   (`Event.OnAttributeChanged`), save and Blueprint access (this step, §30.2).
 3. Gameplay Effects (`.aeffect`): instant, duration and infinite; add, multiply
    and override modifiers; stacking; periodic ticks; tag conditions and granted tags.
 4. Abilities (`.aability`): cost, cooldown, required / blocked / cancel tags,

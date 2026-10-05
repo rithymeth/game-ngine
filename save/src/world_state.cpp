@@ -68,7 +68,11 @@ WorldSnapshot CaptureWorld(World& world, GuidIndex& guids, const WorldTracker* t
         const IdComponent* ia = world.GetComponent<IdComponent>(a);
         const IdComponent* ib = world.GetComponent<IdComponent>(b);
         const EntityGuid ga = ia ? ia->guid : EntityGuid{}, gb = ib ? ib->guid : EntityGuid{};
-        return ga.hi != gb.hi ? ga.hi < gb.hi : ga.lo < gb.lo;
+        if (ga.hi != gb.hi) return ga.hi < gb.hi;
+        if (ga.lo != gb.lo) return ga.lo < gb.lo;
+        // Two entities sharing a GUID: the one created first is "the first" (the other is reported, not saved),
+        // whatever order the ECS happens to iterate them in, which depends on component registration order.
+        return a.index != b.index ? a.index < b.index : a.generation < b.generation;
     });
     for (Entity e : entities) {
         const IdComponent* id = world.GetComponent<IdComponent>(e);
