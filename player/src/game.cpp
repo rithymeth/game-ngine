@@ -264,9 +264,11 @@ std::vector<std::string> Game::LoadSettings(const SettingsTargets& targets) {
     }
     if (settings_observer_ != 0) settings_->RemoveObserver(settings_observer_);
     settings_observer_ = settings_->AddObserver([this](const save::GameSettings& now, const save::GameSettings& before) {
+        if (input_loaded_ && reflect::ToJson(now.bindings) != reflect::ToJson(before.bindings)) ActivateInputContexts(); // live rebinding
         for (const std::string& line : ApplySettings(now, settings_targets_, &before)) AETHER_LOG_INFO("Player", "Settings: applied %s", line.c_str());
     });
     for (const std::string& line : ApplySettings(settings_->Get(), settings_targets_)) AETHER_LOG_INFO("Player", "Settings: applied %s", line.c_str());
+    if (input_loaded_) ActivateInputContexts(); // the loaded file's rebinds
     return warnings;
 }
 
@@ -446,8 +448,13 @@ void Game::LoadInputAssets() {
     }
     for (const std::string& e : input_library_.Errors()) AETHER_LOG_WARN("Player", "%s", e.c_str());
     input_library_.RegisterActions(input_);
+    ActivateInputContexts();
+}
+
+void Game::ActivateInputContexts() {
+    const input::UserBindings* user = settings_ && !settings_->Get().bindings.overrides.empty() ? &settings_->Get().bindings : nullptr;
     i32 priority = 0;
-    for (const std::string& name : input_library_.ContextNames()) input_library_.Activate(input_, name, priority++);
+    for (const std::string& name : input_library_.ContextNames()) input_library_.Activate(input_, name, priority++, user);
 }
 
 void Game::StartRuntime() {

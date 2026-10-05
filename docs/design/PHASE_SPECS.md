@@ -5497,11 +5497,40 @@ save system; the context following a scene reload and the active system
 cleared at teardown; an async save finishing on a tick; `DispatchAll`; what
 `ApplySettings` pushes; and `LoadSettings` applying and observing.
 
-Still for the player executable (the last step): `--user-dir`, the saved
-window size and quality in `main.cpp`, settings written on exit, and moving
-`Saved/Config/Input.json` bindings into the settings.
+### 28.7 The player executable
 
-### 28.7 PR breakdown
+`aether_player` (`player/main.cpp`) uses all of it:
+
+- `--user-dir <dir>` (else `AETHER_USER_DIR`, else the OS folder, §28.6) is
+  where `Saves/` and `Config/` live. `Game::SetUserPaths` and `LoadSettings`
+  run before the scene loads.
+- **Precedence** for the window size and the quality preset: the command line
+  (`--size`, `--quality`), then the settings file, then the project's own.
+  The settings count only if a `settings.asettings` exists: the defaults
+  (1280x720, High) never override the project. Vsync follows the same rule.
+  Fullscreen is read but only logged: `Window` can't change mode yet.
+- **Written on exit only if changed.** The settings are saved after the run
+  if the game changed them (`Settings().Set`), never because they were loaded,
+  so a damaged file isn't overwritten by a run that didn't touch it.
+  Command-line overrides are not copied into the settings.
+- **Key bindings** are part of `GameSettings`. `MigrateLegacyBindings` moves
+  an old `Config/Input.json` (the pre-Phase 28 place) into them once: no file,
+  nothing; a damaged file, a warning and the file stays; rebinds already in
+  the settings win and the old file is set aside; otherwise they are copied in
+  and the file becomes `Input.json.migrated`. `Game` applies the settings'
+  rebinds to every input context, and re-applies them when they change
+  (live rebinding).
+
+Tests (`test_player_save.cpp`): the migration cases above, and a run of the
+real `aether_player --headless --user-dir` that writes no settings file when
+nothing changed, moves the old rebinds in once, and leaves the file alone on
+the next run.
+
+Not done (follow-ups): applying the volumes (the player has no mixer or audio
+system yet), fullscreen and live window resize (`Window` has no setters), a
+quality preset change at runtime, and cloud saves as plugins.
+
+### 28.8 PR breakdown
 
 1. Save slots (done, §28.1).
 2. World state (done, §28.2).
@@ -5509,6 +5538,7 @@ window size and quality in `main.cpp`, settings written on exit, and moving
 4. The save bag and the Blueprint and Luau library (done, §28.4).
 5. The Save Inspector panel for `.asav` (done, §28.5).
 6. Player runtime wiring: user folders, the save system and its world
-   context, `Player.Save`, `DispatchAll`, `ApplySettings` (this step, §28.6).
+   context, `Player.Save`, `DispatchAll`, `ApplySettings` (done, §28.6).
 7. The player executable (`--user-dir`, saved window size and quality,
-   settings on exit, the `Input.json` migration) and the Phase 28 wrap-up.
+   settings on exit, the `Input.json` migration) and the Phase 28 wrap-up
+   (this step, §28.7).
