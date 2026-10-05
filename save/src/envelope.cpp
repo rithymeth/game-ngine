@@ -70,6 +70,43 @@ SaveResult Write(const stdfs::path& file, std::string_view contents) {
     return Ok();
 }
 
+EnvelopeInfo Inspect(const stdfs::path& file) {
+    EnvelopeInfo info;
+    std::error_code ec;
+    const auto size = stdfs::file_size(file, ec);
+    if (ec) {
+        info.error = "can't read " + file.string();
+        return info;
+    }
+    info.bytes = size;
+    if (size > 64ull * 1024 * 1024) {
+        info.error = "the file is too large to inspect (over 64 MB)";
+        return info;
+    }
+    std::vector<u8> bytes;
+    if (!fs::ReadFileBytes(file.string(), bytes)) {
+        info.error = "can't read " + file.string();
+        return info;
+    }
+    info.raw_text.assign(bytes.begin(), bytes.end());
+    const Json j = Json::parse(bytes.begin(), bytes.end(), nullptr, /*allow_exceptions=*/false);
+    if (j.is_discarded() || !j.is_object() || !j.contains("data") || !j.contains("$type")) {
+        info.error = "not an Aether save or settings file";
+        return info;
+    }
+    info.ok = true;
+    info.kind = j.value("$type", "");
+    info.format = j.value("format", 0u);
+    info.type = j.value("type", "");
+    info.type_version = j.value("type_version", 0u);
+    info.slot = j.value("slot", "");
+    info.timestamp = j.value("timestamp_utc", static_cast<u64>(0));
+    info.checksum_stored = j.value("checksum", "");
+    info.data = j["data"];
+    info.checksum_ok = info.checksum_stored == Hex(Checksum(info.data.dump()));
+    return info;
+}
+
 SaveResult Read(const stdfs::path& file, std::string_view kind, const reflect::TypeInfo& type, void* object) {
     std::vector<u8> bytes;
     if (!fs::ReadFileBytes(file.string(), bytes)) return Fail(SaveError::NotFound, "no file at " + file.string());
