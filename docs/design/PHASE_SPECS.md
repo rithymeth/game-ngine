@@ -5465,13 +5465,50 @@ instance; tampering, junk, empty and missing files; an unknown type falling
 back to JSON; the node cap; delete and copy rules; the panel drawing headless
 and rescanning; and the workspace tool and extension opener.
 
-### 28.6 PR breakdown
+### 28.6 Player wiring
+
+`Game` (the player runtime) gets saving (`player/`):
+
+- `ResolveUserPaths(project, override)` gives `{root, Saves, Config}`: the
+  `--user-dir` option, then `AETHER_USER_DIR`, then the OS's per-user data
+  folder (`%APPDATA%`, `~/Library/Application Support`, `$XDG_DATA_HOME` or
+  `~/.local/share`) plus the project name with anything but letters, digits,
+  `-` and `_` replaced by `_` (a project can't name its way out of the folder).
+- `Game::SetUserPaths` opens a `SaveSystem` over `Saves` (made the active one,
+  so `SaveGames` in Blueprints and Luau works) and a `SettingsStore` over
+  `Config`. Without it there is no save system (`Saves()` is null).
+- The save system's world context (world, GUID index, lifecycle and a
+  `WorldTracker`) follows the loaded scene: cleared before the old world
+  goes, set after the new one is built. `~Game` drains and destroys the save
+  system before the world.
+- `Player.Save` (Update, after `Player.Sequencer`, before `Player.Scripting`)
+  pumps the system, then sends `Event.OnSaveFinished(slot, success)` to every
+  Blueprint with it. That is the new `BlueprintVM::DispatchAll(event, args)`,
+  a broadcast returning how many ran it. Luau callbacks run from the same pump.
+- `ApplySettings(settings, targets, before)` pushes volumes (through
+  `BusVolumeDb`, buses Master, Music, SFX, Voice), the quality name and the
+  window to host hooks, only what changed when given `before`. The hooks are
+  injected so the runtime doesn't link the mixer, the renderer or the window.
+  `Game::LoadSettings(targets)` loads the file, applies it, and keeps applying
+  later `Settings().Set(...)` changes.
+
+Tests (`test_player_save.cpp`): path precedence and sanitizing; no paths, no
+save system; the context following a scene reload and the active system
+cleared at teardown; an async save finishing on a tick; `DispatchAll`; what
+`ApplySettings` pushes; and `LoadSettings` applying and observing.
+
+Still for the player executable (the last step): `--user-dir`, the saved
+window size and quality in `main.cpp`, settings written on exit, and moving
+`Saved/Config/Input.json` bindings into the settings.
+
+### 28.7 PR breakdown
 
 1. Save slots (done, §28.1).
 2. World state (done, §28.2).
 3. Settings (done, §28.3).
 4. The save bag and the Blueprint and Luau library (done, §28.4).
-5. The Save Inspector panel for `.asav` (this step, §28.5).
-6. Player wiring (the per-user save and settings folders, a `Player.Save`
-   stage, applying settings, the world context and the finished-save event)
-   and docs.
+5. The Save Inspector panel for `.asav` (done, §28.5).
+6. Player runtime wiring: user folders, the save system and its world
+   context, `Player.Save`, `DispatchAll`, `ApplySettings` (this step, §28.6).
+7. The player executable (`--user-dir`, saved window size and quality,
+   settings on exit, the `Input.json` migration) and the Phase 28 wrap-up.

@@ -211,7 +211,8 @@ struct Game::Runtime {
     std::unique_ptr<bp::BlueprintSystem> blueprints;
 };
 
-Game::Game(GamePackage& package) : package_(package), world_(std::make_unique<World>()) {
+Game::Game(GamePackage& package)
+    : package_(package), world_(std::make_unique<World>()), settings_(std::make_unique<save::SettingsStore<save::GameSettings>>(std::filesystem::path())) {
     lifecycle_ = std::make_unique<Lifecycle>(*world_, guids_);
 #if AETHER_GAME_PHYSICS
     // Registered by name, so scenes can name them.
@@ -226,6 +227,7 @@ Game::Game(GamePackage& package) : package_(package), world_(std::make_unique<Wo
 
 Game::~Game() {
     EndPlay();
+    saves_.reset(); // drains queued saves; its world context points into what's below
     runtime_.reset(); // scripts and Blueprints before the world, lifecycle and input they use
     physics2d_.reset();
     physics_.reset(); // its bodies before the world they belong to
@@ -233,6 +235,39 @@ Game::~Game() {
         modules_.back().second->Shutdown();
         modules_.pop_back();
     }
+}
+
+void Game::RefreshSaveContext() {
+    if (!saves_) return;
+    tracker_.Begin(*world_, guids_); // the scene as loaded: what a later save counts as destroyed is measured against it
+    saves_->SetWorldContext({world_.get(), &guids_, &tracker_, lifecycle_.get()});
+}
+
+void Game::SetUserPaths(const UserPaths& paths) {
+    user_paths_ = paths;
+    saves_ = std::make_unique<save::SaveSystem>(paths.saves);
+    saves_->MakeActive();
+    // Keep what the host already loaded or changed when the folder moves.
+    const save::GameSettings keep = settings_->Get();
+    settings_ = std::make_unique<save::SettingsStore<save::GameSettings>>(paths.settings);
+    settings_->Set(keep);
+    settings_observer_ = 0;
+    RefreshSaveContext();
+}
+
+std::vector<std::string> Game::LoadSettings(const SettingsTargets& targets) {
+    std::vector<std::string> warnings;
+    settings_targets_ = targets;
+    if (!user_paths_.settings.empty()) {
+        const save::SaveResult r = settings_->Load();
+        warnings = r.warnings;
+    }
+    if (settings_observer_ != 0) settings_->RemoveObserver(settings_observer_);
+    settings_observer_ = settings_->AddObserver([this](const save::GameSettings& now, const save::GameSettings& before) {
+        for (const std::string& line : ApplySettings(now, settings_targets_, &before)) AETHER_LOG_INFO("Player", "Settings: applied %s", line.c_str());
+    });
+    for (const std::string& line : ApplySettings(settings_->Get(), settings_targets_)) AETHER_LOG_INFO("Player", "Settings: applied %s", line.c_str());
+    return warnings;
 }
 
 std::vector<std::string> Game::StartModules() {
@@ -327,6 +362,7 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     const bool loaded = is_json ? LoadSceneJsonFromMemory(*world, bytes, path) : LoadSceneFromMemory(*world, bytes, path);
     if (!loaded) return Fail(error, "Can't load the scene " + path);
 
+    if (saves_) saves_->SetWorldContext({}); // it points into the world being replaced
     world_ = std::move(world);
     guids_.Clear();
     guids_.Rebuild(*world_);
@@ -341,6 +377,7 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     }
     guids_.Rebuild(*world_);
     lifecycle_ = std::make_unique<Lifecycle>(*world_, guids_);
+    RefreshSaveContext();
     StartRuntime();
     // 2D physics: the scene's tilemaps are read from the package when first needed.
     tilemaps_.clear();
@@ -567,11 +604,29 @@ void Game::BuildFrame() {
         }
     };
     scheduler_.Add(std::move(sequencer));
+    // Finished saves (§28.7): queued writes are delivered here, on the main
+    // thread, then Blueprints hear Event.OnSaveFinished (slot, success).
+    // Luau's callbacks run from the same Pump.
+    SystemDesc save_system;
+    save_system.name = "Player.Save";
+    save_system.phase = SystemPhase::Update;
+    save_system.after = {"Player.Sequencer"};
+    save_system.main_thread_only = true;
+    save_system.run = [this](World&, const FrameContext&) {
+        if (!saves_) return;
+        saves_->Pump();
+        for (const save::SaveSystem::FinishedSave& f : saves_->TakeFinishedSaves()) {
+            if (!runtime_ || !runtime_->blueprints) continue;
+            const bp::VmValue args[] = {f.slot, f.success};
+            runtime_->blueprints->VM().DispatchAll("Event.OnSaveFinished", args);
+        }
+    };
+    scheduler_.Add(std::move(save_system));
     // Timers and Blueprint ticks run with the frame's Update.
     SystemDesc scripting;
     scripting.name = "Player.Scripting";
     scripting.phase = SystemPhase::Update;
-    scripting.after = {"Player.Sequencer"};
+    scripting.after = {"Player.Sequencer", "Player.Save"};
     scripting.main_thread_only = true;
     scripting.run = [this](World&, const FrameContext& frame) {
 #if AETHER_GAME_SCRIPTING

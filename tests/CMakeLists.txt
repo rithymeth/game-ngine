@@ -31,7 +31,7 @@ add_executable(aether_tests
 
 target_link_libraries(aether_tests PRIVATE Aether::Engine)
 # Phase 25 step 4: the player's runtime.
-target_sources(aether_tests PRIVATE test_player.cpp test_package.cpp test_pak_patch.cpp test_plugin.cpp test_templates.cpp)
+target_sources(aether_tests PRIVATE test_player.cpp test_player_save.cpp test_package.cpp test_pak_patch.cpp test_plugin.cpp test_templates.cpp)
 target_link_libraries(aether_tests PRIVATE Aether::Game Aether::Templates Aether::Blueprint)
 # The Build and Package window's test packages and launches the real player.
 add_dependencies(aether_tests aether_player)
