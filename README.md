@@ -6039,7 +6039,7 @@ snapping). The **Tilemap** tool (under **2D**) paints, fills and erases on layer
 
 **Gameplay Debugger** (§30.6). The editor's Debug tools list each entity's attributes with their modifiers, active effects, abilities and tags, with a filter and buttons to set a base value, remove an effect, cancel an ability and add or remove a tag.
 
-**Inventory and items** (§30.7). An optional genre kit (`AETHER_KIT_INVENTORY`, on by default): `.aitem` definitions (stack size, weight, tags, equipment slot and effects, use effect), an `Inventory` component with slots, a weight limit and worn equipment, and an `InventorySystem` that adds, removes, moves, splits, equips and uses items, applying effects through the gameplay module. The `Items` Blueprint library exposes it; the player and Luau faces follow.
+**Inventory and items** (§30.7). An optional genre kit (`AETHER_KIT_INVENTORY`, on by default): `.aitem` definitions (stack size, weight, tags, equipment slot and effects, use effect), an `Inventory` component with slots, a weight limit and worn equipment, and an `InventorySystem` that adds, removes, moves, splits, equips and uses items, applying effects through the gameplay module. The `Items` Blueprint library and a Luau `Inventory` table expose it, and the player loads `.aitem` assets and sends `OnItem*` events to the owner's Blueprint and script.
 
 **Documentation** (§26.7). The manual is in [docs/manual](docs/manual/README.md).
 The API reference is generated from the engine's reflection: run
