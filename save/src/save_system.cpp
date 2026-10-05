@@ -1,7 +1,7 @@
 #include "aether/save/save_system.h"
 
 #include "aether/core/log.h"
-#include "aether/pak/pak.h"
+#include "aether/save/envelope.h"
 #include "aether/platform/filesystem.h"
 
 #include <algorithm>
@@ -17,31 +17,10 @@ namespace {
 
 std::atomic<SaveSystem*> g_active{nullptr};
 
-constexpr u32 kFormat = 1;
+constexpr const char* kKind = "aether.save";
 
-SaveResult Fail(SaveError error, std::string message) {
-    SaveResult r;
-    r.error = error;
-    r.message = std::move(message);
-    AETHER_LOG_WARN("Save", "%s", r.message.c_str());
-    return r;
-}
-
-SaveResult Ok() {
-    SaveResult r;
-    r.ok = true;
-    return r;
-}
-
-u32 Checksum(const std::string& text) {
-    return pak::Crc32(std::span<const u8>(reinterpret_cast<const u8*>(text.data()), text.size()));
-}
-
-std::string Hex(u32 value) {
-    char buf[16];
-    std::snprintf(buf, sizeof buf, "%08x", value);
-    return buf;
-}
+SaveResult Fail(SaveError e, std::string m) { return envelope::Fail(e, std::move(m)); }
+SaveResult Ok() { return envelope::Ok(); }
 
 } // namespace
 
@@ -75,34 +54,12 @@ bool SaveSystem::ValidSlotName(std::string_view slot) {
 stdfs::path SaveSystem::PathOf(std::string_view slot) const { return directory_ / (std::string(slot) + ".asav"); }
 
 std::string SaveSystem::Envelope(std::string_view slot, const reflect::TypeInfo& type, const void* object) const {
-    Json data = reflect::ToJson(type, object);
-    const std::string dumped = data.dump();
-    Json envelope = {{"$type", "aether.save"},
-                     {"format", kFormat},
-                     {"type", type.name},
-                     {"type_version", type.version},
-                     {"slot", std::string(slot)},
-                     {"timestamp_utc", static_cast<u64>(std::time(nullptr))},
-                     {"checksum", Hex(Checksum(dumped))},
-                     {"data", std::move(data)}};
-    return envelope.dump(2);
+    return envelope::Make(kKind, slot, type, object);
 }
 
 SaveResult SaveSystem::Write(std::string_view slot, const std::string& contents) {
     std::lock_guard<std::mutex> lock(io_mutex_);
-    const stdfs::path file = PathOf(slot);
-    std::error_code ec;
-    stdfs::create_directories(directory_, ec);
-    if (stdfs::exists(file, ec)) {
-        // Keep the previous save: if this write or the new file turns out bad, it is still there.
-        stdfs::path backup = file;
-        backup += ".bak";
-        stdfs::copy_file(file, backup, stdfs::copy_options::overwrite_existing, ec);
-    }
-    if (!fs::WriteFileAtomic(file.string(), contents.data(), contents.size())) {
-        return Fail(SaveError::IoError, "couldn't write " + file.string());
-    }
-    return Ok();
+    return envelope::Write(PathOf(slot), contents);
 }
 
 SaveResult SaveSystem::Save(std::string_view slot, const reflect::TypeInfo& type, const void* object) {
@@ -110,52 +67,10 @@ SaveResult SaveSystem::Save(std::string_view slot, const reflect::TypeInfo& type
     return Write(slot, Envelope(slot, type, object));
 }
 
-SaveResult SaveSystem::LoadFile(const stdfs::path& file, const reflect::TypeInfo& type, void* object) const {
-    std::vector<u8> bytes;
-    if (!fs::ReadFileBytes(file.string(), bytes)) return Fail(SaveError::NotFound, "no save at " + file.string());
-    const Json envelope = Json::parse(bytes.begin(), bytes.end(), nullptr, /*allow_exceptions=*/false);
-    if (envelope.is_discarded() || !envelope.is_object() || envelope.value("$type", "") != "aether.save" || !envelope.contains("data")) {
-        return Fail(SaveError::Corrupt, file.string() + " isn't a readable save file");
-    }
-    if (envelope.value("format", 0u) == 0 || envelope.value("format", 0u) > kFormat) {
-        return Fail(SaveError::Corrupt, file.string() + " has a save format this version doesn't know");
-    }
-    if (envelope.value("checksum", "") != Hex(Checksum(envelope["data"].dump()))) {
-        return Fail(SaveError::Corrupt, file.string() + " has been changed or damaged (its checksum doesn't match)");
-    }
-    if (envelope.value("type", "") != type.name) {
-        return Fail(SaveError::WrongType, file.string() + " holds a '" + envelope.value("type", "") + "', not a '" + type.name + "'");
-    }
-    if (envelope.value("type_version", 0u) > type.version) {
-        return Fail(SaveError::FutureVersion, file.string() + " was saved by a newer version of '" + type.name + "' (" +
-                                                  std::to_string(envelope.value("type_version", 0u)) + ", this code has " + std::to_string(type.version) + ")");
-    }
-    reflect::LoadReport report;
-    if (!reflect::FromJson(type, object, envelope["data"], &report)) {
-        return Fail(SaveError::Corrupt, file.string() + " doesn't have the shape of a '" + type.name + "'");
-    }
-    SaveResult r = Ok();
-    r.warnings = std::move(report.warnings);
-    return r;
-}
-
 SaveResult SaveSystem::Load(std::string_view slot, const reflect::TypeInfo& type, void* object) {
     if (!ValidSlotName(slot)) return Fail(SaveError::InvalidSlot, "'" + std::string(slot) + "' isn't a valid slot name");
     std::lock_guard<std::mutex> lock(io_mutex_);
-    const stdfs::path file = PathOf(slot);
-    stdfs::path backup = file;
-    backup += ".bak";
-    SaveResult result = LoadFile(file, type, object);
-    if (result.ok) return result;
-    // A wrong type or a newer version is the caller's to hear about; damage or a missing file falls back to the backup.
-    if ((result.error == SaveError::Corrupt || result.error == SaveError::NotFound) && fs::Exists(backup.string())) {
-        SaveResult from_backup = LoadFile(backup, type, object);
-        if (from_backup.ok) {
-            from_backup.warnings.push_back("the save was unreadable (" + result.message + "): loaded the previous one");
-            return from_backup;
-        }
-    }
-    return result;
+    return envelope::ReadWithBackup(PathOf(slot), kKind, type, object);
 }
 
 bool SaveSystem::Exists(std::string_view slot) const {
