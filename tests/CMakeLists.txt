@@ -36,6 +36,11 @@ if(TARGET coin_run_game)
     target_link_libraries(aether_tests PRIVATE coin_run_game)
 endif()
 
+if(TARGET aether_mcp)
+    target_sources(aether_tests PRIVATE test_mcp.cpp)
+    target_link_libraries(aether_tests PRIVATE aether_mcp)
+endif()
+
 if(TARGET gem_hop_game)
     target_sources(aether_tests PRIVATE test_gem_hop.cpp)
     target_link_libraries(aether_tests PRIVATE gem_hop_game)

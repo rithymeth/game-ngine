@@ -25,6 +25,7 @@ option(AETHER_BUILD_VULKAN "Build the Vulkan RHI backend" ON)
 option(AETHER_BUILD_SCRIPTING "Build the Luau scripting module" ON)
 option(AETHER_BUILD_TERRAIN "Build the terrain module" ON)
 option(AETHER_BUILD_NET "Build the networking module" ON)
+option(AETHER_BUILD_MCP "Build the MCP (Model Context Protocol) editor server" ON)
 
 include(FetchContent)
 
@@ -264,8 +265,16 @@ if(AETHER_BUILD_PHYSICS)
     add_subdirectory(physics)
 endif()
 
+if(AETHER_BUILD_EDITOR_UI OR AETHER_BUILD_MCP)
+    add_subdirectory(editor/src/core)
+endif()
+
 if(AETHER_BUILD_EDITOR_UI)
     add_subdirectory(editor/src/ui)
+endif()
+
+if(AETHER_BUILD_MCP)
+    add_subdirectory(mcp)
 endif()
 
 add_subdirectory(samples/coin_run)
