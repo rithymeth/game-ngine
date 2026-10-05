@@ -204,6 +204,8 @@ private:
     const seq::LevelSequence* FindSequence(const std::string& path);
     void BuildFrame();
     void LoadInputAssets();
+    // (Re)activates every input context with the settings' rebinds applied.
+    void ActivateInputContexts();
     void StartRuntime(); // scripts and Blueprints for the loaded scene
 
     GamePackage& package_;

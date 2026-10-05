@@ -15,6 +15,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cmath>
+#include <fstream>
 #include <filesystem>
 
 // Phase 28 step 6 (§28.7): the player's user folders, its SaveSystem and
@@ -233,3 +234,105 @@ AETHER_TEST(PlayerSave_LoadSettingsAppliesAndObserves) {
     CHECK(game.Settings().Set(changed));
     CHECK(buses.size() == 1 && buses[0].first == "Voice"); // later changes apply too
 }
+
+// ---- Phase 28 step 7: the old rebinds move into the settings ----
+
+#include "aether/input/bindings.h"
+#include "aether/player/bindings_migrate.h"
+
+namespace {
+
+void WriteLegacy(const stdfs::path& root, const std::string& text) {
+    const stdfs::path file = input::UserBindingsPath(root);
+    stdfs::create_directories(file.parent_path());
+    std::ofstream(file, std::ios::binary) << text;
+}
+
+} // namespace
+
+AETHER_TEST(PlayerSave_MigratesLegacyBindingsOnce) {
+    const stdfs::path root = TestDir("migrate");
+    input::UserBindings ub;
+    ub.Set("Gameplay", "Jump", 0, input::Key::K);
+    std::string error;
+    stdfs::create_directories(input::UserBindingsPath(root).parent_path());
+    CHECK(input::SaveUserBindings(ub, input::UserBindingsPath(root), &error));
+    save::SettingsStore<save::GameSettings> store(root / "Config");
+    CHECK(MigrateLegacyBindings(root, store).empty());
+    CHECK(store.Get().bindings.overrides.size() == 1);
+    CHECK(store.Get().bindings.Find("Gameplay", "Jump", 0) != nullptr);
+    CHECK(!stdfs::exists(input::UserBindingsPath(root)));
+    stdfs::path moved = input::UserBindingsPath(root);
+    moved += ".migrated";
+    CHECK(stdfs::exists(moved));
+    CHECK(MigrateLegacyBindings(root, store).empty()); // a second run does nothing
+    CHECK(store.Get().bindings.overrides.size() == 1);
+}
+
+AETHER_TEST(PlayerSave_MigrationLeavesADamagedFileAlone) {
+    const stdfs::path root = TestDir("migrate_bad");
+    WriteLegacy(root, "{ not json");
+    save::SettingsStore<save::GameSettings> store(root / "Config");
+    const auto warnings = MigrateLegacyBindings(root, store);
+    CHECK(warnings.size() == 1);
+    CHECK(store.Get().bindings.overrides.empty());
+    CHECK(stdfs::exists(input::UserBindingsPath(root)));
+}
+
+AETHER_TEST(PlayerSave_SettingsBindingsWinOverTheOldFile) {
+    const stdfs::path root = TestDir("migrate_wins");
+    input::UserBindings ub;
+    ub.Set("Gameplay", "Jump", 0, input::Key::K);
+    std::string error;
+    stdfs::create_directories(input::UserBindingsPath(root).parent_path());
+    CHECK(input::SaveUserBindings(ub, input::UserBindingsPath(root), &error));
+    save::SettingsStore<save::GameSettings> store(root / "Config");
+    save::GameSettings s;
+    s.bindings.Set("Gameplay", "Jump", 0, input::Key::J);
+    store.Set(s);
+    CHECK(MigrateLegacyBindings(root, store).size() == 1);
+    CHECK(store.Get().bindings.Find("Gameplay", "Jump", 0)->key == input::Key::J);
+    CHECK(!stdfs::exists(input::UserBindingsPath(root)));
+}
+
+AETHER_TEST(PlayerSave_NoOldFileNoMigration) {
+    const stdfs::path root = TestDir("migrate_none");
+    save::SettingsStore<save::GameSettings> store(root / "Config");
+    CHECK(MigrateLegacyBindings(root, store).empty());
+    CHECK(store.Get().bindings.overrides.empty());
+}
+
+#ifdef AETHER_TEST_PLAYER_PATH
+namespace {
+int RunPlayer(const stdfs::path& pak, const stdfs::path& user) {
+    const std::string cmd = std::string("\"") + AETHER_TEST_PLAYER_PATH + "\" --headless --frames 3 --pak \"" + pak.string() + "\" --user-dir \"" +
+                            user.string() + "\" > /dev/null 2>&1";
+    return std::system(cmd.c_str());
+}
+} // namespace
+
+AETHER_TEST(PlayerSave_PlayerExecutableLeavesSettingsAloneUnlessChanged) {
+#if !defined(_WIN32)
+    const stdfs::path dir = TestDir("exe");
+    const stdfs::path pak = MakeGame(dir);
+    const stdfs::path user = dir / "user";
+    CHECK(RunPlayer(pak, user) == 0);
+    CHECK(!stdfs::exists(user / "Config" / "settings.asettings")); // nothing changed: nothing written
+    // An old rebinds file is moved into a new settings file, once.
+    input::UserBindings ub;
+    ub.Set("Gameplay", "Jump", 0, input::Key::K);
+    std::string error;
+    stdfs::create_directories(input::UserBindingsPath(user).parent_path());
+    CHECK(input::SaveUserBindings(ub, input::UserBindingsPath(user), &error));
+    CHECK(RunPlayer(pak, user) == 0);
+    CHECK(stdfs::exists(user / "Config" / "settings.asettings"));
+    CHECK(!stdfs::exists(input::UserBindingsPath(user)));
+    save::SettingsStore<save::GameSettings> store(user / "Config");
+    CHECK(store.Load().ok && store.Get().bindings.overrides.size() == 1);
+    // A run that changes nothing leaves the file as it is.
+    const auto written = stdfs::last_write_time(store.Path());
+    CHECK(RunPlayer(pak, user) == 0);
+    CHECK(stdfs::last_write_time(store.Path()) == written);
+#endif
+}
+#endif

@@ -7,25 +7,32 @@
 //   aether_player [--pak <file|dir>]... [--scene <path>] [--frames <n>]
 //                 [--headless] [--backend d3d12|vulkan] [--size <w>x<h>]
 //                 [--quality <preset>] [--key <64 hex digits>]
-//                 [--press <Key>]... [--report]
+//                 [--press <Key>]... [--report] [--user-dir <dir>]
 //
 // Encrypted archives (§25.6) open with --key, or AETHER_PAK_KEY in the
 // environment, or the key a game's player was built with
 // (-DAETHER_GAME_PAK_KEY=<hex>).
 //
 // The window's title, size and vsync, and the quality preset, come from the
-// project's settings (§25.5) unless given here.
+// player's settings file (settings.asettings, §28.6) if it has one, else the
+// project's settings (§25.5), unless given here. Saves and settings live in
+// the player's folder: --user-dir, else AETHER_USER_DIR, else the OS's
+// per-user data folder (Saves/ and Config/ inside it). A settings file is
+// only written when this run changed something (the old
+// Saved/Config/Input.json rebinds are moved into it once).
 //
 // With no --pak it mounts every .apak in Paks/ beside the executable (then
 // in the working directory). The manifest's configuration sets the log
 // level: Debug logs everything, Development logs info and a stats line
 // every second, Shipping only warnings and errors.
 
+#include "aether/player/bindings_migrate.h"
 #include "aether/player/game.h"
 
 #include "aether/core/log.h"
 #include "aether/gfx/rhi/device.h"
 #include "aether/platform/window.h"
+#include "aether/reflection/serialize.h"
 #include "aether/scene/components.h"
 #include "aether/scene/gameplay.h"
 
@@ -54,6 +61,7 @@ struct Options {
     std::string backend;
     u32 width = 0, height = 0; // 0: the project's
     std::string quality;
+    std::string user_dir; // empty: AETHER_USER_DIR, then the OS's folder
     std::vector<std::string> keys;
     std::vector<std::string> pressed; // keys held for the whole run (headless runs, smoke tests)
     bool report = false;              // print where the Player-tagged entity ended up
@@ -63,7 +71,7 @@ void Usage() {
     std::fprintf(stderr,
                  "usage: aether_player [--pak <file|dir>]... [--scene <path>] [--frames <n>] [--headless]\n"
                  "                     [--backend d3d12|vulkan] [--size <w>x<h>] [--quality <preset>]\n"
-                 "                     [--key <64 hex digits>] [--press <Key>]... [--report]\n");
+                 "                     [--key <64 hex digits>] [--press <Key>]... [--report] [--user-dir <dir>]\n");
 }
 
 bool ParseArgs(int argc, char** argv, Options& o) {
@@ -84,6 +92,8 @@ bool ParseArgs(int argc, char** argv, Options& o) {
             o.report = true;
         } else if (a == "--key" && has_value) {
             o.keys.push_back(argv[++i]);
+        } else if (a == "--user-dir" && has_value) {
+            o.user_dir = argv[++i];
         } else if (a == "--quality" && has_value) {
             o.quality = argv[++i];
         } else if (a == "--backend" && has_value) {
@@ -168,17 +178,45 @@ int main(int argc, char** argv) {
                     cook::ConfigurationName(config), paks.size(), manifest.assets.size());
     for (const std::string& dlc : package.Dlcs()) AETHER_LOG_INFO("Player", "DLC: %s", dlc.c_str());
 
-    const QualityPreset* quality = ChooseQuality(manifest, options.quality);
-    if (!options.quality.empty() && (!quality || quality->name != options.quality)) {
-        AETHER_LOG_WARN("Player", "No quality preset '%s'", options.quality.c_str());
+    // The player's folder, settings and old rebinds, before the scene: the
+    // settings decide the window and quality, the rebinds the input contexts.
+    Game game(package);
+    const UserPaths user_paths = ResolveUserPaths(manifest.project, options.user_dir);
+    game.SetUserPaths(user_paths);
+    // The window can't change after it opens, so the settings' window values
+    // are only recorded here, then used when it is created below.
+    struct Chosen {
+        u32 width = 0, height = 0;
+        bool fullscreen = false, vsync = true;
+    } chosen;
+    SettingsTargets targets;
+    targets.set_window = [&](u32 w, u32 h, bool fullscreen, bool vsync) { chosen = {w, h, fullscreen, vsync}; };
+    for (const std::string& w : game.LoadSettings(targets)) AETHER_LOG_WARN("Player", "%s", w.c_str());
+    // A settings file counts only if there is one: the defaults (1280x720,
+    // High) must not override the project's own.
+    std::error_code settings_ec;
+    const bool have_settings = stdfs::exists(game.Settings().Path(), settings_ec);
+    std::string saved_json = reflect::ToJson(game.Settings().Get()).dump();
+    for (const std::string& w : MigrateLegacyBindings(user_paths.root, game.Settings())) AETHER_LOG_WARN("Player", "%s", w.c_str());
+    const auto settings_changed = [&] { return reflect::ToJson(game.Settings().Get()).dump() != saved_json; };
+    if (settings_changed()) { // the old rebinds were moved in and their file renamed: keep them
+        for (const std::string& w : game.Settings().Save().warnings) AETHER_LOG_WARN("Player", "%s", w.c_str());
+        saved_json = reflect::ToJson(game.Settings().Get()).dump();
+    }
+
+    const std::string wanted_quality = !options.quality.empty() ? options.quality : (have_settings ? game.Settings().Get().quality : std::string());
+    const QualityPreset* quality = ChooseQuality(manifest, wanted_quality);
+    if (!wanted_quality.empty() && (!quality || quality->name != wanted_quality)) {
+        AETHER_LOG_WARN("Player", "No quality preset '%s'", wanted_quality.c_str());
     }
     if (quality) {
         AETHER_LOG_INFO("Player", "Quality: %s (resolution x%.2f, %u shadow cascades at %u, MSAA x%u)", quality->name.c_str(),
                         quality->resolution_scale, quality->shadow_cascades, quality->shadow_resolution,
                         quality->msaa_samples);
     }
+    const bool vsync = have_settings ? chosen.vsync : manifest.vsync;
+    if (have_settings && chosen.fullscreen) AETHER_LOG_WARN("Player", "Fullscreen is saved in the settings but isn't supported by this window yet");
 
-    Game game(package);
     const bool loaded = options.scene.empty() ? game.LoadStartupScene(&error) : game.LoadScene(options.scene, &error);
     if (!loaded) {
         std::fprintf(stderr, "aether_player: %s\n", error.c_str());
@@ -199,8 +237,8 @@ int main(int argc, char** argv) {
             if (config != cook::BuildConfiguration::Shipping) {
                 desc.title += std::string(" (") + cook::ConfigurationName(config) + ")";
             }
-            desc.width = options.width ? options.width : manifest.window_width;
-            desc.height = options.height ? options.height : manifest.window_height;
+            desc.width = options.width ? options.width : (have_settings ? chosen.width : manifest.window_width);
+            desc.height = options.height ? options.height : (have_settings ? chosen.height : manifest.window_height);
             window = std::make_unique<Window>(desc);
             if (!window->IsValid()) {
                 AETHER_LOG_WARN("Player", "No window could be opened; running headless");
@@ -262,7 +300,7 @@ int main(int argc, char** argv) {
                 cmd->EndRenderPass();
                 cmd->Close();
                 fence = device->Submit(*cmd, swap_chain.get());
-                swap_chain->Present(manifest.vsync);
+                swap_chain->Present(vsync);
             }
             if (config != cook::BuildConfiguration::Shipping && now - last_stats >= std::chrono::seconds(1)) {
                 last_stats = now;
@@ -282,6 +320,11 @@ int main(int argc, char** argv) {
             }
         }
         game.EndPlay();
+        // Settings are written only if the game changed them: a damaged file
+        // isn't overwritten by a run that never touched it.
+        if (settings_changed()) {
+            for (const std::string& w : game.Settings().Save().warnings) AETHER_LOG_WARN("Player", "%s", w.c_str());
+        }
         const GameStats s = game.Stats();
         AETHER_LOG_INFO("Player", "Ran %llu frames (%.2f s of game time, %llu fixed steps)",
                         static_cast<unsigned long long>(s.frames), s.time,
