@@ -18,6 +18,19 @@ endif()
 option(AETHER_BUILD_TESTS "Build Aether unit tests" ON)
 option(AETHER_BUILD_MCP "Build the MCP (Model Context Protocol) editor server" ON)
 
+# Phase 37 step 6: -Werror for the engine and the gameplay kits, off by default (the four gameplay libraries build clean with GCC under it; CI will turn it on once Clang and MSVC are checked).
+option(AETHER_WARNINGS_AS_ERRORS "Treat warnings as errors in the engine and the gameplay kits" OFF)
+function(aether_warnings_as_errors target)
+    if(AETHER_WARNINGS_AS_ERRORS)
+        if(MSVC)
+            target_compile_options(${target} PRIVATE /WX)
+        else()
+            target_compile_options(${target} PRIVATE -Werror)
+        endif()
+    endif()
+endfunction()
+
+
 if(MSVC)
     add_compile_options(/W4 /permissive- /arch:AVX2 /Zc:__cplusplus)
     # Over-aligned types (16-byte math types) in std::stable_sort's temporary
