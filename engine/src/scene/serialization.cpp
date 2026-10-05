@@ -1,4 +1,5 @@
 #include "aether/scene/serialization.h"
+#include "aether/core/json_util.h"
 
 #include "aether/core/log.h"
 #include "aether/platform/filesystem.h"
@@ -348,7 +349,23 @@ bool LoadSceneJson(World& world, const std::string& path) {
     return LoadSceneJsonFromMemory(world, bytes, path);
 }
 
+namespace {
+bool LoadSceneJsonFromMemoryImpl(World& world, std::span<const u8> bytes, const std::string& path);
+}
+
+// A scene file with a value of the wrong type (a number where a string belongs) makes nlohmann throw; a
+// loader answers with false instead of ending the process (found by the scene fuzzer, Phase 47 step 1).
 bool LoadSceneJsonFromMemory(World& world, std::span<const u8> bytes, const std::string& path) {
+    try {
+        return LoadSceneJsonFromMemoryImpl(world, bytes, path);
+    } catch (const nlohmann::json::exception& e) {
+        AETHER_LOG_ERROR("Scene", "Malformed JSON scene %s: %s", path.c_str(), e.what());
+        return false;
+    }
+}
+
+namespace {
+bool LoadSceneJsonFromMemoryImpl(World& world, std::span<const u8> bytes, const std::string& path) {
     using reflect::Json;
     RegisterSceneComponents();
     Json scene = Json::parse(bytes.begin(), bytes.end(), nullptr, /*allow_exceptions=*/false);
@@ -356,7 +373,7 @@ bool LoadSceneJsonFromMemory(World& world, std::span<const u8> bytes, const std:
         AETHER_LOG_ERROR("Scene", "Not an Aether JSON scene file: %s", path.c_str());
         return false;
     }
-    if (scene.value("$version", 0) != static_cast<int>(kJsonSceneVersion)) {
+    if (JsonVersion(scene) != static_cast<int>(kJsonSceneVersion)) {
         AETHER_LOG_ERROR("Scene", "Unsupported JSON scene version in %s", path.c_str());
         return false;
     }
@@ -408,5 +425,6 @@ bool LoadSceneJsonFromMemory(World& world, std::span<const u8> bytes, const std:
     AETHER_LOG_INFO("Scene", "Loaded %u entities from %s", loaded, path.c_str());
     return true;
 }
+} // namespace
 
 } // namespace aether

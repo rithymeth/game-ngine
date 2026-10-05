@@ -456,6 +456,7 @@ endif()
 
 # Phase 23: the functional test runner (headless, any platform).
 add_subdirectory(tools/functional)
+add_subdirectory(tools/fuzz)
 # Phase 25: the .apak archive tool and the cooker.
 add_subdirectory(tools/pak)
 add_subdirectory(tools/cook)

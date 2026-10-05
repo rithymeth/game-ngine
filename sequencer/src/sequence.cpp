@@ -1,4 +1,5 @@
 #include "aether/sequencer/sequence.h"
+#include "aether/core/json_util.h"
 
 #include "aether/platform/filesystem.h"
 
@@ -374,7 +375,7 @@ bool SequenceFromJson(const nlohmann::json& j, LevelSequence& out, std::string* 
         return false;
     };
     if (!j.is_object() || j.value("$type", "") != "LevelSequence") return fail("not a level sequence");
-    const u32 version = j.value("$version", 0u);
+    const u32 version = static_cast<u32>(JsonVersion(j));
     if (version == 0 || version > LevelSequence::kVersion) return fail("sequence version " + std::to_string(version) + " isn't supported");
     LevelSequence s;
     s.name = j.value("name", "");
