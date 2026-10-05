@@ -329,6 +329,10 @@ option(AETHER_KIT_INVENTORY "Build the inventory and items genre kit" ON)
 if(AETHER_KIT_INVENTORY)
     add_subdirectory(inventory)
 endif()
+option(AETHER_KIT_INTERACTION "Build the interaction genre kit" ON)
+if(AETHER_KIT_INTERACTION)
+    add_subdirectory(interaction)
+endif()
 add_subdirectory(net)
 
 # Recast/Detour (zlib, recastnavigation/recastnavigation) for navigation

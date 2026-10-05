@@ -3,6 +3,7 @@
 
 #include "aether/script/script_system.h"
 #include "aether/script/gameplay_api.h"
+#include "aether/script/interaction_api.h"
 #include "aether/script/inventory_api.h"
 #include "aether/script/loc_api.h"
 #include "aether/script/save_api.h"
@@ -209,6 +210,7 @@ void ScriptSystem::InstallApi() {
 
     InstallSaveApi(host_); // SaveGames (Phase 28 step 4)
     InstallLocApi(host_);  // Localization (Phase 29 step 2)
+    InstallInteractionApi(host_); // Interaction (Phase 30 step 7b), inert if the kit isn't built
     InstallInventoryApi(host_); // Inventory (Phase 30 step 7a), inert if the kit isn't built
     InstallGameplayApi(host_); // GameplayTags, Attributes, Effects, Abilities (Phase 30 step 5)
 }

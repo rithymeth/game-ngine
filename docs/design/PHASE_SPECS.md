@@ -6058,7 +6058,26 @@ the same functions as the `Items` library. The manual chapter is `docs/manual/10
 Next: 7b interaction, 7c quests and 7d the dialogue graph. Deferred: containers shared between
 entities, item instances with their own state (durability), crafting, an inventory editor panel.
 
-### 30.8 PR breakdown
+### 30.8 Interaction (`interaction/`, step 7b)
+
+The second genre kit, `aether_interaction` (`Aether::Interaction`, `AETHER_KIT_INTERACTION`, on by default,
+a public definition of `aether_game`). The `Interactable` component (saved with the entity): `enabled`, a
+`prompt` or localization `prompt_key`, `range` (0 for none), `required_tags` / `blocked_tags` on the user
+(hierarchical), an `effect` applied to and an `ability` activated by the user, `one_shot`, `cooldown` and the
+runtime `remaining` / `used`. `InteractionSystem` (with optional effect and ability systems): `Check` gives a
+`Reason` (none, dead entity, not interactable, disabled, out of range, missing tag, blocked tag, cooldown,
+used, action failed); `Focus` picks the nearest usable target within its range and within about 72 degrees of
+a direction (zero looks all round); `Interact` applies the ability and effect, starts the cooldown, spends a one
+shot and queues an event; `Prompt` is localized; `SetEnabled`, `Reset`, and `Update` counts cooldowns down.
+Positions are `Transform` positions (a physics ray is deferred).
+
+The player's `Player.Interaction` stage (after `Player.Effects`) ticks it and sends the target's Blueprint
+`Event.OnInteract (interactor)` and script method `OnInteract (interactor)`, and the user's
+`Event.OnInteractFailed` / `OnInteractFailed (target, reason name)`. Blueprint library `Interaction` (7 functions),
+Luau `Interaction` table (`Find` takes numbers for the position and direction), manual chapter
+`docs/manual/11-interaction.md`. Next: 7c quests, 7d the dialogue graph.
+
+### 30.9 PR breakdown
 
 1. Gameplay tags (done, §30.1).
 2. `AttributeSet`: base and current values with clamps, change events
@@ -6072,7 +6091,7 @@ entities, item instances with their own state (durability), crafting, an invento
 5. Luau face, script events, and the manual chapter with a sample (done, §30.5); the
    Blueprint face, player systems and cook roots came with steps 2-4.
 6. The editor's attribute and effect debugger (done, §30.6).
-7. Genre kits as optional libraries (7a inventory done, §30.7): inventory and items, the dialogue graph,
+7. Genre kits as optional libraries (7a inventory done, §30.7; 7b interaction done, §30.8): inventory and items, the dialogue graph,
    quests, interaction.
 8. Networking (prediction keys) waits for the networking integration; tag counts
    are the replication unit.
