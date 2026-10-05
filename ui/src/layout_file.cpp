@@ -15,7 +15,7 @@ namespace {
 constexpr const char* kVisibility[] = {"Visible", "Hidden", "Collapsed", "HitTestInvisible", "SelfHitTestInvisible"};
 constexpr const char* kHAlign[] = {"Fill", "Left", "Center", "Right"};
 constexpr const char* kVAlign[] = {"Fill", "Top", "Center", "Bottom"};
-constexpr const char* kTextAlign[] = {"Left", "Center", "Right"};
+constexpr const char* kTextAlign[] = {"Left", "Center", "Right", "Start", "End"};
 constexpr const char* kFill[] = {"LeftToRight", "RightToLeft", "BottomToTop", "TopToBottom"};
 
 template <usize N>

@@ -56,4 +56,19 @@ std::vector<std::string> FallbackChain(std::string_view language, std::string_vi
     return chain;
 }
 
+bool IsRtl(std::string_view language) {
+    const std::string tag = NormalizeLanguage(language);
+    if (tag.empty()) return false;
+    // An explicit script decides: Arabic, Hebrew, Thaana, Nko, Syriac, Adlam are right to left.
+    for (const char* script : {"Arab", "Hebr", "Thaa", "Nkoo", "Syrc", "Adlm"}) {
+        if (tag.find(std::string("-") + script) != std::string::npos) return true;
+    }
+    if (tag.find("-Latn") != std::string::npos || tag.find("-Cyrl") != std::string::npos) return false;
+    const std::string base = tag.substr(0, tag.find('-'));
+    for (const char* rtl : {"ar", "he", "iw", "fa", "ur", "ps", "sd", "ug", "yi", "dv", "ckb"}) {
+        if (base == rtl) return true;
+    }
+    return false;
+}
+
 } // namespace aether::loc

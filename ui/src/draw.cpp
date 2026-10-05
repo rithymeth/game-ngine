@@ -1,5 +1,7 @@
 #include "aether/ui/draw.h"
 
+#include "aether/ui/bidi.h"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -106,13 +108,23 @@ u32 DecodeUtf8(std::string_view s, usize& i) {
     return cp;
 }
 
+namespace {
+
+// The code points of the line text[a, b) in the order they are drawn (right-to-left runs reversed, §29.6).
+std::vector<u32> LineInVisualOrder(std::string_view text, usize a, usize b) {
+    std::vector<u32> cps;
+    for (usize i = a; i < b;) cps.push_back(DecodeUtf8(text, i));
+    return ReorderVisual(cps);
+}
+
+} // namespace
+
 TextLayout LayoutText(const Font& font, std::string_view text, f32 size, f32 wrap_width) {
     TextLayout out;
     auto width_of = [&](usize a, usize b) {
         f32 w = 0.0f;
         u32 prev = 0;
-        for (usize i = a; i < b;) {
-            const u32 cp = DecodeUtf8(text, i);
+        for (const u32 cp : LineInVisualOrder(text, a, b)) {
             if (prev != 0) w += font.Kerning(prev, cp, size);
             w += font.GlyphOf(cp, size).advance;
             prev = cp;
@@ -250,8 +262,7 @@ void DrawList::AddText(const Font& font, std::string_view text, f32 size, const 
             if (align == TextAlign::Center) x += (box.w - line.width) * 0.5f;
             else if (align == TextAlign::Right) x += box.w - line.width;
             u32 prev = 0;
-            for (usize i = line.begin; i < line.end;) {
-                const u32 cp = DecodeUtf8(text, i);
+            for (const u32 cp : LineInVisualOrder(text, line.begin, line.end)) {
                 if (prev != 0) x += font.Kerning(prev, cp, size);
                 const Font& src = font.Source(cp); // a fallback chain draws each glyph from the font that has it
                 const Glyph g = src.GlyphOf(cp, size);

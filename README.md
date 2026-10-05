@@ -6025,6 +6025,8 @@ snapping). The **Tilemap** tool (under **2D**) paints, fills and erases on layer
 
 **Localized assets** (§29.6). `Textures/logo.png` can have `Textures/logo.fr.png` and `Textures/logo.pt-BR.png`: `Game::LocalizedAsset(path)` (and `GamePackage::LocalizedPath`) gives the variant for the current language, following the fallback chain (pt-BR, pt, then the base). Variants are ordinary assets and cook as usual; a variant with no base asset is a player warning.
 
+**Right-to-left** (§29.6). Set `Viewport::direction = FlowDirection::RightToLeft` (`loc::IsRtl(language)` says when) and the UI is laid out then mirrored about its centre; `TextAlign::Start`/`End` follow the direction; Hebrew text is reordered visually, with numbers and Latin runs keeping their order. Arabic letters don't join yet (that needs the shaping step).
+
 **Documentation** (§26.7). The manual is in [docs/manual](docs/manual/README.md).
 The API reference is generated from the engine's reflection: run
 `aether_docgen --out api` for `API.md` (every component, struct and enum with
