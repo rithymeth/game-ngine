@@ -10,4 +10,5 @@ add_library(aether_quests STATIC
 target_include_directories(aether_quests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aether_quests PUBLIC cxx_std_20)
 target_link_libraries(aether_quests PUBLIC Aether::Gameplay Aether::Loc)
+aether_warnings_as_errors(aether_quests)
 add_library(Aether::Quests ALIAS aether_quests)

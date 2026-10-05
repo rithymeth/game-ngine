@@ -281,6 +281,71 @@ jobs:
           path: functional-results.xml
           if-no-files-found: ignore
 
+  # Phase 37 step 6 (docs/design/UPGRADE_PLAN.md): extra analysis gates. They are advisory
+  # (continue-on-error) until they have been clean for a while, then they become required.
+  tsan:
+    name: Linux (TSan, advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: >
+          sudo apt-get update && sudo apt-get install -y ninja-build xvfb
+          libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+          libvulkan-dev glslang-dev glslang-tools spirv-tools mesa-vulkan-drivers
+      - name: Cache fetched dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-linux-tsan-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: deps-linux-tsan-
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          "-DCMAKE_CXX_FLAGS=-fsanitize=thread -fno-omit-frame-pointer"
+          -DAETHER_BUILD_PHYSICS=OFF -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_SANDBOX=OFF
+      - name: Build the tests
+        run: cmake --build build --target aether_tests --parallel
+      - name: Threaded tests under TSan
+        env:
+          AETHER_TEST_FILTER: JobSystem_,Audio_,Net_,NetPlay_,Streaming_
+          TSAN_OPTIONS: halt_on_error=1 second_deadlock_stack=1
+        run: xvfb-run -a ./build/tests/aether_tests
+
+  clang-tidy:
+    name: clang-tidy (changed files, advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install tools
+        run: >
+          sudo apt-get update && sudo apt-get install -y ninja-build clang clang-tidy
+          libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+          libvulkan-dev glslang-dev glslang-tools spirv-tools
+      - name: Cache fetched dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-linux-tidy-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: deps-linux-tidy-
+      - name: Configure
+        env:
+          CC: clang
+          CXX: clang++
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+          -DAETHER_BUILD_PHYSICS=OFF -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_SANDBOX=OFF
+      - name: Tidy the changed files
+        run: |
+          files=$(git diff --name-only --diff-filter=d origin/${{ github.base_ref }}...HEAD -- '*.cpp' | grep -E '^(engine|gameplay|inventory|interaction|quests|save|loc)/' || true)
+          if [ -z "$files" ]; then echo "no engine or kit sources changed"; exit 0; fi
+          clang-tidy -p build $files
+
   release:
     name: Release
     # A pushed v* tag, or a manual run given a release_tag (which creates
