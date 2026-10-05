@@ -16,6 +16,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 option(AETHER_BUILD_TESTS "Build Aether unit tests" ON)
+option(AETHER_BUILD_MCP "Build the MCP (Model Context Protocol) editor server" ON)
 
 if(MSVC)
     add_compile_options(/W4 /permissive- /arch:AVX2 /Zc:__cplusplus)
@@ -379,9 +380,20 @@ if(AETHER_BUILD_PHYSICS)
     add_subdirectory(physics)
 endif()
 
+if(AETHER_BUILD_EDITOR_UI OR AETHER_BUILD_MCP)
+    add_subdirectory(editor/src/core)
+endif()
+
 if(AETHER_BUILD_EDITOR_UI)
     add_subdirectory(editor/src/ui)
 endif()
+
+if(AETHER_BUILD_MCP)
+    add_subdirectory(mcp)
+endif()
+
+add_subdirectory(samples/coin_run)
+add_subdirectory(samples/gem_hop)
 
 # Phase 24 step 5: the portable editor shell - the editor's panels in a
 # GLFW (or Win32) window, or offscreen, drawn through the Vulkan RHI.
