@@ -48,7 +48,7 @@ public:
     f32 SdfRange(f32 size) const override;
     f32 SdfEdge() const override;
 
-    bool HasGlyph(u32 codepoint) const;
+    bool HasGlyph(u32 codepoint) const override;
     std::string FamilyName() const; // the name table's family name, ID 1 ("Roboto Medium"; "" if it has none)
     const SdfFontSettings& Settings() const { return settings_; }
     // Rasterize ahead of time (a loading screen), so the first frame that shows the text doesn't.
