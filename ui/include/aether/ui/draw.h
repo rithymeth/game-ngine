@@ -2,6 +2,7 @@
 
 #include "aether/ui/geometry.h"
 
+#include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -74,6 +75,40 @@ public:
     // 0..1 span covers at `size`, and its edge value. 0: a plain bitmap.
     virtual f32 SdfRange(f32) const { return 0.0f; }
     virtual f32 SdfEdge() const { return 0.5f; }
+    // Whether the font has a glyph of its own for the code point (not its
+    // tofu / replacement); true for fonts that draw anything.
+    virtual bool HasGlyph(u32) const { return true; }
+    // The font that actually draws `codepoint`: this one, except for a
+    // FallbackFont, whose glyphs come from the font in its chain that has them
+    // (with that font's own atlas texture and distance-field range).
+    virtual const Font& Source(u32) const { return *this; }
+};
+
+// A chain of fonts tried in order, per code point (Phase 29 step 6, §29.6):
+// Latin from the first, CJK from the second, emoji from the third. A code
+// point no font has draws as the first font's replacement glyph. Lines use
+// the first font's ascent and line height (a fallback glyph is drawn at the
+// same size on that baseline), and kerning applies only between two glyphs
+// from the same font. Doesn't own the fonts.
+class FallbackFont final : public Font {
+public:
+    explicit FallbackFont(std::vector<const Font*> fonts) : fonts_(std::move(fonts)) {}
+    const std::vector<const Font*>& Fonts() const { return fonts_; }
+    f32 Ascent(f32 size) const override { return fonts_.empty() ? 0.0f : fonts_[0]->Ascent(size); }
+    f32 LineHeight(f32 size) const override { return fonts_.empty() ? 0.0f : fonts_[0]->LineHeight(size); }
+    Glyph GlyphOf(u32 codepoint, f32 size) const override {
+        const Font& source = Source(codepoint);
+        return &source == this ? Glyph{} : source.GlyphOf(codepoint, size); // an empty chain draws nothing
+    }
+    f32 Kerning(u32 a, u32 b, f32 size) const override;
+    u32 Texture() const override { return fonts_.empty() ? 0 : fonts_[0]->Texture(); }
+    f32 SdfRange(f32 size) const override { return fonts_.empty() ? 0.0f : fonts_[0]->SdfRange(size); }
+    f32 SdfEdge() const override { return fonts_.empty() ? 0.5f : fonts_[0]->SdfEdge(); }
+    bool HasGlyph(u32 codepoint) const override;
+    const Font& Source(u32 codepoint) const override;
+
+private:
+    std::vector<const Font*> fonts_;
 };
 
 // Named fonts ("Roboto", "Title"), for Text widgets and text styles that
@@ -82,11 +117,15 @@ class FontLibrary {
 public:
     void Add(const std::string& name, const Font* font);
     void Remove(const std::string& name);
-    const Font* Find(const std::string& name) const; // null if unknown
+    // A name, or a comma-separated list ("Roboto,NotoSansCJK,NotoEmoji") that
+    // is a FallbackFont of those, in order (unknown names are skipped; null if
+    // none is known). The chain is kept until a font is added or removed.
+    const Font* Find(const std::string& name) const;
     std::vector<std::string> Names() const;
 
 private:
     std::vector<std::pair<std::string, const Font*>> fonts_;
+    mutable std::vector<std::pair<std::string, std::unique_ptr<FallbackFont>>> chains_;
 };
 
 // Outlines and drop shadows, drawn behind the text. With a distance-field

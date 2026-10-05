@@ -6021,6 +6021,8 @@ snapping). The **Tilemap** tool (under **2D**) paints, fills and erases on layer
 
 **Localization dashboard** (§29.5). The **Localization** tool (Data) opens a `.astrings`: each language and how complete it is, the keys a language is missing with a box for the translation, add and remove keys and languages, Save, `.po` export and import, and the gather step (check-only by default). The **pseudo-localization preview** swaps keyed text in the editor for accented, about-a-third-longer, `[bracketed]` text, to find clipped or untranslated strings before there are translations.
 
+**Font fallback** (§29.6). A font name can be a comma-separated chain, `"Roboto, NotoSansCJK, NotoEmoji"`: each character is drawn from the first font that has it, with that font's own atlas, so one line can mix scripts. A character in no font shows the first font's replacement glyph. UTF-8 decoding now rejects overlong and surrogate forms.
+
 **Documentation** (§26.7). The manual is in [docs/manual](docs/manual/README.md).
 The API reference is generated from the engine's reflection: run
 `aether_docgen --out api` for `API.md` (every component, struct and enum with

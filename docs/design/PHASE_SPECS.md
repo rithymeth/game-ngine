@@ -5725,7 +5725,40 @@ save and reload including an empty language; `.po` round trip and gather
 (check, dirty, real); the panel drawing and the preview taking over and giving
 back the active Localization; and the workspace tool.
 
-### 29.6 PR breakdown
+### 29.6 Font fallback
+
+One font rarely has every script, so text can use a **chain** (`ui/`):
+
+- `FallbackFont` holds fonts in order and takes each code point from the
+  first one that has a glyph for it (`Font::HasGlyph`, new; true for fonts that
+  draw anything, like `BuiltinFont`). A code point no font has draws as the
+  first font's replacement glyph. Lines use the first font's ascent and line
+  height (a fallback glyph is drawn at the same size on that baseline); kerning
+  applies only between two glyphs from the same font.
+- Each glyph is drawn with **its own font's** atlas texture and distance-field
+  range (`Font::Source(codepoint)`), so one line can mix a bitmap font and
+  an SDF one, several textures in one text run.
+- `FontLibrary::Find("Roboto, NotoSansCJK, NotoEmoji")`: a comma-separated name
+  is a chain of the named fonts (unknown names skipped, none known gives
+  null so the default font is used). It works anywhere a font name does
+  (`Text::font` in layout files, text styles). Chains are cached until a font
+  is added or removed.
+- `DecodeUtf8` now rejects overlong forms, surrogates and values past U+10FFFF
+  (U+FFFD, the whole bad sequence consumed), so malformed text can't smuggle
+  characters past a filter.
+- No CJK or emoji font ships (a licensing decision), so the tests chain the
+  shipped Roboto with test fonts and the built-in boxes.
+
+Tests (`test_ui_fallback.cpp`): the first font with the glyph wins, metrics and
+kerning, an empty chain; layout and drawing across fonts with their own
+textures and SDF ranges; chains from library names, caching and rebuilding, and a
+Text widget using one; Roboto then the boxes for a CJK character; and strict UTF-8.
+
+Not done: a CJK line-break table (text still wraps at spaces and line breaks),
+emoji sequences (ZWJ, variation selectors), colour emoji (needs RGBA atlases),
+and per-run baseline alignment between fonts with different metrics.
+
+### 29.7 PR breakdown
 
 1. The core (done, §29.1).
 2. `.astrings` as a cooked asset type; a `Localization` service with a runtime
@@ -5737,7 +5770,9 @@ back the active Localization; and the workspace tool.
    and widgets), PO import and export, and a command-line tool (done,
    §29.4).
 5. The editor's Localization dashboard (languages, completion, missing keys,
-   pseudo-localization) (this step, §29.5).
-6. Font fallback (Latin, then CJK, then emoji), localized assets, and
-   right-to-left layout.
+   pseudo-localization) (done, §29.5).
+6. Font fallback (Latin, then CJK, then emoji) (done, §29.6); localized assets
+   (a language's variant of an asset by file name); right-to-left layout (a
+   run-reversing BiDi-lite for Hebrew, Start/End alignment, mirrored
+   horizontal layout; Arabic joining needs shaping and waits for step 7).
 7. Optional: HarfBuzz shaping behind a CMake option, and gender selectors.
