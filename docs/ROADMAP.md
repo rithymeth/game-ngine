@@ -6,6 +6,7 @@
 > - [`design/PHASE_SPECS.md`](design/PHASE_SPECS.md): build specs for
 >   Phases 7, 8, 9, 11 and 13
 > - [`design/EDITOR_UI.md`](design/EDITOR_UI.md): full editor UI design spec
+> - [`design/UPGRADE_PLAN.md`](design/UPGRADE_PLAN.md): the PR-sized plan for M7, the Aether Upgrade (Phases 37-48)
 > - [`design/BLUEPRINT_NODES.md`](design/BLUEPRINT_NODES.md): Blueprint node reference
 > - [`tutorials/FIRST_GAME.md`](tutorials/FIRST_GAME.md): the target
 >   "first game" walkthrough and M2 acceptance test
@@ -1246,7 +1247,7 @@ edits made in the viewport or Inspector into keys automatically.
 
 ## Phase 30: Gameplay Ability System and RPG Toolkit
 
-**Status:** in progress (gameplay tags, attributes, effect system, ability system, Luau face, editor debugger, inventory and interaction kits; see `docs/design/PHASE_SPECS.md` §30).
+**Status:** in progress (gameplay tags, attributes, effect system, ability system, Luau face, editor debugger, inventory, interaction and quests kits; see `docs/design/PHASE_SPECS.md` §30).
 
 **Why:** most action, RPG and MOBA games rebuild the same systems: stats,
 buffs, cooldowns and abilities. Unreal's Gameplay Ability System (GAS) is
@@ -1399,6 +1400,189 @@ work fully without them.
 
 ---
 
+# M7: The Aether Upgrade (from feature-complete to production-grade)
+
+Phases 1-36 make Aether a **feature-complete** engine. They do not make it something other
+people can build and ship commercial games on. M7 is a separate upgrade roadmap that starts
+**when Phase 36 is finished** and changes the question from "what features are missing?" to "is
+this dependable?". The pattern is the usual one for mature engines: after feature expansion,
+the work shifts to optimization, quality assurance, tooling, compatibility and release stability.
+
+**Rules for M7:**
+
+- **No more open-ended feature phases.** Every M7 phase ends on measurable acceptance (benchmarks,
+  budgets, soak tests, a sample game that ships), not on "the feature exists".
+- **It revisits earlier phases, it doesn't replace them.** "Graphics 2.0" hardens and extends
+  Phase 31; "Multiplayer 2.0" does the same for Phase 22. Each M7 phase names what it builds on.
+- **Everything ends at the production gate** (below). Phase 48 is the release; nothing is "done"
+  until the gate says so.
+- Keep the cross-cutting rules (section 3), and keep the honest-documentation habit: record what
+  was measured and how, including what didn't work.
+
+## Phase 37: Engine 2.0 Core (API cleanup, architecture, stability)
+
+- **Why:** a decade of phases leaves seams: duplicated helpers, inconsistent naming, modules that
+  reach into each other, optional kits wired by hand into the player.
+- **Work:** an API audit module by module (naming, ownership, error handling, `const`-ness, what is
+  public); one module/kit registration mechanism for the player, the editor and scripting (today
+  each kit adds CMake options, defines and stage code by hand); dependency-graph cleanup with a CI
+  check that forbids new cycles; a deprecation policy (`AETHER_DEPRECATED` with a version and a
+  replacement); sanitizer and static-analysis clean builds as a gate.
+- **Done when:** the module graph is acyclic and checked in CI; a kit can be added without editing
+  `game.cpp`; the public headers have documented stability levels (stable / experimental / internal).
+
+## Phase 38: Performance
+
+- **Why:** the performance budgets in section 3 are targets, not measurements.
+- **Work:** a benchmark suite with checked-in baselines and a CI regression gate (ECS iteration and
+  structural changes, job system, scene load, physics step, render extraction, Blueprint VM, Luau
+  calls, save/load, cook); ECS (the component-type cap, now 256, made dynamic or proven sufficient; chunk layout; query caching); renderer
+  (draw submission, culling, GPU-driven paths where the RHI supports them, pipeline and shader
+  caches); memory (per-system budgets, allocation tracking, per-frame allocation audit);
+  multithreading (a task graph with inferred dependencies, a render thread, async asset jobs); GPU
+  profiling and optimization passes with Tracy zones everywhere.
+- **Done when:** the budgets in section 3 are met on the reference machines and enforced in CI; a
+  10k-entity scene loads in under 2 s; frame-time histograms and memory per system are in every
+  benchmark report.
+
+## Phase 39: Graphics 2.0
+
+- **Builds on:** Phases 14, 15, 31.
+- **Work:** one rendering path across D3D12, Vulkan and MoltenVK with feature-level fallbacks;
+  advanced PBR (clear coat, sheen, anisotropy, subsurface, hair, cloth, decals); virtual geometry
+  (meshlet clusters with hierarchical LOD and streaming, in the spirit of Nanite, with a fallback
+  for hardware without mesh shaders); virtual texturing; a mature GI/shadow stack and upscaling;
+  render-graph validation and capture tooling.
+- **Done when:** the same scene renders within tolerance on all three backends, a million-triangle
+  asset is usable with virtual geometry, and the render-graph validator runs in CI.
+
+## Phase 40: AI Engine
+
+- **Builds on:** Phase 20.
+- **Work:** navigation at scale (tiled navmesh streaming, dynamic obstacles, hierarchical paths,
+  crowds in the thousands); behavior tooling (utility AI, GOAP, state trees next to behavior trees,
+  debugging and visualization); perception 2.0; an optional ML integration layer (ONNX runtime
+  inference as a runtime feature for NPC behavior, never required); a clean boundary for AI *agents*
+  that drive the editor (Phase 44) kept separate from gameplay AI.
+- **Done when:** a 1000-agent crowd scene meets its budget; a behavior can be authored, debugged
+  and profiled entirely in the editor; an ONNX model runs in a sample with deterministic fallback.
+
+## Phase 41: Multiplayer 2.0
+
+- **Builds on:** Phase 22, Phase 30 (prediction for abilities).
+- **Work:** dedicated server builds and headless operation; matchmaking and sessions behind a
+  backend-agnostic service interface; replication optimization (priority, relevancy, bandwidth
+  budgets, interest management, delta compression measurements); prediction and rollback for the
+  gameplay ability system; cheat-resistance basics (server authority audit, input validation);
+  network soak and loss/latency simulation in CI.
+- **Done when:** a 64-player dedicated-server sample runs a soak test within bandwidth and tick
+  budgets under simulated packet loss.
+
+## Phase 42: World Streaming 2.0
+
+- **Builds on:** Phase 21.
+- **Work:** worlds of hundreds of kilometres (large-world coordinates end to end: physics,
+  rendering, audio, networking); asynchronous cell streaming with priorities and hitch-free budgets;
+  LOD and HLOD generation; world-partition authoring tools (data layers, level instances at scale);
+  streaming of audio, navmesh and gameplay data with the cells.
+- **Done when:** a very large generated world is traversed at speed with no frame hitch above budget
+  and bounded memory, in an automated flythrough test.
+
+## Phase 43: Editor 2.0
+
+- **Work:** the pending editor items finished (docking branch, `editor/main.cpp` split, gizmos,
+  multi-select, copy/paste, Simulate mode, the New/Open Project UI); layout and workspace
+  presets; a command palette and global search; asset management at scale (thumbnails, dependency
+  and reference viewer, bulk rename and move, validation, source control integration); UX polish
+  driven by recorded task walkthroughs (make a level, make a character, make a UI).
+- **Done when:** the "first game" tutorial and two larger walkthroughs are completed in the editor
+  without leaving it, and an editor soak test (open, edit, undo, play, stop, for hours) is stable.
+
+## Phase 44: AI-Native Editor
+
+- **Builds on:** Phase 36 (the optional assistant) and the editor's command stack (Phase 7).
+- **Idea:** the editor and the running game are exposed as a **tool surface** that AI agents can use
+  through the Model Context Protocol (MCP), with the human always in the loop.
+- **Work:** an MCP server in the editor exposing typed, versioned tools: query and edit the scene
+  and prefabs, create and edit assets (materials, Blueprints, quests, items, effects, dialogue),
+  import and cook, build and package, run the test suite and the functional tests, play-in-editor
+  with a bounded step and capture (screenshots, logs, profiler summaries), read diagnostics. Every
+  edit goes through the undo stack and is attributed to the agent; destructive tools need
+  confirmation; a project-level permission file says what agents may touch; agent sessions are
+  logged. Reference agents on top: a code agent (scripts, native modules), an asset agent, and a
+  level/game-design agent that composes gameplay-kit data (abilities, quests, items, NPCs) and
+  proposes a scene for review. Everything stays optional and off by default, like Phase 36.
+- **Done when:** an agent can, from a written brief, build a small playable level (terrain, enemies,
+  abilities, a quest, NPCs), compile and run the tests, and report failures, with every change
+  reviewable and undoable, and the engine works fully without any of it.
+- **Note:** the repository already has an MCP server (`mcp/`, option `AETHER_BUILD_MCP`): scene
+  inspection and editing, undo/redo, scene save/load and Play-in-Editor over stdio, with every change
+  going through the editor's command stack. This phase hardens and extends it (versioned tool schemas,
+  agent attribution, permissions, confirmation, kit tools, build/test tools, bounded capture) rather
+  than starting it.
+
+## Phase 45: Mobile and Console
+
+- **Builds on:** Phases 24, 33.
+- **Work:** Android and iOS production builds (lifecycle, permissions, thermal and memory pressure,
+  store packaging); ARM everywhere; controller and touch input abstraction with remapping UI and
+  haptics; console readiness through the platform-plugin interface (certification checklists,
+  save/storage, suspend/resume, performance-mode profiles); device farms in CI for at least one
+  phone class.
+- **Done when:** a sample game ships as a signed Android and iOS build that passes lifecycle tests
+  and holds its frame budget on a reference device.
+
+## Phase 46: Developer Ecosystem
+
+- **Builds on:** Phase 26.
+- **Work:** a stable SDK (headers, libraries, CMake package config, versioned ABI for native
+  modules); plugin packaging, versioning and dependency resolution; project templates and sample
+  games kept current by CI; a plugin/asset marketplace specification (metadata, signing, licensing,
+  review) and a local registry; documentation site generated from the code and the manual.
+- **Done when:** a third party can build a plugin and a game against the SDK from a clean machine
+  using only the published instructions, and the sample games build in CI against the SDK.
+
+## Phase 47: Production QA
+
+- **Work:** fuzzing (asset importers, scene/Blueprint/save loaders, the network protocol, the
+  cooker and pak reader) in CI; crash recovery (editor autosave and restore, crash dumps with
+  symbolication, a safe mode); a soak/endurance suite; profiling and memory-leak gates on every
+  release candidate; automated functional and screenshot test farms per platform and backend;
+  accessibility and localization regression checks; security review of the plugin and MCP surfaces.
+- **Done when:** the fuzzers run clean for a fixed budget on every release candidate, the editor
+  recovers from an injected crash with no data loss, and the QA matrix is green on every supported
+  platform.
+
+## Phase 48: Aether 1.0
+
+- **Work:** the production gate below, executed; API freeze for everything marked stable; migration
+  tooling for every versioned format; release notes, upgrade guide and long-term-support policy;
+  signed release builds of the editor, player and SDK for each platform; sample games and a
+  documented first-game path.
+- **Done when:** the production gate passes on a tagged release candidate and a release is cut.
+
+## The Aether 1.0 production gate
+
+Aether is "1.0" only when **all** of these hold, each checked by something automated where possible:
+
+| Area | Requirement |
+|---|---|
+| **API stability** | Public APIs are marked stable / experimental / internal; stable ones are frozen with a deprecation policy |
+| **Backwards compatibility** | Every serialized format is versioned with a migration path; a corpus of old projects keeps loading |
+| **Performance benchmarks** | Baselines for the hot paths are checked in; regressions fail CI |
+| **Memory budgets** | Per-system budgets are tracked and enforced; no per-frame allocation in hot paths |
+| **Crash reporting** | Crash dumps are captured, symbolicated and triaged; the editor recovers without data loss |
+| **Automated testing** | Unit, functional, screenshot, soak, network and fuzz suites run per platform and backend |
+| **Documentation** | The manual, the generated API reference and the specs match the code (the manual and API-docs tests already enforce part of this) |
+| **Examples and sample games** | At least three complete sample games build, run and ship from the SDK |
+| **Packaged editor** | Signed, installable editor builds for each supported desktop platform |
+| **Player/runtime** | Signed player builds for every supported platform, with the cook/pak pipeline |
+| **SDK** | A published SDK a third party can build against from a clean machine |
+| **Plugin system** | Versioned plugin ABI, packaging and a documented authoring path |
+| **Release builds** | Reproducible release pipeline with checksums and release notes |
+
+---
+
 ## 3. Cross-cutting concerns (every phase)
 
 | Concern | Rule |
@@ -1468,6 +1652,11 @@ Work in this order. Each line is roughly one PR-sized chunk, or a few.
 42. Advanced rendering: ray tracing, DDGI, volumetrics, upscalers, water.
 43. XR (OpenXR), mobile (Android/iOS) and web (WebGPU).
 44. Modding support, then optional AI-assisted editor tools.
+45. **M7, after Phase 36 is finished: the Aether Upgrade.** Engine 2.0 core and API cleanup (37),
+    performance with CI benchmark gates (38), Graphics 2.0 (39), the AI engine (40), Multiplayer
+    2.0 (41), World Streaming 2.0 (42), Editor 2.0 (43), the AI-native editor over MCP (44),
+    mobile and console (45), the developer ecosystem and SDK (46), production QA (47), then Aether 1.0
+    behind the production gate (48). No further open-ended feature phases until the gate is passed.
 
 ---
 

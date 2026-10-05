@@ -15,6 +15,7 @@ it works inside.
 9. [Gameplay](09-gameplay.md): tags, attributes, effects and abilities.
 10. [Inventory and items](10-inventory.md): the inventory genre kit.
 11. [Interaction](11-interaction.md): the interaction genre kit.
+12. [Quests](12-quests.md): the quests genre kit.
 
 The sample projects are the templates: **Blank**, **First Person**, **Third
 Person**, **Top Down**, **Vehicle** and **2D Platformer**, in the editor's

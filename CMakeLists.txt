@@ -333,6 +333,10 @@ option(AETHER_KIT_INTERACTION "Build the interaction genre kit" ON)
 if(AETHER_KIT_INTERACTION)
     add_subdirectory(interaction)
 endif()
+option(AETHER_KIT_QUESTS "Build the quests genre kit" ON)
+if(AETHER_KIT_QUESTS)
+    add_subdirectory(quests)
+endif()
 add_subdirectory(net)
 
 # Recast/Detour (zlib, recastnavigation/recastnavigation) for navigation

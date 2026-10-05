@@ -242,6 +242,11 @@ void RegisterBuiltins(Registry& r) {
     // Interaction kit (Phase 30 step 7b): something was used (heard by the target), or couldn't be (heard by the user).
     AddEvent(r, "Event.OnInteract", "Event OnInteract", {Out("interactor", kEntity)});
     AddEvent(r, "Event.OnInteractFailed", "Event OnInteractFailed", {Out("target", kEntity), Out("reason", kString)});
+    // Quests kit (Phase 30 step 7c): a quest started, advanced, completed or failed.
+    AddEvent(r, "Event.OnQuestStarted", "Event OnQuestStarted", {Out("quest", kString)});
+    AddEvent(r, "Event.OnQuestProgress", "Event OnQuestProgress", {Out("quest", kString), Out("objective", kString), Out("progress", kInt), Out("required", kInt)});
+    AddEvent(r, "Event.OnQuestCompleted", "Event OnQuestCompleted", {Out("quest", kString)});
+    AddEvent(r, "Event.OnQuestFailed", "Event OnQuestFailed", {Out("quest", kString)});
     // VFX (Phase 19 step 4): a ParticleSystem's effect is over.
     AddEvent(r, "Event.OnParticleSystemFinished", "Event OnParticleSystemFinished", {Out("asset", kString)});
     // Navigation (Phase 20 step 3): a NavAgent's move ended (arrived, or failed).

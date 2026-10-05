@@ -8,6 +8,9 @@
 #if AETHER_KIT_INVENTORY
 #include "aether/inventory/item_def.h"
 #endif
+#if AETHER_KIT_QUESTS
+#include "aether/quests/quest_def.h"
+#endif
 #include "aether/input/bindings.h"
 #include "aether/math/math.h"
 #include "aether/pak/vfs.h"
@@ -228,6 +231,7 @@ private:
     void LoadEffects();      // every GameplayEffect asset in the package
     void LoadAbilities();    // every GameplayAbility asset (after the effects)
     void LoadItems();        // every ItemDefinition asset (after the effects), if the inventory kit is built
+    void LoadQuests();       // every QuestDefinition asset (after the effects), if the quests kit is built
     // (Re)activates every input context with the settings' rebinds applied.
     void ActivateInputContexts();
     void StartRuntime(); // scripts and Blueprints for the loaded scene
@@ -265,6 +269,10 @@ private:
     inv::ItemLibrary items_;
 #endif
     bool items_loaded_ = false;
+#if AETHER_KIT_QUESTS
+    quest::QuestLibrary quests_;
+#endif
+    bool quests_loaded_ = false;
     bool input_loaded_ = false;
     struct Runtime;
     std::unique_ptr<Runtime> runtime_; // it holds references to the above

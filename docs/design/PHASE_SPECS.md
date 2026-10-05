@@ -6077,7 +6077,35 @@ The player's `Player.Interaction` stage (after `Player.Effects`) ticks it and se
 Luau `Interaction` table (`Find` takes numbers for the position and direction), manual chapter
 `docs/manual/11-interaction.md`. Next: 7c quests, 7d the dialogue graph.
 
-### 30.9 PR breakdown
+### 30.9 Quests (`quests/`, step 7c)
+
+The third genre kit, `aether_quests` (`Aether::Quests`, `AETHER_KIT_QUESTS`, on by default, a public definition of
+`aether_game`); it links only the gameplay and loc modules. `QuestDef` (`.aquest`, importer `QuestDefinition`, cooked
+automatically): name, title and description with localization keys, objectives (`id`, `kind` count / tag / flag,
+`target`, `required`, `optional`, text and key), prerequisite quests, and rewards (effect names and items). Errors:
+`quest.parse`, `no_name`, `duplicate_objective`, `bad_kind`, `bad_required`; `QuestLibrary::Check` finds
+`quest.unknown_prereq`, `prereq_cycle` and `unknown_effect` once everything is loaded.
+
+The `QuestLog` component (saved; quests and objectives by name) holds each quest's state. `QuestSystem` (with an
+optional `EffectSystem`): `Start` (prerequisites completed; a completed quest can't restart, an abandoned or failed one
+starts over; no objectives completes at once), `Abandon`, `Fail`, `Progress` (one objective by name) and `Notify`
+(every unfinished objective of the active quests with that kind and target; the way a host reports what happened).
+Count and tag objectives clamp at `required`, a negative amount takes progress back until done, a flag is done at once.
+When every non-optional objective is done the quest completes, reward effects are applied, and the Completed event
+carries the reward items. Event-driven, no `Update`. Events: Started, ObjectiveProgress, ObjectiveCompleted,
+Completed, Failed, Abandoned.
+
+The player loads `.aquest` assets (and reports library problems), gives each scene a `QuestSystem`, forwards item
+Added / Removed from the inventory kit as `Notify(Count, item, +/-n)`, and a `Player.Quests` stage (after
+`Player.Effects`, `Player.Inventory` and `Player.Interaction`) hands reward items to the inventory kit, and sends the
+owner's Blueprint `Event.OnQuestStarted` / `OnQuestProgress` / `OnQuestCompleted` / `OnQuestFailed` and script methods
+(`OnQuestStarted`, `OnQuestProgress`, `OnQuestObjectiveCompleted`, `OnQuestCompleted`, `OnQuestFailed`,
+`OnQuestAbandoned`). Blueprint library `Quests` (10 functions), Luau `Quests` table, manual chapter
+`docs/manual/12-quests.md`. Deferred: a journal panel, timed quests, objectives that watch the game themselves (tags,
+places), interaction events as a source of notifications (the interactable has no name to match yet). Next: 7d the
+dialogue graph.
+
+### 30.10 PR breakdown
 
 1. Gameplay tags (done, §30.1).
 2. `AttributeSet`: base and current values with clamps, change events
@@ -6091,7 +6119,7 @@ Luau `Interaction` table (`Find` takes numbers for the position and direction), 
 5. Luau face, script events, and the manual chapter with a sample (done, §30.5); the
    Blueprint face, player systems and cook roots came with steps 2-4.
 6. The editor's attribute and effect debugger (done, §30.6).
-7. Genre kits as optional libraries (7a inventory done, §30.7; 7b interaction done, §30.8): inventory and items, the dialogue graph,
+7. Genre kits as optional libraries (7a inventory done, §30.7; 7b interaction done, §30.8; 7c quests done, §30.9): inventory and items, the dialogue graph,
    quests, interaction.
 8. Networking (prediction keys) waits for the networking integration; tag counts
    are the replication unit.
