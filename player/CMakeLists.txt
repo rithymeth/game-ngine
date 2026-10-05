@@ -1,7 +1,7 @@
 # Phase 25 step 4: the player - a cooked game without the editor.
 # aether_game is its runtime (mounting the paks, loading the startup scene,
 # the frame loop); aether_player is the executable around it.
-add_library(aether_game STATIC src/game.cpp)
+add_library(aether_game STATIC src/game.cpp src/user_paths.cpp src/settings_apply.cpp)
 target_include_directories(aether_game PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(aether_game PUBLIC Aether::Engine)
 if(TARGET Aether::Physics)
@@ -12,7 +12,7 @@ else()
 endif()
 # Scenes' scripts and Blueprints run in the player (Phase 26 step 4); Luau
 # only when the build has it.
-target_link_libraries(aether_game PUBLIC Aether::Blueprint Aether::Sprite2D Aether::Sequencer)
+target_link_libraries(aether_game PUBLIC Aether::Blueprint Aether::Sprite2D Aether::Sequencer Aether::Save)
 if(TARGET Aether::Scripting)
     target_link_libraries(aether_game PRIVATE Aether::Scripting)
     target_compile_definitions(aether_game PRIVATE AETHER_GAME_SCRIPTING=1)

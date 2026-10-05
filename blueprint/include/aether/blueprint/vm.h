@@ -100,6 +100,10 @@ public:
     // (a runtime error is recorded). Arguments fill the event's outputs
     // (Tick's delta, a custom event's parameters) in order.
     bool Dispatch(Entity entity, std::string_view event, std::span<const VmValue> args = {});
+    // Runs an event on every attached instance that has it (a broadcast, for
+    // events with no entity of their own, like Event.OnSaveFinished). Returns
+    // how many instances ran it.
+    usize DispatchAll(std::string_view event, std::span<const VmValue> args = {});
     // One frame (§C.4): advances game time, resumes the latent actions that
     // are due (Delay's "completed", in wake-time order), then runs Event
     // Tick on every enabled instance that has it, in attach order.

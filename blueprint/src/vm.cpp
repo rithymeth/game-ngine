@@ -278,6 +278,18 @@ bool BlueprintVM::Dispatch(Entity entity, std::string_view event, std::span<cons
     return Invoke(*instance, it->second, args);
 }
 
+usize BlueprintVM::DispatchAll(std::string_view event, std::span<const VmValue> args) {
+    std::vector<Entity> targets; // a handler may attach or detach, so don't walk the map while running
+    for (const auto& [key, instance] : instances_) {
+        if (instance->blueprint->events.find(event) != instance->blueprint->events.end()) targets.push_back(instance->entity);
+    }
+    usize ran = 0;
+    for (const Entity e : targets) {
+        if (Dispatch(e, event, args)) ++ran;
+    }
+    return ran;
+}
+
 bool BlueprintVM::Invoke(Instance& instance_ref, u32 function, std::span<const VmValue> args) {
     Instance* instance = &instance_ref;
     const Entity entity = instance->entity;
