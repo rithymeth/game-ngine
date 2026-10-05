@@ -562,8 +562,8 @@ void UIDesigner::DrawCanvas() {
             std::string str;
             f32 size = 0.0f;
             ui::Color color;
-            if (const auto* t = dynamic_cast<const ui::Text*>(&w)) str = t->text, size = t->size, color = t->color;
-            else if (const auto* ti = dynamic_cast<const ui::TextInput*>(&w)) str = ti->text.empty() ? ti->hint : ti->text, size = ti->style.text_size, color = ti->style.text;
+            if (const auto* t = dynamic_cast<const ui::Text*>(&w)) str = t->Shown(), size = t->size, color = t->color;
+            else if (const auto* ti = dynamic_cast<const ui::TextInput*>(&w)) str = ti->text.empty() ? ti->ShownHint() : ti->text, size = ti->style.text_size, color = ti->style.text;
             if (!str.empty() && size * s >= 3.0f) {
                 const Vec2 at = LayoutToScreen({g.x, g.y});
                 dl->AddText(nullptr, size * s, Im(at), Col(color.WithAlpha(opacity)), str.c_str());

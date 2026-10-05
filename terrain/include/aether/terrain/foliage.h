@@ -27,7 +27,7 @@ struct FoliageType {
     // Per-instance variation bounds.
     f32 scale_min = 0.8f;
     f32 scale_max = 1.2f;
-    f32 rotation_range = 3.14159f; // ?180? around Y
+    f32 rotation_range = 3.14159f; // +-180 degrees around Y
     bool align_to_normal = true;   // tilt with terrain slope
 
     // Ground offset: place this far above ground (e.g. trees anchor at base).
@@ -70,8 +70,11 @@ struct DensityMap {
     std::vector<u8> cells; // row-major
 };
 
-// Generate instances procedurally using a density map and terrain normals.
-// Uses a deterministic RNG seeded per layer.
+// Generate instances at sample points (on the terrain, with its normals):
+// each is kept with the density map's probability under it (1 m cells; no
+// map keeps all), up to max_instances. Types are picked at random; each gets
+// its type's scale, Y rotation (tilted to the normal with align_to_normal)
+// and anchor offset.
 void GenerateInstances(FoliageLayer& layer, const DensityMap& density,
                      span<const Vec3> sample_positions,
                      span<const Vec3> sample_normals,
@@ -100,8 +103,9 @@ void AddInstance(FoliageLayer& layer, const Vec3& position,
 // Remove instances near a world position (for eraser tool).
 void RemoveInstancesNear(FoliageLayer& layer, const Vec3& position, f32 radius);
 
-// Paint instances: add if density > threshold, remove if density <= threshold.
-// density is in world-space cells.
+// Paint instances over a disc: layer.density instances per square metre on
+// average, thinned by the density map, at the centre's height, up to
+// max_instances.
 void PaintInstances(FoliageLayer& layer, const DensityMap& density,
                    const Vec3& center, f32 brush_radius,
                    std::mt19937& rng);

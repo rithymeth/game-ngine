@@ -1,5 +1,7 @@
 #include "aether/ui/draw.h"
 
+#include "aether/ui/bidi.h"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -13,6 +15,7 @@ f32 SdfCoverage(f32 d, const DrawQuad& q) {
 }
 
 void FontLibrary::Add(const std::string& name, const Font* font) {
+    chains_.clear();
     for (auto& [n, f] : fonts_) {
         if (n == name) {
             f = font;
@@ -23,6 +26,7 @@ void FontLibrary::Add(const std::string& name, const Font* font) {
 }
 
 void FontLibrary::Remove(const std::string& name) {
+    chains_.clear();
     std::erase_if(fonts_, [&](const auto& e) { return e.first == name; });
 }
 
@@ -30,7 +34,47 @@ const Font* FontLibrary::Find(const std::string& name) const {
     for (const auto& [n, f] : fonts_) {
         if (n == name) return f;
     }
-    return nullptr;
+    if (name.find(',') == std::string::npos) return nullptr;
+    for (const auto& [n, chain] : chains_) {
+        if (n == name) return chain.get();
+    }
+    std::vector<const Font*> found;
+    for (usize start = 0; start <= name.size();) {
+        usize end = name.find(',', start);
+        if (end == std::string::npos) end = name.size();
+        std::string part = name.substr(start, end - start);
+        const usize a = part.find_first_not_of(' '), b = part.find_last_not_of(' ');
+        part = a == std::string::npos ? std::string() : part.substr(a, b - a + 1);
+        for (const auto& [n, f] : fonts_) {
+            if (n == part) {
+                found.push_back(f);
+                break;
+            }
+        }
+        start = end + 1;
+    }
+    if (found.empty()) return nullptr;
+    chains_.emplace_back(name, std::make_unique<FallbackFont>(std::move(found)));
+    return chains_.back().second.get();
+}
+
+f32 FallbackFont::Kerning(u32 a, u32 b, f32 size) const {
+    const Font& fa = Source(a);
+    return &fa == &Source(b) ? fa.Kerning(a, b, size) : 0.0f; // only within one font
+}
+
+bool FallbackFont::HasGlyph(u32 codepoint) const {
+    for (const Font* f : fonts_) {
+        if (f->HasGlyph(codepoint)) return true;
+    }
+    return false;
+}
+
+const Font& FallbackFont::Source(u32 codepoint) const {
+    for (const Font* f : fonts_) {
+        if (f->HasGlyph(codepoint)) return f->Source(codepoint);
+    }
+    return fonts_.empty() ? static_cast<const Font&>(*this) : fonts_[0]->Source(codepoint); // tofu from the first
 }
 
 std::vector<std::string> FontLibrary::Names() const {
@@ -52,21 +96,35 @@ u32 DecodeUtf8(std::string_view s, usize& i) {
     if (c < 0x80) return c;
     int extra = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : c >= 0xC0 ? 1 : -1;
     if (extra < 0 || c >= 0xF8) return 0xFFFD;
+    const int length = extra;
     u32 cp = c & (0x3F >> extra);
     for (; extra > 0; --extra) {
         if (i >= s.size() || (byte(i) & 0xC0) != 0x80) return 0xFFFD;
         cp = (cp << 6) | (byte(i++) & 0x3F);
     }
+    // Not the shortest form, a surrogate, or past U+10FFFF: not text.
+    const u32 shortest = length == 1 ? 0x80u : length == 2 ? 0x800u : 0x10000u;
+    if (cp < shortest || (cp >= 0xD800 && cp <= 0xDFFF) || cp > 0x10FFFF) return 0xFFFD;
     return cp;
 }
+
+namespace {
+
+// The code points of the line text[a, b) in the order they are drawn (right-to-left runs reversed, §29.6).
+std::vector<u32> LineInVisualOrder(std::string_view text, usize a, usize b) {
+    std::vector<u32> cps;
+    for (usize i = a; i < b;) cps.push_back(DecodeUtf8(text, i));
+    return ReorderVisual(cps);
+}
+
+} // namespace
 
 TextLayout LayoutText(const Font& font, std::string_view text, f32 size, f32 wrap_width) {
     TextLayout out;
     auto width_of = [&](usize a, usize b) {
         f32 w = 0.0f;
         u32 prev = 0;
-        for (usize i = a; i < b;) {
-            const u32 cp = DecodeUtf8(text, i);
+        for (const u32 cp : LineInVisualOrder(text, a, b)) {
             if (prev != 0) w += font.Kerning(prev, cp, size);
             w += font.GlyphOf(cp, size).advance;
             prev = cp;
@@ -194,7 +252,6 @@ void DrawList::AddSdfQuad(const Rect& local, Color color, u32 texture, const Rec
 void DrawList::AddText(const Font& font, std::string_view text, f32 size, const Rect& box, Color color, TextAlign align, f32 wrap_width,
                        const TextEffects* effects) {
     const TextLayout layout = LayoutText(font, text, size, wrap_width);
-    const f32 range = font.SdfRange(size), edge = font.SdfEdge();
     // One pass over the glyphs per layer (shadow, outline, fill), so an
     // outline never covers the neighbouring glyph's fill.
     auto pass = [&](Vec2 offset, Color c, f32 grow, f32 softness) {
@@ -205,21 +262,22 @@ void DrawList::AddText(const Font& font, std::string_view text, f32 size, const 
             if (align == TextAlign::Center) x += (box.w - line.width) * 0.5f;
             else if (align == TextAlign::Right) x += box.w - line.width;
             u32 prev = 0;
-            for (usize i = line.begin; i < line.end;) {
-                const u32 cp = DecodeUtf8(text, i);
+            for (const u32 cp : LineInVisualOrder(text, line.begin, line.end)) {
                 if (prev != 0) x += font.Kerning(prev, cp, size);
-                const Glyph g = font.GlyphOf(cp, size);
+                const Font& src = font.Source(cp); // a fallback chain draws each glyph from the font that has it
+                const Glyph g = src.GlyphOf(cp, size);
+                const f32 range = src.SdfRange(size), edge = src.SdfEdge();
                 const Rect r{x + g.quad.x, y + g.quad.y, g.quad.w, g.quad.h};
                 if (range > 0.0f) {
                     // Grow the shape by moving the edge down the field (it can't go past the field's end).
                     const f32 e = std::max(edge - grow / range, 0.02f);
-                    AddSdfQuad(r, c, font.Texture(), g.uv, range, e, softness / range);
+                    AddSdfQuad(r, c, src.Texture(), g.uv, range, e, softness / range);
                 } else if (grow > 0.0f) {
                     for (const Vec2 d : {Vec2{-grow, 0}, Vec2{grow, 0}, Vec2{0, -grow}, Vec2{0, grow}}) {
-                        AddQuad({r.x + d.x, r.y + d.y, r.w, r.h}, c, font.Texture(), g.uv);
+                        AddQuad({r.x + d.x, r.y + d.y, r.w, r.h}, c, src.Texture(), g.uv);
                     }
                 } else {
-                    AddQuad(r, c, font.Texture(), g.uv);
+                    AddQuad(r, c, src.Texture(), g.uv);
                 }
                 x += g.advance;
                 prev = cp;

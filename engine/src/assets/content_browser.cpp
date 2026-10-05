@@ -125,6 +125,23 @@ std::vector<ContentEntry> ListContent(const AssetDatabase& database, const Conte
     return folders;
 }
 
+usize ApplyVcsStatus(std::vector<ContentEntry>& entries, const VcsStatus& status) {
+    usize changed = 0;
+    for (ContentEntry& entry : entries) {
+        entry.vcs = VcsState::Clean;
+        if (!status.available) continue;
+        if (entry.is_folder) {
+            entry.vcs = status.OfLocalFolder(entry.path);
+        } else {
+            std::string source = entry.path;
+            if (const usize hash = source.find('#'); hash != std::string::npos) source.resize(hash); // a sub-asset's source
+            entry.vcs = WorseVcsState(status.OfLocal(source), status.OfLocal(source + ".ameta"));
+        }
+        if (entry.vcs != VcsState::Clean) ++changed;
+    }
+    return changed;
+}
+
 // ---------------------------------------------------------------------------
 // Rename, move, create
 // ---------------------------------------------------------------------------
@@ -194,7 +211,16 @@ MoveResult MoveContent(AssetDatabase& database, const std::string& from_path, co
     from_meta += AssetMeta::kExtension;
     stdfs::path to_meta = to_abs;
     to_meta += AssetMeta::kExtension;
-    if (stdfs::exists(to_abs, ec) || (!is_folder && stdfs::exists(to_meta, ec))) {
+    // On a case-insensitive file system (macOS, Windows) a rename that only
+    // changes case finds its own source at the destination: that's not a
+    // clash.
+    const auto same_file = [](const stdfs::path& a, const stdfs::path& b) {
+        std::error_code e;
+        return stdfs::equivalent(a, b, e) && !e;
+    };
+    const bool case_only = same_file(from_abs, to_abs);
+    if ((stdfs::exists(to_abs, ec) && !case_only) ||
+        (!is_folder && stdfs::exists(to_meta, ec) && !same_file(from_meta, to_meta))) {
         return Fail(to + " already exists");
     }
 
@@ -215,16 +241,28 @@ MoveResult MoveContent(AssetDatabase& database, const std::string& from_path, co
 
     // Move: a folder in one go (with every .ameta and helper file in it), a
     // file together with its .ameta.
+    // A case-only rename goes through a temporary name, which every file
+    // system handles the same way.
+    const auto rename = [&](const stdfs::path& a, const stdfs::path& b, std::error_code& e) {
+        if (!same_file(a, b)) {
+            stdfs::rename(a, b, e);
+            return;
+        }
+        stdfs::path temp = a;
+        temp += ".aether-rename";
+        stdfs::rename(a, temp, e);
+        if (!e) stdfs::rename(temp, b, e);
+    };
     stdfs::create_directories(to_abs.parent_path(), ec);
-    stdfs::rename(from_abs, to_abs, ec);
+    rename(from_abs, to_abs, ec);
     if (ec) {
         return Fail("Couldn't move " + from + ": " + ec.message());
     }
     if (!is_folder && stdfs::exists(from_meta)) {
-        stdfs::rename(from_meta, to_meta, ec);
+        rename(from_meta, to_meta, ec);
         if (ec) {
             std::error_code undo;
-            stdfs::rename(to_abs, from_abs, undo); // keep the pair together
+            rename(to_abs, from_abs, undo); // keep the pair together
             return Fail("Couldn't move the .ameta of " + from + ": " + ec.message());
         }
     }

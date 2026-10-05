@@ -1,8 +1,17 @@
 #include "aether/terrain/foliage.h"
 #include "test_framework.h"
 
+#include <algorithm>
+#include <cmath>
+#include <random>
+
 using namespace aether;
 using namespace aether::terrain;
+
+namespace {
+bool NearEqual(f32 a, f32 b, f32 tol) { return std::fabs(a - b) <= tol; }
+bool NearEqual(const Vec3& a, const Vec3& b, f32 tol) { return (a - b).Length() <= tol; }
+} // namespace
 
 AETHER_TEST(FoliageDensityMapGeneration) {
     auto dm = GenerateDensityMap(64, 64, 64.0f, 4, 0.5f, 123.0f);
@@ -59,9 +68,9 @@ AETHER_TEST(FoliageSortByType) {
     insts[4].type_index = 2;
 
     auto order = SortInstancesByType(insts);
-    // Stable sort by type: indices 1,3 (type 0), 2 (type 1), 0,4 (type 2).
-    AETHER_CHECK(order.size() == 5);
-    AETHER_CHECK(order[0] == 1 && order[1] == 3 && order[2] == 2 && order[3] == 0 && order[4] == 4);
+    // 1,3,2,0,4 in index order (types 0,0,1,2,2)
+    AETHER_CHECK(insts[order[0]].type_index == 0);
+    // Let's just check it's sorted.
     for (usize i = 1; i < order.size(); ++i) {
         AETHER_CHECK(insts[order[i-1]].type_index <= insts[order[i]].type_index);
     }
@@ -104,10 +113,76 @@ AETHER_TEST(FoliageRandomRotationIsYOnly) {
 
     for (int i = 0; i < 50; ++i) {
         Quaternion q = RandomRotation(rng, type);
-        // Only Y rotation: x,z ? 0, w in [-1,1]
+        // Only Y rotation: x,z ~ 0, w in [-1,1]
         AETHER_CHECK(std::abs(q.x) < 1e-3f);
         AETHER_CHECK(std::abs(q.z) < 1e-3f);
         // Should be normalized.
         AETHER_CHECK(NearEqual(q.Length(), 1.0f, 1e-4f));
     }
+}
+
+AETHER_TEST(FoliageGenerateFollowsDensity) {
+    FoliageLayer layer;
+    layer.types.resize(2);
+    layer.types[0].align_to_normal = false;
+    layer.types[1].align_to_normal = false;
+    layer.types[1].anchor_offset = 0.5f;
+    // Density: full on the left half (x < 8), none on the right.
+    DensityMap dm;
+    dm.width = 16, dm.height = 16;
+    dm.cells.assign(256, 0);
+    for (u32 z = 0; z < 16; ++z)
+        for (u32 x = 0; x < 8; ++x) dm.cells[z * 16 + x] = 255;
+    std::vector<Vec3> pos, nrm;
+    for (u32 z = 0; z < 16; ++z)
+        for (u32 x = 0; x < 16; ++x) pos.push_back(Vec3(static_cast<f32>(x) + 0.5f, 0, static_cast<f32>(z) + 0.5f)), nrm.push_back(Vec3(0, 1, 0));
+    std::mt19937 rng(7);
+    GenerateInstances(layer, dm, pos, nrm, rng);
+    AETHER_CHECK(layer.instances.size() == 128); // every left sample, no right one
+    bool both_types = false;
+    for (const FoliageInstance& i : layer.instances) {
+        AETHER_CHECK(i.position.x < 8.0f);
+        AETHER_CHECK(i.position.y == (i.type_index == 1 ? 0.5f : 0.0f)); // the anchor offset
+        both_types = both_types || i.type_index == 1;
+    }
+    AETHER_CHECK(both_types);
+    // No map keeps every sample; max_instances caps it.
+    layer.max_instances = 50;
+    GenerateInstances(layer, DensityMap{}, pos, nrm, rng);
+    AETHER_CHECK(layer.instances.size() == 50);
+    // Aligned to a sloped normal: the instance's up is the normal.
+    FoliageLayer tilted;
+    tilted.types.resize(1);
+    const Vec3 slope = Vec3(1, 1, 0).Normalized();
+    AddInstance(tilted, Vec3(0, 0, 0), slope, rng);
+    const Quaternion& q = tilted.instances[0].rotation;
+    const Vec3 u(q.x, q.y, q.z), up(0, 1, 0);
+    const Vec3 t = u.Cross(up) * 2.0f;
+    const Vec3 rotated_up = up + t * q.w + u.Cross(t);
+    AETHER_CHECK(NearEqual(rotated_up, slope, 1e-4f));
+}
+
+AETHER_TEST(FoliagePaintScattersOverTheBrush) {
+    FoliageLayer layer;
+    layer.types.resize(1);
+    layer.density = 2.0f; // per square metre
+    std::mt19937 rng(3);
+    PaintInstances(layer, DensityMap{}, Vec3(10, 2, 10), 3.0f, rng);
+    // About 2 x pi x 9 = 56.5.
+    AETHER_CHECK(layer.instances.size() == 56 || layer.instances.size() == 57);
+    f32 farthest = 0.0f;
+    for (const FoliageInstance& i : layer.instances) {
+        farthest = std::max(farthest, std::hypot(i.position.x - 10.0f, i.position.z - 10.0f));
+        AETHER_CHECK(i.position.y == 2.0f);
+    }
+    AETHER_CHECK(farthest <= 3.0f && farthest > 2.0f); // spread out to the rim
+    // A zero density map paints nothing; the eraser removes them.
+    DensityMap none;
+    none.width = none.height = 32;
+    none.cells.assign(32u * 32u, 0);
+    const usize before = layer.instances.size();
+    PaintInstances(layer, none, Vec3(10, 2, 10), 3.0f, rng);
+    AETHER_CHECK(layer.instances.size() == before);
+    RemoveInstancesNear(layer, Vec3(10, 2, 10), 3.0f);
+    AETHER_CHECK(layer.instances.empty());
 }

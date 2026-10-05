@@ -1,6 +1,7 @@
 #include "aether/scene/scheduler.h"
 #include "test_framework.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <mutex>

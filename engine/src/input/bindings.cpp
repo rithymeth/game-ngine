@@ -34,6 +34,23 @@ bool SaveTyped(const char* kind, const T& object, const stdfs::path& file, std::
     return true;
 }
 
+// `source` names the file (or archive entry) in messages.
+template <typename T>
+bool ParseTyped(const char* kind, std::string_view text, const std::string& source, T& out, std::string* error) {
+    const reflect::Json json = reflect::Json::parse(text.begin(), text.end(), nullptr, /*allow_exceptions=*/false);
+    if (json.is_discarded() || !json.is_object() || json.value("$type", "") != kind || !json.contains("data")) {
+        SetError(error, source + " isn't " + std::string(kind) + " data");
+        return false;
+    }
+    T object{};
+    if (!reflect::FromJson(object, json["data"])) {
+        SetError(error, source + " has malformed " + std::string(kind) + " data");
+        return false;
+    }
+    out = std::move(object);
+    return true;
+}
+
 template <typename T>
 bool LoadTyped(const char* kind, const stdfs::path& file, T& out, std::string* error) {
     std::vector<u8> bytes;
@@ -41,18 +58,8 @@ bool LoadTyped(const char* kind, const stdfs::path& file, T& out, std::string* e
         SetError(error, "Couldn't read " + file.string());
         return false;
     }
-    const reflect::Json json = reflect::Json::parse(bytes.begin(), bytes.end(), nullptr, /*allow_exceptions=*/false);
-    if (json.is_discarded() || !json.is_object() || json.value("$type", "") != kind || !json.contains("data")) {
-        SetError(error, file.string() + " isn't " + std::string(kind) + " data");
-        return false;
-    }
-    T object{};
-    if (!reflect::FromJson(object, json["data"])) {
-        SetError(error, file.string() + " has malformed " + std::string(kind) + " data");
-        return false;
-    }
-    out = std::move(object);
-    return true;
+    return ParseTyped(kind, std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), file.string(), out,
+                      error);
 }
 
 } // namespace
@@ -102,6 +109,41 @@ usize InputAssetLibrary::Load(const assets::AssetDatabase& database) {
         }
     }
     return errors_.size();
+}
+
+bool InputAssetLibrary::AddFromText(const std::string& importer, const std::string& path, std::string_view text,
+                                    std::string* error) {
+    std::string why;
+    if (importer == "InputAction") {
+        InputAction action;
+        if (!ParseTyped("InputAction", text, path, action, &why)) {
+            errors_.push_back(why);
+            if (error) *error = why;
+            return false;
+        }
+        if (action.name.empty()) {
+            why = path + ": the action has no name";
+            errors_.push_back(why);
+            if (error) *error = why;
+            return false;
+        }
+        actions_.push_back(std::move(action));
+        return true;
+    }
+    if (importer == "InputMapping") {
+        InputMappingContext context;
+        if (!ParseTyped("InputMappingContext", text, path, context, &why)) {
+            errors_.push_back(why);
+            if (error) *error = why;
+            return false;
+        }
+        if (context.name.empty()) context.name = stdfs::path(path).stem().string();
+        contexts_.push_back(std::move(context));
+        return true;
+    }
+    why = path + " isn't an input asset (importer '" + importer + "')";
+    if (error) *error = why;
+    return false;
 }
 
 const InputMappingContext* InputAssetLibrary::FindContext(const std::string& name) const {

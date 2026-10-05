@@ -1,0 +1,295 @@
+# Continuous integration (Phase 24 step 1, docs/design/PHASE_SPECS.md §24.1).
+#
+# Linux: the portable engine, editor UI, scripting and tests with GCC,
+# Clang, ASan/UBSan and the physics module; runs the unit tests and the
+# functional tests (aether_functional), and keeps the JUnit report.
+#
+# macOS (Apple Silicon): the engine, scripting, physics, the Vulkan backend
+# on MoltenVK and the editor shell; runs the unit and functional tests.
+#
+# Windows: MSVC builds everything, the D3D12 editor included, runs the
+# tests, and packages the editor (aether_editor.exe, its DLLs and the
+# assets) as a downloadable artifact. Pushing a tag v* - or running the
+# workflow by hand with a release_tag - also publishes the package as a
+# GitHub release.
+name: CI
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Publish a GitHub release with this tag (e.g. v0.24.0), created on the commit being built; empty for a plain run"
+        required: false
+        default: ""
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC
+            cc: gcc
+            cxx: g++
+            type: RelWithDebInfo
+            flags: ""
+            physics: "OFF"
+          - name: Clang
+            cc: clang
+            cxx: clang++
+            type: RelWithDebInfo
+            flags: ""
+            physics: "OFF"
+          - name: ASan+UBSan
+            cc: gcc
+            cxx: g++
+            type: Debug
+            flags: "-fsanitize=address,undefined -fno-omit-frame-pointer"
+            physics: "OFF"
+          - name: Physics
+            cc: gcc
+            cxx: g++
+            type: RelWithDebInfo
+            flags: ""
+            physics: "ON"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        # The X11 development packages build GLFW's window backend; Xvfb gives
+        # the window tests a display. The Vulkan loader and headers, glslang
+        # (HLSL to SPIR-V) and Mesa's lavapipe (software Vulkan) let the
+        # Vulkan backend build and its tests render on a runner with no GPU.
+        run: >
+          sudo apt-get update && sudo apt-get install -y ninja-build xvfb
+          libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+          libvulkan-dev glslang-dev glslang-tools spirv-tools mesa-vulkan-drivers
+      - name: Cache fetched dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-linux-${{ matrix.name }}-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: deps-linux-${{ matrix.name }}-
+      - name: Configure
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ matrix.type }}
+          "-DCMAKE_CXX_FLAGS=${{ matrix.flags }}"
+          -DAETHER_BUILD_PHYSICS=${{ matrix.physics }}
+          -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_SANDBOX=OFF
+          -DAETHER_PLATFORM_PLUGINS=platforms/example
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Unit tests
+        env:
+          # Under LeakSanitizer, Mesa's lavapipe reports allocations its
+          # worker threads keep after the driver is unloaded; that job hides
+          # the driver, so its Vulkan device tests skip (the others run them).
+          VK_DRIVER_FILES: ${{ matrix.name == 'ASan+UBSan' && '/nonexistent/icd.json' || '' }}
+          VK_ICD_FILENAMES: ${{ matrix.name == 'ASan+UBSan' && '/nonexistent/icd.json' || '' }}
+        run: xvfb-run -a ./build/tests/aether_tests
+      - name: Functional tests
+        run: ./build/tools/functional/aether_functional --quiet --junit functional-results.xml
+      - name: Pack the assets
+        # Phase 25: assets/ into an .apak archive and back, byte for byte.
+        if: matrix.name == 'GCC'
+        run: |
+          ./build/tools/pak/aether_pak create assets.apak assets --prefix assets
+          ./build/tools/pak/aether_pak verify assets.apak
+          ./build/tools/pak/aether_pak extract assets.apak unpacked
+          diff -r assets unpacked/assets
+      - name: Screenshot the editor shell
+        # The portable editor (editor/shell) in a real window under Xvfb,
+        # drawn through Vulkan on lavapipe; the last frame is kept.
+        if: matrix.name == 'GCC'
+        env:
+          AETHER_EDITOR_MAX_FRAMES: "30"
+          AETHER_EDITOR_SCREENSHOT: ${{ github.workspace }}/editor-screenshot-linux.png
+        run: |
+          xvfb-run -a -s "-screen 0 1920x1080x24" ./build/editor/shell/aether_editor_shell
+          test -s editor-screenshot-linux.png
+      - name: Upload the editor screenshot
+        if: matrix.name == 'GCC' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: editor-screenshot-linux
+          path: editor-screenshot-linux.png
+          if-no-files-found: ignore
+      - name: Keep the functional report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: functional-results-linux-${{ matrix.name }}
+          path: functional-results.xml
+          if-no-files-found: ignore
+
+  macos:
+    name: macOS (Apple Silicon, MoltenVK)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        # MoltenVK (Vulkan on Metal) with the Vulkan loader and headers, and
+        # glslang for HLSL to SPIR-V.
+        run: |
+          brew install ninja molten-vk vulkan-loader vulkan-headers glslang
+          for f in "$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json" \
+                   "$(brew --prefix)/share/vulkan/icd.d/MoltenVK_icd.json" \
+                   "$(brew --prefix molten-vk)/etc/vulkan/icd.d/MoltenVK_icd.json" \
+                   "$(brew --prefix molten-vk)/share/vulkan/icd.d/MoltenVK_icd.json"; do
+            if [ -f "$f" ]; then echo "VK_ICD_FILENAMES=$f" >> "$GITHUB_ENV"; break; fi
+          done
+      - name: Cache fetched dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-macos-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: deps-macos-
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          "-DCMAKE_PREFIX_PATH=$(brew --prefix)"
+          -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_SANDBOX=OFF
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Unit tests
+        run: ./build/tests/aether_tests
+      - name: Functional tests
+        run: ./build/tools/functional/aether_functional --quiet --junit functional-results.xml
+      - name: Screenshot the editor shell
+        # Offscreen through MoltenVK; hosted runners may have no Metal
+        # device, so this reports without failing the job.
+        continue-on-error: true
+        env:
+          AETHER_EDITOR_HEADLESS: "1"
+          AETHER_EDITOR_MAX_FRAMES: "10"
+          AETHER_EDITOR_SCREENSHOT: ${{ github.workspace }}/editor-screenshot-macos.png
+        run: ./build/editor/shell/aether_editor_shell
+      - name: Upload the editor screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: editor-screenshot-macos
+          path: editor-screenshot-macos.png
+          if-no-files-found: ignore
+      - name: Keep the functional report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: functional-results-macos
+          path: functional-results.xml
+          if-no-files-found: ignore
+
+  windows:
+    name: Windows (MSVC, D3D12 editor)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache fetched dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-windows-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: deps-windows-
+      - name: Configure
+        # Vulkan is off: hosted runners have no Vulkan loader to link
+        # against. The D3D12 editor and the rest build as usual.
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DAETHER_BUILD_VULKAN=OFF
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Unit tests
+        # Hosted runners have no GPU; tests that need a D3D12 device may fail
+        # there, so this step reports without failing the job (for now).
+        continue-on-error: true
+        run: .\build\tests\Release\aether_tests.exe
+      - name: Functional tests
+        run: .\build\tools\functional\Release\aether_functional.exe --quiet --junit functional-results.xml
+      - name: Package the editor
+        shell: pwsh
+        run: |
+          $out = "dist/AetherEditor"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item build/editor/Release/aether_editor.exe $out/
+          # The build tools and the player: cook a project, pack it, play it.
+          Copy-Item build/tools/cook/Release/aether_cook.exe $out/
+          Copy-Item build/tools/pak/Release/aether_pak.exe $out/
+          Copy-Item build/player/Release/aether_player.exe $out/
+          # The manual, and the API reference generated from the engine's reflection.
+          Copy-Item -Recurse docs/manual $out/manual
+          & build/tools/docgen/Release/aether_docgen.exe --out $out/api
+          if ($LASTEXITCODE -ne 0) { throw "aether_docgen failed" }
+          Get-ChildItem build/editor/Release -Filter *.dll | Copy-Item -Destination $out/
+          Copy-Item -Recurse assets $out/assets
+          Copy-Item README.md $out/
+          Compress-Archive -Path "$out/*" -DestinationPath dist/AetherEditor-windows-x64.zip -Force
+      - name: Upload the editor
+        uses: actions/upload-artifact@v4
+        with:
+          name: AetherEditor-windows-x64
+          path: dist/AetherEditor-windows-x64.zip
+      - name: Screenshot the packaged editor
+        # Runs the zip's editor for 120 frames on WARP (hosted runners have
+        # no GPU; the editor falls back to the software device) and saves
+        # the last frame, so every run shows what the editor looks like.
+        continue-on-error: true
+        timeout-minutes: 10
+        shell: pwsh
+        env:
+          AETHER_EDITOR_MAX_FRAMES: "120"
+          AETHER_EDITOR_SCREENSHOT: ${{ github.workspace }}/editor-screenshot.png
+        run: |
+          Expand-Archive dist/AetherEditor-windows-x64.zip -DestinationPath run -Force
+          Push-Location run
+          ./aether_editor.exe
+          Pop-Location
+          if (-not (Test-Path editor-screenshot.png)) { throw "the editor wrote no screenshot" }
+      - name: Upload the screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: editor-screenshot-windows
+          path: editor-screenshot.png
+          if-no-files-found: ignore
+      - name: Keep the functional report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: functional-results-windows
+          path: functional-results.xml
+          if-no-files-found: ignore
+
+  release:
+    name: Release
+    # A pushed v* tag, or a manual run given a release_tag (which creates
+    # the tag on the commit it built).
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+    needs: [linux, macos, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: AetherEditor-windows-x64
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: AetherEditor-windows-x64.zip
+          generate_release_notes: true
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          target_commitish: ${{ github.sha }}

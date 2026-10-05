@@ -1,5 +1,9 @@
 #include "aether/job/job_system.h"
 
+#include "aether/core/profiler.h"
+
+#include <string>
+
 #include "aether/core/log.h"
 
 namespace aether {
@@ -113,6 +117,7 @@ void JobSystem::Wait(JobCounter& counter) {
 
 void JobSystem::WorkerMain(u32 thread_index) {
     tls_thread_index_ = thread_index;
+    Profiler::Get().SetThreadName("Worker " + std::to_string(thread_index));
     while (running_.load(std::memory_order_acquire)) {
         if (!TryRunOneJob(thread_index)) {
             std::this_thread::yield();

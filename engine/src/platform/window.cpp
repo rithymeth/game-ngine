@@ -17,6 +17,21 @@ namespace {
 
 constexpr const wchar_t* kWindowClassName = L"AetherWindowClass";
 
+} // namespace
+
+struct WindowBackendAccess {
+    static void MouseAt(Window& w, f32 x, f32 y) {
+        WindowEvent e;
+        e.type = WindowEventType::MouseMove;
+        e.x = x, e.y = y;
+        if (w.has_mouse_) e.dx = x - w.last_mouse_x_, e.dy = y - w.last_mouse_y_;
+        w.last_mouse_x_ = x, w.last_mouse_y_ = y, w.has_mouse_ = true;
+        w.PushEvent(e);
+    }
+};
+
+namespace {
+
 std::wstring ToWide(const std::string& s) {
     if (s.empty()) {
         return {};
@@ -33,6 +48,67 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     if (window && window->native_message_hook) {
         window->native_message_hook(hwnd, static_cast<u32>(msg), static_cast<u64>(wparam),
                                      static_cast<i64>(lparam));
+    }
+
+    if (window) {
+        switch (msg) {
+            case WM_KEYDOWN:
+            case WM_SYSKEYDOWN:
+            case WM_KEYUP:
+            case WM_SYSKEYUP: {
+                u32 vk = static_cast<u32>(wparam);
+                const UINT scancode = static_cast<UINT>((lparam >> 16) & 0xFF);
+                const bool extended = ((lparam >> 24) & 1) != 0;
+                if (vk == VK_SHIFT) vk = MapVirtualKeyW(scancode, MAPVK_VSC_TO_VK_EX);
+                else if (vk == VK_CONTROL) vk = extended ? VK_RCONTROL : VK_LCONTROL;
+                else if (vk == VK_MENU) vk = extended ? VK_RMENU : VK_LMENU;
+                WindowEvent e;
+                e.type = WindowEventType::Key;
+                e.key = KeyFromVirtualKey(vk);
+                e.down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
+                if (e.key != input::Key::None) window->PushEvent(e);
+                break; // DefWindowProc still sees them (Alt+F4)
+            }
+            case WM_LBUTTONDOWN: case WM_LBUTTONUP: case WM_RBUTTONDOWN: case WM_RBUTTONUP:
+            case WM_MBUTTONDOWN: case WM_MBUTTONUP: case WM_XBUTTONDOWN: case WM_XBUTTONUP: {
+                WindowEvent e;
+                e.type = WindowEventType::Key;
+                e.down = msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN || msg == WM_MBUTTONDOWN || msg == WM_XBUTTONDOWN;
+                if (msg == WM_LBUTTONDOWN || msg == WM_LBUTTONUP) e.key = input::Key::MouseLeft;
+                else if (msg == WM_RBUTTONDOWN || msg == WM_RBUTTONUP) e.key = input::Key::MouseRight;
+                else if (msg == WM_MBUTTONDOWN || msg == WM_MBUTTONUP) e.key = input::Key::MouseMiddle;
+                else e.key = HIWORD(wparam) == XBUTTON1 ? input::Key::MouseButton4 : input::Key::MouseButton5;
+                window->PushEvent(e);
+                break;
+            }
+            case WM_MOUSEMOVE:
+                WindowBackendAccess::MouseAt(*window, static_cast<f32>(static_cast<short>(LOWORD(lparam))),
+                                             static_cast<f32>(static_cast<short>(HIWORD(lparam))));
+                break;
+            case WM_MOUSEWHEEL: {
+                WindowEvent e;
+                e.type = WindowEventType::Scroll;
+                e.dy = static_cast<f32>(static_cast<short>(HIWORD(wparam))) / static_cast<f32>(WHEEL_DELTA);
+                window->PushEvent(e);
+                break;
+            }
+            case WM_CHAR: {
+                WindowEvent e;
+                e.type = WindowEventType::Char;
+                e.codepoint = static_cast<u32>(wparam);
+                window->PushEvent(e);
+                break;
+            }
+            case WM_SETFOCUS:
+            case WM_KILLFOCUS: {
+                WindowEvent e;
+                e.type = WindowEventType::Focus;
+                e.down = msg == WM_SETFOCUS;
+                window->PushEvent(e);
+                break;
+            }
+            default: break;
+        }
     }
 
     switch (msg) {
@@ -89,7 +165,7 @@ Window::Window(const WindowDesc& desc) : width_(desc.width), height_(desc.height
     AETHER_ASSERT(hwnd != nullptr);
     native_handle_ = hwnd;
 
-    ShowWindow(hwnd, SW_SHOW);
+    ShowWindow(hwnd, desc.visible ? SW_SHOW : SW_HIDE);
     AETHER_LOG_INFO("Window", "Created %ux%u window \"%s\"", desc.width, desc.height, desc.title.c_str());
 }
 
@@ -99,9 +175,23 @@ Window::~Window() {
     }
 }
 
+const char* Window::Backend() const { return "win32"; }
+
+void Window::SetTitle(const std::string& title) {
+    if (native_handle_) SetWindowTextW(static_cast<HWND>(native_handle_), ToWide(title).c_str());
+}
+
+void Window::RequestClose() {
+    if (native_handle_) PostMessageW(static_cast<HWND>(native_handle_), WM_CLOSE, 0, 0);
+}
+
 void Window::NotifyResized(u32 width, u32 height) {
     width_ = width;
     height_ = height;
+    WindowEvent e;
+    e.type = WindowEventType::Resize;
+    e.x = static_cast<f32>(width), e.y = static_cast<f32>(height);
+    PushEvent(e);
     if (on_resize) {
         on_resize(width, height);
     }
@@ -109,6 +199,9 @@ void Window::NotifyResized(u32 width, u32 height) {
 
 void Window::NotifyClosed() {
     should_close_ = true;
+    WindowEvent e;
+    e.type = WindowEventType::Close;
+    PushEvent(e);
     DestroyWindow(static_cast<HWND>(native_handle_));
 }
 

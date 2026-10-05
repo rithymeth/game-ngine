@@ -1,6 +1,7 @@
 #include "aether/blueprint/vm.h"
 
 #include "aether/core/log.h"
+#include "aether/ecs/remote_call.h"
 #include "aether/ecs/world.h"
 #include "aether/reflection/reflection.h"
 #include "aether/assets/asset_guid.h"
@@ -275,6 +276,18 @@ bool BlueprintVM::Dispatch(Entity entity, std::string_view event, std::span<cons
     auto it = bp.events.find(event);
     if (it == bp.events.end()) return false;
     return Invoke(*instance, it->second, args);
+}
+
+usize BlueprintVM::DispatchAll(std::string_view event, std::span<const VmValue> args) {
+    std::vector<Entity> targets; // a handler may attach or detach, so don't walk the map while running
+    for (const auto& [key, instance] : instances_) {
+        if (instance->blueprint->events.find(event) != instance->blueprint->events.end()) targets.push_back(instance->entity);
+    }
+    usize ran = 0;
+    for (const Entity e : targets) {
+        if (Dispatch(e, event, args)) ++ran;
+    }
+    return ran;
 }
 
 bool BlueprintVM::Invoke(Instance& instance_ref, u32 function, std::span<const VmValue> args) {
@@ -652,10 +665,15 @@ void BlueprintVM::NativeCallOp(Instance& instance, const CompiledFunction& fn, c
                              arg.reg.bank == Bank::String ? frame.s[arg.reg.index] : std::string(), arg.type));
     }
     reflect::Any result;
-    if (!call.function->Invoke(self, args, call.has_result ? &result : nullptr)) {
+    const bool ok = call.has_target && call.owner != nullptr
+                        ? CallFunction(world_, frame.r[call.target.index].AsEntity(), *call.owner, *call.function, self,
+                                       args, call.has_result ? &result : nullptr)
+                        : call.function->Invoke(self, args, call.has_result ? &result : nullptr);
+    if (!ok) {
         Warn("BP204", instance, fn, node, std::string("The call to '") + call.function->name + "' was refused.");
         return;
     }
+    if (call.has_result && !result.HasValue()) return; // a remote call that was sent
     if (call.has_result) {
         const RegRef r = call.result.reg;
         Reg scratch;

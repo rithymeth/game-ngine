@@ -1,6 +1,7 @@
 #pragma once
 
 #include "aether/assets/importer.h"
+#include "aether/assets/vcs.h"
 
 #include <optional>
 #include <string>
@@ -26,6 +27,7 @@ struct ContentEntry {
     std::string name; // file or folder name; for a sub-asset, its key ("mesh:0")
     std::string path; // relative to the content root
     const AssetRecord* asset = nullptr; // null for folders
+    VcsState vcs = VcsState::Clean;     // set by ApplyVcsStatus
 };
 
 struct ContentQuery {
@@ -39,6 +41,13 @@ struct ContentQuery {
 // Folders first (only when not searching or recursing), then assets, each
 // sorted by name (case-insensitive). Invalidated by any database change.
 std::vector<ContentEntry> ListContent(const AssetDatabase& database, const ContentQuery& query);
+
+// Fills each entry's `vcs` from a status queried in the content root
+// (QueryGitStatus(database.ContentRoot())): an asset takes the worse of its
+// own file's state and its .ameta sidecar's (a sub-asset follows its source),
+// and a folder the worst of everything inside it. Returns how many entries
+// are not Clean. A status that isn't `available` leaves everything Clean.
+usize ApplyVcsStatus(std::vector<ContentEntry>& entries, const VcsStatus& status);
 
 // ---------------------------------------------------------------------------
 // Rename, move, create

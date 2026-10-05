@@ -31,6 +31,7 @@ void RegisterSceneComponents() {
     (void)GetComponentId<PrefabLink>();
     (void)GetComponentId<Active>();
     (void)GetComponentId<Camera>();
+    (void)GetComponentId<CineCamera>();
     (void)GetComponentId<Tags>();
     (void)GetComponentId<Layer>();
     (void)GetComponentId<ScriptComponent>();
@@ -339,13 +340,17 @@ bool SaveSceneJson(const World& world, const std::string& path) {
 }
 
 bool LoadSceneJson(World& world, const std::string& path) {
-    using reflect::Json;
-    RegisterSceneComponents();
     std::vector<u8> bytes;
     if (!fs::ReadFileBytes(path, bytes)) {
         AETHER_LOG_ERROR("Scene", "Failed to read scene file: %s", path.c_str());
         return false;
     }
+    return LoadSceneJsonFromMemory(world, bytes, path);
+}
+
+bool LoadSceneJsonFromMemory(World& world, std::span<const u8> bytes, const std::string& path) {
+    using reflect::Json;
+    RegisterSceneComponents();
     Json scene = Json::parse(bytes.begin(), bytes.end(), nullptr, /*allow_exceptions=*/false);
     if (scene.is_discarded() || !scene.is_object() || scene.value("$type", "") != "Scene") {
         AETHER_LOG_ERROR("Scene", "Not an Aether JSON scene file: %s", path.c_str());

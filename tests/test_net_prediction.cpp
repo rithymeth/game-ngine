@@ -1,459 +1,256 @@
-#include "aether/net/bytes.h"
+#include "aether/net/interpolation.h"
 #include "aether/net/prediction.h"
 #include "test_framework.h"
 
 #include <algorithm>
 #include <cmath>
 
-// Phase 22 step 4: prediction and reconciliation - the movement step, input
-// sanitizing, prediction that agrees with the server, corrections that ease
-// instead of snapping, loss, replay, and a client that cheats.
+// Phase 22 step 4: the interpolation buffer, snapshot interpolation that
+// moves smoothly between snapshots, and predicted character movement that
+// responds at once, agrees with the server, and reconciles when it doesn't.
 
 using namespace aether;
 using namespace aether::net;
 
+#define CHECK(...) AETHER_CHECK((__VA_ARGS__))
+
 namespace {
 
-constexpr f32 kDt = 1.0f / 60.0f;
+constexpr f64 kStep = 1.0 / 60.0;
 
-MoveSettings Settings() { return {}; }
-
-// A client and a server over a simulated network, one fixed tick at a time.
-struct Link {
+struct PredSim {
     LoopbackNetwork net;
-    LoopbackTransport& server_link;
-    LoopbackTransport& client_link;
-    NetEndpoint server_ep;
-    NetEndpoint client_ep;
-    PredictionServer server;
-    PredictionClient client;
-    f64 t = 0.0;
-    u64 states_received = 0;
+    World world;
+    std::unique_ptr<DatagramSocket> socket;
+    std::unique_ptr<NetHost> host;
+    std::unique_ptr<ReplicationServer> replication;
+    std::unique_ptr<MovementServer> movement;
+    std::vector<PeerId> peers;
+    struct Client {
+        World world;
+        std::unique_ptr<DatagramSocket> socket;
+        std::unique_ptr<NetHost> host;
+        std::unique_ptr<ReplicationClient> replication;
+        std::unique_ptr<MovementClient> movement;
+        std::unique_ptr<SnapshotInterpolation> interpolation;
+    };
+    std::vector<std::unique_ptr<Client>> clients;
 
-    Link(MoveStepFn server_step, MoveStepFn client_step, u64 seed = 1)
-        : net(seed),
-          server_link(net.CreateEndpoint()),
-          client_link(net.CreateEndpoint()),
-          server_ep(server_link),
-          client_ep(client_link),
-          server(std::move(server_step)),
-          client(std::move(client_step)) {
-        server_ep.Listen();
-        client_ep.Connect(server_link.LocalAddress());
-        for (int i = 0; i < 100; ++i) Step(nullptr, false);
-        server.AddPeer(client_link.LocalAddress(), MoveState{});
-        client.Reset(MoveState{});
+    explicit PredSim(u64 seed = 1) : net(seed) {
+        socket = net.Open(7777);
+        host = std::make_unique<NetHost>(*socket);
+        host->Listen();
+        replication = std::make_unique<ReplicationServer>(world, *host);
+        movement = std::make_unique<MovementServer>(world, *host, *replication);
     }
-
-    void Step(const MoveInput* input, bool play = true) {
-        if (play && input != nullptr) {
-            client_ep.Send(server_link.LocalAddress(), Channel::Unreliable, client.Predict(*input));
-        }
-        t += kDt;
-        net.Advance(kDt);
-        client_ep.Update(t);
-        server_ep.Update(t);
-        NetEvent e;
-        while (server_ep.Poll(e)) {
-            if (e.type == NetEventType::Message && !e.data.empty() && e.data[0] == kInputMessage) {
-                server.OnInputMessage(e.peer, e.data);
+    Client& AddClient() {
+        auto c = std::make_unique<Client>();
+        c->socket = net.Open();
+        c->host = std::make_unique<NetHost>(*c->socket);
+        const PeerId server = c->host->Connect(Address::Loopback(7777), net.Now());
+        c->replication = std::make_unique<ReplicationClient>(c->world, *c->host, server);
+        c->movement = std::make_unique<MovementClient>(c->world, *c->host, *c->replication, server);
+        c->interpolation = std::make_unique<SnapshotInterpolation>(c->world, *c->replication);
+        clients.push_back(std::move(c));
+        return *clients.back();
+    }
+    // One frame: the network, the server, then each client (input happens between frames).
+    void Step(int frames = 1) {
+        for (int i = 0; i < frames; ++i) {
+            net.Advance(kStep);
+            host->Update(net.Now());
+            for (const NetEvent& e : host->TakeEvents()) {
+                if (e.type == NetEventType::Connected) peers.push_back(e.peer);
+                if (!replication->HandleEvent(e)) movement->HandleEvent(e);
+            }
+            movement->Update(net.Now());
+            replication->Update(net.Now());
+            for (auto& c : clients) {
+                c->host->Update(net.Now());
+                for (const NetEvent& e : c->host->TakeEvents())
+                    if (!c->replication->HandleEvent(e)) c->movement->HandleEvent(e);
+                c->interpolation->Update(net.Now());
             }
         }
-        if (play) {
-            server.Tick();
-            const std::vector<u8> state = server.BuildStateMessage(client_link.LocalAddress());
-            if (!state.empty()) server_ep.Send(client_link.LocalAddress(), Channel::Unreliable, state);
-        }
-        server_ep.Update(t);
-        while (client_ep.Poll(e)) {
-            if (e.type == NetEventType::Message && !e.data.empty() && e.data[0] == kStateMessage) {
-                if (client.OnStateMessage(e.data)) ++states_received;
-            }
-        }
-        client.Update(kDt);
     }
-    void Run(const MoveInput& input, int ticks) {
-        for (int i = 0; i < ticks; ++i) Step(&input);
+    Entity SpawnCharacter(PeerId owner, const Vec3& at = {}) {
+        NetIdentity ni;
+        SetNetArchetype(ni, "character");
+        ni.owner = owner;
+        return world.CreateEntity(ni, Transform{at, Quaternion{}}, NetMovement{});
     }
-    const MoveState& ServerState() { return *server.StateOf(client_link.LocalAddress()); }
+    u32 NetId(Entity e) { return world.GetComponent<NetIdentity>(e)->net_id; }
+    Vec3 ServerPos(Entity e) { return world.GetComponent<Transform>(e)->position; }
+    Vec3 ClientPos(Client& c, Entity server_entity) {
+        return c.world.GetComponent<Transform>(c.replication->FindEntity(NetId(server_entity)))->position;
+    }
 };
 
-f32 Dist(const Vec3& a, const Vec3& b) { return (a - b).Length(); }
+bool Near(const Vec3& a, const Vec3& b, f32 tol = 1e-4f) { return (a - b).Length() <= tol; }
 
 } // namespace
 
-AETHER_TEST(NetPrediction_StepMovement) {
-    const MoveSettings s = Settings();
-    MoveState state;
-    MoveInput forward;
-    forward.move_x = 1.0f;
-    // Accelerates toward walk speed without overshooting it.
-    for (int i = 0; i < 120; ++i) StepMovement(s, {}, state, forward);
-    AETHER_CHECK_NEAR(state.velocity.x, s.walk_speed, 1e-4f);
-    AETHER_CHECK(state.position.x > 6.0f && state.grounded);
-    forward.run = true;
-    for (int i = 0; i < 120; ++i) StepMovement(s, {}, state, forward);
-    AETHER_CHECK_NEAR(state.velocity.x, s.run_speed, 1e-4f);
+AETHER_TEST(Prediction_InterpolationBufferSamples) {
+    InterpolationBuffer b;
+    CHECK(!b.Sample(0.0, *std::make_unique<Transform>()));
+    b.Push(1.0, Transform{Vec3(0, 0, 0), Quaternion{}});
+    b.Push(2.0, Transform{Vec3(10, 0, 0), Quaternion::FromAxisAngle(Vec3(0, 1, 0), 1.5707963f)});
+    b.Push(1.5, Transform{Vec3(99, 0, 0), Quaternion{}}); // out of order: ignored
+    CHECK(b.Size() == 2 && b.Oldest() == 1.0 && b.Newest() == 2.0);
+    Transform t;
+    CHECK(b.Sample(1.25, t) && Near(t.position, Vec3(2.5f, 0, 0)));
+    const Quaternion half = Quaternion::FromAxisAngle(Vec3(0, 1, 0), 0.7853982f);
+    CHECK(b.Sample(1.5, t) && std::fabs(t.rotation.y - half.y) < 1e-3f && std::fabs(t.rotation.w - half.w) < 1e-3f);
+    CHECK(b.Sample(0.0, t) && Near(t.position, Vec3(0, 0, 0)));  // before: the oldest
+    CHECK(b.Sample(9.0, t) && Near(t.position, Vec3(10, 0, 0))); // after: the newest
+    // The shorter arc: q and -q are the same rotation.
+    Quaternion neg = half;
+    neg.x = -neg.x, neg.y = -neg.y, neg.z = -neg.z, neg.w = -neg.w;
+    const Quaternion mid = NlerpShortest(half, neg, 0.5f);
+    CHECK(std::fabs(std::fabs(mid.w) - std::fabs(half.w)) < 1e-4f);
+    for (int i = 0; i < 40; ++i) b.Push(3.0 + i, Transform{});
+    CHECK(b.Size() == InterpolationBuffer::kCapacity);
+}
 
-    // Braking to a stop.
-    MoveInput none;
-    for (int i = 0; i < 60; ++i) StepMovement(s, {}, state, none);
-    AETHER_CHECK_NEAR(state.velocity.x, 0.0f, 1e-4f);
-
-    // A jump goes up, comes down and lands.
-    MoveState j;
-    MoveInput jump;
-    jump.jump = true;
-    StepMovement(s, {}, j, jump);
-    AETHER_CHECK(!j.grounded && j.velocity.y > 0.0f && j.position.y > 0.0f);
-    f32 peak = 0.0f;
+AETHER_TEST(Prediction_InterpolationIsSmooth) {
+    PredSim sim(3);
+    sim.net.conditions.latency = 0.05;
+    sim.net.conditions.jitter = 0.01;
+    auto& viewer = sim.AddClient();
+    sim.Step(10);
+    const Entity mover = sim.SpawnCharacter(kNoPeer);
+    f64 t = 0;
+    auto move = [&] {
+        t += kStep;
+        sim.world.GetComponent<Transform>(mover)->position = Vec3(static_cast<f32>(t * 5.0), 0, 0);
+    };
+    for (int i = 0; i < 60; ++i) move(), sim.Step();
+    // Raw snapshots arrive at 20 Hz: 0.25 m steps with still frames between.
+    // Interpolated, every frame moves about 5/60 m.
+    f32 prev = sim.ClientPos(viewer, mover).x, min_delta = 1e9f, max_delta = 0;
+    f32 min_lag = 1e9f, max_lag = 0;
+    const u32 starved = viewer.interpolation->Starved();
     for (int i = 0; i < 120; ++i) {
-        StepMovement(s, {}, j, none);
-        peak = std::max(peak, j.position.y);
+        move(), sim.Step();
+        const f32 x = sim.ClientPos(viewer, mover).x;
+        min_delta = std::min(min_delta, x - prev), max_delta = std::max(max_delta, x - prev);
+        const f32 lag = sim.ServerPos(mover).x - x;
+        min_lag = std::min(min_lag, lag), max_lag = std::max(max_lag, lag);
+        prev = x;
     }
-    AETHER_CHECK(peak > 1.0f && peak < 1.4f); // v^2 / 2g = 1.27 m
-    AETHER_CHECK(j.grounded && j.position.y == 0.0f && j.velocity.y == 0.0f);
-
-    // No double jump in the air.
-    MoveState air;
-    StepMovement(s, {}, air, jump);
-    const f32 vy = air.velocity.y;
-    StepMovement(s, {}, air, jump);
-    AETHER_CHECK(air.velocity.y < vy);
-
-    // Ground follows a height function, and walking off an edge makes you fall.
-    GroundFn ramp = [](f32 x, f32) { return x < 10.0f ? 0.1f * x : 0.0f; };
-    MoveState r;
-    MoveInput east;
-    east.move_x = 1.0f;
-    for (int i = 0; i < 200; ++i) StepMovement(s, ramp, r, east);
-    AETHER_CHECK(r.position.x > 10.0f && r.grounded && r.position.y == 0.0f);
+    CHECK(min_delta > 0.03f && max_delta < 0.14f);
+    CHECK(min_lag > 0.4f && max_lag < 1.5f); // about (delay + latency + snapshot age) x 5 m/s
+    CHECK(viewer.interpolation->Starved() == starved);
+    CHECK(viewer.interpolation->Buffer(sim.NetId(mover))->Size() > 2);
+    // Gone with its entity.
+    const u32 id = sim.NetId(mover);
+    sim.world.DestroyEntity(mover);
+    sim.Step(20);
+    CHECK(viewer.interpolation->Buffer(id) == nullptr);
 }
 
-AETHER_TEST(NetPrediction_StepIsDeterministic) {
-    const MoveStepFn step = MakeMoveStep(Settings());
-    auto run = [&] {
-        MoveState s;
-        for (int i = 0; i < 500; ++i) {
-            MoveInput in;
-            in.move_x = std::sin(static_cast<f32>(i) * 0.07f);
-            in.move_z = std::cos(static_cast<f32>(i) * 0.05f);
-            in.jump = i % 97 == 0;
-            step(s, Sanitize(in));
-        }
-        return s;
-    };
-    const MoveState a = run(), b = run();
-    AETHER_CHECK(a.position.x == b.position.x && a.position.y == b.position.y && a.position.z == b.position.z);
+AETHER_TEST(Prediction_RespondsAtOnceAndAgrees) {
+    PredSim sim;
+    sim.net.conditions.latency = 0.1;
+    auto& owner = sim.AddClient();
+    auto& other = sim.AddClient();
+    sim.Step(10);
+    const Entity pawn = sim.SpawnCharacter(sim.peers[0]);
+    sim.Step(20);
+    const Entity mine = owner.replication->FindEntity(sim.NetId(pawn));
+    CHECK(!mine.IsNull() && owner.world.GetComponent<NetIdentity>(mine)->locally_owned);
+    // Only the owner predicts.
+    CHECK(!other.movement->Predict(other.replication->FindEntity(sim.NetId(pawn)), 1, 0, false, kStep));
+
+    CHECK(owner.movement->Predict(mine, 1, 0, false, kStep));
+    CHECK(owner.world.GetComponent<Transform>(mine)->position.x > 0.0f); // this frame, not a round trip later
+    CHECK(sim.ServerPos(pawn).x == 0.0f);
+    f32 peak_y = 0;
+    for (int i = 1; i < 90; ++i) {
+        owner.movement->Predict(mine, i < 60 ? 1.0f : 0.0f, i < 60 ? 0.5f : 0.0f, i == 20, kStep);
+        sim.Step();
+        peak_y = std::max(peak_y, owner.world.GetComponent<Transform>(mine)->position.y);
+        if (i < 60 && i > 5) CHECK(owner.world.GetComponent<Transform>(mine)->position.x > sim.ServerPos(pawn).x);
+    }
+    CHECK(peak_y > 0.5f); // it jumped
+    for (int i = 0; i < 30; ++i) owner.movement->Predict(mine, 0, 0, false, kStep), sim.Step();
+    CHECK(Near(owner.world.GetComponent<Transform>(mine)->position, sim.ServerPos(pawn), 1e-4f));
+    CHECK(sim.ServerPos(pawn).x > 3.0f && sim.ServerPos(pawn).y == 0.0f);
+    CHECK(owner.movement->GetStats().corrections == 0 && owner.movement->GetStats().max_error < 1e-4f);
+    CHECK(owner.movement->Pending(sim.NetId(pawn)) <= 15);
+    sim.Step(20); // the last inputs are still on their way
+    CHECK(sim.movement->GetStats().inputs_run == 120 && sim.movement->LastProcessed(sim.NetId(pawn)) == 120);
+    CHECK(owner.movement->Pending(sim.NetId(pawn)) == 0);
+    // The other client sees it where the server has it, smoothly.
+    CHECK(Near(sim.ClientPos(other, pawn), sim.ServerPos(pawn), 1e-3f));
 }
 
-AETHER_TEST(NetPrediction_SanitizeClampsAndQuantizes) {
-    MoveInput big;
-    big.move_x = 3.0f;
-    big.move_z = 4.0f;
-    const MoveInput s = Sanitize(big);
-    AETHER_CHECK_NEAR(std::sqrt(s.move_x * s.move_x + s.move_z * s.move_z), 1.0f, 0.01f);
-    AETHER_CHECK_NEAR(s.move_x, 0.6f, 0.01f);
-
-    MoveInput odd;
-    odd.move_x = 0.33333f;
-    const MoveInput q = Sanitize(odd);
-    AETHER_CHECK(q.move_x != odd.move_x && std::fabs(q.move_x - odd.move_x) < 0.005f);
-    AETHER_CHECK(Sanitize(q).move_x == q.move_x); // quantizing is stable
-
-    MoveInput nan;
-    nan.move_x = std::nanf("");
-    nan.move_z = INFINITY;
-    const MoveInput n = Sanitize(nan);
-    AETHER_CHECK(n.move_x == 0.0f && n.move_z == 0.0f);
-}
-
-AETHER_TEST(NetPrediction_ClientMovesImmediatelyAndAgreesWithTheServer) {
-    const MoveStepFn step = MakeMoveStep(Settings());
-    Link link(step, step);
-    link.net.conditions.latency = 0.05;
-    MoveInput forward;
-    forward.move_x = 1.0f;
-    link.Step(&forward);
-    AETHER_CHECK(link.client.State().position.x > 0.0f);          // moved this very tick
-    AETHER_CHECK(link.ServerState().position.x == 0.0f);          // the server hasn't heard yet
-
-    MoveInput jump = forward;
+AETHER_TEST(Prediction_SurvivesLossAndReconciles) {
+    PredSim sim(5);
+    sim.net.conditions.latency = 0.06;
+    sim.net.conditions.jitter = 0.02;
+    sim.net.conditions.loss = 0.2;
+    auto& owner = sim.AddClient();
+    sim.Step(30);
+    const Entity pawn = sim.SpawnCharacter(sim.peers[0]);
+    sim.Step(40);
+    const Entity mine = owner.replication->FindEntity(sim.NetId(pawn));
+    CHECK(!mine.IsNull());
     for (int i = 0; i < 180; ++i) {
-        jump.jump = i == 30 || i == 100;
-        link.Step(&jump);
+        const f32 a = static_cast<f32>(i) * 0.05f;
+        owner.movement->Predict(mine, std::cos(a), std::sin(a), i % 50 == 10, kStep);
+        sim.Step();
     }
-    MoveInput idle;
-    link.Run(idle, 120);
-    // The server and the client's prediction never disagreed, so nothing was corrected.
-    AETHER_CHECK(link.client.Stats().reconciliations == 0 && link.states_received > 100);
-    AETHER_CHECK(Dist(link.client.State().position, link.ServerState().position) < 1e-3f);
-    AETHER_CHECK(link.client.Acknowledged() == link.client.LastSequence() - 0 || link.client.Unacknowledged() <= 12);
-    AETHER_CHECK(link.server.Stats().processed >= link.client.Stats().inputs - 12);
+    for (int i = 0; i < 90; ++i) owner.movement->Predict(mine, 0, 0, false, kStep), sim.Step();
+    CHECK(sim.net.Dropped() > 0);
+    CHECK(Near(owner.world.GetComponent<Transform>(mine)->position, sim.ServerPos(pawn), 1e-3f));
+    CHECK(sim.movement->GetStats().duplicates > 0); // the redundancy at work
+
+    // The server moves it on its own (a knockback): the owner is corrected.
+    sim.world.GetComponent<Transform>(pawn)->position.x += 3.0f;
+    const u32 before = owner.movement->GetStats().corrections;
+    for (int i = 0; i < 60; ++i) owner.movement->Predict(mine, 0, 0, false, kStep), sim.Step();
+    CHECK(owner.movement->GetStats().corrections > before);
+    CHECK(owner.movement->GetStats().max_error > 2.5f);
+    CHECK(Near(owner.world.GetComponent<Transform>(mine)->position, sim.ServerPos(pawn), 1e-3f));
 }
 
-AETHER_TEST(NetPrediction_ServerWallCorrectsTheClientSmoothly) {
-    const MoveSettings s = Settings();
-    // The server knows about a wall at x = 3 that the client doesn't.
-    const MoveStepFn plain = MakeMoveStep(s);
-    const MoveStepFn walled = [plain](MoveState& st, const MoveInput& in) {
-        plain(st, in);
-        if (st.position.x > 3.0f) {
-            st.position.x = 3.0f;
-            st.velocity.x = 0.0f;
-        }
-    };
-    Link link(walled, plain);
-    link.net.conditions.latency = 0.03;
-    MoveInput forward;
-    forward.move_x = 1.0f;
+AETHER_TEST(Prediction_ServerSanitizesAndChecksOwners) {
+    // The rule itself: acceleration, top speed, gravity and landing.
+    Transform t;
+    NetMovement m;
+    MovementInput in;
+    in.dt = 0.05f, in.move_x = 1.0f;
+    StepMovement(t, m, in);
+    CHECK(std::fabs(m.velocity.x - 2.0f) < 1e-5f); // 40 m/s^2 x 0.05 s
+    for (int i = 0; i < 20; ++i) StepMovement(t, m, in);
+    CHECK(std::fabs(m.velocity.x - 6.0f) < 1e-5f);
+    in.jump = true;
+    StepMovement(t, m, in);
+    CHECK(!m.grounded && t.position.y > 0.0f);
+    in.jump = false;
+    for (int i = 0; i < 40; ++i) StepMovement(t, m, in);
+    CHECK(m.grounded && t.position.y == 0.0f && m.velocity.y == 0.0f);
+    const MovementInput wild = SanitizeInput({1, 5.0f, 30.0f, 40.0f, false});
+    CHECK(wild.dt == 0.1f && std::fabs(std::hypot(wild.move_x, wild.move_z) - 1.0f) < 1e-5f);
+    CHECK(SanitizeInput({1, std::nanf(""), std::nanf(""), 0, false}).dt == 0.0f);
 
-    f32 biggest_visual_step = 0.0f;
-    Vec3 last_visual = link.client.VisualPosition();
-    for (int i = 0; i < 240; ++i) {
-        link.Step(&forward);
-        biggest_visual_step = std::max(biggest_visual_step, Dist(link.client.VisualPosition(), last_visual));
-        last_visual = link.client.VisualPosition();
-    }
-    AETHER_CHECK(link.client.Stats().reconciliations > 0);
-    AETHER_CHECK(link.client.Stats().snaps == 0); // small errors ease; they don't jump
-    // The view never moved by more than the character's own speed allows in one tick, plus a bit.
-    AETHER_CHECK(biggest_visual_step < 7.0f * kDt * 1.5f);
-    // Still pushing forward, the client predicts a few in-flight inputs past the wall (about
-    // round-trip time x speed), never more; the server holds it at the wall.
-    AETHER_CHECK(link.client.State().position.x > 3.0f && link.client.State().position.x < 3.6f);
-    AETHER_CHECK_NEAR(link.ServerState().position.x, 3.0f, 1e-3f);
-    // Letting go, the prediction settles exactly where the server has it.
-    MoveInput idle;
-    link.Run(idle, 90);
-    AETHER_CHECK_NEAR(link.client.State().position.x, 3.0f, 0.01f);
-    AETHER_CHECK_NEAR(link.client.VisualPosition().x, 3.0f, 0.01f);
-}
-
-AETHER_TEST(NetPrediction_ReconcileReplaysUnacknowledgedInputs) {
-    const MoveSettings s = Settings();
-    const MoveStepFn step = MakeMoveStep(s);
-    PredictionClient client(step);
-    MoveInput forward;
-    forward.move_x = 1.0f;
-    std::vector<MoveState> after;
-    for (int i = 0; i < 10; ++i) {
-        client.Predict(forward);
-        after.push_back(client.State());
-    }
-    // The server says that after input 5 the character was 0.5 m further along.
-    MoveState server = after[4];
-    server.position.x += 0.5f;
-    client.Reconcile(5, server);
-    AETHER_CHECK(client.Stats().reconciliations == 1 && client.Unacknowledged() == 5);
-    AETHER_CHECK_NEAR(client.Stats().last_error, 0.5f, 1e-4f);
-    AETHER_CHECK(client.Stats().replayed_inputs == 5);
-
-    // The result equals starting from the server's state and applying inputs 6..10.
-    MoveState expected = server;
-    for (int i = 0; i < 5; ++i) step(expected, Sanitize(forward));
-    AETHER_CHECK(Dist(client.State().position, expected.position) < 1e-5f);
-    // The view hasn't moved yet: the offset hides the 0.5 m and eases out.
-    AETHER_CHECK(Dist(client.VisualPosition(), after[9].position) < 1e-5f);
-    for (int i = 0; i < 120; ++i) client.Update(kDt);
-    AETHER_CHECK(Dist(client.VisualPosition(), client.State().position) < 1e-3f);
-
-    // A matching report changes nothing; an old one is ignored.
-    client.Reconcile(7, [&] {
-        MoveState m = after[6];
-        m.position.x = client.State().position.x; // unrelated: just not applied below
-        return m;
-    }());
-    const u64 reconciliations = client.Stats().reconciliations;
-    client.Reconcile(3, server);
-    AETHER_CHECK(client.Stats().reconciliations == reconciliations);
-}
-
-AETHER_TEST(NetPrediction_BigDisagreementsSnap) {
-    const MoveStepFn step = MakeMoveStep(Settings());
-    Link link(step, step);
-    MoveInput idle;
-    link.Run(idle, 30);
-    link.server.SetState(link.client_link.LocalAddress(), MoveState{Vec3(50, 0, 0), Vec3(0, 0, 0), true}); // teleported
-    link.Run(idle, 30);
-    AETHER_CHECK(link.client.Stats().snaps == 1);
-    AETHER_CHECK(Dist(link.client.VisualPosition(), link.client.State().position) < 1e-4f);
-    AETHER_CHECK_NEAR(link.client.State().position.x, 50.0f, 1e-3f);
-}
-
-AETHER_TEST(NetPrediction_RedundancySurvivesLoss) {
-    const MoveStepFn step = MakeMoveStep(Settings());
-    Link link(step, step, 17);
-    link.net.conditions.latency = 0.02;
-    link.net.conditions.jitter = 0.02;
-    link.net.conditions.loss = 0.3;
-    for (int i = 0; i < 400; ++i) {
-        MoveInput in;
-        in.move_x = std::sin(static_cast<f32>(i) * 0.1f);
-        in.move_z = std::cos(static_cast<f32>(i) * 0.13f);
-        in.jump = i % 70 == 0;
-        link.Step(&in);
-    }
-    link.net.conditions.loss = 0.0;
-    MoveInput idle;
-    link.Run(idle, 180);
-
-    const u64 sent = link.client.Stats().inputs;
-    AETHER_CHECK(link.server.Stats().processed + 8 >= sent); // all but, at worst, a handful were heard
-    AETHER_CHECK(Dist(link.client.State().position, link.ServerState().position) < 0.02f);
-    AETHER_CHECK(link.server.LastProcessed(link.client_link.LocalAddress()) + 4 >= link.client.LastSequence()); // the newest are still in flight
-}
-
-AETHER_TEST(NetPrediction_SpeedHackIsLimited) {
-    const MoveStepFn step = MakeMoveStep(Settings());
-    PredictionServer server(step);
-    server.AddPeer(1, MoveState{});
-    u32 sequence = 1;
-    for (int tick = 0; tick < 60; ++tick) {
-        // Sixteen new inputs every tick instead of one.
-        ByteWriter w;
-        w.U8(kInputMessage);
-        w.Varint(16);
-        w.Varint(sequence);
-        for (int i = 0; i < 16; ++i) {
-            w.U8(0);
-            w.U8(127);
-            w.U8(0);
-        }
-        sequence += 16;
-        AETHER_CHECK(server.OnInputMessage(1, w.Data()));
-        server.Tick();
-    }
-    AETHER_CHECK(server.Stats().processed <= 60 + 4); // one per tick on average, plus the burst allowance
-    AETHER_CHECK(server.Stats().dropped > 500);       // the rest never fit the queue
-    AETHER_CHECK(server.Queued(1) <= 32);
-    // Moved no further than an honest client could in the same time.
-    MoveState honest;
-    MoveInput forward;
-    forward.move_x = 1.0f;
-    for (int i = 0; i < 64; ++i) StepMovement(Settings(), {}, honest, forward);
-    AETHER_CHECK(server.StateOf(1)->position.x <= honest.position.x + 1e-3f);
-}
-
-AETHER_TEST(NetPrediction_ServerRejectsBadInput) {
-    const MoveStepFn step = MakeMoveStep(Settings());
-    PredictionServer server(step);
-    server.AddPeer(1, MoveState{});
-    auto msg = [](u8 kind, u64 count, u64 first, int bodies) {
-        ByteWriter w;
-        w.U8(kind);
-        w.Varint(count);
-        w.Varint(first);
-        for (int i = 0; i < bodies * 3; ++i) w.U8(0);
-        return w;
-    };
-    AETHER_CHECK(!server.OnInputMessage(1, msg(kStateMessage, 1, 1, 1).Data())); // wrong kind
-    AETHER_CHECK(!server.OnInputMessage(1, msg(kInputMessage, 0, 1, 0).Data()));  // no inputs
-    AETHER_CHECK(!server.OnInputMessage(1, msg(kInputMessage, 17, 1, 17).Data())); // too many
-    AETHER_CHECK(!server.OnInputMessage(1, msg(kInputMessage, 2, 1, 1).Data()));   // body too short
-    AETHER_CHECK(!server.OnInputMessage(1, msg(kInputMessage, 1, 0, 1).Data()));   // sequence 0
-    AETHER_CHECK(!server.OnInputMessage(1, msg(kInputMessage, 1, 1ull << 40, 1).Data()));
-    AETHER_CHECK(!server.OnInputMessage(99, msg(kInputMessage, 1, 1, 1).Data()));  // not a peer
-    AETHER_CHECK(server.Stats().malformed == 6);
-
-    // An over-long move vector is clamped, not trusted.
-    ByteWriter cheat;
-    cheat.U8(kInputMessage);
-    cheat.Varint(1);
-    cheat.Varint(1);
-    cheat.U8(0);
-    cheat.U8(127);
-    cheat.U8(127);
-    AETHER_CHECK(server.OnInputMessage(1, cheat.Data()));
-    AETHER_CHECK(server.Stats().clamped == 1);
-    for (int i = 0; i < 200; ++i) {
-        ByteWriter more;
-        more.U8(kInputMessage);
-        more.Varint(1);
-        more.Varint(2 + i);
-        more.U8(0);
-        more.U8(127);
-        more.U8(127);
-        server.OnInputMessage(1, more.Data());
-        server.Tick();
-    }
-    const MoveState* s = server.StateOf(1);
-    AETHER_CHECK(std::sqrt(s->velocity.x * s->velocity.x + s->velocity.z * s->velocity.z) <= Settings().walk_speed * 1.01f);
-
-    // Duplicates and stale sequences are dropped.
-    const u64 dropped = server.Stats().dropped;
-    ByteWriter old;
-    old.U8(kInputMessage);
-    old.Varint(1);
-    old.Varint(3);
-    old.U8(0), old.U8(0), old.U8(0);
-    AETHER_CHECK(server.OnInputMessage(1, old.Data()));
-    AETHER_CHECK(server.Stats().dropped == dropped + 1);
-}
-
-AETHER_TEST(NetPrediction_InputsRunInOrderEvenWhenReordered) {
-    const MoveStepFn step = MakeMoveStep(Settings());
-    PredictionServer server(step);
-    server.AddPeer(1, MoveState{});
-    auto one = [](u32 seq, bool jump) {
-        ByteWriter w;
-        w.U8(kInputMessage);
-        w.Varint(1);
-        w.Varint(seq);
-        w.U8(jump ? 1 : 0), w.U8(0), w.U8(0);
-        return w;
-    };
-    server.OnInputMessage(1, one(3, false).Data());
-    server.OnInputMessage(1, one(1, true).Data());  // the jump arrives late
-    server.OnInputMessage(1, one(2, false).Data());
-    AETHER_CHECK(server.Queued(1) == 3);
-    server.Tick();
-    server.Tick();
-    server.Tick();
-    AETHER_CHECK(server.LastProcessed(1) == 3 && server.StateOf(1)->position.y > 0.0f); // 1 ran first: it jumped
-}
-
-AETHER_TEST(NetPrediction_StateMessagesAreValidated) {
-    const MoveStepFn step = MakeMoveStep(Settings());
-    PredictionClient client(step);
-    PredictionServer server(step);
-    server.AddPeer(1, MoveState{Vec3(1, 2, 3), Vec3(0, 0, 0), false});
-    std::vector<u8> good = server.BuildStateMessage(1);
-    AETHER_CHECK(!good.empty() && client.OnStateMessage(good));
-    AETHER_CHECK(server.BuildStateMessage(2).empty());
-
-    std::vector<u8> wrong = good;
-    wrong[0] = 0x01;
-    AETHER_CHECK(!client.OnStateMessage(wrong));
-    std::vector<u8> truncated(good.begin(), good.end() - 3);
-    AETHER_CHECK(!client.OnStateMessage(truncated));
-    std::vector<u8> extra = good;
-    extra.push_back(0);
-    AETHER_CHECK(!client.OnStateMessage(extra));
-
-    ByteWriter nan;
-    nan.U8(kStateMessage);
-    nan.U32(0);
-    nan.F32(std::nanf(""));
-    for (int i = 0; i < 5; ++i) nan.F32(0.0f);
-    nan.Bool(true);
-    AETHER_CHECK(!client.OnStateMessage(nan.Data()));
-}
-
-AETHER_TEST(NetPrediction_HistoryIsBounded) {
-    const MoveStepFn step = MakeMoveStep(Settings());
-    PredictionConfig cfg;
-    cfg.max_history = 20;
-    PredictionClient client(step, cfg);
-    MoveInput forward;
-    forward.move_x = 1.0f;
-    for (int i = 0; i < 100; ++i) client.Predict(forward);
-    AETHER_CHECK(client.Unacknowledged() == 20 && client.LastSequence() == 100);
-
-    // The message repeats at most redundancy + 1 inputs.
-    const std::vector<u8> msg = client.Predict(forward);
-    ByteReader r(msg);
-    r.U8();
-    AETHER_CHECK(r.Varint() == cfg.redundancy + 1);
-    AETHER_CHECK(r.Varint() == 101 - cfg.redundancy);
+    PredSim sim;
+    auto& owner = sim.AddClient();
+    auto& thief = sim.AddClient();
+    sim.Step(10);
+    const Entity pawn = sim.SpawnCharacter(sim.peers[0]);
+    sim.Step(20);
+    const Entity mine = owner.replication->FindEntity(sim.NetId(pawn));
+    // A speed hack: a 1 s frame at 10x input runs as a 0.1 s frame at full input, on both sides.
+    CHECK(owner.movement->Predict(mine, 10, 0, false, 1.0f));
+    sim.Step(10);
+    CHECK(Near(owner.world.GetComponent<Transform>(mine)->position, sim.ServerPos(pawn)));
+    CHECK(std::fabs(sim.ServerPos(pawn).x - 0.4f) < 1e-5f);
+    // Someone else's inputs for it are rejected.
+    const Entity theirs = thief.replication->FindEntity(sim.NetId(pawn));
+    thief.world.GetComponent<NetIdentity>(theirs)->locally_owned = true; // lies locally
+    CHECK(thief.movement->Predict(theirs, 1, 0, false, kStep));
+    sim.Step(10);
+    CHECK(sim.movement->GetStats().rejected == 1 && std::fabs(sim.ServerPos(pawn).x - 0.4f) < 1e-5f);
 }

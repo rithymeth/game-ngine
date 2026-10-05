@@ -9,7 +9,7 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
-## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 done on the engine and portable-editor side (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes; Blackboards and Behavior Trees; AI perception; debug drawing, the Behavior Tree editor and debugger, and the Navigation panel). Phase 21 done on the engine and portable-editor side (World Building: terrain, splatmap painting and sculpting, foliage, splines, heightfield collider, world partition streaming with a floating origin and the Terrain panel). Now: Phase 22 -- Networking and Multiplayer
+## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 done on the engine and portable-editor side (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes; Blackboards and Behavior Trees; AI perception; debug drawing, the Behavior Tree editor and debugger, and the Navigation panel). Phase 21 done on the engine and portable-editor side (world building: heightmap terrain, splatmaps and brushes, terrain rendering data, foliage, splines, world partition with cell streaming and a floating origin, and the terrain, foliage, spline and partition editors). Phase 22 done on the engine and portable-editor side (networking: a UDP transport with reliable, unreliable and sequenced channels; delta-snapshot replication with relevancy and a bandwidth budget; RPCs from C++, Blueprints and Luau; client-side prediction and snapshot interpolation; sessions with LAN discovery and lobbies; networked Play-in-Editor and a network profiler). Phase 23 done on the engine and portable-editor side (developer tools: console variables and the console; the profiler with Tracy forwarding and its panel; debug drawing and stat overlays; crash reports and the crash reporter; headless functional tests with JUnit reports). Phase 24 done (cross-platform: CI on Linux, macOS and Windows; a packaged Windows editor; a portable GLFW window and input layer; the Vulkan backend on Linux and macOS (MoltenVK) with headless rendering tests; the editor shell on Vulkan; ARM via sse2neon; platform plugins for Android and consoles). Phase 25 done (build, cook and package: .apak archives with LZ4/zstd and a virtual file system; the cooker; block-compressed textures; the player; packaging from the editor; patches, DLCs and encryption; ASTC, precompiled shaders and Blueprint bytecode, and the player drawing the scene, still to come). Phase 26 in progress (plugins; project templates; the player runs scripts, Blueprints and input; the editor extensibility API; the manual and a generated API reference; version control badges in the Content Browser; the 2D toolkit's sprites, tilemaps and pixel-perfect camera). Phase 27 in progress (the sequencer: level sequences, the sequence player, event, visibility, spawn, camera cut, audio and animation tracks, the sequence component, the player running sequences, the sequencer editor, the CineCamera, the movie-render loop, and Fade and Subsequence tracks). Phase 28 done on the engine, player and portable-editor side (save slots, world state, settings, the Blueprint and Luau save library, the Save Inspector, and the player's user folders, settings and key-binding migration; cloud saves, volumes and fullscreen from settings still to come). Phase 29 done except optional shaping (localization: `LocText`, string tables with CSV, language fallback and plural-aware messages, the gather tool and `.po` files, the editor dashboard and pseudo-localization, font fallback, localized assets, right-to-left layout). Phase 30 in progress (gameplay tags, attributes, gameplay effects, abilities)
 
 ### Phase 1 — Foundation
 
@@ -1124,26 +1124,56 @@ the glTF root signature already sets for the same reason (its PSO also has
 a real vertex input layout, unlike the billboard-sphere pipeline). 81/81
 tests unchanged; 6 quick runs plus one 2000-frame stability run, all clean.
 
-### Follow-up: editor workspace redesign
+### Follow-up: friendlier UI (layout, style, confirmations, help)
 
-The editor now opens into a composed workspace instead of a collection of
-floating debug panels. A compact scene toolbar groups Play/Pause/Step/Stop,
-spawn, save and load actions; the Hierarchy and Content Browser share the
-left rail; the Inspector fills the right rail; and the 3D scene remains the
-focus in the center. A slim status bar keeps camera and selection shortcuts
-visible. The layout uses the regular ImGui release and scales its panel
-positions and sizes to the available viewport without relying on ImGui's
-separate docking branch.
+The previous two follow-ups added real functionality (camera, picking,
+gizmo, hierarchy, asset browser) but left the UI itself exactly as
+default-ImGui-gray as it always was, with every panel spawning at the same
+default position — the screenshots showed Hierarchy, Inspector, and the
+main panel all stacked directly on top of each other. This follow-up is a
+pure UI/UX pass, no new editor functionality.
 
-The Inspector is always present, with a useful empty state until an entity
-is selected. Reflected component edits remain undoable and continue to use
-the editor's physics hooks. Hierarchy deletion still uses a confirmation
-dialog. The Help window no longer covers the scene at startup; it is
-available from the Help menu. The graphite theme carries through the shell,
-controls and graph editor with a restrained blue focus/selection color.
+- **Non-overlapping default layout.** Every panel (`Aether Editor`, `Asset
+  Browser`, `Hierarchy`, `Inspector`) now gets an explicit default
+  position/size via `ImGui::SetNextWindowPos`/`SetNextWindowSize` with
+  `ImGuiCond_FirstUseEver` — a simple left-column stack (main panel → Asset
+  Browser → Hierarchy) plus Inspector on the right, leaving the 3D viewport
+  visible in between. `ImGuiCond_FirstUseEver` means this only applies
+  before a window has a saved position in `imgui.ini`; once a user drags a
+  panel themselves, their own layout persists across runs. (A real docked
+  layout via `ImGui::DockBuilder`/`DockSpace` was the first approach tried,
+  but this project's vendored ImGui is pinned to a plain release tag
+  (`v1.92.9`) rather than the separate `docking` git branch, so those
+  symbols don't exist in this build — reverted in favor of the
+  `SetNextWindowPos` approach above rather than repointing the whole
+  project at a different ImGui branch for one follow-up.)
+- **Friendlier visual style** (`ApplyFriendlyEditorStyle`): a soft blue-teal
+  accent color (buttons, headers, checkmarks, tabs) in place of ImGui's
+  default blue, rounded corners, and more breathing room between widgets.
+  `ImGui::SeparatorText` section headers ("Controls", "Bodies", "Models")
+  replace the old plain `Text` + `Separator` pairs. Bodies/models are
+  color-coded by type and selection state (blue for a body, orange for a
+  model, gold when selected) instead of a bare `#N`.
+- **Friendlier controls**: field labels now carry units ("Position (m)",
+  "Radius (m)", "Mass (kg)", "Static (doesn't fall)") instead of bare nouns.
+  Every **Delete** button (Bodies, Models, and the Hierarchy panel) now
+  opens a shared "Are you sure?" confirmation modal instead of deleting
+  immediately and irreversibly on a single misclick.
+- **Onboarding**: a new **Help** window, shown by default on first run,
+  centered on screen, with a plain-language quick reference for the camera
+  controls, selecting/moving, and the scene hierarchy — the one thing the
+  camera/picking/gizmo follow-up left completely undocumented in-app. A
+  **View** menu (new main menu bar) can re-show it, or any panel closed via
+  its title-bar X, without restarting.
 
-**Verified by actual execution**: the editor builds, starts, renders the
-workspace at 1280×800, and exits cleanly after a three-frame screenshot run.
+**Verified by actual execution**: screenshots (with `imgui.ini` cleared to
+force first-run defaults) confirm all five panels lay out without
+overlapping, the accent color/section headers/unit labels render correctly,
+and — with a temporary env-var-gated self-test forcing a selection, removed
+before commit — that the Inspector's default top-right position doesn't
+collide with the left-column stack even when populated with real model
+data. 81/81 tests unchanged; 6 quick runs plus one 2000-frame stability
+run, all clean.
 
 ### Phase 6 — Reflection & Property System
 
@@ -2267,9 +2297,10 @@ Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 10
   - `ApplyUserBindings` gives a rebound copy of a context. The project's
     defaults are never changed, and a rebind whose binding no longer exists
     is reported, not applied.
-  - Rebinds are saved in `Saved/Config/Input.json` (`UserBindingsPath`),
-    separate from the project's defaults, so the defaults can change
-    without losing the player's choices.
+  - Rebinds are saved in the player's settings file (`settings.asettings`,
+    `GameSettings::bindings`, §28.7), separate from the project's defaults,
+    so the defaults can change without losing the player's choices. The
+    player moves an old `Config/Input.json` (`UserBindingsPath`) in once.
   - `FindConflicts` lists the other bindings already using a key, for "C is
     already bound to Crouch" warnings.
 - **"Press a key…" capture** (`KeyCapture`):
@@ -5381,7 +5412,7 @@ Behavior Trees and perception come next. Spec:
   physics.
 
 
-### Phase 21 (done) — World Building
+### Phase 21 — World Building
 
 Build spec: [docs/design/PHASE_SPECS.md](docs/design/PHASE_SPECS.md), Phase 21.
 
@@ -5400,139 +5431,659 @@ Build spec: [docs/design/PHASE_SPECS.md](docs/design/PHASE_SPECS.md), Phase 21.
 - **SplatmapData**: RGBA8 splatmap pixels (R=layer0, G=layer1, B=layer2, A=layer3).
 - **Pack/unpack**: encode/decode weights to/from RGBA8 pixels.
 - **Brush**: circular falloff, strength and radius; apply to splatmap or heightmap.
-- **Paint modes**: raise/lower (default), flatten (lerp toward the brush-weighted mean height), smooth (neighbor average).
+- **Paint modes**: raise/lower (default), flatten (lerp toward center height), smooth (neighbor average).
 - **Layer normalization**: blend weights to sum to 1.0.
 
-**Step 3: GPU terrain rendering**.
+**Verified**: 13 new tests (7 terrain, 6 splat).
 
-- **TerrainRenderer**: builds visible terrain chunks and uploads generated vertex/index data through `gfx::Buffer`.
-- **Chunk culling**: distance-based visibility selection with per-chunk bounds.
-- **LOD-aware rebuilds**: regenerates mesh buffers when the selected terrain level changes.
+**Steps 3–5: terrain rendering, foliage and splines**.
 
-**Step 4: foliage instancing**.
+- **Rendering**: chunks upload through a `TerrainGpu` interface (the
+  renderer implements it over the RHI). Dirty chunks rebuild, LOD
+  changes re-upload, and VRAM is estimated.
+- **Foliage**:
+  - generated from sample points through a density map, with random
+    types, scale, rotation, normal alignment and anchor offsets;
+  - painted over a brush disc at a density per m², and erased;
+  - filtered by chunk and sorted by type.
+- **Splines**: Catmull-Rom curves with width and roll, strip meshes,
+  and dashed road markings.
 
-- **FoliageLayer**: per-type instance placement, density map generation, scale/rotation variation, and terrain alignment.
-- **Chunk filtering and ordering**: groups instances for efficient renderer submission.
+The terrain module didn't compile when it first landed. It was repaired
+in #96 and #97, which also fixed:
+- every chunk using the first chunk's heights;
+- lowering never working;
+- noise that wasn't smooth and overflowed signed integers;
+- the stub functions.
 
-**Step 5: spline world tools**.
+**Step 6: large worlds** (`streaming/`, §21.6).
 
-- **Spline**: Catmull-Rom evaluation, arc-length sampling, closest-point queries, frames, roll, and point-width interpolation.
-- **Spline mesh generation**: strip and road meshes plus road masks for terrain blending.
+- **Partition**: a level splits into grid-cell scenes plus a persistent
+  scene (no Transform, AlwaysLoaded, streaming sources). Children go
+  with their parents.
+- **Index and files**: `world.aworld` (JSON) and binary cell scenes.
+- **`WorldStreamer`**:
+  - loads cells within each `StreamingSource`'s radius, nearest first;
+  - unloads past radius × 1.25, so cells on a border don't thrash;
+  - has load and unload budgets per update, and pins;
+  - reports cells that fail;
+  - adds GUIDs to the index, so parents resolve across cells.
+- **Floating origin**: shifts root Transforms back near zero in whole
+  steps and keeps a double-precision offset. The streamer works in
+  whole-world positions through it.
 
-**Step 6: sculpt and paint brushes**.
+**Verified**: 5 new tests.
 
-- **Sculpt modes**: raise/lower, flatten, smooth, procedural noise, and erosion.
-- **Material painting**: applies normalized splatmap weights with the same brush falloff controls.
+- Cell coordinates and bounds.
+- Partitioning: cells, children following parents, the persistent
+  scene, the index round trip, and copying entities.
+- Streaming around a moving player: hysteresis, destroyed and spawned
+  entities, and GUIDs.
+- Budgets with nearest-first loading, failures, and pins.
+- Files (and replacing stale cells), and the floating origin with
+  streaming.
+- 497/497 tests pass on GCC 13, Clang and ASan/UBSan, and 529/529 with
+  physics.
 
-**Step 7: heightfield collider** (`heightfield.h`).
+**Step 7: the world-building editors** (§21.7).
 
-- **Queries**: footprint test, scaled bilinear height, central-difference normal.
-- **Raycast**: sub-cell stepping with bisection refinement; one-sided (a ray starting below the surface misses) and enters from the side of the footprint.
-- **Sphere penetration**: depth along the surface normal for ground contact resolution.
+- **Terrain**:
+  - raise, lower, smooth, flatten and paint;
+  - strokes as single undo steps that store only the changed region;
+  - dirty chunks for the renderer;
+  - a cursor ring that follows the ground;
+  - dabs spaced along a drag.
+- **Foliage**:
+  - paint and erase, with instances set onto the ground;
+  - undo per stroke;
+  - type editing, density, the instance cap, and counts.
+- **Splines**:
+  - add, insert, remove and drag points (each drag is one undo step);
+  - width and roll;
+  - picking, and the curve and road edges for the viewport.
+- **World partition map**: cell states, pins, entity counts, and
+  streaming sources with their reach.
+- Like the other editors, they're hooked into the editor window with
+  the Windows build.
 
-**Step 8: large worlds** (`world.h`).
+**Verified**: 5 new tests.
 
-- **WorldPartition**: grid-cell streaming that reports cells to load (nearest first, capped per update) and unload (farthest first); the unload radius exceeds the load radius so cells on the boundary do not thrash.
-- **FloatingOrigin**: double-precision `WorldPosition` with a rebase that returns the shift to apply to local-space objects, keeping float precision far from the world origin.
+- Terrain strokes:
+  - one undo step per stroke, exact undo and redo;
+  - dirty chunks, including both chunks on a shared edge;
+  - lower, flatten and smooth;
+  - strokes that change nothing aren't kept;
+  - paint, and the cursor.
+- Pointer-driven dab spacing.
+- Foliage: on the ground with anchors, erase, undo, types, density and
+  the cap.
+- Splines: insert, drags as one step, width and roll, picking, the
+  curve and road edges, selection, and the viewport gestures.
+- Every panel drawn headless, and the partition map's hit testing and
+  pins.
+- 502/502 tests pass on GCC 13, Clang and ASan/UBSan, and 534/534 with
+  physics.
 
-**Step 9: physics heightfield shape** (`physics/`).
+### Phase 22 (done) — Networking and multiplayer
 
-- **HeightfieldCollider**: row-major height grid with cell size, vertical scale and offset; builds a Jolt `HeightFieldShape` for static bodies (non-square grids are padded with no-collision samples), and reports why a moving body, a mismatched grid or a non-finite height has no body.
-- **Debug draw**: the footprint's bounding box, not every triangle.
+The `Aether::Net` library (`net/`). Spec:
+[PHASE_SPECS.md, Phase 22](docs/design/PHASE_SPECS.md).
 
-**Step 10: Terrain editor panel** (`editor/src/world/`).
+**Step 1: the transport** (§22.1). It's our own small protocol over a
+datagram interface, so the same code runs over UDP and over a simulated
+network.
 
-- **TerrainPanel**: Sculpt and Paint tools with brush radius, strength (negative lowers), falloff, mode, noise and erosion parameters and the paint layer; draws headless like the other panels.
-- **Strokes and undo**: each stroke is one undo step holding only the samples it changed (heights or splat pixels); redo, a bounded history, and the terrain bounds follow undo/redo.
-- **Viewport**: `Pick` casts the mouse ray against the heightfield; `BuildCursor` drapes the brush ring over the surface; `TakeDirtyChunks` lists the chunks whose meshes need rebuilding (a stroke on a seam marks both).
-- **Fixes**: Smooth mode is honored by `ApplySculptBrush`, and a negative strength now lowers (the weight used to be applied twice and negative weights were skipped); noise amplitude no longer squares the strength.
+- **Sockets**:
+  - `UdpSocket`: non-blocking, POSIX or WinSock;
+  - `LoopbackNetwork`: in memory, with seeded latency, jitter (so
+    packets reorder), loss and duplication, and time you advance.
+- **`Connection`**:
+  - sequence numbers with 33 acks per packet;
+  - reliable ordered messages, resent on an RTT-based timer and
+    delivered once and in order;
+  - fragments for large messages, up to 256 KB;
+  - unreliable and sequenced channels;
+  - bounded queues;
+  - RTT and loss stats.
+- **`NetHost`**:
+  - listen, connect with retries, and refuse when full;
+  - keepalives, timeouts and goodbyes;
+  - protocol ids;
+  - events for connect, disconnect (with a reason) and messages;
+  - Send and Broadcast.
 
-**Step 11: scene streaming** (`streaming.h`).
+**Verified**: 8 new tests.
 
-- **CellSceneStreamer**: drives a `WorldPartition`; each cell has an optional scene file (`CellScenePath` gives `<dir>/cell_<x>_<z>.aesc`), loaded additively when the cell comes in range. It records exactly the entities each load created, so unloading destroys those and nothing else (entities gameplay already destroyed are skipped).
-- **Failures**: a scene that fails to load leaves the cell empty, is reported in `Failed()` and is not retried until `Retry()`; `UnloadAll` and `on_loaded`/`on_unloaded` callbacks round it out. Scenes keep their authored world-space positions, and entities are destroyed directly (no OnDestroy).
+- Addresses and wrapping sequence numbers.
+- The simulated network: latency, closed ports, and loss rates.
+- Handshakes, messages both ways, and goodbyes.
+- 500 reliable messages, all delivered once and in order, over 20%
+  loss, 5% duplication and jitter; unreliable and sequenced delivery;
+  resends, losses and RTT.
+- A 100 KB message in fragments, and the limits.
+- A full server refusing, and a missing server.
+- Keepalives over 20 idle seconds, timeouts, and foreign protocols.
+- Real UDP on localhost.
+- 510/510 tests pass on GCC 13, Clang and ASan/UBSan, and 542/542 with
+  physics.
 
-Phase 21's remaining items are the ones the roadmap marks as later: foliage impostors and the lighting bake.
+**Step 2: replication** (§22.2). The server is authoritative and sends
+delta snapshots in the manner of Quake 3.
 
-**Verified**: 14 new tests (6 heightfield queries, 5 partition, 1 floating origin, 2 physics heightfield colliders) plus 1 debug-draw test, 7 editor panel tests and 4 streaming tests.
-**Validation**: terrain library and the full test binary build in the RelWithDebInfo Visual Studio configuration. Focused terrain and splat test sources cover heightmaps, layers, brush modes, renderer buffers, foliage, and splines.
+- **`NetIdentity`**: a net id, owner, archetype, relevancy radius and
+  priority.
+- **What is sent**: `Field_Replicated` fields (and all of `Transform`),
+  per component, with masks of the fields that changed since the last
+  snapshot the client acknowledged. An idle world costs a 17-byte
+  header, and a lost snapshot costs only latency.
+- **Spawns and despawns**: spawns carry everything, and an `OnSpawn`
+  hook per archetype adds what isn't replicated. Despawns are explicit.
+- **Ownership**: `locally_owned` on the client.
+- **Relevancy**: by distance from the client's viewer (its pawn, or one
+  set with `SetViewer`).
+- **Bandwidth**: a byte budget per snapshot, shared by accumulated
+  priority.
 
-### Phase 22 (in progress) — Networking and Multiplayer
+**Verified**: 5 new tests.
 
-Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md), Phase 22. The module (`net/`, option `AETHER_BUILD_NET`) is engine-only and tested headless over a simulated network.
+- Spawns (with hooks), updates (positions, rotations, strings, and
+  non-replicated fields left alone), removed components and despawns.
+- Header-only idle snapshots, one small entry for one move, and only
+  changed fields written.
+- Convergence through 30% loss, jitter and duplication, with spawns and
+  despawns along the way.
+- Relevancy as viewers move, ownership and its handover, and
+  disconnects.
+- The budget kept, everything arriving in the end, and a high-priority
+  entity keeping up.
+- 515/515 tests pass on GCC 13, Clang and ASan/UBSan, and 547/547 with
+  physics.
 
-**Step 1: transport and connections** (`aether/net/`).
+**Step 3: remote calls** (§22.3). These are RPCs in the manner of
+Unreal.
 
-- **ByteWriter / ByteReader** (`bytes.h`): little-endian fields, varints and strings; the reader never reads out of bounds and reports failure once.
-- **Transport** (`transport.h`): an abstract unreliable datagram transport. `LoopbackNetwork` is an in-process network with a manual clock and a seeded random generator: latency, jitter (which reorders), loss and duplication, so tests and the editor's simulated latency are reproducible.
-- **NetEndpoint** (`endpoint.h`): a server (`Listen`) or a client (`Connect`) with a handshake that rejects a protocol-version mismatch or a full server and survives loss. Per peer it keeps packet sequence numbers with acknowledgement bits, drops duplicate datagrams, and offers a reliable ordered channel (resent after a round-trip-based timeout until acknowledged, delivered once and in order, with a pending cap for backpressure) and an unreliable channel. It tracks RTT and packet statistics, sends keepalives, and times out silent peers; disconnects are explicit and tolerate loss.
+- **Flags**: `Fn_Server`, `Fn_Client`, `Fn_Multicast` and
+  `Fn_Unreliable` on reflected functions.
+- **Every call goes through `CallFunction`**: this is how C++ calls
+  them, and the Blueprint VM and Luau now do too. The world's router
+  then runs the call, sends it, or refuses it.
+- **`net::RpcRouter`**:
+  - server calls are sent only by their owner and run only from it;
+  - client calls go to the owner;
+  - multicasts go to every client that has the entity.
+  Without a router, everything runs locally (single player).
 
-**Verified**: 25 new tests (3 byte, 5 loopback, 17 endpoint), including 300 reliable messages in order over 30% loss with jitter and duplication, and sequence-number wrap past 65,536 packets.
+**Verified**: 5 new tests.
 
-**Step 2: state replication** (`replication.h`, `components.h`).
+- Server calls from the owner, refused for others, rejected from a
+  client that lies about owning the entity, and following an ownership
+  handover; unreliable calls; mismatched arguments.
+- Client calls to the owner only; multicasts limited by relevancy; local
+  calls on clients; non-remote functions.
+- Single-player worlds, the router's lifetime, and malformed or unknown
+  calls.
+- A Blueprint, and a Luau script, calling through the network: the
+  owner's calls get through, and others get BP204 or a script error.
+- 520/520 tests pass on GCC 13, Clang and ASan/UBSan, and 552/552 with
+  physics.
 
-- **NetIdentity**: marks an entity as replicated. The server assigns its network id (never reused); `owner` is the controlling client's address, itself a replicated field.
-- **Field_Replicated**: every flagged field of every component on an entity with a NetIdentity goes to clients (`Transform` is flagged). Components are named on the wire by a hash of their reflected name, so clients must have the types registered (`RegisterReplicatedComponent<T>()`).
-- **Codec**: reflection-driven (`EncodeValue`/`DecodeValue`): integers as varints, floats raw, strings, fixed strings, enums, nested structs and arrays; decoding is bounds-checked and rejects malformed or oversized data.
-- **ReplicationServer::Replicate()**: per connected peer, sends Spawn (full state), Update (only the changed fields of the changed components, adding components the client lacks), RemoveComponent and Despawn records, batched into reliable ordered messages, against a per-peer baseline of what that peer last received, so late joiners get everything and nothing is resent when nothing changed.
-- **Relevancy and budget**: an optional `relevancy(peer, entity)` filter (out of range = despawned on that client, respawned with current state when back); `bytes_per_peer` caps update bytes per pass, with waiting records gaining priority and spawns/despawns always going first. A record too big for one message is skipped (counted as `oversized`) without blocking others; a big update to a known entity is split per component.
-- **ReplicationClient**: `Apply` creates, updates and destroys entities from replication messages (`IsReplicationMessage` tells them apart from game messages); `Clear` on disconnect.
+**Step 4: prediction and interpolation** (§22.4).
 
-**Verified (step 2)**: 17 new tests (3 codec, 14 replication), including convergence of 10 changing entities over 30% loss with reordering and duplication, a 100-entity late join, relevancy, the byte budget and malformed input.
+- **Snapshot interpolation**: other machines' entities are shown 0.1 s
+  in the past, between two snapshots, against a smoothed server clock.
+- **Predicted character movement**:
+  - **`NetMovement`** and a deterministic `StepMovement` (which can be
+    replaced).
+  - **The owner** moves at once and sends its inputs redundantly.
+  - **The server** runs inputs only from the owner, once each and
+    sanitized, and acknowledges them.
+  - **Reconciliation**: the owner rewinds to the acknowledged state and
+    replays the inputs since.
+
+**Verified**: 5 new tests.
+
+- Buffer sampling: lerp, the shorter-arc nlerp, clamping and capacity.
+- Interpolated motion every frame (not 0.25 m snapshot steps), with a
+  steady lag and no starvation.
+- Prediction that responds the same frame, jumps, and ends exactly where
+  the server does with no corrections; other clients agree.
+- 20% loss with jitter, covered by the input redundancy, and a
+  server-side knockback reconciled.
+- The movement rule, sanitized speed hacks that replay identically, and
+  inputs from someone else rejected.
+- 525/525 tests pass on GCC 13, Clang and ASan/UBSan, and 557/557 with
+  physics.
+
+**Step 5: sessions** (§22.5).
+
+- **The simulated network gains hosts**: virtual machines (10.0.0.x)
+  and broadcast, and UDP sockets can broadcast.
+- **`SessionInfo`**: name, map, mode, port, players, build, a password
+  flag and properties.
+- **LAN discovery**: `LanBeacon` answers broadcast queries; `LanBrowser`
+  collects sessions with their ping and build compatibility, and expires
+  them.
+- **Hosting and joining**: `SessionHost` admits players by build,
+  password and room, drops silent peers, keeps names unique, and can
+  kick. `SessionClient` ends Joined or Failed with a reason.
+- **`LobbyService`**: an interface for platform services later, with a
+  LAN implementation now.
+
+**Verified**: 5 new tests.
+
+- Simulated hosts, ports and broadcast delivery.
+- Session info round trips, cut-short data, and long strings.
+- Discovering two servers (one with another build), updated player
+  counts, other protocols ignored, expiry, auto-search, and disabled
+  beacons.
+- Joining with the right password; refused for a wrong password, a wrong
+  build, or a full session; duplicate names, silent peers dropped,
+  leaving, kicking, and no server at all.
+- The LAN lobby service advertising, finding and stopping.
+- 530/530 tests pass on GCC 13, Clang and ASan/UBSan, and 562/562 with
+  physics.
+
+**Step 6: the editor** (§22.6).
+
+- **Networked Play-in-Editor** (`NetPlaySession`): a listen or dedicated
+  server and N clients, in one process over a simulated network whose
+  latency, jitter, loss and duplication change live. The edited world
+  is copied, never touched. Player pawns are predicted; everything else
+  is interpolated.
+- **The network profiler**: bytes per entity, component and field, as
+  totals and rates.
+- **Panels**: Net Play (mode, clients, network sliders, per-client RTT,
+  loss, traffic and corrections) and Net Profiler (by entity, by field).
+
+**Verified**: 4 new tests.
+
+- A listen server with 2 clients: the level arrives with its models;
+  predicted walking agrees with the server; the listen player is seen
+  by clients; the edited world is untouched.
+- A dedicated server with 3 clients converging after the network turns
+  bad mid-play, and a clean restart.
+- The profiler ranks the moving player first, with Transform.position
+  its costliest field, and still scenery costs nothing.
+- Both panels drawn headless before, during and after play.
+- 534/534 tests pass on GCC 13, Clang and ASan/UBSan, and 566/566 with
+  physics.
+
+### Phase 23 (done) — Profiling, debugging and developer tools
+
+Spec: [PHASE_SPECS.md, Phase 23](docs/design/PHASE_SPECS.md).
+
+**Step 1: console variables and the console** (§23.1).
+
+- **CVars** are typed settings declared where they're used
+  (`AutoCVar<int> cascades("r.shadows.cascades", 4, ...)`).
+  - They parse, clamp to a range, and can be reset to their defaults.
+  - Flags: read-only, cheat, archive and requires-restart.
+  - Change callbacks; reads are thread-safe.
+- **The console** runs `name`, `name value` and `command args`, with
+  `;`, quotes and comments.
+  - Built-in commands: help, find, cvarlist, set, reset, toggle, echo,
+    exec, writeconfig, history and clear.
+  - It has history and Tab completion, reads and writes config files,
+    and takes `+name value` on the command line.
+  - It can capture the log from any thread.
+- **The logger** gains sinks and a buffer of recent lines.
+- **The console panel**: a filtered, coloured output pane and an input
+  line with history and completion. It doubles as an in-game overlay
+  toggled with the tilde key.
+
+**Verified**: 7 new tests.
+
+- CVar parsing, ranges, defaults, callbacks, registry rules, and
+  variables and commands declared where they're used.
+- Statements, quotes, comments, read-only and cheat refusals,
+  suggestions, and every built-in command.
+- Completion, history, config files written and read back, nested exec
+  limits, and the command line.
+- Log sinks, the recent-lines buffer, and capture from another thread.
+- The panel's history and Tab completion, and drawing docked and as an
+  overlay.
+- 541/541 tests pass on GCC 13.
+
+**Step 2: the profiler** (§23.2).
+
+- **Zones**: `AETHER_PROFILE_ZONE` records per thread without a lock.
+  Frames gather zones, per-frame counters, gauges and GPU pass times;
+  the last 300 frames are kept.
+- **Statistics**: total, self and max time per zone.
+- **Export**: a Chrome or Perfetto trace.
+- **Tracy**: optional forwarding (`-DAETHER_TRACY=ON`).
+- **Instrumented**: scheduler phases and every system; job workers are
+  named.
+- **Memory by category**: the allocators report their usage.
+- **Console**: profiler variables and commands.
+- **The profiler panel**: a frame graph (click a frame to inspect it),
+  zone tables, a per-thread timeline, counters and GPU passes, memory,
+  and export.
+
+**Verified**: 4 new tests.
+
+- Nesting and self time, counters, gauges and GPU timings, and the
+  enabled, paused and history settings.
+- Named threads, and the scheduler's and workers' zones.
+- The Chrome trace's contents, the allocators' memory, and the console
+  commands.
+- The panel's frame selection, zone statistics per frame and across
+  all frames, export, and drawing.
+- 545/545 tests pass on GCC 13.
+
+**Step 3: debug drawing and stat overlays** (§23.3).
+
+- **Debug drawing**:
+  - lines, arrows, boxes, spheres, circles, points, axes and text, in
+    the world or on screen;
+  - for one frame or for a duration;
+  - from any thread, with a limit, and switched off with the
+    `debug.draw` CVar;
+  - callable from C++, from Blueprints (the `DebugDraw` nodes) and from
+    Luau (`Draw.line`, `Draw.box`, ...).
+- **Stat overlays**:
+  - groups: `stat fps`, `zones`, `counters`, `gpu` and `memory`;
+  - `stat net` for a network host;
+  - custom groups;
+  - the `stat` command.
+- **The debug overlay**: draws all of it over a viewport with ImGui.
+
+**Verified**: 6 new tests.
+
+- The lines each shape becomes, rotations and colors.
+- Durations and ticking, screen text, the CVar, the limit, and drawing
+  from four threads.
+- The reflected functions, and a Blueprint drawing a sphere and text.
+- The Luau `Draw` table and its errors.
+- Built-in, custom and net stat groups, and the `stat` command.
+- The overlay's projection, near-plane clipping, text and stats, drawn
+  headless.
+- 551/551 tests pass on GCC 13.
+
+**Step 4: crash handling** (§23.4).
+
+- **What is caught**: fatal signals (on an alternate stack), Windows SEH
+  exceptions (with a minidump), and uncaught C++ exceptions.
+- **The report file** holds the reason, build, address, thread, the
+  game's context, a backtrace and the last 200 log lines.
+- **Signal safety**: the handler writes it with async-signal-safe calls
+  only, then lets the process die as it would have.
+- **Next run**: the reports are listed, read, dismissed or deleted. The
+  editor's crash reporter shows them at startup.
+
+**Verified**: 3 new tests.
+
+- A report written on purpose and read back: fields, context, log and
+  backtrace; then listing, dismissing and deleting.
+- Real crashes in child processes: a segfault, an abort, an uncaught
+  exception and SIGFPE. Each is reported once, and the process still
+  dies of it.
+- The reporter dialog opening, its report text, dismissing and
+  deleting, and drawing headless.
+- 554/554 tests pass on GCC 13.
+
+**Step 5: functional tests** (§23.5).
+
+- **Scenarios** run headless with a fixed step, built from steps:
+  - load a scene;
+  - set up;
+  - simulate, or simulate until a condition holds;
+  - check;
+  - "reaches": an entity with a tag reaches a box in time.
+- **Failures**: the first failing step ends the test, and the result
+  says why and where. Log lines are captured.
+- **Registry**: tests register with `AETHER_FUNCTIONAL_TEST` and are
+  filtered by name or tag.
+- **Reports**: JUnit XML (for CI), JSON, and a summary.
+- **`aether_functional`**: a command-line runner, registered with CTest,
+  with sample scenarios.
+- **Console**: the `functional.run` and `functional.list` commands.
+- **A fix**: the profiler's worker-thread test no longer depends on how
+  the scheduler happens to split jobs (it failed once under ASan).
+
+**Verified**: 3 new tests, and the runner's 2 sample scenarios.
+
+- Steps in order, fixed-step simulation, "reaches", and the log.
+- Every kind of failure and its explanation.
+- Scenes from files, the registry's filters, tags and stop-on-failure,
+  the JUnit and JSON reports, and the console commands.
+- 557/557 tests pass on GCC 13, and `aether_functional` passes 2/2.
+
+### Phase 24 — Cross-platform
+
+Spec: [PHASE_SPECS.md, Phase 24](docs/design/PHASE_SPECS.md).
+
+**Step 1: continuous integration** (§24.1).
+
+- **GitHub Actions on every push and pull request**:
+  - Linux: GCC, Clang, ASan+UBSan and physics builds, each running the
+    unit and functional tests.
+  - Windows: an MSVC build of everything, the D3D12 editor included.
+- **The packaged editor**: the Windows job packages
+  `AetherEditor-windows-x64.zip` (`aether_editor.exe`, its DLLs and the
+  assets) as a download on each run.
+- **Releases**: a `v*` tag publishes the zip as a GitHub release.
+- **Assets**: the editor finds `assets/` next to its executable, so the
+  zip runs anywhere.
+
+**Step 3: a portable window and input layer** (§24.2). `platform::Window`
+runs on Win32 or GLFW (X11, Wayland, Cocoa) and reports the same events
+everywhere - keys, mouse, wheel, characters, gamepads, focus, resizes,
+close - which `ApplyWindowEvents` feeds into the input state. Linux CI
+runs the window tests under Xvfb.
+
+**Step 4: the Vulkan backend off Windows** (§24.3).
+
+- **Builds on Linux**: the RHI's Vulkan backend now builds there, with
+  glslang compiling the engine's HLSL to SPIR-V.
+- **Window swap chains**: these work through GLFW.
+- **Offscreen swap chains**: these render with no window, and
+  `ISwapChain::ReadBack` copies a frame back to memory.
+- **Tests on lavapipe**: Linux CI renders the tests with Mesa's software
+  Vulkan driver, with no GPU needed.
+
+**Step 5: the editor on Vulkan** (§24.4). `aether_editor_shell` runs the
+editor's panels on any platform with Vulkan, in a GLFW window or
+offscreen:
+
+- **Panels**: every tool editor (see "Every tool in both editors" below).
+- **Rendering**: Dear ImGui is drawn through the engine's own Vulkan
+  device.
+- **Input**: comes from the engine's portable window events.
+- **CI**: Linux CI screenshots the shell on lavapipe.
+
+**Step 6: macOS, ARM and platform plugins** (§24.5).
+
+- **macOS**: the engine builds on Apple Silicon. Its SIMD math compiles
+  to NEON through sse2neon, and Vulkan runs on Metal through MoltenVK.
+  CI builds and tests it.
+- **Platform plugins**: Android and consoles plug in from outside the
+  engine, with startup and shutdown hooks, a user data directory and RHI
+  device factories (see `platforms/README.md`).
+
+### Phase 25 (in progress) — Build, cook and package
+
+Spec: [PHASE_SPECS.md, Phase 25](docs/design/PHASE_SPECS.md).
+
+**Step 1: .apak archives and the virtual file system** (§25.1).
+
+- **Archives**: entries compressed with LZ4 or zstd (or stored raw when
+  that's smaller), each with a CRC-32, and an index at the end.
+  Truncated and damaged archives are detected.
+- **Virtual file system**: mounts directories and archives by priority,
+  so patch and DLC paks override the base and loose files override
+  both.
+- **`aether_pak`**: creates, lists, extracts and verifies archives.
+
+**Step 2: the cooker** (§25.2). `aether_cook <project> --out <dir>`:
+
+- **What it cooks**: what the startup scene reaches, plus the
+  `always_cook` content, skipping everything else.
+- **What it strips**: editor-only fields (`Field_EditorOnly`).
+- **What it writes**: the assets, their imported data and a manifest,
+  all into one `.apak`.
+
+**Step 3: cooked textures** (§25.3). The cooker block-compresses
+textures (BC1, BC3, BC4, BC5, BC7) with sRGB-correct mips. Normal maps
+use BC5, with renormalized mips. The results are stored in `.atex`
+files that GPUs can sample directly.
+
+**Step 4: the player** (§25.4). `aether_player` runs a cooked game
+without the editor:
+
+- **Loading**: it mounts the game's `.apak` archives (later ones patch
+  earlier ones) and reads the manifest. It loads the startup scene, with
+  its prefabs, from the archives.
+- **Running**: the scene runs on the fixed-timestep frame loop, with
+  lifecycle callbacks, and with physics when the engine has it. It runs in
+  a window or headless.
+- **Configurations**: Debug, Development and Shipping set the logging.
+- **Not yet**: drawing the scene. The window shows a clear colour until
+  the renderer's RHI path lands.
+
+```bash
+aether_cook MyGame.aproject --out Build/Paks --config shipping
+aether_player --pak Build/Paks          # or put the paks in Paks/ beside it
+```
+
+**Step 5: packaging from the editor** (§25.5). The editor's **Build and
+Package** window cooks the project, or packages it, on a background
+thread, with a progress bar and a log:
+
+- **Package** stages the player, named for the project, beside its
+  `Paks/`. **Launch** runs the packaged game.
+- **Project Settings** edits the project, including the packaged game's
+  window (title, size, vsync) and the quality presets (Low, Medium, High,
+  Epic).
+- `aether_player --quality <preset>` picks a preset.
+
+**Step 6: patches, DLCs and encryption** (§25.6).
+
+- **Patches**: `aether_cook --patch-of Game.apak --pak-name Game_p1`
+  writes only what changed since a release. The paths it removed are
+  hidden in the paks below it.
+- **DLCs**: `aether_cook --dlc Forest --dlc-base Game.apak --always
+  DLC/Forest/` cooks extra content that the game merges in.
+- **Encryption**: `--key` (ChaCha20, `aether_pak keygen` makes one)
+  encrypts paks so archive tools can't read them. The player takes the
+  key from `--key`, `AETHER_PAK_KEY`, or its build. The editor's Build
+  and Package window has an Encrypt option.
+
+**Phase 26 step 1: plugins** (§26.1). A plugin is a folder holding a
+`<Name>.aplugin` descriptor, modules (code) and content:
+
+- **Where they live**: the engine's in `plugins/`, a project's in its
+  `Plugins/` folder.
+- **Engine plugins**: Physics, Audio, Navigation, AI and Networking are
+  plugins now, enabled by default.
+- **Loading**: plugins are resolved with their dependencies and version
+  checks. Their modules start in order, in the player and in the editor.
+  The cooker records which ones the game runs and cooks their content.
+- **Editor**: the **Plugins** panel enables a plugin for the project, and
+  **New Plugin** makes one.
+
+**Phase 26 step 2: project templates** (§26.2). New Project starts from a
+template, each with a controller script, input bindings and a spinning
+pickup Blueprint:
+
+- **Blank**: a camera and a Player Start.
+- **First Person**, **Third Person**, **Top Down** and **Vehicle**: the
+  controller reads the bindings it ships, and is tested by running it with
+  simulated keys and mouse.
+- **2D Platformer**: a tilemap level, a character with coyote time, jump buffering and variable jump height, and a camera that follows it, all on the 2D toolkit and playable in the packaged player.
+- **Editor**: the **New Project** tool creates one and opens it.
+- **Playing**: the packaged player runs them, with scripts, Blueprints and
+  input: `aether_player --press W --report` holds a key in a headless run
+  and prints where the player ended up.
+
+**2D** (§26.6, `sprite2d/`). Sprite atlases (`.aatlas`: frames, pivots and
+animation clips, packed or cut from a sheet), `Sprite` and `SpriteAnimator`
+components, tilesets (`.atileset`, with solid tiles and four-neighbour
+autotiles), tilemaps (`.atilemap`), draw batches sorted by layer, order and
+depth with view culling, and a pixel-perfect camera (whole-number scaling,
+snapping). The **Tilemap** tool (under **2D**) paints, fills and erases on layers, sets solid tiles and edits autotile rules. 2D physics (`Rigidbody2D`, `Collider2D`: boxes and circles, triggers, layers, solid tilemap cells, ray and overlap queries, grounding for platformers) and 2D lights (global, point and spot lights, shadows from solid tiles and shadow-caster boxes, light maps and visibility polygons) are in.
+
+**Sequencer** (§27.1, `sequencer/`). A level sequence (`.asequence`) animates entities over time: Transform tracks (position curves and slerped rotation keys) and Property tracks (any reflected float, integer, bool, enum or all-float struct field), with constant, linear and Bezier keys. A `SequencePlayer` plays, loops, scrubs and reverses it deterministically, and reports problems (a missing entity or field) once without stopping the other tracks. Event tracks fire named moments once as the playhead crosses them; Visibility tracks show and hide an entity; Spawn tracks keep a prefab alive for a range; Camera Cut tracks pick the camera the game renders from; Audio and Animation tracks start and stop cues and montages; Fade tracks ask the screen to fade; Subsequence tracks play another sequence inside this one (scaled, offset, cycle-safe). The packaged player plays them: `.asequence` is a cooked asset type, and a `SequenceComponent` plays a sequence from an entity (a `CineCamera` gives a camera a real lens, and `RenderMovie` steps a sequence frame by frame for rendering; the **Sequencer** tool, under **Cinematics**, edits them: a timeline with tracks, keys, scrubbing and undo), with Play/Pause/Stop/Set Time as Blueprint nodes and Luau calls, run by the `SequenceSystem`.
+
+**Saving** (§28.1, `save/`). `SaveSystem` saves any reflected struct to a named slot as a versioned, checksummed `.asav` file: atomic writes with a backup it falls back to, migration hooks for older saves, refusal of saves from newer versions, slot names that can't escape the folder, and async saving that snapshots the object first. A `SaveableEntity` marks what in a level to keep (`Door.open`, `Pickup`): `CaptureWorld` and `RestoreWorld` save and put back that state by entity GUID, including entities that were destroyed. `SettingsStore<T>` keeps options (quality, resolution, volumes, language, key rebinds) in their own checksummed `.asettings` file, with defaults when it is missing or damaged, validation, and change observers. Blueprints and Luau save through a `SaveBag` of named values and the `SaveGames` library (Save Game to Slot, Load Game from Slot, Does Save Game Exist, Create Save Game Object, typed Set and Get, Capture and Restore World, and an `Event.OnSaveFinished`).
+
+**Player saves** (§28.6-28.7). The player keeps `Saves/` and `Config/` in `--user-dir` (else `AETHER_USER_DIR`, else the OS's per-user folder), pumps queued saves each frame (Blueprints get `Event.OnSaveFinished`), takes its window size, vsync and quality from `settings.asettings` when there is one (command line first, the project's own after), and writes the file on exit only if the game changed it.
+
+**Save Inspector** (§28.5). The **Save Inspector** tool (Data) lists the `.asav` and `.asettings` files in a folder and shows a file's kind, type and version, time, size, checksum, backup and every problem found, then its contents: the saved struct in the Inspector (read-only) when its type is in the build, otherwise a JSON tree, plus the raw JSON. Reload, delete (with its backup) and copy to a new slot; it never edits a save.
+
+**Localization** (§29.1, `loc/`). `LocText` (a string key plus its source text) is the type for player-visible strings. A `StringTable` holds translations by key and language and reads and writes CSV (`key,en,pt-BR,...`). A language falls back along its tags (`pt-BR` to `pt` to `en`), and a string with no translation shows its source text, never a blank. Messages take arguments and plurals: `{count} coin{count|s}` or `{count|one:moeda;other:moedas}`, with CLDR plural rules for English, Portuguese, French, Japanese, Russian, Polish and Arabic.
+
+**Text in the game** (§29.2). Translations live in `.astrings` files (CSV: `key,en,pt-BR,...`), cooked automatically. The player merges them, shows the language in `GameSettings::language` (a language chosen in play is saved with the settings), and Blueprints (`Localize.GetText`, `FormatInt`, ...) and Luau (`Localization.GetText(key, default)`, `Localization.Format(...)`, `Localization.SetLanguage(...)`) read it, falling back to the default text and then the key.
+
+**Localized UI** (§29.3). A Text widget (and a text box's hint) takes a string table key beside its text (`text_key`, `hint_key` in layout files and the UI Designer): the key's translation in the current language shows, falling back to the text. Blueprints and scripts use `UI.SetTextKey`; setting text directly (`UI.SetText`, a binding) overrides the key.
+
+**Translating** (§29.4). `aether_loc <project.aproject> --po-out po/ --languages fr,de` scans a project's scenes, prefabs, UI layouts and Blueprints for localizable text (a `text_key`, a `LocText`, or a `Localize.GetText` / `UI.SetTextKey` node with a literal key), adds the new keys to `Content/Localization/strings.astrings` and writes a `.po` file per language for translators; `--po-in` reads the returned files back. Existing translations are never touched, and keys nothing uses any more are only listed.
+
+**Localization dashboard** (§29.5). The **Localization** tool (Data) opens a `.astrings`: each language and how complete it is, the keys a language is missing with a box for the translation, add and remove keys and languages, Save, `.po` export and import, and the gather step (check-only by default). The **pseudo-localization preview** swaps keyed text in the editor for accented, about-a-third-longer, `[bracketed]` text, to find clipped or untranslated strings before there are translations.
+
+**Font fallback** (§29.6). A font name can be a comma-separated chain, `"Roboto, NotoSansCJK, NotoEmoji"`: each character is drawn from the first font that has it, with that font's own atlas, so one line can mix scripts. A character in no font shows the first font's replacement glyph. UTF-8 decoding now rejects overlong and surrogate forms.
+
+**Localized assets** (§29.6). `Textures/logo.png` can have `Textures/logo.fr.png` and `Textures/logo.pt-BR.png`: `Game::LocalizedAsset(path)` (and `GamePackage::LocalizedPath`) gives the variant for the current language, following the fallback chain (pt-BR, pt, then the base). Variants are ordinary assets and cook as usual; a variant with no base asset is a player warning.
+
+**Right-to-left** (§29.6). Set `Viewport::direction = FlowDirection::RightToLeft` (`loc::IsRtl(language)` says when) and the UI is laid out then mirrored about its centre; `TextAlign::Start`/`End` follow the direction; Hebrew text is reordered visually, with numbers and Latin runs keeping their order. Arabic letters don't join yet (that needs the shaping step).
+
+**Gameplay tags** (§30.1, `gameplay/`). `GameplayTag` is a dotted name (`State.Stunned`, `Damage.Fire.Burning`); a tag matches itself and everything under it. `TagContainer` keeps an entity's tags with reference counts (two effects granting the same tag keep it until both are gone), `TagQuery` is an any/all/none/and/or condition saved as JSON, and the `GameplayTags` Blueprint library checks matches. Attributes, effects and abilities build on these.
+
+**Attributes** (§30.2). `AttributeSet` holds an entity's stats (Health, Mana, ...), each with a base, a current value and min/max bounds (the base is clamped too, so a capped Health doesn't hide later damage). Changes made through the `AttributeSystem` or the `Attributes` Blueprint library queue one event per real change, which the player sends to the entity's Blueprint as `Event.OnAttributeChanged` (name, old, new).
+
+**Gameplay effects** (§30.3). `GameplayEffect` (`.aeffect` JSON) changes attributes instantly or while it lasts: add, multiply and override modifiers, stacking, periodic ticks (poison), tag requirements and granted tags. The `EffectSystem` applies and ticks them deterministically; timed modifiers affect an attribute's current value and leave its base alone. `.aeffect` assets are cooked automatically and loaded by the player, which ticks effects each frame and sends `Event.OnEffectApplied` / `Event.OnEffectRemoved` to the target's Blueprint; the `Effects` Blueprint library applies and removes them.
+
+**Gameplay abilities** (§30.4). `GameplayAbility` (`.aability` JSON) is something an entity can do, gated by required and blocked tags, paid for by an instant effect and put on cooldown by a timed one. The `AbilitySystem` activates, commits, ends and cancels them, with cancel and block by tags, owned tags and a `max_duration`; each failure says why. Assets, the player stage and Blueprint nodes follow in the next step.
+
+**Documentation** (§26.7). The manual is in [docs/manual](docs/manual/README.md).
+The API reference is generated from the engine's reflection: run
+`aether_docgen --out api` for `API.md` (every component, struct and enum with
+its fields, ranges, units and tooltips) and `api.json`. The Windows release zip
+includes both.
+
+**Version control** (§26.7). The **Content Browser** tool (Project) lists the
+project's folders and assets with a git badge on each: **M** modified, **A**
+added, **?** untracked, **D** deleted, **R** renamed, **!** conflict (a folder
+shows its worst child; an asset also counts its `.ameta`), with a "changed
+only" filter. A project that isn't a git repository just says so.
+
+**Extending the editor** (§26.5). Plugins, game modules and a project's
+own Luau scripts add panels, menus, Inspector property drawers and asset
+types. A script in `Content/Editor/*.luau`:
+
+```lua
+local clicks = 0
+editor.AddPanel("Hello Panel", function()
+    if ui.Button("Click me") then clicks += 1 end
+    ui.SameLine()
+    ui.Text("clicks: " .. clicks)
+end)
+editor.AddMenuItem("Tools/Hello/Say hello", function() editor.Log("hi") end, "Ctrl+Shift+H")
+```
+
+The editor's sample project ships this one: open the **Hello Panel** tool.
+
+**Every tool in both editors.** The Windows editor (`aether_editor.exe`,
+D3D12) and the portable shell (`aether_editor_shell`, Vulkan) host the
+same set of tool editors (`editor/src/workspace`). Each one opens on a
+sample document:
+
+- **Scripting**: the Blueprint editor and the Luau code editor.
+- **Rendering**: the Material editor and the particle system (VFX) editor.
+- **Animation**: the anim graph, blend space and clip viewer.
+- **AI**: the Behavior Tree editor and the Navigation panel (baked).
+- **Audio**: the Sound Cue editor and the mixer.
+- **UI**: the UI Designer.
+- **World**: terrain, foliage, spline and world partition tools.
+- **Networking**: networked Play-in-Editor and the network profiler.
+- **Debug**: the console, the profiler and the crash reports.
+- **Project**: Project Settings, and Build and Package.
+
+They're in the **Tools** window (a list by category, with the selected
+tool beside it) and the **Tools** menu, which pops a tool out into its
+own window. `AETHER_EDITOR_TAB=<name>` picks the tool to open on.
 
 ## Building
-
-**Step 3: RPCs** (`rpc.h`).
-
-- **Flags**: a reflected method on a component of a replicated entity marked `Fn_ServerRPC` (a client calls it, it runs on the server), `Fn_ClientRPC` (the server calls it, it runs on the owning client) or `Fn_MulticastRPC` (the server calls it, it runs on every client that has the entity); add `Fn_RpcUnreliable` to skip the reliable channel. Arguments are encoded with the replication codec, so any reflected type works; return values are dropped.
-- **RpcServer / RpcClient**: `Call(entity, "Component", "function", args...)` type-checks the arguments against the function's parameters and the message size before sending; a Server RPC called on the server just runs. `IsRpcMessage` routes incoming messages to `Handle`.
-- **Server-side checks**: the function must be a Server RPC (a forged call to a Client-only or non-RPC function is refused), the caller must own the entity (`NetIdentity::owner`), arguments must decode exactly, and each peer is rate limited (`max_calls_per_second`, default 100). Results are reported as `RpcResult` and counted in `RpcStats`.
-
-**Verified (step 3)**: 12 new tests, including ownership, direction and rate-limit enforcement, forged and malformed messages, Multicast skipping a client that doesn't have the entity, and 50 reliable calls run exactly once in order over a lossy link.
-
-**Step 4: client-side prediction** (`prediction.h`).
-
-- **Movement step**: `MoveStepFn` is a pluggable, deterministic `(MoveState, MoveInput)` step; `StepMovement` is the kinematic default (acceleration and braking, air control, gravity, jumping, a ground-height function). A move built on Jolt's CharacterVirtual can't be rewound, so networked players use a step of this shape. `Sanitize` clamps the move vector and quantizes it to what survives the wire, and both sides step the sanitized input.
-- **PredictionClient**: `Predict` applies the input at once and returns the unreliable message to send, which repeats the latest unacknowledged inputs so a lost packet doesn't lose one. On a state report, `Reconcile` compares the server's state with what it predicted at that input; if they differ it takes the server's state and replays the unacknowledged inputs. The visible position (`VisualPosition`) eases out the error instead of jumping, and a correction over `snap_distance` snaps.
-- **PredictionServer**: queues each peer's inputs by sequence (reordered ones run in order, duplicates and stale ones are dropped), runs one step per input with a credit budget (one per tick on average plus a small burst, so a stalled link can catch up but a client flooding inputs can't move faster), clamps over-long move vectors, validates every message, and reports `BuildStateMessage` (last processed sequence plus state).
-
-**Verified (step 4)**: 13 new tests, including no corrections at all when client and server agree over a 50 ms link, a server-only wall corrected without a visible jump, replay arithmetic, 30% loss with jitter, a 16-inputs-per-tick speed hack, and malformed input.
-
-**Step 5: snapshot interpolation** (`interpolation.h`).
-
-- **Snapshots**: the server captures every replicated entity's Transform (`CaptureSnapshots`) and sends it timestamped and unreliable at a modest rate (`BuildSnapshotMessages` splits to the size limit; position as floats, rotation as three 16-bit components with w rebuilt). Parsing rejects truncation, length bombs, non-finite values and trailing bytes.
-- **ClockSync**: estimates the server's clock from the timestamps, trusting the least delayed packet, following drift slowly and adopting a restarted server's clock at once.
-- **InterpolationBuffer / SnapshotInterpolator**: each entity is shown `delay` (100 ms) in the past, blending the two snapshots around that moment (rotation the short way round); a late snapshot is slotted in, and when the buffer runs dry the entity extrapolates for up to `max_extrapolation`, then holds. `Apply` writes Transforms, skips entities owned by this client (those are predicted), and lets snapshots for not-yet-spawned entities wait.
-- **ReplicationServer::ReplicateOnlyOnSpawn<Transform>()**: a component sent in full at spawn and never updated, so a moving entity's Transform isn't also streamed reliably.
-
-**Verified (step 5)**: 11 new tests, including a mover tracked within 0.25 m of the server's past position with no per-frame jump over 10% loss and jitter, the owned entity left alone, and spawn-only replication keeping updates to a handful.
-
-**Step 6: UDP transport and LAN discovery** (`udp.h`, `discovery.h`).
-
-- **UdpTransport**: a non-blocking IPv4 UDP socket as a `Transport` (Winsock on Windows, POSIX elsewhere). A `NetAddress` is a handle for an (IP, port) pair (`AddressFor("host", port)`, `Describe`, `AddressWithPort` for a host's game port from its discovery reply); the handle table is bounded and drops the quietest pair first, so spoofed source addresses can't grow memory and live connections are unaffected. Datagrams over the size limit are never sent or accepted; Windows' ICMP "connection reset" receive errors are ignored.
-- **Transport::Broadcast**: sends to everyone on the LAN listening on a port (a no-op for transports that can't); `LoopbackTransport` implements it for tests.
-- **LanHost / LanBrowser**: a host answers `Query` datagrams with its session (name, map, game version, game port, players/slots), only for the same game id and only while advertising, with a reply rate limit so it can't be used as a reflector; a browser broadcasts (`Search`) or queries one known host (`SearchHost`), lists the answers with round-trip time, refreshes entries in place and `Prune`s quiet hosts. Malformed queries and responses (wrong magic, trailing bytes, over-long strings, no game port, more players than slots) are counted and ignored.
-
-**Verified (step 6)**: 14 new tests (7 UDP on this machine's loopback interface, including a full connection with 20 reliable messages each way over real sockets and a discovery exchange; 7 discovery over the simulated network).
-
-**Step 7: editor network tools** (`editor/src/net/`).
-
-- **NetPlaySession**: multi-client Play-in-Editor. A server world is loaded from a snapshot of the edited scene (`SaveSceneToMemory`) and N client worlds, each its own `World`, fill by replication over a simulated network; entities with a `NetIdentity` replicate and their Transforms travel as interpolated snapshots. Clients can be added, disconnected and reconnected live, entities can be given an owner, and non-replication messages (RPCs, game messages) reach `on_server_message` / `on_client_message`.
-- **Simulated link**: latency, jitter, loss and duplication adjustable while running, with presets (None, LAN, Good broadband, Mobile, Poor, Terrible); seeded, so a run is reproducible.
-- **NetworkPanel**: the link controls, the client table (state, RTT, lost packets, traffic, entities, disconnect/reconnect), the server's send rate over time, replication counters and a profiler of where bandwidth goes. `ReplicationServer::Profile()` attributes every replicated byte to its (component, field) and entity, summed over peers; the panel lists the most expensive fields and entities and the share of the total. Draws headless like the other panels.
-
-**Verified (step 7)**: 9 new tests, including two clients filling from a scene snapshot, a unit followed smoothly by interpolation, rejoining, a 250 ms / 15% loss link that still converges, and exact per-field send counts in the profiler.
-
-**Step 8: sessions and the lobby** (`session.h`).
-
-- **SessionHost / SessionClient**: hosting and joining on top of `NetEndpoint`. Both feed their endpoint's events to `HandleEvent`, which consumes session messages and passes everything else (including Connected/Disconnected) back to the game. A client sends a `JoinRequest` (name, game version, password); the host answers `JoinAccept` with a player id or `JoinReject` with why: `Full`, `VersionMismatch`, `BadPassword`, `BadName` (empty, too long or control characters) or `InProgress`. Duplicate names get a suffix inside the length limit, ids are never reused, and a listen-server host can play too (`host_player_name`).
-- **Lobby**: the host keeps the player list, map and phase, and sends every change to all players as a whole-state message; clients see the same `LobbyState` and receive `Joined`, `Rejected`, `LobbyChanged`, `GameStarting` (map and a shared seed), `Kicked` and `Disconnected` events. Players toggle ready; `StartGame` needs everyone ready unless forced; late joiners are refused or, with `allow_join_in_progress`, told to start at once.
-- **Hardening**: a connection that doesn't send its JoinRequest within `join_timeout` is dropped, and nothing but a JoinRequest is accepted from it; rejected and kicked peers are cut off after a short grace if they don't leave; client messages that only the host may send (start, kick, lobby, unknown kinds) are ignored and counted, and a client discards malformed host messages (bad phase, empty names, truncation, over-limit counts).
-- **Discovery**: `SessionHost::Advertisement(game_port)` gives the `SessionInfo` for a `LanHost`, so browsers see the live player count and map.
-
-**Verified (step 8)**: 14 new tests, including joining over 30% loss with duplication (one Joined event), every refusal reason, kick/leave, a late join, a client posing as the host and a host sending garbage.
-
-Remaining for Phase 22: Blueprint/Luau access to RPCs, and wiring Play-in-Editor's "N clients" option and the Network panel into the editor window.
 
 Requires CMake 3.20+, a C++20 compiler with SSE4/AVX2 support (MSVC, Clang,
 or GCC), and network access the first time you configure (to fetch Jolt
@@ -5543,7 +6094,7 @@ Vulkan-enabled Windows build — a SPIR-V-capable `dxcompiler.dll` release).
 cmake -S . -B build
 cmake --build build --config RelWithDebInfo
 ./build/sandbox/aether_sandbox.exe          # Windows only; Phase 3/4 bindless + GPU-culling demo
-./build/editor/aether_editor.exe            # Windows only; Phase 5 ImGui editor + physics
+./build/editor/aether_editor.exe            # Windows only; the D3D12 editor: 3D view, physics and every tool editor
 AETHER_RHI_BACKEND=vulkan ./build/rhi_demo/aether_rhi_demo.exe   # or =d3d12 (default); swappable RHI proof
 ctest --test-dir build --output-on-failure
 ```

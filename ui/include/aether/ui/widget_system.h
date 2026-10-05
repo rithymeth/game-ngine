@@ -31,6 +31,8 @@ struct UI {
     static Entity CreateWidget(const std::string& layout, i32 z);
     static void RemoveWidget(const Entity& target);
     static void SetText(const Entity& target, const std::string& widget, const std::string& text);
+    // Gives a Text (or a button's first Text) a string table key, with `fallback` as its source text (§29.3).
+    static void SetTextKey(const Entity& target, const std::string& widget, const std::string& key, const std::string& fallback);
     static std::string GetText(const Entity& target, const std::string& widget);
     static void SetVisible(const Entity& target, const std::string& widget, bool visible);
     static void SetEnabled(const Entity& target, const std::string& widget, bool enabled);
@@ -146,6 +148,7 @@ AETHER_REFLECT(aether::UI, 1,
     AETHER_METHOD(CreateWidget, Fn_BlueprintCallable, {"layout", "z"}),
     AETHER_METHOD(RemoveWidget, Fn_BlueprintCallable, {"target"}),
     AETHER_METHOD(SetText, Fn_BlueprintCallable, {"target", "widget", "text"}),
+    AETHER_METHOD(SetTextKey, Fn_BlueprintCallable, {"target", "widget", "key", "default"}),
     AETHER_METHOD(GetText, Fn_BlueprintCallable | Fn_Pure, {"target", "widget"}),
     AETHER_METHOD(SetVisible, Fn_BlueprintCallable, {"target", "widget", "visible"}),
     AETHER_METHOD(SetEnabled, Fn_BlueprintCallable, {"target", "widget", "enabled"}),

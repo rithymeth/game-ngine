@@ -1,0 +1,22 @@
+{
+  "$type": "Plugin",
+  "$v": 1,
+  "name": "Networking",
+  "friendly_name": "Networking",
+  "version": "1.0.0",
+  "description": "Transport, replication, RPCs, prediction and sessions.",
+  "category": "Networking",
+  "created_by": "Aether",
+  "engine_version": "",
+  "enabled_by_default": true,
+  "has_content": false,
+  "dependencies": [],
+  "modules": [
+    {
+      "$v": 1,
+      "name": "Networking",
+      "type": "Runtime",
+      "phase": "PreDefault"
+    }
+  ]
+}

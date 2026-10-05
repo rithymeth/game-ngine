@@ -77,6 +77,7 @@ private:
         std::vector<std::vector<u32>> levels; // indices into systems_
     };
     std::vector<SystemDesc> systems_;
+    std::vector<const char*> zone_names_; // interned in the profiler, by system
     PhaseGraph graphs_[kSystemPhaseCount];
     bool built_ = false;
 };

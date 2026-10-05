@@ -1,6 +1,9 @@
 #include "aether/terrain/terrain.h"
 #include "test_framework.h"
 
+#include <algorithm>
+#include <cmath>
+
 using namespace aether;
 using namespace aether::terrain;
 
@@ -95,7 +98,7 @@ AETHER_TEST(TerrainChunks_VertexGeneration) {
 }
 
 AETHER_TEST(TerrainChunks_IndexGeneration) {
-    Heightmap hm = CreateProceduralHeightmap(32, 32, 1.0f, 1, 0.5f, 4.0f);
+    Heightmap hm = CreateProceduralHeightmap(33, 33, 1.0f, 1, 0.5f, 4.0f);
     TerrainSettings settings;
     settings.verts_per_chunk = 32;
     settings.chunk_world_size = 31.0f;
@@ -141,4 +144,19 @@ AETHER_TEST(TerrainHeight_Sampling) {
     // Sample at various positions.
     const f32 h = SampleTerrainHeight(data, 32.0f, 32.0f);
     AETHER_CHECK(h != 0.0f || hm.heights[0] != 0.0f); // non-trivial height
+}
+
+AETHER_TEST(TerrainHeightmapProceduralIsSmooth) {
+    const Heightmap a = CreateProceduralHeightmap(65, 65, 1.0f, 1, 0.5f, 10.0f);
+    const Heightmap b = CreateProceduralHeightmap(65, 65, 1.0f, 1, 0.5f, 10.0f);
+    AETHER_CHECK(a.heights == b.heights); // deterministic
+    // One octave of 16-sample features: neighbours differ by a small step, not white noise.
+    f32 worst = 0.0f, lo = 1e9f, hi = -1e9f;
+    for (u32 z = 0; z < 65; ++z) {
+        for (u32 x = 0; x + 1 < 65; ++x) worst = std::max(worst, std::fabs(a.GetHeight(x + 1, z) - a.GetHeight(x, z)));
+        for (u32 x = 0; x < 65; ++x) lo = std::min(lo, a.GetHeight(x, z)), hi = std::max(hi, a.GetHeight(x, z));
+    }
+    AETHER_CHECK(worst < 10.0f * 2.0f / 16.0f * 1.6f);
+    AETHER_CHECK(hi - lo > 2.0f); // but not flat
+    AETHER_CHECK(lo >= -10.0f && hi <= 10.0f);
 }
