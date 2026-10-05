@@ -268,6 +268,8 @@ if(AETHER_BUILD_EDITOR_UI)
     add_subdirectory(editor/src/ui)
 endif()
 
+add_subdirectory(samples/coin_run)
+
 if(AETHER_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
