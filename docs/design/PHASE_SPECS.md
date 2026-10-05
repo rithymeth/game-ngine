@@ -5758,6 +5758,34 @@ Not done: a CJK line-break table (text still wraps at spaces and line breaks),
 emoji sequences (ZWJ, variation selectors), colour emoji (needs RGBA atlases),
 and per-run baseline alignment between fonts with different metrics.
 
+#### Localized assets
+
+A language's variant of an asset is the same path with the language before the
+extension: `Textures/logo.png` has `Textures/logo.fr.png` and
+`Textures/logo.pt-BR.png`. Variants are ordinary assets (they cook and ship like
+any other), so nothing in the cooker or the manifest changed; only the lookup
+knows the naming (`loc/localized_path.h`).
+
+- `LocalizedCandidates(path, language)` is the list to try: the fallback chain of
+  §29.1, most specific first (`logo.pt-BR.png`, `logo.pt.png`), then the base
+  path, which is the default language's (a variant for the default language
+  itself isn't tried).
+- `GamePackage::LocalizedPath` is the first candidate that is a cooked asset (else
+  the path unchanged); `ReadContentLocalized` reads it. `Game::LocalizedAsset(path)`
+  uses the game's current language, so a script or system that asks again after a
+  language change gets the new variant.
+- `SplitVariant` / `OrphanedVariants` recognize a variant by its name (a 2 or 3
+  letter lower-case language, optionally with subtags: `icon.large.png` and
+  `v1.2.png` aren't variants). The player warns about a variant with no base asset
+  (a typo in the language, or nothing to fall back to).
+
+Tests (`test_loc_runtime.cpp`): the candidate lists, variant recognition and
+orphans, and a cooked package resolving fr, a pt-BR falling back to pt, a language
+with no variant falling back to the base, and the game following its language.
+
+Not done: reloading what is already loaded when the language changes (the
+`Localization` change listener is the hook), and per-asset-type policy.
+
 ### 29.7 PR breakdown
 
 1. The core (done, §29.1).
@@ -5772,7 +5800,7 @@ and per-run baseline alignment between fonts with different metrics.
 5. The editor's Localization dashboard (languages, completion, missing keys,
    pseudo-localization) (done, §29.5).
 6. Font fallback (Latin, then CJK, then emoji) (done, §29.6); localized assets
-   (a language's variant of an asset by file name); right-to-left layout (a
+   (a language's variant of an asset by file name) (done, §29.6); right-to-left layout (a
    run-reversing BiDi-lite for Hebrew, Start/End alignment, mirrored
    horizontal layout; Arabic joining needs shaping and waits for step 7).
 7. Optional: HarfBuzz shaping behind a CMake option, and gender selectors.

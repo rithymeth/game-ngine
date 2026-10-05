@@ -223,3 +223,68 @@ AETHER_TEST(LocRuntime_LuauTable) {
     CHECK(!host.Run("return Localization.GetText(5)", "bad").ok); // a wrong-typed argument is a script error
 }
 #endif
+
+// ---- Phase 29 step 6: localized assets ----
+
+#include "aether/loc/localized_path.h"
+
+AETHER_TEST(LocAssets_CandidatesFollowTheFallbackChain) {
+    using loc::LocalizedCandidates;
+    CHECK((LocalizedCandidates("Textures/logo.png", "pt-BR") == std::vector<std::string>{"Textures/logo.pt-BR.png", "Textures/logo.pt.png", "Textures/logo.png"}));
+    CHECK((LocalizedCandidates("Textures/logo.png", "fr") == std::vector<std::string>{"Textures/logo.fr.png", "Textures/logo.png"}));
+    CHECK((LocalizedCandidates("Textures/logo.png", "en") == std::vector<std::string>{"Textures/logo.png"})); // the base is the default language
+    CHECK((LocalizedCandidates("logo.png", "de", "fr") == std::vector<std::string>{"logo.de.png", "logo.png"}));
+    CHECK((LocalizedCandidates("Audio/voice.line.ogg", "fr") == std::vector<std::string>{"Audio/voice.line.fr.ogg", "Audio/voice.line.ogg"}));
+    CHECK((LocalizedCandidates("README", "fr") == std::vector<std::string>{"README.fr", "README"})); // no extension
+    CHECK((LocalizedCandidates("a.dir/readme", "fr") == std::vector<std::string>{"a.dir/readme.fr", "a.dir/readme"}));
+}
+
+AETHER_TEST(LocAssets_VariantsAreRecognizedAndOrphansFound) {
+    std::string base, language;
+    CHECK(loc::SplitVariant("Textures/logo.fr.png", &base, &language) && base == "Textures/logo.png" && language == "fr");
+    CHECK(loc::SplitVariant("logo.pt-BR.png", &base, &language) && base == "logo.png" && language == "pt-BR");
+    CHECK(loc::SplitVariant("logo.zh-Hans-CN.png", &base, &language) && language == "zh-Hans-CN");
+    CHECK(!loc::SplitVariant("Textures/logo.png") && !loc::SplitVariant("icon.large.png") && !loc::SplitVariant("v1.2.png") &&
+          !loc::SplitVariant("a.dir/readme") && !loc::SplitVariant(".fr.png") && !loc::SplitVariant("Textures.fr/logo.png"));
+    const std::vector<std::string> paths{"logo.png", "logo.fr.png", "menu.fr.png", "Scenes/start.ascene"};
+    CHECK((loc::OrphanedVariants(paths) == std::vector<std::string>{"menu.fr.png"}));
+}
+
+AETHER_TEST(LocAssets_PackageResolvesTheVariantAndFallsBack) {
+    const stdfs::path dir = TestDir("assets");
+    const json scene = {{"$type", "Scene"}, {"$version", 1}, {"entities", json::array()}};
+    json assets = json::array({{{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/start.ascene"}, {"importer", "Scene"}}});
+    for (const char* p : {"Textures/logo.png", "Textures/logo.fr.png", "Textures/logo.pt.png", "Textures/orphan.de.png"}) {
+        assets.push_back({{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", p}, {"importer", "Texture"}});
+    }
+    const json manifest = {{"$type", "CookManifest"}, {"$version", 1},        {"project", "Demo"}, {"configuration", "Development"},
+                           {"startup_scene", "Scenes/start.ascene"},         {"fixed_timestep_hz", 60.0}, {"gravity", {0.0, -9.81, 0.0}},
+                           {"layers", {"Default"}}, {"collision_matrix", json::array()}, {"assets", assets}, {"files", json::array()}};
+    pak::PakWriter writer;
+    writer.Add("Manifest.json", manifest.dump(2));
+    writer.Add("Content/Scenes/start.ascene", scene.dump(2));
+    writer.Add("Content/Textures/logo.png", "base");
+    writer.Add("Content/Textures/logo.fr.png", "french");
+    writer.Add("Content/Textures/logo.pt.png", "portuguese");
+    writer.Add("Content/Textures/orphan.de.png", "orphan");
+    const stdfs::path file = dir / "Game.apak";
+    std::string error;
+    CHECK(writer.Write(file.string(), &error));
+    Loaded g(file);
+    CHECK(g.package.LocalizedPath("Textures/logo.png", "fr") == "Textures/logo.fr.png");
+    CHECK(g.package.LocalizedPath("Textures/logo.png", "pt-BR") == "Textures/logo.pt.png"); // pt-BR has none: pt does
+    CHECK(g.package.LocalizedPath("Textures/logo.png", "de") == "Textures/logo.png");       // no German: the base
+    CHECK(g.package.LocalizedPath("Textures/other.png", "fr") == "Textures/other.png");     // not an asset at all: unchanged
+    std::vector<u8> bytes;
+    CHECK(g.package.ReadContentLocalized("Textures/logo.png", "fr", bytes, &error) && std::string(bytes.begin(), bytes.end()) == "french");
+    CHECK(g.package.ReadContentLocalized("Textures/logo.png", "ja", bytes, &error) && std::string(bytes.begin(), bytes.end()) == "base");
+    // The game follows its current language, and warns about the orphan.
+    Game game(g.package);
+    CHECK(game.LoadStartupScene(&error));
+    CHECK(game.LocalizedAsset("Textures/logo.png") == "Textures/logo.png");
+    game.Localization().SetLanguage("fr");
+    CHECK(game.LocalizedAsset("Textures/logo.png") == "Textures/logo.fr.png");
+    bool warned = false;
+    for (const std::string& w : game.Warnings()) warned = warned || w.find("orphan.de.png") != std::string::npos;
+    CHECK(warned);
+}
