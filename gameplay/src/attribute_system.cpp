@@ -1,6 +1,7 @@
 #include "aether/gameplay/attribute_system.h"
 
 #include "aether/ecs/component.h"
+#include "aether/gameplay/ability_system.h"
 #include "aether/gameplay/effect_system.h"
 #include "aether/gameplay/tag_container.h"
 
@@ -14,6 +15,7 @@ void RegisterGameplayComponents() {
     (void)GetComponentId<AttributeSet>();
     (void)GetComponentId<TagContainer>();
     (void)GetComponentId<EffectContainer>();
+    (void)GetComponentId<AbilityContainer>();
 }
 
 AttributeSystem::AttributeSystem(World& world) : world_(world) {
