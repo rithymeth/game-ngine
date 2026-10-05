@@ -6017,6 +6017,8 @@ snapping). The **Tilemap** tool (under **2D**) paints, fills and erases on layer
 
 **Localized UI** (§29.3). A Text widget (and a text box's hint) takes a string table key beside its text (`text_key`, `hint_key` in layout files and the UI Designer): the key's translation in the current language shows, falling back to the text. Blueprints and scripts use `UI.SetTextKey`; setting text directly (`UI.SetText`, a binding) overrides the key.
 
+**Translating** (§29.4). `aether_loc <project.aproject> --po-out po/ --languages fr,de` scans a project's scenes, prefabs, UI layouts and Blueprints for localizable text (a `text_key`, a `LocText`, or a `Localize.GetText` / `UI.SetTextKey` node with a literal key), adds the new keys to `Content/Localization/strings.astrings` and writes a `.po` file per language for translators; `--po-in` reads the returned files back. Existing translations are never touched, and keys nothing uses any more are only listed.
+
 **Documentation** (§26.7). The manual is in [docs/manual](docs/manual/README.md).
 The API reference is generated from the engine's reflection: run
 `aether_docgen --out api` for `API.md` (every component, struct and enum with

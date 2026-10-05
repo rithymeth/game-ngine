@@ -403,6 +403,7 @@ add_subdirectory(tools/functional)
 add_subdirectory(tools/pak)
 add_subdirectory(tools/cook)
 add_subdirectory(tools/docgen)
+add_subdirectory(tools/loc)
 
 if(AETHER_BUILD_SANDBOX)
     add_subdirectory(sandbox)
