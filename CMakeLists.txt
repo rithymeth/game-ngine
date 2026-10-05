@@ -269,6 +269,7 @@ if(AETHER_BUILD_EDITOR_UI)
 endif()
 
 add_subdirectory(samples/coin_run)
+add_subdirectory(samples/gem_hop)
 
 if(AETHER_BUILD_TESTS)
     enable_testing()
