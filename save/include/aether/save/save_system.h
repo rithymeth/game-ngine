@@ -1,6 +1,7 @@
 #pragma once
 
 #include "aether/core/base.h"
+#include "aether/save/save_bag.h"
 #include "aether/save/save_result.h"
 #include "aether/reflection/reflection.h"
 #include "aether/reflection/serialize.h"
@@ -94,6 +95,33 @@ public:
     static SaveSystem* Active();
     void MakeActive();
 
+    // What Blueprints and Luau use (the SaveGames library, §28.4): the system's
+    // own bag of named values, the world the CaptureWorld / RestoreWorld nodes
+    // act on (set by the host), the last error message, and the async saves
+    // that finished (the host calls Pump(), then TakeFinishedSaves(), and
+    // dispatches Event.OnSaveFinished). Main thread only.
+    SaveBag& Bag() { return bag_; }
+    struct WorldContext {
+        World* world = nullptr;
+        GuidIndex* guids = nullptr;
+        WorldTracker* tracker = nullptr;
+        Lifecycle* lifecycle = nullptr;
+    };
+    void SetWorldContext(const WorldContext& context) { world_context_ = context; }
+    const WorldContext& GetWorldContext() const { return world_context_; }
+    const std::string& LastError() const { return last_error_; }
+    void SetLastError(std::string message) { last_error_ = std::move(message); }
+    struct FinishedSave {
+        std::string slot;
+        bool success = false;
+    };
+    void NoteFinishedSave(FinishedSave finished) { finished_saves_.push_back(std::move(finished)); }
+    std::vector<FinishedSave> TakeFinishedSaves() {
+        std::vector<FinishedSave> out;
+        out.swap(finished_saves_);
+        return out;
+    }
+
 private:
     struct Job {
         std::string slot;
@@ -115,6 +143,10 @@ private:
     std::condition_variable wake_, idle_;
     std::deque<Job> jobs_;
     std::deque<Done> finished_;
+    SaveBag bag_;
+    WorldContext world_context_;
+    std::string last_error_;
+    std::vector<FinishedSave> finished_saves_;
     bool busy_ = false;
     bool stop_ = false;
     std::thread worker_;
