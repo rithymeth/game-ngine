@@ -4,6 +4,7 @@
 # Checked by tools/check_api_stability.py (a test in the suite).
 ai experimental
 animation experimental
+bench experimental
 audio experimental
 blueprint experimental
 engine experimental
