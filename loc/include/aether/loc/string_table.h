@@ -18,6 +18,10 @@ public:
     // The text, or null if this language has no entry for the key.
     const std::string* Find(std::string_view language, const std::string& key) const;
     bool Remove(std::string_view language, const std::string& key);
+    // Makes `language` a column even with no entries yet (so an editor can add one
+    // and export it); returns false for an empty tag. Remove drops a language that
+    // has no entries left, as before.
+    bool AddLanguage(std::string_view language);
     bool HasKey(const std::string& key) const { return entries_.count(key) != 0; }
 
     std::vector<std::string> Languages() const { return {languages_.begin(), languages_.end()}; }

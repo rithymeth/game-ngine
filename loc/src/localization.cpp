@@ -16,6 +16,7 @@ Localization::~Localization() {
 
 Localization* Localization::Active() { return g_active.load(); }
 void Localization::MakeActive() { g_active.store(this); }
+void Localization::ClearActive() { g_active.store(nullptr); }
 
 bool Localization::SetLanguage(std::string language) {
     const std::string before = localizer_.Language();
