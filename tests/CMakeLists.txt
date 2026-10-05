@@ -99,7 +99,7 @@ target_sources(aether_tests PRIVATE test_blueprint_graph.cpp test_blueprint_vm.c
     test_terrain_splat.cpp
     test_terrain_renderer.cpp
     test_terrain_foliage.cpp
-    test_terrain_spline.cpp test_ai_perception.cpp test_streaming.cpp test_sprite2d.cpp test_sequence_core.cpp test_sequence_system.cpp test_cine_movie.cpp test_sequence_fade_sub.cpp test_save.cpp test_world_state.cpp test_settings.cpp test_save_games.cpp test_loc.cpp test_loc_tools.cpp test_gameplay_tags.cpp test_gameplay_attributes.cpp test_gameplay_effects.cpp test_gameplay_abilities.cpp test_gameplay_script.cpp test_api_docs.cpp test_manual.cpp test_net_transport.cpp test_net_replication.cpp test_net_rpc.cpp test_net_prediction.cpp test_net_session.cpp test_console.cpp test_profiler.cpp test_debug_draw.cpp test_crash.cpp test_functional.cpp test_window.cpp test_vulkan_rhi.cpp test_platform_plugin.cpp test_pak.cpp test_cook.cpp test_texture_cook.cpp)
+    test_terrain_spline.cpp test_ai_perception.cpp test_streaming.cpp test_sprite2d.cpp test_sequence_core.cpp test_sequence_system.cpp test_cine_movie.cpp test_sequence_fade_sub.cpp test_save.cpp test_world_state.cpp test_settings.cpp test_save_games.cpp test_loc.cpp test_loc_tools.cpp test_gameplay_tags.cpp test_gameplay_attributes.cpp test_gameplay_effects.cpp test_gameplay_abilities.cpp test_gameplay_script.cpp test_api_docs.cpp test_api_stability.cpp test_manual.cpp test_net_transport.cpp test_net_replication.cpp test_net_rpc.cpp test_net_prediction.cpp test_net_session.cpp test_console.cpp test_profiler.cpp test_debug_draw.cpp test_crash.cpp test_functional.cpp test_window.cpp test_vulkan_rhi.cpp test_platform_plugin.cpp test_pak.cpp test_cook.cpp test_texture_cook.cpp)
 target_link_libraries(aether_tests PRIVATE Aether::Blueprint Aether::Renderer Aether::Animation Aether::Audio Aether::UI Aether::VFX Aether::Nav Aether::AI Aether::Terrain Aether::Streaming Aether::Sprite2D Aether::Sequencer Aether::Save Aether::Loc Aether::Gameplay Aether::Net)
 if(TARGET aether_quests)
     target_sources(aether_tests PRIVATE test_quests.cpp)
@@ -123,4 +123,5 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME module_graph_catches_a_cycle
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_module_graph.py --dot ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/module_graph_cycle.dot --no-includes)
     set_tests_properties(module_graph_catches_a_cycle PROPERTIES WILL_FAIL TRUE)
+    add_test(NAME api_stability_annotations COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_api_stability.py)
 endif()
