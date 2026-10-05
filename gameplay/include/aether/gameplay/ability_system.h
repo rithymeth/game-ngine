@@ -30,6 +30,8 @@ struct AbilityContainer {
 enum class FailReason : u8 {
     None, UnknownAbility, NotGranted, DeadOwner, AlreadyActive, MissingRequired, Blocked, BlockedByAbility, Cooldown, CannotAfford
 };
+// "cooldown", "cannot_afford", ...: what a Blueprint's Event.OnAbilityFailed hears.
+const char* FailReasonName(FailReason reason);
 
 // Something happened to an ability (§30.4). `reason` is set for Failed;
 // `timed_out` for an Ended that hit its max_duration.
@@ -52,6 +54,7 @@ class AbilitySystem {
 public:
     static constexpr const char* kActivatedEvent = "Event.OnAbilityActivated";
     static constexpr const char* kEndedEvent = "Event.OnAbilityEnded";
+    static constexpr const char* kFailedEvent = "Event.OnAbilityFailed";
 
     struct ActivateResult {
         AbilityHandle handle = 0;
