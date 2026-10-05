@@ -1,4 +1,5 @@
 #include "aether/renderer/material_instance.h"
+#include "aether/core/json_util.h"
 
 #include <algorithm>
 #include <cstring>
@@ -80,7 +81,7 @@ bool InstanceFromJson(const json& j, MaterialInstance& out, std::string* error) 
         return false;
     };
     if (!j.is_object() || j.value("$type", "") != "MaterialInstance") return fail("not a material instance file");
-    if (j.value("$version", 0) > kInstanceVersion) return fail("saved by a newer version of the engine");
+    if (JsonVersion(j) > kInstanceVersion) return fail("saved by a newer version of the engine");
     MaterialInstance instance;
     const json parent = j.value("parent", json());
     if (!parent.is_string() || parent.get<std::string>().empty()) return fail("a material instance needs a parent");

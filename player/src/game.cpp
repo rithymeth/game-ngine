@@ -1,4 +1,5 @@
 #include "aether/player/game.h"
+#include "aether/core/json_util.h"
 
 #include "aether/sequencer/sequence_system.h"
 
@@ -64,7 +65,7 @@ bool ParseGameManifest(std::string_view text, GameManifest& out, std::string* er
     const json m = json::parse(text.begin(), text.end(), nullptr, /*allow_exceptions=*/false);
     if (m.is_discarded() || !m.is_object()) return Fail(error, "Manifest.json isn't JSON");
     if (m.value("$type", "") != "CookManifest") return Fail(error, "Manifest.json isn't a cook manifest");
-    if (m.value("$version", 0) != 1) return Fail(error, "Manifest.json has an unsupported version");
+    if (JsonVersion(m) != 1) return Fail(error, "Manifest.json has an unsupported version");
     try {
         GameManifest g;
         g.project = m.value("project", "");

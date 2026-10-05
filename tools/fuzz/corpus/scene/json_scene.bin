@@ -1,0 +1,1 @@
+{"$type": "Scene", "$version": 1, "entities": [{"guid": "1", "components": {"Transform": {"position": [1, 2, 3]}}}]}

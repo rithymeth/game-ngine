@@ -1,4 +1,5 @@
 #include "aether/scene/prefab.h"
+#include "aether/core/json_util.h"
 
 #include "aether/core/log.h"
 #include "aether/platform/filesystem.h"
@@ -380,7 +381,7 @@ bool PrefabFromJson(const Json& json, PrefabData& out, std::string* error) {
         SetError(error, "Not an Aether prefab");
         return false;
     }
-    if (json.value("$version", 0) != kPrefabVersion) {
+    if (JsonVersion(json) != kPrefabVersion) {
         SetError(error, "Unsupported prefab version");
         return false;
     }

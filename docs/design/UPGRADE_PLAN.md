@@ -181,7 +181,7 @@ when advisory gates become required.
 
 | Step | Work | Needs |
 |---|---|---|
-| **47.1** | libFuzzer harnesses (`tools/fuzz/`, `AETHER_BUILD_FUZZERS`, Clang): pak reader, scene, Blueprint and save loaders, the net protocol, importers. One PR per target, runnable here. `||` | - |
+| **47.1** *(started: pak, scene, Blueprint and gameplay-data targets; found and fixed two real crashes)* | libFuzzer harnesses (`tools/fuzz/`, `AETHER_BUILD_FUZZERS`, Clang): pak reader, scene, Blueprint and save loaders, the net protocol, importers. One PR per target, runnable here. `||` | - |
 | **47.2** | A corpus and a fixed-budget fuzz job in CI. | 47.1 |
 | **47.3** | Editor autosave and crash recovery (extends the crash reporter). | - |
 | **47.4** | Crash-dump symbolication. The Windows dump path is Windows-CI-only. | - |

@@ -358,6 +358,49 @@ jobs:
           if [ -z "$files" ]; then echo "no engine or kit sources changed"; exit 0; fi
           clang-tidy -p build $files
 
+  # Phase 47 step 1 (docs/design/UPGRADE_PLAN.md): libFuzzer on the loaders, for a fixed time each. Advisory
+  # for now; the checked-in corpus also runs as a regression test (ctest fuzz_replay_*) in every job.
+  fuzz:
+    name: Fuzz (Clang, advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: >
+          sudo apt-get update && sudo apt-get install -y ninja-build clang libclang-rt-dev
+          libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+          libvulkan-dev glslang-dev glslang-tools spirv-tools
+      - name: Cache fetched dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-linux-fuzz-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: deps-linux-fuzz-
+      - name: Configure
+        env:
+          CC: clang
+          CXX: clang++
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DAETHER_BUILD_FUZZERS=ON
+          -DAETHER_BUILD_PHYSICS=OFF -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_SANDBOX=OFF -DAETHER_BUILD_TESTS=OFF
+      - name: Build the fuzzers
+        run: cmake --build build --target aether_fuzz_pak aether_fuzz_scene aether_fuzz_blueprint aether_fuzz_gameplay --parallel
+      - name: Fuzz
+        run: |
+          for t in pak scene blueprint gameplay; do
+            mkdir -p work/$t
+            cp -r tools/fuzz/corpus/$t/. work/$t/
+            ./build/tools/fuzz/aether_fuzz_$t -max_total_time=60 -rss_limit_mb=2048 -timeout=10 work/$t
+          done
+      - name: Keep any crash inputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes
+          path: crash-*
+          if-no-files-found: ignore
+
   release:
     name: Release
     # A pushed v* tag, or a manual run given a release_tag (which creates

@@ -1,4 +1,5 @@
 #include "aether/animation/anim_graph.h"
+#include "aether/core/json_util.h"
 
 #include <algorithm>
 #include <cmath>
@@ -896,7 +897,7 @@ bool AnimGraphFromJson(const json& j, AnimGraph& out, std::string* error) {
         return false;
     };
     if (!j.is_object() || j.value("$type", "") != "AnimGraph") return fail("not an animation graph file");
-    if (j.value("$version", 0) > kFormatVersion) return fail("saved by a newer version of the engine");
+    if (JsonVersion(j) > kFormatVersion) return fail("saved by a newer version of the engine");
     AnimGraph g;
     for (const json& v : j.value("variables", json::array())) {
         AnimVariable var;

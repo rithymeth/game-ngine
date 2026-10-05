@@ -1,4 +1,5 @@
 #include "aether/animation/blend_space.h"
+#include "aether/core/json_util.h"
 
 #include <algorithm>
 #include <cmath>
@@ -328,7 +329,7 @@ bool BlendSpaceFromJson(const json& j, BlendSpace& out, std::string* error) {
         return false;
     };
     if (!j.is_object() || j.value("$type", "") != "BlendSpace") return fail("not a blend space file");
-    if (j.value("$version", 0) > kFormatVersion) return fail("saved by a newer version of the engine");
+    if (JsonVersion(j) > kFormatVersion) return fail("saved by a newer version of the engine");
     BlendSpace s;
     const json dims = j.value("dimensions", json(1));
     if (!dims.is_number_integer() || (dims.get<i64>() != 1 && dims.get<i64>() != 2)) return fail("a blend space has 1 or 2 dimensions");
