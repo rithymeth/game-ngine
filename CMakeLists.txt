@@ -320,6 +320,9 @@ add_subdirectory(save)
 
 # Localization (Phase 29): LocText, string tables and message formatting; engine-only.
 add_subdirectory(loc)
+
+# Gameplay ability system and RPG toolkit (Phase 30): tags, attributes, effects, abilities; engine-only.
+add_subdirectory(gameplay)
 add_subdirectory(net)
 
 # Recast/Detour (zlib, recastnavigation/recastnavigation) for navigation
