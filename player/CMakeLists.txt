@@ -26,6 +26,13 @@ if(TARGET Aether::Inventory)
 else()
     target_compile_definitions(aether_game PUBLIC AETHER_KIT_INVENTORY=0)
 endif()
+# The interaction genre kit (Phase 30 step 7b), when built.
+if(TARGET Aether::Interaction)
+    target_link_libraries(aether_game PUBLIC Aether::Interaction)
+    target_compile_definitions(aether_game PUBLIC AETHER_KIT_INTERACTION=1)
+else()
+    target_compile_definitions(aether_game PUBLIC AETHER_KIT_INTERACTION=0)
+endif()
 add_library(Aether::Game ALIAS aether_game)
 
 add_executable(aether_player main.cpp)

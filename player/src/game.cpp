@@ -7,6 +7,9 @@
 #if AETHER_KIT_INVENTORY
 #include "aether/inventory/inventory_system.h"
 #endif
+#if AETHER_KIT_INTERACTION
+#include "aether/interaction/interaction_system.h"
+#endif
 #include "aether/gameplay/attribute_system.h"
 #include "aether/gameplay/effect_system.h"
 #include "aether/loc/localized_path.h"
@@ -227,6 +230,9 @@ struct Game::Runtime {
     std::unique_ptr<gas::AbilitySystem> abilities;
 #if AETHER_KIT_INVENTORY
     std::unique_ptr<inv::InventorySystem> inventory;
+#endif
+#if AETHER_KIT_INTERACTION
+    std::unique_ptr<interact::InteractionSystem> interaction;
 #endif
 #if AETHER_GAME_SCRIPTING
     script::LuauHost host;
@@ -614,6 +620,9 @@ void Game::StartRuntime() {
     runtime_->inventory = std::make_unique<inv::InventorySystem>(*world_, runtime_->effects.get(), items_);
 #endif
     runtime_->abilities = std::make_unique<gas::AbilitySystem>(*world_, *runtime_->attributes, *runtime_->effects, abilities_, effects_);
+#if AETHER_KIT_INTERACTION
+    runtime_->interaction = std::make_unique<interact::InteractionSystem>(*world_, runtime_->effects.get(), runtime_->abilities.get());
+#endif
     runtime_->sequences = std::make_unique<seq::SequenceSystem>(
         *world_, guids_, [this](const std::string& path) { return FindSequence(path); }, lifecycle_.get());
     runtime_->sequences->SetSpawner([this](const seq::Track&, Entity parent, const seq::SpawnKey& key) -> Entity {
@@ -896,6 +905,39 @@ void Game::BuildFrame() {
     };
     scheduler_.Add(std::move(inventory));
 #endif
+#if AETHER_KIT_INTERACTION
+    // Interaction (§30.8): cooldowns tick, and uses reach the target's script and Blueprint (OnInteract),
+    // failures the user's (OnInteractFailed).
+    SystemDesc interaction;
+    interaction.name = "Player.Interaction";
+    interaction.phase = SystemPhase::Update;
+    interaction.after = {"Player.Update", "Player.Sequencer", "Player.Effects"};
+    interaction.main_thread_only = true;
+    interaction.run = [this](World&, const FrameContext& frame) {
+        if (!runtime_ || !runtime_->interaction) return;
+        runtime_->interaction->Update(frame.dt);
+        const std::vector<interact::InteractionEvent> events = runtime_->interaction->Events();
+        runtime_->interaction->ClearEvents();
+        for (const interact::InteractionEvent& e : events) {
+            const bool ok = e.kind == interact::InteractionEvent::Kind::Interacted;
+#if AETHER_GAME_SCRIPTING
+            if (runtime_->scripts) {
+                if (ok) runtime_->scripts->SendEvent(e.target, "OnInteract", {script::EntityRef{e.interactor}});
+                else runtime_->scripts->SendEvent(e.interactor, "OnInteractFailed", {script::EntityRef{e.target}, std::string(interact::ReasonName(e.reason))});
+            }
+#endif
+            if (!runtime_->blueprints) continue;
+            if (ok) {
+                const bp::VmValue args[] = {e.interactor};
+                runtime_->blueprints->VM().Dispatch(e.target, interact::InteractionSystem::kInteractEvent, args);
+            } else {
+                const bp::VmValue args[] = {e.target, std::string(interact::ReasonName(e.reason))};
+                runtime_->blueprints->VM().Dispatch(e.interactor, interact::InteractionSystem::kFailedEvent, args);
+            }
+        }
+    };
+    scheduler_.Add(std::move(interaction));
+#endif
     SystemDesc attributes;
     attributes.name = "Player.Attributes";
     attributes.phase = SystemPhase::Update;
@@ -924,6 +966,9 @@ void Game::BuildFrame() {
     scripting.after = {"Player.Sequencer", "Player.Save", "Player.Attributes", "Player.Effects", "Player.Abilities"
 #if AETHER_KIT_INVENTORY
         ,"Player.Inventory"
+#endif
+#if AETHER_KIT_INTERACTION
+        ,"Player.Interaction"
 #endif
     };
     scripting.main_thread_only = true;
