@@ -3,6 +3,7 @@
 #include "aether/ui/font.h"
 #include "aether/ui/panels.h"
 #include "aether/ui/viewport.h"
+#include "aether/ui/panels.h"
 #include "test_framework.h"
 
 #include <cmath>
@@ -143,4 +144,91 @@ AETHER_TEST(UIFallback_Utf8RejectsOverlongSurrogatesAndOutOfRange) {
     const std::string s = "\xC0\xAF" "x";
     DecodeUtf8(s, i);
     CHECK(i == 2); // the whole bad sequence is consumed, then "x" decodes normally
+}
+
+// ---- right-to-left (§29.6) ----
+
+#include "aether/loc/language.h"
+#include "aether/ui/bidi.h"
+
+namespace {
+
+std::vector<u32> U(const std::u32string& s) { return std::vector<u32>(s.begin(), s.end()); }
+std::u32string S(const std::vector<u32>& v) { return std::u32string(v.begin(), v.end()); }
+
+} // namespace
+
+AETHER_TEST(UIBidi_HebrewReversesAndNumbersKeepTheirOrder) {
+    const std::u32string shalom = U"שלום"; // שלום, logical order
+    const std::u32string reversed(shalom.rbegin(), shalom.rend());
+    CHECK(S(ReorderVisual(U(shalom))) == reversed);
+    CHECK(S(ReorderVisual(U(U"abc"))) == U"abc"); // no right-to-left character: untouched
+    CHECK(S(ReorderVisual(U(U""))) == U"");
+    // A Latin word and a number inside Hebrew keep their own order; the Hebrew runs swap places.
+    const std::u32string mixed = U"של abc 123 ום";
+    const std::u32string visual = S(ReorderVisual(U(mixed)));
+    CHECK(visual.find(U"abc") != std::u32string::npos && visual.find(U"123") != std::u32string::npos);
+    CHECK(visual.front() == U'\u05DD' && visual.back() == U'\u05E9'); // the last Hebrew word is drawn first (leftmost), each word reversed
+    CHECK(visual.find(U"abc 123") != std::u32string::npos);           // the Latin and the number keep their order as one run
+    // Left-to-right text with a Hebrew word in it: the base stays left to right.
+    const std::u32string ltr = U"say שלום now";
+    const std::u32string out = S(ReorderVisual(U(ltr)));
+    CHECK(out.rfind(U"say ", 0) == 0 && out.find(U" now") == out.size() - 4);
+    CHECK(BaseDirectionIsRtl(U(shalom)) && !BaseDirectionIsRtl(U(ltr)) && !BaseDirectionIsRtl(U(U"123 ?")));
+    // Brackets in a right-to-left run are mirrored.
+    CHECK(S(ReorderVisual(U(U"א(ב)"))).find(U'(') != std::u32string::npos);
+    CHECK(IsRightToLeft(0x05D0) && IsRightToLeft(0x0627) && !IsRightToLeft('a') && !IsRightToLeft('5') && !IsRightToLeft(0x0661));
+}
+
+AETHER_TEST(UIBidi_LayoutWidthAndDrawOrderFollowTheVisualOrder) {
+    const BuiltinFont boxes;
+    const std::string text = "\xD7\xA9\xD7\x9C\xD7\x95\xD7\x9D"; // שלום
+    const TextLayout layout = LayoutText(boxes, text, 10, 0);
+    CHECK(Near(layout.size.x, 24.0f) && layout.lines.size() == 1); // 4 glyphs of 6
+    // Draw order is by position: with distinct widths the first drawn quad is the last letter.
+    StubFont stub({0x05E9, 0x05DC, 0x05D5, 0x05DD}, 1.0f, 1);
+    DrawList list;
+    list.AddText(stub, text, 10, {0, 0, 100, 20}, Color{1, 1, 1, 1}, TextAlign::Left, 0, nullptr);
+    CHECK(list.quads.size() == 4);
+    for (usize i = 1; i < list.quads.size(); ++i) CHECK(list.quads[i].rect.x > list.quads[i - 1].rect.x);
+}
+
+AETHER_TEST(UIBidi_ViewportMirrorsLayoutAndResolvesStartEnd) {
+    const BuiltinFont boxes;
+    const auto build = [](Viewport& vp, Text*& first, Text*& start, Text*& end) {
+        vp.scale_settings.rule = ScaleSettings::Rule::None;
+        vp.SetSize({200, 100});
+        auto row = std::make_unique<HorizontalBox>();
+        first = row->Add<Text>("A");
+        first->size = 10;
+        Text* second = row->Add<Text>("B");
+        second->size = 10;
+        start = row->Add<Text>("S");
+        start->justify = TextAlign::Start;
+        end = row->Add<Text>("E");
+        end->justify = TextAlign::End;
+        (void)second;
+        vp.Add(std::move(row));
+    };
+    Viewport ltr, rtl;
+    Text *l1, *ls, *le, *r1, *rs, *re;
+    build(ltr, l1, ls, le);
+    build(rtl, r1, rs, re);
+    rtl.direction = FlowDirection::RightToLeft;
+    ltr.Layout(boxes);
+    rtl.Layout(boxes);
+    // The first child is leftmost in LTR and rightmost in RTL, mirrored about the screen's centre.
+    CHECK(l1->Geometry().x < ls->Geometry().x);
+    CHECK(Near(r1->Geometry().x, 200.0f - l1->Geometry().x - l1->Geometry().w));
+    CHECK(r1->Geometry().x > rs->Geometry().x);
+    CHECK(Near(r1->Geometry().w, l1->Geometry().w)); // sizes are unchanged
+    // Start / End resolve against the direction; Left and Right don't.
+    const DrawList a = ltr.Paint(boxes), b = rtl.Paint(boxes);
+    CHECK(a.quads.size() == b.quads.size() && !a.quads.empty());
+    for (const DrawQuad& q : b.quads) CHECK(q.rect.x >= 0.0f && q.rect.Right() <= 200.0f + 1e-3f);
+}
+
+AETHER_TEST(UIBidi_LanguagesKnowTheirDirection) {
+    for (const char* l : {"ar", "he", "fa", "ur", "ar-EG", "he-IL", "ps", "yi", "pa-Arab", "ku-Arab-IQ", "AR"}) CHECK(loc::IsRtl(l));
+    for (const char* l : {"en", "fr", "pt-BR", "zh-Hans", "ja", "ru", "", "sr-Latn", "arn"}) CHECK(!loc::IsRtl(l));
 }

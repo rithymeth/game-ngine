@@ -5786,6 +5786,41 @@ with no variant falling back to the base, and the game following its language.
 Not done: reloading what is already loaded when the language changes (the
 `Localization` change listener is the hook), and per-asset-type policy.
 
+#### Right-to-left
+
+Enough for Hebrew and layout mirroring; **Arabic joining needs shaping and is not
+done** (Arabic letters draw as separate, isolated forms, which reads wrong until
+step 7 adds HarfBuzz).
+
+- **Text order** (`ui/bidi.h`): `ReorderVisual` puts a line's code points in the order
+  they are drawn, following the shape of UAX #9 without embeddings or isolates.
+  The base direction is the first strong character's; Hebrew and Arabic letters
+  run right to left, other letters and digits left to right (a number inside Hebrew
+  keeps its order, sitting one level up); spaces and punctuation take the direction
+  around them, else the base; runs are reversed from the deepest level up; brackets
+  in a right-to-left run are mirrored. Text with no right-to-left character is
+  untouched, so left-to-right text costs only a scan. `LayoutText` wraps in logical
+  order and then orders each line, so measuring and drawing agree.
+- **Layout mirroring**: `Viewport::direction` (`FlowDirection`). With
+  `RightToLeft` the layers are laid out as usual and then flipped about the safe
+  area's centre (`Widget::MirrorX`), so a box runs right to left, `Left`-aligned
+  children sit on the right, and padding and margins mirror, with no change to any
+  panel. Sizes are unchanged; hit testing uses the mirrored rectangles.
+- **Start / End**: `TextAlign::Start` and `End` (layout files: "Start", "End") are
+  the side a line starts and ends on in the reading direction; a Text resolves
+  them against the viewport's direction. (`Left`, `Center`, `Right` are as before.)
+- `loc::IsRtl(language)` says whether a language is written right to left (ar,
+  he, fa, ur, ... or an Arabic/Hebrew script subtag), for setting the direction
+  when the language changes.
+
+Tests (`test_ui_fallback.cpp`): Hebrew reversal, numbers and Latin keeping
+their order, a left-to-right base staying so, brackets mirrored; layout width and
+draw order following the visual order; a viewport mirrored about its centre with
+Start/End resolved; and `IsRtl`.
+
+Not done: Arabic shaping, caret and selection in mixed-direction text (text
+boxes still move by logical position), embeddings and isolates, and mirrored icons.
+
 ### 29.7 PR breakdown
 
 1. The core (done, §29.1).
@@ -5802,5 +5837,5 @@ Not done: reloading what is already loaded when the language changes (the
 6. Font fallback (Latin, then CJK, then emoji) (done, §29.6); localized assets
    (a language's variant of an asset by file name) (done, §29.6); right-to-left layout (a
    run-reversing BiDi-lite for Hebrew, Start/End alignment, mirrored
-   horizontal layout; Arabic joining needs shaping and waits for step 7).
+   layout; Arabic joining needs shaping and waits for step 7) (done, §29.6).
 7. Optional: HarfBuzz shaping behind a CMake option, and gender selectors.

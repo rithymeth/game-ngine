@@ -58,5 +58,7 @@ struct Anchors {
 
 enum class HAlign : u8 { Fill, Left, Center, Right };
 enum class VAlign : u8 { Fill, Top, Center, Bottom };
+// The direction text and horizontal layout run in (Phase 29 step 6, §29.6).
+enum class FlowDirection : u8 { LeftToRight, RightToLeft };
 
 } // namespace aether::ui
