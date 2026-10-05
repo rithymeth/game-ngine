@@ -118,6 +118,11 @@ std::vector<AssetGuid> CollectCookSet(const AssetDatabase& database,
             warnings.push_back(root + " (" + reason + ") isn't an asset in the content folder");
         }
     }
+    // String tables are referenced by no asset, so without this they'd have
+    // to be listed by hand and a forgotten one would silently lose its text.
+    for (const AssetRecord* record : all) {
+        if (!record->IsSubAsset() && !record->missing && record->importer == "StringTable") include(record->guid, "localization");
+    }
     std::vector<AssetGuid> result;
     while (!queue.empty()) {
         const AssetGuid guid = queue.front();
