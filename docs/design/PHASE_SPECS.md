@@ -5241,3 +5241,69 @@ forwards them (below).
 7. Fade and Subsequence tracks (this step, §27.7).
 8. A release (v0.27.0) that carries the Phase 26 documentation and lights and
    all of Phase 27.
+
+
+---
+
+# Phase 28: Save Game and Persistence
+
+The concept is in [ROADMAP.md Phase 28](../ROADMAP.md). Step 1 is save slots,
+in its own module, `save/` (`aether::save`, `Aether::Save`).
+
+### 28.1 Save slots
+
+- **What is saved**: any reflected struct (`AETHER_REFLECT`), through the
+  reflection layer's JSON serializer, so its schema version (`$v`) and its
+  migration hook (`reflect::RegisterMigration`) are the ones every other
+  asset uses: loading an older save runs the hook, a field the save lacks
+  keeps its default, one it doesn't know is skipped with a warning.
+- **`.asav`**: one file per slot, `<slot>.asav`, JSON text in an envelope:
+  `$type` ("aether.save"), `format` (1), `type` (the struct's name),
+  `type_version`, `slot`, `timestamp_utc`, `checksum` (CRC-32 of the data's
+  compact JSON, as 8 hex digits) and `data`. Readable and diffable, and the
+  Save Inspector (a later step) opens it.
+- **`SaveSystem(directory)`**: `Save`, `Load` (by type or template),
+  `Exists`, `ListSlots` (slot, type, version, time, size, validity; a damaged
+  file is listed as invalid), `DeleteSlot`, and `Active()` / `MakeActive()`
+  for the Blueprint nodes. Results are `SaveResult` (ok, an error code, a
+  message and warnings), never exceptions.
+- **Slot names** are 1 to 64 of `A-Z a-z 0-9 _ -`, so a name can't reach
+  outside the folder (`InvalidSlot` otherwise).
+- **Errors**: `NotFound`, `IoError`, `Corrupt` (not a save, truncated, an
+  unknown envelope format, a checksum that doesn't match), `WrongType` (the
+  slot holds another struct) and `FutureVersion` (saved by a newer version of
+  the struct than the code has: refused, not guessed at). A failed load never
+  touches the object.
+- **Atomic writes** (`fs::WriteFileAtomic`): the data goes to `<file>.tmp` and
+  is renamed over the target, so a crash leaves the old save or the new, and
+  a failed write removes the temp file. Each save first copies the existing
+  file to `<slot>.asav.bak`; loading a missing or `Corrupt` file falls back to
+  the backup (with a warning), while a wrong type or a newer version doesn't.
+  `DeleteSlot` removes both. (An fsync before the rename, for a true
+  power-loss guarantee, is not done yet.)
+- **Async**: `SaveAsync` turns the object into text on the calling thread, so
+  it may change right after, and a worker thread writes the file. Saves are
+  written in the order made; the callback runs from `Pump()` on the pumping
+  thread; `Flush()` waits for the queue; the destructor finishes what is
+  queued (undelivered callbacks are dropped). Synchronous and async calls
+  share one lock, so they never interleave on a file.
+- **Where saves live** is the caller's: the directory is a constructor
+  argument. The per-user folder on each platform comes with the player wiring.
+- `fs::ListDirectory` lists a folder's files, sorted.
+- **Tests** (`test_save.cpp`): a struct round trip and the envelope; slot name
+  validation; listing, existence and deletion; atomic writes and the file
+  helpers; the backup and recovery; corruption, truncation and unknown
+  formats; wrong type and newer versions; migration and defaults; async
+  completion, ordering, the destructor draining and sync/async mixing; and
+  the active system.
+
+### 28.2 PR breakdown
+
+1. Save slots: versioned, checksummed, atomic, async (this step, §28.1).
+2. World state: a `SaveableEntity` component, capture and restore by
+   `EntityGuid`.
+3. Settings, stored apart from game saves.
+4. Blueprint and Luau nodes (Save Game to Slot, Load Game from Slot, Does
+   Save Game Exist, Create Save Game Object).
+5. The Save Inspector panel for `.asav`.
+6. Player wiring (the per-user save folder, a `Player.Save` stage) and docs.
