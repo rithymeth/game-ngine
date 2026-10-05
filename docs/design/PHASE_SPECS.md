@@ -5994,7 +5994,21 @@ attribute change or gameplay event; a Blueprint graph can already use its latent
 a dedicated ability graph asset (an ability's logic runs in the owner's script graph),
 replication.
 
-### 30.5 PR breakdown
+### 30.5 Luau face and manual (step 5)
+
+Luau gets `GameplayTags`, `Attributes`, `Effects` and `Abilities` tables
+(`scripting/src/gameplay_api.cpp`, `InstallGameplayApi`), one for one with the Blueprint
+libraries and acting on the same active systems; wrong-typed arguments raise script errors
+and a missing system makes them inert. `NativeCall` gained `IsEntity` and `EntityArg`. The
+player's `Player.Attributes`, `Player.Effects` and `Player.Abilities` stages also call the
+entity's script method when it defines one: `OnAttributeChanged (name, old, new)`,
+`OnEffectApplied` / `OnEffectRemoved (effect, handle)`, `OnAbilityActivated (ability, handle)`,
+`OnAbilityEnded (ability, handle, cancelled)`, `OnAbilityFailed (ability, reason)`. The sample
+is the manual's chapter `docs/manual/09-gameplay.md` (a poison effect, a fireball with cost and
+cooldown, and a script). Deferred: Event-object subscriptions (`Attributes.OnChanged`),
+Luau access to an entity's tag container.
+
+### 30.6 PR breakdown
 
 1. Gameplay tags (done, §30.1).
 2. `AttributeSet`: base and current values with clamps, change events
@@ -6005,7 +6019,8 @@ replication.
 4. Abilities (`.aability`): cost, cooldown, required / blocked / cancel tags,
    activate, commit, end. 4a data and system, 4b assets, the player stage and the Blueprint
    library (done, §30.4); the latent tasks are deferred.
-5. Blueprint and Luau faces, the `Player.Gameplay` system, cook roots and a sample.
+5. Luau face, script events, and the manual chapter with a sample (done, §30.5); the
+   Blueprint face, player systems and cook roots came with steps 2-4.
 6. The editor's attribute and effect debugger.
 7. Genre kits as optional plugins: inventory and items, the dialogue graph,
    quests, interaction.

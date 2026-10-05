@@ -12,6 +12,7 @@ it works inside.
 6. [Packaging and shipping](06-packaging.md): cooking, `.apak` archives, the player, patches, DLC, encryption.
 7. [Plugins and editor extensions](07-extending.md): modules, panels, menus, property drawers, editor scripts.
 8. [The API reference](08-api-reference.md): every component and type, generated from the code.
+9. [Gameplay](09-gameplay.md): tags, attributes, effects and abilities.
 
 The sample projects are the templates: **Blank**, **First Person**, **Third
 Person**, **Top Down**, **Vehicle** and **2D Platformer**, in the editor's
