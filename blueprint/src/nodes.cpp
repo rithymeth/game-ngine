@@ -224,6 +224,8 @@ void RegisterBuiltins(Registry& r) {
     AddEvent(r, "Event.OnAudioFinished", "Event OnAudioFinished", {Out("cue", kString)});
     // Save games (Phase 28 step 4): an async Save Game to Slot finished.
     AddEvent(r, "Event.OnSaveFinished", "Event OnSaveFinished", {Out("slot", kString), Out("success", kBool)});
+    // Gameplay (Phase 30 step 2): one of an entity's attributes changed its current value.
+    AddEvent(r, "Event.OnAttributeChanged", "Event OnAttributeChanged", {Out("name", kString), Out("old", kFloat), Out("new", kFloat)});
     // VFX (Phase 19 step 4): a ParticleSystem's effect is over.
     AddEvent(r, "Event.OnParticleSystemFinished", "Event OnParticleSystemFinished", {Out("asset", kString)});
     // Navigation (Phase 20 step 3): a NavAgent's move ended (arrived, or failed).
