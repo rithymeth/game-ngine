@@ -125,6 +125,7 @@ std::vector<AssetGuid> CollectCookSet(const AssetDatabase& database,
         // Gameplay effects are applied by name from Blueprints, so nothing references them either.
         if (!record->IsSubAsset() && !record->missing && record->importer == "GameplayEffect") include(record->guid, "gameplay");
         if (!record->IsSubAsset() && !record->missing && record->importer == "GameplayAbility") include(record->guid, "gameplay");
+        if (!record->IsSubAsset() && !record->missing && record->importer == "ItemDefinition") include(record->guid, "gameplay");
     }
     std::vector<AssetGuid> result;
     while (!queue.empty()) {
