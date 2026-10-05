@@ -321,7 +321,7 @@ jobs:
         run: cmake --build build --target aether_tests --parallel
       - name: Threaded tests under TSan
         env:
-          AETHER_TEST_FILTER: JobSystem_,Audio_,Net_,NetPlay_,Streaming_
+          AETHER_TEST_FILTER: JobSystem_,Audio_SpscQueue,Audio_ThreadedMixer,Net_,NetPlay_,Streaming_
           TSAN_OPTIONS: halt_on_error=1 second_deadlock_stack=1 suppressions=${{ github.workspace }}/tools/tsan_suppressions.txt
         run: xvfb-run -a ./build/tests/aether_tests
 
