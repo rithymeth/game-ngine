@@ -3,6 +3,7 @@
 #include "aether/sequencer/sequence_system.h"
 
 #include "aether/core/log.h"
+#include "aether/gameplay/attribute_system.h"
 #include "aether/loc/localized_path.h"
 #include "aether/reflection/serialize.h"
 #include "aether/scene/gameplay.h"
@@ -216,6 +217,7 @@ bool Game::HasScripting() { return AETHER_GAME_SCRIPTING != 0; }
 // before any of them.
 struct Game::Runtime {
     std::unique_ptr<seq::SequenceSystem> sequences;
+    std::unique_ptr<gas::AttributeSystem> attributes; // Phase 30
 #if AETHER_GAME_SCRIPTING
     script::LuauHost host;
     std::unique_ptr<script::ScriptSystem> scripts;
@@ -374,6 +376,7 @@ bool Game::LoadStartupScene(std::string* error) {
 bool Game::LoadScene(const std::string& path, std::string* error) {
     StartModules(); // their components, before the scene names them
     RegisterSequenceComponents(); // SequenceComponent (§27.2)
+    gas::RegisterGameplayComponents(); // AttributeSet and TagContainer (§30)
     sequences_.clear(); // the old scene's sequences go with its runtime (below)
     sprite2d::RegisterSprite2DComponents(); // sprites and tilemaps (§26.6)
     sprite2d::RegisterPhysics2DComponents(); // 2D bodies and colliders
@@ -530,6 +533,7 @@ void Game::StartRuntime() {
     runtime_->blueprints->Register(*lifecycle_);
     // Sequences (§27): the system finds .asequence files by path, and spawns
     // a Spawn key's prefab (a GUID or a path) at its place.
+    runtime_->attributes = std::make_unique<gas::AttributeSystem>(*world_); // attributes of this scene's entities
     runtime_->sequences = std::make_unique<seq::SequenceSystem>(
         *world_, guids_, [this](const std::string& path) { return FindSequence(path); }, lifecycle_.get());
     runtime_->sequences->SetSpawner([this](const seq::Track&, Entity parent, const seq::SpawnKey& key) -> Entity {
@@ -688,11 +692,30 @@ void Game::BuildFrame() {
         }
     };
     scheduler_.Add(std::move(save_system));
+    // Attribute changes (§30.2) reach the changed entity's Blueprint as
+    // Event.OnAttributeChanged (name, old, new), after gameplay has run.
+    SystemDesc attributes;
+    attributes.name = "Player.Attributes";
+    attributes.phase = SystemPhase::Update;
+    attributes.after = {"Player.Update", "Player.Sequencer"};
+    attributes.main_thread_only = true;
+    attributes.run = [this](World&, const FrameContext&) {
+        if (!runtime_ || !runtime_->attributes) return;
+        // Take the queue first: a handler that changes an attribute queues the next event for next frame.
+        const std::vector<gas::AttributeEvent> events = runtime_->attributes->Events();
+        runtime_->attributes->ClearEvents();
+        if (!runtime_->blueprints) return;
+        for (const gas::AttributeEvent& e : events) {
+            const bp::VmValue args[] = {e.name, e.old_value, e.new_value};
+            runtime_->blueprints->VM().Dispatch(e.entity, gas::AttributeSystem::kChangedEvent, args);
+        }
+    };
+    scheduler_.Add(std::move(attributes));
     // Timers and Blueprint ticks run with the frame's Update.
     SystemDesc scripting;
     scripting.name = "Player.Scripting";
     scripting.phase = SystemPhase::Update;
-    scripting.after = {"Player.Sequencer", "Player.Save"};
+    scripting.after = {"Player.Sequencer", "Player.Save", "Player.Attributes"};
     scripting.main_thread_only = true;
     scripting.run = [this](World&, const FrameContext& frame) {
 #if AETHER_GAME_SCRIPTING
