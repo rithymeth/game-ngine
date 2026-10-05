@@ -1,4 +1,6 @@
 #include "aether/terrain/terrain.h"
+#include "terrain_math.h"
+#include "terrain_noise.h"
 
 #include <algorithm>
 #include <cmath>
@@ -34,39 +36,7 @@ f32 Heightmap::SampleLinear(f32 wx, f32 wz) const {
     return h0 + (h1 - h0) * fz;
 }
 
-// --- Noise ---
-
-namespace {
-
-f32 Smoothstep(f32 t) { return t * t * (3.0f - 2.0f * t); }
-
-i32 Hash(i32 x, i32 z) {
-    i32 n = x + z * 57;
-    n = (n << 13) ^ n;
-    return n * (n * n * 15731 + 789221) + 1376312589;
-}
-
-f32 FloatFromHash(i32 h) {
-    return static_cast<f32>(static_cast<i32>(h & 0x0fffffff) ^ 0x40000000) / 2147483648.0f;
-}
-
-f32 Noise2D(i32 x, i32 z) {
-    const f32 fx = static_cast<f32>(x) - std::floor(static_cast<f32>(x));
-    const f32 fz = static_cast<f32>(z) - std::floor(static_cast<f32>(z));
-    const f32 sx = Smoothstep(fx);
-    const f32 sz = Smoothstep(fz);
-
-    const f32 n00 = FloatFromHash(Hash(x,     z));
-    const f32 n10 = FloatFromHash(Hash(x + 1, z));
-    const f32 n01 = FloatFromHash(Hash(x,     z + 1));
-    const f32 n11 = FloatFromHash(Hash(x + 1, z + 1));
-
-    const f32 nx0 = n00 + (n10 - n00) * sx;
-    const f32 nx1 = n01 + (n11 - n01) * sx;
-    return nx0 + (nx1 - nx0) * sz;
-}
-
-} // namespace
+// --- Procedural heights ---
 
 Heightmap CreateProceduralHeightmap(u32 width, u32 height, f32 cell_size,
                                      u32 octaves, f32 persistence, f32 scale) {
@@ -75,25 +45,12 @@ Heightmap CreateProceduralHeightmap(u32 width, u32 height, f32 cell_size,
     hm.height = height;
     hm.cell_size = cell_size;
     hm.heights.resize(static_cast<usize>(width) * height, 0.0f);
-
+    // Features about 16 samples across at the first octave; heights in -scale..scale.
+    constexpr f32 kFeature = 16.0f;
     for (u32 z = 0; z < height; ++z) {
         for (u32 x = 0; x < width; ++x) {
-            f32 height_value = 0.0f;
-            f32 amplitude = 1.0f;
-            f32 frequency = 1.0f;
-            f32 max_val = 0.0f;
-
-            for (u32 o = 0; o < octaves; ++o) {
-                height_value += amplitude * Noise2D(
-                    static_cast<i32>(x) * static_cast<i32>(frequency),
-                    static_cast<i32>(z) * static_cast<i32>(frequency));
-                max_val += amplitude;
-                amplitude *= persistence;
-                frequency *= 2.0f;
-            }
-
             hm.heights[static_cast<usize>(z) * width + x] =
-                (height_value / max_val) * scale;
+                FractalNoise(static_cast<f32>(x) / kFeature, static_cast<f32>(z) / kFeature, octaves, persistence, 0u) * scale;
         }
     }
     return hm;
@@ -113,10 +70,9 @@ void InitTerrainData(TerrainData& data, const Heightmap& hm, const TerrainSettin
 
     // Overlap by 1 vertex at the edges so chunks stitch together.
     const u32 step = vpc > 1 ? vpc - 1 : 1;
-    const u32 cells_x = verts_x > 1 ? verts_x - 1 : 1;
-    const u32 cells_z = verts_z > 1 ? verts_z - 1 : 1;
-    data.chunk_count_x = (cells_x + step - 1) / step;
-    data.chunk_count_z = (cells_z + step - 1) / step;
+    // Enough chunks to cover the cells (verts - 1 of them), each chunk `step` cells wide.
+    data.chunk_count_x = verts_x > 1 ? (verts_x - 1 + step - 1) / step : 1;
+    data.chunk_count_z = verts_z > 1 ? (verts_z - 1 + step - 1) / step : 1;
 
     // Compute bounds from heightmap.
     f32 min_h =  1e9f;
@@ -143,8 +99,8 @@ void InitTerrainData(TerrainData& data, const Heightmap& hm, const TerrainSettin
 
 // --- Chunk bounds ---
 
-static void ComputeChunkBounds(const TerrainData& data, const TerrainSettings& settings,
-                               TerrainChunk& chunk) {
+void ComputeChunkBounds(const TerrainData& data, const TerrainSettings& settings,
+                        TerrainChunk& chunk) {
     const f32 world_size = settings.chunk_world_size;
     const u32 vps = data.chunk_size;
     const u32 lod_step = 1u << chunk.lod_level;
@@ -153,17 +109,20 @@ static void ComputeChunkBounds(const TerrainData& data, const TerrainSettings& s
 
     const f32 origin_x = static_cast<f32>(chunk.chunk_x) * world_size;
     const f32 origin_z = static_cast<f32>(chunk.chunk_z) * world_size;
-    const f32 step_x = world_size / static_cast<f32>(step);
-    const f32 step_z = world_size / static_cast<f32>(step);
     const f32 vs = settings.vertical_scale;
 
     f32 min_h =  1e9f;
     f32 max_h = -1e9f;
 
+    // This chunk's corner in the heightmap (chunks share their edge samples).
+    const u32 base_x = static_cast<u32>(chunk.chunk_x) * step;
+    const u32 base_z = static_cast<u32>(chunk.chunk_z) * step;
+    const u32 last_x = data.heightmap.width > 0 ? data.heightmap.width - 1 : 0;
+    const u32 last_z = data.heightmap.height > 0 ? data.heightmap.height - 1 : 0;
     for (u32 z = 0; z < lvps; ++z) {
         for (u32 x = 0; x < lvps; ++x) {
-            const u32 hx = std::min(x * lod_step, step);
-            const u32 hz = std::min(z * lod_step, step);
+            const u32 hx = std::min(base_x + std::min(x * lod_step, step), last_x);
+            const u32 hz = std::min(base_z + std::min(z * lod_step, step), last_z);
             const f32 h = data.heightmap.GetHeight(hx, hz) * vs;
             min_h = std::min(min_h, h);
             max_h = std::max(max_h, h);
@@ -216,20 +175,25 @@ std::vector<f32> GenerateChunkVertices(const TerrainData& data,
     const f32 origin_x = static_cast<f32>(chunk.chunk_x) * world_size;
     const f32 origin_z = static_cast<f32>(chunk.chunk_z) * world_size;
     const u32 edge_verts = vps - 1;
+    // This chunk's corner in the heightmap (chunks share their edge samples), and its last samples.
+    const u32 base_x = static_cast<u32>(chunk.chunk_x) * edge_verts;
+    const u32 base_z = static_cast<u32>(chunk.chunk_z) * edge_verts;
+    const u32 last_x = data.heightmap.width > 0 ? data.heightmap.width - 1 : 0;
+    const u32 last_z = data.heightmap.height > 0 ? data.heightmap.height - 1 : 0;
 
     for (u32 z = 0; z < lvps; ++z) {
         for (u32 x = 0; x < lvps; ++x) {
-            const u32 hx = std::min(x * lod_step, edge_verts);
-            const u32 hz = std::min(z * lod_step, edge_verts);
+            const u32 hx = std::min(base_x + std::min(x * lod_step, edge_verts), last_x);
+            const u32 hz = std::min(base_z + std::min(z * lod_step, edge_verts), last_z);
             const f32 lx = origin_x + static_cast<f32>(x * lod_step) * step;
             const f32 lz = origin_z + static_cast<f32>(z * lod_step) * step;
             const f32 ly = data.heightmap.GetHeight(hx, hz) * vs;
 
             // Central-difference normal.
             const u32 hxm = hx > 0 ? hx - 1 : 0;
-            const u32 hxp = std::min(hx + 1, edge_verts);
+            const u32 hxp = std::min(hx + 1, last_x);
             const u32 hzm = hz > 0 ? hz - 1 : 0;
-            const u32 hzp = std::min(hz + 1, edge_verts);
+            const u32 hzp = std::min(hz + 1, last_z);
             const f32 hx0 = data.heightmap.GetHeight(hxm, hz) * vs;
             const f32 hx1 = data.heightmap.GetHeight(hxp, hz) * vs;
             const f32 hz0 = data.heightmap.GetHeight(hx, hzm) * vs;
@@ -238,7 +202,7 @@ std::vector<f32> GenerateChunkVertices(const TerrainData& data,
             const f32 ds = step * static_cast<f32>(lod_step);
             const Vec3 tangent{2.0f * ds, hx1 - hx0, 0.0f};
             const Vec3 bitan{0.0f, hz1 - hz0, 2.0f * ds};
-            const Vec3 normal = tangent.Cross(bitan).Normalized();
+            const Vec3 normal = Normalize(Cross(tangent, bitan));
 
             const usize i = static_cast<usize>(z * lvps + x) * 8;
             vertices[i + 0] = lx;

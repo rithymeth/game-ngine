@@ -45,6 +45,23 @@ constexpr const char* kGitIgnore =
 
 } // namespace
 
+std::vector<QualityPreset> DefaultQualityPresets() {
+    // name, resolution scale, shadow texels, cascades, view distance, MSAA, bloom
+    return {
+        {"Low", 0.75f, 1024, 2, 300.0f, 1, false},
+        {"Medium", 1.0f, 1024, 3, 600.0f, 1, true},
+        {"High", 1.0f, 2048, 4, 1000.0f, 2, true},
+        {"Epic", 1.0f, 4096, 4, 2500.0f, 4, true},
+    };
+}
+
+const QualityPreset* FindQualityPreset(const ProjectSettings& settings, const std::string& name) {
+    for (const QualityPreset& p : settings.quality_presets) {
+        if (p.name == name) return &p;
+    }
+    return nullptr;
+}
+
 ProjectPaths ProjectPaths::ForFile(const stdfs::path& project_file) {
     ProjectPaths paths;
     paths.file = project_file;

@@ -41,11 +41,19 @@ struct Registrar {
     }
 };
 
+// The test running now, for the crash handler in main.cpp.
+inline const char*& CurrentTest() {
+    static const char* name = nullptr;
+    return name;
+}
+
 inline int RunAll() {
     int passed = 0;
     for (auto& test : Registry()) {
         int before = FailureCount();
+        CurrentTest() = test.name.c_str();
         test.fn();
+        CurrentTest() = nullptr;
         if (FailureCount() == before) {
             std::printf("[PASS] %s\n", test.name.c_str());
             ++passed;

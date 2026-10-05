@@ -1201,6 +1201,8 @@ edits made in the viewport or Inspector into keys automatically.
 
 ## Phase 28: Save Game and Persistence
 
+**Status:** done except the cloud-save plugins and the player applying volumes and fullscreen (see `docs/design/PHASE_SPECS.md` §28.7).
+
 - `SaveGame` object: a reflected struct the game defines
   (`AETHER_REFLECT(MySave, ...)`) and saves to a slot using the Phase 6
   archive; versioned, with migration hooks.
@@ -1222,6 +1224,8 @@ edits made in the viewport or Inspector into keys automatically.
 
 ## Phase 29: Localization and Text
 
+**Status:** done except the optional shaping step (HarfBuzz joining for Arabic, gender selectors); see `docs/design/PHASE_SPECS.md` §29.
+
 - `LocText` type: a string key plus source text, used for every
   player-visible string; the runtime UI (Phase 18) and Blueprint text
   pins take `LocText`, not raw strings.
@@ -1241,6 +1245,8 @@ edits made in the viewport or Inspector into keys automatically.
 ---
 
 ## Phase 30: Gameplay Ability System and RPG Toolkit
+
+**Status:** in progress (gameplay tags, attributes, effect system, ability system; see `docs/design/PHASE_SPECS.md` §30).
 
 **Why:** most action, RPG and MOBA games rebuild the same systems: stats,
 buffs, cooldowns and abilities. Unreal's Gameplay Ability System (GAS) is

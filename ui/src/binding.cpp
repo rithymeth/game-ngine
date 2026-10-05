@@ -240,7 +240,7 @@ void DataBinder::Push(Live& l) {
     l.last = shown;
     const bool flag = (v != 0.0) != b.invert;
     if (b.property == "text") {
-        if (auto* t = dynamic_cast<Text*>(&w)) t->text = shown;
+        if (auto* t = dynamic_cast<Text*>(&w)) t->text = shown, t->text_key.clear();
         else if (auto* ti = dynamic_cast<TextInput*>(&w)) ti->SetText(shown);
     } else if (b.property == "visible") {
         w.visibility = flag ? Visibility::Visible : Visibility::Collapsed;

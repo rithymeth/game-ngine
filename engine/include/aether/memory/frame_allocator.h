@@ -42,6 +42,7 @@ private:
     std::unique_ptr<u8[]> storage_;
     LinearAllocator buffers_[kBufferCount];
     usize current_index_ = 0;
+    usize reserved_ = 0;
 };
 
 } // namespace aether

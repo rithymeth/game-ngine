@@ -62,6 +62,8 @@ ScriptValue ReadScriptValue(lua_State* L, int index) {
     }
 }
 
+void InstallDebugDrawBindings(lua_State* L); // debug_bindings.cpp
+
 namespace {
 
 LuauHost* HostOf(lua_State* L) { return static_cast<LuauHost*>(lua_callbacks(L)->userdata); }
@@ -97,6 +99,7 @@ LuauHost::LuauHost(Options options) : options_(options) {
 
     print_ = [](const std::string& text) { AETHER_LOG_INFO("Script", "%s", text.c_str()); };
     InstallWorldBindings();
+    InstallDebugDrawBindings(state_);
 }
 
 LuauHost::~LuauHost() {
@@ -263,6 +266,86 @@ ScriptResult LuauHost::Call(const std::string& function, const std::vector<Scrip
         PushScriptValue(state_, arg);
     }
     return CallTop(static_cast<int>(args.size()), function);
+}
+
+usize NativeCall::Count() const { return static_cast<usize>(lua_gettop(state_)); }
+bool NativeCall::IsString(usize i) const { return lua_type(state_, static_cast<int>(i) + 1) == LUA_TSTRING; }
+bool NativeCall::IsNumber(usize i) const { return lua_type(state_, static_cast<int>(i) + 1) == LUA_TNUMBER; }
+bool NativeCall::IsBool(usize i) const { return lua_type(state_, static_cast<int>(i) + 1) == LUA_TBOOLEAN; }
+bool NativeCall::IsFunction(usize i) const { return lua_type(state_, static_cast<int>(i) + 1) == LUA_TFUNCTION; }
+
+std::string NativeCall::String(usize i, const std::string& fallback) const {
+    if (!IsString(i)) return fallback;
+    size_t length = 0;
+    const char* text = lua_tolstring(state_, static_cast<int>(i) + 1, &length);
+    return std::string(text, length);
+}
+
+f64 NativeCall::Number(usize i, f64 fallback) const {
+    return IsNumber(i) ? lua_tonumber(state_, static_cast<int>(i) + 1) : fallback;
+}
+
+bool NativeCall::Bool(usize i, bool fallback) const {
+    return IsBool(i) ? lua_toboolean(state_, static_cast<int>(i) + 1) != 0 : fallback;
+}
+
+int NativeCall::Function(usize i) const {
+    return IsFunction(i) ? lua_ref(state_, static_cast<int>(i) + 1) : -1;
+}
+
+void NativeCall::Return(const ScriptValue& value) {
+    PushScriptValue(state_, value);
+    ++returns_;
+}
+
+int NativeTrampoline(lua_State* L) {
+    NativeFunction* function = static_cast<NativeFunction*>(lua_touserdata(L, lua_upvalueindex(1)));
+    std::string error;
+    int returns = 0;
+    {
+        NativeCall call(L);
+        (*function)(call);
+        error = call.error_;
+        returns = call.returns_;
+    }
+    if (!error.empty()) luaL_error(L, "%s", error.c_str());
+    return returns;
+}
+
+void LuauHost::RegisterNative(const std::string& table, const std::string& name, NativeFunction function) {
+    natives_.push_back(std::make_unique<NativeFunction>(std::move(function)));
+    lua_pushlightuserdata(state_, natives_.back().get());
+    lua_pushcclosure(state_, &NativeTrampoline, name.c_str(), 1);
+    if (table.empty()) {
+        lua_setglobal(state_, name.c_str());
+        return;
+    }
+    lua_getglobal(state_, table.c_str());
+    if (!lua_istable(state_, -1)) {
+        lua_pop(state_, 1);
+        lua_newtable(state_);
+        lua_pushvalue(state_, -1);
+        lua_setglobal(state_, table.c_str());
+    }
+    lua_insert(state_, -2); // table, function
+    lua_setfield(state_, -2, name.c_str());
+    lua_pop(state_, 1);
+}
+
+ScriptResult LuauHost::CallRef(int ref, const std::vector<ScriptValue>& args) {
+    ScriptResult result;
+    lua_getref(state_, ref);
+    if (!lua_isfunction(state_, -1)) {
+        lua_pop(state_, 1);
+        result.error = "not a function";
+        return result;
+    }
+    for (const ScriptValue& a : args) PushScriptValue(state_, a);
+    return CallTop(static_cast<int>(args.size()), "callback");
+}
+
+void LuauHost::Release(int ref) {
+    if (ref >= 0) lua_unref(state_, ref);
 }
 
 ScriptValue LuauHost::GetGlobal(const std::string& name) {

@@ -24,6 +24,8 @@ public:
     usize BlockSize() const { return block_size_; }
     usize BlockCount() const { return block_count_; }
     usize FreeCount() const { return free_count_; }
+    // Reports blocks in use to the MemoryTracker under `category` (Phase 23; null: off).
+    void SetMemoryCategory(const char* category) { category_ = category; }
 
 private:
     struct FreeNode {
@@ -35,6 +37,7 @@ private:
     usize block_count_ = 0;
     usize free_count_ = 0;
     FreeNode* free_list_ = nullptr;
+    const char* category_ = nullptr;
 };
 
 } // namespace aether

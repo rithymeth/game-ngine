@@ -1,6 +1,7 @@
 #include "aether/net/replication.h"
 
-#include "aether/core/log.h"
+#include "aether/reflection/bytes.h"
+#include "aether/scene/components.h"
 
 #include <algorithm>
 #include <cstring>
@@ -9,564 +10,567 @@ namespace aether::net {
 
 namespace {
 
-enum RecordKind : u8 { kSpawn = 1, kUpdate = 2, kRemove = 3, kDespawn = 4 };
-constexpr u8 kFullComponent = 1; // a component record that is a complete state (spawn or add)
-constexpr usize kMaxReplicatedFields = 64;
+constexpr u8 kSnapshot = 1, kAck = 2;
+constexpr u8 kNew = 1, kOwner = 2;
+constexpr u16 kNone = 0xFFFF;
 
-i64 ReadSigned(const void* p, u32 size) {
-    switch (size) {
-    case 1: return *static_cast<const i8*>(p);
-    case 2: { i16 v; std::memcpy(&v, p, 2); return v; }
-    case 4: { i32 v; std::memcpy(&v, p, 4); return v; }
-    default: { i64 v = 0; std::memcpy(&v, p, std::min<u32>(size, 8)); return v; }
+struct Writer {
+    std::vector<u8>& out;
+    void U8(u8 v) { out.push_back(v); }
+    void U16(u16 v) { U8(static_cast<u8>(v)), U8(static_cast<u8>(v >> 8)); }
+    void U32(u32 v) { U16(static_cast<u16>(v)), U16(static_cast<u16>(v >> 16)); }
+    void F64(f64 v) {
+        u64 bits;
+        std::memcpy(&bits, &v, 8);
+        U32(static_cast<u32>(bits)), U32(static_cast<u32>(bits >> 32));
     }
+    void Bytes(const std::vector<u8>& b) { out.insert(out.end(), b.begin(), b.end()); }
+};
+
+struct Reader {
+    std::span<const u8> in;
+    usize at = 0;
+    bool ok = true;
+    bool Has(usize n) { return ok = ok && at + n <= in.size(); }
+    u8 U8() { return Has(1) ? in[at++] : 0; }
+    u16 U16() { u16 lo = U8(); return static_cast<u16>(lo | (U8() << 8)); }
+    u32 U32() { u32 lo = U16(); return lo | (static_cast<u32>(U16()) << 16); }
+    f64 F64() {
+        u64 lo = U32();
+        const u64 bits = lo | (static_cast<u64>(U32()) << 32);
+        f64 v;
+        std::memcpy(&v, &bits, 8);
+        return v;
+    }
+    std::vector<u8> Bytes(usize n) {
+        if (!Has(n)) return {};
+        std::vector<u8> b(in.begin() + static_cast<std::ptrdiff_t>(at), in.begin() + static_cast<std::ptrdiff_t>(at + n));
+        at += n;
+        return b;
+    }
+};
+
+struct FieldCost {
+    u32 hash, field;
+    usize bytes;
+};
+
+const ReplicatedComponent* FindComponent(const ReplicatedEntity& e, u32 hash) {
+    for (const ReplicatedComponent& c : e.components)
+        if (c.hash == hash) return &c;
+    return nullptr;
 }
 
-u64 ReadUnsigned(const void* p, u32 size) {
-    u64 v = 0;
-    std::memcpy(&v, p, std::min<u32>(size, 8)); // little-endian
-    return v;
+// The entity's entry in a snapshot: what `cur` has that `base` (null: the
+// client has not got it) does not. False when there is nothing to send.
+bool WriteDelta(u32 net_id, const ReplicatedEntity& cur, const ReplicatedEntity* base, std::vector<u8>& out,
+                std::vector<FieldCost>* costs = nullptr) {
+    out.clear();
+    if (costs) costs->clear();
+    Writer w{out};
+    w.U32(net_id);
+    const bool owner_changed = base && base->owner != cur.owner;
+    w.U8(static_cast<u8>((base ? 0 : kNew) | (owner_changed ? kOwner : 0)));
+    if (!base || owner_changed) w.U32(cur.owner);
+    if (!base) {
+        const usize len = std::min<usize>(cur.archetype.size(), 255);
+        w.U8(static_cast<u8>(len));
+        out.insert(out.end(), cur.archetype.begin(), cur.archetype.begin() + static_cast<std::ptrdiff_t>(len));
+    }
+    const usize count_at = out.size();
+    w.U8(0);
+    u8 count = 0;
+    for (const ReplicatedComponent& c : cur.components) {
+        const ReplicatedComponent* old = base ? FindComponent(*base, c.hash) : nullptr;
+        u32 mask = 0;
+        for (usize f = 0; f < c.fields.size() && f < 32; ++f)
+            if (!old || f >= old->fields.size() || old->fields[f] != c.fields[f]) mask |= 1u << f;
+        if (mask == 0) continue;
+        w.U32(c.hash), w.U32(mask);
+        for (usize f = 0; f < c.fields.size() && f < 32; ++f)
+            if (mask & (1u << f)) {
+                w.U16(static_cast<u16>(c.fields[f].size())), w.Bytes(c.fields[f]);
+                if (costs) costs->push_back({c.hash, static_cast<u32>(f), 2 + c.fields[f].size()});
+            }
+        ++count;
+    }
+    if (base)
+        for (const ReplicatedComponent& c : base->components)
+            if (!FindComponent(cur, c.hash)) w.U32(c.hash), w.U32(0), ++count; // removed
+    out[count_at] = count;
+    return !base || owner_changed || count > 0;
 }
 
-void WriteInt(void* p, u32 size, u64 v) { std::memcpy(p, &v, std::min<u32>(size, 8)); }
-
-u64 ZigZag(i64 v) { return (static_cast<u64>(v) << 1) ^ static_cast<u64>(v >> 63); }
-i64 UnZigZag(u64 v) { return static_cast<i64>(v >> 1) ^ -static_cast<i64>(v & 1); }
-
-const reflect::TypeInfo& IntegerTypeOf(const reflect::TypeInfo& type) {
-    return type.kind == reflect::TypeKind::Enum && type.underlying != nullptr ? *type.underlying : type;
+// Applies one entry to `state`; false when it does not fit (malformed, or
+// a delta for an entity the baseline does not have).
+bool ReadDelta(Reader& r, ReplicatedState& state) {
+    const u32 net_id = r.U32();
+    const u8 flags = r.U8();
+    ReplicatedEntity* e;
+    if (flags & kNew) {
+        ReplicatedEntity fresh;
+        fresh.owner = r.U32();
+        const u8 len = r.U8();
+        const std::vector<u8> name = r.Bytes(len);
+        fresh.archetype.assign(name.begin(), name.end());
+        e = &(state[net_id] = std::move(fresh));
+    } else {
+        auto it = state.find(net_id);
+        if (it == state.end()) return false;
+        e = &it->second;
+        if (flags & kOwner) e->owner = r.U32();
+    }
+    const u8 count = r.U8();
+    for (u8 i = 0; i < count && r.ok; ++i) {
+        const u32 hash = r.U32(), mask = r.U32();
+        auto it = std::find_if(e->components.begin(), e->components.end(),
+                               [&](const ReplicatedComponent& c) { return c.hash == hash; });
+        if (mask == 0) {
+            if (it != e->components.end()) e->components.erase(it);
+            continue;
+        }
+        if (it == e->components.end()) {
+            ReplicatedComponent c;
+            c.hash = hash;
+            it = e->components.insert(std::upper_bound(e->components.begin(), e->components.end(), hash,
+                                                       [](u32 h, const ReplicatedComponent& x) { return h < x.hash; }),
+                                      std::move(c));
+        }
+        for (u32 f = 0; f < 32; ++f) {
+            if (!(mask & (1u << f))) continue;
+            if (it->fields.size() <= f) it->fields.resize(f + 1);
+            const u16 len = r.U16();
+            it->fields[f] = r.Bytes(len);
+        }
+    }
+    return r.ok;
 }
 
 } // namespace
 
-void EncodeValue(const reflect::TypeInfo& type, const void* value, ByteWriter& out) {
-    using reflect::TypeKind;
-    switch (type.kind) {
-    case TypeKind::Bool: out.U8(*static_cast<const bool*>(value) ? 1 : 0); break;
-    case TypeKind::Int: out.Varint(ZigZag(ReadSigned(value, type.size))); break;
-    case TypeKind::UInt: out.Varint(ReadUnsigned(value, type.size)); break;
-    case TypeKind::Float:
-        if (type.size == 4) out.F32(*static_cast<const f32*>(value));
-        else out.F64(*static_cast<const f64*>(value));
-        break;
-    case TypeKind::String: out.String(*static_cast<const std::string*>(value)); break;
-    case TypeKind::FixedString: {
-        const char* s = static_cast<const char*>(value);
-        out.String(std::string(s, ::strnlen(s, type.size)));
-        break;
-    }
-    case TypeKind::Enum: {
-        const reflect::TypeInfo& base = IntegerTypeOf(type);
-        if (base.kind == TypeKind::Int) out.Varint(ZigZag(ReadSigned(value, type.size)));
-        else out.Varint(ReadUnsigned(value, type.size));
-        break;
-    }
-    case TypeKind::Struct:
-        for (const reflect::FieldInfo& f : type.fields) {
-            if (!f.HasFlag(reflect::Field_Transient)) EncodeValue(*f.type, f.Ptr(value), out);
-        }
-        break;
-    case TypeKind::Array: {
-        const usize n = type.array_size(value);
-        out.Varint(n);
-        for (usize i = 0; i < n; ++i) EncodeValue(*type.element, type.ArrayElement(value, i), out);
-        break;
-    }
-    }
+void SetNetArchetype(NetIdentity& identity, const std::string& archetype) {
+    std::memset(identity.archetype, 0, sizeof(identity.archetype));
+    std::strncpy(identity.archetype, archetype.c_str(), sizeof(identity.archetype) - 1);
 }
 
-bool DecodeValue(const reflect::TypeInfo& type, void* value, ByteReader& in) {
-    using reflect::TypeKind;
-    switch (type.kind) {
-    case TypeKind::Bool: *static_cast<bool*>(value) = in.U8() != 0; break;
-    case TypeKind::Int: WriteInt(value, type.size, static_cast<u64>(UnZigZag(in.Varint()))); break;
-    case TypeKind::UInt: WriteInt(value, type.size, in.Varint()); break;
-    case TypeKind::Float:
-        if (type.size == 4) *static_cast<f32*>(value) = in.F32();
-        else *static_cast<f64*>(value) = in.F64();
-        break;
-    case TypeKind::String: *static_cast<std::string*>(value) = in.String(); break;
-    case TypeKind::FixedString: {
-        const std::string s = in.String();
-        if (type.size == 0) break;
-        std::memset(value, 0, type.size);
-        std::memcpy(value, s.data(), std::min<usize>(s.size(), type.size - 1));
-        break;
-    }
-    case TypeKind::Enum: {
-        const reflect::TypeInfo& base = IntegerTypeOf(type);
-        const u64 raw = base.kind == TypeKind::Int ? static_cast<u64>(UnZigZag(in.Varint())) : in.Varint();
-        WriteInt(value, type.size, raw);
-        break;
-    }
-    case TypeKind::Struct:
-        for (const reflect::FieldInfo& f : type.fields) {
-            if (f.HasFlag(reflect::Field_Transient)) continue;
-            if (!DecodeValue(*f.type, f.Ptr(value), in)) return false;
-        }
-        break;
-    case TypeKind::Array: {
-        const u64 n = in.Varint();
-        if (!in.Ok() || n > in.Remaining()) return false; // every element takes at least a byte
-        type.array_resize(value, static_cast<usize>(n));
-        for (usize i = 0; i < static_cast<usize>(n); ++i) {
-            if (!DecodeValue(*type.element, type.array_element(value, i), in)) return false;
-        }
-        break;
-    }
-    }
-    return in.Ok();
-}
-
-u32 ComponentHash(const char* name) {
+u32 ComponentNameHash(const char* name) {
     u32 h = 2166136261u; // FNV-1a
-    for (const char* c = name; *c != '\0'; ++c) h = (h ^ static_cast<u8>(*c)) * 16777619u;
+    for (; *name; ++name) h = (h ^ static_cast<u8>(*name)) * 16777619u;
     return h;
 }
 
-namespace {
-
-struct Registry {
-    std::vector<ReplicatedComponent> components;
-    std::unordered_map<u32, usize> by_hash;
-    ComponentId scanned = 0;
-};
-
-Registry& Refresh() {
-    static Registry registry;
-    for (; registry.scanned < RegisteredComponentCount(); ++registry.scanned) {
-        const ComponentInfo& info = GetComponentInfo(registry.scanned);
-        if (info.reflected == nullptr) continue;
-        ReplicatedComponent rc;
-        for (const reflect::FieldInfo& f : info.reflected->fields) {
-            if (!f.HasFlag(reflect::Field_Replicated)) continue;
-            if (rc.fields.size() == kMaxReplicatedFields) {
-                AETHER_LOG_WARN("Net", "%s has more than %zu replicated fields; the rest are not sent", info.name, kMaxReplicatedFields);
-                break;
-            }
-            rc.fields.push_back(&f);
+const std::vector<ReplicatedComponentType>& ReplicatedComponentTypes() {
+    // Rebuilt when more component types have registered since.
+    static std::vector<ReplicatedComponentType> types;
+    static ComponentId seen = 0;
+    const ComponentId transform = GetComponentId<Transform>();
+    const ComponentId identity = GetComponentId<NetIdentity>();
+    const ComponentId count = RegisteredComponentCount();
+    if (count != seen) {
+        types.clear();
+        for (ComponentId id = 0; id < count; ++id) {
+            const ComponentInfo& info = GetComponentInfo(id);
+            if (id == identity || !info.reflected) continue;
+            ReplicatedComponentType t;
+            t.id = id;
+            t.hash = ComponentNameHash(info.name);
+            for (const reflect::FieldInfo& f : info.reflected->fields)
+                if ((id == transform || f.HasFlag(reflect::Field_Replicated)) && t.fields.size() < 32) t.fields.push_back(&f);
+            if (!t.fields.empty()) types.push_back(std::move(t));
         }
-        if (rc.fields.empty()) continue;
-        rc.id = registry.scanned;
-        rc.type = info.reflected;
-        rc.hash = ComponentHash(info.name);
-        registry.by_hash.emplace(rc.hash, registry.components.size());
-        registry.components.push_back(std::move(rc));
+        seen = count;
     }
-    return registry;
+    return types;
 }
 
-} // namespace
-
-const std::vector<ReplicatedComponent>& ReplicatedComponents() { return Refresh().components; }
-
-const ReplicatedComponent* FindReplicated(u32 hash) {
-    Registry& r = Refresh();
-    auto it = r.by_hash.find(hash);
-    return it == r.by_hash.end() ? nullptr : &r.components[it->second];
+const char* ReplicatedComponentName(u32 hash) {
+    const ReplicatedComponentType* t = FindReplicatedComponentType(hash);
+    return t ? GetComponentInfo(t->id).name : "?";
 }
 
-// --- server -----------------------------------------------------------------
-
-struct ReplicationServer::Record {
-    RecordKind kind = kUpdate;
-    u32 net_id = 0;
-    f32 priority = 0.0f;
-    std::vector<u8> bytes;
-    const Snapshot* snapshot = nullptr;
-    std::vector<u32> hashes; // components an Update or Remove covers
-    struct Cost {
-        u32 hash, field, bytes;
-    };
-    std::vector<Cost> costs; // the bytes each field of the record takes
-};
-
-ReplicationServer::ReplicationServer(World& world, NetEndpoint& endpoint) : world_(world), endpoint_(endpoint) {
-    (void)GetComponentId<NetIdentity>();
+const char* ReplicatedFieldName(u32 hash, u32 field) {
+    const ReplicatedComponentType* t = FindReplicatedComponentType(hash);
+    return t && field < t->fields.size() ? t->fields[field]->name : "?";
 }
 
-Entity ReplicationServer::EntityOf(u32 net_id) const {
-    auto it = by_id_.find(net_id);
-    return it == by_id_.end() ? kNullEntity : it->second;
+const ReplicatedComponentType* FindReplicatedComponentType(u32 hash) {
+    for (const ReplicatedComponentType& t : ReplicatedComponentTypes())
+        if (t.hash == hash) return &t;
+    return nullptr;
 }
 
-bool ReplicationServer::Knows(NetAddress peer, u32 net_id) const {
+// ---------------------------------------------------------------- server
+
+ReplicationServer::ReplicationServer(World& world, NetHost& host, ReplicationConfig config)
+    : world_(world), host_(host), config_(config) {
+    config_.byte_budget = std::min(config_.byte_budget, Connection::kMaxFragment);
+    config_.history = std::max<u32>(config_.history, 2);
+}
+
+void ReplicationServer::SetViewer(PeerId peer, const Vec3& position) {
+    Peer& p = peers_[peer];
+    p.has_viewer = true;
+    p.viewer = position;
+}
+
+void ReplicationServer::ClearViewer(PeerId peer) {
     auto it = peers_.find(peer);
-    return it != peers_.end() && it->second.known.count(net_id) != 0;
+    if (it != peers_.end()) it->second.has_viewer = false;
 }
 
-void ReplicationServer::TakeSnapshots(std::vector<Snapshot>& out) {
-    const ComponentId identity_id = GetComponentId<NetIdentity>();
-    const std::vector<ReplicatedComponent>& replicated = ReplicatedComponents();
-    by_id_.clear();
+bool ReplicationServer::HandleEvent(const NetEvent& event) {
+    if (event.type == NetEventType::Disconnected) {
+        peers_.erase(event.peer);
+        return false;
+    }
+    if (event.type != NetEventType::Message || event.channel != config_.control_channel || event.data.size() != 3 ||
+        event.data[0] != kAck)
+        return false;
+    auto it = peers_.find(event.peer);
+    if (it == peers_.end()) return true;
+    Peer& p = it->second;
+    const u16 id = static_cast<u16>(event.data[1] | (event.data[2] << 8));
+    const History& h = p.history[id % p.history.size()];
+    if (h.id == id && (p.acked == kNone || SeqGreater(id, p.acked))) p.acked = p.stats.acked = id;
+    return true;
+}
 
-    world_.ForEachArchetype([&](Archetype& archetype) {
-        if (!archetype.Has(identity_id)) return;
-        std::vector<const ReplicatedComponent*> present;
-        for (const ReplicatedComponent& rc : replicated) {
-            if (archetype.Has(rc.id)) present.push_back(&rc);
-        }
-        for (usize chunk = 0; chunk < archetype.ChunkCount(); ++chunk) {
-            const Entity* entities = archetype.EntityArray(chunk);
-            NetIdentity* identities = static_cast<NetIdentity*>(archetype.ComponentArray(chunk, identity_id));
-            for (u32 row = 0; row < archetype.ChunkEntityCount(chunk); ++row) {
-                if (identities[row].net_id == 0) identities[row].net_id = next_net_id_++;
-                Snapshot snap;
-                snap.net_id = identities[row].net_id;
-                snap.entity = entities[row];
-                for (const ReplicatedComponent* rc : present) {
-                    const u8* base = static_cast<const u8*>(archetype.ComponentArray(chunk, rc->id));
-                    const void* object = base + static_cast<usize>(row) * GetComponentInfo(rc->id).size;
-                    Component comp;
-                    comp.hash = rc->hash;
-                    comp.info = rc;
-                    for (const reflect::FieldInfo* f : rc->fields) {
-                        ByteWriter w;
-                        EncodeValue(*f->type, f->Ptr(object), w);
-                        comp.fields.push_back(w.Take());
+Entity ReplicationServer::FindEntity(u32 net_id) const {
+    auto it = entities_.find(net_id);
+    return it == entities_.end() || !world_.IsAlive(it->second) ? Entity{} : it->second;
+}
+
+bool ReplicationServer::PeerHas(PeerId peer, u32 net_id) const {
+    auto it = peers_.find(peer);
+    if (it == peers_.end() || it->second.history.empty()) return false;
+    const Peer& p = it->second;
+    const u16 last = p.stats.last_snapshot;
+    const History& h = p.history[last % p.history.size()];
+    return h.id == last && h.state.count(net_id) > 0;
+}
+
+ReplicationServer::PeerStats ReplicationServer::Stats(PeerId peer) const {
+    auto it = peers_.find(peer);
+    return it == peers_.end() ? PeerStats{} : it->second.stats;
+}
+
+void ReplicationServer::Gather(ReplicatedState& current) {
+    const ComponentId identity_id = GetComponentId<NetIdentity>();
+    const ComponentId transform_id = GetComponentId<Transform>();
+    const auto& types = ReplicatedComponentTypes();
+    entities_.clear();
+    meta_.clear();
+    world_.ForEachArchetype([&](Archetype& a) {
+        if (!a.Has(identity_id)) return;
+        for (usize c = 0; c < a.ChunkCount(); ++c) {
+            const u32 n = a.ChunkEntityCount(c);
+            Entity* ents = a.EntityArray(c);
+            auto* ids = static_cast<NetIdentity*>(a.ComponentArray(c, identity_id));
+            for (u32 row = 0; row < n; ++row) {
+                NetIdentity& ni = ids[row];
+                if (ni.net_id == 0) ni.net_id = next_net_id_++;
+                entities_[ni.net_id] = ents[row];
+                ReplicatedEntity& e = current[ni.net_id];
+                e.owner = ni.owner;
+                e.archetype.assign(ni.archetype, strnlen(ni.archetype, sizeof(ni.archetype)));
+                Meta& m = meta_[ni.net_id];
+                m.radius = ni.relevancy_radius;
+                m.priority = ni.priority;
+                for (const ReplicatedComponentType& t : types) {
+                    if (!a.Has(t.id)) continue;
+                    const u8* comp = static_cast<const u8*>(a.ComponentArray(c, t.id)) + row * GetComponentInfo(t.id).size;
+                    ReplicatedComponent rc;
+                    rc.hash = t.hash;
+                    rc.fields.resize(t.fields.size());
+                    for (usize f = 0; f < t.fields.size(); ++f)
+                        reflect::AppendBinary(*t.fields[f]->type, t.fields[f]->Ptr(comp), rc.fields[f]);
+                    e.components.push_back(std::move(rc));
+                    if (t.id == transform_id) {
+                        m.has_position = true;
+                        m.position = reinterpret_cast<const Transform*>(comp)->position;
                     }
-                    snap.components.push_back(std::move(comp));
                 }
-                by_id_[snap.net_id] = snap.entity;
-                out.push_back(std::move(snap));
+                std::sort(e.components.begin(), e.components.end(),
+                          [](const ReplicatedComponent& x, const ReplicatedComponent& y) { return x.hash < y.hash; });
             }
         }
     });
-    std::sort(out.begin(), out.end(), [](const Snapshot& a, const Snapshot& b) { return a.net_id < b.net_id; });
 }
 
-namespace {
-
-// [hash][flags][mask][the encoded values of the fields in the mask]
-void WriteComponent(ByteWriter& w, u32 hash, u8 flags, u64 mask, const std::vector<std::vector<u8>>& fields) {
-    w.U32(hash);
-    w.U8(flags);
-    w.Varint(mask);
-    for (usize i = 0; i < fields.size(); ++i) {
-        if (mask & (1ull << i)) w.Bytes(fields[i]);
+void ReplicationServer::Update(f64 now) {
+    const std::vector<PeerId> connected = host_.Peers();
+    // Forget peers the host no longer has (a viewer may be set while one is still connecting).
+    for (auto it = peers_.begin(); it != peers_.end();) {
+        if (host_.Peer(it->first)) ++it;
+        else it = peers_.erase(it);
+    }
+    if (now - last_send_ < config_.send_interval) return;
+    last_send_ = now;
+    ReplicatedState current;
+    Gather(current);
+    for (PeerId id : connected) {
+        Peer& p = peers_[id];
+        if (p.history.empty()) p.history.resize(config_.history);
+        SendTo(id, p, current, now);
     }
 }
 
-u64 AllFields(usize count) { return count >= 64 ? ~0ull : (1ull << count) - 1; }
-
-} // namespace
-
-void ReplicationServer::ReplicateTo(NetAddress peer, PeerState& state, const std::vector<Snapshot>& snapshots) {
-    const usize max_message = endpoint_.Config().max_message_size;
-    std::vector<Record> records;
-
-    std::unordered_map<u32, const Snapshot*> visible;
-    for (const Snapshot& s : snapshots) {
-        if (!relevancy || relevancy(peer, s.entity)) visible[s.net_id] = &s;
+void ReplicationServer::SendTo(PeerId id, Peer& peer, const ReplicatedState& current, f64 now) {
+    const History* base = nullptr;
+    if (peer.acked != kNone) {
+        const History& h = peer.history[peer.acked % peer.history.size()];
+        if (h.id == peer.acked) base = &h;
     }
+    static const ReplicatedState kEmpty;
+    const ReplicatedState& base_state = base ? base->state : kEmpty;
 
+    // Where this client looks from.
+    bool has_viewer = peer.has_viewer;
+    Vec3 viewer = peer.viewer;
+    if (!has_viewer)
+        for (const auto& [net_id, e] : current)
+            if (e.owner == id && meta_[net_id].has_position) {
+                has_viewer = true, viewer = meta_[net_id].position;
+                break;
+            }
+    auto relevant = [&](u32 net_id, const ReplicatedEntity& e) {
+        const Meta& m = meta_[net_id];
+        return !has_viewer || m.radius <= 0 || e.owner == id || !m.has_position ||
+               (m.position - viewer).Length() <= m.radius;
+    };
+
+    const u16 snapshot = peer.next_snapshot++;
+    if (peer.next_snapshot == kNone) peer.next_snapshot = 0;
+    History& record = peer.history[snapshot % peer.history.size()];
+    record.id = snapshot;
+    record.state = base_state; // what the client will have: the baseline plus what is sent
+
+    std::vector<u8> msg;
+    Writer w{msg};
+    w.U8(kSnapshot), w.U16(snapshot), w.U16(base ? base->id : kNone), w.F64(now);
+    const usize despawn_count_at = msg.size();
+    w.U16(0);
+    // Despawns: in the baseline, gone or no longer relevant.
+    u16 despawns = 0;
     std::vector<u32> gone;
-    for (const auto& [id, baseline] : state.known) {
-        (void)baseline;
-        if (visible.count(id) == 0) gone.push_back(id);
+    for (const auto& [net_id, e] : base_state) {
+        auto it = current.find(net_id);
+        if (it == current.end() || !relevant(net_id, it->second)) gone.push_back(net_id);
     }
     std::sort(gone.begin(), gone.end());
-    for (u32 id : gone) {
-        Record r;
-        r.kind = kDespawn;
-        r.net_id = id;
-        r.priority = 2.0e9f;
-        ByteWriter w;
-        w.U8(kDespawn);
-        w.Varint(id);
-        r.bytes = w.Take();
-        records.push_back(std::move(r));
+    const usize updates_reserve = 2 + 4; // the update count, and room for at least one id
+    for (u32 net_id : gone) {
+        if (msg.size() + 4 + updates_reserve > config_.byte_budget) break;
+        w.U32(net_id);
+        record.state.erase(net_id);
+        peer.accumulators.erase(net_id);
+        ++despawns;
     }
+    msg[despawn_count_at] = static_cast<u8>(despawns), msg[despawn_count_at + 1] = static_cast<u8>(despawns >> 8);
 
-    for (const Snapshot& snap : snapshots) {
-        if (visible.count(snap.net_id) == 0) continue;
-        auto known = state.known.find(snap.net_id);
-        if (known == state.known.end()) {
-            Record r;
-            r.kind = kSpawn;
-            r.net_id = snap.net_id;
-            r.priority = 1.0e9f;
-            r.snapshot = &snap;
-            ByteWriter w;
-            w.U8(kSpawn);
-            w.Varint(snap.net_id);
-            w.U8(static_cast<u8>(snap.components.size()));
-            for (const Component& c : snap.components) {
-                WriteComponent(w, c.hash, kFullComponent, AllFields(c.fields.size()), c.fields);
-                for (usize i = 0; i < c.fields.size(); ++i) r.costs.push_back({c.hash, static_cast<u32>(i), static_cast<u32>(c.fields[i].size())});
-            }
-            r.bytes = w.Take();
-            records.push_back(std::move(r));
+    // Updates, by accumulated priority while they fit.
+    struct Candidate {
+        u32 net_id;
+        f32 score;
+        std::vector<u8> bytes;
+        std::vector<FieldCost> costs;
+        bool spawn;
+    };
+    std::vector<Candidate> candidates;
+    std::vector<u8> entry;
+    for (const auto& [net_id, e] : current) {
+        if (!relevant(net_id, e)) continue;
+        auto b = base_state.find(net_id);
+        std::vector<FieldCost> costs;
+        if (!WriteDelta(net_id, e, b == base_state.end() ? nullptr : &b->second, entry, &costs)) {
+            peer.accumulators.erase(net_id);
             continue;
         }
-
-        const Baseline& base = known->second;
-        struct Change {
-            const Component* comp;
-            u8 flags;
-            u64 mask;
-        };
-        std::vector<Change> changes;
-        for (const Component& c : snap.components) {
-            auto old = std::find_if(base.components.begin(), base.components.end(), [&](const Component& b) { return b.hash == c.hash; });
-            if (old == base.components.end()) {
-                changes.push_back({&c, kFullComponent, AllFields(c.fields.size())});
-                continue;
-            }
-            if (spawn_only_.count(c.hash) != 0) continue; // kept current by something else
-            u64 mask = 0;
-            for (usize i = 0; i < c.fields.size(); ++i) {
-                if (old->fields[i] != c.fields[i]) mask |= 1ull << i;
-            }
-            if (mask != 0) changes.push_back({&c, 0, mask});
-        }
-        const f32 waited = state.priority.count(snap.net_id) ? state.priority[snap.net_id] : 0.0f;
-        auto make_update = [&](usize first, usize last) {
-            Record r;
-            r.kind = kUpdate;
-            r.net_id = snap.net_id;
-            r.priority = waited;
-            r.snapshot = &snap;
-            ByteWriter w;
-            w.U8(kUpdate);
-            w.Varint(snap.net_id);
-            w.U8(static_cast<u8>(last - first));
-            for (usize i = first; i < last; ++i) {
-                WriteComponent(w, changes[i].comp->hash, changes[i].flags, changes[i].mask, changes[i].comp->fields);
-                r.hashes.push_back(changes[i].comp->hash);
-                const auto& fields = changes[i].comp->fields;
-                for (usize f = 0; f < fields.size(); ++f) {
-                    if (changes[i].mask & (1ull << f)) r.costs.push_back({changes[i].comp->hash, static_cast<u32>(f), static_cast<u32>(fields[f].size())});
-                }
-            }
-            r.bytes = w.Take();
-            return r;
-        };
-        if (!changes.empty()) {
-            Record all = make_update(0, changes.size());
-            if (all.bytes.size() + 1 <= max_message || changes.size() == 1) {
-                records.push_back(std::move(all));
-            } else {
-                // Too big together: one record per component.
-                for (usize i = 0; i < changes.size(); ++i) records.push_back(make_update(i, i + 1));
-            }
-        }
-        for (const Component& b : base.components) {
-            const bool still = std::any_of(snap.components.begin(), snap.components.end(), [&](const Component& c) { return c.hash == b.hash; });
-            if (still) continue;
-            Record r;
-            r.kind = kRemove;
-            r.net_id = snap.net_id;
-            r.priority = waited;
-            r.snapshot = &snap;
-            r.hashes.push_back(b.hash);
-            ByteWriter w;
-            w.U8(kRemove);
-            w.Varint(snap.net_id);
-            w.U32(b.hash);
-            r.bytes = w.Take();
-            records.push_back(std::move(r));
-        }
+        f32& acc = peer.accumulators[net_id];
+        acc += std::max(meta_[net_id].priority, 0.001f);
+        candidates.push_back({net_id, acc, entry, std::move(costs), b == base_state.end()});
     }
-
-    std::stable_sort(records.begin(), records.end(), [](const Record& a, const Record& b) { return a.priority > b.priority; });
-
-    std::vector<bool> sent(records.size(), false);
-    std::vector<usize> batch_members;
-    std::vector<u8> batch = {kReplicationMessage};
-    usize sent_bytes = 0;
-    bool blocked = false;
-
-    auto commit = [&](const Record& r) {
-        switch (r.kind) {
-        case kSpawn:
-            state.known[r.net_id].components = r.snapshot->components;
-            ++stats_.spawns;
-            break;
-        case kUpdate: {
-            Baseline& base = state.known[r.net_id];
-            for (u32 hash : r.hashes) {
-                const Component* now = nullptr;
-                for (const Component& c : r.snapshot->components) {
-                    if (c.hash == hash) now = &c;
-                }
-                if (now == nullptr) continue;
-                auto old = std::find_if(base.components.begin(), base.components.end(), [&](const Component& b) { return b.hash == hash; });
-                if (old != base.components.end()) *old = *now;
-                else base.components.push_back(*now);
-            }
-            ++stats_.updates;
-            break;
-        }
-        case kRemove: {
-            Baseline& base = state.known[r.net_id];
-            base.components.erase(std::remove_if(base.components.begin(), base.components.end(),
-                                                 [&](const Component& b) { return b.hash == r.hashes[0]; }),
-                                  base.components.end());
-            ++stats_.removals;
-            break;
-        }
-        case kDespawn:
-            state.known.erase(r.net_id);
-            ++stats_.despawns;
-            break;
-        }
-        state.priority.erase(r.net_id);
-        ++stats_.records_sent;
-        profile_.entity_bytes[r.net_id] += r.bytes.size();
-        for (const Record::Cost& cost : r.costs) {
-            FieldTraffic& t = profile_.fields[{cost.hash, cost.field}];
-            t.bytes += cost.bytes;
-            ++t.sends;
-        }
-    };
-
-    auto flush = [&]() {
-        if (batch_members.empty()) return;
-        if (!endpoint_.Send(peer, Channel::ReliableOrdered, batch)) {
-            blocked = true; // send queue full: everything after waits too
-        } else {
-            stats_.bytes_sent += batch.size();
-            profile_.total_bytes += batch.size();
-            for (usize i : batch_members) {
-                sent[i] = true;
-                commit(records[i]);
-            }
-        }
-        batch.assign(1, kReplicationMessage);
-        batch_members.clear();
-    };
-
-    for (usize i = 0; i < records.size() && !blocked; ++i) {
-        const Record& r = records[i];
-        if (r.bytes.size() + 1 > max_message) {
-            ++stats_.oversized;
-            AETHER_LOG_WARN("Net", "Replication record for entity %u is %zu bytes, over the message limit; not sent", r.net_id, r.bytes.size());
+    std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
+        return a.score != b.score ? a.score > b.score : a.net_id < b.net_id;
+    });
+    const usize update_count_at = msg.size();
+    w.U16(0);
+    u16 updates = 0;
+    u32 deferred = 0;
+    for (Candidate& c : candidates) {
+        if (msg.size() + c.bytes.size() > config_.byte_budget) {
+            ++deferred;
             continue;
         }
-        const bool essential = r.kind == kSpawn || r.kind == kDespawn;
-        if (bytes_per_peer != 0 && !essential && sent_bytes >= bytes_per_peer) continue;
-        if (batch.size() + r.bytes.size() > max_message) {
-            flush();
-            if (blocked) break;
+        w.Bytes(c.bytes);
+        NetProfile::EntityCost& ec = profile_.entities[c.net_id];
+        ec.archetype = current.at(c.net_id).archetype;
+        ec.bytes += c.bytes.size();
+        ++ec.updates;
+        if (c.spawn) ++ec.spawns;
+        for (const FieldCost& fc : c.costs) {
+            NetProfile::ComponentCost& cc = ec.components[fc.hash];
+            cc.bytes += fc.bytes;
+            cc.fields[fc.field].bytes += fc.bytes;
+            ++cc.fields[fc.field].sends;
         }
-        batch.insert(batch.end(), r.bytes.begin(), r.bytes.end());
-        batch_members.push_back(i);
-        sent_bytes += r.bytes.size();
+        record.state[c.net_id] = current.at(c.net_id);
+        peer.accumulators.erase(c.net_id);
+        ++updates;
     }
-    if (!blocked) flush();
+    msg[update_count_at] = static_cast<u8>(updates), msg[update_count_at + 1] = static_cast<u8>(updates >> 8);
 
-    for (usize i = 0; i < records.size(); ++i) {
-        if (sent[i]) continue;
-        ++stats_.deferred;
-        if (records[i].kind == kUpdate || records[i].kind == kRemove) state.priority[records[i].net_id] = records[i].priority + 1.0f;
-    }
+    host_.Send(id, config_.snapshot_channel, msg);
+    profile_.snapshot_bytes += msg.size();
+    ++profile_.snapshots;
+    profile_.despawns += despawns;
+    peer.stats.last_snapshot = snapshot;
+    peer.stats.last_bytes = msg.size();
+    peer.stats.total_bytes += msg.size();
+    peer.stats.entities_sent = updates;
+    peer.stats.entities_deferred = deferred;
+    peer.stats.despawns_sent = despawns;
 }
 
-usize ReplicationServer::Replicate() {
-    std::vector<Snapshot> snapshots;
-    TakeSnapshots(snapshots);
+// ---------------------------------------------------------------- client
 
-    const std::vector<NetAddress> connected = endpoint_.ConnectedPeers();
-    for (auto it = peers_.begin(); it != peers_.end();) {
-        if (std::find(connected.begin(), connected.end(), it->first) == connected.end()) it = peers_.erase(it);
-        else ++it;
-    }
-    const u64 before = stats_.records_sent;
-    for (NetAddress peer : connected) ReplicateTo(peer, peers_[peer], snapshots);
-    return static_cast<usize>(stats_.records_sent - before);
+ReplicationClient::ReplicationClient(World& world, NetHost& host, PeerId server, ReplicationConfig config)
+    : world_(world), host_(host), server_(server), config_(config) {
+    history_.resize(std::max<u32>(config_.history, 2));
 }
 
-// --- client -----------------------------------------------------------------
-
-Entity ReplicationClient::EntityOf(u32 net_id) const {
-    auto it = by_id_.find(net_id);
-    return it == by_id_.end() ? kNullEntity : it->second;
-}
-
-void ReplicationClient::Clear() {
-    for (const auto& [id, entity] : by_id_) {
-        (void)id;
-        if (world_.IsAlive(entity)) world_.DestroyEntity(entity);
-    }
-    by_id_.clear();
-}
-
-bool ReplicationClient::ApplyComponent(Entity entity, ByteReader& in, bool is_update) {
-    (void)is_update;
-    const u32 hash = in.U32();
-    in.U8(); // flags: a component the entity lacks is added either way
-    const u64 mask = in.Varint();
-    if (!in.Ok()) return false;
-    const ReplicatedComponent* rc = FindReplicated(hash);
-    if (rc == nullptr || (rc->fields.size() < 64 && (mask >> rc->fields.size()) != 0)) return false;
-    if (!world_.HasComponentRaw(entity, rc->id)) world_.AddComponentRaw(entity, rc->id);
-    void* object = world_.GetComponentRaw(entity, rc->id);
-    for (usize i = 0; i < rc->fields.size(); ++i) {
-        if ((mask & (1ull << i)) == 0) continue;
-        if (!DecodeValue(*rc->fields[i]->type, rc->fields[i]->Ptr(object), in)) return false;
-    }
+bool ReplicationClient::ReadReplicated(u32 net_id, ComponentId component, void* out) const {
+    auto it = applied_.find(net_id);
+    if (it == applied_.end()) return false;
+    const ComponentInfo& info = GetComponentInfo(component);
+    if (!info.reflected) return false;
+    const ReplicatedComponentType* t = FindReplicatedComponentType(ComponentNameHash(info.name));
+    const ReplicatedComponent* c = t ? FindComponent(it->second, t->hash) : nullptr;
+    if (!c) return false;
+    for (usize f = 0; f < c->fields.size() && f < t->fields.size(); ++f)
+        if (!c->fields[f].empty())
+            reflect::ReadBinary(*t->fields[f]->type, t->fields[f]->Ptr(out), c->fields[f].data(), c->fields[f].size());
     return true;
 }
 
-bool ReplicationClient::Apply(std::span<const u8> message) {
-    ByteReader in(message);
-    auto fail = [&]() {
-        ++stats_.malformed;
+void ReplicationClient::OnSpawn(const std::string& archetype, SpawnFn fn) { on_spawn_[archetype] = std::move(fn); }
+
+Entity ReplicationClient::FindEntity(u32 net_id) const {
+    auto it = entities_.find(net_id);
+    return it == entities_.end() ? Entity{} : it->second;
+}
+
+bool ReplicationClient::HandleEvent(const NetEvent& event) {
+    if (event.type != NetEventType::Message || event.peer != server_ || event.channel != config_.snapshot_channel ||
+        event.data.empty() || event.data[0] != kSnapshot)
         return false;
-    };
-    if (in.U8() != kReplicationMessage) return fail();
-    const ComponentId identity_id = GetComponentId<NetIdentity>();
+    Receive(event.data);
+    return true;
+}
 
-    while (in.Remaining() > 0) {
-        const u8 kind = in.U8();
-        const u32 net_id = static_cast<u32>(in.Varint());
-        if (!in.Ok()) return fail();
-        switch (kind) {
-        case kSpawn:
-        case kUpdate: {
-            const u8 count = in.U8();
-            if (!in.Ok()) return fail();
-            Entity entity = EntityOf(net_id);
-            if (kind == kSpawn && entity.IsNull()) {
-                ComponentMask mask;
-                mask.set(identity_id);
-                entity = world_.CreateEntityRaw(mask);
-                by_id_[net_id] = entity;
-                ++stats_.spawns;
-            } else if (entity.IsNull() || !world_.IsAlive(entity)) {
-                return fail(); // an update for something never spawned
-            }
-            for (u8 i = 0; i < count; ++i) {
-                if (!ApplyComponent(entity, in, kind == kUpdate)) return fail();
-            }
-            if (NetIdentity* id = world_.GetComponent<NetIdentity>(entity)) id->net_id = net_id;
-            if (kind == kUpdate) ++stats_.updates;
-            break;
+bool ReplicationClient::Receive(std::span<const u8> data) {
+    Reader r{data};
+    r.U8();
+    const u16 id = r.U16(), baseline = r.U16();
+    const f64 time = r.F64();
+    if (!r.ok) return false;
+    if (any_ && !SeqGreater(id, last_)) return false; // stale
+    ReplicatedState state;
+    if (baseline != kNone) {
+        const History& h = history_[baseline % history_.size()];
+        if (h.id != baseline) {
+            ++stats_.undecodable;
+            return false;
         }
-        case kRemove: {
-            const u32 hash = in.U32();
-            if (!in.Ok()) return fail();
-            Entity entity = EntityOf(net_id);
-            const ReplicatedComponent* rc = FindReplicated(hash);
-            if (!entity.IsNull() && rc != nullptr && rc->id != identity_id) {
-                world_.RemoveComponentRaw(entity, rc->id);
-                ++stats_.removals;
+        state = h.state;
+    }
+    const u16 despawns = r.U16();
+    for (u16 i = 0; i < despawns && r.ok; ++i) state.erase(r.U32());
+    const u16 updates = r.U16();
+    for (u16 i = 0; i < updates && r.ok; ++i)
+        if (!ReadDelta(r, state)) {
+            ++stats_.undecodable;
+            return false;
+        }
+    if (!r.ok) {
+        ++stats_.undecodable;
+        return false;
+    }
+    Apply(state);
+    History& slot = history_[id % history_.size()];
+    slot.id = id;
+    slot.state = std::move(state);
+    last_ = id, any_ = true, server_time_ = time;
+    ++stats_.snapshots;
+    const u8 ack[3] = {kAck, static_cast<u8>(id), static_cast<u8>(id >> 8)};
+    host_.Send(server_, config_.control_channel, ack);
+    return true;
+}
+
+void ReplicationClient::Apply(const ReplicatedState& state) {
+    // Gone since the last snapshot.
+    for (auto it = applied_.begin(); it != applied_.end();) {
+        if (state.count(it->first)) {
+            ++it;
+            continue;
+        }
+        auto e = entities_.find(it->first);
+        if (e != entities_.end()) {
+            if (on_despawn_) on_despawn_(world_, e->second);
+            if (world_.IsAlive(e->second)) world_.DestroyEntity(e->second);
+            entities_.erase(e);
+            ++stats_.despawned;
+        }
+        it = applied_.erase(it);
+    }
+    std::optional<PeerInfo> server = host_.Peer(server_);
+    const u32 my_id = server ? server->remote_id : 0;
+    for (const auto& [net_id, e] : state) {
+        auto prev_it = applied_.find(net_id);
+        const ReplicatedEntity* prev = prev_it == applied_.end() ? nullptr : &prev_it->second;
+        Entity entity = FindEntity(net_id);
+        if (entity.IsNull() || !world_.IsAlive(entity)) {
+            NetIdentity ni;
+            ni.net_id = net_id;
+            ni.owner = e.owner;
+            SetNetArchetype(ni, e.archetype);
+            ni.locally_owned = e.owner != kNoPeer && e.owner == my_id;
+            entity = world_.CreateEntity(ni);
+            entities_[net_id] = entity;
+            prev = nullptr;
+            ++stats_.spawned;
+            auto hook = on_spawn_.find(e.archetype);
+            if (hook == on_spawn_.end()) hook = on_spawn_.find("");
+            if (hook != on_spawn_.end() && hook->second) hook->second(world_, entity, ni);
+            if (!world_.IsAlive(entity)) continue;
+        } else if (prev && prev->owner != e.owner) {
+            if (auto* ni = world_.GetComponent<NetIdentity>(entity)) {
+                ni->owner = e.owner;
+                ni->locally_owned = e.owner != kNoPeer && e.owner == my_id;
             }
-            break;
         }
-        case kDespawn: {
-            Entity entity = EntityOf(net_id);
-            if (!entity.IsNull() && world_.IsAlive(entity)) world_.DestroyEntity(entity);
-            by_id_.erase(net_id);
-            ++stats_.despawns;
-            break;
-        }
-        default:
-            return fail();
+        if (prev)
+            for (const ReplicatedComponent& c : prev->components)
+                if (!FindComponent(e, c.hash))
+                    if (const ReplicatedComponentType* t = FindReplicatedComponentType(c.hash))
+                        world_.RemoveComponentRaw(entity, t->id);
+        for (const ReplicatedComponent& c : e.components) {
+            const ReplicatedComponentType* t = FindReplicatedComponentType(c.hash);
+            if (!t) continue; // a component this build does not know
+            if (!world_.HasComponentRaw(entity, t->id)) world_.AddComponentRaw(entity, t->id);
+            const ReplicatedComponent* old = prev ? FindComponent(*prev, c.hash) : nullptr;
+            if (prev && e.owner != kNoPeer && e.owner == my_id &&
+                std::find(predicted_.begin(), predicted_.end(), t->id) != predicted_.end())
+                continue; // ours to predict
+            void* comp = world_.GetComponentRaw(entity, t->id);
+            for (usize f = 0; f < c.fields.size() && f < t->fields.size(); ++f) {
+                if (c.fields[f].empty() || (old && f < old->fields.size() && old->fields[f] == c.fields[f])) continue;
+                reflect::ReadBinary(*t->fields[f]->type, t->fields[f]->Ptr(comp), c.fields[f].data(), c.fields[f].size());
+                ++stats_.fields_written;
+            }
         }
     }
-    return true;
+    applied_ = state;
 }
 
 } // namespace aether::net

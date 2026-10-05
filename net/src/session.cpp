@@ -1,420 +1,357 @@
 #include "aether/net/session.h"
 
-#include "aether/net/bytes.h"
-
 #include <algorithm>
+#include <chrono>
 
 namespace aether::net {
 
 namespace {
 
-enum Kind : u8 { kJoinRequest = 1, kJoinAccept = 2, kJoinReject = 3, kLobby = 4, kSetReady = 5, kStartGame = 6, kKick = 7 };
+constexpr u32 kQueryMagic = 0x51444541;  // "AEDQ"
+constexpr u32 kAnswerMagic = 0x52444541; // "AEDR"
+constexpr u8 kJoinRequest = 6, kJoinAccept = 7, kJoinRefuse = 8;
 
-bool ValidName(const std::string& name) {
-    if (name.empty() || name.size() > kMaxPlayerName) return false;
-    return std::none_of(name.begin(), name.end(), [](char c) { return static_cast<unsigned char>(c) < 0x20 || c == 0x7F; });
+struct Out {
+    std::vector<u8> bytes;
+    void U8(u8 v) { bytes.push_back(v); }
+    void U16(u16 v) { U8(static_cast<u8>(v)), U8(static_cast<u8>(v >> 8)); }
+    void U32(u32 v) { U16(static_cast<u16>(v)), U16(static_cast<u16>(v >> 16)); }
+    void U64(u64 v) { U32(static_cast<u32>(v)), U32(static_cast<u32>(v >> 32)); }
+    void Str(const std::string& s) {
+        const usize n = std::min<usize>(s.size(), 255);
+        U8(static_cast<u8>(n));
+        bytes.insert(bytes.end(), s.begin(), s.begin() + static_cast<std::ptrdiff_t>(n));
+    }
+};
+
+struct In {
+    std::span<const u8> data;
+    usize at = 0;
+    bool ok = true;
+    bool Has(usize n) { return ok = ok && at + n <= data.size(); }
+    u8 U8() { return Has(1) ? data[at++] : 0; }
+    u16 U16() { u16 lo = U8(); return static_cast<u16>(lo | (U8() << 8)); }
+    u32 U32() { u32 lo = U16(); return lo | (static_cast<u32>(U16()) << 16); }
+    u64 U64() { u64 lo = U32(); return lo | (static_cast<u64>(U32()) << 32); }
+    std::string Str() {
+        const u8 n = U8();
+        if (!Has(n)) return {};
+        std::string s(data.begin() + static_cast<std::ptrdiff_t>(at), data.begin() + static_cast<std::ptrdiff_t>(at + n));
+        at += n;
+        return s;
+    }
+};
+
+void WriteInfo(Out& o, const SessionInfo& info) {
+    o.Str(info.name), o.Str(info.map), o.Str(info.mode);
+    o.U16(info.port), o.U32(info.players), o.U32(info.max_players), o.U32(info.build), o.U8(info.password ? 1 : 0);
+    const usize n = std::min<usize>(info.properties.size(), 255);
+    o.U8(static_cast<u8>(n));
+    for (usize i = 0; i < n; ++i) o.Str(info.properties[i].first), o.Str(info.properties[i].second);
 }
 
-std::vector<u8> Message(Kind kind) { return {kSessionMessage, kind}; }
-
-void WriteLobby(ByteWriter& w, const LobbyState& lobby) {
-    w.U8(kSessionMessage);
-    w.U8(kLobby);
-    w.U8(static_cast<u8>(lobby.phase));
-    w.String(lobby.map);
-    w.Varint(lobby.players.size());
-    for (const SessionPlayer& p : lobby.players) {
-        w.U16(p.id);
-        w.String(p.name);
-        w.Bool(p.ready);
-        w.Bool(p.is_host);
+bool ReadInfo(In& in, SessionInfo& info) {
+    info = {};
+    info.name = in.Str(), info.map = in.Str(), info.mode = in.Str();
+    info.port = in.U16(), info.players = in.U32(), info.max_players = in.U32(), info.build = in.U32();
+    info.password = in.U8() != 0;
+    const u8 n = in.U8();
+    for (u8 i = 0; i < n && in.ok; ++i) {
+        std::string k = in.Str();
+        info.properties.emplace_back(std::move(k), in.Str());
     }
-}
-
-bool ReadLobby(ByteReader& r, LobbyState& out) {
-    LobbyState lobby;
-    const u8 phase = r.U8();
-    lobby.map = r.String();
-    const u64 count = r.Varint();
-    if (!r.Ok() || phase > static_cast<u8>(SessionPhase::InGame) || count > kMaxSessionPlayers || lobby.map.size() > 64) return false;
-    lobby.phase = static_cast<SessionPhase>(phase);
-    for (u64 i = 0; i < count; ++i) {
-        SessionPlayer p;
-        p.id = r.U16();
-        p.name = r.String();
-        p.ready = r.Bool();
-        p.is_host = r.Bool();
-        if (!r.Ok() || !ValidName(p.name)) return false;
-        lobby.players.push_back(std::move(p));
-    }
-    if (r.Remaining() != 0) return false;
-    out = std::move(lobby);
-    return true;
+    return in.ok;
 }
 
 } // namespace
 
-// --- host -------------------------------------------------------------------
+const std::string* SessionInfo::Property(const std::string& key) const {
+    for (const auto& [k, v] : properties)
+        if (k == key) return &v;
+    return nullptr;
+}
 
-SessionHost::SessionHost(NetEndpoint& endpoint, const SessionConfig& config) : endpoint_(endpoint), config_(config) {
-    config_.max_players = std::clamp<usize>(config_.max_players, 1, kMaxSessionPlayers);
-    lobby_.map = config_.map;
-    endpoint_.Listen();
-    if (!config_.host_player_name.empty()) {
-        SessionPlayer host;
-        host.id = next_id_++;
-        host.name = config_.host_player_name.substr(0, kMaxPlayerName);
-        host.ready = true;
-        host.is_host = true;
-        lobby_.players.push_back(std::move(host));
+std::vector<u8> EncodeSessionInfo(const SessionInfo& info) {
+    Out o;
+    WriteInfo(o, info);
+    return o.bytes;
+}
+
+bool DecodeSessionInfo(std::span<const u8> data, SessionInfo& out) {
+    In in{data};
+    return ReadInfo(in, out) && in.at == data.size();
+}
+
+const char* JoinResultName(JoinResult result) {
+    switch (result) {
+    case JoinResult::Ok: return "Ok";
+    case JoinResult::WrongPassword: return "WrongPassword";
+    case JoinResult::BuildMismatch: return "BuildMismatch";
+    case JoinResult::Full: return "Full";
+    case JoinResult::NoRequest: return "NoRequest";
+    case JoinResult::Kicked: return "Kicked";
+    case JoinResult::ConnectFailed: return "ConnectFailed";
+    case JoinResult::Lost: return "Lost";
+    }
+    return "?";
+}
+
+// ---------------------------------------------------------------- LAN discovery
+
+void LanBeacon::Update() {
+    Address from;
+    std::vector<u8> data;
+    while (socket_.Receive(from, data)) {
+        In in{data};
+        const u32 magic = in.U32(), protocol = in.U32();
+        const u64 nonce = in.U64();
+        if (!in.ok || magic != kQueryMagic || protocol != protocol_ || !enabled) continue;
+        Out o;
+        o.U32(kAnswerMagic), o.U32(protocol_), o.U64(nonce);
+        WriteInfo(o, info);
+        socket_.Send(from, o.bytes);
+        ++answered_;
     }
 }
 
-NetAddress SessionHost::AddressOf(u16 player_id) const {
-    for (const auto& [peer, id] : players_) {
-        if (id == player_id) return peer;
+LanBrowser::LanBrowser(DatagramSocket& socket, u32 build, u16 discovery_port, u32 protocol_id)
+    : socket_(socket), build_(build), port_(discovery_port), protocol_(protocol_id),
+      nonce_seed_(static_cast<u64>(std::chrono::steady_clock::now().time_since_epoch().count()) ^ 0x9E3779B97F4A7C15ull) {}
+
+void LanBrowser::Search(f64 now) {
+    nonce_seed_ = nonce_seed_ * 6364136223846793005ull + 1442695040888963407ull;
+    const u64 nonce = nonce_seed_;
+    Out o;
+    o.U32(kQueryMagic), o.U32(protocol_), o.U64(nonce);
+    socket_.Send(Address::Broadcast(port_), o.bytes);
+    queries_.push_back({nonce, now});
+    if (queries_.size() > 16) queries_.erase(queries_.begin());
+    last_search_ = now;
+}
+
+void LanBrowser::Update(f64 now) {
+    if (auto_search > 0.0 && now - last_search_ >= auto_search) Search(now);
+    Address from;
+    std::vector<u8> data;
+    while (socket_.Receive(from, data)) {
+        In in{data};
+        const u32 magic = in.U32(), protocol = in.U32();
+        const u64 nonce = in.U64();
+        SessionInfo info;
+        if (!in.ok || magic != kAnswerMagic || protocol != protocol_ || !ReadInfo(in, info)) continue;
+        auto q = std::find_if(queries_.begin(), queries_.end(), [&](const auto& x) { return x.first == nonce; });
+        if (q == queries_.end()) continue; // not an answer to us
+        const Address game{from.ip, info.port != 0 ? info.port : from.port};
+        auto it = std::find_if(sessions_.begin(), sessions_.end(), [&](const LanSession& s) { return s.address == game; });
+        if (it == sessions_.end()) it = sessions_.insert(sessions_.end(), LanSession{});
+        it->address = game;
+        it->compatible = info.build == build_;
+        it->info = std::move(info);
+        it->ping = now - q->second;
+        it->last_seen = now;
     }
-    return 0;
+    std::erase_if(sessions_, [&](const LanSession& s) { return now - s.last_seen > expiry; });
 }
 
-u16 SessionHost::PlayerOf(NetAddress peer) const {
-    auto it = players_.find(peer);
-    return it == players_.end() ? 0 : it->second;
+std::vector<LanSession> LanBrowser::Results() const {
+    std::vector<LanSession> out = sessions_;
+    std::stable_sort(out.begin(), out.end(), [](const LanSession& a, const LanSession& b) {
+        return a.ping != b.ping ? a.ping < b.ping : a.address < b.address;
+    });
+    return out;
 }
 
-SessionInfo SessionHost::Advertisement(u16 game_port) const {
-    SessionInfo info;
-    info.name = config_.name;
-    info.map = lobby_.map;
-    info.game_version = config_.game_version;
-    info.game_port = game_port;
-    info.players = static_cast<u8>(std::min<usize>(lobby_.players.size(), 255));
-    info.max_players = static_cast<u8>(config_.max_players);
-    return info;
+// ---------------------------------------------------------------- hosting
+
+SessionHost::SessionHost(NetHost& host, SessionInfo info, std::string password, SessionConfig config)
+    : host_(host), info_(std::move(info)), password_(std::move(password)), config_(config) {
+    info_.password = !password_.empty();
+    info_.players = 0;
 }
 
-void SessionHost::Broadcast(std::vector<u8> message) {
-    for (const auto& [peer, id] : players_) {
-        (void)id;
-        endpoint_.Send(peer, Channel::ReliableOrdered, message);
-    }
+const SessionPlayer* SessionHost::Player(PeerId peer) const {
+    for (const SessionPlayer& p : players_)
+        if (p.peer == peer) return &p;
+    return nullptr;
 }
 
-void SessionHost::BroadcastLobby() {
-    ByteWriter w;
-    WriteLobby(w, lobby_);
-    Broadcast(w.Take());
+void SessionHost::Refuse(PeerId peer, JoinResult reason, f64 now) {
+    const u8 msg[2] = {kJoinRefuse, static_cast<u8>(reason)};
+    host_.Send(peer, config_.channel, msg);
+    leaving_.push_back({peer, now});
 }
 
-void SessionHost::Reject(NetAddress peer, JoinResult why) {
-    ++rejected_;
-    std::vector<u8> m = Message(kJoinReject);
-    m.push_back(static_cast<u8>(why));
-    endpoint_.Send(peer, Channel::ReliableOrdered, m);
-    pending_.erase(peer);
-    closing_[peer] = now_ + 1.0; // a client leaves on a rejection; one that doesn't is cut off
-}
-
-std::string SessionHost::UniqueName(const std::string& wanted) const {
-    auto taken = [&](const std::string& n) {
-        return std::any_of(lobby_.players.begin(), lobby_.players.end(), [&](const SessionPlayer& p) { return p.name == n; });
-    };
-    if (!taken(wanted)) return wanted;
-    for (int i = 2;; ++i) {
-        const std::string suffix = " (" + std::to_string(i) + ")";
-        const std::string candidate = wanted.substr(0, kMaxPlayerName - std::min(kMaxPlayerName, suffix.size())) + suffix;
-        if (!taken(candidate)) return candidate;
-    }
+void SessionHost::Kick(PeerId peer, f64 now) {
+    auto it = std::find_if(players_.begin(), players_.end(), [&](const SessionPlayer& p) { return p.peer == peer; });
+    if (it == players_.end()) return;
+    events_.push_back({SessionEventType::PlayerLeft, peer, it->name, JoinResult::Kicked});
+    players_.erase(it);
+    info_.players = static_cast<u32>(players_.size());
+    Refuse(peer, JoinResult::Kicked, now);
 }
 
 bool SessionHost::HandleEvent(const NetEvent& event, f64 now) {
-    now_ = now;
     if (event.type == NetEventType::Connected) {
-        pending_[event.peer] = {now};
+        pending_.push_back({event.peer, now});
         return false;
     }
     if (event.type == NetEventType::Disconnected) {
-        pending_.erase(event.peer);
-        closing_.erase(event.peer);
-        auto it = players_.find(event.peer);
+        std::erase_if(pending_, [&](const auto& p) { return p.first == event.peer; });
+        std::erase_if(leaving_, [&](const auto& p) { return p.first == event.peer; });
+        auto it = std::find_if(players_.begin(), players_.end(), [&](const SessionPlayer& p) { return p.peer == event.peer; });
         if (it != players_.end()) {
-            const u16 id = it->second;
+            events_.push_back({SessionEventType::PlayerLeft, event.peer, it->name, JoinResult::Lost});
             players_.erase(it);
-            lobby_.players.erase(std::remove_if(lobby_.players.begin(), lobby_.players.end(), [&](const SessionPlayer& p) { return p.id == id; }),
-                                 lobby_.players.end());
-            BroadcastLobby();
+            info_.players = static_cast<u32>(players_.size());
         }
         return false;
     }
-    if (event.type != NetEventType::Message || event.data.size() < 2 || event.data[0] != kSessionMessage) return false;
-
-    const u8 kind = event.data[1];
-    if (kind == kJoinRequest) {
-        HandleJoin(event.peer, event.data, now);
+    if (event.type != NetEventType::Message || event.channel != config_.channel || event.data.empty() ||
+        event.data[0] != kJoinRequest)
+        return false;
+    auto pending = std::find_if(pending_.begin(), pending_.end(), [&](const auto& p) { return p.first == event.peer; });
+    if (pending == pending_.end()) return true; // asked twice, or already refused
+    pending_.erase(pending);
+    In in{event.data};
+    in.U8();
+    const u32 build = in.U32();
+    std::string name = in.Str();
+    const std::string password = in.Str();
+    JoinResult refuse = JoinResult::Ok;
+    const u32 max = info_.max_players != 0 ? info_.max_players : host_.Config().max_peers;
+    if (!in.ok || build != info_.build) refuse = JoinResult::BuildMismatch;
+    else if (!password_.empty() && password != password_) refuse = JoinResult::WrongPassword;
+    else if (players_.size() >= max) refuse = JoinResult::Full;
+    if (refuse != JoinResult::Ok) {
+        events_.push_back({SessionEventType::JoinRefused, event.peer, name, refuse});
+        Refuse(event.peer, refuse, now);
         return true;
     }
-    auto player = players_.find(event.peer);
-    if (player == players_.end()) return true; // not joined: nothing else counts
-    if (kind == kSetReady) {
-        ByteReader r({event.data.data() + 2, event.data.size() - 2});
-        const bool ready = r.Bool();
-        if (!r.Ok() || r.Remaining() != 0) {
-            ++malformed_;
-            return true;
-        }
-        for (SessionPlayer& p : lobby_.players) {
-            if (p.id == player->second && p.ready != ready && lobby_.phase == SessionPhase::Lobby) {
-                p.ready = ready;
-                BroadcastLobby();
-            }
-        }
-        return true;
-    }
-    ++malformed_; // a client sending a host-only or unknown message
+    if (name.empty()) name = "Player";
+    const std::string base = name;
+    for (int n = 2; std::any_of(players_.begin(), players_.end(), [&](const SessionPlayer& p) { return p.name == name; }); ++n)
+        name = base + " (" + std::to_string(n) + ")";
+    players_.push_back({event.peer, name});
+    info_.players = static_cast<u32>(players_.size());
+    Out o;
+    o.U8(kJoinAccept);
+    o.Str(name);
+    WriteInfo(o, info_);
+    host_.Send(event.peer, config_.channel, o.bytes);
+    events_.push_back({SessionEventType::PlayerJoined, event.peer, name, JoinResult::Ok});
     return true;
-}
-
-void SessionHost::HandleJoin(NetAddress peer, const std::vector<u8>& data, f64 now) {
-    (void)now;
-    if (players_.count(peer) != 0) return; // a repeat
-    if (pending_.count(peer) == 0) return; // not a connection we are waiting on
-    ByteReader r({data.data() + 2, data.size() - 2});
-    std::string name = r.String();
-    const u32 version = r.U32();
-    const std::string password = r.String();
-    if (!r.Ok() || r.Remaining() != 0) {
-        ++malformed_;
-        Reject(peer, JoinResult::BadName);
-        return;
-    }
-    if (lobby_.phase == SessionPhase::InGame && !config_.allow_join_in_progress) return Reject(peer, JoinResult::InProgress);
-    if (version != config_.game_version) return Reject(peer, JoinResult::VersionMismatch);
-    if (!config_.password.empty() && password != config_.password) return Reject(peer, JoinResult::BadPassword);
-    if (!ValidName(name)) return Reject(peer, JoinResult::BadName);
-    if (lobby_.players.size() >= config_.max_players) return Reject(peer, JoinResult::Full);
-
-    SessionPlayer p;
-    p.id = next_id_++;
-    p.name = UniqueName(name);
-    p.ready = lobby_.phase == SessionPhase::InGame; // joining a running game: nothing to get ready for
-    pending_.erase(peer);
-    players_[peer] = p.id;
-    lobby_.players.push_back(p);
-
-    std::vector<u8> accept = Message(kJoinAccept);
-    accept.push_back(static_cast<u8>(p.id & 0xFF));
-    accept.push_back(static_cast<u8>(p.id >> 8));
-    endpoint_.Send(peer, Channel::ReliableOrdered, accept);
-    BroadcastLobby();
-    if (lobby_.phase == SessionPhase::InGame) { // a late joiner is told to start right away
-        ByteWriter w;
-        w.U8(kSessionMessage);
-        w.U8(kStartGame);
-        w.String(lobby_.map);
-        w.U32(seed_);
-        endpoint_.Send(peer, Channel::ReliableOrdered, w.Data());
-    }
 }
 
 void SessionHost::Update(f64 now) {
-    now_ = now;
-    std::vector<NetAddress> cut;
-    for (const auto& [peer, p] : pending_) {
-        if (now - p.since > config_.join_timeout) cut.push_back(peer);
-    }
-    for (const auto& [peer, deadline] : closing_) {
-        if (now >= deadline) cut.push_back(peer);
-    }
-    for (NetAddress peer : cut) {
-        pending_.erase(peer);
-        closing_.erase(peer);
-        endpoint_.Disconnect(peer);
-    }
-}
-
-bool SessionHost::SetMap(const std::string& map) {
-    if (lobby_.phase != SessionPhase::Lobby || map.empty() || map.size() > 64 || map == lobby_.map) return false;
-    lobby_.map = map;
-    BroadcastLobby();
-    return true;
-}
-
-bool SessionHost::SetHostReady(bool ready) {
-    for (SessionPlayer& p : lobby_.players) {
-        if (!p.is_host) continue;
-        if (p.ready != ready && lobby_.phase == SessionPhase::Lobby) {
-            p.ready = ready;
-            BroadcastLobby();
+    for (auto it = pending_.begin(); it != pending_.end();) {
+        if (now - it->second >= config_.join_timeout) {
+            const PeerId peer = it->first;
+            it = pending_.erase(it);
+            events_.push_back({SessionEventType::JoinRefused, peer, {}, JoinResult::NoRequest});
+            Refuse(peer, JoinResult::NoRequest, now);
+        } else {
+            ++it;
         }
+    }
+    for (auto it = leaving_.begin(); it != leaving_.end();) {
+        const std::optional<PeerInfo> peer = host_.Peer(it->first);
+        const bool through = peer && peer->connection && peer->connection->Unacked() == 0 && now > it->second;
+        if (!peer || through || now - it->second >= config_.linger) {
+            if (peer) host_.Disconnect(it->first, now);
+            it = leaving_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+std::vector<SessionEvent> SessionHost::TakeEvents() { return std::exchange(events_, {}); }
+
+// ---------------------------------------------------------------- joining
+
+void SessionClient::Join(const Address& server, const std::string& player_name, const std::string& password, u32 build,
+                         f64 now) {
+    name_ = player_name, password_ = password, build_ = build;
+    result_ = JoinResult::Ok;
+    info_ = {};
+    server_ = host_.Connect(server, now);
+    state_ = State::Connecting;
+}
+
+void SessionClient::Leave(f64 now) {
+    if (server_ != kNoPeer) host_.Disconnect(server_, now);
+    server_ = kNoPeer;
+    state_ = State::Idle;
+}
+
+bool SessionClient::HandleEvent(const NetEvent& event) {
+    if (server_ == kNoPeer || event.peer != server_) return false;
+    if (event.type == NetEventType::Connected && state_ == State::Connecting) {
+        Out o;
+        o.U8(kJoinRequest);
+        o.U32(build_);
+        o.Str(name_);
+        o.Str(password_);
+        host_.Send(server_, config_.channel, o.bytes);
+        return false;
+    }
+    if (event.type == NetEventType::Disconnected) {
+        if (state_ == State::Connecting)
+            result_ = event.reason == DisconnectReason::Denied ? JoinResult::Full : JoinResult::ConnectFailed;
+        else if (state_ == State::Joined)
+            result_ = JoinResult::Lost;
+        if (state_ != State::Failed && state_ != State::Idle) state_ = State::Failed;
+        server_ = kNoPeer;
+        return false;
+    }
+    if (event.type != NetEventType::Message || event.channel != config_.channel || event.data.empty()) return false;
+    In in{event.data};
+    const u8 kind = in.U8();
+    if (kind == kJoinAccept && state_ == State::Connecting) {
+        std::string name = in.Str();
+        SessionInfo info;
+        if (ReadInfo(in, info)) {
+            name_ = std::move(name), info_ = std::move(info);
+            state_ = State::Joined;
+        }
+        return true;
+    }
+    if (kind == kJoinRefuse) {
+        const u8 reason = in.U8();
+        result_ = in.ok && reason <= static_cast<u8>(JoinResult::Lost) ? static_cast<JoinResult>(reason) : JoinResult::Lost;
+        state_ = State::Failed;
         return true;
     }
     return false;
 }
 
-bool SessionHost::StartGame(bool force) {
-    if (lobby_.phase != SessionPhase::Lobby || lobby_.players.empty()) return false;
-    if (!force && !std::all_of(lobby_.players.begin(), lobby_.players.end(), [](const SessionPlayer& p) { return p.ready; })) return false;
-    // A seed the host picks once, so every player starts from the same random state.
-    seed_ = static_cast<u32>(lobby_.players.size() * 2654435761u) ^ static_cast<u32>(lobby_.map.size() * 40503u) ^ 0x9E3779B9u;
-    for (SessionPlayer& p : lobby_.players) seed_ = seed_ * 1664525u + 1013904223u + p.id;
-    lobby_.phase = SessionPhase::InGame;
-    for (SessionPlayer& p : lobby_.players) p.ready = true;
-    ByteWriter w;
-    w.U8(kSessionMessage);
-    w.U8(kStartGame);
-    w.String(lobby_.map);
-    w.U32(seed_);
-    BroadcastLobby();
-    Broadcast(w.Take());
+// ---------------------------------------------------------------- lobbies
+
+LanLobbyService::LanLobbyService(DatagramSocket* discovery, DatagramSocket& search, u32 build, u16 discovery_port,
+                                 u32 protocol_id)
+    : browser_(search, build, discovery_port, protocol_id) {
+    if (discovery) beacon_ = std::make_unique<LanBeacon>(*discovery, protocol_id);
+}
+
+bool LanLobbyService::Advertise(const SessionInfo& info) {
+    if (!beacon_) return false;
+    beacon_->info = info;
+    advertising_ = true;
     return true;
 }
 
-bool SessionHost::Kick(u16 player_id) {
-    const NetAddress peer = AddressOf(player_id);
-    if (peer == 0) return false;
-    endpoint_.Send(peer, Channel::ReliableOrdered, Message(kKick)); // the client leaves on it; if not, Update cuts it off
-    players_.erase(peer);
-    lobby_.players.erase(std::remove_if(lobby_.players.begin(), lobby_.players.end(), [&](const SessionPlayer& p) { return p.id == player_id; }),
-                         lobby_.players.end());
-    closing_[peer] = now_ + 0.5;
-    BroadcastLobby();
-    return true;
+void LanLobbyService::Update(f64 now) {
+    if (beacon_) {
+        beacon_->enabled = advertising_;
+        beacon_->Update();
+    }
+    browser_.Update(now);
 }
 
-// --- client -----------------------------------------------------------------
-
-bool SessionClient::Join(NetAddress server, const std::string& player_name, u32 game_version, const std::string& password) {
-    if (server_ != 0 || !endpoint_.Connect(server)) return false;
-    server_ = server;
-    name_ = player_name;
-    password_ = password;
-    version_ = game_version;
-    joined_ = false;
-    request_sent_ = false;
-    lobby_ = {};
-    return true;
-}
-
-void SessionClient::Leave() {
-    if (server_ == 0) return;
-    endpoint_.Disconnect(server_);
-    server_ = 0;
-    joined_ = false;
-    lobby_ = {};
-}
-
-bool SessionClient::SetReady(bool ready) {
-    if (!joined_) return false;
-    std::vector<u8> m = Message(kSetReady);
-    m.push_back(ready ? 1 : 0);
-    return endpoint_.Send(server_, Channel::ReliableOrdered, m);
-}
-
-bool SessionClient::Poll(SessionEvent& out) {
-    if (events_.empty()) return false;
-    out = std::move(events_.front());
-    events_.pop_front();
-    return true;
-}
-
-bool SessionClient::HandleEvent(const NetEvent& event) {
-    if (server_ == 0 || event.peer != server_) return false;
-    if (event.type == NetEventType::Connected) {
-        ByteWriter w;
-        w.U8(kSessionMessage);
-        w.U8(kJoinRequest);
-        w.String(name_);
-        w.U32(version_);
-        w.String(password_);
-        endpoint_.Send(server_, Channel::ReliableOrdered, w.Data());
-        request_sent_ = true;
-        return false;
-    }
-    if (event.type == NetEventType::Disconnected) {
-        const bool was_in = joined_ || request_sent_;
-        server_ = 0;
-        joined_ = false;
-        if (was_in) {
-            SessionEvent e;
-            e.type = SessionEvent::Type::Disconnected;
-            Push(std::move(e));
-        }
-        return false;
-    }
-    if (event.type != NetEventType::Message || event.data.size() < 2 || event.data[0] != kSessionMessage) return false;
-
-    const std::span<const u8> body(event.data.data() + 2, event.data.size() - 2);
-    ByteReader r(body);
-    switch (event.data[1]) {
-    case kJoinAccept: {
-        const u16 id = r.U16();
-        if (!r.Ok() || r.Remaining() != 0 || id == 0) {
-            ++malformed_;
-            break;
-        }
-        player_id_ = id;
-        joined_ = true;
-        SessionEvent e;
-        e.type = SessionEvent::Type::Joined;
-        e.player_id = id;
-        Push(std::move(e));
-        break;
-    }
-    case kJoinReject: {
-        const u8 why = r.U8();
-        if (!r.Ok() || r.Remaining() != 0 || why == 0 || why > static_cast<u8>(JoinResult::InProgress)) {
-            ++malformed_;
-            break;
-        }
-        SessionEvent e;
-        e.type = SessionEvent::Type::Rejected;
-        e.reason = static_cast<JoinResult>(why);
-        Push(std::move(e));
-        endpoint_.Disconnect(server_);
-        server_ = 0;
-        break;
-    }
-    case kLobby: {
-        LobbyState lobby;
-        if (!joined_ || !ReadLobby(r, lobby)) {
-            ++malformed_;
-            break;
-        }
-        if (!(lobby == lobby_)) {
-            lobby_ = std::move(lobby);
-            SessionEvent e;
-            e.type = SessionEvent::Type::LobbyChanged;
-            Push(std::move(e));
-        }
-        break;
-    }
-    case kStartGame: {
-        SessionEvent e;
-        e.type = SessionEvent::Type::GameStarting;
-        e.map = r.String();
-        e.seed = r.U32();
-        if (!joined_ || !r.Ok() || r.Remaining() != 0 || e.map.size() > 64) {
-            ++malformed_;
-            break;
-        }
-        Push(std::move(e));
-        break;
-    }
-    case kKick: {
-        SessionEvent e;
-        e.type = SessionEvent::Type::Kicked;
-        Push(std::move(e));
-        endpoint_.Disconnect(server_);
-        server_ = 0;
-        joined_ = false;
-        lobby_ = {};
-        break;
-    }
-    default:
-        ++malformed_;
-        break;
-    }
-    return true;
+std::vector<LobbyEntry> LanLobbyService::Results() const {
+    std::vector<LobbyEntry> out;
+    for (const LanSession& s : browser_.Results()) out.push_back({s.address.ToString(), s.address, s.info, s.ping, s.compatible});
+    return out;
 }
 
 } // namespace aether::net

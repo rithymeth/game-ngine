@@ -1,8 +1,15 @@
 #include "aether/terrain/spline.h"
 #include "test_framework.h"
 
+#include <cmath>
+
 using namespace aether;
 using namespace aether::terrain;
+
+namespace {
+bool NearEqual(f32 a, f32 b, f32 tol) { return std::fabs(a - b) <= tol; }
+bool NearEqual(const Vec3& a, const Vec3& b, f32 tol) { return (a - b).Length() <= tol; }
+} // namespace
 
 AETHER_TEST(Spline_AddAndEval) {
     Spline sp;
@@ -86,8 +93,8 @@ AETHER_TEST(Spline_UniformSample) {
 
 AETHER_TEST(Spline_WidthInterpolation) {
     Spline sp;
-    sp.AddPoint({0, 0, 0});   sp.SetPointWidth(0, 2.0f);
-    sp.AddPoint({10, 0, 0});  sp.SetPointWidth(1, 6.0f);
+    sp.AddPoint({0, 0, 0});    sp.SetWidth(0, 2.0f);
+    sp.AddPoint({10, 0, 0});   sp.SetWidth(1, 6.0f);
     AETHER_CHECK(NearEqual(sp.Width(0.0f), 2.0f, 1e-4f));
     AETHER_CHECK(NearEqual(sp.Width(1.0f), 6.0f, 1e-4f));
     // Halfway: average of 2 and 6.
@@ -105,4 +112,26 @@ AETHER_TEST(Spline_MoveControlPoint) {
     Vec3 after = sp.Evaluate(0.5f);
 
     AETHER_CHECK(after.x > before.x); // t=0.5 should now be further right
+}
+
+AETHER_TEST(Spline_MeshAndRoadMask) {
+    Spline sp;
+    sp.AddPoint({0, 0, 0});
+    sp.AddPoint({10, 0, 0});
+    sp.AddPoint({20, 0, 0});
+    // 2 segments x 4 cross-sections each, plus the end: 9, two vertices each.
+    const auto mesh = BuildSplineMesh(sp, 1.0f, 4);
+    AETHER_CHECK(mesh.size() == 9u * 2u * 8u);
+    // Every cross-section is filled in (none left at the origin past the start), ending at the last point.
+    for (usize v = 2; v < 18; ++v) AETHER_CHECK(mesh[v * 8 + 0] > 0.5f);
+    AETHER_CHECK(NearEqual(mesh[16 * 8 + 0], 20.0f, 0.5f));
+    AETHER_CHECK(NearEqual(mesh[17 * 8 + 7], 1.0f, 1e-5f)); // v at the end
+    // The mask matches the mesh's vertices; 5 m dashes over 20 m: on, off, on, off...
+    const auto mask = BuildRoadMask(sp, 4, 5.0f);
+    AETHER_CHECK(mask.size() == 9u * 2u * 2u);
+    AETHER_CHECK(mask[0] == 1.0f && mask[2] == 1.0f);       // the start is painted, on both sides
+    AETHER_CHECK(NearEqual(mask[mask.size() - 1], 1.0f, 1e-5f)); // distance along reaches 1
+    bool gap = false;
+    for (usize i = 0; i < mask.size(); i += 4) gap = gap || mask[i] == 0.0f;
+    AETHER_CHECK(gap);
 }

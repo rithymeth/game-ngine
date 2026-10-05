@@ -1,6 +1,7 @@
 #include "aether/animation/blend_space.h"
 #include "test_framework.h"
 
+#include <algorithm>
 #include <cmath>
 #include <random>
 

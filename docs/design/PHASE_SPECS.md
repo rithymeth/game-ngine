@@ -3012,3 +3012,2992 @@ The `Aether::AI` library (`ai/`), on top of `Aether::Nav`.
    - a navmesh overlay in the viewport;
    - the Behavior Tree graph editor;
    - a BT debugger that shows the active path during Play in Editor.
+
+## Phase 21: World building
+
+The concept is in [ROADMAP.md Phase 21](../ROADMAP.md). Two libraries make
+up the engine side:
+- `Aether::Terrain` (`terrain/`): heightmap terrain, splatmap layers,
+  brushes, foliage and splines;
+- `Aether::Streaming` (`streaming/`): world partition, cell streaming and
+  the floating origin.
+
+Both build and test headless. Steps 1–5 landed on master directly; they
+were then repaired so they build and match their documentation (#96,
+#97).
+
+### 21.1 Heightmap terrain
+
+- `Heightmap`: samples on a grid with a cell size, and bilinear sampling.
+- Procedural heights are fractal value noise (deterministic, smooth,
+  in -scale..scale).
+- `TerrainData` splits the heightmap into square chunks of `chunk_size`
+  vertices. Chunks share their edge vertices, so N samples need
+  ceil((N - 1) / (chunk_size - 1)) chunks per side.
+- Each chunk's mesh comes from its own part of the heightmap. A vertex
+  is position, normal (central differences) and UV: 8 floats.
+- Indices form a triangle list. A LOD level takes every 2^lod-th sample,
+  and the LOD is picked by distance.
+
+### 21.2 Splatmaps and brushes
+
+- **Splatmaps**: up to four layers as RGBA8 weights, with bilinear
+  sampling over UV.
+- **`BuildSplatmap`**:
+  - with no weights, the base layer everywhere;
+  - with one weight per layer, a constant mix;
+  - with one weight per layer per pixel, a painted map.
+- **Brushes**: full strength inside a core, fading smoothly over the
+  outer `falloff` share of the radius (0 is a hard edge).
+  - Painting raises the target layer and lowers the others, then
+    renormalizes.
+  - Height brushes: raise or lower by up to `vertical_scale` units at
+    full weight (a negative strength lowers); smooth (from the heights
+    before the stroke); flatten (toward the height under the center).
+
+### 21.3 Terrain rendering
+
+- `TerrainRenderer` keeps a render chunk per terrain chunk:
+  - it uploads vertex and index buffers through a `TerrainGpu`
+    (create and destroy a buffer), which the renderer implements over
+    the RHI;
+  - it rebuilds dirty chunks, and re-uploads a chunk whose LOD changes;
+  - it frees everything when destroyed;
+  - it estimates VRAM.
+
+### 21.4 Foliage
+
+- Foliage types each have:
+  - a mesh and LOD and impostor distances;
+  - a scale range and Y-rotation range;
+  - alignment to the ground normal, and an anchor offset.
+- **Generation**: each sample point is kept with the density map's
+  probability under it (1 m cells), up to `max_instances`. Its type is
+  picked at random.
+- **Painting**: `layer.density` instances per m² are scattered uniformly
+  over the brush disc and thinned by the map. The eraser removes
+  instances within a radius.
+- Instances can be filtered by chunk, sorted by type for instanced
+  draws, and bounded.
+
+### 21.5 Splines
+
+- Catmull-Rom splines whose control points carry a width and a roll.
+  They give positions, frames, arc lengths, uniform samples and closest
+  points.
+- **Meshes**: a strip with `verts_per_segment` cross-sections per
+  segment. Road markings give each strip vertex a dash flag (painted for
+  the first half of every dash length) and its distance along the road.
+
+### 21.6 Large worlds
+
+- **Partition**: a level is split into square grid cells on the ground
+  plane (`cell_size`, from an origin).
+  - A root entity with a Transform goes to the cell its position is in.
+  - Its descendants, found through Parent GUIDs, go with it.
+  - Entities with no Transform, AlwaysLoaded ones, and streaming
+    sources go to the persistent scene.
+  - Cells are additive binary scenes. `CopyEntity` moves an entity
+    between worlds through each component's serializer.
+- **The index** (`world.aworld`, JSON): the cell size and origin, the
+  persistent entity count, and each cell's entity count and position
+  bounds.
+  - Files: `persistent.aesc`, plus `cells/<x_z>.aesc`.
+  - Saving again removes stale cell files.
+- **Streaming** (`WorldStreamer`):
+  - `StreamingSource` components (a radius) say where to load.
+  - A cell loads once it's within a source's radius, nearest first, at
+    most `max_loads_per_update` per update.
+  - It unloads once it's beyond every source's radius × `unload_margin`
+    (1.25), so standing on a border doesn't thrash. At most
+    `max_unloads_per_update` unload per update.
+  - A pinned cell stays loaded regardless.
+  - A cell that can't be read is reported once and not retried.
+  - Loading adds the cell's entities to the world (and the GUID index),
+    so parents resolve across cells.
+  - Unloading destroys the entities it added that still exist; changes
+    to them aren't kept. Entities spawned at runtime aren't touched.
+  - The events say which cells loaded or unloaded and how many entities
+    they held.
+- **Floating origin**: once the focus is more than `threshold` from the
+  origin on the ground plane, every root Transform shifts back by whole
+  `step`s.
+  - The offset (a double-precision whole-world position) grows by the
+    same amount.
+  - The streamer works in whole-world positions through the offset, and
+    shifts the cells it loads into local positions.
+
+### 21.7 The world-building editors
+
+- **Terrain** (`TerrainEditDocument`, `TerrainToolPanel`):
+  - Tools: Raise, Lower (`raise_height` per full-weight dab), Smooth,
+    Flatten and Paint (a splatmap layer).
+  - The brush has a radius, strength and falloff, and paint radii are in
+    world units.
+  - A stroke is a series of dabs and is one undo step. It stores only
+    the rectangle of heights it changed, or the splatmap for paint, and
+    a stroke that changes nothing isn't kept.
+  - Touched chunks wait in a dirty set for the renderer. Normals reach
+    one sample out, so a dab on a shared edge dirties both chunks.
+  - The brush cursor is a ring that follows the ground.
+  - The viewport drives the panel with `Pointer(down, x, z)`. Dabs are
+    spaced a quarter radius apart along a drag, so the drag speed
+    doesn't change the result.
+- **Foliage** (`FoliagePaintDocument`, `FoliagePanel`):
+  - paint or erase over a radius; painted instances are set on the
+    ground through a height sampler, plus their type's anchor offset;
+  - one undo step per stroke;
+  - types edited with undo (removing one removes its instances and
+    renumbers the rest);
+  - density, and an instance cap that truncates;
+  - counts per type.
+  - Painting dabs every half radius along a drag.
+- **Splines** (`SplineEditDocument`, `SplinePanel`):
+  - add a point, insert one halfway after another, remove, move (a drag
+    is one undo step), and set width and roll;
+  - picking the nearest point within a radius;
+  - the curve and the road's edges for the viewport.
+  - In the viewport, Ctrl+click adds a point, a click picks one, and a
+    drag moves it.
+- **World partition map** (`WorldPartitionPanel`):
+  - every cell of the index, coloured by state (loaded, unloaded,
+    failed), with pins outlined and entity counts;
+  - the streaming sources and their reach;
+  - stats and problems.
+  - Clicking a cell pins or unpins it, and hovering it shows its
+    details.
+- Like the other editors, these are hooked into the editor window with
+  the Windows build.
+
+### 21.8 PR breakdown
+
+1. ✅ **Done.** Heightmap terrain, chunks and LOD.
+2. ✅ **Done.** Splatmaps and brushes.
+3. ✅ **Done** (portable part). Terrain rendering through `TerrainGpu`
+   (the RHI implementation with the Windows renderer).
+4. ✅ **Done** (portable part). Foliage generation and painting (GPU
+   culling with the renderer).
+5. ✅ **Done.** Splines, meshes along them and road markings.
+6. ✅ **Done.** World partition, cell streaming and the floating origin.
+7. ✅ **Done** (portable part). The editor:
+   - the terrain sculpt and paint panel with a viewport brush cursor;
+   - the foliage panel;
+   - spline editing;
+   - the world partition map (cells loaded, entity counts, and the
+     sources' reach).
+
+## Phase 22: Networking and multiplayer
+
+✅ **Done** on the engine and portable-editor side.
+
+The concept is in [ROADMAP.md Phase 22](../ROADMAP.md). The engine side
+starts with the `Aether::Net` library (`net/`).
+
+The transport is our own small protocol, in the manner of ENet and
+yojimbo, over a datagram socket interface. That way:
+- the same code runs over UDP and over an in-memory network that
+  simulates latency, jitter, loss and duplication;
+- tests are deterministic;
+- the editor gets simulated bad networks for free.
+
+### 22.1 The transport
+
+- **Sockets** (`DatagramSocket`):
+  - `UdpSocket`: non-blocking, POSIX or WinSock, bound to a port (0 for
+    any free one).
+  - `LoopbackNetwork`: sockets on 127.0.0.1 ports in one process.
+    Datagrams are delivered at now + latency + random jitter (so they
+    can reorder), lost, or duplicated, by seeded chance. Time moves
+    only with `Advance`, and datagrams to a closed port are dropped as
+    with UDP.
+- **Addresses**: IPv4 and a port, parsed from and printed as
+  `a.b.c.d:port`.
+- **Connections** (`Connection`):
+  - Packets: a 16-bit sequence number (wrapping) and acks of the newest
+    packet received plus a bit for each of the 32 before it. Duplicate
+    packets are dropped. Payloads are at most 1200 bytes.
+  - Channels, by type:
+    - **ReliableOrdered**: messages ride packets until one carrying them
+      is acked, resent after max(0.1 s, RTT × 1.25 + 20 ms), delivered
+      once and in order. A window of 256 messages per channel is in
+      flight, and messages larger than 1024 bytes are split into
+      fragments and joined (up to `max_message`, 256 KB).
+    - **Unreliable**: messages go once and fit one packet.
+    - **UnreliableSequenced**: unreliable, and never older than one
+      already delivered (for state).
+  - Queues are bounded per channel. Sends that don't fit are refused,
+    as are messages to a channel that doesn't exist.
+  - Stats: RTT (smoothed from acks), packet loss (a packet unacked
+    after max(1 s, 4 × RTT) counts as lost), packets and bytes, and
+    resends.
+- **Hosts** (`NetHost`):
+  - A server listens and accepts peers up to `max_peers`, refusing the
+    rest. A client connects with a nonce, retrying every 0.25 s until it
+    is accepted, refused, or 5 s pass.
+  - A lost Accept is sent again on a repeated request. A new request
+    from a known address (a restarted client) replaces the old peer.
+  - Connected peers keep alive (at least every 0.25 s) and time out
+    after 5 s of silence.
+  - Goodbyes are sent three times, unacknowledged.
+  - Packets with another protocol id are ignored.
+  - Events: Connected, Disconnected (with a reason: Local, Remote,
+    Timeout, Denied, ConnectFailed) and Message (peer, channel, bytes).
+  - Send, Broadcast (with an exception) and peer info, including the
+    connection's stats.
+
+### 22.2 Replication
+
+The server is authoritative. It sends each client snapshots of the
+networked entities, in the manner of Quake 3 (`ReplicationServer` and
+`ReplicationClient`, `net/include/aether/net/replication.h`).
+
+- **What replicates**:
+  - Entities with a `NetIdentity`: a net id (the server assigns it), an
+    owner (the server's id for a client, or none), an archetype name,
+    a relevancy radius and a priority.
+  - Their components' `Field_Replicated` fields, in reflection's binary
+    form. `Transform` always replicates whole.
+  - Components are named on the wire by an FNV-1a hash of their name,
+    and fields by their index among the replicated ones (up to 32).
+- **Snapshots**:
+  - Every `send_interval` (20 Hz), each client gets one on an
+    UnreliableSequenced channel. It holds a snapshot id, a baseline id,
+    the server time, despawns, and updates.
+  - An update holds, per component, a mask of the fields that differ
+    from the baseline and their bytes. A mask of 0 means the component
+    was removed. New entities carry everything, plus their owner and
+    archetype.
+  - The baseline is the newest snapshot the client acknowledged (on an
+    Unreliable channel). The server remembers 64 snapshots per client
+    as "the baseline plus what was sent". A lost snapshot therefore
+    costs only latency, and an idle world costs a 17-byte header.
+  - The client rebuilds each snapshot from its own copy of the baseline.
+    It drops one whose baseline it has forgotten. It writes only the
+    fields that changed since the snapshot it last applied.
+- **Spawning**: the client creates an entity with the `NetIdentity`,
+  then runs the `OnSpawn` hook for its archetype (or the "" hook), which
+  adds what isn't replicated (a mesh, a collider). Then it writes the
+  fields. `locally_owned` is set when the owner is this client.
+  Despawns are explicit, and an `OnDespawn` hook runs first.
+- **Relevancy**: an entity goes to a client when its radius is 0, the
+  client owns it, or it is within its radius of the client's viewer.
+  The viewer is set with `SetViewer`, or else is the Transform of an
+  entity the client owns; with neither, everything is relevant. An
+  entity that stops being relevant is despawned on that client.
+- **Bandwidth**: each snapshot fits a byte budget (1000 bytes, at most
+  one unreliable message). Entities with changes add their priority to
+  an accumulator each snapshot and are sent highest first. Those that
+  don't fit wait, with their accumulators growing, so everything gets
+  through in the end and important entities keep up best.
+- **Known limits**:
+  - A snapshot with no baseline (one that falls out of the 64 kept)
+    that the budget cuts short leaves out entities. The client then
+    drops them until they are sent again.
+  - The server keeps a full copy of the state per remembered snapshot;
+    sharing it is for later.
+
+### 22.3 Remote calls
+
+Remote procedure calls in the manner of Unreal's RPCs
+(`net/include/aether/net/rpc.h`, `engine/include/aether/ecs/remote_call.h`).
+
+- **Flags** on reflected member functions:
+  - `Fn_Server`: a client asks the server to run it.
+  - `Fn_Client`: the server runs it on the owning client.
+  - `Fn_Multicast`: the server runs it, and so does every client that
+    has the entity.
+  - `Fn_Unreliable`: may be lost. The default is reliable and in order.
+- **One path for every caller**: C++ calls go through `CallFunction`,
+  and the Blueprint VM's native calls and Luau's method calls now do
+  too. `CallFunction` asks the world's `RemoteCallRouter`:
+  - **RunLocally**: run it here;
+  - **Sent**: it went over the network, and nothing runs here;
+  - **Refused**: not allowed. Blueprints report BP204, and Luau raises
+    "was refused".
+
+  A world without a router runs everything where it is called, as a
+  single-player game would.
+- **`net::RpcRouter`**: one on the server and one per client. Each
+  installs itself as its world's router and removes itself when
+  destroyed.
+
+  | Called on | `Fn_Server` | `Fn_Client` | `Fn_Multicast` |
+  |---|---|---|---|
+  | the server | runs | sent to the owner (runs here if nobody owns it) | runs here and is sent to every peer whose last snapshot had the entity |
+  | a client | sent if this client owns it (`locally_owned`), refused otherwise | runs here | runs here only |
+
+- **Checks on arrival**:
+  - The server runs only `Fn_Server` calls, and only from the entity's
+    owner. Others are rejected and logged.
+  - Clients run only client and multicast calls.
+  - Calls for an unknown entity, component or function are counted, as
+    are malformed ones.
+  - `Caller()` names the sender while a call runs.
+- **Wire format**: kind 3, then the net id, an FNV-1a hash of the
+  component name and of the function name, the argument count, and
+  each argument in reflection's binary form with a 16-bit length. Calls
+  go on the reliable channel, or on the unreliable one for
+  `Fn_Unreliable`. Arguments must match the parameters exactly.
+- **Return values**: remote calls send nothing back.
+
+### 22.4 Prediction and interpolation
+
+Things a client owns are predicted. Everything else is shown slightly in
+the past, between two snapshots (`net/include/aether/net/prediction.h`,
+`interpolation.h`).
+
+- **Snapshot interpolation** (`SnapshotInterpolation`):
+  - On each snapshot, every replicated entity's authoritative Transform
+    is read from the snapshot (`ReplicationClient::ReadReplicated`, not
+    from the world, which shows interpolated values) and pushed into
+    its `InterpolationBuffer` at the snapshot's server time. A buffer
+    holds 32 samples.
+  - Each frame, entities are shown at render time = the estimated
+    server time − `delay` (0.1 s, two snapshots at 20 Hz). Position is
+    lerped and rotation nlerped along the shorter arc. Outside the
+    buffer, the oldest or newest sample holds; the frames where that
+    happens are counted as starved.
+  - The server-time estimate follows the snapshots' arrival, smoothed
+    (it snaps when off by more than 0.25 s), and the render time never
+    runs backwards.
+  - Entities this client owns are left alone, and buffers go with their
+    entities.
+- **Predicted movement**:
+  - `NetMovement`: velocity and grounded replicate; speed,
+    acceleration, jump speed, gravity and ground height don't.
+  - `MovementInput`: a sequence number, dt, a move direction and jump.
+  - `StepMovement` is the deterministic rule both sides run: horizontal
+    velocity eases towards the input's, then jump, gravity and landing.
+    `MovementServer::SetStep` and `MovementClient::SetStep` replace it,
+    for example with a physics character controller.
+  - **`MovementClient::Predict`**:
+    - runs the step at once and keeps the input;
+    - sends the last 8 unacknowledged inputs on an unreliable channel,
+      so losses are covered by redundancy;
+    - registers Transform and NetMovement with `PredictLocally`, so
+      replication writes them on owned entities only when spawning.
+  - **`MovementServer`**:
+    - runs inputs from the entity's owner only, each sequence number
+      once and in order, at most 32 per entity per update;
+    - sanitizes them: dt is clamped to (0, 0.1], the direction to unit
+      length, and NaNs are zeroed. The client sanitizes the same way, so
+      a speed hack replays identically on both sides and gains nothing;
+    - after each batch, acknowledges the last sequence number it ran,
+      with the resulting position, velocity and grounded state.
+  - **Reconciliation**: on an acknowledgement newer than the last, the
+    client drops the inputs it covers, resets to the server's state and
+    replays the rest. The distance the prediction moved is the error.
+    Errors over 1 cm count as corrections, for example when the server
+    knocks the character back.
+
+### 22.5 Sessions and discovery
+
+Finding, hosting and joining games (`net/include/aether/net/session.h`).
+
+- **The simulated network gains hosts**:
+  - `LoopbackNetwork::OpenAt(ip, port)` binds sockets on simulated
+    machines (10.0.0.x), so one process can stand in for a LAN.
+  - `Address::Broadcast(port)` reaches every socket on that port except
+    the sender's own.
+  - UDP sockets set `SO_BROADCAST`.
+- **`SessionInfo`**: name, map, mode, the game port, players and
+  maximum, the build, whether a password is needed (the password itself
+  is never advertised), and key/value properties. It has a compact
+  binary encoding, and strings are cut to 255 bytes.
+- **LAN discovery**:
+  - `LanBeacon` listens on the discovery port (7778) and answers
+    queries carrying our protocol id with the session's info. The
+    query's nonce is echoed back so the browser can time it. A disabled
+    beacon reads queries and ignores them.
+  - `LanBrowser::Search` broadcasts a query. Answers to our own nonces
+    become results, one per game address (the beacon's host plus
+    `info.port`), with the ping and whether the build matches. Results
+    are sorted by ping, expire after `expiry` (5 s), and can be
+    refreshed every `auto_search` seconds.
+- **Hosting and joining**:
+  - `SessionClient::Join` connects, then asks to join over the reliable
+    channel with its build, a player name and the password.
+  - `SessionHost` checks, in order: the build, then the password, then
+    room (`max_players`, or the host's peer limit). If a check fails,
+    the peer is told why and dropped once the refusal is acknowledged
+    (or after 1 s).
+  - Peers that connect but never ask within 3 s are refused with
+    NoRequest.
+  - Accepted players get a unique name ("Ada", "Ada (2)") and the
+    session's info, and the host keeps `info.players` current.
+  - `Kick` refuses with Kicked.
+  - Events: PlayerJoined, PlayerLeft and JoinRefused, each with a
+    reason.
+  - The client ends Joined, or Failed with one of: WrongPassword,
+    BuildMismatch, Full (including the transport's own refusal),
+    NoRequest, Kicked, ConnectFailed or Lost.
+  - The password travels in the clear and is meant for the LAN; secure
+    authentication comes with platform services.
+- **Lobbies**: `LobbyService` is the interface games and the editor use:
+  advertise or update a session, stop, search, results and update.
+  `LanLobbyService` implements it with a beacon and a browser. Steam,
+  EOS and console services implement the same interface later.
+
+### 22.6 The editor
+
+Networked Play-in-Editor and the network profiler (`editor/src/net/`).
+
+- **`NetPlaySession`**:
+  - Copies the edited world into a server world through the binary
+    scene format. The edited world is never touched.
+  - Starts N client worlds that connect over a `LoopbackNetwork`, in
+    one process and deterministic for a seed.
+  - Its latency, jitter, loss and duplication can change while playing.
+  - **Modes**: a listen server, which is also a player (its pawn is
+    moved directly on the server), or a dedicated server, which isn't.
+  - **Options**:
+    - **Replicate the scene**: every scene entity with a Transform gets
+      a NetIdentity ("scene").
+    - **Spawn players**: a predicted "player" pawn (Transform and
+      NetMovement) for each connecting client, placed `spawn_spacing`
+      apart and removed when it disconnects.
+  - **Each frame**:
+    - the network advances;
+    - the server runs replication, RPCs and movement;
+    - every client runs replication, RPCs, movement prediction and
+      interpolation.
+  - **Client spawns**: a newly spawned client entity is given copies of
+    the server entity's other components (models, lights), as if the
+    client had loaded the same level. Shipped games do this through
+    `OnSpawn` instead.
+  - **Input**: `MoveClient` (predicted) and `MoveListenPlayer`.
+  - **Per-client views**: connected, RTT, loss, bytes each way, entity
+    count and prediction corrections.
+- **`NetProfile`** (kept by `ReplicationServer`): bytes per entity (with
+  updates and spawns), per component and per field since `Reset`, plus
+  snapshot totals and despawns.
+  - **`BuildEntityRows`** lists entities by cost, each with its
+    components by cost.
+  - **`BuildFieldRows`** lists fields by cost over all entities.
+  - Both give rates in bytes per second.
+- **Panels**:
+  - **`NetPlayPanel`**: the mode, the client count, scene and player
+    options, the network sliders (live while playing), Play and Stop,
+    and a table of the clients.
+  - **`NetProfilerPanel`**: totals and rate, Reset, and "By entity"
+    (tree) and "By field" (table) views.
+
+### 22.7 PR breakdown
+
+1. ✅ **Done.** The transport: sockets (UDP and the simulated network),
+   connections with reliable, unreliable and sequenced channels, and
+   hosts.
+2. ✅ **Done.** Replication (§22.2):
+   - the `Replicated` field flag and `NetIdentity`;
+   - server-authoritative snapshots of reflected fields, with delta
+     compression against acked baselines;
+   - spawning and despawning on clients;
+   - relevancy by distance, and per-connection priority within a
+     bandwidth budget.
+3. ✅ **Done.** RPCs (§22.3): `Server`, `Client` and `Multicast` function flags, called from
+   C++, Blueprints and Luau, with ownership checks.
+4. ✅ **Done.** Client-side prediction and reconciliation for character movement,
+   and snapshot interpolation for everything else (§22.4).
+5. ✅ **Done.** Sessions (§22.5): hosting, joining and LAN discovery (broadcast); a lobby
+   abstraction for platform services later.
+6. ✅ **Done.** The editor (§22.6):
+   - Play in Editor with N clients and a listen or dedicated server;
+   - simulated latency and loss;
+   - a network profiler (bandwidth per entity and field).
+
+## Phase 23: Profiling, debugging and developer tools
+
+✅ **Done** on the engine and portable-editor side.
+
+The concept is in [ROADMAP.md Phase 23](../ROADMAP.md). The core pieces
+(console variables, the console, the profiler's zones and counters,
+debug drawing, crash capture) live in the engine, so every module can
+use them. Their panels are in the portable editor library and work as
+in-game overlays too.
+
+### 23.1 Console variables and the console
+
+- **Logger** (`aether/core/log.h`):
+  - sinks: listeners for every line that passes the level, called
+    outside the logger's lock;
+  - the 512 most recent lines;
+  - stdout can be switched off.
+- **CVars** (`aether/core/cvar.h`): named, typed settings declared where
+  they're used.
+  - Declared like
+    `static AutoCVar<int> cascades("r.shadows.cascades", 4, "Shadow cascades", CVar_Archive, 1, 4);`.
+  - Types: bool, int, float and string.
+  - Names are case-insensitive and dotted by system.
+  - Reads are atomic, so any thread can read while the console writes.
+  - **Parsing**:
+    - bools take 1/0, true/false, on/off and yes/no;
+    - ints take decimal, hex, octal, and whole-number floats such as
+      "3.0";
+    - floats reject NaN and infinity;
+    - values outside the range are clamped.
+  - **Floats print** in their shortest round-trip form ("0.1").
+  - **Defaults**: `IsDefault` and `Reset`.
+  - **Flags**:
+    - ReadOnly;
+    - Cheat (changed only while cheats are allowed);
+    - Archive (saved by `writeconfig` when not at its default);
+    - RequiresRestart (the console says so).
+  - **Changes**: `OnChange` callbacks, plus a generation counter for
+    cheap polling.
+  - **`CVarRegistry`** also holds console commands (`AutoConsoleCommand`).
+    - Registering a name again returns the existing variable when the
+      type matches, and fails on a type clash.
+    - A name can't be both a variable and a command.
+- **`Console`** (`aether/core/console.h`):
+  - **Syntax**:
+    - `name` describes a variable (value, type, range, default, flags,
+      help);
+    - `name value` sets it (strings take the rest of the line);
+    - `command args` runs a command;
+    - statements are separated by `;`;
+    - `//` and `#` start comments;
+    - quotes, with `\"`, group arguments.
+  - **Built-in commands**: help [prefix], find text (names and help),
+    cvarlist [prefix], set, reset, toggle, echo, exec file (nested up
+    to 8 deep), writeconfig file, history, clear.
+  - **Errors**: unknown names suggest close matches; Execute returns
+    false if any statement failed.
+  - **History**: newest last, no repeats, bounded at 64.
+  - **Completion**: `Complete(prefix)` lists sorted variables, commands
+    and built-ins. `CompleteLine` extends the word being typed to the
+    candidates' common prefix, adding a space when only one remains.
+  - **The command line**: `+name value +command args`.
+  - **Log capture**: log lines from any thread wait in a queue until
+    `Pump`.
+- **`ConsolePanel`** (editor):
+  - output coloured by level, with a filter;
+  - Clear, "Show log" and "Cheats" toggles;
+  - the input line: Up/Down walk the history; Tab completes, and a
+    second Tab lists the candidates.
+  - `Overlay(toggle, width)` draws the same panel as a drop-down window
+    for game builds, toggled with the tilde key.
+
+### 23.2 The profiler
+
+- **Zones** (`aether/core/profiler.h`): `AETHER_PROFILE_ZONE("Physics")`
+  or `AETHER_PROFILE_FUNCTION()`.
+  - Each zone is recorded on its own thread without a lock: two clock
+    reads, and a push when it ends.
+  - It carries its nesting depth and thread.
+  - `Intern` gives stable names for zones named at runtime.
+  - `SetThreadName` names a thread; job workers name themselves
+    "Worker N".
+- **Frames**: `BeginFrame`/`EndFrame` on the main thread. `EndFrame`
+  gathers the following into a `ProfileFrame`, and the last `history`
+  (300) frames are kept:
+  - every thread's zones since the last frame;
+  - the per-frame counts (`Count`: summed over the frame, then reset);
+  - the gauges (`Gauge`: they keep their last value);
+  - the GPU pass timings the render backend submitted.
+  - **Enabled**: off records nothing.
+  - **Paused**: frames still run but aren't kept.
+- **Statistics**: `Aggregate(frames)` gives per zone: calls, total, self
+  (total minus direct children on the same thread), max, and per-frame
+  average, sorted by total.
+- **Export**: `WriteChromeTrace` writes Chrome trace JSON for
+  chrome://tracing and Perfetto, containing:
+  - a "Frames" track;
+  - zones as complete events per thread, with thread names;
+  - counters as counter events.
+- **Tracy**: with `-DAETHER_TRACY=ON`, Tracy's client is fetched and the
+  same macros also emit Tracy zones and frame marks.
+- **Instrumented already**:
+  - every scheduler phase ("Update", "FixedUpdate", ...);
+  - every system, on whichever thread runs it.
+- **Memory by category**: `MemoryTracker` keeps bytes in use, the peak,
+  and allocation and free counts per category.
+  - `LinearAllocator` and `PoolAllocator` report under the category set
+    with `SetMemoryCategory`.
+  - `FrameAllocator` reports its reserved buffers.
+- **Console**:
+  - CVars `profiler.enabled` and `profiler.history`;
+  - commands `profiler.pause`, `profiler.clear` and
+    `profiler.dump [file]` (a Chrome trace).
+- **`ProfilerPanel`** (editor): Record, Pause and Clear toggles, trace
+  export, and the average, fps and worst frame time.
+  - **Frame graph**: green, yellow or red against 60 and 30 fps, with
+    budget lines. Click a frame to inspect it; right-click to follow the
+    newest again.
+  - **Zones**: a table of this frame or all kept frames.
+  - **Timeline**: per-thread lanes, zones nested by depth, with hover
+    times.
+  - **Counters**: the frame's counters and GPU passes.
+  - **Memory**: memory by category.
+
+### 23.3 Debug drawing and stat overlays
+
+- **`DebugDrawList`** (`aether/debug/debug_draw.h`): thread-safe drawing
+  requests.
+  - Shapes: `Line` (with or without depth testing), `Arrow`, `Box`
+    (oriented, 12 lines), `Sphere` (three great circles), `Circle`,
+    `Point` and `Axes` (x red, y green, z blue). All shapes are stored
+    as lines, so a consumer only draws lines and text.
+  - Text: `Text` in the world and `ScreenText` stacked top-left.
+  - Colors are 0xAABBGGRR (`DebugColor(r, g, b, a)`).
+  - **Duration**: 0 means this frame only; otherwise the item stays
+    for that many seconds. `Tick(dt)` once per frame ages items and drops
+    the expired ones. Screen text closes up the gaps.
+  - The `debug.draw` CVar switches it off. `max_lines` (200,000) caps
+    it, and dropped lines are counted.
+- **Every language**:
+  - **C++**: `DebugDrawList::Get()` or `DebugDraw::*`.
+  - **Blueprints**: `DebugDraw` is a reflected struct of static
+    BlueprintCallable functions (Line, Arrow, Box, Sphere, Point, Text,
+    ScreenText; 0..1 RGB colors and a duration), so they appear as
+    Call.Native nodes.
+  - **Luau**: the read-only global `Draw` table: `line`, `arrow`, `box`,
+    `sphere`, `point`, `text` and `screen`. Arguments are vectors, with
+    an optional color (default white) and duration (default 0).
+- **Stat overlays** (`aether/debug/stats.h`): `StatGroups` are named
+  providers of coloured text lines, shown in the order they were turned
+  on.
+  - **Built in**:
+    - `fps`: fps, average, min and max over 60 frames;
+    - `zones`: the top 10 zones per frame, with self time;
+    - `counters`: the last frame's counters and gauges;
+    - `gpu`: pass times;
+    - `memory`: by category.
+  - **`net::NetStatGroup(host)`** adds `net` (peers, RTT, loss and
+    traffic) while it exists.
+  - **The `stat` console command**: `stat fps memory` toggles groups,
+    `stat none` hides them all, and `stat` lists them.
+- **`DebugOverlay`** (editor; also usable in game builds): draws over a
+  viewport with ImGui, given a view-projection matrix:
+  - lines, clipped at the near plane;
+  - world text centred on its projected point;
+  - screen text;
+  - the shown stat groups top-right on a dark backing.
+
+  `ProjectToScreen` is the projection it uses. The renderer's debug pass
+  can draw the same lines with depth testing.
+
+### 23.4 Crash handling
+
+- **`CrashHandler::Install(config)`** (`aether/debug/crash.h`) handles:
+  - fatal signals on POSIX (SIGSEGV, SIGABRT, SIGFPE, SIGILL and
+    SIGBUS), on an alternate stack so a stack overflow can still be
+    reported;
+  - unhandled SEH exceptions on Windows;
+  - uncaught C++ exceptions everywhere, through the terminate handler.
+- **The report** is `crash-<unix time>-<pid>.txt` in the configured
+  directory. It holds:
+  - the app, build, reason (a signal name, an exception code, or the
+    uncaught exception's `what()`), fault address, time, process and
+    thread;
+  - the game's context;
+  - a backtrace (`backtrace_symbols_fd` on glibc, raw frames
+    elsewhere);
+  - the last 200 log lines.
+
+  On Windows, `MiniDumpWriteDump` also writes `crash-....dmp` next to it.
+- **Signal safety**: the handler does only async-signal-safe work.
+  - Log lines are copied into a fixed ring as they're logged (through a
+    log sink).
+  - Up to 16 context pairs (`SetContext("level", "Docks")`) live in
+    fixed buffers.
+  - The report is written with plain `write()` calls and hand-rolled
+    number formatting.
+  - Then the default action is restored and the signal raised again,
+    so the process still dies as it would have (a core dump, an exit
+    status).
+  - A second fault while reporting isn't reported again.
+- **Reading reports**:
+  - `ParseCrashReport` returns the fields (`context.*` included), the
+    backtrace and the log.
+  - `ListCrashReports(dir)` lists the unseen ones, newest first.
+  - `MarkCrashReportSeen` renames a report to `.seen.txt`.
+  - `DeleteCrashReport` removes it and its minidump.
+  - `CrashHandler::WriteReport(reason)` writes one on purpose (for "report
+    a problem" and tests).
+- **`CrashReporterDialog`** (editor): `Refresh` at startup opens the
+  dialog when unseen reports exist.
+  - It lists the reports by time and reason.
+  - The selected report shows its reason, build and process, its
+    context, backtrace and log.
+  - Buttons: Copy report, Dismiss, Delete and Dismiss all.
+
+### 23.5 Functional tests
+
+Whole-game scenarios, run headless (`aether/testing/functional_test.h`).
+
+- **`FunctionalTest(name)`** is built from steps and runs them in order
+  on a fresh World, SystemScheduler and FrameLoop with a fixed step
+  (1/60 s by default; `FixedStep` changes it). The steps:
+  - `Scene(path)`: loads a binary or JSON scene;
+  - `Setup` and `Do`: arbitrary code that builds the world and adds
+    systems;
+  - `Simulate(seconds, each_frame)`;
+  - `SimulateUntil(description, done, timeout)`;
+  - `Check(description, predicate)`;
+  - `ExpectReaches(tag, center, half_extents, timeout)`: "entity X
+    reached trigger Y". It checks the first entity with the tag against
+    the box.
+  - Options: `Tag`, and `Timeout` (simulated seconds across the whole
+    test, 600 by default).
+- **`FunctionalContext`**: `world`, `scheduler`, the simulated `time` and
+  `frame`, `FindTagged` and `AllTagged`, `Position`, `Inside`, `Log`,
+  `Fail` and `Expect`.
+- **Failures**: the first failing step ends the test. Its result names
+  the step and why it failed:
+  - a check that didn't hold;
+  - not done after N s;
+  - where the entity got to;
+  - no entity with the tag;
+  - a scene that couldn't load;
+  - an exception;
+  - the overall time budget running out.
+
+  Log lines written during the test, from any thread, are kept in the
+  result.
+- **Registry and reports**:
+  - `AETHER_FUNCTIONAL_TEST(Name) { return FunctionalTest(...)...; }`
+    registers a test.
+  - `FunctionalTestRegistry::Run(options)` runs them sorted by name,
+    filtered by name substrings and tags, optionally stopping at the
+    first failure.
+  - Reports: `WriteJUnitXml` (for CI), `WriteJsonReport` and
+    `FormatFunctionalSummary`.
+- **`aether_functional`** (`tools/functional`): a headless runner.
+  - Options: `--list`, `--filter`, `--tag`, `--stop-on-failure`,
+    `--junit FILE`, `--json FILE` and `--quiet`.
+  - It exits 0 when everything passes, 1 on a failure and 2 on bad
+    arguments.
+  - It's registered with CTest, and runs two sample scenarios: a seeker
+    reaching its goal, and a spawner.
+  - Games link their own scenarios into a runner like it.
+- **Console**: `functional.run [filter ...]` and `functional.list` run and
+  list the tests in game builds and the editor.
+
+### 23.6 PR breakdown
+
+1. ✅ **Done.** Console variables and the console (§23.1).
+2. ✅ **Done.** The profiler (§23.2): CPU zones per thread and frame, counters, memory by
+   category, with Tracy forwarding as an option (`AETHER_TRACY`), and
+   the editor's profiler panel (frame graph, per-zone times, counters).
+3. ✅ **Done.** The debug draw API (§23.3) (lines, boxes, spheres, arrows and world text,
+   with a duration) from C++, Luau and Blueprints, and stat overlays
+   (`stat fps`, `stat memory`, `stat net`).
+4. ✅ **Done.** Crash handling (§23.4): signal and exception handlers, captured log lines,
+   and a crash report file (a minidump on Windows); the editor's crash
+   reporter dialog.
+5. ✅ **Done.** Functional tests (§23.5): scenarios ("load the scene, simulate 5 s, assert
+   that entity X reached trigger Y") run headless, with a CLI runner
+   and reports for CI.
+
+## Phase 24: Cross-platform
+
+The concept is in [ROADMAP.md Phase 24](../ROADMAP.md). Until now the
+engine was tested on Linux in this repository's sessions, while the
+Windows-only parts (the D3D12 renderer and editor, Win32 windows and
+input) were written for Windows without a Windows build to check them.
+Phase 24 starts by making every platform build on every change.
+
+### 24.1 Continuous integration
+
+`.github/workflows/ci.yml` runs on pushes to master, on pull requests,
+on version tags, and by hand.
+
+- **Linux** (Ubuntu 24.04, Ninja), four jobs: GCC, Clang, ASan+UBSan
+  (Debug), and with physics (Jolt).
+  - Each builds the portable engine, editor UI, scripting and tests.
+  - Each runs `aether_tests`, then `aether_functional`, whose JUnit
+    report is kept as an artifact.
+  - Fetched dependencies are cached.
+- **Windows** (windows-2022, MSVC, Visual Studio generator):
+  - **Build**: everything, the D3D12 editor included. Vulkan is off,
+    because hosted runners have no Vulkan loader.
+  - **Tests**: the unit tests run but don't fail the job yet, because
+    hosted runners have no GPU for the D3D12 device tests. The
+    functional tests do fail the job.
+  - **Package**: `AetherEditor-windows-x64.zip`, containing
+    `aether_editor.exe`, its DLLs (dxcompiler), the assets and the
+    README, uploaded as an artifact.
+- **Release**: a `v*` tag attaches that zip to a GitHub release, with
+  generated notes, once both platforms pass.
+- **Assets**: the editor now looks for its assets next to the
+  executable first, then in the working directory, then in the source
+  tree, so the packaged editor runs from wherever it's unzipped.
+
+### 24.2 A portable window and input layer
+
+`platform::Window` is now one interface over two backends: Win32 on
+Windows and GLFW 3.4 (fetched by CMake) on Linux and macOS, with X11,
+optionally Wayland (`AETHER_GLFW_WAYLAND`), and Cocoa.
+`AETHER_BUILD_WINDOWING` turns the GLFW backend off for builds with no
+windowing (`AETHER_HAS_WINDOW` tells code which it has).
+
+- **Events**: every backend reports the same `WindowEvent`s, in
+  `input::Key` terms: keys and mouse buttons (left and right modifiers
+  told apart), mouse movement and position, the wheel, typed
+  characters, gamepad axes and buttons (GLFW's gamepad mappings, Y axes
+  pointing up, triggers 0..1), focus, resizes and the close request.
+  `TakeEvents()` drains them each frame.
+- **Input**: `ApplyWindowEvents` feeds a frame's events into
+  `input::InputState`; losing focus releases every key and axis, so
+  nothing sticks down after Alt-Tab.
+- **Key maps**: `KeyFromVirtualKey` (Win32), `KeyFromGlfwKey`,
+  `KeyFromGlfwMouseButton`, `KeyFromGlfwGamepadButton`,
+  `KeyFromGlfwGamepadAxis`; keys with no engine name map to `Key::None`.
+- **Native handles**: `NativeHandle()` (HWND, X11 Window, NSWindow),
+  `NativeDisplay()` (the X11 or Wayland display) and, on GLFW,
+  `PlatformWindow()` for `glfwCreateWindowSurface`. Also `Backend()`,
+  `SetTitle`, `RequestClose`, and `WindowDesc::visible` for hidden
+  windows.
+- **Tests**: the key maps and event application everywhere; a real GLFW
+  window (created hidden, pumped, a second window alongside, closed)
+  wherever there is a display - Linux CI runs the tests under Xvfb.
+- **Windows build fix**: MSVC builds with
+  `_ENABLE_EXTENDED_ALIGNED_STORAGE`, needed for sorting 16-byte-aligned
+  types.
+
+### 24.3 The Vulkan backend off Windows
+
+The RHI's Vulkan backend (`gfx/rhi/vulkan`) used to build only on
+Windows. It now builds on Linux (and is ready for macOS) and renders
+headless, which is what lets CI test rendering with no GPU.
+
+- **Build**: on Linux and macOS, CMake uses the system Vulkan loader and
+  headers (`libvulkan-dev`) and glslang (`glslang-dev`). If either is
+  missing, the backend is left out and nothing else changes.
+  `rhi::CreateDevice(Backend::Vulkan)` works off Windows;
+  `Backend::D3D12` reports itself unavailable there.
+- **Shaders**: `CompileHLSLToSPIRV` uses glslang's HLSL front end off
+  Windows, in place of DXC. It compiles the same HLSL with DXC's mapping:
+  `register(tN, spaceM)` becomes set M, binding N; `[[vk::push_constant]]`
+  becomes push constants; entry points keep their names.
+- **Instance**: on Windows the Win32 surface extension. Elsewhere,
+  whichever window-system surface extensions the loader offers (xcb,
+  Xlib, Wayland, Metal), or none on a machine with no window system.
+- **Window swap chains**: `CreateSwapChain` takes an HWND on Windows and
+  a `GLFWwindow*` (`Window::PlatformWindow()`) elsewhere. The surface
+  comes from `glfwCreateWindowSurface`, and present support is checked
+  against it.
+- **Offscreen swap chains**: `CreateSwapChain(nullptr, w, h, n)` creates
+  n device-local images behind the same render pass, framebuffers and
+  depth buffer.
+  - It has no surface and no acquire or present semaphores, and
+    `Present` does nothing.
+  - Pipelines, bindless textures, push constants and draws all work as
+    they do with a window.
+  - Texture handles stay stable across `Resize`.
+- **Read back**: `ISwapChain::ReadBack(rgba8)` copies the current back
+  buffer to memory (RGBA, rows top to bottom). Call it between Submit
+  and Present.
+  - Offscreen swap chains always support it, and window swap chains do
+    where the surface allows `TRANSFER_SRC`.
+  - Other backends return false, for now.
+- **Tests**, on any Vulkan driver (lavapipe in CI):
+  - glslang output (SPIR-V magic number, entry-point names, errors
+    reported).
+  - An offscreen frame: a push-constant-coloured triangle that checks
+    +Y is up, image rotation, and resizing.
+  - A textured quad through the bindless table.
+  - A window swap chain under Xvfb.
+- **CI**: the Linux jobs install the Vulkan loader, glslang and Mesa's
+  lavapipe, and build with Vulkan on.
+  - The ASan+UBSan job hides the driver, because LeakSanitizer reports
+    lavapipe's own thread allocations after unload. Its device tests
+    skip; the other jobs run them.
+- **MSVC**: the missing standard includes it reported (`<array>`,
+  `<numeric>` in terrain) are added, along with the others a scan found.
+
+### 24.4 The editor on Vulkan
+
+The editor's panels now run wherever Vulkan does. The D3D12 editor
+(`editor/main.cpp`, with its 3D viewport) stays the Windows editor.
+
+- **ImGui on the RHI** (`editor/src/host/imgui_vulkan_host.h`,
+  `Aether::EditorVulkan`): `ImGuiVulkanHost` runs `imgui_impl_vulkan` on
+  the engine's own `VkDevice` and queue.
+  - Its pipeline is built for the swap chain's default render pass.
+  - Each frame's draw data is recorded into an RHI command list between
+    `BeginRenderPass` and `EndRenderPass`.
+  - Window and offscreen swap chains work alike.
+- **Input from the engine's windows** (`host/imgui_window_input.h`):
+  `FeedImGuiEvents` turns the platform-neutral `WindowEvent`s into ImGui
+  input: keys with modifiers, mouse position, buttons and wheel,
+  characters, focus and size. `ToImGuiKey` maps `input::Key`. This
+  replaces a per-platform ImGui backend, so Win32 and GLFW windows drive
+  the editor the same way.
+- **The editor shell** (`editor/shell`, `aether_editor_shell`), built
+  wherever the Vulkan backend is:
+  - **Panels**: the Blueprint, Material, Animation (graph, blend space,
+    clip viewer) and Behavior Tree editors in tabs; the terrain tools;
+    the console and profiler. Each opens on a sample document.
+  - **Window**: GLFW (Win32 on Windows), resizable, with VSync.
+  - **Offscreen**: set `AETHER_EDITOR_HEADLESS=1`. It also renders
+    offscreen when there's no display.
+  - **Automation**: `AETHER_EDITOR_MAX_FRAMES` and
+    `AETHER_EDITOR_SCREENSHOT` (a PNG of the last frame, through
+    `ISwapChain::ReadBack`) work as in the Windows editor;
+    `AETHER_EDITOR_SIZE=WxH` sets the size.
+    `AETHER_EDITOR_TAB` (`blueprint`, `material`, `animation`,
+    `behavior`; any prefix) picks the editor tab it opens on.
+- **Tests**:
+  - Key mapping.
+  - Window events driving ImGui: mouse, buttons, Ctrl+S chords,
+    left/right modifiers, wheel, characters, resize.
+  - ImGui drawn through Vulkan offscreen and read back: origin at the top
+    left, solid shapes, and a window.
+- **CI**: the Linux GCC job runs the shell in an Xvfb window on lavapipe
+  and uploads the last frame as `editor-screenshot-linux`.
+- **Fixes**:
+  - Jolt's own Vulkan compute (`JPH_USE_VK`) is off, because with the
+    loader present but no shader compiler it tried to build its shaders.
+  - Linux CI installs `glslang-tools`, which Ubuntu's glslang CMake
+    package references.
+  - A raw string in a macro argument that MSVC rejects
+    (`test_console.cpp`) is now an ordinary string.
+
+### 24.5 macOS, ARM and platform plugins
+
+- **ARM**: the SIMD math (`math/vec.h`, `mat4.h`, `quaternion.h`) uses
+  basic SSE intrinsics. On ARM64 (Apple Silicon, Android) they compile
+  through sse2neon, fetched by CMake, which maps them to NEON. x86 builds
+  keep `-mavx2 -mfma`; ARM builds don't get them.
+- **Apple's libc++** has no floating-point `std::from_chars`. Where it's
+  missing, the reflection serializer reads its shortest round-trip floats
+  back through a classic-locale stream, which is just as
+  locale-independent.
+- **MoltenVK**: the Vulkan backend works on macOS through MoltenVK,
+  Vulkan on Metal.
+  - When the loader offers `VK_KHR_portability_enumeration`, the instance
+    enables it and sets the enumerate-portability flag.
+  - On devices that have `VK_KHR_portability_subset`, the device enables
+    it.
+  - Surfaces come from GLFW through `VK_EXT_metal_surface`.
+- **Platform plugins** (`aether/platform/platform_plugin.h`,
+  `cmake/AetherPlatform.cmake`, `platforms/README.md`): a platform the
+  engine doesn't build in (Android, a console) plugs in from its own
+  directory.
+  - **Build**: `aether_platform_plugin(NAME ... SOURCES ...)` builds the
+    plugin as an OBJECT library, so its self-registration is never dropped
+    by the linker. `AETHER_PLATFORM_PLUGINS` lists the plugin directories.
+    `aether_link_platform_plugins(target)` links them into the tests, the
+    functional runner and the editor shell.
+  - **Code**: `AETHER_PLATFORM_PLUGIN(id)` registers a `PlatformPlugin`
+    with optional hooks: `startup` and `shutdown` (shutdown runs in
+    reverse order, and a plugin registered after startup starts at once),
+    `user_data_dir`, and `create_device`, an RHI device for a graphics API
+    the engine doesn't build in.
+  - **Example**: `platforms/example` is a working template.
+- **Tests**:
+  - Registry: duplicates refused, start/stop order, a late registration,
+    user-data fallthrough, device factories.
+  - The example plugin registering itself from its own library.
+- **CI**:
+  - A macOS job (Apple Silicon, `macos-15`, Homebrew MoltenVK, the Vulkan
+    loader and glslang) builds the engine, physics, scripting, the Vulkan
+    backend and the editor shell, and runs the unit and functional tests.
+    It also tries an offscreen editor screenshot; that step doesn't fail
+    the job, because hosted runners may have no Metal device.
+  - The Linux jobs build `platforms/example` into the tests.
+  - The release job waits for macOS too.
+
+### 24.6 PR breakdown
+
+1. ✅ **Done.** Continuous integration (§24.1), and the packaged Windows
+   editor.
+2. ✅ **Done.** Fix what the first Windows builds report, until the
+   Windows job is green and the editor package launches: MSVC's extended
+   aligned storage, missing standard includes, and a raw string in a
+   macro. The packaged editor now builds, passes its tests, and starts and
+   screenshots itself on WARP in CI.
+3. ✅ **Done.** A portable window and input layer (§24.2): GLFW on
+   Linux and macOS behind `platform::Window`, alongside Win32.
+4. ✅ **Done.** The Vulkan backend off Windows (§24.3): glslang shaders,
+   GLFW surfaces, offscreen swap chains with read-back, and rendering
+   tests on lavapipe in Linux CI.
+5. ✅ **Done.** The editor on Vulkan (§24.4): RHI-hosted ImGui, window
+   events as ImGui input, and the portable editor shell, screenshotted
+   on lavapipe in Linux CI.
+6. ✅ **Done.** macOS through MoltenVK, ARM through sse2neon, and the
+   platform plugin structure for Android and consoles (§24.5). Phase 24
+   is complete.
+
+## Phase 25: Build, cook and package
+
+The concept is in [ROADMAP.md Phase 25](../ROADMAP.md). A shipped game
+reads its content from a few archives through a virtual file system,
+cooked from the project by a command-line cooker and run by a player
+executable with no editor code. Step 1 is the archive format that
+everything else writes and reads.
+
+### 25.1 .apak archives and the virtual file system
+
+- **Format** (`aether/pak/pak.h`):
+  - **Header**: magic, version, entry count, and the index's offset,
+    size and CRC-32.
+  - **Data**: each entry's stored bytes, back to back.
+  - **Index**: at the end; per entry, its path, compression, offset,
+    stored and original sizes, and the CRC-32 of its original bytes.
+  - **Paths** are normalized to `/`-separated with no leading slash;
+    `..` is rejected.
+- **Compression**: LZ4 1.10 and zstd 1.5.7, both fetched by CMake and
+  BSD-licensed.
+  - Policies: `None`, `LZ4`, `Zstd`, or `Auto`, which uses zstd for
+    entries of 16 KiB and up and LZ4 below that.
+  - An entry that doesn't shrink by at least 1/32 is stored raw.
+- **Writing** (`PakWriter`):
+  - `Add` takes bytes or text, `AddFile` a file, `AddDirectory` a whole
+    tree, sorted so the archives are deterministic.
+  - `Write` writes a temporary file and renames it, so a crash never
+    leaves half an archive.
+  - `Build` returns the archive in memory.
+- **Reading** (`PakReader`):
+  - `Open` (a file) or `OpenMemory` checks the magic, the version, the
+    index bounds and the index CRC, and the bounds of every entry. Entry
+    data stays on disk until read.
+  - `Read` decompresses an entry and checks its CRC.
+  - `Verify` reads everything and lists the damaged entries.
+- **Virtual file system** (`aether/pak/vfs.h`):
+  - Directories and archives mount at mount points, each with a
+    priority. The highest priority wins; ties go to the later mount.
+  - So patch and DLC paks override the base pak, and a loose directory
+    on top overrides everything, for iterating on content.
+  - `Read`, `Exists`, `Resolve` (which mount a path comes from), and
+    `List` (every visible path, each once).
+- **`aether_pak`** (`tools/pak`): `create` (from a directory, with a
+  prefix and a compression policy), `list`, `extract` and `verify`.
+- **Tests**:
+  - Path normalization, and the CRC-32 check value.
+  - Round trips under every policy, including raw fallback for
+    incompressible data and empty entries.
+  - Damage: bad magic, truncation, a damaged index, a flipped data byte
+    (CRC), damaged zstd data.
+  - Files on disk, and deterministic order.
+  - The VFS's overrides, unmounting, mount points and in-memory
+    archives.
+- **CI**: the GCC job packs `assets/` with `aether_pak`, verifies the
+  archive, extracts it and compares the result with the original.
+
+### 25.2 The cooker
+
+- **`aether::cook::Cook`** (`aether/cook/cooker.h`) turns a project into
+  one `.apak` archive (`<out>/<pak_name>.apak`), plus
+  `CookManifest.json` beside it.
+- **What gets cooked** (`CollectCookSet`):
+  - **Roots**: the startup scene, the project's new `always_cook` list
+    (asset paths, or folders ending in `/`), and any extra roots passed on
+    the command line.
+  - **Walk**: from the roots it follows the asset database's
+    dependencies transitively. A sub-asset brings its source file.
+  - **Reasons**: each asset records why it was cooked ("startup scene",
+    "always cook", "used by `<path>`").
+  - **Skipped**: unreachable assets are left out and counted. Unknown
+    roots and missing dependencies become warnings.
+- **Editor-only data**:
+  - A new reflection flag, `Field_EditorOnly`, marks fields the editor
+    saves but the game never reads.
+  - `StripEditorOnly` removes them from scene and prefab components,
+    which it looks up by their reflected names, including inside nested
+    structs and arrays.
+  - Scenes and prefabs are then written minified.
+- **The archive**:
+  - `Content/<path>`: each cooked asset, plus the helper files `.gltf`
+    models refer to (buffers, images that aren't assets themselves).
+  - `Imported/<guid>.bin`: each asset's and sub-asset's importer output,
+    served from the derived data cache when it's current.
+  - `Manifest.json`: the configuration, the project's runtime settings
+    (startup scene, timestep, gravity, layers, collision matrix), and
+    every cooked asset with its GUID, path, importer, dependencies,
+    imported flag and sub-assets.
+  - No `.ameta` files ship.
+- **Configurations**: `BuildConfiguration` is Debug, Development or
+  Shipping. Shipping writes its manifest minified.
+- **`aether_cook`** (`tools/cook`): `--out`, `--config`, `--always`,
+  `--compression`, `--no-imported`, `--pak-name`, and `--verbose`, which
+  lists every asset with its reason.
+- **Tests**:
+  - Configuration names.
+  - Stripping, top level and nested, and leaving unreflected components
+    alone.
+  - A full cook of a test project: startup scene → prefab → texture, a
+    model kept by `always_cook` with its `.bin`, and an unused texture.
+    It checks the cook set, the reasons, the skip count, the stripped
+    field count, the archive's minified and stripped scene, the manifest
+    and the imported data.
+  - The refusals.
+- **The test runner**: output is now line-buffered, and a crash prints
+  the name of the test that was running, so a CI crash points somewhere.
+
+### 25.3 Cooked textures
+
+Packaged games load textures in the form GPUs sample directly:
+block-compressed, with a full mip chain. They stay compressed in GPU
+memory too: BC1 at 8:1, BC3, BC5 and BC7 at 4:1, and BC4 at 2:1 against
+RGBA8.
+
+- **Encoders**: `bc7enc_rdo` by Rich Geldreich (MIT), fetched by CMake.
+  `rgbcx` encodes BC1–BC5 and `bc7enc` encodes BC7, each with a decoder.
+  Only the library sources are built, as `aether_bcenc`.
+- **`aether/cook/texture_cook.h`**:
+  - **Formats**: `TextureFormat` is RGBA8, BC1, BC3, BC4, BC5 or BC7.
+    `BlockBytes` and `MipBytes` give sizes.
+  - **Mips**: `GenerateMips` builds the chain down to 1×1, for any size,
+    not only powers of two.
+    - It uses a 2×2 box filter in linear light for sRGB colour, so a
+      black/white checker averages to sRGB 188, not 128.
+    - For normal maps it averages the normals and renormalizes them.
+  - **Auto format**: `ChooseTextureFormat` picks BC5 for normal maps,
+    BC4 for grey images without alpha, and BC7 otherwise.
+  - **`CookTexture`**: takes RGBA8 of any size. Edge blocks repeat the
+    last row and column. Quality runs from 0 to 4 and controls BC7's uber
+    level and partitions, and rgbcx's level. BC4 and BC5 hold data, not
+    colour, so they're never sRGB.
+  - **`DecodeMip`**: decodes a mip back to RGBA8. For BC5 normal maps it
+    rebuilds z from x and y.
+  - **The `.atex` container**: format, sRGB and normal-map flags, size,
+    and the mip chain. `LoadAtex` checks every mip's size against its
+    format.
+- **The cooker**:
+  - Each texture asset is decoded and cooked according to its `.ameta`
+    settings: `cook_format` (auto or a format name), `normal_map`, `srgb`
+    and `mips`.
+  - The result is stored as `Cooked/<guid>.atex`, and the manifest
+    records `cooked` and `cooked_format` for it.
+  - `CookOptions` gets `cook_textures` and `texture_quality`.
+- **Tests**:
+  - Formats and sizes.
+  - Mips: sRGB versus linear averaging, odd chains, and normal
+    renormalization.
+  - Quality, against PSNR bounds on a gradient:
+    - BC1 and BC3: 32 dB.
+    - BC4 and BC5: 38 dB.
+    - BC7: 40 dB, and 38 dB at an odd size, which checks the partial edge
+      blocks.
+  - The automatic format choice, the normal map's rebuilt z, and the
+    `.atex` round trip and damage checks.
+  - The full cook test now checks both of its textures' cooked forms.
+
+### 25.4 The player
+
+The game without the editor: `player/` builds `aether_game`, the runtime
+library, and `aether_player`, the executable.
+
+- **`GameManifest`** (`aether/player/game.h`): `ParseGameManifest` reads
+  the cooker's `Manifest.json`:
+  - the project name and configuration;
+  - the startup scene, the fixed timestep, gravity, the layers and the
+    collision matrix;
+  - every cooked asset's GUID, path, importer and cooked form.
+
+  It refuses text that isn't a cook manifest, an unknown configuration, a
+  timestep of 0 Hz or less, and an asset with no GUID or path.
+- **`GamePackage`**:
+  - Mounts `.apak` archives, or folders for a loose cook, into a virtual
+    file system. A higher priority wins, so a patch pak replaces files.
+  - `FindPaks` lists a folder's archives sorted by name, so later names
+    (patches) mount on top.
+  - Reads the manifest, finds assets by path or GUID, and reads
+    `Content/<path>`.
+- **`Game`**:
+  - **Loading**: the startup scene, or any cooked scene, JSON or binary,
+    from the package. Its prefab instances are resolved from the
+    package's prefabs, read once and cached.
+  - **Play**: `BeginPlay` and `EndPlay` drive the scene's lifecycle
+    callbacks. `Tick(dt)` runs the fixed-timestep frame loop at the
+    manifest's rate: physics, then the lifecycle's FixedUpdate in each
+    fixed step, then Update and LateUpdate.
+  - **Physics**: when the engine has its physics module, gravity and the
+    collision matrix come from the manifest, and a `PhysicsScene` makes
+    bodies for the scene's colliders.
+  - **Game systems**: added through `Systems()`.
+  - **Stats**: frames, fixed steps, game time, entities, prefab instances
+    and physics bodies.
+- **`aether_player`**:
+  - **Mounting**: every `--pak` given (a folder means all its archives),
+    or else `Paks/` beside the executable, then in the working directory.
+  - **Running**: loads the startup scene (or `--scene`) and runs it in a
+    window, through the RHI (D3D12 on Windows, Vulkan elsewhere), or with
+    `--headless`. Headless runs step at the fixed rate, so a run is
+    reproducible. `--frames` stops after that many frames.
+  - **Configurations**: Debug logs everything and turns on the graphics
+    debug layer. Development logs info plus a stats line every second, and
+    puts the configuration in the window title. Shipping logs only
+    warnings and errors.
+  - **Drawing**: the window shows the clear colour for now. Drawing the
+    scene comes with the renderer's RHI path.
+- **Packaging**: the Windows zip now carries `aether_cook.exe`,
+  `aether_pak.exe` and `aether_player.exe` next to the editor.
+- **Tests**:
+  - The manifest, and its refusals.
+  - A pak with a startup scene and a prefab: the prefab's entity comes
+    from the pak, the lifecycle runs, and 1 s at 60 Hz is 60 fixed steps
+    and 60 updates.
+  - A 30 Hz base pak, and a patch pak that replaces its scene.
+  - The refusals: nothing mounted, no manifest, a missing pak, a missing
+    scene.
+  - A project cooked by the cooker and then played: its 50 Hz timestep
+    and the entity's position come through.
+  - With physics: a ball dropped onto a floor falls to about 8.8 m after
+    0.5 s and comes to rest on the floor.
+
+### 25.5 Project settings, packaging and the Build and Package window
+
+- **Project settings** (`ProjectSettings`):
+  - **Window**: `window_title` (empty means the project name),
+    `window_width`, `window_height` and `vsync`.
+  - **Quality presets**: `QualityPreset` has a name, a resolution scale,
+    the shadow resolution and cascades, the view distance, the MSAA
+    samples and bloom.
+  - `DefaultQualityPresets()` gives Low, Medium, High and Epic.
+    `default_quality` is High, and `FindQualityPreset` looks one up by
+    name.
+  - Projects saved before these settings existed load with the defaults.
+- **The cooker**:
+  - The manifest now carries `window`, `quality_presets` and
+    `default_quality`. It warns when the default isn't one of the presets.
+  - `CookOptions::progress` reports the fraction done and the current
+    stage ("Cooking `<path>`", then "Writing", then "Done").
+  - `CookOptions::cancel` stops the cook between assets. It then fails
+    with "Cancelled" and writes nothing.
+- **The player**:
+  - `GameManifest` reads the window and quality settings.
+  - `ChooseQuality` picks the requested preset, else the default, else
+    the first.
+  - `aether_player` opens its window with the project's title, size and
+    vsync. `--size` overrides the size, and `--quality <preset>` picks a
+    preset.
+- **Packaging** (`aether/cook/package.h`):
+  - **`Package`** cooks into `<output>/Paks/` and copies the player in
+    beside it, named for the project (`GameExecutableName`). On Windows it
+    copies the player's DLLs too.
+  - Old paks are removed first, so a stale one can't mount over the new
+    one. The result runs on its own: the player finds `Paks/` beside
+    itself.
+  - **`FindPlayerExecutable`** looks for `aether_player` beside the
+    running executable (a packaged editor), else uses the one the engine
+    was built with.
+- **Processes** (`aether/platform/process.h`):
+  - `ExecutablePath()` gives the running executable's path.
+  - `ChildProcess` starts a program with arguments in a working folder,
+    reports whether it's running, waits for its exit code, and kills it.
+    It uses `CreateProcessW` on Windows and `posix_spawn` elsewhere.
+- **The editor**:
+  - **Build and Package window** (`editor/src/packaging`):
+    - **Settings**: the configuration, the compression, the texture
+      quality, the output folder (by default
+      `Saved/Packaged/<Configuration>`) and the player.
+    - **Buttons**: Cook, Package, Cancel, and Launch, with arguments for
+      the player.
+    - **While it runs**: the build runs on a worker thread while a
+      progress bar and the log (stages and warnings) update.
+  - **Project Settings panel**: the settings in the reflected property
+    table, with Save and Revert. It warns when the default quality isn't
+    a preset.
+  - **The workspace**: both are in a new Project category of the
+    editor's tools, on the project the editor was given. Without one,
+    they use a sample project made under the temp folder: a startup scene
+    with a player, a camera and crates.
+- **Tests**:
+  - **Settings**: the window and quality settings round trip, and old
+    projects get the defaults.
+  - **Cook**: progress is monotonic from 0 to 1, the manifest carries the
+    settings, `ChooseQuality` falls back correctly, and a cancelled cook
+    writes nothing.
+  - **Packaging**: the staged player and pak, stale pak removal, and the
+    refusals.
+  - **Processes**: exit codes, the working folder, and a missing program.
+  - **Build and Package window**: it packages the sample project with the
+    real player and launches the packaged game headless, which exits with
+    0. A cook, a failed cook, a missing player, and the settings panel's
+    edits, saves and reverts are tested too.
+
+### 25.6 Patches, DLCs and encryption
+
+- **Encryption** (`pak::PakKey`):
+  - A 32-byte key, read and written as 64 hex digits. `Generate()` makes
+    a random one.
+  - `Id()` is a fingerprint of the key (a ChaCha20 block under a fixed
+    nonce), not the key itself.
+  - With `PakWriter::SetEncryption`, each entry's stored bytes (after
+    compression) are encrypted with ChaCha20 (RFC 8439, implemented in
+    `pak.cpp`, checked against the RFC's test vector). So is the index.
+    Each gets its own nonce, from its offset and a tag.
+  - The header's flags mark the archive as encrypted, and its last field
+    holds the key id. The index CRC covers the bytes as stored.
+  - `PakReader::Open` takes keys and uses the one whose id matches. No
+    key, or a wrong one, fails with "the archive is encrypted, and no key
+    given is its key". Unknown flags are refused.
+  - Neither the content nor the paths are readable on disk.
+  - It keeps content from being opened with an archive tool. It isn't
+    DRM: the game ships with the key.
+- **Patches**:
+  - `MakePatch(base, updated, patch)` writes the entries that are new or
+    differ in size or CRC.
+  - Removed paths are listed in `PatchRemoved.json`. The virtual file
+    system hides them in the mounts below the patch, in reads and in
+    `List`. A mount above the patch can still provide them.
+  - `PatchReport` lists what was added, changed and removed, and counts
+    what's unchanged.
+  - A patch named to sort after its base (`Game_p1.apak` after
+    `Game.apak`) mounts on top of it in the player.
+- **DLCs**: the cooker's `dlc_name` mode cooks only the `--always`
+  roots, leaving out what `dlc_base` already has. It writes
+  `DLC/<name>.json` (a `DlcManifest`) instead of `Manifest.json`.
+  `GamePackage::LoadManifest` merges every mounted DLC's assets, and
+  `Dlcs()` names them.
+- **The cooker**:
+  - `encryption_key` encrypts the archive, and opens encrypted bases.
+  - `patch_base` cooks in full, then writes only the patch against the
+    base. `CookReport::patch` says what it holds.
+  - `CookReport::in_base` counts what a DLC left out.
+- **The tools**:
+  - **`aether_cook`**: `--key`, `--patch-of` and `--dlc`/`--dlc-base`.
+  - **`aether_pak`**: `keygen`, and `patch <base> <updated> <out>`.
+    `--key` (anywhere) encrypts what it writes and opens what's
+    encrypted.
+- **The player**: keys come from `--key`, from `AETHER_PAK_KEY`, or from
+  the key a game's player was built with (`AETHER_GAME_PAK_KEY`). It logs
+  the DLCs it found.
+- **The editor**: the Build and Package window has an Encrypt option,
+  with a key field and Generate. Launch passes the key to the game.
+- **Tests**:
+  - **Keys**: the RFC 8439 vector, and keys' hex form and ids.
+  - **Encrypted archives**: nothing readable on disk, a missing or wrong
+    key refused, and reads through the virtual file system with the key.
+  - **Patches**: added, changed and removed entries, read and listed
+    through the virtual file system, with a loose folder bringing a
+    removed file back.
+  - **A full cook**: an encrypted 1.0, a 1.1 patch (a changed scene, a
+    removed one), and a DLC that leaves out the base's assets, all played
+    together. The archives refuse to mount without the key.
+  - **The editor**: packaging encrypted, then launching with the key
+    (exit code 0) and without it (it fails).
+
+### 25.7 PR breakdown
+
+1. ✅ **Done.** `.apak` archives, compression, the virtual file system
+   and `aether_pak` (§25.1).
+2. ✅ **Done.** The cooker (§25.2): the cook set from the startup scene
+   and `always_cook`, editor-only stripping, imported data, the
+   manifest, and `aether_cook`. Blueprint bytecode precompilation comes
+   with the player, which runs it.
+3. ✅ **Done.** Cooked textures (§25.3): BC1/3/4/5/7 with mips in
+   `.atex`. Still to do from this step: ASTC for mobile, which comes with
+   Phase 33's mobile targets, and precompiled shaders (DXIL, SPIR-V),
+   which come with the player that loads them.
+4. ✅ **Done.** The player (§25.4): `aether_game` and `aether_player`,
+   the startup scene from the mounted paks with prefabs and physics, and
+   the Debug, Development and Shipping configurations. Scripts, Blueprints
+   and input run in the player since §26.3. Still to do: drawing the scene,
+   with the renderer's RHI path.
+5. ✅ **Done.** Project settings (window defaults, quality presets), the
+   cook's progress and cancel, packaging with the player, and the
+   editor's Build and Package window with progress, logs and Launch
+   (§25.5).
+6. ✅ **Done.** Patch and DLC paks, and optional archive encryption
+   (§25.6). With this, every Phase 25 step is done. Still to come, as
+   the notes on steps 2–4 say: ASTC textures (with Phase 33's mobile
+   targets), precompiled shaders and Blueprint bytecode (with the
+   renderer's RHI path and the player running them), and drawing the
+   scene in the player.
+
+## Phase 26: Ecosystem (templates, plugins, docs)
+
+The concept is in [ROADMAP.md Phase 26](../ROADMAP.md). Step 1 is the
+plugin system that templates, editor extensions and the 2D toolkit plug
+into.
+
+### 26.1 Plugins
+
+- **Descriptors** (`aether/plugin/plugin.h`): a plugin is a folder,
+  `<Name>/<Name>.aplugin`. The descriptor is JSON with `$type` "Plugin",
+  read through reflection, and holds:
+  - the plugin's name (an identifier that matches the folder), friendly
+    name, version, description, category and author;
+  - the oldest engine version it works with;
+  - whether it's enabled by default, and whether it has content;
+  - its dependencies (each with a name, a minimum version, and whether
+    it's optional);
+  - its modules (each with a name, Runtime or Editor, and a loading phase:
+    PreDefault, Default or PostDefault).
+
+  `CompareVersions` compares dotted versions. `CreatePluginScaffold` makes
+  a new plugin folder: a descriptor with one runtime module, and an empty
+  `Content/`.
+- **Modules** are code compiled into the executables that host plugins:
+  - A module class derives from `IModule` (`Startup`, `Shutdown`).
+  - It registers a factory under its name with `AETHER_MODULE`.
+  - `aether_module()` in `cmake/AetherModules.cmake` builds it as an
+    OBJECT library, so the registration links in. The player, both
+    editors and the tests get every module the build has
+    (`aether_link_modules`).
+- **`PluginManager`**:
+  - **Discovery**: it searches the engine's `plugins/` folder and the
+    project's `Plugins/`. A project plugin replaces an engine plugin of
+    the same name. Misnamed or unreadable plugins are skipped with
+    warnings.
+  - **Resolution**: it enables the project's `plugins`, those enabled by
+    default, and everything they need (each records why it's enabled). It
+    refuses:
+    - an unknown plugin;
+    - a missing or too-old required dependency (optional ones only warn);
+    - a plugin that needs a newer engine;
+    - a dependency cycle, named in the error ("A -> B -> C -> A").
+  - **Order**: enabled plugins come after their dependencies.
+  - **Modules**: they start by loading phase, then in plugin order. A game
+    gets runtime modules only, the editor both kinds. A module the
+    executable wasn't built with is a warning. The manager shuts its
+    modules down in reverse order.
+  - **Content**: `ContentMounts()` gives each enabled plugin's `Content/`
+    and its mount point, `Plugins/<Name>/`.
+  - `ResolveProjectPlugins` does all of this for a project.
+- **The engine's own plugins** (`plugins/`): Physics, Audio, Navigation,
+  AI (which needs Navigation) and Networking.
+  - Each has a descriptor (enabled by default) and a PreDefault runtime
+    module that registers its components, so scenes can name them.
+  - Each is built when its module is: a build without physics lists the
+    Physics plugin, but its module isn't there.
+- **The cooker**: it resolves the project's plugins, and fails when they
+  don't resolve. The manifest lists the enabled `plugins` and the runtime
+  `modules` in start order. Each enabled plugin's content is cooked into
+  `Content/Plugins/<Name>/`.
+- **The player**: before loading its first scene, `Game` starts the
+  manifest's modules, and shuts them down with the game. A module the
+  player wasn't built with is a warning.
+- **The editor**:
+  - The workspace resolves its project's plugins and runs their runtime
+    and editor modules.
+  - A new **Plugins** panel in the Project tools lists every plugin. Each
+    row has an enabled checkbox and shows the plugin's version, source,
+    category, modules (built in or not), description and dependencies.
+    It has a search box.
+  - Turning a plugin on saves it in the project, and what it needs comes
+    along. A change that doesn't resolve leaves the project as it was.
+    Plugins enabled by default, or needed by another, stay on.
+  - **New Plugin** makes one in the project's `Plugins/`.
+- **Tests**:
+  - **Descriptors**: they round trip, and bad types and names are
+    refused. Versions compare correctly, and scaffolding works.
+  - **Discovery and resolution**: a project plugin overrides an engine
+    one, and broken plugins are skipped. Dependencies come first, each
+    plugin records why it's enabled, and an optional dependency only
+    warns. An unknown plugin, an old dependency, a newer engine and a
+    cycle are each refused.
+  - **Modules**: they start by phase and dependency, editor modules start
+    only when asked, a missing module warns, and shutdown runs in reverse.
+  - **The engine's plugins**: they're found, and they resolve.
+  - **A project plugin, end to end**: one with a module, content and an
+    engine dependency is cooked. The cook reports it, refuses a missing
+    plugin, and the player starts the module and stops it with the game.
+  - **The Plugins panel**: default plugins stay on, New Plugin works, and
+    enabling saves to the project. A plugin with a missing dependency is
+    refused, leaving the project as it was.
+
+### 26.2 Project templates
+
+New Project starts from a template: a project with a startup scene, a
+controller script, input bindings and a Blueprint. The templates have no
+art; each scene is entities with transforms, tags, a camera, a script and
+a Blueprint, so the starter is wired up and runs, and yours to dress.
+
+- **`aether/templates/templates.h`** (`templates/`, `Aether::Templates`):
+  - `ProjectTemplates()` lists them; `FindProjectTemplate` looks one up by id.
+  - Each has an id, name, genre, description and a list of its features.
+  - A template can be unavailable, with the reason. `CreateProjectFromTemplate`
+    refuses those, unknown ids, and whatever `CreateProject` refuses (a bad
+    name, a folder that isn't empty).
+- **The templates**:
+  - **Blank**: a Main scene with a camera and a Player Start, and nothing else.
+  - **First Person**: the player is the camera, at eye height.
+    `FirstPersonController.luau` walks, looks with the mouse or right stick,
+    and jumps.
+  - **Third Person**: a character, and a camera that orbits behind it.
+    `ThirdPersonController.luau` moves it relative to where the camera
+    looks, turns it to face where it runs, and keeps the camera at a set
+    distance.
+  - **Top Down**: `TopDownController.luau` moves a character along the
+    world's axes (up the screen is -Z), faces where it goes, and a tilted
+    camera follows from above.
+  - **Vehicle**: `VehicleController.luau` is an arcade car with
+    throttle, braking, drag, and steering that needs speed (reversed going
+    backwards), with a chase camera. Pickups are placed along a line ahead.
+  - **2D Platformer** (§26.6): a tilemap level, a platformer character
+    with 2D physics and a following camera. No scripts: the controller is a
+    component, so it creates `Tiles/Level.atileset`, `Tiles/Level1.atilemap`
+    and the Move and Jump bindings, not scripts or Blueprints.
+- **What a playable template creates**:
+  - `Scenes/Main.ascene`, set as the project's startup scene.
+  - `Scripts/<Controller>.luau`, whose top-level fields are the settings
+    the Inspector shows (speed, look speed, jump, gravity, camera distance).
+  - `Blueprints/BP_Pickup.abp`, a Blueprint that spins (Angle plus
+    delta times the instance-editable SpinSpeed, applied as a rotation
+    about +Y). The scene places pickups: a ring in the first three, a line
+    in the vehicle one.
+  - `Input/`: the Move action (WASD and the left stick), and for the
+    first and third person templates Look (mouse and right stick) and Jump
+    (Space and the A button), plus the `Gameplay` mapping context. The
+    stick Y axes are negated or swizzled to match the keys, since the
+    window layer reports GLFW's axes.
+  - `always_cook` lists `Input/`, since nothing in a scene refers to it.
+- **The asset database** now knows `.abp` files (as "Blueprint"). Before
+  this, a Blueprint in a project had no GUID, so a scene couldn't refer to
+  one, and the cooker wouldn't have found it.
+- **The editor**: a **New Project** tool in the Project category lists the
+  templates with their features and, for an unavailable one, why. It takes a
+  name and a folder (`AetherProjects` in the home folder by default). A
+  created project becomes the one the Project tools (settings, Build and
+  Package, Plugins) and the plugins' modules work on
+  (`EditorWorkspace::OpenProject`).
+- **Playing them**: the packaged player runs a template's controller,
+  Blueprint and bindings (§26.3).
+- **Tests** (`test_templates.cpp`):
+  - The list, including the unavailable template, and every refusal.
+  - Blank's contents. Each playable template creates a project that loads,
+    whose assets are in the database under their GUIDs, whose scene refers
+    to them, that cooks (scene, script, Blueprint and bindings), and that
+    the player loads with no warnings.
+  - The Blueprint compiles and has its variables.
+  - **With scripting, each controller is run from its own bindings**:
+    - First person: a second of W at 5 m/s covers 5 m along -Z, diagonals
+      aren't faster, mouse and look turn it, and a jump leaves the floor and
+      lands back on it.
+    - Third person: the camera trails behind and above, running right
+      faces +X, orbiting the camera changes forward, and the distance holds.
+    - Top down: movement on the map's axes, facing, and the camera settling
+      above and behind at its tilt.
+    - Vehicle: no steering when still, 14 m/s after a second, a top speed,
+      turning right at speed, braking, reversing to the limit, and the chase
+      camera's distance.
+    - The scene's pickups spin a quarter turn in a second.
+  - The New Project panel creates a project, announces it, refuses a taken
+    name, the unavailable template and a bad name, and the workspace opens
+    it.
+
+### 26.3 The player runs scripts, Blueprints and input
+
+A packaged game now plays what a project's scripts, Blueprints and bindings
+say, not only its lifecycle callbacks and physics (§25.4).
+
+- **Input**:
+  - `InputAssetLibrary::AddFromText` adds an `.aaction` or `.amapping` from
+    its text, without a database on disk (a bad one is refused, and listed
+    in `Errors()`).
+  - `Game` loads the manifest's input assets from the archives, registers
+    the actions, and activates every mapping context, in name order.
+  - The host sets keys, buttons and mouse movement on `Game::Input()`
+    before each `Tick`. The window's events go in with `ApplyWindowEvents`.
+    `Tick` turns them into this frame's actions, and clears the per-frame
+    movement deltas after it.
+- **Scripts** (when the player is built with Luau; `Game::HasScripting()`):
+  - A `ScriptSystem` reads each script's source from the archives, runs
+    its callbacks through the lifecycle, and ticks timers each frame.
+  - It's bound to the game's input, so `Input.GetAxis2D("Move")` and the
+    rest work.
+- **Blueprints**: a `BlueprintSystem` loads each `.abp` from the archives
+  and runs its entities' events (BeginPlay, Tick, ...) through the same
+  lifecycle.
+- **A scene load rebuilds all of it**: a fresh Luau host, script system and
+  Blueprint system per scene, torn down before the world, lifecycle and
+  input they refer to, so a level change leaves no state behind.
+- **Errors don't stop play**: they're counted in `GameStats`
+  (`script_errors`, `blueprint_errors`) and listed by `ScriptErrors()` and
+  `BlueprintErrors()`. `GameStats` also has the running script and
+  Blueprint instance counts.
+- **`aether_player`**:
+  - The window's events feed the game's input.
+  - `--press <Key>` holds a key for the whole run, which makes a headless
+    run exercise the controls, and `--report` prints where the
+    Player-tagged entity ended up.
+  - It logs script and Blueprint errors and exits with 3 if there were any.
+  - Checked by hand with the real binary on the four cooked templates, 120
+    headless frames holding W: first person ends at z = -10 (5 m/s for 2
+    s), third person and top down at -12 (6 m/s), the vehicle at -28.2.
+- **Not yet**: physics events (collisions and triggers) aren't passed to
+  scripts or Blueprints, and the window still shows the clear colour
+  (drawing waits on the renderer's RHI path).
+- **Tests** (in `test_templates.cpp`):
+  - Each playable template is created, cooked and run by `Game`: its input
+    assets are loaded and the `Gameplay` context is active, one script and
+    one Blueprint per pickup are running, a second of W moves the player as
+    each controller says, the pickups have spun a quarter turn, and nothing
+    errored.
+  - A first person run driven by window events: a mouse move and a key
+    down turn it right and move it that way.
+  - `AddFromText` loads real shipped bindings, refuses bad text, the wrong
+    kind and a non-input asset, and the loaded `Move` action reads WASD and
+    a gamepad stick (negative Y forward) the same.
+
+### 26.4 PR breakdown
+
+1. ✅ **Done.** Plugins (§26.1): descriptors, discovery, resolution,
+   modules, the engine's optional modules as plugins, and the cook,
+   player and editor wiring.
+2. ✅ **Done.** Project templates (§26.2): Blank, First Person, Third
+   Person, Top Down and Vehicle, each a small starter game, and New
+   Project from a template (the 2D Platformer joined with the 2D toolkit).
+   The player runs their scripts, Blueprints and input too (§26.3).
+3. ✅ **Done.** The editor extensibility API (§26.5): panels, menu
+   items, property drawers and asset types from C++, and panels, menu
+   items and asset types from Luau editor scripts.
+4. ✅ **Done.** The 2D toolkit (§26.6): sprite atlases and
+   animation, tilesets, tilemaps with autotiles, render batching and the
+   pixel-perfect camera, the tilemap editor, 2D physics, the platformer
+   controller, the 2D Platformer template and 2D lights.
+5. ✅ **Done.** Documentation (§26.7): the API reference generated from
+   reflection (`aether_docgen`), the manual (`docs/manual`), the sample
+   projects (the templates), and version control status in the Content
+   Browser.
+
+### 26.5 The editor extensibility API
+
+What a plugin, a game module or a project adds to the editor without
+editing it. `ExtensionRegistry` (`editor/src/ui/extensions.h`) holds four
+kinds of entry, each registered under an owner (a plugin or script name) so
+one owner's entries leave together:
+
+- **Panels**: a name, a category (default "Extensions") and a draw
+  function. The workspace lists them as tools after the built-in ones, in
+  the Tools menu and the hub, and a popped-out panel stays open when the
+  list is rebuilt.
+- **Menu items**: a "Menu/Sub/Item" path, an optional shortcut
+  ("Ctrl+Shift+B") and an optional enabled check. Paths under `Tools/`
+  join the Tools menu; any other root gets a menu of its own beside it.
+  `PollShortcuts()` fires the pressed ones, except while a text field has
+  focus.
+- **Property drawers**: for a reflected type's name; the Inspector draws
+  that widget in the value column instead of its own, for every field of
+  the type. A drawer returns whether it changed the value, which feeds
+  the Inspector's changed-field and undo result as any edit does.
+- **Asset types**: an extension, a display name, the text of a new file
+  and an opener for double-click in the Content Browser.
+
+`ExtensionRegistry::Active()` is the registry the editor made active, so a
+plugin's editor module (`ModuleType::Editor`) registers into it from
+`Startup` and removes itself in `Shutdown`.
+
+**Editor scripts.** Every `.luau` file under a project's `Content/Editor/`
+runs when the project opens (and on `Reload`), with these globals:
+`editor.AddPanel(name, fn)`, `editor.AddMenuItem(path, fn [, shortcut])`,
+`editor.AddAssetType(name, ext, newText [, fn(path)])`, `editor.Log(text)`,
+and in a panel `ui.Text`, `TextDisabled`, `Button`, `Checkbox`,
+`SliderFloat`, `InputText`, `CollapsingHeader`, `SameLine`, `Separator` and
+`Spacing`. Widgets that edit a value return the new one (and whether it
+changed). The VM is sandboxed as game scripts are, with a smaller
+instruction budget since a panel runs every frame. A script that fails to
+load leaves nothing registered; an error in a callback shows in its panel
+and in `Errors()` and clears when it next succeeds. Property drawers are
+C++ only for now.
+
+`LuauHost::RegisterNative` and `NativeCall` are the general piece beneath
+this: a host adds its own functions to a VM, and keeps a Luau function
+argument as a reference to call later.
+
+**Tests** (`test_extensions.cpp`):
+
+- Panels and menus: replace by owner and name, remove by owner, shortcuts,
+  a disabled item, and drawing the menus headless.
+- A property drawer replaces the Inspector's widget and reports the
+  change; unregistering restores it; the active registry clears when it
+  is destroyed.
+- Asset types: extension normalising, new files numbered, and the opener.
+- The workspace shows panels as tools and keeps a popped-out one open.
+- Editor scripts: panels, menus and asset types register; a script that
+  fails to load or is called wrongly is reported; menu actions and openers
+  run Luau; every `ui.*` widget draws; reload replaces the old entries; a
+  runaway callback stops at its budget; the sample project's script loads.
+
+### 26.6 The 2D toolkit: sprites, tilemaps and the pixel-perfect camera
+
+The `sprite2d` module (`sprite2d/`) holds the 2D toolkit's data and its
+render batching. It is engine-only, so it builds and tests headless. 2D
+physics, 2D lights and the tileset editor are the next steps (§26.4).
+
+- **Sprite atlases** (`.aatlas`, JSON): one texture, referenced by GUID so
+  the cooker follows it, holding named frames (a pixel rectangle and a
+  pivot as a fraction of the frame, from its top left) and named clips
+  (frame names, frames per second, loop). Loading refuses a frame without
+  a size, a repeated name, and a clip naming a missing frame.
+  `PackRects` shelf-packs rectangles into the smallest power-of-two
+  texture up to a limit, `ComposeAtlasImage` draws the images into it, and
+  `AtlasFromGrid` cuts a sprite sheet into numbered frames.
+- **Components**: `Sprite` (atlas, frame, tint, flips, sorting layer and
+  order, pixels per unit), `SpriteAnimator` (clip, time, speed, playing;
+  `UpdateSpriteAnimations` advances it, a clip that doesn't loop holds its
+  last frame and sets `finished`) and `TilemapRenderer`. They sit on the
+  entity's Transform: x and y position, z depth, rotation about z.
+- **Tilesets** (`.atileset`): a texture cut into tiles (size, margin,
+  spacing), a solid flag per tile, and autotiles: 16 tile numbers indexed
+  by which of the four neighbours hold the same autotile (north 1, east 2,
+  south 4, west 8).
+- **Tilemaps** (`.atilemap`): layers of cells, row 0 at the bottom; a cell
+  is a tile number, empty (-1), or an autotile reference (-2 - index),
+  which resolves by its neighbours' mask when drawn or queried.
+  `IsSolidAt` asks the colliding layers; `LocalToCell` maps positions to
+  cells.
+- **Batches**: `BuildSpriteBatches` turns every sprite and tilemap layer
+  into quads, sorts them by sorting layer, order, then z, and merges runs
+  that share a texture into `SpriteBatch`es (vertices and indices), with an
+  optional view rectangle that culls (a tilemap only visits the visible
+  cells).
+- **Pixel-perfect camera**: `ComputePixelViewport` shows the reference
+  resolution at the largest whole-number scale the window allows, centred
+  with bars (or filling the window, still at a whole scale), and gives
+  the orthographic size in world units; `SnapToPixelGrid` rounds a
+  position to the art's pixels.
+- The asset database knows the three extensions, and scans them for the
+  GUIDs they hold (a tilemap's tileset, a tileset's and an atlas's texture),
+  so the cooker packages what a 2D scene reaches.
+
+**Tests** (`test_sprite2d.cpp`): atlas frames, UVs and JSON (and refusing bad
+data); clip frames, looping and holding; packing with no overlaps, padding
+and composing the image; tileset geometry with margin and spacing;
+tilemap editing, resizing and autotile masks (corners, edges, holes);
+solidity; the JSON round trip and its errors; batch order and merging;
+quad geometry for pivots, flips and a quarter turn; culling; the animator;
+components through reflection; and the pixel-perfect viewport at several
+window sizes.
+
+**The tilemap editor** (`editor/src/sprite2d`). `TilemapEditDocument` edits a
+tilemap and its tileset: Paint, Erase, Rectangle, Fill (a 4-connected flood
+fill) and Pick tools with a brush that is a tile or an autotile; strokes
+that change nothing record nothing and one that does is one undo step;
+layers (add, remove down to one, rename, "blocks movement"), resizing, the
+tileset's solid flags and autotile rules (the tile shown per neighbour
+mask), and saving both files. `TilemapPanel` draws it: layers, the tiles as
+numbered colour swatches (solid ones outlined red), the autotile masks, and
+the map as a grid (drag to paint, right-drag to erase, wheel to zoom,
+middle drag to pan). It needs no texture, so it runs headless and in every
+host. The workspace lists it under a new **2D** category on a sample
+platform level whose ground is an autotile.
+
+Its tests (`test_tilemap_editor.cpp`): strokes as single undo steps, empty
+strokes, rectangles with corners in any order, flood fill regions and
+refilling with the same value, picking, autotile painting and rules,
+layers, solids and resizing with undo, saving both files, the panel
+drawing without editing anything, and the workspace's 2D tool.
+
+**2D physics** (`sprite2d/physics2d.h`). Box2D v3 was the plan; a compact
+solver of our own does what 2D games here need without another dependency
+to build on every platform. `Physics2D` steps a world's bodies:
+
+- **Components**: `Rigidbody2D` (static, kinematic or dynamic; mass, gravity
+  scale, damping, velocity) and `Collider2D` (a box of half extents or a
+  circle, an offset, friction, restitution, a trigger flag, a layer and a
+  mask). A collider with no body is static. Bodies move the Transform's x
+  and y; its z and rotation are left alone, and bodies don't rotate.
+- **Step**: gravity and damping, then movement, then candidate pairs by a
+  sweep along x, then sequential impulses over `iterations` passes with
+  positional correction (restitution only for impacts above 1 m/s, so a
+  resting body doesn't jitter, and friction limited by the normal impulse).
+  Frames longer than `max_step` are cut. Kinematic bodies move by their
+  velocity and push dynamic ones.
+- **Layers**: two colliders meet only if each one's layer is in the other's
+  mask.
+- **Triggers**: overlaps are reported and nothing is pushed.
+- **Tilemaps**: solid cells of every `TilemapRenderer`'s map collide as
+  static boxes (with the entity's position and pixels per unit). A contact
+  face whose neighbouring cell is also solid is dropped, so a body slides
+  over the seams between tiles without catching.
+- **Events**: `Events()` lists the last step's transitions: Begin, End,
+  TriggerEnter and TriggerExit, naming the moving body first (a tile
+  contact has a null second entity). A resting contact isn't a new Begin
+  every frame, and all the tiles a body touches count as one contact.
+- **Queries**: `IsGrounded` and `WallSide` for platformer controllers,
+  `Raycast` (bodies and solid tiles, with a layer mask; tiles are layer 1)
+  and `OverlapBox`.
+
+Tests (`test_sprite2d.cpp`, `Physics2D_*`): falling and resting on a floor
+with grounding; stacking; a heavy box pushing a light one; a circle's
+bounce, friction against none, and a kinematic platform; layer masks and
+trigger enter and exit; contact begin and end events; tile floors, running
+along seams at full speed, stopping at a wall with its side, and tile
+contact events; ray and overlap queries against boxes, circles and tiles;
+and the components through reflection.
+
+**The platformer controller and the template** (`sprite2d/platformer.h`).
+- **`PlatformerController2D`** on an entity with a Rigidbody2D and a
+  Collider2D: run speed with ground and air acceleration, a jump speed,
+  coyote time (a jump still works shortly after leaving a ledge), jump
+  buffering (a press just before landing counts), variable height (letting
+  go early keeps `jump_cut` of the rise), a faster fall (`fall_gravity_scale`)
+  and a terminal speed. It flips a Sprite on the entity to face the way it
+  runs. The host sets `input_move` and `input_jump` each fixed step;
+  `UpdatePlatformers` runs before `Physics2D::Step`, which supplies grounding.
+- **`CameraFollow2D`**: eases a camera toward the first controller's entity
+  (plus an offset), optionally inside bounds; `UpdateCameraFollow2D`.
+- **In the player**: `Game` creates a `Physics2D` for each scene, reading the
+  scene's tilemaps and tilesets from the package, and steps it each fixed
+  step after the 3D physics: the controllers get the "Move" x axis and the
+  "Jump" action, then the bodies and the following cameras move.
+  `Game::Physics2D()` exposes it.
+- **The 2D Platformer template**: a 48 x 16 tile level (ground with a pit,
+  platforms, a step and a tall block at the end) on a tileset whose ground
+  is an autotile, a player with a body and the controller, and an
+  orthographic camera 11.25 units high (a 320 x 180 view at 16 pixels a
+  tile) that follows it. Move is A and D, the arrow keys and the left
+  stick; Jump is Space, W, Up and the A button, held for height.
+- **Tests**: the template's files, dependencies and scene components; cooking
+  it (the tilemap and tileset are packaged because the scene refers to them);
+  and playing it in the player: landing, acceleration and stopping, held and
+  tapped jumps, falling into the pit, facing, crossing the pit with a
+  jump, and stopping at the end wall.
+
+**2D lights** (`sprite2d/lights2d.h`). The module computes the lighting; a
+renderer uploads the light map or draws the polygons.
+- **`Light2D`**: a global light (the same everywhere: ambient), a point
+  light (colour, intensity, a radius where it reaches 0, and a falloff
+  power: 1 is linear) or a spot light (a direction in degrees added to the
+  entity's rotation, a full-bright inner half angle and an outer one where
+  it reaches 0, with a smooth edge). Lights can be disabled, can skip
+  shadows, and carry a layer mask.
+- **`ShadowCaster2D`**: a box that blocks light. Solid tilemap cells block
+  it too; `GatherOccluders` turns them into segments, emitting only the
+  edges that face an empty cell, so a wall is a line and a 3 x 3 block has
+  12 edges, not 36.
+- **`LightAt`** sums the global lights and each light that reaches the point
+  (distance falloff, spot cone, and shadow: `Occluded` tests the line from
+  the light). **`BuildLightMap`** evaluates it over a grid of cells: empty
+  cells at their centres, and a solid cell takes the brightest of its empty
+  neighbours so a wall's face glows like the air in front of it. `Sample`
+  blends bilinearly and clamps at the edges.
+- **`VisibilityPolygon`**: what a light can see, by casting rays at every
+  occluder end (and a hair either side) and keeping the nearest hit, bounded
+  by a square round the light; for drawing the lit area or its shadow.
+
+Tests (`Lights2D_*`): point falloff, tint, steeper falloff, disabled and
+global lights adding; spot cones, the soft edge, the entity's rotation and
+the light's own direction; casters blocking, passing beside, ignoring
+shadow-free lights and region culling; tile walls as lines; a light map
+with a shadow behind a wall, lit wall faces, sampling and refused regions;
+the visibility polygon with and without a wall; and the components through
+reflection.
+
+### 26.7 Documentation
+
+- **The API reference** (`engine/src/docs/api_docs.cpp`, `tools/docgen`).
+  `docs::GenerateApiMarkdown`, `GenerateApiJson` and `WriteApiDocs` document
+  every type in the reflection registry: components (registered with the
+  ECS by name), structs and enums, each with a table of its fields (type,
+  editable / read-only / internal, not saved, editor only, replicated,
+  Blueprint, then tooltip, range, unit and group), its functions with
+  signatures and flags, and an enum's values. Types link to their entries;
+  `AssetRef<T>` is written where it's used, and plain data types (numbers,
+  strings, arrays) have no entries unless `skip_scalars` is off. Entries are
+  sorted by name and the output is deterministic. `aether_docgen --out <dir>`
+  registers all the engine's modules and writes `API.md` and `api.json`;
+  the Windows release zip carries the manual and the reference generated
+  from that build (with physics). A game or plugin documents its own types
+  by registering them and calling `WriteApiDocs`.
+- **The manual** (`docs/manual`): getting started, projects and assets,
+  scripting, input, 2D, packaging and shipping, plugins and editor
+  extensions, and the API reference. The templates are the sample projects.
+- **Tests**: `test_api_docs.cpp` (a reflected type's table, its escaped
+  tooltip, ranges, units, flags, functions and enum values; the JSON with the
+  same facts; sorted, one entry per name, links; both files written,
+  deterministically; type names) and `test_manual.cpp` (every chapter exists
+  and is in the contents, every relative link resolves, and the manual names
+  the real templates, tools and flags).
+
+**Version control status in the Content Browser** (`engine/include/aether/assets/vcs.h`,
+`editor/src/content`).
+- **`VcsStatus`**: the repository's changed files by repository-relative
+  path, each Untracked, Renamed, Added, Modified, Deleted or Conflicted,
+  with the queried folder's `prefix` inside the repository. `Of`, `OfLocal`
+  (a path relative to the queried folder) and `OfFolder` / `OfLocalFolder`
+  (the worst state of everything under a folder; whole folder names only).
+  States combine by severity: Conflicted, Deleted, Modified, Renamed, Added,
+  Untracked, Clean.
+- **`ParseGitStatus`** reads `git status --porcelain=v1 -z`: the two status
+  letters decide the state (a conflict is a `U`, `AA` or `DD`; then
+  deleted, renamed, added, modified), a rename also marks the old name
+  Deleted, ignored entries are left out and malformed ones skipped.
+  **`QueryGitStatus(dir)`** runs `git rev-parse --show-prefix` and
+  `git status` there (untracked files listed one by one); outside a
+  repository, or with no git, it returns `available == false` with the reason.
+- **`ApplyVcsStatus`** sets each `ContentEntry::vcs`: an asset takes the worse
+  of its own file and its `.ameta` sidecar (a new asset's sidecar is
+  untracked before the asset is committed), a sub-asset follows its source,
+  a folder shows its worst child.
+- **The Content Browser tool** (Project category): a folder tree and a
+  listing, each with a coloured badge (M, A, ?, D, R, !), a search that
+  looks in subfolders, a "Changed only" filter, Refresh (which asks git
+  again), a count of changed files, and a "not under version control" note
+  otherwise. Double-clicking a folder opens it, and an asset whose extension an
+  editor extension registered runs its opener (§26.5).
+- **Tests** (`test_vcs.cpp`): parsing every status pair, rename, ignored and
+  malformed input; local paths, folder aggregation and severity; badges on a
+  real content folder, including a sidecar-only change; a real `git init`
+  repository with modified, untracked and deleted files (skipped where git
+  isn't installed), queried from a subfolder and from the root; the panel's
+  listing, filter, navigation, search and drawing; and the workspace tool.
+
+---
+
+# Phase 27: Cinematics (sequencer)
+
+The concept is in [ROADMAP.md Phase 27](../ROADMAP.md). Step 1 is the data and
+playback core, in its own module, `sequencer/` (`aether::seq`).
+
+### 27.1 Level sequences
+
+- **`LevelSequence`** (`.asequence`, JSON, `kVersion = 1`): a name, `duration`
+  in seconds, `fps` (for frame snapping and rendering) and a list of tracks.
+  `EffectiveDuration` is the duration, or the last key's time when the
+  duration is 0.
+- **Tracks** are bound to an entity by `EntityGuid`, so a sequence survives
+  scene reloads and prefab instancing. Two kinds so far:
+  - **Transform**: three position channels (x, y, z) plus a list of
+    rotation keys (quaternions) blended by slerp the short way round. It
+    writes the entity's `Transform` position and rotation; a channel with no
+    keys leaves its axis alone.
+  - **Property**: a reflected `component` and `field`, written through the
+    reflection registry's field offset. It can key floats (f32/f64),
+    integers (rounded and clamped to the type), bool, enums (by their
+    underlying type) and structs whose members are all floats (one channel
+    per member).
+- **Channels** hold keys (time, value, interpolation). `Constant` holds the
+  value until the next key, `Linear` blends, `Bezier` is a cubic Hermite
+  segment with in and out tangents. Before the first key and after the last,
+  the value holds.
+- **Diagnostics** (`ValidateSequence`): SQ001 no tracks; SQ002 keys not in
+  increasing time order; SQ003 a key outside the duration; SQ004 a property
+  track with no component or field; SQ005 a repeated track id; SQ006 bad
+  duration or fps; SQ007 a track without an id; SQ008 a track bound to no
+  entity; SQ009 a transform track without three channels; SQ010 a property
+  track without channels. `SequenceFromJson` refuses malformed files with
+  a message and leaves its output untouched.
+- **`SequencePlayer(sequence, world, guid index)`**: `Bind` resolves every
+  track once (problems, such as a missing entity, component or field, are
+  reported once through `Problems()` while the other tracks still play); an
+  entity that dies is re-resolved when it comes back. `SetTime` clamps to the
+  duration, `Evaluate` writes the state at the current time and depends only
+  on the time, so two players on the same sequence agree exactly. `Play`,
+  `Pause`, `Stop`, `SetRate` (negative plays backwards), `loop` and
+  `on_finished`, driven by `Update(dt)`.
+- **Tests** (`test_sequence_core.cpp`): channel interpolation in every mode;
+  slerp the short way; each diagnostic; JSON round trip and refusals;
+  transform and property tracks; once-only problems; rebinding after a
+  destroyed entity; playback, looping and `on_finished`; determinism.
+
+### 27.2 Events, visibility and the scene component
+
+- **Event track**: `events` of (time, name, payload). The player calls
+  `on_event` for each key the playhead crosses while playing forward: once
+  each, in time order, an event at t = 0 on the first frame, and a loop fires
+  the keys at the end and then those at the start. Scrubbing (`SetTime`),
+  `Evaluate` and backward playback fire nothing, so `Evaluate` stays a pure
+  function of time. The binding is optional (the entity the event is about).
+- **Visibility track**: one channel of 0 and 1 keys (held until the next); it
+  sets the bound entity's `Active` flag, calling `set_active(entity, on)`
+  only when the value changes. A host routes that through
+  `Lifecycle::SetActive`, so OnEnable/OnDisable fire.
+- **Diagnostics**: SQ011 an event key with no name; SQ012 a Visibility track
+  without exactly one channel of 0/1 values; SQ013 keys on a track of the
+  wrong kind. SQ008 doesn't apply to an Event track.
+- **`SequenceComponent`**: `sequence` (asset path), `auto_play`, `loop`,
+  `rate`, `destroy_when_finished`, and `time` and `playing` written back (not
+  saved). Its methods `Play`, `Pause`, `Stop`, `SetTime`, `SetRate`,
+  `SetLoop`, `IsPlaying` and `GetTime` are reflected as Blueprint nodes and
+  Luau calls, and queue commands like `AudioSource`. The **`Sequencer`**
+  library has `PlaySequence(sequence, loop)` (an entity that plays and is
+  destroyed at the end) and `StopAll`.
+- **`SequenceSystem`**: a player per component (made when it appears or its
+  `sequence` changes), queued commands, Update, time written back, players of
+  destroyed entities dropped, problems reported once. `Events()` is what
+  happened in the last Update: a Marker (name, payload, the track's entity) or
+  Finished (the sequence). The host dispatches them to Blueprints as
+  `Event.OnSequenceEvent` (name, payload) and `Event.OnSequenceFinished`.
+  Wiring it into the player's scheduler comes with the asset loading in a
+  later step, as the audio system's does.
+- **Physics note**: a body the sequence moves should be kinematic.
+- **Tests** (`test_sequence_system.cpp`): both new tracks' JSON and
+  diagnostics; events once, not on scrub or backward, across a loop wrap, with
+  muted tracks and bound events; visibility and its change-only hook;
+  auto-play, every command, event and finished collection, Lifecycle
+  visibility, destroy-when-finished and the library, once-only problems,
+  dropped players, and the reflected Blueprint surface.
+
+### 27.3 Spawn, Camera Cut, Audio and Animation tracks
+
+The player drives these through callbacks, so the sequencer module links no
+audio, animation or prefab code and tests headless; the `SequenceSystem`
+forwards them (below).
+
+- **Spawn track**: `spawns` of (time, duration, prefab, position, rotation).
+  A prefab is alive exactly while the playhead is in [time, time + duration)
+  (duration 0: to the end). `on_spawn(track, parent, key)` makes it (the
+  binding, when it has one, is the parent), `on_despawn(entity)` removes it.
+  Leaving the range, `Stop` and destroying the player despawn it; scrubbing
+  back in respawns it; evaluating twice inside the range spawns once; one
+  that gameplay destroyed isn't remade while the playhead stays inside.
+- **Camera Cut track** (no binding): `cuts` of (time, camera GUID). The cut in
+  force at the playhead gives its camera priority `kCutPriority` (1000) so
+  `FindActiveCamera` picks it; the previous camera gets its own priority back,
+  as does the one cut away from, before the first cut, and when the player is
+  destroyed. `on_camera_cut(camera)` is told of each change (null before the
+  first cut).
+- **Audio track**: `audio` keys of (time, cue, action Play / Stop / FadeIn /
+  FadeOut, volume_db, fade). **Animation track**: `anims` of (time, montage,
+  action Play / Stop, rate), bound to the animated entity. Both fire like
+  Event keys (once, forward only) through `on_audio` / `on_animation`.
+- **JSON**: `"type": "spawn" | "cameracut" | "audio" | "animation"` with the
+  key arrays `spawns`, `cuts`, `audio` and `animation`; `$version` stays 1.
+- **Diagnostics**: SQ014 a Spawn key with no prefab; SQ015 a negative spawn
+  duration; SQ016 a cut to no camera; SQ017 an Audio key with no cue; SQ018 an
+  Animation key with no montage. SQ002 and SQ003 cover every key list, SQ013
+  keys on the wrong kind of track. Spawn, Camera Cut and Audio tracks need no
+  binding; an Animation track does.
+- **`SequenceSystem`**: `SetSpawner(fn)` is how a host instantiates prefabs;
+  despawning goes through `Lifecycle::Destroy`. Audio and Animation keys come
+  out of `Events()` as `Kind::Audio` (name = the cue, payload = the action,
+  `value` = volume dB, `fade`) and `Kind::Animation` (name = the montage,
+  payload = the action, `value` = the rate), with `subject` the track's
+  entity, for the host to give to its audio and animation systems.
+- **Tests**: JSON round trip and refused actions; every new diagnostic;
+  spawn range, scrubbing, Stop, destructor and externally destroyed spawns;
+  camera cuts against `FindActiveCamera`, restoring priorities and the
+  destructor; audio and animation firing once and forward only; and the
+  system's forwarding and Lifecycle despawn.
+
+### 27.4 Sequences in the player
+
+- **Asset type**: `.asequence` imports as "Sequence". Its GUID strings (a Spawn
+  key's prefab, a Camera Cut's camera is an *entity* GUID, so not that) are
+  scanned as dependencies, so cooking a sequence cooks the prefabs it spawns.
+- **`Game::FindSequence(path)`**: reads the sequence from the package by
+  asset path, once per scene (a miss is remembered), with a warning when it
+  isn't in the package or can't be parsed.
+- **Cooking a sequence**: a scene names its sequences by path
+  (`SequenceComponent.sequence`), which the cooker doesn't follow yet, so a
+  project lists its sequence folder under `always_cook` (for example
+  `Sequences/`), as the platformer template does for `Input/`.
+- **The system**: each scene's runtime owns a `SequenceSystem` (so it goes
+  with the scene), registered as the `Sequencer` library's active one. The
+  `Player.Sequencer` system runs in Update after `Player.Update` and before
+  `Player.Scripting`, so scripts and Blueprints see this frame's events.
+- **Spawn tracks** resolve their `prefab` as a GUID or an asset path, and
+  place it at the key's position and rotation (relative to the track's
+  entity when it has one, by its position and rotation), through
+  `InstantiatePrefab` on the same cached prefab data the scene uses. A prefab
+  that isn't in the package is a warning.
+- **Events**: Marker keys reach Blueprints as `Event.OnSequenceEvent` (name,
+  payload) and the end as `Event.OnSequenceFinished` (the sequence), on the
+  `SequenceComponent`'s entity. Audio and Animation keys are collected in the
+  system's `Events()` but the player has no audio or animation runtime to hand
+  them to yet.
+- **Tests** (`test_player.cpp`): a sequence played from a hand-built pak (the
+  moved entity, a prefab spawned at its time and position, the final pose, no
+  warnings); a missing sequence warned about once; and a project cooked with
+  `always_cook` that imports the sequence as "Sequence" and plays it.
+- Not in this step: `CineCamera` (a camera component with focal length,
+  sensor and aperture that derives the field of view), cooker following of
+  scene sequence paths, and audio and animation in the player.
+
+### 27.5 The sequencer editor
+
+- **`SequenceDocument`** (`editor/src/sequencer/`): a `LevelSequence` being
+  edited, with whole-sequence undo and redo (a sequence is small), a dirty
+  flag and the diagnostics. A drag is one undo step (`BeginEdit` ..
+  `EndEdit`). Tracks: add (with the channels its kind needs and a unique
+  id), remove, rename, bind, mute, lock, and the Property track's component
+  and field. Keys: add a value key (one at the same time has its value
+  replaced), move any key (value, rotation, event, spawn, cut, audio,
+  animation; the list is re-sorted and the new index returned, and a move onto
+  another value, rotation or cut key's time is refused), set a value or
+  interpolation, add and edit rotation and event keys, remove. Duration, fps
+  and name. A locked track refuses every edit, including removal, until it is
+  unlocked. `Load` replaces the document (and clears the history), and leaves
+  it unchanged when the file can't be read; `Save` clears the dirty flag.
+- **`SequencerPanel`**: a toolbar (undo, redo, add a track of any kind,
+  play / pause / stop, loop, the time, zoom, a count of problems), a timeline
+  (a ruler with a tick each second, a header per track with mute and lock
+  toggles, a row per value channel and key list with the keys as diamonds,
+  and a red playhead; click the ruler to scrub, snapped to the frame rate;
+  click a key to select it and drag it to move it), and an inspector (the
+  track's name, entity and property target, the selected key's time, value,
+  interpolation or event name and payload, delete, and the diagnostics).
+  The panel draws without textures, so it runs headless.
+- **Preview**: the panel scrubs and plays a `SequencePlayer` on the world
+  and GUID index the host gives it (the sample scene in the workspace),
+  rebuilt whenever the document changes so undo and edits show at once.
+  Spawn tracks make empty entities there and remove them again, including
+  when the panel is destroyed; audio and animation keys do nothing in the
+  preview.
+- **Workspace**: the **Sequencer - Intro** tool (category Cinematics) opens a
+  sample cutscene: a door that slides open on a curve, markers, and a light
+  that switches on.
+- Not yet: editing the keys of Spawn, Camera Cut, Audio and Animation tracks
+  (they show on the timeline and can be moved and deleted, but their fields
+  are changed in the file), curve and tangent editing, multi-key selection,
+  and previewing in the Viewport of an open level.
+- **Tests** (`test_sequencer_editor.cpp`): track edits with undo and redo;
+  sorted keys, replace, move, remove; rotation and event keys; a drag as one
+  undo step; locked tracks; diagnostics following edits; save, load, dirty and
+  a failed load; the panel scrubbing deterministically, playing, pausing,
+  stopping, looping and following edits and undo; preview spawns removed with
+  the panel; drawing and selection headless; and the workspace tool.
+
+### 27.6 CineCamera and movie render
+
+- **`CineCamera`** (`scene/gameplay.h`): a lens beside a `Camera`:
+  `focal_length_mm` (35), `sensor_width_mm` (36), `sensor_height_mm` (20.25, a
+  16:9 gate), `aperture_f` and `focus_distance` (stored for depth of field).
+  `CineFovDegrees` is the vertical field of view, 2 * atan(sensor_height / (2 *
+  focal_length)), kept to 1..170 degrees and safe for zero or negative
+  values. `ApplyCineCameras(world)` writes it into each entity's `Camera`
+  (making it perspective; a CineCamera without a Camera is left alone) and
+  returns how many it updated. The renderer and `CameraProjection` are
+  unchanged: the CineCamera wins over a hand-edited `Camera.fov_degrees`.
+  Every field is a reflected float, so a Property track can zoom the lens
+  (component `CineCamera`, field `focal_length_mm`); the `SequenceSystem`
+  applies the lenses at the end of each update, and the movie loop after each
+  frame. No `.asequence` change.
+- **`SequencePlayer::AdvanceTo(time)`**: moves the playhead forward in one
+  step, firing the Event, Audio and Animation keys on the way (once each, the
+  one at t = 0 included on the first call) and applying the tracks. Backward
+  fires nothing.
+- **`RenderMovie(sequence, world, guids, options, sink, setup)`**
+  (`sequencer/movie.h`): the headless frame loop. Frame i is at exactly i /
+  fps seconds (from the integer, so nothing drifts); a sequence has
+  `MovieFrameCount` = floor(duration * fps) + 1 frames, the last at the end
+  (2 s at 24 fps: 49). For each frame it advances the player, applies the
+  CineCameras and calls `sink(frame, time, world)`; returning false stops
+  (stopping on the last frame still counts as complete). Options: `fps`
+  (0: the sequence's), `start_frame` and `end_frame` (events before the
+  range don't fire), `fire_events`. `setup` gets the player first, for its
+  hooks (the Spawn spawner, `on_event`, `on_audio` ...). The result has the
+  frames rendered, the total, whether it completed, and the problems (a bad
+  frame rate, no tracks, a start past the end, and what couldn't be bound).
+  The same sequence on the same world renders the same frames every time.
+  Camera Cuts and spawns are undone when the render ends. What a sink does with
+  a frame (draw it, write an image, encode) is the caller's.
+- **Tests** (`test_cine_movie.cpp`): the field of view for known lenses and
+  bad values; writing the Camera and leaving others alone; a Property track
+  zooming the lens; reflection; frame counts and exact times; determinism, the
+  frame range and another frame rate; stopping and bad options (and an orphan
+  track reported while the rest renders); events once each, from a later start
+  and silenced; and camera cuts and a lens zoom in force on the right frames,
+  with the cut undone afterwards.
+- Still to come: Fade and Subsequence tracks, a command-line movie renderer
+  (it needs scene loading and a draw path), and depth of field using the
+  aperture and focus distance.
+
+### 27.7 Fade and Subsequence tracks
+
+- **Fade track**: one channel named `amount` (0 to 1, any interpolation) and a
+  `fade_color` (RGBA, default opaque black); no entity. The player's `Fade()`
+  is the strongest fade at the playhead: the highest amount among the
+  unmuted Fade tracks and the sequences playing inside this one, with that
+  track's colour. `on_fade` is called when it changes, and `Stop` clears it.
+  `SequenceSystem::Fade()` is the strongest across every playing sequence
+  (a finished one holds its last value, so a fade-out stays out). Drawing it
+  over the screen is the host's (the UI module has no screen fade yet);
+  `RenderMovie`'s sink reads it from the player it got through `setup`.
+- **Subsequence track**: `subs` of (time, duration, sequence path, offset,
+  scale); no entity. While the playhead is in [time, time + duration) the
+  child plays at its own time `(t - time) * scale + offset`, so a child can
+  start part way in or run faster. `duration` is required (above 0), so a
+  sequence's length never needs the child loaded. The child is found by a
+  `SequenceResolver` the player is given (the `SequenceSystem` passes its
+  lookup, `RenderMovie` takes one in its options); without one the track
+  reports a problem and plays nothing.
+- **A child is a player of its own**, made when the parent is bound, that
+  reports through the parent's hooks as they are when they fire (events,
+  audio, animation, spawns, camera cuts, visibility). Its events fire once
+  each as the parent's playhead crosses them, scaled and offset, and those at
+  the child's start fire as it enters the range. Leaving the range the child's
+  last pose is applied (its first, going backward), then what it spawned is
+  removed and its cuts and fade released; destroying or stopping the parent
+  does the same. A child's fade merges into the parent's.
+- **Cycles and depth**: a child whose path is already in the chain of
+  parents is refused ("plays itself"), as is nesting deeper than
+  `kMaxSubsequenceDepth` (4); both, a child that isn't found, and a child's
+  own problems are in the parent's `Problems()`. Pass the sequence's own path
+  to the player (the system does) to catch a sequence that plays itself
+  straight away; without it the cycle is caught one level later.
+- **JSON**: `"type": "fade"` (with `fade_color` and one `amount` channel) and
+  `"type": "subsequence"` (with `subs`); `$version` stays 1.
+- **Diagnostics**: SQ019 a Fade track without exactly one channel; SQ020 a
+  fade amount outside 0..1; SQ021 a subsequence key with no sequence; SQ022 a
+  duration not above 0; SQ023 a scale not above 0.
+- **Editor**: Fade and Subsequence are in the Add Track menu (Fade gets its
+  amount channel; subsequence keys show on a timeline lane and can be moved
+  and deleted, their fields are set in the file for now).
+- **Tests** (`test_sequence_fade_sub.cpp`): the fade's amount, colour,
+  change notifications and Stop; the strongest of several tracks and muting;
+  JSON and every new diagnostic; a child at its local time, scale and offset
+  (and back and forth); events forwarded once and spawns removed on leaving;
+  the destructor releasing spawns, cuts and fade; self reference, mutual
+  cycles, the depth limit, missing sequences and no resolver; a child's own
+  problems; the system's strongest fade and nested playback; and rendering a
+  movie with a subsequence and a fade.
+
+### 27.8 PR breakdown
+
+1. Level sequences and the player core (done, §27.1).
+2. Event and Visibility tracks, the SequenceComponent and system (done, §27.2).
+3. Spawn, Camera Cut, Audio and Animation tracks (done, §27.3).
+4. Sequences in the player and asset pipeline (done, §27.4).
+5. The sequencer editor (done, §27.5).
+6. CineCamera and the movie-render loop (done, §27.6).
+7. Fade and Subsequence tracks (this step, §27.7).
+8. A release (v0.27.0) that carries the Phase 26 documentation and lights and
+   all of Phase 27.
+
+
+---
+
+# Phase 28: Save Game and Persistence
+
+The concept is in [ROADMAP.md Phase 28](../ROADMAP.md). Step 1 is save slots,
+in its own module, `save/` (`aether::save`, `Aether::Save`).
+
+### 28.1 Save slots
+
+- **What is saved**: any reflected struct (`AETHER_REFLECT`), through the
+  reflection layer's JSON serializer, so its schema version (`$v`) and its
+  migration hook (`reflect::RegisterMigration`) are the ones every other
+  asset uses: loading an older save runs the hook, a field the save lacks
+  keeps its default, one it doesn't know is skipped with a warning.
+- **`.asav`**: one file per slot, `<slot>.asav`, JSON text in an envelope:
+  `$type` ("aether.save"), `format` (1), `type` (the struct's name),
+  `type_version`, `slot`, `timestamp_utc`, `checksum` (CRC-32 of the data's
+  compact JSON, as 8 hex digits) and `data`. Readable and diffable, and the
+  Save Inspector (a later step) opens it.
+- **`SaveSystem(directory)`**: `Save`, `Load` (by type or template),
+  `Exists`, `ListSlots` (slot, type, version, time, size, validity; a damaged
+  file is listed as invalid), `DeleteSlot`, and `Active()` / `MakeActive()`
+  for the Blueprint nodes. Results are `SaveResult` (ok, an error code, a
+  message and warnings), never exceptions.
+- **Slot names** are 1 to 64 of `A-Z a-z 0-9 _ -`, so a name can't reach
+  outside the folder (`InvalidSlot` otherwise).
+- **Errors**: `NotFound`, `IoError`, `Corrupt` (not a save, truncated, an
+  unknown envelope format, a checksum that doesn't match), `WrongType` (the
+  slot holds another struct) and `FutureVersion` (saved by a newer version of
+  the struct than the code has: refused, not guessed at). A failed load never
+  touches the object.
+- **Atomic writes** (`fs::WriteFileAtomic`): the data goes to `<file>.tmp` and
+  is renamed over the target, so a crash leaves the old save or the new, and
+  a failed write removes the temp file. Each save first copies the existing
+  file to `<slot>.asav.bak`; loading a missing or `Corrupt` file falls back to
+  the backup (with a warning), while a wrong type or a newer version doesn't.
+  `DeleteSlot` removes both. (An fsync before the rename, for a true
+  power-loss guarantee, is not done yet.)
+- **Async**: `SaveAsync` turns the object into text on the calling thread, so
+  it may change right after, and a worker thread writes the file. Saves are
+  written in the order made; the callback runs from `Pump()` on the pumping
+  thread; `Flush()` waits for the queue; the destructor finishes what is
+  queued (undelivered callbacks are dropped). Synchronous and async calls
+  share one lock, so they never interleave on a file.
+- **Where saves live** is the caller's: the directory is a constructor
+  argument. The per-user folder on each platform comes with the player wiring.
+- `fs::ListDirectory` lists a folder's files, sorted.
+- **Tests** (`test_save.cpp`): a struct round trip and the envelope; slot name
+  validation; listing, existence and deletion; atomic writes and the file
+  helpers; the backup and recovery; corruption, truncation and unknown
+  formats; wrong type and newer versions; migration and defaults; async
+  completion, ordering, the destructor draining and sync/async mixing; and
+  the active system.
+
+### 28.2 World state
+
+- **`SaveableEntity`** (component, in `save/`): `tag` (free text) and `fields`:
+  `"Door.open"` keeps one field of the entity's `Door` component, `"Door"` the
+  whole component. Names are the reflected ones. A list on the entity (not a
+  type-level flag) because "a door is open" is per instance, a designer can
+  edit it in the Inspector, and it needs no reflection change; a
+  `Field_SaveGame` flag that supplies defaults is a possible follow-up. It
+  needs the entity's `IdComponent`.
+- **`WorldSnapshot`** (reflected, so it can be a field of the game's own save
+  struct or saved on its own through `SaveSystem`): `entities` (`SavedEntity`:
+  guid, tag, and `SavedComponent`s of component name plus compact JSON of the
+  listed values) and `destroyed` (guids).
+- **`CaptureWorld(world, guids, tracker, report)`** refreshes the GUID index,
+  and for every saveable entity (in guid order, so equal state gives an equal
+  snapshot) writes the listed fields of each component. Warnings (also logged)
+  for an entity with no GUID, two entities sharing a GUID, a component or
+  field that doesn't exist, a component the entity lacks, and a component that
+  isn't reflected.
+- **Destroyed entities** can't be captured, so a **`WorldTracker`** remembers
+  which saveable entities the scene started with: `Begin` right after the
+  scene loads, before `RestoreWorld`. Capture then lists the baseline guids
+  that are gone as `destroyed`; it works with plain `World::DestroyEntity`
+  (no hook to remember to call). With a tracker, saveable entities that
+  weren't in the baseline (made while playing) are skipped and counted in
+  `CaptureReport::skipped_runtime`; spawn recording (a prefab plus overrides)
+  is a follow-up, as are Blueprint and script variables.
+- **`RestoreWorld(world, guids, snapshot, report, lifecycle)`** finds each
+  entity by GUID (so a freshly loaded scene with new entity handles works),
+  lays the saved values over the live component and loads it (the unlisted
+  fields keep the scene's values; a whole component's `$v` runs the migration
+  hook for an older version), and destroys the `destroyed` entities (through
+  the `Lifecycle` when given, so OnDestroy fires; restoring twice is
+  harmless). A component the entity lacks is reported, not added. It returns
+  true when nothing went wrong; otherwise the `RestoreReport` has the
+  `missing` entities, `unknown_components`, `unknown_fields` and `warnings`,
+  and everything that could be restored was. Call it after the scene loads
+  and before play starts.
+- **Tests** (`test_world_state.cpp`): a round trip into a fresh scene, with
+  unlisted fields and non-saveable entities untouched; only the listed fields
+  in the snapshot, and equal state giving equal snapshots; destroyed entities
+  staying destroyed (and why Begin goes before the restore); Lifecycle
+  destruction; runtime entities skipped; every restore problem reported;
+  capture warnings; and a snapshot saved and loaded through a slot.
+
+### 28.3 Settings
+
+- **Apart from saves**: what the options menu sets lives in its own file,
+  `<directory>/settings.asettings`, an `aether.settings` file (a save slot
+  can't be mistaken for it, and the other way round), written like a save:
+  atomically, with the previous file kept as `.bak`, a CRC-32, the struct's
+  version and migration hooks. `save/envelope.h` is the shared mechanics
+  (`Make`, `Write`, `Read`, `ReadWithBackup`); `SaveSystem` and
+  `SettingsStore` both use it.
+- **`SettingsStore<T>`** works for any reflected struct (a game's own options
+  struct, `GameSettings` by default): `Load` (defaults when the file is
+  missing, which is normal and gives no warning; defaults plus an `error`
+  (`Corrupt`, `WrongType`, `FutureVersion`) and a warning when the file, and
+  then its backup, can't be used, leaving the bad file alone until the next
+  `Save`; `ok` means `Get()` is usable), `Save`, `Get`, `Set` (validated; true
+  if anything changed), `ResetToDefaults`, and observers `fn(now, before)`
+  called only for real changes (a `Set` from inside an observer takes effect
+  without notifying again). One thread (the main one) owns a store; there is
+  no worker, since settings are written rarely.
+- **`GameSettings`**: `quality` (a project quality preset's name, a string so
+  a project can define its own presets), `width`, `height`, `fullscreen`,
+  `vsync`, `master` / `music` / `sfx` / `voice` volumes (0 to 1), `language`,
+  and `bindings` (`input::UserBindings`: the player's key rebinds, reused as
+  they are, with their stale-override and conflict handling; they replace
+  the separate `Saved/Config/Input.json`, whose one-time migration comes with
+  the player wiring).
+- **Validation**: `Validate(GameSettings&, warnings)` clamps volumes to 0..1
+  (NaN back to 1), the window size to 320..16384, and resets an empty or
+  over-long language or quality name; one warning each. The store runs it on
+  load, `Set` and `Save`; a game's own struct gets its own `Validate`,
+  found by ADL. A hand edit has to recompute the checksum or the file is
+  treated as damaged (defaults, with the backup tried first).
+- **`BusVolumeDb(linear)`**: 20 * log10(v) for the mixer's dB, with 0 (or
+  anything below -80 dB) the floor of -80.
+- Applying settings (the mixer's bus volumes, the quality preset, the
+  window) belongs to the player and comes with its wiring, so `save/` stays
+  engine-only.
+- **Tests** (`test_settings.cpp`): defaults for a missing file; a round trip
+  including key rebinds and the separation from saves; the backup and the
+  defaults for damaged files; validation and the checksum guard; observers; a
+  game's own struct with its own validation and a newer-version file; the dB
+  conversion; and the backup and no stray temp file. The save tests ran
+  unchanged on the refactored mechanics.
+
+### 28.4 Blueprints and Luau: the save bag and the SaveGames library
+
+- **The problem**: a game's save struct is a C++ type Blueprints and Luau
+  can't name. So they keep their save state in a **`SaveBag`**: named values
+  (bool, int, float, string, vector) plus an optional `WorldSnapshot`. It is an
+  ordinary reflected struct (`SaveEntry` list, the snapshot, `has_world`), so
+  C++ code can `Save("slot", bag)` and `Load("slot", bag)` and share slots with
+  Blueprint saves. A bag has no schema and no migration: nothing checks that a
+  key keeps its type between versions of the game, and a get of the wrong kind
+  gives its default (loosely typed by design). Keys are unique; a Set replaces
+  an entry of any kind; lookup is a linear scan (bags are small).
+- **`SaveSystem`** owns the bag (`Bag()`), the world the capture and restore
+  nodes act on (`SetWorldContext`: world, GUID index, a `WorldTracker`, a
+  `Lifecycle`, all set by the host), the last error (`LastError()`), and the
+  async saves that finished (`TakeFinishedSaves()`). Main thread only.
+- **`SaveGames`** (a reflected static library, so every function is a
+  Blueprint node under `Call.Native:SaveGames.*`): `CreateSaveObject`,
+  `SetBool / SetInt / SetFloat / SetString / SetVector`, the matching pure
+  `Get...(key, default)`, `HasKey`, `RemoveKey`, `SaveToSlot`,
+  `SaveToSlotAsync`, `LoadFromSlot` (replaces the bag; unchanged on failure),
+  `DoesSaveExist`, `DeleteSave`, `GetSlotCount`, `GetSlotName(index)`,
+  `GetLastError`, `CaptureWorld` and `RestoreWorld`. All act on
+  `SaveSystem::Active()`; without one they do nothing (false, the default,
+  empty). A function that can fail returns false and leaves the reason in
+  `GetLastError` (a success clears it). `CaptureWorld` needs a world
+  context and stores the snapshot in the bag; `RestoreWorld` puts it back,
+  returns false if something couldn't be restored, and lists what in the
+  error.
+- **Async**: `SaveToSlotAsync` copies the bag now; after the host calls
+  `Pump()` it takes `TakeFinishedSaves()` and dispatches **`Event.OnSaveFinished`**
+  (slot, success) to the Blueprint instances, as it does
+  `Event.OnSequenceFinished`.
+- **Luau**: a `SaveGames` table with the same functions
+  (`scripting/save_api.h`): `SetNumber` (stored as an int when it has no
+  fractional part, else a float, so Blueprint's Get Int and Get Float read
+  what a script saved), `GetNumber` (reads either), `SetVector(key, x, y, z)`
+  and `GetVector(key, dx, dy, dz)` returning three numbers, the others as
+  their Blueprint twins. Installed by `ScriptSystem`; a missing or wrongly
+  typed argument raises a script error. Only this table is hand-registered:
+  a generic binding of every reflected static library is a possible later step.
+- **Not here**: settings access from Blueprints and Luau, and wiring a
+  `SaveSystem` into the player (PR 6): a host makes one active, sets its world
+  context, pumps it and dispatches the event.
+- **Tests** (`test_save_games.cpp`): the bag's set, get, replace and remove; a
+  bag saved and loaded by C++ with its world; the library's save, load, exists,
+  delete, list and errors; no active system; capture and restore through a
+  slot (and a vanished entity reported); async finishing through the host; the
+  reflected function list; a real Blueprint graph that saves, clears and loads
+  back, and handles `Event.OnSaveFinished`; and the Luau table including
+  errors.
+
+### 28.5 The Save Inspector
+
+`Tools > Data > Save Inspector` shows the save and settings files in a folder
+(`editor/src/save/`). It is **view-only** on purpose: editing a save means
+recomputing its checksum, running migrations and silently changing a player's
+progress, so the actions are the ones that don't alter contents: **Reload**,
+**Delete** (with the `.bak`, after a confirmation) and **Copy as...** (a valid
+slot name that isn't taken; a damaged file is copied raw, for a bug report).
+
+- `save::envelope::Inspect(file)` reads an envelope without loading it:
+  kind, format, type and version, slot, time, size, the stored and computed
+  checksum, the data, and the raw text. Files over 64 MB are refused.
+- `SaveInspectorDocument` adds what the file doesn't say about itself: a
+  backup beside it, and problems (bad checksum, unknown type or format, a
+  newer version than the code has, what loading would skip, data that doesn't
+  fit the type). When the type is registered in the build it makes a
+  temporary instance, so the generic Inspector draws it (read-only); else it
+  shows a JSON tree capped at `kMaxTreeNodes` (5000), plus a Raw JSON tab.
+- The list marks unreadable files and bad checksums in red. The editor's
+  Content Browser opens `.asav` and `.asettings` here (extension asset types).
+- The workspace writes sample saves under the temp folder (a bag with a
+  world, a settings file, a tampered copy) so the tool is never empty.
+
+Tests (`test_save_inspector.cpp`): a bag opens with its backup and a reflected
+instance; tampering, junk, empty and missing files; an unknown type falling
+back to JSON; the node cap; delete and copy rules; the panel drawing headless
+and rescanning; and the workspace tool and extension opener.
+
+### 28.6 Player wiring
+
+`Game` (the player runtime) gets saving (`player/`):
+
+- `ResolveUserPaths(project, override)` gives `{root, Saves, Config}`: the
+  `--user-dir` option, then `AETHER_USER_DIR`, then the OS's per-user data
+  folder (`%APPDATA%`, `~/Library/Application Support`, `$XDG_DATA_HOME` or
+  `~/.local/share`) plus the project name with anything but letters, digits,
+  `-` and `_` replaced by `_` (a project can't name its way out of the folder).
+- `Game::SetUserPaths` opens a `SaveSystem` over `Saves` (made the active one,
+  so `SaveGames` in Blueprints and Luau works) and a `SettingsStore` over
+  `Config`. Without it there is no save system (`Saves()` is null).
+- The save system's world context (world, GUID index, lifecycle and a
+  `WorldTracker`) follows the loaded scene: cleared before the old world
+  goes, set after the new one is built. `~Game` drains and destroys the save
+  system before the world.
+- `Player.Save` (Update, after `Player.Sequencer`, before `Player.Scripting`)
+  pumps the system, then sends `Event.OnSaveFinished(slot, success)` to every
+  Blueprint with it. That is the new `BlueprintVM::DispatchAll(event, args)`,
+  a broadcast returning how many ran it. Luau callbacks run from the same pump.
+- `ApplySettings(settings, targets, before)` pushes volumes (through
+  `BusVolumeDb`, buses Master, Music, SFX, Voice), the quality name and the
+  window to host hooks, only what changed when given `before`. The hooks are
+  injected so the runtime doesn't link the mixer, the renderer or the window.
+  `Game::LoadSettings(targets)` loads the file, applies it, and keeps applying
+  later `Settings().Set(...)` changes.
+
+Tests (`test_player_save.cpp`): path precedence and sanitizing; no paths, no
+save system; the context following a scene reload and the active system
+cleared at teardown; an async save finishing on a tick; `DispatchAll`; what
+`ApplySettings` pushes; and `LoadSettings` applying and observing.
+
+### 28.7 The player executable
+
+`aether_player` (`player/main.cpp`) uses all of it:
+
+- `--user-dir <dir>` (else `AETHER_USER_DIR`, else the OS folder, §28.6) is
+  where `Saves/` and `Config/` live. `Game::SetUserPaths` and `LoadSettings`
+  run before the scene loads.
+- **Precedence** for the window size and the quality preset: the command line
+  (`--size`, `--quality`), then the settings file, then the project's own.
+  The settings count only if a `settings.asettings` exists: the defaults
+  (1280x720, High) never override the project. Vsync follows the same rule.
+  Fullscreen is read but only logged: `Window` can't change mode yet.
+- **Written on exit only if changed.** The settings are saved after the run
+  if the game changed them (`Settings().Set`), never because they were loaded,
+  so a damaged file isn't overwritten by a run that didn't touch it.
+  Command-line overrides are not copied into the settings.
+- **Key bindings** are part of `GameSettings`. `MigrateLegacyBindings` moves
+  an old `Config/Input.json` (the pre-Phase 28 place) into them once: no file,
+  nothing; a damaged file, a warning and the file stays; rebinds already in
+  the settings win and the old file is set aside; otherwise they are copied in
+  and the file becomes `Input.json.migrated`. `Game` applies the settings'
+  rebinds to every input context, and re-applies them when they change
+  (live rebinding).
+
+Tests (`test_player_save.cpp`): the migration cases above, and a run of the
+real `aether_player --headless --user-dir` that writes no settings file when
+nothing changed, moves the old rebinds in once, and leaves the file alone on
+the next run.
+
+Not done (follow-ups): applying the volumes (the player has no mixer or audio
+system yet), fullscreen and live window resize (`Window` has no setters), a
+quality preset change at runtime, and cloud saves as plugins.
+
+### 28.8 PR breakdown
+
+1. Save slots (done, §28.1).
+2. World state (done, §28.2).
+3. Settings (done, §28.3).
+4. The save bag and the Blueprint and Luau library (done, §28.4).
+5. The Save Inspector panel for `.asav` (done, §28.5).
+6. Player runtime wiring: user folders, the save system and its world
+   context, `Player.Save`, `DispatchAll`, `ApplySettings` (done, §28.6).
+7. The player executable (`--user-dir`, saved window size and quality,
+   settings on exit, the `Input.json` migration) and the Phase 28 wrap-up
+   (this step, §28.7).
+
+---
+
+## Phase 29: localization and text
+
+### 29.1 The core (`loc/`, `aether::loc`)
+
+A small, dependency-free library (`Aether::Loc`, engine-only, headless):
+
+- **`LocText { key, source }`**, a reflected struct (so it saves, cooks and
+  shows in the Inspector like any field). `key` indexes the string tables;
+  `source` is the text as written, shown when no table has the key. An empty
+  key makes a *literal* (`LocText::Literal`), shown as it is and never looked up.
+- **`NormalizeLanguage` / `FallbackChain`**: `pt_br` and `PT-br` are `pt-BR`;
+  the chain is the tag, then each shorter prefix, then the default language
+  (`pt-BR` gives `{pt-BR, pt, en}`), without repeats.
+- **`StringTable`**: translations by key and language, with **CSV** import and
+  export. Columns are `key,en,pt-BR,...`; a `comment` column is ignored;
+  cells follow RFC 4180 (commas, quotes and line breaks inside quotes); a BOM
+  and CRLF are fine; an empty cell is no translation. Export sorts keys and
+  languages so diffs stay small. Import merges, reports a missing header, an
+  unclosed quote, a row with no key and a repeated key (the later row wins),
+  and keeps going where it can.
+- **`Format(pattern, language, args)`**: `{name}` substitution; plurals with
+  `{count|s}` (the suffix unless the category is *one*, so
+  `{count} coin{count|s}`) or explicit forms,
+  `{count|one:coin;other:coins}` (falling back to `other`); `{{` and `}}` are
+  literal braces. A problem leaves that part as written and adds a line to
+  the error list; it never throws.
+- **`PluralCategory(language, n)`**: the CLDR rules, written by hand for en
+  (and the languages that follow it), pt (pt-BR: 0 and 1 are *one*; pt-PT: 1
+  only), fr, ja/zh/ko/vi/th/id/ms (no plurals), ru/uk, pl and ar. Other
+  languages follow English. ICU is not used.
+- **`Localizer`**: resolves a `LocText`: a table entry along the fallback
+  chain, else `source`, else the key, so a string is never blank; with
+  arguments the result goes through `Format`. It isn't a global yet.
+
+Tests (`test_loc.cpp`): tags and chains; table set, find, remove and counts;
+CSV round trips of hard cells, BOM/CRLF/comment columns, and every reported
+problem; the plural rules; formatting and escapes, including malformed
+patterns; the localizer's resolution order; and `LocText` as a reflected field.
+
+### 29.2 Assets, the runtime service and the language switch
+
+- **`.astrings`** is a cooked asset type, importer `StringTable`: plain CSV in
+  the format of §29.1 (`key,en,pt-BR,...`), so translators and spreadsheets
+  open it as it is. Nothing references a string table, so the cooker adds
+  every `StringTable` asset to the cook set on its own (reason
+  "localization"); a table can't be forgotten and silently lose all text.
+- **`loc::Localization`** is the running game's text: every table merged
+  (a later file's entry replaces an earlier one's for the same key and
+  language), the current language, and listeners told when it changes (only on
+  a real change). `Text(key, fallback, args)` follows §29.1's order (the
+  chain, then the source text, then the key). One can be made the active
+  one, like `SaveSystem`.
+- **In the player**, `Game::Localization()` is always there and active for
+  the game's life. The first scene load reads every `StringTable` asset in the
+  package (a bad table is a warning, the rest still load; the warnings stay
+  across scene loads). The language and `GameSettings::language` follow each
+  other: a settings change switches the language, and a language chosen in play
+  (`Localization.SetLanguage`) is written into the settings, so it is saved on
+  exit like any other change. `LoadSettings` applies the loaded language.
+- **Blueprints and Luau**: the reflected `Localize` library
+  (`Call.Native:Localize.GetText`, `FormatInt`, `FormatString`, `HasText`,
+  `SetLanguage`, `GetLanguage`) and Luau's `Localization` table
+  (`GetText(key, default)`, `Format(key, default, name, value)` with a number or
+  a string, `HasText`, `SetLanguage`, `GetLanguage`). With no active
+  Localization they return the default (or the key), so text never blanks.
+
+Tests (`test_loc_runtime.cpp`): `.astrings` cooked without `always_cook` and
+read by the player; merging and a bad table's warning; the language following
+the settings both ways, with a listener firing once per real change; a saved
+language applied on load; the library with and without a service, with
+plural rules per language; its reflected functions; and the Luau table.
+
+UI and Blueprint text are §29.3.
+
+### 29.3 Runtime UI and Blueprint text
+
+Widget text is localized with a **key beside the text**, not by changing the
+field's type: `Text::text_key` and `TextInput::hint_key`, with `text` / `hint`
+as the source text. This keeps every existing layout, binding, script and
+test working, and no call site had to change.
+
+- `Text::Shown()` (and `TextInput::ShownHint()`) is what is measured and
+  drawn: with a key and an active `Localization`, the key's text in the current
+  language (the fallback chain of §29.1, then the source text); otherwise the
+  text as it is. Layout and drawing ask each frame, so a language change shows
+  at the next layout and paint with nothing to subscribe to.
+- Layout files write `text_key` / `hint_key` only when set; a file without
+  them loads as before. The UI Designer lists them as properties ("Text key",
+  "Hint key") and its canvas preview shows the translated text.
+- Runtime text wins over a key: `UI.SetText` and a binding to `text` clear
+  `text_key`. `UI.SetTextKey(target, widget, key, default)` sets one (on a
+  Text, or on a button's first Text), so Blueprints localize a widget without
+  a new pin type. `Localize.GetText` into `UI.SetText` also works.
+- `aether_ui` now links `Aether::Loc` (no cycle: `loc` needs only the engine).
+
+Tests (`test_ui_loc.cpp`, and the UI library test): the shown text with and
+without a service, a key and a translation; layout width changing with the
+language; JSON round trips, old files, and keys written only when set; and
+`SetTextKey` / `SetText`.
+
+Not done (later, as needed): a Blueprint `Text` pin type (a `Make LocText`
+node), localizing a binding's `format` string, tooltip and dropdown option keys,
+and a `LocText` JSON converter for scene and component fields (the gather step
+needs it).
+
+### 29.4 Gather, merge and .po files
+
+The gather step is `aether_loc` (tool in `tools/loc/`; the work is in
+`loc/` so it is tested headless):
+
+- **Gather** (`loc::GatherContent`) reads the JSON of every `.ascene`,
+  `.aprefab`, `.aui` and `.abp` under `Content/` and finds: a `text_key` /
+  `hint_key` (source: the sibling `text` / `hint`); a reflected `LocText` (an
+  object with a non-empty string `key` and `source` and nothing else but `$v`);
+  and a Blueprint `Localize.GetText` / `FormatInt` / `FormatString` or
+  `UI.SetTextKey` node whose `key` pin has a literal default (source: its
+  `default`). A key that comes from a linked pin can't be known and is a
+  warning. Keys are merged: the same key with two different texts is a
+  warning (the first by path is kept). It is a JSON walk, not the reflection
+  registry, so it needs no `LocText` converter; the `LocText` shape is the
+  heuristic.
+- **Merge** (`loc::MergeKeys`): a new key gets its text in the source language;
+  a changed source text is updated; **no translation is touched and no key is
+  removed**: keys nothing uses are only listed.
+- **PO** (`loc::ExportPo` / `ImportPo` / `PoLanguage`): one file per language,
+  `msgctxt` = the key, `msgid` = the source text, `msgstr` = the translation,
+  with a UTF-8 header and `Language:`. Import skips empty and `fuzzy`
+  entries (fuzzy with a warning) and obsolete ones, accepts the split-string
+  form and a `.po` with no `msgctxt` (the msgid is the key), and reports a
+  bad line by number. Plural forms are not used: write plurals inside the string (§29.1).
+- **`aether_loc <project.aproject>`**: `--strings` (default
+  `Localization/strings.astrings` under Content), `--source-language en`,
+  `--languages fr,de`, `--po-out <dir>`, `--po-in <dir|file.po>`, `--check`
+  (write nothing). It applies returned `.po` files, merges, writes the CSV back
+  and the `.po` files out, and prints the counts and the unused keys. Files are
+  deterministic, so a run with nothing new rewrites identical ones.
+
+Tests (`test_loc_tools.cpp`): gathering from each kind of content, merging
+and conflicts; the merge rules; `.po` export, round trip with escapes, and
+every import rule and error; and the whole sync (new strings, a returned
+translation, the second run changing nothing, `--check`, a damaged table).
+
+### 29.5 The Localization dashboard
+
+`Tools > Data > Localization` (`editor/src/loc/`) opens a `.astrings`:
+
+- **Languages**: each language, how many keys it has translated out of all,
+  and a bar; the source language is marked. A language can be added (a column
+  with no cells yet; `StringTable::AddLanguage`, and the CSV reader now keeps
+  header-only columns, so an empty column survives a save).
+- **What's missing**: for the selected language, its untranslated keys beside
+  the source text, each with a box (Enter sets the cell; an empty text clears
+  it). Add and remove keys. At most 200 are drawn at a time.
+- **Files**: Save (atomic CSV, dirty marker), Reload, **Export .po** for a
+  language and import of a returned one (the language comes from its header).
+- **Gather from project**: runs §29.4's `SyncProject` on the content folder,
+  **Check only** on by default (nothing written); a real gather needs the table
+  saved first and reloads it after. It reports found, new, changed and unused
+  keys and the warnings.
+- **Pseudo-localization**: `loc::Pseudo` accents the letters (Latin-1, which
+  the default font has), pads about 35% (`~`), wraps in `[ ]`, and copies
+  `{placeholders}`, `{{`/`}}` and line breaks as they are, so a pseudo string
+  still formats. `PseudoTable` adds the `qps-Ploc` language. The panel's
+  **preview** checkbox makes a Localization holding that table the active one,
+  so every keyed text (the UI Designer's preview and a running UI) shows pseudo
+  text; it is rebuilt when the table changes and the previous active one is put
+  back when switched off.
+- A double-click on a `.astrings` in the Content Browser opens it here (an
+  extension asset type). The workspace opens a sample table (English, French,
+  German with gaps) and a small content folder with UI text to gather.
+
+Not done: undo (edits are explicit and saved with Save), stale-key diffs,
+plural forms, and a per-viewport language.
+
+Tests (`test_loc_editor.cpp`): pseudo-localization (accents, length,
+placeholders, deterministic, still formats); stats, missing keys and every edit;
+save and reload including an empty language; `.po` round trip and gather
+(check, dirty, real); the panel drawing and the preview taking over and giving
+back the active Localization; and the workspace tool.
+
+### 29.6 Font fallback
+
+One font rarely has every script, so text can use a **chain** (`ui/`):
+
+- `FallbackFont` holds fonts in order and takes each code point from the
+  first one that has a glyph for it (`Font::HasGlyph`, new; true for fonts that
+  draw anything, like `BuiltinFont`). A code point no font has draws as the
+  first font's replacement glyph. Lines use the first font's ascent and line
+  height (a fallback glyph is drawn at the same size on that baseline); kerning
+  applies only between two glyphs from the same font.
+- Each glyph is drawn with **its own font's** atlas texture and distance-field
+  range (`Font::Source(codepoint)`), so one line can mix a bitmap font and
+  an SDF one, several textures in one text run.
+- `FontLibrary::Find("Roboto, NotoSansCJK, NotoEmoji")`: a comma-separated name
+  is a chain of the named fonts (unknown names skipped, none known gives
+  null so the default font is used). It works anywhere a font name does
+  (`Text::font` in layout files, text styles). Chains are cached until a font
+  is added or removed.
+- `DecodeUtf8` now rejects overlong forms, surrogates and values past U+10FFFF
+  (U+FFFD, the whole bad sequence consumed), so malformed text can't smuggle
+  characters past a filter.
+- No CJK or emoji font ships (a licensing decision), so the tests chain the
+  shipped Roboto with test fonts and the built-in boxes.
+
+Tests (`test_ui_fallback.cpp`): the first font with the glyph wins, metrics and
+kerning, an empty chain; layout and drawing across fonts with their own
+textures and SDF ranges; chains from library names, caching and rebuilding, and a
+Text widget using one; Roboto then the boxes for a CJK character; and strict UTF-8.
+
+Not done: a CJK line-break table (text still wraps at spaces and line breaks),
+emoji sequences (ZWJ, variation selectors), colour emoji (needs RGBA atlases),
+and per-run baseline alignment between fonts with different metrics.
+
+#### Localized assets
+
+A language's variant of an asset is the same path with the language before the
+extension: `Textures/logo.png` has `Textures/logo.fr.png` and
+`Textures/logo.pt-BR.png`. Variants are ordinary assets (they cook and ship like
+any other), so nothing in the cooker or the manifest changed; only the lookup
+knows the naming (`loc/localized_path.h`).
+
+- `LocalizedCandidates(path, language)` is the list to try: the fallback chain of
+  §29.1, most specific first (`logo.pt-BR.png`, `logo.pt.png`), then the base
+  path, which is the default language's (a variant for the default language
+  itself isn't tried).
+- `GamePackage::LocalizedPath` is the first candidate that is a cooked asset (else
+  the path unchanged); `ReadContentLocalized` reads it. `Game::LocalizedAsset(path)`
+  uses the game's current language, so a script or system that asks again after a
+  language change gets the new variant.
+- `SplitVariant` / `OrphanedVariants` recognize a variant by its name (a 2 or 3
+  letter lower-case language, optionally with subtags: `icon.large.png` and
+  `v1.2.png` aren't variants). The player warns about a variant with no base asset
+  (a typo in the language, or nothing to fall back to).
+
+Tests (`test_loc_runtime.cpp`): the candidate lists, variant recognition and
+orphans, and a cooked package resolving fr, a pt-BR falling back to pt, a language
+with no variant falling back to the base, and the game following its language.
+
+Not done: reloading what is already loaded when the language changes (the
+`Localization` change listener is the hook), and per-asset-type policy.
+
+#### Right-to-left
+
+Enough for Hebrew and layout mirroring; **Arabic joining needs shaping and is not
+done** (Arabic letters draw as separate, isolated forms, which reads wrong until
+step 7 adds HarfBuzz).
+
+- **Text order** (`ui/bidi.h`): `ReorderVisual` puts a line's code points in the order
+  they are drawn, following the shape of UAX #9 without embeddings or isolates.
+  The base direction is the first strong character's; Hebrew and Arabic letters
+  run right to left, other letters and digits left to right (a number inside Hebrew
+  keeps its order, sitting one level up); spaces and punctuation take the direction
+  around them, else the base; runs are reversed from the deepest level up; brackets
+  in a right-to-left run are mirrored. Text with no right-to-left character is
+  untouched, so left-to-right text costs only a scan. `LayoutText` wraps in logical
+  order and then orders each line, so measuring and drawing agree.
+- **Layout mirroring**: `Viewport::direction` (`FlowDirection`). With
+  `RightToLeft` the layers are laid out as usual and then flipped about the safe
+  area's centre (`Widget::MirrorX`), so a box runs right to left, `Left`-aligned
+  children sit on the right, and padding and margins mirror, with no change to any
+  panel. Sizes are unchanged; hit testing uses the mirrored rectangles.
+- **Start / End**: `TextAlign::Start` and `End` (layout files: "Start", "End") are
+  the side a line starts and ends on in the reading direction; a Text resolves
+  them against the viewport's direction. (`Left`, `Center`, `Right` are as before.)
+- `loc::IsRtl(language)` says whether a language is written right to left (ar,
+  he, fa, ur, ... or an Arabic/Hebrew script subtag), for setting the direction
+  when the language changes.
+
+Tests (`test_ui_fallback.cpp`): Hebrew reversal, numbers and Latin keeping
+their order, a left-to-right base staying so, brackets mirrored; layout width and
+draw order following the visual order; a viewport mirrored about its centre with
+Start/End resolved; and `IsRtl`.
+
+Not done: Arabic shaping, caret and selection in mixed-direction text (text
+boxes still move by logical position), embeddings and isolates, and mirrored icons.
+
+### 29.7 PR breakdown
+
+1. The core (done, §29.1).
+2. `.astrings` as a cooked asset type; a `Localization` service with a runtime
+   language switch and a change event, wired to `GameSettings::language`
+   (done, §29.2).
+3. Runtime UI text takes a key beside its text; Blueprints set it with
+   `UI.SetTextKey` (done, §29.3).
+4. The gather step (every localizable string in scenes, prefabs, Blueprints
+   and widgets), PO import and export, and a command-line tool (done,
+   §29.4).
+5. The editor's Localization dashboard (languages, completion, missing keys,
+   pseudo-localization) (done, §29.5).
+6. Font fallback (Latin, then CJK, then emoji) (done, §29.6); localized assets
+   (a language's variant of an asset by file name) (done, §29.6); right-to-left layout (a
+   run-reversing BiDi-lite for Hebrew, Start/End alignment, mirrored
+   layout; Arabic joining needs shaping and waits for step 7) (done, §29.6).
+7. Optional: HarfBuzz shaping behind a CMake option, and gender selectors.
+
+---
+
+## Phase 30: the gameplay ability system and RPG toolkit
+
+### 30.1 Gameplay tags (`gameplay/`, `aether::gas`)
+
+The foundation everything else in the phase uses: stats, effects and abilities
+block, require and cancel each other with tags. A small, engine-only, headless
+library (`Aether::Gameplay`).
+
+- **`GameplayTag`**: a dotted name like `State.Stunned` or `Damage.Fire.Burning`;
+  segments are non-empty and made of letters, digits and `_`. An invalid name is
+  the empty tag, which matches nothing. A tag *matches* itself and every tag
+  below it (`Damage.Fire.Burning` matches `Damage.Fire` and `Damage`; a parent
+  doesn't match its child), and the match is on segment boundaries, so
+  `State.Stunned` does not match `State.Stun` and `StateX` is not under `State`.
+  `Parent()`, `Depth()`, `MatchesExact`.
+- **`TagContainer`**: the tags something has now, each with a **reference count**
+  (two effects that both grant `State.Stunned` keep an entity stunned until both
+  are removed), kept sorted so it saves and compares deterministically. `Add`,
+  `Remove` (the tag goes when its count reaches zero), `RemoveAll`, hierarchical
+  `HasTag`, `HasTagExact`, `Count`, and `HasAny` / `HasAll` / `HasNone` over a
+  list. It is a reflected struct and an ordinary component (an entity's tags).
+- **`TagQuery`**: a condition tree for effects and abilities: `Any`, `All`,
+  `None` over tags, and `And` / `Or` over child queries; saved as JSON
+  (`{"op":"and","children":[{"op":"all","tags":["State.Alive"]},
+  {"op":"none","tags":["State.Stunned"]}]}`); a bad op, tag name or shape is an
+  error naming it, and nesting is limited to 32 levels.
+- **Blueprint library** `GameplayTags` (`Call.Native:GameplayTags.Matches`,
+  `MatchesExact`, `IsValid`, `GetParent`, `GetDepth`): tags are plain strings
+  there. Tags on an entity, and Luau, come with the attribute and ability
+  systems.
+
+There is no tag registry yet: tags are free-form strings. A validated registry
+(an editor-managed `.atags` list, with completion) can be added later if wanted.
+Tag names are `std::string`s for now; interning them is an optimisation for when
+profiling asks.
+
+Tests (`test_gameplay_tags.cpp`): validation, parent and depth, hierarchical
+matching and the prefix traps, reference counting, sorted queries, `TagQuery`
+nesting, JSON round trips and every error, reflection and use as a component,
+and the library as Blueprint nodes in a real graph.
+
+### 30.2 Attributes
+
+`AttributeSet` (a component) holds an entity's stats: Health, Mana, Stamina,
+AttackPower... Each `Attribute` has a `base` (what the game sets and saves),
+a `current` (what the rest of the game reads) and `min` / `max` bounds. Today
+`current` is the clamped `base`; `AttributeSet::RecomputeCurrent` is the one
+place step 3 applies effect modifiers, so nothing else changes then.
+
+- The set is sorted by name, so it saves and compares deterministically, and it
+  reflects like any component (`current` is saved; `Normalize` repairs
+  hand-edited data: bounds in order, NaN removed, base and current re-derived).
+- `Define(name, base, min, max)` creates or redefines (an upside-down range is
+  the range the other way round); `SetBase` / `AddBase` clamp the **base** too, so
+  a capped Health doesn't hide later damage. A NaN or an unknown attribute is
+  refused and changes nothing.
+- **`AttributeSystem`** (like the sequencer's: owns the world, can be the active
+  one) is where changes go through, and queues an `AttributeEvent` (entity, name,
+  old, new) **once per real change** to `current`, never for a write that leaves it
+  as it was; a new attribute appears as a change from 0, and narrowing the bounds
+  re-clamps and says so. The host drains the queue.
+- **Blueprints**: the `Attributes` library (`GetAttribute`, `GetAttributeBase`,
+  `GetAttributeMin`, `GetAttributeMax`, `HasAttribute`, `DefineAttribute`,
+  `SetAttributeBase`, `AddAttributeBase`; entity-targeted, acting on the active system, defaults
+  and no effect without one) and **`Event.OnAttributeChanged`** (name, old, new),
+  declared generically in the Blueprint module, so Blueprint doesn't depend on gameplay.
+- **The player** links `Aether::Gameplay`, registers the gameplay components,
+  gives each loaded scene its own `AttributeSystem`, and its `Player.Attributes`
+  stage (after `Player.Update` and `Player.Sequencer`, before `Player.Scripting`)
+  sends each queued change to that entity's Blueprint. The queue is taken first, so a
+  handler that changes an attribute is heard next frame, not in a loop.
+
+Tests (`test_gameplay_attributes.cpp`): define, sorted order and bad input; clamping,
+the capped-base case, NaN and repair; events once per real change, redefining,
+refused writes, dead and attribute-less entities; reflection and a save round trip;
+the library with and without a system and as nodes in a graph; and the player draining
+the queue each frame and giving a new scene a fresh system.
+
+Not done: Luau (with abilities, step 5), modifiers and effects (step 3), and
+Blueprint access to an attribute set as a whole.
+
+### 30.3 Gameplay effects (`gameplay/`, step 3a)
+
+`GameplayEffect` (`.aeffect`, JSON, `EffectFromJson` / `EffectToJson` with named errors
+`effect.name_empty`, `bad_duration`, `bad_modifier`, `bad_op`, `bad_period`,
+`period_on_instant`, `bad_stack`, `bad_tag`, `bad_json`) has a duration policy
+(instant, timed, infinite), modifiers (`add`, `multiply`, `override` on an attribute),
+stacking (none, refresh, stack with `max_stacks`, optionally `per_source`), an optional
+period with `execute_on_apply`, `require` / `blocked` tag queries on the target, tags it
+grants while active, and tags that remove it. An `EffectLibrary` finds definitions by name.
+
+`EffectSystem` (with the `AttributeSystem` and a library) applies them. Instant effects
+change the base through the attribute system, so events fire. Timed and infinite effects
+keep modifiers on `current` only: `current = clamp(latest override, or (base + sum add) *
+product multiply)`, stacks scaling add linearly and multiply as a power. Periodic effects
+change the base each period instead (poison of -5 per second for 3 s is -15; with
+`execute_on_apply` it is -20). `Apply` is rejected for an unknown effect, a dead target, a
+modifier on an attribute the target lacks, unmet tags, or an already-applied
+`none`-stacking effect. Granted tags are reference-counted in the target's `TagContainer`.
+Active effects live in a saved `EffectContainer` component; `Rebuild()` re-derives modifiers
+after a load (the modifier fields on `Attribute` are not saved). `Update(dt)` is
+deterministic (entities, then effects, in order).
+
+Step 3b wires it in. `.aeffect` is an asset type (importer `GameplayEffect`) and the cooker
+roots every one, since effects are applied by name and nothing references them. The player
+loads them into its `EffectLibrary` once (a broken file is a warning naming the asset and the
+error code), gives each scene an `EffectSystem`, and a `Player.Effects` stage ticks it before
+`Player.Attributes`, sending `Event.OnEffectApplied` and `Event.OnEffectRemoved` (effect
+name, handle) to the target's Blueprint. The `Effects` Blueprint library has `ApplyEffect`
+(returns the handle, 0 for an instant or rejected effect), `RemoveEffect`,
+`RemoveEffectsByTag`, `HasActiveEffect` and `GetActiveEffectCount`. Deferred: attribute-based conditions, magnitude curves, cues, effects that
+change min / max, replication.
+
+### 30.4 Abilities (`gameplay/`, step 4a)
+
+`GameplayAbility` (`.aability`, JSON, `AbilityFromJson` / `AbilityToJson`, errors
+`ability.name_empty`, `bad_json`, `bad_duration`, `bad_tag`) names the tags it has,
+`activation_required` / `activation_blocked` queries on the owner,
+`cancel_abilities_with_tags` and `block_abilities_with_tags` queries over other abilities'
+tags, `activation_owned_tags` (on the owner while it runs), a `cost` (an instant effect), a
+`cooldown` (a timed effect that grants a tag), a `max_duration`, and `commit_on_activate`.
+`AbilityLibrary::CheckEffects` reports `ability.unknown_effect`, `cost_not_instant` and
+`cooldown_not_timed` against an `EffectLibrary` (the library can't, at parse time).
+
+`AbilitySystem` keeps a saved `AbilityContainer` (granted names and running instances).
+`CanActivate` returns a `FailReason` (unknown, not granted, dead owner, already active,
+missing required, blocked, ability-blocked, cooldown, cannot afford; the cost is a dry run).
+`TryActivate` cancels what it cancels, adds the owned tags, commits and queues an Activated
+event; `Commit` applies the cost and cooldown through the `EffectSystem` (once; callable
+later when `commit_on_activate` is false); `End`, `Cancel`, `CancelByTag` and `Revoke`
+release exactly what activation added. Blocking is evaluated against the running abilities
+at activation, so nothing extra is stored. Owned tags are reference-counted with
+effect-granted ones. `Update(dt)` ends an ability at its `max_duration` (event marked
+`timed_out`). Events: Activated, Ended, Cancelled, Failed (with the reason).
+
+Not done (step 4b): the `.aability` asset type and cook root, the player loading abilities and
+its `Player.Abilities` stage, the `Abilities` Blueprint library and
+`Event.OnAbilityActivated` / `OnAbilityEnded`. Deferred: latent tasks (wait for delay,
+attribute change or gameplay event; a Blueprint graph can already use its latent nodes),
+a dedicated ability graph asset (an ability's logic runs in the owner's script graph),
+replication.
+
+### 30.5 PR breakdown
+
+1. Gameplay tags (done, §30.1).
+2. `AttributeSet`: base and current values with clamps, change events
+   (`Event.OnAttributeChanged`), save and Blueprint access (done, §30.2).
+3. Gameplay Effects (`.aeffect`): 3a data, modifier math, stacking, periodic ticks, tags
+   and the system (done, §30.3); 3b assets, the player stage and the Blueprint library
+   (done, §30.3).
+4. Abilities (`.aability`): cost, cooldown, required / blocked / cancel tags,
+   activate, commit, end. 4a data and system (done, §30.4); 4b assets, the player stage and
+   the Blueprint library; the latent tasks are deferred.
+5. Blueprint and Luau faces, the `Player.Gameplay` system, cook roots and a sample.
+6. The editor's attribute and effect debugger.
+7. Genre kits as optional plugins: inventory and items, the dialogue graph,
+   quests, interaction.
+8. Networking (prediction keys) waits for the networking integration; tag counts
+   are the replication unit.

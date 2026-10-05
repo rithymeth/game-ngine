@@ -1,125 +1,69 @@
 #pragma once
 
+#include "aether/ecs/remote_call.h"
 #include "aether/net/replication.h"
-#include "aether/reflection/any.h"
-
-#include <string_view>
-#include <unordered_map>
 
 namespace aether::net {
 
-using reflect::Any;
-
-// Remote procedure calls (Phase 22 step 3). A reflected method on a component
-// of a replicated entity (one with a NetIdentity), flagged
-//
-//   Fn_ServerRPC     - a client calls it; it runs on the server
-//   Fn_ClientRPC     - the server calls it; it runs on the entity's owning client
-//   Fn_MulticastRPC  - the server calls it; it runs on every client that has the entity
-//
-// (add Fn_RpcUnreliable to skip the reliable channel). Arguments are encoded
-// by reflected type (the same codec as replication), so any reflected type
-// works. Return values are dropped. The server never trusts a client: it
-// checks the function is a Server RPC, that the caller owns the entity, that
-// the arguments decode exactly, and applies a per-peer rate limit.
-//
-// RPC messages start with kRpcMessage; the game routes them with
-// IsRpcMessage next to ReplicationClient::IsReplicationMessage.
-//
-//   [kRpcMessage][varint net_id][u32 component hash][u32 function hash][args...]
-
-inline constexpr u8 kRpcMessage = 0xA1;
-
-enum class RpcResult : u8 {
-    Ok,
-    Malformed,       // the bytes don't parse
-    UnknownEntity,   // no such network id
-    UnknownFunction, // no such component or RPC function
-    NotAllowed,      // wrong direction, or the caller doesn't own the entity
-    BadArguments,    // an argument type has no default value, or extra bytes follow
-    RateLimited,
+struct RpcConfig {
+    u8 reliable_channel = 0;   // a ReliableOrdered channel
+    u8 unreliable_channel = 1; // for Fn_Unreliable calls
 };
-
-inline bool IsRpcMessage(const NetEvent& event) {
-    return event.type == NetEventType::Message && !event.data.empty() && event.data[0] == kRpcMessage;
-}
 
 struct RpcStats {
-    u64 sent = 0;
-    u64 executed = 0;
-    u64 rejected = 0;
+    u32 sent = 0;
+    u32 received = 0;    // and run
+    u32 refused = 0;     // calls from here not allowed (a server call on an entity this client doesn't own)
+    u32 rejected = 0;    // incoming calls not allowed (from a client that doesn't own the entity, or the wrong kind)
+    u32 unknown = 0;     // incoming calls for an entity, component or function this side doesn't have
+    u32 malformed = 0;
 };
 
-struct RpcComponent {
-    ComponentId id = kInvalidComponentId;
-    u32 hash = 0;
-    const reflect::TypeInfo* type = nullptr;
-};
-
-// Every registered component with at least one RPC function.
-const std::vector<RpcComponent>& RpcComponents();
-
-class RpcServer {
+// Routes remote calls over a NetHost (Phase 22 step 3,
+// docs/design/PHASE_SPECS.md §22.3). One is made on the server and one on
+// each client; it installs itself as its world's RemoteCallRouter, so calls
+// from C++ (CallFunction), Blueprints and Luau all come here:
+// - Fn_Server, called on a client: sent to the server when this client
+//   owns the entity, refused otherwise. The server runs it only when the
+//   caller owns the entity. Called on the server: runs.
+// - Fn_Client, called on the server: sent to the owning client (runs on
+//   the server when no client owns it). Called on a client: runs there.
+// - Fn_Multicast, called on the server: runs there and on every client
+//   that has the entity. Called on a client: runs only there.
+// Entities are named by their NetIdentity net id, components and functions
+// by name hashes, and arguments go in reflection's binary form. Remote
+// calls send nothing back; their return values are not used.
+class RpcRouter final : public RemoteCallRouter {
 public:
-    RpcServer(World& world, NetEndpoint& endpoint, ReplicationServer& replication)
-        : world_(world), endpoint_(endpoint), replication_(replication) {}
+    RpcRouter(World& world, NetHost& host, ReplicationServer& server, RpcConfig config = {});
+    RpcRouter(World& world, NetHost& host, ReplicationClient& client, PeerId server, RpcConfig config = {});
+    ~RpcRouter() override;
+    RpcRouter(const RpcRouter&) = delete;
+    RpcRouter& operator=(const RpcRouter&) = delete;
 
-    // Calls an RPC from the server. Client RPC: sent to the entity's owner.
-    // Multicast: sent to every connected peer that knows the entity. Server
-    // RPC: runs here, directly. False if the entity has no network id yet,
-    // the function isn't an RPC, the arguments don't match its parameters, or
-    // the message doesn't fit.
-    bool Call(Entity entity, std::string_view component, std::string_view function, std::span<const Any> args = {});
-    template <typename... Args>
-    bool Call(Entity entity, std::string_view component, std::string_view function, Args&&... args) {
-        std::vector<Any> list;
-        (list.emplace_back(std::forward<Args>(args)), ...);
-        return Call(entity, component, function, std::span<const Any>(list));
-    }
+    RemoteCallResult Route(Entity entity, const reflect::TypeInfo& component, const reflect::FunctionInfo& function,
+                           std::span<reflect::Any> args) override;
 
-    // Handles a Server RPC message received from `from`; `now` is the
-    // caller's clock in seconds (for the rate limit).
-    RpcResult Handle(NetAddress from, std::span<const u8> message, f64 now);
+    // Runs the calls in the host's events; true when `event` was one.
+    bool HandleEvent(const NetEvent& event);
 
-    usize max_calls_per_second = 100; // per peer; 0 = unlimited
+    bool IsServer() const { return replication_server_ != nullptr; }
+    // While an incoming call runs: who sent it (kNoPeer otherwise).
+    PeerId Caller() const { return caller_; }
     const RpcStats& Stats() const { return stats_; }
 
 private:
-    struct Window {
-        f64 start = 0.0;
-        usize count = 0;
-    };
+    bool Send(PeerId peer, u32 net_id, const reflect::TypeInfo& component, const reflect::FunctionInfo& function,
+              std::span<reflect::Any> args);
+    void Receive(PeerId from, std::span<const u8> data);
+
     World& world_;
-    NetEndpoint& endpoint_;
-    ReplicationServer& replication_;
-    std::unordered_map<NetAddress, Window> windows_;
-    RpcStats stats_;
-};
-
-class RpcClient {
-public:
-    RpcClient(World& world, NetEndpoint& endpoint, NetAddress server, ReplicationClient& replication)
-        : world_(world), endpoint_(endpoint), server_(server), replication_(replication) {}
-
-    // Calls a Server RPC on a replicated entity of this client's world.
-    bool Call(Entity entity, std::string_view component, std::string_view function, std::span<const Any> args = {});
-    template <typename... Args>
-    bool Call(Entity entity, std::string_view component, std::string_view function, Args&&... args) {
-        std::vector<Any> list;
-        (list.emplace_back(std::forward<Args>(args)), ...);
-        return Call(entity, component, function, std::span<const Any>(list));
-    }
-
-    // Handles a Client or Multicast RPC message from the server.
-    RpcResult Handle(std::span<const u8> message);
-
-    const RpcStats& Stats() const { return stats_; }
-
-private:
-    World& world_;
-    NetEndpoint& endpoint_;
-    NetAddress server_;
-    ReplicationClient& replication_;
+    NetHost& host_;
+    ReplicationServer* replication_server_ = nullptr;
+    ReplicationClient* replication_client_ = nullptr;
+    PeerId server_ = kNoPeer;
+    RpcConfig config_;
+    PeerId caller_ = kNoPeer;
     RpcStats stats_;
 };
 

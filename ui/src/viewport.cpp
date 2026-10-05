@@ -80,12 +80,13 @@ void Viewport::Layout(const Font& font) {
     for (LayerEntry& e : layers_) {
         e.widget->Measure(ctx);
         e.widget->Arrange(area, ctx);
+        if (direction == FlowDirection::RightToLeft) e.widget->MirrorX(2.0f * area.x + area.w); // laid out left to right, then flipped
     }
 }
 
 DrawList Viewport::Paint(const Font& font) const {
     DrawList list;
-    PaintContext ctx{&font, 1.0f, fonts_};
+    PaintContext ctx{&font, 1.0f, fonts_, direction};
     for (const LayerEntry& e : layers_) e.widget->Paint(list, ctx);
     list.Scale(Scale());
     return list;

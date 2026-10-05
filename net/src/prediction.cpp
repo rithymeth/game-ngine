@@ -1,291 +1,242 @@
 #include "aether/net/prediction.h"
 
-#include "aether/net/bytes.h"
-
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace aether::net {
 
 namespace {
 
-i8 Quantize(f32 v) { return static_cast<i8>(std::lround(std::clamp(v, -1.0f, 1.0f) * 127.0f)); }
-f32 Dequantize(i8 q) { return static_cast<f32>(q) / 127.0f; }
+constexpr u8 kInputs = 4, kAck = 5;
 
-void WriteState(ByteWriter& w, const MoveState& s) {
-    w.F32(s.position.x), w.F32(s.position.y), w.F32(s.position.z);
-    w.F32(s.velocity.x), w.F32(s.velocity.y), w.F32(s.velocity.z);
-    w.Bool(s.grounded);
+void PutU32(std::vector<u8>& out, u32 v) {
+    for (int i = 0; i < 4; ++i) out.push_back(static_cast<u8>(v >> (8 * i)));
+}
+void PutF32(std::vector<u8>& out, f32 v) {
+    u32 bits;
+    std::memcpy(&bits, &v, 4);
+    PutU32(out, bits);
 }
 
-MoveState ReadState(ByteReader& r) {
-    MoveState s;
-    s.position.x = r.F32(), s.position.y = r.F32(), s.position.z = r.F32();
-    s.velocity.x = r.F32(), s.velocity.y = r.F32(), s.velocity.z = r.F32();
-    s.grounded = r.Bool();
-    return s;
-}
+struct In {
+    std::span<const u8> data;
+    usize at = 1;
+    bool ok = true;
+    u8 U8() { return (ok = ok && at + 1 <= data.size()) ? data[at++] : 0; }
+    u32 U32() {
+        if (!(ok = ok && at + 4 <= data.size())) return 0;
+        u32 v = 0;
+        for (int i = 0; i < 4; ++i) v |= static_cast<u32>(data[at++]) << (8 * i);
+        return v;
+    }
+    f32 F32() {
+        const u32 bits = U32();
+        f32 v;
+        std::memcpy(&v, &bits, 4);
+        return v;
+    }
+};
 
-bool Finite(const MoveState& s) {
-    return std::isfinite(s.position.x) && std::isfinite(s.position.y) && std::isfinite(s.position.z) && std::isfinite(s.velocity.x) &&
-           std::isfinite(s.velocity.y) && std::isfinite(s.velocity.z);
+MovementStep DefaultStep() {
+    return [](World&, Entity, Transform& t, NetMovement& m, const MovementInput& in) { StepMovement(t, m, in); };
 }
-
-f32 Distance(const Vec3& a, const Vec3& b) { return (a - b).Length(); }
 
 } // namespace
 
-void StepMovement(const MoveSettings& s, const GroundFn& ground, MoveState& state, const MoveInput& input) {
-    const f32 dt = s.dt;
-    const f32 speed = input.run ? s.run_speed : s.walk_speed;
-    const f32 target_x = input.move_x * speed;
-    const f32 target_z = input.move_z * speed;
-    const bool has_input = input.move_x != 0.0f || input.move_z != 0.0f;
-
-    // Horizontal: accelerate toward the target (on the ground fully, in the air by air_control).
-    f32 accel = state.grounded ? (has_input ? s.acceleration : s.braking) : s.air_acceleration;
-    f32 want_x = target_x, want_z = target_z;
-    if (!state.grounded) {
-        want_x = state.velocity.x + (target_x - state.velocity.x) * s.air_control;
-        want_z = state.velocity.z + (target_z - state.velocity.z) * s.air_control;
-    }
-    const f32 dx = want_x - state.velocity.x, dz = want_z - state.velocity.z;
-    const f32 dist = std::sqrt(dx * dx + dz * dz);
-    const f32 max_change = accel * dt;
-    if (dist <= max_change || dist == 0.0f) {
-        state.velocity.x = want_x;
-        state.velocity.z = want_z;
-    } else {
-        state.velocity.x += dx / dist * max_change;
-        state.velocity.z += dz / dist * max_change;
-    }
-
-    // Vertical.
-    if (state.grounded && input.jump) {
-        state.velocity.y = s.jump_velocity;
-        state.grounded = false;
-    }
-    if (!state.grounded) state.velocity.y += s.gravity * dt;
-
-    state.position.x += state.velocity.x * dt;
-    state.position.z += state.velocity.z * dt;
-    state.position.y += state.velocity.y * dt;
-
-    const f32 floor = ground ? ground(state.position.x, state.position.z) : 0.0f;
-    if (state.position.y <= floor) {
-        state.position.y = floor;
-        if (state.velocity.y < 0.0f) state.velocity.y = 0.0f;
-        state.grounded = true;
-    } else if (state.grounded && state.position.y > floor + 0.05f) {
-        state.grounded = false; // walked off an edge
+void StepMovement(Transform& transform, NetMovement& movement, const MovementInput& input) {
+    const f32 dt = input.dt;
+    // Horizontal velocity eases towards the input's.
+    const f32 tx = input.move_x * movement.speed, tz = input.move_z * movement.speed;
+    const f32 dx = tx - movement.velocity.x, dz = tz - movement.velocity.z;
+    const f32 dist = std::sqrt(dx * dx + dz * dz), step = movement.acceleration * dt;
+    if (dist <= step || dist <= 0.0f) movement.velocity.x = tx, movement.velocity.z = tz;
+    else movement.velocity.x += dx / dist * step, movement.velocity.z += dz / dist * step;
+    // Jumping and gravity.
+    if (movement.grounded && input.jump) movement.velocity.y = movement.jump_speed, movement.grounded = false;
+    if (!movement.grounded) movement.velocity.y += movement.gravity * dt;
+    transform.position = transform.position + movement.velocity * dt;
+    if (transform.position.y <= movement.ground_height && movement.velocity.y <= 0.0f) {
+        transform.position.y = movement.ground_height;
+        movement.velocity.y = 0.0f;
+        movement.grounded = true;
     }
 }
 
-MoveStepFn MakeMoveStep(const MoveSettings& settings, GroundFn ground) {
-    return [settings, ground = std::move(ground)](MoveState& state, const MoveInput& input) {
-        StepMovement(settings, ground, state, input);
-    };
+MovementInput SanitizeInput(MovementInput input, f32 max_dt) {
+    if (!std::isfinite(input.dt) || input.dt <= 0.0f) input.dt = 0.0f;
+    input.dt = std::min(input.dt, max_dt);
+    if (!std::isfinite(input.move_x) || !std::isfinite(input.move_z)) input.move_x = input.move_z = 0.0f;
+    const f32 len = std::sqrt(input.move_x * input.move_x + input.move_z * input.move_z);
+    if (len > 1.0f) input.move_x /= len, input.move_z /= len;
+    return input;
 }
 
-MoveInput Sanitize(const MoveInput& in) {
-    MoveInput out = in;
-    f32 x = std::isfinite(in.move_x) ? in.move_x : 0.0f;
-    f32 z = std::isfinite(in.move_z) ? in.move_z : 0.0f;
-    const f32 len = std::sqrt(x * x + z * z);
-    if (len > 1.0f) {
-        x /= len;
-        z /= len;
-    }
-    out.move_x = Dequantize(Quantize(x));
-    out.move_z = Dequantize(Quantize(z));
-    return out;
+// ---------------------------------------------------------------- server
+
+MovementServer::MovementServer(World& world, NetHost& host, ReplicationServer& replication, PredictionConfig config)
+    : world_(world), host_(host), replication_(replication), config_(config), step_(DefaultStep()) {}
+
+u32 MovementServer::LastProcessed(u32 net_id) const {
+    auto it = characters_.find(net_id);
+    return it == characters_.end() ? 0 : it->second.last;
 }
 
-// --- client -----------------------------------------------------------------
-
-PredictionClient::PredictionClient(MoveStepFn step, const PredictionConfig& config) : step_(std::move(step)), config_(config) {}
-
-void PredictionClient::Reset(const MoveState& state) {
-    state_ = state;
-    offset_ = Vec3(0, 0, 0);
-    history_.clear();
-    acknowledged_ = next_sequence_ - 1;
-}
-
-std::vector<u8> PredictionClient::Predict(const MoveInput& raw) {
-    Entry e;
-    e.sequence = next_sequence_++;
-    e.input = Sanitize(raw);
-    step_(state_, e.input);
-    e.after = state_;
-    history_.push_back(e);
-    if (history_.size() > config_.max_history) history_.pop_front();
-    ++stats_.inputs;
-
-    const usize count = std::min(history_.size(), config_.redundancy + 1);
-    ByteWriter w;
-    w.U8(kInputMessage);
-    w.Varint(count);
-    w.Varint(history_[history_.size() - count].sequence);
-    for (usize i = history_.size() - count; i < history_.size(); ++i) {
-        const MoveInput& in = history_[i].input;
-        w.U8(static_cast<u8>((in.jump ? 1 : 0) | (in.run ? 2 : 0)));
-        w.U8(static_cast<u8>(Quantize(in.move_x)));
-        w.U8(static_cast<u8>(Quantize(in.move_z)));
-    }
-    return w.Take();
-}
-
-bool PredictionClient::OnStateMessage(std::span<const u8> message) {
-    ByteReader r(message);
-    if (r.U8() != kStateMessage) return false;
-    const u32 sequence = r.U32();
-    const MoveState state = ReadState(r);
-    if (!r.Ok() || r.Remaining() != 0 || !Finite(state)) return false;
-    Reconcile(sequence, state);
-    return true;
-}
-
-void PredictionClient::Reconcile(u32 ack, const MoveState& server) {
-    if (ack < acknowledged_) return; // an old, reordered report
-    acknowledged_ = ack;
-
-    MoveState predicted;
-    bool found = false;
-    while (!history_.empty() && history_.front().sequence <= ack) {
-        if (history_.front().sequence == ack) {
-            predicted = history_.front().after;
-            found = true;
-        }
-        history_.pop_front();
-    }
-    if (!found && ack == 0) return; // the server hasn't processed anything yet
-    if (found) {
-        const f32 error = Distance(predicted.position, server.position);
-        if (error <= config_.position_tolerance && predicted.grounded == server.grounded) return;
-        stats_.last_error = error;
-    }
-
-    const Vec3 before = state_.position;
-    state_ = server;
-    for (Entry& e : history_) {
-        step_(state_, e.input);
-        e.after = state_;
-        ++stats_.replayed_inputs;
-    }
-    ++stats_.reconciliations;
-    const f32 jump = Distance(before, state_.position);
-    if (!found) stats_.last_error = jump;
-    if (jump > config_.snap_distance) {
-        offset_ = Vec3(0, 0, 0);
-        ++stats_.snaps;
-    } else {
-        offset_ = offset_ + (before - state_.position); // the view stays where it was, then eases
-    }
-}
-
-void PredictionClient::Update(f32 dt) {
-    offset_ = offset_ * std::exp(-config_.correction_rate * dt);
-    if (offset_.LengthSq() < 1e-8f) offset_ = Vec3(0, 0, 0);
-}
-
-// --- server -----------------------------------------------------------------
-
-PredictionServer::PredictionServer(MoveStepFn step, const PredictionServerConfig& config) : step_(std::move(step)), config_(config) {}
-
-void PredictionServer::AddPeer(NetAddress peer, const MoveState& initial) {
-    Peer p;
-    p.state = initial;
-    peers_[peer] = std::move(p);
-}
-
-void PredictionServer::RemovePeer(NetAddress peer) { peers_.erase(peer); }
-
-bool PredictionServer::OnInputMessage(NetAddress peer, std::span<const u8> message) {
-    auto it = peers_.find(peer);
-    if (it == peers_.end()) return false;
-    Peer& p = it->second;
-
-    ByteReader r(message);
-    if (r.U8() != kInputMessage) {
-        ++stats_.malformed;
+bool MovementServer::HandleEvent(const NetEvent& event) {
+    if (event.type != NetEventType::Message || event.channel != config_.input_channel || event.data.empty() ||
+        event.data[0] != kInputs)
         return false;
+    In in{event.data};
+    const u32 net_id = in.U32();
+    const u8 count = in.U8();
+    std::vector<MovementInput> inputs(count);
+    for (MovementInput& i : inputs) {
+        i.sequence = in.U32();
+        i.dt = in.F32();
+        i.move_x = in.F32();
+        i.move_z = in.F32();
+        i.jump = in.U8() != 0;
     }
-    const u64 count = r.Varint();
-    const u64 first = r.Varint();
-    if (!r.Ok() || count == 0 || count > 16 || first == 0 || first > 0xFFFFFFFFull || r.Remaining() != count * 3) {
+    if (!in.ok) {
         ++stats_.malformed;
-        return false;
+        return true;
     }
-    for (u64 i = 0; i < count; ++i) {
-        const u8 flags = r.U8();
-        MoveInput in;
-        in.jump = (flags & 1) != 0;
-        in.run = (flags & 2) != 0;
-        in.move_x = Dequantize(static_cast<i8>(r.U8()));
-        in.move_z = Dequantize(static_cast<i8>(r.U8()));
-        const u32 sequence = static_cast<u32>(first + i);
-
-        // Redundant copies of inputs already queued or run are dropped, not errors.
-        const bool seen = sequence <= p.last_processed ||
-                          std::any_of(p.queue.begin(), p.queue.end(), [&](const auto& q) { return q.first == sequence; });
-        if (seen || p.queue.size() >= config_.max_queued_inputs) {
-            ++stats_.dropped;
+    const Entity entity = replication_.FindEntity(net_id);
+    const NetIdentity* ni = entity.IsNull() ? nullptr : world_.GetComponent<NetIdentity>(entity);
+    if (!ni || ni->owner != event.peer || !world_.HasComponent<NetMovement>(entity)) {
+        ++stats_.rejected;
+        return true;
+    }
+    Character& c = characters_[net_id];
+    for (const MovementInput& i : inputs) {
+        if (i.sequence <= c.last) {
+            ++stats_.duplicates;
             continue;
         }
-        // A real client's inputs are already clamped; a bigger vector is a cheat or a bug.
-        if (in.move_x * in.move_x + in.move_z * in.move_z > 1.02f * 1.02f) {
-            in = Sanitize(in);
-            ++stats_.clamped;
+        auto at = std::lower_bound(c.queue.begin(), c.queue.end(), i.sequence,
+                                   [](const MovementInput& q, u32 s) { return q.sequence < s; });
+        if (at != c.queue.end() && at->sequence == i.sequence) {
+            ++stats_.duplicates;
+            continue;
         }
-        auto at = std::upper_bound(p.queue.begin(), p.queue.end(), sequence, [](u32 s, const auto& q) { return s < q.first; });
-        p.queue.insert(at, {sequence, in});
+        c.queue.insert(at, i);
     }
+    while (c.queue.size() > config_.max_pending) c.queue.pop_back(); // far-future floods
     return true;
 }
 
-void PredictionServer::Tick() {
-    for (auto& [address, p] : peers_) {
-        (void)address;
-        p.credit = std::min(p.credit + 1.0f, static_cast<f32>(config_.max_burst));
-        while (!p.queue.empty() && p.credit >= 1.0f) {
-            step_(p.state, p.queue.front().second);
-            p.last_processed = p.queue.front().first;
-            p.queue.pop_front();
-            p.credit -= 1.0f;
-            ++stats_.processed;
+void MovementServer::Update(f64) {
+    for (auto it = characters_.begin(); it != characters_.end();) {
+        const Entity entity = replication_.FindEntity(it->first);
+        if (entity.IsNull() || !world_.IsAlive(entity)) {
+            it = characters_.erase(it);
+            continue;
         }
+        Character& c = it->second;
+        Transform* t = world_.GetComponent<Transform>(entity);
+        NetMovement* m = world_.GetComponent<NetMovement>(entity);
+        const NetIdentity* ni = world_.GetComponent<NetIdentity>(entity);
+        if (t && m && ni) {
+            for (usize n = 0; n < config_.max_inputs_per_update && !c.queue.empty(); ++n) {
+                const MovementInput input = SanitizeInput(c.queue.front(), config_.max_dt);
+                c.queue.pop_front();
+                step_(world_, entity, *t, *m, input);
+                c.last = input.sequence;
+                c.dirty = true;
+                ++stats_.inputs_run;
+            }
+            if (c.dirty && ni->owner != kNoPeer) {
+                std::vector<u8> msg{kAck};
+                PutU32(msg, it->first);
+                PutU32(msg, c.last);
+                for (f32 v : {t->position.x, t->position.y, t->position.z, m->velocity.x, m->velocity.y, m->velocity.z})
+                    PutF32(msg, v);
+                msg.push_back(m->grounded ? 1 : 0);
+                if (host_.Send(ni->owner, config_.ack_channel, msg)) ++stats_.acks_sent;
+                c.dirty = false;
+            }
+        }
+        ++it;
     }
 }
 
-const MoveState* PredictionServer::StateOf(NetAddress peer) const {
-    auto it = peers_.find(peer);
-    return it == peers_.end() ? nullptr : &it->second.state;
+// ---------------------------------------------------------------- client
+
+MovementClient::MovementClient(World& world, NetHost& host, ReplicationClient& replication, PeerId server,
+                               PredictionConfig config)
+    : world_(world), host_(host), replication_(replication), server_(server), config_(config), step_(DefaultStep()) {
+    replication_.PredictLocally(GetComponentId<Transform>());
+    replication_.PredictLocally(GetComponentId<NetMovement>());
 }
 
-u32 PredictionServer::LastProcessed(NetAddress peer) const {
-    auto it = peers_.find(peer);
-    return it == peers_.end() ? 0 : it->second.last_processed;
+usize MovementClient::Pending(u32 net_id) const {
+    auto it = characters_.find(net_id);
+    return it == characters_.end() ? 0 : it->second.pending.size();
 }
 
-usize PredictionServer::Queued(NetAddress peer) const {
-    auto it = peers_.find(peer);
-    return it == peers_.end() ? 0 : it->second.queue.size();
+bool MovementClient::Predict(Entity entity, f32 move_x, f32 move_z, bool jump, f32 dt) {
+    if (!world_.IsAlive(entity)) return false;
+    const NetIdentity* ni = world_.GetComponent<NetIdentity>(entity);
+    Transform* t = world_.GetComponent<Transform>(entity);
+    NetMovement* m = world_.GetComponent<NetMovement>(entity);
+    if (!ni || !ni->locally_owned || !t || !m) return false;
+    Character& c = characters_[ni->net_id];
+    MovementInput input;
+    input.sequence = c.next++;
+    input.dt = dt, input.move_x = move_x, input.move_z = move_z, input.jump = jump;
+    input = SanitizeInput(input, config_.max_dt);
+    step_(world_, entity, *t, *m, input);
+    c.pending.push_back(input);
+    while (c.pending.size() > config_.max_pending) c.pending.pop_front();
+    ++stats_.predicted;
+
+    std::vector<u8> msg{kInputs};
+    PutU32(msg, ni->net_id);
+    const usize n = std::min(config_.redundancy, c.pending.size());
+    msg.push_back(static_cast<u8>(n));
+    for (usize i = c.pending.size() - n; i < c.pending.size(); ++i) {
+        const MovementInput& p = c.pending[i];
+        PutU32(msg, p.sequence);
+        PutF32(msg, p.dt), PutF32(msg, p.move_x), PutF32(msg, p.move_z);
+        msg.push_back(p.jump ? 1 : 0);
+    }
+    host_.Send(server_, config_.input_channel, msg);
+    return true;
 }
 
-std::vector<u8> PredictionServer::BuildStateMessage(NetAddress peer) const {
-    auto it = peers_.find(peer);
-    if (it == peers_.end()) return {};
-    ByteWriter w;
-    w.U8(kStateMessage);
-    w.U32(it->second.last_processed);
-    WriteState(w, it->second.state);
-    return w.Take();
-}
-
-void PredictionServer::SetState(NetAddress peer, const MoveState& state) {
-    auto it = peers_.find(peer);
-    if (it != peers_.end()) it->second.state = state;
+bool MovementClient::HandleEvent(const NetEvent& event) {
+    if (event.type != NetEventType::Message || event.peer != server_ || event.channel != config_.ack_channel ||
+        event.data.empty() || event.data[0] != kAck)
+        return false;
+    In in{event.data};
+    const u32 net_id = in.U32(), sequence = in.U32();
+    Vec3 position, velocity;
+    position.x = in.F32(), position.y = in.F32(), position.z = in.F32();
+    velocity.x = in.F32(), velocity.y = in.F32(), velocity.z = in.F32();
+    const bool grounded = in.U8() != 0;
+    if (!in.ok) return true;
+    const Entity entity = replication_.FindEntity(net_id);
+    if (entity.IsNull() || !world_.IsAlive(entity)) return true;
+    Transform* t = world_.GetComponent<Transform>(entity);
+    NetMovement* m = world_.GetComponent<NetMovement>(entity);
+    const NetIdentity* ni = world_.GetComponent<NetIdentity>(entity);
+    if (!t || !m || !ni || !ni->locally_owned) return true;
+    Character& c = characters_[net_id];
+    if (sequence <= c.acked) return true; // older than one already applied
+    c.acked = sequence;
+    ++stats_.acks;
+    while (!c.pending.empty() && c.pending.front().sequence <= sequence) c.pending.pop_front();
+    // Rewind to the server's state and replay what it hasn't reached yet.
+    const Vec3 predicted = t->position;
+    t->position = position;
+    m->velocity = velocity;
+    m->grounded = grounded;
+    for (const MovementInput& input : c.pending) step_(world_, entity, *t, *m, input);
+    const f32 error = (t->position - predicted).Length();
+    stats_.last_error = error;
+    stats_.max_error = std::max(stats_.max_error, error);
+    if (error > config_.snap_distance) ++stats_.corrections;
+    return true;
 }
 
 } // namespace aether::net
