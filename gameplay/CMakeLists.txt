@@ -11,6 +11,7 @@ add_library(aether_gameplay STATIC
     src/attribute_library.cpp
     src/gameplay_effect.cpp
     src/effect_system.cpp
+    src/effect_library.cpp
 )
 target_include_directories(aether_gameplay PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aether_gameplay PUBLIC cxx_std_20)

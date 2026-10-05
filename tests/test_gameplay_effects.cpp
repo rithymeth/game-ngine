@@ -1,11 +1,19 @@
 #include "test_framework.h"
 
+#include "aether/assets/asset_guid.h"
 #include "aether/ecs/world.h"
+#include "aether/gameplay/effect_library.h"
 #include "aether/gameplay/effect_system.h"
 #include "aether/gameplay/tag_container.h"
+#include "aether/pak/pak.h"
+#include "aether/player/game.h"
+#include "aether/reflection/registry.h"
 #include "aether/scene/components.h"
 
+#include <nlohmann/json.hpp>
+
 #include <cmath>
+#include <filesystem>
 
 // Phase 30 step 3a (§30.3): gameplay effects, their modifier math, stacking,
 // periodic ticks, tags and JSON.
@@ -40,6 +48,7 @@ GameplayEffect Make(const char* name, GameplayEffect::Duration d, f32 dur, std::
     g.modifiers = std::move(mods);
     return g;
 }
+Entity world_entity(player::Game& game) { return game.GetWorld().CreateEntity(Transform{Vec3(), Quaternion::Identity()}); }
 using Op = GameplayEffect::Op;
 using Dur = GameplayEffect::Duration;
 } // namespace
@@ -239,4 +248,63 @@ AETHER_TEST(Effect_JsonRoundTripAndErrors) {
     CHECK(fails(R"({"name":"x","stacking":"stack","max_stacks":0})", "effect.bad_stack"));
     CHECK(fails(R"({"name":"x","granted_tags":["bad tag!"]})", "effect.bad_tag"));
     CHECK(fails(R"({"name":"x","require":{"op":"xor"}})", "effect.bad_tag"));
+}
+
+AETHER_TEST(Effect_BlueprintLibraryActsOnTheActiveSystem) {
+    const reflect::TypeInfo* type = reflect::TypeRegistry::Find("Effects");
+    CHECK(type != nullptr && type->functions.size() == 5);
+    World world;
+    const Entity e = world.CreateEntity(Transform{Vec3(), Quaternion::Identity()});
+    CHECK(EffectSystem::Active() == nullptr);
+    CHECK(Effects::ApplyEffect(e, "Buff", kNullEntity) == 0 && !Effects::RemoveEffect(1) && !Effects::HasActiveEffect(e, "Buff") && Effects::GetActiveEffectCount(e) == 0);
+    Rig r;
+    r.Reg(Make("Buff", Dur::Infinite, 0, {{"Speed", Op::Add, 5}}));
+    CHECK(EffectSystem::Active() == &r.fx);
+    const i32 h = Effects::ApplyEffect(r.e, "Buff", kNullEntity);
+    CHECK(h > 0 && Effects::HasActiveEffect(r.e, "Buff") && Effects::GetActiveEffectCount(r.e) == 1 && Near(r.attrs.Get(r.e, "Speed"), 15));
+    CHECK(Effects::RemoveEffect(h) && Effects::GetActiveEffectCount(r.e) == 0 && !Effects::RemoveEffect(h));
+}
+
+AETHER_TEST(Effect_PlayerLoadsAssetsAndTicksThem) {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "aether_gameplay_effect_tests";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const nlohmann::json scene = {{"$type", "Scene"}, {"$version", 1}, {"entities", nlohmann::json::array()}};
+    const auto asset = [](const char* path, const char* importer) {
+        return nlohmann::json{{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", path}, {"importer", importer}};
+    };
+    const nlohmann::json manifest = {{"$type", "CookManifest"}, {"$version", 1}, {"project", "Demo"}, {"configuration", "Development"},
+                                     {"startup_scene", "Scenes/start.ascene"}, {"fixed_timestep_hz", 60.0}, {"gravity", {0.0, -9.81, 0.0}},
+                                     {"layers", {"Default"}}, {"collision_matrix", nlohmann::json::array()},
+                                     {"assets", nlohmann::json::array({asset("Scenes/start.ascene", "Scene"), asset("Effects/slow.aeffect", "GameplayEffect"), asset("Effects/bad.aeffect", "GameplayEffect")})},
+                                     {"files", nlohmann::json::array()}};
+    const nlohmann::json slow = {{"name", "Slow"}, {"duration_policy", "timed"}, {"duration", 0.1},
+                                 {"modifiers", nlohmann::json::array({{{"attribute", "Speed"}, {"op", "multiply"}, {"magnitude", 0.5}}})}};
+    pak::PakWriter writer;
+    writer.Add("Manifest.json", manifest.dump(2));
+    writer.Add("Content/Scenes/start.ascene", scene.dump(2));
+    writer.Add("Content/Effects/slow.aeffect", slow.dump(2));
+    writer.Add("Content/Effects/bad.aeffect", std::string("{\"name\":\"\"}"));
+    const std::filesystem::path file = dir / "Game.apak";
+    std::string error;
+    CHECK(writer.Write(file.string(), &error));
+    player::GamePackage package;
+    CHECK(package.Mount(file.string(), 0, &error) && package.LoadManifest(&error));
+    player::Game game(package);
+    CHECK(game.LoadStartupScene(&error));
+    bool warned = false;
+    for (const std::string& w : game.Warnings()) warned = warned || (w.find("bad.aeffect") != std::string::npos && w.find("effect.name_empty") != std::string::npos);
+    CHECK(warned); // the broken asset is reported, the good one loads
+    EffectSystem* fx = EffectSystem::Active();
+    CHECK(fx != nullptr && AttributeSystem::Active() != nullptr);
+    if (!fx) return;
+    AttributeSystem* attrs = AttributeSystem::Active();
+    const Entity e = world_entity(game);
+    CHECK(attrs->Define(e, "Speed", 10));
+    game.BeginPlay();
+    CHECK(fx->Apply(e, "Slow").status == EffectSystem::Status::Applied && Near(attrs->Get(e, "Speed"), 5));
+    game.Tick(0.016f);
+    CHECK(fx->Events().empty() && Near(attrs->Get(e, "Speed"), 5)); // Player.Effects drained the applied event
+    for (int i = 0; i < 8; ++i) game.Tick(0.016f);
+    CHECK(!fx->HasEffect(e, "Slow") && Near(attrs->Get(e, "Speed"), 10)); // expired by the player's own tick
 }
