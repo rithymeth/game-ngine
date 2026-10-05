@@ -6,6 +6,7 @@
 > - [`design/PHASE_SPECS.md`](design/PHASE_SPECS.md): build specs for
 >   Phases 7, 8, 9, 11 and 13
 > - [`design/EDITOR_UI.md`](design/EDITOR_UI.md): full editor UI design spec
+> - [`design/UPGRADE_PLAN.md`](design/UPGRADE_PLAN.md): the PR-sized plan for M7, the Aether Upgrade (Phases 37-48)
 > - [`design/BLUEPRINT_NODES.md`](design/BLUEPRINT_NODES.md): Blueprint node reference
 > - [`tutorials/FIRST_GAME.md`](tutorials/FIRST_GAME.md): the target
 >   "first game" walkthrough and M2 acceptance test
@@ -1435,7 +1436,7 @@ the work shifts to optimization, quality assurance, tooling, compatibility and r
 - **Why:** the performance budgets in section 3 are targets, not measurements.
 - **Work:** a benchmark suite with checked-in baselines and a CI regression gate (ECS iteration and
   structural changes, job system, scene load, physics step, render extraction, Blueprint VM, Luau
-  calls, save/load, cook); ECS (the 64 component-type cap, chunk layout, query caching); renderer
+  calls, save/load, cook); ECS (the component-type cap, now 256, made dynamic or proven sufficient; chunk layout; query caching); renderer
   (draw submission, culling, GPU-driven paths where the RHI supports them, pipeline and shader
   caches); memory (per-system budgets, allocation tracking, per-frame allocation audit);
   multithreading (a task graph with inferred dependencies, a render thread, async asset jobs); GPU
@@ -1514,8 +1515,11 @@ the work shifts to optimization, quality assurance, tooling, compatibility and r
 - **Done when:** an agent can, from a written brief, build a small playable level (terrain, enemies,
   abilities, a quest, NPCs), compile and run the tests, and report failures, with every change
   reviewable and undoable, and the engine works fully without any of it.
-- **Note:** this repository contains no MCP code yet; this phase starts from the protocol and the
-  command stack.
+- **Note:** the repository already has an MCP server (`mcp/`, option `AETHER_BUILD_MCP`): scene
+  inspection and editing, undo/redo, scene save/load and Play-in-Editor over stdio, with every change
+  going through the editor's command stack. This phase hardens and extends it (versioned tool schemas,
+  agent attribution, permissions, confirmation, kit tools, build/test tools, bounded capture) rather
+  than starting it.
 
 ## Phase 45: Mobile and Console
 
