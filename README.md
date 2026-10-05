@@ -6015,6 +6015,8 @@ snapping). The **Tilemap** tool (under **2D**) paints, fills and erases on layer
 
 **Text in the game** (§29.2). Translations live in `.astrings` files (CSV: `key,en,pt-BR,...`), cooked automatically. The player merges them, shows the language in `GameSettings::language` (a language chosen in play is saved with the settings), and Blueprints (`Localize.GetText`, `FormatInt`, ...) and Luau (`Localization.GetText(key, default)`, `Localization.Format(...)`, `Localization.SetLanguage(...)`) read it, falling back to the default text and then the key.
 
+**Localized UI** (§29.3). A Text widget (and a text box's hint) takes a string table key beside its text (`text_key`, `hint_key` in layout files and the UI Designer): the key's translation in the current language shows, falling back to the text. Blueprints and scripts use `UI.SetTextKey`; setting text directly (`UI.SetText`, a binding) overrides the key.
+
 **Documentation** (§26.7). The manual is in [docs/manual](docs/manual/README.md).
 The API reference is generated from the engine's reflection: run
 `aether_docgen --out api` for `API.md` (every component, struct and enum with

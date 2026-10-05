@@ -194,6 +194,7 @@ std::map<std::string, WidgetType>& Registry() {
             "Text",
             [](const Text& t, json& j) {
                 j["text"] = t.text;
+                if (!t.text_key.empty()) j["text_key"] = t.text_key;
                 j["size"] = t.size;
                 j["color"] = ColorToJson(t.color);
                 if (t.justify != TextAlign::Left) j["justify"] = kTextAlign[static_cast<usize>(t.justify)];
@@ -203,6 +204,7 @@ std::map<std::string, WidgetType>& Registry() {
             },
             [](Text& t, const json& j, TR, std::string* e) {
                 t.text = j.value("text", t.text);
+                t.text_key = j.value("text_key", t.text_key);
                 t.size = j.value("size", t.size);
                 if (j.contains("color") && !ColorFromJson(j["color"], t.color, {}, e)) return false;
                 t.wrap_width = j.value("wrap_width", t.wrap_width);
@@ -281,6 +283,7 @@ std::map<std::string, WidgetType>& Registry() {
             [=](const TextInput& t, json& j) {
                 focusable_save(t, j);
                 j["text"] = t.text, j["hint"] = t.hint;
+                if (!t.hint_key.empty()) j["hint_key"] = t.hint_key;
                 if (t.max_length != 0) j["max_length"] = t.max_length;
                 if (t.password) j["password"] = true;
             },
@@ -288,6 +291,7 @@ std::map<std::string, WidgetType>& Registry() {
                 focusable_load(t, j);
                 t.SetText(j.value("text", t.text));
                 t.hint = j.value("hint", t.hint);
+                t.hint_key = j.value("hint_key", t.hint_key);
                 t.max_length = j.value("max_length", t.max_length);
                 t.password = j.value("password", t.password);
                 return true;

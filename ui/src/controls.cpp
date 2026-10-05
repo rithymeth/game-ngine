@@ -1,5 +1,7 @@
 #include "aether/ui/controls.h"
 
+#include "aether/loc/localization.h"
+
 #include "aether/ui/basic.h"
 #include "aether/ui/input.h"
 #include "aether/ui/panels.h"
@@ -8,6 +10,12 @@
 #include <cmath>
 
 namespace aether::ui {
+
+std::string TextInput::ShownHint() const {
+    const loc::Localization* l = hint_key.empty() ? nullptr : loc::Localization::Active();
+    return l ? l->Text(hint_key, hint) : hint;
+}
+
 
 const ControlStyle& DefaultStyle() {
     static const ControlStyle style;
@@ -338,7 +346,7 @@ void TextInput::PaintSelf(DrawList& list, const PaintContext& ctx) const {
         const f32 x0 = XOf(SelectionStart()), x1 = XOf(SelectionEnd());
         list.AddBrush({at.x + x0, inner.y, x1 - x0, inner.h}, style.accent, ctx.opacity * 0.5f);
     }
-    if (text.empty() && !IsFocused()) list.AddText(*ctx.font, hint, style.text_size, inner, style.hint.WithAlpha(ctx.opacity));
+    if (text.empty() && !IsFocused()) list.AddText(*ctx.font, ShownHint(), style.text_size, inner, style.hint.WithAlpha(ctx.opacity));
     else list.AddText(*ctx.font, Shown(), style.text_size, at, style.text.WithAlpha(ctx.opacity));
     if (IsFocused()) list.AddQuad({at.x + XOf(cursor_), inner.y, kCaretWidth, inner.h}, style.text.WithAlpha(ctx.opacity));
     list.PopClip();
