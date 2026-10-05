@@ -3,6 +3,7 @@
 #include "aether/sequencer/sequence_system.h"
 
 #include "aether/core/log.h"
+#include "aether/loc/localized_path.h"
 #include "aether/reflection/serialize.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/serialization.h"
@@ -180,6 +181,17 @@ const GameManifest::Asset* GamePackage::FindAssetByGuid(std::string_view guid) c
 
 bool GamePackage::ReadContent(const std::string& path, std::vector<u8>& out, std::string* error) const {
     return vfs_.Read("Content/" + path, out, error);
+}
+
+std::string GamePackage::LocalizedPath(const std::string& path, const std::string& language, const std::string& default_language) const {
+    for (const std::string& candidate : loc::LocalizedCandidates(path, language, default_language)) {
+        if (FindAsset(candidate) != nullptr) return candidate;
+    }
+    return path;
+}
+
+bool GamePackage::ReadContentLocalized(const std::string& path, const std::string& language, std::vector<u8>& out, std::string* error) const {
+    return ReadContent(LocalizedPath(path, language), out, error);
 }
 
 // ---------------------------------------------------------------------------
@@ -475,6 +487,12 @@ void Game::LoadInputAssets() {
 void Game::LoadLocalization() {
     if (localization_loaded_) return;
     localization_loaded_ = true;
+    // A translated asset with no base to fall back to is a mistake worth a line.
+    std::vector<std::string> paths;
+    for (const GameManifest::Asset& asset : package_.Manifest().assets) paths.push_back(asset.path);
+    for (const std::string& orphan : loc::OrphanedVariants(paths)) {
+        localization_warnings_.push_back(orphan + " looks like a language variant, but there is no base asset for it");
+    }
     for (const GameManifest::Asset& asset : package_.Manifest().assets) {
         if (asset.importer != "StringTable") continue;
         std::vector<u8> bytes;
