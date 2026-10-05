@@ -6008,7 +6008,23 @@ is the manual's chapter `docs/manual/09-gameplay.md` (a poison effect, a firebal
 cooldown, and a script). Deferred: Event-object subscriptions (`Attributes.OnChanged`),
 Luau access to an entity's tag container.
 
-### 30.6 PR breakdown
+### 30.6 The Gameplay Debugger (`editor/src/gameplay/`, step 6)
+
+`GameplayDebuggerDocument` (no ImGui) builds the rows for the entities of a world it is pointed at
+(`SetWorld`): for each entity with gameplay data, its attributes (base, current, bounds and the
+add / multiply / override modifiers on them), active effects (kind, time left, stacks), granted
+abilities (ready or running, elapsed, committed) and tags with counts. Order is deterministic
+(entity index, then names, effects by handle). A case-insensitive filter matches entity labels,
+attributes, effects, abilities and tags; `Select` narrows to one entity; at most 500 entities.
+The actions return a message: set a base, remove an effect, cancel an ability, add and remove a
+tag. They go through the gameplay systems the host gives it (`SetSystems`, so events fire and
+modifiers follow) and edit the components directly when there are none. `GameplayDebuggerPanel`
+draws it with tables and per-row buttons, and says so when there is no world. The workspace shows
+it as **Gameplay Debugger** (Debug) on a built-in sample hero; `SetGameplayWorld` points it at the
+world being played (or back at the sample). Deferred: live graphs and history, an event log,
+editing effect and ability definitions, network views.
+
+### 30.7 PR breakdown
 
 1. Gameplay tags (done, §30.1).
 2. `AttributeSet`: base and current values with clamps, change events
@@ -6021,7 +6037,7 @@ Luau access to an entity's tag container.
    library (done, §30.4); the latent tasks are deferred.
 5. Luau face, script events, and the manual chapter with a sample (done, §30.5); the
    Blueprint face, player systems and cook roots came with steps 2-4.
-6. The editor's attribute and effect debugger.
+6. The editor's attribute and effect debugger (done, §30.6).
 7. Genre kits as optional plugins: inventory and items, the dialogue graph,
    quests, interaction.
 8. Networking (prediction keys) waits for the networking integration; tag counts
