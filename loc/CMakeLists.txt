@@ -7,6 +7,8 @@ add_library(aether_loc STATIC
     src/string_table.cpp
     src/message_format.cpp
     src/localizer.cpp
+    src/localization.cpp
+    src/localize.cpp
 )
 target_include_directories(aether_loc PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aether_loc PUBLIC cxx_std_20)

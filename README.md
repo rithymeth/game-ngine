@@ -6013,6 +6013,8 @@ snapping). The **Tilemap** tool (under **2D**) paints, fills and erases on layer
 
 **Localization** (§29.1, `loc/`). `LocText` (a string key plus its source text) is the type for player-visible strings. A `StringTable` holds translations by key and language and reads and writes CSV (`key,en,pt-BR,...`). A language falls back along its tags (`pt-BR` to `pt` to `en`), and a string with no translation shows its source text, never a blank. Messages take arguments and plurals: `{count} coin{count|s}` or `{count|one:moeda;other:moedas}`, with CLDR plural rules for English, Portuguese, French, Japanese, Russian, Polish and Arabic.
 
+**Text in the game** (§29.2). Translations live in `.astrings` files (CSV: `key,en,pt-BR,...`), cooked automatically. The player merges them, shows the language in `GameSettings::language` (a language chosen in play is saved with the settings), and Blueprints (`Localize.GetText`, `FormatInt`, ...) and Luau (`Localization.GetText(key, default)`, `Localization.Format(...)`, `Localization.SetLanguage(...)`) read it, falling back to the default text and then the key.
+
 **Documentation** (§26.7). The manual is in [docs/manual](docs/manual/README.md).
 The API reference is generated from the engine's reflection: run
 `aether_docgen --out api` for `API.md` (every component, struct and enum with
