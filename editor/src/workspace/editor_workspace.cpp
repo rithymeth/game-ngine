@@ -20,6 +20,7 @@
 #include "graph/material_editor.h"
 #include "net/net_panels.h"
 #include "loc/localization_panel.h"
+#include "gameplay/gameplay_debugger_panel.h"
 #include "save/save_inspector_panel.h"
 #include "sequencer/sequencer_panel.h"
 #include "sprite2d/tilemap_panel.h"
@@ -201,6 +202,12 @@ struct EditorWorkspace::Impl {
     std::filesystem::path loc_sample_dir;
     std::unique_ptr<LocalizationDocument> loc_doc;
     std::unique_ptr<LocalizationPanel> loc_panel;
+    // Gameplay.
+    World gameplay_sample;
+    gas::EffectLibrary gameplay_effects;
+    gas::AbilityLibrary gameplay_abilities;
+    std::unique_ptr<GameplayDebuggerDocument> gameplay_doc;
+    std::unique_ptr<GameplayDebuggerPanel> gameplay_panel;
     // World.
     terrain::TerrainData terrain_data;
     terrain::TerrainSettings terrain_settings;
@@ -250,6 +257,7 @@ struct EditorWorkspace::Impl {
         BuildSequencer();
         BuildSaveInspector();
         BuildLocalization();
+        BuildGameplay();
         BuildNetworking();
         BuildDebug();
         BuildProject();
@@ -273,6 +281,7 @@ struct EditorWorkspace::Impl {
             {"Sequencer - Intro", "Cinematics", [this] { sequencer_panel->Draw(); }},
             {"Save Inspector", "Data", [this] { save_panel->Draw(); }},
             {"Localization", "Data", [this] { loc_panel->Draw(); }},
+            {"Gameplay Debugger", "Debug", [this] { gameplay_panel->Draw(); }},
             {"Net Play", "Networking", [this] { net_panel->Draw(); }},
             {"Net Profiler", "Networking", [this] { net_profiler->Draw(); }},
             {"Console", "Debug", [this] { console_panel->Draw(); }},
@@ -604,6 +613,58 @@ struct EditorWorkspace::Impl {
         extensions.AddAssetType(std::move(type));
     }
 
+    // A small sample world to look at; the host points the debugger at the live world with SetGameplayWorld.
+    void BuildGameplay() {
+        using namespace aether::gas;
+        RegisterGameplayComponents();
+        GameplayEffect burning;
+        burning.name = "Burning";
+        burning.duration_policy = GameplayEffect::Duration::Timed;
+        burning.duration = 6.0f;
+        burning.period = 1.0f;
+        burning.modifiers = {{"Health", GameplayEffect::Op::Add, -4.0f}};
+        burning.granted_tags = {GameplayTag::Make("State.Burning")};
+        GameplayEffect haste;
+        haste.name = "Haste";
+        haste.duration_policy = GameplayEffect::Duration::Infinite;
+        haste.modifiers = {{"Speed", GameplayEffect::Op::Multiply, 1.5f}};
+        GameplayEffect cost;
+        cost.name = "FireballCost";
+        cost.modifiers = {{"Mana", GameplayEffect::Op::Add, -20.0f}};
+        GameplayEffect cooldown;
+        cooldown.name = "FireballCooldown";
+        cooldown.duration_policy = GameplayEffect::Duration::Timed;
+        cooldown.duration = 3.0f;
+        cooldown.granted_tags = {GameplayTag::Make("Cooldown.Fireball")};
+        for (GameplayEffect* e : {&burning, &haste, &cost, &cooldown}) gameplay_effects.Register(*e);
+        GameplayAbility fireball;
+        fireball.name = "Fireball";
+        fireball.tags = {GameplayTag::Make("Ability.Fire")};
+        fireball.cost = "FireballCost";
+        fireball.cooldown = "FireballCooldown";
+        gameplay_abilities.Register(fireball);
+        // Systems only to set the sample up: they go away at the end of this function (and with them
+        // their claim on being the active systems), leaving the components they made.
+        AttributeSystem gameplay_attributes_sys(gameplay_sample);
+        EffectSystem gameplay_effects_sys(gameplay_sample, gameplay_attributes_sys, gameplay_effects);
+        AbilitySystem gameplay_abilities_sys(gameplay_sample, gameplay_attributes_sys, gameplay_effects_sys, gameplay_abilities, gameplay_effects);
+        const Entity hero = gameplay_sample.CreateEntity(Transform{Vec3(), Quaternion::Identity()});
+        gameplay_attributes_sys.Define(hero, "Health", 100, 0, 100);
+        gameplay_attributes_sys.Define(hero, "Mana", 50, 0, 100);
+        gameplay_attributes_sys.Define(hero, "Speed", 6);
+        gameplay_effects_sys.Apply(hero, "Burning");
+        gameplay_effects_sys.Apply(hero, "Haste");
+        gameplay_abilities_sys.Grant(hero, "Fireball");
+        gameplay_abilities_sys.TryActivate(hero, "Fireball");
+        gameplay_attributes_sys.ClearEvents();
+        gameplay_effects_sys.ClearEvents();
+        gameplay_abilities_sys.ClearEvents();
+        gameplay_doc = std::make_unique<GameplayDebuggerDocument>();
+        gameplay_doc->SetWorld(&gameplay_sample);
+        gameplay_doc->SetLibraries(&gameplay_effects, &gameplay_abilities);
+        gameplay_panel = std::make_unique<GameplayDebuggerPanel>(*gameplay_doc);
+    }
+
     void BuildSaveInspector() {
         using namespace aether::save;
         std::error_code ec;
@@ -877,6 +938,11 @@ void EditorWorkspace::Update(f32 dt) {
 
 ExtensionRegistry& EditorWorkspace::Extensions() { return impl_->extensions; }
 EditorScripts& EditorWorkspace::Scripts() { return impl_->editor_scripts; }
+
+void EditorWorkspace::SetGameplayWorld(World* world, gas::AttributeSystem* attributes, gas::EffectSystem* effects, gas::AbilitySystem* abilities) {
+    impl_->gameplay_doc->SetWorld(world ? world : &impl_->gameplay_sample);
+    impl_->gameplay_doc->SetSystems(world ? attributes : nullptr, world ? effects : nullptr, world ? abilities : nullptr);
+}
 
 usize EditorWorkspace::ToolCount() const { return impl_->tools.size(); }
 const char* EditorWorkspace::ToolName(usize tool) const { return impl_->tools[tool].name.c_str(); }
