@@ -19,6 +19,15 @@
 // selected tool), and DrawWindows() draws the tools popped out into their
 // own windows. All of it is plain Dear ImGui, so it runs headless too.
 
+namespace aether {
+class World;
+namespace gas {
+class AttributeSystem;
+class EffectSystem;
+class AbilitySystem;
+} // namespace gas
+} // namespace aether
+
 namespace aether::editor {
 
 class ExtensionRegistry;
@@ -50,6 +59,11 @@ public:
     ExtensionRegistry& Extensions();
     // The project's Luau editor scripts (Content/Editor/*.luau).
     EditorScripts& Scripts();
+
+    // The world the Gameplay Debugger shows (the host points it at the world being played and
+    // clears it with nullptr, which goes back to the built-in sample), and the running gameplay
+    // systems its actions go through (any may be null).
+    void SetGameplayWorld(World* world, gas::AttributeSystem* attributes = nullptr, gas::EffectSystem* effects = nullptr, gas::AbilitySystem* abilities = nullptr);
 
     usize ToolCount() const;
     const char* ToolName(usize tool) const;

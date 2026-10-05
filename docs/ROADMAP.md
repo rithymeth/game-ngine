@@ -1246,7 +1246,7 @@ edits made in the viewport or Inspector into keys automatically.
 
 ## Phase 30: Gameplay Ability System and RPG Toolkit
 
-**Status:** in progress (gameplay tags, attributes, effect system, ability system, Luau face; see `docs/design/PHASE_SPECS.md` §30).
+**Status:** in progress (gameplay tags, attributes, effect system, ability system, Luau face, editor debugger; see `docs/design/PHASE_SPECS.md` §30).
 
 **Why:** most action, RPG and MOBA games rebuild the same systems: stats,
 buffs, cooldowns and abilities. Unreal's Gameplay Ability System (GAS) is

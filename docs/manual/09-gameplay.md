@@ -106,9 +106,19 @@ The same functions are the `GameplayTags`, `Attributes`, `Effects` and
 graph: do the work when it activates (the latent nodes such as Delay work here)
 and call `EndAbility`.
 
+## Debugging in the editor
+
+The **Gameplay Debugger** (Debug tools) shows every entity that has gameplay data: its
+attributes (base, current, bounds, and the modifiers an effect is putting on them), its active
+effects with time left and stacks, its abilities (ready or running) and its tags with counts.
+Type in the filter to narrow it to an entity, attribute, effect, ability or tag. Type a number
+into an attribute's base to set it, press Remove on an effect or Cancel on a running ability,
+or add and remove tags. Edits made while the game is running go through the running systems, so
+scripts and Blueprints hear the changes.
+
 ## Good to know
 
 - A broken `.aeffect` or `.aability` file is a warning in the player (it names the file and the error), not a crash. An ability that names a missing effect is one of those warnings.
 - Effects and abilities are cooked automatically; you don't list them.
 - Applying an effect to an entity that lacks one of its attributes is rejected as a whole.
-- Not built yet: waiting for a gameplay event inside an ability, the editor's attribute and effect debugger, and network replication.
+- Not built yet: waiting for a gameplay event inside an ability, network replication, and graphs of values over time in the debugger.
