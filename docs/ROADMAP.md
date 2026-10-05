@@ -1224,7 +1224,7 @@ edits made in the viewport or Inspector into keys automatically.
 
 ## Phase 29: Localization and Text
 
-**Status:** in progress (the core: `LocText`, string tables with CSV, fallback chains, plural-aware formatting; see `docs/design/PHASE_SPECS.md` §29).
+**Status:** done except the optional shaping step (HarfBuzz joining for Arabic, gender selectors); see `docs/design/PHASE_SPECS.md` §29.
 
 - `LocText` type: a string key plus source text, used for every
   player-visible string; the runtime UI (Phase 18) and Blueprint text
@@ -1245,6 +1245,8 @@ edits made in the viewport or Inspector into keys automatically.
 ---
 
 ## Phase 30: Gameplay Ability System and RPG Toolkit
+
+**Status:** in progress (gameplay tags; see `docs/design/PHASE_SPECS.md` §30).
 
 **Why:** most action, RPG and MOBA games rebuild the same systems: stats,
 buffs, cooldowns and abilities. Unreal's Gameplay Ability System (GAS) is
