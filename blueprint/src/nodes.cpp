@@ -239,6 +239,9 @@ void RegisterBuiltins(Registry& r) {
     AddEvent(r, "Event.OnItemEquipped", "Event OnItemEquipped", {Out("item", kString), Out("slot", kString)});
     AddEvent(r, "Event.OnItemUnequipped", "Event OnItemUnequipped", {Out("item", kString), Out("slot", kString)});
     AddEvent(r, "Event.OnItemUsed", "Event OnItemUsed", {Out("item", kString)});
+    // Interaction kit (Phase 30 step 7b): something was used (heard by the target), or couldn't be (heard by the user).
+    AddEvent(r, "Event.OnInteract", "Event OnInteract", {Out("interactor", kEntity)});
+    AddEvent(r, "Event.OnInteractFailed", "Event OnInteractFailed", {Out("target", kEntity), Out("reason", kString)});
     // VFX (Phase 19 step 4): a ParticleSystem's effect is over.
     AddEvent(r, "Event.OnParticleSystemFinished", "Event OnParticleSystemFinished", {Out("asset", kString)});
     // Navigation (Phase 20 step 3): a NavAgent's move ended (arrived, or failed).
