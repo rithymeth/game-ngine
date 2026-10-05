@@ -8,8 +8,8 @@ every gem is collected). Fall into the void and you respawn at the start.
 | --- | --- |
 | W / A / S / D | move (relative to the camera) |
 | Space | jump (hold for a higher jump) |
-| Left / Right | orbit the camera |
-| Up / Down | camera pitch |
+| Mouse | look around (cursor is captured while the window is focused) |
+| Arrow keys | also turn the camera |
 | R | restart |
 | Esc | quit |
 

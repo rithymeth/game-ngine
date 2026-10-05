@@ -7,7 +7,8 @@
 // GDI -- so it runs on any machine, GPU or not.
 //
 //   W/A/S/D     move (relative to the camera)    Space  jump (hold = higher)
-//   Left/Right  orbit the camera                 Up/Down  camera pitch
+//   Mouse       look around (cursor is captured while focused)
+//   Left/Right/Up/Down  also turn the camera
 //   R           restart                          Esc    quit
 //
 // Set AETHER_GEMHOP_MAX_FRAMES=<N> to auto-close after N frames;
@@ -321,6 +322,8 @@ int main() {
     f32 yaw = 3.14159f; // start looking down +z, the direction of the route
     f32 pitch = 0.5f;
     bool prev_restart = false;
+    bool mouse_ready = false;
+    bool cursor_hidden = false;
     i64 frame = 0;
 
     AETHER_LOG_INFO("GemHop", "Collect all %d gems, then stand on the goal pad.", game.GemsTotal());
@@ -342,10 +345,30 @@ int main() {
             if (Down(VK_ESCAPE)) {
                 break;
             }
-            if (Down(VK_LEFT)) yaw -= 2.0f * dt;
-            if (Down(VK_RIGHT)) yaw += 2.0f * dt;
-            if (Down(VK_UP)) pitch = std::min(1.3f, pitch + 1.0f * dt);
-            if (Down(VK_DOWN)) pitch = std::max(0.1f, pitch - 1.0f * dt);
+            if (Down(VK_LEFT)) yaw += 2.0f * dt;
+            if (Down(VK_RIGHT)) yaw -= 2.0f * dt;
+            if (Down(VK_UP)) pitch -= 1.0f * dt; // look up = camera lower
+            if (Down(VK_DOWN)) pitch += 1.0f * dt;
+
+            // Mouse look: measure how far the cursor moved from the window
+            // centre, then put it back (so it never hits a screen edge).
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+            POINT centre{rc.right / 2, rc.bottom / 2};
+            ClientToScreen(hwnd, &centre);
+            POINT cur;
+            GetCursorPos(&cur);
+            if (mouse_ready) {
+                yaw -= (cur.x - centre.x) * 0.003f;
+                pitch += (cur.y - centre.y) * 0.003f;
+            }
+            SetCursorPos(centre.x, centre.y);
+            mouse_ready = true;
+            if (!cursor_hidden) {
+                ShowCursor(FALSE);
+                cursor_hidden = true;
+            }
+            pitch = std::clamp(pitch, 0.05f, 1.3f);
 
             f32 fwd = (Down('W') ? 1.0f : 0.0f) - (Down('S') ? 1.0f : 0.0f);
             f32 side = (Down('D') ? 1.0f : 0.0f) - (Down('A') ? 1.0f : 0.0f);
@@ -360,6 +383,13 @@ int main() {
                 game.Restart();
             }
             prev_restart = restart;
+        }
+        if (GetForegroundWindow() != hwnd) {
+            mouse_ready = false; // re-centre on focus without a jump
+            if (cursor_hidden) {
+                ShowCursor(TRUE);
+                cursor_hidden = false;
+            }
         }
         while (accumulator >= Game::kStep) {
             game.Step(in);
