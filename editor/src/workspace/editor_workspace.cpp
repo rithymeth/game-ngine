@@ -19,6 +19,7 @@
 #include "graph/blueprint_editor.h"
 #include "graph/material_editor.h"
 #include "net/net_panels.h"
+#include "loc/localization_panel.h"
 #include "save/save_inspector_panel.h"
 #include "sequencer/sequencer_panel.h"
 #include "sprite2d/tilemap_panel.h"
@@ -197,6 +198,9 @@ struct EditorWorkspace::Impl {
     std::filesystem::path save_sample_dir;
     std::unique_ptr<SaveInspectorDocument> save_doc;
     std::unique_ptr<SaveInspectorPanel> save_panel;
+    std::filesystem::path loc_sample_dir;
+    std::unique_ptr<LocalizationDocument> loc_doc;
+    std::unique_ptr<LocalizationPanel> loc_panel;
     // World.
     terrain::TerrainData terrain_data;
     terrain::TerrainSettings terrain_settings;
@@ -245,6 +249,7 @@ struct EditorWorkspace::Impl {
         BuildTilemap();
         BuildSequencer();
         BuildSaveInspector();
+        BuildLocalization();
         BuildNetworking();
         BuildDebug();
         BuildProject();
@@ -267,6 +272,7 @@ struct EditorWorkspace::Impl {
             {"Tilemap - Level 1", "2D", [this] { tilemap_panel->Draw(); }},
             {"Sequencer - Intro", "Cinematics", [this] { sequencer_panel->Draw(); }},
             {"Save Inspector", "Data", [this] { save_panel->Draw(); }},
+            {"Localization", "Data", [this] { loc_panel->Draw(); }},
             {"Net Play", "Networking", [this] { net_panel->Draw(); }},
             {"Net Profiler", "Networking", [this] { net_profiler->Draw(); }},
             {"Console", "Debug", [this] { console_panel->Draw(); }},
@@ -562,6 +568,42 @@ struct EditorWorkspace::Impl {
 
     // A folder of sample saves to look at: a Blueprint-style save bag (with a
     // world snapshot), a settings file, and a damaged copy (bad checksum).
+    // A string table to look at: English with a placeholder and a plural, French
+    // complete, German with gaps; and a small content folder with UI text for
+    // the gather step to find.
+    void BuildLocalization() {
+        std::error_code ec;
+        loc_sample_dir = std::filesystem::temp_directory_path() / "aether_editor_loc_samples";
+        std::filesystem::remove_all(loc_sample_dir, ec);
+        std::filesystem::create_directories(loc_sample_dir / "Content" / "UI", ec);
+        const std::string csv =
+            "key,en,fr,de\r\n"
+            "menu.play,Play,Jouer,Spielen\r\n"
+            "menu.quit,Quit,Quitter,\r\n"
+            "hud.coins,{count} coin{count|s},{count} pi\xC3\xA8""ce{count|s},\r\n"
+            "hud.welcome,Welcome {name}!,Bienvenue {name} !,\r\n";
+        const std::filesystem::path table = loc_sample_dir / "Content" / "Localization" / "strings.astrings";
+        std::filesystem::create_directories(table.parent_path(), ec);
+        fs::WriteFileBytes(table.string(), csv.data(), csv.size());
+        const std::string ui = R"({"root":{"type":"VerticalBox","children":[{"type":"Text","text":"Play","text_key":"menu.play"},{"type":"Text","text":"Settings","text_key":"menu.settings"}]}})";
+        fs::WriteFileBytes((loc_sample_dir / "Content" / "UI" / "menu.aui").string(), ui.data(), ui.size());
+        loc_doc = std::make_unique<LocalizationDocument>();
+        loc_panel = std::make_unique<LocalizationPanel>(*loc_doc);
+        loc_panel->SetContentDirectory(loc_sample_dir / "Content");
+        loc_panel->SetPoDirectory(loc_sample_dir / "po");
+        loc_doc->Open(table);
+        loc_panel->SelectLanguage("de");
+        ExtensionAssetType type;
+        type.name = "String Table";
+        type.extension = ".astrings";
+        type.open = [this](const std::filesystem::path& file) {
+            loc_doc->Open(file);
+            loc_panel->SetContentDirectory(file.parent_path().parent_path());
+        };
+        type.owner = "editor.loc";
+        extensions.AddAssetType(std::move(type));
+    }
+
     void BuildSaveInspector() {
         using namespace aether::save;
         std::error_code ec;

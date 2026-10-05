@@ -12,6 +12,7 @@ add_library(aether_loc STATIC
     src/gather.cpp
     src/merge.cpp
     src/po.cpp
+    src/pseudo.cpp
     src/project_sync.cpp
 )
 target_include_directories(aether_loc PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

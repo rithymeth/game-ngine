@@ -5687,7 +5687,45 @@ and conflicts; the merge rules; `.po` export, round trip with escapes, and
 every import rule and error; and the whole sync (new strings, a returned
 translation, the second run changing nothing, `--check`, a damaged table).
 
-### 29.5 PR breakdown
+### 29.5 The Localization dashboard
+
+`Tools > Data > Localization` (`editor/src/loc/`) opens a `.astrings`:
+
+- **Languages**: each language, how many keys it has translated out of all,
+  and a bar; the source language is marked. A language can be added (a column
+  with no cells yet; `StringTable::AddLanguage`, and the CSV reader now keeps
+  header-only columns, so an empty column survives a save).
+- **What's missing**: for the selected language, its untranslated keys beside
+  the source text, each with a box (Enter sets the cell; an empty text clears
+  it). Add and remove keys. At most 200 are drawn at a time.
+- **Files**: Save (atomic CSV, dirty marker), Reload, **Export .po** for a
+  language and import of a returned one (the language comes from its header).
+- **Gather from project**: runs §29.4's `SyncProject` on the content folder,
+  **Check only** on by default (nothing written); a real gather needs the table
+  saved first and reloads it after. It reports found, new, changed and unused
+  keys and the warnings.
+- **Pseudo-localization**: `loc::Pseudo` accents the letters (Latin-1, which
+  the default font has), pads about 35% (`~`), wraps in `[ ]`, and copies
+  `{placeholders}`, `{{`/`}}` and line breaks as they are, so a pseudo string
+  still formats. `PseudoTable` adds the `qps-Ploc` language. The panel's
+  **preview** checkbox makes a Localization holding that table the active one,
+  so every keyed text (the UI Designer's preview and a running UI) shows pseudo
+  text; it is rebuilt when the table changes and the previous active one is put
+  back when switched off.
+- A double-click on a `.astrings` in the Content Browser opens it here (an
+  extension asset type). The workspace opens a sample table (English, French,
+  German with gaps) and a small content folder with UI text to gather.
+
+Not done: undo (edits are explicit and saved with Save), stale-key diffs,
+plural forms, and a per-viewport language.
+
+Tests (`test_loc_editor.cpp`): pseudo-localization (accents, length,
+placeholders, deterministic, still formats); stats, missing keys and every edit;
+save and reload including an empty language; `.po` round trip and gather
+(check, dirty, real); the panel drawing and the preview taking over and giving
+back the active Localization; and the workspace tool.
+
+### 29.6 PR breakdown
 
 1. The core (done, §29.1).
 2. `.astrings` as a cooked asset type; a `Localization` service with a runtime
@@ -5696,10 +5734,10 @@ translation, the second run changing nothing, `--check`, a damaged table).
 3. Runtime UI text takes a key beside its text; Blueprints set it with
    `UI.SetTextKey` (done, §29.3).
 4. The gather step (every localizable string in scenes, prefabs, Blueprints
-   and widgets), PO import and export, and a command-line tool (this step,
+   and widgets), PO import and export, and a command-line tool (done,
    §29.4).
 5. The editor's Localization dashboard (languages, completion, missing keys,
-   pseudo-localization).
+   pseudo-localization) (this step, §29.5).
 6. Font fallback (Latin, then CJK, then emoji), localized assets, and
    right-to-left layout.
 7. Optional: HarfBuzz shaping behind a CMake option, and gender selectors.

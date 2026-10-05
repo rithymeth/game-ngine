@@ -6019,6 +6019,8 @@ snapping). The **Tilemap** tool (under **2D**) paints, fills and erases on layer
 
 **Translating** (§29.4). `aether_loc <project.aproject> --po-out po/ --languages fr,de` scans a project's scenes, prefabs, UI layouts and Blueprints for localizable text (a `text_key`, a `LocText`, or a `Localize.GetText` / `UI.SetTextKey` node with a literal key), adds the new keys to `Content/Localization/strings.astrings` and writes a `.po` file per language for translators; `--po-in` reads the returned files back. Existing translations are never touched, and keys nothing uses any more are only listed.
 
+**Localization dashboard** (§29.5). The **Localization** tool (Data) opens a `.astrings`: each language and how complete it is, the keys a language is missing with a box for the translation, add and remove keys and languages, Save, `.po` export and import, and the gather step (check-only by default). The **pseudo-localization preview** swaps keyed text in the editor for accented, about-a-third-longer, `[bracketed]` text, to find clipped or untranslated strings before there are translations.
+
 **Documentation** (§26.7). The manual is in [docs/manual](docs/manual/README.md).
 The API reference is generated from the engine's reflection: run
 `aether_docgen --out api` for `API.md` (every component, struct and enum with

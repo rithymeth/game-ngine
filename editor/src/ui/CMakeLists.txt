@@ -57,6 +57,8 @@ add_library(aether_editor_ui STATIC
     ../sequencer/sequencer_panel.cpp
     ../save/save_inspector_document.cpp
     ../save/save_inspector_panel.cpp
+    ../loc/localization_document.cpp
+    ../loc/localization_panel.cpp
     ../content/content_browser_panel.cpp
     ../packaging/build_window.cpp
     ../packaging/plugins_panel.cpp
