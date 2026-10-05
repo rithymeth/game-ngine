@@ -13,6 +13,13 @@ void StringTable::Set(std::string_view language, const std::string& key, std::st
     languages_.insert(lang);
 }
 
+bool StringTable::AddLanguage(std::string_view language) {
+    const std::string lang = NormalizeLanguage(language);
+    if (lang.empty()) return false;
+    languages_.insert(lang);
+    return true;
+}
+
 const std::string* StringTable::Find(std::string_view language, const std::string& key) const {
     const auto row = entries_.find(key);
     if (row == entries_.end()) return nullptr;
@@ -127,6 +134,7 @@ bool StringTable::ImportCsv(std::string_view csv, std::vector<std::string>* erro
     for (usize c = 1; c < header.size(); ++c) {
         if (header[c] == "comment") continue;
         languages[c] = NormalizeLanguage(header[c]);
+        if (!languages[c].empty()) languages_.insert(languages[c]); // a column with no cells yet is still a language
         if (languages[c].empty() && errors) errors->push_back("Column " + std::to_string(c + 1) + " has no language name and was skipped");
     }
     std::set<std::string> seen;

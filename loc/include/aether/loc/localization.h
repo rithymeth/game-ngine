@@ -51,6 +51,8 @@ public:
     // The one the Blueprint and Luau libraries talk to (null if none).
     static Localization* Active();
     void MakeActive();
+    // No active Localization (what the library does without a service).
+    static void ClearActive();
 
 private:
     StringTable table_;
