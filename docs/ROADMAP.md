@@ -1224,6 +1224,8 @@ edits made in the viewport or Inspector into keys automatically.
 
 ## Phase 29: Localization and Text
 
+**Status:** in progress (the core: `LocText`, string tables with CSV, fallback chains, plural-aware formatting; see `docs/design/PHASE_SPECS.md` §29).
+
 - `LocText` type: a string key plus source text, used for every
   player-visible string; the runtime UI (Phase 18) and Blueprint text
   pins take `LocText`, not raw strings.

@@ -5542,3 +5542,58 @@ quality preset change at runtime, and cloud saves as plugins.
 7. The player executable (`--user-dir`, saved window size and quality,
    settings on exit, the `Input.json` migration) and the Phase 28 wrap-up
    (this step, §28.7).
+
+---
+
+## Phase 29: localization and text
+
+### 29.1 The core (`loc/`, `aether::loc`)
+
+A small, dependency-free library (`Aether::Loc`, engine-only, headless):
+
+- **`LocText { key, source }`**, a reflected struct (so it saves, cooks and
+  shows in the Inspector like any field). `key` indexes the string tables;
+  `source` is the text as written, shown when no table has the key. An empty
+  key makes a *literal* (`LocText::Literal`), shown as it is and never looked up.
+- **`NormalizeLanguage` / `FallbackChain`**: `pt_br` and `PT-br` are `pt-BR`;
+  the chain is the tag, then each shorter prefix, then the default language
+  (`pt-BR` gives `{pt-BR, pt, en}`), without repeats.
+- **`StringTable`**: translations by key and language, with **CSV** import and
+  export. Columns are `key,en,pt-BR,...`; a `comment` column is ignored;
+  cells follow RFC 4180 (commas, quotes and line breaks inside quotes); a BOM
+  and CRLF are fine; an empty cell is no translation. Export sorts keys and
+  languages so diffs stay small. Import merges, reports a missing header, an
+  unclosed quote, a row with no key and a repeated key (the later row wins),
+  and keeps going where it can.
+- **`Format(pattern, language, args)`**: `{name}` substitution; plurals with
+  `{count|s}` (the suffix unless the category is *one*, so
+  `{count} coin{count|s}`) or explicit forms,
+  `{count|one:coin;other:coins}` (falling back to `other`); `{{` and `}}` are
+  literal braces. A problem leaves that part as written and adds a line to
+  the error list; it never throws.
+- **`PluralCategory(language, n)`**: the CLDR rules, written by hand for en
+  (and the languages that follow it), pt (pt-BR: 0 and 1 are *one*; pt-PT: 1
+  only), fr, ja/zh/ko/vi/th/id/ms (no plurals), ru/uk, pl and ar. Other
+  languages follow English. ICU is not used.
+- **`Localizer`**: resolves a `LocText`: a table entry along the fallback
+  chain, else `source`, else the key, so a string is never blank; with
+  arguments the result goes through `Format`. It isn't a global yet.
+
+Tests (`test_loc.cpp`): tags and chains; table set, find, remove and counts;
+CSV round trips of hard cells, BOM/CRLF/comment columns, and every reported
+problem; the plural rules; formatting and escapes, including malformed
+patterns; the localizer's resolution order; and `LocText` as a reflected field.
+
+### 29.2 PR breakdown
+
+1. The core (this step, §29.1).
+2. `.astrings` as a cooked asset type; a `Localization` service with a runtime
+   language switch and a change event, wired to `GameSettings::language`.
+3. Runtime UI and Blueprint text take `LocText` (raw strings still load).
+4. The gather step (every `LocText` in scenes, prefabs, Blueprints and
+   widgets), PO import and export, and a command-line tool.
+5. The editor's Localization dashboard (languages, completion, missing keys,
+   pseudo-localization).
+6. Font fallback (Latin, then CJK, then emoji), localized assets, and
+   right-to-left layout.
+7. Optional: HarfBuzz shaping behind a CMake option, and gender selectors.
