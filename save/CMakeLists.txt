@@ -4,6 +4,7 @@
 # headless on every platform.
 add_library(aether_save STATIC
     src/save_system.cpp
+    src/world_state.cpp
 )
 target_include_directories(aether_save PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aether_save PUBLIC cxx_std_20)

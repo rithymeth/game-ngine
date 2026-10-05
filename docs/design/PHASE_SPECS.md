@@ -5297,11 +5297,55 @@ in its own module, `save/` (`aether::save`, `Aether::Save`).
   completion, ordering, the destructor draining and sync/async mixing; and
   the active system.
 
-### 28.2 PR breakdown
+### 28.2 World state
 
-1. Save slots: versioned, checksummed, atomic, async (this step, §28.1).
-2. World state: a `SaveableEntity` component, capture and restore by
-   `EntityGuid`.
+- **`SaveableEntity`** (component, in `save/`): `tag` (free text) and `fields`:
+  `"Door.open"` keeps one field of the entity's `Door` component, `"Door"` the
+  whole component. Names are the reflected ones. A list on the entity (not a
+  type-level flag) because "a door is open" is per instance, a designer can
+  edit it in the Inspector, and it needs no reflection change; a
+  `Field_SaveGame` flag that supplies defaults is a possible follow-up. It
+  needs the entity's `IdComponent`.
+- **`WorldSnapshot`** (reflected, so it can be a field of the game's own save
+  struct or saved on its own through `SaveSystem`): `entities` (`SavedEntity`:
+  guid, tag, and `SavedComponent`s of component name plus compact JSON of the
+  listed values) and `destroyed` (guids).
+- **`CaptureWorld(world, guids, tracker, report)`** refreshes the GUID index,
+  and for every saveable entity (in guid order, so equal state gives an equal
+  snapshot) writes the listed fields of each component. Warnings (also logged)
+  for an entity with no GUID, two entities sharing a GUID, a component or
+  field that doesn't exist, a component the entity lacks, and a component that
+  isn't reflected.
+- **Destroyed entities** can't be captured, so a **`WorldTracker`** remembers
+  which saveable entities the scene started with: `Begin` right after the
+  scene loads, before `RestoreWorld`. Capture then lists the baseline guids
+  that are gone as `destroyed`; it works with plain `World::DestroyEntity`
+  (no hook to remember to call). With a tracker, saveable entities that
+  weren't in the baseline (made while playing) are skipped and counted in
+  `CaptureReport::skipped_runtime`; spawn recording (a prefab plus overrides)
+  is a follow-up, as are Blueprint and script variables.
+- **`RestoreWorld(world, guids, snapshot, report, lifecycle)`** finds each
+  entity by GUID (so a freshly loaded scene with new entity handles works),
+  lays the saved values over the live component and loads it (the unlisted
+  fields keep the scene's values; a whole component's `$v` runs the migration
+  hook for an older version), and destroys the `destroyed` entities (through
+  the `Lifecycle` when given, so OnDestroy fires; restoring twice is
+  harmless). A component the entity lacks is reported, not added. It returns
+  true when nothing went wrong; otherwise the `RestoreReport` has the
+  `missing` entities, `unknown_components`, `unknown_fields` and `warnings`,
+  and everything that could be restored was. Call it after the scene loads
+  and before play starts.
+- **Tests** (`test_world_state.cpp`): a round trip into a fresh scene, with
+  unlisted fields and non-saveable entities untouched; only the listed fields
+  in the snapshot, and equal state giving equal snapshots; destroyed entities
+  staying destroyed (and why Begin goes before the restore); Lifecycle
+  destruction; runtime entities skipped; every restore problem reported;
+  capture warnings; and a snapshot saved and loaded through a slot.
+
+### 28.3 PR breakdown
+
+1. Save slots (done, §28.1).
+2. World state (this step, §28.2).
 3. Settings, stored apart from game saves.
 4. Blueprint and Luau nodes (Save Game to Slot, Load Game from Slot, Does
    Save Game Exist, Create Save Game Object).
