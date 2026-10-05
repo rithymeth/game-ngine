@@ -18,4 +18,9 @@ std::string NormalizeLanguage(std::string_view tag);
 // No entry repeats, and an empty or unknown tag is just {default_language}.
 std::vector<std::string> FallbackChain(std::string_view language, std::string_view default_language = "en");
 
+// Whether a language is written right to left (ar, he, fa, ur, ps, sd, ug, yi, dv and
+// ckb, with or without region or script subtags; "pa-Arab" and "ku-Arab" count by
+// their script).
+bool IsRtl(std::string_view language);
+
 } // namespace aether::loc

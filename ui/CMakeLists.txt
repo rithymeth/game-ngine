@@ -3,6 +3,7 @@
 # Engine-only, so it builds and tests headless on every platform.
 add_library(aether_ui STATIC
     src/draw.cpp
+    src/bidi.cpp
     src/widget.cpp
     src/panels.cpp
     src/basic.cpp
