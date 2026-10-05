@@ -324,6 +324,11 @@ add_subdirectory(loc)
 
 # Gameplay ability system and RPG toolkit (Phase 30): tags, attributes, effects, abilities; engine-only.
 add_subdirectory(gameplay)
+# Genre kits (Phase 30 step 7, docs/design/PHASE_SPECS.md §30.8): optional libraries on the gameplay module.
+option(AETHER_KIT_INVENTORY "Build the inventory and items genre kit" ON)
+if(AETHER_KIT_INVENTORY)
+    add_subdirectory(inventory)
+endif()
 add_subdirectory(net)
 
 # Recast/Detour (zlib, recastnavigation/recastnavigation) for navigation

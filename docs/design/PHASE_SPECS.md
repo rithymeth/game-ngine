@@ -6024,7 +6024,35 @@ it as **Gameplay Debugger** (Debug) on a built-in sample hero; `SetGameplayWorld
 world being played (or back at the sample). Deferred: live graphs and history, an event log,
 editing effect and ability definitions, network views.
 
-### 30.7 PR breakdown
+### 30.7 Inventory and items (`inventory/`, step 7a)
+
+The first genre kit is an optional library on the gameplay module: `aether_inventory`
+(`Aether::Inventory`), built unless `AETHER_KIT_INVENTORY=OFF`. Kits are libraries the player
+links and guards with a compile definition rather than `IModule` plugins, because they need
+hooks (asset loading, scheduler stages, Luau and Blueprint registration) that `IModule`, which
+only has Startup and Shutdown, does not offer.
+
+`ItemDef` (`.aitem`, importer `ItemDefinition`, cooked automatically) has a name, a localization
+`display_key`, an icon path, `max_stack`, `weight`, tags, an `equip_slot` with `equip_effects`
+(effects active while worn), and a `use_effect` with `consume_on_use`. `ItemFromJson` / `ItemToJson`
+report `item.name_empty`, `bad_json`, `bad_stack`, `bad_weight`, `bad_tag` and
+`equip_effects_without_slot`; `ItemLibrary::CheckEffects` reports `item.unknown_effect`.
+
+The `Inventory` component (saved with the entity) has `capacity` slots of `ItemStack`, a
+`max_weight` (0 for none) and the worn `EquipSlot`s with the handles of the effects they apply.
+`InventorySystem` (with an optional `EffectSystem`): `Add` fills stacks, then empty slots, within
+the weight limit, and returns how many fit; `Remove` is all or nothing; `Move` merges, swaps or
+moves; `Split` keeps at least one; `Equip` wears one item, swaps and returns what was there (needing
+room for it), and applies the item's effects to the wearer; `Unequip` removes them; `Use` applies the
+use effect and consumes. Changes queue `ItemEvent`s (Added, Removed, Equipped, Unequipped, Used).
+The `Items` Blueprint library acts on the active system.
+
+Not done yet (step 7a, second part): the player loading `.aitem` assets and running a `Player.Inventory`
+stage that sends `Event.OnItem*` to scripts and Blueprints, the Luau `Inventory` table, and a manual
+chapter. Then 7b interaction, 7c quests and 7d the dialogue graph. Deferred: containers shared between
+entities, item instances with their own state (durability), crafting, an inventory editor panel.
+
+### 30.8 PR breakdown
 
 1. Gameplay tags (done, §30.1).
 2. `AttributeSet`: base and current values with clamps, change events
@@ -6038,7 +6066,7 @@ editing effect and ability definitions, network views.
 5. Luau face, script events, and the manual chapter with a sample (done, §30.5); the
    Blueprint face, player systems and cook roots came with steps 2-4.
 6. The editor's attribute and effect debugger (done, §30.6).
-7. Genre kits as optional plugins: inventory and items, the dialogue graph,
+7. Genre kits as optional libraries (7a inventory started, §30.7): inventory and items, the dialogue graph,
    quests, interaction.
 8. Networking (prediction keys) waits for the networking integration; tag counts
    are the replication unit.
