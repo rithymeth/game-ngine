@@ -376,7 +376,13 @@ Json PrefabToJson(const PrefabData& prefab) {
     return json;
 }
 
+static bool PrefabFromJsonImpl(const Json& json, PrefabData& out, std::string* error);
+
 bool PrefabFromJson(const Json& json, PrefabData& out, std::string* error) {
+    return GuardJsonLoader(error, "prefab", [&] { return PrefabFromJsonImpl(json, out, error); });
+}
+
+static bool PrefabFromJsonImpl(const Json& json, PrefabData& out, std::string* error) {
     if (!json.is_object() || json.value("$type", "") != "Prefab") {
         SetError(error, "Not an Aether prefab");
         return false;

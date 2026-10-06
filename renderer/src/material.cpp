@@ -694,7 +694,13 @@ json MaterialToJson(const Material& m) {
             {"two_sided", m.two_sided}, {"opacity_mask_clip", m.opacity_mask_clip}, {"parameters", params}, {"nodes", nodes}, {"links", links}};
 }
 
+static bool MaterialFromJsonImpl(const json& j, Material& out, std::string* error);
+
 bool MaterialFromJson(const json& j, Material& out, std::string* error) {
+    return GuardJsonLoader(error, "material", [&] { return MaterialFromJsonImpl(j, out, error); });
+}
+
+static bool MaterialFromJsonImpl(const json& j, Material& out, std::string* error) {
     auto fail = [&](const std::string& message) {
         if (error != nullptr) *error = message;
         return false;

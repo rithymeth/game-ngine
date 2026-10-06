@@ -64,7 +64,10 @@ bool Fail(std::string* error, std::string message) {
 bool ParseGameManifest(std::string_view text, GameManifest& out, std::string* error) {
     const json m = json::parse(text.begin(), text.end(), nullptr, /*allow_exceptions=*/false);
     if (m.is_discarded() || !m.is_object()) return Fail(error, "Manifest.json isn't JSON");
-    if (m.value("$type", "") != "CookManifest") return Fail(error, "Manifest.json isn't a cook manifest");
+    const auto type = m.find("$type");
+    if (type == m.end() || !type->is_string() || type->get<std::string>() != "CookManifest") {
+        return Fail(error, "Manifest.json isn't a cook manifest");
+    }
     if (JsonVersion(m) != 1) return Fail(error, "Manifest.json has an unsupported version");
     try {
         GameManifest g;
