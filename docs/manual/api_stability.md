@@ -38,3 +38,7 @@ documentation and change nothing in the build.
 - A **stable** API is deprecated for at least one release before it is removed, and the deprecation names the replacement.
 - A serialized format is never changed without a version and a migration (the existing rule for every saved type).
 - **Experimental** changes are listed in the release notes but need no deprecation period.
+
+## Results you must check
+
+A function whose failure the caller has to handle returns a type or bool marked `[[nodiscard]]`, so ignoring the result is a compiler warning. `SaveResult` is marked, so every save, settings and envelope call is covered; so are `cook::LoadAtex`, `cook::ParseTextureFormat` and `cook::ParseConfiguration`. When ignoring one is really fine (a sample the editor writes for a tool), say so with `(void)` and a comment.
