@@ -60,6 +60,20 @@ AETHER_TEST(Bench_BaselineComparisonFindsRegressions) {
 }
 
 
+// Sanitizers slow code several times over; the budget is for a normal build, so it scales up under them
+// (still tight enough to catch an accidental quadratic).
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+constexpr double kSceneBudgetScale = 10.0;
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+constexpr double kSceneBudgetScale = 10.0;
+#else
+constexpr double kSceneBudgetScale = 1.0;
+#endif
+#else
+constexpr double kSceneBudgetScale = 1.0;
+#endif
+
 // The plan's budget: 10k entities save and load in under 2 seconds (a wide margin; a Debug build on a busy
 // CI runner is the slow case), and saving the same world twice gives the same bytes.
 AETHER_TEST(Bench_Scene10kRoundTripsUnderBudget) {
@@ -75,7 +89,7 @@ AETHER_TEST(Bench_Scene10kRoundTripsUnderBudget) {
     usize count = 0;
     loaded.ForEach<Transform>([&](Transform&) { ++count; });
     AETHER_CHECK(count == 10'000);
-    AETHER_CHECK(seconds < 2.0);
+    AETHER_CHECK(seconds < 2.0 * kSceneBudgetScale);
     AETHER_CHECK(SaveSceneToMemory(world) == bytes);
 }
 
