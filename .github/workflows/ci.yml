@@ -114,10 +114,12 @@ jobs:
       - name: Functional tests
         run: ./build/tools/functional/aether_functional --quiet --junit functional-results.xml
       - name: Benchmarks
-        # Phase 38 step 1: the report is kept as an artifact; the regression gate comes with
-        # the baselines (step 6).
+        # Phase 38 steps 1 and 6: the report is kept as an artifact, and compared with the checked-in
+        # baseline (bench/baseline.json) by calibration-normalized time. Advisory (continue-on-error)
+        # until the thresholds have held for a couple of weeks; then it becomes required.
         if: matrix.name == 'GCC'
-        run: ./build/bench/aether_bench --repeat 5 --json bench-report.json
+        continue-on-error: true
+        run: ./build/bench/aether_bench --repeat 5 --json bench-report.json --baseline bench/baseline.json --tolerance 3.0
       - name: Upload the benchmark report
         if: matrix.name == 'GCC' && always()
         uses: actions/upload-artifact@v4

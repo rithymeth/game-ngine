@@ -75,8 +75,8 @@ when advisory gates become required.
 | **38.2** *(started: iteration, create/destroy, add/remove component benches)* | ECS bench: iteration, structural change, queries; decide whether 256 component types is enough or make it dynamic. `||` | 38.1 |
 | **38.3** *(started: a 1024-job batch bench)* | Job-system bench. `||` | 38.1 |
 | **38.4** *(started: binary and JSON scene save/load benches at 10k entities, the 10k-entity under 2 s test; Debug GCC: binary save 190 ms, load 250 ms, JSON save 400 ms, load 340 ms; cook benches still to do)* | Scene load, save/load and cook benches, including the 10k-entity under 2 s budget. `||` | 38.1 |
-| **38.5** | Physics, Blueprint VM and Luau call benches. `||` | 38.1 |
-| **38.6** | Baselines and the CI regression gate. Shared runners are noisy, so gate on instruction counts or on a ratio against a calibration loop. | 38.2-38.5 |
+| **38.5** *(done except physics: Blueprint VM loop (10k iterations) and 1k-instance tick, Luau 10k calls and a 100k-iteration loop; Debug GCC here: 0.45 ms, 0.47 ms, 6.7 ms, 1.8 ms; the physics bench waits for a physics-ON build)* | Physics, Blueprint VM and Luau call benches. `||` | 38.1 |
+| **38.6** *(started: `bench/baseline.json` checked in and compared in the GCC job with a 3x tolerance, advisory; promote it to required after about two weeks of clean runs and regenerate the baseline from a CI artifact)* | Baselines and the CI regression gate. Shared runners are noisy, so gate on instruction counts or on a ratio against a calibration loop. | 38.2-38.5 |
 | **38.7** | Allocation tracking and a per-frame allocation audit (a frame in a sample allocates zero bytes in hot paths). `||` | 38.1 |
 | **38.8** | Renderer: render thread, draw submission, culling, pipeline and shader caches, Tracy zones. *Needs hardware* for GPU timing. | 38.1 |
 
