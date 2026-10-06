@@ -1,0 +1,21 @@
+{
+  "$type": "aether.save",
+  "checksum": "4269199d",
+  "data": {
+    "$v": 1,
+    "hard_mode": false,
+    "health": 100.0,
+    "inventory": [
+      1,
+      2,
+      3
+    ],
+    "level": 7,
+    "name": "Hero"
+  },
+  "format": 1,
+  "slot": "slot1",
+  "timestamp_utc": 1791258211,
+  "type": "FuzzProfile",
+  "type_version": 1
+}
