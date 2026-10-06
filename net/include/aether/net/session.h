@@ -1,167 +1,208 @@
 #pragma once
 
-#include "aether/net/discovery.h"
-#include "aether/net/endpoint.h"
+#include "aether/net/host.h"
 
-#include <deque>
-#include <map>
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace aether::net {
 
-// Game sessions (Phase 22 step 8): hosting and joining, the lobby, and
-// starting a game, on top of NetEndpoint. The host admits players (checking
-// the game version, password, name and room), keeps the player list and the
-// lobby settings, and tells everyone about every change; clients see the
-// same lobby and learn when the game starts. Both sides take the endpoint's
-// events through HandleEvent, which consumes session messages (first byte
-// kSessionMessage) and lets everything else, including Connected and
-// Disconnected, pass back to the game.
-//
-//   Join -> JoinRequest -> JoinAccept (player id) | JoinReject (why)
-//   then Lobby updates (reliable, whole state) -> StartGame (map, seed)
-//
-// A connection that doesn't send its JoinRequest within join_timeout is
-// dropped, and nothing but a JoinRequest is accepted from it. Only the host
-// can change the map, start the game or kick; the same messages from a client
-// are ignored.
-
-inline constexpr u8 kSessionMessage = 0xA5;
-inline constexpr usize kMaxPlayerName = 24;
-inline constexpr usize kMaxSessionPlayers = 32;
-
-enum class SessionPhase : u8 { Lobby, InGame };
-
-enum class JoinResult : u8 { Accepted, Full, VersionMismatch, BadPassword, BadName, InProgress };
-
-struct SessionPlayer {
-    u16 id = 0;
-    std::string name;
-    bool ready = false;
-    bool is_host = false; // the host's own player in a listen server
-    bool operator==(const SessionPlayer& o) const { return id == o.id && name == o.name && ready == o.ready && is_host == o.is_host; }
-};
-
-struct LobbyState {
-    SessionPhase phase = SessionPhase::Lobby;
+// What a game session tells the world about itself.
+struct SessionInfo {
+    std::string name;     // "Ada's game"
     std::string map;
-    std::vector<SessionPlayer> players;
-    const SessionPlayer* Find(u16 id) const {
-        for (const SessionPlayer& p : players) {
-            if (p.id == id) return &p;
-        }
-        return nullptr;
-    }
-    bool operator==(const LobbyState& o) const { return phase == o.phase && map == o.map && players == o.players; }
+    std::string mode;
+    u16 port = 0;         // where the game's NetHost listens
+    u32 players = 0, max_players = 0; // max 0: the host's own limit
+    u32 build = 0;        // clients must match it to join
+    bool password = false; // a password is needed (it is never advertised)
+    std::vector<std::pair<std::string, std::string>> properties;
+
+    const std::string* Property(const std::string& key) const;
 };
+
+std::vector<u8> EncodeSessionInfo(const SessionInfo& info);
+bool DecodeSessionInfo(std::span<const u8> data, SessionInfo& out);
+
+constexpr u16 kDefaultDiscoveryPort = 7778;
+
+// Answers LAN discovery queries (Phase 22 step 5, docs/design/PHASE_SPECS.md
+// §22.5): listen on the discovery port, and every query with our protocol
+// id gets the session's info back, with the query's nonce so the browser
+// can time it.
+class LanBeacon {
+public:
+    LanBeacon(DatagramSocket& socket, u32 protocol_id = HostConfig{}.protocol_id) : socket_(socket), protocol_(protocol_id) {}
+    SessionInfo info;
+    bool enabled = true; // when false, queries are read and ignored
+    void Update();
+    u32 Answered() const { return answered_; }
+
+private:
+    DatagramSocket& socket_;
+    u32 protocol_;
+    u32 answered_ = 0;
+};
+
+struct LanSession {
+    Address address;      // the game's: the beacon's host and info.port
+    SessionInfo info;
+    f64 ping = 0.0;       // seconds from query to answer
+    f64 last_seen = 0.0;
+    bool compatible = true; // same build
+};
+
+// Finds sessions on the local network: Search broadcasts a query to the
+// discovery port; answers arriving in Update become results, one per game
+// address, sorted by ping. A session not heard from for `expiry` seconds
+// is dropped.
+class LanBrowser {
+public:
+    LanBrowser(DatagramSocket& socket, u32 build, u16 discovery_port = kDefaultDiscoveryPort,
+               u32 protocol_id = HostConfig{}.protocol_id);
+    void Search(f64 now);
+    void Update(f64 now);
+    std::vector<LanSession> Results() const;
+    f64 expiry = 5.0;
+    f64 auto_search = 0.0; // search again this often (0: only when asked)
+
+private:
+    DatagramSocket& socket_;
+    u32 build_;
+    u16 port_;
+    u32 protocol_;
+    u64 nonce_seed_;
+    f64 last_search_ = -1e300;
+    std::vector<std::pair<u64, f64>> queries_; // nonce, when sent
+    std::vector<LanSession> sessions_;
+};
+
+// --- Hosting and joining -------------------------------------------------------------------------
+
+enum class JoinResult : u8 { Ok, WrongPassword, BuildMismatch, Full, NoRequest, Kicked, ConnectFailed, Lost };
+const char* JoinResultName(JoinResult result);
 
 struct SessionConfig {
-    std::string name = "Game";
-    std::string map = "default";
-    u32 game_version = 1;
-    usize max_players = 8;
-    std::string password;            // empty = open
-    bool allow_join_in_progress = false;
-    f64 join_timeout = 5.0;          // seconds a new connection has to send its JoinRequest
-    std::string host_player_name;    // non-empty: the host plays too (a listen server), as player 1
+    u8 channel = 0;            // a ReliableOrdered channel
+    f64 join_timeout = 3.0;    // a connected peer must ask to join within this
+    f64 linger = 1.0;          // a refused peer is dropped once the refusal is acked, or after this
 };
 
-// --- host -------------------------------------------------------------------
+struct SessionPlayer {
+    PeerId peer = kNoPeer;
+    std::string name;
+};
 
+enum class SessionEventType : u8 { PlayerJoined, PlayerLeft, JoinRefused };
+struct SessionEvent {
+    SessionEventType type;
+    PeerId peer = kNoPeer;
+    std::string name;
+    JoinResult reason = JoinResult::Ok;
+};
+
+// The host's side of a session: a connected peer becomes a player only once
+// it has asked to join with the right build and password while there is
+// room; otherwise it is told why and dropped. Player names are kept unique
+// ("Ada", "Ada (2)"). Keeps info.players current, so a beacon can show it.
 class SessionHost {
 public:
-    SessionHost(NetEndpoint& endpoint, const SessionConfig& config);
+    SessionHost(NetHost& host, SessionInfo info, std::string password = {}, SessionConfig config = {});
 
-    // Feeds an endpoint event. True if it was a session message (consumed);
-    // Connected/Disconnected events are acted on and still returned to the game (false).
     bool HandleEvent(const NetEvent& event, f64 now);
-    // Drops connections that never joined.
     void Update(f64 now);
+    std::vector<SessionEvent> TakeEvents();
 
-    const LobbyState& Lobby() const { return lobby_; }
-    const SessionConfig& Config() const { return config_; }
-    bool SetMap(const std::string& map);
-    // Starts the game if every player is ready (or `force`). False if it isn't the lobby, there are no
-    // players, or someone isn't ready.
-    bool StartGame(bool force = false);
-    u32 Seed() const { return seed_; }
-    bool Kick(u16 player_id);
-    bool SetHostReady(bool ready);
-    // The peer address behind a player (0 for the host's own player or an unknown id).
-    NetAddress AddressOf(u16 player_id) const;
-    u16 PlayerOf(NetAddress peer) const;
-
-    // What a LanHost should advertise for this session.
-    SessionInfo Advertisement(u16 game_port) const;
-
-    u64 Rejected() const { return rejected_; }
-    u64 Malformed() const { return malformed_; }
+    const std::vector<SessionPlayer>& Players() const { return players_; }
+    const SessionPlayer* Player(PeerId peer) const;
+    void Kick(PeerId peer, f64 now);
+    const SessionInfo& Info() const { return info_; }
+    SessionInfo& MutableInfo() { return info_; }
 
 private:
-    struct Pending {
-        f64 since = 0.0;
-    };
-    void HandleJoin(NetAddress peer, const std::vector<u8>& data, f64 now);
-    void Broadcast(std::vector<u8> message);
-    void BroadcastLobby();
-    void Reject(NetAddress peer, JoinResult why);
-    std::string UniqueName(const std::string& wanted) const;
-
-    NetEndpoint& endpoint_;
+    void Refuse(PeerId peer, JoinResult reason, f64 now);
+    NetHost& host_;
+    SessionInfo info_;
+    std::string password_;
     SessionConfig config_;
-    LobbyState lobby_;
-    u32 seed_ = 0;
-    u16 next_id_ = 1;
-    f64 now_ = 0.0;
-    std::map<NetAddress, Pending> pending_;
-    std::map<NetAddress, f64> closing_; // rejected or kicked peers, and when to cut them off if they have not left
-    std::map<NetAddress, u16> players_; // peer -> player id
-    u64 rejected_ = 0, malformed_ = 0;
+    std::vector<std::pair<PeerId, f64>> pending_;  // connected, not yet asked
+    std::vector<std::pair<PeerId, f64>> leaving_;  // refused: dropped when the refusal is through
+    std::vector<SessionPlayer> players_;
+    std::vector<SessionEvent> events_;
 };
 
-// --- client -----------------------------------------------------------------
-
-struct SessionEvent {
-    enum class Type : u8 { Joined, Rejected, LobbyChanged, GameStarting, Kicked, Disconnected };
-    Type type = Type::LobbyChanged;
-    u16 player_id = 0;                      // Joined
-    JoinResult reason = JoinResult::Accepted; // Rejected
-    std::string map;                        // GameStarting
-    u32 seed = 0;                           // GameStarting
-};
-
+// The joining side: connects, asks to join, and ends Joined (with the
+// session's info and the name the host gave us) or Failed with a reason.
 class SessionClient {
 public:
-    explicit SessionClient(NetEndpoint& endpoint) : endpoint_(endpoint) {}
+    explicit SessionClient(NetHost& host, SessionConfig config = {}) : host_(host), config_(config) {}
 
-    // Connects to `server` and asks to join; the outcome arrives as a Joined or Rejected event.
-    bool Join(NetAddress server, const std::string& player_name, u32 game_version, const std::string& password = "");
-    void Leave();
-
+    void Join(const Address& server, const std::string& player_name, const std::string& password, u32 build, f64 now);
+    void Leave(f64 now);
     bool HandleEvent(const NetEvent& event);
-    bool Poll(SessionEvent& out);
 
-    bool SetReady(bool ready);
-
-    bool Joined() const { return joined_; }
-    u16 LocalPlayer() const { return player_id_; }
-    const LobbyState& Lobby() const { return lobby_; }
-    NetAddress Server() const { return server_; }
-    u64 Malformed() const { return malformed_; }
+    enum class State : u8 { Idle, Connecting, Joined, Failed };
+    State GetState() const { return state_; }
+    JoinResult Result() const { return result_; }
+    PeerId Server() const { return server_; }
+    const SessionInfo& Info() const { return info_; }
+    const std::string& PlayerName() const { return name_; }
 
 private:
-    void Push(SessionEvent e) { events_.push_back(std::move(e)); }
-    NetEndpoint& endpoint_;
-    NetAddress server_ = 0;
+    NetHost& host_;
+    SessionConfig config_;
+    State state_ = State::Idle;
+    JoinResult result_ = JoinResult::Ok;
+    PeerId server_ = kNoPeer;
     std::string name_, password_;
-    u32 version_ = 0;
-    bool joined_ = false;
-    bool request_sent_ = false;
-    u16 player_id_ = 0;
-    LobbyState lobby_;
-    std::deque<SessionEvent> events_;
-    u64 malformed_ = 0;
+    u32 build_ = 0;
+    SessionInfo info_;
+};
+
+// --- Lobbies ---------------------------------------------------------------------------------------
+
+struct LobbyEntry {
+    std::string id; // the service's name for it (on the LAN: the game address)
+    Address address;
+    SessionInfo info;
+    f64 ping = 0.0;
+    bool compatible = true;
+};
+
+// Where sessions are advertised and found. The LAN one comes first;
+// platform services (Steam, EOS, consoles) implement the same interface
+// later, so games and the editor don't care which they talk to.
+class LobbyService {
+public:
+    virtual ~LobbyService() = default;
+    virtual const char* Name() const = 0;
+    virtual bool Advertise(const SessionInfo& info) = 0; // start, or update what is shown
+    virtual void StopAdvertising() = 0;
+    virtual void Search(f64 now) = 0;
+    virtual std::vector<LobbyEntry> Results() const = 0;
+    virtual void Update(f64 now) = 0;
+};
+
+// Lobbies on the local network: a LanBeacon while advertising, a LanBrowser for searches.
+class LanLobbyService final : public LobbyService {
+public:
+    // `discovery` is bound to the discovery port to advertise; `search` is any socket.
+    LanLobbyService(DatagramSocket* discovery, DatagramSocket& search, u32 build,
+                    u16 discovery_port = kDefaultDiscoveryPort, u32 protocol_id = HostConfig{}.protocol_id);
+    const char* Name() const override { return "LAN"; }
+    bool Advertise(const SessionInfo& info) override;
+    void StopAdvertising() override { advertising_ = false; }
+    void Search(f64 now) override { browser_.Search(now); }
+    std::vector<LobbyEntry> Results() const override;
+    void Update(f64 now) override;
+    bool Advertising() const { return advertising_; }
+
+private:
+    std::unique_ptr<LanBeacon> beacon_;
+    LanBrowser browser_;
+    bool advertising_ = false;
 };
 
 } // namespace aether::net

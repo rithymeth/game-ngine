@@ -1,4 +1,5 @@
 #include "aether/renderer/material.h"
+#include "aether/core/json_util.h"
 
 #include <algorithm>
 #include <cctype>
@@ -693,14 +694,20 @@ json MaterialToJson(const Material& m) {
             {"two_sided", m.two_sided}, {"opacity_mask_clip", m.opacity_mask_clip}, {"parameters", params}, {"nodes", nodes}, {"links", links}};
 }
 
+static bool MaterialFromJsonImpl(const json& j, Material& out, std::string* error);
+
 bool MaterialFromJson(const json& j, Material& out, std::string* error) {
+    return GuardJsonLoader(error, "material", [&] { return MaterialFromJsonImpl(j, out, error); });
+}
+
+static bool MaterialFromJsonImpl(const json& j, Material& out, std::string* error) {
     auto fail = [&](const std::string& message) {
         if (error != nullptr) *error = message;
         return false;
     };
     const std::string type = j.is_object() ? j.value("$type", "") : "";
     if (type != "Material" && type != "MaterialFunction") return fail("not a material file");
-    if (j.value("$version", 0) > kFormatVersion) return fail("saved by a newer version of the engine");
+    if (JsonVersion(j) > kFormatVersion) return fail("saved by a newer version of the engine");
     Material m;
     m.is_function = type == "MaterialFunction";
     m.description = j.value("description", "");

@@ -2,10 +2,10 @@
 
 #include "aether/core/base.h"
 #include "aether/ecs/entity.h"
-#include "aether/math/vec.h"
 
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -36,6 +36,43 @@ struct ScriptResult {
     std::string error; // "chunk:line: message" for script errors
     std::vector<ScriptValue> values; // what the chunk or function returned
 };
+
+// The arguments of a native function a host registered (RegisterNative),
+// and where it puts its results. Arguments are 0-based; a missing or
+// differently typed one reads as its fallback.
+int NativeTrampoline(lua_State* state); // runs a RegisterNative function
+
+class NativeCall {
+public:
+    usize Count() const;
+    bool IsString(usize i) const;
+    bool IsNumber(usize i) const;
+    bool IsBool(usize i) const;
+    bool IsFunction(usize i) const;
+    bool IsEntity(usize i) const;
+    std::string String(usize i, const std::string& fallback = {}) const;
+    f64 Number(usize i, f64 fallback = 0.0) const;
+    // An entity argument; the null entity if it isn't one.
+    Entity EntityArg(usize i) const;
+    bool Bool(usize i, bool fallback = false) const;
+    // A Luau function argument kept alive as a reference, for the host to
+    // call later (LuauHost::CallRef); -1 if the argument isn't a function.
+    // The host releases it with LuauHost::Release.
+    int Function(usize i) const;
+    // Adds a return value (nil, boolean, number, string).
+    void Return(const ScriptValue& value);
+    // Raises a script error from the call, once the function returns.
+    void Fail(const std::string& message) { error_ = message; }
+
+private:
+    friend class LuauHost;
+    friend int NativeTrampoline(lua_State* state);
+    explicit NativeCall(lua_State* state) : state_(state) {}
+    lua_State* state_;
+    int returns_ = 0;
+    std::string error_;
+};
+using NativeFunction = std::function<void(NativeCall&)>;
 
 // One Luau VM (Phase 11 step 1, docs/design/PHASE_SPECS.md §11.1-11.4).
 //
@@ -71,6 +108,15 @@ public:
     // Calls a global function.
     ScriptResult Call(const std::string& function, const std::vector<ScriptValue>& args = {});
 
+    // Adds a function written in C++ to the VM, as `table.name` (a global
+    // table, made if missing; empty `table` = a global function). The host
+    // behind editor scripts (§26.5) builds its `editor` and `ui` APIs on this.
+    void RegisterNative(const std::string& table, const std::string& name, NativeFunction function);
+    // Calls a function kept with NativeCall::Function; the instruction
+    // budget applies as for any call.
+    ScriptResult CallRef(int ref, const std::vector<ScriptValue>& args = {});
+    void Release(int ref);
+
     ScriptValue GetGlobal(const std::string& name);
     void SetGlobal(const std::string& name, const ScriptValue& value);
 
@@ -87,20 +133,6 @@ public:
 
     // Where print() goes (default: the engine log, category "Script").
     void SetPrintHandler(std::function<void(const std::string&)> handler) { print_ = std::move(handler); }
-
-    // Where engine.debug_draw.* primitives go (Phase 23 step 6). The game
-    // connects this to its debug-draw accumulator. `primitive` mirrors
-    // dev::DebugPrimitive so the host can forward it directly; scripting
-    // links only the engine, not devtools. Null discards the output.
-    struct DebugDrawCall {
-        enum class Kind : u8 { Line, Box, Sphere, Point, Text, Rect } kind = Kind::Line;
-        Vec3 from{0, 0, 0}, to{0, 0, 0}; // Line: from->to; Box/Sphere/Point/Rect: center, half-size/radius
-        Vec3 size{0, 0, 0};              // Box half-extent; Rect extents; ignored otherwise
-        std::string text;                // Text
-        u32 color = 0xFFFFFFFF;          // 0xRRGGBBAA
-        f32 duration = 0.0f;             // seconds; 0 = this frame only
-    };
-    void SetDebugDrawHandler(std::function<void(const DebugDrawCall&)> handler) { debug_draw_ = std::move(handler); }
 
     usize MemoryUsed() const { return memory_used_; }
     usize CompiledCount() const { return bytecode_.size(); }
@@ -147,10 +179,10 @@ private:
     u64 ticks_ = 0;
     bool budget_exceeded_ = false;
     std::function<void(const std::string&)> print_;
-    std::function<void(const DebugDrawCall&)> debug_draw_;
     std::unordered_map<u64, std::string> bytecode_;
     std::unordered_map<std::string, int> chunk_functions_; // chunk name -> registry ref
     std::function<void(const std::string& chunk)> on_chunk_loaded_;
+    std::vector<std::unique_ptr<NativeFunction>> natives_;
     void* debugger_ = nullptr;
 };
 

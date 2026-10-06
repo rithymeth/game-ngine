@@ -89,6 +89,25 @@ Entity FindActiveCamera(const World& world, const GuidIndex& guids) {
     return best;
 }
 
+f32 CineFovDegrees(const CineCamera& camera) {
+    const f32 focal = std::max(camera.focal_length_mm, 0.1f);
+    const f32 height = std::max(camera.sensor_height_mm, 0.1f);
+    const f32 fov = 2.0f * std::atan(height / (2.0f * focal)) * (180.0f / 3.14159265358979f);
+    return std::clamp(fov, 1.0f, 170.0f);
+}
+
+usize ApplyCineCameras(World& world) {
+    usize applied = 0;
+    for (Entity entity : EntitiesWith(world, GetComponentId<CineCamera>())) {
+        Camera* camera = world.GetComponent<Camera>(entity);
+        if (!camera) continue;
+        camera->projection = Projection::Perspective;
+        camera->fov_degrees = CineFovDegrees(*world.GetComponent<CineCamera>(entity));
+        ++applied;
+    }
+    return applied;
+}
+
 bool HasTag(const World& world, Entity entity, std::string_view tag) {
     const Tags* tags = world.IsAlive(entity) ? world.GetComponent<Tags>(entity) : nullptr;
     return tags != nullptr && std::find(tags->names.begin(), tags->names.end(), tag) != tags->names.end();

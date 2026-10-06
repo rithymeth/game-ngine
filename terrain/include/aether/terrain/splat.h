@@ -6,7 +6,6 @@
 
 #include <array>
 #include <span>
-#include <string>
 #include <vector>
 
 namespace aether {
@@ -38,47 +37,32 @@ struct SplatmapData {
     u32 height = 0;
     std::vector<u8> pixels; // RGBA8, row-major
 
-    // Get the blending weights at normalized UV (0..1).
+    // Get the blending weights at normalized UV (0..1), bilinear between pixels.
     // Returns up to 4 weights (one per layer).
     // Sum may be < 1.0 if no layer is painted.
     std::array<f32, 4> GetWeights(f32 u, f32 v) const;
 };
 
-// Build a splatmap for a given terrain chunk.
-// layers must have at least 1 entry. Uses the chunk's UV space.
+// Build a splatmap (up to 4 layers) at `resolution` x `resolution`:
+// - `layer_weights` empty: the first layer everywhere;
+// - one weight per layer: that mix everywhere;
+// - one weight per layer per pixel (row-major, a pixel's layers together): painted.
+// Weights are normalized to sum to 1 per pixel.
 SplatmapData BuildSplatmap(u32 resolution, span<const SplatmapLayer> layers,
                            const std::vector<f32>& layer_weights);
-
-// The height-sculpt mode for a terrain brush.
-enum class SculptMode {
-    Raise,    // raise terrain (strength > 0) or lower (strength < 0)
-    Flatten,  // lerp toward the brush center's height
-    Smooth,   // average with neighbors
-    Noise,    // add Perlin-like noise displacement (strength scales amplitude)
-    Erode     // simplify the surface (remove small high-frequency bumps)
-};
 
 // A brush for terrain painting.
 struct TerrainBrush {
     f32 radius = 2.0f;       // world units
-    f32 strength = 0.5f;     // 0..1: how fast to apply paint per stroke
-    f32 falloff = 0.5f;      // 0..1: how sharply the weight drops toward the rim (0 = smoothstep)
-    i32 layer_index = 0;     // which layer to paint (splatmap)
-    SculptMode mode = SculptMode::Raise;
-    bool flatten = false;   // back-compat: sets mode to Flatten
-    bool smooth = false;     // back-compat: sets mode to Smooth
-
-    // Noise sculpt parameters.
-    f32 noise_scale = 8.0f;  // feature size in world units (smaller = finer detail)
-    i32 noise_seed = 1337;   // deterministic seed for the noise displacement
-
-    // Erosion parameters.
-    f32 erosion_deposition = 0.35f;  // how much material is re-applied downstream
-    i32 erosion_iterations = 1;      // passes over the brush footprint
+    f32 strength = 0.5f;     // how fast to apply per stroke (negative lowers, for raise/lower)
+    f32 falloff = 0.5f;      // 0..1: the share of the radius that fades out (0: a hard edge)
+    i32 layer_index = 0;     // which layer to paint
+    bool flatten = false;   // flatten terrain to the brush center's height
+    bool smooth = false;     // smooth terrain within the brush
 };
 
-// Compute a circular brush's weight at an offset from the center.
-// weight = strength at the center, fading to 0 at the radius.
+// A circular brush's weight at an offset from its center: `strength` within
+// the core, fading smoothly to 0 over the outer `falloff` share of the radius.
 f32 BrushWeight(f32 dx, f32 dz, f32 radius, f32 strength, f32 falloff);
 
 // Apply a paint stroke to the splatmap layer weights.
@@ -87,34 +71,12 @@ void ApplyBrushStroke(SplatmapData& splatmap,
                        f32 center_u, f32 center_v,
                        const TerrainBrush& brush);
 
-// Apply a paint stroke to the heightmap (flatten or smooth).
+// Apply a stroke to the heightmap: smooth, flatten (toward the height under the
+// center), or else raise/lower by up to `vertical_scale` world units at full weight.
 void ApplyHeightBrush(Heightmap& heightmap,
                        f32 center_wx, f32 center_wz,
                        const TerrainBrush& brush,
                        f32 vertical_scale);
-
-// Displace the heightmap inside the brush footprint with Perlin-like noise.
-// Amplitude is scaled by brush.strength; feature size by brush.noise_scale.
-void ApplyNoiseBrush(Heightmap& heightmap,
-                      f32 center_wx, f32 center_wz,
-                      const TerrainBrush& brush,
-                      f32 vertical_scale);
-
-// A simple particle-free erosion pass over the brush footprint: for each
-// sample, if a neighbor is much lower, deposit some of this sample's excess
-// onto the neighbor (flattening sharp ridges). erosion_deposition controls
-// how aggressive the smoothing is, erosion_iterations how many passes.
-void ApplyErosionBrush(Heightmap& heightmap,
-                        f32 center_wx, f32 center_wz,
-                        const TerrainBrush& brush,
-                        f32 vertical_scale);
-
-// Dispatch the correct height-brush mode based on brush.mode.
-// Raises/lowers, flattens, smooths, applies noise, or erodes.
-void ApplySculptBrush(Heightmap& heightmap,
-                      f32 center_wx, f32 center_wz,
-                      const TerrainBrush& brush,
-                      f32 vertical_scale);
 
 // Convert from layer indices to RGBA channel indices (0=R, 1=G, 2=B, 3=A).
 i32 LayerToChannel(u32 layer_index);

@@ -1,14 +1,23 @@
 #include "aether/terrain/renderer.h"
+#include "terrain_math.h"
 
 #include "aether/core/log.h"
-#include "aether/gfx/buffer.h"
 
 #include <algorithm>
 
 namespace aether {
 namespace terrain {
 
-using namespace gfx;
+namespace {
+// A render chunk's bounds, through the terrain chunk it draws.
+void ComputeChunkBounds(const TerrainData& data, const TerrainSettings& settings, RenderChunk& chunk) {
+    TerrainChunk t = chunk.AsTerrainChunk();
+    terrain::ComputeChunkBounds(data, settings, t);
+    chunk.world_min = t.world_min;
+    chunk.world_max = t.world_max;
+}
+} // namespace
+
 
 // --- Key utils ---
 
@@ -19,84 +28,66 @@ u64 TerrainRenderer::MakeKey(i32 cx, i32 cz, u32 lod) const {
          |  static_cast<u64>(static_cast<u32>(cx) + 0x800000u);
 }
 
-// --- Chunk bounds ---
-
-namespace {
-
-// Recompute a render chunk's world-space bounds from its heightmap region.
-void ComputeChunkBounds(const TerrainData& data, const TerrainSettings& settings,
-                        RenderChunk& chunk) {
-    const u32 vps = data.chunk_size;
-    const f32 step = (vps > 1) ? 1.0f / static_cast<f32>(vps - 1) : 0.0f;
-    const f32 half_w = settings.chunk_world_size * 0.5f;
-
-    const f32 x0 = static_cast<f32>(chunk.chunk_x) * settings.chunk_world_size;
-    const f32 z0 = static_cast<f32>(chunk.chunk_z) * settings.chunk_world_size;
-
-    // Bounding box of the chunk's sample region in world units.
-    chunk.world_min = Vec3(x0, -10.0f, z0);
-    chunk.world_max = Vec3(x0 + settings.chunk_world_size,
-                           10.0f,
-                           z0 + settings.chunk_world_size);
-    (void)step;
-    (void)half_w;
-}
-
-} // namespace
-
 // --- Chunk upload ---
 
-bool UploadChunkData(Device& device, RenderChunk& chunk,
-                     span<const f32> vertices, span<const u32> indices) {
+bool UploadChunkData(TerrainGpu& gpu, RenderChunk& chunk,
+                     std::span<const f32> vertices, std::span<const u32> indices) {
     if (vertices.empty() || indices.empty()) return false;
 
     const u64 vb_size = static_cast<u64>(vertices.size()) * sizeof(f32);
     const u64 ib_size = static_cast<u64>(indices.size()) * sizeof(u32);
 
-    // Create and fill the vertex buffer (pos+normal+uv: 8 floats/vertex).
-    chunk.vertex_buffer = std::make_unique<Buffer>(device, vb_size, BufferKind::Upload);
-    chunk.vertex_buffer->Update(vertices.data(), vb_size);
+    // Vertex buffer: pos+normal+uv, 8 floats = 32 bytes per vertex.
+    chunk.vertex_buffer = gpu.CreateBuffer(vertices.data(), vb_size, false);
+    if (chunk.vertex_buffer == 0) {
+        AETHER_LOG_ERROR("Terrain", "Failed to create a terrain vertex buffer (%llu bytes)", static_cast<unsigned long long>(vb_size));
+        return false;
+    }
     chunk.vertex_count = static_cast<u32>(vertices.size()) / 8;
 
-    // Create and fill the index buffer (32-bit indices).
-    chunk.index_buffer = std::make_unique<Buffer>(device, ib_size, BufferKind::Upload);
-    chunk.index_buffer->Update(indices.data(), ib_size);
+    // Index buffer (32-bit indices).
+    chunk.index_buffer = gpu.CreateBuffer(indices.data(), ib_size, true);
+    if (chunk.index_buffer == 0) {
+        AETHER_LOG_ERROR("Terrain", "Failed to create a terrain index buffer (%llu bytes)", static_cast<unsigned long long>(ib_size));
+        gpu.DestroyBuffer(chunk.vertex_buffer);
+        chunk.vertex_buffer = 0;
+        chunk.vertex_count = 0;
+        return false;
+    }
     chunk.index_count = static_cast<u32>(indices.size());
 
     chunk.dirty = false;
     return true;
 }
 
-bool RebuildChunk(Device& device, RenderChunk& chunk,
+bool UploadChunk(TerrainGpu& gpu, RenderChunk& chunk,
+                 std::span<const f32> vertices, std::span<const u32> indices) {
+    FreeChunk(gpu, chunk);
+    return UploadChunkData(gpu, chunk, vertices, indices);
+}
+
+bool RebuildChunk(TerrainGpu& gpu, RenderChunk& chunk,
                   const TerrainData& data, const TerrainSettings& settings) {
     // Free existing buffers.
-    chunk.vertex_buffer.reset();
-    chunk.index_buffer.reset();
+    if (chunk.vertex_buffer) gpu.DestroyBuffer(chunk.vertex_buffer);
+    if (chunk.index_buffer)  gpu.DestroyBuffer(chunk.index_buffer);
+    chunk.vertex_buffer = 0;
+    chunk.index_buffer = 0;
 
-    // Generate geometry — pass a TerrainChunk wrapper built from the RenderChunk.
-    TerrainChunk tc;
-    tc.chunk_x = chunk.chunk_x;
-    tc.chunk_z = chunk.chunk_z;
-    tc.lod_level = chunk.lod_level;
-    tc.verts_per_side = chunk.verts_per_side;
-    tc.world_min = chunk.world_min;
-    tc.world_max = chunk.world_max;
-    auto verts = GenerateChunkVertices(data, settings, tc);
-    auto idxs  = GenerateChunkIndices(data, tc);
+    // Generate geometry.
+    auto verts = GenerateChunkVertices(data, settings, chunk.AsTerrainChunk());
+    auto idxs  = GenerateChunkIndices(data, chunk.AsTerrainChunk());
 
     // Update bounds from the new geometry.
     ComputeChunkBounds(data, settings, chunk);
 
-    return UploadChunkData(device, chunk,
-                            {verts.data(), verts.size()},
-                            {idxs.data(), idxs.size()});
+    return UploadChunkData(gpu, chunk, std::span<const f32>(verts), std::span<const u32>(idxs));
 }
 
-void FreeChunk(Device& device, RenderChunk& chunk) {
-    chunk.vertex_buffer.reset();
-    chunk.index_buffer.reset();
+void FreeChunk(TerrainGpu& gpu, RenderChunk& chunk) {
+    if (chunk.vertex_buffer) { gpu.DestroyBuffer(chunk.vertex_buffer); chunk.vertex_buffer = 0; }
+    if (chunk.index_buffer)  { gpu.DestroyBuffer(chunk.index_buffer);  chunk.index_buffer = 0; }
     chunk.dirty = true;
-    (void)device;
 }
 
 // --- Render chunk collection ---
@@ -115,7 +106,7 @@ std::vector<RenderChunk> BuildRenderChunks(const TerrainData& data,
             chunk.lod_level = 0;
             chunk.verts_per_side = lvps0;
             ComputeChunkBounds(data, settings, chunk);
-            chunks.push_back(std::move(chunk));
+            chunks.push_back(chunk);
         }
     }
     return chunks;
@@ -123,7 +114,7 @@ std::vector<RenderChunk> BuildRenderChunks(const TerrainData& data,
 
 // --- TerrainRenderer ---
 
-TerrainRenderer::TerrainRenderer(Device& device) : device_(device) {}
+TerrainRenderer::TerrainRenderer(TerrainGpu& gpu) : gpu_(gpu) {}
 
 TerrainRenderer::~TerrainRenderer() { Destroy(); }
 
@@ -162,7 +153,7 @@ void TerrainRenderer::UpdateLOD(const TerrainData& data, const TerrainSettings& 
             (c.world_min.y + c.world_max.y) * 0.5f,
             (c.world_min.z + c.world_max.z) * 0.5f
         };
-        const f32 dist = (chunk_center - camera_pos).Length();
+        const f32 dist = Length(chunk_center - camera_pos);
         const u32 target_lod = SelectLod(data, dist);
 
         if (target_lod != c.lod_level) {
@@ -176,6 +167,7 @@ void TerrainRenderer::UpdateLOD(const TerrainData& data, const TerrainSettings& 
             const u32 lod_step = 1u << target_lod;
             c.verts_per_side = (vps - 1) / lod_step + 1;
             ComputeChunkBounds(data, settings, c);
+            c.dirty = true; // its mesh is for the old LOD
             RebuildImpl(c, data, settings);
 
             u64 new_key = MakeKey(c.chunk_x, c.chunk_z, c.lod_level);
@@ -192,7 +184,7 @@ void TerrainRenderer::MarkAllDirty() {
 
 void TerrainRenderer::Destroy() {
     for (RenderChunk& c : chunks_) {
-        FreeChunk(device_, c);
+        FreeChunk(gpu_, c);
     }
     chunks_.clear();
     chunk_by_key_.clear();
@@ -201,7 +193,7 @@ void TerrainRenderer::Destroy() {
 usize TerrainRenderer::UploadedCount() const {
     usize count = 0;
     for (const RenderChunk& c : chunks_) {
-        if (c.vertex_buffer) ++count;
+        if (c.vertex_buffer != 0) ++count;
     }
     return count;
 }
@@ -209,7 +201,7 @@ usize TerrainRenderer::UploadedCount() const {
 u64 TerrainRenderer::EstimatedVRAM() const {
     u64 total = 0;
     for (const RenderChunk& c : chunks_) {
-        if (c.vertex_buffer) {
+        if (c.vertex_buffer != 0) {
             // vertex: 8 floats * 4 bytes * count
             total += static_cast<u64>(c.vertex_count) * 8 * 4;
             // index: 4 bytes * count
@@ -228,8 +220,10 @@ RenderChunk* TerrainRenderer::GetChunk(i32 cx, i32 cz, u32 lod) {
 void TerrainRenderer::RebuildImpl(RenderChunk& chunk, const TerrainData& data,
                                   const TerrainSettings& settings) {
     // Rebuild if dirty or no GPU buffers.
-    if (!chunk.vertex_buffer || chunk.dirty) {
-        RebuildChunk(device_, chunk, data, settings);
+    if (chunk.vertex_buffer == 0) {
+        RebuildChunk(gpu_, chunk, data, settings);
+    } else if (chunk.dirty) {
+        RebuildChunk(gpu_, chunk, data, settings);
     }
 }
 

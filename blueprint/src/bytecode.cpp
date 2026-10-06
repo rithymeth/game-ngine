@@ -86,7 +86,6 @@ OpInfo Info(Op op) {
     case Op::Jmp: return {"JMP", "---@"};
     case Op::JmpF: return {"JMPF", "-r-@"};
     case Op::Print: return {"PRINT", "-s--"};
-    case Op::Draw: return {"DRAW", "-b-w"};
     case Op::CallNative: return {"CALLN", "---n"};
     case Op::GetField: return {"GETFIELD", "---f"};
     case Op::SetField: return {"SETFIELD", "---f"};
@@ -245,16 +244,6 @@ std::string Disassemble(const CompiledBlueprint& bp, const CompiledFunction& fn)
                     operands += " ->";
                     for (RegRef r : call.results) operands += " " + RegName(r);
                 }
-                break;
-            }
-            case 'w': {
-                const DrawInfo& draw = bp.debug_draws[static_cast<usize>(v)];
-                static const char* kKinds[] = {"Line", "Box", "Sphere", "Point", "Text"};
-                operands += kKinds[static_cast<usize>(draw.kind)];
-                operands += " a" + std::to_string(draw.a.index) + " b" + std::to_string(draw.b.index);
-                if (draw.kind == DrawInfo::Kind::Text) operands += " s" + std::to_string(draw.text.index);
-                operands += " color r" + std::to_string(draw.color.index);
-                operands += " dur r" + std::to_string(draw.duration.index);
                 break;
             }
             default: break;

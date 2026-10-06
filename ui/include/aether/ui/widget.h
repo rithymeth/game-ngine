@@ -59,6 +59,7 @@ struct PaintContext {
     const Font* font = nullptr;
     f32 opacity = 1.0f;
     const FontLibrary* fonts = nullptr;
+    FlowDirection direction = FlowDirection::LeftToRight;
 };
 
 // A node in the UI tree. Layout is two passes: Measure (children first) for
@@ -110,6 +111,9 @@ public:
     void Arrange(const Rect& rect, const LayoutContext& ctx);
     Vec2 DesiredSize() const { return desired_; }
     const Rect& Geometry() const { return geometry_; }
+    // Mirrors this widget and everything under it left to right about the vertical
+    // line at x = axis_sum / 2 (right-to-left layout: lay out as usual, then flip).
+    void MirrorX(f32 axis_sum);
     bool TakesSpace() const { return visibility != Visibility::Collapsed; }
 
     // --- Input (step 2) ---------------------------------------------------------------

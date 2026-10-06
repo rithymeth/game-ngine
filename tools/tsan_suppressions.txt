@@ -1,0 +1,6 @@
+# The work-stealing queue (engine/include/aether/job/work_stealing_queue.h) is a Chase-Lev deque that
+# publishes a Job through standalone atomic_thread_fence calls. ThreadSanitizer does not model
+# standalone fences, so it reports the plain Job fields as racing even though the fence orders them.
+# Suppressed narrowly: only the two functions that touch Job fields.
+race:aether::JobSystem::Execute
+race:aether::JobSystem::AllocateJob

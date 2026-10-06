@@ -1033,33 +1033,6 @@ private:
             Emit({Op::Print, 0, text.index}, id);
             return Chain(id, "then");
         }
-        if (type == "Debug.DrawLine" || type == "Debug.DrawBox" || type == "Debug.DrawSphere" ||
-            type == "Debug.DrawPoint" || type == "Debug.DrawText") {
-            DrawInfo draw;
-            draw.kind = type == "Debug.DrawBox"    ? DrawInfo::Kind::Box
-                        : type == "Debug.DrawSphere" ? DrawInfo::Kind::Sphere
-                                                     : type == "Debug.DrawPoint" ? DrawInfo::Kind::Point
-                                                     : type == "Debug.DrawText"   ? DrawInfo::Kind::Text
-                                                                                  : DrawInfo::Kind::Line;
-            draw.a = Input(id, draw.kind == DrawInfo::Kind::Line
-                                   ? "from"
-                                   : (draw.kind == DrawInfo::Kind::Point || draw.kind == DrawInfo::Kind::Text)
-                                         ? "location"
-                                         : "center"); // from / center / location
-            draw.b = Input(id, draw.kind == DrawInfo::Kind::Line
-                                   ? "to"
-                                   : draw.kind == DrawInfo::Kind::Text
-                                         ? "text"
-                                         : draw.kind == DrawInfo::Kind::Box    ? "halfExtent"
-                                         : draw.kind == DrawInfo::Kind::Sphere ? "radius"
-                                                                                : "size");
-            draw.color = Input(id, "color");
-            draw.duration = Input(id, "duration");
-            draw.node = id;
-            out_.debug_draws.push_back(draw);
-            Emit({Op::Draw, 0, 0, 0, static_cast<i32>(out_.debug_draws.size() - 1)}, id);
-            return Chain(id, "then");
-        }
         if (type.rfind("Call.Native:", 0) == 0) {
             EmitNative(id, sig, false);
             return Chain(id, "then");

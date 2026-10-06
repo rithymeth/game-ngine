@@ -1,0 +1,16 @@
+# clang-tidy (Phase 37 step 6, docs/design/UPGRADE_PLAN.md). Run by CI on the files a pull request
+# changes, advisory until it has been clean for a while. Locally:
+#   clang-tidy -p build path/to/file.cpp
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-exception-escape,
+  performance-*,
+  -performance-no-int-to-ptr,
+  clang-analyzer-*,
+  -clang-analyzer-optin.performance.Padding
+WarningsAsErrors: ''
+HeaderFilterRegex: '(engine|gameplay|inventory|interaction|quests|save|loc)/include/aether/.*'

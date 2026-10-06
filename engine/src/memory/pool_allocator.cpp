@@ -1,5 +1,7 @@
 #include "aether/memory/pool_allocator.h"
 
+#include "aether/core/profiler.h"
+
 namespace aether {
 
 PoolAllocator::PoolAllocator(void* memory, usize size_bytes, usize block_size, usize block_alignment) {
@@ -33,6 +35,7 @@ void* PoolAllocator::Allocate() {
     FreeNode* node = free_list_;
     free_list_ = node->next;
     --free_count_;
+    if (category_) MemoryTracker::Get().Alloc(category_, block_size_);
     return node;
 }
 
@@ -44,6 +47,7 @@ void PoolAllocator::Free(void* block) {
     node->next = free_list_;
     free_list_ = node;
     ++free_count_;
+    if (category_) MemoryTracker::Get().Free(category_, block_size_);
 }
 
 } // namespace aether

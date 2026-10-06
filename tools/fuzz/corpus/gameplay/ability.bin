@@ -1,0 +1,1 @@
+{"name": "Fireball", "cost": "Mana", "cooldown": "CD", "max_duration": 2, "activation_required": {"op": "all", "tags": ["State.Alive"]}}

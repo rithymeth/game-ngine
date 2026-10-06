@@ -87,6 +87,11 @@ void Widget::ArrangeChildren(const LayoutContext& ctx) {
     }
 }
 
+void Widget::MirrorX(f32 axis_sum) {
+    geometry_.x = axis_sum - geometry_.x - geometry_.w;
+    for (auto& c : children_) c->MirrorX(axis_sum);
+}
+
 std::vector<Widget*> Widget::PaintOrder() const {
     std::vector<Widget*> order;
     for (const auto& c : children_) order.push_back(c.get());

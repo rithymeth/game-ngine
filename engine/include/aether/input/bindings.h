@@ -4,6 +4,7 @@
 #include "aether/input/actions.h"
 
 #include <filesystem>
+#include <string_view>
 #include <map>
 #include <optional>
 #include <string>
@@ -33,6 +34,12 @@ public:
     // number of files that couldn't be read; see Errors().
     usize Load(const assets::AssetDatabase& database);
     const std::vector<std::string>& Errors() const { return errors_; }
+    // Adds one asset from its text, for assets that don't come from a
+    // database on disk (a packaged game reads them from its archives).
+    // `importer` is "InputAction" or "InputMapping"; `path` names it in
+    // messages (and a nameless context after its file). A bad one is also in Errors().
+    bool AddFromText(const std::string& importer, const std::string& path, std::string_view text,
+                     std::string* error = nullptr);
 
     const std::vector<InputAction>& Actions() const { return actions_; }
     const InputMappingContext* FindContext(const std::string& name) const;
@@ -65,7 +72,7 @@ struct KeyOverride {
 };
 
 // A player's rebinds, saved separately from the project's defaults (in
-// Saved/Config/Input.json) so defaults can change without losing them.
+// the player's settings, §28.7) so defaults can change without losing them.
 struct UserBindings {
     std::vector<KeyOverride> overrides;
 

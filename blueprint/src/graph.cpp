@@ -1,4 +1,5 @@
 #include "aether/blueprint/graph.h"
+#include "aether/core/json_util.h"
 
 #include <algorithm>
 #include <fstream>
@@ -172,7 +173,23 @@ json BlueprintToJson(const Blueprint& bp) {
     return out;
 }
 
+namespace {
+bool BlueprintFromJsonImpl(const json& j, Blueprint& out, std::string* error);
+}
+
+// A Blueprint file with a value of the wrong type makes nlohmann throw; the loader answers with false and a
+// message instead of ending the process (found by the Blueprint fuzzer, Phase 47 step 1).
 bool BlueprintFromJson(const json& j, Blueprint& out, std::string* error) {
+    try {
+        return BlueprintFromJsonImpl(j, out, error);
+    } catch (const json::exception& e) {
+        if (error != nullptr) *error = std::string("malformed Blueprint: ") + e.what();
+        return false;
+    }
+}
+
+namespace {
+bool BlueprintFromJsonImpl(const json& j, Blueprint& out, std::string* error) {
     std::string message;
     auto fail = [&](const std::string& text) {
         if (error != nullptr) *error = text;
@@ -181,8 +198,8 @@ bool BlueprintFromJson(const json& j, Blueprint& out, std::string* error) {
     if (!j.is_object() || j.value("$type", "") != "Blueprint") {
         return fail("not a Blueprint file");
     }
-    if (j.value("$version", 0) > kFormatVersion) {
-        return fail("saved by a newer version of the engine (format " + std::to_string(j.value("$version", 0)) + ")");
+    if (JsonVersion(j) > kFormatVersion) {
+        return fail("saved by a newer version of the engine (format " + std::to_string(JsonVersion(j)) + ")");
     }
     Blueprint bp;
     bp.parent = j.value("parent", "native:Entity");
@@ -274,6 +291,7 @@ bool BlueprintFromJson(const json& j, Blueprint& out, std::string* error) {
     out = std::move(bp);
     return true;
 }
+} // namespace
 
 bool SaveBlueprint(const Blueprint& blueprint, const std::filesystem::path& path, std::string* error) {
     std::ofstream file(path, std::ios::binary | std::ios::trunc);

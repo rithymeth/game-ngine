@@ -1,0 +1,1056 @@
+#include "workspace/editor_workspace.h"
+
+#include "ai/bt_editor.h"
+#include "ai/nav_panel.h"
+#include "anim/anim_graph_editor.h"
+#include "anim/anim_viewer.h"
+#include "anim/blend_space_editor.h"
+#include "audio/cue_editor.h"
+#include "audio/mixer_panel.h"
+#include "content/content_browser_panel.h"
+#include "devtools/console_panel.h"
+#include "ui/editor_scripts.h"
+#include "ui/extensions.h"
+#include "packaging/build_window.h"
+#include "packaging/new_project_panel.h"
+#include "packaging/plugins_panel.h"
+#include "devtools/crash_reporter.h"
+#include "devtools/profiler_panel.h"
+#include "graph/blueprint_editor.h"
+#include "graph/material_editor.h"
+#include "net/net_panels.h"
+#include "loc/localization_panel.h"
+#include "gameplay/gameplay_debugger_panel.h"
+#include "save/save_inspector_panel.h"
+#include "sequencer/sequencer_panel.h"
+#include "sprite2d/tilemap_panel.h"
+#include "ui/code_editor.h"
+#include "uidesign/ui_designer.h"
+#include "vfx/vfx_editor.h"
+#include "world/world_panels.h"
+
+#include "aether/blueprint/nodes.h"
+#include "aether/core/console.h"
+#include "aether/nav/components.h"
+#include "aether/nav/crowd.h"
+#include "aether/platform/filesystem.h"
+#include "aether/project/project.h"
+#include "aether/reflection/serialize.h"
+#include "aether/save/save_bag.h"
+#include "aether/save/save_system.h"
+#include "aether/save/settings.h"
+#include "aether/scene/gameplay.h"
+#include "aether/scene/components.h"
+#include "aether/streaming/partition.h"
+
+#include <imgui.h>
+
+#include <algorithm>
+#include <array>
+#include <cctype>
+#include <cstring>
+#include <fstream>
+#include <functional>
+#include <vector>
+
+namespace aether::editor {
+
+using nlohmann::json;
+
+namespace {
+
+constexpr const char* kLuauSample = R"(-- A door that opens when the player comes near.
+local Door = {}
+
+Door.open_distance = 3.0
+Door.speed = 2.0
+
+function Door:BeginPlay()
+    self.angle = 0
+    self.target = 0
+    print("Door ready: " .. self.entity:Name())
+end
+
+function Door:Tick(dt)
+    local player = world:FindPlayer()
+    if player then
+        local d = (player.position - self.transform.position):Length()
+        self.target = d < Door.open_distance and 90 or 0
+    end
+    self.angle = self.angle + (self.target - self.angle) * math.min(1, dt * Door.speed)
+    self.transform.rotation = Quaternion.FromEuler(0, self.angle, 0)
+end
+
+return Door
+)";
+
+// The floor a navigation sample bakes on: a 20 m square.
+bool SampleFloor(const ModelRenderer& m, std::vector<Vec3>& v, std::vector<u32>& i) {
+    if (std::strcmp(m.asset_path, "floor") != 0) return false;
+    nav::NavGeometry g;
+    g.AddPlane(Vec3(0, 0, 0), 10, 10);
+    v = g.vertices;
+    i = g.indices;
+    return true;
+}
+
+bool StartsWithNoCase(const char* text, std::string_view prefix) {
+    usize k = 0;
+    for (; k < prefix.size() && text[k]; ++k) {
+        if (std::tolower(static_cast<unsigned char>(text[k])) != std::tolower(static_cast<unsigned char>(prefix[k]))) {
+            return false;
+        }
+    }
+    return k == prefix.size();
+}
+
+// An editor script (§26.5): a panel, a menu item and an asset type. Written
+// into a sample project that doesn't have it yet (an older one gains it).
+void WriteSampleEditorScript(const std::filesystem::path& content) {
+    namespace stdfs = std::filesystem;
+    std::error_code ec;
+    if (stdfs::exists(content / "Editor" / "Hello.luau", ec)) return;
+    stdfs::create_directories(content / "Editor", ec);
+    std::ofstream(content / "Editor" / "Hello.luau", std::ios::binary) << R"(-- An editor script: Content/Editor/*.luau runs when the project opens.
+local clicks = 0
+local scale = 1.0
+local note = "type here"
+
+editor.AddPanel("Hello Panel", function()
+    ui.Text("This panel is a Luau editor script.")
+    if ui.Button("Click me") then
+        clicks += 1
+        editor.Log("clicked " .. clicks)
+    end
+    ui.SameLine()
+    ui.Text("clicks: " .. clicks)
+    scale = ui.SliderFloat("Scale", scale, 0, 4)
+    note = ui.InputText("Note", note)
+end)
+
+editor.AddMenuItem("Tools/Hello/Say hello", function()
+    editor.Log("Hello from an editor script")
+end, "Ctrl+Shift+H")
+
+editor.AddAssetType("Dialogue", ".dialogue", "{\"lines\": []}\n")
+)";
+}
+
+} // namespace
+
+struct EditorWorkspace::Impl {
+    struct Tool {
+        std::string name;
+        std::string category;
+        std::function<void()> draw;
+        bool window_open = false;
+        bool extension = false; // a panel an extension registered
+    };
+    // Declared first, so they outlive the plugins' editor modules, which
+    // register into the registry and remove themselves at shutdown.
+    ExtensionRegistry extensions;
+    EditorScripts editor_scripts{extensions};
+    u64 extensions_seen = 0;
+    std::vector<Tool> tools;
+    usize selected = 0;
+
+    // Scripting.
+    std::unique_ptr<BlueprintDocument> blueprint_doc;
+    std::unique_ptr<BlueprintEditor> blueprint_editor;
+    std::unique_ptr<CodeDocument> script_doc;
+    CodeEditorState script_state;
+    // Rendering.
+    std::unique_ptr<MaterialDocument> material_doc;
+    std::unique_ptr<MaterialEditor> material_editor;
+    std::unique_ptr<ParticleSystemDocument> particle_doc;
+    std::unique_ptr<ParticleEditor> particle_editor;
+    // Animation.
+    std::unique_ptr<AnimGraphDocument> anim_doc;
+    std::unique_ptr<AnimGraphEditor> anim_editor;
+    std::unique_ptr<BlendSpaceDocument> blend_doc;
+    std::unique_ptr<BlendSpaceEditor> blend_editor;
+    anim::Skeleton skeleton;
+    anim::AnimationClip clip;
+    std::unique_ptr<ClipViewer> clip_viewer;
+    // AI.
+    std::unique_ptr<BehaviorTreeDocument> bt_doc;
+    std::unique_ptr<BehaviorTreeEditor> bt_editor;
+    World nav_level;
+    std::unique_ptr<nav::NavWorld> nav_world;
+    std::unique_ptr<nav::NavCrowd> nav_crowd;
+    std::unique_ptr<NavigationPanel> nav_panel;
+    // Audio.
+    std::unique_ptr<SoundCueDocument> cue_doc;
+    std::unique_ptr<SoundCueEditor> cue_editor;
+    std::unique_ptr<audio::Mixer> mixer;
+    std::unique_ptr<MixerPanel> mixer_panel;
+    // UI.
+    std::unique_ptr<UILayoutDocument> ui_doc;
+    std::unique_ptr<UIDesigner> ui_designer;
+    // 2D.
+    std::unique_ptr<TilemapEditDocument> tilemap_doc;
+    std::unique_ptr<TilemapPanel> tilemap_panel;
+    // Cinematics.
+    World sequence_level;
+    GuidIndex sequence_guids;
+    std::unique_ptr<SequenceDocument> sequence_doc;
+    std::unique_ptr<SequencerPanel> sequencer_panel;
+    // Data.
+    std::filesystem::path save_sample_dir;
+    std::unique_ptr<SaveInspectorDocument> save_doc;
+    std::unique_ptr<SaveInspectorPanel> save_panel;
+    std::filesystem::path loc_sample_dir;
+    std::unique_ptr<LocalizationDocument> loc_doc;
+    std::unique_ptr<LocalizationPanel> loc_panel;
+    // Gameplay.
+    World gameplay_sample;
+    gas::EffectLibrary gameplay_effects;
+    gas::AbilityLibrary gameplay_abilities;
+    std::unique_ptr<GameplayDebuggerDocument> gameplay_doc;
+    std::unique_ptr<GameplayDebuggerPanel> gameplay_panel;
+    // World.
+    terrain::TerrainData terrain_data;
+    terrain::TerrainSettings terrain_settings;
+    std::unique_ptr<TerrainEditDocument> terrain_doc;
+    std::unique_ptr<TerrainToolPanel> terrain_panel;
+    terrain::FoliageLayer foliage_layer;
+    std::unique_ptr<FoliagePaintDocument> foliage_doc;
+    std::unique_ptr<FoliagePanel> foliage_panel;
+    std::unique_ptr<SplineEditDocument> spline_doc;
+    std::unique_ptr<SplinePanel> spline_panel;
+    streaming::PartitionResult partition;
+    World streamed_world;
+    std::unique_ptr<streaming::WorldStreamer> streamer;
+    std::unique_ptr<WorldPartitionPanel> partition_panel;
+    // Networking.
+    World net_level;
+    std::unique_ptr<NetPlaySession> net_session;
+    std::unique_ptr<NetPlayPanel> net_panel;
+    std::unique_ptr<NetProfilerPanel> net_profiler;
+    // Debug.
+    Console console;
+    std::unique_ptr<ConsolePanel> console_panel;
+    std::unique_ptr<ProfilerPanel> profiler_panel;
+    std::unique_ptr<CrashReporterDialog> crash_dialog;
+    // Project.
+    std::filesystem::path project_file;
+    std::unique_ptr<ProjectSettingsPanel> project_settings;
+    std::unique_ptr<BuildPackageWindow> build_window;
+    std::unique_ptr<PluginsPanel> plugins_panel;
+    std::unique_ptr<ContentBrowserPanel> content_browser;
+    NewProjectPanel new_project;
+    plugin::PluginManager plugins; // the project's, with their modules started
+
+    explicit Impl(std::filesystem::path project) : project_file(std::move(project)) {
+        extensions.MakeActive();
+        BuildBlueprint();
+        BuildScript();
+        BuildMaterial();
+        BuildParticles();
+        BuildAnimation();
+        BuildBehaviorTree();
+        BuildNavigation();
+        BuildAudio();
+        BuildUI();
+        BuildWorld();
+        BuildTilemap();
+        BuildSequencer();
+        BuildSaveInspector();
+        BuildLocalization();
+        BuildGameplay();
+        BuildNetworking();
+        BuildDebug();
+        BuildProject();
+
+        tools = {
+            {"Blueprint - BP_Door", "Scripting", [this] { blueprint_editor->Draw(); }},
+            {"Luau Script - door.luau", "Scripting", [this] { DrawCodeEditor("##luau", *script_doc, script_state); }},
+            {"Material - M_Lit", "Rendering", [this] { material_editor->Draw(); }},
+            {"Particle System - PS_Sparks", "Rendering", [this] { particle_editor->Draw(); }},
+            {"Animation - ABP_Character", "Animation", [this] { DrawAnimation(); }}, // graph, blend space, clip,
+            {"Behavior Tree - BT_Guard", "AI", [this] { bt_editor->Draw(); }},
+            {"Navigation", "AI", [this] { nav_panel->Draw(); }},
+            {"Sound Cue - SC_Blip", "Audio", [this] { cue_editor->Draw(); }},
+            {"Mixer", "Audio", [this] { mixer_panel->Draw(); }},
+            {"UI Designer - WBP_MainMenu", "UI", [this] { ui_designer->Draw(); }},
+            {"Terrain", "World", [this] { terrain_panel->Draw(); }},
+            {"Foliage", "World", [this] { foliage_panel->Draw(); }},
+            {"Spline", "World", [this] { spline_panel->Draw(); }},
+            {"World Partition", "World", [this] { partition_panel->Draw(); }},
+            {"Tilemap - Level 1", "2D", [this] { tilemap_panel->Draw(); }},
+            {"Sequencer - Intro", "Cinematics", [this] { sequencer_panel->Draw(); }},
+            {"Save Inspector", "Data", [this] { save_panel->Draw(); }},
+            {"Localization", "Data", [this] { loc_panel->Draw(); }},
+            {"Gameplay Debugger", "Debug", [this] { gameplay_panel->Draw(); }},
+            {"Net Play", "Networking", [this] { net_panel->Draw(); }},
+            {"Net Profiler", "Networking", [this] { net_profiler->Draw(); }},
+            {"Console", "Debug", [this] { console_panel->Draw(); }},
+            {"Profiler", "Debug", [this] { profiler_panel->Draw(); }},
+            {"Crash Reports", "Debug", [this] { DrawCrashReports(); }},
+            {"Content Browser", "Project", [this] {
+                 if (content_browser) {
+                     content_browser->Draw();
+                 } else {
+                     ImGui::TextDisabled("No project is open.");
+                 }
+             }},
+            {"New Project", "Project", [this] { new_project.Draw(); }},
+            {"Project Settings", "Project", [this] { DrawProjectTool(true); }},
+            {"Build and Package", "Project", [this] { DrawProjectTool(false); }},
+            {"Plugins", "Project", [this] {
+                 if (plugins_panel) {
+                     plugins_panel->Draw();
+                 } else {
+                     ImGui::TextDisabled("No project is open.");
+                 }
+             }},
+        };
+    }
+
+    void BuildBlueprint() {
+        bp::Blueprint blueprint;
+        bp::Variable open;
+        open.name = "IsOpen";
+        open.type = bp::PinType::Of(bp::ValueType::Bool);
+        open.default_value = false;
+        blueprint.variables = {open};
+        bp::Graph g;
+        g.name = "EventGraph";
+        bp::GraphBuilder b(g);
+        const auto begin = b.Add("Event.BeginPlay", json::object(), 0, 0);
+        const auto branch = b.Add("Flow.Branch", json::object(), 280, 0);
+        const auto get = b.Add("Var.Get:IsOpen", json::object(), 80, 150);
+        const auto print = b.Add("Debug.Print", json::object(), 560, 0);
+        b.Connect(begin, "then", branch, "exec")
+            .Connect(get, "value", branch, "condition")
+            .Connect(branch, "false", print, "exec");
+        const auto tick = b.Add("Event.Tick", json::object(), 0, 260);
+        const auto mul = b.Add("Math.Multiply:float", json::object(), 280, 330);
+        const auto set = b.Add("Var.Set:IsOpen", json::object(), 560, 260);
+        b.Connect(tick, "then", set, "exec").Connect(tick, "delta_seconds", mul, "a");
+        blueprint.graphs.push_back(g);
+        blueprint_doc = std::make_unique<BlueprintDocument>(blueprint);
+        blueprint_editor = std::make_unique<BlueprintEditor>(*blueprint_doc);
+    }
+
+    void BuildScript() { script_doc = std::make_unique<CodeDocument>(kLuauSample); }
+
+    void BuildMaterial() {
+        using mat::PinType;
+        mat::Material m;
+        m.parameters.push_back({"Albedo", PinType::Texture, {}, "guid", ""});
+        m.parameters.push_back({"Tint", PinType::Float3, {1, 0.85f, 0.7f, 0}, "", "Surface"});
+        m.parameters.push_back({"Roughness", PinType::Float, {0.5f, 0, 0, 0}, "", "Surface"});
+        m.parameters.push_back({"Metallic", PinType::Float, {0.1f, 0, 0, 0}, "", "Surface"});
+        const auto out = m.Add("Material.Output", {}, 760, 0);
+        const auto tex = m.Add("Param.Texture:Albedo", {}, 0, 0);
+        const auto sample = m.Add("Texture.Sample", {}, 200, 0);
+        const auto mul = m.Add("Math.Multiply", {}, 470, 0);
+        const auto tint = m.Add("Param.Vector:Tint", {}, 200, 190);
+        const auto rough = m.Add("Param.Scalar:Roughness", {}, 470, 230);
+        const auto metal = m.Add("Param.Scalar:Metallic", {}, 470, 330);
+        m.Connect(tex, "value", sample, "texture").Connect(sample, "rgb", mul, "a").Connect(tint, "value", mul, "b");
+        m.Connect(mul, "result", out, "BaseColor")
+            .Connect(rough, "value", out, "Roughness")
+            .Connect(metal, "value", out, "Metallic");
+        material_doc = std::make_unique<MaterialDocument>(m);
+        material_editor = std::make_unique<MaterialEditor>(*material_doc);
+    }
+
+    void BuildParticles() {
+        particle_doc = std::make_unique<ParticleSystemDocument>();
+        particle_editor = std::make_unique<ParticleEditor>(*particle_doc);
+    }
+
+    void BuildAnimation() {
+        using namespace aether::anim;
+        anim_doc = std::make_unique<AnimGraphDocument>();
+        AnimGraphDocument& doc = *anim_doc;
+        doc.AddVariable(VarType::Float);
+        doc.RenameVariable("NewVar", "Speed");
+        doc.AddVariable(VarType::Bool);
+        doc.RenameVariable("NewVar", "IsFalling");
+        const u32 slot = doc.AddNode(AnimNodeKind::Slot, 420, 0);
+        u32 machine_node = 0;
+        const std::string machine = doc.AddMachine(100, 0, &machine_node);
+        doc.ConnectPose(machine_node, slot, 0);
+        doc.SetOutput(slot);
+        doc.AddState(machine, 0, 0);
+        doc.AddState(machine, 320, -60);
+        doc.AddState(machine, 320, 140);
+        doc.RenameState(machine, "State", "Idle");
+        doc.RenameState(machine, "State_1", "Walk");
+        doc.RenameState(machine, "State_2", "Fall");
+        const i32 walk = doc.AddTransition(machine, 0, 1);
+        doc.Edit("Condition", [&](AnimGraph& g) {
+            g.machines[0].transitions[static_cast<usize>(walk)].conditions.push_back(
+                {"Speed", CompareOp::Greater, 0.1f});
+        });
+        const i32 idle = doc.AddTransition(machine, 1, 0);
+        doc.Edit("Condition", [&](AnimGraph& g) {
+            g.machines[0].transitions[static_cast<usize>(idle)].conditions.push_back({"Speed", CompareOp::Less, 0.1f});
+        });
+        doc.AddTransition(machine, 1, 2);
+        doc.AddTransition(machine, 2, 0);
+        doc.Edit("Clips", [&](AnimGraph& g) {
+            const auto& states = g.machines[0].states;
+            for (AnimNode& n : g.nodes) {
+                if (n.kind != AnimNodeKind::Clip) continue;
+                n.asset = n.id == states[0].pose ? "Idle" : n.id == states[1].pose ? "Walk" : "Fall";
+            }
+        });
+        anim_editor = std::make_unique<AnimGraphEditor>(doc);
+        anim_editor->OpenTab(machine);
+
+        BlendSpace space;
+        space.dimensions = 2;
+        space.x = {"Right", -1, 1};
+        space.y = {"Forward", 0, 2};
+        blend_doc = std::make_unique<BlendSpaceDocument>(space);
+        blend_doc->AddSample("Idle", 0, 0);
+        blend_doc->AddSample("Walk_Fwd", 0, 1);
+        blend_doc->AddSample("Run_Fwd", 0, 2);
+        blend_doc->AddSample("Strafe_L", -1, 1);
+        blend_doc->AddSample("Strafe_R", 1, 1);
+        blend_editor = std::make_unique<BlendSpaceEditor>(*blend_doc);
+        blend_editor->preview_x = 0.3f;
+        blend_editor->preview_y = 1.4f;
+
+        skeleton.bones = {{"root", -1, {}, Mat4::Identity()},  {"spine", 0, {}, Mat4::Identity()},
+                          {"arm_l", 1, {}, Mat4::Identity()},  {"hand_l", 2, {}, Mat4::Identity()},
+                          {"arm_r", 1, {}, Mat4::Identity()},  {"leg_l", 0, {}, Mat4::Identity()},
+                          {"leg_r", 0, {}, Mat4::Identity()}};
+        clip.duration = 1.2f;
+        clip.tracks.resize(skeleton.bones.size());
+        clip.tracks[2].translation.times = {0.0f, 0.3f, 0.6f, 0.9f, 1.2f};
+        clip.tracks[2].translation.values = {Vec3(0, 0, 0), Vec3(0, 1.5f, 0), Vec3(0, 0.2f, 0), Vec3(0, 1.2f, 0),
+                                             Vec3(0, 0, 0)};
+        clip.notifies = {{"Footstep_L", 0.3f}, {"Footstep_R", 0.9f}};
+        clip_viewer = std::make_unique<ClipViewer>(skeleton, clip);
+        clip_viewer->selected_bone = 2;
+        clip_viewer->SetTime(0.45f);
+    }
+
+    // The graph above, with the blend space and the clip side by side under it.
+    void DrawAnimation() {
+        const ImVec2 avail = ImGui::GetContentRegionAvail();
+        if (ImGui::BeginChild("##graph", ImVec2(avail.x, avail.y * 0.6f), ImGuiChildFlags_Borders)) {
+            anim_editor->Draw();
+        }
+        ImGui::EndChild();
+        if (ImGui::BeginChild("##blend", ImVec2(avail.x * 0.55f, 0), ImGuiChildFlags_Borders)) {
+            blend_editor->Draw();
+        }
+        ImGui::EndChild();
+        ImGui::SameLine();
+        if (ImGui::BeginChild("##clip", ImVec2(0, 0), ImGuiChildFlags_Borders)) {
+            clip_viewer->Draw();
+        }
+        ImGui::EndChild();
+    }
+
+    void BuildBehaviorTree() {
+        bt_doc = std::make_unique<BehaviorTreeDocument>();
+        BehaviorTreeDocument& bt = *bt_doc;
+        bt.AddKey("Enemy", ai::BlackboardType::Entity);
+        bt.AddKey("Health", ai::BlackboardType::Float);
+        bt.AddNode({}, ai::BtNodeType::Sequence, 0);
+        bt.AddNode({0}, ai::BtNodeType::MoveTo);
+        bt.SetNodeField({0, 0}, "key", "Enemy");
+        bt.AddNode({0}, ai::BtNodeType::Log);
+        bt.AddDecorator({0}, ai::BtDecoratorType::BlackboardCondition);
+        bt.AddNode({}, ai::BtNodeType::Wait);
+        bt_editor = std::make_unique<BehaviorTreeEditor>(bt);
+    }
+
+    // A floor with a crate on it, baked.
+    void BuildNavigation() {
+        ModelRenderer floor;
+        SetModelPath(floor, "floor");
+        nav_level.CreateEntity(Transform{}, floor);
+        nav_level.CreateEntity(Transform{Vec3(3, 0.5f, 3), Quaternion::Identity()}, NavObstacle{});
+        nav_world = std::make_unique<nav::NavWorld>(nav_level, SampleFloor);
+        nav_crowd = std::make_unique<nav::NavCrowd>(nav_level, *nav_world);
+        nav_panel = std::make_unique<NavigationPanel>(nav_level, *nav_world, nav_crowd.get());
+        nav_panel->Bake();
+    }
+
+    void BuildAudio() {
+        cue_doc = std::make_unique<SoundCueDocument>();
+        cue_doc->SetSounds({"blip", "hum"});
+        const u32 random = cue_doc->AddNode(audio::CueNodeType::Random, 300, 0);
+        const u32 a = cue_doc->AddNode(audio::CueNodeType::Wave, 0, 0, "blip");
+        const u32 b = cue_doc->AddNode(audio::CueNodeType::Wave, 0, 100, "hum");
+        cue_doc->Connect(a, random, 0);
+        cue_doc->Connect(b, random, 1);
+        cue_editor = std::make_unique<SoundCueEditor>(*cue_doc);
+        mixer = std::make_unique<audio::Mixer>(48000);
+        mixer->AddDefaultBuses();
+        mixer_panel = std::make_unique<MixerPanel>(*mixer);
+    }
+
+    void BuildUI() {
+        ui_doc = std::make_unique<UILayoutDocument>();
+        const auto play = ui_doc->AddWidget("Button", {});
+        const auto quit = ui_doc->AddWidget("Button", {});
+        if (play) {
+            ui_doc->Rename(*play, "Play");
+            if (const auto label = ui_doc->AddWidget("Text", *play)) ui_doc->SetProperty(*label, "text", "Play");
+        }
+        if (quit) {
+            ui_doc->Rename(*quit, "Quit");
+            if (const auto label = ui_doc->AddWidget("Text", *quit)) ui_doc->SetProperty(*label, "text", "Quit");
+        }
+        ui_designer = std::make_unique<UIDesigner>(*ui_doc);
+    }
+
+    // A small platform level over an 8x4-tile sheet: tiles 16-31 are the
+    // ground autotile's sixteen shapes, all solid.
+    void BuildTilemap() {
+        using namespace aether::sprite2d;
+        Tileset tileset;
+        tileset.texture_width = 128;
+        tileset.texture_height = 64;
+        tileset.tile_width = tileset.tile_height = 16;
+        std::array<i32, 16> shapes;
+        for (int m = 0; m < 16; ++m) {
+            shapes[static_cast<usize>(m)] = 16 + m;
+            tileset.SetSolid(16 + m, true);
+        }
+        const usize ground = tileset.AddAutotile("Ground", shapes);
+        tileset.SetSolid(8, true); // a crate
+        TilemapData map;
+        map.Resize(24, 14);
+        map.AddLayer("Ground");
+        map.AddLayer("Decor");
+        map.layers[1].collides = false;
+        map.Fill(0, 0, 0, 23, 1, AutotileCell(ground));
+        map.Fill(0, 6, 4, 11, 4, AutotileCell(ground));
+        map.Fill(0, 14, 7, 19, 7, AutotileCell(ground));
+        map.Set(0, 3, 2, 8);
+        map.Set(1, 8, 2, 4);
+        map.Set(1, 15, 8, 5);
+        tilemap_doc = std::make_unique<TilemapEditDocument>(std::move(map), std::move(tileset));
+        tilemap_doc->brush = AutotileCell(ground);
+        tilemap_panel = std::make_unique<TilemapPanel>(*tilemap_doc);
+    }
+
+    // A small cutscene over a door and a light: the door slides open (a
+    // position curve) while a marker event fires and the light switches on.
+    void BuildSequencer() {
+        using namespace aether::seq;
+        (void)GetComponentId<Transform>();
+        (void)GetComponentId<Tags>();
+        const auto actor = [&](const char* tag, Vec3 at) {
+            Tags tags;
+            tags.names = {tag};
+            const Entity e = sequence_level.CreateEntity(Transform{at, Quaternion::Identity()}, tags);
+            return EnsureGuid(sequence_level, e, &sequence_guids);
+        };
+        const EntityGuid door = actor("Door", Vec3(0, 0, 0));
+        const EntityGuid light = actor("Light", Vec3(0, 3, 0));
+        LevelSequence s;
+        s.name = "Intro";
+        s.duration = 4.0f;
+        Track slide;
+        slide.id = "door";
+        slide.name = "Door slide";
+        slide.type = TrackType::Transform;
+        slide.binding = door;
+        slide.channels = {Channel{"position.x", {Key{0.0f, 0.0f, Interp::Bezier, 0, 0}, Key{2.0f, 3.0f, Interp::Linear, 0, 0}}},
+                          Channel{"position.y", {}}, Channel{"position.z", {}}};
+        Track marker;
+        marker.id = "events";
+        marker.name = "Markers";
+        marker.type = TrackType::Event;
+        marker.events = {EventKey{1.0f, "DoorOpening", ""}, EventKey{3.0f, "Done", ""}};
+        Track lamp;
+        lamp.id = "lamp";
+        lamp.name = "Light";
+        lamp.type = TrackType::Visibility;
+        lamp.binding = light;
+        lamp.channels = {Channel{"visible", {Key{0.0f, 0.0f, Interp::Constant, 0, 0}, Key{1.0f, 1.0f, Interp::Constant, 0, 0}}}};
+        s.tracks = {slide, marker, lamp};
+        sequence_doc = std::make_unique<SequenceDocument>(std::move(s));
+        sequencer_panel = std::make_unique<SequencerPanel>(*sequence_doc, sequence_level, sequence_guids);
+    }
+
+    // A folder of sample saves to look at: a Blueprint-style save bag (with a
+    // world snapshot), a settings file, and a damaged copy (bad checksum).
+    // A string table to look at: English with a placeholder and a plural, French
+    // complete, German with gaps; and a small content folder with UI text for
+    // the gather step to find.
+    void BuildLocalization() {
+        std::error_code ec;
+        loc_sample_dir = std::filesystem::temp_directory_path() / "aether_editor_loc_samples";
+        std::filesystem::remove_all(loc_sample_dir, ec);
+        std::filesystem::create_directories(loc_sample_dir / "Content" / "UI", ec);
+        const std::string csv =
+            "key,en,fr,de\r\n"
+            "menu.play,Play,Jouer,Spielen\r\n"
+            "menu.quit,Quit,Quitter,\r\n"
+            "hud.coins,{count} coin{count|s},{count} pi\xC3\xA8""ce{count|s},\r\n"
+            "hud.welcome,Welcome {name}!,Bienvenue {name} !,\r\n";
+        const std::filesystem::path table = loc_sample_dir / "Content" / "Localization" / "strings.astrings";
+        std::filesystem::create_directories(table.parent_path(), ec);
+        fs::WriteFileBytes(table.string(), csv.data(), csv.size());
+        const std::string ui = R"({"root":{"type":"VerticalBox","children":[{"type":"Text","text":"Play","text_key":"menu.play"},{"type":"Text","text":"Settings","text_key":"menu.settings"}]}})";
+        fs::WriteFileBytes((loc_sample_dir / "Content" / "UI" / "menu.aui").string(), ui.data(), ui.size());
+        loc_doc = std::make_unique<LocalizationDocument>();
+        loc_panel = std::make_unique<LocalizationPanel>(*loc_doc);
+        loc_panel->SetContentDirectory(loc_sample_dir / "Content");
+        loc_panel->SetPoDirectory(loc_sample_dir / "po");
+        loc_doc->Open(table);
+        loc_panel->SelectLanguage("de");
+        ExtensionAssetType type;
+        type.name = "String Table";
+        type.extension = ".astrings";
+        type.open = [this](const std::filesystem::path& file) {
+            loc_doc->Open(file);
+            loc_panel->SetContentDirectory(file.parent_path().parent_path());
+        };
+        type.owner = "editor.loc";
+        extensions.AddAssetType(std::move(type));
+    }
+
+    // A small sample world to look at; the host points the debugger at the live world with SetGameplayWorld.
+    void BuildGameplay() {
+        using namespace aether::gas;
+        RegisterGameplayComponents();
+        GameplayEffect burning;
+        burning.name = "Burning";
+        burning.duration_policy = GameplayEffect::Duration::Timed;
+        burning.duration = 6.0f;
+        burning.period = 1.0f;
+        burning.modifiers = {{"Health", GameplayEffect::Op::Add, -4.0f}};
+        burning.granted_tags = {GameplayTag::Make("State.Burning")};
+        GameplayEffect haste;
+        haste.name = "Haste";
+        haste.duration_policy = GameplayEffect::Duration::Infinite;
+        haste.modifiers = {{"Speed", GameplayEffect::Op::Multiply, 1.5f}};
+        GameplayEffect cost;
+        cost.name = "FireballCost";
+        cost.modifiers = {{"Mana", GameplayEffect::Op::Add, -20.0f}};
+        GameplayEffect cooldown;
+        cooldown.name = "FireballCooldown";
+        cooldown.duration_policy = GameplayEffect::Duration::Timed;
+        cooldown.duration = 3.0f;
+        cooldown.granted_tags = {GameplayTag::Make("Cooldown.Fireball")};
+        for (GameplayEffect* e : {&burning, &haste, &cost, &cooldown}) gameplay_effects.Register(*e);
+        GameplayAbility fireball;
+        fireball.name = "Fireball";
+        fireball.tags = {GameplayTag::Make("Ability.Fire")};
+        fireball.cost = "FireballCost";
+        fireball.cooldown = "FireballCooldown";
+        gameplay_abilities.Register(fireball);
+        // Systems only to set the sample up: they go away at the end of this function (and with them
+        // their claim on being the active systems), leaving the components they made.
+        AttributeSystem gameplay_attributes_sys(gameplay_sample);
+        EffectSystem gameplay_effects_sys(gameplay_sample, gameplay_attributes_sys, gameplay_effects);
+        AbilitySystem gameplay_abilities_sys(gameplay_sample, gameplay_attributes_sys, gameplay_effects_sys, gameplay_abilities, gameplay_effects);
+        const Entity hero = gameplay_sample.CreateEntity(Transform{Vec3(), Quaternion::Identity()});
+        gameplay_attributes_sys.Define(hero, "Health", 100, 0, 100);
+        gameplay_attributes_sys.Define(hero, "Mana", 50, 0, 100);
+        gameplay_attributes_sys.Define(hero, "Speed", 6);
+        gameplay_effects_sys.Apply(hero, "Burning");
+        gameplay_effects_sys.Apply(hero, "Haste");
+        gameplay_abilities_sys.Grant(hero, "Fireball");
+        gameplay_abilities_sys.TryActivate(hero, "Fireball");
+        gameplay_attributes_sys.ClearEvents();
+        gameplay_effects_sys.ClearEvents();
+        gameplay_abilities_sys.ClearEvents();
+        gameplay_doc = std::make_unique<GameplayDebuggerDocument>();
+        gameplay_doc->SetWorld(&gameplay_sample);
+        gameplay_doc->SetLibraries(&gameplay_effects, &gameplay_abilities);
+        gameplay_panel = std::make_unique<GameplayDebuggerPanel>(*gameplay_doc);
+    }
+
+    void BuildSaveInspector() {
+        using namespace aether::save;
+        std::error_code ec;
+        save_sample_dir = std::filesystem::temp_directory_path() / "aether_editor_save_samples";
+        std::filesystem::remove_all(save_sample_dir, ec);
+        SaveSystem saves(save_sample_dir);
+        SaveBag bag;
+        bag.SetBool("tutorial_done", true);
+        bag.SetInt("coins", 42);
+        bag.SetFloat("health", 87.5f);
+        bag.SetString("checkpoint", "Cave_2");
+        bag.SetVector("respawn", Vec3(12.0f, 0.5f, -3.0f));
+        SavedEntity door;
+        door.guid = EntityGuid{0xD00A, 1};
+        door.tag = "cave_door";
+        door.components.push_back({"Door", "{\"open\":true}"});
+        bag.world.entities.push_back(door);
+        bag.world.destroyed.push_back(EntityGuid{0xE4E4, 2});
+        bag.has_world = true;
+        (void)saves.Save("slot1", bag); // a sample for the Save Inspector: a failure just leaves it empty
+        (void)saves.Save("slot1", bag); // twice: the second write keeps the first as a backup
+        SettingsStore<> settings(save_sample_dir);
+        GameSettings s;
+        s.quality = "Medium";
+        s.master = 0.8f;
+        settings.Set(s);
+        (void)settings.Save();
+        // A damaged copy: one value changed without fixing the checksum.
+        std::string text;
+        if (fs::ReadFileText((save_sample_dir / "slot1.asav").string(), text)) {
+            const usize at = text.find("\"i\": 42");
+            if (at != std::string::npos) text.replace(at + 5, 2, "99");
+            std::ofstream(save_sample_dir / "damaged.asav", std::ios::binary) << text;
+        }
+        save_doc = std::make_unique<SaveInspectorDocument>();
+        save_panel = std::make_unique<SaveInspectorPanel>(*save_doc);
+        save_panel->SetDirectory(save_sample_dir);
+        save_doc->Open(save_sample_dir / "slot1.asav");
+        // Double-clicking a save in the Content Browser opens it here.
+        for (const char* ext : {".asav", ".asettings"}) {
+            ExtensionAssetType type;
+            type.name = ext[1] == 'a' && ext[2] == 's' && ext[3] == 'a' ? "Save Game" : "Settings";
+            type.extension = ext;
+            type.open = [this](const std::filesystem::path& file) {
+                save_doc->Open(file);
+                save_panel->SetDirectory(file.parent_path());
+            };
+            type.owner = "editor.save";
+            extensions.AddAssetType(std::move(type));
+        }
+    }
+
+    void BuildWorld() {
+        using namespace aether::terrain;
+        Heightmap hm;
+        hm.width = hm.height = 63;
+        hm.cell_size = 1.0f;
+        hm.heights.assign(63u * 63u, 0.0f);
+        terrain_settings.verts_per_chunk = 32;
+        terrain_settings.chunk_world_size = 31.0f;
+        InitTerrainData(terrain_data, hm, terrain_settings);
+        terrain_data.layers.push_back(TerrainLayer{"Grass", Vec3(0.3f, 0.6f, 0.2f), 0.0f, 0.9f, 1.0f});
+        terrain_data.layers.push_back(TerrainLayer{"Rock", Vec3(0.5f, 0.5f, 0.5f), 0.0f, 0.9f, 1.0f});
+        std::vector<SplatmapLayer> layers(2);
+        terrain_doc =
+            std::make_unique<TerrainEditDocument>(terrain_data, terrain_settings, BuildSplatmap(64, layers, {}));
+        terrain_panel = std::make_unique<TerrainToolPanel>(*terrain_doc);
+
+        foliage_layer.types.resize(1);
+        foliage_doc = std::make_unique<FoliagePaintDocument>(foliage_layer);
+        foliage_panel = std::make_unique<FoliagePanel>(*foliage_doc);
+
+        spline_doc = std::make_unique<SplineEditDocument>();
+        spline_doc->AddPoint(Vec3());
+        spline_doc->AddPoint(Vec3(10, 0, 0));
+        spline_doc->AddPoint(Vec3(20, 0, 8));
+        spline_panel = std::make_unique<SplinePanel>(*spline_doc);
+
+        // A level partitioned into 64 m cells, streamed around a camera at the origin.
+        RegisterStreamingComponents();
+        World source;
+        for (int i = 0; i < 6; ++i) {
+            source.CreateEntity(Transform{Vec3(10.0f + 50.0f * static_cast<f32>(i), 0, 10.0f + 25.0f * static_cast<f32>(i % 3)),
+                                          Quaternion::Identity()});
+        }
+        streaming::PartitionSettings ps;
+        ps.cell_size = 64.0f;
+        partition = streaming::PartitionWorld(source, ps);
+        streamed_world.CreateEntity(Transform{Vec3(0, 0, 0), Quaternion::Identity()}, StreamingSource{90.0f, true});
+        streamer = std::make_unique<streaming::WorldStreamer>(
+            streamed_world, partition.index, [this](const streaming::CellCoord& c, std::vector<u8>& bytes) {
+                const auto it = partition.cells.find(c);
+                if (it == partition.cells.end()) return false;
+                bytes = it->second;
+                return true;
+            });
+        streamer->Update();
+        partition_panel = std::make_unique<WorldPartitionPanel>(*streamer, &streamed_world);
+    }
+
+    // Three crates; Net Play's Start runs them on a server with clients.
+    void BuildNetworking() {
+        for (int i = 0; i < 3; ++i) {
+            ModelRenderer model;
+            SetModelPath(model, "models/crate.gltf");
+            net_level.CreateEntity(Transform{Vec3(static_cast<f32>(i) * 3.0f, 0, 5), Quaternion{}}, model);
+        }
+        net_session = std::make_unique<NetPlaySession>();
+        net_panel = std::make_unique<NetPlayPanel>(*net_session, net_level);
+        net_panel->settings.clients = 2;
+        net_profiler = std::make_unique<NetProfilerPanel>(*net_session);
+    }
+
+    void BuildDebug() {
+        console.CaptureLog(true);
+        console_panel = std::make_unique<ConsolePanel>(console);
+        profiler_panel = std::make_unique<ProfilerPanel>();
+        crash_dialog = std::make_unique<CrashReporterDialog>(CrashConfig{}.directory);
+    }
+
+    // A project made from a template becomes the one the Project tools work on.
+    void BuildProject() {
+        new_project.on_created = [this](const std::filesystem::path& file) { OpenProject(file); };
+        std::string error;
+        if (project_file.empty()) project_file = EditorWorkspace::SampleProject(&error);
+        if (project_file.empty()) return;
+        LoadProjectTools();
+    }
+
+    // Points the Project tools (and the plugins' modules) at `file`.
+    void OpenProject(const std::filesystem::path& file) {
+        // The running build, if any, is cancelled and joined by its window's destructor.
+        build_window.reset();
+        project_file = file;
+        LoadProjectTools();
+    }
+
+    void LoadProjectTools() {
+        std::string error;
+        project_settings = std::make_unique<ProjectSettingsPanel>(project_file);
+        build_window = std::make_unique<BuildPackageWindow>(project_file);
+        plugins_panel = std::make_unique<PluginsPanel>(project_file);
+        content_browser = std::make_unique<ContentBrowserPanel>(project_file);
+        // The project's plugins: their runtime and editor modules run in the editor.
+        if (plugin::ResolveProjectPlugins(project_file, plugins, &error)) plugins.StartModules(true, true);
+        // The project's editor scripts (Content/Editor/*.luau, §26.5).
+        editor_scripts.Load(ProjectPaths::ForFile(project_file).content / "Editor");
+    }
+
+    // The registry's panels become tools at the end of the list (so the
+    // built-in tools keep their numbers), under their own category.
+    void SyncExtensions() {
+        if (extensions_seen == extensions.Version()) return;
+        extensions_seen = extensions.Version();
+        std::vector<std::string> open;
+        for (const Tool& t : tools) {
+            if (t.extension && t.window_open) open.push_back(t.name);
+        }
+        tools.erase(std::remove_if(tools.begin(), tools.end(), [](const Tool& t) { return t.extension; }), tools.end());
+        std::vector<const ExtensionPanel*> panels;
+        for (const ExtensionPanel& p : extensions.Panels()) panels.push_back(&p);
+        std::stable_sort(panels.begin(), panels.end(),
+                         [](const ExtensionPanel* a, const ExtensionPanel* b) { return a->category < b->category; });
+        for (const ExtensionPanel* p : panels) {
+            Tool tool;
+            tool.name = p->name;
+            tool.category = p->category;
+            tool.extension = true;
+            tool.window_open = std::find(open.begin(), open.end(), p->name) != open.end();
+            const std::string name = p->name;
+            tool.draw = [this, name] {
+                if (const ExtensionPanel* panel = extensions.FindPanel(name); panel && panel->draw) panel->draw();
+            };
+            tools.push_back(std::move(tool));
+        }
+        if (selected >= tools.size()) selected = 0;
+    }
+
+    void DrawProjectTool(bool settings) {
+        if (!project_settings) {
+            ImGui::TextDisabled("No project is open.");
+            return;
+        }
+        if (settings) {
+            project_settings->Draw();
+        } else {
+            build_window->Draw();
+        }
+    }
+
+    void DrawCrashReports() {
+        ImGui::TextWrapped("Crash reports from earlier runs are kept in \"%s\".", CrashConfig{}.directory.c_str());
+        if (ImGui::Button("Check for crash reports")) {
+            crash_dialog->Refresh();
+            crash_dialog->open = !crash_dialog->Reports().empty();
+        }
+        ImGui::SameLine();
+        if (crash_dialog->Reports().empty()) {
+            ImGui::TextDisabled("No unseen reports.");
+        } else {
+            ImGui::Text("%zu report(s)", crash_dialog->Reports().size());
+        }
+    }
+};
+
+EditorWorkspace::EditorWorkspace(std::filesystem::path project_file)
+    : impl_(std::make_unique<Impl>(std::move(project_file))) {}
+
+const std::filesystem::path& EditorWorkspace::ProjectFile() const { return impl_->project_file; }
+
+bool EditorWorkspace::OpenProject(const std::filesystem::path& project_file) {
+    ProjectSettings settings;
+    if (!LoadProject(project_file, settings, nullptr)) return false;
+    impl_->OpenProject(project_file);
+    return true;
+}
+
+std::filesystem::path EditorWorkspace::SampleProject(std::string* error) {
+    namespace stdfs = std::filesystem;
+    std::error_code ec;
+    const stdfs::path parent = stdfs::temp_directory_path(ec) / "aether_editor";
+    const ProjectPaths paths = ProjectPaths::ForFile(parent / "SampleGame" / "SampleGame.aproject");
+    if (stdfs::is_regular_file(paths.file, ec)) {
+        WriteSampleEditorScript(paths.content);
+        return paths.file;
+    }
+    stdfs::create_directories(parent, ec);
+    stdfs::remove_all(paths.root, ec); // a half-made one from an earlier run
+    std::string why;
+    if (!CreateProject(parent, "SampleGame", nullptr, &why)) {
+        if (error) *error = why;
+        return {};
+    }
+    // A startup scene: a tagged player, a camera and a few crates.
+    nlohmann::json entities = nlohmann::json::array();
+    const auto add = [&](Vec3 at, const char* tag, bool camera) {
+        nlohmann::json components = {{"Transform", reflect::ToJson(Transform{at, Quaternion::Identity()})}};
+        Tags tags;
+        tags.names = {tag};
+        components["Tags"] = reflect::ToJson(tags);
+        if (camera) components["Camera"] = reflect::ToJson(Camera{});
+        entities.push_back({{"components", components}});
+    };
+    add(Vec3(0, 1, 0), "Player", false);
+    add(Vec3(0, 3, 8), "MainCamera", true);
+    for (int i = 0; i < 3; ++i) add(Vec3(static_cast<f32>(i) * 2.0f - 2.0f, 0.5f, -4.0f), "Crate", false);
+    const nlohmann::json scene = {{"$type", "Scene"}, {"$version", 1}, {"entities", entities}};
+    stdfs::create_directories(paths.content / "Scenes", ec);
+    std::ofstream(paths.content / "Scenes" / "Main.ascene", std::ios::binary) << scene.dump(2);
+    ProjectSettings settings;
+    if (!LoadProject(paths.file, settings, &why)) {
+        if (error) *error = why;
+        return {};
+    }
+    settings.startup_scene = "Scenes/Main.ascene";
+    settings.window_title = "Sample Game";
+    if (!SaveProject(paths.file, settings, &why)) {
+        if (error) *error = why;
+        return {};
+    }
+    WriteSampleEditorScript(paths.content);
+    return paths.file;
+}
+EditorWorkspace::~EditorWorkspace() = default;
+
+void EditorWorkspace::Update(f32 dt) {
+    impl_->SyncExtensions();
+    if (impl_->net_session->Running()) impl_->net_session->Tick(static_cast<f64>(dt));
+    impl_->console.Pump();
+}
+
+ExtensionRegistry& EditorWorkspace::Extensions() { return impl_->extensions; }
+EditorScripts& EditorWorkspace::Scripts() { return impl_->editor_scripts; }
+
+void EditorWorkspace::SetGameplayWorld(World* world, gas::AttributeSystem* attributes, gas::EffectSystem* effects, gas::AbilitySystem* abilities) {
+    impl_->gameplay_doc->SetWorld(world ? world : &impl_->gameplay_sample);
+    impl_->gameplay_doc->SetSystems(world ? attributes : nullptr, world ? effects : nullptr, world ? abilities : nullptr);
+}
+
+usize EditorWorkspace::ToolCount() const { return impl_->tools.size(); }
+const char* EditorWorkspace::ToolName(usize tool) const { return impl_->tools[tool].name.c_str(); }
+const char* EditorWorkspace::ToolCategory(usize tool) const { return impl_->tools[tool].category.c_str(); }
+
+i64 EditorWorkspace::FindTool(std::string_view name) const {
+    if (name.empty()) return -1;
+    for (usize i = 0; i < impl_->tools.size(); ++i) {
+        if (StartsWithNoCase(impl_->tools[i].name.c_str(), name)) return static_cast<i64>(i);
+    }
+    return -1;
+}
+
+usize EditorWorkspace::Selected() const { return impl_->selected; }
+void EditorWorkspace::Select(usize tool) {
+    if (tool < impl_->tools.size()) impl_->selected = tool;
+}
+bool EditorWorkspace::IsWindowOpen(usize tool) const { return impl_->tools[tool].window_open; }
+void EditorWorkspace::SetWindowOpen(usize tool, bool open) {
+    if (tool < impl_->tools.size()) impl_->tools[tool].window_open = open;
+}
+
+void EditorWorkspace::DrawTool(usize tool) {
+    ImGui::PushID(static_cast<int>(tool));
+    impl_->tools[tool].draw();
+    ImGui::PopID();
+}
+
+void EditorWorkspace::DrawToolsMenu() {
+    impl_->extensions.PollShortcuts();
+    if (ImGui::BeginMenu("Tools")) {
+        const char* category = nullptr;
+        bool category_open = false;
+        for (usize i = 0; i < impl_->tools.size(); ++i) {
+            Impl::Tool& t = impl_->tools[i];
+            if (!category || std::strcmp(category, t.category.c_str()) != 0) {
+                if (category_open) ImGui::EndMenu();
+                category = t.category.c_str();
+                category_open = ImGui::BeginMenu(category);
+            }
+            if (category_open && ImGui::MenuItem(t.name.c_str(), nullptr, t.window_open)) {
+                t.window_open = !t.window_open;
+                if (t.window_open) ImGui::SetWindowFocus(t.name.c_str());
+            }
+        }
+        if (category_open) ImGui::EndMenu();
+        // Items extensions put under "Tools/...", then the menus of their own roots.
+        impl_->extensions.DrawMenuItemsOf("Tools");
+        ImGui::EndMenu();
+    }
+    impl_->extensions.DrawMenus("Tools");
+}
+
+void EditorWorkspace::DrawHubContents() {
+    const f32 list_w = 230.0f;
+    if (ImGui::BeginChild("##tool_list", ImVec2(list_w, 0), ImGuiChildFlags_Borders)) {
+        const char* category = nullptr;
+        for (usize i = 0; i < impl_->tools.size(); ++i) {
+            const Impl::Tool& t = impl_->tools[i];
+            if (!category || std::strcmp(category, t.category.c_str()) != 0) {
+                category = t.category.c_str();
+                ImGui::SeparatorText(category);
+            }
+            if (ImGui::Selectable(t.name.c_str(), impl_->selected == i)) impl_->selected = i;
+            if (ImGui::BeginPopupContextItem()) {
+                if (ImGui::MenuItem("Open in its own window")) impl_->tools[i].window_open = true;
+                ImGui::EndPopup();
+            }
+        }
+    }
+    ImGui::EndChild();
+    ImGui::SameLine();
+    if (ImGui::BeginChild("##tool", ImVec2(0, 0), ImGuiChildFlags_Borders)) {
+        const usize sel = impl_->selected;
+        if (ImGui::SmallButton("Pop out")) impl_->tools[sel].window_open = true;
+        ImGui::SameLine();
+        ImGui::TextUnformatted(impl_->tools[sel].name.c_str());
+        ImGui::SameLine();
+        ImGui::TextDisabled("(%s)", impl_->tools[sel].category.c_str());
+        ImGui::Separator();
+        // A popped-out tool draws in its own window, not twice.
+        if (impl_->tools[sel].window_open) {
+            ImGui::TextDisabled("Open in its own window.");
+        } else {
+            DrawTool(sel);
+        }
+    }
+    ImGui::EndChild();
+}
+
+void EditorWorkspace::DrawHub(const char* title, bool* open) {
+    ImGui::SetNextWindowSize(ImVec2(1100, 700), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin(title, open)) DrawHubContents();
+    ImGui::End();
+}
+
+void EditorWorkspace::DrawWindows() {
+    int cascade = 0;
+    for (usize i = 0; i < impl_->tools.size(); ++i) {
+        Impl::Tool& t = impl_->tools[i];
+        if (!t.window_open) continue;
+        const f32 offset = 30.0f * static_cast<f32>(cascade++ % 8);
+        ImGui::SetNextWindowPos(ImVec2(120.0f + offset, 80.0f + offset), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(900, 600), ImGuiCond_FirstUseEver);
+        if (ImGui::Begin(t.name.c_str(), &t.window_open)) DrawTool(i);
+        ImGui::End();
+    }
+    impl_->crash_dialog->Draw();
+}
+
+} // namespace aether::editor

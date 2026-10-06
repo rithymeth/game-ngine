@@ -4,6 +4,7 @@
 #include "aether/math/math.h"
 #include "aether/reflection/reflection.h"
 
+#include <span>
 #include <functional>
 #include <memory>
 #include <vector>
@@ -12,10 +13,12 @@ namespace aether {
 
 // Phase 21 step 1: heightmap terrain with chunked meshes and LOD.
 // The engine module owns the terrain math and chunk generation.
-// GPU buffer upload and rendering use the RHI ? the terrain module itself
+// GPU buffer upload and rendering use the RHI -- the terrain module itself
 // is engine-only so it can build headless.
 
 namespace terrain {
+
+using std::span;
 
 // A 2D heightmap tile used as source data for terrain chunks.
 // Heights are in world units.
@@ -76,6 +79,9 @@ struct TerrainChunk {
 
 // Build the chunk layout from heightmap dimensions.
 void InitTerrainData(TerrainData& data, const Heightmap& hm, const TerrainSettings& settings);
+
+// A chunk's world bounds (its heights at its LOD).
+void ComputeChunkBounds(const TerrainData& data, const TerrainSettings& settings, TerrainChunk& chunk);
 
 // Build all terrain chunks from heightmap data.
 std::vector<TerrainChunk> BuildChunks(const TerrainData& data,
