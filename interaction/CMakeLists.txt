@@ -4,6 +4,7 @@
 add_library(aether_interaction STATIC
     src/interactable.cpp
     src/interaction_system.cpp
+    src/interaction_kit.cpp
     src/interaction_library.cpp
 )
 target_include_directories(aether_interaction PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

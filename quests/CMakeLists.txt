@@ -5,6 +5,7 @@
 add_library(aether_quests STATIC
     src/quest_def.cpp
     src/quest_system.cpp
+    src/quests_kit.cpp
     src/quest_library.cpp
 )
 target_include_directories(aether_quests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

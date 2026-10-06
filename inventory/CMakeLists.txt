@@ -5,6 +5,7 @@ add_library(aether_inventory STATIC
     src/item_def.cpp
     src/inventory.cpp
     src/inventory_system.cpp
+    src/inventory_kit.cpp
     src/inventory_library.cpp
 )
 target_include_directories(aether_inventory PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
