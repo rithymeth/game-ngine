@@ -1,11 +1,14 @@
-// Engine benchmarks (Phase 38 steps 2, 3 and 4): ECS iteration and structural changes, the job system, and
-// scene save and load.
+// Engine benchmarks (Phase 38 steps 2, 3 and 4): ECS iteration and structural changes, the job system, scene
+// save and load, and texture cooking.
 #include "aether/bench/bench.h"
+#include "aether/cook/texture_cook.h"
 #include "aether/ecs/world.h"
 #include "aether/job/job_system.h"
 #include "aether/scene/components.h"
 #include "aether/scene/serialization.h"
 
+#include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -162,4 +165,81 @@ AETHER_BENCH_SETUP(
     [] {
         World world;
         LoadSceneJsonFromMemory(world, SceneData().json, "bench");
+    });
+
+// ---------------------------------------------------------------------------------------------------
+// Texture cooking (Phase 38 step 4): block compression and the .atex container, on a synthetic image.
+// ---------------------------------------------------------------------------------------------------
+
+namespace {
+
+// A smooth gradient with some noise, so the encoders have real work to do.
+std::vector<u8> SyntheticImage(u32 size) {
+    std::vector<u8> rgba(static_cast<usize>(size) * size * 4);
+    u32 seed = 12345;
+    for (u32 y = 0; y < size; ++y) {
+        for (u32 x = 0; x < size; ++x) {
+            seed = seed * 1664525u + 1013904223u;
+            u8* p = &rgba[(static_cast<usize>(y) * size + x) * 4];
+            p[0] = static_cast<u8>(x * 255 / size);
+            p[1] = static_cast<u8>(y * 255 / size);
+            p[2] = static_cast<u8>((seed >> 24) & 0xFF);
+            p[3] = 255;
+        }
+    }
+    return rgba;
+}
+
+struct CookState {
+    std::vector<u8> image;
+    std::vector<u8> atex;
+};
+CookState& Cook() {
+    static CookState s;
+    return s;
+}
+
+} // namespace
+
+AETHER_BENCH_SETUP(
+    "cook/texture_bc7_256", 3,
+    [] { Cook().image = SyntheticImage(256); },
+    [] {
+        cook::TextureCookSettings settings;
+        settings.auto_format = false;
+        settings.format = cook::TextureFormat::BC7;
+        settings.quality = 2;
+        cook::CookTexture(Cook().image, 256, 256, settings);
+    });
+
+AETHER_BENCH_SETUP(
+    "cook/texture_bc1_512_mips", 3,
+    [] { Cook().image = SyntheticImage(512); },
+    [] {
+        cook::TextureCookSettings settings;
+        settings.auto_format = false;
+        settings.format = cook::TextureFormat::BC1;
+        settings.quality = 2;
+        cook::CookTexture(Cook().image, 512, 512, settings);
+    });
+
+// Writing a cooked texture to its container and reading it back.
+AETHER_BENCH_SETUP(
+    "cook/atex_roundtrip_256", 10,
+    [] {
+        Cook().image = SyntheticImage(256);
+        cook::TextureCookSettings settings;
+        settings.auto_format = false;
+        settings.format = cook::TextureFormat::BC1;
+        Cook().atex = cook::SaveAtex(cook::CookTexture(Cook().image, 256, 256, settings));
+        cook::CookedTexture check;
+        if (!cook::LoadAtex(Cook().atex, check) || check.mips.empty()) { // can't quietly time an empty round trip
+            std::fprintf(stderr, "cook/atex_roundtrip_256: the container did not load\n");
+            std::abort();
+        }
+    },
+    [] {
+        cook::CookedTexture texture;
+        cook::LoadAtex(Cook().atex, texture);
+        cook::SaveAtex(texture);
     });
