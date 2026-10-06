@@ -2,6 +2,7 @@
 # ability system and RPG toolkit. Gameplay tags first; attributes, effects and
 # abilities follow. Engine-only, so it builds and tests headless on every platform.
 add_library(aether_gameplay STATIC
+    src/gameplay_kit.cpp
     src/gameplay_tag.cpp
     src/tag_container.cpp
     src/tag_query.cpp

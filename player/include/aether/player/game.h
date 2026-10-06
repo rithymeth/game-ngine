@@ -3,6 +3,7 @@
 #include "aether/cook/cooker.h"
 #include "aether/ecs/world.h"
 #include "aether/input/actions.h"
+#include "aether/kit/kit.h"
 #include "aether/gameplay/gameplay_ability.h"
 #include "aether/gameplay/gameplay_effect.h"
 #if AETHER_KIT_INVENTORY
@@ -235,12 +236,16 @@ private:
     // (Re)activates every input context with the settings' rebinds applied.
     void ActivateInputContexts();
     void StartRuntime(); // scripts and Blueprints for the loaded scene
+    void BuildKits();    // adds the kits this build has and orders them
+    // A kit stage as the registry describes it: its name and `after` list, for the system that runs it.
+    void ApplyKitStage(SystemDesc& system, const std::string& name) const;
 
     GamePackage& package_;
     std::unique_ptr<World> world_;
     GuidIndex guids_;
     std::unique_ptr<Lifecycle> lifecycle_;
     SystemScheduler scheduler_;
+    kit::KitRegistry kits_; // the gameplay kits this build has (Phase 37 step 4)
     std::unique_ptr<FrameLoop> loop_;
     std::unordered_map<assets::AssetGuid, std::unique_ptr<PrefabData>> prefabs_;
     std::unordered_map<std::string, std::unique_ptr<seq::LevelSequence>> sequences_;
