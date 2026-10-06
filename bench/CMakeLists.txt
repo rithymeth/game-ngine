@@ -8,5 +8,16 @@ target_compile_features(aether_bench_lib PUBLIC cxx_std_20)
 target_link_libraries(aether_bench_lib PUBLIC Aether::Engine)
 add_library(Aether::Bench ALIAS aether_bench_lib)
 
+# The benchmark sources go straight into the executable (not a static library, which would drop the
+# self-registering objects). Blueprint and Luau benchmarks are there when those modules are built.
 add_executable(aether_bench src/main.cpp src/bench_engine.cpp)
 target_link_libraries(aether_bench PRIVATE Aether::Bench)
+if(TARGET aether_blueprint)
+    target_sources(aether_bench PRIVATE src/bench_blueprint.cpp)
+    target_link_libraries(aether_bench PRIVATE Aether::Blueprint)
+endif()
+# add_subdirectory(scripting) comes after this one, so test the option, not the target.
+if(AETHER_BUILD_SCRIPTING)
+    target_sources(aether_bench PRIVATE src/bench_luau.cpp)
+    target_link_libraries(aether_bench PRIVATE Aether::Scripting)
+endif()
