@@ -88,20 +88,37 @@ EnvelopeInfo Inspect(const stdfs::path& file) {
         info.error = "can't read " + file.string();
         return info;
     }
+    EnvelopeInfo parsed = InspectBytes(bytes);
+    parsed.bytes = info.bytes;
+    return parsed;
+}
+
+EnvelopeInfo InspectBytes(std::span<const u8> bytes) {
+    EnvelopeInfo info;
+    info.bytes = bytes.size();
     info.raw_text.assign(bytes.begin(), bytes.end());
     const Json j = Json::parse(bytes.begin(), bytes.end(), nullptr, /*allow_exceptions=*/false);
     if (j.is_discarded() || !j.is_object() || !j.contains("data") || !j.contains("$type")) {
         info.error = "not an Aether save or settings file";
         return info;
     }
+    // A field of the wrong type (a number where the name goes) makes nlohmann's value() throw; that is a damaged file.
+    try {
+        info.kind = j.value("$type", "");
+        info.format = j.value("format", 0u);
+        info.type = j.value("type", "");
+        info.type_version = j.value("type_version", 0u);
+        info.slot = j.value("slot", "");
+        info.timestamp = j.value("timestamp_utc", static_cast<u64>(0));
+        info.checksum_stored = j.value("checksum", "");
+    } catch (const Json::exception& e) {
+        info = EnvelopeInfo();
+        info.bytes = bytes.size();
+        info.raw_text.assign(bytes.begin(), bytes.end());
+        info.error = std::string("the envelope has a field of the wrong type: ") + e.what();
+        return info;
+    }
     info.ok = true;
-    info.kind = j.value("$type", "");
-    info.format = j.value("format", 0u);
-    info.type = j.value("type", "");
-    info.type_version = j.value("type_version", 0u);
-    info.slot = j.value("slot", "");
-    info.timestamp = j.value("timestamp_utc", static_cast<u64>(0));
-    info.checksum_stored = j.value("checksum", "");
     info.data = j["data"];
     info.checksum_ok = info.checksum_stored == Hex(Checksum(info.data.dump()));
     return info;
@@ -110,26 +127,38 @@ EnvelopeInfo Inspect(const stdfs::path& file) {
 SaveResult Read(const stdfs::path& file, std::string_view kind, const reflect::TypeInfo& type, void* object) {
     std::vector<u8> bytes;
     if (!fs::ReadFileBytes(file.string(), bytes)) return Fail(SaveError::NotFound, "no file at " + file.string());
+    return ReadFromMemory(bytes, file.string(), kind, type, object);
+}
+
+SaveResult ReadFromMemory(std::span<const u8> bytes, const std::string& source, std::string_view kind, const reflect::TypeInfo& type, void* object) {
     const Json envelope = Json::parse(bytes.begin(), bytes.end(), nullptr, /*allow_exceptions=*/false);
-    if (envelope.is_discarded() || !envelope.is_object() || envelope.value("$type", "") != kind || !envelope.contains("data")) {
-        return Fail(SaveError::Corrupt, file.string() + " isn't a readable " + std::string(kind) + " file");
+    if (envelope.is_discarded() || !envelope.is_object() || !envelope.contains("data")) {
+        return Fail(SaveError::Corrupt, source + " isn't a readable " + std::string(kind) + " file");
     }
-    if (envelope.value("format", 0u) == 0 || envelope.value("format", 0u) > kFormat) {
-        return Fail(SaveError::Corrupt, file.string() + " has a file format this version doesn't know");
-    }
-    if (envelope.value("checksum", "") != Hex(Checksum(envelope["data"].dump()))) {
-        return Fail(SaveError::Corrupt, file.string() + " has been changed or damaged (its checksum doesn't match)");
-    }
-    if (envelope.value("type", "") != type.name) {
-        return Fail(SaveError::WrongType, file.string() + " holds a '" + envelope.value("type", "") + "', not a '" + type.name + "'");
-    }
-    if (envelope.value("type_version", 0u) > type.version) {
-        return Fail(SaveError::FutureVersion, file.string() + " was saved by a newer version of '" + type.name + "' (" +
-                                                  std::to_string(envelope.value("type_version", 0u)) + ", this code has " + std::to_string(type.version) + ")");
+    // A field of the wrong type makes nlohmann's value() throw: that is a damaged file, not a crash.
+    try {
+        if (envelope.value("$type", "") != kind) {
+            return Fail(SaveError::Corrupt, source + " isn't a readable " + std::string(kind) + " file");
+        }
+        if (envelope.value("format", 0u) == 0 || envelope.value("format", 0u) > kFormat) {
+            return Fail(SaveError::Corrupt, source + " has a file format this version doesn't know");
+        }
+        if (envelope.value("checksum", "") != Hex(Checksum(envelope["data"].dump()))) {
+            return Fail(SaveError::Corrupt, source + " has been changed or damaged (its checksum doesn't match)");
+        }
+        if (envelope.value("type", "") != type.name) {
+            return Fail(SaveError::WrongType, source + " holds a '" + envelope.value("type", "") + "', not a '" + type.name + "'");
+        }
+        if (envelope.value("type_version", 0u) > type.version) {
+            return Fail(SaveError::FutureVersion, source + " was saved by a newer version of '" + type.name + "' (" +
+                                                      std::to_string(envelope.value("type_version", 0u)) + ", this code has " + std::to_string(type.version) + ")");
+        }
+    } catch (const Json::exception&) {
+        return Fail(SaveError::Corrupt, source + " has a field of the wrong type");
     }
     reflect::LoadReport report;
     if (!reflect::FromJson(type, object, envelope["data"], &report)) {
-        return Fail(SaveError::Corrupt, file.string() + " doesn't have the shape of a '" + type.name + "'");
+        return Fail(SaveError::Corrupt, source + " doesn't have the shape of a '" + type.name + "'");
     }
     SaveResult r = Ok();
     r.warnings = std::move(report.warnings);

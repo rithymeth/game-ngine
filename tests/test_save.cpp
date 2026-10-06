@@ -3,9 +3,12 @@
 #include "aether/pak/pak.h"
 #include "aether/platform/filesystem.h"
 #include "aether/reflection/serialize.h"
+#include "aether/save/envelope.h"
 #include "aether/save/save_system.h"
 
 #include <cstdio>
+#include <cstring>
+#include <span>
 #include <filesystem>
 #include <fstream>
 
@@ -302,4 +305,47 @@ AETHER_TEST(Save_ActiveSystemIsClearedOnDestruction) {
         CHECK(SaveSystem::Active() == &saves);
     }
     CHECK(SaveSystem::Active() == nullptr);
+}
+
+namespace fuzz_save {
+struct FuzzProfile {
+    i32 level = 1;
+    f32 health = 100.0f;
+    std::string name = "Hero";
+    std::vector<i32> inventory;
+    bool hard_mode = false;
+};
+} // namespace fuzz_save
+AETHER_REFLECT(fuzz_save::FuzzProfile, 1, AETHER_FIELD(level, Field_EditAnywhere), AETHER_FIELD(health, Field_EditAnywhere),
+               AETHER_FIELD(name, Field_EditAnywhere), AETHER_FIELD(inventory, Field_EditAnywhere), AETHER_FIELD(hard_mode, Field_EditAnywhere))
+// The envelope from memory (Phase 47 step 1): a field of the wrong type is a damaged file,
+// not an exception.
+AETHER_TEST(Save_EnvelopeFromMemoryReadsAndSurvivesWrongTypes) {
+    fuzz_save::FuzzProfile written;
+    written.level = 7;
+    written.inventory = {1, 2, 3};
+    const reflect::TypeInfo& info = reflect::Reflect<fuzz_save::FuzzProfile>();
+    const std::string text = aether::save::envelope::Make("aether.save", "slot1", info, &written);
+    const std::span<const u8> bytes(reinterpret_cast<const u8*>(text.data()), text.size());
+
+    fuzz_save::FuzzProfile read;
+    CHECK(aether::save::envelope::ReadFromMemory(bytes, "memory", "aether.save", info, &read).ok);
+    CHECK(read.level == 7 && read.inventory == std::vector<i32>({1, 2, 3}));
+    const aether::save::envelope::EnvelopeInfo inspected = aether::save::envelope::InspectBytes(bytes);
+    CHECK(inspected.ok && inspected.checksum_ok && inspected.type == "FuzzProfile" && inspected.slot == "slot1");
+
+    bool threw = false;
+    try {
+        for (const char* wrong : {R"({"$type":5,"format":"x","type":[1],"type_version":{},"checksum":7,"data":{}})",
+                                  R"({"$type":"aether.save","format":"x","data":{}})", R"({"$type":"aether.save","format":1,"checksum":[],"data":{}})",
+                                  R"({"$type":"aether.save","format":1,"checksum":"x","type":3,"data":{}})"}) {
+            const std::span<const u8> b(reinterpret_cast<const u8*>(wrong), std::strlen(wrong));
+            fuzz_save::FuzzProfile target;
+            const aether::save::SaveResult result = aether::save::envelope::ReadFromMemory(b, "memory", "aether.save", info, &target);
+            CHECK(!result.ok);
+        }
+    } catch (...) {
+        threw = true;
+    }
+    CHECK(!threw);
 }
