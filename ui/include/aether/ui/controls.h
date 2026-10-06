@@ -130,6 +130,8 @@ class TextInput : public Control {
 public:
     const char* TypeName() const override { return "TextInput"; }
     std::string text, hint;
+    std::string hint_key; // the hint's string table key (§29.3); `hint` is its source text
+    std::string ShownHint() const;
     usize max_length = 0; // in code points; 0 = no limit
     bool password = false;
     Margin padding{8, 6, 8, 6};

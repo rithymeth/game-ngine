@@ -6,16 +6,16 @@
 // DrawInstanced, so the new surface area this phase adds (ImGui, physics,
 // serialization) stays easy to follow.
 //
-// Workspace: scene actions live in a top toolbar, the Hierarchy and Content
-// Browser share the left rail, the Inspector occupies the right rail, and
-// the 3D scene stays visible in the center. Loading reconnects each
-// RigidBody to a freshly-created Jolt body; live body handles are not
-// serialized (see aether::RegisterPhysicsComponentSerializers).
+// Panels: live entity list, spawn/reset controls, play/pause, and
+// Save/Load Scene buttons exercising the Phase 5 serializer. Loading
+// reconnects each RigidBody entity to a freshly-created Jolt body (the
+// serializer deliberately does not — and cannot — persist a live body
+// handle; see aether::RegisterPhysicsComponentSerializers).
 //
 // Editor-workflow follow-up: a loaded glTF model is now a normal ECS
 // entity (Transform + ModelRenderer, see below), not a hardcoded, always-
 // present render path bolted onto the side — it shows up in the same
-// entity list the physics spheres do, spawns via a "Content Browser" panel
+// entity list the physics spheres do, spawns via an "Asset Browser" panel
 // that lists whatever .gltf files sit under assets/models/ instead of a
 // path baked into source, round-trips through Save/Load Scene exactly like
 // a RigidBody entity does (ModelRenderer's asset_path is plain fixed-size
@@ -38,15 +38,17 @@
 // waiting for the window to be closed, for scripted/automated verification.
 // Set AETHER_EDITOR_SCREENSHOT=<path> to dump the final frame to a PNG on
 // exit, for visual verification without a human watching the window live.
+// Set AETHER_EDITOR_TAB=<name> to pick the tool the Tools window opens on
+// (the start of its name: blueprint, material, particle, sound, ...).
+//
+// Every tool editor (Blueprint, Luau, Material, VFX, animation, AI, audio,
+// UI, world, networking and debug tools; editor/src/workspace) is in the
+// Tools window and the Tools menu, the same set the portable editor shell
+// (editor/shell) shows.
 
 #include "aether/assets/asset_manager.h"
 #include "aether/assets/gltf_loader.h"
 #include "aether/core/log.h"
-#include "aether/core/cvars.h"
-#include "aether/core/profile.h"
-#include "aether/dev/crash.h"
-#include "aether/dev/debug_draw.h"
-#include "aether/dev/profiler.h"
 #include "aether/gfx/buffer.h"
 #include "aether/gfx/command_list.h"
 #include "aether/gfx/descriptor_heap.h"
@@ -64,12 +66,9 @@
 #include "aether/scene/serialization.h"
 #include "core/commands.h"
 #include "core/play_session.h"
-#include "dev/console_panel.h"
-#include "dev/debug_render.h"
-#include "dev/profiler_panel.h"
-#include "dev/stat_overlay.h"
 #include "ui/entity_inspector.h"
 #include "ui/reflected_inspector.h"
+#include "workspace/editor_workspace.h"
 
 #include <imgui.h>
 #include <imgui_impl_dx12.h>
@@ -90,6 +89,22 @@
 #include <unordered_map>
 #include <vector>
 
+// Where the assets are (Phase 24): an assets folder next to the executable
+// (a packaged editor), then one in the working directory, then the source
+// tree's (a developer build). Set once at startup by FindAssetDir.
+static std::string g_asset_dir = AETHER_ASSET_DIR;
+static const std::string& AssetDir() { return g_asset_dir; }
+static void FindAssetDir(const char* argv0) {
+    std::error_code ec;
+    const std::filesystem::path exe_dir = std::filesystem::absolute(argv0 ? argv0 : "", ec).parent_path();
+    for (const std::filesystem::path& dir : {exe_dir / "assets", std::filesystem::current_path(ec) / "assets"}) {
+        if (std::filesystem::is_directory(dir, ec)) {
+            g_asset_dir = (dir / "").string();
+            return;
+        }
+    }
+}
+
 using namespace aether;
 using namespace aether::gfx;
 
@@ -104,103 +119,59 @@ constexpr u32 kMaxInstances = 256;
 constexpr const char* kScenePath = "editor_scene.aesc";
 
 // --------------------------------------------------------------------------
-// Workspace theme and styling.
+// UI-workflow follow-up: a friendlier default look and a real default dock
+// layout, addressing the two biggest complaints a first-time user of the
+// earlier screenshots would have — "everything is default ImGui gray" and
+// "every panel is stacked on top of every other panel at startup."
 // --------------------------------------------------------------------------
 
-// A restrained graphite palette with a clear blue accent keeps the editor
-// readable without making every panel header compete for attention.
+// A soft blue-teal accent instead of ImGui's default blue, plus a bit more
+// breathing room between widgets — small changes, but they're most of the
+// difference between "looks like a debug overlay" and "looks like a tool."
 void ApplyFriendlyEditorStyle() {
     ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding = 5.0f;
-    style.ChildRounding = 4.0f;
-    style.FrameRounding = 4.0f;
-    style.PopupRounding = 5.0f;
-    style.ScrollbarRounding = 6.0f;
+    style.WindowRounding = 4.0f;
+    style.FrameRounding = 3.0f;
     style.GrabRounding = 3.0f;
-    style.TabRounding = 4.0f;
-    style.WindowBorderSize = 1.0f;
-    style.ChildBorderSize = 1.0f;
-    style.FrameBorderSize = 0.0f;
-    style.WindowPadding = ImVec2(10, 9);
-    style.FramePadding = ImVec2(7, 5);
-    style.ItemSpacing = ImVec2(8, 7);
-    style.ItemInnerSpacing = ImVec2(6, 5);
-    style.ScrollbarSize = 13.0f;
+    style.TabRounding = 3.0f;
+    style.WindowPadding = ImVec2(10, 10);
+    style.FramePadding = ImVec2(6, 4);
+    style.ItemSpacing = ImVec2(8, 6);
+    style.ScrollbarSize = 14.0f;
 
     ImVec4* colors = style.Colors;
-    const ImVec4 app_bg(0.086f, 0.090f, 0.102f, 1.00f);
-    const ImVec4 panel_bg(0.118f, 0.122f, 0.133f, 1.00f);
-    const ImVec4 panel_alt(0.137f, 0.141f, 0.153f, 1.00f);
-    const ImVec4 header_bg(0.169f, 0.176f, 0.192f, 1.00f);
-    const ImVec4 input_bg(0.067f, 0.071f, 0.078f, 1.00f);
-    const ImVec4 hover_bg(0.184f, 0.192f, 0.212f, 1.00f);
-    const ImVec4 active_bg(0.208f, 0.220f, 0.247f, 1.00f);
-    const ImVec4 border(0.180f, 0.188f, 0.208f, 1.00f);
-    const ImVec4 border_strong(0.263f, 0.275f, 0.302f, 1.00f);
-    const ImVec4 text(0.902f, 0.906f, 0.918f, 1.00f);
-    const ImVec4 text_secondary(0.651f, 0.663f, 0.690f, 1.00f);
-    const ImVec4 accent(0.298f, 0.553f, 1.000f, 1.00f);
-    const ImVec4 accent_hover(0.420f, 0.631f, 1.000f, 1.00f);
-    const ImVec4 accent_active(0.122f, 0.227f, 0.400f, 1.00f);
-
-    colors[ImGuiCol_Text] = text;
-    colors[ImGuiCol_TextDisabled] = text_secondary;
-    colors[ImGuiCol_WindowBg] = panel_bg;
-    colors[ImGuiCol_ChildBg] = app_bg;
-    colors[ImGuiCol_PopupBg] = panel_alt;
-    colors[ImGuiCol_Border] = border;
-    colors[ImGuiCol_BorderShadow] = ImVec4(0, 0, 0, 0);
-    colors[ImGuiCol_FrameBg] = input_bg;
-    colors[ImGuiCol_FrameBgHovered] = hover_bg;
-    colors[ImGuiCol_FrameBgActive] = active_bg;
-    colors[ImGuiCol_TitleBg] = app_bg;
-    colors[ImGuiCol_TitleBgActive] = header_bg;
-    colors[ImGuiCol_TitleBgCollapsed] = app_bg;
-    colors[ImGuiCol_MenuBarBg] = app_bg;
-    colors[ImGuiCol_ScrollbarBg] = app_bg;
-    colors[ImGuiCol_ScrollbarGrab] = border_strong;
-    colors[ImGuiCol_ScrollbarGrabHovered] = text_secondary;
-    colors[ImGuiCol_ScrollbarGrabActive] = accent;
-    colors[ImGuiCol_CheckMark] = accent_hover;
-    colors[ImGuiCol_SliderGrab] = accent;
-    colors[ImGuiCol_SliderGrabActive] = accent_hover;
-    colors[ImGuiCol_Button] = header_bg;
-    colors[ImGuiCol_ButtonHovered] = hover_bg;
-    colors[ImGuiCol_ButtonActive] = active_bg;
-    colors[ImGuiCol_Header] = accent_active;
-    colors[ImGuiCol_HeaderHovered] = hover_bg;
-    colors[ImGuiCol_HeaderActive] = active_bg;
-    colors[ImGuiCol_Separator] = border;
-    colors[ImGuiCol_SeparatorHovered] = accent;
-    colors[ImGuiCol_SeparatorActive] = accent_hover;
-    colors[ImGuiCol_ResizeGrip] = ImVec4(accent.x, accent.y, accent.z, 0.18f);
-    colors[ImGuiCol_ResizeGripHovered] = ImVec4(accent.x, accent.y, accent.z, 0.55f);
-    colors[ImGuiCol_ResizeGripActive] = accent;
-    colors[ImGuiCol_Tab] = app_bg;
-    colors[ImGuiCol_TabHovered] = hover_bg;
-    colors[ImGuiCol_TabActive] = panel_bg;
-    colors[ImGuiCol_TabUnfocused] = app_bg;
-    colors[ImGuiCol_TabUnfocusedActive] = panel_bg;
-    colors[ImGuiCol_PlotLines] = accent;
-    colors[ImGuiCol_PlotLinesHovered] = accent_hover;
-    colors[ImGuiCol_PlotHistogram] = ImVec4(0.824f, 0.600f, 0.133f, 1.00f);
-    colors[ImGuiCol_PlotHistogramHovered] = ImVec4(0.949f, 0.718f, 0.247f, 1.00f);
-    colors[ImGuiCol_TableHeaderBg] = header_bg;
-    colors[ImGuiCol_TableBorderStrong] = border_strong;
-    colors[ImGuiCol_TableBorderLight] = border;
-    colors[ImGuiCol_TableRowBg] = ImVec4(0, 0, 0, 0);
-    colors[ImGuiCol_TableRowBgAlt] = ImVec4(panel_alt.x, panel_alt.y, panel_alt.z, 0.45f);
-    colors[ImGuiCol_TextSelectedBg] = ImVec4(accent.x, accent.y, accent.z, 0.30f);
-    colors[ImGuiCol_DragDropTarget] = accent_hover;
-    colors[ImGuiCol_NavHighlight] = accent;
-    colors[ImGuiCol_NavWindowingHighlight] = ImVec4(1, 1, 1, 0.65f);
-    colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.08f, 0.08f, 0.09f, 0.55f);
-    colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.04f, 0.04f, 0.05f, 0.65f);
+    const ImVec4 kAccent(0.26f, 0.59f, 0.62f, 1.00f);
+    const ImVec4 kAccentHover(0.32f, 0.70f, 0.74f, 1.00f);
+    const ImVec4 kAccentActive(0.20f, 0.48f, 0.51f, 1.00f);
+    colors[ImGuiCol_TitleBgActive] = kAccentActive;
+    colors[ImGuiCol_Header] = kAccent;
+    colors[ImGuiCol_HeaderHovered] = kAccentHover;
+    colors[ImGuiCol_HeaderActive] = kAccentActive;
+    colors[ImGuiCol_Button] = kAccentActive;
+    colors[ImGuiCol_ButtonHovered] = kAccentHover;
+    colors[ImGuiCol_ButtonActive] = kAccent;
+    colors[ImGuiCol_FrameBgHovered] = ImVec4(0.30f, 0.30f, 0.33f, 1.00f);
+    colors[ImGuiCol_CheckMark] = kAccentHover;
+    colors[ImGuiCol_SliderGrab] = kAccent;
+    colors[ImGuiCol_SliderGrabActive] = kAccentHover;
+    colors[ImGuiCol_Tab] = ImVec4(0.16f, 0.16f, 0.18f, 1.00f);
+    colors[ImGuiCol_TabHovered] = kAccentHover;
+    colors[ImGuiCol_TabActive] = kAccentActive;
 }
 
-// This editor uses the regular ImGui release (not the docking branch), so
-// panels get an adaptive, non-overlapping first-run layout and remain movable.
+// Default panel layout: this editor's vendored ImGui is built from a plain
+// release tag (v1.92.9), not the separate "docking" branch, so there's no
+// DockBuilder/DockSpace here — instead, every panel below gets an explicit
+// default position/size via ImGuiCond_FirstUseEver, arranged as a simple
+// non-overlapping grid (main panel + Hierarchy + Asset Browser stacked down
+// the left edge, Inspector on the right) so nothing starts stacked on top
+// of anything else. ImGuiCond_FirstUseEver means this only ever applies
+// before a window has a saved position — once a user drags a panel
+// themselves, that layout persists via ImGui's own imgui.ini, same as any
+// other ImGui app.
+constexpr f32 kMenuBarHeight = 20.0f;
 constexpr f32 kPanelMargin = 8.0f;
+constexpr f32 kLeftPanelWidth = 340.0f;
 
 // ModelRenderer (a model-carrying entity's glTF asset path) and SetModelPath
 // now live in aether/scene/components.h, reflected, since they're runtime
@@ -852,46 +823,6 @@ ComPtr<ID3D12PipelineState> CreateGizmoPSO(Device& device, ID3D12RootSignature* 
     return pso;
 }
 
-// The debug-draw line renderer (Phase 23 step 6): identical to the gizmo
-// pipeline (same colored-line vertex/root signature) except depth is ON so
-// world-space debug lines tuck behind scene geometry. Shares the gizmo root
-// signature and InputLayout.
-ComPtr<ID3D12PipelineState> CreateDebugDrawPSO(Device& device, ID3D12RootSignature* root_signature,
-                                                DXGI_FORMAT rtv_format) {
-    ShaderBytecode vs = CompileHLSL(kGizmoShaderSource, "VSMain", "vs_5_0", "editor_debugdraw_vs");
-    ShaderBytecode ps = CompileHLSL(kGizmoShaderSource, "PSMain", "ps_5_0", "editor_debugdraw_ps");
-
-    D3D12_INPUT_ELEMENT_DESC input_elements[2] = {
-        {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(GizmoVertex, pos),
-         D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-        {"COLOR", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(GizmoVertex, color),
-         D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-    };
-
-    D3D12_GRAPHICS_PIPELINE_STATE_DESC desc{};
-    desc.pRootSignature = root_signature;
-    desc.InputLayout = {input_elements, 2};
-    desc.VS = {vs.Data(), vs.Size()};
-    desc.PS = {ps.Data(), ps.Size()};
-    desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
-    desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
-    desc.RasterizerState.DepthClipEnable = TRUE;
-    desc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
-    desc.DepthStencilState.DepthEnable = TRUE;
-    desc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
-    desc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
-    desc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
-    desc.SampleMask = UINT_MAX;
-    desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE;
-    desc.NumRenderTargets = 1;
-    desc.RTVFormats[0] = rtv_format;
-    desc.SampleDesc.Count = 1;
-
-    ComPtr<ID3D12PipelineState> pso;
-    AETHER_D3D_CHECK(device.Handle()->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&pso)));
-    return pso;
-}
-
 // Everything needed to draw one glTF asset: geometry buffers, the resolved
 // material, and the parsed GltfScene itself (kept around for its
 // node_instances/animations, re-evaluated in place each frame — see the
@@ -935,7 +866,7 @@ GltfRenderData& GetOrLoadGltfRenderData(Device& device, assets::AssetManager& as
     }
 
     auto data = std::make_unique<GltfRenderData>();
-    std::string full_path = std::string(AETHER_ASSET_DIR) + path;
+    std::string full_path = AssetDir() + path;
     bool ok = assets::LoadGltf(full_path, data->scene) && !data->scene.meshes.empty() &&
               !data->scene.meshes[0].primitives.empty();
     if (!ok) {
@@ -1004,7 +935,7 @@ GltfRenderData& GetOrLoadGltfRenderData(Device& device, assets::AssetManager& as
 // path hardcoded in source.
 std::vector<std::string> ListAvailableGltfModels() {
     std::vector<std::string> paths;
-    std::filesystem::path models_dir = std::filesystem::path(AETHER_ASSET_DIR) / "models";
+    std::filesystem::path models_dir = std::filesystem::path(AssetDir()) / "models";
     if (!std::filesystem::exists(models_dir)) {
         return paths;
     }
@@ -1093,11 +1024,8 @@ void SaveBackbufferScreenshot(Device& device, SwapChain& swap_chain, u32 buffer_
 
 } // namespace
 
-int main() {
-    // Phase 23: install the crash handler first so any uncaught exception or
-    // SEH fault (including during startup) writes a minidump + log capture.
-    dev::InstallCrashHandler();
-
+int main(int argc, char** argv) {
+    FindAssetDir(argc > 0 ? argv[0] : nullptr);
     i32 max_frames = -1;
     if (const char* env = std::getenv("AETHER_EDITOR_MAX_FRAMES")) {
         max_frames = std::atoi(env);
@@ -1115,8 +1043,8 @@ int main() {
 
         WindowDesc window_desc;
         window_desc.title = "Aether Editor";
-        window_desc.width = 1280;
-        window_desc.height = 800;
+        window_desc.width = 1600;
+        window_desc.height = 960;
         Window window(window_desc);
 
         Device device(/*enable_debug_layer=*/true);
@@ -1168,16 +1096,14 @@ int main() {
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
         ImGui::StyleColorsDark();
-        // Apply the editor theme before creating any workspace panels.
+        // UI-workflow follow-up: a non-overlapping default layout for the
+        // panels this editor already had (Aether Editor, Hierarchy,
+        // Inspector, Asset Browser) instead of every one of them stacking on
+        // top of each other at (0,0) — the biggest usability problem in
+        // earlier screenshots. See each panel's SetNextWindowPos/Size call
+        // below, and ApplyFriendlyEditorStyle for the accent-color/spacing
+        // pass.
         ApplyFriendlyEditorStyle();
-        ImGuiIO& imgui_io = ImGui::GetIO();
-        const std::string ui_font_path =
-            (std::filesystem::path(AETHER_ASSET_DIR) / "fonts" / "Roboto-Medium.ttf").string();
-        imgui_io.FontDefault = imgui_io.Fonts->AddFontFromFileTTF(ui_font_path.c_str(), 15.0f);
-        if (imgui_io.FontDefault == nullptr) {
-            AETHER_LOG_WARN("Editor", "Could not load UI font \"%s\"; using ImGui's built-in font",
-                            ui_font_path.c_str());
-        }
         ImGui_ImplWin32_Init(window.NativeHandle());
 
         ImGui_ImplDX12_InitInfo init_info{};
@@ -1203,20 +1129,6 @@ int main() {
             // dynamic textures would want a real CPU<->GPU handle lookup here.
         };
         ImGui_ImplDX12_Init(&init_info);
-
-        // Phase 23: the editor drives the CPU profiler and owns its panel.
-        dev::Profiler editor_profiler(/*history_frames=*/300);
-        editor_profiler.Install();
-        editor::ProfilerPanel profiler_panel(editor_profiler);
-        bool show_profiler = false;
-
-        // Phase 23: console + stat overlay, driven by CVars so a shipping build
-        // can expose them via on-screen commands too.
-        editor::ConsolePanel console_panel;
-        bool show_console = false;
-        cvars::RegisterCVar("stat.fps", cvars::CVarType::Bool, "0", "show the FPS stat overlay");
-        cvars::RegisterCVar("stat.gpu", cvars::CVarType::Bool, "0", "show the GPU stat overlay");
-        cvars::RegisterCVar("stat.memory", cvars::CVarType::Bool, "0", "show the memory stat overlay");
 
         ComPtr<ID3D12RootSignature> root_signature = CreateRootSignature(device);
         ComPtr<ID3D12PipelineState> pso = CreatePSO(device, root_signature.Get(), swap_chain.Format());
@@ -1255,16 +1167,6 @@ int main() {
         Entity model_entity =
             world.CreateEntity(Transform{Vec3(-2.0f, 1.2f, 3.5f), Quaternion::Identity()}, ModelRenderer{});
         SetModelPath(*world.GetComponent<ModelRenderer>(model_entity), "models/test_animation.gltf");
-
-        // Phase 23: AETHER_EDITOR_DEBUG_DRAW=1 draws a few fixed primitives
-        // every frame so the debug-draw viewport path (accumulator -> builder
-        // -> line PSO) is exercised in the automated screenshot run.
-        if (const char* env = std::getenv("AETHER_EDITOR_DEBUG_DRAW"); env && std::atoi(env) != 0) {
-            dev::DebugDrawInstance().AddLine(Vec3(-2, 2, 3.5f), Vec3(2, 2, 3.5f), 0xFFFF0000u, 100.0f);
-            dev::DebugDrawInstance().AddBox(Vec3(0, 0.5f, 0) - Vec3(0.4f, 0.4f, 0.4f),
-                                            Vec3(0, 0.5f, 0) + Vec3(0.4f, 0.4f, 0.4f), 0xFF00FF00u, 100.0f);
-            dev::DebugDrawInstance().AddSphere(Vec3(0, 3.0f, 0), 0.6f, 0xFF0000FFu, 100.0f);
-        }
 
         // Viewport-picking/gizmo follow-up: click an entity in the 3D
         // viewport (not just its row in a list) to select it, then drag one
@@ -1337,15 +1239,6 @@ int main() {
         Vec3 gizmo_drag_start_point{0, 0, 0};
         Vec3 gizmo_drag_start_entity_pos{0, 0, 0};
 
-        // Phase 23: debug-draw viewport renderer. Uses the same colored-line
-        // pipeline as the gizmo (same root signature/input layout/PSO), but
-        // with depth testing ON so world-space debug lines tuck behind scene
-        // geometry instead of drawing over it.
-        ComPtr<ID3D12PipelineState> debug_draw_pso = CreateDebugDrawPSO(device, gizmo_root_signature.Get(), swap_chain.Format());
-        Buffer debug_draw_vertex_buffer(
-            device, sizeof(::aether::editor::DebugDrawVertex) * ::aether::editor::kMaxDebugDrawVerts, BufferKind::Upload);
-        ::aether::editor::DebugDrawBuilder debug_draw_builder;
-
         // UI-workflow follow-up state: panel visibility is toggled from the
         // new "View" menu so a user who closes a panel can bring it back
         // without restarting; delete_confirm_target/name back a single
@@ -1354,7 +1247,14 @@ int main() {
         bool show_hierarchy = true;
         bool show_inspector = true;
         bool show_asset_browser = true;
-        bool show_help = false;
+        bool show_help = true;
+        bool show_tools = true;
+        // Every tool editor, each on a sample document (after ImGui's context: some build fonts or state).
+        editor::EditorWorkspace workspace;
+        if (const char* tab = std::getenv("AETHER_EDITOR_TAB")) {
+            const i64 tool = workspace.FindTool(tab);
+            if (tool >= 0) workspace.Select(static_cast<usize>(tool));
+        }
         Entity delete_confirm_target = kNullEntity;
         std::string delete_confirm_name;
 
@@ -1399,18 +1299,10 @@ int main() {
             if (play_session.ShouldSimulate()) {
                 SyncPhysicsToTransforms(world, physics, kDt);
             }
-            // Phase 23: advance the debug-draw clock so duration-timed
-            // primitives expire (this frame's scene is captured below in the
-            // render pass).
-            dev::DebugDrawInstance().Advance(kDt);
 
             ImGui_ImplDX12_NewFrame();
             ImGui_ImplWin32_NewFrame();
             ImGui::NewFrame();
-
-            // The profiler frames the whole editor update (physics sync,
-            // UI, picking, render) so frame time includes real work.
-            editor_profiler.BeginFrame();
 
             // Undo/redo destroys and recreates entities, so any handle kept
             // across frames may have gone stale.
@@ -1430,15 +1322,6 @@ int main() {
                 undo_requested = ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z);
                 redo_requested = ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Y) ||
                                  ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z);
-                // Phase 23: ` (backtick/tilde) opens the console.
-                if (ImGui::IsKeyPressed(ImGuiKey_GraveAccent, false)) {
-                    show_console = !show_console;
-                    if (show_console) {
-                        console_panel.Open();
-                    } else {
-                        console_panel.Close();
-                    }
-                }
             }
 
             // Editor camera/viewport follow-up: computed once per frame,
@@ -1474,14 +1357,13 @@ int main() {
                 if (ImGui::BeginMenu("View")) {
                     ImGui::MenuItem("Hierarchy", nullptr, &show_hierarchy);
                     ImGui::MenuItem("Inspector", nullptr, &show_inspector);
-                    ImGui::MenuItem("Content Browser", nullptr, &show_asset_browser);
-                    ImGui::Separator();
-                    ImGui::MenuItem("Profiler", nullptr, &show_profiler);
-                    ImGui::MenuItem("Console", "`", &show_console);
+                    ImGui::MenuItem("Asset Browser", nullptr, &show_asset_browser);
+                    ImGui::MenuItem("Tools", nullptr, &show_tools);
                     ImGui::Separator();
                     ImGui::MenuItem("Help", nullptr, &show_help);
                     ImGui::EndMenu();
                 }
+                workspace.DrawToolsMenu();
                 if (ImGui::BeginMenu("Help")) {
                     if (ImGui::MenuItem("Show Help Window")) {
                         show_help = true;
@@ -1653,42 +1535,16 @@ int main() {
 
             std::vector<Entity> entities_to_delete;
 
-            const ImGuiViewport* viewport = ImGui::GetMainViewport();
-            const ImVec2 work_pos = viewport->WorkPos;
-            const ImVec2 work_size = viewport->WorkSize;
-            constexpr f32 kToolbarHeight = 48.0f;
-            constexpr f32 kStatusHeight = 26.0f;
-            const f32 content_y = work_pos.y + kToolbarHeight + kPanelMargin;
-            const f32 content_height = std::max(180.0f, work_size.y - kToolbarHeight - kStatusHeight -
-                                                               4.0f * kPanelMargin);
-            const f32 left_width = std::min(300.0f, std::max(220.0f, work_size.x * 0.22f));
-            const f32 right_width = std::min(340.0f, std::max(240.0f, work_size.x * 0.25f));
-            const f32 hierarchy_height = content_height * 0.60f;
-            const f32 asset_height = std::max(120.0f, content_height - hierarchy_height - 3.0f * kPanelMargin);
+            ImGui::SetNextWindowPos(ImVec2(kPanelMargin, kMenuBarHeight + kPanelMargin), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(ImVec2(kLeftPanelWidth, 340.0f), ImGuiCond_FirstUseEver);
+            ImGui::Begin("Aether Editor");
+            ImGui::Text("Entities: %zu", world.EntityCount());
             using PlayState = editor::PlaySession::State;
             const PlayState play_state = play_session.GetState();
-
-            const ImGuiWindowFlags fixed_panel_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove |
-                                                       ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings |
-                                                       ImGuiWindowFlags_NoScrollbar;
-            ImGui::SetNextWindowPos(work_pos);
-            ImGui::SetNextWindowSize(ImVec2(work_size.x, kToolbarHeight));
-            ImGui::Begin("##EditorToolbar", nullptr, fixed_panel_flags);
-            ImGui::TextColored(ImVec4(0.42f, 0.63f, 1.0f, 1.0f), "AETHER");
-            ImGui::SameLine();
-            ImGui::TextDisabled("SCENE");
-            ImGui::SameLine();
-            ImGui::TextUnformatted(kScenePath);
-            ImGui::SameLine(std::max(190.0f, work_size.x - 670.0f));
-
             if (play_state == PlayState::Editing) {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.40f, 0.28f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.50f, 0.34f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.12f, 0.32f, 0.22f, 1.0f));
-                if (ImGui::Button("Play")) {
+                if (ImGui::Button("Play (Alt+P)")) {
                     play_toggle_requested = true;
                 }
-                ImGui::PopStyleColor(3);
             } else {
                 if (ImGui::Button(play_state == PlayState::Paused ? "Resume" : "Pause")) {
                     play_toggle_requested = true;
@@ -1700,56 +1556,157 @@ int main() {
                 }
                 ImGui::EndDisabled();
                 ImGui::SameLine();
-                if (ImGui::Button("Stop")) {
+                if (ImGui::Button("Stop (Esc)")) {
                     stop_requested = true;
                 }
+                ImGui::TextColored(play_state == PlayState::Paused ? ImVec4(0.82f, 0.6f, 0.13f, 1.0f)
+                                                                   : ImVec4(0.25f, 0.73f, 0.31f, 1.0f),
+                                   play_state == PlayState::Paused ? "Paused - changes are discarded on Stop"
+                                                                   : "Playing - changes are discarded on Stop");
             }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip(play_state == PlayState::Editing ? "Start play mode (Alt+P)" : "Toggle play mode");
-            }
-
-            ImGui::SameLine();
+            // Saving or loading mid-play would capture/replace the played
+            // world, not the level being edited.
             ImGui::BeginDisabled(play_state != PlayState::Editing);
-            if (ImGui::Button("Add Sphere")) {
+            if (ImGui::Button("Spawn Sphere")) {
                 Entity spawned = SpawnSphere(world, physics, Vec3(spread(rng), 8.0f, spread(rng)), 0.5f, 1.0f);
                 commands.Record(editor::CreateEntityCommand::FromExisting(cmd_ctx, spawned, "Spawn Sphere"));
             }
             ImGui::SameLine();
-            if (ImGui::Button("Save")) {
+            if (ImGui::Button("Save Scene")) {
                 if (SaveScene(world, kScenePath)) {
                     commands.MarkSaved();
                 }
             }
             ImGui::SameLine();
-            if (ImGui::Button("Load")) {
+            if (ImGui::Button("Load Scene")) {
                 World loaded;
                 if (LoadScene(loaded, kScenePath)) {
                     world = std::move(loaded);
-                    selected_entity = kNullEntity;
+                    selected_entity = kNullEntity; // stale after a full world swap
+                    // The serializer never persists a live Jolt body handle
+                    // (see RegisterPhysicsComponentSerializers) — reconnect
+                    // every loaded RigidBody to a fresh body in this
+                    // PhysicsWorld, seeded from its Transform + saved shape.
+                    // ModelRenderer needs no such reconnection: asset_path is
+                    // plain data, and GetOrLoadGltfRenderData above re-loads
+                    // (or finds already-cached) GPU resources for it lazily.
+                    // Scenes saved before the collider split keep the radius
+                    // on the RigidBody; give those a SphereCollider first.
                     MigrateLegacyRigidBodies(world);
                     ForEachWithEntity<Transform, RigidBody>(world, [&](Entity e, Transform& t, RigidBody& b) {
                         b.body_id = physics.CreateSphere(t.position, SphereRadiusOf(world, e), b.mass,
                                                          b.motion == BodyMotion::Static);
                     });
+                    // A different world: the old history no longer applies.
                     commands.Clear();
                     editor::EnsureAllGuids(world, guids);
                     commands.MarkSaved();
                 }
             }
+
             ImGui::EndDisabled();
-            ImGui::SameLine();
-            const ImVec4 state_color = play_state == PlayState::Playing
-                                           ? ImVec4(0.31f, 0.78f, 0.47f, 1.0f)
-                                           : play_state == PlayState::Paused ? ImVec4(0.85f, 0.65f, 0.26f, 1.0f)
-                                                                            : ImVec4(0.65f, 0.68f, 0.73f, 1.0f);
-            const char* state_text = play_state == PlayState::Playing
-                                         ? "PLAYING"
-                                         : play_state == PlayState::Paused ? "PAUSED" : "EDITING";
-            ImGui::TextColored(state_color, "%s", state_text);
-            ImGui::SameLine();
-            ImGui::TextDisabled("%zu entities", world.EntityCount());
+
+            ImGui::SeparatorText("Controls");
+            ImGui::TextWrapped("Hold Right Mouse + WASD/QE to fly the camera. Left-click an entity (or empty "
+                                "space) to select/deselect. Drag a gizmo arrow to move the selection.");
+
+            // Bodies list: a colored bullet per row (matching the sphere's
+            // own on-screen color scheme — gold when selected) instead of a
+            // bare "#N", so a row's entity type/state reads at a glance
+            // instead of only through its label text.
+            ImGui::SeparatorText("Bodies");
+            ImGui::TextDisabled("Live-edit: changes apply to the running simulation immediately.");
+            int index = 0;
+            ForEachWithEntity<Transform, RigidBody>(world, [&](Entity e, Transform& t, RigidBody& b) {
+                ImGui::PushID(index);
+                bool is_selected = (e == selected_entity);
+                // Colored label instead of a plain "#N" — matches the same
+                // gold-when-selected / blue-otherwise scheme the sphere's
+                // own on-screen color already uses, so a row's state reads
+                // at a glance. (Not a separate bullet glyph: the default
+                // ImGui font only ships Basic Latin, so anything outside
+                // ASCII renders as a missing-glyph box.)
+                ImVec4 label_color = is_selected ? ImVec4(1.0f, 0.85f, 0.2f, 1.0f) : ImVec4(0.4f, 0.7f, 1.0f, 1.0f);
+                ImGui::TextColored(label_color, "Body #%d", index);
+                ImGui::SameLine();
+                if (ImGui::SmallButton(is_selected ? "Selected" : "Select")) {
+                    selected_entity = e;
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Delete")) {
+                    delete_confirm_target = e;
+                    delete_confirm_name = "Body #" + std::to_string(index);
+                }
+
+                // Each slider edits in place, then CommitFieldEdit turns the
+                // change into an undoable command (a drag merges into one
+                // step). Physics follows through hooks.on_field_changed.
+                // Every entity has an IdComponent (EnsureAllGuids at startup
+                // and load, FromExisting on spawn), so none is added here —
+                // that would move the entity mid-iteration.
+                const IdComponent* row_id = world.GetComponent<IdComponent>(e);
+                auto undoable = [&](ComponentId component, void* data, const char* field_name, auto&& widget) {
+                    const reflect::FieldInfo& field = *GetComponentInfo(component).reflected->FindField(field_name);
+                    reflect::Any before = field.Get(data);
+                    bool changed = widget();
+                    bool committed = ImGui::IsItemDeactivatedAfterEdit();
+                    if (row_id != nullptr && (changed || committed)) {
+                        editor::CommitFieldEdit(cmd_ctx, commands, row_id->guid, component, field, data, before,
+                                                committed);
+                    }
+                };
+                undoable(GetComponentId<Transform>(), &t, "position",
+                         [&] { return ImGui::DragFloat3("Position (m)", &t.position.x, 0.05f); });
+                if (SphereCollider* shape = world.GetComponent<SphereCollider>(e)) {
+                    undoable(GetComponentId<SphereCollider>(), shape, "radius", [&] {
+                        return ImGui::DragFloat("Radius (m)", &shape->radius, 0.01f, 0.05f, 5.0f, "%.2f");
+                    });
+                }
+                undoable(GetComponentId<RigidBody>(), &b, "mass",
+                         [&] { return ImGui::DragFloat("Mass (kg)", &b.mass, 0.05f, 0.01f, 100.0f, "%.2f"); });
+                undoable(GetComponentId<RigidBody>(), &b, "motion", [&] {
+                    bool is_static = b.motion == BodyMotion::Static;
+                    const bool changed = ImGui::Checkbox("Static (doesn't fall)", &is_static);
+                    if (changed) b.motion = is_static ? BodyMotion::Static : BodyMotion::Dynamic;
+                    return changed;
+                });
+
+                ImGui::Separator();
+                ImGui::PopID();
+                ++index;
+            });
+
+            // Same list treatment for model entities, now that a model is a
+            // normal (Transform, ModelRenderer) entity instead of a special
+            // case rendered outside the ECS entirely.
+            ImGui::SeparatorText("Models");
+            int model_index = 0;
+            ForEachWithEntity<Transform, ModelRenderer>(world, [&](Entity e, Transform& t, ModelRenderer& renderer) {
+                ImGui::PushID(1000 + model_index); // offset so IDs never collide with the Bodies loop above
+                bool is_selected = (e == selected_entity);
+                ImVec4 label_color = is_selected ? ImVec4(1.0f, 0.85f, 0.2f, 1.0f) : ImVec4(1.0f, 0.55f, 0.2f, 1.0f);
+                ImGui::TextColored(label_color, "%s", renderer.asset_path);
+                ImGui::SameLine();
+                if (ImGui::SmallButton(is_selected ? "Selected" : "Select")) {
+                    selected_entity = e;
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Delete")) {
+                    delete_confirm_target = e;
+                    delete_confirm_name = std::string("Model \"") + renderer.asset_path + "\"";
+                }
+                ImGui::DragFloat3("Position (m)", &t.position.x, 0.05f);
+                ImGui::Separator();
+                ImGui::PopID();
+                ++model_index;
+            });
             ImGui::End();
 
+            // Shared "Are you sure?" confirmation for every Delete button
+            // above (and in the Hierarchy panel below) — friendlier than
+            // deleting immediately and irreversibly on a single misclick.
+            // OpenPopup is safe to call every frame while the target is set:
+            // ImGui no-ops it once the popup's already open.
             if (!delete_confirm_target.IsNull()) {
                 ImGui::OpenPopup("Confirm Delete");
             }
@@ -1777,12 +1734,10 @@ int main() {
             // so a .gltf dropped into assets/models/ while the editor is
             // running shows up without a restart.
             if (show_asset_browser) {
-                ImGui::SetNextWindowPos(
-                    ImVec2(work_pos.x + kPanelMargin,
-                           content_y + hierarchy_height + 2.0f * kPanelMargin),
-                    ImGuiCond_FirstUseEver);
-                ImGui::SetNextWindowSize(ImVec2(left_width, asset_height), ImGuiCond_FirstUseEver);
-                ImGui::Begin("Content Browser###ContentBrowserPanel", &show_asset_browser);
+                ImGui::SetNextWindowPos(ImVec2(kPanelMargin, kMenuBarHeight + kPanelMargin + 340.0f + kPanelMargin),
+                                         ImGuiCond_FirstUseEver);
+                ImGui::SetNextWindowSize(ImVec2(kLeftPanelWidth, 220.0f), ImGuiCond_FirstUseEver);
+                ImGui::Begin("Asset Browser", &show_asset_browser);
                 ImGui::TextWrapped("Click Spawn to add a model to the scene.");
                 ImGui::Text("assets/models/*.gltf");
                 ImGui::SameLine();
@@ -1795,11 +1750,7 @@ int main() {
                 }
                 for (const std::string& model_path : available_gltf_models) {
                     ImGui::PushID(model_path.c_str());
-                    const std::string model_name = std::filesystem::path(model_path).filename().string();
-                    ImGui::Text("%s", model_name.c_str());
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("%s", model_path.c_str());
-                    }
+                    ImGui::Text("%s", model_path.c_str());
                     ImGui::SameLine();
                     if (ImGui::SmallButton("Spawn")) {
                         Vec3 spawn_pos(spread(rng), 1.2f, spread(rng) + 3.5f);
@@ -1820,9 +1771,11 @@ int main() {
             // selected (rejecting the drop if it would create a cycle — see
             // WouldCreateCycle); "Unparent" detaches it back to the root.
             if (show_hierarchy) {
-            ImGui::SetNextWindowPos(ImVec2(work_pos.x + kPanelMargin, content_y), ImGuiCond_FirstUseEver);
-            ImGui::SetNextWindowSize(ImVec2(left_width, hierarchy_height), ImGuiCond_FirstUseEver);
-            ImGui::Begin("Hierarchy###SceneHierarchy", &show_hierarchy);
+            ImGui::SetNextWindowPos(
+                ImVec2(kPanelMargin, kMenuBarHeight + kPanelMargin + 340.0f + kPanelMargin + 220.0f + kPanelMargin),
+                ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(ImVec2(kLeftPanelWidth, 220.0f), ImGuiCond_FirstUseEver);
+            ImGui::Begin("Hierarchy", &show_hierarchy);
             ImGui::TextWrapped(
                 "Select an entity, then click \"Parent to selection\" on another row to nest it underneath.");
             ImGui::Separator();
@@ -1845,7 +1798,7 @@ int main() {
 
             auto entity_label = [&](Entity e) -> std::string {
                 if (ModelRenderer* mr = world.GetComponent<ModelRenderer>(e)) {
-                    return std::string("Model: ") + std::filesystem::path(mr->asset_path).filename().string();
+                    return std::string("Model: ") + mr->asset_path;
                 }
                 if (world.HasComponent<RigidBody>(e)) {
                     return "Body #" + std::to_string(e.index);
@@ -1871,13 +1824,10 @@ int main() {
                 ImGui::SameLine();
                 if (!selected_entity.IsNull() && selected_entity != e &&
                     !WouldCreateCycle(world, guids, e, selected_entity)) {
-                    if (ImGui::SmallButton("Parent")) {
+                    if (ImGui::SmallButton("Parent to selection")) {
                         commands.Execute(cmd_ctx, std::make_unique<editor::ReparentCommand>(
                                                       EnsureGuid(world, e, &guids),
                                                       EnsureGuid(world, selected_entity, &guids)));
-                    }
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("Parent this entity to the current selection");
                     }
                     ImGui::SameLine();
                 }
@@ -1907,18 +1857,18 @@ int main() {
             ImGui::End();
             } // show_hierarchy
 
-            // The inspector fills the right rail and shows a concise empty
-            // state until an entity is selected.
-            if (show_inspector) {
+            // Inspector: shows only the selected entity, regardless of which
+            // list it was selected from — the "click-to-select" workflow's
+            // payoff panel. Selection itself is still list-based (a "Select"
+            // button per row above), not a true click-in-viewport pick —
+            // that needs screen-to-world ray casting against each entity's
+            // bounds, real future work.
+            if (show_inspector && !selected_entity.IsNull()) {
                 ImGui::SetNextWindowPos(
-                    ImVec2(work_pos.x + work_size.x - right_width - kPanelMargin,
-                           content_y),
+                    ImVec2(static_cast<f32>(swap_chain.Width()) - 320.0f - kPanelMargin, kMenuBarHeight + kPanelMargin),
                     ImGuiCond_FirstUseEver);
-                ImGui::SetNextWindowSize(ImVec2(right_width, content_height), ImGuiCond_FirstUseEver);
-                ImGui::Begin("Inspector###PropertyInspector", &show_inspector);
-                if (selected_entity.IsNull()) {
-                    ImGui::TextWrapped("Select an entity in the scene or Hierarchy to inspect its components.");
-                } else {
+                ImGui::SetNextWindowSize(ImVec2(320.0f, 300.0f), ImGuiCond_FirstUseEver);
+                ImGui::Begin("Inspector", &show_inspector);
                 // Every reflected component on the entity is drawn
                 // generically from its reflection data, so a newly reflected
                 // component shows up here with no editor code.
@@ -1951,18 +1901,20 @@ int main() {
                 if (ImGui::Button("Deselect")) {
                     selected_entity = kNullEntity;
                 }
-                }
                 ImGui::End();
             }
 
-            // Keep the workspace clear on launch; the menu can open this
-            // quick reference whenever it's needed.
+            // Onboarding follow-up: shown by default on first run so a new
+            // user isn't left guessing what the mouse/keys do — the single
+            // biggest gap the earlier gizmo/picking/camera follow-up left
+            // completely undocumented in-app. The title-bar close (X), wired
+            // to show_help, is how it gets dismissed; "Help > Show Help
+            // Window" in the menu bar brings it back.
             if (show_help) {
-                ImGui::SetNextWindowSize(ImVec2(460, 0), ImGuiCond_FirstUseEver);
-                ImGui::SetNextWindowPos(ImVec2(work_pos.x + work_size.x * 0.5f,
-                                               work_pos.y + work_size.y * 0.5f),
-                                        ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
-                ImGui::Begin("Help###HelpWindow", &show_help);
+                ImGui::SetNextWindowSize(ImVec2(420, 0), ImGuiCond_FirstUseEver);
+                ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_FirstUseEver,
+                                         ImVec2(0.5f, 0.5f));
+                ImGui::Begin("Help", &show_help);
                 ImGui::TextWrapped("Welcome to the Aether Editor. Quick reference:");
                 ImGui::SeparatorText("Camera");
                 ImGui::BulletText("Hold Right Mouse Button + move to look around.");
@@ -1971,11 +1923,11 @@ int main() {
                 ImGui::BulletText("Left-click an object in the 3D view to select it.");
                 ImGui::BulletText("Left-click empty space to deselect.");
                 ImGui::BulletText("Drag a red/green/blue gizmo arrow to move the selection along that axis.");
-                ImGui::BulletText("Select an entity to edit its components in the Inspector.");
+                ImGui::BulletText("Or use the Position fields in the Bodies/Models/Inspector panels.");
                 ImGui::SeparatorText("Scene");
                 ImGui::BulletText("The Hierarchy panel shows parent/child relationships.");
                 ImGui::BulletText("\"Parent to selection\" nests an entity under whatever's selected.");
-                ImGui::BulletText("The Content Browser spawns models from assets/models/*.gltf.");
+                ImGui::BulletText("The Asset Browser spawns new models from assets/models/*.gltf.");
                 ImGui::Separator();
                 if (ImGui::Button("Got it", ImVec2(120, 0))) {
                     show_help = false;
@@ -1983,67 +1935,20 @@ int main() {
                 ImGui::End();
             }
 
-            // Phase 23: profiler panel + console panel as docked windows,
-            // toggled from View (or ^ in the console's case).
-            if (show_profiler) {
-                profiler_panel.show = true;
-                ImGui::SetNextWindowSize(ImVec2(480, 420), ImGuiCond_FirstUseEver);
-                ImGui::Begin("Profiler###ProfilerPanel", &profiler_panel.show);
-                profiler_panel.Draw();
-                ImGui::End();
-                show_profiler = profiler_panel.show; // reflect the close button
+            // The Tools window: every tool editor, below the 3D view and
+            // right of the left-hand panels; and any popped out on their own.
+            workspace.Update(kDt);
+            if (show_tools) {
+                const f32 w = static_cast<f32>(swap_chain.Width());
+                const f32 h = static_cast<f32>(swap_chain.Height());
+                const f32 x = kPanelMargin + kLeftPanelWidth + kPanelMargin;
+                const f32 y = std::max(kMenuBarHeight + kPanelMargin, h * 0.42f);
+                ImGui::SetNextWindowPos(ImVec2(x, y), ImGuiCond_FirstUseEver);
+                ImGui::SetNextWindowSize(ImVec2(std::max(w - x - kPanelMargin, 400.0f), std::max(h - y - kPanelMargin, 300.0f)),
+                                         ImGuiCond_FirstUseEver);
+                workspace.DrawHub("Tools", &show_tools);
             }
-            if (show_console) {
-                console_panel.Open();
-                std::string submitted = console_panel.Draw();
-                if (!submitted.empty()) {
-                    std::string output;
-                    cvars::RunCommand(submitted, output);
-                    if (!output.empty()) {
-                        console_panel.Log(submitted + "  ->  " + output, false);
-                    }
-                }
-                show_console = console_panel.IsOpen();
-            }
-
-            // Drive the stat overlay from the profiler's last frame + registers.
-            editor::StatOverlayValues values;
-            const dev::FrameProfile* frame_profile = editor_profiler.Frame(0);
-            if (frame_profile != nullptr) {
-                values.frame_ms = static_cast<f32>(frame_profile->DurationMs());
-                auto dc = frame_profile->counters.find("draw calls");
-                if (dc != frame_profile->counters.end()) values.draw_calls = static_cast<f32>(dc->second);
-                auto tr = frame_profile->counters.find("triangles");
-                if (tr != frame_profile->counters.end()) values.triangles = static_cast<f32>(tr->second);
-            }
-            values.fps = static_cast<f32>(editor_profiler.Fps());
-            values.avg_ms = static_cast<f32>(editor_profiler.AverageFrameMs(120));
-            values.p99_ms = static_cast<f32>(editor_profiler.PercentileFrameMs(0.99, 120));
-            values.gpu_ms = -1.0f; // RHI timestamps not tracked yet; skip the GPU line
-            values.memory_bytes = editor_profiler.TotalMemory();
-            editor::StatOverlayFlags overlay_flags;
-            overlay_flags.fps = cvars::GetBool("stat.fps");
-            overlay_flags.gpu = cvars::GetBool("stat.gpu");
-            overlay_flags.memory = cvars::GetBool("stat.memory");
-            const ImVec2 overlay_anchor(work_pos.x + left_width + kPanelMargin + 12.0f, content_y + 12.0f);
-            editor::DrawStatOverlay(overlay_flags, values, overlay_anchor);
-
-            ImGui::SetNextWindowPos(ImVec2(work_pos.x, work_pos.y + work_size.y - kStatusHeight));
-            ImGui::SetNextWindowSize(ImVec2(work_size.x, kStatusHeight));
-            ImGui::Begin("##EditorStatus", nullptr, fixed_panel_flags);
-            ImGui::TextDisabled("VIEWPORT  |  RMB + WASD/QE: camera  |  Click: select  |  Drag gizmo: move");
-            ImGui::SameLine(std::max(220.0f, work_size.x - 150.0f));
-            ImGui::TextDisabled("%s  |  %zu entities", state_text, world.EntityCount());
-            ImGui::End();
-
-            const ImVec2 viewport_label(work_pos.x + left_width + 2.0f * kPanelMargin, content_y + 10.0f);
-            ImDrawList* foreground = ImGui::GetForegroundDrawList();
-            const ImVec2 viewport_label_size = ImGui::CalcTextSize("SCENE VIEW");
-            foreground->AddRectFilled(ImVec2(viewport_label.x - 7.0f, viewport_label.y - 4.0f),
-                                      ImVec2(viewport_label.x + viewport_label_size.x + 7.0f,
-                                             viewport_label.y + viewport_label_size.y + 4.0f),
-                                      IM_COL32(28, 32, 40, 220), 4.0f);
-            foreground->AddText(viewport_label, IM_COL32(173, 183, 198, 255), "SCENE VIEW");
+            workspace.DrawWindows();
 
             ImGui::Render();
 
@@ -2143,7 +2048,7 @@ int main() {
                     D3D12_CPU_DESCRIPTOR_HANDLE rtv = swap_chain.CurrentBackBufferRTV();
                     D3D12_CPU_DESCRIPTOR_HANDLE dsv = graph.GetOrCreateDSV(depth_handle);
                     cl->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
-                    const f32 clear_color[4] = {0.075f, 0.083f, 0.105f, 1.0f};
+                    const f32 clear_color[4] = {0.03f, 0.03f, 0.05f, 1.0f};
                     cl->ClearRenderTargetView(rtv, clear_color, 0, nullptr);
                     cl->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
@@ -2161,8 +2066,6 @@ int main() {
                         cl->SetGraphicsRootShaderResourceView(1, instance_buffer.GPUAddress());
                         cl->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
                         cl->DrawInstanced(6, static_cast<UINT>(instances.size()), 0, 0);
-                        editor_profiler.AddCounter("draw calls", 1.0);
-                        editor_profiler.AddCounter("triangles", static_cast<f64>(instances.size()) * 2.0);
                     }
 
                     // Every (Transform, ModelRenderer) entity draws with its
@@ -2210,9 +2113,6 @@ int main() {
                                 cl->SetGraphicsRoot32BitConstants(0, sizeof(GltfFrameConstants) / 4,
                                                                    &gltf_frame_constants, 0);
                                 cl->DrawIndexedInstanced(static_cast<UINT>(data.index_count), 1, 0, 0, 0);
-                                editor_profiler.AddCounter("draw calls", 1.0);
-                                editor_profiler.AddCounter("triangles",
-                                                           static_cast<f64>(data.index_count / 3u) * 1.0);
                             }
                         });
 
@@ -2234,51 +2134,6 @@ int main() {
                         cl->DrawInstanced(6, 1, 0, 0);
                     }
 
-                    // Phase 23 debug drawing: the world-space primitives the
-                    // engine/scripts/Blueprints accumulated this frame, drawn
-                    // depth-tested (DebugDrawPSO differs from the gizmo only
-                    // in that — see CreateDebugDrawPSO). The builder expands
-                    // boxes/spheres/points into line segments once per frame.
-                    debug_draw_builder.Clear();
-                    for (const dev::DebugPrimitive& p : dev::DebugDrawInstance().Snapshot()) {
-                        const u32 color = p.color;
-                        switch (p.type) {
-                        case dev::DebugPrimitive::Type::Line:
-                            debug_draw_builder.AddLine(p.a, p.b, color);
-                            break;
-                        case dev::DebugPrimitive::Type::Box:
-                            debug_draw_builder.AddBox(p.a, p.b, color);
-                            break;
-                        case dev::DebugPrimitive::Type::Sphere:
-                            debug_draw_builder.AddSphere(p.a, p.radius, color);
-                            break;
-                        case dev::DebugPrimitive::Type::Point:
-                            debug_draw_builder.AddPoint(p.a, p.radius > 0.0f ? p.radius : 0.1f, color);
-                            break;
-                        case dev::DebugPrimitive::Type::Text:
-                            // Text is a small cross marker here; ImGui draws
-                            // its glyph in the overlay.
-                            debug_draw_builder.AddPoint(p.a, 0.2f, color);
-                            break;
-                        }
-                    }
-                    if (!debug_draw_builder.Empty()) {
-                        debug_draw_vertex_buffer.Update(debug_draw_builder.Data(),
-                                                        debug_draw_builder.VertexCount() * sizeof(::aether::editor::DebugDrawVertex));
-                        D3D12_VERTEX_BUFFER_VIEW debug_vbv{};
-                        debug_vbv.BufferLocation = debug_draw_vertex_buffer.GPUAddress();
-                        debug_vbv.SizeInBytes = static_cast<UINT>(
-                            debug_draw_builder.VertexCount() * sizeof(::aether::editor::DebugDrawVertex));
-                        debug_vbv.StrideInBytes = sizeof(::aether::editor::DebugDrawVertex);
-
-                        cl->SetPipelineState(debug_draw_pso.Get());
-                        cl->SetGraphicsRootSignature(gizmo_root_signature.Get());
-                        cl->SetGraphicsRootConstantBufferView(0, view_proj_buffer.GPUAddress());
-                        cl->IASetVertexBuffers(0, 1, &debug_vbv);
-                        cl->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_LINELIST);
-                        cl->DrawInstanced(static_cast<UINT>(debug_draw_builder.VertexCount()), 1, 0, 0);
-                    }
-
                     ID3D12DescriptorHeap* imgui_heaps[] = {imgui_srv_heap.Heap()};
                     cl->SetDescriptorHeaps(1, imgui_heaps);
                     ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), cl);
@@ -2292,8 +2147,6 @@ int main() {
             frame_fences[buffer_index] = device.Submit(lists, 1);
 
             swap_chain.Present(/*vsync=*/true);
-
-            editor_profiler.EndFrame();
 
             ++frame_index;
             if (max_frames >= 0 && frame_index >= max_frames) {

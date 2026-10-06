@@ -1,7 +1,8 @@
 #include "aether/scene/scheduler.h"
 
+#include "aether/core/profiler.h"
+
 #include "aether/core/log.h"
-#include "aether/core/profile.h"
 
 #include <algorithm>
 #include <unordered_map>
@@ -44,6 +45,7 @@ bool SystemScheduler::Add(SystemDesc system, std::string* error) {
             return false;
         }
     }
+    zone_names_.push_back(Profiler::Get().Intern(system.name));
     systems_.push_back(std::move(system));
     built_ = false;
     return true;
@@ -165,6 +167,7 @@ std::vector<std::vector<std::string>> SystemScheduler::Levels(SystemPhase phase)
 namespace {
 
 struct SystemJob {
+    const char* zone;
     const SystemDesc* system;
     World* world;
     const FrameContext* frame;
@@ -172,7 +175,7 @@ struct SystemJob {
 
 void RunSystemJob(void* data) {
     const SystemJob* job = static_cast<const SystemJob*>(data);
-    AETHER_ZONE_DYNAMIC(job->system->name.c_str());
+    ScopedZone zone(job->zone);
     job->system->run(*job->world, *job->frame);
 }
 
@@ -187,10 +190,12 @@ void SystemScheduler::RunPhase(World& world, SystemPhase phase, const FrameConte
         }
         AETHER_ASSERT(ok);
     }
+    static const char* const kPhaseZones[] = {"PreUpdate", "FixedUpdate", "Update", "LateUpdate", "PreRender"};
+    ScopedZone phase_zone(kPhaseZones[static_cast<usize>(phase)]);
     const PhaseGraph& graph = graphs_[static_cast<usize>(phase)];
     if (jobs == nullptr) {
         for (u32 i : graph.order) {
-            AETHER_ZONE_DYNAMIC(systems_[i].name.c_str());
+            ScopedZone zone(zone_names_[i]);
             systems_[i].run(world, frame);
         }
         return;
@@ -202,7 +207,7 @@ void SystemScheduler::RunPhase(World& world, SystemPhase phase, const FrameConte
         decls.clear();
         for (u32 i : level) {
             if (!systems_[i].main_thread_only) {
-                batch.push_back({&systems_[i], &world, &frame});
+                batch.push_back({zone_names_[i], &systems_[i], &world, &frame});
             }
         }
         for (SystemJob& job : batch) {
@@ -214,7 +219,7 @@ void SystemScheduler::RunPhase(World& world, SystemPhase phase, const FrameConte
         }
         for (u32 i : level) { // the calling thread's share, meanwhile
             if (systems_[i].main_thread_only) {
-                AETHER_ZONE_DYNAMIC(systems_[i].name.c_str());
+                ScopedZone zone(zone_names_[i]);
                 systems_[i].run(world, frame);
             }
         }

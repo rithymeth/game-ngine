@@ -1,208 +1,179 @@
 #include "aether/net/rpc.h"
 
-#include <algorithm>
+#include "aether/core/log.h"
+#include "aether/reflection/bytes.h"
+
+#include <vector>
 
 namespace aether::net {
 
 namespace {
 
-constexpr u32 kRpcMask = reflect::Fn_ServerRPC | reflect::Fn_ClientRPC | reflect::Fn_MulticastRPC;
+constexpr u8 kRpc = 3;
 
-struct Registry {
-    std::vector<RpcComponent> components;
-    ComponentId scanned = 0;
+void Put32(std::vector<u8>& out, u32 v) {
+    for (int i = 0; i < 4; ++i) out.push_back(static_cast<u8>(v >> (8 * i)));
+}
+
+struct In {
+    std::span<const u8> data;
+    usize at = 0;
+    bool ok = true;
+    bool Has(usize n) { return ok = ok && at + n <= data.size(); }
+    u8 U8() { return Has(1) ? data[at++] : 0; }
+    u16 U16() { u16 lo = U8(); return static_cast<u16>(lo | (U8() << 8)); }
+    u32 U32() { u32 lo = U16(); return lo | (static_cast<u32>(U16()) << 16); }
 };
 
-Registry& Refresh() {
-    static Registry registry;
-    for (; registry.scanned < RegisteredComponentCount(); ++registry.scanned) {
-        const ComponentInfo& info = GetComponentInfo(registry.scanned);
-        if (info.reflected == nullptr) continue;
-        const bool any = std::any_of(info.reflected->functions.begin(), info.reflected->functions.end(),
-                                     [](const reflect::FunctionInfo& f) { return (f.flags & kRpcMask) != 0; });
-        if (!any) continue;
-        registry.components.push_back({registry.scanned, ComponentHash(info.name), info.reflected});
+ComponentId FindComponentByHash(u32 hash) {
+    for (ComponentId id = 0; id < RegisteredComponentCount(); ++id) {
+        const ComponentInfo& info = GetComponentInfo(id);
+        if (info.reflected && ComponentNameHash(info.name) == hash) return id;
     }
-    return registry;
+    return kInvalidComponentId;
 }
 
-const RpcComponent* FindByName(std::string_view name) {
-    for (const RpcComponent& c : Refresh().components) {
-        if (name == c.type->name) return &c;
-    }
+const reflect::FunctionInfo* FindFunctionByHash(const reflect::TypeInfo& type, u32 hash) {
+    for (const reflect::FunctionInfo& f : type.functions)
+        if (ComponentNameHash(f.name) == hash) return &f;
     return nullptr;
-}
-
-const RpcComponent* FindByHash(u32 hash) {
-    for (const RpcComponent& c : Refresh().components) {
-        if (c.hash == hash) return &c;
-    }
-    return nullptr;
-}
-
-const reflect::FunctionInfo* FindFunctionByHash(const reflect::TypeInfo& type, u32 hash, u32 flags) {
-    for (const reflect::FunctionInfo& f : type.functions) {
-        if ((f.flags & flags) != 0 && ComponentHash(f.name) == hash) return &f;
-    }
-    return nullptr;
-}
-
-// Resolves "Component"/"function" for a call: the function must carry one of `flags`.
-bool Resolve(std::string_view component, std::string_view function, u32 flags, const RpcComponent*& comp,
-             const reflect::FunctionInfo*& fn) {
-    comp = FindByName(component);
-    if (comp == nullptr) return false;
-    fn = comp->type->FindFunction(function);
-    return fn != nullptr && (fn->flags & flags) != 0;
-}
-
-bool Build(u32 net_id, const RpcComponent& comp, const reflect::FunctionInfo& fn, std::span<const Any> args, usize max_size,
-           std::vector<u8>& out) {
-    if (args.size() != fn.params.size()) return false;
-    ByteWriter w;
-    w.U8(kRpcMessage);
-    w.Varint(net_id);
-    w.U32(comp.hash);
-    w.U32(ComponentHash(fn.name));
-    for (usize i = 0; i < args.size(); ++i) {
-        if (args[i].Type() != fn.params[i].type) return false;
-        EncodeValue(*fn.params[i].type, args[i].Data(), w);
-    }
-    if (w.Size() > max_size) return false;
-    out = w.Take();
-    return true;
-}
-
-// Parses the header, finds the function (which must carry one of `flags`), decodes
-// the arguments and runs it on `entity`'s component.
-struct Header {
-    u32 net_id = 0;
-    const RpcComponent* comp = nullptr;
-    const reflect::FunctionInfo* fn = nullptr;
-};
-
-RpcResult ParseHeader(ByteReader& in, u32 flags, Header& h) {
-    if (in.U8() != kRpcMessage) return RpcResult::Malformed;
-    h.net_id = static_cast<u32>(in.Varint());
-    const u32 comp_hash = in.U32();
-    const u32 fn_hash = in.U32();
-    if (!in.Ok()) return RpcResult::Malformed;
-    h.comp = FindByHash(comp_hash);
-    if (h.comp == nullptr) return RpcResult::UnknownFunction;
-    h.fn = FindFunctionByHash(*h.comp->type, fn_hash, kRpcMask);
-    if (h.fn == nullptr) return RpcResult::UnknownFunction;
-    if ((h.fn->flags & flags) == 0) return RpcResult::NotAllowed; // right function, wrong direction
-    return RpcResult::Ok;
-}
-
-RpcResult Execute(World& world, Entity entity, const Header& h, ByteReader& in) {
-    std::vector<Any> args;
-    args.reserve(h.fn->params.size());
-    for (const reflect::ParamInfo& p : h.fn->params) {
-        Any value = Any::DefaultOf(*p.type);
-        if (!value.HasValue()) return RpcResult::BadArguments;
-        if (!DecodeValue(*p.type, value.Data(), in)) return RpcResult::Malformed;
-        args.push_back(std::move(value));
-    }
-    if (in.Remaining() != 0) return RpcResult::BadArguments;
-    if (!world.IsAlive(entity)) return RpcResult::UnknownEntity;
-    void* object = world.GetComponentRaw(entity, h.comp->id);
-    if (object == nullptr) return RpcResult::UnknownFunction; // the entity lacks that component
-    return h.fn->Invoke(object, args) ? RpcResult::Ok : RpcResult::BadArguments;
 }
 
 } // namespace
 
-const std::vector<RpcComponent>& RpcComponents() { return Refresh().components; }
+RpcRouter::RpcRouter(World& world, NetHost& host, ReplicationServer& server, RpcConfig config)
+    : world_(world), host_(host), replication_server_(&server), config_(config) {
+    SetRemoteCallRouter(world_, this);
+}
 
-// --- server -----------------------------------------------------------------
+RpcRouter::RpcRouter(World& world, NetHost& host, ReplicationClient& client, PeerId server, RpcConfig config)
+    : world_(world), host_(host), replication_client_(&client), server_(server), config_(config) {
+    SetRemoteCallRouter(world_, this);
+}
 
-bool RpcServer::Call(Entity entity, std::string_view component, std::string_view function, std::span<const Any> args) {
-    const NetIdentity* identity = world_.IsAlive(entity) ? world_.GetComponent<NetIdentity>(entity) : nullptr;
-    if (identity == nullptr || identity->net_id == 0) return false;
-    const RpcComponent* comp = nullptr;
-    const reflect::FunctionInfo* fn = nullptr;
-    if (!Resolve(component, function, kRpcMask, comp, fn)) return false;
+RpcRouter::~RpcRouter() {
+    if (GetRemoteCallRouter(world_) == this) SetRemoteCallRouter(world_, nullptr);
+}
 
-    if (fn->flags & reflect::Fn_ServerRPC) { // already on the server: just run it
-        if (args.size() != fn->params.size()) return false;
-        std::vector<Any> copy(args.begin(), args.end());
-        void* object = world_.GetComponentRaw(entity, comp->id);
-        if (object == nullptr || !fn->Invoke(object, copy)) return false;
-        ++stats_.executed;
-        return true;
-    }
-
-    std::vector<u8> message;
-    if (!Build(identity->net_id, *comp, *fn, args, endpoint_.Config().max_message_size, message)) return false;
-    const Channel channel = (fn->flags & reflect::Fn_RpcUnreliable) ? Channel::Unreliable : Channel::ReliableOrdered;
-    bool sent = false;
-    if (fn->flags & reflect::Fn_ClientRPC) {
-        if (identity->owner == 0 || !endpoint_.IsConnected(identity->owner)) return false;
-        sent = endpoint_.Send(identity->owner, channel, message);
-    } else {
-        for (NetAddress peer : endpoint_.ConnectedPeers()) {
-            if (replication_.Knows(peer, identity->net_id)) sent = endpoint_.Send(peer, channel, message) || sent;
+RemoteCallResult RpcRouter::Route(Entity entity, const reflect::TypeInfo& component, const reflect::FunctionInfo& function,
+                                  std::span<reflect::Any> args) {
+    const NetIdentity* ni = world_.IsAlive(entity) ? world_.GetComponent<NetIdentity>(entity) : nullptr;
+    if (IsServer()) {
+        if (function.HasFlag(reflect::Fn_Server)) return RemoteCallResult::RunLocally;
+        if (!ni || ni->net_id == 0) return RemoteCallResult::RunLocally; // not networked (yet): nobody else has it
+        if (function.HasFlag(reflect::Fn_Client)) {
+            if (ni->owner == kNoPeer) return RemoteCallResult::RunLocally;
+            return Send(ni->owner, ni->net_id, component, function, args) ? RemoteCallResult::Sent
+                                                                           : RemoteCallResult::Refused;
         }
+        // Multicast: to everyone who has it, and here.
+        for (PeerId peer : host_.Peers())
+            if (replication_server_->PeerHas(peer, ni->net_id)) Send(peer, ni->net_id, component, function, args);
+        return RemoteCallResult::RunLocally;
     }
-    if (sent) ++stats_.sent;
-    return sent;
+    if (!function.HasFlag(reflect::Fn_Server)) return RemoteCallResult::RunLocally;
+    if (!ni || !ni->locally_owned) {
+        ++stats_.refused;
+        AETHER_LOG_WARN("Net", "Refused the server call %s.%s: this client doesn't own the entity", component.name,
+                        function.name);
+        return RemoteCallResult::Refused;
+    }
+    return Send(server_, ni->net_id, component, function, args) ? RemoteCallResult::Sent : RemoteCallResult::Refused;
 }
 
-RpcResult RpcServer::Handle(NetAddress from, std::span<const u8> message, f64 now) {
-    auto reject = [&](RpcResult r) {
-        ++stats_.rejected;
-        return r;
-    };
-    if (max_calls_per_second != 0) {
-        Window& w = windows_[from];
-        if (now - w.start >= 1.0) w = {now, 0};
-        if (++w.count > max_calls_per_second) return reject(RpcResult::RateLimited);
+bool RpcRouter::Send(PeerId peer, u32 net_id, const reflect::TypeInfo& component, const reflect::FunctionInfo& function,
+                     std::span<reflect::Any> args) {
+    if (args.size() != function.params.size() || args.size() > 255) return false;
+    std::vector<u8> msg;
+    msg.push_back(kRpc);
+    Put32(msg, net_id);
+    Put32(msg, ComponentNameHash(component.name));
+    Put32(msg, ComponentNameHash(function.name));
+    msg.push_back(static_cast<u8>(args.size()));
+    std::vector<u8> bytes;
+    for (usize i = 0; i < args.size(); ++i) {
+        if (args[i].Type() != function.params[i].type) return false;
+        bytes.clear();
+        reflect::AppendBinary(*args[i].Type(), args[i].Data(), bytes);
+        if (bytes.size() > 0xFFFF) return false;
+        msg.push_back(static_cast<u8>(bytes.size())), msg.push_back(static_cast<u8>(bytes.size() >> 8));
+        msg.insert(msg.end(), bytes.begin(), bytes.end());
     }
-
-    ByteReader in(message);
-    Header h;
-    if (RpcResult r = ParseHeader(in, reflect::Fn_ServerRPC, h); r != RpcResult::Ok) return reject(r);
-    const Entity entity = replication_.EntityOf(h.net_id);
-    if (entity.IsNull() || !world_.IsAlive(entity)) return reject(RpcResult::UnknownEntity);
-    const NetIdentity* identity = world_.GetComponent<NetIdentity>(entity);
-    if (identity == nullptr || identity->owner != from) return reject(RpcResult::NotAllowed); // only the owner may call
-    const RpcResult r = Execute(world_, entity, h, in);
-    if (r != RpcResult::Ok) return reject(r);
-    ++stats_.executed;
-    return r;
-}
-
-// --- client -----------------------------------------------------------------
-
-bool RpcClient::Call(Entity entity, std::string_view component, std::string_view function, std::span<const Any> args) {
-    const NetIdentity* identity = world_.IsAlive(entity) ? world_.GetComponent<NetIdentity>(entity) : nullptr;
-    if (identity == nullptr || identity->net_id == 0) return false;
-    const RpcComponent* comp = nullptr;
-    const reflect::FunctionInfo* fn = nullptr;
-    if (!Resolve(component, function, reflect::Fn_ServerRPC, comp, fn)) return false;
-    std::vector<u8> message;
-    if (!Build(identity->net_id, *comp, *fn, args, endpoint_.Config().max_message_size, message)) return false;
-    const Channel channel = (fn->flags & reflect::Fn_RpcUnreliable) ? Channel::Unreliable : Channel::ReliableOrdered;
-    if (!endpoint_.Send(server_, channel, message)) return false;
+    const u8 channel = function.HasFlag(reflect::Fn_Unreliable) ? config_.unreliable_channel : config_.reliable_channel;
+    if (!host_.Send(peer, channel, msg)) return false;
     ++stats_.sent;
     return true;
 }
 
-RpcResult RpcClient::Handle(std::span<const u8> message) {
-    auto reject = [&](RpcResult r) {
+bool RpcRouter::HandleEvent(const NetEvent& event) {
+    if (event.type != NetEventType::Message || event.data.empty() || event.data[0] != kRpc ||
+        (event.channel != config_.reliable_channel && event.channel != config_.unreliable_channel))
+        return false;
+    if (!IsServer() && event.peer != server_) return false;
+    Receive(event.peer, event.data);
+    return true;
+}
+
+void RpcRouter::Receive(PeerId from, std::span<const u8> data) {
+    In in{data};
+    in.U8();
+    const u32 net_id = in.U32(), component_hash = in.U32(), function_hash = in.U32();
+    const u8 argc = in.U8();
+    if (!in.ok) {
+        ++stats_.malformed;
+        return;
+    }
+    const Entity entity = IsServer() ? replication_server_->FindEntity(net_id) : replication_client_->FindEntity(net_id);
+    const ComponentId component = FindComponentByHash(component_hash);
+    if (entity.IsNull() || !world_.IsAlive(entity) || component == kInvalidComponentId ||
+        !world_.HasComponentRaw(entity, component)) {
+        ++stats_.unknown;
+        return;
+    }
+    const reflect::TypeInfo& type = *GetComponentInfo(component).reflected;
+    const reflect::FunctionInfo* function = FindFunctionByHash(type, function_hash);
+    if (!function || function->HasFlag(reflect::Fn_Static)) {
+        ++stats_.unknown;
+        return;
+    }
+    // What may arrive: on the server, server calls from the owner; on a client, client and multicast calls.
+    if (IsServer()) {
+        const NetIdentity* ni = world_.GetComponent<NetIdentity>(entity);
+        if (!function->HasFlag(reflect::Fn_Server) || !ni || ni->owner != from) {
+            ++stats_.rejected;
+            AETHER_LOG_WARN("Net", "Rejected %s.%s from peer %u: it doesn't own the entity, or it isn't a server call",
+                            type.name, function->name, from);
+            return;
+        }
+    } else if (!function->HasFlag(reflect::Fn_Client) && !function->HasFlag(reflect::Fn_Multicast)) {
         ++stats_.rejected;
-        return r;
-    };
-    ByteReader in(message);
-    Header h;
-    if (RpcResult r = ParseHeader(in, reflect::Fn_ClientRPC | reflect::Fn_MulticastRPC, h); r != RpcResult::Ok) return reject(r);
-    const Entity entity = replication_.EntityOf(h.net_id);
-    if (entity.IsNull()) return reject(RpcResult::UnknownEntity);
-    const RpcResult r = Execute(world_, entity, h, in);
-    if (r != RpcResult::Ok) return reject(r);
-    ++stats_.executed;
-    return r;
+        return;
+    }
+    if (argc != function->params.size()) {
+        ++stats_.malformed;
+        return;
+    }
+    std::vector<reflect::Any> args;
+    args.reserve(argc);
+    for (const reflect::ParamInfo& param : function->params) {
+        const u16 len = in.U16();
+        if (!in.Has(len)) break;
+        args.push_back(reflect::Any::DefaultOf(*param.type));
+        if (!args.back().HasValue() || !reflect::ReadBinary(*param.type, args.back().Data(), data.data() + in.at, len)) {
+            in.ok = false;
+            break;
+        }
+        in.at += len;
+    }
+    if (!in.ok || args.size() != function->params.size()) {
+        ++stats_.malformed;
+        return;
+    }
+    caller_ = from;
+    const bool ran = function->Invoke(world_.GetComponentRaw(entity, component), args);
+    caller_ = kNoPeer;
+    if (ran) ++stats_.received;
+    else ++stats_.malformed;
 }
 
 } // namespace aether::net

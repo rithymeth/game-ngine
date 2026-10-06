@@ -1,4 +1,5 @@
 #include "aether/animation/montage.h"
+#include "aether/core/json_util.h"
 
 #include <algorithm>
 #include <set>
@@ -63,13 +64,19 @@ json MontageToJson(const Montage& m) {
             {"slot", m.slot},     {"blend_in", m.blend_in},     {"blend_out", m.blend_out}, {"sections", sections}};
 }
 
+static bool MontageFromJsonImpl(const json& j, Montage& out, std::string* error);
+
 bool MontageFromJson(const json& j, Montage& out, std::string* error) {
+    return GuardJsonLoader(error, "montage", [&] { return MontageFromJsonImpl(j, out, error); });
+}
+
+static bool MontageFromJsonImpl(const json& j, Montage& out, std::string* error) {
     auto fail = [&](const std::string& message) {
         if (error != nullptr) *error = message;
         return false;
     };
     if (!j.is_object() || j.value("$type", "") != "Montage") return fail("not a montage file");
-    if (j.value("$version", 0) > kFormatVersion) return fail("saved by a newer version of the engine");
+    if (JsonVersion(j) > kFormatVersion) return fail("saved by a newer version of the engine");
     Montage m;
     m.name = j.value("name", "");
     m.clip = j.value("clip", "");

@@ -2,6 +2,12 @@
 // :Connect, timers, and input.
 
 #include "aether/script/script_system.h"
+#include "aether/script/gameplay_api.h"
+#include "aether/script/interaction_api.h"
+#include "aether/script/quests_api.h"
+#include "aether/script/inventory_api.h"
+#include "aether/script/loc_api.h"
+#include "aether/script/save_api.h"
 
 #include "aether/core/log.h"
 
@@ -202,6 +208,13 @@ void ScriptSystem::InstallApi() {
     SetFunction(L, "OnCompleted", &InputOnCompleted);
     SetFunction(L, "OnCanceled", &InputOnCanceled);
     lua_setglobal(L, "Input");
+
+    InstallSaveApi(host_); // SaveGames (Phase 28 step 4)
+    InstallLocApi(host_);  // Localization (Phase 29 step 2)
+    InstallQuestsApi(host_); // Quests (Phase 30 step 7c), inert if the kit isn't built
+    InstallInteractionApi(host_); // Interaction (Phase 30 step 7b), inert if the kit isn't built
+    InstallInventoryApi(host_); // Inventory (Phase 30 step 7a), inert if the kit isn't built
+    InstallGameplayApi(host_); // GameplayTags, Attributes, Effects, Abilities (Phase 30 step 5)
 }
 
 void ScriptSystem::RecordError(const std::string& error) {

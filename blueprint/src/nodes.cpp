@@ -1,4 +1,5 @@
 #include "aether/blueprint/nodes.h"
+#include "aether/debug/debug_draw.h" // its functions are nodes (Phase 23)
 
 #include "aether/assets/asset_guid.h"
 #include "aether/reflection/reflection.h"
@@ -221,6 +222,31 @@ void RegisterBuiltins(Registry& r) {
     AddEvent(r, "Event.OnMontageEnded", "Event OnMontageEnded", {Out("montage", kString), Out("interrupted", kBool)});
     // Audio (Phase 17 step 4): an AudioSource's cue ended by itself.
     AddEvent(r, "Event.OnAudioFinished", "Event OnAudioFinished", {Out("cue", kString)});
+    // Save games (Phase 28 step 4): an async Save Game to Slot finished.
+    AddEvent(r, "Event.OnSaveFinished", "Event OnSaveFinished", {Out("slot", kString), Out("success", kBool)});
+    // Gameplay (Phase 30 step 2): one of an entity's attributes changed its current value.
+    AddEvent(r, "Event.OnAttributeChanged", "Event OnAttributeChanged", {Out("name", kString), Out("old", kFloat), Out("new", kFloat)});
+    // Gameplay (Phase 30 step 3): a lasting effect started or ended on an entity.
+    AddEvent(r, "Event.OnEffectApplied", "Event OnEffectApplied", {Out("effect", kString), Out("handle", kInt)});
+    AddEvent(r, "Event.OnEffectRemoved", "Event OnEffectRemoved", {Out("effect", kString), Out("handle", kInt)});
+    // Gameplay (Phase 30 step 4): an ability started, ended (or was cancelled) or couldn't activate.
+    AddEvent(r, "Event.OnAbilityActivated", "Event OnAbilityActivated", {Out("ability", kString), Out("handle", kInt)});
+    AddEvent(r, "Event.OnAbilityEnded", "Event OnAbilityEnded", {Out("ability", kString), Out("handle", kInt), Out("cancelled", kBool)});
+    AddEvent(r, "Event.OnAbilityFailed", "Event OnAbilityFailed", {Out("ability", kString), Out("reason", kString)});
+    // Inventory kit (Phase 30 step 7a): items added, removed, equipped, unequipped and used.
+    AddEvent(r, "Event.OnItemAdded", "Event OnItemAdded", {Out("item", kString), Out("count", kInt)});
+    AddEvent(r, "Event.OnItemRemoved", "Event OnItemRemoved", {Out("item", kString), Out("count", kInt)});
+    AddEvent(r, "Event.OnItemEquipped", "Event OnItemEquipped", {Out("item", kString), Out("slot", kString)});
+    AddEvent(r, "Event.OnItemUnequipped", "Event OnItemUnequipped", {Out("item", kString), Out("slot", kString)});
+    AddEvent(r, "Event.OnItemUsed", "Event OnItemUsed", {Out("item", kString)});
+    // Interaction kit (Phase 30 step 7b): something was used (heard by the target), or couldn't be (heard by the user).
+    AddEvent(r, "Event.OnInteract", "Event OnInteract", {Out("interactor", kEntity)});
+    AddEvent(r, "Event.OnInteractFailed", "Event OnInteractFailed", {Out("target", kEntity), Out("reason", kString)});
+    // Quests kit (Phase 30 step 7c): a quest started, advanced, completed or failed.
+    AddEvent(r, "Event.OnQuestStarted", "Event OnQuestStarted", {Out("quest", kString)});
+    AddEvent(r, "Event.OnQuestProgress", "Event OnQuestProgress", {Out("quest", kString), Out("objective", kString), Out("progress", kInt), Out("required", kInt)});
+    AddEvent(r, "Event.OnQuestCompleted", "Event OnQuestCompleted", {Out("quest", kString)});
+    AddEvent(r, "Event.OnQuestFailed", "Event OnQuestFailed", {Out("quest", kString)});
     // VFX (Phase 19 step 4): a ParticleSystem's effect is over.
     AddEvent(r, "Event.OnParticleSystemFinished", "Event OnParticleSystemFinished", {Out("asset", kString)});
     // Navigation (Phase 20 step 3): a NavAgent's move ended (arrived, or failed).
@@ -904,34 +930,6 @@ void RegisterBuiltins(Registry& r) {
     r.exact["Debug.Print"] = [kString](const NodeContext&, NodeError&) -> std::optional<NodeSignature> {
         return Sig("Print String", "Debug", NodeKind::Impure,
                    {ExecIn(), In("text", kString, std::string("Hello")), ExecOut()});
-    };
-    // Debug drawing (Phase 23 step 6): primitives accumulate in the engine's
-    // debug-draw sink via Op::Draw. `color` is 0xRRGGBBAA (default white);
-    // duration 0 = draw for this frame only.
-    r.exact["Debug.DrawLine"] = [=](const NodeContext&, NodeError&) -> std::optional<NodeSignature> {
-        std::vector<PinDesc> pins{ExecIn(), In("from", kVec3), In("to", kVec3), In("color", kInt, i32{-1}),
-                                  In("duration", kFloat, 0.0f), ExecOut()};
-        return Sig("Draw Line", "Debug", NodeKind::Impure, std::move(pins));
-    };
-    r.exact["Debug.DrawBox"] = [=](const NodeContext&, NodeError&) -> std::optional<NodeSignature> {
-        std::vector<PinDesc> pins{ExecIn(), In("center", kVec3), In("halfExtent", kVec3), In("color", kInt, i32{-1}),
-                                  In("duration", kFloat, 0.0f), ExecOut()};
-        return Sig("Draw Debug Box", "Debug", NodeKind::Impure, std::move(pins));
-    };
-    r.exact["Debug.DrawSphere"] = [=](const NodeContext&, NodeError&) -> std::optional<NodeSignature> {
-        std::vector<PinDesc> pins{ExecIn(), In("center", kVec3), In("radius", kFloat, 50.0f), In("color", kInt, i32{-1}),
-                                  In("duration", kFloat, 0.0f), ExecOut()};
-        return Sig("Draw Debug Sphere", "Debug", NodeKind::Impure, std::move(pins));
-    };
-    r.exact["Debug.DrawPoint"] = [=](const NodeContext&, NodeError&) -> std::optional<NodeSignature> {
-        std::vector<PinDesc> pins{ExecIn(), In("location", kVec3), In("size", kFloat, 8.0f), In("color", kInt, i32{-1}),
-                                  In("duration", kFloat, 0.0f), ExecOut()};
-        return Sig("Draw Debug Point", "Debug", NodeKind::Impure, std::move(pins));
-    };
-    r.exact["Debug.DrawText"] = [=](const NodeContext&, NodeError&) -> std::optional<NodeSignature> {
-        std::vector<PinDesc> pins{ExecIn(), In("location", kVec3), In("text", kString), In("color", kInt, i32{-1}),
-                                  In("duration", kFloat, 0.0f), ExecOut()};
-        return Sig("Draw Debug Text", "Debug", NodeKind::Impure, std::move(pins));
     };
 
     // --- Functions (§12) ---------------------------------------------------

@@ -1,0 +1,1 @@
+{"name": "Pelts", "objectives": [{"id": "collect", "kind": "count", "target": "Pelt", "required": 3}], "rewards": {"effects": ["Blessing"], "items": [{"item": "Gold", "count": 5}]}}

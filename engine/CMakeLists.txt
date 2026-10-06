@@ -1,12 +1,29 @@
 add_library(aether_engine STATIC
     src/core/log.cpp
-    src/core/cvars.cpp
+    src/core/cvar.cpp
+    src/core/console.cpp
+    src/core/profiler.cpp
+    src/debug/debug_draw.cpp
+    src/debug/stats.cpp
+    src/debug/crash.cpp
+    src/testing/functional_test.cpp
     src/memory/linear_allocator.cpp
     src/memory/pool_allocator.cpp
     src/memory/frame_allocator.cpp
     src/platform/filesystem.cpp
+    src/platform/window_events.cpp
+    src/platform/platform_plugin.cpp
+    src/platform/process.cpp
+    src/pak/pak.cpp
+    src/pak/vfs.cpp
+    src/cook/cooker.cpp
+    src/docs/api_docs.cpp
+    src/cook/package.cpp
+    src/plugin/plugin.cpp
+    src/cook/texture_cook.cpp
     src/math/math.cpp
     src/job/job_system.cpp
+    src/kit/kit_registry.cpp
     src/ecs/archetype.cpp
     src/scene/serialization.cpp
     src/scene/entity_guid.cpp
@@ -36,12 +53,15 @@ add_library(aether_engine STATIC
     src/assets/hot_reload.cpp
     src/assets/gltf_references.cpp
     src/assets/content_browser.cpp
+    src/assets/vcs.cpp
 )
 
 target_include_directories(aether_engine PRIVATE ${stb_SOURCE_DIR})
 # PUBLIC: reflection/serialize.h exposes nlohmann::json (the in-memory form
 # of the JSON archive, and what schema migration hooks edit).
 target_link_libraries(aether_engine PUBLIC nlohmann_json::nlohmann_json)
+# .apak compression (Phase 25).
+target_link_libraries(aether_engine PRIVATE lz4_static libzstd_static aether_bcenc)
 
 if(WIN32)
     target_sources(aether_engine PRIVATE
@@ -61,8 +81,41 @@ if(WIN32)
     )
 endif()
 
+if(WIN32)
+    target_compile_definitions(aether_engine PUBLIC AETHER_HAS_WINDOW)
+elseif(AETHER_BUILD_WINDOWING)
+    include(FetchContent)
+    FetchContent_Declare(glfw GIT_REPOSITORY https://github.com/glfw/glfw.git GIT_TAG 3.4 GIT_SHALLOW TRUE)
+    set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_WAYLAND ${AETHER_GLFW_WAYLAND} CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(glfw)
+    target_sources(aether_engine PRIVATE src/platform/window_glfw.cpp)
+    target_link_libraries(aether_engine PRIVATE glfw)
+    target_compile_definitions(aether_engine PUBLIC AETHER_HAS_WINDOW PRIVATE AETHER_HAS_GLFW)
+    if(AETHER_GLFW_WAYLAND)
+        target_compile_definitions(aether_engine PRIVATE AETHER_GLFW_WAYLAND)
+    endif()
+endif()
+
 if(AETHER_BUILD_VULKAN)
     target_sources(aether_engine PRIVATE src/gfx/rhi/vulkan/vulkan_backend.cpp)
+    if(NOT WIN32)
+        # Off Windows: the RHI's device factory, and glslang for HLSL to
+        # SPIR-V (DXC's role on Windows).
+        target_sources(aether_engine PRIVATE src/gfx/rhi/device_factory.cpp src/gfx/shader_compiler_glslang.cpp)
+        target_link_libraries(aether_engine PRIVATE ${AETHER_GLSLANG_LIBRARIES})
+        # `VkFooInfo info{VK_STRUCTURE_TYPE_...}` leaves the rest zeroed on
+        # purpose, which -Wextra reports member by member.
+        set_source_files_properties(src/gfx/rhi/vulkan/vulkan_backend.cpp PROPERTIES
+                                    COMPILE_OPTIONS -Wno-missing-field-initializers)
+        # Distribution glslang builds have no RTTI, which UBSan's vptr check
+        # (the ASan+UBSan CI job) would need for glslang's classes.
+        set_source_files_properties(src/gfx/shader_compiler_glslang.cpp PROPERTIES
+                                    COMPILE_OPTIONS -fno-sanitize=vptr)
+    endif()
     # PUBLIC, not PRIVATE: rhi_demo includes vulkan_backend.h directly (the
     # same NativeHandle()-based escape hatch the D3D12 backend header already
     # supports), so Vulkan-Headers' include dir must propagate to consumers.
@@ -154,3 +207,28 @@ else()
 endif()
 
 add_library(Aether::Engine ALIAS aether_engine)
+
+# Phase 23: profiler zones can also feed Tracy (https://github.com/wolfpld/tracy).
+# Off by default; when on, Tracy's client is fetched and AETHER_PROFILE_ZONE
+# records into both the engine's profiler and Tracy.
+option(AETHER_TRACY "Forward profiler zones to Tracy" OFF)
+if(AETHER_TRACY)
+    include(FetchContent)
+    FetchContent_Declare(tracy GIT_REPOSITORY https://github.com/wolfpld/tracy.git GIT_TAG v0.11.1 GIT_SHALLOW TRUE)
+    set(TRACY_ENABLE ON CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(tracy)
+    target_link_libraries(aether_engine PUBLIC Tracy::TracyClient)
+    target_compile_definitions(aether_engine PUBLIC AETHER_TRACY)
+endif()
+
+# Phase 23: the crash handler writes minidumps on Windows.
+if(WIN32)
+    target_link_libraries(aether_engine PRIVATE dbghelp)
+endif()
+
+# Phase 25 step 5: packaging finds the player this engine was built with
+# (player/), when there's none beside the running executable.
+target_compile_definitions(aether_engine PRIVATE AETHER_PLAYER_BUILD_PATH="$<TARGET_FILE:aether_player>")
+# Phase 26 step 1: the engine's own plugins (plugins/: physics, audio, AI,
+# networking), found by PluginManager::EnginePluginsDir().
+target_compile_definitions(aether_engine PRIVATE AETHER_ENGINE_PLUGINS_DIR="${CMAKE_SOURCE_DIR}/plugins")

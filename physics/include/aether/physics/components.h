@@ -100,23 +100,6 @@ struct MeshCollider {
     bool report_stay = false; // OnCollisionStay every step while touching (off by default: it's every step)
 };
 
-// A terrain surface from a grid of heights (Phase 21). heights is row-major,
-// width x depth samples cell_size apart along X and Z, each multiplied by
-// ertical_scale (match the rendered terrain). center is where the
-// (0, 0) sample sits relative to the entity. Static bodies only.
-struct HeightfieldCollider {
-    std::vector<f32> heights;
-    u32 width = 0;
-    u32 depth = 0;
-    f32 cell_size = 1.0f;
-    f32 vertical_scale = 1.0f;
-    Vec3 center{0.0f, 0.0f, 0.0f};
-    bool is_trigger = false;
-    f32 friction = 0.5f;
-    f32 restitution = 0.0f;
-    bool report_stay = false; // OnCollisionStay every step while touching (off by default: it's every step)
-};
-
 // Installs RigidBody's custom binary (de)serializer and its JSON migration
 // from the pre-split format. Call once before any SaveScene/LoadScene that
 // may touch RigidBody entities.
@@ -182,19 +165,6 @@ AETHER_REFLECT(aether::CapsuleCollider, 1,
 AETHER_REFLECT(aether::ConvexCollider, 1,
     AETHER_FIELD(points, Field_EditAnywhere, {.tooltip = "The hull is built around these points", .units = "m"}),
     AETHER_FIELD(center, Field_EditAnywhere, {.units = "m"}),
-    AETHER_FIELD(is_trigger, Field_EditAnywhere, {.tooltip = "Reports overlaps (OnTriggerEnter/Exit) instead of colliding"}),
-    AETHER_FIELD(friction, Field_EditAnywhere, {.range_min = 0.0, .range_max = 2.0}),
-    AETHER_FIELD(restitution, Field_EditAnywhere, {.range_min = 0.0, .range_max = 1.0}),
-    AETHER_FIELD(report_stay, Field_EditAnywhere, {.tooltip = "Send OnCollisionStay every step while touching"})
-)
-
-AETHER_REFLECT(aether::HeightfieldCollider, 1,
-    AETHER_FIELD(heights, Field_ReadOnly, {.tooltip = "Row-major, width x depth samples", .units = "m"}),
-    AETHER_FIELD(width, Field_ReadOnly),
-    AETHER_FIELD(depth, Field_ReadOnly),
-    AETHER_FIELD(cell_size, Field_EditAnywhere, {.range_min = 0.01, .range_max = 1000.0, .units = "m"}),
-    AETHER_FIELD(vertical_scale, Field_EditAnywhere, {.range_min = 0.01, .range_max = 1000.0}),
-    AETHER_FIELD(center, Field_EditAnywhere, {.tooltip = "Where the (0, 0) sample sits", .units = "m"}),
     AETHER_FIELD(is_trigger, Field_EditAnywhere, {.tooltip = "Reports overlaps (OnTriggerEnter/Exit) instead of colliding"}),
     AETHER_FIELD(friction, Field_EditAnywhere, {.range_min = 0.0, .range_max = 2.0}),
     AETHER_FIELD(restitution, Field_EditAnywhere, {.range_min = 0.0, .range_max = 1.0}),

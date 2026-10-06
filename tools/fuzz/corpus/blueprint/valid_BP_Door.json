@@ -1,0 +1,547 @@
+{
+  "$type": "Blueprint",
+  "$version": 1,
+  "parent": "native:Entity",
+  "variables": [
+    {
+      "name": "IsOpen",
+      "type": "bool",
+      "default": false,
+      "tooltip": "Whether the door is opening (the player is in its trigger)",
+      "category": "Door"
+    },
+    {
+      "name": "OpenAngle",
+      "type": "float",
+      "default": 90.0,
+      "flags": [
+        "InstanceEditable"
+      ],
+      "tooltip": "How far it swings, in degrees",
+      "category": "Door"
+    },
+    {
+      "name": "Speed",
+      "type": "float",
+      "default": 90.0,
+      "flags": [
+        "InstanceEditable"
+      ],
+      "tooltip": "Degrees per second",
+      "category": "Door"
+    },
+    {
+      "name": "Angle",
+      "type": "float",
+      "default": 0.0,
+      "tooltip": "The current swing",
+      "category": "Door"
+    }
+  ],
+  "graphs": [
+    {
+      "name": "EventGraph",
+      "kind": "EventGraph",
+      "nodes": [
+        {
+          "id": 1,
+          "type": "Event.OnTriggerEnter",
+          "pos": [
+            0,
+            0
+          ]
+        },
+        {
+          "id": 2,
+          "type": "Entity.HasTag",
+          "pos": [
+            0,
+            120
+          ],
+          "defaults": {
+            "tag": "Player"
+          }
+        },
+        {
+          "id": 3,
+          "type": "Flow.Branch",
+          "pos": [
+            260,
+            0
+          ]
+        },
+        {
+          "id": 4,
+          "type": "Var.Set:IsOpen",
+          "pos": [
+            480,
+            0
+          ],
+          "defaults": {
+            "value": true
+          }
+        },
+        {
+          "id": 5,
+          "type": "Event.OnTriggerExit",
+          "pos": [
+            0,
+            260
+          ]
+        },
+        {
+          "id": 6,
+          "type": "Entity.HasTag",
+          "pos": [
+            0,
+            380
+          ],
+          "defaults": {
+            "tag": "Player"
+          }
+        },
+        {
+          "id": 7,
+          "type": "Flow.Branch",
+          "pos": [
+            260,
+            260
+          ]
+        },
+        {
+          "id": 8,
+          "type": "Var.Set:IsOpen",
+          "pos": [
+            480,
+            260
+          ],
+          "defaults": {
+            "value": false
+          }
+        },
+        {
+          "id": 9,
+          "type": "Event.Tick",
+          "pos": [
+            0,
+            620
+          ]
+        },
+        {
+          "id": 10,
+          "type": "Var.Get:IsOpen",
+          "pos": [
+            60,
+            740
+          ]
+        },
+        {
+          "id": 11,
+          "type": "Flow.Branch",
+          "pos": [
+            260,
+            620
+          ]
+        },
+        {
+          "id": 12,
+          "type": "Math.Multiply:float",
+          "pos": [
+            60,
+            840
+          ]
+        },
+        {
+          "id": 13,
+          "type": "Var.Get:Speed",
+          "pos": [
+            -160,
+            860
+          ]
+        },
+        {
+          "id": 14,
+          "type": "Var.Get:Angle",
+          "pos": [
+            260,
+            900
+          ]
+        },
+        {
+          "id": 15,
+          "type": "Math.Add:float",
+          "pos": [
+            460,
+            820
+          ]
+        },
+        {
+          "id": 16,
+          "type": "Math.Subtract:float",
+          "pos": [
+            460,
+            960
+          ]
+        },
+        {
+          "id": 17,
+          "type": "Var.Get:OpenAngle",
+          "pos": [
+            460,
+            740
+          ]
+        },
+        {
+          "id": 18,
+          "type": "Math.Min:float",
+          "pos": [
+            660,
+            800
+          ]
+        },
+        {
+          "id": 19,
+          "type": "Math.Max:float",
+          "pos": [
+            660,
+            960
+          ]
+        },
+        {
+          "id": 20,
+          "type": "Var.Set:Angle",
+          "pos": [
+            880,
+            620
+          ]
+        },
+        {
+          "id": 21,
+          "type": "Var.Set:Angle",
+          "pos": [
+            880,
+            760
+          ]
+        },
+        {
+          "id": 22,
+          "type": "Var.Get:Angle",
+          "pos": [
+            1080,
+            820
+          ]
+        },
+        {
+          "id": 23,
+          "type": "Quat.FromAxisAngle",
+          "pos": [
+            1240,
+            820
+          ]
+        },
+        {
+          "id": 24,
+          "type": "Entity.SetRotation",
+          "pos": [
+            1460,
+            680
+          ]
+        }
+      ],
+      "links": [
+        {
+          "from": [
+            1,
+            "then"
+          ],
+          "to": [
+            3,
+            "exec"
+          ]
+        },
+        {
+          "from": [
+            1,
+            "other"
+          ],
+          "to": [
+            2,
+            "target"
+          ]
+        },
+        {
+          "from": [
+            2,
+            "result"
+          ],
+          "to": [
+            3,
+            "condition"
+          ]
+        },
+        {
+          "from": [
+            3,
+            "true"
+          ],
+          "to": [
+            4,
+            "exec"
+          ]
+        },
+        {
+          "from": [
+            5,
+            "then"
+          ],
+          "to": [
+            7,
+            "exec"
+          ]
+        },
+        {
+          "from": [
+            5,
+            "other"
+          ],
+          "to": [
+            6,
+            "target"
+          ]
+        },
+        {
+          "from": [
+            6,
+            "result"
+          ],
+          "to": [
+            7,
+            "condition"
+          ]
+        },
+        {
+          "from": [
+            7,
+            "true"
+          ],
+          "to": [
+            8,
+            "exec"
+          ]
+        },
+        {
+          "from": [
+            9,
+            "then"
+          ],
+          "to": [
+            11,
+            "exec"
+          ]
+        },
+        {
+          "from": [
+            10,
+            "value"
+          ],
+          "to": [
+            11,
+            "condition"
+          ]
+        },
+        {
+          "from": [
+            13,
+            "value"
+          ],
+          "to": [
+            12,
+            "a"
+          ]
+        },
+        {
+          "from": [
+            9,
+            "delta_seconds"
+          ],
+          "to": [
+            12,
+            "b"
+          ]
+        },
+        {
+          "from": [
+            14,
+            "value"
+          ],
+          "to": [
+            15,
+            "a"
+          ]
+        },
+        {
+          "from": [
+            12,
+            "result"
+          ],
+          "to": [
+            15,
+            "b"
+          ]
+        },
+        {
+          "from": [
+            14,
+            "value"
+          ],
+          "to": [
+            16,
+            "a"
+          ]
+        },
+        {
+          "from": [
+            12,
+            "result"
+          ],
+          "to": [
+            16,
+            "b"
+          ]
+        },
+        {
+          "from": [
+            15,
+            "result"
+          ],
+          "to": [
+            18,
+            "a"
+          ]
+        },
+        {
+          "from": [
+            17,
+            "value"
+          ],
+          "to": [
+            18,
+            "b"
+          ]
+        },
+        {
+          "from": [
+            16,
+            "result"
+          ],
+          "to": [
+            19,
+            "a"
+          ]
+        },
+        {
+          "from": [
+            11,
+            "true"
+          ],
+          "to": [
+            20,
+            "exec"
+          ]
+        },
+        {
+          "from": [
+            18,
+            "result"
+          ],
+          "to": [
+            20,
+            "value"
+          ]
+        },
+        {
+          "from": [
+            11,
+            "false"
+          ],
+          "to": [
+            21,
+            "exec"
+          ]
+        },
+        {
+          "from": [
+            19,
+            "result"
+          ],
+          "to": [
+            21,
+            "value"
+          ]
+        },
+        {
+          "from": [
+            22,
+            "value"
+          ],
+          "to": [
+            23,
+            "degrees"
+          ]
+        },
+        {
+          "from": [
+            23,
+            "result"
+          ],
+          "to": [
+            24,
+            "rotation"
+          ]
+        },
+        {
+          "from": [
+            20,
+            "then"
+          ],
+          "to": [
+            24,
+            "exec"
+          ]
+        },
+        {
+          "from": [
+            21,
+            "then"
+          ],
+          "to": [
+            24,
+            "exec"
+          ]
+        }
+      ],
+      "comments": [
+        {
+          "text": "Open while the player is in the trigger",
+          "rect": [
+            -30,
+            -50,
+            760,
+            520
+          ],
+          "color": 1086357568
+        },
+        {
+          "text": "Swing toward open or closed at Speed degrees per second",
+          "rect": [
+            -190,
+            570,
+            1880,
+            480
+          ],
+          "color": 1086357568
+        }
+      ]
+    }
+  ]
+}

@@ -5,6 +5,7 @@
 #include "aether/scene/components.h"
 #include "test_framework.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <map>

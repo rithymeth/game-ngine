@@ -52,6 +52,7 @@ AETHER_TEST(RecentProjects_OrderDedupeLimitAndPersistence) {
 
 AETHER_TEST(ProjectSettings_DrawInTheInspectorHeadless) {
     ImGuiContext* context = ImGui::CreateContext();
+    ImGui::GetIO().ConfigMacOSXBehaviors = false; // tests press Ctrl on every platform
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr;
     io.DisplaySize = ImVec2(1024, 768);
@@ -83,6 +84,7 @@ AETHER_TEST(ProjectSettings_DrawInTheInspectorHeadless) {
 
 AETHER_TEST(Inspector_AssetRefFieldsUseTheProviderHeadless) {
     ImGuiContext* context = ImGui::CreateContext();
+    ImGui::GetIO().ConfigMacOSXBehaviors = false; // tests press Ctrl on every platform
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr;
     io.DisplaySize = ImVec2(1024, 768);

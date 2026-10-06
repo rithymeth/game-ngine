@@ -43,6 +43,7 @@ private:
     usize tracked_bytes_ = 0; // what was reported to the memory hook
     LinearAllocator buffers_[kBufferCount];
     usize current_index_ = 0;
+    usize reserved_ = 0;
 };
 
 } // namespace aether

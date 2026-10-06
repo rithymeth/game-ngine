@@ -4,7 +4,6 @@
 #include "aether/math/math.h"
 
 #include <span>
-#include <utility>
 #include <vector>
 
 namespace aether {
@@ -26,6 +25,7 @@ struct SplinePoint {
 // Supports road/river placement and mesh generation along the curve.
 class Spline {
 public:
+    usize SegmentCount() const { return points_.size() >= 2 ? points_.size() - 1 : 0; }
     Spline() = default;
     explicit Spline(span<const Vec3> control_points);
 
@@ -43,9 +43,8 @@ public:
 
     // Move a control point.
     void SetPoint(u32 index, Vec3 position);
-
-    // Set the width of a control point.
-    void SetPointWidth(u32 index, f32 width);
+    void SetWidth(u32 index, f32 width); // ignored for an index past the end
+    void SetRoll(u32 index, f32 roll);
 
     // Recompute tangents (called after any point change).
     void RecomputeTangents();
@@ -68,7 +67,7 @@ public:
     std::vector<Vec3> SamplePerSegment(u32 points_per_segment) const;
 
     // Find the closest point on the spline to a world position.
-    // Returns (t, distance?).
+    // Returns (t, distance).
     std::pair<f32, f32> ClosestPoint(Vec3 pos) const;
 
     // Get the tangent at parameter t.
@@ -82,9 +81,6 @@ public:
 
     // Get the forward frame (tangent, up, right) at t.
     void Frame(f32 t, Vec3* out_tangent, Vec3* out_up, Vec3* out_right) const;
-
-    // Number of curve segments (control points - 1, or 0 if fewer than 2).
-    usize SegmentCount() const { return points_.size() >= 2 ? points_.size() - 1 : 0; }
 
 private:
     std::vector<SplinePoint> points_;
@@ -100,9 +96,9 @@ std::vector<f32> BuildSplineMesh(const Spline& spline, f32 half_width, u32 verts
 // Build a road mesh: two-sided strip with the center line at UV.y=0.5.
 std::vector<f32> BuildRoadMesh(const Spline& spline, u32 verts_per_segment);
 
-// Get road markings: dashed center line texture UV (alternating on/off).
-// UV: x = along length, y = across width (0=center, 1=edge).
-// A value of 1.0 = painted, 0.0 = no paint.
+// Road markings, per vertex of BuildRoadMesh (left then right per cross-section):
+// (1 where the dashed centre line is painted, else 0; distance along the road, 0..1).
+// Dashes are painted for the first half of every dash_length.
 std::vector<f32> BuildRoadMask(const Spline& spline, u32 verts_per_segment, f32 dash_length);
 
 // Closest point on a single Catmull-Rom segment.

@@ -1,6 +1,5 @@
 #include "aether/core/log.h"
 
-#include <algorithm>
 #include <cstdarg>
 #include <chrono>
 #include <cstdio>
@@ -9,7 +8,11 @@ namespace aether {
 
 namespace {
 
-const char* LevelToString(LogLevel level) {
+const auto kStart = std::chrono::steady_clock::now();
+
+} // namespace
+
+const char* LogLevelName(LogLevel level) {
     switch (level) {
         case LogLevel::Trace: return "TRACE";
         case LogLevel::Info:  return "INFO";
@@ -20,10 +23,6 @@ const char* LevelToString(LogLevel level) {
     return "?????";
 }
 
-} // namespace
-
-Logger::Logger(usize buffer_size) : buffer_size_(buffer_size > 0 ? buffer_size : 1) {}
-
 Logger& Logger::Instance() {
     static Logger instance;
     return instance;
@@ -33,35 +32,44 @@ void Logger::Log(LogLevel level, std::string_view category, std::string_view mes
     if (level < min_level_) {
         return;
     }
-
-    std::lock_guard<std::mutex> lock(mutex_);
-    FILE* stream = (level >= LogLevel::Error) ? stderr : stdout;
-    std::fprintf(stream, "[%s] %.*s: %.*s\n", LevelToString(level), static_cast<int>(category.size()),
-                 category.data(), static_cast<int>(message.size()), message.data());
-    std::fflush(stream);
-
-    // Keep a copy in the recent-log ring buffer (used by the crash handler).
-    ring_buffer_.emplace_back(LogEntry{level, std::string(category), std::string(message)});
-    if (ring_buffer_.size() > buffer_size_) {
-        ring_buffer_.pop_front();
+    LogLine line{level, std::string(category), std::string(message),
+                 std::chrono::duration<double>(std::chrono::steady_clock::now() - kStart).count()};
+    std::vector<std::shared_ptr<Sink>> sinks;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (stdout_) {
+            FILE* stream = (level >= LogLevel::Error) ? stderr : stdout;
+            std::fprintf(stream, "[%s] %.*s: %.*s\n", LogLevelName(level), static_cast<int>(category.size()),
+                         category.data(), static_cast<int>(message.size()), message.data());
+            std::fflush(stream);
+        }
+        recent_.push_back(line);
+        while (recent_.size() > RecentCapacity()) recent_.pop_front();
+        for (const auto& [id, sink] : sinks_) sinks.push_back(sink);
     }
+    for (const auto& sink : sinks) (*sink)(line);
 }
 
-std::vector<LogEntry> Logger::RecentLogLines(usize max) const {
+int Logger::AddSink(Sink sink) {
     std::lock_guard<std::mutex> lock(mutex_);
-    const usize take = std::min(max, ring_buffer_.size());
-    if (take == 0) {
-        return {};
-    }
-    return std::vector<LogEntry>(ring_buffer_.begin(), ring_buffer_.begin() + static_cast<std::ptrdiff_t>(take));
+    const int id = next_sink_++;
+    sinks_.push_back({id, std::make_shared<Sink>(std::move(sink))});
+    return id;
 }
 
-void Logger::SetLogBufferSize(usize n) {
+void Logger::RemoveSink(int id) {
     std::lock_guard<std::mutex> lock(mutex_);
-    buffer_size_ = n > 0 ? n : 1;
-    while (ring_buffer_.size() > buffer_size_) {
-        ring_buffer_.pop_front();
-    }
+    std::erase_if(sinks_, [&](const auto& s) { return s.first == id; });
+}
+
+std::vector<LogLine> Logger::Recent() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return std::vector<LogLine>(recent_.begin(), recent_.end());
+}
+
+void Logger::ClearRecent() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    recent_.clear();
 }
 
 void LogFormatted(LogLevel level, std::string_view category, const char* fmt, ...) {

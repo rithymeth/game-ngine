@@ -1,6 +1,7 @@
 #include "aether/blueprint/vm.h"
 
 #include "aether/core/log.h"
+#include "aether/ecs/remote_call.h"
 #include "aether/ecs/world.h"
 #include "aether/reflection/reflection.h"
 #include "aether/assets/asset_guid.h"
@@ -275,6 +276,18 @@ bool BlueprintVM::Dispatch(Entity entity, std::string_view event, std::span<cons
     auto it = bp.events.find(event);
     if (it == bp.events.end()) return false;
     return Invoke(*instance, it->second, args);
+}
+
+usize BlueprintVM::DispatchAll(std::string_view event, std::span<const VmValue> args) {
+    std::vector<Entity> targets; // a handler may attach or detach, so don't walk the map while running
+    for (const auto& [key, instance] : instances_) {
+        if (instance->blueprint->events.find(event) != instance->blueprint->events.end()) targets.push_back(instance->entity);
+    }
+    usize ran = 0;
+    for (const Entity e : targets) {
+        if (Dispatch(e, event, args)) ++ran;
+    }
+    return ran;
 }
 
 bool BlueprintVM::Invoke(Instance& instance_ref, u32 function, std::span<const VmValue> args) {
@@ -652,10 +665,15 @@ void BlueprintVM::NativeCallOp(Instance& instance, const CompiledFunction& fn, c
                              arg.reg.bank == Bank::String ? frame.s[arg.reg.index] : std::string(), arg.type));
     }
     reflect::Any result;
-    if (!call.function->Invoke(self, args, call.has_result ? &result : nullptr)) {
+    const bool ok = call.has_target && call.owner != nullptr
+                        ? CallFunction(world_, frame.r[call.target.index].AsEntity(), *call.owner, *call.function, self,
+                                       args, call.has_result ? &result : nullptr)
+                        : call.function->Invoke(self, args, call.has_result ? &result : nullptr);
+    if (!ok) {
         Warn("BP204", instance, fn, node, std::string("The call to '") + call.function->name + "' was refused.");
         return;
     }
+    if (call.has_result && !result.HasValue()) return; // a remote call that was sent
     if (call.has_result) {
         const RegRef r = call.result.reg;
         Reg scratch;
@@ -865,25 +883,6 @@ bool BlueprintVM::Run(Instance& instance, u32 function, Frame& frame, u32 depth,
         case Op::Print:
             if (print_) print_(instance.entity, s[in.b]);
             break;
-        case Op::Draw: {
-            const DrawInfo& d = bp.debug_draws[static_cast<usize>(in.d)];
-            if (debug_draw_) {
-                DebugDrawCall call;
-                call.kind = static_cast<DebugDrawCall::Kind>(d.kind);
-                call.from = r[d.a.index].AsVec3();
-                switch (d.kind) {
-                    case DrawInfo::Kind::Line: call.to = r[d.b.index].AsVec3(); break;
-                    case DrawInfo::Kind::Box: call.size = r[d.b.index].AsVec3(); break;
-                    case DrawInfo::Kind::Sphere:
-                    case DrawInfo::Kind::Point: call.to.x = r[d.b.index].f; break; // radius / cross half-size
-                    case DrawInfo::Kind::Text: call.text = s[d.text.index]; break;
-                }
-                call.color = static_cast<u32>(r[d.color.index].i);
-                call.duration = r[d.duration.index].f;
-                debug_draw_(instance.entity, call);
-            }
-            break;
-        }
         case Op::CallNative:
             NativeCallOp(instance, fn, bp.native_calls[static_cast<usize>(in.d)], frame, fn.node_of[pc - 1]);
             break;

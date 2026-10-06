@@ -41,5 +41,7 @@ bool LoadSceneFromMemory(World& world, std::span<const u8> bytes, const std::str
 // fields the same way the binary form does.
 bool SaveSceneJson(const World& world, const std::string& path);
 bool LoadSceneJson(World& world, const std::string& path);
+// The same from a JSON scene in memory (e.g. read from an .apak); `source_name` is for messages.
+bool LoadSceneJsonFromMemory(World& world, std::span<const u8> bytes, const std::string& source_name = "<memory>");
 
 } // namespace aether

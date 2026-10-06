@@ -1,195 +1,223 @@
 #pragma once
 
 #include "aether/ecs/world.h"
-#include "aether/net/bytes.h"
-#include "aether/net/components.h"
-#include "aether/net/endpoint.h"
+#include "aether/math/math.h"
+#include "aether/net/host.h"
 
 #include <functional>
 #include <map>
+#include <string>
 #include <unordered_map>
-#include <unordered_set>
-#include <vector>
 
 namespace aether::net {
 
-// State replication (Phase 22 step 2), built on reflection: every field
-// flagged Field_Replicated, of every component on an entity that has a
-// NetIdentity, is sent server -> client. Only what changed since the last
-// update the peer received goes on the wire (a per-field delta against a
-// per-peer baseline), over the reliable ordered channel, so a peer can never
-// miss a change or see one out of order.
-//
-// Wire (reliable messages whose first byte is kReplicationMessage; other
-// messages belong to the game): a batch of records - Spawn (all replicated
-// components), Update (changed fields of changed components, adding a
-// component the client lacks), RemoveComponent, Despawn.
-//
-// Components are named on the wire by a hash of their reflected name, so the
-// client must have those component types registered (touching
-// GetComponentId<T>() once, as RegisterReplicatedComponent does). Fields are
-// encoded by reflected type (see EncodeValue); a component may have at most
-// 64 replicated fields, and one entity's Spawn must fit in one message.
+// Marks an entity as networked. On the server, give an entity one (net_id
+// left 0) and the ReplicationServer assigns its id and sends it to the
+// clients it is relevant to; on a client, the ReplicationClient creates
+// entities with one filled in. Plain data.
+struct NetIdentity {
+    u32 net_id = 0;            // assigned by the server; 0 until then
+    PeerId owner = kNoPeer;    // the server's id for the owning client (kNoPeer: the server owns it)
+    char archetype[32] = {};   // what the client spawns ("player", "rocket"); see ReplicationClient::OnSpawn
+    f32 relevancy_radius = 0;  // sent to viewers within this distance; 0: to everyone
+    f32 priority = 1;          // share of the bandwidth budget when there is not room for everything
+    bool locally_owned = false; // client side: this client owns it
+};
 
-inline constexpr u8 kReplicationMessage = 0xA0;
+void SetNetArchetype(NetIdentity& identity, const std::string& archetype);
 
-// --- value codec -----------------------------------------------------------
+struct ReplicationConfig {
+    u8 snapshot_channel = 2;  // an UnreliableSequenced channel: late snapshots are useless
+    u8 control_channel = 1;   // an Unreliable channel for acks
+    usize byte_budget = 1000; // per snapshot per client (at most Connection::kMaxFragment)
+    f64 send_interval = 1.0 / 20.0;
+    u32 history = 64;         // snapshots remembered per client (deltas are against one of them)
+};
 
-// Encodes a reflected value compactly: integers as varints, floats raw,
-// strings and arrays length-prefixed, structs as their non-transient fields.
-void EncodeValue(const reflect::TypeInfo& type, const void* value, ByteWriter& out);
-// False if the bytes are malformed; `value` may then be partly written.
-bool DecodeValue(const reflect::TypeInfo& type, void* value, ByteReader& in);
-
-// --- replicated components --------------------------------------------------
-
+// The replicated state of one entity: per component (by name hash) the
+// replicated fields' bytes. Components replicate their Field_Replicated
+// fields; Transform always replicates whole.
 struct ReplicatedComponent {
+    u32 hash = 0;
+    std::vector<std::vector<u8>> fields; // by replicated-field index; empty: not sent yet
+};
+struct ReplicatedEntity {
+    PeerId owner = kNoPeer;
+    std::string archetype;
+    std::vector<ReplicatedComponent> components; // sorted by hash
+};
+using ReplicatedState = std::unordered_map<u32, ReplicatedEntity>; // by net id
+
+// The components that replicate and their replicated fields.
+struct ReplicatedComponentType {
     ComponentId id = kInvalidComponentId;
     u32 hash = 0;
-    const reflect::TypeInfo* type = nullptr;
-    std::vector<const reflect::FieldInfo*> fields; // the Field_Replicated ones, declaration order
+    std::vector<const reflect::FieldInfo*> fields; // at most 32
+};
+const std::vector<ReplicatedComponentType>& ReplicatedComponentTypes();
+const ReplicatedComponentType* FindReplicatedComponentType(u32 hash);
+u32 ComponentNameHash(const char* name);
+const char* ReplicatedComponentName(u32 hash);
+const char* ReplicatedFieldName(u32 hash, u32 field);
+
+// Where the server's snapshot bytes went (Phase 22 step 6): per entity,
+// per component and per field, since the last Reset. Entity bytes are
+// whole entries (ids, masks, lengths and values); field bytes are a
+// field's length and value.
+struct NetProfile {
+    struct FieldCost {
+        u64 bytes = 0;
+        u32 sends = 0;
+    };
+    struct ComponentCost {
+        u64 bytes = 0;
+        std::map<u32, FieldCost> fields; // by replicated-field index
+    };
+    struct EntityCost {
+        std::string archetype;
+        u64 bytes = 0;
+        u32 updates = 0, spawns = 0;
+        std::map<u32, ComponentCost> components; // by name hash
+    };
+    std::unordered_map<u32, EntityCost> entities; // by net id
+    u64 snapshot_bytes = 0; // everything, headers and despawns included
+    u32 snapshots = 0, despawns = 0;
+    f64 since = 0.0; // when it was reset (the caller's clock)
+    void Reset(f64 now) { *this = NetProfile{}, since = now; }
 };
 
-// Every registered component with at least one replicated field.
-const std::vector<ReplicatedComponent>& ReplicatedComponents();
-const ReplicatedComponent* FindReplicated(u32 hash);
-u32 ComponentHash(const char* name);
-
-template <typename T>
-void RegisterReplicatedComponent() {
-    (void)GetComponentId<T>();
-}
-
-// --- server -----------------------------------------------------------------
-
-struct ReplicationStats {
-    u64 records_sent = 0;
-    u64 spawns = 0;
-    u64 updates = 0;
-    u64 removals = 0;
-    u64 despawns = 0;
-    u64 bytes_sent = 0;
-    u64 deferred = 0;  // records held back by the byte budget or a full send queue
-    u64 oversized = 0; // records too big for one message (never sent)
-};
-
-// Where replication bandwidth goes (summed over every peer sent to): per
-// replicated field, per entity, and the total. Headers and record framing count
-// toward the entity and the total but not toward any field.
-struct FieldTraffic {
-    u64 bytes = 0;
-    u64 sends = 0;
-};
-
-struct ReplicationProfile {
-    std::map<std::pair<u32, u32>, FieldTraffic> fields; // (component hash, replicated field index)
-    std::unordered_map<u32, u64> entity_bytes;          // by network id
-    u64 total_bytes = 0;                                // every byte of every replication message
-    void Reset() { *this = {}; }
-};
-
+// Sends the world to clients as delta snapshots (Phase 22 step 2,
+// docs/design/PHASE_SPECS.md §22.2). Every send_interval each connected
+// client gets one snapshot holding, for the entities relevant to it, the
+// replicated fields that differ from the last snapshot it acknowledged -
+// so an idle world costs a few bytes, and a lost snapshot costs nothing
+// but latency, because the next one is still against an acknowledged
+// baseline. Spawns carry everything; despawns are explicit. When the
+// changes do not fit the byte budget, entities are sent by accumulated
+// priority and the rest wait.
 class ReplicationServer {
 public:
-    ReplicationServer(World& world, NetEndpoint& endpoint);
+    ReplicationServer(World& world, NetHost& host, ReplicationConfig config = {});
 
-    // Decides whether a peer should see an entity (default: everyone sees everything).
-    // An entity that stops being relevant is despawned on that client, and
-    // spawned again when it becomes relevant.
-    std::function<bool(NetAddress peer, Entity entity)> relevancy;
+    // Where a client looks from, for relevancy; without one, the Transform
+    // of an entity it owns; without that, everything is relevant.
+    void SetViewer(PeerId peer, const Vec3& position);
+    void ClearViewer(PeerId peer);
 
-    // A component that is sent in full when an entity spawns on a client but
-    // never updated after that, because something else keeps it current (a
-    // moving entity's Transform, owned by snapshot interpolation).
-    template <typename T>
-    void ReplicateOnlyOnSpawn() {
-        spawn_only_.insert(ComponentHash(GetComponentInfo(GetComponentId<T>()).name));
-    }
+    // Takes the acks out of the host's events; true when `event` was one
+    // (or a disconnect it needed to see; those are left for the game too: false).
+    bool HandleEvent(const NetEvent& event);
+    void Update(f64 now);
 
-    // Most bytes of records sent to one peer per Replicate call (0 = unlimited).
-    // Records beyond it wait for the next call; the longer one waits, the
-    // higher its priority, and new spawns always go first.
-    usize bytes_per_peer = 0;
+    Entity FindEntity(u32 net_id) const;
+    // Whether the last snapshot sent to `peer` had the entity (so it has, or is about to have, it).
+    bool PeerHas(PeerId peer, u32 net_id) const;
 
-    // One replication pass: assigns network ids, and sends each connected peer
-    // what changed. Call it at the game's network tick rate, after
-    // NetEndpoint::Update. Returns the number of records sent.
-    usize Replicate();
-
-    Entity EntityOf(u32 net_id) const;
-    bool Knows(NetAddress peer, u32 net_id) const;
-    const ReplicationStats& Stats() const { return stats_; }
-    const ReplicationProfile& Profile() const { return profile_; }
-    void ResetProfile() { profile_.Reset(); }
+    struct PeerStats {
+        u16 last_snapshot = 0;
+        u16 acked = 0xFFFF;
+        usize last_bytes = 0;
+        u32 entities_sent = 0, entities_deferred = 0, despawns_sent = 0;
+        u64 total_bytes = 0;
+    };
+    PeerStats Stats(PeerId peer) const;
+    const NetProfile& Profile() const { return profile_; }
+    NetProfile& MutableProfile() { return profile_; }
 
 private:
-    using FieldBytes = std::vector<std::vector<u8>>; // one encoding per replicated field
-    struct Component {
-        u32 hash = 0;
-        const ReplicatedComponent* info = nullptr;
-        FieldBytes fields;
+    struct History {
+        u16 id = 0xFFFF;
+        ReplicatedState state;
     };
-    struct Snapshot {
-        u32 net_id = 0;
-        Entity entity;
-        std::vector<Component> components;
+    struct Peer {
+        u16 next_snapshot = 0;
+        u16 acked = 0xFFFF;
+        bool has_viewer = false;
+        Vec3 viewer;
+        std::vector<History> history;
+        std::unordered_map<u32, f32> accumulators;
+        PeerStats stats;
     };
-    struct Baseline {
-        std::vector<Component> components;
+    struct Meta {
+        f32 radius = 0, priority = 1;
+        bool has_position = false;
+        Vec3 position;
     };
-    struct PeerState {
-        std::unordered_map<u32, Baseline> known;
-        std::unordered_map<u32, f32> priority;
-    };
-    struct Record;
-
-    void TakeSnapshots(std::vector<Snapshot>& out);
-    void ReplicateTo(NetAddress peer, PeerState& state, const std::vector<Snapshot>& snapshots);
+    void Gather(ReplicatedState& current);
+    void SendTo(PeerId id, Peer& peer, const ReplicatedState& current, f64 now);
 
     World& world_;
-    NetEndpoint& endpoint_;
+    NetHost& host_;
+    ReplicationConfig config_;
     u32 next_net_id_ = 1;
-    std::unordered_set<u32> spawn_only_;
-    std::unordered_map<u32, Entity> by_id_;
-    std::unordered_map<NetAddress, PeerState> peers_;
-    ReplicationStats stats_;
-    ReplicationProfile profile_;
+    f64 last_send_ = -1e300;
+    std::unordered_map<u32, Entity> entities_;
+    std::unordered_map<u32, Meta> meta_;
+    std::unordered_map<PeerId, Peer> peers_;
+    NetProfile profile_;
 };
 
-// --- client -----------------------------------------------------------------
-
-struct ClientReplicationStats {
-    u64 spawns = 0;
-    u64 updates = 0;
-    u64 removals = 0;
-    u64 despawns = 0;
-    u64 malformed = 0;
-};
-
+// Rebuilds the server's world from its snapshots (Phase 22 step 2): spawns
+// and despawns entities, writes the replicated fields that changed, and
+// acknowledges each snapshot so the next is a delta against it.
 class ReplicationClient {
 public:
-    explicit ReplicationClient(World& world) : world_(world) {}
+    ReplicationClient(World& world, NetHost& host, PeerId server, ReplicationConfig config = {});
 
-    static bool IsReplicationMessage(const NetEvent& event) {
-        return event.type == NetEventType::Message && event.channel == Channel::ReliableOrdered && !event.data.empty() &&
-               event.data[0] == kReplicationMessage;
-    }
+    // Runs when an entity of `archetype` is spawned, before its fields are
+    // written: add the components that are not replicated (a mesh, a
+    // collider). "" matches every archetype without its own hook.
+    using SpawnFn = std::function<void(World&, Entity, const NetIdentity&)>;
+    void OnSpawn(const std::string& archetype, SpawnFn fn);
+    using DespawnFn = std::function<void(World&, Entity)>;
+    void OnDespawn(DespawnFn fn) { on_despawn_ = std::move(fn); }
 
-    // Applies one replication message to the world. False if it is malformed
-    // (the records before the bad one were applied).
-    bool Apply(std::span<const u8> message);
+    // Takes the snapshots out of the host's events; true when `event` was one.
+    bool HandleEvent(const NetEvent& event);
 
-    Entity EntityOf(u32 net_id) const;
-    usize EntityCount() const { return by_id_.size(); }
-    // Destroys every replicated entity (on disconnect).
-    void Clear();
-    const ClientReplicationStats& Stats() const { return stats_; }
+    // Components this client predicts itself (Phase 22 step 4): replication
+    // writes them on an entity it owns only when spawning it.
+    void PredictLocally(ComponentId component) { predicted_.push_back(component); }
+    // The last applied snapshot's value of a replicated component, read into
+    // `out` (a live component of that type); false if it doesn't have one.
+    bool ReadReplicated(u32 net_id, ComponentId component, void* out) const;
+
+    Entity FindEntity(u32 net_id) const;
+    const std::unordered_map<u32, Entity>& Entities() const { return entities_; }
+    usize EntityCount() const { return entities_.size(); }
+    u16 LastSnapshot() const { return last_; }
+    f64 ServerTime() const { return server_time_; }
+
+    struct Stats {
+        u32 snapshots = 0;
+        u32 undecodable = 0; // their baseline was forgotten
+        u32 spawned = 0, despawned = 0;
+        u64 fields_written = 0;
+    };
+    const Stats& GetStats() const { return stats_; }
 
 private:
-    bool ApplyComponent(Entity entity, ByteReader& in, bool is_update);
+    struct History {
+        u16 id = 0xFFFF;
+        ReplicatedState state;
+    };
+    bool Receive(std::span<const u8> data);
+    void Apply(const ReplicatedState& state);
 
     World& world_;
-    std::unordered_map<u32, Entity> by_id_;
-    ClientReplicationStats stats_;
+    NetHost& host_;
+    PeerId server_;
+    ReplicationConfig config_;
+    std::vector<History> history_;
+    ReplicatedState applied_;
+    std::unordered_map<u32, Entity> entities_;
+    std::unordered_map<std::string, SpawnFn> on_spawn_;
+    DespawnFn on_despawn_;
+    std::vector<ComponentId> predicted_;
+    u16 last_ = 0xFFFF;
+    bool any_ = false;
+    f64 server_time_ = 0;
+    Stats stats_;
 };
 
 } // namespace aether::net

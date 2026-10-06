@@ -1,6 +1,6 @@
 #include "aether/memory/frame_allocator.h"
 
-#include "aether/core/profile.h"
+#include "aether/core/profiler.h"
 
 namespace aether {
 
@@ -9,14 +9,14 @@ FrameAllocator::FrameAllocator(usize buffer_size_bytes) {
 }
 
 FrameAllocator::~FrameAllocator() {
-    prof::ReportMemory("Frame allocator", -static_cast<i64>(tracked_bytes_));
+    if (storage_) MemoryTracker::Get().Free("Frame allocator (reserved)", reserved_);
 }
 
 void FrameAllocator::Init(usize buffer_size_bytes) {
-    prof::ReportMemory("Frame allocator", -static_cast<i64>(tracked_bytes_)); // a re-Init replaces the old storage
-    tracked_bytes_ = buffer_size_bytes * kBufferCount;
-    prof::ReportMemory("Frame allocator", static_cast<i64>(tracked_bytes_));
-    storage_ = std::make_unique<u8[]>(buffer_size_bytes * kBufferCount);
+    if (storage_) MemoryTracker::Get().Free("Frame allocator (reserved)", reserved_);
+    reserved_ = buffer_size_bytes * kBufferCount;
+    storage_ = std::make_unique<u8[]>(reserved_);
+    MemoryTracker::Get().Alloc("Frame allocator (reserved)", reserved_);
     for (usize i = 0; i < kBufferCount; ++i) {
         buffers_[i].Init(storage_.get() + i * buffer_size_bytes, buffer_size_bytes);
     }

@@ -46,6 +46,29 @@ struct Camera {
     i32 priority = 0;
 };
 
+// A film-style camera (Phase 27 step 6, §27.7): the field of view comes from
+// the lens, not a number. Add it beside a Camera; the vertical field of view
+// is 2 * atan(sensor_height / (2 * focal_length)), written into the Camera
+// by ApplyCineCameras (so the renderer needs nothing new, and the CineCamera
+// wins over a hand-edited Camera.fov_degrees). Every field is keyable by a
+// sequence's Property track, so a lens can zoom or rack focus in a cutscene.
+// Aperture and focus distance are stored for depth of field to use later.
+struct CineCamera {
+    f32 focal_length_mm = 35.0f;
+    f32 sensor_width_mm = 36.0f;
+    f32 sensor_height_mm = 20.25f; // a 16:9 gate
+    f32 aperture_f = 2.8f;
+    f32 focus_distance = 10.0f;
+};
+
+// The vertical field of view in degrees for the lens, kept to 1..170 and safe
+// for zero or negative values.
+f32 CineFovDegrees(const CineCamera& camera);
+// Writes every CineCamera's field of view into its entity's Camera (and makes
+// it a perspective one); an entity with a CineCamera and no Camera is left
+// alone. Returns how many cameras it updated.
+usize ApplyCineCameras(World& world);
+
 // Right-handed orthographic projection with Vulkan's [0, 1] depth range
 // (the counterpart of Mat4::PerspectiveRH).
 Mat4 OrthographicRH(f32 width, f32 height, f32 z_near, f32 z_far);
@@ -129,6 +152,14 @@ AETHER_REFLECT(aether::Camera, 1,
     AETHER_FIELD(near_plane, Field_EditAnywhere, {.range_min = 0.001, .range_max = 100000, .units = "m"}),
     AETHER_FIELD(far_plane, Field_EditAnywhere, {.range_min = 0.01, .range_max = 1000000, .units = "m"}),
     AETHER_FIELD(priority, Field_EditAnywhere, {.tooltip = "The highest-priority camera on an active entity is used"})
+)
+
+AETHER_REFLECT(aether::CineCamera, 1,
+    AETHER_FIELD(focal_length_mm, Field_EditAnywhere, {.tooltip = "Lens focal length", .range_min = 1, .range_max = 1000, .units = "mm"}),
+    AETHER_FIELD(sensor_width_mm, Field_EditAnywhere, {.tooltip = "Film back width", .range_min = 1, .range_max = 100, .units = "mm"}),
+    AETHER_FIELD(sensor_height_mm, Field_EditAnywhere, {.tooltip = "Film back height: with the focal length it sets the vertical field of view", .range_min = 1, .range_max = 100, .units = "mm"}),
+    AETHER_FIELD(aperture_f, Field_EditAnywhere, {.tooltip = "f-stop (stored for depth of field)", .range_min = 0.7, .range_max = 64}),
+    AETHER_FIELD(focus_distance, Field_EditAnywhere, {.tooltip = "Focus distance (stored for depth of field)", .range_min = 0.01, .range_max = 100000, .units = "m"})
 )
 
 AETHER_REFLECT(aether::Tags, 1, AETHER_FIELD(names, Field_EditAnywhere, {.tooltip = "Labels for finding entities"}))

@@ -1,0 +1,181 @@
+{
+  "$type": "Blueprint",
+  "$version": 1,
+  "parent": "native:Entity",
+  "variables": [
+    {
+      "name": "Value",
+      "type": "int",
+      "default": 1,
+      "flags": [
+        "InstanceEditable"
+      ],
+      "tooltip": "Score this coin is worth",
+      "category": "Coin"
+    }
+  ],
+  "graphs": [
+    {
+      "name": "EventGraph",
+      "kind": "EventGraph",
+      "nodes": [
+        {
+          "id": 1,
+          "type": "Event.OnTriggerEnter",
+          "pos": [
+            0,
+            0
+          ]
+        },
+        {
+          "id": 2,
+          "type": "Entity.HasTag",
+          "pos": [
+            0,
+            120
+          ],
+          "defaults": {
+            "tag": "Player"
+          }
+        },
+        {
+          "id": 3,
+          "type": "Flow.Branch",
+          "pos": [
+            260,
+            0
+          ]
+        },
+        {
+          "id": 4,
+          "type": "Flow.DoOnce",
+          "pos": [
+            480,
+            0
+          ],
+          "comment": "A coin counts once, even if two triggers fire"
+        },
+        {
+          "id": 5,
+          "type": "Var.Get:Value",
+          "pos": [
+            480,
+            160
+          ]
+        },
+        {
+          "id": 6,
+          "type": "Dispatch.Call:OnCollected",
+          "pos": [
+            720,
+            0
+          ]
+        },
+        {
+          "id": 7,
+          "type": "Entity.Destroy",
+          "pos": [
+            960,
+            0
+          ]
+        }
+      ],
+      "links": [
+        {
+          "from": [
+            1,
+            "then"
+          ],
+          "to": [
+            3,
+            "exec"
+          ]
+        },
+        {
+          "from": [
+            1,
+            "other"
+          ],
+          "to": [
+            2,
+            "target"
+          ]
+        },
+        {
+          "from": [
+            2,
+            "result"
+          ],
+          "to": [
+            3,
+            "condition"
+          ]
+        },
+        {
+          "from": [
+            3,
+            "true"
+          ],
+          "to": [
+            4,
+            "exec"
+          ]
+        },
+        {
+          "from": [
+            4,
+            "completed"
+          ],
+          "to": [
+            6,
+            "exec"
+          ]
+        },
+        {
+          "from": [
+            5,
+            "value"
+          ],
+          "to": [
+            6,
+            "value"
+          ]
+        },
+        {
+          "from": [
+            6,
+            "then"
+          ],
+          "to": [
+            7,
+            "exec"
+          ]
+        }
+      ],
+      "comments": [
+        {
+          "text": "Collected by the player",
+          "rect": [
+            -30,
+            -50,
+            1200,
+            300
+          ],
+          "color": 1086357568
+        }
+      ]
+    }
+  ],
+  "dispatchers": [
+    {
+      "name": "OnCollected",
+      "params": [
+        {
+          "name": "value",
+          "type": "int",
+          "default": 0
+        }
+      ]
+    }
+  ]
+}

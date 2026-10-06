@@ -1,8 +1,9 @@
 #include "aether/terrain/splat.h"
+#include "terrain_math.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
-#include <functional>
 
 namespace aether {
 namespace terrain {
@@ -11,28 +12,34 @@ namespace terrain {
 
 f32 BrushWeight(f32 dx, f32 dz, f32 radius, f32 strength, f32 falloff) {
     const f32 dist = std::sqrt(dx * dx + dz * dz);
-    if (dist >= radius) return 0.0f;
+    if (radius <= 0.0f || dist >= radius) return 0.0f;
     const f32 t = dist / radius; // 0 at center, 1 at edge
-    // Smoothstep profile; falloff > 0 concentrates the weight toward the center.
-    const f32 smooth = t * t * (3.0f - 2.0f * t);
-    return strength * std::pow(1.0f - smooth, 1.0f + std::max(0.0f, falloff));
+    // Full strength inside the core; the outer `falloff` share of the radius fades smoothly (0: a hard edge).
+    const f32 fade = std::clamp(falloff, 0.0f, 1.0f);
+    const f32 core = 1.0f - fade;
+    if (t <= core) return strength;
+    const f32 u = (t - core) / fade;
+    return strength * (1.0f - u * u * (3.0f - 2.0f * u));
 }
 
 // --- Splatmap data ---
 
 std::array<f32, 4> SplatmapData::GetWeights(f32 u, f32 v) const {
-    if (width == 0 || height == 0) return {1.0f, 0.0f, 0.0f, 0.0f};
-    const f32 cu = std::clamp(u, 0.0f, 1.0f);
-    const f32 cv = std::clamp(v, 0.0f, 1.0f);
-    const u32 px = static_cast<u32>(cu * static_cast<f32>(width - 1));
-    const u32 pz = static_cast<u32>(cv * static_cast<f32>(height - 1));
-    const usize idx = (static_cast<usize>(pz) * width + px) * 4;
-    return {
-        static_cast<f32>(pixels[idx + 0]) / 255.0f,
-        static_cast<f32>(pixels[idx + 1]) / 255.0f,
-        static_cast<f32>(pixels[idx + 2]) / 255.0f,
-        static_cast<f32>(pixels[idx + 3]) / 255.0f
-    };
+    if (width == 0 || height == 0 || pixels.size() < static_cast<usize>(width) * height * 4) return {1.0f, 0.0f, 0.0f, 0.0f};
+    // Bilinear between the four nearest pixels.
+    const f32 fx = std::clamp(u, 0.0f, 1.0f) * static_cast<f32>(width - 1);
+    const f32 fz = std::clamp(v, 0.0f, 1.0f) * static_cast<f32>(height - 1);
+    const u32 x0 = static_cast<u32>(fx), z0 = static_cast<u32>(fz);
+    const u32 x1 = std::min(x0 + 1, width - 1), z1 = std::min(z0 + 1, height - 1);
+    const f32 tx = fx - static_cast<f32>(x0), tz = fz - static_cast<f32>(z0);
+    const auto at = [&](u32 x, u32 z, int c) { return static_cast<f32>(pixels[(static_cast<usize>(z) * width + x) * 4 + static_cast<usize>(c)]) / 255.0f; };
+    std::array<f32, 4> out{};
+    for (int c = 0; c < 4; ++c) {
+        const f32 a = at(x0, z0, c) + (at(x1, z0, c) - at(x0, z0, c)) * tx;
+        const f32 b = at(x0, z1, c) + (at(x1, z1, c) - at(x0, z1, c)) * tx;
+        out[static_cast<usize>(c)] = a + (b - a) * tz;
+    }
+    return out;
 }
 
 // --- Encoding ---
@@ -87,41 +94,20 @@ SplatmapData BuildSplatmap(u32 resolution, span<const SplatmapLayer> layers,
     sm.width = resolution;
     sm.height = resolution;
     sm.pixels.resize(static_cast<usize>(resolution) * resolution * 4, 0);
-
-    const u32 layer_count = static_cast<u32>(layers.size());
-    const usize wp_count = layer_weights.size();
-
-    for (u32 z = 0; z < resolution; ++z) {
-        for (u32 x = 0; x < resolution; ++x) {
-            const f32 u = static_cast<f32>(x) / static_cast<f32>(resolution - 1);
-            const f32 v = static_cast<f32>(z) / static_cast<f32>(resolution - 1);
-
-            // Bilinear interpolation of layer weights.
-            std::array<f32, 4> weights{0.0f, 0.0f, 0.0f, 0.0f};
-            if (wp_count > 0) {
-                // weights are stored flat: layer0_u0v0, layer0_u1v0, ...
-                // But here we generate a simple gradient for testing.
-                weights[0] = (layers.size() > 0) ? 1.0f - v : 0.0f;
-                weights[1] = (layers.size() > 1) ? v : 0.0f;
-                weights[2] = 0.0f;
-                weights[3] = 0.0f;
-            }
-
-            // Add noise variation for natural look.
-            const f32 noise = u * 17.3f + v * 31.7f;
-            const f32 frac = noise * 0.5f - std::floor(noise * 0.5f); // 0..1
-            const f32 n = frac * 2.0f - 1.0f; // -1..1
-            weights[0] = std::clamp(weights[0] + n * 0.05f, 0.0f, 1.0f);
-            weights[1] = std::clamp(1.0f - weights[0], 0.0f, 1.0f);
-
+    const usize layer_count = std::min<usize>(std::max<usize>(layers.size(), 1), 4);
+    const usize pixel_count = static_cast<usize>(resolution) * resolution;
+    // One weight per layer: the same mix everywhere. One per layer per pixel: painted. Otherwise the base layer.
+    const bool constant = layer_weights.size() == layer_count;
+    const bool painted = layer_weights.size() == layer_count * pixel_count && pixel_count > 0;
+    for (usize i = 0; i < pixel_count; ++i) {
+        std::array<f32, 4> weights{1.0f, 0.0f, 0.0f, 0.0f};
+        if (constant || painted) {
+            const f32* w = layer_weights.data() + (painted ? i * layer_count : 0);
+            for (usize l = 0; l < 4; ++l) weights[l] = l < layer_count ? std::max(0.0f, w[l]) : 0.0f;
+            if (weights[0] + weights[1] + weights[2] + weights[3] <= 1e-6f) weights = {1.0f, 0.0f, 0.0f, 0.0f};
             NormalizeWeights(weights);
-
-            const usize idx = static_cast<usize>(z * resolution + x) * 4;
-            sm.pixels[idx + 0] = static_cast<u8>(weights[0] * 255.0f);
-            sm.pixels[idx + 1] = static_cast<u8>(weights[1] * 255.0f);
-            sm.pixels[idx + 2] = static_cast<u8>(weights[2] * 255.0f);
-            sm.pixels[idx + 3] = static_cast<u8>(weights[3] * 255.0f);
         }
+        for (usize l = 0; l < 4; ++l) sm.pixels[i * 4 + l] = static_cast<u8>(std::lround(std::clamp(weights[l], 0.0f, 1.0f) * 255.0f));
     }
     return sm;
 }
@@ -190,6 +176,10 @@ void ApplyHeightBrush(Heightmap& heightmap,
     const f32 world_per_sample = heightmap.cell_size;
     const f32 brush_radius_cells = brush.radius / world_per_sample;
 
+    const f32 center_h = heightmap.SampleLinear(center_wx, center_wz);
+    // Smoothing reads the heights as they were before this stroke.
+    const std::vector<f32> before = brush.smooth ? heightmap.heights : std::vector<f32>();
+
     const i32 cx = static_cast<i32>(center_wx / world_per_sample);
     const i32 cz = static_cast<i32>(center_wz / world_per_sample);
     const i32 r = static_cast<i32>(std::ceil(brush_radius_cells));
@@ -199,38 +189,21 @@ void ApplyHeightBrush(Heightmap& heightmap,
     const i32 z0 = std::max(0, cz - r);
     const i32 z1 = std::min(static_cast<i32>(heightmap.height), cz + r + 1);
 
-    // Flatten levels the footprint to its brush-weighted mean height.
-    f32 target_h = 0.0f;
-    if (brush.flatten || brush.mode == SculptMode::Flatten) {
-        f32 weighted_sum = 0.0f;
-        f32 weight_sum = 0.0f;
-        for (i32 z = z0; z < z1; ++z) {
-            for (i32 x = x0; x < x1; ++x) {
-                const f32 dx = static_cast<f32>(x) * world_per_sample - center_wx;
-                const f32 dz = static_cast<f32>(z) * world_per_sample - center_wz;
-                const f32 fw = BrushWeight(dx, dz, brush.radius, 1.0f, brush.falloff);
-                weighted_sum += heightmap.heights[static_cast<usize>(z) * heightmap.width + static_cast<usize>(x)] * fw;
-                weight_sum += fw;
-            }
-        }
-        target_h = weight_sum > 1e-6f ? weighted_sum / weight_sum : 0.0f;
-    }
-
     for (i32 z = z0; z < z1; ++z) {
         for (i32 x = x0; x < x1; ++x) {
             const f32 wx = static_cast<f32>(x) * world_per_sample;
             const f32 wz = static_cast<f32>(z) * world_per_sample;
             const f32 dx = wx - center_wx;
             const f32 dz = wz - center_wz;
-            // Signed: a negative strength lowers; blend modes only use the magnitude.
-            const f32 signed_w = BrushWeight(dx, dz, brush.radius, brush.strength, brush.falloff);
-            const f32 w = std::fabs(signed_w);
+            // Signed: a negative strength lowers.
+            const f32 sw = BrushWeight(dx, dz, brush.radius, brush.strength, brush.falloff);
+            const f32 w = std::fabs(sw);
             if (w < 1e-6f) continue;
 
             const usize idx = static_cast<usize>(z) * heightmap.width + static_cast<usize>(x);
             f32& h = heightmap.heights[idx];
 
-            if (brush.smooth || brush.mode == SculptMode::Smooth) {
+            if (brush.smooth) {
                 // Average with neighbors.
                 f32 sum = 0.0f;
                 i32 count = 0;
@@ -240,171 +213,21 @@ void ApplyHeightBrush(Heightmap& heightmap,
                         const i32 nz2 = z + dz2;
                         if (nx2 >= 0 && nx2 < static_cast<i32>(heightmap.width) &&
                             nz2 >= 0 && nz2 < static_cast<i32>(heightmap.height)) {
-                            sum += heightmap.heights[static_cast<usize>(nz2) * heightmap.width + static_cast<usize>(nx2)];
+                            sum += before[static_cast<usize>(nz2) * heightmap.width + static_cast<usize>(nx2)];
                             ++count;
                         }
                     }
                 }
                 const f32 avg = sum / static_cast<f32>(count);
-                h = h + (avg - h) * w;
-            } else if (brush.flatten || brush.mode == SculptMode::Flatten) {
-                h = h + (target_h - h) * w;
+                h = h + (avg - h) * std::min(w, 1.0f);
+            } else if (brush.flatten) {
+                // Lerp toward the center height.
+                h = h + (center_h - h) * std::min(w, 1.0f);
             } else {
-                // Default: raise/lower (mode from direction of brush strength).
-                // strength > 0 = raise, strength < 0 = lower.
-                h = h + signed_w * vertical_scale;
+                // Raise (strength > 0) or lower (strength < 0) by up to vertical_scale world units.
+                h = h + sw * vertical_scale;
             }
         }
-    }
-}
-
-// --- Noise sculpting ---
-
-namespace {
-
-// Hash-based value noise (0..1) used for sculpt displacement.
-// Deterministic for a given (x, z) grid coordinate and seed.
-f32 SculptNoise(i32 x, i32 z, i32 seed) {
-    i32 n = x + z * 57 + seed * 131;
-    n = (n << 13) ^ n;
-    const i32 hash = (n * (n * n * 15731 + 789221) + 1376312589) & 0x7fffffff;
-    return static_cast<f32>(hash) / 2147483647.0f;
-}
-
-f32 SculptSmoothstep(f32 t) { return t * t * (3.0f - 2.0f * t); }
-
-// Smooth 2D value noise at continuous coordinates.
-f32 SculptNoise2D(f32 fx, f32 fz, i32 seed) {
-    const i32 x0 = static_cast<i32>(std::floor(fx));
-    const i32 z0 = static_cast<i32>(std::floor(fz));
-    const f32 tx = SculptSmoothstep(fx - static_cast<f32>(x0));
-    const f32 tz = SculptSmoothstep(fz - static_cast<f32>(z0));
-
-    const f32 n00 = SculptNoise(x0,     z0,     seed);
-    const f32 n10 = SculptNoise(x0 + 1, z0,     seed);
-    const f32 n01 = SculptNoise(x0,     z0 + 1, seed);
-    const f32 n11 = SculptNoise(x0 + 1, z0 + 1, seed);
-
-    const f32 nx0 = n00 + (n10 - n00) * tx;
-    const f32 nx1 = n01 + (n11 - n01) * tx;
-    return nx0 + (nx1 - nx0) * tz;
-}
-
-void ForEachBrushSample(const Heightmap& heightmap, f32 center_wx, f32 center_wz,
-                        const TerrainBrush& brush,
-                        const std::function<void(i32, i32, f32)>& fn) {
-    const f32 world_per_sample = heightmap.cell_size > 0.0f ? heightmap.cell_size : 1.0f;
-    const f32 brush_radius_cells = brush.radius / world_per_sample;
-    const i32 cx = static_cast<i32>(center_wx / world_per_sample);
-    const i32 cz = static_cast<i32>(center_wz / world_per_sample);
-    const i32 r = static_cast<i32>(std::ceil(brush_radius_cells));
-    const i32 x0 = std::max(0, cx - r);
-    const i32 x1 = std::min(static_cast<i32>(heightmap.width), cx + r + 1);
-    const i32 z0 = std::max(0, cz - r);
-    const i32 z1 = std::min(static_cast<i32>(heightmap.height), cz + r + 1);
-    for (i32 z = z0; z < z1; ++z) {
-        for (i32 x = x0; x < x1; ++x) {
-            const f32 wx = static_cast<f32>(x) * world_per_sample;
-            const f32 wz = static_cast<f32>(z) * world_per_sample;
-            const f32 dx = wx - center_wx;
-            const f32 dz = wz - center_wz;
-            const f32 w = BrushWeight(dx, dz, brush.radius, brush.strength, brush.falloff);
-            if (std::fabs(w) < 1e-6f) continue;
-            fn(x, z, w);
-        }
-    }
-}
-
-} // namespace
-
-void ApplyNoiseBrush(Heightmap& heightmap,
-                      f32 center_wx, f32 center_wz,
-                      const TerrainBrush& brush,
-                      f32 vertical_scale) {
-    if (heightmap.width == 0 || heightmap.height == 0) return;
-    const f32 feature = std::max(brush.noise_scale, 0.1f);
-    const f32 amp = vertical_scale; // the (signed) strength is already in the weight
-
-    ForEachBrushSample(heightmap, center_wx, center_wz, brush,
-        [&](i32 x, i32 z, f32 w) {
-            const f32 nx = static_cast<f32>(x) / feature;
-            const f32 nz = static_cast<f32>(z) / feature;
-            // Two octaves for natural detail, remapped to -1..1.
-            const f32 n0 = SculptNoise2D(nx, nz, brush.noise_seed);
-            const f32 n1 = SculptNoise2D(nx * 2.0f, nz * 2.0f, brush.noise_seed + 7);
-            const f32 displacement = (n0 * 0.7f + n1 * 0.3f - 0.5f) * 2.0f * amp * w;
-            const usize idx = static_cast<usize>(z) * heightmap.width + static_cast<usize>(x);
-            heightmap.heights[idx] += displacement;
-        });
-}
-
-void ApplyErosionBrush(Heightmap& heightmap,
-                        f32 center_wx, f32 center_wz,
-                        const TerrainBrush& brush,
-                        f32 /*vertical_scale*/) {
-    if (heightmap.width == 0 || heightmap.height == 0) return;
-    const f32 dep = std::clamp(brush.erosion_deposition, 0.0f, 1.0f);
-    const i32 passes = std::max(1, brush.erosion_iterations);
-    const i32 width = static_cast<i32>(heightmap.width);
-    const i32 height = static_cast<i32>(heightmap.height);
-
-    for (i32 pass = 0; pass < passes; ++pass) {
-        // Read from a snapshot and accumulate changes so a pass is order independent.
-        const std::vector<f32> src = heightmap.heights;
-        std::vector<f32> delta(src.size(), 0.0f);
-        ForEachBrushSample(heightmap, center_wx, center_wz, brush,
-            [&](i32 x, i32 z, f32 signed_w) {
-                const f32 w = std::fabs(signed_w);
-                const usize idx = static_cast<usize>(z) * heightmap.width + static_cast<usize>(x);
-                f32 total_diff = 0.0f;
-                i32 lower_neighbours = 0;
-                for (i32 dz2 = -1; dz2 <= 1; ++dz2) {
-                    for (i32 dx2 = -1; dx2 <= 1; ++dx2) {
-                        if (dx2 == 0 && dz2 == 0) continue;
-                        const i32 nx = x + dx2;
-                        const i32 nz = z + dz2;
-                        if (nx < 0 || nx >= width || nz < 0 || nz >= height) continue;
-                        const f32 diff = src[idx] - src[static_cast<usize>(nz) * heightmap.width + static_cast<usize>(nx)];
-                        if (diff > 1e-6f) {
-                            total_diff += diff;
-                            ++lower_neighbours;
-                        }
-                    }
-                }
-                if (lower_neighbours == 0) return;
-                // Move material downhill in proportion to each neighbour's drop.
-                const f32 moved = total_diff / static_cast<f32>(lower_neighbours) * dep * w;
-                delta[idx] -= moved;
-                for (i32 dz2 = -1; dz2 <= 1; ++dz2) {
-                    for (i32 dx2 = -1; dx2 <= 1; ++dx2) {
-                        if (dx2 == 0 && dz2 == 0) continue;
-                        const i32 nx = x + dx2;
-                        const i32 nz = z + dz2;
-                        if (nx < 0 || nx >= width || nz < 0 || nz >= height) continue;
-                        const usize nidx = static_cast<usize>(nz) * heightmap.width + static_cast<usize>(nx);
-                        const f32 diff = src[idx] - src[nidx];
-                        if (diff > 1e-6f) delta[nidx] += moved * diff / total_diff;
-                    }
-                }
-            });
-        for (usize i = 0; i < delta.size(); ++i) heightmap.heights[i] += delta[i];
-    }
-}
-void ApplySculptBrush(Heightmap& heightmap,
-                      f32 center_wx, f32 center_wz,
-                      const TerrainBrush& brush,
-                      f32 vertical_scale) {
-    switch (brush.mode) {
-        case SculptMode::Noise:
-            ApplyNoiseBrush(heightmap, center_wx, center_wz, brush, vertical_scale);
-            break;
-        case SculptMode::Erode:
-            ApplyErosionBrush(heightmap, center_wx, center_wz, brush, vertical_scale);
-            break;
-        default:
-            // Raise/Flatten/Smooth all go through the classic height brush.
-            ApplyHeightBrush(heightmap, center_wx, center_wz, brush, vertical_scale);
-            break;
     }
 }
 

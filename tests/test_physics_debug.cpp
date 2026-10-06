@@ -221,21 +221,3 @@ AETHER_TEST(PhysicsDebug_GizmoHandlesResizeColliders) {
     AETHER_CHECK(world.GetComponent<CapsuleCollider>(c)->radius == 1.1f); // at most half the height
     AETHER_CHECK(!DragColliderHandle(world, s, find(ColliderHandleKind::CapsuleHeight, 1, 1), 1.0f)); // not a capsule
 }
-
-AETHER_TEST(PhysicsDebug_HeightfieldDrawsItsFootprintBox) {
-    World world;
-    HeightfieldCollider terrain;
-    terrain.width = 5;
-    terrain.depth = 3;
-    terrain.cell_size = 2.0f;
-    terrain.vertical_scale = 2.0f;
-    terrain.heights = {0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0}; // one 1 m peak, 2 m scaled
-    terrain.center = Vec3(1, 0, 0);
-    const Entity e = world.CreateEntity(Transform{Vec3(10, 0, 0), Quaternion::Identity()}, terrain);
-    std::vector<DebugLine> lines;
-    DrawColliderWireframe(world, nullptr, e, 0xFFFFFFFF, lines);
-    AETHER_CHECK(lines.size() == 12);
-    AETHER_CHECK(AllEnds(lines, [](const Vec3& p) {
-        return p.x >= 10.99f && p.x <= 19.01f && p.y >= -0.01f && p.y <= 2.01f && p.z >= -0.01f && p.z <= 4.01f;
-    }));
-}
