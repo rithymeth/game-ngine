@@ -1,9 +1,14 @@
-// Engine benchmarks (Phase 38 steps 2 and 3): ECS iteration and structural changes, and the job system.
+// Engine benchmarks (Phase 38 steps 2, 3 and 4): ECS iteration and structural changes, the job system, and
+// scene save and load.
 #include "aether/bench/bench.h"
 #include "aether/ecs/world.h"
 #include "aether/job/job_system.h"
 #include "aether/scene/components.h"
+#include "aether/scene/serialization.h"
 
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <vector>
 
@@ -27,6 +32,11 @@ EcsState& Ecs() {
 void Spin(void* data) {
     auto* x = static_cast<u64*>(data);
     for (int i = 0; i < 200; ++i) *x = *x * 6364136223846793005ull + 1442695040888963407ull;
+}
+
+World& SceneWorld() {
+    static World world;
+    return world;
 }
 
 struct JobState {
@@ -84,4 +94,72 @@ AETHER_BENCH_SETUP(
         JobCounter counter{0};
         s.jobs->ScheduleBatch(s.decls.data(), static_cast<u32>(s.decls.size()), counter);
         s.jobs->Wait(counter);
+    });
+
+// ---------------------------------------------------------------------------------------------------
+// Scene save and load (Phase 38 step 4): 10k entities through the binary and the JSON formats.
+// ---------------------------------------------------------------------------------------------------
+
+namespace {
+
+constexpr int kSceneEntities = 10'000;
+
+struct SceneState {
+    std::vector<u8> binary;
+    std::vector<u8> json;
+};
+SceneState& SceneData() {
+    static SceneState s;
+    return s;
+}
+
+void FillSceneWorld(World& world) {
+    for (int i = 0; i < kSceneEntities; ++i) {
+        world.CreateEntity(Transform{Vec3(static_cast<f32>(i), static_cast<f32>(i % 97), 0), Quaternion::Identity()});
+    }
+}
+
+} // namespace
+
+AETHER_BENCH_SETUP(
+    "scene/save_binary_10k", 5,
+    [] { FillSceneWorld(SceneWorld()); },
+    [] { SceneData().binary = SaveSceneToMemory(SceneWorld()); });
+
+AETHER_BENCH_SETUP(
+    "scene/load_binary_10k", 5,
+    [] {
+        World world;
+        FillSceneWorld(world);
+        SceneData().binary = SaveSceneToMemory(world);
+    },
+    [] {
+        World world;
+        LoadSceneFromMemory(world, SceneData().binary, "bench");
+    });
+
+AETHER_BENCH_SETUP(
+    "scene/save_json_10k", 3,
+    [] { FillSceneWorld(SceneWorld()); },
+    [] {
+        const std::filesystem::path path = std::filesystem::temp_directory_path() / "aether_bench_scene_save.json";
+        SaveSceneJson(SceneWorld(), path.string());
+        std::filesystem::remove(path);
+    });
+
+AETHER_BENCH_SETUP(
+    "scene/load_json_10k", 3,
+    [] {
+        World world;
+        FillSceneWorld(world);
+        const std::filesystem::path path = std::filesystem::temp_directory_path() / "aether_bench_scene_load.json";
+        SaveSceneJson(world, path.string());
+        std::ifstream in(path, std::ios::binary);
+        SceneData().json.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        in.close();
+        std::filesystem::remove(path);
+    },
+    [] {
+        World world;
+        LoadSceneJsonFromMemory(world, SceneData().json, "bench");
     });

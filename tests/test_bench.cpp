@@ -3,8 +3,13 @@
 #ifdef AETHER_TEST_HAS_BENCH
 
 #include "aether/bench/bench.h"
+#include "aether/ecs/world.h"
+#include "aether/scene/components.h"
+#include "aether/scene/serialization.h"
 
 #include <nlohmann/json.hpp>
+
+#include <chrono>
 
 // The benchmark harness (Phase 38 step 1): running, the JSON report and the baseline comparison.
 
@@ -52,6 +57,26 @@ AETHER_TEST(Bench_BaselineComparisonFindsRegressions) {
     fresh.name = "new/one";
     fresh.normalized = 9.0;
     AETHER_CHECK(bench::Compare(report(1.0), bench::ToJson({fresh}, 10.0), 1.5, regressions, &error) && regressions.empty());
+}
+
+
+// The plan's budget: 10k entities save and load in under 2 seconds (a wide margin; a Debug build on a busy
+// CI runner is the slow case), and saving the same world twice gives the same bytes.
+AETHER_TEST(Bench_Scene10kRoundTripsUnderBudget) {
+    World world;
+    for (int i = 0; i < 10'000; ++i) {
+        world.CreateEntity(Transform{Vec3(static_cast<f32>(i), 0, 0), Quaternion::Identity()});
+    }
+    const auto start = std::chrono::steady_clock::now();
+    const std::vector<u8> bytes = SaveSceneToMemory(world);
+    World loaded;
+    AETHER_CHECK(LoadSceneFromMemory(loaded, bytes, "budget"));
+    const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    usize count = 0;
+    loaded.ForEach<Transform>([&](Transform&) { ++count; });
+    AETHER_CHECK(count == 10'000);
+    AETHER_CHECK(seconds < 2.0);
+    AETHER_CHECK(SaveSceneToMemory(world) == bytes);
 }
 
 #endif
