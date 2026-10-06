@@ -684,14 +684,14 @@ struct EditorWorkspace::Impl {
         bag.world.entities.push_back(door);
         bag.world.destroyed.push_back(EntityGuid{0xE4E4, 2});
         bag.has_world = true;
-        saves.Save("slot1", bag);
-        saves.Save("slot1", bag); // twice: the second write keeps the first as a backup
+        (void)saves.Save("slot1", bag); // a sample for the Save Inspector: a failure just leaves it empty
+        (void)saves.Save("slot1", bag); // twice: the second write keeps the first as a backup
         SettingsStore<> settings(save_sample_dir);
         GameSettings s;
         s.quality = "Medium";
         s.master = 0.8f;
         settings.Set(s);
-        settings.Save();
+        (void)settings.Save();
         // A damaged copy: one value changed without fixing the checksum.
         std::string text;
         if (fs::ReadFileText((save_sample_dir / "slot1.asav").string(), text)) {

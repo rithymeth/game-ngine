@@ -73,8 +73,8 @@ stdfs::path MakeBagSave(const stdfs::path& dir) {
     SaveBag bag;
     bag.SetInt("coins", 42);
     bag.SetBool("done", true);
-    saves.Save("slot1", bag);
-    saves.Save("slot1", bag);
+    AETHER_CHECK(saves.Save("slot1", bag).ok);
+    AETHER_CHECK(saves.Save("slot1", bag).ok);
     return dir / "slot1.asav";
 }
 
