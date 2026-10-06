@@ -23,6 +23,7 @@ add_library(aether_engine STATIC
     src/cook/texture_cook.cpp
     src/math/math.cpp
     src/job/job_system.cpp
+    src/kit/kit_registry.cpp
     src/ecs/archetype.cpp
     src/scene/serialization.cpp
     src/scene/entity_guid.cpp
