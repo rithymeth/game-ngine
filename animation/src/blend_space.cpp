@@ -323,7 +323,13 @@ json BlendSpaceToJson(const BlendSpace& s) {
     return out;
 }
 
+static bool BlendSpaceFromJsonImpl(const json& j, BlendSpace& out, std::string* error);
+
 bool BlendSpaceFromJson(const json& j, BlendSpace& out, std::string* error) {
+    return GuardJsonLoader(error, "blend space", [&] { return BlendSpaceFromJsonImpl(j, out, error); });
+}
+
+static bool BlendSpaceFromJsonImpl(const json& j, BlendSpace& out, std::string* error) {
     auto fail = [&](const std::string& message) {
         if (error != nullptr) *error = message;
         return false;

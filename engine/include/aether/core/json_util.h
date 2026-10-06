@@ -3,7 +3,10 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
+#include <exception>
+#include <new>
 #include <limits>
+#include <string>
 
 namespace aether {
 
@@ -18,6 +21,22 @@ inline int JsonVersion(const nlohmann::json& j, int fallback = 0) {
     const std::int64_t v = it->get<std::int64_t>();
     if (v < std::numeric_limits<int>::min() || v > std::numeric_limits<int>::max()) return fallback;
     return static_cast<int>(v);
+}
+
+// Runs a JSON loader body and turns a thrown JSON type error (or any std::exception, such as a failed
+// number conversion) into `false` plus an error message. nlohmann's `value()` and `get<>()` throw when a
+// field has the wrong type; loaders read untrusted files, so a malformed one must fail, not end the
+// process. Doesn't catch allocation failure on purpose (that is not a malformed-input error).
+template <class F>
+bool GuardJsonLoader(std::string* error, const char* what, F&& body) {
+    try {
+        return body();
+    } catch (const std::bad_alloc&) {
+        throw;
+    } catch (const std::exception& e) {
+        if (error != nullptr) *error = std::string("malformed ") + what + ": " + e.what();
+        return false;
+    }
 }
 
 } // namespace aether
