@@ -183,7 +183,7 @@ when advisory gates become required.
 
 | Step | Work | Needs |
 |---|---|---|
-| **47.1** *(started: pak, scene, Blueprint, gameplay-data, prefab, material, sequence, animation and manifest targets; found and fixed two real crashes, and `GuardJsonLoader` now hardens seven more loaders. The save envelope target is done (`ReadFromMemory` and `InspectBytes` seams; reading the code for it showed that a wrong-typed field in a save file would throw out of `Read` and `Inspect`, now a Corrupt result). Still to do: net protocol, importers, richer valid seeds)* | libFuzzer harnesses (`tools/fuzz/`, `AETHER_BUILD_FUZZERS`, Clang): pak reader, scene, Blueprint and save loaders, the net protocol, importers. One PR per target, runnable here. `||` | - |
+| **47.1** *(started: pak, scene, Blueprint, gameplay-data, prefab, material, sequence, animation and manifest targets; found and fixed two real crashes, and `GuardJsonLoader` now hardens seven more loaders. The save envelope target is done (`ReadFromMemory` and `InspectBytes` seams; reading the code for it showed that a wrong-typed field in a save file would throw out of `Read` and `Inspect`, now a Corrupt result). The Blueprint corpus now has the four shipped sample Blueprints as valid seeds. Still to do: net protocol, importers, richer valid seeds for the other loaders)* | libFuzzer harnesses (`tools/fuzz/`, `AETHER_BUILD_FUZZERS`, Clang): pak reader, scene, Blueprint and save loaders, the net protocol, importers. One PR per target, runnable here. `||` | - |
 | **47.2** | A corpus and a fixed-budget fuzz job in CI. | 47.1 |
 | **47.3** | Editor autosave and crash recovery (extends the crash reporter). | - |
 | **47.4** | Crash-dump symbolication. The Windows dump path is Windows-CI-only. | - |

@@ -1,0 +1,384 @@
+{
+  "$type": "Blueprint",
+  "$version": 1,
+  "parent": "native:Entity",
+  "variables": [
+    {
+      "name": "Score",
+      "type": "int",
+      "default": 0,
+      "category": "Game"
+    },
+    {
+      "name": "Goal",
+      "type": "int",
+      "default": 10,
+      "flags": [
+        "InstanceEditable"
+      ],
+      "tooltip": "Score needed to win",
+      "category": "Game"
+    }
+  ],
+  "graphs": [
+    {
+      "name": "EventGraph",
+      "kind": "EventGraph",
+      "nodes": [
+        {
+          "id": 1,
+          "type": "Event.BeginPlay",
+          "pos": [
+            0,
+            0
+          ]
+        },
+        {
+          "id": 2,
+          "type": "Entity.FindWithTag",
+          "pos": [
+            0,
+            120
+          ],
+          "defaults": {
+            "tag": "Coin"
+          }
+        },
+        {
+          "id": 3,
+          "type": "Flow.ForEach:Entity",
+          "pos": [
+            260,
+            0
+          ]
+        },
+        {
+          "id": 4,
+          "type": "Dispatch.Bind:OnCollected",
+          "pos": [
+            520,
+            0
+          ],
+          "config": {
+            "event": "AddScore"
+          }
+        },
+        {
+          "id": 5,
+          "type": "Event.Custom",
+          "pos": [
+            0,
+            360
+          ],
+          "config": {
+            "name": "AddScore",
+            "params": [
+              {
+                "name": "value",
+                "type": "int"
+              }
+            ]
+          }
+        },
+        {
+          "id": 6,
+          "type": "Var.Get:Score",
+          "pos": [
+            0,
+            480
+          ]
+        },
+        {
+          "id": 7,
+          "type": "Math.Add:int",
+          "pos": [
+            220,
+            460
+          ]
+        },
+        {
+          "id": 8,
+          "type": "Var.Set:Score",
+          "pos": [
+            440,
+            360
+          ]
+        },
+        {
+          "id": 9,
+          "type": "Conv.ToString:int",
+          "pos": [
+            440,
+            520
+          ]
+        },
+        {
+          "id": 10,
+          "type": "String.Append",
+          "pos": [
+            640,
+            520
+          ],
+          "defaults": {
+            "a": "Score: "
+          }
+        },
+        {
+          "id": 11,
+          "type": "Debug.Print",
+          "pos": [
+            680,
+            360
+          ]
+        },
+        {
+          "id": 12,
+          "type": "Var.Get:Goal",
+          "pos": [
+            880,
+            520
+          ]
+        },
+        {
+          "id": 13,
+          "type": "Math.GreaterEqual:int",
+          "pos": [
+            1080,
+            480
+          ]
+        },
+        {
+          "id": 14,
+          "type": "Flow.Branch",
+          "pos": [
+            1100,
+            360
+          ]
+        },
+        {
+          "id": 15,
+          "type": "Flow.DoOnce",
+          "pos": [
+            1320,
+            360
+          ]
+        },
+        {
+          "id": 16,
+          "type": "Debug.Print",
+          "pos": [
+            1540,
+            360
+          ],
+          "defaults": {
+            "text": "You win"
+          }
+        }
+      ],
+      "links": [
+        {
+          "from": [
+            1,
+            "then"
+          ],
+          "to": [
+            3,
+            "exec"
+          ]
+        },
+        {
+          "from": [
+            2,
+            "entities"
+          ],
+          "to": [
+            3,
+            "array"
+          ]
+        },
+        {
+          "from": [
+            3,
+            "loop_body"
+          ],
+          "to": [
+            4,
+            "exec"
+          ]
+        },
+        {
+          "from": [
+            3,
+            "element"
+          ],
+          "to": [
+            4,
+            "target"
+          ]
+        },
+        {
+          "from": [
+            5,
+            "then"
+          ],
+          "to": [
+            8,
+            "exec"
+          ]
+        },
+        {
+          "from": [
+            6,
+            "value"
+          ],
+          "to": [
+            7,
+            "a"
+          ]
+        },
+        {
+          "from": [
+            5,
+            "value"
+          ],
+          "to": [
+            7,
+            "b"
+          ]
+        },
+        {
+          "from": [
+            7,
+            "result"
+          ],
+          "to": [
+            8,
+            "value"
+          ]
+        },
+        {
+          "from": [
+            8,
+            "value"
+          ],
+          "to": [
+            9,
+            "value"
+          ]
+        },
+        {
+          "from": [
+            9,
+            "result"
+          ],
+          "to": [
+            10,
+            "b"
+          ]
+        },
+        {
+          "from": [
+            10,
+            "result"
+          ],
+          "to": [
+            11,
+            "text"
+          ]
+        },
+        {
+          "from": [
+            8,
+            "then"
+          ],
+          "to": [
+            11,
+            "exec"
+          ]
+        },
+        {
+          "from": [
+            8,
+            "value"
+          ],
+          "to": [
+            13,
+            "a"
+          ]
+        },
+        {
+          "from": [
+            12,
+            "value"
+          ],
+          "to": [
+            13,
+            "b"
+          ]
+        },
+        {
+          "from": [
+            11,
+            "then"
+          ],
+          "to": [
+            14,
+            "exec"
+          ]
+        },
+        {
+          "from": [
+            13,
+            "result"
+          ],
+          "to": [
+            14,
+            "condition"
+          ]
+        },
+        {
+          "from": [
+            14,
+            "true"
+          ],
+          "to": [
+            15,
+            "exec"
+          ]
+        },
+        {
+          "from": [
+            15,
+            "completed"
+          ],
+          "to": [
+            16,
+            "exec"
+          ]
+        }
+      ],
+      "comments": [
+        {
+          "text": "Listen to every coin",
+          "rect": [
+            -30,
+            -50,
+            780,
+            280
+          ],
+          "color": 1086357568
+        },
+        {
+          "text": "Count the score; win at the goal",
+          "rect": [
+            -30,
+            310,
+            1800,
+            300
+          ],
+          "color": 1086357568
+        }
+      ]
+    }
+  ]
+}
