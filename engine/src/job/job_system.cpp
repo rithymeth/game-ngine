@@ -1,6 +1,7 @@
 #include "aether/job/job_system.h"
 
 #include "aether/core/log.h"
+#include "aether/core/profile.h"
 
 namespace aether {
 
@@ -72,6 +73,7 @@ void JobSystem::ScheduleBatch(const JobDecl* jobs, u32 count, JobCounter& counte
 }
 
 void JobSystem::Execute(Job* job) {
+    AETHER_ZONE("Job");
     job->function(job->data);
     job->counter->fetch_sub(1, std::memory_order_acq_rel);
 }

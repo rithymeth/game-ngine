@@ -7,3 +7,6 @@ CMakeUserPresets.json
 imgui.ini
 *.aesc
 build_debug/
+
+.claude/
+

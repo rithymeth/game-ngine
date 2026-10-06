@@ -12,16 +12,16 @@ namespace {
 constexpr float kPad = 8.0f;
 constexpr float kPinRadius = 5.0f;
 constexpr float kMinZoom = 0.25f, kMaxZoom = 2.0f;
-constexpr ImU32 kColBackground = IM_COL32(30, 30, 34, 255);
-constexpr ImU32 kColGrid = IM_COL32(45, 45, 52, 255);
-constexpr ImU32 kColNodeBody = IM_COL32(40, 40, 44, 235);
-constexpr ImU32 kColNodeBorder = IM_COL32(20, 20, 20, 255);
-constexpr ImU32 kColSelected = IM_COL32(255, 160, 40, 255);
-constexpr ImU32 kColHighlight = IM_COL32(255, 220, 0, 255);
-constexpr ImU32 kColError = IM_COL32(230, 40, 40, 255);
-constexpr ImU32 kColText = IM_COL32(230, 230, 230, 255);
-constexpr ImU32 kColBox = IM_COL32(90, 140, 230, 60);
-constexpr ImU32 kColBoxBorder = IM_COL32(90, 140, 230, 200);
+constexpr ImU32 kColBackground = IM_COL32(22, 23, 26, 255);
+constexpr ImU32 kColGrid = IM_COL32(37, 39, 44, 255);
+constexpr ImU32 kColNodeBody = IM_COL32(38, 40, 45, 245);
+constexpr ImU32 kColNodeBorder = IM_COL32(58, 61, 69, 255);
+constexpr ImU32 kColSelected = IM_COL32(107, 161, 255, 255);
+constexpr ImU32 kColHighlight = IM_COL32(227, 179, 65, 255);
+constexpr ImU32 kColError = IM_COL32(248, 81, 73, 255);
+constexpr ImU32 kColText = IM_COL32(230, 231, 234, 255);
+constexpr ImU32 kColBox = IM_COL32(76, 141, 255, 36);
+constexpr ImU32 kColBoxBorder = IM_COL32(107, 161, 255, 190);
 
 float TextWidth(const std::string& text, float font_size) {
     if (text.empty()) return 0.0f;
