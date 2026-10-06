@@ -17,7 +17,8 @@ enum class SaveError : u8 {
     NotFound,
 };
 
-struct SaveResult {
+// Ignoring a save or load result loses the failure, so the compiler warns (Phase 37 step 7).
+struct [[nodiscard]] SaveResult {
     bool ok = false;
     SaveError error = SaveError::None;
     std::string message;
