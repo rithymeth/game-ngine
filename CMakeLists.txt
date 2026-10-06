@@ -25,6 +25,7 @@ option(AETHER_BUILD_VULKAN "Build the Vulkan RHI backend" ON)
 option(AETHER_BUILD_SCRIPTING "Build the Luau scripting module" ON)
 option(AETHER_BUILD_TERRAIN "Build the terrain module" ON)
 option(AETHER_BUILD_NET "Build the networking module" ON)
+option(AETHER_BUILD_DEVTOOLS "Build the profiler, console and developer tools" ON)
 
 include(FetchContent)
 
@@ -208,6 +209,10 @@ endif()
 # Networking (Phase 22): transport, connections and replication; engine-only.
 if(AETHER_BUILD_NET)
     add_subdirectory(net)
+endif()
+# Developer tools (Phase 23): profiler, console and CVars, debug draw; engine-only.
+if(AETHER_BUILD_DEVTOOLS)
+    add_subdirectory(devtools)
 endif()
 
 # Recast/Detour (zlib, recastnavigation/recastnavigation) for navigation

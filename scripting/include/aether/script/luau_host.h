@@ -2,6 +2,7 @@
 
 #include "aether/core/base.h"
 #include "aether/ecs/entity.h"
+#include "aether/math/vec.h"
 
 #include <filesystem>
 #include <functional>
@@ -87,6 +88,20 @@ public:
     // Where print() goes (default: the engine log, category "Script").
     void SetPrintHandler(std::function<void(const std::string&)> handler) { print_ = std::move(handler); }
 
+    // Where engine.debug_draw.* primitives go (Phase 23 step 6). The game
+    // connects this to its debug-draw accumulator. `primitive` mirrors
+    // dev::DebugPrimitive so the host can forward it directly; scripting
+    // links only the engine, not devtools. Null discards the output.
+    struct DebugDrawCall {
+        enum class Kind : u8 { Line, Box, Sphere, Point, Text, Rect } kind = Kind::Line;
+        Vec3 from{0, 0, 0}, to{0, 0, 0}; // Line: from->to; Box/Sphere/Point/Rect: center, half-size/radius
+        Vec3 size{0, 0, 0};              // Box half-extent; Rect extents; ignored otherwise
+        std::string text;                // Text
+        u32 color = 0xFFFFFFFF;          // 0xRRGGBBAA
+        f32 duration = 0.0f;             // seconds; 0 = this frame only
+    };
+    void SetDebugDrawHandler(std::function<void(const DebugDrawCall&)> handler) { debug_draw_ = std::move(handler); }
+
     usize MemoryUsed() const { return memory_used_; }
     usize CompiledCount() const { return bytecode_.size(); }
     // The raw VM, for the binding layer.
@@ -132,6 +147,7 @@ private:
     u64 ticks_ = 0;
     bool budget_exceeded_ = false;
     std::function<void(const std::string&)> print_;
+    std::function<void(const DebugDrawCall&)> debug_draw_;
     std::unordered_map<u64, std::string> bytecode_;
     std::unordered_map<std::string, int> chunk_functions_; // chunk name -> registry ref
     std::function<void(const std::string& chunk)> on_chunk_loaded_;

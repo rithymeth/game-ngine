@@ -30,6 +30,7 @@ struct BindingAccess {
     static World* WorldOf(LuauHost& h) { return h.world_; }
     static GuidIndex* GuidsOf(LuauHost& h) { return h.guids_; }
     static u64 Generation(LuauHost& h) { return h.binding_generation_; }
+    static std::function<void(const LuauHost::DebugDrawCall&)>& DrawSink(LuauHost& h) { return h.debug_draw_; }
 };
 
 namespace {
@@ -588,6 +589,92 @@ void SetFunction(lua_State* L, const char* name, lua_CFunction fn) {
     lua_setfield(L, -2, name);
 }
 
+// --- engine.debug_draw (Phase 23 step 6) --------------------------------
+// Each function takes its primitive's pins, then optional `color`
+// (0xRRGGBBAA, default white) and `duration` (seconds, default 0 = this
+// frame). Output goes to the host's debug-draw sink; with no sink connected
+// (null handler) calls are no-ops. Nothing here needs the bound world.
+
+// False when no debug-draw sink is connected (calls become no-ops).
+bool Sink(lua_State* L) { return static_cast<bool>(BindingAccess::DrawSink(Host(L))); }
+Vec3 CheckVec3(lua_State* L, int index, const char* what) {
+    if (lua_type(L, index) != LUA_TVECTOR) {
+        luaL_error(L, "engine.debug_draw.%s expects a vector, got %s", what, lua_typename(L, lua_type(L, index)));
+    }
+    const float* v = lua_tovector(L, index);
+    return {v[0], v[1], v[2]};
+}
+void ReadDrawTail(lua_State* L, LuauHost::DebugDrawCall& call) {
+    // Color is 0xRRGGBBAA: read as a double so values above INT_MAX (white
+    // = 0xFFFFFFFF) round-trip, then cast to the u32 the sink expects.
+    if (lua_type(L, 3) != LUA_TNONE) call.color = static_cast<u32>(lua_tonumber(L, 3));
+    if (lua_type(L, 4) != LUA_TNONE) call.duration = static_cast<f32>(lua_tonumber(L, 4));
+}
+
+int DrawLine(lua_State* L) { // from, to [, color [, duration]]
+    LuauHost::DebugDrawCall call;
+    call.kind = LuauHost::DebugDrawCall::Kind::Line;
+    call.from = CheckVec3(L, 1, "Line");
+    call.to = CheckVec3(L, 2, "Line");
+    ReadDrawTail(L, call);
+    if (Sink(L)) BindingAccess::DrawSink(Host(L))(call);
+    return 0;
+}
+int DrawBox(lua_State* L) { // center, halfSize [, color [, duration]]
+    LuauHost::DebugDrawCall call;
+    call.kind = LuauHost::DebugDrawCall::Kind::Box;
+    call.from = CheckVec3(L, 1, "Box");
+    call.size = CheckVec3(L, 2, "Box");
+    ReadDrawTail(L, call);
+    if (Sink(L)) BindingAccess::DrawSink(Host(L))(call);
+    return 0;
+}
+int DrawSphere(lua_State* L) { // center, radius [, color [, duration]]
+    LuauHost::DebugDrawCall call;
+    call.kind = LuauHost::DebugDrawCall::Kind::Sphere;
+    call.from = CheckVec3(L, 1, "Sphere");
+    if (lua_type(L, 2) != LUA_TNUMBER) {
+        luaL_error(L, "engine.debug_draw.Sphere expects a number radius, got %s", lua_typename(L, lua_type(L, 2)));
+    }
+    call.to.x = static_cast<f32>(lua_tonumber(L, 2));
+    ReadDrawTail(L, call);
+    if (Sink(L)) BindingAccess::DrawSink(Host(L))(call);
+    return 0;
+}
+int DrawPoint(lua_State* L) { // location, size [, color [, duration]]
+    LuauHost::DebugDrawCall call;
+    call.kind = LuauHost::DebugDrawCall::Kind::Point;
+    call.from = CheckVec3(L, 1, "Point");
+    if (lua_type(L, 2) != LUA_TNUMBER) {
+        luaL_error(L, "engine.debug_draw.Point expects a number size, got %s", lua_typename(L, lua_type(L, 2)));
+    }
+    call.to.x = static_cast<f32>(lua_tonumber(L, 2));
+    ReadDrawTail(L, call);
+    if (Sink(L)) BindingAccess::DrawSink(Host(L))(call);
+    return 0;
+}
+int DrawRect(lua_State* L) { // center, size [, color [, duration]]
+    LuauHost::DebugDrawCall call;
+    call.kind = LuauHost::DebugDrawCall::Kind::Rect;
+    call.from = CheckVec3(L, 1, "Rect");
+    call.size = CheckVec3(L, 2, "Rect");
+    ReadDrawTail(L, call);
+    if (Sink(L)) BindingAccess::DrawSink(Host(L))(call);
+    return 0;
+}
+int DrawText(lua_State* L) { // location, text [, color [, duration]]
+    LuauHost::DebugDrawCall call;
+    call.kind = LuauHost::DebugDrawCall::Kind::Text;
+    call.from = CheckVec3(L, 1, "Text");
+    if (lua_type(L, 2) != LUA_TSTRING) {
+        luaL_error(L, "engine.debug_draw.Text expects a string, got %s", lua_typename(L, lua_type(L, 2)));
+    }
+    call.text = lua_tostring(L, 2);
+    ReadDrawTail(L, call);
+    if (Sink(L)) BindingAccess::DrawSink(Host(L))(call);
+    return 0;
+}
+
 } // namespace
 
 void PushEntityValue(lua_State* L, Entity entity) {
@@ -642,6 +729,19 @@ void LuauHost::InstallWorldBindings() {
     SetFunction(L, "Find", &WorldFind);
     SetFunction(L, "EntitiesWith", &WorldEntitiesWith);
     lua_setglobal(L, "world");
+
+    // engine.debug_draw: primitives for the host's debug-draw sink (Phase
+    // 23 step 6). Read by the host's SetDebugDrawHandler.
+    lua_createtable(L, 0, 1); // engine
+    lua_createtable(L, 0, 6); // engine.debug_draw
+    SetFunction(L, "Line", &DrawLine);
+    SetFunction(L, "Box", &DrawBox);
+    SetFunction(L, "Sphere", &DrawSphere);
+    SetFunction(L, "Point", &DrawPoint);
+    SetFunction(L, "Rect", &DrawRect);
+    SetFunction(L, "Text", &DrawText);
+    lua_setfield(L, -2, "debug_draw");
+    lua_setglobal(L, "engine");
 }
 
 void LuauHost::BindWorld(World* world, GuidIndex* guids) {

@@ -1,5 +1,6 @@
 add_library(aether_engine STATIC
     src/core/log.cpp
+    src/core/cvars.cpp
     src/memory/linear_allocator.cpp
     src/memory/pool_allocator.cpp
     src/memory/frame_allocator.cpp

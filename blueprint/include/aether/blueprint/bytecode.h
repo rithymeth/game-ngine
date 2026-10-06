@@ -104,6 +104,7 @@ enum class Op : u8 {
     Jmp,      // d = target instruction
     JmpF,     // b = condition, d = target
     Print,    // b = string register
+    Draw,     // d = debug-draw index; b = color int register
     CallNative,   // d = native call index
     GetField,     // d = field access index
     SetField,     // d = field access index
@@ -234,6 +235,18 @@ struct FieldAccess {
     TypedReg value;
 };
 
+// World-space debug drawing (Op::Draw). `kind` selects the primitive;
+// a/b/radius match the dev::DebugPrimitive layout so the host can forward to
+// it directly. `color` is an int register holding 0xRRGGBBAA.
+struct DrawInfo {
+    enum class Kind : u8 { Line, Box, Sphere, Point, Text } kind = Kind::Line;
+    RegRef a, b, color;
+    RegRef radius;   // floats (sphere radius, point cross half-size); unused for lines
+    RegRef text;     // string register (Text); unused otherwise
+    RegRef duration; // float seconds; 0 = this frame only
+    u32 node = 0;    // for error attribution
+};
+
 // Physics queries: which one, and the registers of its pins.
 struct TraceInfo {
     enum class Kind : u8 { Line, Sphere, OverlapSphere } kind = Kind::Line;
@@ -326,6 +339,7 @@ struct CompiledBlueprint {
     std::vector<LatentInfo> latents;
     std::vector<SpawnInfo> spawns;
     std::vector<TraceInfo> traces;
+    std::vector<DrawInfo> debug_draws;
     std::vector<SortInfo> sorts;
     std::vector<DispatcherCall> dispatcher_calls;
     std::vector<DispatcherBind> dispatcher_binds;

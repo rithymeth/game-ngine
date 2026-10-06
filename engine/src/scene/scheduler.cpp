@@ -1,6 +1,7 @@
 #include "aether/scene/scheduler.h"
 
 #include "aether/core/log.h"
+#include "aether/core/profile.h"
 
 #include <algorithm>
 #include <unordered_map>
@@ -171,6 +172,7 @@ struct SystemJob {
 
 void RunSystemJob(void* data) {
     const SystemJob* job = static_cast<const SystemJob*>(data);
+    AETHER_ZONE_DYNAMIC(job->system->name.c_str());
     job->system->run(*job->world, *job->frame);
 }
 
@@ -188,6 +190,7 @@ void SystemScheduler::RunPhase(World& world, SystemPhase phase, const FrameConte
     const PhaseGraph& graph = graphs_[static_cast<usize>(phase)];
     if (jobs == nullptr) {
         for (u32 i : graph.order) {
+            AETHER_ZONE_DYNAMIC(systems_[i].name.c_str());
             systems_[i].run(world, frame);
         }
         return;
@@ -211,6 +214,7 @@ void SystemScheduler::RunPhase(World& world, SystemPhase phase, const FrameConte
         }
         for (u32 i : level) { // the calling thread's share, meanwhile
             if (systems_[i].main_thread_only) {
+                AETHER_ZONE_DYNAMIC(systems_[i].name.c_str());
                 systems_[i].run(world, frame);
             }
         }

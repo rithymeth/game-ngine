@@ -1,12 +1,23 @@
 #pragma once
 
+#include "aether/core/base.h"
+
 #include <cstdio>
+#include <deque>
 #include <mutex>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace aether {
 
 enum class LogLevel : int { Trace = 0, Info, Warn, Error, Fatal };
+
+struct LogEntry {
+    LogLevel level = LogLevel::Trace;
+    std::string category;
+    std::string message;
+};
 
 class Logger {
 public:
@@ -15,9 +26,18 @@ public:
     void SetMinLevel(LogLevel level) { min_level_ = level; }
     void Log(LogLevel level, std::string_view category, std::string_view message);
 
+    // Thread-safe ring buffer of the most recent log lines, oldest -> newest.
+    std::vector<LogEntry> RecentLogLines(usize max = 200) const;
+    // Resizes the kept history (default 200). Truncates if smaller.
+    void SetLogBufferSize(usize n);
+
 private:
+    explicit Logger(usize buffer_size = 200);
+
     LogLevel min_level_ = LogLevel::Trace;
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
+    usize buffer_size_;
+    std::deque<LogEntry> ring_buffer_;
 };
 
 void LogFormatted(LogLevel level, std::string_view category, const char* fmt, ...);

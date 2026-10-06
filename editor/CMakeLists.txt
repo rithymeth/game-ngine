@@ -1,5 +1,5 @@
 add_executable(aether_editor main.cpp)
-target_link_libraries(aether_editor PRIVATE Aether::Engine Aether::Physics Aether::EditorUI ImGui::ImGui)
+target_link_libraries(aether_editor PRIVATE Aether::Engine Aether::Physics Aether::EditorUI Aether::DevTools ImGui::ImGui)
 if(NOT AETHER_BUILD_EDITOR_UI)
     message(FATAL_ERROR "The editor needs AETHER_BUILD_EDITOR_UI=ON (its generic Inspector lives there)")
 endif()

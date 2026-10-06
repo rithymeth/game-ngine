@@ -905,6 +905,34 @@ void RegisterBuiltins(Registry& r) {
         return Sig("Print String", "Debug", NodeKind::Impure,
                    {ExecIn(), In("text", kString, std::string("Hello")), ExecOut()});
     };
+    // Debug drawing (Phase 23 step 6): primitives accumulate in the engine's
+    // debug-draw sink via Op::Draw. `color` is 0xRRGGBBAA (default white);
+    // duration 0 = draw for this frame only.
+    r.exact["Debug.DrawLine"] = [=](const NodeContext&, NodeError&) -> std::optional<NodeSignature> {
+        std::vector<PinDesc> pins{ExecIn(), In("from", kVec3), In("to", kVec3), In("color", kInt, i32{-1}),
+                                  In("duration", kFloat, 0.0f), ExecOut()};
+        return Sig("Draw Line", "Debug", NodeKind::Impure, std::move(pins));
+    };
+    r.exact["Debug.DrawBox"] = [=](const NodeContext&, NodeError&) -> std::optional<NodeSignature> {
+        std::vector<PinDesc> pins{ExecIn(), In("center", kVec3), In("halfExtent", kVec3), In("color", kInt, i32{-1}),
+                                  In("duration", kFloat, 0.0f), ExecOut()};
+        return Sig("Draw Debug Box", "Debug", NodeKind::Impure, std::move(pins));
+    };
+    r.exact["Debug.DrawSphere"] = [=](const NodeContext&, NodeError&) -> std::optional<NodeSignature> {
+        std::vector<PinDesc> pins{ExecIn(), In("center", kVec3), In("radius", kFloat, 50.0f), In("color", kInt, i32{-1}),
+                                  In("duration", kFloat, 0.0f), ExecOut()};
+        return Sig("Draw Debug Sphere", "Debug", NodeKind::Impure, std::move(pins));
+    };
+    r.exact["Debug.DrawPoint"] = [=](const NodeContext&, NodeError&) -> std::optional<NodeSignature> {
+        std::vector<PinDesc> pins{ExecIn(), In("location", kVec3), In("size", kFloat, 8.0f), In("color", kInt, i32{-1}),
+                                  In("duration", kFloat, 0.0f), ExecOut()};
+        return Sig("Draw Debug Point", "Debug", NodeKind::Impure, std::move(pins));
+    };
+    r.exact["Debug.DrawText"] = [=](const NodeContext&, NodeError&) -> std::optional<NodeSignature> {
+        std::vector<PinDesc> pins{ExecIn(), In("location", kVec3), In("text", kString), In("color", kInt, i32{-1}),
+                                  In("duration", kFloat, 0.0f), ExecOut()};
+        return Sig("Draw Debug Text", "Debug", NodeKind::Impure, std::move(pins));
+    };
 
     // --- Functions (§12) ---------------------------------------------------
     r.exact["Function.Entry"] = [](const NodeContext& c, NodeError& error) -> std::optional<NodeSignature> {

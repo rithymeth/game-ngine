@@ -151,6 +151,22 @@ public:
     // Where Print String goes (default: the engine log, category "Blueprint").
     void SetPrintHandler(std::function<void(Entity, const std::string&)> handler) { print_ = std::move(handler); }
 
+    // Where Debug.Draw* primitives go (engine console debug drawing). The
+    // game connects this to its debug-draw accumulator. `primitive` mirrors
+    // `dev::DebugPrimitive` so the host can forward it directly; blueprint
+    // itself links only the engine, not devtools. Null discards the output.
+    struct DebugDrawCall {
+        enum class Kind : u8 { Line, Box, Sphere, Point, Text } kind = Kind::Line;
+        Vec3 from{0, 0, 0}, to{0, 0, 0}; // Line: from->to; Box/Sphere/Point: center, half-extent/radius
+        Vec3 size{0, 0, 0};              // Box half-extent; ignored otherwise
+        std::string text;                // Text
+        u32 color = 0xFFFFFFFF;          // 0xRRGGBBAA
+        f32 duration = 0.0f;             // seconds; 0 = this frame only
+    };
+    void SetDebugDrawHandler(std::function<void(Entity entity, const DebugDrawCall&)> handler) {
+        debug_draw_ = std::move(handler);
+    }
+
     // --- Debugging -----------------------------------------------------
     // The handler runs at each stop, synchronously (PIE is paused inside it;
     // it must not run Blueprints on this VM). Null detaches the debugger.
@@ -247,6 +263,7 @@ private:
     std::vector<Frame> frames_; // one per call depth, reused: no allocation per dispatch
     u32 depth_ = 0;             // frames in use
     std::function<void(Entity, const std::string&)> print_;
+    std::function<void(Entity, const DebugDrawCall&)> debug_draw_;
     std::vector<RuntimeError> errors_;
     std::unordered_map<u64, bool> warned_; // BP201 once per (function, node)
     GuidIndex* guids_ = nullptr;

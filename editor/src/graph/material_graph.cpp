@@ -25,15 +25,15 @@ u32 MaterialPinColor(PinType type) {
 }
 
 u32 MaterialHeaderColor(const std::string& category) {
-    if (category == "Output") return IM_COL32(120, 80, 30, 255);
-    if (category == "Parameters") return IM_COL32(40, 105, 55, 255);
-    if (category == "Constants") return IM_COL32(60, 90, 60, 255);
-    if (category == "Texture") return IM_COL32(150, 60, 40, 255);
-    if (category == "Coordinates" || category == "Vectors") return IM_COL32(40, 90, 130, 255);
-    if (category == "Functions") return IM_COL32(95, 70, 125, 255);
-    if (category == "Custom") return IM_COL32(130, 40, 90, 255);
-    if (category == "Utility") return IM_COL32(85, 85, 90, 255);
-    return IM_COL32(35, 75, 150, 255); // math and shading
+    if (category == "Output") return IM_COL32(112, 86, 43, 255);
+    if (category == "Parameters") return IM_COL32(44, 89, 63, 255);
+    if (category == "Constants") return IM_COL32(51, 83, 69, 255);
+    if (category == "Texture") return IM_COL32(112, 61, 51, 255);
+    if (category == "Coordinates" || category == "Vectors") return IM_COL32(48, 79, 102, 255);
+    if (category == "Functions") return IM_COL32(78, 62, 101, 255);
+    if (category == "Custom") return IM_COL32(105, 58, 84, 255);
+    if (category == "Utility") return IM_COL32(67, 70, 77, 255);
+    return IM_COL32(49, 79, 132, 255); // math and shading
 }
 
 GraphViewModel BuildMaterialView(const Material& m, const mat::Analysis& analysis) {
