@@ -369,7 +369,13 @@ nlohmann::json SequenceToJson(const LevelSequence& s) {
             {"fps", s.fps},             {"duration", s.duration},              {"tracks", std::move(tracks)}};
 }
 
+static bool SequenceFromJsonImpl(const nlohmann::json& j, LevelSequence& out, std::string* error);
+
 bool SequenceFromJson(const nlohmann::json& j, LevelSequence& out, std::string* error) {
+    return GuardJsonLoader(error, "sequence", [&] { return SequenceFromJsonImpl(j, out, error); });
+}
+
+static bool SequenceFromJsonImpl(const nlohmann::json& j, LevelSequence& out, std::string* error) {
     const auto fail = [&](const std::string& why) {
         if (error) *error = why;
         return false;

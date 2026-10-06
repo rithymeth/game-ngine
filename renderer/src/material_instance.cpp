@@ -75,7 +75,13 @@ json InstanceToJson(const MaterialInstance& instance) {
     return {{"$type", "MaterialInstance"}, {"$version", kInstanceVersion}, {"parent", instance.parent}, {"parameters", params}};
 }
 
+static bool InstanceFromJsonImpl(const json& j, MaterialInstance& out, std::string* error);
+
 bool InstanceFromJson(const json& j, MaterialInstance& out, std::string* error) {
+    return GuardJsonLoader(error, "material instance", [&] { return InstanceFromJsonImpl(j, out, error); });
+}
+
+static bool InstanceFromJsonImpl(const json& j, MaterialInstance& out, std::string* error) {
     auto fail = [&](const std::string& message) {
         if (error != nullptr) *error = message;
         return false;

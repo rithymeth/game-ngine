@@ -64,7 +64,13 @@ json MontageToJson(const Montage& m) {
             {"slot", m.slot},     {"blend_in", m.blend_in},     {"blend_out", m.blend_out}, {"sections", sections}};
 }
 
+static bool MontageFromJsonImpl(const json& j, Montage& out, std::string* error);
+
 bool MontageFromJson(const json& j, Montage& out, std::string* error) {
+    return GuardJsonLoader(error, "montage", [&] { return MontageFromJsonImpl(j, out, error); });
+}
+
+static bool MontageFromJsonImpl(const json& j, Montage& out, std::string* error) {
     auto fail = [&](const std::string& message) {
         if (error != nullptr) *error = message;
         return false;

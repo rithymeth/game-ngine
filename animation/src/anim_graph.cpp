@@ -891,7 +891,13 @@ json AnimGraphToJson(const AnimGraph& g) {
     return {{"$type", "AnimGraph"}, {"$version", kFormatVersion}, {"variables", vars}, {"output", g.output}, {"nodes", nodes}, {"machines", machines}};
 }
 
+static bool AnimGraphFromJsonImpl(const json& j, AnimGraph& out, std::string* error);
+
 bool AnimGraphFromJson(const json& j, AnimGraph& out, std::string* error) {
+    return GuardJsonLoader(error, "animation graph", [&] { return AnimGraphFromJsonImpl(j, out, error); });
+}
+
+static bool AnimGraphFromJsonImpl(const json& j, AnimGraph& out, std::string* error) {
     auto fail = [&](const std::string& message) {
         if (error != nullptr) *error = message;
         return false;
