@@ -240,6 +240,6 @@ AETHER_BENCH_SETUP(
     },
     [] {
         cook::CookedTexture texture;
-        cook::LoadAtex(Cook().atex, texture);
+        if (!cook::LoadAtex(Cook().atex, texture)) std::abort();
         cook::SaveAtex(texture);
     });

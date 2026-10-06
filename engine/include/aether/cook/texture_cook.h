@@ -22,7 +22,7 @@ enum class TextureFormat : u8 {
     BC7 = 5,   // RGBA at high quality, 8 bpp
 };
 const char* TextureFormatName(TextureFormat f);
-bool ParseTextureFormat(const std::string& name, TextureFormat& out);
+[[nodiscard]] bool ParseTextureFormat(const std::string& name, TextureFormat& out);
 // Bytes per 4x4 block, or 0 for RGBA8.
 u32 BlockBytes(TextureFormat f);
 // Bytes of one mip of this size.
@@ -72,6 +72,6 @@ std::vector<u8> DecodeMip(const CookedTexture& texture, usize mip);
 // 2 normal map), u16 0, u32 width, u32 height, u32 mip count, then per mip
 // u32 width, u32 height, u32 size and its bytes (little-endian).
 std::vector<u8> SaveAtex(const CookedTexture& texture);
-bool LoadAtex(std::span<const u8> bytes, CookedTexture& out, std::string* error = nullptr);
+[[nodiscard]] bool LoadAtex(std::span<const u8> bytes, CookedTexture& out, std::string* error = nullptr);
 
 } // namespace aether::cook

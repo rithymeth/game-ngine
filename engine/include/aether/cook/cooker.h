@@ -21,7 +21,7 @@ namespace aether::cook {
 
 enum class BuildConfiguration : u8 { Debug, Development, Shipping };
 const char* ConfigurationName(BuildConfiguration c);
-bool ParseConfiguration(const std::string& name, BuildConfiguration& out);
+[[nodiscard]] bool ParseConfiguration(const std::string& name, BuildConfiguration& out);
 
 struct CookOptions {
     std::filesystem::path project_file;  // the .aproject
