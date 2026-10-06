@@ -147,7 +147,7 @@ when advisory gates become required.
 
 | Step | Work | Needs |
 |---|---|---|
-| **44.1** | Audit and harden `mcp/` (`editor_tools.cpp`, `mcp_server.cpp`): version the tool schemas, test the protocol with a stub client. | - |
+| **44.1** *(started: wrong-typed `jsonrpc`/`id`/`params`/`protocolVersion` no longer throw out of the server; a throwing tool is an `isError` result; schema `required` arguments are checked before the handler; result size cap (8 MB) and request line cap (4 MB); `schemaVersion` in `tools/list`; empty or handler-less tools are refused. Still to do: path sandboxing (44.3), a scripted stub-client session, per-tool schema type checks)* | Audit and harden `mcp/` (`editor_tools.cpp`, `mcp_server.cpp`): version the tool schemas, test the protocol with a stub client. | - |
 | **44.2** | Every edit through the undo stack with agent attribution. | 44.1 |
 | **44.3** | A permission file in the project and a session log. | 44.1 |
 | **44.4** | Confirmation flow for destructive tools. | 44.3 |

@@ -264,3 +264,72 @@ AETHER_TEST(Mcp_StdioLoop) {
     AETHER_CHECK(lines[1]["id"] == 2 && lines[1]["result"]["isError"] == false);
     AETHER_CHECK(lines[2]["error"]["code"] == -32700);
 }
+
+// Hardening (Phase 44 step 1): requests with fields of the wrong type, a throwing tool, limits and the schema
+// version. None of these may throw out of the server or end it.
+AETHER_TEST(Mcp_WrongTypedFieldsAnswerWithErrors) {
+    McpServer server("test", "0");
+    bool threw = false;
+    try {
+        // "jsonrpc" as a number, "method" as a number, "id" as an object and an array, "params" as a string.
+        for (const char* text : {R"({"jsonrpc":2,"id":1,"method":"ping"})", R"({"jsonrpc":"2.0","id":1,"method":5})",
+                                 R"({"jsonrpc":"2.0","id":{"a":1},"method":"ping"})", R"({"jsonrpc":"2.0","id":[1],"method":"ping"})",
+                                 R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":7}})",
+                                 R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":"text"})",
+                                 R"({"jsonrpc":"2.0","id":1,"method":"tools/call","params":"text"})", R"([{"jsonrpc":"2.0","id":1,"method":"ping"}])",
+                                 R"(5)", R"(null)", R"("x")"}) {
+            const std::optional<Json> response = server.HandleText(text);
+            AETHER_CHECK(response.has_value() && response->contains("error") + response->contains("result") == 1);
+        }
+    } catch (...) {
+        threw = true;
+    }
+    AETHER_CHECK(!threw);
+    // The id of a bad-id request is answered with null, not echoed back as an object.
+    const std::optional<Json> bad_id = server.HandleText(R"({"jsonrpc":"2.0","id":{"a":1},"method":"ping"})");
+    AETHER_CHECK(bad_id && (*bad_id)["id"].is_null() && (*bad_id)["error"]["code"] == -32600);
+}
+
+AETHER_TEST(Mcp_ToolFailuresAndRequiredArguments) {
+    McpServer server("test", "0");
+    AETHER_CHECK(!server.AddTool(Tool{"", "no name", Json::object(), [](const Json&) { return Json("x"); }}));
+    AETHER_CHECK(!server.AddTool(Tool{"no_handler", "no handler", Json::object(), nullptr}));
+    Tool throwing{"throws", "throws a std::exception", {{"type", "object"}}, [](const Json&) -> Json { throw std::runtime_error("boom"); }};
+    AETHER_CHECK(server.AddTool(throwing));
+    Tool needs{"needs", "needs an argument", {{"type", "object"}, {"required", Json::array({"path"})}}, [](const Json&) { return Json("ok"); }};
+    AETHER_CHECK(server.AddTool(needs));
+    Tool huge{"huge", "returns too much", {{"type", "object"}}, [](const Json&) { return Json(std::string(kMaxResultBytes + 1, 'x')); }};
+    AETHER_CHECK(server.AddTool(huge));
+    // Adding a tool of the same name replaces it.
+    AETHER_CHECK(server.AddTool(Tool{"needs", "replaced", {{"type", "object"}}, [](const Json&) { return Json("ok2"); }}) && server.Tools().size() == 3);
+
+    const auto call = [&](const char* tool) {
+        return *server.HandleMessage({{"jsonrpc", "2.0"}, {"id", 1}, {"method", "tools/call"}, {"params", {{"name", tool}}}});
+    };
+    const Json thrown = call("throws");
+    AETHER_CHECK(thrown["result"]["isError"] == true && thrown["result"]["content"][0]["text"].get<std::string>().find("boom") != std::string::npos);
+    AETHER_CHECK(call("needs")["result"]["content"][0]["text"] == "ok2"); // replaced: nothing required now
+    AETHER_CHECK(call("huge")["result"]["isError"] == true);
+
+    server.AddTool(needs); // required "path" again
+    const Json missing = call("needs");
+    AETHER_CHECK(missing["error"]["code"] == -32602 && missing["error"]["message"].get<std::string>().find("path") != std::string::npos);
+    const Json present = *server.HandleMessage({{"jsonrpc", "2.0"}, {"id", 2}, {"method", "tools/call"}, {"params", {{"name", "needs"}, {"arguments", {{"path", "a"}}}}}});
+    AETHER_CHECK(present["result"]["isError"] == false);
+}
+
+AETHER_TEST(Mcp_ListReportsTheSchemaVersionAndStdioSkipsHugeLines) {
+    McpServer server("test", "0");
+    const Json list = *server.HandleMessage({{"jsonrpc", "2.0"}, {"id", 1}, {"method", "tools/list"}});
+    AETHER_CHECK(list["result"]["schemaVersion"] == kToolSchemaVersion && list["result"]["tools"].is_array());
+
+    std::stringstream in;
+    in << std::string(kMaxMessageBytes + 10, 'x') << "\n" << R"({"jsonrpc":"2.0","id":9,"method":"ping"})" << "\n";
+    std::stringstream out;
+    server.RunStdio(in, out);
+    std::vector<Json> lines;
+    std::string line;
+    while (std::getline(out, line)) lines.push_back(Json::parse(line));
+    AETHER_CHECK(lines.size() == 2);
+    AETHER_CHECK(lines[0]["error"]["code"] == -32600 && lines[1]["id"] == 9 && lines[1].contains("result"));
+}

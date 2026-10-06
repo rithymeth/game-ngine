@@ -14,6 +14,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstddef>
 #include <functional>
 #include <iosfwd>
 #include <optional>
@@ -24,6 +25,13 @@
 namespace aether::mcp {
 
 using Json = nlohmann::json;
+
+// The shape of the tool listing (a tool's name, description and input schema). It is reported in the tools/list
+// result as "schemaVersion", so a client can tell if it changes. Adding a field doesn't change it.
+inline constexpr int kToolSchemaVersion = 1;
+// Limits: a request line longer than this is refused (and skipped), and so is a tool result larger than this.
+inline constexpr std::size_t kMaxMessageBytes = 4 * 1024 * 1024;
+inline constexpr std::size_t kMaxResultBytes = 8 * 1024 * 1024;
 
 // Thrown by a tool handler to report a failure to the model (an MCP tool
 // result with isError = true) rather than a protocol error.
@@ -44,7 +52,8 @@ class McpServer {
 public:
     McpServer(std::string name, std::string version);
 
-    void AddTool(Tool tool);
+    // Adds a tool, replacing one of the same name. A tool with no name or no handler is refused (false).
+    bool AddTool(Tool tool);
     const std::vector<Tool>& Tools() const { return tools_; }
 
     // Handles one JSON-RPC message. Returns the response, or nullopt for a
