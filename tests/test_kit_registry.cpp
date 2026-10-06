@@ -1,6 +1,16 @@
 #include "test_framework.h"
 
+#include "aether/gameplay/gameplay_kit.h"
 #include "aether/kit/kit.h"
+#if AETHER_KIT_INVENTORY
+#include "aether/inventory/inventory_kit.h"
+#endif
+#if AETHER_KIT_INTERACTION
+#include "aether/interaction/interaction_kit.h"
+#endif
+#if AETHER_KIT_QUESTS
+#include "aether/quests/quests_kit.h"
+#endif
 
 #include <algorithm>
 
@@ -117,4 +127,31 @@ AETHER_TEST(Kit_StagesFollowTheirDependencies) {
     AETHER_CHECK(stages[0].name == "Player.Inventory" && stages[0].after.empty());
     AETHER_CHECK(stages[1].name == "Player.Quests");
     AETHER_CHECK(stages[1].after.size() == 1 && stages[1].after[0] == "Player.Inventory");
+}
+
+// The four real gameplay kits (Phase 37 step 4): they resolve, the gameplay module comes first, and each kit
+// adds the one stage the player used to hand-write.
+AETHER_TEST(Kit_TheGameplayKitsResolveInOrder) {
+    KitRegistry registry;
+    registry.Add(gas::MakeGameplayKit());
+#if AETHER_KIT_QUESTS
+    registry.Add(quest::MakeQuestsKit());
+#endif
+#if AETHER_KIT_INVENTORY
+    registry.Add(inv::MakeInventoryKit());
+#endif
+#if AETHER_KIT_INTERACTION
+    registry.Add(interact::MakeInteractionKit());
+#endif
+    AETHER_CHECK(registry.Resolve() && registry.Errors().empty());
+    AETHER_CHECK(!registry.Order().empty() && std::string(registry.Order()[0]->Name()) == "Gameplay");
+    registry.RegisterComponents(); // idempotent, and safe to run in any order
+    std::vector<std::string> names;
+    for (const KitStage& stage : registry.Stages()) {
+        names.push_back(stage.name);
+        AETHER_CHECK(std::find(stage.after.begin(), stage.after.end(), "Player.Effects") != stage.after.end());
+    }
+#if AETHER_KIT_INVENTORY && AETHER_KIT_INTERACTION && AETHER_KIT_QUESTS
+    AETHER_CHECK((names == std::vector<std::string>{"Player.Interaction", "Player.Inventory", "Player.Quests"}));
+#endif
 }
