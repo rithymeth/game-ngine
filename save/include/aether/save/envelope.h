@@ -5,6 +5,7 @@
 #include "aether/save/save_result.h"
 
 #include <filesystem>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -30,6 +31,10 @@ SaveResult Write(const std::filesystem::path& file, std::string_view contents);
 // (with the load's warnings). The object is untouched on failure.
 SaveResult Read(const std::filesystem::path& file, std::string_view kind, const reflect::TypeInfo& type, void* object);
 
+// The same from bytes already in memory (`source` names them in messages). A damaged document, including one
+// with a field of the wrong type, is Corrupt; nothing throws.
+SaveResult ReadFromMemory(std::span<const u8> bytes, const std::string& source, std::string_view kind, const reflect::TypeInfo& type, void* object);
+
 // Read, then on NotFound or Corrupt the `.bak` (with a note in the warnings).
 SaveResult ReadWithBackup(const std::filesystem::path& file, std::string_view kind, const reflect::TypeInfo& type, void* object);
 
@@ -52,6 +57,8 @@ struct EnvelopeInfo {
 };
 // Reads and checks a file's envelope. Files over 64 MB are refused.
 EnvelopeInfo Inspect(const std::filesystem::path& file);
+// The same on bytes already in memory.
+EnvelopeInfo InspectBytes(std::span<const u8> bytes);
 
 SaveResult Fail(SaveError error, std::string message);
 SaveResult Ok();
