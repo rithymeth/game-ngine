@@ -318,7 +318,7 @@ struct FuzzProfile {
 } // namespace fuzz_save
 AETHER_REFLECT(fuzz_save::FuzzProfile, 1, AETHER_FIELD(level, Field_EditAnywhere), AETHER_FIELD(health, Field_EditAnywhere),
                AETHER_FIELD(name, Field_EditAnywhere), AETHER_FIELD(inventory, Field_EditAnywhere), AETHER_FIELD(hard_mode, Field_EditAnywhere))
-// The envelope from memory (Phase 47 step 1, found by fuzzing): a field of the wrong type is a damaged file,
+// The envelope from memory (Phase 47 step 1): a field of the wrong type is a damaged file,
 // not an exception.
 AETHER_TEST(Save_EnvelopeFromMemoryReadsAndSurvivesWrongTypes) {
     fuzz_save::FuzzProfile written;
