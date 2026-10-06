@@ -429,3 +429,59 @@ AETHER_TEST(Player_SimulatesPhysics) {
     CHECK(rest > 0.3f && rest < 0.7f); // on the floor
 }
 #endif
+
+// The order the player runs its systems in, as a snapshot: the kit migration (Phase 37 step 4) must not change it.
+// A failure prints the new order; update the golden text only when a change of order is intended.
+namespace {
+std::string DescribeStages(Game& game) {
+    std::string out, error;
+    game.Systems().Build(&error);
+    if (!error.empty()) return "build failed: " + error;
+    for (const SystemPhase phase : {SystemPhase::PreUpdate, SystemPhase::FixedUpdate, SystemPhase::Update, SystemPhase::LateUpdate, SystemPhase::PreRender}) {
+        out += std::string(SystemPhaseName(phase)) + ":";
+        for (const std::string& name : game.Systems().Order(phase)) out += " " + name;
+        out += "\n";
+        for (const std::vector<std::string>& level : game.Systems().Levels(phase)) {
+            out += "  |";
+            for (const std::string& name : level) out += " " + name;
+            out += "\n";
+        }
+    }
+    return out;
+}
+} // namespace
+
+AETHER_TEST(Player_StageOrderSnapshot) {
+    const stdfs::path dir = TestDir("StageOrder");
+    const stdfs::path pak = MakePak(dir, "Game.apak");
+    GamePackage package;
+    std::string error;
+    CHECK(package.Mount(pak.string(), 0, &error));
+    CHECK(package.LoadManifest(&error));
+    Game game(package);
+    CHECK(game.LoadStartupScene(&error));
+    game.Tick(1.0f / 60.0f); // builds the frame's systems
+    const std::string order = DescribeStages(game);
+#if defined(AETHER_KIT_INVENTORY) && defined(AETHER_KIT_INTERACTION) && defined(AETHER_KIT_QUESTS) && AETHER_KIT_INVENTORY && AETHER_KIT_INTERACTION && AETHER_KIT_QUESTS
+    const std::string golden =
+        "PreUpdate:\n"
+        "FixedUpdate: Player.Physics Player.Physics2D Player.FixedUpdate\n"
+        "  | Player.Physics\n"
+        "  | Player.Physics2D\n"
+        "  | Player.FixedUpdate\n"
+        "Update: Player.Update Player.Sequencer Player.Save Player.Effects Player.Abilities Player.Inventory Player.Interaction Player.Attributes Player.Quests Player.Scripting\n"
+        "  | Player.Update\n"
+        "  | Player.Sequencer\n"
+        "  | Player.Save Player.Effects\n"
+        "  | Player.Abilities Player.Inventory Player.Interaction Player.Attributes\n"
+        "  | Player.Quests\n"
+        "  | Player.Scripting\n"
+        "LateUpdate: Player.LateUpdate\n"
+        "  | Player.LateUpdate\n"
+        "PreRender:\n";
+    if (order != golden) std::printf("  stage order is now:\n%s", order.c_str());
+    CHECK(order == golden);
+#else
+    CHECK(order.find("Player.Scripting") != std::string::npos);
+#endif
+}

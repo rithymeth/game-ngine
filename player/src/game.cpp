@@ -5,14 +5,18 @@
 
 #include "aether/core/log.h"
 #include "aether/gameplay/ability_system.h"
+#include "aether/gameplay/gameplay_kit.h"
 #if AETHER_KIT_INVENTORY
+#include "aether/inventory/inventory_kit.h"
 #include "aether/inventory/inventory_system.h"
 #endif
 #if AETHER_KIT_INTERACTION
+#include "aether/interaction/interaction_kit.h"
 #include "aether/interaction/interaction_system.h"
 #endif
 #if AETHER_KIT_QUESTS
 #include "aether/quests/quest_system.h"
+#include "aether/quests/quests_kit.h"
 #endif
 #include "aether/gameplay/attribute_system.h"
 #include "aether/gameplay/effect_system.h"
@@ -254,6 +258,7 @@ struct Game::Runtime {
 Game::Game(GamePackage& package)
     : package_(package), world_(std::make_unique<World>()), settings_(std::make_unique<save::SettingsStore<save::GameSettings>>(std::filesystem::path())) {
     lifecycle_ = std::make_unique<Lifecycle>(*world_, guids_);
+    BuildKits();
     localization_ = std::make_unique<loc::Localization>();
     localization_->MakeActive();
     // A language chosen in play (Localization.SetLanguage) is the player's setting too.
@@ -393,6 +398,34 @@ const seq::LevelSequence* Game::FindSequence(const std::string& path) {
     return slot.get();
 }
 
+void Game::BuildKits() {
+    // The one place that knows which kits this build has. Each kit says what it needs, which components it
+    // registers and which stage it adds; the registry orders them.
+    kits_.Add(gas::MakeGameplayKit());
+#if AETHER_KIT_INVENTORY
+    kits_.Add(inv::MakeInventoryKit());
+#endif
+#if AETHER_KIT_INTERACTION
+    kits_.Add(interact::MakeInteractionKit());
+#endif
+#if AETHER_KIT_QUESTS
+    kits_.Add(quest::MakeQuestsKit());
+#endif
+    if (!kits_.Resolve()) {
+        for (const std::string& e : kits_.Errors()) AETHER_LOG_ERROR("Player", "Kits: %s", e.c_str());
+    }
+}
+
+void Game::ApplyKitStage(SystemDesc& system, const std::string& name) const {
+    for (const kit::KitStage& stage : kits_.Stages()) {
+        if (stage.name != name) continue;
+        system.name = stage.name;
+        system.after = stage.after;
+        return;
+    }
+    AETHER_LOG_ERROR("Player", "Kits: no stage named %s", name.c_str());
+}
+
 bool Game::LoadStartupScene(std::string* error) {
     if (!package_.HasManifest() && !package_.LoadManifest(error)) return false;
     if (package_.Manifest().startup_scene.empty()) return Fail(error, "The game has no startup scene");
@@ -402,7 +435,7 @@ bool Game::LoadStartupScene(std::string* error) {
 bool Game::LoadScene(const std::string& path, std::string* error) {
     StartModules(); // their components, before the scene names them
     RegisterSequenceComponents(); // SequenceComponent (§27.2)
-    gas::RegisterGameplayComponents(); // AttributeSet and TagContainer (§30)
+    kits_.RegisterComponents(); // the gameplay kits' components: attributes, tags, items, interactables, quests (§30)
     sequences_.clear(); // the old scene's sequences go with its runtime (below)
     sprite2d::RegisterSprite2DComponents(); // sprites and tilemaps (§26.6)
     sprite2d::RegisterPhysics2DComponents(); // 2D bodies and colliders
@@ -895,9 +928,8 @@ void Game::BuildFrame() {
 #if AETHER_KIT_INVENTORY
     // Inventory changes (§30.7) reach the owner's script and Blueprint, after effects have run.
     SystemDesc inventory;
-    inventory.name = "Player.Inventory";
+    ApplyKitStage(inventory, "Player.Inventory");
     inventory.phase = SystemPhase::Update;
-    inventory.after = {"Player.Update", "Player.Sequencer", "Player.Effects"};
     inventory.main_thread_only = true;
     inventory.run = [this](World&, const FrameContext&) {
         if (!runtime_ || !runtime_->inventory) return;
@@ -955,9 +987,8 @@ void Game::BuildFrame() {
     // Interaction (§30.8): cooldowns tick, and uses reach the target's script and Blueprint (OnInteract),
     // failures the user's (OnInteractFailed).
     SystemDesc interaction;
-    interaction.name = "Player.Interaction";
+    ApplyKitStage(interaction, "Player.Interaction");
     interaction.phase = SystemPhase::Update;
-    interaction.after = {"Player.Update", "Player.Sequencer", "Player.Effects"};
     interaction.main_thread_only = true;
     interaction.run = [this](World&, const FrameContext& frame) {
         if (!runtime_ || !runtime_->interaction) return;
@@ -987,16 +1018,12 @@ void Game::BuildFrame() {
 #if AETHER_KIT_QUESTS
     // Quest changes (§30.10) reach the owner's script and Blueprint; reward items go to the inventory kit.
     SystemDesc quests;
-    quests.name = "Player.Quests";
+    ApplyKitStage(quests, "Player.Quests");
     quests.phase = SystemPhase::Update;
-    quests.after = {"Player.Update", "Player.Sequencer", "Player.Effects"
-#if AETHER_KIT_INVENTORY
-                    , "Player.Inventory"
-#endif
-#if AETHER_KIT_INTERACTION
-                    , "Player.Interaction"
-#endif
-    };
+    // Reward items go to the inventory and objectives follow its events, so quests run after the kits it can hear from.
+    for (const char* other : {"Inventory", "Interaction"}) {
+        if (kits_.Has(other)) quests.after.push_back(std::string("Player.") + other);
+    }
     quests.main_thread_only = true;
     quests.run = [this](World&, const FrameContext&) {
         if (!runtime_ || !runtime_->quests) return;
@@ -1076,17 +1103,8 @@ void Game::BuildFrame() {
     SystemDesc scripting;
     scripting.name = "Player.Scripting";
     scripting.phase = SystemPhase::Update;
-    scripting.after = {"Player.Sequencer", "Player.Save", "Player.Attributes", "Player.Effects", "Player.Abilities"
-#if AETHER_KIT_INVENTORY
-        ,"Player.Inventory"
-#endif
-#if AETHER_KIT_INTERACTION
-        ,"Player.Interaction"
-#endif
-#if AETHER_KIT_QUESTS
-        ,"Player.Quests"
-#endif
-    };
+    scripting.after = {"Player.Sequencer", "Player.Save", "Player.Attributes", "Player.Effects", "Player.Abilities"};
+    for (const kit::KitStage& stage : kits_.Stages()) scripting.after.push_back(stage.name); // scripts see what the kits queued
     scripting.main_thread_only = true;
     scripting.run = [this](World&, const FrameContext& frame) {
 #if AETHER_GAME_SCRIPTING
