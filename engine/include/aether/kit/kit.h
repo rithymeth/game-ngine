@@ -46,6 +46,10 @@ struct KitAssetContext {
     std::function<void(const KitAssetDiagnostic&)> report;
 };
 
+struct KitScriptApiContext {
+    std::function<void(const std::string&)> install;
+};
+
 class IKit {
 public:
     virtual ~IKit() = default;

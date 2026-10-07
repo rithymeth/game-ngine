@@ -34,6 +34,12 @@ public:
     void LoadAssets(const KitAssetContext&) override {
         if (log_) log_->push_back("load-" + name_);
     }
+    void InstallBlueprintNodes() override {
+        if (log_) log_->push_back("blueprint-" + name_);
+    }
+    void InstallScriptApi(void*) override {
+        if (log_) log_->push_back("script-" + name_);
+    }
     std::vector<KitStage> Stages() const override { return {{"Player." + name_, {}}}; }
 
 private:
@@ -120,6 +126,12 @@ AETHER_TEST(Kit_InstallHooksRunInDependencyOrder) {
     log.clear();
     registry.LoadAssets({});
     AETHER_CHECK(log.size() == 2 && log[0] == "load-A" && log[1] == "load-B");
+    log.clear();
+    registry.InstallBlueprintNodes();
+    AETHER_CHECK(log.size() == 2 && log[0] == "blueprint-A" && log[1] == "blueprint-B");
+    log.clear();
+    registry.InstallScriptApi(nullptr);
+    AETHER_CHECK(log.size() == 2 && log[0] == "script-A" && log[1] == "script-B");
     AETHER_CHECK(registry.Has("A") && !registry.Has("Z"));
     AETHER_CHECK(registry.Find("B") != nullptr);
 }

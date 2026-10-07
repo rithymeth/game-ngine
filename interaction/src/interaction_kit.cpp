@@ -13,6 +13,10 @@ public:
     const char* Name() const override { return "Interaction"; }
     std::vector<std::string> Deps() const override { return {"Gameplay"}; }
     void RegisterComponents() override { RegisterInteractionComponents(); }
+    void InstallScriptApi(void* context) override {
+        auto* api = static_cast<kit::KitScriptApiContext*>(context);
+        if (api && api->install) api->install(Name());
+    }
     std::vector<kit::KitStage> Stages() const override {
         // Runs with the frame's Update, after effects have run, like the other gameplay kit systems.
         return {{"Player.Interaction", {"Player.Update", "Player.Sequencer", "Player.Effects"}}};
