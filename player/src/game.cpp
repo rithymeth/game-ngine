@@ -1177,6 +1177,11 @@ void Game::UpdateProofMenu() {
         }
     } else if (proof_menu_ == 3 && accept) { proof_menu_ = 1; proof_menu_row_ = 0; }
     if (previous_menu != proof_menu_) paused_ = proof_menu_ != 0;
+    if (previous_menu != 0 && proof_menu_ == 0 && !proof_load_input_ && !proof_new_input_) {
+        // Consume the menu confirmation/back edge before gameplay reads it.
+        // The same gamepad buttons also bind jump and interaction.
+        input_.Update(input_state_, 0);
+    }
     const auto players = FindEntitiesWithTag(*world_, "Player");
     if (players.empty()) return;
     auto* attributes = world_->GetComponent<gas::AttributeSet>(players.front());
