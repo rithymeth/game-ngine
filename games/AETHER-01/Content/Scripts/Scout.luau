@@ -6,11 +6,22 @@ Scout.speed = 1.2
 --@range 0 20
 Scout.stop_distance = 1.2
 
+function Scout:OnCreate()
+    self.player = nil
+    for _, entity in ipairs(world:EntitiesWith("Tags")) do
+        for _, tag in ipairs(entity:Get("Tags").names) do
+            if tag == "Player" then self.player = entity end
+        end
+    end
+end
+
 function Scout:OnUpdate(dt)
-    local players = world:EntitiesWith("CharacterMovement")
-    if #players == 0 then return end
+    if self.player == nil or not self.player:IsValid() then return end
+    -- The cryo bay remains quiet until Kael retrieves the rifle. Defeated
+    -- Scouts stay at their hidden position across checkpoint reloads.
+    if Attributes.Get(self.player, "MissionStage") < 1 or Attributes.Get(self.entity, "Health") <= 0 then return end
     local transform = self.entity:Get("Transform")
-    local player = players[1]:Get("Transform").position
+    local player = self.player:Get("Transform").position
     local p = transform.position
     local dx, dz = player.x - p.x, player.z - p.z
     local distance = math.sqrt(dx * dx + dz * dz)
