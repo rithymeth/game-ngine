@@ -4,6 +4,13 @@
 -- turns to face where it goes. Space or the A button jumps.
 local Controller = {}
 
+local function BoxObstacles()
+    -- Physics is optional in portable CI/player builds. This game keeps its
+    -- template fallback movement and skips collider queries in that build.
+    local available, entities = pcall(function() return world:EntitiesWith("BoxCollider") end)
+    return available and entities or {}
+end
+
 local function SegmentIntersectsBox(origin, endpoint, center, half_extents)
     local delta = endpoint - origin
     local min_t, max_t = 0, 1
@@ -20,13 +27,13 @@ local function SegmentIntersectsBox(origin, endpoint, center, half_extents)
             if min_t > max_t then return false end
         end
     end
-    return true
+    return true, min_t
 end
 
 local function HasClearShot(origin, endpoint, shooter, target)
     -- The current HELIOS-7 greybox uses unrotated BoxColliders. Keep this
     -- query game-owned until a level needs additional collider shapes.
-    for _, obstacle in ipairs(world:EntitiesWith("BoxCollider")) do
+    for _, obstacle in ipairs(BoxObstacles()) do
         if obstacle:IsValid() and obstacle ~= shooter and obstacle ~= target then
             local collider = obstacle:Get("BoxCollider")
             if not collider.is_trigger then
@@ -68,7 +75,8 @@ function Controller:OnCreate()
     self.vy = 0
     self.floor = self.entity:Get("Transform").position.y
     self.camera = world:EntitiesWith("Camera")[1]
-    self.character = self.entity:Get("CharacterMovement")
+    local have_character, character = pcall(function() return self.entity:Get("CharacterMovement") end)
+    self.character = have_character and character or nil
     self.fire_timer = 0
     self.scout_health = {}
     self.scout_spawn = {}
@@ -94,6 +102,10 @@ function Controller:OnCreate()
                     local p = enemy:Get("Transform").position
                     self.scout_spawn[enemy:Guid()] = vector.create(p.x, p.y, p.z)
                     Attributes.Define(enemy, "Health", 3, 0, 3)
+                elseif tag == "Warden" then
+                    local p = enemy:Get("Transform").position
+                    self.scout_spawn[enemy:Guid()] = vector.create(p.x, p.y, p.z)
+                    Attributes.Define(enemy, "Health", 12, 0, 12)
                 end
             end
         end
@@ -101,6 +113,120 @@ function Controller:OnCreate()
     if self.character ~= nil then
         self.character.walk_speed = self.speed
         self.character.jump_velocity = self.jump_speed
+    end
+    self:InitializeMission()
+end
+
+function Controller:InitializeMission()
+    self.mission_stage = 0
+    self.rifle, self.gate = nil, nil
+    for _, entity in ipairs(world:EntitiesWith("Tags")) do
+        for _, tag in ipairs(entity:Get("Tags").names) do
+            if tag == "RiflePickup" then self.rifle = entity end
+            if tag == "ServiceGate" then self.gate = entity end
+        end
+    end
+    Attributes.Define(self.entity, "MissionStage", 0, 0, 5)
+    Attributes.Define(self.entity, "SaveStatus", 0, -1, 1)
+    self:LoadCheckpoint()
+    self:ApplyMission()
+end
+
+function Controller:ApplyMission()
+    Attributes.SetBase(self.entity, "MissionStage", self.mission_stage)
+    if self.rifle ~= nil then
+        self.rifle:Get("Transform").position = self.mission_stage > 0
+            and vector.create(1.1, -100, 0) or vector.create(1.1, 0.6, 0)
+    end
+    if self.gate ~= nil then
+        self.gate:Get("Transform").position = vector.create(0, self.mission_stage >= 2 and -10 or 2, -8.5)
+    end
+    if self.mission_stage >= 2 then
+        for _, enemy in ipairs(world:EntitiesWith("Tags")) do
+            for _, tag in ipairs(enemy:Get("Tags").names) do
+                if tag == "Scout" then
+                    self.scout_health[enemy:Guid()] = 0
+                    Attributes.SetBase(enemy, "Health", 0)
+                    local p = enemy:Get("Transform").position
+                    enemy:Get("Transform").position = vector.create(p.x, -100, p.z)
+                elseif tag == "Warden" and self.mission_stage >= 4 then
+                    Attributes.SetBase(enemy, "Health", 0)
+                    enemy:Get("Transform").position = vector.create(0, -100, -35)
+                end
+            end
+        end
+    end
+end
+
+function Controller:LoadCheckpoint()
+    if not SaveGames.DoesSaveExist("first-contact") then return false end
+    if not SaveGames.LoadFromSlot("first-contact") then
+        Attributes.SetBase(self.entity, "SaveStatus", -1)
+        return false
+    end
+    local stage = SaveGames.GetNumber("mission_stage", -1)
+    if SaveGames.GetNumber("schema", 0) ~= 1 or stage < 1 or stage > 5 or stage % 1 ~= 0 then
+        Attributes.SetBase(self.entity, "SaveStatus", -1)
+        return false
+    end
+    self.mission_stage = stage
+    self.health, self.ammo = 3, self.ammo_capacity
+    self.entity:Get("Transform").position = stage >= 3 and vector.create(0, 0, -22) or self.spawn_position
+    Attributes.SetBase(self.entity, "Health", self.health)
+    Attributes.SetBase(self.entity, "Ammo", self.ammo)
+    Attributes.SetBase(self.entity, "SaveStatus", 1)
+    return true
+end
+
+function Controller:SaveCheckpoint()
+    SaveGames.CreateSaveObject()
+    SaveGames.SetNumber("schema", 1)
+    SaveGames.SetNumber("mission_stage", self.mission_stage)
+    local saved = SaveGames.SaveToSlot("first-contact")
+    Attributes.SetBase(self.entity, "SaveStatus", saved and 1 or -1)
+end
+
+function Controller:UpdateMission()
+    if self.mission_stage == 0 and Input.IsTriggered("Interact") and self.rifle ~= nil then
+        local delta = self.rifle:Get("Transform").position - self.entity:Get("Transform").position
+        if vector.magnitude(delta) <= 1.8 then
+            self.mission_stage = 1
+            self:ApplyMission()
+            self:SaveCheckpoint()
+        end
+    elseif self.mission_stage == 1 then
+        local scout_alive = false
+        for _, enemy in ipairs(world:EntitiesWith("Tags")) do
+            for _, tag in ipairs(enemy:Get("Tags").names) do
+                if tag == "Scout" and self.scout_health[enemy:Guid()] ~= 0 then scout_alive = true end
+            end
+        end
+        if not scout_alive then
+            self.mission_stage = 2
+            self:ApplyMission()
+            self:SaveCheckpoint()
+        end
+    elseif self.mission_stage == 2 and self.entity:Get("Transform").position.z < -22 then
+        self.mission_stage = 3
+        self:ApplyMission()
+        self:SaveCheckpoint()
+    elseif self.mission_stage == 3 then
+        for _, enemy in ipairs(world:EntitiesWith("Tags")) do
+            for _, tag in ipairs(enemy:Get("Tags").names) do
+                if tag == "Warden" and Attributes.Get(enemy, "Health") <= 0 then
+                    self.mission_stage = 4
+                    self:ApplyMission()
+                    self:SaveCheckpoint()
+                end
+            end
+        end
+    elseif self.mission_stage == 4 and Input.IsTriggered("Interact") then
+        local p = self.entity:Get("Transform").position
+        if math.abs(p.x) <= 2 and math.abs(p.z + 40) <= 2 then
+            self.mission_stage = 5
+            self:ApplyMission()
+            self:SaveCheckpoint()
+        end
     end
 end
 
@@ -114,9 +240,22 @@ end
 
 function Controller:OnUpdate(dt)
     local t = self.entity:Get("Transform")
+    -- Enemy scripts also write the existing health/feedback attributes.
+    self.health = Attributes.Get(self.entity, "Health")
+    self.damage_flash = math.max(self.damage_flash, Attributes.Get(self.entity, "DamageFlash"))
+    if self.health <= 0 then self.dead = true end
+    local new_game = Input.IsTriggered("NewGame")
+    if new_game then
+        if SaveGames.DoesSaveExist("first-contact") and not SaveGames.DeleteSave("first-contact") then
+            Attributes.SetBase(self.entity, "SaveStatus", -1)
+            return
+        end
+        self.dead, self.mission_stage = true, 0
+        Attributes.SetBase(self.entity, "SaveStatus", 0)
+    end
 
     if self.dead then
-        if Input.IsTriggered("Restart") then
+        if Input.IsTriggered("Restart") or new_game then
             self.dead = false
             self.health = 3
             self.ammo = self.ammo_capacity
@@ -125,6 +264,8 @@ function Controller:OnUpdate(dt)
             self.damage_flash = 0
             self.hit_confirm = 0
             self.damage_timer = 0
+            self.fire_timer = 0
+            self.yaw, self.pitch = 0, -0.3
             Attributes.SetBase(self.entity, "Health", self.health)
             Attributes.SetBase(self.entity, "Ammo", self.ammo)
             Attributes.SetBase(self.entity, "Reloading", 0)
@@ -141,10 +282,15 @@ function Controller:OnUpdate(dt)
                             enemy:Get("Transform").position = self.scout_spawn[guid]
                             self.scout_health[guid] = nil
                             Attributes.SetBase(enemy, "Health", 3)
+                        elseif tag == "Warden" then
+                            enemy:Get("Transform").position = self.scout_spawn[enemy:Guid()]
+                            Attributes.SetBase(enemy, "Health", 12)
                         end
                     end
                 end
             end
+            self:LoadCheckpoint()
+            self:ApplyMission()
         else
             if self.character ~= nil then
                 self.character.input = vector.create(0, 0, 0)
@@ -154,12 +300,15 @@ function Controller:OnUpdate(dt)
         end
     end
 
+    self:UpdateMission()
+
     local look = Input.GetAxis2D("Look")
     self.yaw = self.yaw - math.rad(look.x * self.look_speed)
     self.pitch = math.clamp(self.pitch - math.rad(look.y * self.look_speed), -1.2, 0.5)
 
     -- Move relative to the camera's heading.
     local move = Input.GetAxis2D("Move")
+    if self.mission_stage == 5 then move = vector.create(0, 0, 0) end
     if vector.magnitude(move) > 1 then move = vector.normalize(move) end
     local sy, cy = math.sin(self.yaw), math.cos(self.yaw)
     local vx = -sy * move.y + cy * move.x
@@ -204,7 +353,7 @@ function Controller:OnUpdate(dt)
         end
     end
 
-    if Input.IsTriggered("Fire") and self.fire_timer == 0 and not self.reloading and self.ammo > 0 then
+    if self.mission_stage >= 1 and self.mission_stage < 5 and Input.IsTriggered("Fire") and self.fire_timer == 0 and not self.reloading and self.ammo > 0 then
         self.fire_timer = self.fire_cooldown
         self.ammo -= 1
         Attributes.SetBase(self.entity, "Ammo", self.ammo)
@@ -216,11 +365,13 @@ function Controller:OnUpdate(dt)
         for _, enemy in ipairs(world:EntitiesWith("Tags")) do
             if enemy:IsValid() and enemy:Has("Tags") then
                 local tags = enemy:Get("Tags").names
-                local is_scout = false
+                local is_enemy = false
+                local is_warden = false
                 for _, tag in ipairs(tags) do
-                    if tag == "Scout" then is_scout = true end
+                    if tag == "Enemy" then is_enemy = true end
+                    if tag == "Warden" then is_warden = true end
                 end
-                if is_scout and enemy:Has("Transform") then
+                if is_enemy and (not is_warden or self.mission_stage == 3) and Attributes.Get(enemy, "Health") > 0 and enemy:Has("Transform") then
                     local p = enemy:Get("Transform").position
                     local dx, dy, dz = p.x - origin.x, p.y - origin.y, p.z - origin.z
                     local distance = math.sqrt(dx * dx + dy * dy + dz * dz)
@@ -237,7 +388,8 @@ function Controller:OnUpdate(dt)
             self.hit_confirm = 1
             Attributes.SetBase(self.entity, "HitConfirm", self.hit_confirm)
             local guid = target:Guid()
-            local health = (self.scout_health[guid] or 3) - 1
+            local damage = Attributes.Get(target, "Phase") >= 3 and 2 or 1
+            local health = Attributes.Get(target, "Health") - damage
             if health <= 0 then
                 self.scout_health[guid] = 0
                 Attributes.SetBase(target, "Health", 0)
@@ -250,7 +402,7 @@ function Controller:OnUpdate(dt)
                 local p = hit_transform.position
                 local dx, dz = p.x - origin.x, p.z - origin.z
                 local length = math.sqrt(dx * dx + dz * dz)
-                if length > 0 then
+                if length > 0 and Attributes.Get(target, "Phase") == 0 then
                     hit_transform.position = vector.create(p.x + dx / length * 0.3, p.y, p.z + dz / length * 0.3)
                 end
             end
@@ -258,7 +410,7 @@ function Controller:OnUpdate(dt)
     end
 
     self.damage_timer = math.max(0, self.damage_timer - dt)
-    if self.damage_timer == 0 then
+    if self.damage_timer == 0 and self.mission_stage >= 1 then
         for _, enemy in ipairs(world:EntitiesWith("Tags")) do
             if enemy:IsValid() and enemy:Has("Tags") and enemy:Has("Transform") then
                 local is_scout = false
@@ -294,7 +446,17 @@ function Controller:OnUpdate(dt)
         local forward = vector.create(-sy * math.cos(self.pitch), math.sin(self.pitch), -cy * math.cos(self.pitch))
         local target = t.position + vector.create(0, self.height, 0)
         local ct = self.camera:Get("Transform")
-        ct.position = target - forward * self.distance
+        local endpoint = target - forward * self.distance
+        local camera_distance = self.distance
+        for _, obstacle in ipairs(BoxObstacles()) do
+            local collider = obstacle:Get("BoxCollider")
+            if obstacle ~= self.entity and not collider.is_trigger then
+                local center = obstacle:Get("Transform").position + collider.center
+                local hit, entry = SegmentIntersectsBox(target, endpoint, center, collider.half_extents)
+                if hit then camera_distance = math.min(camera_distance, math.max(0.05, self.distance * entry - 0.25)) end
+            end
+        end
+        ct.position = target - forward * camera_distance
         ct.rotation = Quat(self.yaw, self.pitch)
     end
 end

@@ -264,6 +264,8 @@ struct SceneRenderer::Impl {
         };
         f32 health = 3.0f, max_health = 3.0f, ammo = 30.0f, max_ammo = 30.0f;
         f32 damage_flash = 0.0f, hit_confirm = 0.0f, reloading = 0.0f;
+        i32 mission_stage = 0;
+        f32 save_status = 0.0f;
         const std::vector<Entity> players = FindEntitiesWithTag(world, "Player");
         if (!players.empty()) {
             const Entity player = players.front();
@@ -274,11 +276,14 @@ struct SceneRenderer::Impl {
             damage_flash = read_attribute(player, "DamageFlash", damage_flash);
             hit_confirm = read_attribute(player, "HitConfirm", hit_confirm);
             reloading = read_attribute(player, "Reloading", reloading);
+            mission_stage = static_cast<i32>(read_attribute(player, "MissionStage", 0));
+            save_status = read_attribute(player, "SaveStatus", 0);
         }
         health = std::clamp(health, 0.0f, max_health);
         ammo = std::clamp(ammo, 0.0f, max_ammo);
 
         bool scout_found = false;
+        f32 boss_phase = 1, boss_attack = 0;
         f32 scout_health = 0.0f, scout_max_health = 3.0f;
         for (const Entity scout : FindEntitiesWithTag(world, "Scout")) {
             scout_found = true;
@@ -291,6 +296,16 @@ struct SceneRenderer::Impl {
             break;
         }
         scout_health = std::clamp(scout_health, 0.0f, scout_max_health);
+        if (mission_stage >= 3) {
+            const auto bosses = FindEntitiesWithTag(world, "Warden");
+            if (!bosses.empty()) {
+                scout_found = true;
+                scout_health = read_attribute(bosses.front(), "Health", 12);
+                scout_max_health = 12;
+                boss_phase = read_attribute(bosses.front(), "Phase", 1);
+                boss_attack = read_attribute(bosses.front(), "AttackState", 0);
+            }
+        }
 
         ui::DrawList list;
         const ui::Color panel{0.015f, 0.035f, 0.055f, 0.86f};
@@ -323,12 +338,16 @@ struct SceneRenderer::Impl {
         const f32 objective_x = std::max(278.0f, width * 0.5f - 165.0f);
         solid(objective_x, 22, 330, 58, panel);
         text("MISSION 01  /  HELIOS-7", objective_x + 18, 28, 12, muted, 290);
-        text(scout_found && scout_health > 0 ? "NEUTRALIZE SCOUT" : "SCOUT NEUTRALIZED",
-             objective_x + 18, 49, 17, scout_health > 0 ? pale : cyan, 295);
+        constexpr const char* objectives[] = {"E RETRIEVE AEGIS RIFLE", "NEUTRALIZE SCOUT",
+                                              "ENTER SERVICE ROUTE", "DEFEAT WARDEN",
+                                              "E READ ARCHIVE TERMINAL", "FIRST CONTACT COMPLETE"};
+        text(health <= 0 ? "R RELOAD CHECKPOINT" : objectives[std::clamp(mission_stage, 0, 5)],
+             objective_x + 18, 49, 17, health <= 0 ? red : pale, 295);
 
         const f32 scout_x = width - 274.0f;
         solid(scout_x, 22, 250, 74, panel);
-        text("SCOUT // THREAT", scout_x + 16, 31, 13, muted, 220);
+        text(mission_stage >= 3 ? "WARDEN / PHASE " + std::to_string(static_cast<i32>(boss_phase)) : "SCOUT // THREAT",
+             scout_x + 16, 31, 13, muted, 220);
         if (scout_found && scout_health > 0) {
             text(std::to_string(static_cast<i32>(std::ceil(scout_health))) + "/" +
                      std::to_string(static_cast<i32>(scout_max_health)),
@@ -349,10 +368,19 @@ struct SceneRenderer::Impl {
         const f32 weapon_x = width - 274.0f;
         solid(weapon_x, height - 92.0f, 250, 68, panel);
         solid(weapon_x, height - 92.0f, 3, 68, cyan);
-        text("AEGIS RIFLE", weapon_x + 17, height - 83.0f, 14, pale, 210);
-        text(reloading > 0.5f ? "RELOADING" : "AMMO  " + std::to_string(static_cast<i32>(ammo)) +
+        text(mission_stage == 0 ? "RIFLE NOT EQUIPPED" : "AEGIS RIFLE", weapon_x + 17, height - 83.0f, 14, pale, 210);
+        text(mission_stage == 0 ? "E TO RETRIEVE" : reloading > 0.5f ? "RELOADING" : "AMMO  " + std::to_string(static_cast<i32>(ammo)) +
                  " / " + std::to_string(static_cast<i32>(max_ammo)),
              weapon_x + 17, height - 55.0f, 13, ammo <= 5 ? red : muted, 220);
+
+        solid(24, height - 88.0f, 440, 64, panel);
+        text(mission_stage == 0 ? "HELIOS-7 CRYO BAY  /  87 YEARS LATER" :
+             mission_stage >= 4 ? "FACILITY LOSS WAS DELIBERATE" :
+             mission_stage == 3 ? "AETHER: PRESERVE PLANETARY LIFE" : "SECURITY NETWORK ONLINE",
+             40, height - 79.0f, 13, pale, 410);
+        text(save_status < 0 ? "CHECKPOINT SAVE FAILED" : mission_stage == 5 ? "END OF GREYBOX PROOF / N NEW GAME" :
+             boss_attack > 0 ? "MOVE OUT OF THE RED STRIKE ZONE" : save_status > 0 ? "CHECKPOINT SAVED" : "AWAKENING",
+             40, height - 53.0f, 12, save_status < 0 || boss_attack > 0 ? red : muted, 410);
 
         commands.BindPipeline(hud_pipeline);
         commands.BindBindlessTextures();

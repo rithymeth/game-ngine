@@ -1,0 +1,20 @@
+{
+  "$type": "AssetMeta",
+  "$v": 1,
+  "guid": "00e53732-153d-427a-a91e-aa62f63f3e68",
+  "importer": "Model",
+  "importer_version": 1,
+  "labels": [],
+  "settings": {},
+  "source_hash": "fnv1a64:5b9ce0d19b47ad0e",
+  "sub_assets": {
+    "material:0": {
+      "guid": "c44d20b0-2df4-4f45-b394-82d8a6a966be",
+      "importer": "Material"
+    },
+    "mesh:0": {
+      "guid": "5813cd94-890d-4f84-89d3-296bd26c1bd7",
+      "importer": "Mesh"
+    }
+  }
+}

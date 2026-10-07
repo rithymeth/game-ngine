@@ -38,17 +38,17 @@ actual authoring and packaged-player workflow as the prototype is built.
 
 | AETHER-01 need | Existing engine path | Initial status / gap |
 |---|---|---|
-| 3D scene, camera, project and player | Third Person project template, scene components, Luau script, player runtime, RHI | AETHER-01 has a 15-entity HELIOS-7 greybox room. The packaged player draws static glTF meshes and base-color textures through the existing cross-API RHI. Direct pixel inspection and original-resolution previews confirm complete scene/HUD captures. Lighting, animation rendering, and camera collision remain unverified. |
+| 3D scene, camera, project and player | Third Person project template, scene components, Luau script, player runtime, RHI | AETHER-01 now has a 31-entity connected cryo/service-route/Warden greybox. The packaged player draws static glTF meshes and base-color textures through the existing cross-API RHI. Direct pixel inspection confirms complete scene/HUD captures. Lighting and animation rendering remain unverified. |
 | Rendered-player evidence | Existing swap-chain readback API and player screenshot option | Normal-build 960x540 captures passed 12 D3D12 and eight Vulkan launches locally. Earlier partial image previews did not reflect the saved pixels; no rendering/readback fault was established. CI now checks scene/player/HUD pixels across three launches, replacing its file-size-only check; this strengthened gate still needs a pushed CI result. |
 | Input and rebinding | Input actions, mapping contexts, player settings | Present; the first Windows test run exposed open-file cleanup failures, fixed in the current working changes and verified in the full suite. |
 | Collision and physics | Jolt-backed rigid bodies, scene queries and component serialization | Present; build encounters with existing behavior and validate packaged startup. |
 | Enemy navigation and behavior | Navmesh, NavAgents, behavior trees and perception | Present; enemy decision graphs and tuning are game content. |
 | Weapons, health and abilities | Gameplay tags, attributes, effects, abilities; Luau and Blueprint support | Existing building blocks. Weapon definitions, encounter rules and damage tuning are game-owned. |
 | Animation, audio and effects | Animation graphs/IK, audio sources/cues, VFX | Existing systems; final content and quality still need proof. |
-| HUD and menus | Runtime UI draw list, font atlas and RHI | AETHER-01 locally draws health, Scout health, ammo/reload state, Scout objective cue, damage flash and hit confirmation through the existing UI draw list. Menus, shield/energy/stamina, and objective flow remain unimplemented. |
-| Checkpoints and save/load | Save slots, world state, settings and player folders | Existing system; verify this game's precise progress payload and clean packaged path. |
+| HUD and menus | Runtime UI draw list, font atlas and RHI | AETHER-01 locally draws player/enemy health, Warden phase/strike warnings, ammo/reload state, mission objectives, checkpoint status, ending text, damage flash and hit confirmation. Menus and shield/energy/stamina remain unimplemented. |
+| Checkpoints and save/load | Save slots, world state, settings and player folders | Game-owned milestone/schema payload locally verifies progression across fresh runtime instances. Health/ammo and an unfinished boss reset at safe checkpoint positions. Save failure is visible; clean packaged-path validation remains open. |
 | Cook/package/standalone run | Cooker, .apak, package workflow and player executable | Existing path; clean-checkout and machine-independent launch still require end-to-end proof. |
-| Third-person camera collision | No camera-collision behavior in the current Third Person template | Gap to resolve using game-owned code and existing query APIs if available; do not assume support from the template name. |
+| Third-person camera collision | Game-owned box-segment query in AETHER-01 | Camera distance shortens at the current level's unrotated box colliders. Other shapes and rotations remain unsupported; this is not a general engine camera-collision guarantee. |
 
 ## Baseline verification recorded 2026-10-07
 
@@ -81,8 +81,24 @@ rejected by the new pixel verifier. Normal-build windowed screenshots pass repea
 and Vulkan. Investigation corrected an earlier report: partial previews
 omitted pixels that were present in the saved image, and original-resolution
 viewing shows the complete frame. Temporary draw diagnostics and speculative
-readback changes were removed. Objective completion, save/checkpoint behavior,
-boss encounter and ending remain unimplemented.
+readback changes were removed.
+
+The next local iteration completes a connected greybox mission: rifle pickup,
+Scout defeat, service gate/route, four Warden phases, archive reveal, ending and
+new game. Seven Windows physics-on cooked-game tests verify combat, checkpoint reload, the input-driven
+start-to-ending path, strike warning/damage/dodge, and visible save-write failure.
+The Warden removes armor, exposes a core that takes extra damage, and increases
+strike radius/frequency in its final phase. The route and moving Scout use existing
+kinematic bodies. All six applicable tests also pass in a separate physics-off
+`RelWithDebInfo` build, whose full unit suite passes **1,003/1,003**. This fixes
+the missing optional-component lookups found in the first combat CI run
+(`37651575215`, commit `1031fab`); a new CI result is still required.
+This is a short prototype workload; it does not establish the
+MVP's 60–90 minute duration. Remaining weapons/enemies, audio/cinematics, menus,
+clean package delivery, released-engine validation and CI gates remain open.
+The Windows physics-on full suite also passes **1,043/1,043** unit tests and
+**19/19 CTest entries**. The current 32-asset cook passes startup scene/HUD pixel
+checks on both D3D12 and Vulkan.
 
 ## Delivery sequence
 

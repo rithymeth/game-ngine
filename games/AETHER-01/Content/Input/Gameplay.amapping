@@ -392,6 +392,51 @@
             "type": "Pressed"
           }
         ]
+      },
+      {
+        "$v": 1,
+        "action": "Interact",
+        "actuation": 0.5,
+        "key": "E",
+        "modifiers": [],
+        "triggers": [
+          {
+            "chord_action": "",
+            "one_shot": true,
+            "time": 0.5,
+            "type": "Pressed"
+          }
+        ]
+      },
+      {
+        "$v": 1,
+        "action": "Interact",
+        "actuation": 0.5,
+        "key": "GamepadB",
+        "modifiers": [],
+        "triggers": [
+          {
+            "chord_action": "",
+            "one_shot": true,
+            "time": 0.5,
+            "type": "Pressed"
+          }
+        ]
+      },
+      {
+        "$v": 1,
+        "action": "NewGame",
+        "actuation": 0.5,
+        "key": "N",
+        "modifiers": [],
+        "triggers": [
+          {
+            "chord_action": "",
+            "one_shot": true,
+            "time": 0.5,
+            "type": "Pressed"
+          }
+        ]
       }
     ],
     "block_lower_contexts": false,
