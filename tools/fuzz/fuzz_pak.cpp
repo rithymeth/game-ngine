@@ -15,7 +15,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     if (reader.OpenMemory(std::vector<aether::u8>(data, data + size), &error)) {
         for (const auto& entry : reader.Entries()) {
             std::vector<aether::u8> out;
-            reader.Read(entry.path, out, &error);
+            (void)reader.Read(entry.path, out, &error); // Exercise corrupt entries; failure is expected for fuzzed bytes.
         }
         (void)reader.Verify();
     }
