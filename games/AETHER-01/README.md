@@ -7,13 +7,15 @@ workflows.
 
 ## Current state
 
-**Greybox room scaffold; the combat slice is not implemented yet.** The project
-currently proves project creation, third-person input and camera follow,
+**Early combat prototype; not a complete playable slice.** The project proves
+project creation, third-person movement and camera follow,
 `CharacterMovement` collision, textured model importing, asset cooking, and
-headless player startup. Its 387-entity scene contains a tiled room, collision
-walls and cryo-pod placeholders. The cube/checker art and template pickup
-targets are temporary. There are no weapons, enemies, boss encounter, story
-sequence, save/checkpoint flow, or finished level art yet.
+headless player startup. Its 15-entity scene contains Kael, a Scout target, a
+tiled room, collision walls, a service-door opening, and cryo pods. The player,
+Scout, and environment use temporary cube/checker greybox art. Mouse-left or
+right trigger fires a simple aim-cone hit that removes the Scout; it has no
+occlusion, health, ammunition, damage feedback, death/restart flow, boss,
+story sequence, save/checkpoint flow, or finished level art.
 
 The first playable milestone is one connected HELIOS-7 room sequence: Kael
 wakes in cryo, retrieves the AEGIS Rifle, defeats a Scout, opens the service
@@ -24,7 +26,9 @@ systems; keep this game code and content inside this project.
 
 - W/A/S/D: move
 - Mouse: orbit camera
+- Mouse-left: fire the AEGIS prototype
 - Space: jump
+- Gamepad right trigger: fire
 
 ## Build and run (Windows)
 
@@ -40,12 +44,12 @@ command. Generated builds belong under the ignored engine `build/` directory.
 
 ## Milestones
 
-1. Replace the template pickup scene with HELIOS-7 cryo and service-room
-   greyboxes, readable objectives, and a simple end-of-slice transition.
-2. Add one weapon and one enemy using existing engine systems; prove hit,
-   damage, death, restart, and feedback in a repeatable encounter.
-3. Add the remaining MVP weapons/enemies and the Warden encounter only after
-   the first combat room is playable and packaged.
+1. Turn the prototype shot and Scout into a readable combat loop with line of
+   sight, health, damage/hit feedback, death, and restart.
+2. Add the AEGIS Rifle pickup and service-route objective, then make the first
+   connected cryo/research sequence completable.
+3. Add the remaining MVP weapons/enemies and Warden encounter after the first
+   combat room is repeatable and packaged.
 4. Verify save/checkpoint behavior, a clean cook/package/run path, and a
    complete start-to-ending playthrough before calling this an engine proof.
 
