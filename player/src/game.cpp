@@ -602,24 +602,23 @@ void Game::LoadQuests() {
     if (quests_loaded_) return;
     quests_loaded_ = true;
 #if AETHER_KIT_QUESTS
+    std::vector<std::string> paths;
     for (const GameManifest::Asset& asset : package_.Manifest().assets) {
         if (asset.importer != "QuestDefinition") continue;
-        std::vector<u8> bytes;
-        std::string error;
-        if (!package_.ReadContent(asset.path, bytes, &error)) {
-            warnings_.push_back(error);
+        paths.push_back(asset.path);
+    }
+    const auto diagnostics = quest::LoadQuestAssets(paths,
+        [this](const std::string& path, std::vector<u8>& bytes, std::string* error) {
+            return package_.ReadContent(path, bytes, error);
+        }, effects_, quests_);
+    for (const quest::QuestAssetDiagnostic& diagnostic : diagnostics) {
+        if (diagnostic.content_read_failure) {
+            warnings_.push_back(diagnostic.message);
             continue;
         }
-        quest::QuestDef def;
-        if (!quest::QuestFromJson(std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size()), def, &error) || !quests_.Register(std::move(def), &error)) {
-            effect_warnings_.push_back(asset.path + ": " + error);
-            AETHER_LOG_WARN("Player", "%s: %s", asset.path.c_str(), error.c_str());
-        }
-    }
-    // Problems across the quests (a prerequisite that isn't one, a cycle, a missing reward effect).
-    for (const std::string& problem : quests_.Check(&effects_)) {
-        effect_warnings_.push_back(problem);
-        AETHER_LOG_WARN("Player", "%s", problem.c_str());
+        const std::string message = diagnostic.path.empty() ? diagnostic.message : diagnostic.path + ": " + diagnostic.message;
+        effect_warnings_.push_back(message);
+        AETHER_LOG_WARN("Player", "%s", message.c_str());
     }
 #endif
 }
@@ -628,20 +627,22 @@ void Game::LoadItems() {
     if (items_loaded_) return;
     items_loaded_ = true;
 #if AETHER_KIT_INVENTORY
+    std::vector<std::string> paths;
     for (const GameManifest::Asset& asset : package_.Manifest().assets) {
         if (asset.importer != "ItemDefinition") continue;
-        std::vector<u8> bytes;
-        std::string error;
-        if (!package_.ReadContent(asset.path, bytes, &error)) {
-            warnings_.push_back(error);
+        paths.push_back(asset.path);
+    }
+    const auto diagnostics = inv::LoadItemAssets(paths,
+        [this](const std::string& path, std::vector<u8>& bytes, std::string* error) {
+            return package_.ReadContent(path, bytes, error);
+        }, effects_, items_);
+    for (const inv::ItemAssetDiagnostic& diagnostic : diagnostics) {
+        if (diagnostic.content_read_failure) {
+            warnings_.push_back(diagnostic.message);
             continue;
         }
-        inv::ItemDef item;
-        if (!inv::ItemFromJson(std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size()), item, &error) ||
-            !(error = inv::ItemLibrary::CheckEffects(item, effects_)).empty() || !items_.Register(std::move(item), &error)) {
-            effect_warnings_.push_back(asset.path + ": " + error);
-            AETHER_LOG_WARN("Player", "%s: %s", asset.path.c_str(), error.c_str());
-        }
+        effect_warnings_.push_back(diagnostic.path + ": " + diagnostic.message);
+        AETHER_LOG_WARN("Player", "%s: %s", diagnostic.path.c_str(), diagnostic.message.c_str());
     }
 #endif
 }
