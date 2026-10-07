@@ -74,14 +74,26 @@ function Controller:OnCreate()
     self.scout_spawn = {}
     self.spawn_position = self.entity:Get("Transform").position
     self.health = 3
+    self.ammo_capacity = 30
+    self.ammo = self.ammo_capacity
+    self.reloading = false
+    self.reload_timer = 0
+    self.damage_flash = 0
+    self.hit_confirm = 0
     self.damage_timer = 0
     self.dead = false
+    Attributes.Define(self.entity, "Health", self.health, 0, 3)
+    Attributes.Define(self.entity, "Ammo", self.ammo, 0, self.ammo_capacity)
+    Attributes.Define(self.entity, "Reloading", 0, 0, 1)
+    Attributes.Define(self.entity, "DamageFlash", 0, 0, 1)
+    Attributes.Define(self.entity, "HitConfirm", 0, 0, 1)
     for _, enemy in ipairs(world:EntitiesWith("Tags")) do
         if enemy:Has("Tags") and enemy:Has("Transform") then
             for _, tag in ipairs(enemy:Get("Tags").names) do
                 if tag == "Scout" then
                     local p = enemy:Get("Transform").position
                     self.scout_spawn[enemy:Guid()] = vector.create(p.x, p.y, p.z)
+                    Attributes.Define(enemy, "Health", 3, 0, 3)
                 end
             end
         end
@@ -107,7 +119,17 @@ function Controller:OnUpdate(dt)
         if Input.IsTriggered("Restart") then
             self.dead = false
             self.health = 3
+            self.ammo = self.ammo_capacity
+            self.reloading = false
+            self.reload_timer = 0
+            self.damage_flash = 0
+            self.hit_confirm = 0
             self.damage_timer = 0
+            Attributes.SetBase(self.entity, "Health", self.health)
+            Attributes.SetBase(self.entity, "Ammo", self.ammo)
+            Attributes.SetBase(self.entity, "Reloading", 0)
+            Attributes.SetBase(self.entity, "DamageFlash", 0)
+            Attributes.SetBase(self.entity, "HitConfirm", 0)
             self.scout_health = {}
             t.position = self.spawn_position
             self.vy = 0
@@ -118,6 +140,7 @@ function Controller:OnUpdate(dt)
                             local guid = enemy:Guid()
                             enemy:Get("Transform").position = self.scout_spawn[guid]
                             self.scout_health[guid] = nil
+                            Attributes.SetBase(enemy, "Health", 3)
                         end
                     end
                 end
@@ -161,8 +184,30 @@ function Controller:OnUpdate(dt)
     -- A simple, game-owned hitscan loop for the first combat proof. Select the
     -- closest Scout inside a narrow cone in front of the over-shoulder camera.
     self.fire_timer = math.max(0, self.fire_timer - dt)
-    if Input.IsTriggered("Fire") and self.fire_timer == 0 then
+    self.damage_flash = math.max(0, self.damage_flash - dt * 2.5)
+    self.hit_confirm = math.max(0, self.hit_confirm - dt * 3.0)
+    Attributes.SetBase(self.entity, "DamageFlash", self.damage_flash)
+    Attributes.SetBase(self.entity, "HitConfirm", self.hit_confirm)
+
+    if Input.IsTriggered("Reload") and not self.reloading and self.ammo < self.ammo_capacity then
+        self.reloading = true
+        self.reload_timer = 1.1
+        Attributes.SetBase(self.entity, "Reloading", 1)
+    end
+    if self.reloading then
+        self.reload_timer = self.reload_timer - dt
+        if self.reload_timer <= 0 then
+            self.reloading = false
+            self.ammo = self.ammo_capacity
+            Attributes.SetBase(self.entity, "Ammo", self.ammo)
+            Attributes.SetBase(self.entity, "Reloading", 0)
+        end
+    end
+
+    if Input.IsTriggered("Fire") and self.fire_timer == 0 and not self.reloading and self.ammo > 0 then
         self.fire_timer = self.fire_cooldown
+        self.ammo -= 1
+        Attributes.SetBase(self.entity, "Ammo", self.ammo)
         local fx = -sy * math.cos(self.pitch)
         local fy = math.sin(self.pitch)
         local fz = -cy * math.cos(self.pitch)
@@ -189,14 +234,18 @@ function Controller:OnUpdate(dt)
             end
         end
         if target ~= nil then
+            self.hit_confirm = 1
+            Attributes.SetBase(self.entity, "HitConfirm", self.hit_confirm)
             local guid = target:Guid()
             local health = (self.scout_health[guid] or 3) - 1
             if health <= 0 then
                 self.scout_health[guid] = 0
+                Attributes.SetBase(target, "Health", 0)
                 local p = target:Get("Transform").position
                 target:Get("Transform").position = vector.create(p.x, -100, p.z)
             else
                 self.scout_health[guid] = health
+                Attributes.SetBase(target, "Health", health)
                 local hit_transform = target:Get("Transform")
                 local p = hit_transform.position
                 local dx, dz = p.x - origin.x, p.z - origin.z
@@ -222,6 +271,9 @@ function Controller:OnUpdate(dt)
                     local dx, dz = p.x - t.position.x, p.z - t.position.z
                     if dx * dx + dz * dz < 1.8 * 1.8 then
                         self.health -= 1
+                        self.damage_flash = 1
+                        Attributes.SetBase(self.entity, "Health", self.health)
+                        Attributes.SetBase(self.entity, "DamageFlash", self.damage_flash)
                         self.damage_timer = 0.8
                         if self.health <= 0 then self.dead = true end
                         break

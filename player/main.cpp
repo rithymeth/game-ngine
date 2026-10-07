@@ -337,9 +337,9 @@ int main(int argc, char** argv) {
             const f32 dt = window ? (std::min)(std::chrono::duration<f32>(now - last).count(), 0.25f)
                                   : 1.0f / manifest.fixed_timestep_hz;
             last = now;
-            if (!options.screenshot.empty() && frame == 0) {
-                // Ignore the window's initial cursor warp so a proof capture
-                // starts from the camera pose saved in the startup scene.
+            if (!options.screenshot.empty()) {
+                // Ignore incidental cursor motion during a proof capture so
+                // its camera stays at the startup scene's deterministic pose.
                 game.Input().EndFrame();
             }
             game.Tick(dt);

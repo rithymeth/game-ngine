@@ -4,7 +4,7 @@
 add_library(aether_game STATIC src/game.cpp src/game_kits.cpp src/user_paths.cpp src/settings_apply.cpp src/bindings_migrate.cpp
                                src/scene_renderer.cpp)
 target_include_directories(aether_game PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(aether_game PUBLIC Aether::Engine)
+target_link_libraries(aether_game PUBLIC Aether::Engine Aether::UI)
 if(TARGET Aether::Physics)
     target_link_libraries(aether_game PRIVATE Aether::Physics)
     target_compile_definitions(aether_game PRIVATE AETHER_GAME_PHYSICS=1)

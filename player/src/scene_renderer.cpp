@@ -3,8 +3,11 @@
 #include "aether/assets/gltf_loader.h"
 #include "aether/assets/image.h"
 #include "aether/core/log.h"
+#include "aether/gameplay/attribute_set.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
+#include "aether/ui/draw.h"
+#include "aether/ui/font.h"
 
 #include <nlohmann/json.hpp>
 
@@ -74,6 +77,74 @@ float4 PSMain(PSInput input) : SV_TARGET {
 }
 )";
 
+struct HudConstants {
+    f32 rect[4]{};
+    f32 viewport[4]{};
+    f32 color[4]{};
+    f32 uv[4]{};
+    f32 sdf_range = 0.0f;
+    f32 sdf_edge = 0.5f;
+    f32 sdf_softness = 0.0f;
+    u32 texture_index = 0;
+    u32 use_texture = 0;
+    u32 use_sdf = 0;
+};
+static_assert(sizeof(HudConstants) == 88);
+
+constexpr char kHudShader[] = R"(
+struct PushConstants {
+    float4 g_Rect;
+    float4 g_Viewport;
+    float4 g_Color;
+    float4 g_Uv;
+    float g_SdfRange;
+    float g_SdfEdge;
+    float g_SdfSoftness;
+    uint g_TextureIndex;
+    uint g_UseTexture;
+    uint g_UseSdf;
+};
+#ifdef __spirv__
+[[vk::push_constant]]
+#endif
+ConstantBuffer<PushConstants> g_PC : register(b0);
+Texture2D g_Textures[32] : register(t0, space0);
+SamplerState g_Sampler : register(s0, space1);
+
+struct PSInput {
+    float4 position : SV_POSITION;
+    float2 uv : TEXCOORD0;
+};
+
+PSInput VSMain(uint vertex_id : SV_VertexID) {
+    const float2 corners[6] = {
+        float2(0, 0), float2(1, 0), float2(1, 1),
+        float2(0, 0), float2(1, 1), float2(0, 1)
+    };
+    float2 corner = corners[vertex_id];
+    float2 pixel = g_PC.g_Rect.xy + corner * g_PC.g_Rect.zw;
+    PSInput output;
+    output.position = float4(pixel.x / g_PC.g_Viewport.x * 2.0 - 1.0,
+                             1.0 - pixel.y / g_PC.g_Viewport.y * 2.0, 0.0, 1.0);
+    output.uv = g_PC.g_Uv.xy + corner * g_PC.g_Uv.zw;
+    return output;
+}
+
+float4 PSMain(PSInput input) : SV_TARGET {
+    float alpha = g_PC.g_Color.a;
+    if (g_PC.g_UseTexture != 0) {
+        float sample_value = g_Textures[g_PC.g_TextureIndex].Sample(g_Sampler, input.uv).r;
+        if (g_PC.g_UseSdf != 0) {
+            float width = 1.0 / max(g_PC.g_SdfRange, 0.001) + g_PC.g_SdfSoftness;
+            alpha *= saturate((sample_value - g_PC.g_SdfEdge) / width + 0.5);
+        } else {
+            alpha *= sample_value;
+        }
+    }
+    return float4(g_PC.g_Color.rgb, alpha);
+}
+)";
+
 std::string Base64(std::span<const u8> bytes) {
     constexpr char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     std::string out;
@@ -121,7 +192,9 @@ struct SceneRenderer::Impl {
     ISwapChain& swap_chain;
     const GamePackage& package;
     PipelineHandle pipeline;
+    PipelineHandle hud_pipeline;
     SampledTextureHandle white_texture;
+    std::unique_ptr<ui::SdfFont> hud_font;
     std::unordered_map<std::string, Model> models;
     std::unordered_map<std::string, SampledTextureHandle> textures;
 
@@ -137,6 +210,182 @@ struct SceneRenderer::Impl {
         constexpr std::array<u8, 4> white{255, 255, 255, 255};
         white_texture = device.CreateTexture(1, 1, white.data());
         if (white_texture.IsValid()) textures.emplace("", white_texture);
+        // This first proof HUD is specific to the AETHER-01 content contract.
+        if (package.Manifest().project != "AETHER-01") return;
+
+        PipelineDesc hud_desc;
+        hud_desc.hlsl_source = kHudShader;
+        hud_desc.push_constant_size_bytes = sizeof(HudConstants);
+        hud_desc.enable_bindless_textures = true;
+        hud_desc.enable_blending = true;
+        hud_pipeline = device.CreatePipeline(hud_desc, swap_chain);
+
+        std::vector<u8> font_bytes;
+        if (package.ReadContent("fonts/Roboto-Medium.ttf", font_bytes)) {
+            std::string error;
+            hud_font = ui::SdfFont::FromMemory(std::move(font_bytes), {}, &error);
+            if (hud_font) {
+                hud_font->Prewarm("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:/-%");
+                const auto& atlas = hud_font->AtlasPixels();
+                std::vector<u8> rgba(atlas.size() * 4);
+                for (usize i = 0; i < atlas.size(); ++i) {
+                    rgba[i * 4] = atlas[i];
+                    rgba[i * 4 + 1] = atlas[i];
+                    rgba[i * 4 + 2] = atlas[i];
+                    rgba[i * 4 + 3] = 255;
+                }
+                const SampledTextureHandle font_texture = device.CreateTexture(
+                    static_cast<u32>(hud_font->AtlasWidth()), static_cast<u32>(hud_font->AtlasHeight()), rgba.data());
+                if (font_texture.IsValid()) {
+                    hud_font->SetTexture(font_texture.index);
+                } else {
+                    AETHER_LOG_WARN("PlayerRenderer", "Couldn't upload the AETHER-01 HUD font atlas");
+                    hud_font.reset();
+                }
+            } else {
+                AETHER_LOG_WARN("PlayerRenderer", "Couldn't load the AETHER-01 HUD font: %s", error.c_str());
+            }
+        } else {
+            AETHER_LOG_WARN("PlayerRenderer", "Cooked package has no fonts/Roboto-Medium.ttf; HUD text is unavailable");
+        }
+    }
+
+    void DrawHud(Game& game, ICommandList& commands) {
+        if (!hud_font) return;
+        const World& world = game.GetWorld();
+        const f32 width = static_cast<f32>(swap_chain.Width());
+        const f32 height = static_cast<f32>(swap_chain.Height());
+        if (width <= 0 || height <= 0) return;
+
+        const auto read_attribute = [&](Entity entity, const char* name, f32 fallback) {
+            if (!world.HasComponent<gas::AttributeSet>(entity)) return fallback;
+            const gas::AttributeSet* attributes = world.GetComponent<gas::AttributeSet>(entity);
+            return attributes ? attributes->Get(name, fallback) : fallback;
+        };
+        f32 health = 3.0f, max_health = 3.0f, ammo = 30.0f, max_ammo = 30.0f;
+        f32 damage_flash = 0.0f, hit_confirm = 0.0f, reloading = 0.0f;
+        const std::vector<Entity> players = FindEntitiesWithTag(world, "Player");
+        if (!players.empty()) {
+            const Entity player = players.front();
+            health = read_attribute(player, "Health", health);
+            max_health = read_attribute(player, "MaxHealth", max_health);
+            ammo = read_attribute(player, "Ammo", ammo);
+            max_ammo = read_attribute(player, "MaxAmmo", max_ammo);
+            damage_flash = read_attribute(player, "DamageFlash", damage_flash);
+            hit_confirm = read_attribute(player, "HitConfirm", hit_confirm);
+            reloading = read_attribute(player, "Reloading", reloading);
+        }
+        health = std::clamp(health, 0.0f, max_health);
+        ammo = std::clamp(ammo, 0.0f, max_ammo);
+
+        bool scout_found = false;
+        f32 scout_health = 0.0f, scout_max_health = 3.0f;
+        for (const Entity scout : FindEntitiesWithTag(world, "Scout")) {
+            scout_found = true;
+            scout_health = read_attribute(scout, "Health", 3.0f);
+            scout_max_health = read_attribute(scout, "MaxHealth", 3.0f);
+            if (!world.HasComponent<gas::AttributeSet>(scout)) {
+                const Transform* transform = world.GetComponent<Transform>(scout);
+                if (transform && transform->position.y < -50.0f) scout_health = 0.0f;
+            }
+            break;
+        }
+        scout_health = std::clamp(scout_health, 0.0f, scout_max_health);
+
+        ui::DrawList list;
+        const ui::Color panel{0.015f, 0.035f, 0.055f, 0.86f};
+        const ui::Color pale{0.82f, 0.93f, 0.97f, 1.0f};
+        const ui::Color muted{0.36f, 0.57f, 0.63f, 1.0f};
+        const ui::Color cyan{0.18f, 0.82f, 0.95f, 1.0f};
+        const ui::Color red{0.96f, 0.20f, 0.17f, 1.0f};
+        const ui::Color dim{0.08f, 0.16f, 0.19f, 1.0f};
+        auto text = [&](std::string_view value, f32 x, f32 y, f32 size, ui::Color color, f32 box_width = 340.0f) {
+            list.AddText(*hud_font, value, size, {x, y, box_width, size + 6.0f}, color);
+        };
+        auto solid = [&](f32 x, f32 y, f32 w, f32 h, ui::Color color) {
+            list.AddQuad({x, y, w, h}, color);
+        };
+
+        if (damage_flash > 0.0f) {
+            list.AddQuad({0, 0, width, height}, {0.72f, 0.035f, 0.025f, 0.17f * std::clamp(damage_flash, 0.0f, 1.0f)});
+        }
+
+        solid(24, 22, 250, 104, panel);
+        solid(24, 22, 3, 104, cyan);
+        text("AEGIS-9", 42, 31, 21, pale, 180);
+        text("HEALTH", 42, 67, 13, muted, 100);
+        text(std::to_string(static_cast<i32>(std::ceil(health))) + "/" +
+                 std::to_string(static_cast<i32>(max_health)),
+             194, 65, 14, health <= 1 ? red : pale, 70);
+        solid(42, 96, 211, 7, dim);
+        if (max_health > 0) solid(42, 96, 211 * health / max_health, 7, health <= 1 ? red : cyan);
+
+        const f32 objective_x = std::max(278.0f, width * 0.5f - 165.0f);
+        solid(objective_x, 22, 330, 58, panel);
+        text("MISSION 01  /  HELIOS-7", objective_x + 18, 28, 12, muted, 290);
+        text(scout_found && scout_health > 0 ? "NEUTRALIZE SCOUT" : "SCOUT NEUTRALIZED",
+             objective_x + 18, 49, 17, scout_health > 0 ? pale : cyan, 295);
+
+        const f32 scout_x = width - 274.0f;
+        solid(scout_x, 22, 250, 74, panel);
+        text("SCOUT // THREAT", scout_x + 16, 31, 13, muted, 220);
+        if (scout_found && scout_health > 0) {
+            text(std::to_string(static_cast<i32>(std::ceil(scout_health))) + "/" +
+                     std::to_string(static_cast<i32>(scout_max_health)),
+                 scout_x + 202, 50, 13, pale, 42);
+            solid(scout_x + 16, 73, 218, 7, dim);
+            if (scout_max_health > 0) solid(scout_x + 16, 73, 218 * scout_health / scout_max_health, 7, red);
+        } else {
+            text("NEUTRALIZED", scout_x + 16, 57, 13, cyan, 220);
+        }
+
+        const f32 cx = width * 0.5f, cy = height * 0.5f;
+        const ui::Color reticle = hit_confirm > 0.0f ? cyan : pale;
+        solid(cx - 13, cy - 1, 8, 2, reticle);
+        solid(cx + 5, cy - 1, 8, 2, reticle);
+        solid(cx - 1, cy - 13, 2, 8, reticle);
+        solid(cx - 1, cy + 5, 2, 8, reticle);
+
+        const f32 weapon_x = width - 274.0f;
+        solid(weapon_x, height - 92.0f, 250, 68, panel);
+        solid(weapon_x, height - 92.0f, 3, 68, cyan);
+        text("AEGIS RIFLE", weapon_x + 17, height - 83.0f, 14, pale, 210);
+        text(reloading > 0.5f ? "RELOADING" : "AMMO  " + std::to_string(static_cast<i32>(ammo)) +
+                 " / " + std::to_string(static_cast<i32>(max_ammo)),
+             weapon_x + 17, height - 55.0f, 13, ammo <= 5 ? red : muted, 220);
+
+        commands.BindPipeline(hud_pipeline);
+        commands.BindBindlessTextures();
+        for (const ui::DrawQuad& quad : list.quads) {
+            if (quad.clip >= list.clips.size() || quad.rect.Empty()) continue;
+            const ui::Rect clipped = quad.rect.Intersect(list.clips[quad.clip]);
+            if (clipped.Empty()) continue;
+            const f32 u0 = (clipped.x - quad.rect.x) / quad.rect.w;
+            const f32 v0 = (clipped.y - quad.rect.y) / quad.rect.h;
+            HudConstants constants;
+            constants.rect[0] = clipped.x;
+            constants.rect[1] = clipped.y;
+            constants.rect[2] = clipped.w;
+            constants.rect[3] = clipped.h;
+            constants.viewport[0] = width;
+            constants.viewport[1] = height;
+            constants.color[0] = quad.color.r;
+            constants.color[1] = quad.color.g;
+            constants.color[2] = quad.color.b;
+            constants.color[3] = quad.color.a;
+            constants.uv[0] = quad.uv.x + quad.uv.w * u0;
+            constants.uv[1] = quad.uv.y + quad.uv.h * v0;
+            constants.uv[2] = quad.uv.w * clipped.w / quad.rect.w;
+            constants.uv[3] = quad.uv.h * clipped.h / quad.rect.h;
+            constants.sdf_range = quad.sdf_range;
+            constants.sdf_edge = quad.sdf_edge;
+            constants.sdf_softness = quad.sdf_softness;
+            constants.texture_index = quad.texture;
+            constants.use_texture = quad.texture != 0 ? 1u : 0u;
+            constants.use_sdf = quad.sdf_range > 0.0f ? 1u : 0u;
+            commands.SetPushConstants(&constants, sizeof(constants));
+            commands.Draw(6);
+        }
     }
 
     bool LoadTexture(const std::string& path, SampledTextureHandle& out) {
@@ -330,6 +579,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands) {
             }
         });
     }
+    renderer.DrawHud(game, commands);
     commands.EndRenderPass();
 }
 

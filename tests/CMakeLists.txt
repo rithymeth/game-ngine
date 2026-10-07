@@ -47,7 +47,7 @@ if(TARGET aether_mcp)
     target_link_libraries(aether_tests PRIVATE aether_mcp)
 endif()
 # Phase 25 step 4: the player's runtime.
-target_sources(aether_tests PRIVATE test_player.cpp test_player_save.cpp test_loc_runtime.cpp test_package.cpp test_pak_patch.cpp test_plugin.cpp test_templates.cpp)
+target_sources(aether_tests PRIVATE test_player.cpp test_player_save.cpp test_loc_runtime.cpp test_package.cpp test_pak_patch.cpp test_plugin.cpp test_templates.cpp test_aether01.cpp)
 target_link_libraries(aether_tests PRIVATE Aether::Game Aether::Templates Aether::Blueprint)
 if(TARGET Aether::Physics)
     target_link_libraries(aether_tests PRIVATE Aether::Physics)

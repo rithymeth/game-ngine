@@ -38,14 +38,14 @@ actual authoring and packaged-player workflow as the prototype is built.
 
 | AETHER-01 need | Existing engine path | Initial status / gap |
 |---|---|---|
-| 3D scene, camera, project and player | Third Person project template, scene components, Luau script, player runtime, RHI | AETHER-01 has a 15-entity HELIOS-7 greybox room. The packaged player now draws static glTF meshes and base-color textures through the existing cross-API RHI; a local D3D12 capture shows the room. Lighting, animation rendering, and camera collision remain unverified. |
-| Rendered-player evidence | Existing swap-chain readback API and player screenshot option | The D3D12 swap chain now implements the existing synchronized RGBA readback contract. Local 960x540 capture succeeds; the Windows CI screenshot and artifact upload are pending on the current changes. |
+| 3D scene, camera, project and player | Third Person project template, scene components, Luau script, player runtime, RHI | AETHER-01 has a 15-entity HELIOS-7 greybox room. The packaged player draws static glTF meshes and base-color textures through the existing cross-API RHI. Direct pixel inspection and original-resolution previews confirm complete scene/HUD captures. Lighting, animation rendering, and camera collision remain unverified. |
+| Rendered-player evidence | Existing swap-chain readback API and player screenshot option | Normal-build 960x540 captures passed 12 D3D12 and eight Vulkan launches locally. Earlier partial image previews did not reflect the saved pixels; no rendering/readback fault was established. CI now checks scene/player/HUD pixels across three launches, replacing its file-size-only check; this strengthened gate still needs a pushed CI result. |
 | Input and rebinding | Input actions, mapping contexts, player settings | Present; the first Windows test run exposed open-file cleanup failures, fixed in the current working changes and verified in the full suite. |
 | Collision and physics | Jolt-backed rigid bodies, scene queries and component serialization | Present; build encounters with existing behavior and validate packaged startup. |
 | Enemy navigation and behavior | Navmesh, NavAgents, behavior trees and perception | Present; enemy decision graphs and tuning are game content. |
 | Weapons, health and abilities | Gameplay tags, attributes, effects, abilities; Luau and Blueprint support | Existing building blocks. Weapon definitions, encounter rules and damage tuning are game-owned. |
 | Animation, audio and effects | Animation graphs/IK, audio sources/cues, VFX | Existing systems; final content and quality still need proof. |
-| HUD and menus | Runtime UI and editor UI designer | Existing workflow; the game HUD, menus and art are game-owned. |
+| HUD and menus | Runtime UI draw list, font atlas and RHI | AETHER-01 locally draws health, Scout health, ammo/reload state, Scout objective cue, damage flash and hit confirmation through the existing UI draw list. Menus, shield/energy/stamina, and objective flow remain unimplemented. |
 | Checkpoints and save/load | Save slots, world state, settings and player folders | Existing system; verify this game's precise progress payload and clean packaged path. |
 | Cook/package/standalone run | Cooker, .apak, package workflow and player executable | Existing path; clean-checkout and machine-independent launch still require end-to-end proof. |
 | Third-person camera collision | No camera-collision behavior in the current Third Person template | Gap to resolve using game-owned code and existing query APIs if available; do not assume support from the template name. |
@@ -53,7 +53,8 @@ actual authoring and packaged-player workflow as the prototype is built.
 ## Baseline verification recorded 2026-10-07
 
 On the Windows development workstation (MSVC 17.14.37, CMake 3.31.0, NVIDIA
-GeForce RTX 3050 Laptop GPU), the current working changes built the editor,
+GeForce RTX 3050 Laptop GPU), the Ninja `RelWithDebInfo` build of the current
+working changes built the editor,
 player, cooker, pak tool, functional runner, Coin Run and Gem Hop. The Windows
 unit suite passed **1,036/1,036** and the functional runner passed **2/2**.
 This is a local baseline, not a clean-checkout or GitHub release result. The
@@ -66,17 +67,22 @@ test groups each pass **15/15**. The full Windows unit and functional suites
 also pass on this working tree. This closes the template's fixed-floor
 movement gap, but does not prove AETHER-01 gameplay or a release build.
 
-The first AETHER-01 project scaffold is at `games/AETHER-01`. The latest
-committed project cooks to 16 assets and passes a 120-frame packaged-player
-smoke run in [GitHub CI](https://github.com/rithymeth/game-ngine/actions/runs/37637914254).
-The current local iteration adds a game-owned box-collider line-of-sight test,
-three-hit Scout health with knockback, and player death/restart. It cooks to 17
-assets and completes a local 120-frame headless run. The packaged player also
-renders its static glTF scene through D3D12 and writes a 960x540 BMP after a
-10-frame windowed smoke run; the raw cube buffer is the one skipped source file. These latest engine
-and game changes still need CI verification. The encounter lacks a visible HUD
-and hit/damage feedback, ammunition, objective completion, save/checkpoint
-behavior, boss encounter and ending.
+The first AETHER-01 project scaffold is at `games/AETHER-01`. The initial
+project cooks and passes a 120-frame packaged-player smoke run in
+[GitHub CI](https://github.com/rithymeth/game-ngine/actions/runs/37637914254).
+The pushed rendering update adds a D3D12 player screenshot gate; its CI run is
+tracked separately. The current local game iteration adds a game-owned
+box-collider line-of-sight test, three-hit Scout health with knockback, player
+death/restart, a 30-round reload loop, and a runtime HUD using existing UI
+primitives. It cooks to 19 assets and completes a local 120-frame headless run.
+The current follow-up passes **19/19 CTest entries**, including **1,038 unit
+tests** and the two cooked-game combat tests. Blank and truncated captures are
+rejected by the new pixel verifier. Normal-build windowed screenshots pass repeated direct pixel checks on D3D12
+and Vulkan. Investigation corrected an earlier report: partial previews
+omitted pixels that were present in the saved image, and original-resolution
+viewing shows the complete frame. Temporary draw diagnostics and speculative
+readback changes were removed. Objective completion, save/checkpoint behavior,
+boss encounter and ending remain unimplemented.
 
 ## Delivery sequence
 

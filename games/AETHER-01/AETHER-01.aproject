@@ -2,7 +2,8 @@
   "$type": "Project",
   "$v": 1,
   "always_cook": [
-    "Input/"
+    "Input/",
+    "fonts/"
   ],
   "collision_matrix": [],
   "default_quality": "High",
