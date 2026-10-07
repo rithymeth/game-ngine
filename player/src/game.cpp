@@ -1116,13 +1116,77 @@ void Game::BuildFrame() {
 
 FrameContext Game::Tick(f32 dt) {
     if (!loop_) BuildFrame();
+    UpdateProofMenu();
     input_.Update(input_state_, dt); // the host's keys and mouse, as this frame's actions
+    if (paused_) {
+        input_state_.EndFrame();
+        FrameContext frame = last_frame_;
+        frame.dt = 0;
+        return frame;
+    }
     const FrameContext frame = loop_->Tick(*world_, dt);
     input_state_.EndFrame();         // movement deltas are per frame; held keys stay
+    if (proof_load_input_) { input_state_.SetButton(input::Key::F5, false); proof_load_input_ = false; }
+    if (proof_new_input_) { input_state_.SetButton(input::Key::N, false); proof_new_input_ = false; }
+    last_frame_ = frame;
     stats_.frames = frame.frame + 1;
     stats_.fixed_steps = frame.fixed_step;
     stats_.time = frame.time;
     return frame;
+}
+
+void Game::UpdateProofMenu() {
+    if (package_.Manifest().project != "AETHER-01") return;
+    using input::Key;
+    const auto pressed = [&](Key key) { return input_state_.IsDown(key) && !menu_previous_.IsDown(key); };
+    const bool back = pressed(Key::Escape) || pressed(Key::GamepadStart) || (proof_menu_ != 0 && pressed(Key::GamepadB));
+    const bool accept = pressed(Key::Enter) || pressed(Key::GamepadA);
+    const bool up = pressed(Key::Up) || pressed(Key::GamepadDPadUp);
+    const bool down = pressed(Key::Down) || pressed(Key::GamepadDPadDown);
+    const bool left = pressed(Key::Left) || pressed(Key::GamepadDPadLeft);
+    const bool right = pressed(Key::Right) || pressed(Key::GamepadDPadRight);
+    menu_previous_ = input_state_;
+    const i32 previous_menu = proof_menu_;
+    if (back) {
+        proof_menu_ = proof_menu_ == 0 ? 1 : proof_menu_ == 1 ? 0 : 1;
+        proof_menu_row_ = 0;
+        proof_settings_status_ = 0;
+    } else if (proof_menu_ == 1) {
+        proof_menu_row_ = (proof_menu_row_ + (down ? 1 : up ? 5 : 0)) % 6;
+        if (accept) switch (proof_menu_row_) {
+        case 0: proof_menu_ = 0; break;
+        case 1: proof_menu_ = 2; proof_menu_row_ = 0; break;
+        case 2: proof_menu_ = 3; break;
+        case 3:
+            if (saves_ && saves_->Exists("first-contact")) {
+                input_state_.SetButton(Key::F5, true); proof_load_input_ = true; proof_menu_ = 0;
+            } else proof_settings_status_ = -2;
+            break;
+        case 4: input_state_.SetButton(Key::N, true); proof_new_input_ = true; proof_menu_ = 0; break;
+        case 5: exit_requested_ = true; break;
+        }
+    } else if (proof_menu_ == 2) {
+        proof_menu_row_ = (proof_menu_row_ + (down ? 1 : up ? 4 : 0)) % 5;
+        if (proof_menu_row_ == 4 && accept) { proof_menu_ = 1; proof_menu_row_ = 0; }
+        else if (proof_menu_row_ < 4 && (left || right || accept)) {
+            save::GameSettings next = settings_->Get();
+            f32* volumes[] = {&next.master, &next.music, &next.sfx, &next.voice};
+            *volumes[proof_menu_row_] = std::clamp(*volumes[proof_menu_row_] + (left ? -0.1f : 0.1f), 0.0f, 1.0f);
+            settings_->Set(next);
+            proof_settings_status_ = settings_->Save().ok ? 1 : -1;
+        }
+    } else if (proof_menu_ == 3 && accept) { proof_menu_ = 1; proof_menu_row_ = 0; }
+    if (previous_menu != proof_menu_) paused_ = proof_menu_ != 0;
+    const auto players = FindEntitiesWithTag(*world_, "Player");
+    if (players.empty()) return;
+    auto* attributes = world_->GetComponent<gas::AttributeSet>(players.front());
+    if (!attributes) return;
+    attributes->Define("MenuState", 0, 0, 3);
+    attributes->Define("MenuRow", 0, 0, 5);
+    attributes->Define("SettingsStatus", 0, -2, 1);
+    attributes->SetBase("MenuState", static_cast<f32>(proof_menu_));
+    attributes->SetBase("MenuRow", static_cast<f32>(proof_menu_row_));
+    attributes->SetBase("SettingsStatus", static_cast<f32>(proof_settings_status_));
 }
 
 GameStats Game::Stats() const {

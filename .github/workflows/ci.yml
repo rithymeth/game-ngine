@@ -237,6 +237,8 @@ jobs:
       - name: Unit tests
         # The D3D12 backend falls back to WARP on hosts without a hardware GPU,
         # so the Windows suite is a required release check on hosted runners too.
+        env:
+          AETHER01_INPUT_TRACE: ${{ github.workspace }}/build/aether01-input-trace.json
         run: .\build\tests\Release\aether_tests.exe
       - name: Functional tests
         run: .\build\tools\functional\Release\aether_functional.exe --quiet --junit functional-results.xml
@@ -279,12 +281,92 @@ jobs:
           Get-ChildItem build/editor/Release -Filter *.dll | Copy-Item -Destination $out/
           Copy-Item -Recurse assets $out/assets
           Copy-Item README.md $out/
+          Copy-Item THIRD_PARTY_NOTICES.md $out/
+          Copy-Item docs/WINDOWS_REQUIREMENTS.md $out/
+          Copy-Item docs/releases/v0.27.0.md $out/RELEASE_NOTES.md
+          Copy-Item -Recurse third_party/licenses $out/licenses
           Compress-Archive -Path "$out/*" -DestinationPath dist/AetherEditor-windows-x64.zip -Force
       - name: Upload the editor
         uses: actions/upload-artifact@v4
         with:
           name: AetherEditor-windows-x64
           path: dist/AetherEditor-windows-x64.zip
+      - name: Package and validate the standalone proof game
+        shell: pwsh
+        run: |
+          & tools/package_aether01.ps1 -Configuration Release -Version '${{ inputs.release_tag || github.ref_name }}'
+          Expand-Archive dist/AETHER-01-windows-x64.zip -DestinationPath build/package-check/AETHER-01
+          $gameDir = (Resolve-Path build/package-check/AETHER-01).Path
+          foreach ($line in Get-Content "$gameDir/SHA256SUMS.txt") {
+            $expected = $line.Substring(0, 64)
+            $file = Join-Path $gameDir $line.Substring(66)
+            if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw "Package checksum mismatch: $file" }
+          }
+          # Remove the game source from its original location before launching.
+          $source = (Resolve-Path games/AETHER-01).Path
+          $hidden = Join-Path $env:GITHUB_WORKSPACE 'build/package-check/source-hidden'
+          if (-not $source.StartsWith($env:GITHUB_WORKSPACE + '\') -or -not $hidden.StartsWith($env:GITHUB_WORKSPACE + '\')) { throw 'Unexpected source paths' }
+          Move-Item -LiteralPath $source -Destination $hidden
+          New-Item -ItemType Directory -Force build/package-check/empty-cwd | Out-Null
+          $capture = Join-Path $env:GITHUB_WORKSPACE 'build/aether01-packaged.bmp'
+          $menu = Join-Path $env:GITHUB_WORKSPACE 'build/aether01-menu.bmp'
+          $ending = Join-Path $env:GITHUB_WORKSPACE 'build/aether01-ending.bmp'
+          $trace = Join-Path $env:GITHUB_WORKSPACE 'build/aether01-input-trace.json'
+          Push-Location build/package-check/empty-cwd
+          try {
+            & "$gameDir/AETHER-01.exe" --headless --frames 120 --report --user-dir user
+            if ($LASTEXITCODE -ne 0) { throw 'Packaged headless launch failed' }
+            & "$gameDir/AETHER-01.exe" --frames 10 --size 960x540 --screenshot $capture --user-dir user
+            if ($LASTEXITCODE -ne 0) { throw 'Packaged rendering failed' }
+            & "$gameDir/AETHER-01.exe" --frames 10 --size 960x540 --press Escape --screenshot $menu --user-dir user
+            if ($LASTEXITCODE -ne 0) { throw 'Packaged pause menu failed' }
+            foreach ($mode in @('headless', 'rendered')) {
+              $replayArgs = @('--replay-input', $trace, '--report', '--user-dir', "user/replay-$mode")
+              if ($mode -eq 'headless') { $replayArgs += '--headless' }
+              else { $replayArgs += @('--size', '960x540', '--screenshot', $ending) }
+              $result = & "$gameDir/AETHER-01.exe" @replayArgs
+              $code = $LASTEXITCODE
+              $result | Set-Content (Join-Path $env:GITHUB_WORKSPACE "build/aether01-playthrough-$mode.log")
+              $result | Write-Output
+              if ($code -ne 0) { throw "Packaged $mode playthrough failed" }
+              $state = $result | Where-Object { $_ -like 'Player attributes: *' } | Select-Object -Last 1
+              if (-not $state) { throw 'Missing final game state' }
+              $state = $state.Substring('Player attributes: '.Length) | ConvertFrom-Json
+              if ($state.MissionStage -ne 5 -or $state.Health -le 0 -or $state.ArchiveTime -ne 8) { throw 'Packaged playthrough did not complete the archive ending' }
+            }
+          } finally { Pop-Location }
+          python tools/verify_aether01_capture.py $capture
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged scene pixels failed' }
+          python tools/verify_aether01_capture.py --menu $menu
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged menu pixels failed' }
+          python tools/verify_aether01_capture.py --ending $ending
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged ending pixels failed' }
+          $inventory = foreach ($path in @('dist/AetherEditor-windows-x64.zip', 'dist/AETHER-01-windows-x64.zip')) {
+            $file = Get-Item $path
+            [ordered]@{ name = $file.Name; bytes = $file.Length; sha256 = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant() }
+          }
+          $manifest = [ordered]@{ commit = '${{ github.sha }}'; platform = 'windows-x64'; configuration = 'Release'; signed = $false; artifacts = @($inventory) }
+          $manifest | ConvertTo-Json -Depth 5 | Set-Content dist/RELEASE_MANIFEST.json -Encoding utf8
+          $inventory | ForEach-Object { "$($_.sha256)  $($_.name)" } | Set-Content dist/SHA256SUMS.txt -Encoding utf8
+      - name: Upload the standalone proof game
+        uses: actions/upload-artifact@v4
+        with:
+          name: AETHER-01-windows-x64
+          path: dist/AETHER-01-windows-x64.zip
+          if-no-files-found: error
+      - name: Upload package evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: Aether-release-evidence
+          path: |
+            dist/RELEASE_MANIFEST.json
+            dist/SHA256SUMS.txt
+            build/aether01-packaged.bmp
+            build/aether01-menu.bmp
+            build/aether01-ending.bmp
+            build/aether01-input-trace.json
+            build/aether01-playthrough-*.log
+          if-no-files-found: error
       - name: Screenshot the packaged editor
         # Runs the zip's editor for 120 frames on WARP (hosted runners have
         # no GPU; the editor falls back to the software device) and saves
@@ -434,13 +516,26 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: AetherEditor-windows-x64
+          pattern: '*-windows-x64'
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: Aether-release-evidence
+          path: release-evidence
       - name: Publish
         uses: softprops/action-gh-release@v2
         with:
-          files: AetherEditor-windows-x64.zip
+          files: |
+            AetherEditor-windows-x64.zip
+            AETHER-01-windows-x64.zip
+            release-evidence/dist/RELEASE_MANIFEST.json
+            release-evidence/dist/SHA256SUMS.txt
           generate_release_notes: true
+          body_path: docs/releases/${{ inputs.release_tag || github.ref_name }}.md
+          fail_on_unmatched_files: true
+          prerelease: true
           tag_name: ${{ inputs.release_tag || github.ref_name }}
           target_commitish: ${{ github.sha }}

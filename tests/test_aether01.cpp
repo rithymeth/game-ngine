@@ -4,10 +4,13 @@
 #include "aether/player/game.h"
 #include "aether/scene/components.h"
 #include "aether/scene/gameplay.h"
+#include "aether/scene/serialization.h"
+#include "aether/reflection/serialize.h"
 #include "aether/sequencer/sequence_system.h"
 #include "test_framework.h"
 
 #include <filesystem>
+#include <cstdlib>
 #include <fstream>
 #include <memory>
 
@@ -21,8 +24,13 @@ struct ProofRun {
     player::GamePackage package;
     std::unique_ptr<player::Game> game;
     Entity hero, scout;
+    bool record = false;
+    i64 recorded_frames = 0;
+    input::InputState recorded_input;
+    reflect::Json recorded_events = reflect::Json::array();
 
     explicit ProofRun(const char* name) {
+        record = std::string(name) == "ending";
         root = fs::temp_directory_path() / "aether01_proof_tests" / (std::string(name) + assets::ToString(assets::NewAssetGuid()));
         fs::create_directories(root);
         const auto source = fs::path(AETHER_REPO_ASSETS_DIR).parent_path() / "games/AETHER-01";
@@ -53,7 +61,20 @@ struct ProofRun {
         Frames(1);
     }
     void Frames(int count) {
-        for (int i = 0; i < count; ++i) game->Tick(1.0f / 60.0f);
+        for (int i = 0; i < count; ++i) {
+            if (record) {
+                for (usize index = 1; index < input::kKeyCount; ++index) {
+                    const auto key = static_cast<input::Key>(index);
+                    const f32 value = game->Input().Value(key);
+                    if (value != recorded_input.Value(key)) recorded_events.push_back(
+                        {{"frame", recorded_frames}, {"key", input::KeyName(key)}, {"value", value}});
+                }
+                recorded_input = game->Input();
+                recorded_input.EndFrame();
+                ++recorded_frames;
+            }
+            game->Tick(1.0f / 60.0f);
+        }
         AETHER_CHECK(game->ScriptErrors().empty());
         AETHER_CHECK(game->AudioSystem() != nullptr && game->AudioSystem()->Problems().empty());
     }
@@ -103,6 +124,30 @@ struct ProofRun {
 };
 }
 
+AETHER_TEST(Aether01_AuthoredSceneSaveCloseReopenPreservesComponents) {
+    ProofRun run("authoring");
+    const auto first = (run.root / "authored.ascene").string();
+    const auto second = (run.root / "reopened.ascene").string();
+    {
+        player::Game author(run.package);
+        std::string error;
+        AETHER_CHECK(author.LoadStartupScene(&error));
+        const auto heroes = FindEntitiesWithTag(author.GetWorld(), "Player");
+        AETHER_CHECK(heroes.size() == 1);
+        author.GetWorld().GetComponent<Transform>(heroes.front())->position.x = 1.25f;
+        AETHER_CHECK(SaveSceneJson(author.GetWorld(), first));
+    }
+    World reopened;
+    AETHER_CHECK(LoadSceneJson(reopened, first));
+    AETHER_CHECK(reopened.EntityCount() == 41);
+    const auto heroes = FindEntitiesWithTag(reopened, "Player");
+    AETHER_CHECK(heroes.size() == 1);
+    AETHER_CHECK(reopened.GetComponent<Transform>(heroes.front())->position.x == 1.25f);
+    AETHER_CHECK(SaveSceneJson(reopened, second));
+    std::ifstream a(first), b(second);
+    AETHER_CHECK(reflect::Json::parse(a) == reflect::Json::parse(b));
+}
+
 AETHER_TEST(Aether01_CookedCombatAmmoReloadAndScoutDefeat) {
     ProofRun run("combat");
     AETHER_CHECK(run.Stat(run.hero, "Health") == 3);
@@ -136,6 +181,85 @@ AETHER_TEST(Aether01_CookedContactDeathAndRestart) {
     AETHER_CHECK(run.Stat(run.hero, "Ammo") == 30);
     AETHER_CHECK(run.Stat(run.scout, "Health") == 3);
     AETHER_CHECK(run.Stat(run.hero, "DamageFlash") == 0);
+}
+
+AETHER_TEST(Aether01_PauseMenusFreezeCombatAndResume) {
+    ProofRun run("pause");
+    run.Tap(input::Key::E);
+    const Vec3 hero = run.game->GetWorld().GetComponent<Transform>(run.hero)->position;
+    const Vec3 scout = run.game->GetWorld().GetComponent<Transform>(run.scout)->position;
+    run.Tap(input::Key::Escape);
+    AETHER_CHECK(run.game->IsPaused() && run.Stat(run.hero, "MenuState") == 1);
+    const auto stats = run.game->Stats();
+    run.game->Input().SetButton(input::Key::W, true);
+    run.game->Input().SetButton(input::Key::MouseLeft, true);
+    run.Frames(300);
+    run.game->Input().SetButton(input::Key::W, false);
+    run.game->Input().SetButton(input::Key::MouseLeft, false);
+    const auto still = run.game->GetWorld().GetComponent<Transform>(run.hero)->position;
+    const auto enemy = run.game->GetWorld().GetComponent<Transform>(run.scout)->position;
+    AETHER_CHECK(still.z == hero.z && enemy.z == scout.z);
+    AETHER_CHECK(run.Stat(run.hero, "Ammo") == 30 && run.Stat(run.hero, "Health") == 3);
+    AETHER_CHECK(run.game->Stats().time == stats.time && run.game->Stats().fixed_steps == stats.fixed_steps);
+    run.Tap(input::Key::Down);
+    run.Tap(input::Key::Down);
+    run.Tap(input::Key::Enter);
+    AETHER_CHECK(run.Stat(run.hero, "MenuState") == 3);
+    run.Tap(input::Key::Escape);
+    run.Tap(input::Key::Escape);
+    AETHER_CHECK(!run.game->IsPaused());
+    run.Frames(60);
+    AETHER_CHECK(run.game->Stats().time > stats.time && run.game->GetWorld().GetComponent<Transform>(run.scout)->position.z > scout.z);
+}
+
+AETHER_TEST(Aether01_AudioMenuPersistsVolumesAndReportsWriteFailure) {
+    ProofRun run("settings-menu");
+    run.Tap(input::Key::GamepadStart);
+    run.Tap(input::Key::GamepadDPadDown);
+    run.Tap(input::Key::GamepadA);
+    AETHER_CHECK(run.Stat(run.hero, "MenuState") == 2);
+    run.Tap(input::Key::GamepadDPadLeft);
+    AETHER_CHECK(std::abs(run.game->Settings().Get().master - 0.9f) < 0.001f);
+    AETHER_CHECK(run.Stat(run.hero, "SettingsStatus") == 1);
+    run.Start();
+    run.game->LoadSettings({});
+    AETHER_CHECK(std::abs(run.game->Settings().Get().master - 0.9f) < 0.001f);
+    AETHER_CHECK(run.game->AudioSystem()->GetMixer().BusVolume(audio::kMasterBus) < 0);
+    const auto blocked = run.root / "blocked-settings";
+    std::ofstream(blocked) << "file blocks the settings directory";
+    run.game->SetUserPaths(player::ResolveUserPaths("AETHER-01", blocked));
+    run.Tap(input::Key::Escape);
+    run.Tap(input::Key::Down);
+    run.Tap(input::Key::Enter);
+    run.Tap(input::Key::Left);
+    AETHER_CHECK(run.Stat(run.hero, "SettingsStatus") == -1);
+}
+
+AETHER_TEST(Aether01_MenuCheckpointNewGameAndQuit) {
+    ProofRun run("menu-actions");
+    run.Tap(input::Key::GamepadB);
+    AETHER_CHECK(!run.game->IsPaused() && run.Stat(run.hero, "MissionStage") == 1);
+    run.Tap(input::Key::N);
+    run.Tap(input::Key::Escape);
+    for (int i = 0; i < 3; ++i) run.Tap(input::Key::Down);
+    run.Tap(input::Key::Enter);
+    AETHER_CHECK(run.game->IsPaused() && run.Stat(run.hero, "SettingsStatus") == -2);
+    run.Tap(input::Key::Escape);
+    run.Tap(input::Key::E);
+    run.Tap(input::Key::MouseLeft);
+    AETHER_CHECK(run.Stat(run.hero, "Ammo") == 29);
+    run.Tap(input::Key::Escape);
+    for (int i = 0; i < 3; ++i) run.Tap(input::Key::Down);
+    run.Tap(input::Key::Enter);
+    AETHER_CHECK(!run.game->IsPaused() && run.Stat(run.hero, "Ammo") == 30 && run.Stat(run.scout, "Health") == 3);
+    run.Tap(input::Key::Escape);
+    for (int i = 0; i < 4; ++i) run.Tap(input::Key::Down);
+    run.Tap(input::Key::Enter);
+    AETHER_CHECK(run.Stat(run.hero, "MissionStage") == 0 && !run.game->Saves()->Exists("first-contact"));
+    run.Tap(input::Key::Escape);
+    for (int i = 0; i < 5; ++i) run.Tap(input::Key::Down);
+    run.Tap(input::Key::Enter);
+    AETHER_CHECK(run.game->ExitRequested());
 }
 
 AETHER_TEST(Aether01_CookedWeaponReloadAndDamageSoundFeedback) {
@@ -353,6 +477,11 @@ AETHER_TEST(Aether01_WardenPhasesEndingAndNewGame) {
     run.Frames(480);
     AETHER_CHECK(!run.game->GetWorld().GetComponent<SequenceComponent>(archive)->playing);
     AETHER_CHECK(run.Stat(run.hero, "ArchiveTime") == 8);
+    if (const char* path = std::getenv("AETHER01_INPUT_TRACE")) {
+        std::ofstream trace(path);
+        trace << reflect::Json({{"frames", run.recorded_frames}, {"events", run.recorded_events}}).dump(2);
+        AETHER_CHECK(trace.good());
+    }
     run.Start();
     AETHER_CHECK(run.Stat(run.hero, "MissionStage") == 5);
     const auto restored_bosses = FindEntitiesWithTag(run.game->GetWorld(), "Warden");

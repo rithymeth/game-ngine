@@ -31,6 +31,7 @@
 #include "aether/player/scene_renderer.h"
 
 #include "aether/core/log.h"
+#include "aether/gameplay/attribute_set.h"
 #include "aether/gfx/rhi/device.h"
 #include "aether/platform/window.h"
 #include "aether/reflection/serialize.h"
@@ -39,6 +40,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -67,6 +69,7 @@ struct Options {
     std::vector<std::string> keys;
     std::vector<std::string> pressed; // keys held for the whole run (headless runs, smoke tests)
     std::string screenshot;
+    std::string replay_input;          // recorded input for deterministic package verification
     bool report = false;              // print where the Player-tagged entity ended up
 };
 
@@ -75,7 +78,7 @@ void Usage() {
                  "usage: aether_player [--pak <file|dir>]... [--scene <path>] [--frames <n>] [--headless]\n"
                  "                     [--backend d3d12|vulkan] [--size <w>x<h>] [--quality <preset>]\n"
                  "                     [--key <64 hex digits>] [--press <Key>]... [--screenshot <file.bmp>]\n"
-                 "                     [--report] [--user-dir <dir>]\n");
+                 "                     [--report] [--user-dir <dir>] [--replay-input <file.json>]\n");
 }
 
 bool ParseArgs(int argc, char** argv, Options& o) {
@@ -96,6 +99,8 @@ bool ParseArgs(int argc, char** argv, Options& o) {
             o.screenshot = argv[++i];
         } else if (a == "--report") {
             o.report = true;
+        } else if (a == "--replay-input" && has_value) {
+            o.replay_input = argv[++i];
         } else if (a == "--key" && has_value) {
             o.keys.push_back(argv[++i]);
         } else if (a == "--user-dir" && has_value) {
@@ -271,6 +276,28 @@ int main(int argc, char** argv) {
     }
 
     try {
+        struct ReplayEvent { i64 frame; input::Key key; f32 value; };
+        std::vector<ReplayEvent> replay;
+        if (!options.replay_input.empty()) {
+            std::ifstream stream(options.replay_input);
+            const auto json = reflect::Json::parse(stream);
+            const i64 frames = json.at("frames").get<i64>();
+            if (frames <= 0 || frames > 360000) throw std::runtime_error("Invalid replay frame count");
+            if (options.frames >= 0 && options.frames != frames) throw std::runtime_error("Replay frame count differs from --frames");
+            options.frames = frames;
+            i64 previous = 0;
+            for (const auto& event : json.at("events")) {
+                const i64 frame = event.at("frame").get<i64>();
+                const auto key = input::KeyFromName(event.at("key").get<std::string>());
+                const f32 value = event.at("value").get<f32>();
+                if (frame < previous || frame >= frames || key == input::Key::None || !std::isfinite(value))
+                    throw std::runtime_error("Invalid replay input event");
+                replay.push_back({frame, key, value});
+                previous = frame;
+            }
+        }
+        usize replay_cursor = 0;
+        input::InputState replay_held;
         std::unique_ptr<Window> window;
         std::unique_ptr<rhi::IDevice> device;
         std::unique_ptr<rhi::ISwapChain> swap_chain;
@@ -335,7 +362,7 @@ int main(int argc, char** argv) {
             }
             const auto now = std::chrono::steady_clock::now();
             // Headless runs step at the fixed rate, so a run is reproducible.
-            const f32 dt = window ? (std::min)(std::chrono::duration<f32>(now - last).count(), 0.25f)
+            const f32 dt = window && options.replay_input.empty() ? (std::min)(std::chrono::duration<f32>(now - last).count(), 0.25f)
                                   : 1.0f / manifest.fixed_timestep_hz;
             last = now;
             if (!options.screenshot.empty()) {
@@ -343,7 +370,17 @@ int main(int argc, char** argv) {
                 // its camera stays at the startup scene's deterministic pose.
                 game.Input().EndFrame();
             }
+            if (!options.replay_input.empty()) {
+                // The trace owns raw input; incidental window input cannot alter verification.
+                replay_held.EndFrame();
+                while (replay_cursor < replay.size() && replay[replay_cursor].frame == frame) {
+                    const auto& event = replay[replay_cursor++];
+                    replay_held.SetAxis(event.key, event.value);
+                }
+                game.Input() = replay_held;
+            }
             game.Tick(dt);
+            if (game.ExitRequested()) break;
 
             if (swap_chain) {
                 device->WaitForFence(fence);
@@ -389,6 +426,10 @@ int main(int argc, char** argv) {
             for (const Entity e : FindEntitiesWithTag(game.GetWorld(), "Player")) {
                 if (const Transform* t = game.GetWorld().GetComponent<Transform>(e)) {
                     std::printf("Player at (%.3f, %.3f, %.3f)\n", t->position.x, t->position.y, t->position.z);
+                }
+                if (const auto* attributes = game.GetWorld().GetComponent<gas::AttributeSet>(e)) {
+                    std::printf("Player attributes: %s\n", reflect::Json({{"Health", attributes->Get("Health")},
+                        {"MissionStage", attributes->Get("MissionStage")}, {"ArchiveTime", attributes->Get("ArchiveTime")}}).dump().c_str());
                 }
             }
         }

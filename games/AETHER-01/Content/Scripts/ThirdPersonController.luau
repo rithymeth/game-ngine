@@ -294,6 +294,8 @@ function Controller:OnUpdate(dt)
     self.damage_flash = math.max(self.damage_flash, Attributes.Get(self.entity, "DamageFlash"))
     if self.health <= 0 then self.dead = true end
     local new_game = Input.IsTriggered("NewGame")
+    local load_checkpoint = Input.IsTriggered("LoadCheckpoint") and SaveGames.DoesSaveExist("first-contact")
+    if load_checkpoint then self.dead = true end
     if new_game then
         if SaveGames.DoesSaveExist("first-contact") and not SaveGames.DeleteSave("first-contact") then
             Attributes.SetBase(self.entity, "SaveStatus", -1)
@@ -304,7 +306,7 @@ function Controller:OnUpdate(dt)
     end
 
     if self.dead then
-        if Input.IsTriggered("Restart") or new_game then
+        if Input.IsTriggered("Restart") or new_game or load_checkpoint then
             self.dead = false
             self.health = 3
             self.ammo = self.ammo_capacity

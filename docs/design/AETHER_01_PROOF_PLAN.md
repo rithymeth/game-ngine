@@ -36,6 +36,10 @@ expand the first proof build.
 This is a starting map, not a feature guarantee. Recheck each item against the
 actual authoring and packaged-player workflow as the prototype is built.
 
+The dated sections below are cumulative engineering records. The newest
+verification is the release candidate record; earlier open items describe
+their state at that earlier checkpoint.
+
 | AETHER-01 need | Existing engine path | Initial status / gap |
 |---|---|---|
 | 3D scene, camera, project and player | Third Person project template, scene components, Luau script, player runtime, RHI | AETHER-01 now has a 31-entity connected cryo/service-route/Warden greybox. The packaged player draws static glTF meshes and base-color textures through the existing cross-API RHI. Direct pixel inspection confirms complete scene/HUD captures. Lighting and animation rendering remain unverified. |
@@ -125,6 +129,47 @@ cinematic presentation and pause/settings menus remain open; this engine host
 work does not establish those game acceptance items.
 
 ## Delivery sequence
+
+### v0.27.0 release candidate verification recorded 2026-10-08
+
+The full local Windows build produces the editor, cooker, pak tool, player and
+tests. Physics-on passes **1,057/1,057** unit checks; physics-off passes
+**1,017/1,017**. The game checks include scene edit/save/close/reopen with
+identical serialized component data, pause, settings, checkpoint menus and
+gamepad interaction. The project stamps engine version **0.27.0**.
+
+The cooked 60-asset package was extracted and launched from an empty directory
+with `games/AETHER-01` moved away. The actual executable replays 1,728 recorded
+input frames through pickup, all regular enemies, the Warden and the archive.
+Headless and rendered runs both finish at mission stage 5, health 2 and archive
+time 8. The rendered ending overlay passes a pixel gate that rejects the startup
+capture. This is a deterministic regression workload lasting 28.8 seconds of
+simulation, not a measured first-player playtime.
+
+The packages include full dependency/font license texts, requirements, release
+notes and checksums. The binaries require the Microsoft Visual C++ v14 x64
+system runtime and are unsigned. These local results still require a clean
+pushed CI result, publication and validation using the released engine tools.
+Local CTest passes **19/19**. The prior presentation commit `27032a1` passes all
+required GitHub CI jobs in run `37661255975`; the release candidate requires
+its own exact-commit result.
+
+### Menus and package gate verification recorded 2026-10-08
+
+The local AETHER-01 pause menu provides resume, audio settings, controls,
+checkpoint reload, new game and quit through keyboard and gamepad input. The
+player's existing frame loop can pause while input remains available to menus;
+physics, combat, sequences and mission time stop. Settings use the existing
+store/mixer APIs and save immediately, including visible write-failure feedback.
+The settings menu exposes Master/Music/SFX/Voice volume; it makes no graphics
+quality claim. Input-driven game checks pass **15/15** with physics and **14/14**
+without physics. The pause capture verifies its header and every menu row.
+
+The Windows workflow now packages a separate game ZIP alongside the engine ZIP,
+records SHA256 checksums and a release inventory, verifies extracted files,
+moves the game source out of its original location and launches the extracted
+executable from an empty working directory. It checks both scene and pause-menu
+pixels. These workflow gates require a pushed clean-run result before release.
 
 ### Prototype presentation verification recorded 2026-10-08
 
