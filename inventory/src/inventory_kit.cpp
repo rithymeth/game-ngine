@@ -1,6 +1,7 @@
 #include "aether/inventory/inventory_kit.h"
 
 #include "aether/inventory/inventory_system.h"
+#include "aether/inventory/item_def.h"
 
 #include <utility>
 
@@ -34,6 +35,29 @@ SystemDesc MakeInventorySystem(InventorySystem* system, std::function<void(const
         if (on_event) for (const ItemEvent& event : events) on_event(event);
     };
     return desc;
+}
+
+std::vector<ItemAssetDiagnostic> LoadItemAssets(
+    const std::vector<std::string>& paths,
+    std::function<bool(const std::string&, std::vector<u8>&, std::string*)> read_content,
+    const gas::EffectLibrary& effects, ItemLibrary& items) {
+    std::vector<ItemAssetDiagnostic> diagnostics;
+    for (const std::string& path : paths) {
+        std::vector<u8> bytes;
+        std::string error;
+        if (!read_content || !read_content(path, bytes, &error)) {
+            diagnostics.push_back({path, std::move(error), true});
+            continue;
+        }
+        ItemDef item;
+        const std::string text(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+        if (!ItemFromJson(text, item, &error) ||
+            !(error = ItemLibrary::CheckEffects(item, effects)).empty() ||
+            !items.Register(std::move(item), &error)) {
+            diagnostics.push_back({path, std::move(error), false});
+        }
+    }
+    return diagnostics;
 }
 
 std::unique_ptr<kit::IKit> MakeInventoryKit() { return std::make_unique<InventoryKit>(); }
