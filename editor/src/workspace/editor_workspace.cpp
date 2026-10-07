@@ -106,6 +106,13 @@ bool StartsWithNoCase(const char* text, std::string_view prefix) {
     return k == prefix.size();
 }
 
+bool ContainsNoCase(std::string_view text, std::string_view query) {
+    if (query.empty()) return true;
+    return std::search(text.begin(), text.end(), query.begin(), query.end(), [](char a, char b) {
+        return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+    }) != text.end();
+}
+
 // An editor script (§26.5): a panel, a menu item and an asset type. Written
 // into a sample project that doesn't have it yet (an older one gains it).
 void WriteSampleEditorScript(const std::filesystem::path& content) {
@@ -155,6 +162,7 @@ struct EditorWorkspace::Impl {
     u64 extensions_seen = 0;
     std::vector<Tool> tools;
     usize selected = 0;
+    std::array<char, 128> tool_filter{};
 
     // Scripting.
     std::unique_ptr<BlueprintDocument> blueprint_doc;
@@ -1002,11 +1010,50 @@ void EditorWorkspace::DrawToolsMenu() {
 }
 
 void EditorWorkspace::DrawHubContents() {
+    struct WorkspaceEntry { const char* label; const char* tool; };
+    static constexpr WorkspaceEntry workspaces[] = {
+        {"World", "Terrain"}, {"Script", "Luau"}, {"Blueprint", "Blueprint"},
+        {"Animation", "Animation"}, {"AI", "Behavior Tree"}, {"Audio", "Sound Cue"},
+        {"UI", "UI Designer"}, {"Material", "Material"}, {"Sequence", "Sequencer"},
+        {"Network", "Net"}, {"Profiler", "Profiler"},
+    };
+    usize active_workspace = std::size(workspaces);
+    for (usize i = 0; i < std::size(workspaces); ++i) {
+        if (!impl_->tools.empty() && impl_->selected < impl_->tools.size() &&
+            StartsWithNoCase(impl_->tools[impl_->selected].name.c_str(), workspaces[i].tool)) {
+            active_workspace = i;
+            break;
+        }
+    }
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, ImGui::GetStyle().ItemSpacing.y));
+    for (usize i = 0; i < std::size(workspaces); ++i) {
+        if (i != 0) ImGui::SameLine();
+        if (i == active_workspace) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_Text));
+        }
+        if (ImGui::Button(workspaces[i].label)) {
+            const i64 tool = FindTool(workspaces[i].tool);
+            if (tool >= 0) impl_->selected = static_cast<usize>(tool);
+        }
+        if (i == active_workspace) ImGui::PopStyleColor(2);
+    }
+    ImGui::PopStyleVar();
+    ImGui::Separator();
+    ImGui::SetNextItemWidth(260.0f);
+    ImGui::InputTextWithHint("##tool_filter", "Search tools…", impl_->tool_filter.data(), impl_->tool_filter.size());
+    ImGui::SameLine();
+    ImGui::TextDisabled("%zu tools", impl_->tools.size());
+
     const f32 list_w = 230.0f;
     if (ImGui::BeginChild("##tool_list", ImVec2(list_w, 0), ImGuiChildFlags_Borders)) {
         const char* category = nullptr;
+        usize visible_tools = 0;
         for (usize i = 0; i < impl_->tools.size(); ++i) {
             const Impl::Tool& t = impl_->tools[i];
+            if (!ContainsNoCase(t.name, impl_->tool_filter.data()) &&
+                !ContainsNoCase(t.category, impl_->tool_filter.data())) continue;
+            ++visible_tools;
             if (!category || std::strcmp(category, t.category.c_str()) != 0) {
                 category = t.category.c_str();
                 ImGui::SeparatorText(category);
@@ -1017,6 +1064,7 @@ void EditorWorkspace::DrawHubContents() {
                 ImGui::EndPopup();
             }
         }
+        if (visible_tools == 0) ImGui::TextDisabled("No tools match this search.");
     }
     ImGui::EndChild();
     ImGui::SameLine();
