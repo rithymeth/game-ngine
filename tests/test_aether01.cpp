@@ -237,6 +237,14 @@ AETHER_TEST(Aether01_AudioMenuPersistsVolumesAndReportsWriteFailure) {
 
 AETHER_TEST(Aether01_MenuCheckpointNewGameAndQuit) {
     ProofRun run("menu-actions");
+    run.Tap(input::Key::GamepadStart);
+    run.Tap(input::Key::GamepadA);
+    run.Frames(10);
+    AETHER_CHECK(!run.game->IsPaused() && run.Stat(run.hero, "MissionStage") == 0);
+    AETHER_CHECK(std::abs(run.game->GetWorld().GetComponent<Transform>(run.hero)->position.y) < 0.01f);
+    run.Tap(input::Key::GamepadStart);
+    run.Tap(input::Key::GamepadB);
+    AETHER_CHECK(!run.game->IsPaused() && run.Stat(run.hero, "MissionStage") == 0);
     run.Tap(input::Key::GamepadB);
     AETHER_CHECK(!run.game->IsPaused() && run.Stat(run.hero, "MissionStage") == 1);
     run.Tap(input::Key::N);
