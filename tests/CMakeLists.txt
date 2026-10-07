@@ -49,6 +49,12 @@ endif()
 # Phase 25 step 4: the player's runtime.
 target_sources(aether_tests PRIVATE test_player.cpp test_player_save.cpp test_loc_runtime.cpp test_package.cpp test_pak_patch.cpp test_plugin.cpp test_templates.cpp)
 target_link_libraries(aether_tests PRIVATE Aether::Game Aether::Templates Aether::Blueprint)
+if(TARGET Aether::Physics)
+    target_link_libraries(aether_tests PRIVATE Aether::Physics)
+    target_compile_definitions(aether_tests PRIVATE AETHER_TEST_HAS_PHYSICS=1)
+else()
+    target_compile_definitions(aether_tests PRIVATE AETHER_TEST_HAS_PHYSICS=0)
+endif()
 # The Build and Package window's test packages and launches the real player.
 add_dependencies(aether_tests aether_player)
 target_compile_definitions(aether_tests PRIVATE AETHER_TEST_PLAYER_PATH="$<TARGET_FILE:aether_player>")

@@ -85,6 +85,11 @@ function Controller:OnCreate()
     self.vy = 0
     self.floor = self.entity:Get("Transform").position.y
     self.camera = world:EntitiesWith("Camera")[1]
+    @@CHARACTER_MOVEMENT_LOOKUP@@
+    if self.character ~= nil then
+        self.character.walk_speed = self.speed
+        self.character.jump_velocity = self.jump_speed
+    end
 end
 
 local function Quat(yaw, pitch)
@@ -106,15 +111,24 @@ function Controller:OnUpdate(dt)
     local move = Input.GetAxis2D("Move")
     if vector.magnitude(move) > 1 then move = vector.normalize(move) end
     local sy, cy = math.sin(self.yaw), math.cos(self.yaw)
-    local vx = (-sy * move.y + cy * move.x) * self.speed
-    local vz = (-cy * move.y - sy * move.x) * self.speed
+    local vx = -sy * move.y + cy * move.x
+    local vz = -cy * move.y - sy * move.x
 
-    if self.vy == 0 and Input.IsTriggered("Jump") then self.vy = self.jump_speed end
-    self.vy += self.gravity * dt
-    local p = t.position
-    local y = p.y + self.vy * dt
-    if y <= self.floor then y = self.floor; self.vy = 0 end
-    t.position = vector.create(p.x + vx * dt, y, p.z + vz * dt)
+    if self.character ~= nil then
+        -- The player's existing Jolt CharacterSystem consumes this input in
+        -- FixedUpdate, including slopes, steps, collision and buffered jumps.
+        self.character.input = vector.create(vx, 0, vz)
+        self.character.jump_requested = Input.IsTriggered("Jump")
+    else
+        -- Preserve this template's movement when the engine is built without
+        -- the optional physics module.
+        if self.vy == 0 and Input.IsTriggered("Jump") then self.vy = self.jump_speed end
+        self.vy += self.gravity * dt
+        local p = t.position
+        local y = p.y + self.vy * dt
+        if y <= self.floor then y = self.floor; self.vy = 0 end
+        t.position = vector.create(p.x + vx * self.speed * dt, y, p.z + vz * self.speed * dt)
+    end
 
     -- Face the way it's going.
     if vx ~= 0 or vz ~= 0 then

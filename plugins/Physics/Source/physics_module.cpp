@@ -1,6 +1,7 @@
 // The Physics plugin's runtime module (Phase 26 step 1): registers its
 // components, so scenes can name them, when the plugin is enabled.
 #include "aether/physics/components.h"
+#include "aether/physics/character.h"
 #include "aether/plugin/plugin.h"
 
 namespace {
@@ -15,6 +16,7 @@ public:
         (void)GetComponentId<CapsuleCollider>();
         (void)GetComponentId<ConvexCollider>();
         (void)GetComponentId<MeshCollider>();
+        (void)GetComponentId<CharacterMovement>();
         RegisterPhysicsComponentSerializers();
     }
 };
