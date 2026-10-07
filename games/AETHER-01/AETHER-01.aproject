@@ -1,0 +1,68 @@
+{
+  "$type": "Project",
+  "$v": 1,
+  "always_cook": [
+    "Input/"
+  ],
+  "collision_matrix": [],
+  "default_quality": "High",
+  "engine_version": "0.7.0",
+  "fixed_timestep_hz": 60.0,
+  "gravity": [
+    0.0,
+    -9.81,
+    0.0
+  ],
+  "layers": [
+    "Default"
+  ],
+  "name": "AETHER-01",
+  "plugins": [],
+  "quality_presets": [
+    {
+      "$v": 1,
+      "bloom": false,
+      "msaa_samples": 1,
+      "name": "Low",
+      "resolution_scale": 0.75,
+      "shadow_cascades": 2,
+      "shadow_resolution": 1024,
+      "view_distance": 300.0
+    },
+    {
+      "$v": 1,
+      "bloom": true,
+      "msaa_samples": 1,
+      "name": "Medium",
+      "resolution_scale": 1.0,
+      "shadow_cascades": 3,
+      "shadow_resolution": 1024,
+      "view_distance": 600.0
+    },
+    {
+      "$v": 1,
+      "bloom": true,
+      "msaa_samples": 2,
+      "name": "High",
+      "resolution_scale": 1.0,
+      "shadow_cascades": 4,
+      "shadow_resolution": 2048,
+      "view_distance": 1000.0
+    },
+    {
+      "$v": 1,
+      "bloom": true,
+      "msaa_samples": 4,
+      "name": "Epic",
+      "resolution_scale": 1.0,
+      "shadow_cascades": 4,
+      "shadow_resolution": 4096,
+      "view_distance": 2500.0
+    }
+  ],
+  "startup_scene": "Scenes/Main.ascene",
+  "vsync": true,
+  "window_height": 720,
+  "window_title": "AETHER-01: First Contact",
+  "window_width": 1280
+}

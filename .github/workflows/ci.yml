@@ -240,6 +240,13 @@ jobs:
         run: .\build\tests\Release\aether_tests.exe
       - name: Functional tests
         run: .\build\tools\functional\Release\aether_functional.exe --quiet --junit functional-results.xml
+      - name: Cook and launch the AETHER-01 proof project
+        shell: pwsh
+        run: |
+          & .\build\tools\cook\Release\aether_cook.exe games\AETHER-01\AETHER-01.aproject --out build\aether01-cooked --config development
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\build\player\Release\aether_player.exe --pak build\aether01-cooked\Game.apak --headless --frames 120 --report
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Package the editor
         shell: pwsh
         run: |
