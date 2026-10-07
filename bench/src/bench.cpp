@@ -123,6 +123,13 @@ bool Compare(const std::string& baseline_json, const std::string& current_json, 
         if (error) *error = "benchmark report contains invalid or duplicate results";
         return false;
     }
+    const bool overlaps = std::any_of(baseline.begin(), baseline.end(), [&](const auto& item) {
+        return current.find(item.first) != current.end();
+    });
+    if (!overlaps) {
+        if (error) *error = "no benchmarks overlap with baseline";
+        return false;
+    }
     for (const auto& [name, was] : baseline) {
         (void)was;
         if (current.find(name) == current.end()) {
@@ -130,18 +137,12 @@ bool Compare(const std::string& baseline_json, const std::string& current_json, 
             return false;
         }
     }
-    usize compared = 0;
     for (const auto& [name, now] : current) {
         const auto found = baseline.find(name);
         if (found == baseline.end()) continue; // New benchmarks have no history yet.
-        ++compared;
         const double was = found->second;
         const double ratio = now / was;
         if (ratio > tolerance) regressions.push_back({name, was, now, ratio});
-    }
-    if (compared == 0) {
-        if (error) *error = "no benchmarks overlap with baseline";
-        return false;
     }
     return true;
 }
