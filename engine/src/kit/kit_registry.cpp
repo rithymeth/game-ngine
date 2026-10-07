@@ -83,6 +83,10 @@ void KitRegistry::RegisterComponents() {
     for (IKit* kit : order_) kit->RegisterComponents();
 }
 
+void KitRegistry::LoadAssets(const KitAssetContext& context) {
+    for (IKit* kit : order_) kit->LoadAssets(context);
+}
+
 void KitRegistry::InstallBlueprintNodes() {
     for (IKit* kit : order_) kit->InstallBlueprintNodes();
 }

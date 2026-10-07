@@ -31,6 +31,6 @@ std::vector<ItemAssetDiagnostic> LoadItemAssets(
 
 // This kit's description for the player's kit registry (Phase 37 step 4): its name, what it needs, the
 // components it registers and the scheduler stage it adds.
-std::unique_ptr<kit::IKit> MakeInventoryKit();
+std::unique_ptr<kit::IKit> MakeInventoryKit(ItemLibrary* items = nullptr, const gas::EffectLibrary* effects = nullptr);
 
 } // namespace aether::inv

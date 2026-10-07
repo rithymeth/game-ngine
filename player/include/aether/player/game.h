@@ -229,10 +229,7 @@ private:
     void LoadInputAssets();
     void WatchSettingsLanguage(); // the settings' language is the Localization's
     void LoadLocalization(); // every StringTable asset in the package, once
-    void LoadEffects();      // every GameplayEffect asset in the package
-    void LoadAbilities();    // every GameplayAbility asset (after the effects)
-    void LoadItems();        // every ItemDefinition asset (after the effects), if the inventory kit is built
-    void LoadQuests();       // every QuestDefinition asset (after the effects), if the quests kit is built
+    void LoadKitAssets();   // loads gameplay definitions through the kit registry
     // (Re)activates every input context with the settings' rebinds applied.
     void ActivateInputContexts();
     void StartRuntime(); // scripts and Blueprints for the loaded scene
@@ -267,17 +264,14 @@ private:
     input::InputAssetLibrary input_library_;
     gas::EffectLibrary effects_; // declared before runtime_, whose effect system refers to it
     std::vector<std::string> effect_warnings_;
-    bool effects_loaded_ = false;
     gas::AbilityLibrary abilities_;
-    bool abilities_loaded_ = false;
 #if AETHER_KIT_INVENTORY
     inv::ItemLibrary items_;
 #endif
-    bool items_loaded_ = false;
 #if AETHER_KIT_QUESTS
     quest::QuestLibrary quests_;
 #endif
-    bool quests_loaded_ = false;
+    bool kit_assets_loaded_ = false;
     bool input_loaded_ = false;
     struct Runtime;
     std::unique_ptr<Runtime> runtime_; // it holds references to the above
