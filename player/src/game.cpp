@@ -6,14 +6,18 @@
 #include "aether/core/log.h"
 #include "aether/kit/event_bus.h"
 #include "aether/gameplay/ability_system.h"
+#include "aether/gameplay/gameplay_kit.h"
 #if AETHER_KIT_INVENTORY
+#include "aether/inventory/inventory_kit.h"
 #include "aether/inventory/inventory_system.h"
 #endif
 #if AETHER_KIT_INTERACTION
+#include "aether/interaction/interaction_kit.h"
 #include "aether/interaction/interaction_system.h"
 #endif
 #if AETHER_KIT_QUESTS
 #include "aether/quests/quest_system.h"
+#include "aether/quests/quests_kit.h"
 #endif
 #include "aether/gameplay/attribute_system.h"
 #include "aether/gameplay/effect_system.h"
