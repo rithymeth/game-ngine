@@ -1,0 +1,365 @@
+{
+  "$type": "Scene",
+  "$version": 1,
+  "entities": [
+    {
+      "components": {
+        "CharacterMovement": {
+          "$v": 1,
+          "acceleration": 20.0,
+          "air_acceleration": 5.0,
+          "air_control": 0.3,
+          "braking": 25.0,
+          "coyote_time": 0.1,
+          "flying": false,
+          "gravity_scale": 1.0,
+          "height": 1.8,
+          "jump_buffer": 0.1,
+          "jump_velocity": 5.0,
+          "mass": 70.0,
+          "max_slope_degrees": 45.0,
+          "radius": 0.35,
+          "run_speed": 7.0,
+          "step_height": 0.35,
+          "walk_speed": 4.0
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "properties": [],
+          "script": "9958a788-7c77-4b06-a2ae-3db9391eb681"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Player"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
+      },
+      "guid": "88f690e4-8827-4383-bfb5-520bc345bff0"
+    },
+    {
+      "components": {
+        "Camera": {
+          "$v": 1,
+          "far_plane": 1000.0,
+          "fov_degrees": 60.0,
+          "near_plane": 0.1,
+          "ortho_height": 10.0,
+          "priority": 0,
+          "projection": "Perspective"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "MainCamera"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            3.0,
+            6.0
+          ],
+          "rotation": [
+            -0.14943814,
+            -0.0,
+            -0.0,
+            0.9887711
+          ]
+        }
+      },
+      "guid": "11c7363b-8f51-486e-b4bb-2a57fd73e7ca"
+    },
+    {
+      "components": {
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.5,
+          "half_extents": [
+            40.0,
+            0.5,
+            40.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            -0.5,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
+      },
+      "guid": "effed8f0-776a-4c9e-9ed0-4dde23457549"
+    },
+    {
+      "components": {
+        "BlueprintInstance": {
+          "$v": 1,
+          "blueprint": "f39db8ce-c878-495a-aeb1-cdd86ce5c515",
+          "overrides": []
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Pickup"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            1.0,
+            -7.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
+      },
+      "guid": "4ec75c2d-210c-43d2-a825-bc94a271c05e"
+    },
+    {
+      "components": {
+        "BlueprintInstance": {
+          "$v": 1,
+          "blueprint": "f39db8ce-c878-495a-aeb1-cdd86ce5c515",
+          "overrides": []
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Pickup"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.9497476,
+            1.0,
+            -4.9497476
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
+      },
+      "guid": "7c341f27-0f14-4817-a7fc-b14c483b1283"
+    },
+    {
+      "components": {
+        "BlueprintInstance": {
+          "$v": 1,
+          "blueprint": "f39db8ce-c878-495a-aeb1-cdd86ce5c515",
+          "overrides": []
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Pickup"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            7.0,
+            1.0,
+            3.059797e-07
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
+      },
+      "guid": "7fd84560-f5eb-4454-9182-0c5483017f6f"
+    },
+    {
+      "components": {
+        "BlueprintInstance": {
+          "$v": 1,
+          "blueprint": "f39db8ce-c878-495a-aeb1-cdd86ce5c515",
+          "overrides": []
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Pickup"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.9497476,
+            1.0,
+            4.9497476
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
+      },
+      "guid": "1adecb6c-50e2-4950-ac64-854c040ccc48"
+    },
+    {
+      "components": {
+        "BlueprintInstance": {
+          "$v": 1,
+          "blueprint": "f39db8ce-c878-495a-aeb1-cdd86ce5c515",
+          "overrides": []
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Pickup"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -6.119594e-07,
+            1.0,
+            7.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
+      },
+      "guid": "9e0aa406-8032-41df-988b-f34d3bfaf37e"
+    },
+    {
+      "components": {
+        "BlueprintInstance": {
+          "$v": 1,
+          "blueprint": "f39db8ce-c878-495a-aeb1-cdd86ce5c515",
+          "overrides": []
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Pickup"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -4.949748,
+            1.0,
+            4.9497466
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
+      },
+      "guid": "961e385b-7d51-40ca-a810-9e5509112252"
+    },
+    {
+      "components": {
+        "BlueprintInstance": {
+          "$v": 1,
+          "blueprint": "f39db8ce-c878-495a-aeb1-cdd86ce5c515",
+          "overrides": []
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Pickup"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -7.0,
+            1.0,
+            -8.347416e-08
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
+      },
+      "guid": "e1e577a3-096d-438c-9a12-daaa5cc43a3f"
+    },
+    {
+      "components": {
+        "BlueprintInstance": {
+          "$v": 1,
+          "blueprint": "f39db8ce-c878-495a-aeb1-cdd86ce5c515",
+          "overrides": []
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Pickup"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -4.9497457,
+            1.0,
+            -4.949749
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
+      },
+      "guid": "f55518b5-2e63-445a-a110-94c07e818284"
+    }
+  ]
+}
