@@ -130,6 +130,25 @@ work does not establish those game acceptance items.
 
 ## Delivery sequence
 
+### Released tool validation and v0.27.1 packaging correction
+
+Commit `439d219` passed every required CI job in run `37666623883` and published
+v0.27.0. Downloaded ZIP checksums and the game file checksums pass. The downloaded
+engine cooker rebuilds the exact game source, and its player completes both
+headless and rendered playthroughs; a process restart preserves ending progress.
+
+This consumer check found that the cooker discovered the built-in plugin
+catalog only through its compiled source-tree path. Away from that tree, the
+game content matched but `Manifest.json` silently omitted plugins/modules.
+v0.27.1 corrects that existing discovery/packaging contract: include `plugins/`
+in the engine ZIP, prefer the catalog beside the executable, and require a
+byte-identical recook after the source catalog is moved away in CI.
+The local relocated-cooker check passes from an empty working directory with
+the source catalog moved away: original and recooked game packages both hash
+to `8f680f38fb4c737d343cf036748b6359e68145a397271312d647a7349e941dec`.
+The patch build passes local **19/19 CTest entries**, **1,057/1,057** physics-on
+unit tests, **2/2** functional checks and **1,017/1,017** physics-off unit tests.
+
 ### v0.27.0 release candidate verification recorded 2026-10-08
 
 The full local Windows build produces the editor, cooker, pak tool, player and

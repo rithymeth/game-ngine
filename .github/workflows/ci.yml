@@ -283,7 +283,8 @@ jobs:
           Copy-Item README.md $out/
           Copy-Item THIRD_PARTY_NOTICES.md $out/
           Copy-Item docs/WINDOWS_REQUIREMENTS.md $out/
-          Copy-Item docs/releases/v0.27.0.md $out/RELEASE_NOTES.md
+          Copy-Item docs/releases/v0.27.1.md $out/RELEASE_NOTES.md
+          Copy-Item -Recurse plugins $out/plugins
           Copy-Item -Recurse third_party/licenses $out/licenses
           Compress-Archive -Path "$out/*" -DestinationPath dist/AetherEditor-windows-x64.zip -Force
       - name: Upload the editor
@@ -307,6 +308,16 @@ jobs:
           $hidden = Join-Path $env:GITHUB_WORKSPACE 'build/package-check/source-hidden'
           if (-not $source.StartsWith($env:GITHUB_WORKSPACE + '\') -or -not $hidden.StartsWith($env:GITHUB_WORKSPACE + '\')) { throw 'Unexpected source paths' }
           Move-Item -LiteralPath $source -Destination $hidden
+          $pluginSource = (Resolve-Path plugins).Path
+          $pluginHidden = Join-Path $env:GITHUB_WORKSPACE 'build/package-check/plugins-hidden'
+          if (-not $pluginSource.StartsWith($env:GITHUB_WORKSPACE + '\') -or -not $pluginHidden.StartsWith($env:GITHUB_WORKSPACE + '\')) { throw 'Unexpected plugin source paths' }
+          Move-Item -LiteralPath $pluginSource -Destination $pluginHidden
+          Expand-Archive dist/AetherEditor-windows-x64.zip -DestinationPath build/package-check/Engine
+          $engineDir = (Resolve-Path build/package-check/Engine).Path
+          if ((Get-FileHash "$engineDir/aether_player.exe").Hash -ne (Get-FileHash "$gameDir/AETHER-01.exe").Hash) { throw 'Game player differs from packaged engine' }
+          & "$engineDir/aether_cook.exe" "$hidden/AETHER-01.aproject" --out build/package-check/recooked --config development
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged engine cook failed' }
+          if ((Get-FileHash build/package-check/recooked/Game.apak).Hash -ne (Get-FileHash "$gameDir/Paks/Game.apak").Hash) { throw 'Packaged engine recook differs from the original package' }
           New-Item -ItemType Directory -Force build/package-check/empty-cwd | Out-Null
           $capture = Join-Path $env:GITHUB_WORKSPACE 'build/aether01-packaged.bmp'
           $menu = Join-Path $env:GITHUB_WORKSPACE 'build/aether01-menu.bmp'
