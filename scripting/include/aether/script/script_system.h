@@ -57,6 +57,7 @@ public:
 
     // Binds `world` to `host`. Both must outlive the system.
     ScriptSystem(LuauHost& host, World& world, GuidIndex& guids, SourceLoader loader);
+    ScriptSystem(LuauHost& host, World& world, GuidIndex& guids, SourceLoader loader, bool install_kit_apis);
     ~ScriptSystem();
     ScriptSystem(const ScriptSystem&) = delete;
     ScriptSystem& operator=(const ScriptSystem&) = delete;
@@ -157,9 +158,10 @@ public:
     bool CancelTimer(u32 timer);
     input::InputSystem* BoundInput() { return input_; }
     u32 InputEvent(const std::string& action, input::ActionEvent event);
+    void InstallKitApi(const std::string& kit_name);
 
 private:
-    void InstallApi();
+    void InstallApi(bool install_kit_apis);
     void ReleaseOwner(u64 owner);
     void RecordError(const std::string& error);
 

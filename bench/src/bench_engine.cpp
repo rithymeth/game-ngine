@@ -22,6 +22,7 @@ namespace {
 struct Velocity {
     Vec3 value;
 };
+struct QueryMarker {};
 
 struct EcsState {
     World world;
@@ -29,6 +30,15 @@ struct EcsState {
 };
 EcsState& Ecs() {
     static EcsState s;
+    return s;
+}
+
+struct QueryState {
+    World world;
+    usize matches = 0;
+};
+QueryState& Query() {
+    static QueryState s;
     return s;
 }
 
@@ -63,6 +73,23 @@ AETHER_BENCH_SETUP(
     },
     [] {
         Ecs().world.ForEach<Transform, Velocity>([](Transform& t, Velocity& v) { t.position = t.position + v.value * 0.016f; });
+    });
+
+// Query a component subset across two archetypes, matching half the mixed entities.
+AETHER_BENCH_SETUP(
+    "ecs/query_50k_of_100k", 10,
+    [] {
+        QueryState& s = Query();
+        for (int i = 0; i < 100'000; ++i) {
+            if ((i & 1) == 0) s.world.CreateEntity(Transform{}, QueryMarker{});
+            else s.world.CreateEntity(Transform{});
+        }
+    },
+    [] {
+        QueryState& s = Query();
+        s.matches = 0;
+        s.world.ForEach<Transform, QueryMarker>([&](Transform&, QueryMarker&) { ++s.matches; });
+        if (s.matches != 50'000) std::abort();
     });
 
 // Creating and destroying 10k entities (structural changes, which move rows between chunks).

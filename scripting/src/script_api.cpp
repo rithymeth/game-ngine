@@ -180,7 +180,7 @@ const char* EventName(input::ActionEvent event) {
 
 } // namespace
 
-void ScriptSystem::InstallApi() {
+void ScriptSystem::InstallApi(bool install_kit_apis) {
     lua_State* L = host_.State();
     lua_pushlightuserdata(L, this);
     lua_setfield(L, LUA_REGISTRYINDEX, kSystemKey);
@@ -211,10 +211,19 @@ void ScriptSystem::InstallApi() {
 
     InstallSaveApi(host_); // SaveGames (Phase 28 step 4)
     InstallLocApi(host_);  // Localization (Phase 29 step 2)
-    InstallQuestsApi(host_); // Quests (Phase 30 step 7c), inert if the kit isn't built
-    InstallInteractionApi(host_); // Interaction (Phase 30 step 7b), inert if the kit isn't built
-    InstallInventoryApi(host_); // Inventory (Phase 30 step 7a), inert if the kit isn't built
-    InstallGameplayApi(host_); // GameplayTags, Attributes, Effects, Abilities (Phase 30 step 5)
+    if (install_kit_apis) {
+        InstallKitApi("Quests");
+        InstallKitApi("Interaction");
+        InstallKitApi("Inventory");
+        InstallKitApi("Gameplay");
+    }
+}
+
+void ScriptSystem::InstallKitApi(const std::string& kit_name) {
+    if (kit_name == "Gameplay") InstallGameplayApi(host_);
+    else if (kit_name == "Inventory") InstallInventoryApi(host_);
+    else if (kit_name == "Interaction") InstallInteractionApi(host_);
+    else if (kit_name == "Quests") InstallQuestsApi(host_);
 }
 
 void ScriptSystem::RecordError(const std::string& error) {

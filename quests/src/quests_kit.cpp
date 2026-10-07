@@ -15,6 +15,10 @@ public:
     const char* Name() const override { return "Quests"; }
     std::vector<std::string> Deps() const override { return {"Gameplay"}; }
     void RegisterComponents() override { RegisterQuestComponents(); }
+    void InstallScriptApi(void* context) override {
+        auto* api = static_cast<kit::KitScriptApiContext*>(context);
+        if (api && api->install) api->install(Name());
+    }
     void LoadAssets(const kit::KitAssetContext& context) override {
         if (!quests_ || !effects_) return;
         std::vector<std::string> paths;

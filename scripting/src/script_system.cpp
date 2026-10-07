@@ -149,9 +149,12 @@ ScriptClassInfo ScriptSystem::DescribeSource(LuauHost& host, const std::string& 
 }
 
 ScriptSystem::ScriptSystem(LuauHost& host, World& world, GuidIndex& guids, SourceLoader loader)
+    : ScriptSystem(host, world, guids, std::move(loader), true) {}
+
+ScriptSystem::ScriptSystem(LuauHost& host, World& world, GuidIndex& guids, SourceLoader loader, bool install_kit_apis)
     : host_(host), world_(world), guids_(guids), loader_(std::move(loader)) {
     host_.BindWorld(&world_, &guids_);
-    InstallApi();
+    InstallApi(install_kit_apis);
 }
 
 ScriptSystem::~ScriptSystem() {

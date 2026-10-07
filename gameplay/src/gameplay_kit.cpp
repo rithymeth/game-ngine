@@ -13,6 +13,10 @@ public:
     GameplayKit(EffectLibrary* effects, AbilityLibrary* abilities) : effects_(effects), abilities_(abilities) {}
     const char* Name() const override { return "Gameplay"; }
     void RegisterComponents() override { RegisterGameplayComponents(); }
+    void InstallScriptApi(void* context) override {
+        auto* api = static_cast<kit::KitScriptApiContext*>(context);
+        if (api && api->install) api->install(Name());
+    }
     void LoadAssets(const kit::KitAssetContext& context) override {
         if (effects_) {
             std::vector<std::string> paths;

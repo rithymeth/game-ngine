@@ -663,9 +663,12 @@ void Game::StartRuntime() {
             source.assign(bytes.begin(), bytes.end());
             name = asset->path;
             return true;
-        });
+        }, false);
     runtime_->scripts->Register(*lifecycle_);
     runtime_->scripts->BindInput(&input_);
+    kit::KitScriptApiContext api_context;
+    api_context.install = [this](const std::string& kit_name) { runtime_->scripts->InstallKitApi(kit_name); };
+    kits_.InstallScriptApi(&api_context);
 #endif
 }
 

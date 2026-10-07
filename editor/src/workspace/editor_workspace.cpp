@@ -31,6 +31,8 @@
 
 #include "aether/blueprint/nodes.h"
 #include "aether/core/console.h"
+#include "aether/gameplay/gameplay_kit.h"
+#include "aether/kit/kit.h"
 #include "aether/nav/components.h"
 #include "aether/nav/crowd.h"
 #include "aether/platform/filesystem.h"
@@ -617,7 +619,9 @@ struct EditorWorkspace::Impl {
     // A small sample world to look at; the host points the debugger at the live world with SetGameplayWorld.
     void BuildGameplay() {
         using namespace aether::gas;
-        RegisterGameplayComponents();
+        aether::kit::KitRegistry gameplay_kits;
+        gameplay_kits.Add(MakeGameplayKit());
+        if (gameplay_kits.Resolve()) gameplay_kits.RegisterComponents();
         GameplayEffect burning;
         burning.name = "Burning";
         burning.duration_policy = GameplayEffect::Duration::Timed;
