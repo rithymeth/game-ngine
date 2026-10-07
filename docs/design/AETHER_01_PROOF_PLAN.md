@@ -100,6 +100,30 @@ The Windows physics-on full suite also passes **1,043/1,043** unit tests and
 **19/19 CTest entries**. The current 32-asset cook passes startup scene/HUD pixel
 checks on both D3D12 and Vulkan.
 
+## Packaged audio hardening recorded 2026-10-08
+
+The current local engine changes connect the existing AudioSystem, streamed
+WAV/Ogg/FLAC bank, cue player, mixer and platform/null output to Game. Sound cues
+(`.acue`) now receive asset registration and can be cooked. Bound and unbound
+sequence audio keys play, stop and fade through existing components/cue APIs.
+Master/Music/SFX/Voice settings apply to the mixer. Headless tests render real
+samples without opening an audio device. Cooked fixture playback passes after
+its source Content folder is removed.
+
+This verification exposed and fixes two existing scene-replacement lifetime
+issues: gameplay kit scheduler stages kept pointers into the old Runtime, and
+sequence cache data was cleared before its players. Kit stages now resolve the
+current runtime while custom scheduler stages remain registered. Sequence
+players are torn down before their cached data. The selected player/game/asset
+checks pass **42/42**, including audio playback/volume/listener, bound/unbound
+sequence fades, invalid wave diagnostics, source-free cook/play and repeated
+scene replacement. Local CTest passes **19/19**, including **1,052/1,052** unit
+tests and **2/2** functional checks; the physics-off suite passes **1,012/1,012**.
+The windowed player still passes the startup scene/HUD pixel check.
+Game-specific sound content,
+cinematic presentation and pause/settings menus remain open; this engine host
+work does not establish those game acceptance items.
+
 ## Delivery sequence
 
 ### Combat roster verification recorded 2026-10-08

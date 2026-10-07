@@ -40,6 +40,7 @@ AETHER_TEST(AssetGuid_StringAndReflection) {
     AETHER_CHECK(reflect::ToJson(reflect::Reflect<AssetGuid>(), &g) == ToString(g)); // string via converter
     AETHER_CHECK(ImporterForExtension("a/b/Brick.PNG") == "Texture");
     AETHER_CHECK(ImporterForExtension("hero.glb") == "Model");
+    AETHER_CHECK(ImporterForExtension("Audio/alert.ACUE") == "SoundCue");
     AETHER_CHECK(ImporterForExtension("notes.txt").empty());
 }
 

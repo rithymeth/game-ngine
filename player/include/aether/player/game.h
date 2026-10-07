@@ -48,6 +48,10 @@ namespace aether::sprite2d {
 class Physics2D;
 }
 
+namespace aether::audio {
+class AudioSystem;
+}
+
 namespace aether::player {
 
 // Manifest.json, as the cooker writes it (§25.2).
@@ -221,11 +225,18 @@ public:
     // warnings (a damaged file gives the defaults, with a line saying so).
     std::vector<std::string> LoadSettings(const SettingsTargets& targets);
 
+    // The existing audio system over cooked WAV/Ogg/FLAC and .acue assets.
+    // Tests/headless games render deterministically on Tick; the window host
+    // starts device output explicitly. Scene replacement stops the old output.
+    audio::AudioSystem* AudioSystem();
+    bool StartAudioOutput(std::string* error = nullptr);
+
 private:
     const PrefabData* FindPrefab(const assets::AssetGuid& guid);
     // A level sequence by asset path (cached for the scene; null with a warning if unreadable).
     const seq::LevelSequence* FindSequence(const std::string& path);
     void BuildFrame();
+    void BuildRuntimeStages();
     void LoadInputAssets();
     void WatchSettingsLanguage(); // the settings' language is the Localization's
     void LoadLocalization(); // every StringTable asset in the package, once
@@ -233,6 +244,7 @@ private:
     // (Re)activates every input context with the settings' rebinds applied.
     void ActivateInputContexts();
     void StartRuntime(); // scripts and Blueprints for the loaded scene
+    void ApplyAudioSettings();
     void BuildKits();    // adds the kits this build has and orders them
     // A kit stage as the registry describes it: its name and `after` list, for the system that runs it.
     void ApplyKitStage(SystemDesc& system, const std::string& name) const;

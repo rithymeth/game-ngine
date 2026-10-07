@@ -13,6 +13,28 @@ and runs the game without the editor.
 In the editor, **Tools > Project > Build and Package** does the same with a
 progress bar, a log, a Cancel button and Launch.
 
+## Packaged audio
+
+The player runs the existing `AudioSource`, `AudioListener` and `ReverbZone`
+components, sound cues (`.acue`) and sequence audio keys. Cue names and wave names
+are content-relative paths, such as `Audio/shot.acue` and `Audio/shot.wav`.
+WAV, Ogg Vorbis and FLAC waves are streamed from the package. Put the cue/wave
+folders and sequence folders on the project's **always cook** list: references
+stored as path strings are not GUID dependencies followed by the cooker.
+
+Windowed players start the platform audio output, with the existing null backend
+when no device is available. Headless runs render audio on the frame thread;
+they do not open a device. Master/Music/SFX/Voice volumes follow player settings.
+Invalid packaged waves are reported during scene load; cue diagnostics are
+available from the audio system. Animation sequence keys still require a player
+animation host.
+
+C++ hosts can inspect `Game::AudioSystem()` after loading a scene. Call
+`Game::StartAudioOutput()` to enable device output. Replacing the scene stops the
+old output; call it again for the new scene. Scheduled gameplay kit stages follow
+the replacement scene while custom stages registered through `Game::Systems()`
+remain registered.
+
 ## Configurations
 
 **Debug** logs everything; **Development** logs info and a stats line every

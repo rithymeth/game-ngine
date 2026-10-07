@@ -1,5 +1,7 @@
 #include "aether/player/game.h"
 #include "aether/core/json_util.h"
+#include "aether/audio/backend.h"
+#include "aether/audio/audio_system.h"
 
 #include "aether/sequencer/sequence_system.h"
 
@@ -33,6 +35,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <system_error>
 
 #include "aether/blueprint/graph.h"
@@ -239,6 +242,13 @@ bool Game::HasScripting() { return AETHER_GAME_SCRIPTING != 0; }
 // before any of them.
 struct Game::Runtime {
     kit::KitEventBus kit_events;
+    std::map<std::string, SystemDesc> stages;
+    audio::SoundBank sounds;
+    std::map<std::string, audio::SoundCue> cues;
+    audio::Mixer mixer;
+    std::unique_ptr<audio::AudioSystem> audio;
+    std::unique_ptr<audio::AudioOutput> output; // stops its thread before audio/mixer/bank destruction
+    std::map<std::pair<u32, std::string>, audio::CueHandle> sequence_audio;
     std::unique_ptr<seq::SequenceSystem> sequences;
     std::unique_ptr<gas::AttributeSystem> attributes; // Phase 30
     std::unique_ptr<gas::EffectSystem> effects;
@@ -307,6 +317,7 @@ void Game::RefreshSaveContext() {
 void Game::WatchSettingsLanguage() {
     settings_->AddObserver([this](const save::GameSettings& now, const save::GameSettings& before) {
         if (now.language != before.language) localization_->SetLanguage(now.language);
+        ApplyAudioSettings();
     });
 }
 
@@ -338,7 +349,25 @@ std::vector<std::string> Game::LoadSettings(const SettingsTargets& targets) {
     for (const std::string& line : ApplySettings(settings_->Get(), settings_targets_)) AETHER_LOG_INFO("Player", "Settings: applied %s", line.c_str());
     if (input_loaded_) ActivateInputContexts(); // the loaded file's rebinds
     localization_->SetLanguage(settings_->Get().language);
+    ApplyAudioSettings();
     return warnings;
+}
+
+audio::AudioSystem* Game::AudioSystem() { return runtime_ ? runtime_->audio.get() : nullptr; }
+
+void Game::ApplyAudioSettings() {
+    if (!runtime_ || !runtime_->audio) return;
+    SettingsTargets targets;
+    targets.set_bus_volume_db = [this](const std::string& bus, f32 db) { runtime_->audio->SetBusVolume(bus, db); };
+    ApplySettings(settings_->Get(), targets);
+}
+
+bool Game::StartAudioOutput(std::string* error) {
+    if (!runtime_ || !runtime_->audio) return Fail(error, "Load a scene before starting audio output");
+    if (!runtime_->output) {
+        runtime_->output = std::make_unique<audio::AudioOutput>(runtime_->mixer, audio::CreateDefaultBackend(runtime_->mixer.SampleRate()));
+    }
+    return runtime_->output->Start(480, error);
 }
 
 std::vector<std::string> Game::StartModules() {
@@ -412,8 +441,8 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     StartModules(); // their components, before the scene names them
     bp::RegisterBlueprintComponents(); // BlueprintInstance, before scene deserialization
     RegisterSequenceComponents(); // SequenceComponent (§27.2)
+    RegisterAudioComponents(); // cooked AudioSource/AudioListener/ReverbZone before deserialization
     kits_.RegisterComponents(); // the gameplay kits' components: attributes, tags, items, interactables, quests (§30)
-    sequences_.clear(); // the old scene's sequences go with its runtime (below)
     sprite2d::RegisterSprite2DComponents(); // sprites and tilemaps (§26.6)
     sprite2d::RegisterPhysics2DComponents(); // 2D bodies and colliders
     sprite2d::RegisterPlatformerComponents();
@@ -431,6 +460,7 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     LoadKitAssets(); // dependency order loads effects before abilities, items and quests
     EndPlay();
     runtime_.reset();
+    sequences_.clear(); // sequence players must be destroyed before their cached data
     physics2d_.reset();
     physics_.reset();
     auto world = std::make_unique<World>();
@@ -458,6 +488,7 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     lifecycle_ = std::make_unique<Lifecycle>(*world_, guids_);
     RefreshSaveContext();
     StartRuntime();
+    BuildRuntimeStages();
     // 2D physics: the scene's tilemaps are read from the package when first needed.
     tilemaps_.clear();
     tilesets_.clear();
@@ -563,6 +594,34 @@ void Game::ActivateInputContexts() {
 
 void Game::StartRuntime() {
     runtime_ = std::make_unique<Runtime>();
+    runtime_->mixer.AddDefaultBuses();
+    for (const auto& asset : package_.Manifest().assets) {
+        std::string extension = stdfs::path(asset.path).extension().string();
+        std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (extension != ".wav" && extension != ".ogg" && extension != ".flac" && extension != ".acue") continue;
+        auto bytes = std::make_shared<std::vector<u8>>();
+        std::string error;
+        if (!package_.ReadContent(asset.path, *bytes, &error)) {
+            warnings_.push_back("Audio: " + asset.path + ": " + error);
+            continue;
+        }
+        if (extension == ".acue") {
+            audio::SoundCue cue;
+            if (!audio::LoadCue(std::string(bytes->begin(), bytes->end()), cue, &error)) {
+                warnings_.push_back("Audio: " + asset.path + ": " + error);
+                continue;
+            }
+            runtime_->cues.emplace(asset.path, std::move(cue));
+        } else if (!runtime_->sounds.AddStreamed(asset.path, bytes, &error)) {
+            warnings_.push_back("Audio: " + asset.path + ": " + error);
+        }
+    }
+    runtime_->audio = std::make_unique<audio::AudioSystem>(*world_, runtime_->mixer, runtime_->sounds,
+        [this](const std::string& path) -> const audio::SoundCue* {
+            const auto it = runtime_->cues.find(path);
+            return it == runtime_->cues.end() ? nullptr : &it->second;
+        }, &guids_);
+    ApplyAudioSettings();
     runtime_->blueprints = std::make_unique<bp::BlueprintSystem>(*world_);
     runtime_->blueprints->SetLoader([this](const assets::AssetGuid& guid, bp::Blueprint& out, std::string& name) {
         const GameManifest::Asset* asset = package_.FindAssetByGuid(assets::ToString(guid));
@@ -656,6 +715,218 @@ void Game::BeginPlay() {
 
 void Game::EndPlay() {
     if (lifecycle_ && lifecycle_->IsPlaying()) lifecycle_->EndPlay();
+    if (runtime_) {
+        if (runtime_->output) runtime_->output->Stop();
+        if (runtime_->audio) runtime_->audio->StopAll();
+        runtime_->sequence_audio.clear();
+    }
+}
+
+
+void Game::BuildRuntimeStages() {
+    // Attribute changes (§30.2) reach the changed entity's Blueprint as
+    // Event.OnAttributeChanged (name, old, new), after gameplay has run.
+    // Lasting effects (§30.3) tick before the attributes they change are reported.
+    SystemDesc effects = gas::MakeEffectSystem(runtime_ ? runtime_->effects.get() : nullptr, [this](const gas::EffectEvent& e) {
+        if (!runtime_) return;
+#if AETHER_GAME_SCRIPTING
+        // A script hears it as OnEffectApplied / OnEffectRemoved (effect, handle).
+        if (runtime_->scripts) runtime_->scripts->SendEvent(e.entity, e.applied ? "OnEffectApplied" : "OnEffectRemoved", {e.effect, static_cast<f64>(e.handle)});
+#endif
+        if (!runtime_->blueprints) return;
+        const bp::VmValue args[] = {e.effect, static_cast<i32>(e.handle)};
+        runtime_->blueprints->VM().Dispatch(e.entity, e.applied ? gas::EffectSystem::kAppliedEvent : gas::EffectSystem::kRemovedEvent, args);
+    });
+    ApplyKitStage(effects, "Player.Effects");
+    runtime_->stages[effects.name] = std::move(effects);
+    // Abilities (§30.4) run after this frame's effects, so cooldown tags are current when scripts activate.
+    SystemDesc abilities = gas::MakeAbilitySystem(runtime_ ? runtime_->abilities.get() : nullptr, [this](const gas::AbilityEvent& e) {
+        if (!runtime_) return;
+        using Kind = gas::AbilityEvent::Kind;
+        const i32 handle = static_cast<i32>(e.handle);
+#if AETHER_GAME_SCRIPTING
+        if (runtime_->scripts) {
+            const f64 h = static_cast<f64>(e.handle);
+            switch (e.kind) {
+            case Kind::Activated: runtime_->scripts->SendEvent(e.entity, "OnAbilityActivated", {e.ability, h}); break;
+            case Kind::Ended:
+            case Kind::Cancelled: runtime_->scripts->SendEvent(e.entity, "OnAbilityEnded", {e.ability, h, e.kind == Kind::Cancelled}); break;
+            case Kind::Failed: runtime_->scripts->SendEvent(e.entity, "OnAbilityFailed", {e.ability, std::string(gas::FailReasonName(e.reason))}); break;
+            }
+        }
+#endif
+        if (!runtime_->blueprints) return;
+        switch (e.kind) {
+        case Kind::Activated: {
+            const bp::VmValue args[] = {e.ability, handle};
+            runtime_->blueprints->VM().Dispatch(e.entity, gas::AbilitySystem::kActivatedEvent, args);
+            break;
+        }
+        case Kind::Ended:
+        case Kind::Cancelled: {
+            const bp::VmValue args[] = {e.ability, handle, e.kind == Kind::Cancelled};
+            runtime_->blueprints->VM().Dispatch(e.entity, gas::AbilitySystem::kEndedEvent, args);
+            break;
+        }
+        case Kind::Failed: {
+            const bp::VmValue args[] = {e.ability, std::string(gas::FailReasonName(e.reason))};
+            runtime_->blueprints->VM().Dispatch(e.entity, gas::AbilitySystem::kFailedEvent, args);
+            break;
+            }
+        }
+    });
+    ApplyKitStage(abilities, "Player.Abilities");
+    runtime_->stages[abilities.name] = std::move(abilities);
+#if AETHER_KIT_INVENTORY
+    // Inventory changes (§30.7) reach the owner's script and Blueprint, after effects have run.
+    SystemDesc inventory = inv::MakeInventorySystem(runtime_ ? runtime_->inventory.get() : nullptr, [this](const inv::ItemEvent& e) {
+        if (!runtime_) return;
+        using Kind = inv::ItemEvent::Kind;
+        // Quest objectives consume inventory events in the Quests stage,
+        // so Inventory has no direct dependency on the Quests kit.
+        if (kits_.Has("Quests")) runtime_->kit_events.Publish(e);
+#if AETHER_GAME_SCRIPTING
+        if (runtime_->scripts) {
+            const f64 n = static_cast<f64>(e.count);
+            switch (e.kind) {
+            case Kind::Added: runtime_->scripts->SendEvent(e.entity, "OnItemAdded", {e.item, n}); break;
+            case Kind::Removed: runtime_->scripts->SendEvent(e.entity, "OnItemRemoved", {e.item, n}); break;
+            case Kind::Equipped: runtime_->scripts->SendEvent(e.entity, "OnItemEquipped", {e.item, e.slot}); break;
+            case Kind::Unequipped: runtime_->scripts->SendEvent(e.entity, "OnItemUnequipped", {e.item, e.slot}); break;
+            case Kind::Used: runtime_->scripts->SendEvent(e.entity, "OnItemUsed", {e.item}); break;
+            }
+        }
+#endif
+        if (!runtime_->blueprints) return;
+        switch (e.kind) {
+        case Kind::Added: {
+            const bp::VmValue args[] = {e.item, e.count};
+            runtime_->blueprints->VM().Dispatch(e.entity, inv::InventorySystem::kAddedEvent, args);
+            break;
+        }
+        case Kind::Removed: {
+            const bp::VmValue args[] = {e.item, e.count};
+            runtime_->blueprints->VM().Dispatch(e.entity, inv::InventorySystem::kRemovedEvent, args);
+            break;
+        }
+        case Kind::Equipped:
+        case Kind::Unequipped: {
+            const bp::VmValue args[] = {e.item, e.slot};
+            runtime_->blueprints->VM().Dispatch(e.entity, e.kind == Kind::Equipped ? inv::InventorySystem::kEquippedEvent : inv::InventorySystem::kUnequippedEvent, args);
+            break;
+        }
+        case Kind::Used: {
+            const bp::VmValue args[] = {e.item};
+            runtime_->blueprints->VM().Dispatch(e.entity, inv::InventorySystem::kUsedEvent, args);
+            break;
+            }
+        }
+    });
+    ApplyKitStage(inventory, "Player.Inventory");
+    runtime_->stages[inventory.name] = std::move(inventory);
+#endif
+#if AETHER_KIT_INTERACTION
+    // Interaction (§30.8): cooldowns tick, and uses reach the target's script and Blueprint (OnInteract),
+    // failures the user's (OnInteractFailed).
+    SystemDesc interaction = interact::MakeInteractionSystem(runtime_ ? runtime_->interaction.get() : nullptr, [this](const interact::InteractionEvent& e) {
+        if (!runtime_) return;
+        const bool ok = e.kind == interact::InteractionEvent::Kind::Interacted;
+#if AETHER_GAME_SCRIPTING
+        if (runtime_->scripts) {
+            if (ok) runtime_->scripts->SendEvent(e.target, "OnInteract", {script::EntityRef{e.interactor}});
+            else runtime_->scripts->SendEvent(e.interactor, "OnInteractFailed", {script::EntityRef{e.target}, std::string(interact::ReasonName(e.reason))});
+        }
+#endif
+        if (!runtime_->blueprints) return;
+        if (ok) {
+            const bp::VmValue args[] = {e.interactor};
+            runtime_->blueprints->VM().Dispatch(e.target, interact::InteractionSystem::kInteractEvent, args);
+        } else {
+            const bp::VmValue args[] = {e.target, std::string(interact::ReasonName(e.reason))};
+            runtime_->blueprints->VM().Dispatch(e.interactor, interact::InteractionSystem::kFailedEvent, args);
+        }
+    });
+    ApplyKitStage(interaction, "Player.Interaction");
+    runtime_->stages[interaction.name] = std::move(interaction);
+#endif
+#if AETHER_KIT_QUESTS
+    // Quest changes (§30.10) reach the owner's script and Blueprint; reward items go to the inventory kit.
+    SystemDesc quests = quest::MakeQuestsSystem(runtime_ ? runtime_->quests.get() : nullptr, [this](quest::QuestSystem& system) {
+        if (!runtime_) return;
+#if AETHER_KIT_INVENTORY
+        for (const inv::ItemEvent& item : runtime_->kit_events.Drain<inv::ItemEvent>()) {
+            if (item.kind == inv::ItemEvent::Kind::Added || item.kind == inv::ItemEvent::Kind::Removed) {
+                system.Notify(item.entity, quest::Objective::Kind::Count, item.item,
+                              item.kind == inv::ItemEvent::Kind::Added ? item.count : -item.count);
+            }
+        }
+#endif
+    }, [this](const quest::QuestEvent& e) {
+        if (!runtime_) return;
+        using Kind = quest::QuestEvent::Kind;
+#if AETHER_KIT_INVENTORY
+        if (e.kind == Kind::Completed && runtime_->inventory) {
+            for (const quest::RewardItem& reward : e.reward_items) runtime_->inventory->Add(e.entity, reward.item, reward.count);
+        }
+#endif
+#if AETHER_GAME_SCRIPTING
+        if (runtime_->scripts) {
+            const f64 progress = static_cast<f64>(e.progress), required = static_cast<f64>(e.required);
+            switch (e.kind) {
+            case Kind::Started: runtime_->scripts->SendEvent(e.entity, "OnQuestStarted", {e.quest}); break;
+            case Kind::ObjectiveProgress: runtime_->scripts->SendEvent(e.entity, "OnQuestProgress", {e.quest, e.objective, progress, required}); break;
+            case Kind::ObjectiveCompleted: runtime_->scripts->SendEvent(e.entity, "OnQuestObjectiveCompleted", {e.quest, e.objective}); break;
+            case Kind::Completed: runtime_->scripts->SendEvent(e.entity, "OnQuestCompleted", {e.quest}); break;
+            case Kind::Failed: runtime_->scripts->SendEvent(e.entity, "OnQuestFailed", {e.quest}); break;
+            case Kind::Abandoned: runtime_->scripts->SendEvent(e.entity, "OnQuestAbandoned", {e.quest}); break;
+            }
+        }
+#endif
+        if (!runtime_->blueprints) return;
+        switch (e.kind) {
+        case Kind::Started: {
+            const bp::VmValue args[] = {e.quest};
+            runtime_->blueprints->VM().Dispatch(e.entity, "Event.OnQuestStarted", args);
+            break;
+        }
+        case Kind::ObjectiveProgress: {
+            const bp::VmValue args[] = {e.quest, e.objective, e.progress, e.required};
+            runtime_->blueprints->VM().Dispatch(e.entity, "Event.OnQuestProgress", args);
+            break;
+        }
+        case Kind::Completed: {
+            const bp::VmValue args[] = {e.quest};
+            runtime_->blueprints->VM().Dispatch(e.entity, "Event.OnQuestCompleted", args);
+            break;
+        }
+        case Kind::Failed: {
+            const bp::VmValue args[] = {e.quest};
+            runtime_->blueprints->VM().Dispatch(e.entity, "Event.OnQuestFailed", args);
+            break;
+        }
+        case Kind::ObjectiveCompleted:
+        case Kind::Abandoned: break;
+        }
+    });
+    ApplyKitStage(quests, "Player.Quests");
+    // Reward items go to the inventory and objectives follow its events, so quests run after the kits it can hear from.
+    for (const char* other : {"Inventory", "Interaction"}) {
+        if (kits_.Has(other)) quests.after.push_back(std::string("Player.") + other);
+    }
+    runtime_->stages[quests.name] = std::move(quests);
+#endif
+    SystemDesc attributes = gas::MakeAttributeSystem(runtime_ ? runtime_->attributes.get() : nullptr, [this](const gas::AttributeEvent& e) {
+        if (!runtime_) return;
+#if AETHER_GAME_SCRIPTING
+        // A script hears it as OnAttributeChanged (name, old, new).
+        if (runtime_->scripts) runtime_->scripts->SendEvent(e.entity, "OnAttributeChanged", {e.name, static_cast<f64>(e.old_value), static_cast<f64>(e.new_value)});
+#endif
+        if (!runtime_->blueprints) return;
+        const bp::VmValue args[] = {e.name, e.old_value, e.new_value};
+        runtime_->blueprints->VM().Dispatch(e.entity, gas::AttributeSystem::kChangedEvent, args);
+    });
+    ApplyKitStage(attributes, "Player.Attributes");
+    runtime_->stages[attributes.name] = std::move(attributes);
 }
 
 void Game::BuildFrame() {
@@ -729,10 +1000,65 @@ void Game::BuildFrame() {
                 const bp::VmValue args[] = {e.name};
                 runtime_->blueprints->VM().Dispatch(e.entity, seq::SequenceSystem::kFinishedEvent, args);
             }
-            // Audio and Animation keys are collected for hosts with those systems; the player has none yet.
+            else if (e.kind == seq::SequenceEvent::Kind::Audio && runtime_->audio) {
+                if (!e.subject.IsNull() && world_->IsAlive(e.subject)) {
+                    AudioSource* source = world_->GetComponent<AudioSource>(e.subject);
+                    if (!source) { world_->AddComponent(e.subject, AudioSource{}); source = world_->GetComponent<AudioSource>(e.subject); source->auto_play = false; }
+                    if (e.payload == "play" || e.payload == "fade_in") {
+                        if (source->cue != e.name) source->SetCue(e.name);
+                        source->SetVolume(e.value);
+                        if (e.payload == "play") source->Play();
+                        else source->FadeIn(e.fade);
+                    }
+                    else if (e.payload == "fade_out") source->FadeOut(e.fade);
+                    else if (e.payload == "stop") source->Stop();
+                } else {
+                    const auto key = std::make_pair(e.entity.index, e.name);
+                    auto& handle = runtime_->sequence_audio[key];
+                    if (e.payload == "stop" || e.payload == "fade_out") {
+                        runtime_->audio->Player().Stop(handle, e.payload == "fade_out" ? e.fade : 0.0f);
+                    } else {
+                        const auto cue = runtime_->cues.find(e.name);
+                        if (cue != runtime_->cues.end()) {
+                            runtime_->audio->Player().Stop(handle);
+                            audio::CuePlayParams params;
+                            params.force_2d = true;
+                            params.volume_db = e.value;
+                            params.fade_in = e.payload == "fade_in" ? e.fade : 0.0f;
+                            handle = runtime_->audio->Player().Play(cue->second, params);
+                        } else warnings_.push_back("Sequence audio cue missing: " + e.name);
+                    }
+                }
+            }
+            // Animation keys still require an animation host in the player.
         }
     };
     scheduler_.Add(std::move(sequencer));
+    SystemDesc audio;
+    audio.name = "Player.Audio";
+    audio.phase = SystemPhase::Update;
+    audio.after = {"Player.Sequencer"};
+    audio.main_thread_only = true;
+    audio.run = [this](World&, const FrameContext& frame) {
+        if (!runtime_ || !runtime_->audio) return;
+        runtime_->audio->Update(frame.dt);
+        std::erase_if(runtime_->sequence_audio, [this](const auto& item) { return !runtime_->audio->Player().IsPlaying(item.second); });
+        if (runtime_->blueprints) {
+            for (const auto& event : runtime_->audio->Events()) {
+                const bp::VmValue args[] = {event.cue};
+                runtime_->blueprints->VM().Dispatch(event.entity, audio::AudioSystem::kFinishedEvent, args);
+            }
+        }
+        if ((!runtime_->output || !runtime_->output->Running()) &&
+            (runtime_->mixer.VoiceCount() > 0 || runtime_->audio->Player().ActiveCount() > 0)) {
+            const u32 frames = static_cast<u32>(std::clamp(frame.dt, 0.0f, 0.25f) * runtime_->mixer.SampleRate());
+            if (frames > 0) {
+                std::vector<f32> samples(static_cast<usize>(frames) * 2);
+                runtime_->mixer.Render(samples.data(), frames);
+            }
+        }
+    };
+    scheduler_.Add(std::move(audio));
     // Finished saves (§28.7): queued writes are delivered here, on the main
     // thread, then Blueprints hear Event.OnSaveFinished (slot, success).
     // Luau's callbacks run from the same Pump.
@@ -751,209 +1077,20 @@ void Game::BuildFrame() {
         }
     };
     scheduler_.Add(std::move(save_system));
-    // Attribute changes (§30.2) reach the changed entity's Blueprint as
-    // Event.OnAttributeChanged (name, old, new), after gameplay has run.
-    // Lasting effects (§30.3) tick before the attributes they change are reported.
-    SystemDesc effects = gas::MakeEffectSystem(runtime_ ? runtime_->effects.get() : nullptr, [this](const gas::EffectEvent& e) {
-        if (!runtime_) return;
-#if AETHER_GAME_SCRIPTING
-        // A script hears it as OnEffectApplied / OnEffectRemoved (effect, handle).
-        if (runtime_->scripts) runtime_->scripts->SendEvent(e.entity, e.applied ? "OnEffectApplied" : "OnEffectRemoved", {e.effect, static_cast<f64>(e.handle)});
-#endif
-        if (!runtime_->blueprints) return;
-        const bp::VmValue args[] = {e.effect, static_cast<i32>(e.handle)};
-        runtime_->blueprints->VM().Dispatch(e.entity, e.applied ? gas::EffectSystem::kAppliedEvent : gas::EffectSystem::kRemovedEvent, args);
-    });
-    ApplyKitStage(effects, "Player.Effects");
-    scheduler_.Add(std::move(effects));
-    // Abilities (§30.4) run after this frame's effects, so cooldown tags are current when scripts activate.
-    SystemDesc abilities = gas::MakeAbilitySystem(runtime_ ? runtime_->abilities.get() : nullptr, [this](const gas::AbilityEvent& e) {
-        if (!runtime_) return;
-        using Kind = gas::AbilityEvent::Kind;
-        const i32 handle = static_cast<i32>(e.handle);
-#if AETHER_GAME_SCRIPTING
-        if (runtime_->scripts) {
-            const f64 h = static_cast<f64>(e.handle);
-            switch (e.kind) {
-            case Kind::Activated: runtime_->scripts->SendEvent(e.entity, "OnAbilityActivated", {e.ability, h}); break;
-            case Kind::Ended:
-            case Kind::Cancelled: runtime_->scripts->SendEvent(e.entity, "OnAbilityEnded", {e.ability, h, e.kind == Kind::Cancelled}); break;
-            case Kind::Failed: runtime_->scripts->SendEvent(e.entity, "OnAbilityFailed", {e.ability, std::string(gas::FailReasonName(e.reason))}); break;
-            }
-        }
-#endif
-        if (!runtime_->blueprints) return;
-        switch (e.kind) {
-        case Kind::Activated: {
-            const bp::VmValue args[] = {e.ability, handle};
-            runtime_->blueprints->VM().Dispatch(e.entity, gas::AbilitySystem::kActivatedEvent, args);
-            break;
-        }
-        case Kind::Ended:
-        case Kind::Cancelled: {
-            const bp::VmValue args[] = {e.ability, handle, e.kind == Kind::Cancelled};
-            runtime_->blueprints->VM().Dispatch(e.entity, gas::AbilitySystem::kEndedEvent, args);
-            break;
-        }
-        case Kind::Failed: {
-            const bp::VmValue args[] = {e.ability, std::string(gas::FailReasonName(e.reason))};
-            runtime_->blueprints->VM().Dispatch(e.entity, gas::AbilitySystem::kFailedEvent, args);
-            break;
-            }
-        }
-    });
-    ApplyKitStage(abilities, "Player.Abilities");
-    scheduler_.Add(std::move(abilities));
-#if AETHER_KIT_INVENTORY
-    // Inventory changes (§30.7) reach the owner's script and Blueprint, after effects have run.
-    SystemDesc inventory = inv::MakeInventorySystem(runtime_ ? runtime_->inventory.get() : nullptr, [this](const inv::ItemEvent& e) {
-        if (!runtime_) return;
-        using Kind = inv::ItemEvent::Kind;
-        // Quest objectives consume inventory events in the Quests stage,
-        // so Inventory has no direct dependency on the Quests kit.
-        if (kits_.Has("Quests")) runtime_->kit_events.Publish(e);
-#if AETHER_GAME_SCRIPTING
-        if (runtime_->scripts) {
-            const f64 n = static_cast<f64>(e.count);
-            switch (e.kind) {
-            case Kind::Added: runtime_->scripts->SendEvent(e.entity, "OnItemAdded", {e.item, n}); break;
-            case Kind::Removed: runtime_->scripts->SendEvent(e.entity, "OnItemRemoved", {e.item, n}); break;
-            case Kind::Equipped: runtime_->scripts->SendEvent(e.entity, "OnItemEquipped", {e.item, e.slot}); break;
-            case Kind::Unequipped: runtime_->scripts->SendEvent(e.entity, "OnItemUnequipped", {e.item, e.slot}); break;
-            case Kind::Used: runtime_->scripts->SendEvent(e.entity, "OnItemUsed", {e.item}); break;
-            }
-        }
-#endif
-        if (!runtime_->blueprints) return;
-        switch (e.kind) {
-        case Kind::Added: {
-            const bp::VmValue args[] = {e.item, e.count};
-            runtime_->blueprints->VM().Dispatch(e.entity, inv::InventorySystem::kAddedEvent, args);
-            break;
-        }
-        case Kind::Removed: {
-            const bp::VmValue args[] = {e.item, e.count};
-            runtime_->blueprints->VM().Dispatch(e.entity, inv::InventorySystem::kRemovedEvent, args);
-            break;
-        }
-        case Kind::Equipped:
-        case Kind::Unequipped: {
-            const bp::VmValue args[] = {e.item, e.slot};
-            runtime_->blueprints->VM().Dispatch(e.entity, e.kind == Kind::Equipped ? inv::InventorySystem::kEquippedEvent : inv::InventorySystem::kUnequippedEvent, args);
-            break;
-        }
-        case Kind::Used: {
-            const bp::VmValue args[] = {e.item};
-            runtime_->blueprints->VM().Dispatch(e.entity, inv::InventorySystem::kUsedEvent, args);
-            break;
-            }
-        }
-    });
-    ApplyKitStage(inventory, "Player.Inventory");
-    scheduler_.Add(std::move(inventory));
-#endif
-#if AETHER_KIT_INTERACTION
-    // Interaction (§30.8): cooldowns tick, and uses reach the target's script and Blueprint (OnInteract),
-    // failures the user's (OnInteractFailed).
-    SystemDesc interaction = interact::MakeInteractionSystem(runtime_ ? runtime_->interaction.get() : nullptr, [this](const interact::InteractionEvent& e) {
-        if (!runtime_) return;
-        const bool ok = e.kind == interact::InteractionEvent::Kind::Interacted;
-#if AETHER_GAME_SCRIPTING
-        if (runtime_->scripts) {
-            if (ok) runtime_->scripts->SendEvent(e.target, "OnInteract", {script::EntityRef{e.interactor}});
-            else runtime_->scripts->SendEvent(e.interactor, "OnInteractFailed", {script::EntityRef{e.target}, std::string(interact::ReasonName(e.reason))});
-        }
-#endif
-        if (!runtime_->blueprints) return;
-        if (ok) {
-            const bp::VmValue args[] = {e.interactor};
-            runtime_->blueprints->VM().Dispatch(e.target, interact::InteractionSystem::kInteractEvent, args);
-        } else {
-            const bp::VmValue args[] = {e.target, std::string(interact::ReasonName(e.reason))};
-            runtime_->blueprints->VM().Dispatch(e.interactor, interact::InteractionSystem::kFailedEvent, args);
-        }
-    });
-    ApplyKitStage(interaction, "Player.Interaction");
-    scheduler_.Add(std::move(interaction));
-#endif
-#if AETHER_KIT_QUESTS
-    // Quest changes (§30.10) reach the owner's script and Blueprint; reward items go to the inventory kit.
-    SystemDesc quests = quest::MakeQuestsSystem(runtime_ ? runtime_->quests.get() : nullptr, [this](quest::QuestSystem& system) {
-        if (!runtime_) return;
-#if AETHER_KIT_INVENTORY
-        for (const inv::ItemEvent& item : runtime_->kit_events.Drain<inv::ItemEvent>()) {
-            if (item.kind == inv::ItemEvent::Kind::Added || item.kind == inv::ItemEvent::Kind::Removed) {
-                system.Notify(item.entity, quest::Objective::Kind::Count, item.item,
-                              item.kind == inv::ItemEvent::Kind::Added ? item.count : -item.count);
-            }
-        }
-#endif
-    }, [this](const quest::QuestEvent& e) {
-        if (!runtime_) return;
-        using Kind = quest::QuestEvent::Kind;
-#if AETHER_KIT_INVENTORY
-        if (e.kind == Kind::Completed && runtime_->inventory) {
-            for (const quest::RewardItem& reward : e.reward_items) runtime_->inventory->Add(e.entity, reward.item, reward.count);
-        }
-#endif
-#if AETHER_GAME_SCRIPTING
-        if (runtime_->scripts) {
-            const f64 progress = static_cast<f64>(e.progress), required = static_cast<f64>(e.required);
-            switch (e.kind) {
-            case Kind::Started: runtime_->scripts->SendEvent(e.entity, "OnQuestStarted", {e.quest}); break;
-            case Kind::ObjectiveProgress: runtime_->scripts->SendEvent(e.entity, "OnQuestProgress", {e.quest, e.objective, progress, required}); break;
-            case Kind::ObjectiveCompleted: runtime_->scripts->SendEvent(e.entity, "OnQuestObjectiveCompleted", {e.quest, e.objective}); break;
-            case Kind::Completed: runtime_->scripts->SendEvent(e.entity, "OnQuestCompleted", {e.quest}); break;
-            case Kind::Failed: runtime_->scripts->SendEvent(e.entity, "OnQuestFailed", {e.quest}); break;
-            case Kind::Abandoned: runtime_->scripts->SendEvent(e.entity, "OnQuestAbandoned", {e.quest}); break;
-            }
-        }
-#endif
-        if (!runtime_->blueprints) return;
-        switch (e.kind) {
-        case Kind::Started: {
-            const bp::VmValue args[] = {e.quest};
-            runtime_->blueprints->VM().Dispatch(e.entity, "Event.OnQuestStarted", args);
-            break;
-        }
-        case Kind::ObjectiveProgress: {
-            const bp::VmValue args[] = {e.quest, e.objective, e.progress, e.required};
-            runtime_->blueprints->VM().Dispatch(e.entity, "Event.OnQuestProgress", args);
-            break;
-        }
-        case Kind::Completed: {
-            const bp::VmValue args[] = {e.quest};
-            runtime_->blueprints->VM().Dispatch(e.entity, "Event.OnQuestCompleted", args);
-            break;
-        }
-        case Kind::Failed: {
-            const bp::VmValue args[] = {e.quest};
-            runtime_->blueprints->VM().Dispatch(e.entity, "Event.OnQuestFailed", args);
-            break;
-        }
-        case Kind::ObjectiveCompleted:
-        case Kind::Abandoned: break;
-        }
-    });
-    ApplyKitStage(quests, "Player.Quests");
-    // Reward items go to the inventory and objectives follow its events, so quests run after the kits it can hear from.
-    for (const char* other : {"Inventory", "Interaction"}) {
-        if (kits_.Has(other)) quests.after.push_back(std::string("Player.") + other);
+    // Kit factories bind scene-owned systems. Keep their descriptors in the
+    // runtime and have the persistent scheduler resolve the current scene.
+    if (runtime_) for (const auto* name : {"Player.Effects", "Player.Abilities", "Player.Inventory",
+                                         "Player.Interaction", "Player.Quests", "Player.Attributes"}) {
+        const auto found = runtime_->stages.find(name);
+        if (found == runtime_->stages.end()) continue;
+        SystemDesc stage = found->second;
+        stage.run = [this, name](World& world, const FrameContext& frame) {
+            if (!runtime_) return;
+            const auto current = runtime_->stages.find(name);
+            if (current != runtime_->stages.end()) current->second.run(world, frame);
+        };
+        scheduler_.Add(std::move(stage));
     }
-    scheduler_.Add(std::move(quests));
-#endif
-    SystemDesc attributes = gas::MakeAttributeSystem(runtime_ ? runtime_->attributes.get() : nullptr, [this](const gas::AttributeEvent& e) {
-        if (!runtime_) return;
-#if AETHER_GAME_SCRIPTING
-        // A script hears it as OnAttributeChanged (name, old, new).
-        if (runtime_->scripts) runtime_->scripts->SendEvent(e.entity, "OnAttributeChanged", {e.name, static_cast<f64>(e.old_value), static_cast<f64>(e.new_value)});
-#endif
-        if (!runtime_->blueprints) return;
-        const bp::VmValue args[] = {e.name, e.old_value, e.new_value};
-        runtime_->blueprints->VM().Dispatch(e.entity, gas::AttributeSystem::kChangedEvent, args);
-    });
-    ApplyKitStage(attributes, "Player.Attributes");
-    scheduler_.Add(std::move(attributes));
     // Timers and Blueprint ticks run with the frame's Update.
     SystemDesc scripting;
     scripting.name = "Player.Scripting";
