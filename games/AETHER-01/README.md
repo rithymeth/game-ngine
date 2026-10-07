@@ -7,12 +7,13 @@ workflows.
 
 ## Current state
 
-**Prototype scaffold; the combat slice is not implemented yet.** The project
+**Greybox room scaffold; the combat slice is not implemented yet.** The project
 currently proves project creation, third-person input and camera follow,
-`CharacterMovement` collision against a floor, asset cooking, and headless
-player startup. The template's pickup targets are placeholders. There are no
-weapons, enemies, boss encounter, story sequence, save/checkpoint flow, or
-finished level art yet.
+`CharacterMovement` collision, textured model importing, asset cooking, and
+headless player startup. Its 387-entity scene contains a tiled room, collision
+walls and cryo-pod placeholders. The cube/checker art and template pickup
+targets are temporary. There are no weapons, enemies, boss encounter, story
+sequence, save/checkpoint flow, or finished level art yet.
 
 The first playable milestone is one connected HELIOS-7 room sequence: Kael
 wakes in cryo, retrieves the AEGIS Rifle, defeats a Scout, opens the service
