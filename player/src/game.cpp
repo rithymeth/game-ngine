@@ -410,6 +410,7 @@ bool Game::LoadStartupScene(std::string* error) {
 
 bool Game::LoadScene(const std::string& path, std::string* error) {
     StartModules(); // their components, before the scene names them
+    bp::RegisterBlueprintComponents(); // BlueprintInstance, before scene deserialization
     RegisterSequenceComponents(); // SequenceComponent (§27.2)
     kits_.RegisterComponents(); // the gameplay kits' components: attributes, tags, items, interactables, quests (§30)
     sequences_.clear(); // the old scene's sequences go with its runtime (below)
