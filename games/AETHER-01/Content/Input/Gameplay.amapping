@@ -282,7 +282,7 @@
             "chord_action": "",
             "one_shot": true,
             "time": 0.5,
-            "type": "Pressed"
+            "type": "Down"
           }
         ]
       },
@@ -297,7 +297,7 @@
             "chord_action": "",
             "one_shot": true,
             "time": 0.5,
-            "type": "Pressed"
+            "type": "Down"
           }
         ]
       },
@@ -428,6 +428,96 @@
         "action": "NewGame",
         "actuation": 0.5,
         "key": "N",
+        "modifiers": [],
+        "triggers": [
+          {
+            "chord_action": "",
+            "one_shot": true,
+            "time": 0.5,
+            "type": "Pressed"
+          }
+        ]
+      },
+      {
+        "$v": 1,
+        "action": "Weapon1",
+        "actuation": 0.5,
+        "key": "Num1",
+        "modifiers": [],
+        "triggers": [
+          {
+            "chord_action": "",
+            "one_shot": true,
+            "time": 0.5,
+            "type": "Pressed"
+          }
+        ]
+      },
+      {
+        "$v": 1,
+        "action": "Weapon1",
+        "actuation": 0.5,
+        "key": "GamepadDPadLeft",
+        "modifiers": [],
+        "triggers": [
+          {
+            "chord_action": "",
+            "one_shot": true,
+            "time": 0.5,
+            "type": "Pressed"
+          }
+        ]
+      },
+      {
+        "$v": 1,
+        "action": "Weapon2",
+        "actuation": 0.5,
+        "key": "Num2",
+        "modifiers": [],
+        "triggers": [
+          {
+            "chord_action": "",
+            "one_shot": true,
+            "time": 0.5,
+            "type": "Pressed"
+          }
+        ]
+      },
+      {
+        "$v": 1,
+        "action": "Weapon2",
+        "actuation": 0.5,
+        "key": "GamepadDPadUp",
+        "modifiers": [],
+        "triggers": [
+          {
+            "chord_action": "",
+            "one_shot": true,
+            "time": 0.5,
+            "type": "Pressed"
+          }
+        ]
+      },
+      {
+        "$v": 1,
+        "action": "Weapon3",
+        "actuation": 0.5,
+        "key": "Num3",
+        "modifiers": [],
+        "triggers": [
+          {
+            "chord_action": "",
+            "one_shot": true,
+            "time": 0.5,
+            "type": "Pressed"
+          }
+        ]
+      },
+      {
+        "$v": 1,
+        "action": "Weapon3",
+        "actuation": 0.5,
+        "key": "GamepadDPadRight",
         "modifiers": [],
         "triggers": [
           {

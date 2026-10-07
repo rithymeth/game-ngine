@@ -94,13 +94,35 @@ kinematic bodies. All six applicable tests also pass in a separate physics-off
 the missing optional-component lookups found in the first combat CI run
 (`37651575215`, commit `1031fab`); a new CI result is still required.
 This is a short prototype workload; it does not establish the
-MVP's 60–90 minute duration. Remaining weapons/enemies, audio/cinematics, menus,
+MVP's 60–90 minute duration. Remaining audio/cinematics, menus,
 clean package delivery, released-engine validation and CI gates remain open.
 The Windows physics-on full suite also passes **1,043/1,043** unit tests and
 **19/19 CTest entries**. The current 32-asset cook passes startup scene/HUD pixel
 checks on both D3D12 and Vulkan.
 
 ## Delivery sequence
+
+### Combat roster verification recorded 2026-10-08
+
+The local 37-entity greybox now contains all three MVP weapons and all three
+regular enemy roles. The ARC Pistol damages the Sentinel shield twice as fast
+as the rifle; the short-range VOLT Shotgun deals three damage, pushes lighter
+enemies farther and staggers them. Magazines remain separate across switches,
+and switching is blocked during reload. Research contains a shielded stationary
+Sentinel with a warned ground strike and an ambushing Hunter with a warned
+charge. Both must die before the Warden gate opens. Enemy damage checks the
+same unrotated-box visibility contract as the existing game-owned hitscan.
+The arena checkpoint spawns beyond the new gate collider.
+
+Cooked-game checks pass **11/11** with physics and **10/10** without physics.
+They cover the complete input-driven mission, weapon selection (including a
+gamepad binding), magazine/reload/held-fire behavior, shotgun range/damage/
+knockback/stagger, Sentinel warning/damage/dodge, and Hunter warning/charge/dodge.
+The local Windows physics-on full unit suite passes **1,047/1,047**. The current
+cook contains 41 assets. These are local results; the prior connected-mission
+CI run `37655534021` is still queued and this roster needs its own pushed result.
+Audio, cinematic presentation, pause/settings menus and release/package gates
+remain open. The content is a brief greybox, not a measured 60–90 minute game.
 
 ### 1. Lock the baseline
 

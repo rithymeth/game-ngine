@@ -265,6 +265,8 @@ struct SceneRenderer::Impl {
         f32 health = 3.0f, max_health = 3.0f, ammo = 30.0f, max_ammo = 30.0f;
         f32 damage_flash = 0.0f, hit_confirm = 0.0f, reloading = 0.0f;
         i32 mission_stage = 0;
+        i32 weapon_index = 1;
+        bool research_clear = false;
         f32 save_status = 0.0f;
         const std::vector<Entity> players = FindEntitiesWithTag(world, "Player");
         if (!players.empty()) {
@@ -278,6 +280,8 @@ struct SceneRenderer::Impl {
             reloading = read_attribute(player, "Reloading", reloading);
             mission_stage = static_cast<i32>(read_attribute(player, "MissionStage", 0));
             save_status = read_attribute(player, "SaveStatus", 0);
+            weapon_index = static_cast<i32>(read_attribute(player, "WeaponIndex", 1));
+            research_clear = read_attribute(player, "ResearchClear", 0) > 0;
         }
         health = std::clamp(health, 0.0f, max_health);
         ammo = std::clamp(ammo, 0.0f, max_ammo);
@@ -285,6 +289,7 @@ struct SceneRenderer::Impl {
         bool scout_found = false;
         f32 boss_phase = 1, boss_attack = 0;
         f32 scout_health = 0.0f, scout_max_health = 3.0f;
+        std::string threat_name = "SCOUT // THREAT";
         for (const Entity scout : FindEntitiesWithTag(world, "Scout")) {
             scout_found = true;
             scout_health = read_attribute(scout, "Health", 3.0f);
@@ -296,6 +301,31 @@ struct SceneRenderer::Impl {
             break;
         }
         scout_health = std::clamp(scout_health, 0.0f, scout_max_health);
+        if (mission_stage == 2) {
+            f32 nearest = 1.0e30f;
+            threat_name = "RESEARCH DEFENSES";
+            scout_health = 0;
+            if (!players.empty()) {
+                const auto* hero = world.GetComponent<Transform>(players.front());
+                for (const auto* role : {"Sentinel", "Hunter"}) {
+                    for (const Entity enemy : FindEntitiesWithTag(world, role)) {
+                        const auto* transform = world.GetComponent<Transform>(enemy);
+                        if (!hero || !transform || read_attribute(enemy, "Health", 0) <= 0) continue;
+                        const Vec3 delta = transform->position - hero->position;
+                        const f32 distance = delta.x * delta.x + delta.y * delta.y + delta.z * delta.z;
+                        if (distance >= nearest) continue;
+                        nearest = distance;
+                        scout_found = true;
+                        const bool sentinel = std::string_view(role) == "Sentinel";
+                        scout_max_health = sentinel ? 6.0f : 4.0f;
+                        scout_health = read_attribute(enemy, "Health", scout_max_health);
+                        boss_attack = read_attribute(enemy, "AttackState", 0);
+                        threat_name = sentinel ? "SENTINEL / SHIELD " + std::to_string(static_cast<i32>(read_attribute(enemy, "Shield", 0)))
+                                               : "HUNTER // AMBUSH";
+                    }
+                }
+            }
+        }
         if (mission_stage >= 3) {
             const auto bosses = FindEntitiesWithTag(world, "Warden");
             if (!bosses.empty()) {
@@ -304,6 +334,7 @@ struct SceneRenderer::Impl {
                 scout_max_health = 12;
                 boss_phase = read_attribute(bosses.front(), "Phase", 1);
                 boss_attack = read_attribute(bosses.front(), "AttackState", 0);
+                threat_name = "WARDEN / PHASE " + std::to_string(static_cast<i32>(boss_phase));
             }
         }
 
@@ -339,15 +370,14 @@ struct SceneRenderer::Impl {
         solid(objective_x, 22, 330, 58, panel);
         text("MISSION 01  /  HELIOS-7", objective_x + 18, 28, 12, muted, 290);
         constexpr const char* objectives[] = {"E RETRIEVE AEGIS RIFLE", "NEUTRALIZE SCOUT",
-                                              "ENTER SERVICE ROUTE", "DEFEAT WARDEN",
+                                              "CLEAR RESEARCH DEFENSES", "DEFEAT WARDEN",
                                               "E READ ARCHIVE TERMINAL", "FIRST CONTACT COMPLETE"};
-        text(health <= 0 ? "R RELOAD CHECKPOINT" : objectives[std::clamp(mission_stage, 0, 5)],
+        text(health <= 0 ? "R RELOAD CHECKPOINT" : mission_stage == 2 && research_clear ? "ENTER WARDEN ARENA" : objectives[std::clamp(mission_stage, 0, 5)],
              objective_x + 18, 49, 17, health <= 0 ? red : pale, 295);
 
         const f32 scout_x = width - 274.0f;
         solid(scout_x, 22, 250, 74, panel);
-        text(mission_stage >= 3 ? "WARDEN / PHASE " + std::to_string(static_cast<i32>(boss_phase)) : "SCOUT // THREAT",
-             scout_x + 16, 31, 13, muted, 220);
+        text(threat_name, scout_x + 16, 31, 13, muted, 220);
         if (scout_found && scout_health > 0) {
             text(std::to_string(static_cast<i32>(std::ceil(scout_health))) + "/" +
                      std::to_string(static_cast<i32>(scout_max_health)),
@@ -368,7 +398,8 @@ struct SceneRenderer::Impl {
         const f32 weapon_x = width - 274.0f;
         solid(weapon_x, height - 92.0f, 250, 68, panel);
         solid(weapon_x, height - 92.0f, 3, 68, cyan);
-        text(mission_stage == 0 ? "RIFLE NOT EQUIPPED" : "AEGIS RIFLE", weapon_x + 17, height - 83.0f, 14, pale, 210);
+        constexpr const char* weapons[] = {"AEGIS RIFLE", "ARC PISTOL", "VOLT SHOTGUN"};
+        text(mission_stage == 0 ? "RIFLE NOT EQUIPPED" : weapons[std::clamp(weapon_index, 1, 3) - 1], weapon_x + 17, height - 83.0f, 14, pale, 210);
         text(mission_stage == 0 ? "E TO RETRIEVE" : reloading > 0.5f ? "RELOADING" : "AMMO  " + std::to_string(static_cast<i32>(ammo)) +
                  " / " + std::to_string(static_cast<i32>(max_ammo)),
              weapon_x + 17, height - 55.0f, 13, ammo <= 5 ? red : muted, 220);
@@ -379,7 +410,7 @@ struct SceneRenderer::Impl {
              mission_stage == 3 ? "AETHER: PRESERVE PLANETARY LIFE" : "SECURITY NETWORK ONLINE",
              40, height - 79.0f, 13, pale, 410);
         text(save_status < 0 ? "CHECKPOINT SAVE FAILED" : mission_stage == 5 ? "END OF GREYBOX PROOF / N NEW GAME" :
-             boss_attack > 0 ? "MOVE OUT OF THE RED STRIKE ZONE" : save_status > 0 ? "CHECKPOINT SAVED" : "AWAKENING",
+             boss_attack > 0 ? "MOVE OUT OF THE MARKED ATTACK AREA" : save_status > 0 ? "CHECKPOINT SAVED" : "AWAKENING",
              40, height - 53.0f, 12, save_status < 0 || boss_attack > 0 ? red : muted, 410);
 
         commands.BindPipeline(hud_pipeline);

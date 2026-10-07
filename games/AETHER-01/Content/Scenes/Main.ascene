@@ -1383,6 +1383,261 @@
           "asset_path": "models/aether_greybox_terminal.gltf"
         }
       }
+    },
+    {
+      "guid": "3a0b074e-1878-48de-90fc-d70ea98759df",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Enemy",
+            "Sentinel",
+            "Greybox"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0,
+            1,
+            -16
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "e4787100-fe43-4ac3-8210-b829fa796595",
+          "asset_path": "models/aether_greybox_sentinel.gltf"
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "ca683da8-d13c-41f0-a529-795d7224f5f4",
+          "properties": []
+        },
+        "RigidBody": {
+          "$v": 1,
+          "motion": "Kinematic",
+          "mass": 1
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "half_extents": [
+            0.7,
+            1,
+            0.7
+          ],
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "is_trigger": false
+        }
+      }
+    },
+    {
+      "guid": "5fdd952e-8a87-4be0-9f35-e9db42390927",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Enemy",
+            "Hunter",
+            "Greybox"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            3,
+            0.9,
+            -20
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "b9a9b745-7cc6-4c21-b2e0-b114fec01583",
+          "asset_path": "models/aether_greybox_hunter.gltf"
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "ca683da8-d13c-41f0-a529-795d7224f5f4",
+          "properties": []
+        },
+        "RigidBody": {
+          "$v": 1,
+          "motion": "Kinematic",
+          "mass": 1
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "half_extents": [
+            0.5,
+            0.9,
+            0.5
+          ],
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "is_trigger": false
+        }
+      }
+    },
+    {
+      "guid": "af9c4fbe-e9d1-4aea-9e85-886a8f2bedd5",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "SentinelShield",
+            "Greybox"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0,
+            1,
+            -16
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "5a6baaa2-ce89-4ff4-8e91-8db0c33d1244",
+          "asset_path": "models/aether_greybox_shield.gltf"
+        }
+      }
+    },
+    {
+      "guid": "5ceda6e4-52da-417f-bd0f-418c3a44ed63",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "SentinelAim",
+            "Greybox"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0,
+            -100,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "f98def8d-d9f8-4416-baf9-bfa76e8dc460",
+          "asset_path": "models/aether_greybox_sentinel_aim.gltf"
+        }
+      }
+    },
+    {
+      "guid": "240de704-055c-49f4-9b7d-910e47525454",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "HunterTell",
+            "Greybox"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0,
+            -100,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "80860fec-706f-4187-b0d3-33911237be73",
+          "asset_path": "models/aether_greybox_hunter_tell.gltf"
+        }
+      }
+    },
+    {
+      "guid": "8dde4314-9d61-4d4e-b800-9cf007c20c5a",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "ArenaGate",
+            "Greybox"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0,
+            2,
+            -22
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "e9b682b8-0f58-4529-8988-0adf381bf41e",
+          "asset_path": "models/aether_greybox_end_wall.gltf"
+        },
+        "RigidBody": {
+          "$v": 1,
+          "motion": "Kinematic",
+          "mass": 1
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "half_extents": [
+            5.5,
+            2,
+            0.5
+          ],
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "is_trigger": false
+        }
+      }
     }
   ]
 }

@@ -12,7 +12,7 @@ skeletal animation.
 **First connected greybox mission; full MVP remains incomplete.** The project proves
 project creation, third-person movement and camera follow,
 `CharacterMovement` collision, textured model importing, asset cooking, and
-packaged-player rendering/startup. Its 31-entity scene contains Kael, a Scout,
+packaged-player rendering/startup. Its 37-entity scene contains Kael, a Scout,
 a cryo bay, a gated service route, a Warden arena and an archive terminal. The player,
 enemies, and environment use temporary cube/checker greybox art. The AEGIS
 prototype uses an aim cone and checks visibility against the room's unrotated
@@ -20,19 +20,30 @@ box colliders. Three hits knock the Scout back and defeat it. Scout contact
 drains Kael's three health points. The packaged player draws a game-owned HUD
 with health, Scout health, ammo/reload state, a Scout objective cue, damage
 flash, and hit confirmation. The connected prototype mission is to retrieve
-the rifle, defeat the Scout, enter the service route, defeat
+the rifle, defeat the Scout, clear the Sentinel/Hunter research route, defeat
 the Warden and read the archive terminal to finish. Warden phases remove armor,
 expose its core for extra damage and accelerate marked ranged strikes. Red floor
 plates show the strike area before damage; move outside to dodge. The archive
 reveals that the facility's loss was deliberate. This is brief prototype text,
-not a finished cinematic. Lighting, animation rendering, audio, remaining MVP
-weapons/enemies, menus and finished level art remain incomplete.
+not a finished cinematic. Lighting, animation rendering, audio, menus and
+finished level art remain incomplete.
 Repeated 960x540 captures pass direct pixel checks on D3D12 and Vulkan. Earlier
 partial previews were an image-preview problem: the saved pixels contained the
 full room and HUD. CI checks scene, player, health bar and text pixels across
 three independent launches. Use an image viewer at original resolution when
 reviewing the evidence. Completion of the game slice and release gates remains
 open.
+
+The weapons have separate magazines: AEGIS Rifle (30 rounds, 1.1-second reload),
+ARC Pistol (12 rounds, 0.9-second reload, double shield damage), and VOLT Shotgun
+(six rounds, 1.6-second reload, eight-metre range, three damage, stronger knockback
+and a brief stagger). Hold fire to repeat shots at the selected weapon's rate.
+Switching is blocked during reload. Ammunition reserves are unlimited in this
+proof build. The Sentinel's six-point shield absorbs shots before its six health
+points; an orange floor marker warns of its ranged strike. The four-health Hunter
+activates inside research, marks a destination, then charges it. Move away from
+the marks to dodge. Both must be defeated to open the arena gate. Visibility
+queries use the current level's unrotated box colliders in physics builds.
 
 Milestone checkpoints use the existing save API and automatically resume on
 launch. They preserve rifle/route/boss/ending progress, then restore full health
@@ -45,9 +56,11 @@ level's unrotated box colliders; rotated/other collider shapes remain unsupporte
 
 - W/A/S/D: move
 - Mouse: orbit camera
-- Mouse-left: fire the AEGIS prototype
+- Mouse-left: fire the selected weapon
+- 1 / 2 / 3: AEGIS Rifle / ARC Pistol / VOLT Shotgun
+- Gamepad D-pad left / up / right: select those weapons
 - E / Gamepad B: retrieve the rifle or read the archive terminal
-- R: reload (30 rounds, 1.1-second reload)
+- R: reload the selected weapon
 - Space: jump
 - Gamepad right trigger: fire
 - Gamepad X: reload
@@ -76,8 +89,9 @@ Generated builds belong under the ignored engine `build/` directory.
 
 1. Locally verified: cooked pickup/combat/route/Warden/ending path, checkpoint
    reload, new game, strike warning/damage/dodge and save-error feedback.
-2. Complete the locked three-weapon/three-enemy roster and audio/cinematic/menu
-   proof using existing systems.
+2. Locally verified: the three-weapon/three-enemy roster, separate magazines,
+   shotgun range/stagger and research enemy strike/charge/dodge behavior.
+   Audio/cinematic/menu proof using existing systems remains open.
 3. Pass clean cook/package/run and the release CI gates, then validate the game
    against the released engine artifact. No release is claimed by local tests.
 

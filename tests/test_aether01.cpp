@@ -65,6 +65,38 @@ struct ProofRun {
         game->Input().SetButton(key, false);
         Frames(1);
     }
+    void ClearResearch() {
+        const Entity sentinel = FindEntitiesWithTag(game->GetWorld(), "Sentinel").front();
+        const Entity hunter = FindEntitiesWithTag(game->GetWorld(), "Hunter").front();
+        game->Input().AddMouseDelta(0, -143.24f); // level the aim down the service route
+        Frames(1);
+        Tap(input::Key::Num2);
+        Frames(12);
+        for (int shot = 0; shot < 3; ++shot) { Tap(input::Key::MouseLeft); Frames(15); }
+        AETHER_CHECK(Stat(sentinel, "Shield") == 0 && Stat(sentinel, "Health") == 6);
+        Tap(input::Key::Num1);
+        Frames(12);
+        for (int shot = 0; shot < 6; ++shot) { Tap(input::Key::MouseLeft); Frames(15); }
+        // Enter the route: the bay wall occludes the Hunter from the spawn.
+        game->Input().SetButton(input::Key::W, true);
+        Frames(120);
+        game->Input().SetButton(input::Key::W, false);
+        game->Input().SetButton(input::Key::D, true);
+        Frames(30);
+        game->Input().SetButton(input::Key::D, false);
+        Frames(20);
+        for (int shot = 0; shot < 4; ++shot) { Tap(input::Key::MouseLeft); Frames(15); }
+        AETHER_CHECK(Stat(sentinel, "Health") == 0 && Stat(hunter, "Health") == 0);
+        AETHER_CHECK(Stat(hero, "ResearchClear") == 1);
+        // Return to the bay so the route/arena checks retain their start point.
+        game->Input().SetButton(input::Key::A, true);
+        Frames(30);
+        game->Input().SetButton(input::Key::A, false);
+        game->Input().SetButton(input::Key::S, true);
+        Frames(120);
+        game->Input().SetButton(input::Key::S, false);
+        Frames(20);
+    }
 };
 }
 
@@ -103,6 +135,117 @@ AETHER_TEST(Aether01_CookedContactDeathAndRestart) {
     AETHER_CHECK(run.Stat(run.hero, "DamageFlash") == 0);
 }
 
+AETHER_TEST(Aether01_WeaponMagazinesSwitchReloadAndHeldFire) {
+    ProofRun run("weapons");
+    run.Tap(input::Key::Num3);
+    AETHER_CHECK(run.Stat(run.hero, "WeaponIndex") == 1); // locked before pickup
+    run.Tap(input::Key::E);
+    run.Tap(input::Key::GamepadDPadUp);
+    run.Frames(12);
+    AETHER_CHECK(run.Stat(run.hero, "WeaponIndex") == 2);
+    AETHER_CHECK(run.Stat(run.hero, "MaxAmmo") == 12);
+    run.Tap(input::Key::MouseLeft);
+    AETHER_CHECK(run.Stat(run.hero, "Ammo") == 11);
+    run.Tap(input::Key::Num3);
+    run.Frames(12);
+    run.Tap(input::Key::MouseLeft);
+    AETHER_CHECK(run.Stat(run.hero, "Ammo") == 5);
+    run.Tap(input::Key::Num1);
+    AETHER_CHECK(run.Stat(run.hero, "Ammo") == 30);
+    run.Tap(input::Key::Num2);
+    AETHER_CHECK(run.Stat(run.hero, "Ammo") == 11);
+    run.Tap(input::Key::R);
+    run.Tap(input::Key::Num3);
+    AETHER_CHECK(run.Stat(run.hero, "WeaponIndex") == 2);
+    run.Frames(60);
+    AETHER_CHECK(run.Stat(run.hero, "Ammo") == 12);
+    run.game->Input().SetButton(input::Key::MouseLeft, true);
+    run.Frames(60);
+    run.game->Input().SetButton(input::Key::MouseLeft, false);
+    AETHER_CHECK(run.Stat(run.hero, "Ammo") <= 7 && run.Stat(run.hero, "Ammo") >= 5);
+    run.Tap(input::Key::N);
+    AETHER_CHECK(run.Stat(run.hero, "WeaponIndex") == 1 && run.Stat(run.hero, "Ammo") == 30);
+}
+
+AETHER_TEST(Aether01_ShotgunRangeDamageKnockbackAndStagger) {
+    ProofRun run("shotgun");
+    run.Tap(input::Key::E);
+    auto& world = run.game->GetWorld();
+    world.GetComponent<Transform>(run.scout)->position = Vec3(0, 1, -12);
+    run.Tap(input::Key::Num3);
+    run.Frames(12);
+    run.Tap(input::Key::MouseLeft);
+    AETHER_CHECK(run.Stat(run.scout, "Health") == 3); // out of shotgun range
+    world.GetComponent<Transform>(run.scout)->position = Vec3(0, 1, -6);
+    run.Frames(50);
+    run.Tap(input::Key::MouseLeft);
+    AETHER_CHECK(run.Stat(run.scout, "Health") == 0); // one close three-damage blast
+    run.Frames(50);
+    const Entity hunter = FindEntitiesWithTag(world, "Hunter").front();
+    world.GetComponent<Transform>(hunter)->position = Vec3(0, 0.9f, -6);
+    run.Tap(input::Key::MouseLeft);
+    AETHER_CHECK(run.Stat(hunter, "Health") == 1);
+    AETHER_CHECK(world.GetComponent<Transform>(hunter)->position.z < -7);
+    AETHER_CHECK(run.Stat(hunter, "Stagger") > 0);
+    run.Frames(35);
+    AETHER_CHECK(run.Stat(hunter, "Stagger") == 0);
+}
+
+AETHER_TEST(Aether01_SentinelTellDamageAndDodge) {
+    ProofRun run("sentinel");
+    run.Tap(input::Key::E);
+    for (int shot = 0; shot < 3; ++shot) { run.Tap(input::Key::MouseLeft); run.Frames(15); }
+    run.Start(); // research checkpoint gives a repeatable attack timer
+    const Entity sentinel = FindEntitiesWithTag(run.game->GetWorld(), "Sentinel").front();
+    run.Frames(120);
+    AETHER_CHECK(run.Stat(sentinel, "AttackState") == 1);
+    AETHER_CHECK(run.Stat(run.hero, "Health") == 3);
+    run.Frames(67);
+    AETHER_CHECK(run.Stat(run.hero, "Health") == 2);
+    run.Start();
+    run.Frames(120);
+    run.game->Input().SetButton(input::Key::D, true);
+    run.Frames(30);
+    run.game->Input().SetButton(input::Key::D, false);
+    run.Frames(38);
+    AETHER_CHECK(run.Stat(run.hero, "Health") == 3);
+    AETHER_CHECK(run.Stat(run.hero, "ResearchClear") == 0);
+}
+
+AETHER_TEST(Aether01_HunterTelegraphsChargeAndCanBeDodged) {
+    ProofRun run("hunter");
+    run.Tap(input::Key::E);
+    for (int shot = 0; shot < 3; ++shot) { run.Tap(input::Key::MouseLeft); run.Frames(15); }
+    auto prepare = [&]() {
+        auto& world = run.game->GetWorld();
+        const Entity sentinel = FindEntitiesWithTag(world, "Sentinel").front();
+        // Isolate the Hunter behavior; the complete mission test kills both via inputs.
+        world.GetComponent<gas::AttributeSet>(sentinel)->SetBase("Health", 0);
+        world.GetComponent<Transform>(sentinel)->position.y = -100;
+        run.game->Input().SetButton(input::Key::W, true);
+        run.Frames(155);
+        run.game->Input().SetButton(input::Key::W, false);
+        run.Frames(20);
+    };
+    prepare();
+    Entity hunter = FindEntitiesWithTag(run.game->GetWorld(), "Hunter").front();
+    for (int i = 0; i < 150 && run.Stat(hunter, "AttackState") == 0; ++i) run.Frames(1);
+    AETHER_CHECK(run.Stat(hunter, "AttackState") == 1);
+    AETHER_CHECK(run.Stat(run.hero, "Health") == 3);
+    run.Frames(90);
+    AETHER_CHECK(run.Stat(run.hero, "Health") == 2);
+    run.Start();
+    prepare();
+    hunter = FindEntitiesWithTag(run.game->GetWorld(), "Hunter").front();
+    for (int i = 0; i < 150 && run.Stat(hunter, "AttackState") == 0; ++i) run.Frames(1);
+    AETHER_CHECK(run.Stat(hunter, "AttackState") == 1);
+    run.game->Input().SetButton(input::Key::A, true);
+    run.Frames(40);
+    run.game->Input().SetButton(input::Key::A, false);
+    run.Frames(50);
+    AETHER_CHECK(run.Stat(run.hero, "Health") == 3);
+}
+
 AETHER_TEST(Aether01_PickupCheckpointReloadAndServiceRoute) {
     ProofRun run("checkpoint");
     run.Tap(input::Key::MouseLeft);
@@ -125,20 +268,23 @@ AETHER_TEST(Aether01_PickupCheckpointReloadAndServiceRoute) {
     const auto gates = FindEntitiesWithTag(run.game->GetWorld(), "ServiceGate");
     AETHER_CHECK(gates.size() == 1);
     AETHER_CHECK(run.game->GetWorld().GetComponent<Transform>(gates.front())->position.y < -5);
+    run.ClearResearch();
     run.game->Input().SetButton(input::Key::W, true);
     run.Frames(280);
     AETHER_CHECK(run.Stat(run.hero, "MissionStage") == 3);
     const auto p = run.game->GetWorld().GetComponent<Transform>(run.hero)->position;
     AETHER_CHECK(p.z < -22 && p.y > -0.2f);
+    run.game->Input().SetButton(input::Key::W, false);
     run.Start();
     AETHER_CHECK(run.Stat(run.hero, "MissionStage") == 3);
-    AETHER_CHECK(run.game->GetWorld().GetComponent<Transform>(run.hero)->position.z == -22);
+    AETHER_CHECK(std::abs(run.game->GetWorld().GetComponent<Transform>(run.hero)->position.z + 23) < 0.01f);
 }
 
 AETHER_TEST(Aether01_WardenPhasesEndingAndNewGame) {
     ProofRun run("ending");
     run.Tap(input::Key::E);
     for (int shot = 0; shot < 3; ++shot) { run.Tap(input::Key::MouseLeft); run.Frames(15); }
+    run.ClearResearch();
     run.game->Input().SetButton(input::Key::W, true);
     run.Frames(280);
     run.game->Input().SetButton(input::Key::W, false);
@@ -148,7 +294,6 @@ AETHER_TEST(Aether01_WardenPhasesEndingAndNewGame) {
     AETHER_CHECK(bosses.size() == 1);
     const Entity boss = bosses.front();
     // Level the aim at the Warden, then use the real input/fire/cooldown path.
-    run.game->Input().AddMouseDelta(0, -143.24f);
     run.Frames(1);
     for (int shot = 0; shot < 9; ++shot) {
         run.Tap(input::Key::MouseLeft);
@@ -181,6 +326,7 @@ AETHER_TEST(Aether01_WardenStrikeTellDamageAndDodge) {
     ProofRun run("dodge");
     run.Tap(input::Key::E);
     for (int shot = 0; shot < 3; ++shot) { run.Tap(input::Key::MouseLeft); run.Frames(15); }
+    run.ClearResearch();
     run.game->Input().SetButton(input::Key::W, true);
     run.Frames(280);
     run.game->Input().SetButton(input::Key::W, false);
