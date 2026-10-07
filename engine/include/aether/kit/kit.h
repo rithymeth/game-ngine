@@ -14,6 +14,7 @@
 
 #include "aether/core/base.h"
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -24,6 +25,25 @@ namespace aether::kit {
 struct KitStage {
     std::string name;
     std::vector<std::string> after; // stage names that must run first
+};
+
+struct KitAsset {
+    std::string importer;
+    std::string path;
+};
+
+struct KitAssetDiagnostic {
+    std::string path;
+    std::string message;
+    bool content_read_failure = false;
+};
+
+// Package-neutral access to the cooked assets a kit recognizes. The host controls
+// content access and diagnostic presentation; kits own parsing and validation.
+struct KitAssetContext {
+    std::vector<KitAsset> assets;
+    std::function<bool(const std::string&, std::vector<u8>&, std::string*)> read_content;
+    std::function<void(const KitAssetDiagnostic&)> report;
 };
 
 class IKit {
@@ -37,6 +57,8 @@ public:
 
     // Reflection and saved components.
     virtual void RegisterComponents() {}
+    // Loads this kit's definitions from the host's package context.
+    virtual void LoadAssets(const KitAssetContext& context) { (void)context; }
     // Blueprint function libraries and events.
     virtual void InstallBlueprintNodes() {}
     // Luau natives; `script_host` is the scripting layer's host, passed opaque so the engine doesn't link it.
@@ -63,6 +85,7 @@ public:
 
     // Runs the install hooks over `Order()`, in dependency order.
     void RegisterComponents();
+    void LoadAssets(const KitAssetContext& context);
     void InstallBlueprintNodes();
     void InstallScriptApi(void* script_host);
 

@@ -31,6 +31,9 @@ public:
     void RegisterComponents() override {
         if (log_) log_->push_back(name_);
     }
+    void LoadAssets(const KitAssetContext&) override {
+        if (log_) log_->push_back("load-" + name_);
+    }
     std::vector<KitStage> Stages() const override { return {{"Player." + name_, {}}}; }
 
 private:
@@ -114,6 +117,9 @@ AETHER_TEST(Kit_InstallHooksRunInDependencyOrder) {
     AETHER_CHECK(registry.Resolve());
     registry.RegisterComponents();
     AETHER_CHECK(log.size() == 2 && log[0] == "A" && log[1] == "B");
+    log.clear();
+    registry.LoadAssets({});
+    AETHER_CHECK(log.size() == 2 && log[0] == "load-A" && log[1] == "load-B");
     AETHER_CHECK(registry.Has("A") && !registry.Has("Z"));
     AETHER_CHECK(registry.Find("B") != nullptr);
 }

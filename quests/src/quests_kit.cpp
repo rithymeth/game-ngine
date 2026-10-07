@@ -11,13 +11,25 @@ namespace {
 
 class QuestsKit : public kit::IKit {
 public:
+    QuestsKit(QuestLibrary* quests, const gas::EffectLibrary* effects) : quests_(quests), effects_(effects) {}
     const char* Name() const override { return "Quests"; }
     std::vector<std::string> Deps() const override { return {"Gameplay"}; }
     void RegisterComponents() override { RegisterQuestComponents(); }
+    void LoadAssets(const kit::KitAssetContext& context) override {
+        if (!quests_ || !effects_) return;
+        std::vector<std::string> paths;
+        for (const kit::KitAsset& asset : context.assets) if (asset.importer == "QuestDefinition") paths.push_back(asset.path);
+        for (const QuestAssetDiagnostic& diagnostic : LoadQuestAssets(paths, context.read_content, *effects_, *quests_)) {
+            if (context.report) context.report({diagnostic.path, diagnostic.message, diagnostic.content_read_failure});
+        }
+    }
     std::vector<kit::KitStage> Stages() const override {
         // Runs with the frame's Update, after effects have run, like the other gameplay kit systems.
         return {{"Player.Quests", {"Player.Update", "Player.Sequencer", "Player.Effects"}}};
     }
+private:
+    QuestLibrary* quests_;
+    const gas::EffectLibrary* effects_;
 };
 
 } // namespace
@@ -63,6 +75,8 @@ std::vector<QuestAssetDiagnostic> LoadQuestAssets(
     return diagnostics;
 }
 
-std::unique_ptr<kit::IKit> MakeQuestsKit() { return std::make_unique<QuestsKit>(); }
+std::unique_ptr<kit::IKit> MakeQuestsKit(QuestLibrary* quests, const gas::EffectLibrary* effects) {
+    return std::make_unique<QuestsKit>(quests, effects);
+}
 
 } // namespace aether::quest

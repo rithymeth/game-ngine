@@ -11,13 +11,25 @@ namespace {
 
 class InventoryKit : public kit::IKit {
 public:
+    InventoryKit(ItemLibrary* items, const gas::EffectLibrary* effects) : items_(items), effects_(effects) {}
     const char* Name() const override { return "Inventory"; }
     std::vector<std::string> Deps() const override { return {"Gameplay"}; }
     void RegisterComponents() override { RegisterInventoryComponents(); }
+    void LoadAssets(const kit::KitAssetContext& context) override {
+        if (!items_ || !effects_) return;
+        std::vector<std::string> paths;
+        for (const kit::KitAsset& asset : context.assets) if (asset.importer == "ItemDefinition") paths.push_back(asset.path);
+        for (const ItemAssetDiagnostic& diagnostic : LoadItemAssets(paths, context.read_content, *effects_, *items_)) {
+            if (context.report) context.report({diagnostic.path, diagnostic.message, diagnostic.content_read_failure});
+        }
+    }
     std::vector<kit::KitStage> Stages() const override {
         // Runs with the frame's Update, after effects have run, like the other gameplay kit systems.
         return {{"Player.Inventory", {"Player.Update", "Player.Sequencer", "Player.Effects"}}};
     }
+private:
+    ItemLibrary* items_;
+    const gas::EffectLibrary* effects_;
 };
 
 } // namespace
@@ -60,6 +72,8 @@ std::vector<ItemAssetDiagnostic> LoadItemAssets(
     return diagnostics;
 }
 
-std::unique_ptr<kit::IKit> MakeInventoryKit() { return std::make_unique<InventoryKit>(); }
+std::unique_ptr<kit::IKit> MakeInventoryKit(ItemLibrary* items, const gas::EffectLibrary* effects) {
+    return std::make_unique<InventoryKit>(items, effects);
+}
 
 } // namespace aether::inv

@@ -31,6 +31,6 @@ std::vector<QuestAssetDiagnostic> LoadQuestAssets(
 
 // This kit's description for the player's kit registry (Phase 37 step 4): its name, what it needs, the
 // components it registers and the scheduler stage it adds.
-std::unique_ptr<kit::IKit> MakeQuestsKit();
+std::unique_ptr<kit::IKit> MakeQuestsKit(QuestLibrary* quests = nullptr, const gas::EffectLibrary* effects = nullptr);
 
 } // namespace aether::quest
