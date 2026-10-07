@@ -4,8 +4,10 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <numeric>
+#include <unordered_map>
 
 namespace aether::bench {
 
@@ -101,13 +103,36 @@ bool Compare(const std::string& baseline_json, const std::string& current_json, 
         if (error) *error = "not a benchmark report";
         return false;
     }
-    regressions.clear();
-    for (const auto& c : cur["results"]) {
-        for (const auto& b : base["results"]) {
-            if (b.value("name", "") != c.value("name", "")) continue;
-            const double was = b.value("normalized", 0.0), now = c.value("normalized", 0.0);
-            if (was > 0.0 && now > was * tolerance) regressions.push_back({c.value("name", ""), was, now, now / was});
+    if (!std::isfinite(tolerance) || tolerance <= 0.0) {
+        if (error) *error = "tolerance must be finite and greater than zero";
+        return false;
+    }
+    const auto index = [](const nlohmann::json& report, std::unordered_map<std::string, double>& values) {
+        for (const auto& item : report["results"]) {
+            if (!item.is_object() || !item.contains("name") || !item["name"].is_string() || !item.contains("normalized") || !item["normalized"].is_number()) return false;
+            const std::string name = item["name"].get<std::string>();
+            const double value = item["normalized"].get<double>();
+            if (name.empty() || !std::isfinite(value) || value <= 0.0 || !values.emplace(name, value).second) return false;
         }
+        return true;
+    };
+    std::unordered_map<std::string, double> baseline, current;
+    if (!index(base, baseline) || !index(cur, current)) {
+        if (error) *error = "benchmark report contains invalid or duplicate results";
+        return false;
+    }
+    regressions.clear();
+    usize compared = 0;
+    for (const auto& [name, now] : current) {
+        const auto found = baseline.find(name);
+        if (found == baseline.end()) continue; // New benchmarks have no history yet.
+        ++compared;
+        const double was = found->second;
+        if (now > was * tolerance) regressions.push_back({name, was, now, now / was});
+    }
+    if (compared == 0) {
+        if (error) *error = "no benchmarks overlap with baseline";
+        return false;
     }
     return true;
 }

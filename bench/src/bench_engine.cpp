@@ -47,11 +47,6 @@ void Spin(void* data) {
     for (int i = 0; i < 200; ++i) *x = *x * 6364136223846793005ull + 1442695040888963407ull;
 }
 
-World& SceneWorld() {
-    static World world;
-    return world;
-}
-
 struct JobState {
     std::unique_ptr<JobSystem> jobs;
     std::vector<u64> data = std::vector<u64>(1024, 1);
@@ -124,6 +119,7 @@ AETHER_BENCH_SETUP(
         JobCounter counter{0};
         s.jobs->ScheduleBatch(s.decls.data(), static_cast<u32>(s.decls.size()), counter);
         s.jobs->Wait(counter);
+        if (s.data.front() == 1 || s.data.back() == 1) std::abort();
     });
 
 // ---------------------------------------------------------------------------------------------------
@@ -135,6 +131,8 @@ namespace {
 constexpr int kSceneEntities = 10'000;
 
 struct SceneState {
+    World binary_world;
+    World json_world;
     std::vector<u8> binary;
     std::vector<u8> json;
 };
@@ -153,8 +151,11 @@ void FillSceneWorld(World& world) {
 
 AETHER_BENCH_SETUP(
     "scene/save_binary_10k", 5,
-    [] { FillSceneWorld(SceneWorld()); },
-    [] { SceneData().binary = SaveSceneToMemory(SceneWorld()); });
+    [] { FillSceneWorld(SceneData().binary_world); },
+    [] {
+        SceneData().binary = SaveSceneToMemory(SceneData().binary_world);
+        if (SceneData().binary.empty()) std::abort();
+    });
 
 AETHER_BENCH_SETUP(
     "scene/load_binary_10k", 5,
@@ -162,18 +163,19 @@ AETHER_BENCH_SETUP(
         World world;
         FillSceneWorld(world);
         SceneData().binary = SaveSceneToMemory(world);
+        if (SceneData().binary.empty()) std::abort();
     },
     [] {
         World world;
-        LoadSceneFromMemory(world, SceneData().binary, "bench");
+        if (!LoadSceneFromMemory(world, SceneData().binary, "bench") || world.EntityCount() != kSceneEntities) std::abort();
     });
 
 AETHER_BENCH_SETUP(
     "scene/save_json_10k", 3,
-    [] { FillSceneWorld(SceneWorld()); },
+    [] { FillSceneWorld(SceneData().json_world); },
     [] {
         const std::filesystem::path path = std::filesystem::temp_directory_path() / "aether_bench_scene_save.json";
-        SaveSceneJson(SceneWorld(), path.string());
+        if (!SaveSceneJson(SceneData().json_world, path.string()) || !std::filesystem::exists(path) || std::filesystem::file_size(path) == 0) std::abort();
         std::filesystem::remove(path);
     });
 
@@ -183,15 +185,16 @@ AETHER_BENCH_SETUP(
         World world;
         FillSceneWorld(world);
         const std::filesystem::path path = std::filesystem::temp_directory_path() / "aether_bench_scene_load.json";
-        SaveSceneJson(world, path.string());
+        if (!SaveSceneJson(world, path.string())) std::abort();
         std::ifstream in(path, std::ios::binary);
         SceneData().json.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
         in.close();
         std::filesystem::remove(path);
+        if (SceneData().json.empty()) std::abort();
     },
     [] {
         World world;
-        LoadSceneJsonFromMemory(world, SceneData().json, "bench");
+        if (!LoadSceneJsonFromMemory(world, SceneData().json, "bench") || world.EntityCount() != kSceneEntities) std::abort();
     });
 
 // ---------------------------------------------------------------------------------------------------
