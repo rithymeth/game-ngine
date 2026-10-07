@@ -2,6 +2,8 @@
 
 #include "aether/inventory/inventory_system.h"
 
+#include <utility>
+
 namespace aether::inv {
 
 namespace {
@@ -18,6 +20,21 @@ public:
 };
 
 } // namespace
+
+SystemDesc MakeInventorySystem(InventorySystem* system, std::function<void(const ItemEvent&)> on_event) {
+    SystemDesc desc;
+    desc.name = "Player.Inventory";
+    desc.phase = SystemPhase::Update;
+    desc.after = {"Player.Update", "Player.Sequencer", "Player.Effects"};
+    desc.main_thread_only = true;
+    desc.run = [system, on_event = std::move(on_event)](World&, const FrameContext&) {
+        if (!system) return;
+        const std::vector<ItemEvent> events = system->Events();
+        system->ClearEvents();
+        if (on_event) for (const ItemEvent& event : events) on_event(event);
+    };
+    return desc;
+}
 
 std::unique_ptr<kit::IKit> MakeInventoryKit() { return std::make_unique<InventoryKit>(); }
 

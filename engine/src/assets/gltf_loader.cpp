@@ -80,7 +80,8 @@ std::string UriDecode(const std::string& uri) {
     return out;
 }
 
-bool ResolveBufferData(const Json& buffer_json, const std::string& base_dir, std::vector<u8>& out_data) {
+bool ResolveBufferData(const Json& buffer_json, const std::string& base_dir, bool allow_external,
+                       std::vector<u8>& out_data) {
     if (!buffer_json.contains("uri")) {
         AETHER_LOG_ERROR("glTF", "Buffer with no uri (GLB-embedded binary chunk) is not supported");
         return false;
@@ -94,6 +95,7 @@ bool ResolveBufferData(const Json& buffer_json, const std::string& base_dir, std
         out_data = DecodeBase64(uri.substr(comma + 1));
         return true;
     }
+    if (!allow_external) return false;
     std::string path = JoinPath(base_dir, UriDecode(uri));
     return fs::ReadFileBytes(path, out_data);
 }
@@ -530,13 +532,8 @@ std::vector<GltfNode> ApplyAnimationToNodes(const GltfScene& scene, const GltfAn
 
 } // namespace
 
-bool LoadGltf(const std::string& path, GltfScene& out_scene) {
-    std::string text;
-    if (!fs::ReadFileText(path, text)) {
-        AETHER_LOG_ERROR("glTF", "Failed to read \"%s\"", path.c_str());
-        return false;
-    }
-
+static bool ParseGltfText(const std::string& text, const std::string& path, bool allow_external,
+                          GltfScene& out_scene) {
     Json gltf;
     try {
         gltf = Json::parse(text);
@@ -545,13 +542,13 @@ bool LoadGltf(const std::string& path, GltfScene& out_scene) {
         return false;
     }
 
-    std::string base_dir = fs::ParentPath(path);
+    std::string base_dir = allow_external ? fs::ParentPath(path) : std::string();
 
     std::vector<std::vector<u8>> buffers;
     if (gltf.contains("buffers")) {
         for (const auto& buffer_json : gltf["buffers"]) {
             std::vector<u8> data;
-            if (!ResolveBufferData(buffer_json, base_dir, data)) {
+            if (!ResolveBufferData(buffer_json, base_dir, allow_external, data)) {
                 AETHER_LOG_ERROR("glTF", "Failed to resolve a buffer referenced by \"%s\"", path.c_str());
                 return false;
             }
@@ -583,7 +580,7 @@ bool LoadGltf(const std::string& path, GltfScene& out_scene) {
         if (uri.rfind("data:", 0) == 0) {
             return {};
         }
-        return JoinPath(base_dir, UriDecode(uri));
+        return allow_external ? JoinPath(base_dir, UriDecode(uri)) : std::string();
     };
 
     if (gltf.contains("materials")) {
@@ -712,6 +709,37 @@ bool LoadGltf(const std::string& path, GltfScene& out_scene) {
                      "%zu animation(s)",
                      path.c_str(), out_scene.meshes.size(), out_scene.materials.size(),
                      out_scene.node_instances.size(), out_scene.skins.size(), out_scene.animations.size());
+    return true;
+}
+
+bool LoadGltf(const std::string& path, GltfScene& out_scene) {
+    std::string text;
+    if (!fs::ReadFileText(path, text)) {
+        AETHER_LOG_ERROR("glTF", "Failed to read \"%s\"", path.c_str());
+        return false;
+    }
+    GltfScene scene;
+    try {
+        if (!ParseGltfText(text, path, true, scene)) return false;
+    } catch (const std::exception& e) {
+        AETHER_LOG_ERROR("glTF", "Malformed \"%s\": %s", path.c_str(), e.what());
+        return false;
+    }
+    out_scene = std::move(scene);
+    return true;
+}
+
+bool LoadGltfFromMemory(std::span<const u8> json, GltfScene& out_scene) {
+    constexpr usize kMaxJsonBytes = 32 * 1024 * 1024;
+    if (json.empty() || json.size() > kMaxJsonBytes) return false;
+    const std::string text(reinterpret_cast<const char*>(json.data()), json.size());
+    GltfScene scene;
+    try {
+        if (!ParseGltfText(text, "<memory>", false, scene)) return false;
+    } catch (const std::exception&) {
+        return false;
+    }
+    out_scene = std::move(scene);
     return true;
 }
 

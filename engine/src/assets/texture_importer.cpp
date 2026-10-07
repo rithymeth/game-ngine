@@ -62,6 +62,8 @@ T SettingOr(const nlohmann::json& settings, const char* name, T fallback, std::v
     return it->get<T>();
 }
 
+ImportResult ImportDecoded(ImageData image, const nlohmann::json& settings);
+
 } // namespace
 
 std::vector<u8> DownsampleRGBA8(const std::vector<u8>& pixels, u32 width, u32 height, bool srgb) {
@@ -146,18 +148,32 @@ nlohmann::json TextureImporter::DefaultSettings() const {
 }
 
 ImportResult TextureImporter::Import(const ImportContext& context) const {
-    ImportResult result;
-    const bool srgb = SettingOr<bool>(context.settings, "srgb", true, result.warnings, &nlohmann::json::is_boolean);
-    const bool mips =
-        SettingOr<bool>(context.settings, "generate_mips", true, result.warnings, &nlohmann::json::is_boolean);
-    const i64 max_size =
-        SettingOr<i64>(context.settings, "max_size", 0, result.warnings, &nlohmann::json::is_number_integer);
-
     ImageData image;
-    if (!DecodeImageFile(context.source.string(), image)) {
+    if (!DecodeImageFile(context.source.string(), image, 16 * 1024 * 1024)) {
+        ImportResult result;
         result.error = "not a readable image";
         return result;
     }
+    return ImportDecoded(std::move(image), context.settings);
+}
+
+ImportResult TextureImporter::ImportFromMemory(std::span<const u8> bytes, const nlohmann::json& settings, u64 max_pixels) const {
+    ImageData image;
+    if (!DecodeImageFromMemory(bytes, image, max_pixels)) {
+        ImportResult result;
+        result.error = "not a readable image or exceeds the pixel budget";
+        return result;
+    }
+    return ImportDecoded(std::move(image), settings);
+}
+
+namespace {
+
+ImportResult ImportDecoded(ImageData image, const nlohmann::json& settings) {
+    ImportResult result;
+    const bool srgb = SettingOr<bool>(settings, "srgb", true, result.warnings, &nlohmann::json::is_boolean);
+    const bool mips = SettingOr<bool>(settings, "generate_mips", true, result.warnings, &nlohmann::json::is_boolean);
+    const i64 max_size = SettingOr<i64>(settings, "max_size", 0, result.warnings, &nlohmann::json::is_number_integer);
 
     TextureData texture;
     texture.srgb = srgb;
@@ -184,5 +200,7 @@ ImportResult TextureImporter::Import(const ImportContext& context) const {
     result.ok = true;
     return result;
 }
+
+} // namespace
 
 } // namespace aether::assets

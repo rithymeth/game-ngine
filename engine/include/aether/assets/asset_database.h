@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -35,6 +36,7 @@ struct AssetMeta {
 };
 
 bool LoadAssetMeta(const std::filesystem::path& meta_file, AssetMeta& out, std::string* error = nullptr);
+bool LoadAssetMetaFromMemory(std::span<const u8> bytes, AssetMeta& out, std::string* error = nullptr);
 bool SaveAssetMeta(const std::filesystem::path& meta_file, const AssetMeta& meta, std::string* error = nullptr);
 
 // Which importer handles a source file, by extension (case-insensitive), or

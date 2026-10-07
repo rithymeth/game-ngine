@@ -57,6 +57,7 @@ AETHER_TEST(FrameGraph_PlansAForwardPlusFrame) {
     });
     std::string error;
     AETHER_CHECK(g.Compile(&error));
+    AETHER_CHECK(g.Validate(&error));
 
     // Order and culling.
     AETHER_CHECK(g.Order() == (std::vector<PassId>{shadows, prepass, cull, forward, bloom_pass, tonemap}));
@@ -120,6 +121,7 @@ AETHER_TEST(FrameGraph_UavBarriersSideEffectsAndErrors) {
             p.SideEffect();                      // ...but a side effect keeps it
         });
         AETHER_CHECK(g.Compile());
+        AETHER_CHECK(g.Validate());
         AETHER_CHECK(g.Order() == (std::vector<PassId>{emit, simulate, capture}));
         AETHER_CHECK(HasBarrier(g.BarriersBefore(simulate), particles, Access::ShaderWrite, Access::ShaderWrite));
         AETHER_CHECK(HasBarrier(g.BarriersBefore(capture), particles, Access::ShaderWrite, Access::CopySource));
@@ -131,6 +133,7 @@ AETHER_TEST(FrameGraph_UavBarriersSideEffectsAndErrors) {
         const ResourceId t = g.CreateTexture("t", {64, 64});
         g.AddPass("Orphan", Queue::Graphics, [&](FrameGraph::PassBuilder& p) { p.Write(t, Access::ColorTarget); });
         AETHER_CHECK(g.Compile() && g.Order().empty() && g.HeapSize() == 0);
+        AETHER_CHECK(g.Validate());
     }
     std::string error;
     {
@@ -142,6 +145,7 @@ AETHER_TEST(FrameGraph_UavBarriersSideEffectsAndErrors) {
             p.Write(out, Access::ColorTarget);
         });
         AETHER_CHECK(!g.Compile(&error) && error.find("before anything writes it") != std::string::npos);
+        AETHER_CHECK(!g.Validate(&error) && error.find("has not been compiled") != std::string::npos);
     }
     {
         FrameGraph g;
@@ -187,6 +191,7 @@ AETHER_TEST(FrameGraph_RandomGraphsKeepTheirInvariants) {
         }
         std::string error;
         AETHER_CHECK(g.Compile(&error));
+        AETHER_CHECK(g.Validate(&error));
         // Resources alive at the same time never share memory.
         for (usize a = 0; a < resources.size(); ++a) {
             for (usize b = a + 1; b < resources.size(); ++b) {

@@ -2,6 +2,7 @@
 
 #include "aether/gameplay/gameplay_kit.h"
 #include "aether/kit/kit.h"
+#include "aether/kit/event_bus.h"
 #if AETHER_KIT_INVENTORY
 #include "aether/inventory/inventory_kit.h"
 #endif
@@ -127,6 +128,26 @@ AETHER_TEST(Kit_StagesFollowTheirDependencies) {
     AETHER_CHECK(stages[0].name == "Player.Inventory" && stages[0].after.empty());
     AETHER_CHECK(stages[1].name == "Player.Quests");
     AETHER_CHECK(stages[1].after.size() == 1 && stages[1].after[0] == "Player.Inventory");
+}
+
+AETHER_TEST(Kit_EventBusDrainsTypedEventsInOrder) {
+    struct ItemEvent { int item; int count; };
+    struct QuestEvent { int id; };
+    KitEventBus bus;
+    bus.Publish(ItemEvent{3, 2});
+    bus.Publish(QuestEvent{9});
+    bus.Publish(ItemEvent{5, 1});
+
+    AETHER_CHECK(bus.HasPending<ItemEvent>());
+    AETHER_CHECK(bus.HasPending<QuestEvent>());
+    const std::vector<ItemEvent> items = bus.Drain<ItemEvent>();
+    AETHER_CHECK(items.size() == 2);
+    AETHER_CHECK(items[0].item == 3 && items[0].count == 2);
+    AETHER_CHECK(items[1].item == 5 && items[1].count == 1);
+    AETHER_CHECK(!bus.HasPending<ItemEvent>());
+    AETHER_CHECK(bus.Drain<ItemEvent>().empty());
+    const std::vector<QuestEvent> quests = bus.Drain<QuestEvent>();
+    AETHER_CHECK(quests.size() == 1 && quests[0].id == 9);
 }
 
 // The four real gameplay kits (Phase 37 step 4): they resolve, the gameplay module comes first, and each kit

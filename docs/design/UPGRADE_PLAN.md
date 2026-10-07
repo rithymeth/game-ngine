@@ -58,7 +58,7 @@ gates the world work, `43.1` gates all editor work.
 > **37.1 status: registry done (this step), the rest stays open.** `aether/kit/kit.h` and `kit_registry.cpp` provide `IKit` (`Name`, `Deps`, `RegisterComponents`, `InstallBlueprintNodes`, `InstallScriptApi(void*)`, `Stages`) and `KitRegistry` (`Add`, `Resolve` with a deterministic dependency order, duplicate, missing-dependency and cycle errors, install hooks, stage list with dependency `after`). Decision: kits are installed from an explicit list (`RegisterXKit(registry)`), not a static registrar, because the kits are static libraries and the linker can drop a registrar object. Still to do with 37.4: `LoadAssets`, `CreateRuntime`, the `KitEventBus`, the `aether_kit()` CMake function and the kit migrations.
 | **37.2** *(done)* | Module dependency check: `tools/check_module_graph.py` plus a `check_module_graph` target and a CI step. It reads `cmake --graphviz`, fails on a cycle or on an edge not in the checked-in `docs/design/module_layers.txt`, and scans `#include "aether/<module>/..."` against the same layer file. Acceptance: clean today; a seeded-cycle fixture fails. | - |
 | **37.3** *(done)* | Stability annotations: `engine/include/aether/core/api.h` (`AETHER_DEPRECATED(version, replacement)` as a real `[[deprecated]]`, `AETHER_STABLE`, `AETHER_EXPERIMENTAL`, `AETHER_INTERNAL`); a level per public module in `docs/design/api_stability.txt` (everything experimental until the 48.3 freeze) with an optional `// @stability:` override per header; `tools/check_api_stability.py` as a test; `docs/manual/api_stability.md`. (`tools/docgen` documents reflected types, not headers, so levels are per module and header, not in the generated reference.) | - |
-| **37.4** *(started, one PR in two commits: a stage-order snapshot test (`Player_StageOrderSnapshot`, exact order and parallel levels of every player system), then `MakeGameplayKit`/`MakeInventoryKit`/`MakeInteractionKit`/`MakeQuestsKit` and `Game::BuildKits`: kit names, dependencies, component registration and each kit stage's name and `after` now come from the registry, and `game.cpp` has one `#if` per kit in `BuildKits`; the order is unchanged. Still to do: move the system lambdas into the kits (needs a context interface to the runtime, scripts and Blueprint VM), the event bus for the quests/inventory coupling, `InstallScriptApi` through the registry, the lazy asset loading, and the remaining `#if`s in `game.h`/`game.cpp`)* | Migrate gameplay, inventory, interaction and quests to `IKit` (a `*_kit.cpp` each), delete the `AETHER_KIT_*` `#if`s from `game.cpp`, move the `quests->Notify` coupling to the event bus. Acceptance: `tests/test_coin_run.cpp` and the functional scenarios pass unchanged, a stage-order snapshot test matches today's order, and dropping then re-adding a kit option doesn't touch `game.cpp`. **Highest risk in the phase** (stage order, lazy loading). | 37.1 |
+| **37.4** *(started, one PR in two commits: a stage-order snapshot test (`Player_StageOrderSnapshot`, exact order and parallel levels of every player system), then `MakeGameplayKit`/`MakeInventoryKit`/`MakeInteractionKit`/`MakeQuestsKit` and `Game::BuildKits`: kit names, dependencies, component registration and each kit stage's name and `after` now come from the registry, and `game.cpp` has one `#if` per kit in `BuildKits`; the order is unchanged. A typed `KitEventBus` now carries inventory events to the quests stage, removing the direct `Inventory -> QuestSystem::Notify` call. Still to do: move the system lambdas into the kits (needs a context interface to the runtime, scripts and Blueprint VM), route script API installation through the registry, lazy asset loading, and the remaining `#if`s in `game.h`/`game.cpp`)* | Migrate gameplay, inventory, interaction and quests to `IKit` (a `*_kit.cpp` each), delete the `AETHER_KIT_*` `#if`s from `game.cpp`, move the `quests->Notify` coupling to the event bus. Acceptance: `tests/test_coin_run.cpp` and the functional scenarios pass unchanged, a stage-order snapshot test matches today's order, and dropping then re-adding a kit option doesn't touch `game.cpp`. **Highest risk in the phase** (stage order, lazy loading). | 37.1 |
 | **37.5** | The editor, scripting and tests consume the registry (`editor/main.cpp`, `editor/src/workspace`, `tests/CMakeLists.txt`). | 37.4 |
 | **37.6** *(done, advisory)* | Analysis gates: an advisory TSan CI job that runs the threaded tests (`AETHER_TEST_FILTER=JobSystem_,Audio_,Net_,NetPlay_,Streaming_`, a new comma-separated name filter in the test runner), an advisory clang-tidy job on the engine and kit sources a PR changes (`.clang-tidy`: `bugprone-*`, `performance-*`, `clang-analyzer-*`), and the `AETHER_WARNINGS_AS_ERRORS` option (off by default; the four gameplay libraries build clean under it with GCC; it is not on in CI yet because Clang and MSVC haven't been checked). Promote each to required after about two weeks clean. | - |
 | **37.7** *(started: `[[nodiscard]]` on `SaveResult` (every save, settings and envelope call), `cook::LoadAtex`, `ParseTextureFormat` and `ParseConfiguration`; the five call sites that ignored results were fixed. Still to do: the other modules, the error-return convention decision, naming and const passes)* | API audit sweep, one PR per module group: naming, `const`-ness, `[[nodiscard]]`, an error-return convention, a narrower public surface. `||` across groups. | 37.3 |
@@ -84,7 +84,7 @@ when advisory gates become required.
 
 | Step | Work | Needs |
 |---|---|---|
-| **39.1** | Render-graph validator (`renderer/`): hazards, unused passes, lifetimes; CPU unit tests. | - |
+| **39.1** *(done: `FrameGraph::Validate` checks compiled pass culling/order, read hazards, dependencies and queue waits, transient lifetimes and placements; the forward-plus, error and 200 randomized graph tests validate their compiled plans)* | Render-graph validator (`renderer/`): hazards, unused passes, lifetimes; CPU unit tests. | - |
 | **39.2** | Backend parity harness: same scene on every backend, compared with a tolerance (`tools/functional`); lavapipe covers Vulkan in CI, D3D12 and Metal on the Windows and macOS jobs. | the screenshot test |
 | **39.3** | Advanced PBR terms (clear coat, sheen, anisotropy) in material codegen and shaders. | 39.2 to verify |
 | **39.4** | Subsurface, hair, cloth, decals. | 39.3 |
@@ -104,14 +104,14 @@ when advisory gates become required.
 | **40.5** | Perception 2.0 (`ai/`). | - |
 | **40.6** | Behavior debugger and visualization (`editor/src/ai`). | 40.4 |
 | **40.7** | Optional ONNX runtime layer (`AETHER_AI_ONNX`, deterministic fallback, licence review). Windows and macOS are CI checks. | - |
-| **40.8** | Document the agent/gameplay-AI boundary; `mcp/` links nothing from `ai/` (checked by 37.2). | 37.2 |
+| **40.8** *(done: `docs/design/agent_gameplay_ai_boundary.md` documents runtime/editor responsibilities, dependency direction and deterministic simulation constraints; the module graph gate checks that MCP does not link AI)* | Document the agent/gameplay-AI boundary; `mcp/` links nothing from `ai/` (checked by 37.2). | 37.2 |
 
 ## Phase 41: Multiplayer 2.0
 
 | Step | Work | Needs |
 |---|---|---|
 | **41.1** | Headless dedicated-server target (`net/`, `player/`): no window, RHI or audio. | - |
-| **41.2** | Network conditioner (loss, latency, jitter) in `net/`. `||` | - |
+| **41.2** *(done: `LoopbackNetwork` simulates seeded loss, latency, jitter and duplication; `Net_LoopbackNetworkAppliesJitterAndDuplication` checks delay bounds and duplicate delivery, and `Net_ReliableUnderBadConditions` exercises recovery under all four conditions)* | Network conditioner (loss, latency, jitter) in `net/`. `||` | - |
 | **41.3** | Replication priority, relevancy and a bandwidth budget. | 41.2 |
 | **41.4** | Session and matchmaking interface with a local backend. `||` | - |
 | **41.5** | Server-authority and input-validation audit. `||` | - |
@@ -147,7 +147,7 @@ when advisory gates become required.
 
 | Step | Work | Needs |
 |---|---|---|
-| **44.1** *(started: wrong-typed `jsonrpc`/`id`/`params`/`protocolVersion` no longer throw out of the server; a throwing tool is an `isError` result; schema `required` arguments are checked before the handler; result size cap (8 MB) and request line cap (4 MB); `schemaVersion` in `tools/list`; empty or handler-less tools are refused. Still to do: path sandboxing (44.3), a scripted stub-client session, per-tool schema type checks)* | Audit and harden `mcp/` (`editor_tools.cpp`, `mcp_server.cpp`): version the tool schemas, test the protocol with a stub client. | - |
+| **44.1** *(done for the protocol audit: malformed fields, required arguments, schema property types, handler exceptions and message/result limits are tested; `tests/test_mcp.cpp` drives initialize and tool calls through a stub stdio client; `tools/list` reports the schema version)* | Audit and harden `mcp/` (`editor_tools.cpp`, `mcp_server.cpp`): version the tool schemas, test the protocol with a stub client. | - |
 | **44.2** | Every edit through the undo stack with agent attribution. | 44.1 |
 | **44.3** | A permission file in the project and a session log. | 44.1 |
 | **44.4** | Confirmation flow for destructive tools. | 44.3 |
@@ -183,7 +183,7 @@ when advisory gates become required.
 
 | Step | Work | Needs |
 |---|---|---|
-| **47.1** *(started: pak, scene, Blueprint, gameplay-data, prefab, material, sequence, animation and manifest targets; found and fixed two real crashes, and `GuardJsonLoader` now hardens seven more loaders. The save envelope target is done (`ReadFromMemory` and `InspectBytes` seams; reading the code for it showed that a wrong-typed field in a save file would throw out of `Read` and `Inspect`, now a Corrupt result). The Blueprint corpus now has the four shipped sample Blueprints as valid seeds. Still to do: net protocol, importers, richer valid seeds for the other loaders)* | libFuzzer harnesses (`tools/fuzz/`, `AETHER_BUILD_FUZZERS`, Clang): pak reader, scene, Blueprint and save loaders, the net protocol, importers. One PR per target, runnable here. `||` | - |
+| **47.1** *(started: pak, scene, Blueprint, gameplay-data, prefab, material, sequence, animation, manifest, save-envelope, session-info, asset metadata, bounded texture import and bounded self-contained glTF parsing have fuzz targets. Metadata has wrong-type coverage; image decoding enforces a pixel budget; glTF memory parsing refuses external file URIs. Still to do: full model-import result generation and richer valid seeds for the other loaders)* | libFuzzer harnesses (`tools/fuzz/`, `AETHER_BUILD_FUZZERS`, Clang): pak reader, scene, Blueprint and save loaders, the net protocol, importers. One PR per target, runnable here. `||` | - |
 | **47.2** | A corpus and a fixed-budget fuzz job in CI. | 47.1 |
 | **47.3** | Editor autosave and crash recovery (extends the crash reporter). | - |
 | **47.4** | Crash-dump symbolication. The Windows dump path is Windows-CI-only. | - |
@@ -196,7 +196,7 @@ when advisory gates become required.
 
 | Step | Work | Needs |
 |---|---|---|
-| **48.1** | `tools/gate.py`: checks each row of the production gate table and reports pass or fail; rows start as "n/a yet". | - |
+| **48.1** *(started: `tools/gate.py` validates a versioned production-gates table, reports pass/fail/n-a statuses, and supports a strict `--require-complete` release check; initial rows are honestly marked `n/a yet`; the table is a CTest check)* | `tools/gate.py`: checks each row of the production gate table and reports pass or fail; rows start as "n/a yet". | - |
 | **48.2** | Format-version audit; migration tools for every serialized format; a corpus of old projects in the tests. | - |
 | **48.3** | API freeze: promote the stable annotations and block removals in CI. | 37.3 |
 | **48.4** | Three sample games (the existing coin run and gem hop, plus one new). | - |

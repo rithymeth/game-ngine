@@ -4,6 +4,7 @@
 #include "aether/sequencer/sequence_system.h"
 
 #include "aether/core/log.h"
+#include "aether/kit/event_bus.h"
 #include "aether/gameplay/ability_system.h"
 #include "aether/gameplay/gameplay_kit.h"
 #if AETHER_KIT_INVENTORY
@@ -235,6 +236,7 @@ bool Game::HasScripting() { return AETHER_GAME_SCRIPTING != 0; }
 // world, the GUID index and the input, so it's built per scene and torn down
 // before any of them.
 struct Game::Runtime {
+    kit::KitEventBus kit_events;
     std::unique_ptr<seq::SequenceSystem> sequences;
     std::unique_ptr<gas::AttributeSystem> attributes; // Phase 30
     std::unique_ptr<gas::EffectSystem> effects;
@@ -927,92 +929,74 @@ void Game::BuildFrame() {
     scheduler_.Add(std::move(abilities));
 #if AETHER_KIT_INVENTORY
     // Inventory changes (§30.7) reach the owner's script and Blueprint, after effects have run.
-    SystemDesc inventory;
-    ApplyKitStage(inventory, "Player.Inventory");
-    inventory.phase = SystemPhase::Update;
-    inventory.main_thread_only = true;
-    inventory.run = [this](World&, const FrameContext&) {
-        if (!runtime_ || !runtime_->inventory) return;
-        const std::vector<inv::ItemEvent> events = runtime_->inventory->Events();
-        runtime_->inventory->ClearEvents();
-        for (const inv::ItemEvent& e : events) {
-            using Kind = inv::ItemEvent::Kind;
-#if AETHER_KIT_QUESTS
-            // Items picked up and put down advance "count" objectives that name the item.
-            if (runtime_->quests && (e.kind == Kind::Added || e.kind == Kind::Removed)) {
-                runtime_->quests->Notify(e.entity, quest::Objective::Kind::Count, e.item, e.kind == Kind::Added ? e.count : -e.count);
-            }
-#endif
+    SystemDesc inventory = inv::MakeInventorySystem(runtime_ ? runtime_->inventory.get() : nullptr, [this](const inv::ItemEvent& e) {
+        if (!runtime_) return;
+        using Kind = inv::ItemEvent::Kind;
+        // Quest objectives consume inventory events in the Quests stage,
+        // so Inventory has no direct dependency on the Quests kit.
+        if (kits_.Has("Quests")) runtime_->kit_events.Publish(e);
 #if AETHER_GAME_SCRIPTING
-            if (runtime_->scripts) {
-                const f64 n = static_cast<f64>(e.count);
-                switch (e.kind) {
-                case Kind::Added: runtime_->scripts->SendEvent(e.entity, "OnItemAdded", {e.item, n}); break;
-                case Kind::Removed: runtime_->scripts->SendEvent(e.entity, "OnItemRemoved", {e.item, n}); break;
-                case Kind::Equipped: runtime_->scripts->SendEvent(e.entity, "OnItemEquipped", {e.item, e.slot}); break;
-                case Kind::Unequipped: runtime_->scripts->SendEvent(e.entity, "OnItemUnequipped", {e.item, e.slot}); break;
-                case Kind::Used: runtime_->scripts->SendEvent(e.entity, "OnItemUsed", {e.item}); break;
-                }
-            }
-#endif
-            if (!runtime_->blueprints) continue;
+        if (runtime_->scripts) {
+            const f64 n = static_cast<f64>(e.count);
             switch (e.kind) {
-            case Kind::Added: {
-                const bp::VmValue args[] = {e.item, e.count};
-                runtime_->blueprints->VM().Dispatch(e.entity, inv::InventorySystem::kAddedEvent, args);
-                break;
-            }
-            case Kind::Removed: {
-                const bp::VmValue args[] = {e.item, e.count};
-                runtime_->blueprints->VM().Dispatch(e.entity, inv::InventorySystem::kRemovedEvent, args);
-                break;
-            }
-            case Kind::Equipped:
-            case Kind::Unequipped: {
-                const bp::VmValue args[] = {e.item, e.slot};
-                runtime_->blueprints->VM().Dispatch(e.entity, e.kind == Kind::Equipped ? inv::InventorySystem::kEquippedEvent : inv::InventorySystem::kUnequippedEvent, args);
-                break;
-            }
-            case Kind::Used: {
-                const bp::VmValue args[] = {e.item};
-                runtime_->blueprints->VM().Dispatch(e.entity, inv::InventorySystem::kUsedEvent, args);
-                break;
-            }
+            case Kind::Added: runtime_->scripts->SendEvent(e.entity, "OnItemAdded", {e.item, n}); break;
+            case Kind::Removed: runtime_->scripts->SendEvent(e.entity, "OnItemRemoved", {e.item, n}); break;
+            case Kind::Equipped: runtime_->scripts->SendEvent(e.entity, "OnItemEquipped", {e.item, e.slot}); break;
+            case Kind::Unequipped: runtime_->scripts->SendEvent(e.entity, "OnItemUnequipped", {e.item, e.slot}); break;
+            case Kind::Used: runtime_->scripts->SendEvent(e.entity, "OnItemUsed", {e.item}); break;
             }
         }
-    };
+#endif
+        if (!runtime_->blueprints) return;
+        switch (e.kind) {
+        case Kind::Added: {
+            const bp::VmValue args[] = {e.item, e.count};
+            runtime_->blueprints->VM().Dispatch(e.entity, inv::InventorySystem::kAddedEvent, args);
+            break;
+        }
+        case Kind::Removed: {
+            const bp::VmValue args[] = {e.item, e.count};
+            runtime_->blueprints->VM().Dispatch(e.entity, inv::InventorySystem::kRemovedEvent, args);
+            break;
+        }
+        case Kind::Equipped:
+        case Kind::Unequipped: {
+            const bp::VmValue args[] = {e.item, e.slot};
+            runtime_->blueprints->VM().Dispatch(e.entity, e.kind == Kind::Equipped ? inv::InventorySystem::kEquippedEvent : inv::InventorySystem::kUnequippedEvent, args);
+            break;
+        }
+        case Kind::Used: {
+            const bp::VmValue args[] = {e.item};
+            runtime_->blueprints->VM().Dispatch(e.entity, inv::InventorySystem::kUsedEvent, args);
+            break;
+            }
+        }
+    });
+    ApplyKitStage(inventory, "Player.Inventory");
     scheduler_.Add(std::move(inventory));
 #endif
 #if AETHER_KIT_INTERACTION
     // Interaction (§30.8): cooldowns tick, and uses reach the target's script and Blueprint (OnInteract),
     // failures the user's (OnInteractFailed).
-    SystemDesc interaction;
-    ApplyKitStage(interaction, "Player.Interaction");
-    interaction.phase = SystemPhase::Update;
-    interaction.main_thread_only = true;
-    interaction.run = [this](World&, const FrameContext& frame) {
-        if (!runtime_ || !runtime_->interaction) return;
-        runtime_->interaction->Update(frame.dt);
-        const std::vector<interact::InteractionEvent> events = runtime_->interaction->Events();
-        runtime_->interaction->ClearEvents();
-        for (const interact::InteractionEvent& e : events) {
-            const bool ok = e.kind == interact::InteractionEvent::Kind::Interacted;
+    SystemDesc interaction = interact::MakeInteractionSystem(runtime_ ? runtime_->interaction.get() : nullptr, [this](const interact::InteractionEvent& e) {
+        if (!runtime_) return;
+        const bool ok = e.kind == interact::InteractionEvent::Kind::Interacted;
 #if AETHER_GAME_SCRIPTING
-            if (runtime_->scripts) {
-                if (ok) runtime_->scripts->SendEvent(e.target, "OnInteract", {script::EntityRef{e.interactor}});
-                else runtime_->scripts->SendEvent(e.interactor, "OnInteractFailed", {script::EntityRef{e.target}, std::string(interact::ReasonName(e.reason))});
-            }
-#endif
-            if (!runtime_->blueprints) continue;
-            if (ok) {
-                const bp::VmValue args[] = {e.interactor};
-                runtime_->blueprints->VM().Dispatch(e.target, interact::InteractionSystem::kInteractEvent, args);
-            } else {
-                const bp::VmValue args[] = {e.target, std::string(interact::ReasonName(e.reason))};
-                runtime_->blueprints->VM().Dispatch(e.interactor, interact::InteractionSystem::kFailedEvent, args);
-            }
+        if (runtime_->scripts) {
+            if (ok) runtime_->scripts->SendEvent(e.target, "OnInteract", {script::EntityRef{e.interactor}});
+            else runtime_->scripts->SendEvent(e.interactor, "OnInteractFailed", {script::EntityRef{e.target}, std::string(interact::ReasonName(e.reason))});
         }
-    };
+#endif
+        if (!runtime_->blueprints) return;
+        if (ok) {
+            const bp::VmValue args[] = {e.interactor};
+            runtime_->blueprints->VM().Dispatch(e.target, interact::InteractionSystem::kInteractEvent, args);
+        } else {
+            const bp::VmValue args[] = {e.target, std::string(interact::ReasonName(e.reason))};
+            runtime_->blueprints->VM().Dispatch(e.interactor, interact::InteractionSystem::kFailedEvent, args);
+        }
+    });
+    ApplyKitStage(interaction, "Player.Interaction");
     scheduler_.Add(std::move(interaction));
 #endif
 #if AETHER_KIT_QUESTS
@@ -1027,6 +1011,14 @@ void Game::BuildFrame() {
     quests.main_thread_only = true;
     quests.run = [this](World&, const FrameContext&) {
         if (!runtime_ || !runtime_->quests) return;
+#if AETHER_KIT_INVENTORY
+        for (const inv::ItemEvent& item : runtime_->kit_events.Drain<inv::ItemEvent>()) {
+            if (item.kind == inv::ItemEvent::Kind::Added || item.kind == inv::ItemEvent::Kind::Removed) {
+                runtime_->quests->Notify(item.entity, quest::Objective::Kind::Count, item.item,
+                                         item.kind == inv::ItemEvent::Kind::Added ? item.count : -item.count);
+            }
+        }
+#endif
         const std::vector<quest::QuestEvent> events = runtime_->quests->Events();
         runtime_->quests->ClearEvents();
         for (const quest::QuestEvent& e : events) {

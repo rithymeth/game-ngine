@@ -43,6 +43,19 @@ AETHER_TEST(AssetGuid_StringAndReflection) {
     AETHER_CHECK(ImporterForExtension("notes.txt").empty());
 }
 
+AETHER_TEST(AssetMetaFromMemory_RejectsWrongTypesWithoutThrowing) {
+    const std::string valid = R"({"$type":"AssetMeta","guid":"00000000-0000-4000-8000-000000000002","importer_version":7,"importer":"Texture","source_hash":"abc"})";
+    AssetMeta meta;
+    std::string error;
+    AETHER_CHECK(LoadAssetMetaFromMemory(std::span<const u8>(reinterpret_cast<const u8*>(valid.data()), valid.size()), meta, &error));
+    AETHER_CHECK(meta.importer == "Texture" && meta.importer_version == 7 && meta.source_hash == "abc");
+
+    const std::string malformed = R"({"$type":"AssetMeta","guid":"00000000-0000-4000-8000-000000000002","importer":{},"importer_version":"new","source_hash":[],"labels":{},"sub_assets":{"mesh:0":{"guid":"00000000-0000-4000-8000-000000000003","importer":false}}})";
+    AETHER_CHECK(LoadAssetMetaFromMemory(std::span<const u8>(reinterpret_cast<const u8*>(malformed.data()), malformed.size()), meta, &error));
+    AETHER_CHECK(meta.importer.empty() && meta.importer_version == 1 && meta.source_hash.empty());
+    AETHER_CHECK(meta.labels.empty() && meta.sub_assets.size() == 1 && meta.sub_assets[0].importer.empty());
+}
+
 AETHER_TEST(AssetDatabase_ScanCreatesStableMetadata) {
     stdfs::path root = FreshContent("aether_test_content_scan");
     Write(root / "Textures/brick.png", "fake png bytes");

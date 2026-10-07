@@ -81,6 +81,16 @@ AETHER_TEST(TextureImporter_BuildsMipChainFromARealPng) {
     AETHER_CHECK(tiny.mips[1] == DownsampleRGBA8(corners.pixels, 2, 2, true));
 }
 
+AETHER_TEST(TextureImporter_MemoryImportEnforcesThePixelBudget) {
+    std::ifstream file(kRepoTextures / "checker_a.png", std::ios::binary);
+    std::vector<u8> bytes((std::istreambuf_iterator<char>(file)), {});
+    TextureImporter importer;
+    const auto imported = importer.ImportFromMemory(bytes, importer.DefaultSettings(), 64 * 64);
+    AETHER_CHECK(imported.ok);
+    const auto refused = importer.ImportFromMemory(bytes, importer.DefaultSettings(), 64 * 64 - 1);
+    AETHER_CHECK(!refused.ok && !refused.error.empty());
+}
+
 AETHER_TEST(TextureImporter_SettingsChangeTheOutput) {
     AssetRecord record;
     TextureImporter importer;

@@ -1,4 +1,5 @@
 #include "aether/assets/asset_ref.h"
+#include "aether/assets/gltf_loader.h"
 #include "aether/assets/model_importer.h"
 #include "aether/reflection/serialize.h"
 #include "test_framework.h"
@@ -72,6 +73,16 @@ AETHER_TEST(MeshData_RoundTripsAndRejectsBadInput) {
     huge_count[8] = 0xff; // primitive count far beyond the data
     AETHER_CHECK(!DecodeMeshData(huge_count, back));
     AETHER_CHECK(!DecodeMeshData({'A', 'M', 'S'}, back));
+}
+
+AETHER_TEST(GltfMemoryLoader_ParsesBoundedDataAndRejectsExternalUris) {
+    const auto parse = [](const std::string& json, GltfScene& scene) {
+        return LoadGltfFromMemory(std::span<const u8>(reinterpret_cast<const u8*>(json.data()), json.size()), scene);
+    };
+    GltfScene scene;
+    AETHER_CHECK(parse(R"({"asset":{"version":"2.0"}})", scene));
+    AETHER_CHECK(!parse(R"({"asset":{"version":"2.0"},"buffers":[{"uri":"../../private.bin","byteLength":1}]})", scene));
+    AETHER_CHECK(!parse(R"({"asset":{"version":"2.0"},"materials":[{"pbrMetallicRoughness":{"baseColorFactor":"bad"}}]})", scene));
 }
 
 AETHER_TEST(ModelImporter_SplitsATexturedCube) {
