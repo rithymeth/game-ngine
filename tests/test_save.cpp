@@ -60,7 +60,7 @@ stdfs::path Dir(const std::string& name) {
 
 std::string ReadAll(const stdfs::path& file) {
     std::string text;
-    fs::ReadFileText(file.string(), text);
+    CHECK(fs::ReadFileText(file.string(), text));
     return text;
 }
 
