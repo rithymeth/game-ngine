@@ -3,6 +3,7 @@
 #include "aether/core/log.h"
 #include "aether/core/version.h"
 #include "aether/platform/filesystem.h"
+#include "aether/platform/process.h"
 #include "aether/project/project.h"
 #include "aether/reflection/serialize.h"
 
@@ -152,6 +153,14 @@ void ModuleRegistry::UnregisterForTesting(const std::string& name) {
 // --- The manager ---------------------------------------------------------------
 
 stdfs::path PluginManager::EnginePluginsDir() {
+    // Installed tools must discover the catalog beside their executable;
+    // the build machine's source directory is only a development fallback.
+    std::error_code bundled_error;
+    const stdfs::path executable = platform::ExecutablePath();
+    if (!executable.empty()) {
+        const stdfs::path bundled = executable.parent_path() / "plugins";
+        if (stdfs::is_directory(bundled, bundled_error)) return bundled;
+    }
 #ifdef AETHER_ENGINE_PLUGINS_DIR
     std::error_code ec;
     const stdfs::path dir = AETHER_ENGINE_PLUGINS_DIR;

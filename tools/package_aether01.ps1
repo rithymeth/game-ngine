@@ -29,7 +29,7 @@ Copy-Item -LiteralPath (Join-Path $repo 'games/AETHER-01/README.md') -Destinatio
 Copy-Item -LiteralPath (Join-Path $repo 'games/AETHER-01/THIRD_PARTY_NOTICES.md') -Destination $outputRoot
 Copy-Item -LiteralPath (Join-Path $repo 'THIRD_PARTY_NOTICES.md') -Destination (Join-Path $outputRoot 'ENGINE_NOTICES.md')
 Copy-Item -LiteralPath (Join-Path $repo 'docs/WINDOWS_REQUIREMENTS.md') -Destination $outputRoot
-Copy-Item -LiteralPath (Join-Path $repo 'docs/releases/v0.27.0.md') -Destination (Join-Path $outputRoot 'RELEASE_NOTES.md')
+Copy-Item -LiteralPath (Join-Path $repo 'docs/releases/v0.27.1.md') -Destination (Join-Path $outputRoot 'RELEASE_NOTES.md')
 Copy-Item -LiteralPath (Join-Path $repo 'third_party/licenses') -Destination (Join-Path $outputRoot 'licenses') -Recurse
 $commit = (& git -C $repo rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Cannot record the build commit' }

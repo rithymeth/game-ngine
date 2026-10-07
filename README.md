@@ -1577,7 +1577,7 @@ confirm.
     and writes `Name.aproject`. It validates the name and refuses a non-empty
     folder.
   - `LoadProject`/`SaveProject` use deterministic JSON stamped with the
-    engine version (`aether/core/version.h`, now 0.27.0). Loading tolerates
+    engine version (`aether/core/version.h`, now 0.27.1). Loading tolerates
     missing and unknown fields, warns about a project saved by a newer
     engine, and enforces "layer 0 is Default, at most 32 layers".
   - `EnsureProjectFolders` restores the ignored folders after a fresh clone.

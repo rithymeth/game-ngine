@@ -163,7 +163,8 @@ public:
     // mounts in the virtual file system ("Plugins/<Name>/").
     std::vector<std::pair<std::filesystem::path, std::string>> ContentMounts() const;
 
-    // The engine's own plugins folder (this source tree's plugins/), or empty.
+    // The executable's bundled plugins/ folder, then the development source
+    // tree's plugins/ folder as a fallback, or empty if neither exists.
     static std::filesystem::path EnginePluginsDir();
 
 private:
