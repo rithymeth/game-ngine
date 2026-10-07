@@ -1,5 +1,7 @@
 #include "aether/gfx/rhi/d3d12/d3d12_backend.h"
 
+#include <limits>
+
 #include "aether/core/log.h"
 #include "aether/gfx/shader_compiler.h"
 
@@ -288,6 +290,65 @@ void D3D12SwapChain::Resize(u32 width, u32 height) {
     }
     used_before_.assign(swap_chain_.BufferCount(), false);
     CreateDepthBuffer(swap_chain_.Width(), swap_chain_.Height());
+}
+
+bool D3D12SwapChain::ReadBack(std::vector<u8>& rgba8) {
+    if (swap_chain_.Format() != DXGI_FORMAT_R8G8B8A8_UNORM || Width() == 0 || Height() == 0) {
+        return false;
+    }
+
+    ID3D12Resource* backbuffer = swap_chain_.BackBuffer(CurrentIndex());
+    const D3D12_RESOURCE_DESC texture_desc = backbuffer->GetDesc();
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
+    u32 row_count = 0;
+    u64 row_size = 0;
+    u64 total_bytes = 0;
+    device_.Native().Handle()->GetCopyableFootprints(&texture_desc, 0, 1, 0, &footprint, &row_count, &row_size,
+                                                       &total_bytes);
+    if (row_count != Height() || row_size != static_cast<u64>(Width()) * 4 ||
+        total_bytes > static_cast<u64>(std::numeric_limits<usize>::max())) {
+        return false;
+    }
+
+    gfx::Buffer readback(device_.Native(), total_bytes, gfx::BufferKind::Readback);
+    ComPtr<ID3D12CommandAllocator> allocator;
+    AETHER_D3D_CHECK(device_.Native().Handle()->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
+                                                                        IID_PPV_ARGS(&allocator)));
+    ComPtr<ID3D12GraphicsCommandList> command_list;
+    AETHER_D3D_CHECK(device_.Native().Handle()->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
+                                                                   allocator.Get(), nullptr,
+                                                                   IID_PPV_ARGS(&command_list)));
+
+    D3D12_RESOURCE_BARRIER to_copy = TransitionBarrier(backbuffer, D3D12_RESOURCE_STATE_PRESENT,
+                                                       D3D12_RESOURCE_STATE_COPY_SOURCE);
+    command_list->ResourceBarrier(1, &to_copy);
+
+    D3D12_TEXTURE_COPY_LOCATION destination{};
+    destination.pResource = readback.Handle();
+    destination.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    destination.PlacedFootprint = footprint;
+    D3D12_TEXTURE_COPY_LOCATION source{};
+    source.pResource = backbuffer;
+    source.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    source.SubresourceIndex = 0;
+    command_list->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
+
+    D3D12_RESOURCE_BARRIER to_present = TransitionBarrier(backbuffer, D3D12_RESOURCE_STATE_COPY_SOURCE,
+                                                          D3D12_RESOURCE_STATE_PRESENT);
+    command_list->ResourceBarrier(1, &to_present);
+    AETHER_D3D_CHECK(command_list->Close());
+
+    ID3D12CommandList* lists[] = {command_list.Get()};
+    const u64 fence = device_.Native().Submit(lists, 1);
+    device_.Native().WaitForFence(fence);
+
+    const usize row_bytes = static_cast<usize>(row_size);
+    rgba8.resize(row_bytes * Height());
+    for (u32 row = 0; row < Height(); ++row) {
+        readback.Read(rgba8.data() + static_cast<usize>(row) * row_bytes, row_bytes,
+                      footprint.Offset + static_cast<u64>(row) * footprint.Footprint.RowPitch);
+    }
+    return true;
 }
 
 D3D12CommandList::D3D12CommandList(D3D12Device& device, D3D12_COMMAND_LIST_TYPE type)

@@ -106,6 +106,7 @@ public:
     u32 Height() const override { return swap_chain_.Height(); }
     u32 BufferCount() const override { return swap_chain_.BufferCount(); }
     void* NativeHandle() const override { return const_cast<gfx::SwapChain*>(&swap_chain_); }
+    bool ReadBack(std::vector<u8>& rgba8) override;
 
     gfx::SwapChain& Native() { return swap_chain_; }
     u32 CurrentIndex() const { return swap_chain_.CurrentBackBufferIndex(); }

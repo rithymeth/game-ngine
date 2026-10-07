@@ -3,19 +3,24 @@
 This is the playable project scaffold for the AETHER-01 engine proof game. It
 is based on the engine's Third Person project template so the first pass uses
 the real project, input, scene, Lua, physics, cooker, and standalone-player
-workflows.
+workflows. The player currently draws static glTF meshes and textures through
+the engine RHI; this remains greybox-only and does not yet render lighting or
+skeletal animation.
 
 ## Current state
 
 **Early combat prototype; not a complete playable slice.** The project proves
 project creation, third-person movement and camera follow,
 `CharacterMovement` collision, textured model importing, asset cooking, and
-headless player startup. Its 15-entity scene contains Kael, a Scout target, a
-tiled room, collision walls, a service-door opening, and cryo pods. The player,
-Scout, and environment use temporary cube/checker greybox art. Mouse-left or
-right trigger fires a simple aim-cone hit that removes the Scout; it has no
-occlusion, health, ammunition, damage feedback, death/restart flow, boss,
-story sequence, save/checkpoint flow, or finished level art.
+packaged-player rendering/startup. Its 15-entity scene contains Kael, a Scout,
+a tiled room, collision walls, a service-door opening, and cryo pods. The player, Scout,
+and environment use temporary cube/checker greybox art. The AEGIS prototype
+uses an aim cone and checks visibility against the room's unrotated box
+colliders. Three hits knock the Scout back and defeat it. Scout contact drains
+Kael's three health points; press R or gamepad Y after death to restart the
+room. The prototype still lacks a visible HUD, ammo, hit/damage indicators,
+objective flow, boss encounter, story sequence, save/checkpoint flow, and
+finished level art.
 
 The first playable milestone is one connected HELIOS-7 room sequence: Kael
 wakes in cryo, retrieves the AEGIS Rifle, defeats a Scout, opens the service
@@ -29,6 +34,8 @@ systems; keep this game code and content inside this project.
 - Mouse-left: fire the AEGIS prototype
 - Space: jump
 - Gamepad right trigger: fire
+- R after death: restart the room
+- Gamepad Y after death: restart the room
 
 ## Build and run (Windows)
 
@@ -40,12 +47,18 @@ build\player\aether_player.exe --pak build\aether01-cooked\Game.apak
 ```
 
 For a headless smoke run, add `--headless --frames 120 --report` to the player
-command. Generated builds belong under the ignored engine `build/` directory.
+command. To capture the rendered window after 10 frames, run:
+
+```powershell
+build\player\aether_player.exe --pak build\aether01-cooked\Game.apak --frames 10 --size 960x540 --screenshot build\aether01-preview.bmp
+```
+
+Generated builds belong under the ignored engine `build/` directory.
 
 ## Milestones
 
-1. Turn the prototype shot and Scout into a readable combat loop with line of
-   sight, health, damage/hit feedback, death, and restart.
+1. Add a HUD and damage/hit feedback so health, Scout health, ammo, and danger
+   are readable during the current three-hit encounter.
 2. Add the AEGIS Rifle pickup and service-route objective, then make the first
    connected cryo/research sequence completable.
 3. Add the remaining MVP weapons/enemies and Warden encounter after the first

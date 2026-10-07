@@ -1,7 +1,8 @@
 # Phase 25 step 4: the player - a cooked game without the editor.
 # aether_game is its runtime (mounting the paks, loading the startup scene,
 # the frame loop); aether_player is the executable around it.
-add_library(aether_game STATIC src/game.cpp src/game_kits.cpp src/user_paths.cpp src/settings_apply.cpp src/bindings_migrate.cpp)
+add_library(aether_game STATIC src/game.cpp src/game_kits.cpp src/user_paths.cpp src/settings_apply.cpp src/bindings_migrate.cpp
+                               src/scene_renderer.cpp)
 target_include_directories(aether_game PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(aether_game PUBLIC Aether::Engine)
 if(TARGET Aether::Physics)

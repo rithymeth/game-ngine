@@ -303,6 +303,36 @@
       },
       {
         "$v": 1,
+        "action": "Restart",
+        "actuation": 0.5,
+        "key": "R",
+        "modifiers": [],
+        "triggers": [
+          {
+            "chord_action": "",
+            "one_shot": true,
+            "time": 0.5,
+            "type": "Pressed"
+          }
+        ]
+      },
+      {
+        "$v": 1,
+        "action": "Restart",
+        "actuation": 0.5,
+        "key": "GamepadY",
+        "modifiers": [],
+        "triggers": [
+          {
+            "chord_action": "",
+            "one_shot": true,
+            "time": 0.5,
+            "type": "Pressed"
+          }
+        ]
+      },
+      {
+        "$v": 1,
         "action": "Jump",
         "actuation": 0.5,
         "key": "Space",

@@ -247,6 +247,19 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & .\build\player\Release\aether_player.exe --pak build\aether01-cooked\Game.apak --headless --frames 120 --report
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Render the AETHER-01 proof scene
+        shell: pwsh
+        run: |
+          & .\build\player\Release\aether_player.exe --pak build\aether01-cooked\Game.apak --frames 10 --size 960x540 --screenshot build\aether01-proof.bmp --user-dir build\aether01-user
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $image = Get-Item build\aether01-proof.bmp -ErrorAction Stop
+          if ($image.Length -lt 65536) { throw "Rendered proof frame is unexpectedly small ($($image.Length) bytes)" }
+      - name: Upload the AETHER-01 rendered proof frame
+        uses: actions/upload-artifact@v4
+        with:
+          name: AETHER-01-rendered-proof
+          path: build/aether01-proof.bmp
+          if-no-files-found: error
       - name: Package the editor
         shell: pwsh
         run: |

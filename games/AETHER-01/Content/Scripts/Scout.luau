@@ -4,7 +4,7 @@ local Scout = {}
 --@range 0 10
 Scout.speed = 1.2
 --@range 0 20
-Scout.stop_distance = 3
+Scout.stop_distance = 1.2
 
 function Scout:OnUpdate(dt)
     local players = world:EntitiesWith("CharacterMovement")

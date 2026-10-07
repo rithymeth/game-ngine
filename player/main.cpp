@@ -28,6 +28,7 @@
 
 #include "aether/player/bindings_migrate.h"
 #include "aether/player/game.h"
+#include "aether/player/scene_renderer.h"
 
 #include "aether/core/log.h"
 #include "aether/gfx/rhi/device.h"
@@ -42,6 +43,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <vector>
@@ -64,6 +66,7 @@ struct Options {
     std::string user_dir; // empty: AETHER_USER_DIR, then the OS's folder
     std::vector<std::string> keys;
     std::vector<std::string> pressed; // keys held for the whole run (headless runs, smoke tests)
+    std::string screenshot;
     bool report = false;              // print where the Player-tagged entity ended up
 };
 
@@ -71,7 +74,8 @@ void Usage() {
     std::fprintf(stderr,
                  "usage: aether_player [--pak <file|dir>]... [--scene <path>] [--frames <n>] [--headless]\n"
                  "                     [--backend d3d12|vulkan] [--size <w>x<h>] [--quality <preset>]\n"
-                 "                     [--key <64 hex digits>] [--press <Key>]... [--report] [--user-dir <dir>]\n");
+                 "                     [--key <64 hex digits>] [--press <Key>]... [--screenshot <file.bmp>]\n"
+                 "                     [--report] [--user-dir <dir>]\n");
 }
 
 bool ParseArgs(int argc, char** argv, Options& o) {
@@ -88,6 +92,8 @@ bool ParseArgs(int argc, char** argv, Options& o) {
             o.headless = true;
         } else if (a == "--press" && has_value) {
             o.pressed.push_back(argv[++i]);
+        } else if (a == "--screenshot" && has_value) {
+            o.screenshot = argv[++i];
         } else if (a == "--report") {
             o.report = true;
         } else if (a == "--key" && has_value) {
@@ -107,6 +113,47 @@ bool ParseArgs(int argc, char** argv, Options& o) {
         }
     }
     return true;
+}
+
+void WriteU16(std::ostream& stream, u16 value) {
+    const char bytes[2] = {static_cast<char>(value & 0xff), static_cast<char>((value >> 8) & 0xff)};
+    stream.write(bytes, sizeof(bytes));
+}
+
+void WriteU32(std::ostream& stream, u32 value) {
+    const char bytes[4] = {static_cast<char>(value & 0xff), static_cast<char>((value >> 8) & 0xff),
+                           static_cast<char>((value >> 16) & 0xff), static_cast<char>((value >> 24) & 0xff)};
+    stream.write(bytes, sizeof(bytes));
+}
+
+bool SaveScreenshotBmp(const std::string& path, u32 width, u32 height, const std::vector<u8>& rgba) {
+    if (width == 0 || height == 0 || rgba.size() != static_cast<usize>(width) * height * 4) return false;
+    std::ofstream file(path, std::ios::binary);
+    if (!file) return false;
+    const u32 bytes = width * height * 4;
+    file.put('B');
+    file.put('M');
+    WriteU32(file, 54 + bytes);
+    WriteU16(file, 0);
+    WriteU16(file, 0);
+    WriteU32(file, 54);
+    WriteU32(file, 40);
+    WriteU32(file, width);
+    WriteU32(file, static_cast<u32>(-static_cast<i32>(height)));
+    WriteU16(file, 1);
+    WriteU16(file, 32);
+    WriteU32(file, 0);
+    WriteU32(file, bytes);
+    WriteU32(file, 2835);
+    WriteU32(file, 2835);
+    WriteU32(file, 0);
+    WriteU32(file, 0);
+    for (usize i = 0; i < rgba.size(); i += 4) {
+        const char bgra[4] = {static_cast<char>(rgba[i + 2]), static_cast<char>(rgba[i + 1]),
+                              static_cast<char>(rgba[i]), static_cast<char>(rgba[i + 3])};
+        file.write(bgra, sizeof(bgra));
+    }
+    return file.good();
 }
 
 // --pak arguments (a folder means every .apak in it), else Paks/ beside the
@@ -228,6 +275,7 @@ int main(int argc, char** argv) {
         std::unique_ptr<rhi::IDevice> device;
         std::unique_ptr<rhi::ISwapChain> swap_chain;
         std::unique_ptr<rhi::ICommandList> cmd;
+        std::unique_ptr<SceneRenderer> scene_renderer;
         bool resized = false;
         if (!options.headless) {
             WindowDesc desc;
@@ -257,6 +305,7 @@ int main(int argc, char** argv) {
             if (device) {
                 swap_chain = device->CreateSwapChain(native, window->Width(), window->Height(), 2);
                 cmd = device->CreateCommandList();
+                scene_renderer = std::make_unique<SceneRenderer>(*device, *swap_chain, package);
                 window->on_resize = [&](u32, u32) { resized = true; };
             } else {
                 AETHER_LOG_WARN("Player", "No graphics device; running without drawing");
@@ -273,6 +322,8 @@ int main(int argc, char** argv) {
         }
         game.BeginPlay();
         u64 fence = 0;
+        bool screenshot_written = false;
+        bool screenshot_failed = false;
         auto last = std::chrono::steady_clock::now();
         auto last_stats = last;
         for (i64 frame = 0; options.frames < 0 || frame < options.frames; ++frame) {
@@ -286,6 +337,11 @@ int main(int argc, char** argv) {
             const f32 dt = window ? (std::min)(std::chrono::duration<f32>(now - last).count(), 0.25f)
                                   : 1.0f / manifest.fixed_timestep_hz;
             last = now;
+            if (!options.screenshot.empty() && frame == 0) {
+                // Ignore the window's initial cursor warp so a proof capture
+                // starts from the camera pose saved in the startup scene.
+                game.Input().EndFrame();
+            }
             game.Tick(dt);
 
             if (swap_chain) {
@@ -296,10 +352,26 @@ int main(int argc, char** argv) {
                 }
                 swap_chain->AcquireNextImage();
                 cmd->Reset();
-                cmd->BeginRenderPass(*swap_chain, {0.32f, 0.45f, 0.62f, 1.0f});
-                cmd->EndRenderPass();
+                if (scene_renderer) {
+                    scene_renderer->Draw(game, *cmd);
+                } else {
+                    cmd->BeginRenderPass(*swap_chain, {0.015f, 0.025f, 0.045f, 1.0f});
+                    cmd->EndRenderPass();
+                }
                 cmd->Close();
                 fence = device->Submit(*cmd, swap_chain.get());
+                const bool should_capture = options.frames < 0 || frame + 1 >= options.frames;
+                if (!options.screenshot.empty() && !screenshot_written && should_capture) {
+                    std::vector<u8> rgba;
+                    screenshot_written = true;
+                    if (swap_chain->ReadBack(rgba) &&
+                        SaveScreenshotBmp(options.screenshot, swap_chain->Width(), swap_chain->Height(), rgba)) {
+                        AETHER_LOG_INFO("Player", "Saved rendered frame to %s", options.screenshot.c_str());
+                    } else {
+                        AETHER_LOG_ERROR("Player", "Couldn't read back or save rendered frame to %s", options.screenshot.c_str());
+                        screenshot_failed = true;
+                    }
+                }
                 swap_chain->Present(vsync);
             }
             if (config != cook::BuildConfiguration::Shipping && now - last_stats >= std::chrono::seconds(1)) {
@@ -320,6 +392,7 @@ int main(int argc, char** argv) {
             }
         }
         game.EndPlay();
+        if (!options.screenshot.empty() && (!screenshot_written || screenshot_failed)) return 4;
         // Settings are written only if the game changed them: a damaged file
         // isn't overwritten by a run that never touched it.
         if (settings_changed()) {
