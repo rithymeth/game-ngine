@@ -31,7 +31,7 @@ constexpr u8 kSolidRedPng[] = {
 
 std::string WriteTempPng(const char* filename) {
     std::string path = (std::filesystem::temp_directory_path() / filename).string();
-    fs::WriteFileBytes(path, kSolidRedPng, sizeof(kSolidRedPng));
+    AETHER_CHECK(fs::WriteFileBytes(path, kSolidRedPng, sizeof(kSolidRedPng)));
     return path;
 }
 
