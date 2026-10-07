@@ -593,9 +593,10 @@ struct EditorWorkspace::Impl {
             "hud.welcome,Welcome {name}!,Bienvenue {name} !,\r\n";
         const std::filesystem::path table = loc_sample_dir / "Content" / "Localization" / "strings.astrings";
         std::filesystem::create_directories(table.parent_path(), ec);
-        fs::WriteFileBytes(table.string(), csv.data(), csv.size());
+        // Sample content is best-effort; missing files are surfaced by the editor panels.
+        (void)fs::WriteFileBytes(table.string(), csv.data(), csv.size());
         const std::string ui = R"({"root":{"type":"VerticalBox","children":[{"type":"Text","text":"Play","text_key":"menu.play"},{"type":"Text","text":"Settings","text_key":"menu.settings"}]}})";
-        fs::WriteFileBytes((loc_sample_dir / "Content" / "UI" / "menu.aui").string(), ui.data(), ui.size());
+        (void)fs::WriteFileBytes((loc_sample_dir / "Content" / "UI" / "menu.aui").string(), ui.data(), ui.size());
         loc_doc = std::make_unique<LocalizationDocument>();
         loc_panel = std::make_unique<LocalizationPanel>(*loc_doc);
         loc_panel->SetContentDirectory(loc_sample_dir / "Content");
