@@ -13,6 +13,12 @@
 #include "aether/sprite2d/platformer.h"
 #include "aether/sprite2d/tilemap.h"
 #include "aether/templates/templates.h"
+#if AETHER_TEST_HAS_PHYSICS
+#include "aether/job/job_system.h"
+#include "aether/physics/character.h"
+#include "aether/physics/components.h"
+#include "aether/physics/physics_scene.h"
+#endif
 #include "test_framework.h"
 
 #include <cmath>
@@ -24,6 +30,9 @@
 
 #ifndef AETHER_TEST_HAS_SCRIPTING
 #define AETHER_TEST_HAS_SCRIPTING 0
+#endif
+#ifndef AETHER_TEST_HAS_PHYSICS
+#define AETHER_TEST_HAS_PHYSICS 0
 #endif
 #if AETHER_TEST_HAS_SCRIPTING
 #include "aether/script/script_system.h"
@@ -360,6 +369,12 @@ struct Run {
     ProjectPaths paths;
     std::unique_ptr<assets::AssetDatabase> db;
     World world;
+#if AETHER_TEST_HAS_PHYSICS
+    std::unique_ptr<JobSystem> jobs;
+    std::unique_ptr<PhysicsWorld> physics;
+    std::unique_ptr<PhysicsScene> physics_scene;
+    std::unique_ptr<CharacterSystem> characters;
+#endif
     GuidIndex guids;
     script::LuauHost host;
     std::unique_ptr<Lifecycle> life;
@@ -379,7 +394,19 @@ struct Run {
         paths = Create(id, "Run");
         db = std::make_unique<assets::AssetDatabase>(paths.content);
         db->Scan();
+#if AETHER_TEST_HAS_PHYSICS
+        RegisterPhysicsComponentSerializers();
+        (void)GetComponentId<BoxCollider>();
+        (void)GetComponentId<CharacterMovement>();
+#endif
         AETHER_CHECK(LoadSceneJson(world, (paths.content / "Scenes/Main.ascene").string()));
+#if AETHER_TEST_HAS_PHYSICS
+        jobs = std::make_unique<JobSystem>(2);
+        physics = std::make_unique<PhysicsWorld>(*jobs);
+        physics_scene = std::make_unique<PhysicsScene>(world, *physics);
+        physics_scene->Sync();
+        characters = std::make_unique<CharacterSystem>(world, *physics, physics_scene.get());
+#endif
         guids.Rebuild(world);
         life = std::make_unique<Lifecycle>(world, guids);
         scripts = std::make_unique<script::ScriptSystem>(host, world, guids, script::ScriptSystem::DatabaseLoader(*db));
@@ -397,6 +424,10 @@ struct Run {
     void Frames(int n, f32 dt = 1.0f / 60.0f) {
         for (int i = 0; i < n; ++i) {
             input.Update(state, dt);
+#if AETHER_TEST_HAS_PHYSICS
+            characters->Step(dt);
+            physics_scene->Step(dt);
+#endif
             life->Update(dt);
             scripts->Tick(dt);
             state.EndFrame();
@@ -473,14 +504,27 @@ AETHER_TEST(Templates_ThirdPersonOrbitsAndFacesTheWayItRuns) {
     r.state.SetButton(input::Key::W, true);
     r.Frames(60);
     p = r.Position(r.player);
+#if AETHER_TEST_HAS_PHYSICS
+    CHECK(Near(p.z, -5.05f, 0.15f) && Near(p.x, 0.0f) && Near(r.Rotation(r.player).y, 0.0f));
+    CHECK(r.world.HasComponent<CharacterMovement>(r.player));
+    if (const CharacterMovement* movement = r.world.GetComponent<CharacterMovement>(r.player)) {
+        CHECK(movement->grounded);
+        CHECK(Near(p.y, 0.0f, 0.05f));
+    }
+#else
     CHECK(Near(p.z, -6.0f, 0.15f) && Near(p.x, 0.0f) && Near(r.Rotation(r.player).y, 0.0f));
+#endif
     CHECK(r.Position(r.camera).z > p.z + 4.0f); // it followed
     r.state.SetButton(input::Key::W, false);
 
     // Running right turns it to face +X (a quarter turn, clockwise from above).
     r.state.SetButton(input::Key::D, true);
     r.Frames(30);
+#if AETHER_TEST_HAS_PHYSICS
+    CHECK(r.Position(r.player).x > 1.5f && Near(r.Rotation(r.player).y, -std::sqrt(0.5f), 0.02f));
+#else
     CHECK(r.Position(r.player).x > 2.5f && Near(r.Rotation(r.player).y, -std::sqrt(0.5f), 0.02f));
+#endif
     r.state.SetButton(input::Key::D, false);
 
     // Orbiting the camera changes what "forward" is: turning it a quarter
@@ -582,7 +626,11 @@ AETHER_TEST(Templates_PlacedPickupsSpinInTheScene) {
 // player's Game, which hosts the scripts, the Blueprints and the input.
 AETHER_TEST(Templates_ThePlayerRunsThemCooked) {
     CHECK(player::Game::HasScripting());
+#if AETHER_TEST_HAS_PHYSICS
+    const f32 expected_z[] = {-5.0f, -5.05f, -6.0f, -7.0f}; // acceleration affects the physics-backed template
+#else
     const f32 expected_z[] = {-5.0f, -6.0f, -6.0f, -7.0f}; // after a second of W, by template
+#endif
     for (usize i = 0; i < kPlayable.size(); ++i) {
         const std::string& id = kPlayable[i];
         const ProjectPaths paths = Create(id, "Cooked");

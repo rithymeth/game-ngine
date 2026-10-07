@@ -44,6 +44,7 @@
 #if AETHER_GAME_PHYSICS
 #include "aether/job/job_system.h"
 #include "aether/physics/components.h"
+#include "aether/physics/character.h"
 #include "aether/physics/physics_scene.h"
 #include "aether/physics/physics_world.h"
 #endif
@@ -224,6 +225,7 @@ struct Game::Physics {
     JobSystem jobs{2};
     PhysicsWorld world{jobs};
     std::unique_ptr<PhysicsScene> scene;
+    std::unique_ptr<CharacterSystem> characters;
 };
 #else
 struct Game::Physics {};
@@ -415,6 +417,9 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     sprite2d::RegisterPhysics2DComponents(); // 2D bodies and colliders
     sprite2d::RegisterPlatformerComponents();
     sprite2d::RegisterLight2DComponents();
+#if AETHER_GAME_PHYSICS
+    (void)GetComponentId<CharacterMovement>();
+#endif
     std::vector<u8> bytes;
     std::string read_error;
     if (!package_.ReadContent(path, bytes, &read_error)) {
@@ -493,6 +498,7 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     settings.collision_matrix = package_.Manifest().collision_matrix;
     physics_->world.SetCollisionMatrix(MakeCollisionMatrix(settings));
     physics_->scene = std::make_unique<PhysicsScene>(*world_, physics_->world);
+    physics_->characters = std::make_unique<CharacterSystem>(*world_, physics_->world, physics_->scene.get());
 #endif
     scene_ = path;
     for (const std::string& w : warnings_) AETHER_LOG_WARN("Player", "%s", w.c_str());
@@ -661,7 +667,10 @@ void Game::BuildFrame() {
     physics.main_thread_only = true;
     physics.run = [this](World&, const FrameContext& frame) {
 #if AETHER_GAME_PHYSICS
-        if (physics_) physics_->scene->Step(frame.fixed_dt);
+        if (physics_) {
+            physics_->characters->Step(frame.fixed_dt);
+            physics_->scene->Step(frame.fixed_dt);
+        }
 #else
         (void)this; // no physics module: the step does nothing
         (void)frame;

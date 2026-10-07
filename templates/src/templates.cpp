@@ -18,6 +18,10 @@
 #include "aether/sprite2d/physics2d.h"
 #include "aether/sprite2d/platformer.h"
 #include "aether/sprite2d/tilemap.h"
+#if AETHER_TEMPLATE_HAS_PHYSICS
+#include "aether/physics/character.h"
+#include "aether/physics/components.h"
+#endif
 
 #include <nlohmann/json.hpp>
 
@@ -217,7 +221,7 @@ struct SceneBuilder {
 
     // One entity: a transform, tags, and optionally a camera, a script and a Blueprint.
     void Add(Vec3 position, Quaternion rotation, const std::vector<std::string>& tags, bool camera = false,
-             const assets::AssetGuid& script = {}, const assets::AssetGuid& blueprint = {}) {
+             const assets::AssetGuid& script = {}, const assets::AssetGuid& blueprint = {}, bool character = false) {
         json components = {{"Transform", reflect::ToJson(Transform{position, rotation})}};
         if (!tags.empty()) {
             Tags t;
@@ -235,8 +239,23 @@ struct SceneBuilder {
             instance.blueprint.guid = blueprint;
             components["BlueprintInstance"] = reflect::ToJson(instance);
         }
+#if AETHER_TEMPLATE_HAS_PHYSICS
+        if (character) components["CharacterMovement"] = reflect::ToJson(CharacterMovement{});
+#else
+        (void)character;
+#endif
         entities.push_back({{"guid", ToString(NewEntityGuid())}, {"components", std::move(components)}});
     }
+
+#if AETHER_TEMPLATE_HAS_PHYSICS
+    void AddGround() {
+        BoxCollider collider;
+        collider.half_extents = Vec3(40.0f, 0.5f, 40.0f);
+        json components = {{"Transform", reflect::ToJson(Transform{Vec3(0.0f, -0.5f, 0.0f), Quaternion::Identity()})},
+                           {"BoxCollider", reflect::ToJson(collider)}};
+        entities.push_back({{"guid", ToString(NewEntityGuid())}, {"components", std::move(components)}});
+    }
+#endif
 
     // `count` pickups on a circle of `radius` about (cx, y, cz).
     void Ring(const assets::AssetGuid& blueprint, int count, f32 radius, f32 cx, f32 y, f32 cz) {
@@ -424,12 +443,26 @@ bool CreateProjectFromTemplate(const stdfs::path& parent_dir, const std::string&
     // Scripts, the pickup Blueprint and the input bindings.
     const char* script_source = nullptr;
     const char* script_name = nullptr;
+    std::string script_storage;
     switch (kind) {
         case Kind::FirstPerson: script_source = kFirstPersonScript, script_name = "FirstPersonController"; break;
         case Kind::ThirdPerson: script_source = kThirdPersonScript, script_name = "ThirdPersonController"; break;
         case Kind::TopDown: script_source = kTopDownScript, script_name = "TopDownController"; break;
         case Kind::Vehicle: script_source = kVehicleScript, script_name = "VehicleController"; break;
         case Kind::Blank: break;
+    }
+    if (kind == Kind::ThirdPerson) {
+        script_storage = kThirdPersonScript;
+        constexpr const char* marker = "@@CHARACTER_MOVEMENT_LOOKUP@@";
+#if AETHER_TEMPLATE_HAS_PHYSICS
+        constexpr const char* lookup = "self.character = self.entity:Get(\"CharacterMovement\")";
+#else
+        constexpr const char* lookup = "self.character = nil";
+#endif
+        if (const usize at = script_storage.find(marker); at != std::string::npos) {
+            script_storage.replace(at, std::char_traits<char>::length(marker), lookup);
+        }
+        script_source = script_storage.c_str();
     }
     const std::string script_path = script_name ? std::string("Scripts/") + script_name + ".luau" : std::string();
     if (script_source && !WriteText(content / script_path, script_source, error)) return false;
@@ -465,8 +498,11 @@ bool CreateProjectFromTemplate(const stdfs::path& parent_dir, const std::string&
             scene.Ring(pickup, 8, 6.0f, 0, 1.2f, 0);
             break;
         case Kind::ThirdPerson:
-            scene.Add(Vec3(0, 0, 0), Quaternion::Identity(), {"Player"}, false, script);
+            scene.Add(Vec3(0, 0, 0), Quaternion::Identity(), {"Player"}, false, script, {}, true);
             scene.Add(Vec3(0, 3, 6), PitchDown(0.3f), {"MainCamera"}, true);
+#if AETHER_TEMPLATE_HAS_PHYSICS
+            scene.AddGround();
+#endif
             scene.Ring(pickup, 8, 7.0f, 0, 1.0f, 0);
             break;
         case Kind::TopDown:

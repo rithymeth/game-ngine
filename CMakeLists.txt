@@ -287,6 +287,11 @@ include(cmake/AetherModules.cmake)
 aether_add_platform_plugins()
 # Blueprints (Phase 12): graph model, compiler and VM; engine-only, no fetches.
 add_subdirectory(blueprint)
+# Physics (optional Jolt-backed module). Declare it before templates so their
+# optional CharacterMovement integration can resolve Aether::Physics.
+if(AETHER_BUILD_PHYSICS)
+    add_subdirectory(physics)
+endif()
 # Phase 26 step 2: project templates (they place Blueprints).
 add_subdirectory(templates)
 # The renderer's CPU side (Phase 14); engine-only, no fetches.
@@ -416,10 +421,6 @@ if(AETHER_BUILD_SCRIPTING)
         endif()
     endforeach()
     add_subdirectory(scripting)
-endif()
-
-if(AETHER_BUILD_PHYSICS)
-    add_subdirectory(physics)
 endif()
 
 if(AETHER_BUILD_EDITOR_UI OR AETHER_BUILD_MCP)

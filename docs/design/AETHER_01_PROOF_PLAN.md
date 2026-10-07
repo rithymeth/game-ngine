@@ -38,7 +38,7 @@ actual authoring and packaged-player workflow as the prototype is built.
 
 | AETHER-01 need | Existing engine path | Initial status / gap |
 |---|---|---|
-| 3D scene, camera, project and player | Third Person project template, scene components, Luau script, player runtime | Usable for a greybox. Template movement is script-driven and snaps to a stored floor height; validate against the level's physics and slope needs. |
+| 3D scene, camera, project and player | Third Person project template, scene components, Luau script, player runtime | Existing CharacterSystem now drives the Third Person template in physics-enabled builds, including ground collision and fixed-step movement. The no-physics build keeps the script fallback. Camera collision remains game-owned/unverified. |
 | Input and rebinding | Input actions, mapping contexts, player settings | Present; the first Windows test run exposed open-file cleanup failures, fixed in the current working changes and verified in the full suite. |
 | Collision and physics | Jolt-backed rigid bodies, scene queries and component serialization | Present; build encounters with existing behavior and validate packaged startup. |
 | Enemy navigation and behavior | Navmesh, NavAgents, behavior trees and perception | Present; enemy decision graphs and tuning are game content. |
@@ -57,6 +57,13 @@ player, cooker, pak tool, functional runner, Coin Run and Gem Hop. The Windows
 unit suite passed **1,036/1,036** and the functional runner passed **2/2**.
 This is a local baseline, not a clean-checkout or GitHub release result. The
 proof game, clean packaging validation and GitHub release gates remain open.
+
+The follow-up character-controller integration is locally verified: the Third
+Person template uses the existing `CharacterMovement` system and a
+collider-backed ground in physics builds. Physics-on and physics-off template
+test groups each pass **15/15**. The full Windows unit and functional suites
+also pass on this working tree. This closes the template's fixed-floor
+movement gap, but does not prove AETHER-01 gameplay or a release build.
 
 ## Delivery sequence
 
