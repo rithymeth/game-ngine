@@ -527,6 +527,21 @@
             "type": "Pressed"
           }
         ]
+      },
+      {
+        "$v": 1,
+        "action": "LoadCheckpoint",
+        "actuation": 0.5,
+        "key": "F5",
+        "modifiers": [],
+        "triggers": [
+          {
+            "type": "Pressed",
+            "chord_action": "",
+            "one_shot": true,
+            "time": 0.5
+          }
+        ]
       }
     ],
     "block_lower_contexts": false,

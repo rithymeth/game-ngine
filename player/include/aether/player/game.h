@@ -169,6 +169,10 @@ public:
     // One frame of `dt` seconds: PreUpdate, the fixed steps owed (physics,
     // then lifecycle FixedUpdate), Update, LateUpdate, PreRender.
     FrameContext Tick(f32 dt);
+    // Pause keeps input available to menus while simulation/time stay frozen.
+    void SetPaused(bool paused) { paused_ = paused; }
+    bool IsPaused() const { return paused_; }
+    bool ExitRequested() const { return exit_requested_; }
 
     World& GetWorld() { return *world_; }
     GuidIndex& Guids() { return guids_; }
@@ -236,6 +240,7 @@ private:
     // A level sequence by asset path (cached for the scene; null with a warning if unreadable).
     const seq::LevelSequence* FindSequence(const std::string& path);
     void BuildFrame();
+    void UpdateProofMenu(); // AETHER-01 content UI over existing input/settings/save APIs
     void BuildRuntimeStages();
     void LoadInputAssets();
     void WatchSettingsLanguage(); // the settings' language is the Localization's
@@ -262,6 +267,11 @@ private:
     std::vector<std::string> warnings_;
     usize prefab_instances_ = 0;
     GameStats stats_;
+    FrameContext last_frame_;
+    bool paused_ = false, exit_requested_ = false;
+    i32 proof_menu_ = 0, proof_menu_row_ = 0, proof_settings_status_ = 0;
+    input::InputState menu_previous_;
+    bool proof_load_input_ = false, proof_new_input_ = false;
     struct Physics;
     std::unique_ptr<Physics> physics_;
     std::unique_ptr<sprite2d::Physics2D> physics2d_;

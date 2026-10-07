@@ -268,6 +268,8 @@ struct SceneRenderer::Impl {
         i32 weapon_index = 1;
         bool research_clear = false;
         f32 archive_time = 0;
+        i32 menu_state = 0, menu_row = 0;
+        f32 settings_status = 0;
         f32 save_status = 0.0f;
         const std::vector<Entity> players = FindEntitiesWithTag(world, "Player");
         if (!players.empty()) {
@@ -284,6 +286,9 @@ struct SceneRenderer::Impl {
             weapon_index = static_cast<i32>(read_attribute(player, "WeaponIndex", 1));
             research_clear = read_attribute(player, "ResearchClear", 0) > 0;
             archive_time = read_attribute(player, "ArchiveTime", 0);
+            menu_state = static_cast<i32>(read_attribute(player, "MenuState", 0));
+            menu_row = static_cast<i32>(read_attribute(player, "MenuRow", 0));
+            settings_status = read_attribute(player, "SettingsStatus", 0);
         }
         health = std::clamp(health, 0.0f, max_health);
         ammo = std::clamp(ammo, 0.0f, max_ammo);
@@ -407,6 +412,7 @@ struct SceneRenderer::Impl {
              weapon_x + 17, height - 55.0f, 13, ammo <= 5 ? red : muted, 220);
 
         solid(24, height - 88.0f, 440, 64, panel);
+        text("ESC / START: MENU", 26, height - 111.0f, 12, muted, 300);
         text(mission_stage == 0 ? "HELIOS-7 CRYO BAY  /  87 YEARS LATER" :
              mission_stage >= 4 ? "FACILITY LOSS WAS DELIBERATE" :
              mission_stage == 3 ? "AETHER: PRESERVE PLANETARY LIFE" : "SECURITY NETWORK ONLINE",
@@ -426,6 +432,40 @@ struct SceneRenderer::Impl {
             text(reveal, reveal_x + 20, height * 0.56f + 44, 20, pale, 480);
         }
 
+        if (menu_state != 0) {
+            const f32 mx = std::max(24.0f, width * 0.5f - 240.0f);
+            const f32 my = std::max(24.0f, height * 0.5f - 190.0f);
+            solid(mx, my, 480, 380, {0.015f, 0.035f, 0.055f, 0.97f});
+            solid(mx, my, 3, 380, cyan);
+            text(menu_state == 2 ? "AUDIO SETTINGS" : menu_state == 3 ? "CONTROLS" : "PAUSED / FIRST CONTACT",
+                 mx + 24, my + 20, 23, pale, 430);
+            if (menu_state == 1) {
+                const char* rows[] = {"RESUME", "AUDIO SETTINGS", "CONTROLS", "LOAD CHECKPOINT", "NEW GAME", "QUIT"};
+                for (i32 i = 0; i < 6; ++i) {
+                    if (i == menu_row) solid(mx + 20, my + 66 + i * 37.0f, 440, 33, dim);
+                    text(rows[i], mx + 34, my + 70 + i * 37.0f, 17, i == menu_row ? cyan : pale, 410);
+                }
+            } else if (menu_state == 2) {
+                const auto& settings = game.Settings().Get();
+                const f32 volumes[] = {settings.master, settings.music, settings.sfx, settings.voice};
+                const char* rows[] = {"MASTER", "MUSIC", "SFX", "VOICE", "BACK"};
+                for (i32 i = 0; i < 5; ++i) {
+                    if (i == menu_row) solid(mx + 20, my + 66 + i * 42.0f, 440, 36, dim);
+                    text(rows[i], mx + 34, my + 72 + i * 42.0f, 17, i == menu_row ? cyan : pale, 290);
+                    if (i < 4) text(std::to_string(static_cast<i32>(std::round(volumes[i] * 100))) + "%",
+                                    mx + 366, my + 72 + i * 42.0f, 17, cyan, 70);
+                }
+            } else {
+                const char* rows[] = {"WASD / LEFT STICK: MOVE", "MOUSE / RIGHT STICK: LOOK", "LEFT CLICK / RT: FIRE",
+                    "1 2 3 / D-PAD: WEAPONS", "R / X: RELOAD    SPACE / A: JUMP", "E / B: INTERACT    F5: CHECKPOINT"};
+                for (i32 i = 0; i < 6; ++i) text(rows[i], mx + 24, my + 73 + i * 35.0f, 15, pale, 432);
+            }
+            text(settings_status == -1 ? "SETTINGS SAVE FAILED" : settings_status == -2 ? "NO CHECKPOINT YET" :
+                 settings_status == 1 ? "SETTINGS SAVED" : "SIMULATION PAUSED",
+                 mx + 24, my + 310, 13, settings_status < 0 ? red : muted, 430);
+            text(menu_state == 2 ? "LEFT/RIGHT ADJUST   ESC BACK" : "ARROWS SELECT   ENTER CONFIRM   ESC BACK",
+                 mx + 24, my + 344, 12, muted, 435);
+        }
         commands.BindPipeline(hud_pipeline);
         commands.BindBindlessTextures();
         for (const ui::DrawQuad& quad : list.quads) {
