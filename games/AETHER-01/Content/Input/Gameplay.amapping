@@ -273,6 +273,36 @@
       },
       {
         "$v": 1,
+        "action": "Fire",
+        "actuation": 0.5,
+        "key": "MouseLeft",
+        "modifiers": [],
+        "triggers": [
+          {
+            "chord_action": "",
+            "one_shot": true,
+            "time": 0.5,
+            "type": "Pressed"
+          }
+        ]
+      },
+      {
+        "$v": 1,
+        "action": "Fire",
+        "actuation": 0.5,
+        "key": "GamepadRightTrigger",
+        "modifiers": [],
+        "triggers": [
+          {
+            "chord_action": "",
+            "one_shot": true,
+            "time": 0.5,
+            "type": "Pressed"
+          }
+        ]
+      },
+      {
+        "$v": 1,
         "action": "Jump",
         "actuation": 0.5,
         "key": "Space",

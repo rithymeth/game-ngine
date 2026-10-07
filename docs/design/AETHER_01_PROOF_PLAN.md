@@ -38,7 +38,7 @@ actual authoring and packaged-player workflow as the prototype is built.
 
 | AETHER-01 need | Existing engine path | Initial status / gap |
 |---|---|---|
-| 3D scene, camera, project and player | Third Person project template, scene components, Luau script, player runtime | AETHER-01 now has a 387-entity HELIOS-7 greybox room with imported cube materials, physics walls, and the existing CharacterSystem. Camera collision remains game-owned/unverified. |
+| 3D scene, camera, project and player | Third Person project template, scene components, Luau script, player runtime | AETHER-01 now has a 15-entity HELIOS-7 greybox room with a visible player and Scout, imported cube models, physics walls, and the existing CharacterSystem. Camera collision remains game-owned/unverified. |
 | Input and rebinding | Input actions, mapping contexts, player settings | Present; the first Windows test run exposed open-file cleanup failures, fixed in the current working changes and verified in the full suite. |
 | Collision and physics | Jolt-backed rigid bodies, scene queries and component serialization | Present; build encounters with existing behavior and validate packaged startup. |
 | Enemy navigation and behavior | Navmesh, NavAgents, behavior trees and perception | Present; enemy decision graphs and tuning are game content. |
@@ -65,11 +65,14 @@ test groups each pass **15/15**. The full Windows unit and functional suites
 also pass on this working tree. This closes the template's fixed-floor
 movement gap, but does not prove AETHER-01 gameplay or a release build.
 
-The first AETHER-01 project scaffold is at `games/AETHER-01`. Its nine assets
-cook with no skipped files, and the standalone player loads the room and runs
-120 headless frames (120 fixed steps). The project is still a greybox: it has
-no combat loop or ending. Windows CI now repeats the cook-and-launch smoke
-check; the run for the latest engine commit is pending.
+The first AETHER-01 project scaffold is at `games/AETHER-01`. Its current
+content cooks to 16 assets (one skipped source file), and the standalone player
+loads the room and runs 120 headless frames (120 fixed steps). A basic
+game-owned aim-cone shot removes the Scout, which advances toward the player.
+This is only an early combat prototype: it has no line-of-sight check, health,
+damage feedback, death/restart flow, objective completion or ending. Windows
+CI repeats the baseline cook-and-launch smoke check; a run for the updated
+project is still required.
 
 ## Delivery sequence
 

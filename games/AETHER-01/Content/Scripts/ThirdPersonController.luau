@@ -19,6 +19,11 @@ Controller.height = 1.6
 Controller.jump_speed = 5.5
 --@range -60 0
 Controller.gravity = -15
+--@range 0 100
+--@tooltip Distance at which the AEGIS rifle can hit a Scout
+Controller.weapon_range = 24
+--@range 0 10
+Controller.fire_cooldown = 0.22
 
 function Controller:OnCreate()
     self.yaw = 0
@@ -27,6 +32,7 @@ function Controller:OnCreate()
     self.floor = self.entity:Get("Transform").position.y
     self.camera = world:EntitiesWith("Camera")[1]
     self.character = self.entity:Get("CharacterMovement")
+    self.fire_timer = 0
     if self.character ~= nil then
         self.character.walk_speed = self.speed
         self.character.jump_velocity = self.jump_speed
@@ -69,6 +75,37 @@ function Controller:OnUpdate(dt)
         local y = p.y + self.vy * dt
         if y <= self.floor then y = self.floor; self.vy = 0 end
         t.position = vector.create(p.x + vx * self.speed * dt, y, p.z + vz * self.speed * dt)
+    end
+
+    -- A simple, game-owned hitscan loop for the first combat proof. Select the
+    -- closest Scout inside a narrow cone in front of the over-shoulder camera.
+    self.fire_timer = math.max(0, self.fire_timer - dt)
+    if Input.IsTriggered("Fire") and self.fire_timer == 0 then
+        self.fire_timer = self.fire_cooldown
+        local fx = -sy * math.cos(self.pitch)
+        local fy = math.sin(self.pitch)
+        local fz = -cy * math.cos(self.pitch)
+        local origin = t.position + vector.create(0, self.height, 0)
+        local target, best_distance = nil, self.weapon_range
+        for _, enemy in ipairs(world:EntitiesWith("Tags")) do
+            if enemy:IsValid() and enemy:Has("Tags") then
+                local tags = enemy:Get("Tags").names
+                local is_scout = false
+                for _, tag in ipairs(tags) do
+                    if tag == "Scout" then is_scout = true end
+                end
+                if is_scout and enemy:Has("Transform") then
+                    local p = enemy:Get("Transform").position
+                    local dx, dy, dz = p.x - origin.x, p.y - origin.y, p.z - origin.z
+                    local distance = math.sqrt(dx * dx + dy * dy + dz * dz)
+                    if distance > 0 and distance < best_distance then
+                        local alignment = (dx * fx + dy * fy + dz * fz) / distance
+                        if alignment > 0.94 then target, best_distance = enemy, distance end
+                    end
+                end
+            end
+        end
+        if target ~= nil then world:Destroy(target) end
     end
 
     -- Face the way it's going.
