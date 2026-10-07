@@ -115,9 +115,9 @@ public:
     // Opens an archive, checking the header and the index CRC; the entries'
     // data stays on disk until read. False (and `error`) when it isn't one.
     // An encrypted archive needs its key: `keys` are tried by their id.
-    bool Open(const std::string& file, std::string* error = nullptr, std::span<const PakKey> keys = {});
+    [[nodiscard]] bool Open(const std::string& file, std::string* error = nullptr, std::span<const PakKey> keys = {});
     // The same over bytes already in memory (kept by the reader).
-    bool OpenMemory(std::vector<u8> bytes, std::string* error = nullptr, std::span<const PakKey> keys = {});
+    [[nodiscard]] bool OpenMemory(std::vector<u8> bytes, std::string* error = nullptr, std::span<const PakKey> keys = {});
 
     bool IsOpen() const { return open_; }
     bool IsEncrypted() const { return encrypted_; }
@@ -128,8 +128,8 @@ public:
 
     // Reads and decompresses an entry, checking its CRC; false (and
     // `error`) when it's missing or damaged.
-    bool Read(const std::string& path, std::vector<u8>& out, std::string* error = nullptr) const;
-    bool ReadText(const std::string& path, std::string& out, std::string* error = nullptr) const;
+    [[nodiscard]] bool Read(const std::string& path, std::vector<u8>& out, std::string* error = nullptr) const;
+    [[nodiscard]] bool ReadText(const std::string& path, std::string& out, std::string* error = nullptr) const;
     // Reads every entry; the paths of the damaged ones.
     std::vector<std::string> Verify() const;
 
