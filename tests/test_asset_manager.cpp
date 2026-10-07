@@ -43,7 +43,7 @@ constexpr u8 kCornersPng[] = {
 
 std::string WriteTempPng(const char* filename, const u8* data, usize size) {
     std::string path = (std::filesystem::temp_directory_path() / filename).string();
-    fs::WriteFileBytes(path, data, size);
+    AETHER_CHECK(fs::WriteFileBytes(path, data, size));
     return path;
 }
 
