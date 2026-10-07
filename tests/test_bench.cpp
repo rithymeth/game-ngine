@@ -52,11 +52,17 @@ AETHER_TEST(Bench_BaselineComparisonFindsRegressions) {
     AETHER_CHECK(bench::Compare(report(1.0), report(2.0), 1.5, regressions, &error) && regressions.size() == 1 && regressions[0].name == "a/b" && regressions[0].ratio > 1.9);
     AETHER_CHECK(bench::Compare(report(2.0), report(1.0), 1.5, regressions, &error) && regressions.empty()); // faster is fine
     AETHER_CHECK(!bench::Compare("nonsense", report(1.0), 1.5, regressions, &error) && !error.empty());
-    // A benchmark only in the current report has nothing to compare against.
+    // New benchmarks may be added alongside established baselines, but no-overlap reports fail.
     bench::Result fresh;
     fresh.name = "new/one";
     fresh.normalized = 9.0;
-    AETHER_CHECK(bench::Compare(report(1.0), bench::ToJson({fresh}, 10.0), 1.5, regressions, &error) && regressions.empty());
+    AETHER_CHECK(!bench::Compare(report(1.0), bench::ToJson({fresh}, 10.0), 1.5, regressions, &error) && error.find("overlap") != std::string::npos);
+    bench::Result established;
+    established.name = "a/b";
+    established.normalized = 1.2;
+    AETHER_CHECK(bench::Compare(report(1.0), bench::ToJson({fresh, established}, 10.0), 1.5, regressions, &error) && regressions.empty());
+    AETHER_CHECK(!bench::Compare(report(1.0), report(1.2), 0.0, regressions, &error) && error.find("tolerance") != std::string::npos);
+    AETHER_CHECK(!bench::Compare(report(1.0), "{\"results\":[{\"name\":\"a/b\",\"normalized\":0}]}", 1.5, regressions, &error) && error.find("invalid") != std::string::npos);
 }
 
 
