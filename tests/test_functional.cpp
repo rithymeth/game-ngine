@@ -142,6 +142,8 @@ AETHER_TEST(Functional_ScenesRegistryAndReports) {
     const nlohmann::json j = nlohmann::json::parse(json_in);
     CHECK(j["passed"] == 1 && j["failed"] == 1 && j["tests"].size() == 2 && j["tests"][1]["steps"].size() == 2);
     CHECK(!WriteJUnitXml(report, (dir / "no" / "dir.xml").string()));
+    xml_in.close();
+    json_in.close(); // Windows does not allow deleting a directory with open files.
     std::filesystem::remove_all(dir);
 
     // The console.

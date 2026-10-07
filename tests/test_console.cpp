@@ -178,6 +178,7 @@ AETHER_TEST(Console_CompletionHistoryConfigsAndCommandLine) {
     const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     CHECK(text.find("r.shadows.cascades 2") != std::string::npos && text.find("r.shadows.quality \"very high\"") != std::string::npos);
     CHECK(text.find("r.temp") == std::string::npos && text.find("r.gamma") == std::string::npos);
+    in.close(); // Windows does not allow deleting a directory with an open file.
     c.Execute("reset r.shadows.cascades; reset r.shadows.quality");
     CHECK(c.ExecFile(cfg) && cascades->GetInt() == 2 && quality->GetString() == "very high");
     CHECK(!c.Execute("exec " + (dir / "missing.cfg").string()));

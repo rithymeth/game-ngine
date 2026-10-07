@@ -125,6 +125,7 @@ AETHER_TEST(InputBindings_RebindConflictsAndPersist) {
     std::ifstream text(file);
     std::string contents((std::istreambuf_iterator<char>(text)), std::istreambuf_iterator<char>());
     AETHER_CHECK(contents.find("\"J\"") != std::string::npos); // keys saved by name
+    text.close(); // Windows does not allow deleting a directory with an open file.
 
     // Reset one, then all.
     AETHER_CHECK(reloaded.Reset("OnFoot", "Jump", 0) && !reloaded.Reset("OnFoot", "Jump", 0));

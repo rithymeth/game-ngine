@@ -198,6 +198,7 @@ AETHER_TEST(PhysicsComponents_AreReflectedAndRoundTripThroughBothSceneFormats) {
     AETHER_CHECK(LoadSceneJson(from_json, json_path));
     check(from_json);
 
+    file.close(); // Windows does not allow deleting an open file.
     std::filesystem::remove(binary_path);
     std::filesystem::remove(json_path);
 }

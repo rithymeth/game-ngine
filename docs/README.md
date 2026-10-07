@@ -2,7 +2,10 @@
 
 | Document | What it's for |
 |---|---|
-| [ROADMAP.md](ROADMAP.md) | The overall plan: Phases 6–36 in dependency order, grouped into milestones M1–M6 |
+| [ROADMAP.md](ROADMAP.md) | The overall plan: Phases 6–48, including M7's Aether 1.0 production gate and the improvement-only M8 milestone |
+| [design/UPGRADE_PLAN.md](design/UPGRADE_PLAN.md) | The PR-sized plan for M7, the Aether Upgrade (Phases 37–48) |
+| [design/M8_PRODUCTION_TECHNOLOGY.md](design/M8_PRODUCTION_TECHNOLOGY.md) | Improvement-only M8: harden and tune existing engine systems and workflows without adding feature families |
+| [design/AETHER_01_PROOF_PLAN.md](design/AETHER_01_PROOF_PLAN.md) | Windows proof-release plan for hardening existing engine workflows and building the AETHER-01 First Contact game slice |
 | [ROADMAP_DETAILS.md](ROADMAP_DETAILS.md) | File formats, the Phase 6 (reflection) build spec, Blueprint VM design, extra editor mockups, shortcuts, estimates, risks, PR checklist, glossary |
 | [design/PHASE_SPECS.md](design/PHASE_SPECS.md) | Build specs for the critical-path phases: 7 (undo/redo, GUIDs, Play-in-Editor), 8 (asset database, hot reload), 9 (prefabs, scheduling), 11 (Luau), 13 (physics events, character movement) |
 | [design/EDITOR_UI.md](design/EDITOR_UI.md) | Editor UI design system: color/type/spacing tokens, icons, layouts, widgets, panel specs, interaction rules, feedback, accessibility, and the plan for splitting editor/main.cpp |
@@ -16,8 +19,11 @@
 Where to start:
 
 - **Planning or reviewing scope:** ROADMAP.md.
-- **Implementing the next phase:** ROADMAP_DETAILS.md §B (Phase 6), then
-  design/PHASE_SPECS.md.
+- **Planning M7 execution:** design/UPGRADE_PLAN.md. **Planning the AETHER-01
+  engine proof release:** design/AETHER_01_PROOF_PLAN.md and
+  design/M8_PRODUCTION_TECHNOLOGY.md.
+- **Implementing earlier critical-path phases:** ROADMAP_DETAILS.md §B (Phase 6),
+  then design/PHASE_SPECS.md.
 - **Redesigning the product UX:** design/AETHER_ENGINE_UX.md.
 - **Building editor UI:** design/EDITOR_UI.md for visual system details;
   design/EDITOR_UX_2.md for shell details; and
