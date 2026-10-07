@@ -267,6 +267,7 @@ struct SceneRenderer::Impl {
         i32 mission_stage = 0;
         i32 weapon_index = 1;
         bool research_clear = false;
+        f32 archive_time = 0;
         f32 save_status = 0.0f;
         const std::vector<Entity> players = FindEntitiesWithTag(world, "Player");
         if (!players.empty()) {
@@ -282,6 +283,7 @@ struct SceneRenderer::Impl {
             save_status = read_attribute(player, "SaveStatus", 0);
             weapon_index = static_cast<i32>(read_attribute(player, "WeaponIndex", 1));
             research_clear = read_attribute(player, "ResearchClear", 0) > 0;
+            archive_time = read_attribute(player, "ArchiveTime", 0);
         }
         health = std::clamp(health, 0.0f, max_health);
         ammo = std::clamp(ammo, 0.0f, max_ammo);
@@ -412,6 +414,17 @@ struct SceneRenderer::Impl {
         text(save_status < 0 ? "CHECKPOINT SAVE FAILED" : mission_stage == 5 ? "END OF GREYBOX PROOF / N NEW GAME" :
              boss_attack > 0 ? "MOVE OUT OF THE MARKED ATTACK AREA" : save_status > 0 ? "CHECKPOINT SAVED" : "AWAKENING",
              40, height - 53.0f, 12, save_status < 0 || boss_attack > 0 ? red : muted, 410);
+
+        if (mission_stage == 5) {
+            const f32 reveal_x = std::max(24.0f, width * 0.5f - 260.0f);
+            solid(reveal_x, height * 0.56f, 520, 92, panel);
+            text("HELIOS-7 / ARCHIVE REVEAL", reveal_x + 20, height * 0.56f + 13, 14, cyan, 480);
+            const char* reveal = archive_time < 2 ? "DECRYPTING THE FACILITY RECORD" :
+                                 archive_time < 4 ? "AETHER REDIRECTED THE FAILURE" :
+                                 archive_time < 6 ? "THIS FACILITY WAS SACRIFICED" :
+                                 archive_time < 8 ? "TO PRESERVE PLANETARY LIFE" : "FIRST CONTACT COMPLETE";
+            text(reveal, reveal_x + 20, height * 0.56f + 44, 20, pale, 480);
+        }
 
         commands.BindPipeline(hud_pipeline);
         commands.BindBindlessTextures();

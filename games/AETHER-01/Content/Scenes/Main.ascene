@@ -86,6 +86,10 @@
             -0.0,
             0.9887711
           ]
+        },
+        "AudioListener": {
+          "$v": 1,
+          "active": true
         }
       },
       "guid": "11c7363b-8f51-486e-b4bb-2a57fd73e7ca"
@@ -1381,6 +1385,21 @@
           "$v": 1,
           "model": "46ee7724-2e5d-4ab9-8428-0661f14247b6",
           "asset_path": "models/aether_greybox_terminal.gltf"
+        },
+        "AudioSource": {
+          "$v": 1,
+          "cue": "Audio/archive.acue",
+          "auto_play": false,
+          "volume_db": 0,
+          "pitch": 1
+        },
+        "SequenceComponent": {
+          "$v": 1,
+          "sequence": "Sequences/Archive.asequence",
+          "auto_play": false,
+          "loop": false,
+          "rate": 1,
+          "destroy_when_finished": false
         }
       }
     },
@@ -1636,6 +1655,139 @@
             0
           ],
           "is_trigger": false
+        }
+      }
+    },
+    {
+      "guid": "04f7e36b-22fc-55b4-b566-0b64eca64bbd",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "WeaponAudio"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "AudioSource": {
+          "$v": 1,
+          "cue": "Audio/rifle.acue",
+          "auto_play": false,
+          "volume_db": 0,
+          "pitch": 1
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "e53d5c92-af49-5867-b6a6-60e3f25dae48",
+          "properties": []
+        }
+      }
+    },
+    {
+      "guid": "d2db86be-831a-5500-a90c-788d4aec5641",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "DamageAudio"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "AudioSource": {
+          "$v": 1,
+          "cue": "Audio/hurt.acue",
+          "auto_play": false,
+          "volume_db": 0,
+          "pitch": 1
+        }
+      }
+    },
+    {
+      "guid": "770ec9c9-fade-5441-9bad-40f3f8a62656",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "WarningAudio"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "AudioSource": {
+          "$v": 1,
+          "cue": "Audio/warning.acue",
+          "auto_play": false,
+          "volume_db": 0,
+          "pitch": 1
+        }
+      }
+    },
+    {
+      "guid": "3fcc2756-b720-54ed-9acd-88c0b3ba2560",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "AmbientAudio"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "AudioSource": {
+          "$v": 1,
+          "cue": "Audio/ambient.acue",
+          "auto_play": true,
+          "volume_db": 0,
+          "pitch": 1
         }
       }
     }

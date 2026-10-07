@@ -126,6 +126,24 @@ work does not establish those game acceptance items.
 
 ## Delivery sequence
 
+### Prototype presentation verification recorded 2026-10-08
+
+The 41-entity game scene now has original synthesized rifle/pistol/shotgun,
+reload, damage, warning, ambient and archive sounds. The existing AudioSource
+components play the cues from the cooked package; no new audio API or subsystem
+was added for this content. An existing level sequence moves the camera for
+eight seconds after the terminal interaction, plays archive signals and drives
+timed reveal text in the HUD. A completed checkpoint replays the reveal, and
+new game stops it. The generated sounds are reproducible through
+`tools/generate_aether01_audio.py`; they are temporary prototype content.
+
+The 59-asset cook passes a 120-frame headless launch and the windowed startup
+scene/HUD pixel check. Cooked-game checks pass **12/12** with physics and **11/11**
+without physics, including actual sound handles/nonzero mixer output, warning
+audio, archive audio playback, camera movement and sequence completion.
+Pause/settings menus, final package delivery and release gates remain open.
+No voice acting, finished cinematic quality or 60–90 minute duration is claimed.
+
 ### Combat roster verification recorded 2026-10-08
 
 The local 37-entity greybox now contains all three MVP weapons and all three
