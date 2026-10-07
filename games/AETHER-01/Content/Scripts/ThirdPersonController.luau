@@ -4,6 +4,43 @@
 -- turns to face where it goes. Space or the A button jumps.
 local Controller = {}
 
+local function SegmentIntersectsBox(origin, endpoint, center, half_extents)
+    local delta = endpoint - origin
+    local min_t, max_t = 0, 1
+    for _, axis in ipairs({"x", "y", "z"}) do
+        local o, d = origin[axis], delta[axis]
+        local low = center[axis] - half_extents[axis]
+        local high = center[axis] + half_extents[axis]
+        if math.abs(d) < 0.00001 then
+            if o < low or o > high then return false end
+        else
+            local a, b = (low - o) / d, (high - o) / d
+            if a > b then a, b = b, a end
+            min_t, max_t = math.max(min_t, a), math.min(max_t, b)
+            if min_t > max_t then return false end
+        end
+    end
+    return true
+end
+
+local function HasClearShot(origin, endpoint, shooter, target)
+    -- The current HELIOS-7 greybox uses unrotated BoxColliders. Keep this
+    -- query game-owned until a level needs additional collider shapes.
+    for _, obstacle in ipairs(world:EntitiesWith("BoxCollider")) do
+        if obstacle:IsValid() and obstacle ~= shooter and obstacle ~= target then
+            local collider = obstacle:Get("BoxCollider")
+            if not collider.is_trigger then
+                local transform = obstacle:Get("Transform")
+                local center = transform.position + collider.center
+                if SegmentIntersectsBox(origin, endpoint, center, collider.half_extents) then
+                    return false
+                end
+            end
+        end
+    end
+    return true
+end
+
 --@range 0 30
 --@tooltip Running speed, metres per second
 Controller.speed = 6
@@ -33,6 +70,22 @@ function Controller:OnCreate()
     self.camera = world:EntitiesWith("Camera")[1]
     self.character = self.entity:Get("CharacterMovement")
     self.fire_timer = 0
+    self.scout_health = {}
+    self.scout_spawn = {}
+    self.spawn_position = self.entity:Get("Transform").position
+    self.health = 3
+    self.damage_timer = 0
+    self.dead = false
+    for _, enemy in ipairs(world:EntitiesWith("Tags")) do
+        if enemy:Has("Tags") and enemy:Has("Transform") then
+            for _, tag in ipairs(enemy:Get("Tags").names) do
+                if tag == "Scout" then
+                    local p = enemy:Get("Transform").position
+                    self.scout_spawn[enemy:Guid()] = vector.create(p.x, p.y, p.z)
+                end
+            end
+        end
+    end
     if self.character ~= nil then
         self.character.walk_speed = self.speed
         self.character.jump_velocity = self.jump_speed
@@ -49,6 +102,34 @@ end
 
 function Controller:OnUpdate(dt)
     local t = self.entity:Get("Transform")
+
+    if self.dead then
+        if Input.IsTriggered("Restart") then
+            self.dead = false
+            self.health = 3
+            self.damage_timer = 0
+            self.scout_health = {}
+            t.position = self.spawn_position
+            self.vy = 0
+            for _, enemy in ipairs(world:EntitiesWith("Tags")) do
+                if enemy:IsValid() and enemy:Has("Tags") and enemy:Has("Transform") then
+                    for _, tag in ipairs(enemy:Get("Tags").names) do
+                        if tag == "Scout" then
+                            local guid = enemy:Guid()
+                            enemy:Get("Transform").position = self.scout_spawn[guid]
+                            self.scout_health[guid] = nil
+                        end
+                    end
+                end
+            end
+        else
+            if self.character ~= nil then
+                self.character.input = vector.create(0, 0, 0)
+                self.character.jump_requested = false
+            end
+            return
+        end
+    end
 
     local look = Input.GetAxis2D("Look")
     self.yaw = self.yaw - math.rad(look.x * self.look_speed)
@@ -100,12 +181,54 @@ function Controller:OnUpdate(dt)
                     local distance = math.sqrt(dx * dx + dy * dy + dz * dz)
                     if distance > 0 and distance < best_distance then
                         local alignment = (dx * fx + dy * fy + dz * fz) / distance
-                        if alignment > 0.94 then target, best_distance = enemy, distance end
+                        if alignment > 0.94 and HasClearShot(origin, p, self.entity, enemy) then
+                            target, best_distance = enemy, distance
+                        end
                     end
                 end
             end
         end
-        if target ~= nil then world:Destroy(target) end
+        if target ~= nil then
+            local guid = target:Guid()
+            local health = (self.scout_health[guid] or 3) - 1
+            if health <= 0 then
+                self.scout_health[guid] = 0
+                local p = target:Get("Transform").position
+                target:Get("Transform").position = vector.create(p.x, -100, p.z)
+            else
+                self.scout_health[guid] = health
+                local hit_transform = target:Get("Transform")
+                local p = hit_transform.position
+                local dx, dz = p.x - origin.x, p.z - origin.z
+                local length = math.sqrt(dx * dx + dz * dz)
+                if length > 0 then
+                    hit_transform.position = vector.create(p.x + dx / length * 0.3, p.y, p.z + dz / length * 0.3)
+                end
+            end
+        end
+    end
+
+    self.damage_timer = math.max(0, self.damage_timer - dt)
+    if self.damage_timer == 0 then
+        for _, enemy in ipairs(world:EntitiesWith("Tags")) do
+            if enemy:IsValid() and enemy:Has("Tags") and enemy:Has("Transform") then
+                local is_scout = false
+                for _, tag in ipairs(enemy:Get("Tags").names) do
+                    if tag == "Scout" then is_scout = true end
+                end
+                local guid = enemy:Guid()
+                if is_scout and self.scout_health[guid] ~= 0 then
+                    local p = enemy:Get("Transform").position
+                    local dx, dz = p.x - t.position.x, p.z - t.position.z
+                    if dx * dx + dz * dz < 1.8 * 1.8 then
+                        self.health -= 1
+                        self.damage_timer = 0.8
+                        if self.health <= 0 then self.dead = true end
+                        break
+                    end
+                end
+            end
+        end
     end
 
     -- Face the way it's going.

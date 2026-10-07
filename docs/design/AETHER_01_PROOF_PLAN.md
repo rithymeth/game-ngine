@@ -38,7 +38,8 @@ actual authoring and packaged-player workflow as the prototype is built.
 
 | AETHER-01 need | Existing engine path | Initial status / gap |
 |---|---|---|
-| 3D scene, camera, project and player | Third Person project template, scene components, Luau script, player runtime | AETHER-01 now has a 15-entity HELIOS-7 greybox room with a visible player and Scout, imported cube models, physics walls, and the existing CharacterSystem. Camera collision remains game-owned/unverified. |
+| 3D scene, camera, project and player | Third Person project template, scene components, Luau script, player runtime, RHI | AETHER-01 has a 15-entity HELIOS-7 greybox room. The packaged player now draws static glTF meshes and base-color textures through the existing cross-API RHI; a local D3D12 capture shows the room. Lighting, animation rendering, and camera collision remain unverified. |
+| Rendered-player evidence | Existing swap-chain readback API and player screenshot option | The D3D12 swap chain now implements the existing synchronized RGBA readback contract. Local 960x540 capture succeeds; the Windows CI screenshot and artifact upload are pending on the current changes. |
 | Input and rebinding | Input actions, mapping contexts, player settings | Present; the first Windows test run exposed open-file cleanup failures, fixed in the current working changes and verified in the full suite. |
 | Collision and physics | Jolt-backed rigid bodies, scene queries and component serialization | Present; build encounters with existing behavior and validate packaged startup. |
 | Enemy navigation and behavior | Navmesh, NavAgents, behavior trees and perception | Present; enemy decision graphs and tuning are game content. |
@@ -65,14 +66,17 @@ test groups each pass **15/15**. The full Windows unit and functional suites
 also pass on this working tree. This closes the template's fixed-floor
 movement gap, but does not prove AETHER-01 gameplay or a release build.
 
-The first AETHER-01 project scaffold is at `games/AETHER-01`. Its current
-content cooks to 16 assets (one skipped source file), and the standalone player
-loads the room and runs 120 headless frames (120 fixed steps). A basic
-game-owned aim-cone shot removes the Scout, which advances toward the player.
-This is only an early combat prototype: it has no line-of-sight check, health,
-damage feedback, death/restart flow, objective completion or ending. Windows
-CI repeats the baseline cook-and-launch smoke check; a run for the updated
-project is still required.
+The first AETHER-01 project scaffold is at `games/AETHER-01`. The latest
+committed project cooks to 16 assets and passes a 120-frame packaged-player
+smoke run in [GitHub CI](https://github.com/rithymeth/game-ngine/actions/runs/37637914254).
+The current local iteration adds a game-owned box-collider line-of-sight test,
+three-hit Scout health with knockback, and player death/restart. It cooks to 17
+assets and completes a local 120-frame headless run. The packaged player also
+renders its static glTF scene through D3D12 and writes a 960x540 BMP after a
+10-frame windowed smoke run; the raw cube buffer is the one skipped source file. These latest engine
+and game changes still need CI verification. The encounter lacks a visible HUD
+and hit/damage feedback, ammunition, objective completion, save/checkpoint
+behavior, boss encounter and ending.
 
 ## Delivery sequence
 
@@ -146,7 +150,8 @@ full 3–5 hour game in preproduction until the proof build has been reviewed.
   player and game without relying on ignored local build outputs.
 - The first level can be authored, saved, closed and reopened without data loss.
 - The project can be cooked and packaged; the packaged player starts and loads
-  the intended level without editor or source assets.
+  the intended level without editor or source assets. A Windows CI screenshot
+  confirms the packaged player renders the scene, not only that startup works.
 - Existing engine tests and applicable functional checks pass on the released
   commit; CI results and artifact checks are linked in release evidence.
 - Performance claims include machine, build configuration, workload and
