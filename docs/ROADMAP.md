@@ -7,6 +7,8 @@
 >   Phases 7, 8, 9, 11 and 13
 > - [`design/EDITOR_UI.md`](design/EDITOR_UI.md): full editor UI design spec
 > - [`design/UPGRADE_PLAN.md`](design/UPGRADE_PLAN.md): the PR-sized plan for M7, the Aether Upgrade (Phases 37-48)
+> - [`design/M8_PRODUCTION_TECHNOLOGY.md`](design/M8_PRODUCTION_TECHNOLOGY.md): improvement-only M8 plan for existing systems
+> - [`design/AETHER_01_PROOF_PLAN.md`](design/AETHER_01_PROOF_PLAN.md): improvement-only engine proof release and AETHER-01 First Contact delivery plan
 > - [`design/BLUEPRINT_NODES.md`](design/BLUEPRINT_NODES.md): Blueprint node reference
 > - [`tutorials/FIRST_GAME.md`](tutorials/FIRST_GAME.md): the target
 >   "first game" walkthrough and M2 acceptance test
@@ -1580,6 +1582,23 @@ Aether is "1.0" only when **all** of these hold, each checked by something autom
 | **SDK** | A published SDK a third party can build against from a clean machine |
 | **Plugin system** | Versioned plugin ABI, packaging and a documented authoring path |
 | **Release builds** | Reproducible release pipeline with checksums and release notes |
+
+## M8: Production Technology for Existing Systems
+
+M8 is a follow-on quality pass for making the engine's established technology
+faster, more integrated and dependable for shipped games. It improves existing
+performance tooling, ECS/jobs, renderer, physics/gameplay, networking, content,
+scripting, editor and release workflows. It adds no new feature families or
+platform targets, and it does not replace or mark complete M7's open steps or
+production gate.
+
+The AETHER-01 proof release can validate a narrow Windows game workflow before
+the full 1.0 gate is complete. It does not mark M7 complete or satisfy the
+broader Aether 1.0 production gate. See
+[`design/M8_PRODUCTION_TECHNOLOGY.md`](design/M8_PRODUCTION_TECHNOLOGY.md)
+for the workstreams and
+[`design/AETHER_01_PROOF_PLAN.md`](design/AETHER_01_PROOF_PLAN.md) for the
+game proof, delivery sequence and release acceptance criteria.
 
 ---
 

@@ -235,9 +235,8 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel
       - name: Unit tests
-        # Hosted runners have no GPU; tests that need a D3D12 device may fail
-        # there, so this step reports without failing the job (for now).
-        continue-on-error: true
+        # The D3D12 backend falls back to WARP on hosts without a hardware GPU,
+        # so the Windows suite is a required release check on hosted runners too.
         run: .\build\tests\Release\aether_tests.exe
       - name: Functional tests
         run: .\build\tools\functional\Release\aether_functional.exe --quiet --junit functional-results.xml

@@ -240,5 +240,6 @@ AETHER_TEST(Profiler_ChromeTraceMemoryAndConsole) {
     CHECK(console.Execute("profiler.dump " + dumped) && std::filesystem::exists(dumped));
     CHECK(console.Execute("profiler.clear") && p.Frames().empty());
     console.Execute("reset profiler.history");
+    in.close(); // Windows does not allow deleting a directory with an open file.
     std::filesystem::remove_all(dir);
 }

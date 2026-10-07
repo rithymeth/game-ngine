@@ -159,19 +159,19 @@ std::u32string S(const std::vector<u32>& v) { return std::u32string(v.begin(), v
 } // namespace
 
 AETHER_TEST(UIBidi_HebrewReversesAndNumbersKeepTheirOrder) {
-    const std::u32string shalom = U"שלום"; // שלום, logical order
+    const std::u32string shalom = U"\u05E9\u05DC\u05D5\u05DD"; // שלום, logical order
     const std::u32string reversed(shalom.rbegin(), shalom.rend());
     CHECK(S(ReorderVisual(U(shalom))) == reversed);
     CHECK(S(ReorderVisual(U(U"abc"))) == U"abc"); // no right-to-left character: untouched
     CHECK(S(ReorderVisual(U(U""))) == U"");
     // A Latin word and a number inside Hebrew keep their own order; the Hebrew runs swap places.
-    const std::u32string mixed = U"של abc 123 ום";
+    const std::u32string mixed = U"\u05E9\u05DC abc 123 \u05D5\u05DD";
     const std::u32string visual = S(ReorderVisual(U(mixed)));
     CHECK(visual.find(U"abc") != std::u32string::npos && visual.find(U"123") != std::u32string::npos);
     CHECK(visual.front() == U'\u05DD' && visual.back() == U'\u05E9'); // the last Hebrew word is drawn first (leftmost), each word reversed
     CHECK(visual.find(U"abc 123") != std::u32string::npos);           // the Latin and the number keep their order as one run
     // Left-to-right text with a Hebrew word in it: the base stays left to right.
-    const std::u32string ltr = U"say שלום now";
+    const std::u32string ltr = U"say \u05E9\u05DC\u05D5\u05DD now";
     const std::u32string out = S(ReorderVisual(U(ltr)));
     CHECK(out.rfind(U"say ", 0) == 0 && out.find(U" now") == out.size() - 4);
     CHECK(BaseDirectionIsRtl(U(shalom)) && !BaseDirectionIsRtl(U(ltr)) && !BaseDirectionIsRtl(U(U"123 ?")));
