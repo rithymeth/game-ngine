@@ -3,6 +3,11 @@
 -- the left stick moves relative to where the camera looks, and the character
 -- turns to face where it goes. Space or the A button jumps.
 local Controller = {}
+local Weapons = {
+    {capacity = 30, range = 24, cooldown = 0.22, reload = 1.1, damage = 1, shield_damage = 1, cone = 0.94, knockback = 0.3},
+    {capacity = 12, range = 28, cooldown = 0.16, reload = 0.9, damage = 1, shield_damage = 2, cone = 0.975, knockback = 0.15},
+    {capacity = 6, range = 8, cooldown = 0.8, reload = 1.6, damage = 3, shield_damage = 1, cone = 0.82, knockback = 1.5},
+}
 
 local function BoxObstacles()
     -- Physics is optional in portable CI/player builds. This game keeps its
@@ -82,6 +87,8 @@ function Controller:OnCreate()
     self.scout_spawn = {}
     self.spawn_position = self.entity:Get("Transform").position
     self.health = 3
+    self.weapon_index = 1
+    self.magazines = {30, 12, 6}
     self.ammo_capacity = 30
     self.ammo = self.ammo_capacity
     self.reloading = false
@@ -92,6 +99,8 @@ function Controller:OnCreate()
     self.dead = false
     Attributes.Define(self.entity, "Health", self.health, 0, 3)
     Attributes.Define(self.entity, "Ammo", self.ammo, 0, self.ammo_capacity)
+    Attributes.Define(self.entity, "MaxAmmo", self.ammo_capacity, 0, 30)
+    Attributes.Define(self.entity, "WeaponIndex", 1, 1, 3)
     Attributes.Define(self.entity, "Reloading", 0, 0, 1)
     Attributes.Define(self.entity, "DamageFlash", 0, 0, 1)
     Attributes.Define(self.entity, "HitConfirm", 0, 0, 1)
@@ -106,6 +115,11 @@ function Controller:OnCreate()
                     local p = enemy:Get("Transform").position
                     self.scout_spawn[enemy:Guid()] = vector.create(p.x, p.y, p.z)
                     Attributes.Define(enemy, "Health", 12, 0, 12)
+                elseif tag == "Sentinel" or tag == "Hunter" then
+                    local p = enemy:Get("Transform").position
+                    self.scout_spawn[enemy:Guid()] = vector.create(p.x, p.y, p.z)
+                    local health = tag == "Sentinel" and 6 or 4
+                    Attributes.Define(enemy, "Health", health, 0, health)
                 end
             end
         end
@@ -117,17 +131,31 @@ function Controller:OnCreate()
     self:InitializeMission()
 end
 
+function Controller:SelectWeapon(index, immediate)
+    if self.reloading then return end
+    self.magazines[self.weapon_index] = self.ammo
+    self.weapon_index = index
+    self.ammo_capacity = Weapons[index].capacity
+    self.ammo = self.magazines[index]
+    Attributes.Define(self.entity, "Ammo", self.ammo, 0, self.ammo_capacity)
+    Attributes.SetBase(self.entity, "MaxAmmo", self.ammo_capacity)
+    Attributes.SetBase(self.entity, "WeaponIndex", index)
+    if not immediate then self.fire_timer = math.max(self.fire_timer, 0.15) end
+end
+
 function Controller:InitializeMission()
     self.mission_stage = 0
-    self.rifle, self.gate = nil, nil
+    self.rifle, self.gate, self.arena_gate = nil, nil, nil
     for _, entity in ipairs(world:EntitiesWith("Tags")) do
         for _, tag in ipairs(entity:Get("Tags").names) do
             if tag == "RiflePickup" then self.rifle = entity end
             if tag == "ServiceGate" then self.gate = entity end
+            if tag == "ArenaGate" then self.arena_gate = entity end
         end
     end
     Attributes.Define(self.entity, "MissionStage", 0, 0, 5)
     Attributes.Define(self.entity, "SaveStatus", 0, -1, 1)
+    Attributes.Define(self.entity, "ResearchClear", 0, 0, 1)
     self:LoadCheckpoint()
     self:ApplyMission()
 end
@@ -141,6 +169,9 @@ function Controller:ApplyMission()
     if self.gate ~= nil then
         self.gate:Get("Transform").position = vector.create(0, self.mission_stage >= 2 and -10 or 2, -8.5)
     end
+    if self.arena_gate ~= nil then
+        self.arena_gate:Get("Transform").position = vector.create(0, self.mission_stage >= 3 and -10 or 2, -22)
+    end
     if self.mission_stage >= 2 then
         for _, enemy in ipairs(world:EntitiesWith("Tags")) do
             for _, tag in ipairs(enemy:Get("Tags").names) do
@@ -152,6 +183,10 @@ function Controller:ApplyMission()
                 elseif tag == "Warden" and self.mission_stage >= 4 then
                     Attributes.SetBase(enemy, "Health", 0)
                     enemy:Get("Transform").position = vector.create(0, -100, -35)
+                elseif (tag == "Sentinel" or tag == "Hunter") and self.mission_stage >= 3 then
+                    Attributes.SetBase(enemy, "Health", 0)
+                    local p = enemy:Get("Transform").position
+                    enemy:Get("Transform").position = vector.create(p.x, -100, p.z)
                 end
             end
         end
@@ -170,8 +205,12 @@ function Controller:LoadCheckpoint()
         return false
     end
     self.mission_stage = stage
-    self.health, self.ammo = 3, self.ammo_capacity
-    self.entity:Get("Transform").position = stage >= 3 and vector.create(0, 0, -22) or self.spawn_position
+    self.health = 3
+    self.magazines = {30, 12, 6}
+    self.ammo = Weapons[self.weapon_index].capacity
+    self:SelectWeapon(1, true)
+    -- Spawn beyond the gate's initial collider, before its kinematic update.
+    self.entity:Get("Transform").position = stage >= 3 and vector.create(0, 0, -23) or self.spawn_position
     Attributes.SetBase(self.entity, "Health", self.health)
     Attributes.SetBase(self.entity, "Ammo", self.ammo)
     Attributes.SetBase(self.entity, "SaveStatus", 1)
@@ -206,10 +245,20 @@ function Controller:UpdateMission()
             self:ApplyMission()
             self:SaveCheckpoint()
         end
-    elseif self.mission_stage == 2 and self.entity:Get("Transform").position.z < -22 then
-        self.mission_stage = 3
-        self:ApplyMission()
-        self:SaveCheckpoint()
+    elseif self.mission_stage == 2 then
+        local clear = true
+        for _, enemy in ipairs(world:EntitiesWith("Tags")) do
+            for _, tag in ipairs(enemy:Get("Tags").names) do
+                if (tag == "Sentinel" or tag == "Hunter") and Attributes.Get(enemy, "Health") > 0 then clear = false end
+            end
+        end
+        Attributes.SetBase(self.entity, "ResearchClear", clear and 1 or 0)
+        if self.arena_gate ~= nil then self.arena_gate:Get("Transform").position = vector.create(0, clear and -10 or 2, -22) end
+        if clear and self.entity:Get("Transform").position.z < -22 then
+            self.mission_stage = 3
+            self:ApplyMission()
+            self:SaveCheckpoint()
+        end
     elseif self.mission_stage == 3 then
         for _, enemy in ipairs(world:EntitiesWith("Tags")) do
             for _, tag in ipairs(enemy:Get("Tags").names) do
@@ -285,11 +334,19 @@ function Controller:OnUpdate(dt)
                         elseif tag == "Warden" then
                             enemy:Get("Transform").position = self.scout_spawn[enemy:Guid()]
                             Attributes.SetBase(enemy, "Health", 12)
+                            Attributes.SetBase(enemy, "Phase", 1)
+                        elseif tag == "Sentinel" or tag == "Hunter" then
+                            enemy:Get("Transform").position = self.scout_spawn[enemy:Guid()]
+                            Attributes.SetBase(enemy, "Health", tag == "Sentinel" and 6 or 4)
+                            if tag == "Sentinel" then Attributes.SetBase(enemy, "Shield", 6) end
                         end
                     end
                 end
             end
             self:LoadCheckpoint()
+            self.magazines = {30, 12, 6}
+            self.ammo = self.ammo_capacity
+            self:SelectWeapon(1, true)
             self:ApplyMission()
         else
             if self.character ~= nil then
@@ -301,6 +358,12 @@ function Controller:OnUpdate(dt)
     end
 
     self:UpdateMission()
+    if self.mission_stage >= 1 and self.mission_stage < 5 then
+        for index = 1, 3 do
+            if Input.IsTriggered("Weapon" .. index) then self:SelectWeapon(index, false) end
+        end
+    end
+    local weapon = Weapons[self.weapon_index]
 
     local look = Input.GetAxis2D("Look")
     self.yaw = self.yaw - math.rad(look.x * self.look_speed)
@@ -328,6 +391,9 @@ function Controller:OnUpdate(dt)
         local y = p.y + self.vy * dt
         if y <= self.floor then y = self.floor; self.vy = 0 end
         t.position = vector.create(p.x + vx * self.speed * dt, y, p.z + vz * self.speed * dt)
+        if self.mission_stage == 2 and Attributes.Get(self.entity, "ResearchClear") == 0 and t.position.z < -21 then
+            t.position = vector.create(t.position.x, t.position.y, -21)
+        end
     end
 
     -- A simple, game-owned hitscan loop for the first combat proof. Select the
@@ -340,7 +406,7 @@ function Controller:OnUpdate(dt)
 
     if Input.IsTriggered("Reload") and not self.reloading and self.ammo < self.ammo_capacity then
         self.reloading = true
-        self.reload_timer = 1.1
+        self.reload_timer = weapon.reload
         Attributes.SetBase(self.entity, "Reloading", 1)
     end
     if self.reloading then
@@ -348,20 +414,22 @@ function Controller:OnUpdate(dt)
         if self.reload_timer <= 0 then
             self.reloading = false
             self.ammo = self.ammo_capacity
+            self.magazines[self.weapon_index] = self.ammo
             Attributes.SetBase(self.entity, "Ammo", self.ammo)
             Attributes.SetBase(self.entity, "Reloading", 0)
         end
     end
 
     if self.mission_stage >= 1 and self.mission_stage < 5 and Input.IsTriggered("Fire") and self.fire_timer == 0 and not self.reloading and self.ammo > 0 then
-        self.fire_timer = self.fire_cooldown
+        self.fire_timer = self.weapon_index == 1 and self.fire_cooldown or weapon.cooldown
         self.ammo -= 1
+        self.magazines[self.weapon_index] = self.ammo
         Attributes.SetBase(self.entity, "Ammo", self.ammo)
         local fx = -sy * math.cos(self.pitch)
         local fy = math.sin(self.pitch)
         local fz = -cy * math.cos(self.pitch)
         local origin = t.position + vector.create(0, self.height, 0)
-        local target, best_distance = nil, self.weapon_range
+        local target, best_distance = nil, self.weapon_index == 1 and self.weapon_range or weapon.range
         for _, enemy in ipairs(world:EntitiesWith("Tags")) do
             if enemy:IsValid() and enemy:Has("Tags") then
                 local tags = enemy:Get("Tags").names
@@ -377,7 +445,7 @@ function Controller:OnUpdate(dt)
                     local distance = math.sqrt(dx * dx + dy * dy + dz * dz)
                     if distance > 0 and distance < best_distance then
                         local alignment = (dx * fx + dy * fy + dz * fz) / distance
-                        if alignment > 0.94 and HasClearShot(origin, p, self.entity, enemy) then
+                        if alignment > weapon.cone and HasClearShot(origin, p, self.entity, enemy) then
                             target, best_distance = enemy, distance
                         end
                     end
@@ -388,7 +456,12 @@ function Controller:OnUpdate(dt)
             self.hit_confirm = 1
             Attributes.SetBase(self.entity, "HitConfirm", self.hit_confirm)
             local guid = target:Guid()
-            local damage = Attributes.Get(target, "Phase") >= 3 and 2 or 1
+            local damage = weapon.damage * (Attributes.Get(target, "Phase") >= 3 and 2 or 1)
+            local shield = Attributes.Get(target, "Shield")
+            if shield > 0 then
+                Attributes.SetBase(target, "Shield", math.max(0, shield - weapon.shield_damage))
+                damage = 0
+            end
             local health = Attributes.Get(target, "Health") - damage
             if health <= 0 then
                 self.scout_health[guid] = 0
@@ -403,7 +476,9 @@ function Controller:OnUpdate(dt)
                 local dx, dz = p.x - origin.x, p.z - origin.z
                 local length = math.sqrt(dx * dx + dz * dz)
                 if length > 0 and Attributes.Get(target, "Phase") == 0 then
-                    hit_transform.position = vector.create(p.x + dx / length * 0.3, p.y, p.z + dz / length * 0.3)
+                    local push = weapon.knockback * Attributes.Get(target, "KnockbackScale", 1)
+                    hit_transform.position = vector.create(p.x + dx / length * push, p.y, p.z + dz / length * push)
+                    if self.weapon_index == 3 and damage > 0 then Attributes.Define(target, "Stagger", 0.5, 0, 1) end
                 end
             end
         end
