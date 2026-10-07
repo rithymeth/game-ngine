@@ -1,8 +1,10 @@
 #include "aether/cook/cooker.h"
+#include "aether/audio/audio_system.h"
 #include "aether/gameplay/attribute_set.h"
 #include "aether/player/game.h"
 #include "aether/scene/components.h"
 #include "aether/scene/gameplay.h"
+#include "aether/sequencer/sequence_system.h"
 #include "test_framework.h"
 
 #include <filesystem>
@@ -53,6 +55,7 @@ struct ProofRun {
     void Frames(int count) {
         for (int i = 0; i < count; ++i) game->Tick(1.0f / 60.0f);
         AETHER_CHECK(game->ScriptErrors().empty());
+        AETHER_CHECK(game->AudioSystem() != nullptr && game->AudioSystem()->Problems().empty());
     }
     f32 Stat(Entity entity, const char* name) {
         const auto* attributes = game->GetWorld().GetComponent<gas::AttributeSet>(entity);
@@ -135,6 +138,31 @@ AETHER_TEST(Aether01_CookedContactDeathAndRestart) {
     AETHER_CHECK(run.Stat(run.hero, "DamageFlash") == 0);
 }
 
+AETHER_TEST(Aether01_CookedWeaponReloadAndDamageSoundFeedback) {
+    ProofRun run("audio");
+    auto& world = run.game->GetWorld();
+    const Entity speaker = FindEntitiesWithTag(world, "WeaponAudio").front();
+    const Entity damage = FindEntitiesWithTag(world, "DamageAudio").front();
+    run.Tap(input::Key::E);
+    for (int weapon = 1; weapon <= 3; ++weapon) {
+        if (weapon == 2) run.Tap(input::Key::Num2);
+        if (weapon == 3) run.Tap(input::Key::Num3);
+        run.Frames(15);
+        run.Tap(input::Key::MouseLeft);
+        const auto* source = world.GetComponent<AudioSource>(speaker);
+        const char* paths[] = {"Audio/rifle.acue", "Audio/pistol.acue", "Audio/shotgun.acue"};
+        AETHER_CHECK(source != nullptr && source->playing && source->cue == paths[weapon - 1]);
+        AETHER_CHECK(run.game->AudioSystem()->HandleOf(speaker) != 0);
+    }
+    run.Tap(input::Key::R);
+    AETHER_CHECK(world.GetComponent<AudioSource>(speaker)->cue == "Audio/reload.acue");
+    world.GetComponent<gas::AttributeSet>(run.hero)->SetBase("Health", 2);
+    run.Frames(2);
+    AETHER_CHECK(world.GetComponent<AudioSource>(damage)->playing);
+    AETHER_CHECK(run.game->AudioSystem()->GetMixer().Meter(audio::kMasterBus).peak[0] > 0.01f);
+    AETHER_CHECK(run.game->Warnings().empty());
+}
+
 AETHER_TEST(Aether01_WeaponMagazinesSwitchReloadAndHeldFire) {
     ProofRun run("weapons");
     run.Tap(input::Key::Num3);
@@ -199,6 +227,8 @@ AETHER_TEST(Aether01_SentinelTellDamageAndDodge) {
     const Entity sentinel = FindEntitiesWithTag(run.game->GetWorld(), "Sentinel").front();
     run.Frames(120);
     AETHER_CHECK(run.Stat(sentinel, "AttackState") == 1);
+    const Entity warning = FindEntitiesWithTag(run.game->GetWorld(), "WarningAudio").front();
+    AETHER_CHECK(run.game->GetWorld().GetComponent<AudioSource>(warning)->playing);
     AETHER_CHECK(run.Stat(run.hero, "Health") == 3);
     run.Frames(67);
     AETHER_CHECK(run.Stat(run.hero, "Health") == 2);
@@ -312,6 +342,17 @@ AETHER_TEST(Aether01_WardenPhasesEndingAndNewGame) {
     run.Frames(20);
     run.Tap(input::Key::E);
     AETHER_CHECK(run.Stat(run.hero, "MissionStage") == 5);
+    run.Frames(20);
+    const Entity archive = FindEntitiesWithTag(run.game->GetWorld(), "ArchiveTerminal").front();
+    const Entity camera = FindEntitiesWithTag(run.game->GetWorld(), "MainCamera").front();
+    AETHER_CHECK(run.game->GetWorld().GetComponent<SequenceComponent>(archive)->playing);
+    AETHER_CHECK(run.game->GetWorld().GetComponent<AudioSource>(archive)->playing);
+    AETHER_CHECK(run.game->AudioSystem()->HandleOf(archive) != 0);
+    const auto camera_position = run.game->GetWorld().GetComponent<Transform>(camera)->position;
+    AETHER_CHECK(camera_position.z < -32 && camera_position.z > -34);
+    run.Frames(480);
+    AETHER_CHECK(!run.game->GetWorld().GetComponent<SequenceComponent>(archive)->playing);
+    AETHER_CHECK(run.Stat(run.hero, "ArchiveTime") == 8);
     run.Start();
     AETHER_CHECK(run.Stat(run.hero, "MissionStage") == 5);
     const auto restored_bosses = FindEntitiesWithTag(run.game->GetWorld(), "Warden");

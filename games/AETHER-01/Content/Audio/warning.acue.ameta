@@ -1,0 +1,12 @@
+{
+  "$type": "AssetMeta",
+  "$v": 1,
+  "guid": "cecd99ab-c717-5612-b1f2-00c365250918",
+  "importer": "SoundCue",
+  "importer_version": 1,
+  "settings": {},
+  "labels": [
+    "Prototype"
+  ],
+  "source_hash": ""
+}

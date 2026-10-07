@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "name": "reload",
+  "root": 1,
+  "output": {
+    "bus": "SFX",
+    "volume_db": -6,
+    "spatial": false
+  },
+  "nodes": [
+    {
+      "id": 1,
+      "type": "Wave",
+      "sound": "Audio/reload.wav",
+      "looping": false
+    }
+  ]
+}

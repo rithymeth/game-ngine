@@ -1,0 +1,12 @@
+{
+  "$type": "AssetMeta",
+  "$v": 1,
+  "guid": "e53d5c92-af49-5867-b6a6-60e3f25dae48",
+  "importer": "Script",
+  "importer_version": 1,
+  "settings": {},
+  "labels": [
+    "Prototype"
+  ],
+  "source_hash": ""
+}

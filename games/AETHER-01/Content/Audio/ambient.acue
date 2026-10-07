@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "name": "ambient",
+  "root": 1,
+  "output": {
+    "bus": "Music",
+    "volume_db": -6,
+    "spatial": false
+  },
+  "nodes": [
+    {
+      "id": 1,
+      "type": "Wave",
+      "sound": "Audio/ambient.wav",
+      "looping": true
+    }
+  ]
+}
