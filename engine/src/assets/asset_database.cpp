@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <limits>
 #include <map>
 #include <system_error>
 
@@ -132,20 +133,32 @@ bool LoadAssetMeta(const stdfs::path& meta_file, AssetMeta& out, std::string* er
         SetError(error, "Couldn't read " + meta_file.string());
         return false;
     }
+    return LoadAssetMetaFromMemory(bytes, out, error);
+}
+
+bool LoadAssetMetaFromMemory(std::span<const u8> bytes, AssetMeta& out, std::string* error) {
     Json json = Json::parse(bytes.begin(), bytes.end(), nullptr, /*allow_exceptions=*/false);
-    if (json.is_discarded() || !json.is_object() || json.value("$type", "") != "AssetMeta") {
-        SetError(error, meta_file.string() + " isn't an asset metadata file");
+    if (json.is_discarded() || !json.is_object()) {
+        SetError(error, "Input isn't an asset metadata file");
+        return false;
+    }
+    const auto type = json.find("$type");
+    if (type == json.end() || !type->is_string() || type->get_ref<const std::string&>() != "AssetMeta") {
+        SetError(error, "Input isn't an asset metadata file");
         return false;
     }
     AssetMeta meta;
     if (!json.contains("guid") || !json["guid"].is_string() ||
         !ParseAssetGuid(json["guid"].get_ref<const std::string&>(), meta.guid) || meta.guid.IsNull()) {
-        SetError(error, meta_file.string() + " has no valid guid");
+        SetError(error, "Input has no valid asset guid");
         return false;
     }
-    meta.importer = json.value("importer", "");
-    meta.importer_version = json.value("importer_version", 1u);
-    meta.source_hash = json.value("source_hash", "");
+    if (auto it = json.find("importer"); it != json.end() && it->is_string()) meta.importer = it->get<std::string>();
+    if (auto it = json.find("importer_version"); it != json.end() && it->is_number_integer()) {
+        const i64 version = it->get<i64>();
+        if (version > 0 && static_cast<u64>(version) <= std::numeric_limits<u32>::max()) meta.importer_version = static_cast<u32>(version);
+    }
+    if (auto it = json.find("source_hash"); it != json.end() && it->is_string()) meta.source_hash = it->get<std::string>();
     if (auto it = json.find("settings"); it != json.end() && it->is_object()) {
         meta.settings = *it;
     }
@@ -164,7 +177,7 @@ bool LoadAssetMeta(const stdfs::path& meta_file, AssetMeta& out, std::string* er
                 !ParseAssetGuid(entry["guid"].get_ref<const std::string&>(), sub.guid) || sub.guid.IsNull()) {
                 continue; // dropped; the next import gives the key a new GUID
             }
-            sub.importer = entry.value("importer", "");
+            if (auto importer = entry.find("importer"); importer != entry.end() && importer->is_string()) sub.importer = importer->get<std::string>();
             meta.sub_assets.push_back(std::move(sub));
         }
         std::sort(meta.sub_assets.begin(), meta.sub_assets.end(),

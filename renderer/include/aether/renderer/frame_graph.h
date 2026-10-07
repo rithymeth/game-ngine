@@ -92,6 +92,9 @@ public:
     // False with a message for a malformed graph: a transient read before
     // anything writes it, or one pass using a resource two different ways.
     bool Compile(std::string* error = nullptr);
+    // Checks Compile()'s plan (pass culling, hazards, transient lifetimes and
+    // placements). Useful for debug builds, tests and graph tooling.
+    bool Validate(std::string* error = nullptr) const;
 
     // --- Results (valid after Compile) ------------------------------------------
     const std::vector<PassId>& Order() const { return order_; } // the passes that run
@@ -140,6 +143,7 @@ private:
     std::vector<PassId> order_;
     std::vector<Barrier> final_barriers_;
     u64 heap_size_ = 0;
+    bool compiled_ = false;
 };
 
 } // namespace aether

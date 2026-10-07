@@ -111,6 +111,25 @@ AETHER_TEST(Net_LoopbackNetwork) {
     CHECK(received + lost == 2000);
 }
 
+AETHER_TEST(Net_LoopbackNetworkAppliesJitterAndDuplication) {
+    LoopbackNetwork net(17);
+    auto sender = net.Open(1200);
+    auto receiver = net.Open(1201);
+    net.conditions = {0.1, 0.2, 0.0f, 1.0f};
+    const std::vector<u8> payload{4, 2};
+    CHECK(sender->Send(receiver->LocalAddress(), payload));
+    CHECK(net.InFlight() == 2);
+
+    Address from;
+    std::vector<u8> got;
+    net.Advance(0.099);
+    CHECK(!receiver->Receive(from, got));
+    net.Advance(0.201); // the base latency plus the maximum jitter
+    CHECK(receiver->Receive(from, got) && got == payload && from == sender->LocalAddress());
+    CHECK(receiver->Receive(from, got) && got == payload && from == sender->LocalAddress());
+    CHECK(!receiver->Receive(from, got) && net.InFlight() == 0);
+}
+
 AETHER_TEST(Net_HandshakeAndGoodbye) {
     Sim sim;
     const usize c = sim.AddClient();

@@ -42,6 +42,7 @@ void FrameGraph::PassBuilder::Read(ResourceId resource, Access access) { uses_.p
 void FrameGraph::PassBuilder::Write(ResourceId resource, Access access) { uses_.push_back({resource, access, true}); }
 
 ResourceId FrameGraph::CreateTexture(const std::string& name, const TextureDesc& desc) {
+    compiled_ = false;
     Resource r;
     r.name = name;
     r.texture = desc;
@@ -55,6 +56,7 @@ ResourceId FrameGraph::CreateTexture(const std::string& name, const TextureDesc&
 }
 
 ResourceId FrameGraph::CreateBuffer(const std::string& name, u64 size) {
+    compiled_ = false;
     Resource r;
     r.name = name;
     r.is_buffer = true;
@@ -64,6 +66,7 @@ ResourceId FrameGraph::CreateBuffer(const std::string& name, u64 size) {
 }
 
 ResourceId FrameGraph::Import(const std::string& name, Access initial, Access final_access) {
+    compiled_ = false;
     Resource r;
     r.name = name;
     r.imported = true;
@@ -74,6 +77,7 @@ ResourceId FrameGraph::Import(const std::string& name, Access initial, Access fi
 }
 
 PassId FrameGraph::AddPass(const std::string& name, Queue queue, const std::function<void(PassBuilder&)>& setup) {
+    compiled_ = false;
     PassBuilder builder;
     if (setup) setup(builder);
     Pass p;
@@ -102,6 +106,7 @@ u64 FrameGraph::UnaliasedSize() const {
 }
 
 bool FrameGraph::Compile(std::string* error) {
+    compiled_ = false;
     auto fail = [&](const std::string& message) {
         if (error != nullptr) *error = message;
         return false;
@@ -243,6 +248,95 @@ bool FrameGraph::Compile(std::string* error) {
         std::sort(pass.waits.begin(), pass.waits.end());
         pass.waits.erase(std::unique(pass.waits.begin(), pass.waits.end()), pass.waits.end());
     }
+    compiled_ = true;
+    return true;
+}
+
+bool FrameGraph::Validate(std::string* error) const {
+    auto fail = [&](const std::string& message) {
+        if (error != nullptr) *error = message;
+        return false;
+    };
+    if (!compiled_) return fail("frame graph has not been compiled");
+
+    std::vector<i64> position(passes_.size(), -1);
+    for (usize i = 0; i < order_.size(); ++i) {
+        const PassId pass = order_[i];
+        if (pass >= passes_.size()) return fail("compiled order contains an unknown pass");
+        if (position[pass] >= 0) return fail("compiled order contains a pass more than once");
+        position[pass] = static_cast<i64>(i);
+        if (!passes_[pass].needed) return fail("compiled order contains a culled pass '" + passes_[pass].name + "'");
+    }
+
+    std::vector<bool> used(resources_.size(), false);
+    std::vector<u32> first(resources_.size(), 0), last(resources_.size(), 0);
+    std::vector<i64> last_writer(resources_.size(), -1);
+    for (usize pos = 0; pos < order_.size(); ++pos) {
+        const PassId id = order_[pos];
+        const Pass& pass = passes_[id];
+        for (PassId dep : pass.depends) {
+            if (dep >= passes_.size()) return fail("pass '" + pass.name + "' has an unknown dependency");
+            if (!passes_[dep].needed) continue; // write-after-read ordering doesn't make the reader necessary
+            if (position[dep] < 0 || position[dep] >= static_cast<i64>(pos)) {
+                return fail("pass '" + pass.name + "' has a dependency that doesn't run before it");
+            }
+        }
+        for (const PassBuilder::Use& use : pass.uses) {
+            if (use.resource >= resources_.size()) return fail("pass '" + pass.name + "' uses an unknown resource");
+            const Resource& resource = resources_[use.resource];
+            if (!use.write && last_writer[use.resource] < 0 && !resource.imported) {
+                return fail("pass '" + pass.name + "' reads '" + resource.name + "' without a running writer");
+            }
+            if (!resource.imported) {
+                if (!used[use.resource]) {
+                    used[use.resource] = true;
+                    first[use.resource] = static_cast<u32>(pos);
+                }
+                last[use.resource] = static_cast<u32>(pos);
+            }
+            if (use.write) last_writer[use.resource] = static_cast<i64>(id);
+        }
+        for (PassId wait : pass.waits) {
+            if (wait >= passes_.size() || position[wait] < 0 || position[wait] >= static_cast<i64>(pos) ||
+                passes_[wait].queue == pass.queue ||
+                std::find(pass.depends.begin(), pass.depends.end(), wait) == pass.depends.end()) {
+                return fail("pass '" + pass.name + "' has an invalid cross-queue wait");
+            }
+        }
+        for (PassId dep : pass.depends) {
+            if (passes_[dep].needed && passes_[dep].queue != pass.queue &&
+                std::find(pass.waits.begin(), pass.waits.end(), dep) == pass.waits.end()) {
+                return fail("pass '" + pass.name + "' is missing a cross-queue wait");
+            }
+        }
+    }
+
+    u64 required_heap_size = 0;
+    for (ResourceId id = 0; id < resources_.size(); ++id) {
+        const Resource& resource = resources_[id];
+        if (resource.imported) {
+            if (resource.used) return fail("imported resource '" + resource.name + "' has a transient lifetime");
+            continue;
+        }
+        if (resource.used != used[id]) return fail("resource '" + resource.name + "' has an incorrect used flag");
+        if (!used[id]) continue;
+        if (resource.first != first[id] || resource.last != last[id]) return fail("resource '" + resource.name + "' has an incorrect lifetime");
+        if (resource.placement.offset % kPlacementAlignment != 0 || resource.placement.size % kPlacementAlignment != 0 ||
+            resource.placement.size < resource.size || resource.placement.offset > heap_size_ ||
+            resource.placement.size > heap_size_ - resource.placement.offset) {
+            return fail("resource '" + resource.name + "' has an invalid transient placement");
+        }
+        required_heap_size = std::max(required_heap_size, resource.placement.offset + resource.placement.size);
+        for (ResourceId other_id = 0; other_id < id; ++other_id) {
+            const Resource& other = resources_[other_id];
+            if (!other.imported && used[other_id] && first[id] <= last[other_id] && first[other_id] <= last[id]) {
+                const bool overlaps = other.placement.offset < resource.placement.offset + resource.placement.size &&
+                                      resource.placement.offset < other.placement.offset + other.placement.size;
+                if (overlaps) return fail("resources '" + other.name + "' and '" + resource.name + "' overlap while both are live");
+            }
+        }
+    }
+    if (required_heap_size != heap_size_) return fail("transient heap size doesn't match its placements");
     return true;
 }
 

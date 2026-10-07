@@ -298,10 +298,12 @@ AETHER_TEST(Mcp_ToolFailuresAndRequiredArguments) {
     AETHER_CHECK(server.AddTool(throwing));
     Tool needs{"needs", "needs an argument", {{"type", "object"}, {"required", Json::array({"path"})}}, [](const Json&) { return Json("ok"); }};
     AETHER_CHECK(server.AddTool(needs));
+    Tool typed{"typed", "typed arguments", {{"type", "object"}, {"properties", {{"path", {{"type", "string"}}}, {"count", {{"type", "integer"}}}}}}, [](const Json&) { return Json("typed"); }};
+    AETHER_CHECK(server.AddTool(typed));
     Tool huge{"huge", "returns too much", {{"type", "object"}}, [](const Json&) { return Json(std::string(kMaxResultBytes + 1, 'x')); }};
     AETHER_CHECK(server.AddTool(huge));
     // Adding a tool of the same name replaces it.
-    AETHER_CHECK(server.AddTool(Tool{"needs", "replaced", {{"type", "object"}}, [](const Json&) { return Json("ok2"); }}) && server.Tools().size() == 3);
+    AETHER_CHECK(server.AddTool(Tool{"needs", "replaced", {{"type", "object"}}, [](const Json&) { return Json("ok2"); }}) && server.Tools().size() == 4);
 
     const auto call = [&](const char* tool) {
         return *server.HandleMessage({{"jsonrpc", "2.0"}, {"id", 1}, {"method", "tools/call"}, {"params", {{"name", tool}}}});
@@ -316,6 +318,10 @@ AETHER_TEST(Mcp_ToolFailuresAndRequiredArguments) {
     AETHER_CHECK(missing["error"]["code"] == -32602 && missing["error"]["message"].get<std::string>().find("path") != std::string::npos);
     const Json present = *server.HandleMessage({{"jsonrpc", "2.0"}, {"id", 2}, {"method", "tools/call"}, {"params", {{"name", "needs"}, {"arguments", {{"path", "a"}}}}}});
     AETHER_CHECK(present["result"]["isError"] == false);
+    const Json wrong_type = *server.HandleMessage({{"jsonrpc", "2.0"}, {"id", 3}, {"method", "tools/call"}, {"params", {{"name", "typed"}, {"arguments", {{"path", 7}, {"count", "many"}}}}}});
+    AETHER_CHECK(wrong_type["error"]["code"] == -32602);
+    const Json correct_types = *server.HandleMessage({{"jsonrpc", "2.0"}, {"id", 4}, {"method", "tools/call"}, {"params", {{"name", "typed"}, {"arguments", {{"path", "a"}, {"count", 2}}}}}});
+    AETHER_CHECK(correct_types["result"]["isError"] == false);
 }
 
 AETHER_TEST(Mcp_ListReportsTheSchemaVersionAndStdioSkipsHugeLines) {

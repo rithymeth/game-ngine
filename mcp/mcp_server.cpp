@@ -34,6 +34,19 @@ Json TextResult(const std::string& text, bool is_error) {
     return {{"content", Json::array({{{"type", "text"}, {"text", text}}})}, {"isError", is_error}};
 }
 
+bool MatchesSchemaType(const Json& value, const Json& type) {
+    if (!type.is_string()) return true;
+    const std::string name = type.get<std::string>();
+    if (name == "object") return value.is_object();
+    if (name == "array") return value.is_array();
+    if (name == "string") return value.is_string();
+    if (name == "boolean") return value.is_boolean();
+    if (name == "integer") return value.is_number_integer();
+    if (name == "number") return value.is_number();
+    if (name == "null") return value.is_null();
+    return true; // Unknown schema extensions are left to the handler.
+}
+
 } // namespace
 
 McpServer::McpServer(std::string name, std::string version) : name_(std::move(name)), version_(std::move(version)) {}
@@ -78,6 +91,17 @@ Json McpServer::HandleToolCall(const Json& params) {
             for (const Json& key : *required) {
                 if (key.is_string() && !args.contains(key.get<std::string>())) {
                     throw RpcError{kInvalidParams, "Missing required argument: " + key.get<std::string>()};
+                }
+            }
+        }
+        const auto properties = tool->input_schema.find("properties");
+        if (properties != tool->input_schema.end() && properties->is_object()) {
+            for (auto it = properties->begin(); it != properties->end(); ++it) {
+                if (!args.contains(it.key()) || !it.value().is_object()) continue;
+                const auto type = it.value().find("type");
+                if (type != it.value().end() && !MatchesSchemaType(args[it.key()], *type)) {
+                    const std::string expected = type->is_string() ? type->get<std::string>() : "the declared type";
+                    throw RpcError{kInvalidParams, "Argument '" + it.key() + "' must be " + expected};
                 }
             }
         }

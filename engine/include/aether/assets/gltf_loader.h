@@ -5,6 +5,7 @@
 #include "aether/math/quaternion.h"
 
 #include <array>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -203,5 +204,8 @@ void ComputeSkinMatrices(const GltfScene& scene, const GltfAnimation* animation,
 // non-metallic-roughness material extensions (KHR_materials_*, etc), and
 // multiple/non-default scenes.
 bool LoadGltf(const std::string& path, GltfScene& out_scene);
+// Parses a self-contained glTF JSON document. External file URIs are refused;
+// data URIs remain available. The input is capped at 32 MiB for untrusted data.
+bool LoadGltfFromMemory(std::span<const u8> json, GltfScene& out_scene);
 
 } // namespace aether::assets

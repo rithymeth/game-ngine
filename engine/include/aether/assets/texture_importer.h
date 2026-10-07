@@ -3,6 +3,7 @@
 #include "aether/assets/importer.h"
 
 #include <algorithm>
+#include <span>
 
 namespace aether::assets {
 
@@ -36,6 +37,8 @@ public:
     u32 Version() const override { return 1; }
     nlohmann::json DefaultSettings() const override;
     ImportResult Import(const ImportContext& context) const override;
+    ImportResult ImportFromMemory(std::span<const u8> bytes, const nlohmann::json& settings,
+                                  u64 max_pixels = 16 * 1024 * 1024) const;
 };
 
 } // namespace aether::assets

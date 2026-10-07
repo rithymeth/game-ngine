@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "gates": [
+    {"name": "linux_build_and_tests", "status": "n/a yet", "evidence": "CI Linux GCC and Clang jobs"},
+    {"name": "sanitizers", "status": "n/a yet", "evidence": "ASan/UBSan and TSan CI jobs"},
+    {"name": "module_boundaries", "status": "n/a yet", "evidence": "check_module_graph"},
+    {"name": "fuzz_corpora", "status": "n/a yet", "evidence": "tools/fuzz replay corpus"},
+    {"name": "benchmark_regressions", "status": "n/a yet", "evidence": "bench baseline comparison"},
+    {"name": "serialization_migrations", "status": "n/a yet", "evidence": "format-version audit and legacy fixtures"},
+    {"name": "multiplayer_soak", "status": "n/a yet", "evidence": "loopback 64-player soak"},
+    {"name": "platform_builds", "status": "n/a yet", "evidence": "Windows, macOS, Android and iOS jobs"},
+    {"name": "sample_games", "status": "n/a yet", "evidence": "three sample games build and run"},
+    {"name": "release_artifacts", "status": "n/a yet", "evidence": "checksums, signing and release notes"}
+  ]
+}

@@ -2,6 +2,8 @@
 
 #include "aether/interaction/interaction_system.h"
 
+#include <utility>
+
 namespace aether::interact {
 
 namespace {
@@ -18,6 +20,22 @@ public:
 };
 
 } // namespace
+
+SystemDesc MakeInteractionSystem(InteractionSystem* system, std::function<void(const InteractionEvent&)> on_event) {
+    SystemDesc desc;
+    desc.name = "Player.Interaction";
+    desc.phase = SystemPhase::Update;
+    desc.after = {"Player.Update", "Player.Sequencer", "Player.Effects"};
+    desc.main_thread_only = true;
+    desc.run = [system, on_event = std::move(on_event)](World&, const FrameContext& frame) {
+        if (!system) return;
+        system->Update(frame.dt);
+        const std::vector<InteractionEvent> events = system->Events();
+        system->ClearEvents();
+        if (on_event) for (const InteractionEvent& event : events) on_event(event);
+    };
+    return desc;
+}
 
 std::unique_ptr<kit::IKit> MakeInteractionKit() { return std::make_unique<InteractionKit>(); }
 
