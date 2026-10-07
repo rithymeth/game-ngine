@@ -1,4 +1,6 @@
 #include "aether/assets/asset_guid.h"
+#include "aether/audio/sound.h"
+#include "aether/audio/audio_system.h"
 #include "aether/cook/cooker.h"
 #include "aether/pak/pak.h"
 #include "aether/player/game.h"
@@ -95,6 +97,184 @@ Entity FindTagged(World& world, const std::string& tag) {
 }
 
 } // namespace
+
+namespace {
+stdfs::path MakeAudioPak(const stdfs::path& dir, bool sequence = false, bool bound = false, bool bad_wave = false) {
+    const EntityGuid emitter{0xA001, 0xB002};
+    AudioSource source;
+    source.cue = "Audio/tone.acue";
+    source.auto_play = !sequence;
+    SequenceComponent component;
+    component.sequence = "Sequences/audio.asequence";
+    component.auto_play = sequence;
+    const json scene = {{"$type", "Scene"}, {"$version", 1},
+        {"entities", json::array({{{"guid", ToString(emitter)}, {"components", {{"Transform", Transform3(2, 0, 0)},
+            {"Tags", TagsJson("Emitter")}, {"AudioSource", reflect::ToJson(source)}, {"AudioListener", reflect::ToJson(AudioListener{})}}}},
+            {{"components", {{"SequenceComponent", reflect::ToJson(component)}}}}})}};
+    audio::SoundCue cue;
+    cue.name = "Tone";
+    cue.root = 1;
+    audio::CueNode wave;
+    wave.id = 1;
+    wave.sound = "Audio/tone.wav";
+    cue.nodes.push_back(wave);
+    seq::LevelSequence timeline;
+    timeline.name = "Audio proof";
+    timeline.duration = 2;
+    seq::Track track;
+    track.id = "sound";
+    track.type = seq::TrackType::Audio;
+    if (bound) track.binding = emitter;
+    track.audio = {{0.1f, "Audio/tone.acue", seq::AudioAction::FadeIn, 0, 0.1f},
+                   {0.8f, "Audio/tone.acue", seq::AudioAction::FadeOut, 0, 0.1f}};
+    timeline.tracks.push_back(track);
+    json manifest = Manifest("Scenes/start.ascene", "unused");
+    manifest["assets"] = json::array();
+    for (const auto* path : {"Scenes/start.ascene", "Audio/tone.wav", "Audio/tone.acue", "Sequences/audio.asequence"})
+        manifest["assets"].push_back({{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", path}, {"importer", "Test"}});
+    pak::PakWriter writer;
+    CHECK(writer.Add("Manifest.json", manifest.dump()));
+    CHECK(writer.Add("Content/Scenes/start.ascene", scene.dump()));
+    CHECK(writer.Add("Content/Audio/tone.acue", audio::SaveCue(cue)));
+    CHECK(writer.Add("Content/Sequences/audio.asequence", seq::SequenceToJson(timeline).dump()));
+    if (bad_wave) CHECK(writer.Add("Content/Audio/tone.wav", std::string("invalid WAV")));
+    else CHECK(writer.Add("Content/Audio/tone.wav", audio::EncodeWav(audio::GenerateTone(440, 2))));
+    const auto path = dir / "Game.apak";
+    CHECK(writer.Write(path.string()));
+    return path;
+}
+}
+
+AETHER_TEST(Player_CookedAudioSourceListenerSettingsAndSceneReload) {
+    const auto dir = TestDir("Audio");
+    GamePackage package;
+    CHECK(package.Mount(MakeAudioPak(dir).string()));
+    Game game(package);
+    CHECK(game.LoadStartupScene());
+    game.BeginPlay();
+    for (int i = 0; i < 3; ++i) game.Tick(1.0f / 60);
+    auto* system = game.AudioSystem();
+    CHECK(system != nullptr);
+    CHECK(system->Problems().empty());
+    CHECK(system->ListenerEntity() == FindTagged(game.GetWorld(), "Emitter"));
+    CHECK(system->GetListener().position.x == 2);
+    CHECK(system->GetMixer().FramesRendered() >= 2300);
+    CHECK(system->GetMixer().Meter(audio::kMasterBus).peak[0] > 0.1f);
+    auto settings = game.Settings().Get();
+    settings.master = 0;
+    game.Settings().Set(settings);
+    for (int i = 0; i < 5; ++i) game.Tick(1.0f / 60); // mixer ramps the gain change
+    CHECK(system->GetMixer().BusVolume(audio::kMasterBus) == -80);
+    CHECK(system->GetMixer().Meter(audio::kMasterBus).peak[0] < 0.001f);
+    game.EndPlay();
+    CHECK(system->Player().ActiveCount() == 0);
+    CHECK(game.LoadStartupScene());
+    game.BeginPlay();
+    game.Tick(1.0f / 60);
+    CHECK(game.AudioSystem()->GetMixer().BusVolume(audio::kMasterBus) == -80);
+    CHECK(game.AudioSystem()->Problems().empty() && game.Warnings().empty());
+}
+
+AETHER_TEST(Player_SequenceAudioFadeInAndFadeOutBoundAndUnbound) {
+    for (bool bound : {false, true}) {
+        const auto dir = TestDir(bound ? "BoundAudio" : "SequenceAudio");
+        GamePackage package;
+        CHECK(package.Mount(MakeAudioPak(dir, true, bound).string()));
+        Game game(package);
+        CHECK(game.LoadStartupScene());
+        game.BeginPlay();
+        for (int i = 0; i < 20; ++i) game.Tick(1.0f / 60);
+        auto* system = game.AudioSystem();
+        CHECK(system->Player().ActiveCount() == 1);
+        CHECK(system->GetMixer().Meter(audio::kMasterBus).peak[0] > 0.1f);
+        for (int i = 0; i < 60; ++i) game.Tick(1.0f / 60);
+        CHECK(system->Player().ActiveCount() == 0);
+        CHECK(system->GetMixer().VoiceCount() == 0);
+        CHECK(system->Problems().empty());
+        CHECK(game.Warnings().empty());
+    }
+}
+
+AETHER_TEST(Player_InvalidCookedAudioReportsAWarning) {
+    GamePackage package;
+    CHECK(package.Mount(MakeAudioPak(TestDir("BadAudio"), false, false, true).string()));
+    Game game(package);
+    CHECK(game.LoadStartupScene());
+    CHECK(game.Warnings().size() == 1 && game.Warnings().front().find("tone.wav") != std::string::npos);
+    game.BeginPlay();
+    game.Tick(1.0f / 60);
+    CHECK(!game.AudioSystem()->Problems().empty());
+}
+
+AETHER_TEST(Player_CooksSoundCueAssetsAndPlaysWithoutSourceFiles) {
+    const auto dir = TestDir("CookedAudio");
+    ProjectPaths paths;
+    std::string error;
+    CHECK(CreateProject(dir, "Audio proof", &paths, &error));
+    stdfs::create_directories(paths.content / "Audio");
+    audio::SoundCue cue;
+    cue.root = 1;
+    audio::CueNode wave;
+    wave.id = 1;
+    wave.sound = "Audio/tone.wav";
+    cue.nodes.push_back(wave);
+    std::ofstream(paths.content / "Audio/tone.acue") << audio::SaveCue(cue);
+    const auto samples = audio::EncodeWav(audio::GenerateTone(330, 0.5f));
+    {
+        std::ofstream output(paths.content / "Audio/tone.wav", std::ios::binary);
+        output.write(reinterpret_cast<const char*>(samples.data()), static_cast<std::streamsize>(samples.size()));
+    }
+    AudioSource source;
+    source.cue = "Audio/tone.acue";
+    const json scene = {{"$type", "Scene"}, {"$version", 1},
+        {"entities", json::array({{{"components", {{"Transform", Transform3(0, 0, 0)}, {"AudioSource", reflect::ToJson(source)}}}}})}};
+    stdfs::create_directories(paths.content / "Scenes");
+    std::ofstream(paths.content / "Scenes/main.ascene") << scene.dump();
+    ProjectSettings settings;
+    CHECK(LoadProject(paths.file, settings, &error));
+    settings.startup_scene = "Scenes/main.ascene";
+    settings.always_cook = {"Audio/"}; // cue/wave strings are paths, not serialized GUID dependencies
+    CHECK(SaveProject(paths.file, settings, &error));
+    cook::CookOptions options;
+    options.project_file = paths.file;
+    options.output_dir = dir / "cooked";
+    const auto cooked = cook::Cook(options);
+    CHECK(cooked.ok);
+    // This fixture owns Content; playback must use only the mounted pak.
+    stdfs::remove_all(paths.content);
+    GamePackage package;
+    CHECK(package.Mount(cooked.pak_file.string()));
+    CHECK(package.LoadManifest());
+    const auto* asset = package.FindAsset("Audio/tone.acue");
+    CHECK(asset != nullptr && asset->importer == "SoundCue");
+    Game game(package);
+    CHECK(game.LoadStartupScene());
+    game.BeginPlay();
+    game.Tick(1.0f / 60);
+    CHECK(game.AudioSystem()->GetMixer().Meter(audio::kMasterBus).peak[0] > 0.1f);
+    CHECK(game.Warnings().empty() && game.AudioSystem()->Problems().empty());
+}
+
+AETHER_TEST(Player_SceneReplacementKeepsCustomStagesAndRefreshesKitSystems) {
+    const auto dir = TestDir("ReloadStages");
+    GamePackage package;
+    CHECK(package.Mount(MakePak(dir, "Game.apak").string()));
+    Game game(package);
+    CHECK(game.LoadStartupScene());
+    int ticks = 0;
+    SystemDesc custom;
+    custom.name = "Proof.Custom";
+    custom.phase = SystemPhase::LateUpdate;
+    custom.run = [&](World&, const FrameContext&) { ++ticks; };
+    CHECK(game.Systems().Add(std::move(custom)));
+    for (int scene = 0; scene < 3; ++scene) {
+        if (scene > 0) CHECK(game.LoadStartupScene());
+        game.BeginPlay();
+        for (int frame = 0; frame < 5; ++frame) game.Tick(1.0f / 60);
+    }
+    CHECK(ticks == 15);
+    CHECK(game.ScriptErrors().empty() && game.BlueprintErrors().empty());
+}
 
 AETHER_TEST(Player_ParsesTheManifest) {
     GameManifest m;
@@ -469,10 +649,10 @@ AETHER_TEST(Player_StageOrderSnapshot) {
         "  | Player.Physics\n"
         "  | Player.Physics2D\n"
         "  | Player.FixedUpdate\n"
-        "Update: Player.Update Player.Sequencer Player.Save Player.Effects Player.Abilities Player.Inventory Player.Interaction Player.Attributes Player.Quests Player.Scripting\n"
+        "Update: Player.Update Player.Sequencer Player.Audio Player.Save Player.Effects Player.Abilities Player.Inventory Player.Interaction Player.Attributes Player.Quests Player.Scripting\n"
         "  | Player.Update\n"
         "  | Player.Sequencer\n"
-        "  | Player.Save Player.Effects\n"
+        "  | Player.Audio Player.Save Player.Effects\n"
         "  | Player.Abilities Player.Inventory Player.Interaction Player.Attributes\n"
         "  | Player.Quests\n"
         "  | Player.Scripting\n"

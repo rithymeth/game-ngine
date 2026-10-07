@@ -320,6 +320,7 @@ int main(int argc, char** argv) {
             }
             game.Input().SetButton(key, true);
         }
+        if (window && !game.StartAudioOutput(&error)) AETHER_LOG_WARN("Player", "Audio output: %s", error.c_str());
         game.BeginPlay();
         u64 fence = 0;
         bool screenshot_written = false;
