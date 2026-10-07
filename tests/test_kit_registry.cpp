@@ -150,8 +150,7 @@ AETHER_TEST(Kit_EventBusDrainsTypedEventsInOrder) {
     AETHER_CHECK(quests.size() == 1 && quests[0].id == 9);
 }
 
-// The four real gameplay kits (Phase 37 step 4): they resolve, the gameplay module comes first, and each kit
-// adds the one stage the player used to hand-write.
+// The gameplay kits resolve with Gameplay first and expose their scheduler stages through the registry.
 AETHER_TEST(Kit_TheGameplayKitsResolveInOrder) {
     KitRegistry registry;
     registry.Add(gas::MakeGameplayKit());
@@ -170,9 +169,11 @@ AETHER_TEST(Kit_TheGameplayKitsResolveInOrder) {
     std::vector<std::string> names;
     for (const KitStage& stage : registry.Stages()) {
         names.push_back(stage.name);
-        AETHER_CHECK(std::find(stage.after.begin(), stage.after.end(), "Player.Effects") != stage.after.end());
+        if (stage.name != "Player.Effects") {
+            AETHER_CHECK(std::find(stage.after.begin(), stage.after.end(), "Player.Effects") != stage.after.end());
+        }
     }
 #if AETHER_KIT_INVENTORY && AETHER_KIT_INTERACTION && AETHER_KIT_QUESTS
-    AETHER_CHECK((names == std::vector<std::string>{"Player.Interaction", "Player.Inventory", "Player.Quests"}));
+    AETHER_CHECK((names == std::vector<std::string>{"Player.Attributes", "Player.Abilities", "Player.Effects", "Player.Interaction", "Player.Inventory", "Player.Quests"}));
 #endif
 }
