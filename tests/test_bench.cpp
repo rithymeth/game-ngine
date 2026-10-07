@@ -60,9 +60,17 @@ AETHER_TEST(Bench_BaselineComparisonFindsRegressions) {
     bench::Result established;
     established.name = "a/b";
     established.normalized = 1.2;
-    AETHER_CHECK(bench::Compare(report(1.0), bench::ToJson({fresh, established}, 10.0), 1.5, regressions, &error) && regressions.empty());
+    bench::Result second_established;
+    second_established.name = "a/c";
+    second_established.normalized = 1.0;
+    AETHER_CHECK(bench::Compare(report(1.0), bench::ToJson({fresh, established, second_established}, 10.0), 1.5, regressions, &error) && regressions.empty());
+    AETHER_CHECK(!bench::Compare(report(1.0), bench::ToJson({established}, 10.0), 1.5, regressions, &error) && error.find("missing baseline benchmark: a/c") != std::string::npos);
+    regressions.push_back({"stale", 1.0, 2.0, 2.0});
     AETHER_CHECK(!bench::Compare(report(1.0), report(1.2), 0.0, regressions, &error) && error.find("tolerance") != std::string::npos);
+    AETHER_CHECK(regressions.empty());
     AETHER_CHECK(!bench::Compare(report(1.0), "{\"results\":[{\"name\":\"a/b\",\"normalized\":0}]}", 1.5, regressions, &error) && error.find("invalid") != std::string::npos);
+    AETHER_CHECK(!bench::Compare("{\"results\":[{\"name\":\"a/b\",\"normalized\":1},{\"name\":\"a/b\",\"normalized\":2}]}",
+                                 report(1.0), 1.5, regressions, &error) && error.find("duplicate") != std::string::npos);
 }
 
 

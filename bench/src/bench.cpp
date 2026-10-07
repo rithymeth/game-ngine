@@ -96,6 +96,8 @@ std::string ToJson(const std::vector<Result>& results, double calibration_ms) {
 }
 
 bool Compare(const std::string& baseline_json, const std::string& current_json, double tolerance, std::vector<Regression>& regressions, std::string* error) {
+    regressions.clear();
+    if (error) error->clear();
     const auto base = nlohmann::json::parse(baseline_json, nullptr, false);
     const auto cur = nlohmann::json::parse(current_json, nullptr, false);
     const auto ok = [](const nlohmann::json& j) { return j.is_object() && j.contains("results") && j["results"].is_array(); };
@@ -121,14 +123,21 @@ bool Compare(const std::string& baseline_json, const std::string& current_json, 
         if (error) *error = "benchmark report contains invalid or duplicate results";
         return false;
     }
-    regressions.clear();
+    for (const auto& [name, was] : baseline) {
+        (void)was;
+        if (current.find(name) == current.end()) {
+            if (error) *error = "current report is missing baseline benchmark: " + name;
+            return false;
+        }
+    }
     usize compared = 0;
     for (const auto& [name, now] : current) {
         const auto found = baseline.find(name);
         if (found == baseline.end()) continue; // New benchmarks have no history yet.
         ++compared;
         const double was = found->second;
-        if (now > was * tolerance) regressions.push_back({name, was, now, now / was});
+        const double ratio = now / was;
+        if (ratio > tolerance) regressions.push_back({name, was, now, ratio});
     }
     if (compared == 0) {
         if (error) *error = "no benchmarks overlap with baseline";

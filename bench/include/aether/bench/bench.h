@@ -45,9 +45,10 @@ struct Regression {
     double baseline = 0.0, current = 0.0; // normalized medians
     double ratio = 0.0;
 };
-// Compares a report with a baseline (both JSON from ToJson) by normalized median: a benchmark in both whose
-// current value is more than `tolerance` times the baseline's is a regression. `error` is set (and false returned)
-// if either text isn't a report.
+// Compares a report with a baseline (both JSON from ToJson) by normalized median: every baseline entry must be
+// present in the current report, additional current entries are allowed, and a benchmark whose current value is
+// more than `tolerance` times the baseline's is a regression. `error` is set (and false returned) for malformed,
+// incomplete, or non-overlapping reports.
 bool Compare(const std::string& baseline_json, const std::string& current_json, double tolerance, std::vector<Regression>& regressions, std::string* error);
 
 } // namespace aether::bench
