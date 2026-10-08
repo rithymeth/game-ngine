@@ -42,8 +42,9 @@ cook warnings** in Build and Package. Strict validation reports every warning
 and fails before writing a new archive. Missing roots, broken asset references,
 failed imports and unreadable helper files are among the warnings that block a
 strict cook. A normal cook still reports warnings without failing, so they can
-be investigated during development. Packaging cooks into a staging folder, so
-a validation failure leaves an earlier packaged `Paks/` folder in place.
+be investigated during development. Packaging stages the cooked content,
+player, DLLs and manifest before installation. A staging or installation
+failure restores the previous package files.
 
 The packaged folder includes `PackageManifest.json`, listing the player,
 copied DLLs, archive and cook manifest with byte counts and CRC-32 values.
