@@ -283,7 +283,9 @@ jobs:
           Copy-Item README.md $out/
           Copy-Item THIRD_PARTY_NOTICES.md $out/
           Copy-Item docs/WINDOWS_REQUIREMENTS.md $out/
-          Copy-Item docs/releases/v0.27.1.md $out/RELEASE_NOTES.md
+          $versionSource = Get-Content engine/include/aether/core/version.h -Raw
+          if ($versionSource -notmatch 'kEngineVersion\s*=\s*"([^"]+)"') { throw 'Cannot read the engine release version' }
+          Copy-Item ("docs/releases/v" + $matches[1] + '.md') $out/RELEASE_NOTES.md
           Copy-Item -Recurse plugins $out/plugins
           Copy-Item -Recurse third_party/licenses $out/licenses
           Compress-Archive -Path "$out/*" -DestinationPath dist/AetherEditor-windows-x64.zip -Force

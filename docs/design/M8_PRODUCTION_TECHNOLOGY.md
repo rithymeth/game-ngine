@@ -89,6 +89,11 @@ These may be considered in a later feature milestone, but are not M8 scope:
 
 ## Exit criteria
 
+The [package reliability increment](M8_PACKAGE_RELIABILITY.md) records the
+current targeted work on destination safety, cancellation, manifest validation,
+rollback evidence and release-note completeness. Its checks contribute to M8.2
+and M8.6 without marking the wider milestone complete.
+
 M8 is complete when the existing supported feature set has a reviewed baseline,
 the current platform matrix and sample workflows are reliable, prioritized
 correctness and data-loss issues are resolved, performance changes are backed

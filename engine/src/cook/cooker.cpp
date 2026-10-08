@@ -171,6 +171,13 @@ CookReport Cook(const CookOptions& options) {
     };
     const auto cancelled = [&] { return options.cancel && options.cancel->load(); };
 
+    // pak_name is a filename stem, not an output path. A relative traversal
+    // here would bypass Package's staging directory before verification.
+    if (options.pak_name.empty() || options.pak_name.find_first_of("/\\:") != std::string::npos ||
+        options.pak_name.find('\0') != std::string::npos) {
+        return fail("Invalid pak name: expected a single filename stem without path separators, ':' or NUL");
+    }
+
     progress(0.0f, "Scanning the project");
     ProjectSettings settings;
     std::string error;

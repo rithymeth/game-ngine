@@ -10,6 +10,10 @@ $repo = Split-Path $PSScriptRoot -Parent
 $buildRoot = [IO.Path]::GetFullPath((Join-Path $repo $BuildDir))
 $outputRoot = [IO.Path]::GetFullPath((Join-Path $repo $OutputDir))
 $cookRoot = [IO.Path]::GetFullPath((Join-Path $repo $CookDir))
+$engineVersionSource = Get-Content -LiteralPath (Join-Path $repo 'engine/include/aether/core/version.h') -Raw
+if ($engineVersionSource -notmatch 'kEngineVersion\s*=\s*"([^"]+)"') { throw 'Cannot read the engine release version' }
+$releaseNotes = Join-Path $repo ("docs/releases/v" + $matches[1] + '.md')
+if (-not (Test-Path -LiteralPath $releaseNotes -PathType Leaf)) { throw "Missing release notes: $releaseNotes" }
 if (-not $outputRoot.StartsWith($repo + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
     throw 'Package output must be inside the repository workspace'
 }
@@ -29,7 +33,7 @@ Copy-Item -LiteralPath (Join-Path $repo 'games/AETHER-01/README.md') -Destinatio
 Copy-Item -LiteralPath (Join-Path $repo 'games/AETHER-01/THIRD_PARTY_NOTICES.md') -Destination $outputRoot
 Copy-Item -LiteralPath (Join-Path $repo 'THIRD_PARTY_NOTICES.md') -Destination (Join-Path $outputRoot 'ENGINE_NOTICES.md')
 Copy-Item -LiteralPath (Join-Path $repo 'docs/WINDOWS_REQUIREMENTS.md') -Destination $outputRoot
-Copy-Item -LiteralPath (Join-Path $repo 'docs/releases/v0.27.1.md') -Destination (Join-Path $outputRoot 'RELEASE_NOTES.md')
+Copy-Item -LiteralPath $releaseNotes -Destination (Join-Path $outputRoot 'RELEASE_NOTES.md')
 Copy-Item -LiteralPath (Join-Path $repo 'third_party/licenses') -Destination (Join-Path $outputRoot 'licenses') -Recurse
 $commit = (& git -C $repo rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Cannot record the build commit' }
