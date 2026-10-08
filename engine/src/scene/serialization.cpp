@@ -25,6 +25,7 @@ namespace {
 // unknown.
 void RegisterSceneComponents() {
     (void)GetComponentId<IdComponent>();
+    (void)GetComponentId<EntityName>();
     (void)GetComponentId<Parent>();
     (void)GetComponentId<Transform>();
     (void)GetComponentId<ModelRenderer>();
