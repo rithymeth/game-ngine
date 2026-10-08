@@ -322,17 +322,38 @@ CookReport Cook(const CookOptions& options) {
                     report.warnings.push_back(record.path + ": unknown cook_format '" + format + "', using auto");
                 }
             }
-            assets::ImageData image;
-            if (assets::DecodeImageFile(database.SourcePath(guid).string(), image)) {
-                const CookedTexture cooked_texture = CookTexture(image.pixels, image.width, image.height, tex);
-                const std::vector<u8> atex = SaveAtex(cooked_texture);
+            const json texture_settings = {{"quality", tex.quality},
+                                           {"auto_format", tex.auto_format},
+                                           {"format", TextureFormatName(tex.format)},
+                                           {"mips", tex.mips},
+                                           {"srgb", tex.srgb},
+                                           {"normal_map", tex.normal_map}};
+            const std::string key = assets::DerivedDataCache::MakeKey(
+                "CookedTexture", 1, record.source_hash, texture_settings.dump(), options.platform);
+            std::optional<std::vector<u8>> cached = cache.Get(key);
+            CookedTexture cooked_texture;
+            const bool cache_hit = cached && LoadAtex(*cached, cooked_texture);
+            std::vector<u8> atex;
+            if (cache_hit) {
+                ++report.texture_cache_hits;
+                atex = std::move(*cached);
+            } else {
+                ++report.texture_cache_misses;
+                assets::ImageData image;
+                if (assets::DecodeImageFile(database.SourcePath(guid).string(), image)) {
+                    cooked_texture = CookTexture(image.pixels, image.width, image.height, tex);
+                    atex = SaveAtex(cooked_texture);
+                    if (!cache.Put(key, atex)) report.warnings.push_back("Can't cache cooked texture " + record.path);
+                } else {
+                    report.warnings.push_back("Can't decode " + record.path + " to cook it");
+                }
+            }
+            if (!atex.empty()) {
                 cooked.cooked = "Cooked/" + assets::ToString(guid) + ".atex";
                 cooked.cooked_bytes = atex.size();
                 cooked_format = TextureFormatName(cooked_texture.format);
                 writer.Add(cooked.cooked, atex);
                 report.original_bytes += atex.size();
-            } else {
-                report.warnings.push_back("Can't decode " + record.path + " to cook it");
             }
         }
 
