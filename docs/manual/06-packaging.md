@@ -44,7 +44,8 @@ For a release candidate, add `--strict` to `aether_cook`, or check **Fail on
 cook warnings** in Build and Package. Strict validation reports every warning
 and fails before writing a new archive. Missing roots, broken asset references,
 failed imports and unreadable helper files are among the warnings that block a
-strict cook. A normal cook still reports warnings without failing, so they can
+strict cook. Importer setting warnings include the asset source path and also
+block a strict cook. A normal cook still reports warnings without failing, so they can
 be investigated during development. Packaging stages the cooked content,
 player, DLLs and manifest before installation. A staging or installation
 failure restores the previous package files.
