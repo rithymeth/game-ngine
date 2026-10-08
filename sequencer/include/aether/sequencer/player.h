@@ -86,7 +86,8 @@ public:
     std::function<void(const Track&, const EventKey&)> on_event;
     // Audio and Animation keys, fired like events (forward only, once each).
     // `entity` is the track's bound entity (null for none). Active cues and
-    // montages receive a synthetic Stop when the player is deactivated.
+    // montages receive a synthetic Stop on Stop, Skip or Bind. Destruction
+    // releases owned world state without invoking media callbacks.
     std::function<void(const Track&, Entity entity, const AudioKey&)> on_audio;
     std::function<void(const Track&, Entity entity, const AnimKey&)> on_animation;
     // Spawn tracks: `on_spawn` makes the key's prefab (placed relative to
@@ -155,7 +156,7 @@ private:
     void ApplySpawns(const Track& track, Target& target);
     void ApplyCuts(const Track& track, Target& target);
     void ApplySubsequences(const Track& track, Target& target);
-    void Deactivate(); // despawns, stops cues/montages, releases cuts and fade
+    void Deactivate(bool send_cue_stops = true); // despawns, optionally stops cues/montages, releases cuts and fade
     void ReleaseCut(Target& target);
     void DespawnAll();
     SequencePlayer(const LevelSequence& sequence, World& world, const GuidIndex& guids, SequenceResolver resolver, std::vector<std::string> path);
