@@ -227,3 +227,25 @@ AETHER_TEST(Cook_RefusesNothingToCook) {
     report = cook::Cook(options);
     CHECK(!report.ok && report.error.find("Can't load") != std::string::npos);
 }
+
+AETHER_TEST(Cook_RepeatBuildsAreByteIdentical) {
+    const stdfs::path project = MakeProject("Repeatable");
+    cook::CookOptions options;
+    options.project_file = project;
+    options.configuration = cook::BuildConfiguration::Shipping;
+    options.output_dir = project.parent_path() / "BuildOne";
+    const cook::CookReport first = cook::Cook(options);
+    CHECK(first.ok);
+
+    options.output_dir = project.parent_path() / "BuildTwo";
+    const cook::CookReport second = cook::Cook(options);
+    CHECK(second.ok);
+
+    const auto read_bytes = [](const stdfs::path& path) {
+        std::ifstream in(path, std::ios::binary);
+        AETHER_CHECK(in.good());
+        return std::vector<char>(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    };
+    CHECK(read_bytes(first.pak_file) == read_bytes(second.pak_file));
+    CHECK(read_bytes(first.manifest_file) == read_bytes(second.manifest_file));
+}

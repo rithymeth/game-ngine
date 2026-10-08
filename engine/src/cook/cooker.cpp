@@ -413,6 +413,7 @@ CookReport Cook(const CookOptions& options) {
 
     std::error_code ec;
     stdfs::create_directories(options.output_dir, ec);
+    if (ec) return fail("Can't create " + options.output_dir.string() + ": " + ec.message());
     report.pak_file = options.output_dir / (options.pak_name + ".apak");
     if (!options.patch_base.empty()) {
         // Only what differs from the earlier archive.

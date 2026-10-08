@@ -113,7 +113,10 @@ repeat runs; an unchanged incremental cook does no work; a changed dependency re
 dependents; the `.apak` loads in a standalone player. Record hashes and toolchain revisions.
 The opt-in strict cook (`aether_cook --strict`, or **Fail on cook warnings** in
 Build and Package) is groundwork for missing-content validation; it does not
-establish determinism or pass this phase.
+pass this phase. A regression test now compares both archive and cook-manifest
+bytes from two shipping cooks of the same project into separate output folders.
+Incremental dependency rebuilds and broader toolchain/platform reproducibility
+evidence remain open.
 
 ## M8.6 — Animation & Character
 
