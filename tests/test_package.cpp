@@ -172,6 +172,37 @@ AETHER_TEST(Package_StagesThePlayerWithThePaks) {
     CHECK(!cook::Package(options).ok);
 }
 
+AETHER_TEST(Package_FailedPlayerStagingKeepsThePreviousPackage) {
+    const stdfs::path file = MakeProject("Rollback");
+    const stdfs::path fake_player = file.parent_path() / "fake_player.bin";
+    std::ofstream(fake_player, std::ios::binary) << "player version one";
+    cook::PackageOptions options;
+    options.cook.project_file = file;
+    options.output_dir = file.parent_path() / "Packaged";
+    options.player_executable = fake_player;
+    const cook::PackageReport first = cook::Package(options);
+    CHECK(first.ok);
+    std::vector<std::string> problems;
+    CHECK(cook::VerifyPackageManifest(options.output_dir, problems));
+
+    // Force a different cook, then remove the player after validation but
+    // before its staged copy. No artifact from the new cook may be published.
+    Tags tags;
+    tags.names = {"Changed"};
+    const json scene = {{"$type", "Scene"}, {"$version", 1}, {"entities", json::array({{{"components", {{"Tags", reflect::ToJson(tags)}}}}})}};
+    std::ofstream(file.parent_path() / "Content/Scenes/main.ascene", std::ios::binary) << scene.dump();
+    options.cook.progress = [&](f32, const std::string& stage) {
+        if (stage == "Staging the player") stdfs::remove(fake_player);
+    };
+    const cook::PackageReport failed = cook::Package(options);
+    CHECK(!failed.ok && failed.error.find("Can't stage the player") == 0);
+    CHECK(stdfs::exists(first.game_executable));
+    CHECK(cook::VerifyPackageManifest(options.output_dir, problems));
+    for (const stdfs::directory_entry& entry : stdfs::directory_iterator(options.output_dir)) {
+        CHECK(entry.path().filename().string().find(".aether-package-") != 0);
+    }
+}
+
 AETHER_TEST(Process_StartsWaitsAndReportsTheExitCode) {
     const stdfs::path self = platform::ExecutablePath();
     CHECK(!self.empty() && stdfs::is_regular_file(self));

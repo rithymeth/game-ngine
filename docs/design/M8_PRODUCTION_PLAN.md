@@ -177,7 +177,9 @@ checksums, symbols, license notices, signing, patching and rollback.
 outside the checkout, upgrades from the prior candidate, and can roll back without losing saves.
 The same manifest records binaries, content, toolchain and dependencies.
 `PackageManifest.json` and `aether_pak verify-package` now provide file size and
-CRC-32 checks for the staged player and content. Toolchain provenance,
+CRC-32 checks for the staged player and content. Package installation now
+backs up and restores the previous artifacts if a later install step fails.
+Toolchain provenance,
 cryptographic signatures, install/upgrade and rollback evidence remain open.
 
 ## M8.11 — AETHER-01 Vertical Slice

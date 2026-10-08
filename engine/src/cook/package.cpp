@@ -100,73 +100,67 @@ PackageReport Package(const PackageOptions& options) {
         return fail("Can't load " + options.cook.project_file.string() + ": " + error);
     }
 
-    // Cook beside Paks/ so validation failures leave the previous package intact.
+    // Prepare every package artifact before replacing any published file.
     CookOptions cook = options.cook;
     report.paks_dir = options.output_dir / "Paks";
     stdfs::create_directories(options.output_dir, ec);
     if (ec) return fail("Can't create " + options.output_dir.string() + ": " + ec.message());
-    stdfs::path staged_paks, previous_paks;
+    stdfs::path staged_root, previous_root;
     bool staged_ready = false;
     for (usize i = 0; i < 1024; ++i) {
-        staged_paks = options.output_dir / (".aether-paks-staging-" + std::to_string(i));
-        previous_paks = options.output_dir / (".aether-paks-previous-" + std::to_string(i));
-        if (stdfs::exists(previous_paks, ec)) continue;
-        if (ec) return fail("Can't inspect " + previous_paks.string() + ": " + ec.message());
-        if (stdfs::create_directory(staged_paks, ec)) {
+        staged_root = options.output_dir / (".aether-package-staging-" + std::to_string(i));
+        previous_root = options.output_dir / (".aether-package-previous-" + std::to_string(i));
+        if (stdfs::exists(staged_root, ec) || stdfs::exists(previous_root, ec)) continue;
+        if (ec) return fail("Can't inspect package staging folders: " + ec.message());
+        if (!stdfs::create_directory(staged_root, ec)) {
+            if (ec) return fail("Can't create " + staged_root.string() + ": " + ec.message());
+            continue;
+        }
+        if (stdfs::create_directory(previous_root, ec)) {
             staged_ready = true;
             break;
         }
-        if (ec) return fail("Can't create " + staged_paks.string() + ": " + ec.message());
+        std::error_code cleanup_ec;
+        stdfs::remove_all(staged_root, cleanup_ec);
+        if (ec) return fail("Can't create " + previous_root.string() + ": " + ec.message());
     }
-    if (!staged_ready) return fail("No free staging folder beside " + report.paks_dir.string());
-    cook.output_dir = staged_paks;
+    if (!staged_ready) return fail("No free staging folder in " + options.output_dir.string());
+    const auto cleanup_staging = [&] {
+        std::error_code cleanup_ec;
+        stdfs::remove_all(staged_root, cleanup_ec);
+        if (cleanup_ec) AETHER_LOG_WARN("Package", "Couldn't remove staging folder: %s", cleanup_ec.message().c_str());
+        stdfs::remove_all(previous_root, cleanup_ec);
+        if (cleanup_ec) AETHER_LOG_WARN("Package", "Couldn't remove backup folder: %s", cleanup_ec.message().c_str());
+    };
+    cook.output_dir = staged_root / "Paks";
     if (options.cook.progress) {
         cook.progress = [&](f32 fraction, const std::string& stage) { options.cook.progress(fraction * 0.9f, stage); };
     }
     report.cook = Cook(cook);
     if (!report.cook.ok) {
-        stdfs::remove_all(staged_paks, ec);
+        cleanup_staging();
         return fail(report.cook.error);
-    }
-
-    const bool had_previous = stdfs::exists(report.paks_dir, ec);
-    if (ec) {
-        stdfs::remove_all(staged_paks, ec);
-        return fail("Can't inspect " + report.paks_dir.string());
-    }
-    if (had_previous) {
-        stdfs::rename(report.paks_dir, previous_paks, ec);
-        if (ec) {
-            const std::string message = "Can't move the previous Paks folder: " + ec.message();
-            stdfs::remove_all(staged_paks, ec);
-            return fail(message);
-        }
-    }
-    stdfs::rename(staged_paks, report.paks_dir, ec);
-    if (ec) {
-        const std::string message = "Can't install the new Paks folder: " + ec.message();
-        if (had_previous) {
-            std::error_code restore_error;
-            stdfs::rename(previous_paks, report.paks_dir, restore_error);
-            if (restore_error) return fail(message + "; restoring the previous folder failed: " + restore_error.message());
-        }
-        stdfs::remove_all(staged_paks, ec);
-        return fail(message);
-    }
-    report.cook.pak_file = report.paks_dir / report.cook.pak_file.filename();
-    report.cook.manifest_file = report.paks_dir / report.cook.manifest_file.filename();
-    if (had_previous) {
-        stdfs::remove_all(previous_paks, ec);
-        if (ec) AETHER_LOG_WARN("Package", "Couldn't remove previous Paks folder: %s", ec.message().c_str());
     }
 
     progress(0.92f, "Staging the player");
     report.game_executable = options.output_dir / GameExecutableName(settings.name);
-    stdfs::copy_file(player, report.game_executable, stdfs::copy_options::overwrite_existing, ec);
-    if (ec) return fail("Can't copy the player to " + report.game_executable.string() + ": " + ec.message());
-    stdfs::permissions(report.game_executable,
+    const stdfs::path staged_player = staged_root / report.game_executable.filename();
+    stdfs::copy_file(player, staged_player, stdfs::copy_options::overwrite_existing, ec);
+    if (ec) {
+        const std::string message = "Can't stage the player: " + ec.message();
+        cleanup_staging();
+        return fail(message);
+    }
+#if !defined(_WIN32)
+    stdfs::permissions(staged_player,
                        stdfs::perms::owner_exec | stdfs::perms::group_exec | stdfs::perms::others_exec,
                        stdfs::perm_options::add, ec);
+    if (ec) {
+        const std::string message = "Can't mark the staged player executable: " + ec.message();
+        cleanup_staging();
+        return fail(message);
+    }
+#endif
     report.copied.push_back(report.game_executable);
 #if defined(_WIN32)
     // The DLLs the player loads (dxcompiler.dll and the like).
@@ -174,11 +168,22 @@ PackageReport Package(const PackageOptions& options) {
         if (it->path().extension() != ".dll") continue;
         const stdfs::path to = options.output_dir / it->path().filename();
         std::error_code copy_ec;
-        stdfs::copy_file(it->path(), to, stdfs::copy_options::overwrite_existing, copy_ec);
-        if (!copy_ec) report.copied.push_back(to);
+        stdfs::copy_file(it->path(), staged_root / to.filename(), stdfs::copy_options::overwrite_existing, copy_ec);
+        if (copy_ec) {
+            const std::string message = "Can't stage " + it->path().string() + ": " + copy_ec.message();
+            cleanup_staging();
+            return fail(message);
+        }
+        report.copied.push_back(to);
+    }
+    if (ec) {
+        const std::string message = "Can't list player DLLs: " + ec.message();
+        cleanup_staging();
+        return fail(message);
     }
 #endif
-    std::vector<stdfs::path> files = report.copied;
+    std::vector<stdfs::path> files;
+    for (const stdfs::path& copied : report.copied) files.push_back(staged_root / copied.filename());
     files.push_back(report.cook.pak_file);
     files.push_back(report.cook.manifest_file);
     std::sort(files.begin(), files.end());
@@ -186,8 +191,11 @@ PackageReport Package(const PackageOptions& options) {
     for (const stdfs::path& file : files) {
         u64 bytes = 0;
         u32 crc = 0;
-        if (!FileChecksum(file, bytes, crc)) return fail("Can't checksum " + file.string());
-        file_list.push_back({{"path", file.lexically_relative(options.output_dir).generic_string()},
+        if (!FileChecksum(file, bytes, crc)) {
+            cleanup_staging();
+            return fail("Can't checksum " + file.string());
+        }
+        file_list.push_back({{"path", file.lexically_relative(staged_root).generic_string()},
                              {"bytes", bytes}, {"crc32", CrcHex(crc)}});
     }
     const nlohmann::json manifest = {{"$type", "PackageManifest"},
@@ -198,9 +206,72 @@ PackageReport Package(const PackageOptions& options) {
                                      {"files", std::move(file_list)}};
     report.manifest_file = options.output_dir / "PackageManifest.json";
     const std::string manifest_text = manifest.dump(2);
-    if (!fs::WriteFileAtomic(report.manifest_file.string(), manifest_text.data(), manifest_text.size())) {
-        return fail("Can't write " + report.manifest_file.string());
+    if (!fs::WriteFileAtomic((staged_root / "PackageManifest.json").string(), manifest_text.data(), manifest_text.size())) {
+        cleanup_staging();
+        return fail("Can't stage " + report.manifest_file.string());
     }
+    std::vector<std::string> problems;
+    if (!VerifyPackageManifest(staged_root, problems)) {
+        const std::string message = problems.empty() ? "Can't verify staged package" : problems.front();
+        cleanup_staging();
+        return fail(message);
+    }
+
+    // Move previous artifacts aside, install the staged ones, then publish the
+    // manifest last. On failure, restore each previous artifact in reverse order.
+    struct SwapEntry {
+        stdfs::path name;
+        bool had_previous = false;
+        bool installed = false;
+    };
+    std::vector<SwapEntry> swaps;
+    swaps.push_back({"Paks"});
+    for (const stdfs::path& copied : report.copied) swaps.push_back({copied.filename()});
+    swaps.push_back({"PackageManifest.json"});
+    std::string install_error;
+    for (SwapEntry& entry : swaps) {
+        const stdfs::path destination = options.output_dir / entry.name;
+        const stdfs::file_status status = stdfs::symlink_status(destination, ec);
+        if (ec == std::errc::no_such_file_or_directory) ec.clear();
+        if (ec) {
+            install_error = "Can't inspect " + destination.string() + ": " + ec.message();
+            break;
+        }
+        if (status.type() == stdfs::file_type::symlink) {
+            install_error = "Refusing to replace symlink " + destination.string();
+            break;
+        }
+        entry.had_previous = status.type() != stdfs::file_type::not_found;
+        if (entry.had_previous) {
+            stdfs::rename(destination, previous_root / entry.name, ec);
+            if (ec) {
+                install_error = "Can't back up " + destination.string() + ": " + ec.message();
+                entry.had_previous = false;
+                break;
+            }
+        }
+        stdfs::rename(staged_root / entry.name, destination, ec);
+        if (ec) {
+            install_error = "Can't install " + destination.string() + ": " + ec.message();
+            break;
+        }
+        entry.installed = true;
+    }
+    if (!install_error.empty()) {
+        std::string restore_error;
+        for (auto it = swaps.rbegin(); it != swaps.rend(); ++it) {
+            const stdfs::path destination = options.output_dir / it->name;
+            std::error_code rollback_ec;
+            if (it->installed) stdfs::remove_all(destination, rollback_ec);
+            if (!rollback_ec && it->had_previous) stdfs::rename(previous_root / it->name, destination, rollback_ec);
+            if (rollback_ec && restore_error.empty()) restore_error = rollback_ec.message();
+        }
+        if (restore_error.empty()) cleanup_staging();
+        return fail(install_error + (restore_error.empty() ? "" : "; rollback failed (previous files are in " + previous_root.string() + "): " + restore_error));
+    }
+    report.cook.pak_file = report.paks_dir / report.cook.pak_file.filename();
+    report.cook.manifest_file = report.paks_dir / report.cook.manifest_file.filename();
+    cleanup_staging();
     progress(1.0f, "Packaged " + report.game_executable.filename().string());
     report.ok = true;
     AETHER_LOG_INFO("Package", "Packaged %s into %s", settings.name.c_str(), options.output_dir.string().c_str());
