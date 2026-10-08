@@ -9,6 +9,7 @@
 > - [`design/UPGRADE_PLAN.md`](design/UPGRADE_PLAN.md): the PR-sized plan for M7, the Aether Upgrade (Phases 37-48)
 > - [`design/M8_PRODUCTION_TECHNOLOGY.md`](design/M8_PRODUCTION_TECHNOLOGY.md): improvement-only M8 plan for existing systems
 > - [`design/AETHER_01_PROOF_PLAN.md`](design/AETHER_01_PROOF_PLAN.md): improvement-only engine proof release and AETHER-01 First Contact delivery plan
+> - [`design/M8_PRODUCTION_PLAN.md`](design/M8_PRODUCTION_PLAN.md): proposed twelve-phase Aether 1.0 product gate beyond the current M8 scope
 > - [`design/BLUEPRINT_NODES.md`](design/BLUEPRINT_NODES.md): Blueprint node reference
 > - [`tutorials/FIRST_GAME.md`](tutorials/FIRST_GAME.md): the target
 >   "first game" walkthrough and M2 acceptance test
@@ -127,6 +128,8 @@ templates/  NEW: starter projects (FPS, third-person, 2D platformer, top-down)
 | **M4: Complete games** | 20 → 23 | AI, world building, multiplayer, profiling tools |
 | **M5: Shippable** | 24 → 26 | Cook and package a standalone game for Windows/Linux; templates; docs |
 | **M6: Advanced** | 27 → 36 | Cinematics, save games, localization, abilities/RPG kits, ray tracing, XR, mobile/web, modding, accessibility, optional AI assistants |
+| **M7: Aether Upgrade** | 37 → 48 | Stabilize and measure the engine, SDK, QA and release candidate |
+| **M8: Production & AETHER-01** | M8.1 → M8.12 | Prove the engine through a commercial-grade vertical slice and external developer workflows |
 
 ---
 
@@ -1561,7 +1564,8 @@ the work shifts to optimization, quality assurance, tooling, compatibility and r
   tooling for every versioned format; release notes, upgrade guide and long-term-support policy;
   signed release builds of the editor, player and SDK for each platform; sample games and a
   documented first-game path.
-- **Done when:** the production gate passes on a tagged release candidate and a release is cut.
+- **Done when:** the production gate passes on a tagged release candidate, the M8.12 product
+  validation gate passes on that candidate, and a release is cut.
 
 ## The Aether 1.0 production gate
 
@@ -1582,6 +1586,38 @@ Aether is "1.0" only when **all** of these hold, each checked by something autom
 | **SDK** | A published SDK a third party can build against from a clean machine |
 | **Plugin system** | Versioned plugin ABI, packaging and a documented authoring path |
 | **Release builds** | Reproducible release pipeline with checksums and release notes |
+| **Product validation** | M8.1–M8.12 evidence, including the AETHER-01 vertical slice and external developer study |
+
+---
+
+# Proposed twelve-phase Aether 1.0 product gate
+
+The supplied twelve-phase proposal extends beyond the repository's current
+improvement-only M8 scope. Its proposed **M8.1–M8.12** numbering is separate
+from the current M8.1–M8.7 workstream in
+[the production technology plan](design/M8_PRODUCTION_TECHNOLOGY.md).
+The full proposed scope and acceptance criteria are in
+[the product-gate plan](design/M8_PRODUCTION_PLAN.md); adoption would require a
+separate scope decision. M7 Phase 48 remains the authoritative Aether 1.0 gate.
+
+| Phase | Focus | Exit evidence |
+|---|---|---|
+| **M8.1** | Core stabilization | Versioned Core API 1.0, compatibility corpus and platform CI |
+| **M8.2** | Rendering 2.0 | AETHER-01 frame captures and measured budgets on supported backends |
+| **M8.3** | Editor 2.0 | External developer completes the first-game authoring path |
+| **M8.4** | Gameplay Framework 2.0 | AETHER-01 gameplay authored through public framework APIs |
+| **M8.5** | Asset & content pipeline | Deterministic and incremental standalone cook |
+| **M8.6** | Animation & character | Complete Kael slice move set in packaged playback |
+| **M8.7** | Audio & cinematics | Mixed, localized and skippable packaged sequence |
+| **M8.8** | AI & world systems | Reusable Scout, Sentinel, Hunter and Warden scenario runs |
+| **M8.9** | Multiplayer production | Packaged server plus multi-client soak and reconnect results |
+| **M8.10** | Build & Ship | Tagged clean-machine install, launch, patch and rollback |
+| **M8.11** | AETHER-01 vertical slice | Polished 15–30 minute packaged playthrough |
+| **M8.12** | Aether 1.0 production gate | Engine and game evidence accepted on one release candidate |
+
+The checkout now contains an AETHER-01 prototype. The proposed product gate
+still requires the evidence in [m8_gates.json](design/m8_gates.json); its
+unverified statuses must not be treated as completion.
 
 ## M8: Production Technology for Existing Systems
 
@@ -1676,6 +1712,8 @@ Work in this order. Each line is roughly one PR-sized chunk, or a few.
     2.0 (41), World Streaming 2.0 (42), Editor 2.0 (43), the AI-native editor over MCP (44),
     mobile and console (45), the developer ecosystem and SDK (46), production QA (47), then Aether 1.0
     behind the production gate (48). No further open-ended feature phases until the gate is passed.
+46. **M8, alongside late M7 work:** stabilize the product workflows, produce the AETHER-01
+    15–30 minute vertical slice, and pass M8.12 on the Phase 48 release candidate.
 
 ---
 

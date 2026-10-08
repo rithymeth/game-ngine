@@ -251,6 +251,12 @@ private:
     void StartRuntime(); // scripts and Blueprints for the loaded scene
     void ApplyAudioSettings();
     void BuildKits();    // adds the kits this build has and orders them
+    void CreateInventoryRuntime();
+    void CreateQuestsRuntime();
+    void CreateInteractionRuntime();
+    void AddInventoryStage();
+    void AddInteractionStage();
+    void AddQuestsStage();
     // A kit stage as the registry describes it: its name and `after` list, for the system that runs it.
     void ApplyKitStage(SystemDesc& system, const std::string& name) const;
 

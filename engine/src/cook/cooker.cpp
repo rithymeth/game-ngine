@@ -366,6 +366,10 @@ CookReport Cook(const CookOptions& options) {
             if (added == 0) report.warnings.push_back("The plugin content folder " + dir.string() + " is empty");
         }
     }
+    if (options.strict_validation && !report.warnings.empty()) {
+        return fail("Cook validation failed with " + std::to_string(report.warnings.size()) + " warning(s); first: " +
+                    report.warnings.front());
+    }
     json files = json::array();
     for (const std::string& path : extra) files.push_back(path);
     json presets = json::array();

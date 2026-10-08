@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdio>
 #include <deque>
 #include <functional>
@@ -26,18 +27,20 @@ class Logger {
 public:
     static Logger& Instance();
 
-    void SetMinLevel(LogLevel level) { min_level_ = level; }
-    LogLevel MinLevel() const { return min_level_; }
+    void SetMinLevel(LogLevel level) { min_level_.store(level, std::memory_order_relaxed); }
+    LogLevel MinLevel() const { return min_level_.load(std::memory_order_relaxed); }
     void Log(LogLevel level, std::string_view category, std::string_view message);
 
     // Listeners (Phase 23: the console, crash reports): called for every
     // line that passes the level, on the logging thread, outside the
     // logger's lock (so a sink may log). Returns an id for RemoveSink.
+    // RemoveSink prevents later snapshots from including the sink; a callback
+    // already in flight may still finish after RemoveSink returns.
     using Sink = std::function<void(const LogLine&)>;
     int AddSink(Sink sink);
     void RemoveSink(int id);
     // Whether lines also go to stdout/stderr (default true).
-    void SetStdout(bool enabled) { stdout_ = enabled; }
+    void SetStdout(bool enabled) { stdout_.store(enabled, std::memory_order_relaxed); }
 
     // The most recent lines, oldest first (up to RecentCapacity()).
     std::vector<LogLine> Recent() const;
@@ -45,8 +48,8 @@ public:
     void ClearRecent();
 
 private:
-    LogLevel min_level_ = LogLevel::Trace;
-    bool stdout_ = true;
+    std::atomic<LogLevel> min_level_{LogLevel::Trace};
+    std::atomic<bool> stdout_{true};
     mutable std::mutex mutex_;
     std::deque<LogLine> recent_;
     std::vector<std::pair<int, std::shared_ptr<Sink>>> sinks_;

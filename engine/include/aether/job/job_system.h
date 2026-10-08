@@ -25,6 +25,7 @@ using JobFunc = void (*)(void* data);
 // This is the explicit dependency primitive the Task Graph builds on;
 // automatic read/write dependency inference from component access is a
 // scheduling layer on top of this, not part of it.
+// Keep the counter and every job's data alive until Wait(counter) returns.
 using JobCounter = std::atomic<i32>;
 
 struct JobDecl {
@@ -37,6 +38,9 @@ struct JobDecl {
 // of pending jobs. A thread runs its own work first and steals from others
 // only when idle, which is what lets this scale near-linearly with core
 // count for the frame's Physics/Animation/AI fan-out.
+// Schedule, ScheduleBatch and Wait require the constructing thread or one of
+// this JobSystem's workers; external threads are not registered. Wait for all
+// submitted jobs before destroying the JobSystem.
 class JobSystem {
 public:
     // worker_count == 0 picks hardware_concurrency() - 1, since the

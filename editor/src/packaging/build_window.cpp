@@ -74,6 +74,7 @@ bool BuildPackageWindow::Start(bool package) {
     cook_options.configuration = configuration;
     cook_options.compression = compression;
     cook_options.texture_quality = texture_quality;
+    cook_options.strict_validation = strict_validation;
     cook_options.cancel = &cancel_;
     if (encrypt) cook_options.encryption_key = key;
     cook_options.progress = [this](f32 fraction, const std::string& stage) {
@@ -196,6 +197,7 @@ void BuildPackageWindow::Draw() {
     if (ImGui::Combo("Compression", &comp, kCompressionNames, 4)) compression = static_cast<pak::CompressionPolicy>(comp);
     int quality = static_cast<int>(texture_quality);
     if (ImGui::SliderInt("Texture quality", &quality, 0, 4)) texture_quality = static_cast<u32>(quality);
+    ImGui::Checkbox("Fail on cook warnings", &strict_validation);
     char buffer[512];
     std::snprintf(buffer, sizeof(buffer), "%s", output_dir.c_str());
     if (ImGui::InputTextWithHint("Output folder", OutputDir().string().c_str(), buffer, sizeof(buffer))) output_dir = buffer;

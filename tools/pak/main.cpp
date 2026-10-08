@@ -5,12 +5,14 @@
 //   aether_pak list <archive.apak>
 //   aether_pak extract <archive.apak> <out-directory>
 //   aether_pak verify <archive.apak>
+//   aether_pak verify-package <packaged-directory>
 //   aether_pak patch <base.apak> <updated.apak> <out.apak>
 //   aether_pak keygen
 //
 // Phase 25 step 6 (§25.6): --key <64 hex digits> (anywhere) encrypts what
 // create and patch write, and opens encrypted archives; keygen prints a new
 // random key.
+#include "aether/cook/package.h"
 #include "aether/pak/pak.h"
 
 #include <cstdio>
@@ -32,6 +34,7 @@ int Usage() {
                  "  aether_pak list <archive.apak>\n"
                  "  aether_pak extract <archive.apak> <out-directory>\n"
                  "  aether_pak verify <archive.apak>\n"
+                 "  aether_pak verify-package <packaged-directory>\n"
                  "  aether_pak patch <base.apak> <updated.apak> <out.apak>\n"
                  "  aether_pak keygen\n"
                  "  (any command takes --key <64 hex digits>)\n");
@@ -75,6 +78,15 @@ int main(int raw_argc, char** raw_argv) {
     }
     if (argc < 3) return Usage();
     const std::string command = argv[1];
+
+    if (command == "verify-package") {
+        if (argc != 3) return Usage();
+        std::vector<std::string> problems;
+        const bool ok = cook::VerifyPackageManifest(argv[2], problems);
+        for (const std::string& problem : problems) std::fprintf(stderr, "aether_pak: %s\n", problem.c_str());
+        if (ok) std::printf("package files match PackageManifest.json\n");
+        return ok ? 0 : 1;
+    }
 
     if (command == "patch") {
         if (argc < 5) return Usage();

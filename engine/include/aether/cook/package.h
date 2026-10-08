@@ -11,6 +11,7 @@
 //   <output>/<Game>[.exe]   the player (aether_player), named for the project
 //   <output>/*.dll          the player's DLLs, on Windows
 //   <output>/Paks/<pak>.apak and CookManifest.json
+//   <output>/PackageManifest.json  file sizes and CRC-32 checksums
 // The editor's Build and Package window runs this; so can tools.
 
 namespace aether::cook {
@@ -27,10 +28,15 @@ struct PackageReport {
     CookReport cook;
     std::filesystem::path game_executable;    // the staged player
     std::filesystem::path paks_dir;
+    std::filesystem::path manifest_file;
     std::vector<std::filesystem::path> copied; // the player and its DLLs, as staged
 };
 
 PackageReport Package(const PackageOptions& options);
+
+// Checks every file listed in PackageManifest.json against its size and CRC-32.
+// This detects damage or accidental replacement; it is not a signature.
+bool VerifyPackageManifest(const std::filesystem::path& directory, std::vector<std::string>& problems);
 
 // aether_player beside the running executable (a packaged editor), else the
 // one this engine was built with; empty if neither exists.

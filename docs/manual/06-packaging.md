@@ -35,6 +35,23 @@ old output; call it again for the new scene. Scheduled gameplay kit stages follo
 the replacement scene while custom stages registered through `Game::Systems()`
 remain registered.
 
+## Strict release cooking and package checks
+
+For a release candidate, add `--strict` to `aether_cook`, or check **Fail on
+cook warnings** in Build and Package. Strict validation reports every warning
+and fails before writing a new archive. Missing roots, broken asset references,
+failed imports and unreadable helper files are among the warnings that block a
+strict cook. A normal cook still reports warnings without failing, so they can
+be investigated during development. Packaging cooks into a staging folder, so
+a validation failure leaves an earlier packaged `Paks/` folder in place.
+
+The packaged folder includes `PackageManifest.json`, listing the player,
+copied DLLs, archive and cook manifest with byte counts and CRC-32 values.
+Run `aether_pak verify-package <packaged-directory>` to detect missing or
+changed files. Use `aether_pak verify <archive.apak>` to check the archive's
+entries too. CRC-32 detects accidental damage; it does not authenticate a
+release or replace signing.
+
 ## Configurations
 
 **Debug** logs everything; **Development** logs info and a stats line every

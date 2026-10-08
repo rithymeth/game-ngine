@@ -10,6 +10,7 @@
     {"name": "multiplayer_soak", "status": "n/a yet", "evidence": "loopback 64-player soak"},
     {"name": "platform_builds", "status": "n/a yet", "evidence": "Windows, macOS, Android and iOS jobs"},
     {"name": "sample_games", "status": "n/a yet", "evidence": "three sample games build and run"},
-    {"name": "release_artifacts", "status": "n/a yet", "evidence": "checksums, signing and release notes"}
+    {"name": "release_artifacts", "status": "n/a yet", "evidence": "checksums, signing and release notes"},
+    {"name": "m8_product_validation", "status": "n/a yet", "evidence": "M8.1-M8.12 evidence table, AETHER-01 packaged playthrough, and external developer task study"}
   ]
 }

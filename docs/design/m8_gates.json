@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "gates": [
+    {"name": "M8.1_core_api", "status": "n/a yet", "evidence": "Core API 1.0 inventory, compatibility corpus, and supported compiler/platform CI runs"},
+    {"name": "M8.2_rendering", "status": "n/a yet", "evidence": "Approved AETHER-01 captures and CPU/GPU frame and memory budgets on named backends and hardware"},
+    {"name": "M8.3_editor", "status": "n/a yet", "evidence": "Clean-machine first-game authoring study, editor recovery, keyboard access, and screenshot runs"},
+    {"name": "M8.4_gameplay", "status": "n/a yet", "evidence": "AETHER-01 checkpoint, combat ability, and quest authored through public APIs and cooked without an engine fork"},
+    {"name": "M8.5_content", "status": "n/a yet", "evidence": "Repeat cook hashes, incremental dependency rebuild, importer validation, and standalone pak load"},
+    {"name": "M8.6_character", "status": "n/a yet", "evidence": "Kael move set, varied-frame-rate transitions, retarget validation, and packaged playback"},
+    {"name": "M8.7_presentation", "status": "n/a yet", "evidence": "Packaged skippable cinematic with synchronized audio, dialogue, subtitles, and persistent mixer settings"},
+    {"name": "M8.8_ai_world", "status": "n/a yet", "evidence": "Scout, Sentinel, Hunter, and Warden scenario runs including navigation and checkpoint restore"},
+    {"name": "M8.9_multiplayer", "status": "n/a yet", "evidence": "Packaged dedicated server, multi-client soak, loss/latency/reconnect checks, and network profiler capture"},
+    {"name": "M8.10_build_ship", "status": "n/a yet", "evidence": "Tagged clean-machine install, launch, patch, rollback, checksums, symbols, and release manifest"},
+    {"name": "M8.11_aether01_slice", "status": "n/a yet", "evidence": "AETHER-01 project source plus packaged 15-30 minute playthrough, save/restore, performance and playtest report"},
+    {"name": "M8.12_release_decision", "status": "n/a yet", "evidence": "External developer task study, green Phase 48 gate, and signed engine/game release report"}
+  ]
+}

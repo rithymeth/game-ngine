@@ -42,10 +42,17 @@ public:
     const std::string& Error() const { return error_; }
 
 private:
+    enum class Action { None, Rename, Move, NewFolder };
     void Rebuild();
     void DrawToolbar();
     void DrawTree();
     void DrawListing();
+    void DrawActionDialog();
+    void DrawReferenceViewer();
+    void StartAction(Action action, const std::string& source = {});
+    void AcceptMoveDrop(const std::string& destination_folder);
+    void ApplyAction();
+    void RebaseOpenFolder(const std::string& old_path, const std::string& new_path);
 
     std::filesystem::path project_file_;
     std::unique_ptr<assets::AssetDatabase> database_;
@@ -55,6 +62,15 @@ private:
     std::vector<std::string> folders_; // every folder, sorted
     std::vector<assets::ContentEntry> rows_;
     std::string error_;
+    Action action_ = Action::None;
+    bool action_popup_pending_ = false;
+    std::string action_source_;
+    std::string action_value_;
+    std::string action_error_;
+    std::string operation_warning_;
+    bool references_open_ = false;
+    assets::AssetGuid reference_guid_;
+    assets::ReferenceDirection reference_direction_ = assets::ReferenceDirection::Dependencies;
 };
 
 } // namespace aether::editor

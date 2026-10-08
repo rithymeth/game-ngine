@@ -29,7 +29,7 @@ Logger& Logger::Instance() {
 }
 
 void Logger::Log(LogLevel level, std::string_view category, std::string_view message) {
-    if (level < min_level_) {
+    if (level < min_level_.load(std::memory_order_relaxed)) {
         return;
     }
     LogLine line{level, std::string(category), std::string(message),
@@ -37,7 +37,7 @@ void Logger::Log(LogLevel level, std::string_view category, std::string_view mes
     std::vector<std::shared_ptr<Sink>> sinks;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (stdout_) {
+        if (stdout_.load(std::memory_order_relaxed)) {
             FILE* stream = (level >= LogLevel::Error) ? stderr : stdout;
             std::fprintf(stream, "[%s] %.*s: %.*s\n", LogLevelName(level), static_cast<int>(category.size()),
                          category.data(), static_cast<int>(message.size()), message.data());

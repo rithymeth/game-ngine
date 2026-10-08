@@ -3,7 +3,7 @@
 //
 //   aether_cook <project.aproject> --out <dir> [--config debug|development|shipping]
 //               [--always <path-or-folder/>]... [--compression auto|lz4|zstd|none]
-//               [--no-imported] [--pak-name Game] [--verbose]
+//               [--no-imported] [--pak-name Game] [--strict] [--verbose]
 //               [--key <64 hex digits>] [--patch-of <base.apak>]
 //               [--dlc <Name> [--dlc-base <base.apak>]]
 //
@@ -25,7 +25,7 @@ int Usage() {
     std::fprintf(stderr,
                  "usage: aether_cook <project.aproject> --out <dir> [--config debug|development|shipping]\n"
                  "                   [--always <path-or-folder/>]... [--compression auto|lz4|zstd|none]\n"
-                 "                   [--no-imported] [--pak-name Game] [--verbose]\n"
+                 "                   [--no-imported] [--pak-name Game] [--strict] [--verbose]\n"
                  "                   [--key <64 hex digits>] [--patch-of <base.apak>]\n"
                  "                   [--dlc <Name> [--dlc-base <base.apak>]]\n");
     return 2;
@@ -55,6 +55,8 @@ int main(int argc, char** argv) {
                                                 : pak::CompressionPolicy::Auto;
         } else if (arg == "--no-imported") {
             options.include_imported = false;
+        } else if (arg == "--strict") {
+            options.strict_validation = true;
         } else if (arg == "--pak-name" && has_value) {
             options.pak_name = argv[++i];
         } else if (arg == "--key" && has_value) {

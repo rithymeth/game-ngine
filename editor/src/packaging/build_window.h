@@ -56,6 +56,7 @@ public:
     cook::BuildConfiguration configuration = cook::BuildConfiguration::Development;
     pak::CompressionPolicy compression = pak::CompressionPolicy::Auto;
     u32 texture_quality = 2;
+    bool strict_validation = false; // require a warning-free cook before writing the package
     std::string output_dir;  // empty: <project>/Saved/Packaged/<Configuration>
     std::string player_path; // empty: FindPlayerExecutable()
     // Extra player arguments for Launch, e.g. "--quality Low".

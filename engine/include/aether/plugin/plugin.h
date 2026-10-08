@@ -21,6 +21,9 @@
 // plugins, by aether_link_modules() in cmake/AetherModules.cmake). The
 // PluginManager decides which plugins are enabled, checks their
 // dependencies and the engine version, and starts their modules in order.
+// Discover, Resolve, StartModules and ShutdownModules are lifecycle operations
+// the caller serializes. PluginInfo pointers from Find/Enabled and the Plugins()
+// vector are invalidated by another Discover.
 
 namespace aether::plugin {
 
