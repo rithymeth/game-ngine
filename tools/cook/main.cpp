@@ -104,5 +104,6 @@ int main(int argc, char** argv) {
     if (options.encryption_key) std::printf("encrypted (key id %08x)\n", options.encryption_key->Id());
     std::printf("%llu bytes -> %llu bytes\n", static_cast<unsigned long long>(report.original_bytes),
                 static_cast<unsigned long long>(report.pak_bytes));
+    std::printf("texture cache: %zu reused, %zu cooked\n", report.texture_cache_hits, report.texture_cache_misses);
     return 0;
 }

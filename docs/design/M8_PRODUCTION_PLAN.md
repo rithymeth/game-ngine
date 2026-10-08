@@ -116,7 +116,10 @@ Build and Package) is groundwork for missing-content validation; it does not
 pass this phase. A regression test now compares both archive and cook-manifest
 bytes from two shipping cooks of the same project into separate output folders.
 Incremental dependency rebuilds and broader toolchain/platform reproducibility
-evidence remain open.
+evidence remain open. Texture cooking now reuses cached output for unchanged
+sources and settings; a focused regression confirms that changing one texture
+recooks only that texture. This is a partial incremental-cook result, not the
+full dependent-asset rebuild gate.
 
 ## M8.6 — Animation & Character
 

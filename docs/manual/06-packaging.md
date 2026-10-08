@@ -6,6 +6,9 @@
 refers to, and the folders on the **always cook** list), converts textures to
 block-compressed form, and writes `.apak` archives. `aether_player` mounts them
 and runs the game without the editor.
+Cooked textures are cached by source content and cook settings in the project's
+`Intermediate/DerivedDataCache` folder. A repeat cook reuses unchanged texture
+output; `aether_cook` reports how many textures were reused and cooked.
 
     aether_cook Game.aproject --out Paks --config shipping
     aether_player --pak Paks

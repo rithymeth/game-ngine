@@ -240,6 +240,8 @@ AETHER_TEST(Cook_RepeatBuildsAreByteIdentical) {
     options.output_dir = project.parent_path() / "BuildTwo";
     const cook::CookReport second = cook::Cook(options);
     CHECK(second.ok);
+    CHECK(first.texture_cache_hits == 0 && first.texture_cache_misses == 2);
+    CHECK(second.texture_cache_hits == 2 && second.texture_cache_misses == 0);
 
     const auto read_bytes = [](const stdfs::path& path) {
         std::ifstream in(path, std::ios::binary);
@@ -248,4 +250,13 @@ AETHER_TEST(Cook_RepeatBuildsAreByteIdentical) {
     };
     CHECK(read_bytes(first.pak_file) == read_bytes(second.pak_file));
     CHECK(read_bytes(first.manifest_file) == read_bytes(second.manifest_file));
+
+    // Changing one source invalidates only that texture's cooked cache entry.
+    stdfs::copy_file(stdfs::path(AETHER_REPO_ASSETS_DIR) / "textures/test_corners.png",
+                     project.parent_path() / "Content/Textures/a.png", stdfs::copy_options::overwrite_existing);
+    options.output_dir = project.parent_path() / "BuildThree";
+    const cook::CookReport third = cook::Cook(options);
+    CHECK(third.ok);
+    CHECK(third.texture_cache_hits == 1 && third.texture_cache_misses == 1);
+    CHECK(read_bytes(first.pak_file) != read_bytes(third.pak_file));
 }
