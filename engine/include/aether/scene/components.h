@@ -11,6 +11,13 @@
 
 namespace aether {
 
+// Human-readable editor label persisted with a scene entity. Kept separate
+// from Tags: a name identifies the object in the hierarchy, while tags are
+// free-form gameplay/query labels.
+struct EntityName {
+    std::string value;
+};
+
 // An entity's position and orientation, relative to its parent if it has a
 // Parent (see hierarchy.h), otherwise in world space. Plain data. (Lived in
 // the physics module until Phase 7; it isn't physics-specific.)
@@ -40,6 +47,8 @@ inline void SetModelPath(ModelRenderer& renderer, const std::string& path) {
 }
 
 } // namespace aether
+
+AETHER_REFLECT(aether::EntityName, 1, AETHER_FIELD(value, Field_EditAnywhere, {.category = "Entity"}))
 
 AETHER_REFLECT(aether::Transform, 1,
     AETHER_FIELD(position, Field_EditAnywhere, {.units = "m"}),
