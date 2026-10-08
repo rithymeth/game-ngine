@@ -137,4 +137,6 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(module_graph_catches_a_cycle PROPERTIES WILL_FAIL TRUE)
     add_test(NAME api_stability_annotations COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_api_stability.py)
     add_test(NAME production_gate_table COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/gate.py)
+    add_test(NAME m8_gate_table COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/gate.py
+        --table ${CMAKE_SOURCE_DIR}/docs/design/m8_gates.json)
 endif()

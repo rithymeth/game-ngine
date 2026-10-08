@@ -37,6 +37,7 @@ public:
     void Play();
     void Pause();
     void Stop();
+    void Skip();
     bool Playing() { return Player().Playing(); }
     f32 Time() { return Player().Time(); }
     // Advances the preview by `dt` when playing (Draw does it with the frame time).

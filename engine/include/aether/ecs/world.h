@@ -16,6 +16,10 @@ namespace aether {
 // functions that call World::ForEach/ForEachChunk over the component types
 // they read and write; the World itself has no notion of "systems" or
 // scheduling — that's the Job System's job, one job per chunk.
+// A World is not internally synchronized. The caller must coordinate mutation
+// with iteration and keep jobs on disjoint component storage when parallel.
+// Component pointers from GetComponent/ForEach can become invalid when a
+// structural edit moves or removes their row; reacquire after such edits.
 class World {
 public:
     World() = default;

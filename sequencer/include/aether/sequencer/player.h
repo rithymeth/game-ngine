@@ -53,10 +53,15 @@ public:
     // Applies every unmuted track at the playhead.
     void Evaluate();
 
-    void Play() { playing_ = true; }
+    void Play() { playing_ = true; completed_ = false; }
     void Pause() { playing_ = false; }
     // Stops and returns to the start (the world keeps what was last applied).
     void Stop();
+    // Finishes from the current position without firing intermediate Event,
+    // Audio or Animation keys. Applies the final pose, releases temporary
+    // spawns/camera cuts/fade, stops active cues and montages, and calls
+    // on_finished once.
+    void Skip();
     bool Playing() const { return playing_; }
     void SetRate(f32 rate) { rate_ = rate; } // negative plays backward
     f32 Rate() const { return rate_; }
@@ -80,7 +85,8 @@ public:
     // Called for each Event key crossed, in time order.
     std::function<void(const Track&, const EventKey&)> on_event;
     // Audio and Animation keys, fired like events (forward only, once each).
-    // `entity` is the track's bound entity (null for none).
+    // `entity` is the track's bound entity (null for none). Active cues and
+    // montages receive a synthetic Stop when the player is deactivated.
     std::function<void(const Track&, Entity entity, const AudioKey&)> on_audio;
     std::function<void(const Track&, Entity entity, const AnimKey&)> on_animation;
     // Spawn tracks: `on_spawn` makes the key's prefab (placed relative to
@@ -113,6 +119,15 @@ public:
     const std::vector<std::string>& Problems() const { return problems_; }
 
 private:
+    struct ActiveAudio {
+        std::string cue;
+        Entity entity;
+    };
+    struct ActiveAnimation {
+        std::string montage;
+        Entity entity;
+        f32 rate = 1.0f;
+    };
     struct Target {
         Entity entity;
         ComponentId component = kInvalidComponentId; // Property
@@ -125,6 +140,9 @@ private:
         i32 cut_saved = 0;    // ... and the priority it had
         std::vector<std::unique_ptr<SequencePlayer>> children; // Subsequence: one per key (null when it couldn't be made)
         std::vector<char> child_active; // Subsequence: the playhead is inside this key's range
+        std::unique_ptr<Track> cleanup_track; // Audio/Animation: survives an editor edit before preview teardown
+        std::vector<ActiveAudio> active_audio; // cues and the subjects that received Play
+        std::vector<ActiveAnimation> active_animation; // montages and the subjects that received Play
         int shown = -1;       // Visibility: the last value applied (-1 none yet)
         bool bound = false;   // resolved and usable
         bool reported = false; // its problem has been reported
@@ -137,7 +155,7 @@ private:
     void ApplySpawns(const Track& track, Target& target);
     void ApplyCuts(const Track& track, Target& target);
     void ApplySubsequences(const Track& track, Target& target);
-    void Deactivate(); // despawns, releases camera cuts and clears the fade (a child leaving its range, Stop, the destructor)
+    void Deactivate(); // despawns, stops cues/montages, releases cuts and fade
     void ReleaseCut(Target& target);
     void DespawnAll();
     SequencePlayer(const LevelSequence& sequence, World& world, const GuidIndex& guids, SequenceResolver resolver, std::vector<std::string> path);
@@ -159,6 +177,7 @@ private:
     f32 duration_ = 0.0f;
     f32 rate_ = 1.0f;
     bool playing_ = false;
+    bool completed_ = false;
     bool fresh_ = true; // nothing played yet from the start: an event at t = 0 still fires
 };
 

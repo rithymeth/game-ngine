@@ -21,7 +21,7 @@ namespace aether {
 
 // A request from gameplay or Blueprints, applied by the next SequenceSystem::Update.
 struct SequenceCommand {
-    enum class Kind : u8 { Play, Pause, Stop, SetTime, SetRate, SetLoop };
+    enum class Kind : u8 { Play, Pause, Stop, Skip, SetTime, SetRate, SetLoop };
     Kind kind = Kind::Play;
     f32 value = 0.0f;
 };
@@ -41,6 +41,7 @@ struct SequenceComponent {
     void Play();
     void Pause();
     void Stop();
+    void Skip();
     void SetTime(f32 seconds);
     void SetRate(f32 rate);
     void SetLoop(bool loop);
@@ -53,6 +54,7 @@ struct SequenceComponent {
 struct Sequencer {
     static void PlaySequence(const std::string& sequence, bool loop);
     static void StopAll();
+    static void SkipAll();
 };
 
 // Registers SequenceComponent with the ECS (idempotent).
@@ -65,7 +67,8 @@ namespace aether::seq {
 // What a playing sequence reported in the last Update: a Marker is an Event
 // key the playhead crossed; Audio and Animation are those keys crossed (for
 // the host to act on with its audio and animation systems); Finished is the
-// sequence reaching its end.
+// sequence reaching its end or being skipped. Finished.skipped distinguishes
+// a deliberate skip from natural playback completion.
 struct SequenceEvent {
     enum class Kind : u8 { Marker, Finished, Audio, Animation };
     Kind kind = Kind::Marker;
@@ -75,6 +78,7 @@ struct SequenceEvent {
     Entity subject;      // Marker, Audio, Animation: the track's bound entity, if any
     f32 value = 0.0f;    // Audio: volume in dB; Animation: the rate
     f32 fade = 0.0f;     // Audio: fade seconds
+    bool skipped = false; // Finished: true when Skip ended the sequence
 };
 
 // Makes a Spawn key's prefab (placed relative to `parent`, null for none) and
@@ -106,6 +110,7 @@ public:
     // and is destroyed when it ends. Null if the sequence can't be found.
     Entity PlaySequence(const std::string& sequence, bool loop = false);
     void StopAll();
+    void SkipAll();
 
     const std::vector<SequenceEvent>& Events() const { return events_; }
     // The strongest fade any playing sequence asks for this frame (Fade
@@ -132,6 +137,7 @@ private:
         const LevelSequence* sequence = nullptr;
         std::unique_ptr<SequencePlayer> player;
         bool finished = false; // set by the player's callback during Update
+        bool skipped = false;
         u64 seen = 0;
     };
     void Report(const std::string& message);
@@ -160,6 +166,7 @@ AETHER_REFLECT(aether::SequenceComponent, 1,
     AETHER_METHOD(Play, Fn_BlueprintCallable),
     AETHER_METHOD(Pause, Fn_BlueprintCallable),
     AETHER_METHOD(Stop, Fn_BlueprintCallable),
+    AETHER_METHOD(Skip, Fn_BlueprintCallable),
     AETHER_METHOD(SetTime, Fn_BlueprintCallable, {"seconds"}),
     AETHER_METHOD(SetRate, Fn_BlueprintCallable, {"rate"}),
     AETHER_METHOD(SetLoop, Fn_BlueprintCallable, {"loop"}),
@@ -169,5 +176,6 @@ AETHER_REFLECT(aether::SequenceComponent, 1,
 
 AETHER_REFLECT(aether::Sequencer, 1,
     AETHER_METHOD(PlaySequence, Fn_BlueprintCallable, {"sequence", "loop"}),
-    AETHER_METHOD(StopAll, Fn_BlueprintCallable)
+    AETHER_METHOD(StopAll, Fn_BlueprintCallable),
+    AETHER_METHOD(SkipAll, Fn_BlueprintCallable)
 )

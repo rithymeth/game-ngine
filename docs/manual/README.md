@@ -18,6 +18,7 @@ it works inside.
 12. [Quests](12-quests.md): the quests genre kit.
 
 Also: [API stability](api_stability.md), what "stable", "experimental" and "internal" mean and how to deprecate.
+The [Core API inventory](core_api_inventory.md) records current ownership and threading contracts.
 
 The sample projects are the templates: **Blank**, **First Person**, **Third
 Person**, **Top Down**, **Vehicle** and **2D Platformer**, in the editor's

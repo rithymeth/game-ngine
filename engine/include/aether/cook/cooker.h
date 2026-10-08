@@ -37,6 +37,9 @@ struct CookOptions {
     // "normal_map", "srgb", "mips").
     bool cook_textures = true;
     u32 texture_quality = 2;             // 0 (fastest) .. 4 (best)
+    // Refuse to write an archive when scanning, importing, or cooking reports
+    // any warning. Use for release candidates that require a clean content set.
+    bool strict_validation = false;
     std::string pak_name = "Game";
     std::string platform = "default";    // for the derived data cache
     // Called as the cook goes (from the cooking thread): the fraction done,

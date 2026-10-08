@@ -16,6 +16,8 @@ namespace aether::reflect {
 // static registration in general: a type reflected only inside a static
 // library translation unit that nothing links against never registers. Types
 // reflected in headers the program includes are always fine.)
+// Register and lookup are synchronized. Register stores the caller's pointer:
+// TypeInfo and its referenced metadata must live until process exit.
 class TypeRegistry {
 public:
     // Idempotent for the same TypeInfo. A *different* TypeInfo with the same

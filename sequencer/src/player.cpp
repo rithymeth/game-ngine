@@ -93,8 +93,27 @@ SequencePlayer::SequencePlayer(const LevelSequence& sequence, World& world, cons
 SequencePlayer::~SequencePlayer() { Deactivate(); }
 
 void SequencePlayer::Deactivate() {
-    DespawnAll();
-    for (Target& t : targets_) {
+    for (usize i = 0; i < targets_.size(); ++i) {
+        Target& t = targets_[i];
+        if (on_audio && t.cleanup_track) {
+            for (const ActiveAudio& active : t.active_audio) {
+                AudioKey stop;
+                stop.cue = active.cue;
+                stop.action = AudioAction::Stop;
+                on_audio(*t.cleanup_track, active.entity, stop);
+            }
+        }
+        t.active_audio.clear();
+        if (on_animation && t.cleanup_track) {
+            for (const ActiveAnimation& active : t.active_animation) {
+                AnimKey stop;
+                stop.montage = active.montage;
+                stop.action = AnimAction::Stop;
+                stop.rate = active.rate;
+                on_animation(*t.cleanup_track, active.entity, stop);
+            }
+        }
+        t.active_animation.clear();
         ReleaseCut(t);
         t.cut = -2;
         for (usize i = 0; i < t.children.size(); ++i) {
@@ -102,6 +121,8 @@ void SequencePlayer::Deactivate() {
             if (i < t.child_active.size()) t.child_active[i] = 0;
         }
     }
+    // Stop attached cues while their spawned subjects still exist.
+    DespawnAll();
     if (!(fade_ == FadeState{})) {
         fade_ = FadeState{};
         if (on_fade) on_fade(fade_);
@@ -119,6 +140,14 @@ bool SequencePlayer::ResolveTrack(usize index) {
     const Track& track = sequence_.tracks[index];
     Target& t = targets_[index];
     t.bound = false;
+    if (track.type == TrackType::Audio) {
+        if (!t.cleanup_track) t.cleanup_track = std::make_unique<Track>(track);
+        t.active_audio.reserve(track.audio.size());
+    }
+    if (track.type == TrackType::Animation) {
+        if (!t.cleanup_track) t.cleanup_track = std::make_unique<Track>(track);
+        t.active_animation.reserve(track.anims.size());
+    }
     if (track.type == TrackType::Spawn) {
         t.spawned.assign(track.spawns.size(), kNullEntity);
         t.spawn_done.assign(track.spawns.size(), 0);
@@ -220,6 +249,7 @@ bool SequencePlayer::ResolveTrack(usize index) {
 }
 
 void SequencePlayer::Bind() {
+    Deactivate();
     problems_.clear();
     targets_.clear();
     targets_.resize(sequence_.tracks.size());
@@ -231,13 +261,28 @@ void SequencePlayer::Bind() {
 void SequencePlayer::SetTime(f32 time) {
     time_ = std::clamp(time, 0.0f, duration_);
     fresh_ = time_ <= 0.0f;
+    completed_ = false;
 }
 
 void SequencePlayer::Stop() {
     playing_ = false;
     time_ = 0.0f;
     fresh_ = true;
+    completed_ = false;
     Deactivate();
+}
+
+void SequencePlayer::Skip() {
+    if (completed_) return;
+    playing_ = false;
+    time_ = duration_;
+    fresh_ = false;
+    final_pose_ = true;
+    Evaluate();
+    final_pose_ = false;
+    Deactivate();
+    completed_ = true;
+    if (on_finished) on_finished();
 }
 
 void SequencePlayer::ApplySubsequences(const Track& track, Target& target) {
@@ -249,7 +294,9 @@ void SequencePlayer::ApplySubsequences(const Track& track, Target& target) {
         const bool inside = time_ >= k.time && (time_ < end || (time_ >= duration_ && time_ <= end));
         if (inside) {
             child->SetTime((time_ - k.time) * k.scale + k.offset);
+            child->final_pose_ = final_pose_;
             child->Evaluate();
+            child->final_pose_ = false;
             target.child_active[i] = 1;
             if (child->Fade().amount > pending_fade_.amount) pending_fade_ = child->Fade();
         } else if (target.child_active[i]) {
@@ -353,7 +400,16 @@ void SequencePlayer::FireEvents(f32 from, f32 to, bool include_from) {
             const Entity entity = track.binding.IsNull() ? kNullEntity : guids_.Find(world_, track.binding);
             for (const AudioKey& k : track.audio) {
                 if (k.time > to) break;
-                if (crossed(k.time)) on_audio(track, entity, k);
+                if (!crossed(k.time)) continue;
+                auto& active = targets_[i].active_audio;
+                const auto existing = std::find_if(active.begin(), active.end(), [&](const ActiveAudio& cue) { return cue.cue == k.cue; });
+                if (k.action == AudioAction::Play || k.action == AudioAction::FadeIn) {
+                    if (existing == active.end()) active.push_back({k.cue, entity});
+                    else existing->entity = entity;
+                } else if (k.action == AudioAction::Stop && existing != active.end()) {
+                    active.erase(existing);
+                }
+                on_audio(track, entity, k);
             }
         } else if (track.type == TrackType::Subsequence) {
             for (usize k = 0; k < track.subs.size() && k < targets_[i].children.size(); ++k) {
@@ -371,7 +427,16 @@ void SequencePlayer::FireEvents(f32 from, f32 to, bool include_from) {
             const Entity entity = targets_[i].bound ? targets_[i].entity : kNullEntity;
             for (const AnimKey& k : track.anims) {
                 if (k.time > to) break;
-                if (crossed(k.time)) on_animation(track, entity, k);
+                if (!crossed(k.time)) continue;
+                auto& active = targets_[i].active_animation;
+                const auto existing = std::find_if(active.begin(), active.end(), [&](const ActiveAnimation& montage) { return montage.montage == k.montage; });
+                if (k.action == AnimAction::Play) {
+                    if (existing == active.end()) active.push_back({k.montage, entity, k.rate});
+                    else { existing->entity = entity; existing->rate = k.rate; }
+                } else if (existing != active.end()) {
+                    active.erase(existing);
+                }
+                on_animation(track, entity, k);
             }
         }
     }
@@ -463,6 +528,7 @@ void SequencePlayer::Update(f32 dt) {
             FireEvents(before, duration_, include_start);
             time_ = duration_;
             playing_ = false;
+            completed_ = true;
         }
     } else if (rate_ >= 0.0f) {
         FireEvents(before, time_, include_start);
@@ -472,6 +538,7 @@ void SequencePlayer::Update(f32 dt) {
         else {
             time_ = 0.0f;
             playing_ = false;
+            completed_ = true;
         }
     }
     Evaluate();

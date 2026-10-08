@@ -100,6 +100,8 @@ void SequencerPanel::Stop() {
     p.Evaluate();
 }
 
+void SequencerPanel::Skip() { Player().Skip(); }
+
 void SequencerPanel::Update(f32 dt) {
     SequencePlayer& p = Player();
     p.loop = loop;
@@ -157,6 +159,8 @@ void SequencerPanel::DrawToolbar() {
     }
     ImGui::SameLine();
     if (ImGui::Button("Stop")) Stop();
+    ImGui::SameLine();
+    if (ImGui::Button("Skip")) Skip();
     ImGui::SameLine();
     ImGui::Checkbox("Loop", &loop);
     ImGui::SameLine();

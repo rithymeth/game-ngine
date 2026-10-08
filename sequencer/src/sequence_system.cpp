@@ -11,6 +11,7 @@ namespace aether {
 void SequenceComponent::Play() { commands.push_back({SequenceCommand::Kind::Play, 0.0f}); }
 void SequenceComponent::Pause() { commands.push_back({SequenceCommand::Kind::Pause, 0.0f}); }
 void SequenceComponent::Stop() { commands.push_back({SequenceCommand::Kind::Stop, 0.0f}); }
+void SequenceComponent::Skip() { commands.push_back({SequenceCommand::Kind::Skip, 0.0f}); }
 void SequenceComponent::SetTime(f32 seconds) { commands.push_back({SequenceCommand::Kind::SetTime, seconds}); }
 void SequenceComponent::SetRate(f32 r) {
     rate = r;
@@ -28,6 +29,9 @@ void Sequencer::PlaySequence(const std::string& sequence, bool loop) {
 }
 void Sequencer::StopAll() {
     if (auto* s = seq::SequenceSystem::Active()) s->StopAll();
+}
+void Sequencer::SkipAll() {
+    if (auto* s = seq::SequenceSystem::Active()) s->SkipAll();
 }
 
 } // namespace aether
@@ -49,6 +53,8 @@ SequenceSystem::SequenceSystem(World& world, GuidIndex& guids, SequenceLookup fi
 
 SequenceSystem::~SequenceSystem() {
     if (g_active == this) g_active = nullptr;
+    // Player destructors can emit Stop events; clear them while events_ exists.
+    slots_.clear();
 }
 
 void SequenceSystem::Report(const std::string& message) {
@@ -80,6 +86,18 @@ void SequenceSystem::StopAll() {
             Entity* e = archetype.EntityArray(c);
             for (usize i = 0; i < archetype.ChunkEntityCount(c); ++i) {
                 if (SequenceComponent* s = world_.GetComponent<SequenceComponent>(e[i])) s->Stop();
+            }
+        }
+    });
+}
+
+void SequenceSystem::SkipAll() {
+    world_.ForEachArchetype([&](Archetype& archetype) {
+        if (!archetype.Mask().test(GetComponentId<SequenceComponent>())) return;
+        for (usize c = 0; c < archetype.ChunkCount(); ++c) {
+            Entity* e = archetype.EntityArray(c);
+            for (usize i = 0; i < archetype.ChunkEntityCount(c); ++i) {
+                if (SequenceComponent* s = world_.GetComponent<SequenceComponent>(e[i])) s->Skip();
             }
         }
     });
@@ -177,19 +195,31 @@ void SequenceSystem::Update(f32 dt) {
             comp.commands.clear();
             continue;
         }
+        slot.finished = false;
+        slot.skipped = false;
         for (const SequenceCommand& c : comp.commands) {
             switch (c.kind) {
             case SequenceCommand::Kind::Play:
                 player->Play();
+                slot.finished = false;
+                slot.skipped = false;
                 break;
             case SequenceCommand::Kind::Pause: player->Pause(); break;
             case SequenceCommand::Kind::Stop:
                 player->Stop();
                 player->Evaluate();
+                slot.finished = false;
+                slot.skipped = false;
+                break;
+            case SequenceCommand::Kind::Skip:
+                player->Skip();
+                slot.skipped = slot.finished;
                 break;
             case SequenceCommand::Kind::SetTime:
                 player->SetTime(c.value);
                 player->Evaluate();
+                slot.finished = false;
+                slot.skipped = false;
                 break;
             case SequenceCommand::Kind::SetRate: player->SetRate(c.value); break;
             case SequenceCommand::Kind::SetLoop: player->loop = c.value >= 0.5f; break;
@@ -198,7 +228,6 @@ void SequenceSystem::Update(f32 dt) {
         comp.commands.clear();
         player->loop = comp.loop;
         player->SetRate(comp.rate);
-        slot.finished = false;
         player->Update(dt);
         for (const std::string& p : player->Problems()) Report("Sequence '" + comp.sequence + "': " + p);
         if (player->Fade().amount > fade_.amount) fade_ = player->Fade();
@@ -209,6 +238,7 @@ void SequenceSystem::Update(f32 dt) {
             ev.kind = SequenceEvent::Kind::Finished;
             ev.entity = e;
             ev.name = comp.sequence;
+            ev.skipped = slot.skipped;
             events_.push_back(std::move(ev));
             if (comp.destroy_when_finished && !comp.playing) to_destroy.push_back(e);
         }
