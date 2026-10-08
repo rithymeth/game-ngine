@@ -4,7 +4,9 @@
 add_library(aether_editor_core STATIC
     command_stack.cpp
     commands.cpp
+    scene_document.cpp
     play_session.cpp
+    ../sequencer/sequence_document.cpp
 )
 target_include_directories(aether_editor_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
-target_link_libraries(aether_editor_core PUBLIC Aether::Engine)
+target_link_libraries(aether_editor_core PUBLIC Aether::Engine Aether::Sequencer)

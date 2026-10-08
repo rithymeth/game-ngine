@@ -50,7 +50,6 @@ add_library(aether_editor_ui STATIC
     ../workspace/editor_workspace.cpp
     ../sprite2d/tilemap_document.cpp
     ../sprite2d/tilemap_panel.cpp
-    ../sequencer/sequence_document.cpp
     ../sequencer/sequencer_panel.cpp
     ../save/save_inspector_document.cpp
     ../save/save_inspector_panel.cpp

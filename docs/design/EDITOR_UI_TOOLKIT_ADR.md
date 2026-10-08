@@ -1,6 +1,6 @@
 # ADR: replace Dear ImGui as the Aether Editor UI framework
 
-- **Status:** Proposed; validate with a focused spike before committing to the migration.
+- **Status:** Spike in progress; no production go/no-go decision yet.
 - **Date:** 2026-10-07
 - **Scope:** Editor presentation and host only. Aether's engine RHI and runtime remain independent.
 

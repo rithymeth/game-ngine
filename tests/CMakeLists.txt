@@ -68,6 +68,10 @@ if(TARGET aether_editor_ui)
         target_compile_definitions(aether_tests PRIVATE AETHER_HAS_EDITOR_VULKAN)
     endif()
 endif()
+if(TARGET aether_editor_core)
+    target_sources(aether_tests PRIVATE test_scene_document.cpp)
+    target_link_libraries(aether_tests PRIVATE aether_editor_core)
+endif()
 target_include_directories(aether_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 # Absolute path of the repo's sample assets, so tests can import real files
 # regardless of the working directory they run from.
