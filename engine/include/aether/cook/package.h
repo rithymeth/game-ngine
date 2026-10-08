@@ -35,6 +35,8 @@ struct PackageReport {
 PackageReport Package(const PackageOptions& options);
 
 // Checks every file listed in PackageManifest.json against its size and CRC-32.
+// The manifest and listed files must be regular files, with no linked path
+// components below the package directory. Paths are normalized and relative.
 // This detects damage or accidental replacement; it is not a signature.
 bool VerifyPackageManifest(const std::filesystem::path& directory, std::vector<std::string>& problems);
 

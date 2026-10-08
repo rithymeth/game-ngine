@@ -9,7 +9,7 @@
   ],
   "collision_matrix": [],
   "default_quality": "High",
-  "engine_version": "0.27.1",
+  "engine_version": "0.27.2",
   "fixed_timestep_hz": 60.0,
   "gravity": [
     0.0,

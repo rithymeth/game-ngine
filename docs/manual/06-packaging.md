@@ -49,6 +49,14 @@ block a strict cook. A normal cook still reports warnings without failing, so th
 be investigated during development. Packaging stages the cooked content,
 player, DLLs and manifest before installation. A staging or installation
 failure restores the previous package files.
+Cancellation is honored after cooking and before each installation step. A
+cancelled update keeps the previous package; cancelling after the final
+manifest has been installed does not undo a completed package. Packaging
+refuses linked destinations and unexpected file types: `Paks` must be a
+directory, and the player, DLLs and manifest must be regular files. This
+prevents an update from deleting a same-named directory containing user files.
+If rollback itself fails, the error identifies the backup folder retained
+for recovery. Do not run concurrent updates into the same package directory.
 
 The packaged folder includes `PackageManifest.json`, listing the player,
 copied DLLs, archive and cook manifest with byte counts and CRC-32 values.
@@ -56,6 +64,15 @@ Run `aether_pak verify-package <packaged-directory>` to detect missing or
 changed files. Use `aether_pak verify <archive.apak>` to check the archive's
 entries too. CRC-32 detects accidental damage; it does not authenticate a
 release or replace signing.
+`aether_cook --pak-name <name>` accepts a single filename stem; the output
+directory is supplied separately with `--out`. Names containing path separators,
+NUL characters or `:` drive/stream syntax are rejected before cooking.
+Verification rejects linked manifests and linked parents of listed files,
+including a linked `Paks` folder. Manifest entries must use normalized relative
+paths without NUL characters or `:` stream/drive syntax, and reference regular
+files. Repeated paths are rejected, including ASCII case variants on Windows.
+Verification covers the listed files; it does not reject unrelated extra files
+or protect against files being changed concurrently with verification.
 
 ## Configurations
 

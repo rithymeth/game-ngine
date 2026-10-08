@@ -50,6 +50,53 @@ std::string CrcHex(u32 crc) {
     return text;
 }
 
+// Inspect each component before opening a package file. Checking only the
+// final file misses linked parent folders (including a linked Paks folder).
+bool CheckPackageFile(const stdfs::path& directory, const stdfs::path& relative, std::string& error) {
+    stdfs::path current = directory;
+    for (auto it = relative.begin(); it != relative.end(); ++it) {
+        current /= *it;
+        std::error_code ec;
+        const stdfs::file_status status = stdfs::symlink_status(current, ec);
+        if (ec) {
+            error = "Can't inspect " + current.string() + ": " + ec.message();
+            return false;
+        }
+        if (stdfs::is_symlink(status)) {
+            error = "Package path is a symlink: " + current.string();
+            return false;
+        }
+        auto next = it;
+        ++next;
+        if (next == relative.end() ? !stdfs::is_regular_file(status) : !stdfs::is_directory(status)) {
+            error = "Package path has the wrong file type: " + current.string();
+            return false;
+        }
+    }
+    return true;
+}
+
+bool CheckDestination(const stdfs::path& destination, bool directory, bool& exists, std::string& error) {
+    std::error_code ec;
+    const stdfs::file_status status = stdfs::symlink_status(destination, ec);
+    if (ec == std::errc::no_such_file_or_directory) ec.clear();
+    if (ec) {
+        error = "Can't inspect " + destination.string() + ": " + ec.message();
+        return false;
+    }
+    exists = status.type() != stdfs::file_type::not_found;
+    if (!exists) return true;
+    if (stdfs::is_symlink(status)) {
+        error = "Refusing to replace symlink " + destination.string();
+        return false;
+    }
+    if (directory ? !stdfs::is_directory(status) : !stdfs::is_regular_file(status)) {
+        error = std::string(directory ? "Refusing to replace non-directory " : "Refusing to replace non-file ") + destination.string();
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 std::string GameExecutableName(const std::string& project_name) {
@@ -143,6 +190,10 @@ PackageReport Package(const PackageOptions& options) {
     }
 
     progress(0.92f, "Staging the player");
+    if (cook.cancel && cook.cancel->load()) {
+        cleanup_staging();
+        return fail("Cancelled");
+    }
     report.game_executable = options.output_dir / GameExecutableName(settings.name);
     const stdfs::path staged_player = staged_root / report.game_executable.filename();
     stdfs::copy_file(player, staged_player, stdfs::copy_options::overwrite_existing, ec);
@@ -228,20 +279,27 @@ PackageReport Package(const PackageOptions& options) {
     swaps.push_back({"Paks"});
     for (const stdfs::path& copied : report.copied) swaps.push_back({copied.filename()});
     swaps.push_back({"PackageManifest.json"});
+    // Reject unexpected files/folders before moving any published artifact.
+    // Recheck at each swap as well, since the destination may have changed.
+    for (const SwapEntry& entry : swaps) {
+        bool exists = false;
+        std::string error;
+        if (!CheckDestination(options.output_dir / entry.name, entry.name == "Paks", exists, error)) {
+            cleanup_staging();
+            return fail(error);
+        }
+    }
+    progress(0.98f, "Installing the package");
     std::string install_error;
     for (SwapEntry& entry : swaps) {
+        if (cook.cancel && cook.cancel->load()) {
+            install_error = "Cancelled";
+            break;
+        }
         const stdfs::path destination = options.output_dir / entry.name;
-        const stdfs::file_status status = stdfs::symlink_status(destination, ec);
-        if (ec == std::errc::no_such_file_or_directory) ec.clear();
-        if (ec) {
-            install_error = "Can't inspect " + destination.string() + ": " + ec.message();
-            break;
-        }
-        if (status.type() == stdfs::file_type::symlink) {
-            install_error = "Refusing to replace symlink " + destination.string();
-            break;
-        }
-        entry.had_previous = status.type() != stdfs::file_type::not_found;
+        bool exists = false;
+        if (!CheckDestination(destination, entry.name == "Paks", exists, install_error)) break;
+        entry.had_previous = exists;
         if (entry.had_previous) {
             stdfs::rename(destination, previous_root / entry.name, ec);
             if (ec) {
@@ -282,6 +340,11 @@ bool VerifyPackageManifest(const stdfs::path& directory, std::vector<std::string
     problems.clear();
     std::vector<u8> bytes;
     const stdfs::path manifest_file = directory / "PackageManifest.json";
+    std::string error;
+    if (!CheckPackageFile(directory, "PackageManifest.json", error)) {
+        problems.push_back(error);
+        return false;
+    }
     if (!fs::ReadFileBytes(manifest_file.string(), bytes)) {
         problems.push_back("Can't read " + manifest_file.string());
         return false;
@@ -304,15 +367,26 @@ bool VerifyPackageManifest(const stdfs::path& directory, std::vector<std::string
             continue;
         }
         const std::string path = entry["path"].get<std::string>();
-        const stdfs::path local_path(path);
-        if (path.empty() || pak::NormalizePath(path) != path || local_path.is_absolute() || local_path.has_root_name() ||
-            !seen.insert(path).second) {
+        // NUL can truncate native filesystem calls. ':' can address a Windows
+        // drive or alternate data stream even on a manifest read on Unix.
+        if (path.empty() || path.find('\0') != std::string::npos || path.find(':') != std::string::npos ||
+            pak::NormalizePath(path) != path) {
             problems.push_back("Invalid or repeated package path: " + path);
             continue;
         }
-        std::error_code ec;
-        if (stdfs::is_symlink(directory / local_path, ec)) {
-            problems.push_back("Package file is a symlink: " + path);
+        const stdfs::path local_path(path);
+        std::string identity = path;
+#if defined(_WIN32)
+        std::transform(identity.begin(), identity.end(), identity.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+#endif
+        if (local_path.is_absolute() || local_path.has_root_name() || !seen.insert(identity).second) {
+            problems.push_back("Invalid or repeated package path: " + path);
+            continue;
+        }
+        if (!CheckPackageFile(directory, local_path, error)) {
+            problems.push_back(error);
             continue;
         }
         u64 file_bytes = 0;

@@ -40,7 +40,7 @@ struct CookOptions {
     // Refuse to write an archive when scanning, importing, or cooking reports
     // any warning. Use for release candidates that require a clean content set.
     bool strict_validation = false;
-    std::string pak_name = "Game";
+    std::string pak_name = "Game";        // filename stem only; no path separators, ':' or NUL
     std::string platform = "default";    // for the derived data cache
     // Called as the cook goes (from the cooking thread): the fraction done,
     // 0..1, and what it's doing now ("Cooking Textures/a.png").
