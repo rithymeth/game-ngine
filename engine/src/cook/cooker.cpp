@@ -289,6 +289,9 @@ CookReport Cook(const CookOptions& options) {
         json sub_assets = json::array();
         if (options.include_imported && importers.Find(record.importer)) {
             const assets::ImportOutput output = assets::ImportAsset(database, guid, importers, cache, options.platform);
+            for (const std::string& warning : output.warnings) {
+                report.warnings.push_back(record.path + ": " + warning);
+            }
             if (output.ok) {
                 cooked.imported = true;
                 writer.Add("Imported/" + assets::ToString(guid) + ".bin", output.data);
@@ -311,10 +314,21 @@ CookReport Cook(const CookOptions& options) {
             if (assets::LoadAssetMeta(database.MetaPath(guid), meta)) settings_json = meta.settings;
             TextureCookSettings tex;
             tex.quality = options.texture_quality;
-            tex.normal_map = settings_json.value("normal_map", false);
-            tex.srgb = settings_json.value("srgb", !tex.normal_map);
-            tex.mips = settings_json.value("mips", true);
-            const std::string format = settings_json.value("cook_format", std::string("auto"));
+            const auto bool_setting = [&](const char* name, bool fallback) {
+                const auto it = settings_json.find(name);
+                if (it == settings_json.end()) return fallback;
+                if (it->is_boolean()) return it->get<bool>();
+                report.warnings.push_back(record.path + ": setting '" + name + "' must be a boolean; using the default");
+                return fallback;
+            };
+            tex.normal_map = bool_setting("normal_map", false);
+            tex.srgb = bool_setting("srgb", !tex.normal_map);
+            tex.mips = bool_setting("mips", true);
+            std::string format = "auto";
+            if (const auto it = settings_json.find("cook_format"); it != settings_json.end()) {
+                if (it->is_string()) format = it->get<std::string>();
+                else report.warnings.push_back(record.path + ": setting 'cook_format' must be a string; using auto");
+            }
             if (format != "auto") {
                 if (ParseTextureFormat(format, tex.format)) {
                     tex.auto_format = false;

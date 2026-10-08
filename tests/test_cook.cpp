@@ -260,3 +260,33 @@ AETHER_TEST(Cook_RepeatBuildsAreByteIdentical) {
     CHECK(third.texture_cache_hits == 1 && third.texture_cache_misses == 1);
     CHECK(read_bytes(first.pak_file) != read_bytes(third.pak_file));
 }
+
+AETHER_TEST(Cook_StrictRejectsImporterWarnings) {
+    const stdfs::path project = MakeProject("ImporterWarning");
+    const stdfs::path meta_file = project.parent_path() / "Content/Textures/a.png.ameta";
+    assets::AssetMeta meta;
+    CHECK(assets::LoadAssetMeta(meta_file, meta));
+    meta.settings["generate_mips"] = "invalid";
+    meta.settings["mips"] = "invalid";
+    meta.settings["cook_format"] = 42;
+    CHECK(assets::SaveAssetMeta(meta_file, meta));
+
+    cook::CookOptions options;
+    options.project_file = project;
+    options.output_dir = project.parent_path() / "StrictBuild";
+    options.strict_validation = true;
+    const cook::CookReport strict = cook::Cook(options);
+    CHECK(!strict.ok && strict.error.find("Cook validation failed") == 0);
+    CHECK(!stdfs::exists(options.output_dir / "Game.apak"));
+    bool named_import_warning = false;
+    bool named_cook_warning = false;
+    for (const std::string& warning : strict.warnings) {
+        named_import_warning |= warning.find("Textures/a.png: Setting \"generate_mips\" has the wrong type") != std::string::npos;
+        named_cook_warning |= warning.find("Textures/a.png: setting 'mips' must be a boolean") != std::string::npos;
+    }
+    CHECK(named_import_warning && named_cook_warning);
+
+    options.strict_validation = false;
+    const cook::CookReport development = cook::Cook(options);
+    CHECK(development.ok && stdfs::exists(development.pak_file));
+}
