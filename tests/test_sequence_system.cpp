@@ -402,7 +402,7 @@ AETHER_TEST(SequenceSystem_ComponentsAreReflectedForBlueprintsAndScripts) {
         CHECK(found);
     }
     const reflect::TypeInfo* library = reflect::TypeRegistry::Find("Sequencer");
-    CHECK(library != nullptr && library->functions.size() == 2);
+    CHECK(library != nullptr && library->functions.size() == 3);
 }
 
 // ---------------------------------------------------------------------------

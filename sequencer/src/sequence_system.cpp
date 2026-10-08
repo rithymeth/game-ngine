@@ -53,7 +53,11 @@ SequenceSystem::SequenceSystem(World& world, GuidIndex& guids, SequenceLookup fi
 
 SequenceSystem::~SequenceSystem() {
     if (g_active == this) g_active = nullptr;
-    // Player destructors can emit Stop events; clear them while events_ exists.
+    // Stop players while callbacks and the event buffer are still alive.
+    for (auto& [index, slot] : slots_) {
+        (void)index;
+        if (slot.player) slot.player->Stop();
+    }
     slots_.clear();
 }
 
@@ -122,13 +126,17 @@ void SequenceSystem::Update(f32 dt) {
         SequenceComponent& comp = *world_.GetComponent<SequenceComponent>(e);
         auto it = slots_.find(e.index);
         const bool fresh = it == slots_.end() || it->second.entity != e;
-        if (fresh) it = slots_.insert_or_assign(e.index, Slot{}).first;
+        if (fresh) {
+            if (it != slots_.end() && it->second.player) it->second.player->Stop();
+            it = slots_.insert_or_assign(e.index, Slot{}).first;
+        }
         Slot& slot = it->second;
         slot.seen = now;
         // (Re)make the player when the component is new, or points at another sequence.
         if (fresh || slot.path != comp.sequence) {
             slot.entity = e;
             slot.path = comp.sequence;
+            if (slot.player) slot.player->Stop();
             slot.player.reset();
             slot.sequence = comp.sequence.empty() || !find_ ? nullptr : find_(comp.sequence);
             if (slot.sequence) {
@@ -245,7 +253,10 @@ void SequenceSystem::Update(f32 dt) {
     }
     // Players whose entity is gone.
     for (auto it = slots_.begin(); it != slots_.end();) {
-        if (it->second.seen != now) it = slots_.erase(it);
+        if (it->second.seen != now) {
+            if (it->second.player) it->second.player->Stop();
+            it = slots_.erase(it);
+        }
         else ++it;
     }
     for (Entity e : to_destroy) {

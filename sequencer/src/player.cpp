@@ -90,12 +90,12 @@ SequencePlayer::SequencePlayer(const LevelSequence& sequence, World& world, cons
     Bind();
 }
 
-SequencePlayer::~SequencePlayer() { Deactivate(); }
+SequencePlayer::~SequencePlayer() { Deactivate(false); }
 
-void SequencePlayer::Deactivate() {
+void SequencePlayer::Deactivate(bool send_cue_stops) {
     for (usize i = 0; i < targets_.size(); ++i) {
         Target& t = targets_[i];
-        if (on_audio && t.cleanup_track) {
+        if (send_cue_stops && on_audio && t.cleanup_track) {
             for (const ActiveAudio& active : t.active_audio) {
                 AudioKey stop;
                 stop.cue = active.cue;
@@ -104,7 +104,7 @@ void SequencePlayer::Deactivate() {
             }
         }
         t.active_audio.clear();
-        if (on_animation && t.cleanup_track) {
+        if (send_cue_stops && on_animation && t.cleanup_track) {
             for (const ActiveAnimation& active : t.active_animation) {
                 AnimKey stop;
                 stop.montage = active.montage;
@@ -117,7 +117,7 @@ void SequencePlayer::Deactivate() {
         ReleaseCut(t);
         t.cut = -2;
         for (usize i = 0; i < t.children.size(); ++i) {
-            if (t.children[i]) t.children[i]->Deactivate();
+            if (t.children[i]) t.children[i]->Deactivate(send_cue_stops);
             if (i < t.child_active.size()) t.child_active[i] = 0;
         }
     }
