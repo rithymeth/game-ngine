@@ -499,7 +499,7 @@ endif()
 
 # Phase 26 step 1: the executables that host plugins get every module this
 # build has (each registers itself; the project's plugins decide which start).
-foreach(host aether_player aether_editor_shell aether_editor aether_tests)
+foreach(host aether_player aether_editor_shell aether_editor aether_editor_qt aether_tests)
     if(TARGET ${host})
         aether_link_modules(${host})
     endif()
