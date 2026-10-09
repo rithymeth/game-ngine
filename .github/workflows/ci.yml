@@ -9,8 +9,8 @@
 #
 # Windows: MSVC builds the engine, D3D12 editor, and Qt editor spike, runs
 # their tests, and packages the production editor (aether_editor.exe, its
-# DLLs and the assets) as a downloadable artifact. Pushing a tag v* - or running the
-# workflow by hand with a release_tag - also publishes the package as a
+# DLLs and assets) as a downloadable artifact. Pushing a tag v* - or running
+# the workflow by hand with a release_tag - also publishes the package as a
 # GitHub release.
 name: CI
 
@@ -229,7 +229,6 @@ jobs:
           host: windows
           target: desktop
           arch: win64_msvc2022_64
-          modules: qtbase
           cache: true
       - name: Cache fetched dependencies
         uses: actions/cache@v4
