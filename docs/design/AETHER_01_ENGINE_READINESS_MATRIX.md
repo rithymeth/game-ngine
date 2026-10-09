@@ -4,6 +4,7 @@
 
 - **Assessment point:** 2026-10-09, current upstream master f9f903231618c032a9494bccb3449a2fe0e2b0e4.
 - **Released baseline:** Aether Engine v0.27.2, commit cc294945d453dc7a03a7b8e0ab3efd1e8bc4d0ee.
+- **Current change validation:** PR #186 head 5a36d31581612f029d5ececf6dd2fcdc5a37a131 passed [CI run 37927046532](https://github.com/rithymeth/game-ngine/actions/runs/37927046532). The Qt-enabled Windows build, unit tests, Qt editor self-test, functional tests, AETHER-01 cook/launch/render, and standalone package checks passed. The Release job was skipped.
 - **Requirements source:** the 112-section AETHER-01 Game Design Document supplied by the project owner. GDD references below use its section numbers.
 - **Workload and release evidence:** [AETHER-01 Proof Plan](AETHER_01_PROOF_PLAN.md), [M8 Technology Plan](M8_PRODUCTION_TECHNOLOGY.md), and [master CI run 37872212846](https://github.com/rithymeth/game-ngine/actions/runs/37872212846).
 - **Status rule:** use the definitions in [Engine Foundation Plan](ENGINE_FOUNDATION_PLAN.md#capability-status-rules). A passing build alone does not prove an authoring or packaged-game workflow.
@@ -16,6 +17,12 @@ source-independent proof-game packaging and launch. The separate Release job
 was skipped; clang-tidy was skipped as advisory. This is exact-commit CI
 evidence, not a published v0.27.3 release or a performance run on the GDD's
 minimum and recommended hardware.
+
+The follow-up change in PR #186 also passed the platform matrix. In addition,
+its Windows job built the optional Qt editor and passed the Qt editor
+self-test, which checks the runtime component round-trip. The unit suite
+passed the unknown-component rejection case. This still does not replace the
+full AETHER-01 scene comparison or clean-workstation authoring run.
 
 The current configured build matrix is broader than the game's declared
 shipping target. **The only game target established here is Windows x64 with
@@ -59,7 +66,7 @@ readiness), P2 (full-production gate), and P3 (deferred).
 | ID and GDD source | Scope · owner · status · priority | Dependencies | Acceptance condition and evidence or known limit |
 |---|---|---|---|
 | A01. Create/open a project, persist project settings, and reopen it | VS · Engine · Partial · P1 | Project serializer, editor host, project paths | On a clean Windows workstation, create and open the proof project, change startup scene and project settings, close and reopen, and compare values. Qt project/settings actions exist in the [Qt coverage ledger](QT_EDITOR_FEATURE_COVERAGE.md); the host is still experimental and the full clean-workstation workflow is not certified. |
-| A02. Compose and inspect scenes; preserve all components, entity IDs, and assets through load/edit/save/reopen | VS · Engine · Partial · P0 | Scene serializer, component registry, project modules, editor document | Round-trip the AETHER-01 scene through each supported editor host and compare every entity GUID and serialized component before and after editing one transform. This branch registers the Qt host's audio, physics, gameplay, and sequence schemas, starts enabled project modules before the startup scene, and rejects unknown components in editor scene loads. The source change still needs CI and a full AETHER-01 scene comparison; older master skipped unknown plugin components during load. |
+| A02. Compose and inspect scenes; preserve all components, entity IDs, and assets through load/edit/save/reopen | VS · Engine · Partial · P0 | Scene serializer, component registry, project modules, editor document | Round-trip the AETHER-01 scene through each supported editor host and compare every entity GUID and serialized component before and after editing one transform. PR #186 registers the Qt host's audio, physics, gameplay, and sequence schemas, starts enabled project modules before the startup scene, and rejects unknown components in editor scene loads. CI run 37927046532 passed the Qt editor self-test and unknown-component regression case. A full AETHER-01 scene comparison remains open; older master skipped unknown plugin components during load. |
 | A03. Undo, redo, play/stop restore, and recover interrupted authoring | VS · Engine · Partial · P1 | Command stack, scene snapshot, editor document recovery | Verify entity/transform edits, undo and redo, Play/Pause/Stop restore, then terminate during an unsaved edit and recover without overwriting the last saved scene. Command and play-session operations are covered by the [Qt coverage ledger](QT_EDITOR_FEATURE_COVERAGE.md); crash/interruption recovery remains unproven. |
 | A04. Keep project, scene, save, settings, and asset formats compatible across engine updates | VS + FP · Engine · Partial · P0 | Format versions, migration hooks, fixtures, backup policy | Load representative v0.27.2 projects and saves in the candidate, apply migrations, save, reopen, and compare semantic state; reject unsupported versions without modifying source data. Scene files have format versions and reflection supports field migration, but a cross-format old-project fixture audit and recovery evidence are not recorded here. |
 | A05. Import and reimport static meshes, textures, and materials with useful diagnostics | VS · Engine · Partial · P1 | Importers, asset database, dependency tracking, cooker | Import/reimport the representative environment and weapon assets on a clean workstation, verify stable identities and dependencies, and require actionable failures for malformed inputs. CI proves the current static glTF/base-color path can cook and render; the complete artist reimport and error-repair workflow is not proven. |
@@ -120,7 +127,7 @@ readiness), P2 (full-production gate), and P3 (deferred).
 
 ## Highest-priority gaps from this audit
 
-1. **Prevent scene component loss (P0).** At the assessment point, Qt loaded scenes without starting the project's modules, and generic loads skipped unknown component names. This branch adds module startup, built-in schema registration, and strict editor loading that rejects unknown components; CI plus a full AETHER-01 component/GUID comparison are still required before closing the gap. See editor/src/core/scene_document.cpp, engine/src/scene/serialization.cpp, and editor/qt/main.cpp.
+1. **Prevent scene component loss (P0).** At the assessment point, Qt loaded scenes without starting the project's modules, and generic loads skipped unknown component names. PR #186 adds module startup, built-in schema registration, and strict editor loading that rejects unknown components; CI passed, while the full AETHER-01 component/GUID comparison is still required before closing the gap. See editor/src/core/scene_document.cpp, engine/src/scene/serialization.cpp, and editor/qt/main.cpp.
 2. **Complete the clean-package and save-data gate (P0).** CI now proves the standalone AETHER-01 package flow, but publish and validate a release archive outside the checkout; include checkpoint, corrupt-save, and engine-version upgrade fixtures.
 3. **Close the vertical-slice content path (P1).** Prove skeletal animation, useful lighting/shadows, effects, input/accessibility states, and script/Blueprint diagnostics in one authored scene.
 4. **Measure on agreed PC profiles (P1).** The frame budgets and GPU classes are preliminary. Record repeatable CPU/GPU/memory captures on named minimum and recommended machines before claiming performance readiness.
