@@ -15,7 +15,6 @@
     {
       "name": "Kael | gameplay root",
       "children": [
-        0,
         1,
         2,
         3,
@@ -67,7 +66,8 @@
         49,
         50,
         51,
-        52
+        52,
+        53
       ],
       "translation": [
         0,
