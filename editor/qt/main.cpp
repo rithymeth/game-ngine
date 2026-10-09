@@ -34,6 +34,7 @@
 #include <QFileInfo>
 #include <QFileSystemModel>
 #include <QFormLayout>
+#include <QGroupBox>
 #include <QFont>
 #include <QElapsedTimer>
 #include <QHBoxLayout>
@@ -1008,36 +1009,70 @@ QWidget* MakeHierarchyPanel(QTreeWidget*& tree, QLineEdit*& filter,
     return body;
 }
 
-QWidget* MakeInspector(QLineEdit*& entity_name, std::array<QDoubleSpinBox*, 3>& position,
-                       std::array<QDoubleSpinBox*, 3>& rotation) {
+struct CameraInspectorWidgets {
+    QGroupBox* group = nullptr;
+    QComboBox* projection = nullptr;
+    QDoubleSpinBox* fov = nullptr;
+    QDoubleSpinBox* ortho_height = nullptr;
+    QDoubleSpinBox* near_plane = nullptr;
+    QDoubleSpinBox* far_plane = nullptr;
+    QSpinBox* priority = nullptr;
+    QGroupBox* cine_group = nullptr;
+    QDoubleSpinBox* focal_length = nullptr;
+    QDoubleSpinBox* sensor_width = nullptr;
+    QDoubleSpinBox* sensor_height = nullptr;
+    QDoubleSpinBox* aperture = nullptr;
+    QDoubleSpinBox* focus_distance = nullptr;
+};
+
+QWidget* MakeInspector(QLabel*& selection_status, QLineEdit*& entity_name,
+                       std::array<QDoubleSpinBox*, 3>& position,
+                       std::array<QDoubleSpinBox*, 3>& rotation,
+                       QPushButton*& reset_position, QPushButton*& reset_rotation,
+                       CameraInspectorWidgets& camera) {
     auto* body = new QWidget;
     auto* layout = new QVBoxLayout(body);
     layout->setContentsMargins(14, 14, 14, 14);
-    auto* eyebrow = new QLabel("ENTITY · ACTIVE SELECTION");
-    eyebrow->setObjectName("section");
-    layout->addWidget(eyebrow);
-    entity_name = new QLineEdit("Player");
+    selection_status = new QLabel("NO SELECTION · SELECT AN ENTITY");
+    selection_status->setObjectName("section");
+    layout->addWidget(selection_status);
+    entity_name = new QLineEdit;
     entity_name->setPlaceholderText("Entity name");
     entity_name->setToolTip("Rename the selected scene entity");
+    entity_name->setEnabled(false);
     layout->addWidget(entity_name);
 
+    auto* transform_header = new QHBoxLayout;
     auto* transform_title = new QLabel("Transform");
     transform_title->setStyleSheet("font-weight: 700; color: #aebdca; padding-top: 8px;");
-    layout->addWidget(transform_title);
+    reset_position = new QPushButton("Reset Position");
+    reset_position->setToolTip("Set local position to the origin. This edit can be undone.");
+    reset_position->setEnabled(false);
+    transform_header->addWidget(transform_title);
+    transform_header->addStretch();
+    transform_header->addWidget(reset_position);
+    layout->addLayout(transform_header);
     auto* transform_form = new QFormLayout;
     for (int axis = 0; axis < 3; ++axis) {
         position[axis] = new QDoubleSpinBox;
         position[axis]->setRange(-100000.0, 100000.0);
         position[axis]->setDecimals(2);
         position[axis]->setSingleStep(0.1);
-        position[axis]->setValue(axis == 1 ? 1.8 : axis == 2 ? -6.0 : 0.0);
+        position[axis]->setEnabled(false);
         transform_form->addRow(QString(QChar('X' + axis)), position[axis]);
     }
     layout->addLayout(transform_form);
 
+    auto* rotation_header = new QHBoxLayout;
     auto* rotation_title = new QLabel("Rotation · degrees");
     rotation_title->setObjectName("muted");
-    layout->addWidget(rotation_title);
+    reset_rotation = new QPushButton("Reset Rotation");
+    reset_rotation->setToolTip("Set local rotation to zero. This edit can be undone.");
+    reset_rotation->setEnabled(false);
+    rotation_header->addWidget(rotation_title);
+    rotation_header->addStretch();
+    rotation_header->addWidget(reset_rotation);
+    layout->addLayout(rotation_header);
     auto* rotation_form = new QFormLayout;
     const char* rotation_labels[] = {"Pitch · X", "Yaw · Y", "Roll · Z"};
     for (int axis = 0; axis < 3; ++axis) {
@@ -1046,11 +1081,71 @@ QWidget* MakeInspector(QLineEdit*& entity_name, std::array<QDoubleSpinBox*, 3>& 
         rotation[axis]->setDecimals(2);
         rotation[axis]->setSingleStep(1.0);
         rotation[axis]->setSuffix("°");
+        rotation[axis]->setEnabled(false);
         rotation_form->addRow(rotation_labels[axis], rotation[axis]);
     }
     layout->addLayout(rotation_form);
 
-    auto* coverage = new QLabel("Qt Inspector coverage: Entity and Transform");
+    camera.group = new QGroupBox("Camera", body);
+    auto* camera_form = new QFormLayout(camera.group);
+    camera.projection = new QComboBox(camera.group);
+    camera.projection->addItem("Perspective", static_cast<int>(aether::Projection::Perspective));
+    camera.projection->addItem("Orthographic", static_cast<int>(aether::Projection::Orthographic));
+    camera.projection->setObjectName("cameraProjection");
+    camera_form->addRow("Projection", camera.projection);
+    const auto make_camera_spin = [camera](const QString& object_name, double minimum, double maximum,
+                                            int decimals, double step, const QString& suffix) {
+        auto* spin = new QDoubleSpinBox(camera.group);
+        spin->setObjectName(object_name);
+        spin->setRange(minimum, maximum);
+        spin->setDecimals(decimals);
+        spin->setSingleStep(step);
+        spin->setSuffix(suffix);
+        return spin;
+    };
+    camera.fov = make_camera_spin("cameraFov", 1.0, 179.0, 2, 1.0, "°");
+    camera.fov->setToolTip("Vertical field of view for perspective projection");
+    camera.ortho_height = make_camera_spin("cameraOrthoHeight", 0.01, 100000.0, 2, 0.1, " m");
+    camera.ortho_height->setToolTip("Vertical view height for orthographic projection");
+    camera.near_plane = make_camera_spin("cameraNearPlane", 0.001, 100000.0, 3, 0.1, " m");
+    camera.far_plane = make_camera_spin("cameraFarPlane", 0.01, 1000000.0, 2, 1.0, " m");
+    camera.priority = new QSpinBox(camera.group);
+    camera.priority->setObjectName("cameraPriority");
+    camera.priority->setRange(-100000, 100000);
+    camera_form->addRow("Field of view", camera.fov);
+    camera_form->addRow("Orthographic height", camera.ortho_height);
+    camera_form->addRow("Near clip", camera.near_plane);
+    camera_form->addRow("Far clip", camera.far_plane);
+    camera_form->addRow("Priority", camera.priority);
+    camera.group->setVisible(false);
+    layout->addWidget(camera.group);
+
+    camera.cine_group = new QGroupBox("Cinematic Lens", body);
+    auto* cine_form = new QFormLayout(camera.cine_group);
+    const auto make_lens_spin = [cine_group = camera.cine_group](const QString& name, double min, double max,
+                                                                  double step, const QString& suffix) {
+        auto* spin = new QDoubleSpinBox(cine_group);
+        spin->setObjectName(name);
+        spin->setRange(min, max);
+        spin->setDecimals(2);
+        spin->setSingleStep(step);
+        spin->setSuffix(suffix);
+        return spin;
+    };
+    camera.focal_length = make_lens_spin("cineFocalLength", 1.0, 1000.0, 1.0, " mm");
+    camera.sensor_width = make_lens_spin("cineSensorWidth", 1.0, 100.0, 0.5, " mm");
+    camera.sensor_height = make_lens_spin("cineSensorHeight", 1.0, 100.0, 0.5, " mm");
+    camera.aperture = make_lens_spin("cineAperture", 0.7, 64.0, 0.1, " f");
+    camera.focus_distance = make_lens_spin("cineFocusDistance", 0.01, 100000.0, 0.1, " m");
+    cine_form->addRow("Focal length", camera.focal_length);
+    cine_form->addRow("Sensor width", camera.sensor_width);
+    cine_form->addRow("Sensor height", camera.sensor_height);
+    cine_form->addRow("Aperture", camera.aperture);
+    cine_form->addRow("Focus distance", camera.focus_distance);
+    camera.cine_group->setVisible(false);
+    layout->addWidget(camera.cine_group);
+
+    auto* coverage = new QLabel("Qt Inspector coverage: Entity, Transform, Camera, Cine Camera");
     coverage->setObjectName("muted");
     coverage->setWordWrap(true);
     layout->addWidget(coverage);
@@ -1058,9 +1153,9 @@ QWidget* MakeInspector(QLineEdit*& entity_name, std::array<QDoubleSpinBox*, 3>& 
     return body;
 }
 
-QWidget* MakeContentBrowser(QLabel*& breadcrumb, QFileSystemModel*& asset_model, QListView*& asset_view,
+QWidget* MakeContentBrowser(QComboBox*& breadcrumb, QFileSystemModel*& asset_model, QListView*& asset_view,
                             QPushButton*& parent_button, QPushButton*& new_folder_button,
-                            QLineEdit*& asset_filter) {
+                            QPushButton*& place_model_button, QLineEdit*& asset_filter) {
     auto* root = new QWidget;
     auto* layout = new QVBoxLayout(root);
     layout->setContentsMargins(12, 8, 12, 12);
@@ -1069,16 +1164,26 @@ QWidget* MakeContentBrowser(QLabel*& breadcrumb, QFileSystemModel*& asset_model,
     parent_button->setToolTip("Parent folder");
     parent_button->setFixedWidth(34);
     new_folder_button = new QPushButton("+ Folder");
+    place_model_button = new QPushButton("Place Model");
+    place_model_button->setObjectName("placeModelButton");
+    place_model_button->setToolTip("Add the selected glTF or GLB asset to the active scene");
+    place_model_button->setEnabled(false);
     asset_filter = new QLineEdit;
     asset_filter->setPlaceholderText("Filter assets…");
     asset_filter->setClearButtonEnabled(true);
     asset_filter->setMaximumWidth(220);
-    breadcrumb = new QLabel("NO PROJECT  /  CONTENT");
-    breadcrumb->setObjectName("muted");
+    breadcrumb = new QComboBox;
+    breadcrumb->setObjectName("contentBreadcrumb");
+    breadcrumb->setToolTip("Choose a parent folder in the project Content directory");
+    breadcrumb->setMinimumContentsLength(22);
+    breadcrumb->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    breadcrumb->addItem("NO PROJECT  /  CONTENT");
+    breadcrumb->setEnabled(false);
     navigation->addWidget(parent_button);
     navigation->addWidget(breadcrumb, 1);
     navigation->addWidget(asset_filter);
     navigation->addWidget(new_folder_button);
+    navigation->addWidget(place_model_button);
     layout->addLayout(navigation);
     asset_model = new QFileSystemModel(root);
     asset_model->setFilter(QDir::AllEntries | QDir::NoDotAndDotDot);
@@ -1118,7 +1223,10 @@ public:
                                    MakeHierarchyPanel(hierarchy_tree_, hierarchy_filter_, add_entity_button_,
                                                       duplicate_entity_button_),
                                    *this, Qt::LeftDockWidgetArea, "hierarchyDock");
-        auto* inspector = MakeDock("INSPECTOR", MakeInspector(inspector_name_, position_fields_, rotation_fields_), *this,
+        auto* inspector = MakeDock("INSPECTOR", MakeInspector(inspector_status_, inspector_name_,
+                                                               position_fields_, rotation_fields_,
+                                                               reset_position_button_, reset_rotation_button_,
+                                                               camera_inspector_), *this,
                                    Qt::RightDockWidgetArea, "inspectorDock");
         hierarchy->setMinimumWidth(220);
         inspector->setMinimumWidth(280);
@@ -1126,7 +1234,8 @@ public:
 
         auto* content_dock = MakeDock("CONTENT BROWSER",
                                       MakeContentBrowser(content_breadcrumb_, asset_model_, asset_view_,
-                                                         parent_folder_button_, new_folder_button_, asset_filter_), *this,
+                                                         parent_folder_button_, new_folder_button_,
+                                                         place_model_button_, asset_filter_), *this,
                                       Qt::BottomDockWidgetArea, "contentDock");
         auto* output_dock = MakeDock("OUTPUT", new EditorLogConsole, *this, Qt::BottomDockWidgetArea, "outputDock");
         auto* sequence_dock = MakeDock("ANIMATION · SEQUENCER", MakeSequenceEditor(), *this,
@@ -1158,14 +1267,24 @@ public:
         QObject::connect(duplicate_entity_button_, &QPushButton::clicked, this, [this] { DuplicateSelectedEntity(); });
         QObject::connect(parent_folder_button_, &QPushButton::clicked, this, [this] { NavigateContentParent(); });
         QObject::connect(new_folder_button_, &QPushButton::clicked, this, [this] { CreateContentFolder(); });
+        QObject::connect(place_model_button_, &QPushButton::clicked, this, [this] { PlaceSelectedContentModel(); });
+        QObject::connect(content_breadcrumb_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int index) {
+            const QString path = content_breadcrumb_->itemData(index).toString();
+            if (!path.isEmpty() && path != current_content_path_) SetContentDirectory(path);
+        });
         QObject::connect(asset_filter_, &QLineEdit::textChanged, this, [this](const QString& text) {
             asset_model_->setNameFilters(text.isEmpty() ? QStringList{} : QStringList{"*" + text + "*"});
             asset_model_->setNameFilterDisables(false);
         });
         QObject::connect(asset_view_, &QListView::clicked, this, [this](const QModelIndex& index) {
+            UpdateSelectedContentAsset(index);
             statusBar()->showMessage(QString("●  ASSET SELECTED     %1")
                                          .arg(asset_model_->fileName(index)));
         });
+        QObject::connect(asset_view_->selectionModel(), &QItemSelectionModel::currentChanged, this,
+                         [this](const QModelIndex& current, const QModelIndex&) {
+                             UpdateSelectedContentAsset(current);
+                         });
         QObject::connect(asset_view_, &QListView::doubleClicked, this, [this](const QModelIndex& index) {
             const QString path = asset_model_->filePath(index);
             if (asset_model_->isDir(index)) SetContentDirectory(path);
@@ -1223,6 +1342,59 @@ public:
             QObject::connect(field, &QDoubleSpinBox::editingFinished, this,
                              [this] { ApplyInspectorRotation(true); });
         }
+        QObject::connect(reset_position_button_, &QPushButton::clicked, this, [this] {
+            if (selected_entity_.IsNull() ||
+                !scene_document_.SetPosition(selected_entity_, aether::Vec3{}, true)) return;
+            SyncInspectorPosition();
+            UpdateSceneStatus();
+        });
+        QObject::connect(reset_rotation_button_, &QPushButton::clicked, this, [this] {
+            if (selected_entity_.IsNull() ||
+                !scene_document_.SetRotation(selected_entity_, aether::Quaternion::Identity(), true)) return;
+            SyncInspectorRotation();
+            UpdateSceneStatus();
+        });
+        QObject::connect(camera_inspector_.projection, qOverload<int>(&QComboBox::currentIndexChanged), this,
+                         [this](int index) {
+                             if (selected_entity_.IsNull() || index < 0) return;
+                             const auto projection = static_cast<aether::Projection>(
+                                 camera_inspector_.projection->itemData(index).toInt());
+                             if (scene_document_.SetCameraField(selected_entity_, "projection",
+                                                                aether::reflect::Any(projection))) {
+                                 SyncCameraInspector();
+                                 UpdateSceneStatus();
+                             }
+                         });
+        QObject::connect(camera_inspector_.fov, &QDoubleSpinBox::editingFinished, this, [this] {
+            ApplyCameraInspectorField("fov_degrees", static_cast<aether::f32>(camera_inspector_.fov->value()));
+        });
+        QObject::connect(camera_inspector_.ortho_height, &QDoubleSpinBox::editingFinished, this, [this] {
+            ApplyCameraInspectorField("ortho_height", static_cast<aether::f32>(camera_inspector_.ortho_height->value()));
+        });
+        QObject::connect(camera_inspector_.near_plane, &QDoubleSpinBox::editingFinished, this, [this] {
+            ApplyCameraInspectorField("near_plane", static_cast<aether::f32>(camera_inspector_.near_plane->value()));
+        });
+        QObject::connect(camera_inspector_.far_plane, &QDoubleSpinBox::editingFinished, this, [this] {
+            ApplyCameraInspectorField("far_plane", static_cast<aether::f32>(camera_inspector_.far_plane->value()));
+        });
+        QObject::connect(camera_inspector_.priority, &QSpinBox::editingFinished, this, [this] {
+            ApplyCameraInspectorField("priority", camera_inspector_.priority->value());
+        });
+        const auto connect_lens = [this](QDoubleSpinBox* spin, const char* field) {
+            QObject::connect(spin, &QDoubleSpinBox::editingFinished, this, [this, spin, field] {
+                if (selected_entity_.IsNull()) return;
+                if (scene_document_.SetCineCameraField(selected_entity_, field,
+                                                       aether::reflect::Any(static_cast<aether::f32>(spin->value())))) {
+                    SyncCineCameraInspector();
+                    UpdateSceneStatus();
+                }
+            });
+        };
+        connect_lens(camera_inspector_.focal_length, "focal_length_mm");
+        connect_lens(camera_inspector_.sensor_width, "sensor_width_mm");
+        connect_lens(camera_inspector_.sensor_height, "sensor_height_mm");
+        connect_lens(camera_inspector_.aperture, "aperture_f");
+        connect_lens(camera_inspector_.focus_distance, "focus_distance");
         scene_document_.NewScene();
         RefreshHierarchy();
         viewport_->FitAll();
@@ -1233,11 +1405,28 @@ public:
 
     bool RunSelfTest() {
         const auto require = [](bool condition, const char* message) {
-            if (!condition) qCritical() << "Qt editor self-test:" << message;
+            if (!condition) AETHER_LOG_ERROR("QtEditor", "Self-test failed: %s", message);
             return condition;
         };
         bool passed = true;
         passed &= require(scene_document_.Entities().size() == 5, "default scene should have five entities");
+        passed &= require(!selected_entity_.IsNull() && inspector_name_->isEnabled() &&
+                          inspector_name_->text() == QString::fromStdString(scene_document_.Name(selected_entity_)) &&
+                          reset_position_button_->isEnabled() && reset_rotation_button_->isEnabled() &&
+                          inspector_status_->text() == "ENTITY · ACTIVE SELECTION",
+                          "Inspector should show the real name and state of the selected hierarchy entity");
+        SelectHierarchyItem(nullptr);
+        passed &= require(!inspector_name_->isEnabled() && inspector_name_->text().isEmpty() &&
+                          inspector_status_->text() == "NO SELECTION · SELECT AN ENTITY" &&
+                          !reset_position_button_->isEnabled() && !reset_rotation_button_->isEnabled() &&
+                          std::all_of(position_fields_.begin(), position_fields_.end(),
+                                      [](const QDoubleSpinBox* field) { return !field->isEnabled(); }) &&
+                          std::all_of(rotation_fields_.begin(), rotation_fields_.end(),
+                                      [](const QDoubleSpinBox* field) { return !field->isEnabled(); }),
+                          "empty selection should clear the Inspector and disable entity properties");
+        passed &= require(camera_inspector_.group->isHidden(),
+                          "Camera properties should be hidden when no scene entity is selected");
+        SelectHierarchyItem(hierarchy_tree_->topLevelItem(0)->child(0));
         passed &= require(save_scene_action_ && undo_action_ && redo_action_ && play_action_ &&
                           pause_action_ && stop_action_, "required actions should exist");
         auto* output_dock = findChild<QDockWidget*>("outputDock");
@@ -1299,6 +1488,137 @@ public:
         passed &= require(test_id != nullptr, "created entity should have a persistent GUID");
         const aether::EntityGuid test_guid = test_id ? test_id->guid : aether::EntityGuid{};
         if (test_id) selected_guid_ = test_guid;
+        RefreshHierarchy();
+        const auto* test_transform = scene_document_.GetWorld().GetComponent<aether::Transform>(test_entity);
+        const aether::Quaternion rotation_before = test_transform ? test_transform->rotation : aether::Quaternion::Identity();
+        rotation_fields_[0]->setValue(23.0);
+        rotation_fields_[1]->setValue(90.0);
+        rotation_fields_[2]->setValue(-11.0);
+        ApplyInspectorRotation(true);
+        test_transform = scene_document_.GetWorld().GetComponent<aether::Transform>(test_entity);
+        const aether::Vec3 edited_rotation = test_transform
+            ? RotationToEulerDegrees(test_transform->rotation) : aether::Vec3{};
+        passed &= require(test_transform && std::abs(test_transform->rotation.Length() - 1.0f) < 0.001f &&
+                          std::abs(edited_rotation.x - 23.0f) < 0.05f &&
+                          std::abs(edited_rotation.y - 90.0f) < 0.05f &&
+                          std::abs(edited_rotation.z + 11.0f) < 0.05f,
+                          "Inspector rotation should apply pitch, yaw, and roll as a normalized quaternion");
+        undo_action_->trigger();
+        test_transform = scene_document_.GetWorld().GetComponent<aether::Transform>(test_entity);
+        passed &= require(test_transform &&
+                          std::abs(test_transform->rotation.x - rotation_before.x) < 0.001f &&
+                          std::abs(test_transform->rotation.y - rotation_before.y) < 0.001f &&
+                          std::abs(test_transform->rotation.z - rotation_before.z) < 0.001f &&
+                          std::abs(test_transform->rotation.w - rotation_before.w) < 0.001f,
+                          "Inspector rotation edit should be undoable through the editor action");
+        position_fields_[0]->setValue(3.5);
+        position_fields_[1]->setValue(2.0);
+        position_fields_[2]->setValue(-4.0);
+        ApplyInspectorPosition(true);
+        reset_position_button_->click();
+        test_transform = scene_document_.GetWorld().GetComponent<aether::Transform>(test_entity);
+        passed &= require(test_transform && test_transform->position.Length() < 0.001f,
+                          "Reset Position should set the selected entity to the origin");
+        undo_action_->trigger();
+        test_transform = scene_document_.GetWorld().GetComponent<aether::Transform>(test_entity);
+        passed &= require(test_transform && std::abs(test_transform->position.x - 3.5f) < 0.001f &&
+                          std::abs(test_transform->position.y - 2.0f) < 0.001f &&
+                          std::abs(test_transform->position.z + 4.0f) < 0.001f,
+                          "Reset Position should be undoable");
+        undo_action_->trigger();
+        test_transform = scene_document_.GetWorld().GetComponent<aether::Transform>(test_entity);
+        passed &= require(test_transform && test_transform->position.Length() < 0.001f,
+                          "undoing the position edit should restore the pre-test value");
+
+        rotation_fields_[0]->setValue(23.0);
+        rotation_fields_[1]->setValue(90.0);
+        rotation_fields_[2]->setValue(-11.0);
+        ApplyInspectorRotation(true);
+        reset_rotation_button_->click();
+        test_transform = scene_document_.GetWorld().GetComponent<aether::Transform>(test_entity);
+        passed &= require(test_transform && std::abs(test_transform->rotation.x) < 0.001f &&
+                          std::abs(test_transform->rotation.y) < 0.001f &&
+                          std::abs(test_transform->rotation.z) < 0.001f &&
+                          std::abs(test_transform->rotation.w - 1.0f) < 0.001f,
+                          "Reset Rotation should restore the identity orientation");
+        undo_action_->trigger();
+        test_transform = scene_document_.GetWorld().GetComponent<aether::Transform>(test_entity);
+        const aether::Vec3 restored_rotation = test_transform
+            ? RotationToEulerDegrees(test_transform->rotation) : aether::Vec3{};
+        passed &= require(test_transform && std::abs(restored_rotation.x - 23.0f) < 0.05f &&
+                          std::abs(restored_rotation.y - 90.0f) < 0.05f &&
+                          std::abs(restored_rotation.z + 11.0f) < 0.05f,
+                          "Reset Rotation should be undoable");
+        undo_action_->trigger();
+        test_transform = scene_document_.GetWorld().GetComponent<aether::Transform>(test_entity);
+        passed &= require(test_transform && std::abs(test_transform->rotation.Length() - 1.0f) < 0.001f &&
+                          std::abs(test_transform->rotation.x) < 0.001f &&
+                          std::abs(test_transform->rotation.y) < 0.001f &&
+                          std::abs(test_transform->rotation.z) < 0.001f,
+                          "undoing the rotation edit should restore the pre-test value");
+        const aether::Entity test_camera = scene_document_.CreateEntity(
+            "Self Test Camera", aether::editor::SceneEntityKind::Camera);
+        const auto* test_camera_id = scene_document_.GetWorld().GetComponent<aether::IdComponent>(test_camera);
+        const aether::EntityGuid test_camera_guid = test_camera_id ? test_camera_id->guid : aether::EntityGuid{};
+        if (test_camera_id) selected_guid_ = test_camera_guid;
+        RefreshHierarchy();
+        auto* camera_data = scene_document_.GetWorld().GetComponent<aether::Camera>(test_camera);
+        passed &= require(camera_data && !camera_inspector_.group->isHidden() &&
+                          camera_inspector_.fov->isEnabled() && !camera_inspector_.ortho_height->isEnabled() &&
+                          std::abs(camera_inspector_.fov->value() - 60.0) < 0.01,
+                          "selecting a camera should show its perspective settings in the Inspector");
+        const int orthographic_index = camera_inspector_.projection->findData(
+            static_cast<int>(aether::Projection::Orthographic));
+        camera_inspector_.projection->setCurrentIndex(orthographic_index);
+        passed &= require(camera_data && camera_data->projection == aether::Projection::Orthographic &&
+                          !camera_inspector_.fov->isEnabled() && camera_inspector_.ortho_height->isEnabled(),
+                          "switching projection should update the camera and enable orthographic height");
+        undo_action_->trigger();
+        passed &= require(camera_data && camera_data->projection == aether::Projection::Perspective &&
+                          camera_inspector_.fov->isEnabled(),
+                          "camera projection changes should be undoable through the editor action");
+        redo_action_->trigger();
+        passed &= require(camera_data && camera_data->projection == aether::Projection::Orthographic,
+                          "camera projection changes should be redoable through the editor action");
+        undo_action_->trigger();
+        camera_inspector_.fov->setValue(75.0);
+        passed &= require(QMetaObject::invokeMethod(camera_inspector_.fov, "editingFinished", Qt::DirectConnection),
+                          "camera field of view should expose the standard spin-box commit signal");
+        passed &= require(camera_data && std::abs(camera_data->fov_degrees - 75.0f) < 0.01f,
+                          "editing camera field of view should update the scene component");
+        undo_action_->trigger();
+        passed &= require(camera_data && std::abs(camera_data->fov_degrees - 60.0f) < 0.01f,
+                          "camera field-of-view edits should be undoable");
+        redo_action_->trigger();
+        passed &= require(camera_data && std::abs(camera_data->fov_degrees - 75.0f) < 0.01f,
+                          "camera field-of-view edits should be redoable");
+        undo_action_->trigger();
+        passed &= require(scene_document_.Undo(), "self-test camera entity should be removable from the scene history");
+        const aether::Entity test_cine_camera = scene_document_.CreateEntity(
+            "Self Test Cine Camera", aether::editor::SceneEntityKind::CineCamera);
+        const auto* test_cine_id = scene_document_.GetWorld().GetComponent<aether::IdComponent>(test_cine_camera);
+        if (test_cine_id) selected_guid_ = test_cine_id->guid;
+        RefreshHierarchy();
+        auto* cine_data = scene_document_.GetWorld().GetComponent<aether::CineCamera>(test_cine_camera);
+        passed &= require(cine_data && scene_document_.GetWorld().HasComponent<aether::Camera>(test_cine_camera) &&
+                          !camera_inspector_.cine_group->isHidden() &&
+                          std::abs(camera_inspector_.focal_length->value() - 35.0) < 0.01,
+                          "Cinematic Camera should create camera and lens components and expose lens settings");
+        camera_inspector_.focal_length->setValue(50.0);
+        passed &= require(QMetaObject::invokeMethod(camera_inspector_.focal_length, "editingFinished", Qt::DirectConnection) &&
+                          cine_data && std::abs(cine_data->focal_length_mm - 50.0f) < 0.01f,
+                          "editing cinematic focal length should update the scene component");
+        undo_action_->trigger();
+        passed &= require(cine_data && std::abs(cine_data->focal_length_mm - 35.0f) < 0.01f,
+                          "cinematic lens edits should be undoable");
+        redo_action_->trigger();
+        passed &= require(cine_data && std::abs(cine_data->focal_length_mm - 50.0f) < 0.01f,
+                          "cinematic lens edits should be redoable");
+        undo_action_->trigger();
+        passed &= require(cine_data && std::abs(cine_data->focal_length_mm - 35.0f) < 0.01f,
+                          "cinematic lens edit should be undone before removing its test entity");
+        passed &= require(scene_document_.Undo(), "self-test cinematic camera should be removable from scene history");
+        selected_guid_ = test_guid;
         RefreshHierarchy();
         const aether::Entity test_child = scene_document_.CreateEntity(
             "Self Test Child", aether::editor::SceneEntityKind::Empty, {}, test_entity);
@@ -1386,6 +1706,17 @@ public:
             OpenProject(self_test_paths.file, false);
             passed &= require(save_project_action_->isEnabled() && !asset_view_->isHidden(),
                               "opening a project should enable project settings and Content Browser");
+            const auto content_root = self_test_paths.content;
+            const auto scene_folder = content_root / "Scenes";
+            std::filesystem::create_directories(scene_folder, filesystem_error);
+            SetContentDirectory(QString::fromStdWString(scene_folder.wstring()));
+            passed &= require(content_breadcrumb_->count() == 2 && content_breadcrumb_->currentIndex() == 1 &&
+                              parent_folder_button_->isEnabled(),
+                              "Content Browser breadcrumb should show the current folder and expose its parent");
+            content_breadcrumb_->setCurrentIndex(0);
+            passed &= require(current_content_path_ == QDir::cleanPath(QString::fromStdWString(content_root.wstring())) &&
+                              !parent_folder_button_->isEnabled(),
+                              "choosing the Content breadcrumb should return to the project asset root");
             aether::ProjectSettings candidate = project_settings_;
             candidate.window_width = 1600;
             candidate.window_height = 900;
@@ -1400,6 +1731,27 @@ public:
             passed &= require(reloaded_sequence.Load(sequence_file_, &project_error) &&
                               reloaded_sequence.Sequence().tracks.size() == 1,
                               "saved Qt animation sequence should round-trip from disk");
+
+            const std::filesystem::path source_model(AETHER_QT_TEST_MODEL_PATH);
+            const auto content_model = self_test_paths.content / source_model.filename();
+            std::error_code copy_error;
+            passed &= require(std::filesystem::copy_file(source_model, content_model,
+                                std::filesystem::copy_options::overwrite_existing, copy_error) && !copy_error,
+                              "self-test model fixture should copy into the project Content folder");
+            const auto source_buffer = source_model.parent_path() / "test_cube.bin";
+            const auto content_buffer = self_test_paths.content / source_buffer.filename();
+            copy_error.clear();
+            passed &= require(std::filesystem::copy_file(source_buffer, content_buffer,
+                                std::filesystem::copy_options::overwrite_existing, copy_error) && !copy_error,
+                              "self-test model buffer should copy alongside the glTF asset");
+            const QModelIndex model_index = asset_model_->index(QString::fromStdWString(content_model.wstring()));
+            asset_view_->setCurrentIndex(model_index);
+            passed &= require(model_index.isValid() && place_model_button_->isEnabled(),
+                              "selecting a glTF asset should enable the explicit Place Model action");
+            place_model_button_->click();
+            const auto* placed_model = scene_document_.GetWorld().GetComponent<aether::ModelRenderer>(selected_entity_);
+            passed &= require(placed_model && std::string(placed_model->asset_path) == source_model.filename().string(),
+                              "Place Model should create a scene entity referencing the selected project asset");
         }
         std::filesystem::remove_all(self_test_root, filesystem_error);
         if (passed) qInfo() << "Qt editor self-test passed";
@@ -1954,8 +2306,21 @@ private:
             viewport_->SetSelectedGuid({});
             inspector_name_->clear();
             inspector_name_->setEnabled(false);
-            for (auto* field : position_fields_) field->setEnabled(false);
-            for (auto* field : rotation_fields_) field->setEnabled(false);
+            inspector_status_->setText("NO SELECTION · SELECT AN ENTITY");
+            reset_position_button_->setEnabled(false);
+            reset_rotation_button_->setEnabled(false);
+            for (auto* field : position_fields_) {
+                const QSignalBlocker blocker(field);
+                field->setValue(0.0);
+                field->setEnabled(false);
+            }
+            for (auto* field : rotation_fields_) {
+                const QSignalBlocker blocker(field);
+                field->setValue(0.0);
+                field->setEnabled(false);
+            }
+            camera_inspector_.group->setVisible(false);
+            camera_inspector_.cine_group->setVisible(false);
             RefreshSequenceTarget();
             UpdateSceneStatus();
             return;
@@ -1966,9 +2331,18 @@ private:
         if (selected_entity_.IsNull()) return;
         selected_guid_ = guid;
         viewport_->SetSelectedGuid(guid);
+        inspector_status_->setText("ENTITY · ACTIVE SELECTION");
         const QSignalBlocker name_blocker(inspector_name_);
         inspector_name_->setText(QString::fromStdString(scene_document_.Name(selected_entity_)));
         const auto* transform = scene_document_.GetWorld().GetComponent<aether::Transform>(selected_entity_);
+        const auto* camera = scene_document_.GetWorld().GetComponent<aether::Camera>(selected_entity_);
+        const auto* cine_camera = scene_document_.GetWorld().GetComponent<aether::CineCamera>(selected_entity_);
+        camera_inspector_.group->setVisible(camera != nullptr);
+        if (camera) SyncCameraInspector();
+        camera_inspector_.cine_group->setVisible(cine_camera != nullptr);
+        if (cine_camera) SyncCineCameraInspector();
+        reset_position_button_->setEnabled(transform != nullptr);
+        reset_rotation_button_->setEnabled(transform != nullptr);
         for (std::size_t axis = 0; axis < position_fields_.size(); ++axis) {
             const QSignalBlocker blocker(position_fields_[axis]);
             position_fields_[axis]->setEnabled(transform != nullptr);
@@ -2001,6 +2375,55 @@ private:
             if (committed) SyncInspectorRotation();
             UpdateSceneStatus();
         }
+    }
+
+    template <typename T>
+    void ApplyCameraInspectorField(const char* field_name, T value) {
+        if (selected_entity_.IsNull()) return;
+        if (scene_document_.SetCameraField(selected_entity_, field_name, aether::reflect::Any(value))) {
+            SyncCameraInspector();
+            UpdateSceneStatus();
+        }
+    }
+
+    void SyncCameraInspector() {
+        if (selected_entity_.IsNull()) return;
+        const auto* camera = scene_document_.GetWorld().GetComponent<aether::Camera>(selected_entity_);
+        if (!camera) return;
+        {
+            const QSignalBlocker blocker(camera_inspector_.projection);
+            const int index = camera_inspector_.projection->findData(static_cast<int>(camera->projection));
+            if (index >= 0) camera_inspector_.projection->setCurrentIndex(index);
+        }
+        const QSignalBlocker fov_blocker(camera_inspector_.fov);
+        const QSignalBlocker ortho_blocker(camera_inspector_.ortho_height);
+        const QSignalBlocker near_blocker(camera_inspector_.near_plane);
+        const QSignalBlocker far_blocker(camera_inspector_.far_plane);
+        const QSignalBlocker priority_blocker(camera_inspector_.priority);
+        camera_inspector_.fov->setValue(camera->fov_degrees);
+        camera_inspector_.ortho_height->setValue(camera->ortho_height);
+        camera_inspector_.near_plane->setValue(camera->near_plane);
+        camera_inspector_.far_plane->setValue(camera->far_plane);
+        camera_inspector_.priority->setValue(camera->priority);
+        const bool perspective = camera->projection == aether::Projection::Perspective;
+        camera_inspector_.fov->setEnabled(perspective);
+        camera_inspector_.ortho_height->setEnabled(!perspective);
+    }
+
+    void SyncCineCameraInspector() {
+        if (selected_entity_.IsNull()) return;
+        const auto* camera = scene_document_.GetWorld().GetComponent<aether::CineCamera>(selected_entity_);
+        if (!camera) return;
+        const QSignalBlocker focal_blocker(camera_inspector_.focal_length);
+        const QSignalBlocker width_blocker(camera_inspector_.sensor_width);
+        const QSignalBlocker height_blocker(camera_inspector_.sensor_height);
+        const QSignalBlocker aperture_blocker(camera_inspector_.aperture);
+        const QSignalBlocker focus_blocker(camera_inspector_.focus_distance);
+        camera_inspector_.focal_length->setValue(camera->focal_length_mm);
+        camera_inspector_.sensor_width->setValue(camera->sensor_width_mm);
+        camera_inspector_.sensor_height->setValue(camera->sensor_height_mm);
+        camera_inspector_.aperture->setValue(camera->aperture_f);
+        camera_inspector_.focus_distance->setValue(camera->focus_distance);
     }
 
     void SyncInspectorPosition() {
@@ -2189,6 +2612,14 @@ private:
         UpdateSceneStatus();
     }
 
+    void CreateCineCamera() {
+        const aether::Entity entity = scene_document_.CreateEntity(
+            "Cinematic Camera", aether::editor::SceneEntityKind::CineCamera);
+        if (const auto* id = scene_document_.GetWorld().GetComponent<aether::IdComponent>(entity)) selected_guid_ = id->guid;
+        RefreshHierarchy();
+        UpdateSceneStatus();
+    }
+
     void PlaceModelDialog() {
         if (project_file_.empty()) {
             QMessageBox::information(this, "Open a project", "Open or create a project before placing a model asset.");
@@ -2222,11 +2653,13 @@ private:
         QMenu menu(this);
         auto* empty = menu.addAction("Empty Entity");
         auto* camera = menu.addAction("Camera");
+        auto* cine_camera = menu.addAction("Cinematic Camera");
         auto* model = menu.addAction("Model Asset…");
         model->setEnabled(!project_file_.empty());
         const QAction* choice = menu.exec(add_entity_button_->mapToGlobal(QPoint(0, add_entity_button_->height())));
         if (choice == empty) CreateEntityDialog();
         else if (choice == camera) CreateCameraDialog();
+        else if (choice == cine_camera) CreateCineCamera();
         else if (choice == model) PlaceModelDialog();
     }
 
@@ -2362,13 +2795,12 @@ private:
         SetContentDirectory(QString::fromStdWString(paths.content.wstring()));
         const QString project_name = QString::fromStdString(project_settings_.name);
         setWindowTitle(project_name + " — Aether Engine");
-        content_breadcrumb_->setText(project_name.toUpper() + "  /  CONTENT");
         save_project_action_->setEnabled(true);
-        parent_folder_button_->setEnabled(true);
         new_folder_button_->setEnabled(true);
         asset_filter_->setEnabled(true);
         asset_view_->setEnabled(true);
         asset_view_->setVisible(true);
+        content_breadcrumb_->setEnabled(true);
         UpdateSceneStatus();
     }
 
@@ -2396,10 +2828,24 @@ private:
                                      .arg(info.fileName()));
     }
 
+    void UpdateSelectedContentAsset(const QModelIndex& index) {
+        selected_content_path_.clear();
+        if (index.isValid() && !asset_model_->isDir(index)) {
+            const QString suffix = asset_model_->fileInfo(index).suffix().toLower();
+            if (suffix == "gltf" || suffix == "glb") selected_content_path_ = asset_model_->filePath(index);
+        }
+        place_model_button_->setEnabled(!project_file_.empty() && !selected_content_path_.isEmpty());
+    }
+
+    void PlaceSelectedContentModel() {
+        if (!place_model_button_->isEnabled() || selected_content_path_.isEmpty()) return;
+        PlaceModel(std::filesystem::path(selected_content_path_.toStdWString()));
+    }
+
     bool PersistProjectSettings(const aether::ProjectSettings& candidate, std::string* error) {
         if (project_file_.empty() || !aether::SaveProject(project_file_, candidate, error)) return false;
         project_settings_ = candidate;
-        content_breadcrumb_->setText(QString::fromStdString(project_settings_.name).toUpper() + "  /  CONTENT");
+        RefreshContentBreadcrumb();
         UpdateSceneStatus();
         return true;
     }
@@ -2520,14 +2966,48 @@ private:
         statusBar()->showMessage("●  PROJECT SETTINGS SAVED");
     }
 
-    void SetContentDirectory(QString path) {
-        current_content_path_ = QDir::cleanPath(path);
-        asset_view_->setRootIndex(asset_model_->setRootPath(current_content_path_));
+    void RefreshContentBreadcrumb() {
+        const QSignalBlocker blocker(content_breadcrumb_);
+        content_breadcrumb_->clear();
+        if (project_file_.empty()) {
+            content_breadcrumb_->addItem("NO PROJECT  /  CONTENT");
+            content_breadcrumb_->setCurrentIndex(0);
+            content_breadcrumb_->setEnabled(false);
+            return;
+        }
+
+        const QString root = QDir::cleanPath(QString::fromStdWString(
+            aether::ProjectPaths::ForFile(project_file_).content.wstring()));
         const QString project_name = QString::fromStdString(project_settings_.name).toUpper();
-        const QString relative = QDir(QString::fromStdWString(aether::ProjectPaths::ForFile(project_file_).content.wstring()))
-                                     .relativeFilePath(current_content_path_);
-        content_breadcrumb_->setText(relative == "." ? project_name + "  /  CONTENT" :
-                                      project_name + "  /  CONTENT  /  " + relative.toUpper());
+        content_breadcrumb_->addItem(project_name + "  /  CONTENT", root);
+        const QString relative = QDir(root).relativeFilePath(current_content_path_);
+        if (relative != "." && !relative.startsWith("../") && !QDir::isAbsolutePath(relative)) {
+            QString prefix;
+            QString path = root;
+            for (const QString& segment : relative.split('/', Qt::SkipEmptyParts)) {
+                prefix = prefix.isEmpty() ? segment : prefix + "/" + segment;
+                path = QDir(path).filePath(segment);
+                content_breadcrumb_->addItem(project_name + "  /  CONTENT  /  " + prefix.toUpper(),
+                                              QDir::cleanPath(path));
+            }
+        }
+        content_breadcrumb_->setCurrentIndex(content_breadcrumb_->count() - 1);
+        content_breadcrumb_->setEnabled(true);
+    }
+
+    void SetContentDirectory(QString path) {
+        selected_content_path_.clear();
+        place_model_button_->setEnabled(false);
+        const QString root = QDir::cleanPath(QString::fromStdWString(
+            aether::ProjectPaths::ForFile(project_file_).content.wstring()));
+        path = QDir::cleanPath(path);
+        const QString relative = QDir(root).relativeFilePath(path);
+        if (relative == ".." || relative.startsWith("../") || QDir::isAbsolutePath(relative) ||
+            !QFileInfo(path).isDir()) path = root;
+        current_content_path_ = path;
+        asset_view_->setRootIndex(asset_model_->setRootPath(current_content_path_));
+        parent_folder_button_->setEnabled(current_content_path_ != root);
+        RefreshContentBreadcrumb();
     }
 
     void NavigateContentParent() {
@@ -2760,7 +3240,11 @@ private:
     QPushButton* play_button_ = nullptr;
     QPushButton* pause_button_ = nullptr;
     QPushButton* stop_button_ = nullptr;
+    QLabel* inspector_status_ = nullptr;
     QLineEdit* inspector_name_ = nullptr;
+    QPushButton* reset_position_button_ = nullptr;
+    QPushButton* reset_rotation_button_ = nullptr;
+    CameraInspectorWidgets camera_inspector_;
     QTreeWidget* hierarchy_tree_ = nullptr;
     QLineEdit* hierarchy_filter_ = nullptr;
     QPushButton* add_entity_button_ = nullptr;
@@ -2770,7 +3254,7 @@ private:
     aether::editor::SceneDocument scene_document_;
     aether::EntityGuid selected_guid_{};
     aether::Entity selected_entity_ = aether::kNullEntity;
-    QLabel* content_breadcrumb_ = nullptr;
+    QComboBox* content_breadcrumb_ = nullptr;
     QAction* save_project_action_ = nullptr;
     QAction* new_scene_action_ = nullptr;
     QAction* open_scene_action_ = nullptr;
@@ -2792,6 +3276,8 @@ private:
     QPushButton* parent_folder_button_ = nullptr;
     QPushButton* new_folder_button_ = nullptr;
     QLineEdit* asset_filter_ = nullptr;
+    QPushButton* place_model_button_ = nullptr;
+    QString selected_content_path_;
     QString current_content_path_;
     std::array<QDoubleSpinBox*, 3> position_fields_{};
     std::array<QDoubleSpinBox*, 3> rotation_fields_{};

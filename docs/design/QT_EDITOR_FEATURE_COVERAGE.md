@@ -12,11 +12,11 @@ Disabled mock controls and sample-only panels do not count as migrated.
 | Project | Create/open project; edit and persist identity, startup scene, physics, window, quality, cook, plugin, and layer settings | Existing project/editor-project tests and Qt self-test | Functional |
 | Scene document | New/open/save JSON and binary scenes, dirty state; preserve registered movement, physics, audio, attribute, and sequence components; reject unknown components before editor save | `SceneDocument_SelectionEditsUndoAndRoundTrips`, `SceneDocument_RejectsUnknownComponentsWithoutReplacingCurrentScene`, and Qt runtime-component load/resave self-test | Functional |
 | Map hierarchy | Filter/select; readable unique names for legacy scenes; create empty entities and cameras; place project model assets; create nested child entities; move children to the world root; duplicate, delete, and rename entities | `SceneDocument_MapEntitiesDuplicateWithComponentsAndUndo`, `SceneDocument_LegacyScenesGetReadableUniqueEditorNames`, and Qt self-test | Functional |
-| Inspector | Entity name and Transform position; local pitch/yaw/roll rotation backed by a normalized quaternion | Existing scene-document test and Qt self-test cover position; rotation assertions pending | Position functional; rotation implementation unverified |
+| Inspector | Explicit empty/active selection state; entity name and Transform position/rotation; reset actions; Camera projection, lens, clip planes, and priority; Cine Camera focal length, sensor, aperture, and focus distance | Qt self-test verifies selection states, transform conversion/reset, perspective/orthographic control states, standard and cinematic camera creation, lens edits, and undo/redo | Functional for Entity, Transform, Camera, and Cine Camera |
 | Undo/redo | Create, delete, rename, and transform commands | Command tests, scene-document test, Qt self-test | Functional |
 | Play session | Play, pause, resume, stop, snapshot restore, frozen history | Play-session tests, scene-document test, Qt self-test | Functional |
 | Perspective world view | Depth-tested grid; imported glTF/GLB mesh instances, base-color materials, and textures; fallback editor proxies; hierarchy-aware transforms; selection; model-bounds focus and scene fit; X/Z move and snap; local-Y rotation ring and 15-degree snap; orbit, pan, and dolly | Qt framing self-test and AETHER-01 runtime/visual smoke coverage; move/rotation interaction automation pending | Core view functional; skeletal deformation, PBR lighting, and full transform gizmos remain |
-| Content Browser | Project-root navigation, filtering, create folder | Existing content-browser core tests; Qt automation pending | Functional, UI test pending |
+| Content Browser | Project-root navigation with ancestor breadcrumbs, filtering, create folder; select glTF/GLB and place it into the scene from a clear action or double-click | Qt self-test verifies breadcrumb/parent navigation and model placement with a project-relative asset; filter/folder widget coverage pending | Functional core; remaining UI automation pending |
 | Output | Live engine log sink | Logger behavior covered elsewhere; Qt automation pending | Functional, UI test pending |
 | Layout | Move/tab/show docks and persist window state | Qt automation pending | Functional, UI test pending |
 | Command palette | Invoke the currently migrated commands and docks | Qt automation pending | Functional, UI test pending |
@@ -24,9 +24,10 @@ Disabled mock controls and sample-only panels do not count as migrated.
 
 The Qt executable supports `--self-test`. CTest registers it as
 `qt_editor_self_test`; it invokes the real window actions and validates map
-duplication, parent/child hierarchy display, transform-track authoring/scrubbing/restoration, sequence
-save/reload, project persistence, and the Play/Pause/Resume/Stop lifecycle
-without opening file dialogs.
+duplication, parent/child hierarchy display, Inspector selection, Transform reset,
+Camera editing, selected-model placement, transform-track authoring/scrubbing/restoration,
+sequence save/reload, project persistence, and the Play/Pause/Resume/Stop
+lifecycle without opening file dialogs.
 
 ## Not exposed until migrated
 

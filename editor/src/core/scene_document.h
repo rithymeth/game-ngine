@@ -17,6 +17,7 @@ namespace aether::editor {
 enum class SceneEntityKind {
     Empty,
     Camera,
+    CineCamera,
     Model,
 };
 
@@ -50,6 +51,8 @@ public:
     bool DestroyEntity(Entity entity);
     bool SetPosition(Entity entity, const Vec3& position, bool committed);
     bool SetRotation(Entity entity, const Quaternion& rotation, bool committed);
+    bool SetCameraField(Entity entity, const std::string& field_name, const reflect::Any& value);
+    bool SetCineCameraField(Entity entity, const std::string& field_name, const reflect::Any& value);
     bool Undo();
     bool Redo();
     PlaySession::State PlayState() const { return play_session_.GetState(); }

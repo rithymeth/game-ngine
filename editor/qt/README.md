@@ -2,11 +2,13 @@
 
 This is the first Qt 6 Widgets host for the editor migration. It currently
 provides project creation/opening, a schema-backed Project Settings dialog, a project-backed
-Content Browser with filtering and folder creation, movable Hierarchy,
+Content Browser with ancestor breadcrumbs, filtering, folder creation, and a
+contextual model-placement action, movable Hierarchy,
 Inspector, Output, and Animation Sequencer docks, and a native QWidget viewport backed by the Aether
 D3D12 RHI. The Hierarchy and Inspector now edit a shared `SceneDocument`:
 selection, hierarchy filtering, entity rename/create/delete/duplicate, nested
-child creation and unparenting, camera creation, project model placement, transform position, dirty state, undo
+child creation and unparenting, standard and cinematic camera creation, project model placement,
+Transform, Camera, and Cine Camera property editing, dirty state, undo
 and redo, and JSON/binary scene save/load use the engine ECS and editor command
 stack. The Inspector exposes local Transform rotation as pitch/yaw/roll in
 degrees while scene data keeps its quaternion representation. Rotation
@@ -44,8 +46,9 @@ create, open, and save `.asequence` assets; edit sequence name, frame rate,
 and duration; bind transform tracks to selected scene entities; set, update,
 and clear position keys; and scrub or loop a live viewport preview. Restore
 returns every previewed transform to its pre-preview value. Double-clicking a
-sequence in the Content Browser opens it, while double-clicking a glTF/GLB
-asset places a real `ModelRenderer` entity in the map.
+sequence in the Content Browser opens it. Selecting a glTF/GLB asset enables
+the explicit Place Model action, and double-clicking the asset remains a
+shortcut; both create a real `ModelRenderer` entity in the map.
 
 Project Settings edits and validates the project name, startup scene, fixed
 timestep, gravity, packaged window settings, default quality, always-cook
