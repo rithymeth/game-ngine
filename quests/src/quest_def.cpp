@@ -96,7 +96,9 @@ bool QuestFromJson(const std::string& text, QuestDef& out, std::string* error) {
             if (!oj.is_object()) return Fail(error, "quest.parse: an objective is an object");
             Objective o;
             if (!ReadString(oj, "id", o.id, error) || !ReadString(oj, "text", o.text, error) || !ReadString(oj, "text_key", o.text_key, error) || !ReadString(oj, "target", o.target, error)) return false;
-            const std::string kind = oj.contains("kind") && oj["kind"].is_string() ? oj["kind"].get<std::string>() : "count";
+            if (oj.contains("kind") && !oj["kind"].is_string())
+                return Fail(error, "quest.parse: objective 'kind' is a string");
+            const std::string kind = oj.contains("kind") ? oj["kind"].get<std::string>() : "count";
             if (kind == "count") o.kind = Objective::Kind::Count;
             else if (kind == "tag") o.kind = Objective::Kind::Tag;
             else if (kind == "flag") o.kind = Objective::Kind::Flag;
@@ -105,7 +107,11 @@ bool QuestFromJson(const std::string& text, QuestDef& out, std::string* error) {
                 if (!oj["required"].is_number_integer()) return Fail(error, "quest.bad_required: 'required' is a whole number");
                 o.required = oj["required"].get<i32>();
             }
-            o.optional = oj.value("optional", false);
+            if (oj.contains("optional")) {
+                if (!oj["optional"].is_boolean())
+                    return Fail(error, "quest.parse: objective 'optional' is a boolean");
+                o.optional = oj["optional"].get<bool>();
+            }
             q.objectives.push_back(std::move(o));
         }
     }
@@ -117,7 +123,13 @@ bool QuestFromJson(const std::string& text, QuestDef& out, std::string* error) {
             if (!r["items"].is_array()) return Fail(error, "quest.parse: reward 'items' is a list");
             for (const Json& ij : r["items"]) {
                 if (!ij.is_object() || !ij.contains("item") || !ij["item"].is_string()) return Fail(error, "quest.parse: a reward item has an 'item' and a 'count'");
-                q.reward_items.push_back({ij["item"].get<std::string>(), ij.value("count", 1)});
+                i32 count = 1;
+                if (ij.contains("count")) {
+                    if (!ij["count"].is_number_integer())
+                        return Fail(error, "quest.parse: reward item 'count' is a whole number");
+                    count = ij["count"].get<i32>();
+                }
+                q.reward_items.push_back({ij["item"].get<std::string>(), count});
             }
         }
     }

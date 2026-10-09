@@ -212,10 +212,12 @@ and end-to-end acceptance check.
 
 ## Immediate next actions
 
-1. Create the GDD-to-engine matrix and classify each requirement by vertical
-   slice, full production, game-owned, or deferred scope.
-2. Mark every matrix row Proven, Partial, Missing, Unverified, or Game-owned;
-   attach links and exact evidence rather than inferring readiness from code.
+1. Maintain the [AETHER-01 GDD-to-engine readiness matrix](AETHER_01_ENGINE_READINESS_MATRIX.md)
+   and classify each requirement by vertical slice, full production,
+   game-owned, or deferred scope.
+2. Update matrix statuses only when new evidence exists; attach exact CI,
+   test, package, and hardware records rather than inferring readiness from
+   code.
 3. Rank gaps by dependency: project/data/build safety first, then authoring and
    content, player/runtime systems, presentation/progression, and performance.
 4. Convert the highest-priority blockers into small engine upgrades with
