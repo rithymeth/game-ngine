@@ -72,7 +72,7 @@ class Asset:
   nodes=self.nodes
   roots=list(range(len(nodes)))
   if self.name=='Kael':
-   nodes=[{'name':'Kael | gameplay root','children':roots,'translation':[0,0.16,0],'scale':[0.84,0.83,0.84]}]+nodes; roots=[0]
+   nodes=[{'name':'Kael | gameplay root','children':[i+1 for i in roots],'translation':[0,0.16,0],'scale':[0.84,0.83,0.84]}]+nodes; roots=[0]
   doc={'asset':{'version':'2.0','generator':'AETHER-01 Asset Foundry 1.0'},'scene':0,'scenes':[{'nodes':roots}],'nodes':nodes,'meshes':self.meshes,'materials':self.mats,'buffers':[{'uri':bpath.name,'byteLength':len(self.buf)}],'bufferViews':self.views,'accessors':self.acc}
   raw=json.dumps(doc,indent=2,separators=(',',': ')).encode();path.write_bytes(raw)
   # stable engine AssetMeta preserving deterministic IDs across regeneration

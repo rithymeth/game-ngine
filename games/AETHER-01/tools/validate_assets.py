@@ -24,6 +24,23 @@ def validate_model(path, guids):
     require(len(doc.get("scenes", [])) > 0, f"{path}: missing scene")
     require(len(doc.get("meshes", [])) > 0, f"{path}: missing meshes")
     require(len(doc.get("materials", [])) > 0, f"{path}: missing materials")
+    nodes = doc.get("nodes", [])
+    visiting, visited = set(), set()
+    def visit(index):
+        require(0 <= index < len(nodes), f"{path}: node index out of bounds")
+        require(index not in visiting, f"{path}: cyclic node hierarchy")
+        if index in visited:
+            return
+        visiting.add(index)
+        node = nodes[index]
+        if "mesh" in node:
+            require(0 <= node["mesh"] < len(doc["meshes"]), f"{path}: invalid mesh index")
+        for child in node.get("children", []):
+            visit(child)
+        visiting.remove(index)
+        visited.add(index)
+    for root in doc["scenes"][doc.get("scene", 0)].get("nodes", []):
+        visit(root)
     meta = json.loads(path.with_name(path.name + ".ameta").read_text())
     require(meta.get("$type") == "AssetMeta", f"{path}: invalid metadata type")
     require(meta.get("guid") not in guids, f"{path}: duplicate asset GUID")
