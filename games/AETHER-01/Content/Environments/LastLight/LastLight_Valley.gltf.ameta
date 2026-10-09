@@ -1,0 +1,583 @@
+{
+  "$type": "AssetMeta",
+  "$v": 1,
+  "guid": "40f9ec42-bdce-5678-bde7-2df21ef4348e",
+  "importer": "Model",
+  "importer_version": 1,
+  "labels": [
+    "AETHER-01",
+    "production-assets"
+  ],
+  "settings": {},
+  "source_hash": "fnv1a64:d26c1af3875960f1",
+  "sub_assets": {
+    "material:0": {
+      "guid": "1fea1af3-92ac-532f-86d1-57ff51f1cbb1",
+      "importer": "Material"
+    },
+    "material:1": {
+      "guid": "b92357fa-1c7c-5fff-a176-f3fc7515821a",
+      "importer": "Material"
+    },
+    "material:2": {
+      "guid": "95f689c8-0808-51b6-87e8-aa1bb277483d",
+      "importer": "Material"
+    },
+    "material:3": {
+      "guid": "dc4322a3-d234-5416-aaee-68e19a4dcaa1",
+      "importer": "Material"
+    },
+    "material:4": {
+      "guid": "3eeb3e4b-0d0a-57b4-958c-8aaacf958abf",
+      "importer": "Material"
+    },
+    "material:5": {
+      "guid": "54a5b6dd-81b3-5b07-a8cb-41cd76c6180e",
+      "importer": "Material"
+    },
+    "material:6": {
+      "guid": "6e7bb88c-d6cb-532e-91d5-ae5668890c69",
+      "importer": "Material"
+    },
+    "mesh:0": {
+      "guid": "e5ae3284-3b90-59e5-8e29-cf3a08d2ec05",
+      "importer": "Mesh"
+    },
+    "mesh:1": {
+      "guid": "2cd146e7-46a5-51ed-9e5c-f74bce676347",
+      "importer": "Mesh"
+    },
+    "mesh:2": {
+      "guid": "9df50cf9-e363-5d6d-aefb-64c8d9247de7",
+      "importer": "Mesh"
+    },
+    "mesh:3": {
+      "guid": "391973b4-455f-5389-b40d-ffc5b1d0d78a",
+      "importer": "Mesh"
+    },
+    "mesh:4": {
+      "guid": "dd7aab33-ff08-5bfb-b02c-e7cd00188bb0",
+      "importer": "Mesh"
+    },
+    "mesh:5": {
+      "guid": "a75fd217-24a3-5215-affe-7a48b76dcaa0",
+      "importer": "Mesh"
+    },
+    "mesh:6": {
+      "guid": "08575a69-905f-5767-a6b3-22060a148797",
+      "importer": "Mesh"
+    },
+    "mesh:7": {
+      "guid": "646a9ebc-bdcc-50d8-9276-538aeeb1321b",
+      "importer": "Mesh"
+    },
+    "mesh:8": {
+      "guid": "1f428d3c-78f6-5bf5-ba7d-d42a62400e25",
+      "importer": "Mesh"
+    },
+    "mesh:9": {
+      "guid": "2fde8e27-8ed3-5a3d-8435-c81ab23c1bd8",
+      "importer": "Mesh"
+    },
+    "mesh:10": {
+      "guid": "594a5218-b6d5-5735-a489-1f7057f9959f",
+      "importer": "Mesh"
+    },
+    "mesh:11": {
+      "guid": "d743b070-eeb3-5469-9d02-260c94d8acc8",
+      "importer": "Mesh"
+    },
+    "mesh:12": {
+      "guid": "105e67d4-6dc8-5199-9c59-78a71c0c88ec",
+      "importer": "Mesh"
+    },
+    "mesh:13": {
+      "guid": "d708e8c7-eb04-58c8-9705-bbc78bafcf01",
+      "importer": "Mesh"
+    },
+    "mesh:14": {
+      "guid": "250cb20d-4ee3-54ca-9cfd-7eb174d55447",
+      "importer": "Mesh"
+    },
+    "mesh:15": {
+      "guid": "1f585e17-d81d-5266-a2ea-c69539d48ee6",
+      "importer": "Mesh"
+    },
+    "mesh:16": {
+      "guid": "d184f623-2220-58b4-afd6-7b0a8cd17515",
+      "importer": "Mesh"
+    },
+    "mesh:17": {
+      "guid": "ce3fb36a-f337-5c47-a781-9f2381da26ba",
+      "importer": "Mesh"
+    },
+    "mesh:18": {
+      "guid": "1f8e5a16-7f26-5cca-bca4-8d2cd5936042",
+      "importer": "Mesh"
+    },
+    "mesh:19": {
+      "guid": "c45cad3c-e118-5877-b7b3-68d5b4b49a70",
+      "importer": "Mesh"
+    },
+    "mesh:20": {
+      "guid": "f2aad440-4df9-5051-aed4-044f25304ca4",
+      "importer": "Mesh"
+    },
+    "mesh:21": {
+      "guid": "6059f14b-8659-5cf6-a417-16b03205b667",
+      "importer": "Mesh"
+    },
+    "mesh:22": {
+      "guid": "b8289906-5e3f-520d-a0f5-84581666a7a4",
+      "importer": "Mesh"
+    },
+    "mesh:23": {
+      "guid": "13ea2c23-9898-58fe-9ad9-0db5f2ecc22b",
+      "importer": "Mesh"
+    },
+    "mesh:24": {
+      "guid": "e0c96fd3-9553-501f-aa60-db85b5213f3b",
+      "importer": "Mesh"
+    },
+    "mesh:25": {
+      "guid": "14b9a3a4-90b1-50d2-ab9d-2e8a0c634d9e",
+      "importer": "Mesh"
+    },
+    "mesh:26": {
+      "guid": "35302c3a-e04b-574e-a8c1-ac43b0b7a00a",
+      "importer": "Mesh"
+    },
+    "mesh:27": {
+      "guid": "428de83b-1a92-5e98-85f2-b7abe1d727d6",
+      "importer": "Mesh"
+    },
+    "mesh:28": {
+      "guid": "06ef98ae-17c1-5273-8bfc-5f11075d4c0e",
+      "importer": "Mesh"
+    },
+    "mesh:29": {
+      "guid": "8dc764a0-263d-5fd4-a952-daf625b875fc",
+      "importer": "Mesh"
+    },
+    "mesh:30": {
+      "guid": "6e0d8e76-826a-5a6d-86ac-40d62e922646",
+      "importer": "Mesh"
+    },
+    "mesh:31": {
+      "guid": "59387501-01d5-56d7-957e-330e3747a207",
+      "importer": "Mesh"
+    },
+    "mesh:32": {
+      "guid": "318a8b29-8f10-55fe-800d-866c3925151a",
+      "importer": "Mesh"
+    },
+    "mesh:33": {
+      "guid": "2a978420-0d38-560a-b5be-b0a57d60c52d",
+      "importer": "Mesh"
+    },
+    "mesh:34": {
+      "guid": "b4e098e0-cfe6-5891-9284-512ef40ed862",
+      "importer": "Mesh"
+    },
+    "mesh:35": {
+      "guid": "9c3538a5-728d-5b50-a3d1-caa2a5b5c7e8",
+      "importer": "Mesh"
+    },
+    "mesh:36": {
+      "guid": "2242da0a-629f-545a-9189-a8ed6b881d16",
+      "importer": "Mesh"
+    },
+    "mesh:37": {
+      "guid": "3378cdd4-61bc-5051-babc-6b3ca81dc7b9",
+      "importer": "Mesh"
+    },
+    "mesh:38": {
+      "guid": "769147d2-1d12-5327-a10c-634ddc768b2e",
+      "importer": "Mesh"
+    },
+    "mesh:39": {
+      "guid": "7e95c3bd-8634-53a7-8c5b-6fe2815e7067",
+      "importer": "Mesh"
+    },
+    "mesh:40": {
+      "guid": "dda9e6f7-a37d-5d79-b107-e20dfae13024",
+      "importer": "Mesh"
+    },
+    "mesh:41": {
+      "guid": "7a0bd9df-ba32-5624-a322-9793ebe5b563",
+      "importer": "Mesh"
+    },
+    "mesh:42": {
+      "guid": "010f82e3-6ba0-500c-8771-4628a0d46cd3",
+      "importer": "Mesh"
+    },
+    "mesh:43": {
+      "guid": "075c0151-c61b-56f2-baf8-8b25cab71117",
+      "importer": "Mesh"
+    },
+    "mesh:44": {
+      "guid": "a4edabfd-b78a-57f4-8c13-6cc021812503",
+      "importer": "Mesh"
+    },
+    "mesh:45": {
+      "guid": "2f49934f-a0b5-5b34-b866-42bf6737d388",
+      "importer": "Mesh"
+    },
+    "mesh:46": {
+      "guid": "8494b4d0-18b8-5fb3-b3ad-bb89756f90c5",
+      "importer": "Mesh"
+    },
+    "mesh:47": {
+      "guid": "781f76dc-9aa4-53f1-949b-f0e7c5039558",
+      "importer": "Mesh"
+    },
+    "mesh:48": {
+      "guid": "715bd763-7c1b-5116-8df4-d64a51f8c9ea",
+      "importer": "Mesh"
+    },
+    "mesh:49": {
+      "guid": "d25a7366-a0d4-582c-99c7-b9c05a0b0c39",
+      "importer": "Mesh"
+    },
+    "mesh:50": {
+      "guid": "165deadb-825c-5895-9217-a7b8df561371",
+      "importer": "Mesh"
+    },
+    "mesh:51": {
+      "guid": "a99e78c2-5751-57a3-b5f2-6da7facae738",
+      "importer": "Mesh"
+    },
+    "mesh:52": {
+      "guid": "2323195e-b3fc-5aac-a491-2268a774da9a",
+      "importer": "Mesh"
+    },
+    "mesh:53": {
+      "guid": "8d4843ee-6669-5f56-8c49-5a35912934b7",
+      "importer": "Mesh"
+    },
+    "mesh:54": {
+      "guid": "760d50f6-8e76-5401-ac0d-ce34ff4db0be",
+      "importer": "Mesh"
+    },
+    "mesh:55": {
+      "guid": "5e140b04-1295-5a13-bd97-bf32e24c4a38",
+      "importer": "Mesh"
+    },
+    "mesh:56": {
+      "guid": "b85c1f0c-8af0-5efb-a8a9-64e8f3c5093f",
+      "importer": "Mesh"
+    },
+    "mesh:57": {
+      "guid": "a91b79df-a9d9-54fc-85ba-1ed2a710bcad",
+      "importer": "Mesh"
+    },
+    "mesh:58": {
+      "guid": "87645ac0-f158-53ac-af68-639363c70fdc",
+      "importer": "Mesh"
+    },
+    "mesh:59": {
+      "guid": "b1ba3470-9ff3-5973-853d-80b075cb1a60",
+      "importer": "Mesh"
+    },
+    "mesh:60": {
+      "guid": "c203d17f-150c-57ba-a7cc-9c60f492af70",
+      "importer": "Mesh"
+    },
+    "mesh:61": {
+      "guid": "c2d11483-e732-5eac-bae0-1bb4bf6a104c",
+      "importer": "Mesh"
+    },
+    "mesh:62": {
+      "guid": "b96223be-4573-543d-9677-766e75dbd2d4",
+      "importer": "Mesh"
+    },
+    "mesh:63": {
+      "guid": "9c43fda7-7867-5e39-8973-b675f28363f5",
+      "importer": "Mesh"
+    },
+    "mesh:64": {
+      "guid": "f146296d-a353-5ee8-b580-61c9b077f0e1",
+      "importer": "Mesh"
+    },
+    "mesh:65": {
+      "guid": "6a553d4d-946a-5532-ba4d-b1557702f801",
+      "importer": "Mesh"
+    },
+    "mesh:66": {
+      "guid": "52175c3e-f96a-53e4-b38e-aee6d5e8c20a",
+      "importer": "Mesh"
+    },
+    "mesh:67": {
+      "guid": "f9f7fd06-ea90-5963-9a88-14f7cfed6de7",
+      "importer": "Mesh"
+    },
+    "mesh:68": {
+      "guid": "2dea196b-85b2-58d2-8922-632261f5e4eb",
+      "importer": "Mesh"
+    },
+    "mesh:69": {
+      "guid": "d473bc73-6f2e-569d-bfde-7b721b7431df",
+      "importer": "Mesh"
+    },
+    "mesh:70": {
+      "guid": "27c27f9f-aa71-5c90-afa2-26037dbc9f63",
+      "importer": "Mesh"
+    },
+    "mesh:71": {
+      "guid": "111e366a-ec25-5aae-af77-72adc6bc95f6",
+      "importer": "Mesh"
+    },
+    "mesh:72": {
+      "guid": "23c63deb-8453-5077-8f9e-ae91b6f6923d",
+      "importer": "Mesh"
+    },
+    "mesh:73": {
+      "guid": "128b613a-8829-54c8-881b-7787421d9bc6",
+      "importer": "Mesh"
+    },
+    "mesh:74": {
+      "guid": "c00b37e7-94e6-577a-869a-4b42de051436",
+      "importer": "Mesh"
+    },
+    "mesh:75": {
+      "guid": "0a0f5a99-7a8f-5bbc-bb07-ea6b69b3bb9b",
+      "importer": "Mesh"
+    },
+    "mesh:76": {
+      "guid": "f1bda852-091d-512d-abae-13093f25c9e8",
+      "importer": "Mesh"
+    },
+    "mesh:77": {
+      "guid": "b66fd378-1499-5d8d-aa9e-08100bd70221",
+      "importer": "Mesh"
+    },
+    "mesh:78": {
+      "guid": "7f3729f7-ce0e-50e2-af3b-d44659731f73",
+      "importer": "Mesh"
+    },
+    "mesh:79": {
+      "guid": "02b7c0d1-89ac-5d13-a382-dabb62f2e01d",
+      "importer": "Mesh"
+    },
+    "mesh:80": {
+      "guid": "fca5a05d-bf03-5510-b8a8-03c7e45fcd13",
+      "importer": "Mesh"
+    },
+    "mesh:81": {
+      "guid": "e1c1c04d-fbb8-5547-a2af-dd61b4e8a17d",
+      "importer": "Mesh"
+    },
+    "mesh:82": {
+      "guid": "633d6a25-0ebb-55c6-acfa-074b41503e0c",
+      "importer": "Mesh"
+    },
+    "mesh:83": {
+      "guid": "4adafc1b-162b-5699-906c-96f8b1215d51",
+      "importer": "Mesh"
+    },
+    "mesh:84": {
+      "guid": "42c1d142-2beb-59b0-bc76-5893a5f73c62",
+      "importer": "Mesh"
+    },
+    "mesh:85": {
+      "guid": "a2496d05-3730-5d9a-ac8b-e13854dc7ef7",
+      "importer": "Mesh"
+    },
+    "mesh:86": {
+      "guid": "3718f716-c07d-52a0-b1c0-fb213dfd4600",
+      "importer": "Mesh"
+    },
+    "mesh:87": {
+      "guid": "5cda2d0b-0e28-5ef0-beb5-d75d053ea06b",
+      "importer": "Mesh"
+    },
+    "mesh:88": {
+      "guid": "3636e10c-2906-59a2-8faa-bdff48f1b0f9",
+      "importer": "Mesh"
+    },
+    "mesh:89": {
+      "guid": "9369f68e-5a95-574e-82d8-f5d3f332da0a",
+      "importer": "Mesh"
+    },
+    "mesh:90": {
+      "guid": "42996b89-77ab-560f-878e-df5d667983ec",
+      "importer": "Mesh"
+    },
+    "mesh:91": {
+      "guid": "487ddf0a-632f-500d-ae6e-4724c650b094",
+      "importer": "Mesh"
+    },
+    "mesh:92": {
+      "guid": "4d196ec6-27cf-52c3-962b-91a463a1aeeb",
+      "importer": "Mesh"
+    },
+    "mesh:93": {
+      "guid": "2314ea5b-9fe7-525d-9619-aaddb43048a8",
+      "importer": "Mesh"
+    },
+    "mesh:94": {
+      "guid": "e710ec05-450a-587a-9d1d-47aba4c61c1a",
+      "importer": "Mesh"
+    },
+    "mesh:95": {
+      "guid": "816977e2-89bc-5c72-88c7-cd74c0a9eed9",
+      "importer": "Mesh"
+    },
+    "mesh:96": {
+      "guid": "995e31dd-02d2-5d72-981b-035ae43a12c1",
+      "importer": "Mesh"
+    },
+    "mesh:97": {
+      "guid": "45be84e9-a9a2-5c42-9a80-0233c129df53",
+      "importer": "Mesh"
+    },
+    "mesh:98": {
+      "guid": "5b702e6b-2265-50bf-aa81-b99cb936e320",
+      "importer": "Mesh"
+    },
+    "mesh:99": {
+      "guid": "5e5e3382-d052-5571-9aeb-a1a8b05ae2f8",
+      "importer": "Mesh"
+    },
+    "mesh:100": {
+      "guid": "4e497ee0-0150-506a-a61d-abae6551f7e2",
+      "importer": "Mesh"
+    },
+    "mesh:101": {
+      "guid": "35aa3ebe-ad9b-5467-95ad-c9052a010a0d",
+      "importer": "Mesh"
+    },
+    "mesh:102": {
+      "guid": "b5b2776a-81a1-5f72-87a8-7993570582dc",
+      "importer": "Mesh"
+    },
+    "mesh:103": {
+      "guid": "15be1531-2e0e-52a2-a942-779298f26073",
+      "importer": "Mesh"
+    },
+    "mesh:104": {
+      "guid": "07c5726c-e0d6-56ab-9180-af50fee63167",
+      "importer": "Mesh"
+    },
+    "mesh:105": {
+      "guid": "379a9ef4-c7eb-51e7-b4a0-412bed4d53bf",
+      "importer": "Mesh"
+    },
+    "mesh:106": {
+      "guid": "b3ad0917-9fa4-5d10-91ce-2ef37e40efd6",
+      "importer": "Mesh"
+    },
+    "mesh:107": {
+      "guid": "eab1bb47-244f-5373-bb58-406b83a0e33d",
+      "importer": "Mesh"
+    },
+    "mesh:108": {
+      "guid": "5bd46a48-d0e1-50e8-a0e5-2001b6078bbe",
+      "importer": "Mesh"
+    },
+    "mesh:109": {
+      "guid": "b4cd93f2-ca17-587e-b7b5-2dffa122b419",
+      "importer": "Mesh"
+    },
+    "mesh:110": {
+      "guid": "4f391d50-a653-5e52-a20e-ce50abea44f1",
+      "importer": "Mesh"
+    },
+    "mesh:111": {
+      "guid": "ce867325-c643-5b11-a65a-9150bfcf7298",
+      "importer": "Mesh"
+    },
+    "mesh:112": {
+      "guid": "1a94e300-755c-574d-aaad-6b195fbf9aac",
+      "importer": "Mesh"
+    },
+    "mesh:113": {
+      "guid": "a0323850-3da9-58fe-8cb5-cd67c8363440",
+      "importer": "Mesh"
+    },
+    "mesh:114": {
+      "guid": "8a03989a-b2f3-5ba0-82d6-e86aeb2a52a9",
+      "importer": "Mesh"
+    },
+    "mesh:115": {
+      "guid": "cb58cbb6-cb5c-5b0b-90f8-8809a86d0b61",
+      "importer": "Mesh"
+    },
+    "mesh:116": {
+      "guid": "be2f3729-22bf-5c28-8531-d7865c340cfd",
+      "importer": "Mesh"
+    },
+    "mesh:117": {
+      "guid": "8c8bd531-0784-511f-af94-b6cd550509a0",
+      "importer": "Mesh"
+    },
+    "mesh:118": {
+      "guid": "aae4342a-438e-5a9c-ae1d-700553fa4504",
+      "importer": "Mesh"
+    },
+    "mesh:119": {
+      "guid": "8110099c-8de9-521e-a61a-69a18293c114",
+      "importer": "Mesh"
+    },
+    "mesh:120": {
+      "guid": "2e1e5b5f-5d26-5ebb-92bb-cff2dfaf6c19",
+      "importer": "Mesh"
+    },
+    "mesh:121": {
+      "guid": "dc39f844-dc2b-5f76-b47d-6170195abe3e",
+      "importer": "Mesh"
+    },
+    "mesh:122": {
+      "guid": "0845ede7-1886-549e-97c7-537852ffff1d",
+      "importer": "Mesh"
+    },
+    "mesh:123": {
+      "guid": "29b98ae5-fb8f-53ce-872e-288638f4277d",
+      "importer": "Mesh"
+    },
+    "mesh:124": {
+      "guid": "25e8f79c-22cd-5c25-a6fb-eeb3505a6369",
+      "importer": "Mesh"
+    },
+    "mesh:125": {
+      "guid": "f502fa27-d5a1-554f-9401-584c05c7220a",
+      "importer": "Mesh"
+    },
+    "mesh:126": {
+      "guid": "0a09291e-5a32-5873-820b-dc01adfa8a1d",
+      "importer": "Mesh"
+    },
+    "mesh:127": {
+      "guid": "66ba146b-b024-562f-a522-2edf3d274b03",
+      "importer": "Mesh"
+    },
+    "mesh:128": {
+      "guid": "a3e6ee21-37df-5d90-8e3f-ef8cbe1ff7b2",
+      "importer": "Mesh"
+    },
+    "mesh:129": {
+      "guid": "fabc392b-649e-55f1-9d32-2aaeaba5e88a",
+      "importer": "Mesh"
+    },
+    "mesh:130": {
+      "guid": "f9235ac4-98b9-5a4e-8bef-79ece68950fa",
+      "importer": "Mesh"
+    },
+    "mesh:131": {
+      "guid": "31a0e7d8-7f19-5e1c-a91f-1ebd3d875620",
+      "importer": "Mesh"
+    },
+    "mesh:132": {
+      "guid": "0670dbf7-57a5-5456-be5a-3fc84d96e665",
+      "importer": "Mesh"
+    },
+    "mesh:133": {
+      "guid": "390ddf88-f11c-5b3d-a2d2-5ffb4f1481d0",
+      "importer": "Mesh"
+    },
+    "mesh:134": {
+      "guid": "bc61b5da-cc2a-5b2b-87b7-1e0ec2b316a1",
+      "importer": "Mesh"
+    }
+  }
+}
