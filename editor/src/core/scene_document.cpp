@@ -209,6 +209,9 @@ Entity SceneDocument::CreateEntity(const std::string& name, SceneEntityKind kind
     const Entity entity = world_.CreateEntity(EntityName{name}, Transform{}, IdComponent{guid});
     if (kind == SceneEntityKind::Camera) {
         world_.AddComponent(entity, Camera{});
+    } else if (kind == SceneEntityKind::CineCamera) {
+        world_.AddComponent(entity, Camera{});
+        world_.AddComponent(entity, CineCamera{});
     } else if (kind == SceneEntityKind::Model) {
         ModelRenderer renderer;
         SetModelPath(renderer, model_asset_path);
@@ -318,6 +321,38 @@ bool SceneDocument::SetRotation(Entity entity, const Quaternion& rotation, bool 
         pending_rotation_before_.reset();
         pending_rotation_entity_ = {};
     }
+    return true;
+}
+
+bool SceneDocument::SetCameraField(Entity entity, const std::string& field_name, const reflect::Any& value) {
+    if (!world_.IsAlive(entity) || !world_.HasComponent<Camera>(entity)) return false;
+    const auto* id = world_.GetComponent<IdComponent>(entity);
+    auto* camera = world_.GetComponent<Camera>(entity);
+    if (!id || !camera) return false;
+    const auto& type = reflect::Reflect<Camera>();
+    const auto field = std::find_if(type.fields.begin(), type.fields.end(), [&](const reflect::FieldInfo& candidate) {
+        return field_name == candidate.name && candidate.HasFlag(reflect::Field_EditAnywhere);
+    });
+    if (field == type.fields.end()) return false;
+    reflect::Any old_value = field->Get(camera);
+    if (!field->Set(camera, value)) return false;
+    CommitFieldEdit(context_, commands_, id->guid, GetComponentId<Camera>(), *field, camera, old_value, true);
+    return true;
+}
+
+bool SceneDocument::SetCineCameraField(Entity entity, const std::string& field_name, const reflect::Any& value) {
+    if (!world_.IsAlive(entity) || !world_.HasComponent<CineCamera>(entity)) return false;
+    const auto* id = world_.GetComponent<IdComponent>(entity);
+    auto* camera = world_.GetComponent<CineCamera>(entity);
+    if (!id || !camera) return false;
+    const auto& type = reflect::Reflect<CineCamera>();
+    const auto field = std::find_if(type.fields.begin(), type.fields.end(), [&](const reflect::FieldInfo& candidate) {
+        return field_name == candidate.name && candidate.HasFlag(reflect::Field_EditAnywhere);
+    });
+    if (field == type.fields.end()) return false;
+    reflect::Any old_value = field->Get(camera);
+    if (!field->Set(camera, value)) return false;
+    CommitFieldEdit(context_, commands_, id->guid, GetComponentId<CineCamera>(), *field, camera, old_value, true);
     return true;
 }
 
