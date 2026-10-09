@@ -1,0 +1,26 @@
+{
+  "game": "AETHER-01: First Contact",
+  "schema": "glTF 2.0",
+  "assets": [
+    {
+      "id": "kael-recon",
+      "file": "Content/Characters/Kael/Kael_Recon.gltf",
+      "role": "player character static production mesh",
+      "height_m": 2.0,
+      "parts": 53
+    },
+    {
+      "id": "aegis-carbine",
+      "file": "Content/Weapons/AEGIS/AEGIS_PrecisionCarbine.gltf",
+      "role": "player weapon",
+      "parts": 24
+    },
+    {
+      "id": "last-light-valley",
+      "file": "Content/Environments/LastLight/LastLight_Valley.gltf",
+      "role": "96m playable terrain map",
+      "parts": 135,
+      "triangles": "~11k terrain + modular set dressing"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "$type": "AssetMeta",
+  "$v": 1,
+  "guid": "0cc09d52-9e58-55c3-aa84-763090622500",
+  "importer": "Scene",
+  "importer_version": 1,
+  "labels": [
+    "AETHER-01",
+    "LastLight"
+  ],
+  "settings": {},
+  "source_hash": ""
+}
