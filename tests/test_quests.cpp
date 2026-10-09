@@ -110,6 +110,8 @@ AETHER_TEST(Quests_JsonRoundTripAndErrors) {
     CHECK(fails("nonsense", "quest.parse"));
     CHECK(fails("{}", "quest.no_name"));
     CHECK(fails(R"({"name":"x","objectives":[{"id":"a","kind":"kill"}]})", "quest.bad_kind"));
+    CHECK(fails(R"({"name":"x","objectives":[{"id":"a","optional":0}]})", "quest.parse"));
+    CHECK(fails(R"({"name":"x","rewards":{"items":[{"item":"Gold","count":"many"}]}})", "quest.parse"));
     CHECK(fails(R"({"name":"x","objectives":[{"id":"a","required":0}]})", "quest.bad_required"));
     CHECK(fails(R"({"name":"x","objectives":[{"id":"a"},{"id":"a"}]})", "quest.duplicate_objective"));
     CHECK(fails(R"({"name":"x","objectives":[{"required":1}]})", "quest.duplicate_objective")); // an objective needs an id
