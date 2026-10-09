@@ -7,10 +7,56 @@
 #include "core/commands.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <memory>
+#include <unordered_set>
 
 namespace aether::editor {
+namespace {
+
+std::string HumanizeIdentifier(std::string value) {
+    std::string result;
+    result.reserve(value.size() + 8);
+    bool capitalize = true;
+    char previous = '\0';
+    for (char character : value) {
+        if (character == '_' || character == '-') {
+            if (!result.empty() && result.back() != ' ') result.push_back(' ');
+            capitalize = true;
+            previous = character;
+            continue;
+        }
+        const bool camel_boundary = !result.empty() && previous != '\0' &&
+            std::islower(static_cast<unsigned char>(previous)) &&
+            std::isupper(static_cast<unsigned char>(character));
+        if (camel_boundary && result.back() != ' ') result.push_back(' ');
+        result.push_back(capitalize ? static_cast<char>(std::toupper(static_cast<unsigned char>(character))) : character);
+        capitalize = false;
+        previous = character;
+    }
+    while (!result.empty() && result.back() == ' ') result.pop_back();
+    return result;
+}
+
+std::string SuggestedEntityName(const World& world, Entity entity) {
+    if (const auto* tags = world.GetComponent<Tags>(entity)) {
+        for (auto item = tags->names.rbegin(); item != tags->names.rend(); ++item) {
+            if (item->empty() || *item == "Greybox") continue;
+            return HumanizeIdentifier(*item);
+        }
+    }
+    if (const auto* renderer = world.GetComponent<ModelRenderer>(entity)) {
+        std::string stem = std::filesystem::path(renderer->asset_path).stem().string();
+        constexpr char kGreyboxPrefix[] = "aether_greybox_";
+        if (stem.starts_with(kGreyboxPrefix)) stem.erase(0, sizeof(kGreyboxPrefix) - 1);
+        if (!stem.empty()) return HumanizeIdentifier(stem);
+    }
+    if (world.HasComponent<Camera>(entity)) return "Camera";
+    return "Entity " + std::to_string(entity.index);
+}
+
+} // namespace
 
 SceneDocument::SceneDocument() : context_(world_, guids_) {}
 
@@ -50,9 +96,12 @@ bool SceneDocument::Load(const std::filesystem::path& file, std::string* error) 
     }
     const std::string path = file.string();
     World candidate;
-    const bool loaded = file.extension() == ".ascene" ? LoadSceneJson(candidate, path) : LoadScene(candidate, path);
+    const SceneLoadOptions editor_load_options{.reject_unknown_components = true};
+    const bool loaded = file.extension() == ".ascene"
+        ? LoadSceneJson(candidate, path, editor_load_options)
+        : LoadScene(candidate, path, editor_load_options);
     if (!loaded) {
-        if (error) *error = "The scene file couldn't be loaded.";
+        if (error) *error = "The scene couldn't be loaded safely. Check the Output panel for the unsupported component.";
         return false;
     }
 
@@ -66,9 +115,23 @@ bool SceneDocument::Load(const std::filesystem::path& file, std::string* error) 
             entities.insert(entities.end(), array, array + count);
         }
     });
+    std::sort(entities.begin(), entities.end(), [](Entity a, Entity b) { return a.index < b.index; });
+    std::unordered_set<std::string> used_names;
     for (Entity entity : entities) {
-        if (!candidate.HasComponent<EntityName>(entity))
-            candidate.AddComponent(entity, EntityName{"Entity " + std::to_string(entity.index)});
+        if (const auto* name = candidate.GetComponent<EntityName>(entity); name && !name->value.empty())
+            used_names.insert(name->value);
+    }
+    for (Entity entity : entities) {
+        auto* existing_name = candidate.GetComponent<EntityName>(entity);
+        const std::string legacy_placeholder = "Entity " + std::to_string(entity.index);
+        if (existing_name && !existing_name->value.empty() && existing_name->value != legacy_placeholder) continue;
+        const std::string base = SuggestedEntityName(candidate, entity);
+        std::string unique = base;
+        for (u32 suffix = 2; used_names.contains(unique); ++suffix)
+            unique = base + " " + std::to_string(suffix);
+        if (existing_name) existing_name->value = unique;
+        else candidate.AddComponent(entity, EntityName{unique});
+        used_names.insert(std::move(unique));
     }
     world_ = std::move(candidate);
     guids_ = std::move(candidate_guids);

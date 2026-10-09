@@ -7,9 +7,9 @@
 # macOS (Apple Silicon): the engine, scripting, physics, the Vulkan backend
 # on MoltenVK and the editor shell; runs the unit and functional tests.
 #
-# Windows: MSVC builds everything, the D3D12 editor included, runs the
-# tests, and packages the editor (aether_editor.exe, its DLLs and the
-# assets) as a downloadable artifact. Pushing a tag v* - or running the
+# Windows: MSVC builds the engine, D3D12 editor, and Qt editor spike, runs
+# their tests, and packages the production editor (aether_editor.exe, its
+# DLLs and the assets) as a downloadable artifact. Pushing a tag v* - or running the
 # workflow by hand with a release_tag - also publishes the package as a
 # GitHub release.
 name: CI
@@ -222,6 +222,15 @@ jobs:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
+      - name: Install Qt 6.8.3
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          modules: qtbase
+          cache: true
       - name: Cache fetched dependencies
         uses: actions/cache@v4
         with:
@@ -231,7 +240,7 @@ jobs:
       - name: Configure
         # Vulkan is off: hosted runners have no Vulkan loader to link
         # against. The D3D12 editor and the rest build as usual.
-        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DAETHER_BUILD_VULKAN=OFF
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DAETHER_BUILD_VULKAN=OFF -DAETHER_BUILD_QT_EDITOR=ON
       - name: Build
         run: cmake --build build --config Release --parallel
       - name: Unit tests
@@ -240,6 +249,8 @@ jobs:
         env:
           AETHER01_INPUT_TRACE: ${{ github.workspace }}/build/aether01-input-trace.json
         run: .\build\tests\Release\aether_tests.exe
+      - name: Qt editor self-test
+        run: .\build\editor\qt\Release\aether_editor_qt.exe --self-test
       - name: Functional tests
         run: .\build\tools\functional\Release\aether_functional.exe --quiet --junit functional-results.xml
       - name: Cook and launch the AETHER-01 proof project

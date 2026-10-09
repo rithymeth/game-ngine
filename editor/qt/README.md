@@ -13,13 +13,23 @@ degrees while scene data keeps its quaternion representation. Rotation
 automation is still pending. New projects start with an in-memory sample world that can be saved as
 the startup scene.
 
+The Qt host registers runtime scene schemas before loading a project, including
+movement, physics, audio, gameplay attributes, and sequence components. It
+starts the enabled project modules before reading the startup scene and refuses
+to open a project if a required module is unavailable. Scene documents reject
+unknown component schemas, so the editor cannot save a partial scene after
+silently dropping plugin data. The self-test load/resaves the registered
+runtime components. Legacy scenes without `EntityName` receive readable,
+unique editor labels from their tags or model names instead of generic indexes.
+
 The viewport now draws a depth-tested perspective 3D representation of the active
 `SceneDocument`, including a ground grid, imported glTF/GLB mesh instances,
 base-color materials and textures, selected-entity axis handles,
 hierarchy-aware world transforms, and click-to-select. Missing or invalid models
 retain shaded editor proxies so they remain editable. Right-drag orbits the
 editor camera, middle-drag pans, and the wheel dollies. Focus and Fit All frame
-the selection or scene. It does not yet provide skeletal deformation, PBR
+the selected model or scene from imported mesh bounds, while off-map staged
+models stay selectable without stretching the map view. It does not yet provide skeletal deformation, PBR
 lighting, or X/Z rotation and scale tools. Move drags entities
 across the ground plane, optionally snapping to whole world units. Rotate Y
 shows a local-axis ring and applies snapped or continuous rotation through the

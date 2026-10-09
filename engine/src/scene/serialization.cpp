@@ -204,15 +204,24 @@ bool SaveScene(const World& world, const std::string& path) {
 }
 
 bool LoadScene(World& world, const std::string& path) {
+    return LoadScene(world, path, SceneLoadOptions{});
+}
+
+bool LoadScene(World& world, const std::string& path, const SceneLoadOptions& options) {
     std::vector<u8> buffer;
     if (!fs::ReadFileBytes(path, buffer)) {
         AETHER_LOG_ERROR("Scene", "Failed to read scene file: %s", path.c_str());
         return false;
     }
-    return LoadSceneFromMemory(world, buffer, path);
+    return LoadSceneFromMemory(world, buffer, path, options);
 }
 
 bool LoadSceneFromMemory(World& world, std::span<const u8> buffer, const std::string& path) {
+    return LoadSceneFromMemory(world, buffer, path, SceneLoadOptions{});
+}
+
+bool LoadSceneFromMemory(World& world, std::span<const u8> buffer, const std::string& path,
+                         const SceneLoadOptions& options) {
     RegisterSceneComponents();
     Reader reader(buffer);
     char magic[4];
@@ -267,6 +276,11 @@ bool LoadSceneFromMemory(World& world, std::span<const u8> buffer, const std::st
 
             ComponentId resolved_id = FindComponentIdByName(name);
             if (resolved_id == kInvalidComponentId) {
+                if (options.reject_unknown_components) {
+                    AETHER_LOG_ERROR("Scene", "Cannot safely load unknown component '%s' from %s", name.c_str(),
+                                     path.c_str());
+                    return false;
+                }
                 AETHER_LOG_WARN("Scene", "Skipping unknown component '%s' while loading %s", name.c_str(),
                                 path.c_str());
                 continue;
@@ -342,23 +356,33 @@ bool SaveSceneJson(const World& world, const std::string& path) {
 }
 
 bool LoadSceneJson(World& world, const std::string& path) {
+    return LoadSceneJson(world, path, SceneLoadOptions{});
+}
+
+bool LoadSceneJson(World& world, const std::string& path, const SceneLoadOptions& options) {
     std::vector<u8> bytes;
     if (!fs::ReadFileBytes(path, bytes)) {
         AETHER_LOG_ERROR("Scene", "Failed to read scene file: %s", path.c_str());
         return false;
     }
-    return LoadSceneJsonFromMemory(world, bytes, path);
+    return LoadSceneJsonFromMemory(world, bytes, path, options);
 }
 
 namespace {
-bool LoadSceneJsonFromMemoryImpl(World& world, std::span<const u8> bytes, const std::string& path);
+bool LoadSceneJsonFromMemoryImpl(World& world, std::span<const u8> bytes, const std::string& path,
+                                 const SceneLoadOptions& options);
 }
 
 // A scene file with a value of the wrong type (a number where a string belongs) makes nlohmann throw; a
 // loader answers with false instead of ending the process (found by the scene fuzzer, Phase 47 step 1).
 bool LoadSceneJsonFromMemory(World& world, std::span<const u8> bytes, const std::string& path) {
+    return LoadSceneJsonFromMemory(world, bytes, path, SceneLoadOptions{});
+}
+
+bool LoadSceneJsonFromMemory(World& world, std::span<const u8> bytes, const std::string& path,
+                             const SceneLoadOptions& options) {
     try {
-        return LoadSceneJsonFromMemoryImpl(world, bytes, path);
+        return LoadSceneJsonFromMemoryImpl(world, bytes, path, options);
     } catch (const nlohmann::json::exception& e) {
         AETHER_LOG_ERROR("Scene", "Malformed JSON scene %s: %s", path.c_str(), e.what());
         return false;
@@ -366,7 +390,8 @@ bool LoadSceneJsonFromMemory(World& world, std::span<const u8> bytes, const std:
 }
 
 namespace {
-bool LoadSceneJsonFromMemoryImpl(World& world, std::span<const u8> bytes, const std::string& path) {
+bool LoadSceneJsonFromMemoryImpl(World& world, std::span<const u8> bytes, const std::string& path,
+                                 const SceneLoadOptions& options) {
     using reflect::Json;
     RegisterSceneComponents();
     Json scene = Json::parse(bytes.begin(), bytes.end(), nullptr, /*allow_exceptions=*/false);
@@ -405,6 +430,11 @@ bool LoadSceneJsonFromMemoryImpl(World& world, std::span<const u8> bytes, const 
         for (auto it = components->begin(); it != components->end(); ++it) {
             ComponentId id = FindComponentIdByName(it.key());
             if (id == kInvalidComponentId || GetComponentInfo(id).reflected == nullptr) {
+                if (options.reject_unknown_components) {
+                    AETHER_LOG_ERROR("Scene", "Cannot safely load unknown or unreflected component '%s' from %s",
+                                     it.key().c_str(), path.c_str());
+                    return false;
+                }
                 AETHER_LOG_WARN("Scene", "Skipping unknown or unreflected component '%s' while loading %s",
                                 it.key().c_str(), path.c_str());
                 continue;

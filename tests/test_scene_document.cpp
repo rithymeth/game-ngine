@@ -1,8 +1,10 @@
 #include "core/scene_document.h"
 #include "aether/scene/gameplay.h"
+#include "aether/scene/serialization.h"
 #include "test_framework.h"
 
 #include <filesystem>
+#include <fstream>
 #include <string>
 
 using namespace aether;
@@ -138,4 +140,48 @@ AETHER_TEST(SceneDocument_MapEntitiesDuplicateWithComponentsAndUndo) {
     AETHER_CHECK(document.ParentOf(model) == group);
     AETHER_CHECK(document.ReparentEntity(model));
     AETHER_CHECK(document.ParentOf(model).IsNull());
+}
+
+AETHER_TEST(SceneDocument_LegacyScenesGetReadableUniqueEditorNames) {
+    World legacy;
+    legacy.CreateEntity(Transform{}, Tags{{"Environment", "Greybox", "CryoPod"}});
+    legacy.CreateEntity(Transform{}, Tags{{"Environment", "Greybox", "CryoPod"}});
+    legacy.CreateEntity(Transform{}, Tags{{"MainCamera"}}, Camera{});
+    ModelRenderer renderer;
+    SetModelPath(renderer, "models/aether_greybox_castle_gate.glb");
+    legacy.CreateEntity(Transform{}, renderer);
+
+    const auto path = std::filesystem::temp_directory_path() / "aether_qt_legacy_names.ascene";
+    std::error_code error;
+    std::filesystem::remove(path, error);
+    AETHER_CHECK(SaveSceneJson(legacy, path.string()));
+
+    SceneDocument document;
+    AETHER_CHECK(document.Load(path));
+    std::vector<std::string> names;
+    for (Entity entity : document.Entities()) names.push_back(document.Name(entity));
+    AETHER_CHECK(names == (std::vector<std::string>{"Cryo Pod", "Cryo Pod 2", "Main Camera", "Castle Gate"}));
+    AETHER_CHECK(document.Rename(document.Entities().front(), "Player Pod"));
+    AETHER_CHECK(document.Name(document.Entities().front()) == "Player Pod");
+    std::filesystem::remove(path, error);
+}
+
+AETHER_TEST(SceneDocument_RejectsUnknownComponentsWithoutReplacingCurrentScene) {
+    const auto path = std::filesystem::temp_directory_path() / "aether_scene_unknown_component.ascene";
+    {
+        std::ofstream file(path, std::ios::binary);
+        file << R"({"$type":"Scene","$version":1,"entities":[{"components":{"MissingPluginComponent":{"value":1}}}]})";
+        AETHER_CHECK(file.good());
+    }
+
+    SceneDocument document;
+    document.NewScene();
+    std::string error;
+    AETHER_CHECK(!document.Load(path, &error));
+    AETHER_CHECK(!error.empty());
+    AETHER_CHECK(document.Entities().size() == 5);
+    AETHER_CHECK(document.Name(document.Entities().front()) == "Camera");
+
+    std::error_code filesystem_error;
+    std::filesystem::remove(path, filesystem_error);
 }
