@@ -1,11 +1,19 @@
 #include "aether/gfx/rhi/device.h"
 #include "aether/assets/gltf_loader.h"
 #include "aether/assets/image.h"
+#include "aether/audio/audio_system.h"
 #include "aether/core/log.h"
+#include "aether/ecs/archetype.h"
+#include "aether/gameplay/attribute_system.h"
+#include "aether/physics/character.h"
+#include "aether/physics/components.h"
+#include "aether/plugin/plugin.h"
 #include "aether/project/project.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
+#include "aether/scene/serialization.h"
 #include "aether/sequencer/player.h"
+#include "aether/sequencer/sequence_system.h"
 #include "core/scene_document.h"
 #include "sequencer/sequence_document.h"
 
@@ -78,6 +86,47 @@ namespace rhi = aether::gfx::rhi;
 
 namespace {
 
+void RegisterEditorComponentSchemas() {
+    aether::RegisterAudioComponents();
+    aether::gas::RegisterGameplayComponents();
+    aether::RegisterSequenceComponents();
+    aether::RegisterPhysicsComponentSerializers();
+    (void)aether::GetComponentId<aether::RigidBody>();
+    (void)aether::GetComponentId<aether::BoxCollider>();
+    (void)aether::GetComponentId<aether::SphereCollider>();
+    (void)aether::GetComponentId<aether::CapsuleCollider>();
+    (void)aether::GetComponentId<aether::ConvexCollider>();
+    (void)aether::GetComponentId<aether::MeshCollider>();
+    (void)aether::GetComponentId<aether::CharacterMovement>();
+}
+
+bool ValidatePluginModules(const aether::plugin::PluginManager& manager, std::string* error) {
+    for (const std::string& module : manager.ModuleOrder(true, true)) {
+        if (!aether::plugin::ModuleRegistry::Get().Has(module)) {
+            if (error) *error = "The project requires plugin module '" + module +
+                                "', but it isn't built into this editor.";
+            return false;
+        }
+    }
+    return true;
+}
+
+bool StartDefaultEnginePlugins(aether::plugin::PluginManager& manager, std::string* error) {
+    const auto plugins_directory = aether::plugin::PluginManager::EnginePluginsDir();
+    if (plugins_directory.empty()) return true;
+    manager.AddSearchPath(plugins_directory, aether::plugin::PluginSource::Engine);
+    (void)manager.Discover();
+    if (!manager.Resolve({}, error)) return false;
+    if (!ValidatePluginModules(manager, error)) return false;
+    const auto warnings = manager.StartModules(true, true);
+    if (!warnings.empty()) {
+        manager.ShutdownModules();
+        if (error) *error = warnings.front();
+        return false;
+    }
+    return true;
+}
+
 constexpr auto kStyle = R"(
 * { color: #d7e0ea; font-family: "Segoe UI"; font-size: 9pt; }
 QMainWindow, QWidget { background: #151a21; }
@@ -103,6 +152,8 @@ QLabel#section { color: #61d5b0; font-size: 8pt; font-weight: 700; letter-spacin
 
 class RhiViewport final : public QWidget {
 public:
+    static constexpr float kStagedModelBelowWorldY = -10.0f;
+
     explicit RhiViewport(aether::editor::SceneDocument& document) : document_(document) {
         setAttribute(Qt::WA_NativeWindow);
         setAttribute(Qt::WA_PaintOnScreen);
@@ -258,34 +309,117 @@ public:
     void FocusSelection() {
         const aether::Entity entity = document_.Guids().Find(document_.GetWorld(), selected_guid_);
         if (!entity.IsNull()) {
-            camera_target_ = aether::WorldPosition(document_.GetWorld(), document_.Guids(), entity);
-            camera_distance_ = 7.0f;
+            Bounds bounds;
+            if (EntityBounds(entity, bounds)) {
+                camera_target_ = (bounds.minimum + bounds.maximum) * 0.5f;
+                camera_distance_ = DistanceForExtent(bounds.maximum - bounds.minimum);
+            } else {
+                camera_target_ = aether::WorldPosition(document_.GetWorld(), document_.Guids(), entity);
+                camera_distance_ = 7.0f;
+            }
         }
     }
 
     void FitAll() {
-        aether::Vec3 minimum{}, maximum{};
-        bool found = false;
+        Bounds bounds;
+        bool waiting_for_models = false;
         for (aether::Entity entity : document_.Entities()) {
-            const auto* transform = document_.GetWorld().GetComponent<aether::Transform>(entity);
-            if (!transform) continue;
+            const auto* model = document_.GetWorld().GetComponent<aether::ModelRenderer>(entity);
             const aether::Vec3 position = aether::WorldPosition(document_.GetWorld(), document_.Guids(), entity);
-            if (!found) {
-                minimum = maximum = position;
-                found = true;
-            } else {
-                minimum.x = std::min(minimum.x, position.x); maximum.x = std::max(maximum.x, position.x);
-                minimum.y = std::min(minimum.y, position.y); maximum.y = std::max(maximum.y, position.y);
-                minimum.z = std::min(minimum.z, position.z); maximum.z = std::max(maximum.z, position.z);
-            }
+            // Negative-height model instances are used by gameplay as hidden
+            // staging points (for example, dormant enemy tells). They remain
+            // selectable and focusable, but shouldn't pull the map framing down.
+            if (model && position.y < kStagedModelBelowWorldY) continue;
+            if (model && !device_) waiting_for_models = true;
+            Bounds entity_bounds;
+            if (EntityBounds(entity, entity_bounds)) Include(bounds, entity_bounds);
         }
-        if (!found) { camera_target_ = {}; camera_distance_ = 18.0f; return; }
-        camera_target_ = (minimum + maximum) * 0.5f;
-        const aether::Vec3 extent = maximum - minimum;
-        camera_distance_ = std::clamp(std::max({extent.x, extent.y, extent.z, 2.0f}) * 1.8f, 6.0f, 250.0f);
+        fit_pending_ = waiting_for_models;
+        if (!bounds.valid) { camera_target_ = {}; camera_distance_ = 18.0f; return; }
+        camera_target_ = (bounds.minimum + bounds.maximum) * 0.5f;
+        camera_distance_ = DistanceForExtent(bounds.maximum - bounds.minimum);
+    }
+
+    static float DistanceForExtent(const aether::Vec3& extent, float vertical_fov = 55.0f,
+                                   float aspect = 1.5f) {
+        const float horizontal_fov = 2.0f * std::atan(std::tan(aether::Radians(vertical_fov) * 0.5f) *
+                                                       std::max(aspect, 0.1f));
+        const float half_width = std::max(extent.x, extent.z) * 0.5f;
+        const float half_height = extent.y * 0.5f;
+        const float horizontal_distance = half_width / std::max(std::tan(horizontal_fov * 0.5f), 0.01f);
+        const float vertical_distance = half_height / std::max(std::tan(aether::Radians(vertical_fov) * 0.5f), 0.01f);
+        return std::clamp(std::max({horizontal_distance, vertical_distance, 1.5f}) * 1.25f, 1.5f, 250.0f);
     }
 
 private:
+
+    struct Bounds {
+        aether::Vec3 minimum{};
+        aether::Vec3 maximum{};
+        bool valid = false;
+    };
+
+    static void Include(Bounds& target, const aether::Vec3& point) {
+        if (!target.valid) {
+            target.minimum = target.maximum = point;
+            target.valid = true;
+            return;
+        }
+        target.minimum.x = std::min(target.minimum.x, point.x);
+        target.minimum.y = std::min(target.minimum.y, point.y);
+        target.minimum.z = std::min(target.minimum.z, point.z);
+        target.maximum.x = std::max(target.maximum.x, point.x);
+        target.maximum.y = std::max(target.maximum.y, point.y);
+        target.maximum.z = std::max(target.maximum.z, point.z);
+    }
+
+    static void Include(Bounds& target, const Bounds& source) {
+        if (!source.valid) return;
+        Include(target, source.minimum);
+        Include(target, source.maximum);
+    }
+
+    static void IncludeTransformed(Bounds& bounds, const Bounds& source, const aether::Mat4& transform) {
+        if (!source.valid) return;
+        for (int corner = 0; corner < 8; ++corner) {
+            const aether::Vec4 point(
+                (corner & 1) ? source.maximum.x : source.minimum.x,
+                (corner & 2) ? source.maximum.y : source.minimum.y,
+                (corner & 4) ? source.maximum.z : source.minimum.z, 1.0f);
+            const aether::Vec4 world = transform * point;
+            Include(bounds, {world.x, world.y, world.z});
+        }
+    }
+
+    bool EntityBounds(aether::Entity entity, Bounds& bounds) {
+        const auto* model_renderer = document_.GetWorld().GetComponent<aether::ModelRenderer>(entity);
+        if (model_renderer) {
+            if (ModelAsset* model = FindModel(*model_renderer)) {
+                const aether::Mat4 entity_transform =
+                    aether::ComputeWorldTransform(document_.GetWorld(), document_.Guids(), entity);
+                Bounds model_bounds;
+                for (const auto& instance : model->scene.node_instances) {
+                    if (instance.mesh_index >= model->mesh_bounds.size()) continue;
+                    IncludeTransformed(model_bounds, model->mesh_bounds[instance.mesh_index],
+                                       entity_transform * instance.world_transform);
+                }
+                if (model_bounds.valid) {
+                    bounds = model_bounds;
+                    return true;
+                }
+            }
+        }
+
+        if (!document_.GetWorld().GetComponent<aether::Transform>(entity)) return false;
+        aether::Vec3 marker_scale{0.42f, 0.42f, 0.42f};
+        if (document_.GetWorld().HasComponent<aether::Camera>(entity)) marker_scale = {0.7f, 0.7f, 0.7f};
+        if (document_.Name(entity) == "Ground") marker_scale = {3.5f, 0.12f, 3.5f};
+        const Bounds marker{{-marker_scale.x, -marker_scale.y, -marker_scale.z},
+                            {marker_scale.x, marker_scale.y, marker_scale.z}, true};
+        IncludeTransformed(bounds, marker,
+            aether::ComputeWorldTransform(document_.GetWorld(), document_.Guids(), entity));
+        return bounds.valid;
+    }
 
     struct ScenePushConstants {
         aether::Mat4 mvp;
@@ -319,6 +453,7 @@ private:
     struct ModelAsset {
         aether::assets::GltfScene scene;
         std::vector<std::vector<ModelPrimitive>> meshes;
+        std::vector<Bounds> mesh_bounds;
         bool valid = false;
     };
 
@@ -364,9 +499,13 @@ private:
                                                        material_textures[index]);
 
         out.meshes.resize(out.scene.meshes.size());
+        out.mesh_bounds.resize(out.scene.meshes.size());
         for (std::size_t mesh_index = 0; mesh_index < out.scene.meshes.size(); ++mesh_index) {
             for (const auto& source : out.scene.meshes[mesh_index].primitives) {
                 if (source.vertices.empty() || source.indices.empty()) continue;
+                for (const auto& vertex : source.vertices)
+                    Include(out.mesh_bounds[mesh_index],
+                            {vertex.position[0], vertex.position[1], vertex.position[2]});
                 std::vector<ModelVertex> vertices;
                 vertices.reserve(source.vertices.size());
                 for (const auto& vertex : source.vertices)
@@ -412,6 +551,10 @@ private:
         for (aether::Entity entity : document_.Entities())
             if (const auto* renderer = document_.GetWorld().GetComponent<aether::ModelRenderer>(entity))
                 FindModel(*renderer);
+        if (fit_pending_) {
+            fit_pending_ = false;
+            FitAll();
+        }
     }
 
     aether::EntityGuid PickEntity(const QPointF& point) const {
@@ -739,6 +882,7 @@ float4 PSMain(VertexOut input) : SV_TARGET {
     std::function<void(const aether::EntityGuid&)> entity_selected_;
     std::function<void(const aether::EntityGuid&)> transform_changed_;
     bool move_tool_ = false;
+    bool fit_pending_ = false;
     bool rotate_y_tool_ = false;
     bool grid_snap_ = false;
     bool dragging_ = false;
@@ -958,6 +1102,10 @@ QWidget* MakeContentBrowser(QLabel*& breadcrumb, QFileSystemModel*& asset_model,
 class EditorWindow final : public QMainWindow {
 public:
     EditorWindow() {
+        RegisterEditorComponentSchemas();
+        std::string plugin_error;
+        if (!StartDefaultEnginePlugins(plugin_manager_, &plugin_error))
+            AETHER_LOG_ERROR("Editor", "Couldn't start the engine plugins: %s", plugin_error.c_str());
         setWindowTitle("Aether Engine · World Editor");
         resize(1400, 800);
         setDockOptions(QMainWindow::AllowNestedDocks | QMainWindow::AllowTabbedDocks | QMainWindow::AnimatedDocks);
@@ -1095,6 +1243,54 @@ public:
         auto* output_dock = findChild<QDockWidget*>("outputDock");
         passed &= require(output_dock && output_dock->toggleViewAction()->isEnabled(),
                           "Window menu should be able to show and hide editor docks");
+        const float map_fit_distance = RhiViewport::DistanceForExtent({51.0f, 5.0f, 17.0f}, 55.0f, 1.8f);
+        const float compact_fit_distance = RhiViewport::DistanceForExtent({5.0f, 3.0f, 4.0f}, 55.0f, 1.8f);
+        passed &= require(map_fit_distance > compact_fit_distance && map_fit_distance < 60.0f,
+                          "Fit All should frame map bounds with perspective instead of an oversized fixed multiplier");
+        for (const char* component : {"CharacterMovement", "AudioListener", "AudioSource", "BoxCollider",
+                                      "RigidBody", "AttributeSet", "SequenceComponent"})
+            passed &= require(aether::FindComponentIdByName(component) != aether::kInvalidComponentId,
+                              "runtime scene component schemas should be registered before loading or saving");
+
+        const auto runtime_input = std::filesystem::temp_directory_path() / "aether_qt_runtime_components_in.ascene";
+        const auto runtime_output = std::filesystem::temp_directory_path() / "aether_qt_runtime_components_out.ascene";
+        std::error_code runtime_error;
+        std::filesystem::remove(runtime_input, runtime_error);
+        std::filesystem::remove(runtime_output, runtime_error);
+        aether::World runtime_world;
+        runtime_world.CreateEntity(aether::Transform{}, aether::CharacterMovement{}, aether::AudioListener{},
+                                   aether::AudioSource{}, aether::RigidBody{}, aether::BoxCollider{},
+                                   aether::gas::AttributeSet{}, aether::SequenceComponent{});
+        passed &= require(aether::SaveSceneJson(runtime_world, runtime_input.string()),
+                          "self-test runtime scene should save");
+        aether::editor::SceneDocument runtime_document;
+        passed &= require(runtime_document.Load(runtime_input) && runtime_document.Save(runtime_output),
+                          "Qt scene document should load and resave runtime components");
+        aether::World runtime_reloaded;
+        passed &= require(aether::LoadSceneJson(runtime_reloaded, runtime_output.string()),
+                          "resaved runtime scene should load");
+        const auto runtime_entities = [&] {
+            std::vector<aether::Entity> entities;
+            runtime_reloaded.ForEachArchetype([&](const aether::Archetype& archetype) {
+                for (aether::usize chunk = 0; chunk < archetype.ChunkCount(); ++chunk) {
+                    const aether::Entity* values = archetype.EntityArray(chunk);
+                    entities.insert(entities.end(), values, values + archetype.ChunkEntityCount(chunk));
+                }
+            });
+            return entities;
+        }();
+        const aether::Entity runtime_entity = runtime_entities.empty() ? aether::kNullEntity : runtime_entities.front();
+        passed &= require(!runtime_entity.IsNull() &&
+                          runtime_reloaded.HasComponent<aether::CharacterMovement>(runtime_entity) &&
+                          runtime_reloaded.HasComponent<aether::AudioListener>(runtime_entity) &&
+                          runtime_reloaded.HasComponent<aether::AudioSource>(runtime_entity) &&
+                          runtime_reloaded.HasComponent<aether::RigidBody>(runtime_entity) &&
+                          runtime_reloaded.HasComponent<aether::BoxCollider>(runtime_entity) &&
+                          runtime_reloaded.HasComponent<aether::gas::AttributeSet>(runtime_entity) &&
+                          runtime_reloaded.HasComponent<aether::SequenceComponent>(runtime_entity),
+                          "Qt load/save should preserve registered runtime component data");
+        std::filesystem::remove(runtime_input, runtime_error);
+        std::filesystem::remove(runtime_output, runtime_error);
 
         const aether::Entity test_entity = scene_document_.CreateEntity("Self Test Entity");
         passed &= require(!test_entity.IsNull() && scene_document_.Entities().size() == 6,
@@ -2119,16 +2315,43 @@ private:
             QMessageBox::critical(this, "Couldn't prepare project folders", QString::fromStdString(error));
             return;
         }
+
+        aether::plugin::PluginManager candidate_plugins;
+        if (!aether::plugin::ResolveProjectPlugins(file, candidate_plugins, &error) ||
+            !ValidatePluginModules(candidate_plugins, &error)) {
+            QMessageBox::critical(this, "Couldn't load project plugins", QString::fromStdString(error));
+            return;
+        }
+
+        // Stop the current project's modules before starting the next set.
+        // If startup or scene loading fails, restore the current project modules.
+        plugin_manager_.ShutdownModules();
+        const auto module_warnings = candidate_plugins.StartModules(true, true);
+        if (!module_warnings.empty()) {
+            candidate_plugins.ShutdownModules();
+            const auto restore_warnings = plugin_manager_.StartModules(true, true);
+            error = module_warnings.front();
+            if (!restore_warnings.empty()) error += " The previous project's modules could not be restarted: " +
+                                                    restore_warnings.front();
+            QMessageBox::critical(this, "Couldn't start project plugins", QString::fromStdString(error));
+            return;
+        }
+
         std::filesystem::path startup_scene;
         if (!settings.startup_scene.empty()) startup_scene = paths.content / settings.startup_scene;
         if (!startup_scene.empty() && std::filesystem::exists(startup_scene)) {
             if (!scene_document_.Load(startup_scene, &error)) {
+                candidate_plugins.ShutdownModules();
+                const auto restore_warnings = plugin_manager_.StartModules(true, true);
+                if (!restore_warnings.empty()) error += " The previous project's modules could not be restarted: " +
+                                                        restore_warnings.front();
                 QMessageBox::critical(this, "Couldn't open startup scene", QString::fromStdString(error));
                 return;
             }
         } else {
             scene_document_.NewScene();
         }
+        plugin_manager_ = std::move(candidate_plugins);
         project_file_ = file;
         project_settings_ = std::move(settings);
         viewport_->SetContentRoot(paths.content);
@@ -2543,6 +2766,7 @@ private:
     QPushButton* add_entity_button_ = nullptr;
     QPushButton* duplicate_entity_button_ = nullptr;
     RhiViewport* viewport_ = nullptr;
+    aether::plugin::PluginManager plugin_manager_;
     aether::editor::SceneDocument scene_document_;
     aether::EntityGuid selected_guid_{};
     aether::Entity selected_entity_ = aether::kNullEntity;
