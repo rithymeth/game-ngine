@@ -16,11 +16,16 @@ The first implementation lives in `editor/qt` behind
 `AETHER_BUILD_QT_EDITOR`. It has a dockable World shell, native Aether D3D12
 viewport, project create/open/settings-save flows, a project-backed Content
 Browser, scene-backed Hierarchy and Inspector, a Ctrl+K palette, and saved dock
-layouts. The shared scene document supports JSON/binary load and save, entity
-creation/deletion/rename, transform position and quaternion rotation edits,
+layouts. The Inspector uses explicit selection and empty states, exposes
+undoable position and rotation reset actions, and the shared scene document
+supports JSON/binary load and save, entity creation/deletion/rename, transform
+position and quaternion rotation edits, undoable Camera projection and lens
+settings, and editable Cine Camera lens controls (focal length, sensor, aperture,
+and focus distance) with undo/redo,
 dirty state, and undo/redo through the editor command stack. Rotation is
-edited as local pitch/yaw/roll degrees; automated rotation coverage remains
-pending. The target builds with Qt 6.8.3/MSVC 2022.
+edited as local pitch/yaw/roll degrees; the Qt self-test verifies quaternion
+normalization, Euler round-tripping, and undo. The target builds with Qt
+6.8.3/MSVC 2022.
 The viewport now shows a depth-tested perspective representation of the active
 scene, renders project-relative glTF/GLB mesh instances with base-color
 materials and textures, and retains shaded proxies for missing assets and
