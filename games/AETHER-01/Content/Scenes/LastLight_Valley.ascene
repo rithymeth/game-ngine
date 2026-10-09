@@ -1,0 +1,38 @@
+{
+  "$type": "Scene",
+  "$version": 1,
+  "entities": [
+    {
+      "guid": "d04d3c30-264d-4a91-a615-8a8366ae0078",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "40f9ec42-bdce-5678-bde7-2df21ef4348e",
+          "asset_path": "Environments/LastLight/LastLight_Valley.gltf"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Environment",
+            "LastLight",
+            "TerrainMap"
+          ]
+        }
+      }
+    }
+  ]
+}
