@@ -3,7 +3,9 @@
 #include "image_util.h"
 #include "project_host.h"
 
+#include "aether/ui/animation.h"
 #include "aether/ui/layout_file.h"
+#include "aether/ui/theme.h"
 #include "aether/ui/viewport.h"
 
 #include <algorithm>
@@ -20,16 +22,16 @@ using namespace detail;
 namespace ui = aether::ui;
 
 // The layout text from `definition` (an object or its text) or `file` (under Content/ of the open project, or absolute).
-std::string ReadLayoutText(AssetHost& host, const Json& args, std::string* from) {
-    if (args.contains("definition")) {
-        const Json& d = args["definition"];
+std::string ReadLayoutText(AssetHost& host, const Json& args, std::string* from, const char* def_key = "definition", const char* file_key = "file") {
+    if (args.contains(def_key)) {
+        const Json& d = args[def_key];
         if (from != nullptr) *from = "definition";
         if (d.is_object()) return d.dump();
         if (d.is_string()) return d.get<std::string>();
-        throw ToolError("\"definition\" must be a JSON object or a string of JSON");
+        throw ToolError(std::string("\"") + def_key + "\" must be a JSON object or a string of JSON");
     }
-    if (args.contains("file")) {
-        const std::string name = RequireString(args, "file");
+    if (args.contains(file_key)) {
+        const std::string name = RequireString(args, file_key);
         fs::path path(name);
         if (!path.is_absolute()) path = host.Require().paths.content / CleanRelative(name);
         std::ifstream in(path, std::ios::binary);
@@ -39,7 +41,7 @@ std::string ReadLayoutText(AssetHost& host, const Json& args, std::string* from)
         if (from != nullptr) *from = name;
         return ss.str();
     }
-    throw ToolError("Give \"definition\" (the layout as JSON) or \"file\" (a .aui file under Content/)");
+    throw ToolError(std::string("Give \"") + def_key + "\" (as JSON) or \"" + file_key + "\" (a file under Content/)");
 }
 
 struct Loaded {
@@ -128,14 +130,31 @@ struct Laid {
     ui::Widget* root = nullptr;
 };
 
-void LayOut(Laid& laid, Loaded& l, const Json& args) {
+void LayOut(Laid& laid, Loaded& l, const Json& args, const ui::Theme* theme = nullptr) {
     const f32 w = NumberOr(args, "width", 1920.0f), h = NumberOr(args, "height", 1080.0f);
     if (!(w >= 16.0f && h >= 16.0f && w <= 8192.0f && h <= 8192.0f)) throw ToolError("width and height must be between 16 and 8192");
     laid.viewport.SetSize({w, h});
     if (OptString(args, "scale", "fit") == "none") laid.viewport.scale_settings.rule = ui::ScaleSettings::Rule::None;
     if (OptString(args, "direction", "ltr") == "rtl") laid.viewport.direction = ui::FlowDirection::RightToLeft;
+    if (theme != nullptr) ui::ApplyTheme(*theme, *l.doc.root);
     laid.root = laid.viewport.Add(std::move(l.doc.root));
     laid.viewport.Layout(laid.font);
+}
+
+ui::Theme LoadThemeOrThrow(AssetHost& host, const Json& args, const char* def_key, const char* file_key, std::set<std::string>* images) {
+    ui::Theme theme;
+    const ui::TextureResolver textures = [images](const std::string& image) {
+        if (images != nullptr) images->insert(image);
+        return 1u;
+    };
+    std::string error;
+    if (!ui::LoadTheme(ReadLayoutText(host, args, nullptr, def_key, file_key), theme, textures, &error)) throw ToolError("Not a valid theme: " + error);
+    return theme;
+}
+
+void CollectWidgets(ui::Widget& w, std::vector<ui::Widget*>& out) {
+    out.push_back(&w);
+    for (usize i = 0; i < w.ChildCount(); ++i) CollectWidgets(*w.Child(i), out);
 }
 
 } // namespace
@@ -214,6 +233,8 @@ void RegisterUiTools(McpServer& server, std::shared_ptr<AssetHost> host) {
          "1 unit per pixel instead of fitting the layout's reference resolution; `direction` \"rtl\" mirrors it. Give `definition` (JSON) or `file`.",
          Schema({{"definition", {{"description", "The layout: a JSON object, or its text"}}},
                  {"file", {{"type", "string"}}},
+                 {"theme", {{"description", "A theme (.atheme) to style the widgets with: a JSON object or its text"}}},
+                 {"theme_file", {{"type", "string"}, {"description", "A .atheme file under Content/"}}},
                  {"width", {{"type", "integer"}}},
                  {"height", {{"type", "integer"}}},
                  {"scale", {{"type", "string"}, {"enum", Json::array({"fit", "none"})}}},
@@ -224,8 +245,11 @@ void RegisterUiTools(McpServer& server, std::shared_ptr<AssetHost> host) {
              if (!size_args.contains("width")) size_args["width"] = 960;
              if (!size_args.contains("height")) size_args["height"] = 540;
              if (size_args["width"].get<f32>() > 2048.0f || size_args["height"].get<f32>() > 2048.0f) throw ToolError("width and height are at most 2048");
+             ui::Theme theme;
+             const bool themed = args.contains("theme") || args.contains("theme_file");
+             if (themed) theme = LoadThemeOrThrow(*host, args, "theme", "theme_file", nullptr);
              Laid laid;
-             LayOut(laid, l, size_args);
+             LayOut(laid, l, size_args, themed ? &theme : nullptr);
 
              const u32 W = static_cast<u32>(laid.viewport.Size().x), H = static_cast<u32>(laid.viewport.Size().y);
              std::vector<u8> rgba(static_cast<usize>(W) * H * 4);
@@ -260,6 +284,100 @@ void RegisterUiTools(McpServer& server, std::shared_ptr<AssetHost> host) {
              Json out = {{"width", W}, {"height", H}, {"quads", list.quads.size()}, {"png_bytes", png.size()}};
              out["mcp_content"] = Json::array({{{"type", "image"}, {"data", Base64Encode(png)}, {"mimeType", "image/png"}}});
              return out;
+         }});
+
+    server.AddTool(
+        {"ui_theme_check",
+         "Check a UI theme (.atheme): it must load (colours as \"@name\", \"#RRGGBB[AA]\" or [r,g,b,a]; a style may extend another), then it lists the palette, the control styles "
+         "(\"Button\", \"Button.Primary\", \"Default\"), the text styles and the images it uses. With a layout (`layout` / `layout_file`) it also checks the layout against the theme: "
+         "a widget's `style_class` the theme has no style for (the widget falls back to its type's style, then Default) is reported, and so is a text style a Text widget names that "
+         "isn't there. Give the theme as `definition` or `file`. (ui_preview takes `theme` to see a layout styled by one.)",
+         Schema({{"definition", {{"description", "The theme: a JSON object, or its text"}}},
+                 {"file", {{"type", "string"}}},
+                 {"layout", {{"description", "A layout to check against the theme: a JSON object or its text"}}},
+                 {"layout_file", {{"type", "string"}}}}),
+         [host](const Json& args) -> Json {
+             std::set<std::string> images;
+             const ui::Theme theme = LoadThemeOrThrow(*host, args, "definition", "file", &images);
+             Json colors = Json::object();
+             for (const auto& c : theme.colors) colors[c.first] = ui::ColorToJson(c.second);
+             std::vector<std::string> styles, texts;
+             for (const auto& s : theme.styles) styles.push_back(s.first);
+             for (const auto& t : theme.text) texts.push_back(t.first);
+             Json out = {{"name", theme.name}, {"colors", colors}, {"styles", styles}, {"text_styles", texts}, {"images", Json(std::vector<std::string>(images.begin(), images.end()))}};
+             Json problems = Json::array();
+             if (args.contains("layout") || args.contains("layout_file")) {
+                 Loaded l = LoadOrThrow(ReadLayoutText(*host, args, nullptr, "layout", "layout_file"));
+                 std::vector<ui::Widget*> widgets;
+                 CollectWidgets(*l.doc.root, widgets);
+                 usize classed = 0;
+                 for (ui::Widget* w : widgets) {
+                     if (w->style_class.empty()) continue;
+                     ++classed;
+                     const std::string type = w->TypeName();
+                     const std::string label = w->name.empty() ? type : w->name;
+                     if (type == "Text") {
+                         if (theme.TextFor(w->style_class) == nullptr) problems.push_back({{"widget", label}, {"problem", "no text style \"" + w->style_class + "\" in the theme"}});
+                     } else if (theme.styles.find(type + "." + w->style_class) == theme.styles.end()) {
+                         problems.push_back({{"widget", label}, {"problem", "no style \"" + type + "." + w->style_class + "\" in the theme (it falls back to \"" + type + "\" or Default)"}});
+                     }
+                 }
+                 out["layout_widgets"] = widgets.size();
+                 out["layout_classed_widgets"] = classed;
+             }
+             out["problems"] = problems;
+             out["ok"] = problems.empty();
+             return out;
+         }});
+
+    server.AddTool(
+        {"ui_animation_sample",
+         "Check and sample the UI animations in a layout (`animations` in the .aui). Each track must name a widget in the layout and an animatable property (opacity, offset_x, "
+         "offset_y, scale, scale_x, scale_y, tint_r/g/b/a, position_x/y, size_x/y, value, percent) and have keys in time order; problems are listed. Then every track is evaluated at "
+         "`times` (seconds; default 5 evenly spaced across the animation) to show what moves when. `animation` picks one by name. Give `definition` or `file`.",
+         Schema({{"definition", {{"description", "The layout: a JSON object, or its text"}}},
+                 {"file", {{"type", "string"}}},
+                 {"animation", {{"type", "string"}}},
+                 {"times", {{"type", "array"}, {"items", {{"type", "number"}}}}}}),
+         [host](const Json& args) -> Json {
+             Loaded l = LoadOrThrow(ReadLayoutText(*host, args, nullptr));
+             const std::string only = OptString(args, "animation");
+             std::vector<f32> times;
+             if (args.contains("times")) {
+                 if (!args["times"].is_array()) throw ToolError("\"times\" must be an array of numbers");
+                 for (const Json& t : args["times"]) times.push_back(t.get<f32>());
+                 if (times.size() > 200) throw ToolError("At most 200 times");
+             }
+             Json animations = Json::array();
+             Json problems = Json::array();
+             for (const ui::UIAnimation& a : l.doc.animations) {
+                 if (!only.empty() && a.name != only) continue;
+                 const f32 duration = a.Duration();
+                 std::vector<f32> at = times;
+                 if (at.empty()) {
+                     for (u32 i = 0; i < 5; ++i) at.push_back(duration * static_cast<f32>(i) / 4.0f);
+                 }
+                 Json tracks = Json::array();
+                 for (const ui::UITrack& t : a.tracks) {
+                     const std::string label = a.name + ": " + t.widget + "." + t.property;
+                     if (l.doc.root->Find(t.widget) == nullptr) problems.push_back({{"track", label}, {"problem", "no widget named \"" + t.widget + "\" in the layout"}});
+                     if (!ui::IsAnimatable(t.property)) problems.push_back({{"track", label}, {"problem", "\"" + t.property + "\" can't be animated"}});
+                     if (t.keys.empty()) problems.push_back({{"track", label}, {"problem", "no keys"}});
+                     for (usize i = 1; i < t.keys.size(); ++i) {
+                         if (t.keys[i].time < t.keys[i - 1].time) {
+                             problems.push_back({{"track", label}, {"problem", "keys are not in time order"}});
+                             break;
+                         }
+                     }
+                     Json values = Json::array();
+                     for (f32 time : at) values.push_back({{"time", time}, {"value", t.keys.empty() ? 0.0f : t.Evaluate(time)}});
+                     tracks.push_back({{"widget", t.widget}, {"property", t.property}, {"keys", t.keys.size()}, {"samples", values}});
+                 }
+                 if (a.tracks.empty()) problems.push_back({{"track", a.name}, {"problem", "the animation has no tracks"}});
+                 animations.push_back({{"name", a.name}, {"duration", duration}, {"tracks", tracks}});
+             }
+             if (!only.empty() && animations.empty()) throw ToolError("No animation named \"" + only + "\" in the layout");
+             return {{"count", animations.size()}, {"ok", problems.empty()}, {"problems", problems}, {"animations", animations}};
          }});
 }
 

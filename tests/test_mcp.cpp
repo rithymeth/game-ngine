@@ -551,6 +551,9 @@ AETHER_TEST(Mcp_ToolsCanReturnImages) {
 #include "aether/ui/basic.h"
 #include "aether/ui/layout_file.h"
 #include "aether/ui/panels.h"
+#include "aether/ui/theme.h"
+#include "aether/ui/animation.h"
+#include "aether/ui/controls.h"
 #include "aether/animation/anim_graph.h"
 #include "script_tools.h"
 #include "tilemap_tools.h"
@@ -2372,6 +2375,71 @@ AETHER_TEST(Mcp_SaveToolsListInspectDeleteAndEditSettings) {
     AETHER_CHECK(!stdfs::exists(dir / "slot1.asav") && !stdfs::exists(dir / "slot1.asav.bak"));
     AETHER_CHECK(h.Call("save_delete", {{"directory", dir.string()}, {"slot", "slot1"}}).is_error);
     stdfs::remove_all(dir);
+}
+
+AETHER_TEST(Mcp_UiThemeAndAnimationTools) {
+    namespace ui = aether::ui;
+    Harness h;
+    auto project = MakeAssetHost();
+    RegisterUiTools(h.server, project);
+
+    ui::Theme theme;
+    theme.name = "Dark";
+    theme.colors["accent"] = {1.0f, 0.5f, 0.0f, 1.0f};
+    theme.styles["Button"] = ui::ControlStyle{};
+    theme.styles["Button.Primary"] = ui::ControlStyle{};
+    theme.text["Title"] = ui::TextStyle{};
+    const Json theme_json = Json::parse(ui::SaveTheme(theme));
+
+    auto root = std::make_unique<ui::Canvas>();
+    root->name = "Menu";
+    auto* good = root->Add<ui::Button>();
+    good->name = "Go";
+    good->style_class = "Primary";
+    auto* odd = root->Add<ui::Button>();
+    odd->name = "Odd";
+    odd->style_class = "Fancy";
+    auto* title = root->Add<ui::Text>("Hi");
+    title->name = "Heading";
+    title->style_class = "Title";
+    auto* lost = root->Add<ui::Text>("Hi");
+    lost->name = "Lost";
+    lost->style_class = "Subtitle";
+    auto* panel = root->Add<ui::Image>(ui::Brush::Solid({1.0f, 1.0f, 1.0f, 1.0f}));
+    panel->name = "Panel";
+
+    ui::UIAnimation pop;
+    pop.name = "Pop";
+    pop.tracks.push_back({"Panel", "opacity", {{0.0f, 0.0f, ui::Ease::Linear}, {2.0f, 1.0f, ui::Ease::Linear}}});
+    pop.tracks.push_back({"Ghost", "opacity", {{0.0f, 0.0f, ui::Ease::Linear}}});
+    const Json layout = Json::parse(ui::SaveLayout(*root, {}, {pop}));
+
+    Json t = h.Call("ui_theme_check", {{"definition", theme_json}}).value;
+    AETHER_CHECK(t["ok"] == true && t["name"] == "Dark");
+    AETHER_CHECK(t["styles"].size() == 2 && t["text_styles"] == Json::array({"Title"}) && t.contains("colors") && t["colors"].contains("accent"));
+    Json against = h.Call("ui_theme_check", {{"definition", theme_json}, {"layout", layout}}).value;
+    AETHER_CHECK(against["ok"] == false && against["layout_classed_widgets"] == 4);
+    const std::string problems = against["problems"].dump();
+    AETHER_CHECK(problems.find("Button.Fancy") != std::string::npos && problems.find("Subtitle") != std::string::npos);
+    AETHER_CHECK(problems.find("Primary") == std::string::npos && problems.find("Title") == std::string::npos);
+    AETHER_CHECK(h.Call("ui_theme_check", {{"definition", {{"colors", {{"x", "@nope"}}}}}}).is_error);
+
+    // A theme restyles the preview.
+    const auto themed = h.Call("ui_preview", {{"definition", layout}, {"theme", theme_json}, {"width", 400}, {"height", 300}});
+    AETHER_CHECK(!themed.is_error && themed.value["quads"].get<int>() > 0);
+
+    Json anim = h.Call("ui_animation_sample", {{"definition", layout}, {"times", Json::array({0, 1, 2})}}).value;
+    AETHER_CHECK(anim["count"] == 1 && anim["ok"] == false);
+    const Json samples = anim["animations"][0]["tracks"][0]["samples"];
+    AETHER_CHECK(samples.size() == 3 && samples[1]["value"] == 0.5 && samples[2]["value"] == 1.0);
+    const std::string anim_problems = anim["problems"].dump();
+    AETHER_CHECK(anim_problems.find("Ghost") != std::string::npos);
+    Json sparkle = layout;
+    sparkle["animations"][0]["tracks"][0]["property"] = "sparkle";
+    const auto rejected = h.Call("ui_animation_sample", {{"definition", sparkle}});
+    AETHER_CHECK(rejected.is_error && rejected.text.find("sparkle") != std::string::npos); // the loader says so already
+    AETHER_CHECK(h.Call("ui_animation_sample", {{"definition", layout}, {"animation", "Nope"}}).is_error);
+    AETHER_CHECK(h.Call("ui_animation_sample", {{"definition", layout}}).value["animations"][0]["tracks"][0]["samples"].size() == 5);
 }
 
 #if AETHER_MCP_SCRIPTING
