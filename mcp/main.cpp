@@ -10,6 +10,7 @@
 #include "aether/scene/serialization.h"
 #include "core/commands.h"
 #include "asset_tools.h"
+#include "audio_tools.h"
 #include "build_tools.h"
 #include "editor_tools.h"
 #include "game_tools.h"
@@ -61,6 +62,7 @@ int main(int argc, char** argv) {
     auto project = mcp::MakeAssetHost(); // the open project, shared by the asset and kit tools
     mcp::RegisterAssetTools(server, project);
     mcp::RegisterKitTools(server, project);
+    mcp::RegisterAudioTools(server, project);
     std::error_code ec;
     mcp::RegisterBuildTools(server, mcp::FindBuildContext(build_dir, std::filesystem::absolute(argv[0], ec).parent_path()));
     server.RunStdio(std::cin, std::cout);

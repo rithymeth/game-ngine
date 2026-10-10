@@ -2,6 +2,7 @@
 
 #include "project_host.h"
 
+#include "aether/audio/cue.h"
 #include "aether/gameplay/gameplay_ability.h"
 #include "aether/gameplay/gameplay_effect.h"
 #include "aether/input/actions.h"
@@ -106,6 +107,20 @@ const std::vector<KitType>& Types() {
                          return {};
                      }});
 #endif
+        t.push_back({"sound_cue", ".acue", "SoundCue",
+                     "A sound cue: a small graph (Wave, Random, Sequence, Modulator, Concatenator, Loop, Mix, Delay) deciding what plays each time, "
+                     "plus output settings (bus, volume, pitch, spatial attenuation).",
+                     [] { return audio::CueToJson(audio::SoundCue{}); },
+                     [](const std::string& text, Json& canonical) -> std::string {
+                         audio::SoundCue cue;
+                         std::string error;
+                         if (!audio::LoadCue(text, cue, &error)) return "cue.parse: " + error;
+                         for (const audio::CueDiagnostic& d : audio::ValidateCue(cue)) {
+                             if (d.error) return "cue." + d.code + ": " + d.message;
+                         }
+                         canonical = audio::CueToJson(cue);
+                         return {};
+                     }});
         t.push_back({"input_action", ".aaction", "InputAction", "A named input action (Jump, Move): its value type.",
                      [] { return Wrapped("InputAction", reflect::ToJson(input::InputAction{})); },
                      [](const std::string& text, Json& canonical) {
@@ -174,6 +189,42 @@ Json SampleOf(const std::string& type) {
         a.commit_on_activate = false;
         return gas::AbilityToJson(a);
     }
+    if (type == "sound_cue") {
+        audio::SoundCue c;
+        c.name = "footstep";
+        audio::CueNode modulator;
+        modulator.id = 1;
+        modulator.type = audio::CueNodeType::Modulator;
+        modulator.children = {2};
+        modulator.volume_min_db = -2.0f;
+        modulator.volume_max_db = 0.0f;
+        modulator.pitch_min = 0.95f;
+        modulator.pitch_max = 1.05f;
+        audio::CueNode random;
+        random.id = 2;
+        random.type = audio::CueNodeType::Random;
+        random.children = {3, 4};
+        random.weights = {2.0f, 1.0f};
+        random.no_repeat = true;
+        audio::CueNode a;
+        a.id = 3;
+        a.type = audio::CueNodeType::Wave;
+        a.sound = "Audio/step_a.wav";
+        audio::CueNode b = a;
+        b.id = 4;
+        b.sound = "Audio/step_b.wav";
+        c.nodes = {modulator, random, a, b};
+        c.root = 1;
+        c.volume_db = -3.0f;
+        c.bus = "SFX";
+        c.priority = 100;
+        c.spatial = true;
+        c.attenuation.model = audio::AttenuationModel::Inverse;
+        c.attenuation.min_distance = 1.0f;
+        c.attenuation.max_distance = 30.0f;
+        c.occlusion = true;
+        return audio::CueToJson(c);
+    }
 #if AETHER_MCP_INVENTORY
     if (type == "item") {
         inv::ItemDef i;
@@ -227,6 +278,14 @@ std::vector<std::string> NotesOf(const std::string& type) {
     if (type == "quest") {
         return {"objectives[].kind: count | tag | flag; ids unique; required >= 1",
                 "prerequisites name quests; reward_effects name effects; reward_items[].item names an item (kit_check verifies them)"};
+    }
+    if (type == "sound_cue") {
+        return {"nodes[].type: Wave (sound, looping; no children) | Random (weights, no_repeat) | Sequence | Modulator (volume_db [min,max], pitch [min,max]; one child) | "
+                "Concatenator | Loop (count, 0 = forever; one child) | Mix (input_db per child) | Delay (delay [min,max] seconds; one child)",
+                "root is the id of the node the output plays; Wave sounds are content paths of Sound assets (kit_check verifies they exist)",
+                "output: bus (Master, Music, SFX, UI, Voice), volume_db, pitch > 0, priority 0-255, virtual: Continue | Restart | Stop, spatial, spatial_blend, "
+                "attenuation.model: None | Inverse | Linear | Logarithmic | Custom, doppler, occlusion",
+                "cue_validate gives every diagnostic with its code; cue_preview shows what the cue would play, with no audio"};
     }
     if (type == "input_action") return {"value_type: Bool | Axis1D | Axis2D | Axis3D"};
     if (type == "input_mapping") return {"bindings[] map a key to an action with optional modifiers (DeadZone, Negate, Swizzle, Scale) and triggers; see the example"};
@@ -356,7 +415,7 @@ void RegisterKitTools(McpServer& server, std::shared_ptr<detail::AssetHost> host
     server.AddTool({"kit_schema",
                     "The shape of one definition type: a sample with every field set, the allowed words and cross-reference rules (notes), "
                     "the blank definition, and (if a project is open) an existing example from it.",
-                    Schema({{"type", {{"type", "string"}, {"description", "effect, ability, item, quest, input_action or input_mapping"}}}}, {"type"}),
+                    Schema({{"type", {{"type", "string"}, {"description", "effect, ability, item, quest, sound_cue, input_action or input_mapping"}}}}, {"type"}),
                     [host](const Json& args) -> Json {
                         const KitType& t = RequireType(RequireString(args, "type"));
                         Json out = {{"type", t.name}, {"extension", t.extension}, {"description", t.description}, {"blank", t.blank()}, {"notes", NotesOf(t.name)}};
@@ -493,7 +552,7 @@ void RegisterKitTools(McpServer& server, std::shared_ptr<detail::AssetHost> host
     server.AddTool(
         {"kit_check",
          "Check every kit definition in the open project: each must parse and validate, and cross-references must resolve (an ability's cost "
-         "and cooldown effects, an item's use and equip effects, a quest's reward effects, reward items and prerequisites, an Interactable's effect and ability). Also "
+         "and cooldown effects, an item's use and equip effects, a quest's reward effects, reward items and prerequisites, an Interactable's effect and ability; a sound cue's diagnostics, with its Wave sounds checked against the project, and an AudioSource's cue). Also "
          "reports duplicate names. Warns (not an error) when an effect modifies an attribute no scene or prefab defines.",
          Schema(Json::object()), [host](const Json&) -> Json {
              OpenProject& p = host->Require();
@@ -574,6 +633,33 @@ void RegisterKitTools(McpServer& server, std::shared_ptr<detail::AssetHost> host
              Json warnings = Json::array();
              std::vector<std::string> unreadable;
              const auto attributes = CollectProjectAttributes(p, unreadable);
+
+             // Sound cues: the audio kit's own diagnostics, with the Wave sounds checked against the project's Sound assets.
+             // Scenes' AudioSource components name a cue asset.
+             {
+                 std::set<std::string> sounds, cue_paths;
+                 for (const AssetRecord* r : p.database->All()) {
+                     if (r->IsSubAsset()) continue;
+                     if (r->importer == "Sound") sounds.insert(r->path);
+                     if (r->importer == "SoundCue") cue_paths.insert(r->path);
+                 }
+                 for (const Def& d : defs) {
+                     if (d.type->name != "sound_cue") continue;
+                     audio::SoundCue cue;
+                     if (!audio::CueFromJson(d.canonical, cue)) continue;
+                     for (const audio::CueDiagnostic& diag : audio::ValidateCue(cue, [&](const std::string& s) { return sounds.count(s) != 0; })) {
+                         const std::string message = diag.code + " (node " + std::to_string(diag.node) + "): " + diag.message;
+                         if (diag.error) problem(d.path, message);
+                         else warnings.push_back({{"path", d.path}, {"warning", message}});
+                     }
+                 }
+                 std::vector<std::string> not_scanned_audio;
+                 for (const SceneComponent& c : CollectSceneComponents(p, "AudioSource", not_scanned_audio)) {
+                     const std::string cue = c.value.value("cue", std::string());
+                     if (!cue.empty() && cue_paths.count(cue) == 0) problem(c.path, "an AudioSource's cue \"" + cue + "\" is not a sound cue in the project");
+                 }
+             }
+
              std::set<std::string> warned;
              for (const Def& d : defs) {
                  if (d.type->name != "effect" || !d.canonical.contains("modifiers") || !d.canonical["modifiers"].is_array()) continue;
