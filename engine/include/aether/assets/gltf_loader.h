@@ -1,6 +1,7 @@
 #pragma once
 
 #include "aether/core/base.h"
+#include "aether/assets/material.h"
 #include "aether/math/mat4.h"
 #include "aether/math/quaternion.h"
 
@@ -15,6 +16,7 @@ struct GltfVertex {
     f32 position[3];
     f32 normal[3];
     f32 uv[2];
+    f32 tangent[4]; // xyz tangent direction, w bitangent handedness
 };
 
 // Matches the engine's own PBR metallic-roughness workflow (pbr_demo)
@@ -25,11 +27,17 @@ struct GltfVertex {
 // such texture.
 struct GltfMaterial {
     f32 base_color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    f32 emissive_factor[3] = {0.0f, 0.0f, 0.0f};
     f32 metallic = 1.0f;
     f32 roughness = 1.0f;
+    f32 normal_scale = 1.0f;
+    f32 occlusion_strength = 1.0f;
+    f32 alpha_cutoff = 0.5f;
+    MaterialAlphaMode alpha_mode = MaterialAlphaMode::Opaque;
     std::string base_color_texture;
     std::string normal_texture;
     std::string metallic_roughness_texture;
+    std::string occlusion_texture;
 };
 
 struct GltfPrimitive {
@@ -60,10 +68,13 @@ struct GltfMesh {
 // each mesh with its world_transform, with no separate scene-graph walk of
 // its own needed. Node *names*, non-mesh nodes (cameras, empty transform
 // nodes), and multiple scenes are not preserved — only the default scene
-// (or the sole scene, if only one exists) is flattened.
+// (or the sole scene, if only one exists) is flattened. Each instance also
+// keeps its source node index for mesh-local skin matrix calculations.
 struct GltfNodeInstance {
     usize mesh_index = 0;
     Mat4 world_transform;
+    i32 skin_index = -1;
+    usize node_index = 0;
 };
 
 // A node's raw local transform components (translation/rotation/scale) —
@@ -94,8 +105,8 @@ struct GltfNode {
 // A skin: `joints[k]` is a node index (into GltfScene::nodes) and
 // `inverse_bind_matrices[k]` is that joint's inverse bind matrix — the
 // transform from mesh-local space into that joint's own rest-pose local
-// space, factored out so that at runtime a joint's skinning matrix is just
-// `joint_world_transform * inverse_bind_matrices[k]` (see
+// space, factored out so that runtime skinning uses
+// `inverse(mesh_world) * joint_world * inverse_bind_matrices[k]` (see
 // ComputeSkinMatrices). Same length as `joints`; per the glTF spec,
 // `inverseBindMatrices` is optional and defaults to all-identity when
 // omitted (a skin with no inverse binds at all, meaning the joints' rest
@@ -150,6 +161,15 @@ struct GltfScene {
     std::vector<GltfAnimation> animations;
 };
 
+// Reusable result and scratch storage for one sampled animation. Keeping a
+// pose around between frames retains vector capacity and shares the sampled
+// hierarchy between mesh placement and skin matrix generation.
+struct GltfAnimationPose {
+    std::vector<GltfNode> animated_nodes;
+    std::vector<GltfNodeInstance> node_instances;
+    std::vector<Mat4> node_world_transforms;
+};
+
 // Re-walks the node hierarchy with `animation` sampled at `time_seconds`
 // (channels targeting a node override that node's translation/rotation/
 // scale for this evaluation only — GltfScene::nodes itself is never
@@ -165,19 +185,24 @@ struct GltfScene {
 void EvaluateAnimation(const GltfScene& scene, const GltfAnimation& animation, f32 time_seconds,
                         std::vector<GltfNodeInstance>& out_node_instances);
 
-// The skinning matrices for one skin, given the same animated node-world-
-// transform data EvaluateAnimation computes internally (recomputed here
-// rather than plumbed out of EvaluateAnimation, since most callers only
-// need one or the other, not both, on a given frame) — `out_matrices[k] =
-// world_transform_of(skin.joints[k]) * skin.inverse_bind_matrices[k]`,
-// ready to upload to a GPU skinning buffer indexed by GltfPrimitive's
-// joint_indices. Pass an empty `animation`/time_seconds == 0 with no
-// channels targeting this skin's joints to get the bind-pose skin matrices
-// (every joint's matrix reduces to identity in that case, since a joint's
-// world transform then equals the inverse of its own inverse-bind matrix by
-// construction).
+// Evaluates an animation into reusable pose storage, including world
+// transforms for every node. Prefer this when both mesh instances and skin
+// matrices are needed for the same frame.
+void EvaluateAnimationPose(const GltfScene& scene, const GltfAnimation& animation, f32 time_seconds,
+                            GltfAnimationPose& out_pose);
+
+// Computes mesh-local skin matrices from a pose already evaluated for this
+// frame. This avoids sampling channels and walking the hierarchy again.
+void ComputeSkinMatrices(const GltfAnimationPose& pose, const GltfSkin& skin,
+                          std::vector<Mat4>& out_matrices, i32 mesh_node_index);
+
+// Computes skin matrices in the skinned mesh node's local space:
+// inverse(mesh_world) * joint_world * inverse_bind_matrix. Pass the index
+// of the mesh node whose vertices will use the matrices. The default -1
+// preserves world-space matrices for callers that apply them without a
+// mesh-node transform. An invalid/singular mesh transform clears the output.
 void ComputeSkinMatrices(const GltfScene& scene, const GltfAnimation* animation, f32 time_seconds,
-                          const GltfSkin& skin, std::vector<Mat4>& out_matrices);
+                          const GltfSkin& skin, std::vector<Mat4>& out_matrices, i32 mesh_node_index = -1);
 
 // Loads a glTF 2.0 asset: JSON parsed via nlohmann::json, buffers resolved
 // either from an external .bin file (relative to `path`) or an embedded
@@ -186,8 +211,11 @@ void ComputeSkinMatrices(const GltfScene& scene, const GltfAnimation* animation,
 // Scope: POSITION/NORMAL/TEXCOORD_0/JOINTS_0/WEIGHTS_0 vertex attributes
 // (missing NORMAL is filled with a placeholder up-vector, missing
 // TEXCOORD_0 with zero — a primitive with no POSITION accessor is skipped,
-// not fabricated; JOINTS_0/WEIGHTS_0 are only populated when BOTH are
-// present, see GltfPrimitive), triangle-mode indexed primitives,
+// not fabricated; normalized integer NORMAL/TANGENT, TEXCOORD_0, and WEIGHTS_0
+// values are decoded per the glTF component rules; JOINTS_0 accepts unsigned
+// byte/short and WEIGHTS_0 accepts float or normalized unsigned byte/short.
+// Skin attributes are populated only when both accessors are present and valid,
+// see GltfPrimitive), triangle-mode indexed primitives,
 // pbrMetallicRoughness materials with file-URI textures, the node
 // hierarchy/transform tree (TRS or matrix, walked from the default scene's
 // root nodes and flattened into GltfScene::node_instances — see its

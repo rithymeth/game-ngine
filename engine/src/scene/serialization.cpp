@@ -62,7 +62,7 @@ public:
     explicit Reader(std::span<const u8> buffer) : buffer_(buffer) {}
 
     bool ReadBytes(void* dst, usize n) {
-        if (offset_ + n > buffer_.size()) {
+        if (n > Remaining()) {
             return false;
         }
         std::memcpy(dst, buffer_.data() + offset_, n);
@@ -74,7 +74,12 @@ public:
     bool ReadU32(u32& out) { return ReadBytes(&out, sizeof(out)); }
     bool ReadU64(u64& out) { return ReadBytes(&out, sizeof(out)); }
 
+    usize Remaining() const { return buffer_.size() - offset_; }
+
     bool ReadString(std::string& out, u32 length) {
+        if (length > Remaining()) {
+            return false;
+        }
         out.resize(length);
         return length == 0 || ReadBytes(out.data(), length);
     }
@@ -129,6 +134,11 @@ struct PendingComponent {
     ComponentId id;
     ComponentEncoding encoding;
     std::vector<u8> data;
+};
+
+struct PendingEntity {
+    ComponentMask mask;
+    std::vector<PendingComponent> components;
 };
 
 // Deserializes one component record, bridging encodings when a component's
@@ -241,22 +251,31 @@ bool LoadSceneFromMemory(World& world, std::span<const u8> buffer, const std::st
         return false;
     }
 
-    u32 loaded = 0;
+    std::vector<PendingEntity> pending_entities;
     for (u32 e = 0; e < entity_count; ++e) {
         u32 component_count = 0;
         if (version == kLegacyVersion) {
             // v1 wrote the entity's component mask; one record follows per set bit.
             u64 raw_mask = 0;
             if (!reader.ReadU64(raw_mask)) {
-                break;
+                AETHER_LOG_ERROR("Scene", "Truncated scene file: %s", path.c_str());
+                return false;
             }
             component_count = static_cast<u32>(std::popcount(raw_mask));
         } else if (!reader.ReadU32(component_count)) {
-            break;
+            AETHER_LOG_ERROR("Scene", "Truncated scene file: %s", path.c_str());
+            return false;
         }
 
-        std::vector<PendingComponent> pending;
-        ComponentMask resolved_mask;
+        // Every record has at least a name length and data length (plus an
+        // encoding byte in v2). Reject impossible counts before looping.
+        const usize minimum_record_size = version == kLegacyVersion ? 8 : 9;
+        if (component_count > reader.Remaining() / minimum_record_size) {
+            AETHER_LOG_ERROR("Scene", "Invalid component count in scene file: %s", path.c_str());
+            return false;
+        }
+
+        PendingEntity pending_entity;
         for (u32 c = 0; c < component_count; ++c) {
             u32 name_len = 0;
             std::string name;
@@ -265,6 +284,10 @@ bool LoadSceneFromMemory(World& world, std::span<const u8> buffer, const std::st
             std::vector<u8> data;
             if (!reader.ReadU32(name_len) || !reader.ReadString(name, name_len) ||
                 (version != kLegacyVersion && !reader.ReadU8(encoding)) || !reader.ReadU32(data_len)) {
+                AETHER_LOG_ERROR("Scene", "Truncated scene file: %s", path.c_str());
+                return false;
+            }
+            if (data_len > reader.Remaining()) {
                 AETHER_LOG_ERROR("Scene", "Truncated scene file: %s", path.c_str());
                 return false;
             }
@@ -293,21 +316,26 @@ bool LoadSceneFromMemory(World& world, std::span<const u8> buffer, const std::st
                                     ? ComponentEncoding::Custom
                                     : ComponentEncoding::Raw;
             }
-            resolved_mask.set(resolved_id);
-            pending.push_back({resolved_id, file_encoding, std::move(data)});
+            pending_entity.mask.set(resolved_id);
+            pending_entity.components.push_back({resolved_id, file_encoding, std::move(data)});
         }
+        pending_entities.push_back(std::move(pending_entity));
+    }
 
-        Entity entity = world.CreateEntityRaw(resolved_mask);
-        for (const PendingComponent& component : pending) {
+    // The file is fully parsed and all strict-unknown checks have passed.
+    // Only now mutate the destination world, so malformed input cannot leave
+    // a partially loaded scene behind.
+    for (const PendingEntity& pending_entity : pending_entities) {
+        Entity entity = world.CreateEntityRaw(pending_entity.mask);
+        for (const PendingComponent& component : pending_entity.components) {
             void* ptr = world.GetComponentRaw(entity, component.id);
             if (ptr) {
                 ApplyComponent(ptr, GetComponentInfo(component.id), component, path);
             }
         }
-        ++loaded;
     }
 
-    AETHER_LOG_INFO("Scene", "Loaded %u entities from %s", loaded, path.c_str());
+    AETHER_LOG_INFO("Scene", "Loaded %u entities from %s", entity_count, path.c_str());
     return true;
 }
 
@@ -409,7 +437,12 @@ bool LoadSceneJsonFromMemoryImpl(World& world, std::span<const u8> bytes, const 
         return false;
     }
 
-    u32 loaded = 0;
+    struct PendingJsonEntity {
+        ComponentMask mask;
+        EntityGuid guid;
+        std::vector<std::pair<ComponentId, const Json*>> components;
+    };
+    std::vector<PendingJsonEntity> pending_entities;
     for (const Json& entity_json : *entities) {
         auto components = entity_json.find("components");
         if (!entity_json.is_object() || components == entity_json.end() || !components->is_object()) {
@@ -417,12 +450,12 @@ bool LoadSceneJsonFromMemoryImpl(World& world, std::span<const u8> bytes, const 
             continue;
         }
 
-        ComponentMask mask;
-        std::vector<std::pair<ComponentId, const Json*>> pending;
+        PendingJsonEntity pending_entity;
         EntityGuid guid;
         if (auto guid_json = entity_json.find("guid"); guid_json != entity_json.end()) {
             if (guid_json->is_string() && ParseEntityGuid(guid_json->get_ref<const std::string&>(), guid)) {
-                mask.set(GetComponentId<IdComponent>());
+                pending_entity.mask.set(GetComponentId<IdComponent>());
+                pending_entity.guid = guid;
             } else {
                 AETHER_LOG_WARN("Scene", "Ignoring invalid entity guid in %s", path.c_str());
             }
@@ -439,21 +472,25 @@ bool LoadSceneJsonFromMemoryImpl(World& world, std::span<const u8> bytes, const 
                                 it.key().c_str(), path.c_str());
                 continue;
             }
-            mask.set(id);
-            pending.push_back({id, &it.value()});
+            pending_entity.mask.set(id);
+            pending_entity.components.push_back({id, &it.value()});
         }
-
-        Entity entity = world.CreateEntityRaw(mask);
-        if (!guid.IsNull()) {
-            world.GetComponent<IdComponent>(entity)->guid = guid;
-        }
-        for (auto& [id, data] : pending) {
-            reflect::FromJson(*GetComponentInfo(id).reflected, world.GetComponentRaw(entity, id), *data);
-        }
-        ++loaded;
+        pending_entities.push_back(std::move(pending_entity));
     }
 
-    AETHER_LOG_INFO("Scene", "Loaded %u entities from %s", loaded, path.c_str());
+    // Defer all world mutations until every entity and strict component check
+    // has been processed. The Json document stays alive through this commit.
+    for (const PendingJsonEntity& pending_entity : pending_entities) {
+        Entity entity = world.CreateEntityRaw(pending_entity.mask);
+        if (!pending_entity.guid.IsNull()) {
+            world.GetComponent<IdComponent>(entity)->guid = pending_entity.guid;
+        }
+        for (const auto& [id, data] : pending_entity.components) {
+            reflect::FromJson(*GetComponentInfo(id).reflected, world.GetComponentRaw(entity, id), *data);
+        }
+    }
+
+    AETHER_LOG_INFO("Scene", "Loaded %zu entities from %s", pending_entities.size(), path.c_str());
     return true;
 }
 } // namespace

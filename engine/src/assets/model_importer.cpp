@@ -14,9 +14,15 @@ namespace stdfs = std::filesystem;
 namespace {
 
 constexpr char kMeshMagic[4] = {'A', 'M', 'S', 'H'};
-constexpr u32 kMeshFormatVersion = 1;
+constexpr u32 kMeshFormatVersion = 2;
 
-static_assert(sizeof(MeshVertex) == 8 * sizeof(f32), "MeshVertex is stored as raw bytes");
+static_assert(sizeof(MeshVertex) == 12 * sizeof(f32), "MeshVertex is stored as raw bytes");
+
+struct LegacyMeshVertex {
+    f32 position[3];
+    f32 normal[3];
+    f32 uv[2];
+};
 
 void AppendU32(std::vector<u8>& out, u32 value) {
     const u8* b = reinterpret_cast<const u8*>(&value);
@@ -113,7 +119,7 @@ bool DecodeMeshData(const std::vector<u8>& bytes, MeshData& out) {
     u32 version = 0;
     u32 count = 0;
     if (!ReadBytes(bytes, offset, magic, 4) || std::memcmp(magic, kMeshMagic, 4) != 0 ||
-        !ReadBytes(bytes, offset, &version, 4) || version != kMeshFormatVersion ||
+        !ReadBytes(bytes, offset, &version, 4) || (version != 1 && version != kMeshFormatVersion) ||
         !ReadBytes(bytes, offset, &count, 4)) {
         return false;
     }
@@ -121,11 +127,34 @@ bool DecodeMeshData(const std::vector<u8>& bytes, MeshData& out) {
     for (u32 i = 0; i < count; ++i) {
         MeshPrimitiveData primitive;
         f32 bounds[6];
-        if (!ReadBytes(bytes, offset, &primitive.material, 4) || !ReadBytes(bytes, offset, bounds, sizeof(bounds)) ||
-            !ReadArray(bytes, offset, primitive.vertices) || !ReadArray(bytes, offset, primitive.indices) ||
-            !ReadArray(bytes, offset, primitive.joints) || !ReadArray(bytes, offset, primitive.weights)) {
+        if (!ReadBytes(bytes, offset, &primitive.material, 4) || !ReadBytes(bytes, offset, bounds, sizeof(bounds))) {
             return false;
         }
+        if (version == 1) {
+            u32 vertex_count = 0;
+            if (!ReadBytes(bytes, offset, &vertex_count, 4) ||
+                (bytes.size() - offset) / sizeof(LegacyMeshVertex) < vertex_count) return false;
+            std::vector<LegacyMeshVertex> legacy_vertices(vertex_count);
+            if (!ReadBytes(bytes, offset, legacy_vertices.data(),
+                           static_cast<usize>(vertex_count) * sizeof(LegacyMeshVertex))) return false;
+            primitive.vertices.resize(vertex_count);
+            for (usize vertex = 0; vertex < vertex_count; ++vertex) {
+                std::copy(std::begin(legacy_vertices[vertex].position), std::end(legacy_vertices[vertex].position),
+                          primitive.vertices[vertex].position);
+                std::copy(std::begin(legacy_vertices[vertex].normal), std::end(legacy_vertices[vertex].normal),
+                          primitive.vertices[vertex].normal);
+                std::copy(std::begin(legacy_vertices[vertex].uv), std::end(legacy_vertices[vertex].uv),
+                          primitive.vertices[vertex].uv);
+                primitive.vertices[vertex].tangent[0] = 1.0f;
+                primitive.vertices[vertex].tangent[1] = 0.0f;
+                primitive.vertices[vertex].tangent[2] = 0.0f;
+                primitive.vertices[vertex].tangent[3] = 1.0f;
+            }
+        } else if (!ReadArray(bytes, offset, primitive.vertices)) {
+            return false;
+        }
+        if (!ReadArray(bytes, offset, primitive.indices) || !ReadArray(bytes, offset, primitive.joints) ||
+            !ReadArray(bytes, offset, primitive.weights)) return false;
         primitive.bounds_min = Vec3{bounds[0], bounds[1], bounds[2]};
         primitive.bounds_max = Vec3{bounds[3], bounds[4], bounds[5]};
         mesh.primitives.push_back(std::move(primitive));
@@ -162,10 +191,15 @@ ImportResult ModelImporter::Import(const ImportContext& context) const {
                                        source.base_color[3]};
             material.metallic = source.metallic;
             material.roughness = source.roughness;
+            material.normal_scale = source.normal_scale;
+            material.occlusion_strength = source.occlusion_strength;
+            material.alpha_cutoff = source.alpha_cutoff;
+            material.alpha_mode = source.alpha_mode;
             material.base_color_texture = ContentRelativeTexture(source.base_color_texture, context, result.warnings);
             material.normal_texture = ContentRelativeTexture(source.normal_texture, context, result.warnings);
             material.metallic_roughness_texture =
                 ContentRelativeTexture(source.metallic_roughness_texture, context, result.warnings);
+            material.occlusion_texture = ContentRelativeTexture(source.occlusion_texture, context, result.warnings);
             model.materials.push_back(Key("material", i));
             result.sub_assets.push_back({model.materials.back(), "Material", reflect::SaveBinary(material), {}});
         }

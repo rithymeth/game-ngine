@@ -30,6 +30,7 @@ public:
     World& GetWorld() { return world_; }
     const World& GetWorld() const { return world_; }
     const std::filesystem::path& FilePath() const { return file_; }
+    GuidIndex& Guids() { return guids_; }
     const GuidIndex& Guids() const { return guids_; }
     bool IsDirty() const { return commands_.IsDirty(); }
     bool CanUndo() const { return commands_.CanUndo(); }
@@ -49,8 +50,13 @@ public:
     Entity ParentOf(Entity entity) const;
     bool ReparentEntity(Entity entity, Entity new_parent = kNullEntity);
     bool DestroyEntity(Entity entity);
+    bool AddComponent(Entity entity, ComponentId component);
+    bool RemoveComponent(Entity entity, ComponentId component);
+    bool SetComponentField(Entity entity, ComponentId component, const std::string& field,
+                           const reflect::Any& value, bool committed = true);
     bool SetPosition(Entity entity, const Vec3& position, bool committed);
     bool SetRotation(Entity entity, const Quaternion& rotation, bool committed);
+    bool SetScale(Entity entity, const Vec3& scale, bool committed);
     bool SetCameraField(Entity entity, const std::string& field_name, const reflect::Any& value);
     bool SetCineCameraField(Entity entity, const std::string& field_name, const reflect::Any& value);
     bool Undo();
@@ -73,6 +79,8 @@ private:
     std::optional<reflect::Any> pending_position_before_;
     EntityGuid pending_rotation_entity_{};
     std::optional<reflect::Any> pending_rotation_before_;
+    EntityGuid pending_scale_entity_{};
+    std::optional<reflect::Any> pending_scale_before_;
 };
 
 } // namespace aether::editor

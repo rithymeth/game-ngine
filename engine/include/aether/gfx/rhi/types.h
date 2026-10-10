@@ -59,19 +59,19 @@ struct BufferHandle {
 // elsewhere in this engine (see descriptor_heap.h's comment) — there's no
 // per-draw descriptor rebinding, ICommandList::BindBindlessTextures() binds
 // the whole table once and a pipeline's push constants carry the index.
+// Index zero always selects the white fallback; real texture handles start at 1.
 struct SampledTextureHandle {
     u32 index = static_cast<u32>(-1);
     bool IsValid() const { return index != static_cast<u32>(-1); }
 };
 
-// Fixed capacity of the device-global bindless texture table both backends
-// build: a real bindless design would grow this dynamically (see
-// gfx::DescriptorHeap's free-list allocator for what that looks like on
-// D3D12), but a fixed small capacity, sized well above what any demo built
-// against this RHI actually needs, avoids Vulkan descriptor-set-layout
-// recreation entirely — the layout (and the dummy-filled descriptor set) is
-// built once, in each IDevice implementation's constructor.
+// Slot zero is the permanent white fallback on both backends. This fixed
+// table capacity avoids Vulkan descriptor-set-layout recreation; the table
+// is built once and every descriptor is valid before any real texture loads.
 constexpr u32 kMaxBindlessTextures = 32;
+constexpr u32 kBindlessFallbackTextureIndex = 0;
+constexpr u32 kFirstUserBindlessTextureIndex = kBindlessFallbackTextureIndex + 1;
+constexpr u32 kMaxUserBindlessTextures = kMaxBindlessTextures - kFirstUserBindlessTextureIndex;
 
 enum class IndexFormat { UInt16, UInt32 };
 

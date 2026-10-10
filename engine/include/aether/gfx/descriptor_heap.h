@@ -24,6 +24,7 @@ public:
 
     u32 Allocate();
     void Free(u32 index);
+    bool CanAllocate() const { return !free_list_.empty() || next_free_ < capacity_; }
 
     D3D12_CPU_DESCRIPTOR_HANDLE CPUHandle(u32 index) const;
     D3D12_GPU_DESCRIPTOR_HANDLE GPUHandle(u32 index) const;

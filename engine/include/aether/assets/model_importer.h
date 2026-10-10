@@ -1,6 +1,7 @@
 #pragma once
 
 #include "aether/assets/importer.h"
+#include "aether/assets/material.h"
 #include "aether/math/math.h"
 #include "aether/reflection/reflection.h"
 
@@ -18,6 +19,7 @@ struct MeshVertex {
     f32 position[3];
     f32 normal[3];
     f32 uv[2];
+    f32 tangent[4];
 };
 
 struct MeshPrimitiveData {
@@ -47,9 +49,14 @@ struct MaterialData {
     Vec4 base_color{1.0f, 1.0f, 1.0f, 1.0f};
     f32 metallic = 1.0f;
     f32 roughness = 1.0f;
+    f32 normal_scale = 1.0f;
+    f32 occlusion_strength = 1.0f;
+    f32 alpha_cutoff = 0.5f;
+    MaterialAlphaMode alpha_mode = MaterialAlphaMode::Opaque;
     std::string base_color_texture;
     std::string normal_texture;
     std::string metallic_roughness_texture;
+    std::string occlusion_texture;
 };
 
 enum class AnimationPath { Translation, Rotation, Scale };
@@ -111,7 +118,7 @@ struct ModelData {
 class ModelImporter final : public IAssetImporter {
 public:
     const char* Name() const override { return "Model"; }
-    u32 Version() const override { return 1; }
+    u32 Version() const override { return 4; }
     nlohmann::json DefaultSettings() const override;
     ImportResult Import(const ImportContext& context) const override;
 };
@@ -129,13 +136,24 @@ AETHER_ENUM(aether::assets::AnimationInterpolation, 1,
     AETHER_ENUM_VALUE(Step)
 )
 
-AETHER_REFLECT(aether::assets::MaterialData, 1,
+AETHER_ENUM(aether::assets::MaterialAlphaMode, 1,
+    AETHER_ENUM_VALUE(Opaque),
+    AETHER_ENUM_VALUE(Mask),
+    AETHER_ENUM_VALUE(Blend)
+)
+
+AETHER_REFLECT(aether::assets::MaterialData, 4,
     AETHER_FIELD(base_color),
     AETHER_FIELD(metallic),
     AETHER_FIELD(roughness),
+    AETHER_FIELD(normal_scale),
+    AETHER_FIELD(occlusion_strength),
+    AETHER_FIELD(alpha_cutoff),
+    AETHER_FIELD(alpha_mode),
     AETHER_FIELD(base_color_texture),
     AETHER_FIELD(normal_texture),
-    AETHER_FIELD(metallic_roughness_texture)
+    AETHER_FIELD(metallic_roughness_texture),
+    AETHER_FIELD(occlusion_texture)
 )
 
 AETHER_REFLECT(aether::assets::AnimationChannelData, 1,

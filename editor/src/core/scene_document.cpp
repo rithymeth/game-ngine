@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstring>
 #include <memory>
 #include <unordered_set>
@@ -70,6 +71,8 @@ void SceneDocument::Reset() {
     pending_position_entity_ = {};
     pending_rotation_before_.reset();
     pending_rotation_entity_ = {};
+    pending_scale_before_.reset();
+    pending_scale_entity_ = {};
 }
 
 void SceneDocument::NewScene() {
@@ -269,6 +272,42 @@ bool SceneDocument::DestroyEntity(Entity entity) {
     return true;
 }
 
+bool SceneDocument::AddComponent(Entity entity, ComponentId component) {
+    if (!world_.IsAlive(entity) || component >= RegisteredComponentCount() ||
+        world_.HasComponentRaw(entity, component)) return false;
+    const auto* id = world_.GetComponent<IdComponent>(entity);
+    if (!id) return false;
+    commands_.Execute(context_, std::make_unique<AddComponentCommand>(id->guid, component));
+    return true;
+}
+
+bool SceneDocument::RemoveComponent(Entity entity, ComponentId component) {
+    if (!world_.IsAlive(entity) || component >= RegisteredComponentCount() ||
+        !world_.HasComponentRaw(entity, component)) return false;
+    const auto* id = world_.GetComponent<IdComponent>(entity);
+    if (!id) return false;
+    commands_.Execute(context_, std::make_unique<RemoveComponentCommand>(id->guid, component));
+    return true;
+}
+
+bool SceneDocument::SetComponentField(Entity entity, ComponentId component, const std::string& field_name,
+                                      const reflect::Any& value, bool committed) {
+    if (!world_.IsAlive(entity) || component >= RegisteredComponentCount() ||
+        !world_.HasComponentRaw(entity, component)) return false;
+    const auto* id = world_.GetComponent<IdComponent>(entity);
+    const ComponentInfo& info = GetComponentInfo(component);
+    void* data = world_.GetComponentRaw(entity, component);
+    if (!id || !info.reflected || !data) return false;
+    const auto field = std::find_if(info.reflected->fields.begin(), info.reflected->fields.end(),
+        [&](const reflect::FieldInfo& candidate) { return field_name == candidate.name; });
+    if (field == info.reflected->fields.end()) return false;
+    const reflect::Any old_value = field->Get(data);
+    if (!field->Set(data, value)) return false;
+    // CommitFieldEdit restores the live value while recording the reversible change.
+    CommitFieldEdit(context_, commands_, id->guid, component, *field, data, old_value, committed);
+    return true;
+}
+
 bool SceneDocument::SetPosition(Entity entity, const Vec3& position, bool committed) {
     if (!world_.IsAlive(entity) || !world_.HasComponent<Transform>(entity)) return false;
     const auto* id = world_.GetComponent<IdComponent>(entity);
@@ -320,6 +359,39 @@ bool SceneDocument::SetRotation(Entity entity, const Quaternion& rotation, bool 
     if (committed) {
         pending_rotation_before_.reset();
         pending_rotation_entity_ = {};
+    }
+    return true;
+}
+
+bool SceneDocument::SetScale(Entity entity, const Vec3& scale, bool committed) {
+    if (!world_.IsAlive(entity) || !world_.HasComponent<Transform>(entity)) return false;
+    const auto* id = world_.GetComponent<IdComponent>(entity);
+    auto* transform = world_.GetComponent<Transform>(entity);
+    if (!id || !transform) return false;
+    if (!std::isfinite(scale.x) || !std::isfinite(scale.y) || !std::isfinite(scale.z)) return false;
+    const auto prevent_zero_scale = [](f32 value) {
+        if (std::abs(value) >= 0.001f) return value;
+        return std::signbit(value) ? -0.001f : 0.001f;
+    };
+    const Vec3 safe_scale{prevent_zero_scale(scale.x), prevent_zero_scale(scale.y), prevent_zero_scale(scale.z)};
+    const auto& type = reflect::Reflect<Transform>();
+    const auto field = std::find_if(type.fields.begin(), type.fields.end(),
+                                    [](const reflect::FieldInfo& candidate) {
+                                        return std::strcmp(candidate.name, "scale") == 0;
+                                    });
+    if (field == type.fields.end()) return false;
+    const EntityGuid guid = id->guid;
+    if (!pending_scale_before_ || pending_scale_entity_ != guid) {
+        pending_scale_before_ = field->Get(transform);
+        pending_scale_entity_ = guid;
+    }
+    const reflect::Any old_value = *pending_scale_before_;
+    field->Set(transform, reflect::Any(safe_scale));
+    CommitFieldEdit(context_, commands_, id->guid, GetComponentId<Transform>(), *field, transform,
+                    old_value, committed);
+    if (committed) {
+        pending_scale_before_.reset();
+        pending_scale_entity_ = {};
     }
     return true;
 }

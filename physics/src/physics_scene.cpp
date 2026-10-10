@@ -9,10 +9,12 @@
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
+#include <Jolt/Physics/Collision/Shape/ScaledShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 
 #include <algorithm>
+#include <cmath>
 #include <unordered_set>
 
 namespace aether {
@@ -78,6 +80,11 @@ std::vector<u8> SettingsOf(const World& world, Entity e) {
     AppendSettings<MeshCollider>(world, e, 5, out);
     AppendSettings<RigidBody>(world, e, 6, out);
     AppendSettings<Layer>(world, e, 7, out); // a layer change moves the body to another object layer
+    if (const Transform* transform = world.GetComponent<Transform>(e)) {
+        out.push_back(8);
+        const std::vector<u8> bytes = reflect::SaveBinary(transform->scale);
+        out.insert(out.end(), bytes.begin(), bytes.end());
+    }
     return out;
 }
 
@@ -205,6 +212,16 @@ bool PhysicsScene::Build(Entity e, Tracked& tracked, std::string& problem) {
     }
 
     const Transform* t = world_.GetComponent<Transform>(e);
+    if (t != nullptr && !Same(t->scale, Vec3(1, 1, 1))) {
+        // Jolt's ScaledShape requires every scale component to be non-zero.
+        // Normalize legacy/imported zero values the same way as SceneDocument::SetScale.
+        Vec3 safe_scale = t->scale;
+        for (f32* component : {&safe_scale.x, &safe_scale.y, &safe_scale.z}) {
+            if (std::abs(*component) < 0.001f) *component = std::signbit(*component) ? -0.001f : 0.001f;
+        }
+        if (!Make(JPH::ScaledShapeSettings(shape.GetPtr(), ToJolt(safe_scale)), shape, problem, "Scaled collider"))
+            return false;
+    }
     const Vec3 position = t != nullptr ? t->position : Vec3(0, 0, 0);
     const Quaternion rotation = t != nullptr ? t->rotation : Quaternion::Identity();
     const JPH::EMotionType type = motion == BodyMotion::Static      ? JPH::EMotionType::Static

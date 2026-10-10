@@ -301,7 +301,8 @@ int main(int argc, char** argv) {
         std::unique_ptr<Window> window;
         std::unique_ptr<rhi::IDevice> device;
         std::unique_ptr<rhi::ISwapChain> swap_chain;
-        std::unique_ptr<rhi::ICommandList> cmd;
+        std::vector<std::unique_ptr<rhi::ICommandList>> command_lists;
+        std::vector<u64> frame_fences;
         std::unique_ptr<SceneRenderer> scene_renderer;
         bool resized = false;
         if (!options.headless) {
@@ -331,7 +332,12 @@ int main(int argc, char** argv) {
             device = rhi::CreateDevice(backend, config == cook::BuildConfiguration::Debug);
             if (device) {
                 swap_chain = device->CreateSwapChain(native, window->Width(), window->Height(), 2);
-                cmd = device->CreateCommandList();
+                const u32 frame_count = std::max(swap_chain->BufferCount(), 1u);
+                command_lists.reserve(frame_count);
+                frame_fences.assign(frame_count, 0);
+                for (u32 frame = 0; frame < frame_count; ++frame) {
+                    command_lists.push_back(device->CreateCommandList());
+                }
                 scene_renderer = std::make_unique<SceneRenderer>(*device, *swap_chain, package);
                 window->on_resize = [&](u32, u32) { resized = true; };
             } else {
@@ -349,7 +355,7 @@ int main(int argc, char** argv) {
         }
         if (window && !game.StartAudioOutput(&error)) AETHER_LOG_WARN("Player", "Audio output: %s", error.c_str());
         game.BeginPlay();
-        u64 fence = 0;
+        u32 frame_slot = 0;
         bool screenshot_written = false;
         bool screenshot_failed = false;
         auto last = std::chrono::steady_clock::now();
@@ -383,21 +389,23 @@ int main(int argc, char** argv) {
             if (game.ExitRequested()) break;
 
             if (swap_chain) {
-                device->WaitForFence(fence);
+                device->WaitForFence(frame_fences[frame_slot]);
                 if (resized) {
+                    for (u64 pending_fence : frame_fences) device->WaitForFence(pending_fence);
                     swap_chain->Resize(window->Width(), window->Height());
                     resized = false;
                 }
                 swap_chain->AcquireNextImage();
-                cmd->Reset();
+                rhi::ICommandList& cmd = *command_lists[frame_slot];
+                cmd.Reset();
                 if (scene_renderer) {
-                    scene_renderer->Draw(game, *cmd);
+                    scene_renderer->Draw(game, cmd, frame_slot);
                 } else {
-                    cmd->BeginRenderPass(*swap_chain, {0.015f, 0.025f, 0.045f, 1.0f});
-                    cmd->EndRenderPass();
+                    cmd.BeginRenderPass(*swap_chain, {0.015f, 0.025f, 0.045f, 1.0f});
+                    cmd.EndRenderPass();
                 }
-                cmd->Close();
-                fence = device->Submit(*cmd, swap_chain.get());
+                cmd.Close();
+                frame_fences[frame_slot] = device->Submit(cmd, swap_chain.get());
                 const bool should_capture = options.frames < 0 || frame + 1 >= options.frames;
                 if (!options.screenshot.empty() && !screenshot_written && should_capture) {
                     std::vector<u8> rgba;
@@ -411,6 +419,7 @@ int main(int argc, char** argv) {
                     }
                 }
                 swap_chain->Present(vsync);
+                frame_slot = (frame_slot + 1) % static_cast<u32>(frame_fences.size());
             }
             if (config != cook::BuildConfiguration::Shipping && now - last_stats >= std::chrono::seconds(1)) {
                 last_stats = now;
@@ -421,7 +430,9 @@ int main(int argc, char** argv) {
                                 s.script_instances, s.blueprint_instances);
             }
         }
-        if (device) device->WaitForFence(fence);
+        if (device) {
+            for (u64 pending_fence : frame_fences) device->WaitForFence(pending_fence);
+        }
         if (options.report) {
             for (const Entity e : FindEntitiesWithTag(game.GetWorld(), "Player")) {
                 if (const Transform* t = game.GetWorld().GetComponent<Transform>(e)) {
@@ -429,7 +440,9 @@ int main(int argc, char** argv) {
                 }
                 if (const auto* attributes = game.GetWorld().GetComponent<gas::AttributeSet>(e)) {
                     std::printf("Player attributes: %s\n", reflect::Json({{"Health", attributes->Get("Health")},
-                        {"MissionStage", attributes->Get("MissionStage")}, {"ArchiveTime", attributes->Get("ArchiveTime")}}).dump().c_str());
+                        {"MissionStage", attributes->Get("MissionStage")}, {"ArchiveTime", attributes->Get("ArchiveTime")},
+                        {"CampaignAct", attributes->Get("CampaignAct")}, {"Ending", attributes->Get("Ending")},
+                        {"Energy", attributes->Get("Energy")}, {"AnimationState", attributes->Get("AnimationState")}}).dump().c_str());
                 }
             }
         }

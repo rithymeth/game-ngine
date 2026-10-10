@@ -16,7 +16,9 @@ namespace aether::script {
 namespace {
 
 constexpr const char* kCallbacks[] = {"OnCreate", "OnEnable", "OnStart", "OnUpdate", "OnFixedUpdate",
-                                      "OnLateUpdate", "OnDisable", "OnDestroy", "OnReload"};
+                                      "OnLateUpdate", "OnDisable", "OnDestroy", "OnReload",
+                                      "OnCollisionBegin", "OnCollisionStay", "OnCollisionEnd",
+                                      "OnTriggerEnter", "OnTriggerExit"};
 
 void PushJsonValue(lua_State* L, const nlohmann::json& value) {
     if (value.is_boolean()) {
@@ -159,6 +161,7 @@ ScriptSystem::ScriptSystem(LuauHost& host, World& world, GuidIndex& guids, Sourc
 
 ScriptSystem::~ScriptSystem() {
     BindInput(nullptr);
+    BindPhysicsScene(nullptr);
     lua_State* L = host_.State();
     // Scripts may still hold events or timers: they now report that no
     // script system is running instead of reaching this one.

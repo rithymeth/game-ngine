@@ -3,13 +3,20 @@
 #include "aether/gfx/command_list.h"
 #include "aether/gfx/descriptor_heap.h"
 #include "aether/gfx/device.h"
+#include "aether/core/log.h"
 
 #include <cstring>
+#include <stdexcept>
 
 namespace aether::gfx {
 
 Texture::Texture(Device& device, DescriptorHeap& bindless_heap, ID3D12GraphicsCommandList* upload_cmd, u32 width,
                   u32 height, const u8* pixels) {
+    if (!bindless_heap.CanAllocate()) {
+        AETHER_LOG_ERROR("Texture", "Cannot create texture: bindless descriptor heap is exhausted");
+        throw std::length_error("Cannot create texture: bindless descriptor heap is exhausted");
+    }
+
     D3D12_HEAP_PROPERTIES default_heap{};
     default_heap.Type = D3D12_HEAP_TYPE_DEFAULT;
 
@@ -76,6 +83,10 @@ Texture::Texture(Device& device, DescriptorHeap& bindless_heap, ID3D12GraphicsCo
     upload_cmd->ResourceBarrier(1, &barrier);
 
     bindless_index_ = bindless_heap.Allocate();
+    if (bindless_index_ == DescriptorHeap::kInvalidIndex) {
+        AETHER_LOG_ERROR("Texture", "Cannot create texture: bindless descriptor allocation failed");
+        throw std::length_error("Cannot create texture: bindless descriptor allocation failed");
+    }
     D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc{};
     srv_desc.Format = tex_desc.Format;
     srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;

@@ -919,7 +919,7 @@ GltfRenderData& GetOrLoadGltfRenderData(Device& device, assets::AssetManager& as
     }
     setup_cmd.Close();
     ID3D12CommandList* setup_lists[] = {setup_cmd.Get()};
-    device.WaitForFence(device.Submit(setup_lists, 1));
+    asset_manager.ReleaseUploadStagingAfterFence(device.Submit(setup_lists, 1));
 
     data->valid = true;
     AETHER_LOG_INFO("Editor", "Loaded glTF model \"%s\": %zu vert(s), %zu index(es), %zu animation(s)",
@@ -1133,8 +1133,18 @@ int main(int argc, char** argv) {
         ComPtr<ID3D12RootSignature> root_signature = CreateRootSignature(device);
         ComPtr<ID3D12PipelineState> pso = CreatePSO(device, root_signature.Get(), swap_chain.Format());
 
-        Buffer view_proj_buffer(device, sizeof(f32) * 16, BufferKind::Upload);
-        Buffer instance_buffer(device, sizeof(EditorInstance) * kMaxInstances, BufferKind::Upload);
+        const u32 upload_buffer_count = std::max(swap_chain.BufferCount(), 1u);
+        std::vector<Buffer> view_proj_buffers;
+        std::vector<Buffer> instance_buffers;
+        std::vector<Buffer> gizmo_vertex_buffers;
+        view_proj_buffers.reserve(upload_buffer_count);
+        instance_buffers.reserve(upload_buffer_count);
+        gizmo_vertex_buffers.reserve(upload_buffer_count);
+        for (u32 i = 0; i < upload_buffer_count; ++i) {
+            view_proj_buffers.emplace_back(device, sizeof(f32) * 16, BufferKind::Upload);
+            instance_buffers.emplace_back(device, sizeof(EditorInstance) * kMaxInstances, BufferKind::Upload);
+            gizmo_vertex_buffers.emplace_back(device, sizeof(GizmoVertex) * 6, BufferKind::Upload);
+        }
 
         World world;
         JobSystem job_system;
@@ -1232,7 +1242,6 @@ int main(int argc, char** argv) {
 
         ComPtr<ID3D12RootSignature> gizmo_root_signature = CreateGizmoRootSignature(device);
         ComPtr<ID3D12PipelineState> gizmo_pso = CreateGizmoPSO(device, gizmo_root_signature.Get(), swap_chain.Format());
-        Buffer gizmo_vertex_buffer(device, sizeof(GizmoVertex) * 6, BufferKind::Upload);
         constexpr f32 kGizmoAxisLength = 1.5f;
         constexpr f32 kGizmoPickPixels = 10.0f;
         int gizmo_dragging_axis = -1; // -1 = not dragging, 0/1/2 = X/Y/Z
@@ -1994,6 +2003,15 @@ int main(int argc, char** argv) {
                 assets::EvaluateAnimation(data->scene, animation, data->anim_time, data->scene.node_instances);
             }
 
+            // Each upload buffer belongs to one swap-chain image. Wait before
+            // writing the slot, since its previous submission may still read it.
+            u32 buffer_index = swap_chain.CurrentBackBufferIndex();
+            last_rendered_buffer_index = buffer_index;
+            device.WaitForFence(frame_fences[buffer_index]);
+            Buffer& view_proj_buffer = view_proj_buffers[buffer_index];
+            Buffer& instance_buffer = instance_buffers[buffer_index];
+            Buffer& gizmo_vertex_buffer = gizmo_vertex_buffers[buffer_index];
+
             // view/proj/view_proj were already computed at the top of this
             // iteration (right after NewFrame()) so picking/gizmo math could
             // use them too — no longer recomputed here.
@@ -2026,10 +2044,6 @@ int main(int argc, char** argv) {
                     draw_gizmo = true;
                 }
             }
-
-            u32 buffer_index = swap_chain.CurrentBackBufferIndex();
-            last_rendered_buffer_index = buffer_index;
-            device.WaitForFence(frame_fences[buffer_index]);
 
             CommandList& cmd = *command_lists[buffer_index];
             cmd.Reset();
