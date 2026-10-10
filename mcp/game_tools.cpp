@@ -3,6 +3,7 @@
 #include "screenshot.h"
 
 #include "aether/audio/audio_system.h"
+#include "aether/sequencer/sequence_system.h"
 #include "aether/gameplay/attribute_library.h"
 #include "aether/gameplay/attribute_set.h"
 #include "aether/input/keys.h"
@@ -699,6 +700,74 @@ void RegisterGameTools(McpServer& server) {
              else throw ToolError("\"action\" must be play, stop, fade_in, fade_out, set_volume or set_cue");
              return {{"action", action}, {"cue", source->cue}, {"playing", source->playing}, {"volume_db", source->volume_db}, {"queued_commands", source->commands.size()}};
          }});
+
+    // -- Sequences (the game's SequenceSystem and SequenceComponent) ----------------------------------------------
+    server.AddTool(
+        {"game_sequences",
+         "The running game's sequences: every entity with a SequenceComponent (sequence, playing, time, loop, rate), the screen fade the sequences ask for, and the "
+         "problems the sequence system found (a missing sequence, a track whose entity or field could not be resolved).",
+         Schema(Json::object()), [host](const Json&) -> Json {
+             Game& game = host->Require();
+             seq::SequenceSystem* system = seq::SequenceSystem::Active();
+             Json list = Json::array();
+             game.GetWorld().ForEach<SequenceComponent>([&](SequenceComponent& c) {
+                 list.push_back({{"sequence", c.sequence}, {"playing", c.playing}, {"time", c.time}, {"loop", c.loop}, {"rate", c.rate}});
+             });
+             Json out = {{"sequences", list}, {"has_sequence_system", system != nullptr}};
+             if (system != nullptr) {
+                 out["fade"] = {{"amount", system->Fade().amount}, {"color", Json::array({system->Fade().color.x, system->Fade().color.y, system->Fade().color.z, system->Fade().color.w})}};
+                 out["problems"] = system->Problems();
+             }
+             return out;
+         }});
+
+    server.AddTool({"game_play_sequence",
+                    "Play a level sequence in the running game, like the Blueprint node Play Sequence: it gets its own entity, which is removed when it ends. `sequence` is the "
+                    "asset path (Sequences/Intro.asequence). Step the game to let it run; the entity comes back so game_sequence_control can drive it.",
+                    Schema({{"sequence", {{"type", "string"}}}, {"loop", {{"type", "boolean"}}}}, {"sequence"}), [host](const Json& args) -> Json {
+                        Game& game = host->Require();
+                        seq::SequenceSystem* system = seq::SequenceSystem::Active();
+                        if (system == nullptr) throw ToolError("This game has no sequence system (load a scene first)");
+                        const bool loop = args.contains("loop") && args["loop"].is_boolean() && args["loop"].get<bool>();
+                        const Entity e = system->PlaySequence(RequireString(args, "sequence"), loop);
+                        if (e.IsNull()) throw ToolError("Could not play \"" + RequireString(args, "sequence") + "\": it is not a sequence in the game (see game_sequences problems)");
+                        return {{"entity", EntityKey(game.GetWorld(), e)}, {"sequence", RequireString(args, "sequence")}, {"loop", loop}, {"problems", system->Problems()}};
+                    }});
+
+    server.AddTool(
+        {"game_sequence_control",
+         "Control one SequenceComponent in the running game: play, pause, stop, skip (finish from here without firing the keys in between), set_time (value = seconds), set_rate "
+         "(value; negative plays backward) or set_loop (value 1 or 0). Applied by the next frame's sequence update, so step the game.",
+         Schema({{"entity", {{"type", "string"}}}, {"action", {{"type", "string"}, {"description", "play | pause | stop | skip | set_time | set_rate | set_loop"}}}, {"value", {{"type", "number"}}}},
+                {"entity", "action"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             Entity e = RequireEntity(game, args);
+             SequenceComponent* c = game.GetWorld().GetComponent<SequenceComponent>(e);
+             if (c == nullptr) throw ToolError("The entity has no SequenceComponent");
+             const std::string action = RequireString(args, "action");
+             const f32 value = args.contains("value") && args["value"].is_number() ? args["value"].get<f32>() : 0.0f;
+             if (action == "play") c->Play();
+             else if (action == "pause") c->Pause();
+             else if (action == "stop") c->Stop();
+             else if (action == "skip") c->Skip();
+             else if (action == "set_time") c->SetTime(value);
+             else if (action == "set_rate") c->SetRate(value);
+             else if (action == "set_loop") c->SetLoop(value != 0.0f);
+             else throw ToolError("\"action\" must be play, pause, stop, skip, set_time, set_rate or set_loop");
+             return {{"action", action}, {"sequence", c->sequence}, {"playing", c->playing}, {"time", c->time}, {"queued_commands", c->commands.size()}};
+         }});
+
+    server.AddTool({"game_stop_sequences", "Stop or skip every playing sequence in the running game (skip finishes each from where it is without firing the keys in between).",
+                    Schema({{"skip", {{"type", "boolean"}, {"description", "Skip instead of stop"}}}}), [host](const Json& args) -> Json {
+                        host->Require();
+                        seq::SequenceSystem* system = seq::SequenceSystem::Active();
+                        if (system == nullptr) throw ToolError("This game has no sequence system (load a scene first)");
+                        const bool skip = args.contains("skip") && args["skip"].is_boolean() && args["skip"].get<bool>();
+                        if (skip) system->SkipAll();
+                        else system->StopAll();
+                        return {{"done", skip ? "skipped" : "stopped"}};
+                    }});
 
     server.AddTool({"game_destroy_entity", "Destroy an entity in the running game (its OnDestroy runs).",
                     Schema({{"entity", {{"type", "string"}}}}, {"entity"}), [host](const Json& args) -> Json {

@@ -543,6 +543,7 @@ AETHER_TEST(Mcp_ToolsCanReturnImages) {
 #include "audio_tools.h"
 #include "blueprint_tools.h"
 #include "kit_tools.h"
+#include "sequence_tools.h"
 #include "loc_tools.h"
 #include "nav_tools.h"
 #include "terrain_tools.h"
@@ -1790,4 +1791,206 @@ AETHER_TEST(Mcp_LocToolsFormatEditGatherValidateAndRoundTrip) {
     AETHER_CHECK(h.Call("loc_set", {{"key", "ui.next"}, {"translations", {{"en", "Next"}}}}).is_error);
     AETHER_CHECK(h.Call("loc_get", {{"key", "ui.back"}}).value["translations"]["en"] == "Back"); // the merged view sees both
     stdfs::remove_all(dir);
+}
+
+AETHER_TEST(Mcp_SequenceToolsValidateEvaluateAndPlay) {
+    namespace stdfs = std::filesystem;
+    Harness h;
+    auto project = MakeAssetHost();
+    RegisterAssetTools(h.server, project);
+    RegisterKitTools(h.server, project);
+    RegisterSequenceTools(h.server, project);
+
+    // --- the sample, validated and read without a project
+    const Json sample = h.Call("kit_schema", {{"type", "sequence"}}).value["sample"];
+    Json valid = h.Call("seq_validate", {{"definition", sample}}).value;
+    AETHER_CHECK(valid["ok"] == true);
+    AETHER_CHECK(valid["duration"] == 4);
+    AETHER_CHECK(valid["tracks"] == 3);
+    AETHER_CHECK(valid["by_type"]["transform"] == 1 && valid["by_type"]["event"] == 1 && valid["by_type"]["fade"] == 1);
+
+    Json no_tracks = {{"$type", "LevelSequence"}, {"$version", 1}, {"name", "Empty"}, {"tracks", Json::array()}};
+    Json empty = h.Call("seq_validate", {{"definition", no_tracks}}).value;
+    AETHER_CHECK(empty["ok"] == false);
+    AETHER_CHECK(empty["diagnostics"][0]["code"] == "SQ001");
+    Json duplicate = sample;
+    duplicate["tracks"][1]["id"] = duplicate["tracks"][0]["id"];
+    bool dup_found = false;
+    const Json dup_verdict = h.Call("seq_validate", {{"definition", duplicate}}).value; // kept alive: the loop reads into it
+    for (const Json& d : dup_verdict["diagnostics"]) dup_found = dup_found || d["code"] == "SQ005";
+    AETHER_CHECK(dup_found);
+    AETHER_CHECK(h.Call("seq_validate", {{"definition", "{ not json"}}).is_error);
+    AETHER_CHECK(h.Call("seq_validate").is_error);
+    AETHER_CHECK(h.Call("seq_validate", {{"definition", sample}, {"scene", "Scenes/x.ascene"}}).is_error); // a scene needs a project
+
+    // A Property track's component and field are checked against reflection.
+    auto with_property = [&](const char* component, const char* field) {
+        Json s = sample;
+        const Json keys = Json::array({Json{{"time", 0}, {"value", 0}}, Json{{"time", 1}, {"value", 1}}});
+        const Json channel = {{"name", "value"}, {"keys", keys}};
+        const Json track = {{"id", "prop"}, {"name", "Prop"}, {"type", "property"}, {"binding", "00000000-0000-4000-8000-000000000001"},
+                            {"component", component}, {"field", field}, {"channels", Json::array({channel})}};
+        s["tracks"].push_back(track);
+        return s;
+    };
+    Json bad_component = h.Call("seq_validate", {{"definition", with_property("NoSuchComponent", "x")}}).value;
+    AETHER_CHECK(bad_component["ok"] == false);
+    AETHER_CHECK(bad_component["problems"][0]["problem"].get<std::string>().find("NoSuchComponent") != std::string::npos);
+    Json bad_field = h.Call("seq_validate", {{"definition", with_property("Transform", "wobble")}}).value;
+    AETHER_CHECK(bad_field["ok"] == false);
+    AETHER_CHECK(h.Call("seq_validate", {{"definition", with_property("Transform", "position")}}).value["problems"].empty());
+
+    // --- sampling: a pure function of time
+    Json at = h.Call("seq_evaluate", {{"definition", sample}, {"times", {0, 1, 2, 4}}}).value["samples"];
+    AETHER_CHECK(at.size() == 4);
+    AETHER_CHECK(std::fabs(at[0]["tracks"]["door-move"]["position"]["y"].get<double>() - 0.0) < 1e-6);
+    AETHER_CHECK(std::fabs(at[1]["tracks"]["door-move"]["position"]["y"].get<double>() - 1.5) < 1e-6);
+    AETHER_CHECK(std::fabs(at[2]["tracks"]["door-move"]["position"]["y"].get<double>() - 3.0) < 1e-6);
+    AETHER_CHECK(std::fabs(at[3]["tracks"]["door-move"]["position"]["y"].get<double>() - 3.0) < 1e-6); // holds the last key
+    AETHER_CHECK(!at[0]["tracks"]["door-move"]["position"].contains("x")); // an axis with no keys is left alone
+    AETHER_CHECK(std::fabs(at[0]["tracks"]["fade"]["amount"].get<double>() - 1.0) < 1e-6);
+    AETHER_CHECK(std::fabs(at[1]["tracks"]["fade"]["amount"].get<double>() - 0.0) < 1e-6);
+    AETHER_CHECK(!at[0]["tracks"].contains("creak")); // events are moments, not values
+    Json only = h.Call("seq_evaluate", {{"definition", sample}, {"times", {2}}, {"tracks", {"fade"}}}).value["samples"][0]["tracks"];
+    AETHER_CHECK(only.size() == 1 && only.contains("fade"));
+    Json defaults = h.Call("seq_evaluate", {{"definition", sample}}).value["samples"];
+    AETHER_CHECK(defaults.size() == 5);
+    AETHER_CHECK(h.Call("seq_evaluate", {{"definition", sample}, {"times", Json::array()}}).is_error);
+    AETHER_CHECK(h.Call("seq_evaluate", {{"definition", sample}, {"times", {"soon"}}}).is_error);
+    Json muted = sample;
+    muted["tracks"][0]["mute"] = true;
+    AETHER_CHECK(!h.Call("seq_evaluate", {{"definition", muted}, {"times", {1}}}).value["samples"][0]["tracks"].contains("door-move"));
+
+    // --- what it fires, in time order
+    Json moments = h.Call("seq_events", {{"definition", sample}}).value["moments"];
+    AETHER_CHECK(moments.size() == 3); // the creak and two fade keys
+    for (std::size_t i = 1; i < moments.size(); ++i) AETHER_CHECK(moments[i - 1]["time"].get<double>() <= moments[i]["time"].get<double>());
+    bool creak = false;
+    for (const Json& m : moments) creak = creak || (m["kind"] == "event" && m["name"] == "door_creak" && m["payload"] == "loud" && m["time"] == 1);
+    AETHER_CHECK(creak);
+    AETHER_CHECK(h.Call("seq_events", {{"definition", sample}, {"from", 0.5}, {"to", 1.5}}).value["moments"].size() == 2); // the creak and the fade's end
+    Json rich = sample;
+    rich["tracks"].push_back({{"id", "snd"}, {"name", "Sound"}, {"type", "audio"}, {"binding", "00000000-0000-4000-8000-000000000001"},
+                              {"audio", {{{"time", 0.5}, {"cue", "Audio/boom.acue"}, {"action", "play"}}}}});
+    rich["tracks"].push_back({{"id", "extra"}, {"name", "Extra"}, {"type", "subsequence"}, {"subs", {{{"time", 1}, {"duration", 2}, {"sequence", "Sequences/Other.asequence"}}}}});
+    Json all = h.Call("seq_events", {{"definition", rich}}).value["moments"];
+    bool saw_audio = false, saw_start = false, saw_end = false;
+    for (const Json& m : all) {
+        saw_audio = saw_audio || (m["kind"] == "audio" && m["cue"] == "Audio/boom.acue" && m["time"] == 0.5);
+        saw_start = saw_start || (m["kind"] == "subsequence_start" && m["time"] == 1);
+        saw_end = saw_end || (m["kind"] == "subsequence_end" && m["time"] == 3);
+    }
+    AETHER_CHECK(saw_audio && saw_start && saw_end);
+
+    // --- in a project: files, references, loops
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_seq_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+    ProjectPaths paths;
+    std::string error;
+    AETHER_CHECK(CreateProject(dir, "McpSeq", &paths, &error));
+    AETHER_CHECK(h.Call("seq_validate", {{"asset", "Sequences/Door.asequence"}}).is_error); // no project yet
+    AETHER_CHECK(!h.Call("project_open", {{"project_file", paths.file.string()}}).is_error);
+    AETHER_CHECK(h.Call("kit_put", {{"type", "sequence"}, {"path", "Sequences/Broken"}, {"definition", no_tracks}}).is_error);
+    AETHER_CHECK(!stdfs::exists(paths.content / "Sequences" / "Broken.asequence"));
+    Harness::Result put = h.Call("kit_put", {{"type", "sequence"}, {"path", "Sequences/Door"}, {"definition", sample}});
+    AETHER_CHECK(!put.is_error);
+    AETHER_CHECK(put.value["path"] == "Sequences/Door.asequence");
+    AETHER_CHECK(h.Call("kit_list", {{"type", "sequence"}}).value[0]["valid"] == true);
+    AETHER_CHECK(h.Call("kit_get", {{"asset", "Sequences/Door.asequence"}}).value["definition"]["name"] == "Door opens");
+    AETHER_CHECK(h.Call("seq_validate", {{"asset", "Sequences/Door.asequence"}}).value["ok"] == true);
+    AETHER_CHECK(h.Call("seq_evaluate", {{"asset", "Sequences/Door.asequence"}, {"times", {1}}}).value["samples"][0]["tracks"]["door-move"]["position"]["y"] == 1.5);
+    AETHER_CHECK(h.Call("seq_events", {{"asset", "Sequences/Missing.asequence"}}).is_error);
+
+    // Names are checked against the project: cues, prefabs, sub-sequences.
+    Json refs = sample;
+    refs["tracks"].push_back({{"id", "snd"}, {"name", "Sound"}, {"type", "audio"}, {"binding", "00000000-0000-4000-8000-000000000001"},
+                              {"audio", {{{"time", 0.5}, {"cue", "Audio/boom.acue"}, {"action", "play"}}}}});
+    refs["tracks"].push_back({{"id", "pre"}, {"name", "Prefab"}, {"type", "spawn"}, {"binding", "00000000-0000-4000-8000-000000000001"},
+                              {"spawns", {{{"time", 0.5}, {"prefab", "Prefabs/Gone.aprefab"}}}}});
+    refs["tracks"].push_back({{"id", "sub"}, {"name", "Sub"}, {"type", "subsequence"}, {"subs", {{{"time", 1}, {"duration", 2}, {"sequence", "Sequences/Nowhere.asequence"}}}}});
+    Json ref_check = h.Call("seq_validate", {{"definition", refs}}).value;
+    AETHER_CHECK(ref_check["ok"] == false);
+    AETHER_CHECK(ref_check["problems"].size() == 3);
+
+    // Two sequences that play each other never finish.
+    auto plays = [&](const char* other) {
+        Json s = sample;
+        s["tracks"].push_back({{"id", "sub"}, {"name", "Sub"}, {"type", "subsequence"}, {"subs", {{{"time", 0}, {"duration", 2}, {"sequence", other}}}}});
+        return s;
+    };
+    AETHER_CHECK(!h.Call("kit_put", {{"type", "sequence"}, {"path", "Sequences/Ping"}, {"definition", plays("Sequences/Pong.asequence")}}).is_error);
+    AETHER_CHECK(!h.Call("kit_put", {{"type", "sequence"}, {"path", "Sequences/Pong"}, {"definition", plays("Sequences/Ping.asequence")}}).is_error);
+    Json loop = h.Call("seq_validate", {{"asset", "Sequences/Ping.asequence"}}).value;
+    AETHER_CHECK(loop["ok"] == false);
+    bool says_loop = false;
+    for (const Json& pr : loop["problems"]) says_loop = says_loop || pr["problem"].get<std::string>().find("plays itself") != std::string::npos;
+    AETHER_CHECK(says_loop);
+    AETHER_CHECK(h.Call("seq_validate", {{"asset", "Sequences/Door.asequence"}}).value["ok"] == true);
+
+    // Bindings are checked against a scene's entities.
+    auto scene_with = [](const char* guid) {
+        return Json{{"$type", "Scene"}, {"$version", 1},
+                    {"entities", Json::array({{{"guid", guid}, {"components", {{"Transform", {{"position", {0, 0, 0}}, {"rotation", {0, 0, 0, 1}}, {"scale", {1, 1, 1}}}}}}}})}};
+    };
+    AETHER_CHECK(!h.Call("content_write", {{"path", "Scenes/start.ascene"}, {"text", scene_with("00000000-0000-4000-8000-000000000002").dump()}}).is_error);
+    Json unbound = h.Call("seq_validate", {{"asset", "Sequences/Door.asequence"}, {"scene", "Scenes/start.ascene"}}).value;
+    AETHER_CHECK(unbound["ok"] == false);
+    AETHER_CHECK(unbound["problems"][0]["problem"].get<std::string>().find("not in Scenes/start.ascene") != std::string::npos);
+    AETHER_CHECK(!h.Call("content_write", {{"path", "Scenes/start.ascene"}, {"text", scene_with("00000000-0000-4000-8000-000000000001").dump()}}).is_error);
+    AETHER_CHECK(h.Call("seq_validate", {{"asset", "Sequences/Door.asequence"}, {"scene", "Scenes/start.ascene"}}).value["ok"] == true);
+    AETHER_CHECK(h.Call("seq_validate", {{"asset", "Sequences/Door.asequence"}, {"scene", "Sequences/Door.asequence"}}).is_error); // not a scene
+
+    // --- cook it and play it in the hosted game
+    AETHER_CHECK(!h.Call("project_set", {{"startup_scene", "Scenes/start.ascene"}}).is_error);
+    Harness::Result cooked = h.Call("asset_cook", {{"output_dir", (dir / "Cooked").string()}, {"always_cook", {"Sequences/Door.asequence"}}});
+    AETHER_CHECK(!cooked.is_error);
+    AETHER_CHECK(cooked.value["ok"] == true);
+    RegisterGameTools(h.server);
+    AETHER_CHECK(h.Call("game_sequences").is_error); // no game yet
+    AETHER_CHECK(!h.Call("game_load", {{"paks", {cooked.value["pak_file"]}}, {"user_dir", (dir / "user").string()}}).is_error);
+    h.Call("game_step", {{"frames", 2}});
+    AETHER_CHECK(h.Call("game_sequences").value["has_sequence_system"] == true);
+    AETHER_CHECK(h.Call("game_sequences").value["sequences"].empty());
+    AETHER_CHECK(h.Call("game_play_sequence", {{"sequence", "Sequences/Nowhere.asequence"}}).is_error);
+    Harness::Result started = h.Call("game_play_sequence", {{"sequence", "Sequences/Door.asequence"}});
+    AETHER_CHECK(!started.is_error);
+    const std::string player = started.value["entity"];
+    h.Call("game_step", {{"frames", 60}}); // a second: the door is half way up
+    const std::string door = "00000000-0000-4000-8000-000000000001";
+    const double halfway = h.Call("game_get_entity", {{"entity", door}}).value["components"]["Transform"]["position"][1].get<double>();
+    AETHER_CHECK(halfway > 1.0 && halfway < 2.0);
+    Json state = h.Call("game_sequences").value;
+    AETHER_CHECK(state["sequences"].size() == 1);
+    AETHER_CHECK(state["sequences"][0]["playing"] == true);
+    AETHER_CHECK(!h.Call("game_sequence_control", {{"entity", player}, {"action", "set_rate"}, {"value", 2}}).is_error);
+    AETHER_CHECK(h.Call("game_sequence_control", {{"entity", player}, {"action", "explode"}}).is_error);
+    AETHER_CHECK(h.Call("game_sequence_control", {{"entity", door}, {"action", "play"}}).is_error); // no SequenceComponent there
+    AETHER_CHECK(!h.Call("game_stop_sequences", {{"skip", true}}).is_error);
+    h.Call("game_step", {{"frames", 3}});
+    AETHER_CHECK(std::fabs(h.Call("game_get_entity", {{"entity", door}}).value["components"]["Transform"]["position"][1].get<double>() - 3.0) < 0.01); // skipped to the final pose
+    h.Call("game_unload");
+    stdfs::remove_all(dir);
+
+    // --- the editor scene's SequenceComponent
+    Harness editor;
+    std::string cutscene = editor.Create({{"Transform", Json::object()}});
+    AETHER_CHECK(editor.Call("sequence_component_list").value.empty());
+    AETHER_CHECK(editor.Call("sequence_component_set", {{"entity", cutscene}, {"fields", {{"rate", 1000}}}}).is_error);
+    AETHER_CHECK(editor.Call("sequence_component_set", {{"entity", cutscene}, {"fields", {{"playing", true}}}}).is_error);
+    AETHER_CHECK(editor.Call("sequence_component_set", {{"entity", cutscene}, {"fields", {{"time", 3}}}}).is_error);
+    AETHER_CHECK(editor.Call("sequence_component_set", {{"entity", cutscene}, {"fields", {{"speed", 1}}}}).is_error);
+    AETHER_CHECK(editor.Call("sequence_component_set", {{"entity", cutscene}, {"fields", {{"loop", "yes"}}}}).is_error);
+    AETHER_CHECK(!editor.Components(cutscene).contains("SequenceComponent")); // refused edits leave nothing behind
+    AETHER_CHECK(!editor.Call("sequence_component_set", {{"entity", cutscene}, {"fields", {{"sequence", "Sequences/Door.asequence"}, {"auto_play", true}}}}).is_error);
+    AETHER_CHECK(!editor.Call("sequence_component_set", {{"entity", cutscene}, {"fields", {{"rate", -1}}}}).is_error);
+    AETHER_CHECK(editor.Components(cutscene)["SequenceComponent"]["rate"] == -1);
+    editor.Call("undo");
+    AETHER_CHECK(editor.Components(cutscene)["SequenceComponent"]["rate"] == 1);
+    editor.Call("undo");
+    AETHER_CHECK(!editor.Components(cutscene).contains("SequenceComponent")); // add + set were one step
+    editor.Call("redo");
+    AETHER_CHECK(editor.Call("sequence_component_list").value.size() == 1);
+    AETHER_CHECK(!editor.Call("sequence_component_remove", {{"entity", cutscene}}).is_error);
+    AETHER_CHECK(editor.Call("sequence_component_remove", {{"entity", cutscene}}).is_error);
 }

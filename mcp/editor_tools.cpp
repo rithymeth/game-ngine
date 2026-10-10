@@ -216,6 +216,7 @@ void RegisterAttributeTools(McpServer& server, EditorSession& s);
 void RegisterAudioEditorTools(McpServer& server, EditorSession& s);
 void RegisterParticleEditorTools(McpServer& server, EditorSession& s);
 void RegisterNavEditorTools(McpServer& server, EditorSession& s);
+void RegisterSequenceEditorTools(McpServer& server, EditorSession& s);
 #if AETHER_MCP_INTERACTION
 void RegisterInteractionEditorTools(McpServer& server, EditorSession& s);
 #endif
@@ -593,6 +594,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
     RegisterAudioEditorTools(server, s);
     RegisterParticleEditorTools(server, s);
     RegisterNavEditorTools(server, s);
+    RegisterSequenceEditorTools(server, s);
 #if AETHER_MCP_INTERACTION
     RegisterInteractionEditorTools(server, s);
 #endif
@@ -1148,6 +1150,85 @@ void RegisterNavEditorTools(McpServer& server, EditorSession& s) {
                         editor::CommandContext ctx = s.Context();
                         s.stack.Execute(ctx, std::make_unique<editor::RemoveComponentCommand>(guid, id));
                         return {{"removed", name}};
+                    }});
+}
+
+
+// ---------------------------------------------------------------------------
+// Sequences. The SequenceComponent plays a level sequence (.asequence) from an entity; it is saved in scenes and
+// prefabs. sequence_component_set edits it as one validated, undoable step.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+void ValidateSequenceFields(const Json& fields) {
+    for (auto& [key, value] : fields.items()) {
+        if (key == "time" || key == "playing" || key == "commands") throw ToolError("\"" + key + "\" is runtime state, not saved; use game_sequence_control in a running game");
+        if (key == "sequence") { if (!value.is_string()) throw ToolError("\"sequence\" must be a sequence asset path (a string)"); }
+        else if (key == "auto_play" || key == "loop" || key == "destroy_when_finished") { if (!value.is_boolean()) throw ToolError("\"" + key + "\" must be true or false"); }
+        else if (key == "rate") { if (!value.is_number() || std::fabs(value.get<double>()) > 100.0) throw ToolError("\"rate\" must be a number from -100 to 100 (negative plays backward)"); }
+        else throw ToolError("Unknown SequenceComponent field \"" + key + "\" (sequence, auto_play, loop, rate, destroy_when_finished)");
+    }
+}
+
+} // namespace
+
+void RegisterSequenceEditorTools(McpServer& server, EditorSession& s) {
+    const Json kGuidProp = {{"type", "string"}, {"description", "Entity GUID"}};
+
+    server.AddTool({"sequence_component_list", "Entities in the editor scene with a SequenceComponent, and its settings.", Schema(Json::object()), [&s](const Json&) -> Json {
+                        const ComponentId id = FindComponentIdByName("SequenceComponent");
+                        Json out = Json::array();
+                        if (id == kInvalidComponentId) return out;
+                        for (Entity e : AllEntities(s)) {
+                            if (!s.world.HasComponentRaw(e, id)) continue;
+                            const IdComponent* idc = s.world.GetComponent<IdComponent>(e);
+                            out.push_back({{"entity", idc ? ToString(idc->guid) : ""}, {"sequence_component", ComponentJson(s, e, id)}});
+                        }
+                        return out;
+                    }});
+
+    server.AddTool(
+        {"sequence_component_set",
+         "Make an entity play a level sequence, or change how: adds a SequenceComponent if it has none and applies the fields (a partial update), as one undoable step. "
+         "Fields: sequence (an .asequence asset path, e.g. Sequences/Intro.asequence), auto_play, loop, rate (negative plays backward), destroy_when_finished.",
+         Schema({{"entity", kGuidProp}, {"fields", {{"type", "object"}, {"description", "e.g. {\"sequence\": \"Sequences/Intro.asequence\", \"auto_play\": true}"}}}}, {"entity", "fields"}),
+         [&s](const Json& args) -> Json {
+             Entity e = RequireEntity(s, args);
+             EntityGuid guid = RequireGuid(args, "entity");
+             if (!args["fields"].is_object()) throw ToolError("\"fields\" must be an object");
+             ValidateSequenceFields(args["fields"]);
+             const ComponentId id = RequireComponent("SequenceComponent");
+             editor::CommandContext ctx = s.Context();
+             s.stack.BeginTransaction("Set SequenceComponent");
+             if (!s.world.HasComponentRaw(e, id)) s.stack.Execute(ctx, std::make_unique<editor::AddComponentCommand>(guid, id));
+             Json warnings = Json::array();
+             if (!args["fields"].empty()) {
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 try {
+                     after = PatchedBytes(s, e, id, args["fields"], before, warnings);
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     s.stack.Undo(ctx);
+                     throw;
+                 }
+                 s.stack.Execute(ctx, std::make_unique<SetComponentCommand>(guid, id, before, after));
+             }
+             s.stack.EndTransaction();
+             Json out = {{"sequence_component", ComponentJson(s, e, id)}};
+             if (!warnings.empty()) out["warnings"] = warnings;
+             return out;
+         }});
+
+    server.AddTool({"sequence_component_remove", "Remove an entity's SequenceComponent. Undoable.", Schema({{"entity", kGuidProp}}, {"entity"}), [&s](const Json& args) -> Json {
+                        Entity e = RequireEntity(s, args);
+                        EntityGuid guid = RequireGuid(args, "entity");
+                        const ComponentId id = RequireComponent("SequenceComponent");
+                        if (!s.world.HasComponentRaw(e, id)) throw ToolError("Entity has no SequenceComponent");
+                        editor::CommandContext ctx = s.Context();
+                        s.stack.Execute(ctx, std::make_unique<editor::RemoveComponentCommand>(guid, id));
+                        return {{"removed", true}};
                     }});
 }
 

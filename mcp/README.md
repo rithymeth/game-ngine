@@ -198,6 +198,23 @@ loc module's own message format, plural rules and pseudo-localization.
 | `loc_language` | A tag's normalized form, fallback chain, direction and the plural category of sample numbers |
 | `loc_pseudo` | Pseudo-localize text: accents, about a third longer, in `[ ]`, placeholders kept |
 
+### Level sequences (`seq_*`)
+
+Level sequences (`.asequence`) are the engine's cutscenes: tracks bound to entities that animate transforms and
+component fields, fire events, play sounds and animations, spawn prefabs, cut between cameras, fade the screen
+and play other sequences. They are a real asset type, so they go through the `kit_*` tools (`type: "sequence"`:
+schema with a working sample, validate, put, get, list; a sequence with a diagnostic is refused by `kit_put`).
+
+| Tool | What it does |
+| --- | --- |
+| `seq_validate` | The sequencer's own diagnostics (SQ001...), a summary (effective duration, tracks by type), and, against the project: a Property track's component and field must exist (reflection), Audio cues, Spawn prefabs and Subsequence sequences must be assets, and sequences must not play themselves in a loop; with `scene`, every track's bound entity must be in that scene |
+| `seq_evaluate` | What each track is doing at given times, without playing: Transform position and rotation, Property channels, Visibility, Fade amount and colour, the camera cut in force, the spawns alive, the sub-sequences playing with their child time |
+| `seq_events` | Everything it fires or changes, in time order: events, audio and animation keys, camera cuts, spawns and despawns, sub-sequence starts and ends, fade keys; optionally a time window |
+| `sequence_component_set` / `_list` / `_remove` | Edit the `SequenceComponent` on editor entities (sequence, auto_play, loop, rate, destroy_when_finished), validated, one undoable step |
+
+Evaluation is a pure function of time, as in the player. The `game_*sequence*` tools above play and control
+sequences in the hosted game.
+
 Enum values are lowercase words (`"instant"`, `"count"`); `kit_schema` lists them. Write definitions,
 `kit_check` them, `asset_cook`, then `game_load` to play them.
 
@@ -218,6 +235,7 @@ saves and localization. The game has its own world, separate from the editor's.
 | `game_attributes` / `game_set_attribute` | An entity's attributes in the running game; set a base, add a delta or define one with bounds, through the game's own attribute system (events fire, bounds apply) |
 | `game_interactables` / `game_can_interact` / `game_interact` / `game_interaction_focus` / `game_set_interactable` | The interaction kit in the running game: list usable things (and why an interactor can't use each), check, use (range, tags, cooldown, effect and ability apply, OnInteract is queued for the target's script), find what would be prompted, enable/disable/reset |
 | `game_audio_state` / `game_play_sound` / `game_set_bus` / `game_stop_sounds` / `game_audio_source` | The audio kit in the running game: voices, cues playing, listener, reverb, every bus and the cue problems found; play a cue in 2D or at a location; set a bus's volume (faded) or mute; stop everything; play/stop/fade/set volume or cue on an entity's AudioSource |
+| `game_sequences` / `game_play_sequence` / `game_sequence_control` / `game_stop_sequences` | The running game's level sequences: every `SequenceComponent` with its time and state, the screen fade and problems; play a sequence by asset path; play, pause, stop, skip, set time, rate or loop on one; stop or skip them all |
 | `game_set_paused` | Freeze or resume the simulation |
 | `game_load_scene` | Switch to another cooked scene |
 | `game_systems` | The game's systems in execution order by phase (filled after the first step) |
@@ -272,6 +290,7 @@ Bad input is reported as a tool error (`isError`), never a crash, and a failed
 - `nav_tools.h/.cpp` -- the navigation workbench (the nav component tools are in `editor_tools.cpp`); `image_util.h` -- PNG and base64 helpers for tools that return a picture.
 - `blueprint_tools.h/.cpp` -- the Blueprint node, validate, compile and run tools.
 - `loc_tools.h/.cpp` -- the localization tools.
+- `sequence_tools.h/.cpp` -- the level sequence tools (the `SequenceComponent` tools are in `editor_tools.cpp`, the live ones in `game_tools.cpp`).
 - `main.cpp` -- the `aether_mcp_server` executable.
 - Tests: `tests/test_mcp.cpp`.
 

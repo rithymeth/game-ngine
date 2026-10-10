@@ -17,6 +17,7 @@
 #include "game_tools.h"
 #include "kit_tools.h"
 #include "loc_tools.h"
+#include "sequence_tools.h"
 #include "nav_tools.h"
 #include "terrain_tools.h"
 #include "vfx_tools.h"
@@ -71,6 +72,7 @@ int main(int argc, char** argv) {
     mcp::RegisterVfxTools(server, project);
     mcp::RegisterBlueprintTools(server, project);
     mcp::RegisterLocTools(server, project);
+    mcp::RegisterSequenceTools(server, project);
     mcp::RegisterTerrainTools(server);
     mcp::RegisterNavTools(server, session);
     std::error_code ec;
