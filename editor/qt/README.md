@@ -50,6 +50,8 @@ sequence in the Content Browser opens it. Selecting a glTF/GLB asset enables
 the explicit Place Model action, and double-clicking the asset remains a
 shortcut; both create a real `ModelRenderer` entity in the map.
 
+The Inspector's Mesh section lists what a placed model cooks to: its primitives and vertices and a table of LODs with triangle, error and meshlet counts, computed with the cooker's own code and cached per file and write time. It says so when the file is missing, unreadable or too large.
+
 Project Settings edits and validates the project name, startup scene, fixed
 timestep, gravity, packaged window settings, default quality, always-cook
 paths, plugins, and collision layers before atomically replacing the in-memory
