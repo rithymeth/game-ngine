@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 
 namespace aether::assets {
@@ -129,6 +130,7 @@ struct AccessorInfo {
     usize count = 0;
     usize num_components = 0;
     int component_type = 0;
+    bool normalized = false;
     const u8* data = nullptr;
     usize stride = 0;
 };
@@ -141,6 +143,7 @@ bool ResolveAccessor(const Json& gltf, usize accessor_index, const std::vector<s
     const Json& accessor = gltf["accessors"][accessor_index];
     out.count = accessor.value("count", static_cast<usize>(0));
     out.component_type = accessor.value("componentType", 0);
+    out.normalized = accessor.value("normalized", false);
     out.num_components = NumComponents(accessor.value("type", std::string()));
     usize accessor_byte_offset = accessor.value("byteOffset", static_cast<usize>(0));
 
@@ -182,14 +185,57 @@ void ReadFloatN(const AccessorInfo& info, usize index, f32* out, usize n) {
     const u8* elem = info.data + index * info.stride;
     if (info.component_type == 5126) { // FLOAT
         std::memcpy(out, elem, n * sizeof(f32));
-    } else {
-        // Normalized-integer vertex attributes (e.g. UNSIGNED_BYTE/SHORT
-        // positions or UVs) are outside this loader's scope — see the
-        // header's documented limitations.
-        for (usize i = 0; i < n; ++i) {
-            out[i] = 0.0f;
-        }
+        return;
     }
+    const usize component_size = ComponentSize(info.component_type);
+    for (usize i = 0; i < n; ++i) {
+        const u8* component = elem + i * component_size;
+        f32 value = 0.0f;
+        switch (info.component_type) {
+            case 5120: { // BYTE
+                i8 raw = 0;
+                std::memcpy(&raw, component, sizeof(raw));
+                if (info.normalized) value = std::max(-1.0f, static_cast<f32>(raw) / 127.0f);
+                break;
+            }
+            case 5121: // UNSIGNED_BYTE
+                if (info.normalized) value = static_cast<f32>(*component) / 255.0f;
+                break;
+            case 5122: { // SHORT
+                i16 raw = 0;
+                std::memcpy(&raw, component, sizeof(raw));
+                if (info.normalized) value = std::max(-1.0f, static_cast<f32>(raw) / 32767.0f);
+                break;
+            }
+            case 5123: { // UNSIGNED_SHORT
+                u16 raw = 0;
+                std::memcpy(&raw, component, sizeof(raw));
+                if (info.normalized) value = static_cast<f32>(raw) / 65535.0f;
+                break;
+            }
+            default:
+                break;
+        }
+        out[i] = value;
+    }
+}
+
+bool IsFloatOrNormalized(const AccessorInfo& info, bool allow_unsigned) {
+    if (info.component_type == 5126) return true;
+    if (!info.normalized) return false;
+    if (allow_unsigned) return info.component_type == 5121 || info.component_type == 5123;
+    return info.component_type == 5120 || info.component_type == 5122;
+}
+
+bool IsValidJoints(const AccessorInfo& info, usize vertex_count) {
+    return info.count == vertex_count && info.num_components == 4 && !info.normalized &&
+           (info.component_type == 5121 || info.component_type == 5123);
+}
+
+bool IsValidWeights(const AccessorInfo& info, usize vertex_count) {
+    return info.count == vertex_count && info.num_components == 4 &&
+           (info.component_type == 5126 ||
+            (info.normalized && (info.component_type == 5121 || info.component_type == 5123)));
 }
 
 u32 ReadIndex(const AccessorInfo& info, usize index) {
@@ -209,6 +255,70 @@ u32 ReadIndex(const AccessorInfo& info, usize index) {
         }
         default:
             return 0;
+    }
+}
+
+Vec3 ReadVertexVector(const f32 value[3]) { return {value[0], value[1], value[2]}; }
+
+Vec3 StableTangent(const Vec3& normal, const Vec3& tangent) {
+    Vec3 orthogonal = tangent - normal * normal.Dot(tangent);
+    if (orthogonal.LengthSq() <= 1e-12f) {
+        const Vec3 axis = std::abs(normal.x) < 0.8f ? Vec3{1.0f, 0.0f, 0.0f} : Vec3{0.0f, 1.0f, 0.0f};
+        orthogonal = axis - normal * normal.Dot(axis);
+    }
+    return orthogonal.Normalized();
+}
+
+void FinalizeTangents(GltfPrimitive& primitive, bool has_tangent_attribute) {
+    std::vector<Vec3> tangent_sums;
+    std::vector<Vec3> bitangent_sums;
+    if (!has_tangent_attribute) {
+        tangent_sums.resize(primitive.vertices.size());
+        bitangent_sums.resize(primitive.vertices.size());
+        for (usize triangle = 0; triangle + 2 < primitive.indices.size(); triangle += 3) {
+            const u32 i0 = primitive.indices[triangle];
+            const u32 i1 = primitive.indices[triangle + 1];
+            const u32 i2 = primitive.indices[triangle + 2];
+            if (i0 >= primitive.vertices.size() || i1 >= primitive.vertices.size() || i2 >= primitive.vertices.size()) continue;
+
+            const GltfVertex& v0 = primitive.vertices[i0];
+            const GltfVertex& v1 = primitive.vertices[i1];
+            const GltfVertex& v2 = primitive.vertices[i2];
+            const Vec3 edge1 = ReadVertexVector(v1.position) - ReadVertexVector(v0.position);
+            const Vec3 edge2 = ReadVertexVector(v2.position) - ReadVertexVector(v0.position);
+            const f32 du1 = v1.uv[0] - v0.uv[0];
+            const f32 dv1 = v1.uv[1] - v0.uv[1];
+            const f32 du2 = v2.uv[0] - v0.uv[0];
+            const f32 dv2 = v2.uv[1] - v0.uv[1];
+            const f32 determinant = du1 * dv2 - du2 * dv1;
+            if (std::abs(determinant) <= 1e-10f) continue;
+
+            const f32 reciprocal = 1.0f / determinant;
+            const Vec3 tangent = (edge1 * dv2 - edge2 * dv1) * reciprocal;
+            const Vec3 bitangent = (edge2 * du1 - edge1 * du2) * reciprocal;
+            tangent_sums[i0] = tangent_sums[i0] + tangent;
+            tangent_sums[i1] = tangent_sums[i1] + tangent;
+            tangent_sums[i2] = tangent_sums[i2] + tangent;
+            bitangent_sums[i0] = bitangent_sums[i0] + bitangent;
+            bitangent_sums[i1] = bitangent_sums[i1] + bitangent;
+            bitangent_sums[i2] = bitangent_sums[i2] + bitangent;
+        }
+    }
+
+    for (usize i = 0; i < primitive.vertices.size(); ++i) {
+        GltfVertex& vertex = primitive.vertices[i];
+        Vec3 normal = ReadVertexVector(vertex.normal);
+        normal = normal.LengthSq() > 1e-12f ? normal.Normalized() : Vec3{0.0f, 1.0f, 0.0f};
+        const Vec3 source_tangent = has_tangent_attribute
+                                        ? Vec3{vertex.tangent[0], vertex.tangent[1], vertex.tangent[2]}
+                                        : tangent_sums[i];
+        const Vec3 tangent = StableTangent(normal, source_tangent);
+        f32 handedness = has_tangent_attribute ? vertex.tangent[3] : normal.Cross(tangent).Dot(bitangent_sums[i]);
+        if (std::abs(handedness) <= 1e-8f) handedness = 1.0f;
+        vertex.tangent[0] = tangent.x;
+        vertex.tangent[1] = tangent.y;
+        vertex.tangent[2] = tangent.z;
+        vertex.tangent[3] = handedness < 0.0f ? -1.0f : 1.0f;
     }
 }
 
@@ -270,7 +380,10 @@ void ParseNodeTRS(const Json& node_json, GltfNode& out_node) {
 // pose (LoadGltf, called on GltfScene::nodes as parsed) and animation
 // playback (EvaluateAnimation, called on a temporary animated copy).
 void FlattenNodeInstances(const std::vector<GltfNode>& nodes, const std::vector<usize>& roots,
-                           std::vector<GltfNodeInstance>& out_instances) {
+                           std::vector<GltfNodeInstance>& out_instances,
+                           std::vector<Mat4>* out_world_transforms = nullptr) {
+    out_instances.clear();
+    if (out_world_transforms) out_world_transforms->assign(nodes.size(), Mat4::Identity());
     struct StackEntry {
         usize node_index;
         Mat4 parent_world;
@@ -284,8 +397,9 @@ void FlattenNodeInstances(const std::vector<GltfNode>& nodes, const std::vector<
         stack.pop_back();
         const GltfNode& node = nodes[entry.node_index];
         Mat4 world = entry.parent_world * node.LocalTransform();
+        if (out_world_transforms) (*out_world_transforms)[entry.node_index] = world;
         if (node.mesh_index >= 0) {
-            out_instances.push_back({static_cast<usize>(node.mesh_index), world});
+            out_instances.push_back({static_cast<usize>(node.mesh_index), world, node.skin_index, entry.node_index});
         }
         for (usize child : node.children) {
             stack.push_back({child, world});
@@ -441,18 +555,44 @@ void ParseAnimations(const Json& gltf, const std::vector<std::vector<u8>>& buffe
             channel.interpolation =
                 interpolation_str == "STEP" ? GltfAnimationInterpolation::Step : GltfAnimationInterpolation::Linear;
 
+            const usize components = channel.ComponentsPerKey();
+            if (channel.node_index >= out_scene.nodes.size() || input_info.count == 0 ||
+                output_info.count != input_info.count || input_info.component_type != 5126 ||
+                input_info.num_components != 1 || output_info.component_type != 5126 ||
+                output_info.num_components != components) {
+                AETHER_LOG_WARN("glTF", "Skipping animation channel with invalid node or accessor layout");
+                continue;
+            }
+
             channel.times.resize(input_info.count);
+            bool valid_times = true;
             for (usize i = 0; i < input_info.count; ++i) {
                 ReadFloatN(input_info, i, &channel.times[i], 1);
-                animation.duration = std::max(animation.duration, channel.times[i]);
+                if (!std::isfinite(channel.times[i]) ||
+                    (i > 0 && channel.times[i] <= channel.times[i - 1])) {
+                    valid_times = false;
+                    break;
+                }
+            }
+            if (!valid_times) {
+                AETHER_LOG_WARN("glTF", "Skipping animation channel with non-finite or unordered key times");
+                continue;
             }
 
-            usize components = channel.ComponentsPerKey();
             channel.values.resize(output_info.count * components);
+            bool valid_values = true;
             for (usize i = 0; i < output_info.count; ++i) {
                 ReadFloatN(output_info, i, &channel.values[i * components], components);
+                for (usize component = 0; component < components; ++component) {
+                    if (!std::isfinite(channel.values[i * components + component])) valid_values = false;
+                }
+            }
+            if (!valid_values) {
+                AETHER_LOG_WARN("glTF", "Skipping animation channel with non-finite key values");
+                continue;
             }
 
+            animation.duration = std::max(animation.duration, channel.times.back());
             animation.channels.push_back(std::move(channel));
         }
 
@@ -460,11 +600,9 @@ void ParseAnimations(const Json& gltf, const std::vector<std::vector<u8>>& buffe
     }
 }
 
-// Linear (STEP: nearest-previous-keyframe) sampling of a channel's raw
-// float components at `time_seconds`, already clamped to the channel's own
-// [times.front(), times.back()] range by the caller conceptually — done
-// here since it needs `channel.times` to compute the clamp anyway. Shared
-// by both Vec3 paths (translation/scale) and the quaternion path
+// Samples a channel's raw float components at `time_seconds`. Binary search
+// keeps long animation tracks inexpensive while preserving STEP and LINEAR
+// behavior. Shared by both Vec3 paths and the quaternion path
 // (component-wise LERP + renormalize below — a standard cheap
 // approximation of SLERP, accurate enough for reasonably dense keyframes,
 // without the extra acos/sin SLERP needs).
@@ -478,10 +616,8 @@ void SampleChannelRaw(const GltfAnimationChannel& channel, f32 time_seconds, f32
     }
     f32 t = std::clamp(time_seconds, channel.times.front(), channel.times.back());
 
-    usize k = 0;
-    while (k + 1 < channel.times.size() && channel.times[k + 1] <= t) {
-        ++k;
-    }
+    const auto upper = std::upper_bound(channel.times.begin(), channel.times.end(), t);
+    const usize k = upper == channel.times.begin() ? 0 : static_cast<usize>(upper - channel.times.begin() - 1);
     const f32* v0 = &channel.values[k * n];
     if (k + 1 >= channel.times.size() || channel.interpolation == GltfAnimationInterpolation::Step) {
         for (usize i = 0; i < n; ++i) {
@@ -502,9 +638,9 @@ void SampleChannelRaw(const GltfAnimationChannel& channel, f32 time_seconds, f32
 // (translation/rotation/scale only — a matrix-based node's channels, if any
 // somehow exist in spec-invalid content, are simply not applied, since
 // GltfNode::LocalTransform ignores TRS fields when uses_matrix is set).
-std::vector<GltfNode> ApplyAnimationToNodes(const GltfScene& scene, const GltfAnimation& animation,
-                                             f32 time_seconds) {
-    std::vector<GltfNode> animated_nodes = scene.nodes;
+void ApplyAnimationToNodes(const GltfScene& scene, const GltfAnimation& animation, f32 time_seconds,
+                           std::vector<GltfNode>& animated_nodes) {
+    animated_nodes = scene.nodes;
     for (const GltfAnimationChannel& channel : animation.channels) {
         if (channel.node_index >= animated_nodes.size()) {
             continue;
@@ -527,7 +663,6 @@ std::vector<GltfNode> ApplyAnimationToNodes(const GltfScene& scene, const GltfAn
                 break;
         }
     }
-    return animated_nodes;
 }
 
 } // namespace
@@ -605,7 +740,22 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
             }
             if (material_json.contains("normalTexture")) {
                 material.normal_texture = resolve_texture_path(material_json["normalTexture"]);
+                material.normal_scale = material_json["normalTexture"].value("scale", 1.0f);
             }
+            if (material_json.contains("occlusionTexture")) {
+                material.occlusion_texture = resolve_texture_path(material_json["occlusionTexture"]);
+                material.occlusion_strength = material_json["occlusionTexture"].value("strength", 1.0f);
+            }
+            if (material_json.contains("emissiveFactor")) {
+                const Json& factor = material_json["emissiveFactor"];
+                for (usize i = 0; i < 3 && i < factor.size(); ++i) {
+                    material.emissive_factor[i] = factor[i].get<f32>();
+                }
+            }
+            const std::string alpha_mode = material_json.value("alphaMode", std::string("OPAQUE"));
+            if (alpha_mode == "MASK") material.alpha_mode = MaterialAlphaMode::Mask;
+            else if (alpha_mode == "BLEND") material.alpha_mode = MaterialAlphaMode::Blend;
+            material.alpha_cutoff = material_json.value("alphaCutoff", 0.5f);
             out_scene.materials.push_back(material);
         }
     }
@@ -638,17 +788,30 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
                 AccessorInfo normal_info;
                 bool has_normal =
                     attributes.contains("NORMAL") &&
-                    ResolveAccessor(gltf, attributes["NORMAL"].get<usize>(), buffers, normal_info);
+                    ResolveAccessor(gltf, attributes["NORMAL"].get<usize>(), buffers, normal_info) &&
+                    normal_info.num_components == 3 && IsFloatOrNormalized(normal_info, false) &&
+                    normal_info.count == position_info.count;
 
                 AccessorInfo uv_info;
                 bool has_uv = attributes.contains("TEXCOORD_0") &&
-                              ResolveAccessor(gltf, attributes["TEXCOORD_0"].get<usize>(), buffers, uv_info);
+                              ResolveAccessor(gltf, attributes["TEXCOORD_0"].get<usize>(), buffers, uv_info) &&
+                              uv_info.num_components == 2 && IsFloatOrNormalized(uv_info, true) &&
+                              uv_info.count == position_info.count;
+
+                AccessorInfo tangent_info;
+                const bool has_tangent_attribute =
+                    attributes.contains("TANGENT") &&
+                    ResolveAccessor(gltf, attributes["TANGENT"].get<usize>(), buffers, tangent_info) &&
+                    tangent_info.num_components == 4 && IsFloatOrNormalized(tangent_info, false) &&
+                    tangent_info.count == position_info.count;
 
                 AccessorInfo joints_info;
                 AccessorInfo weights_info;
                 bool has_skinning = attributes.contains("JOINTS_0") && attributes.contains("WEIGHTS_0") &&
                                     ResolveAccessor(gltf, attributes["JOINTS_0"].get<usize>(), buffers, joints_info) &&
-                                    ResolveAccessor(gltf, attributes["WEIGHTS_0"].get<usize>(), buffers, weights_info);
+                                    ResolveAccessor(gltf, attributes["WEIGHTS_0"].get<usize>(), buffers, weights_info) &&
+                                    IsValidJoints(joints_info, position_info.count) &&
+                                    IsValidWeights(weights_info, position_info.count);
 
                 GltfPrimitive primitive;
                 primitive.vertices.resize(position_info.count);
@@ -671,6 +834,9 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
                         primitive.vertices[i].uv[0] = 0.0f;
                         primitive.vertices[i].uv[1] = 0.0f;
                     }
+                    if (has_tangent_attribute) {
+                        ReadFloatN(tangent_info, i, primitive.vertices[i].tangent, 4);
+                    }
                     if (has_skinning) {
                         ReadU16x4(joints_info, i, primitive.joint_indices[i]);
                         ReadFloatN(weights_info, i, primitive.joint_weights[i].data(), 4);
@@ -691,6 +857,8 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
                         primitive.indices[i] = static_cast<u32>(i);
                     }
                 }
+
+                FinalizeTangents(primitive, has_tangent_attribute);
 
                 primitive.material_index = prim_json.value("material", -1);
                 mesh.primitives.push_back(std::move(primitive));
@@ -745,46 +913,52 @@ bool LoadGltfFromMemory(std::span<const u8> json, GltfScene& out_scene) {
 
 void EvaluateAnimation(const GltfScene& scene, const GltfAnimation& animation, f32 time_seconds,
                         std::vector<GltfNodeInstance>& out_node_instances) {
-    out_node_instances.clear();
-    std::vector<GltfNode> animated_nodes = ApplyAnimationToNodes(scene, animation, time_seconds);
+    std::vector<GltfNode> animated_nodes;
+    ApplyAnimationToNodes(scene, animation, time_seconds, animated_nodes);
     FlattenNodeInstances(animated_nodes, scene.root_nodes, out_node_instances);
 }
 
-void ComputeSkinMatrices(const GltfScene& scene, const GltfAnimation* animation, f32 time_seconds,
-                          const GltfSkin& skin, std::vector<Mat4>& out_matrices) {
-    std::vector<GltfNode> animated_nodes =
-        animation ? ApplyAnimationToNodes(scene, *animation, time_seconds) : scene.nodes;
+void EvaluateAnimationPose(const GltfScene& scene, const GltfAnimation& animation, f32 time_seconds,
+                            GltfAnimationPose& out_pose) {
+    ApplyAnimationToNodes(scene, animation, time_seconds, out_pose.animated_nodes);
+    FlattenNodeInstances(out_pose.animated_nodes, scene.root_nodes, out_pose.node_instances,
+                         &out_pose.node_world_transforms);
+}
 
-    // World transforms for every node, not just the skin's joints — a
-    // joint's ancestors may not themselves be joints, so the cheapest
-    // correct approach is one full hierarchy walk (same cost
-    // FlattenNodeInstances already pays for rendering) rather than N partial
-    // walks up from each joint individually.
-    std::vector<Mat4> world_transforms(animated_nodes.size(), Mat4::Identity());
-    struct StackEntry {
-        usize node_index;
-        Mat4 parent_world;
-    };
-    std::vector<StackEntry> stack;
-    for (usize root : scene.root_nodes) {
-        stack.push_back({root, Mat4::Identity()});
-    }
-    while (!stack.empty()) {
-        StackEntry entry = stack.back();
-        stack.pop_back();
-        Mat4 world = entry.parent_world * animated_nodes[entry.node_index].LocalTransform();
-        world_transforms[entry.node_index] = world;
-        for (usize child : animated_nodes[entry.node_index].children) {
-            stack.push_back({child, world});
+void ComputeSkinMatrices(const GltfAnimationPose& pose, const GltfSkin& skin,
+                          std::vector<Mat4>& out_matrices, i32 mesh_node_index) {
+    Mat4 inverse_mesh_world = Mat4::Identity();
+    if (mesh_node_index >= 0) {
+        const usize mesh_node = static_cast<usize>(mesh_node_index);
+        if (mesh_node >= pose.node_world_transforms.size() ||
+            !pose.node_world_transforms[mesh_node].TryInverse(inverse_mesh_world)) {
+            out_matrices.clear();
+            return;
         }
     }
 
     out_matrices.resize(skin.joints.size());
     for (usize k = 0; k < skin.joints.size(); ++k) {
         usize joint_node = skin.joints[k];
-        Mat4 joint_world = joint_node < world_transforms.size() ? world_transforms[joint_node] : Mat4::Identity();
-        out_matrices[k] = joint_world * skin.inverse_bind_matrices[k];
+        Mat4 joint_world = joint_node < pose.node_world_transforms.size()
+                               ? pose.node_world_transforms[joint_node]
+                               : Mat4::Identity();
+        const Mat4 inverse_bind = k < skin.inverse_bind_matrices.size() ? skin.inverse_bind_matrices[k] : Mat4::Identity();
+        out_matrices[k] = inverse_mesh_world * joint_world * inverse_bind;
     }
+}
+
+void ComputeSkinMatrices(const GltfScene& scene, const GltfAnimation* animation, f32 time_seconds,
+                          const GltfSkin& skin, std::vector<Mat4>& out_matrices, i32 mesh_node_index) {
+    GltfAnimationPose pose;
+    if (animation) {
+        EvaluateAnimationPose(scene, *animation, time_seconds, pose);
+    } else {
+        pose.animated_nodes = scene.nodes;
+        FlattenNodeInstances(pose.animated_nodes, scene.root_nodes, pose.node_instances,
+                             &pose.node_world_transforms);
+    }
+    ComputeSkinMatrices(pose, skin, out_matrices, mesh_node_index);
 }
 
 } // namespace aether::assets

@@ -14,6 +14,9 @@ MaterialData LoadMaterial(const assets::GltfMaterial& source, assets::AssetManag
     result.base_color[3] = source.base_color[3];
     result.metallic = source.metallic;
     result.roughness = source.roughness;
+    result.occlusion_strength = source.occlusion_strength;
+    result.alpha_mode = source.alpha_mode;
+    result.alpha_cutoff = source.alpha_cutoff;
 
     if (!source.base_color_texture.empty()) {
         result.base_color_texture = assets.LoadTexture(source.base_color_texture, upload_cmd);
@@ -23,6 +26,9 @@ MaterialData LoadMaterial(const assets::GltfMaterial& source, assets::AssetManag
     }
     if (!source.metallic_roughness_texture.empty()) {
         result.metallic_roughness_texture = assets.LoadTexture(source.metallic_roughness_texture, upload_cmd);
+    }
+    if (!source.occlusion_texture.empty()) {
+        result.occlusion_texture = assets.LoadTexture(source.occlusion_texture, upload_cmd);
     }
 
     return result;

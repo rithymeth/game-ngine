@@ -34,6 +34,8 @@ struct PipelineRecord {
 struct BufferRecord {
     VkBuffer buffer = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkDeviceSize size_bytes = 0;
+    void* mapped = nullptr;
 };
 
 // A real (device-local, staged) sampled texture — unlike BufferRecord above,
@@ -75,6 +77,7 @@ public:
 
     BufferHandle CreateVertexBuffer(const void* data, u64 size_bytes) override;
     BufferHandle CreateIndexBuffer(const void* data, u64 size_bytes, IndexFormat format) override;
+    void UpdateVertexBuffer(BufferHandle buffer, const void* data, u64 size_bytes) override;
     const BufferRecord& GetBuffer(BufferHandle handle) const { return buffers_[handle.index]; }
 
     SampledTextureHandle CreateTexture(u32 width, u32 height, const u8* rgba8_pixels) override;
@@ -115,7 +118,8 @@ public:
 
     TextureHandle RegisterTexture(VkImage image);
     void UpdateTexture(TextureHandle handle, VkImage image);
-    VkImage GetTexture(TextureHandle handle) const { return textures_[handle.index].image; }
+    void UnregisterTexture(TextureHandle handle);
+    VkImage GetTexture(TextureHandle handle) const;
 
 private:
     VkInstance instance_ = VK_NULL_HANDLE;
@@ -161,8 +165,9 @@ private:
     VkDescriptorSet bindless_sampler_set_ = VK_NULL_HANDLE;
     VkSampler bindless_sampler_ = VK_NULL_HANDLE;
 
-    // A 1x1 white dummy image, referenced by every bindless descriptor slot
-    // no real CreateTexture() call has claimed yet — see
+    // A 1x1 white dummy image, permanently retained for slot zero and also
+    // referenced by every other bindless descriptor slot before real
+    // CreateTexture() calls claim them — see
     // D3D12Device::dummy_texture_'s comment for why every slot needs a valid
     // descriptor from the start, not just the ones a particular draw
     // actually samples.
@@ -251,9 +256,9 @@ private:
     VkRenderPass default_render_pass_ = VK_NULL_HANDLE;
     std::vector<VkFramebuffer> framebuffers_;  // one per swapchain image
 
-    // A single depth buffer, shared by every swapchain image (recreated
-    // alongside them on resize) — the "Unified renderer: depth buffer +
-    // blend states" follow-up. Always present in default_render_pass_'s
+    // One depth attachment per swapchain image prevents frames in flight
+    // from sharing writable depth data. They are recreated on resize.
+    // Always present in default_render_pass_'s
     // subpass and every framebuffer, regardless of whether any given
     // pipeline actually depth-tests (PipelineDesc::depth_test toggles a
     // pipeline's own VkPipelineDepthStencilStateCreateInfo, independent of
@@ -261,9 +266,9 @@ private:
     // attachment) — this mirrors the D3D12 backend always binding its own
     // depth buffer in BeginRenderPass regardless of the bound pipeline.
     static constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
-    VkImage depth_image_ = VK_NULL_HANDLE;
-    VkDeviceMemory depth_memory_ = VK_NULL_HANDLE;
-    VkImageView depth_image_view_ = VK_NULL_HANDLE;
+    std::vector<VkImage> depth_images_;
+    std::vector<VkDeviceMemory> depth_memories_;
+    std::vector<VkImageView> depth_image_views_;
 
     std::vector<TextureHandle> handles_;                   // one per swapchain image
     std::vector<VkImageView> image_views_;                 // one per swapchain image

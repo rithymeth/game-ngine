@@ -42,7 +42,6 @@ add_library(aether_editor_ui STATIC
     ../devtools/profiler_panel.cpp
     ../devtools/debug_overlay.cpp
     ../devtools/crash_reporter.cpp
-    ../core/recent_projects.cpp
     ../core/json_edit.cpp
     ../host/imgui_window_input.cpp
     extensions.cpp

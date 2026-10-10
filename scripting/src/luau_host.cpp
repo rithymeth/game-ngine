@@ -273,6 +273,7 @@ bool NativeCall::IsString(usize i) const { return lua_type(state_, static_cast<i
 bool NativeCall::IsNumber(usize i) const { return lua_type(state_, static_cast<int>(i) + 1) == LUA_TNUMBER; }
 bool NativeCall::IsBool(usize i) const { return lua_type(state_, static_cast<int>(i) + 1) == LUA_TBOOLEAN; }
 bool NativeCall::IsFunction(usize i) const { return lua_type(state_, static_cast<int>(i) + 1) == LUA_TFUNCTION; }
+bool NativeCall::IsVector(usize i) const { return lua_type(state_, static_cast<int>(i) + 1) == LUA_TVECTOR; }
 
 bool NativeCall::IsEntity(usize i) const {
     Entity unused;
@@ -282,6 +283,12 @@ bool NativeCall::IsEntity(usize i) const {
 Entity NativeCall::EntityArg(usize i) const {
     Entity entity;
     return ReadEntityValue(state_, static_cast<int>(i) + 1, entity) ? entity : Entity{};
+}
+
+Vec3 NativeCall::Vector(usize i, const Vec3& fallback) const {
+    if (!IsVector(i)) return fallback;
+    const float* value = lua_tovector(state_, static_cast<int>(i) + 1);
+    return Vec3{value[0], value[1], value[2]};
 }
 
 std::string NativeCall::String(usize i, const std::string& fallback) const {
@@ -305,6 +312,11 @@ int NativeCall::Function(usize i) const {
 
 void NativeCall::Return(const ScriptValue& value) {
     PushScriptValue(state_, value);
+    ++returns_;
+}
+
+void NativeCall::ReturnVector(const Vec3& value) {
+    lua_pushvector(state_, value.x, value.y, value.z);
     ++returns_;
 }
 

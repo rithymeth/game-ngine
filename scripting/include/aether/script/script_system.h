@@ -11,6 +11,8 @@
 #include <unordered_map>
 #include <vector>
 
+namespace aether { class PhysicsScene; }
+
 namespace aether::script {
 
 // A script error split into its parts, for the error overlay and the code
@@ -48,6 +50,8 @@ struct ScriptError {
 //   Timer.Every(seconds, fn)       -> timer with :Cancel()   (repeats)
 //   Input.IsTriggered(action), Input.GetAxis1D / GetAxis2D / GetAxis3D(action)
 //   Input.OnStarted / OnTriggered / OnCompleted / OnCanceled(action) -> event (fired with the action's value)
+//   Physics.AddForce / AddImpulse / SetLinearVelocity(entity, vector)
+//   Physics.GetLinearVelocity(entity), Physics.Raycast(...), Physics.SphereCast(...)
 // Connections and timers made while one of an entity's callbacks runs belong
 // to that entity's script, and end when it's destroyed (§11.2).
 class ScriptSystem {
@@ -70,6 +74,9 @@ public:
     // Connects the Input API to an input system (null to disconnect). The
     // system must outlive the binding.
     void BindInput(input::InputSystem* input);
+    // Makes the current scene's ray queries and rigid-body controls available to Luau.
+    void BindPhysicsScene(::aether::PhysicsScene* scene) { physics_scene_ = scene; }
+    ::aether::PhysicsScene* BoundPhysicsScene() const { return physics_scene_; }
     // Calls `method` on the entity's script if it defines it (e.g.
     // "OnCollisionBegin" from physics); false if it has no script or method.
     bool SendEvent(Entity entity, const std::string& method, const std::vector<ScriptValue>& args = {});
@@ -186,6 +193,7 @@ private:
     std::unordered_map<EntityGuid, assets::AssetGuid> waiting_;
     std::unordered_map<std::string, u32> input_events_; // "action\nevent" -> event id
     input::InputSystem* input_ = nullptr;
+    ::aether::PhysicsScene* physics_scene_ = nullptr;
     std::vector<u32> input_subscriptions_;
     u32 next_id_ = 1;
     u64 next_owner_ = 1;

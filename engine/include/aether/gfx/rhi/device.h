@@ -9,6 +9,17 @@
 
 namespace aether::gfx::rhi {
 
+// Vertex data layouts understood by the small cross-API input assembler.
+// PositionUv is the default so existing clients retain their
+// {float3 position; float2 uv;} contract. The extended layouts are
+// {float3 position; float3 normal; float2 uv;} and that layout followed by
+// {float4 tangent}.
+enum class VertexLayout : u8 {
+    PositionUv,
+    PositionNormalUv,
+    PositionNormalUvTangent,
+};
+
 // Describes a pipeline for IDevice::CreatePipeline: one HLSL source compiled
 // two ways internally (D3DCompile/DXIL for D3D12, DXC/SPIR-V for Vulkan —
 // the same dual-compile CompileHLSL/CompileHLSLToSPIRV split rhi_demo's
@@ -27,17 +38,12 @@ struct PipelineDesc {
     u32 push_constant_size_bytes = 0;
     bool cull_back_face = false;
 
-    // Real vertex-buffer input (the "Unified Cross-API Renderer" vertex
-    // buffers/textures follow-up) instead of procedural SV_VertexID/
-    // gl_VertexIndex-driven vertices: both backends build the identical
-    // fixed input layout — { float3 position; float2 uv; }, matching
-    // ICommandList::BindVertexBuffer's expected vertex stride — when this is
-    // set. Kept to one fixed layout (rather than a general attribute
-    // description list) for the same reason PipelineDesc itself stays
-    // narrow: this is the minimal shape that makes "real vertex buffers,
-    // unified across both backends" true, not a general mesh/material
-    // system (see IDevice's class comment).
+    // Real vertex-buffer input instead of procedural SV_VertexID/
+    // gl_VertexIndex-driven vertices. Both backends build the input layout
+    // selected by vertex_layout when this is set. This remains a small set
+    // of common layouts rather than a general attribute-description API.
     bool use_vertex_buffer = false;
+    VertexLayout vertex_layout = VertexLayout::PositionUv;
 
     // Reserves this pipeline's descriptor layout for the device-global
     // bindless texture table (IDevice::CreateTexture / kMaxBindlessTextures)
@@ -58,10 +64,16 @@ struct PipelineDesc {
 
     // Standard non-premultiplied alpha blending (src.rgb*src.a +
     // dst.rgb*(1-src.a); output alpha passes through unblended) instead of
-    // an opaque overwrite. Combine with depth_test = true and draw
-    // back-to-front for correct transparency, same as any other
+    // an opaque overwrite. Combine with depth_test = true, depth_write =
+    // false, and draw back-to-front for correct transparency, same as any other
     // depth-tested renderer — this RHI has no automatic draw-order sorting.
     bool enable_blending = false;
+
+    // Allows depth-tested transparent draws to respect opaque geometry
+    // without preventing later transparent surfaces from contributing.
+    // Ignored when depth_test is false. True preserves every pipeline's
+    // previous behavior.
+    bool depth_write = true;
 };
 
 // Backend-agnostic device/queue/submission layer, extended with a genuinely
@@ -91,6 +103,9 @@ public:
     // (there it's simply ignored). Omit it for work that doesn't touch a
     // swap chain image (e.g. an off-screen compute pass).
     virtual u64 Submit(ICommandList& cmd, ISwapChain* wait_on_swap_chain = nullptr) = 0;
+    // Fence values are local to this device and queue. A value not returned
+    // by a successful submission is invalid; implementations diagnose it and
+    // return instead of waiting forever on an unsignaled value.
     virtual void WaitForFence(u64 fence_value) = 0;
     virtual bool IsFenceComplete(u64 fence_value) const = 0;
 
@@ -116,7 +131,8 @@ public:
     // only attach to an actual vkQueueSubmit — so the Vulkan backend queues
     // the wait and attaches it to whichever SubmitCompute/Submit call comes
     // next on that queue. Call this immediately before the submission it's
-    // meant to gate.
+    // meant to gate. The source fence must already have been returned by a
+    // successful submission on this device.
     virtual void ComputeQueueWaitOnGraphics(u64 graphics_fence_value) = 0;
     virtual void GraphicsQueueWaitOnCompute(u64 compute_fence_value) = 0;
 
@@ -130,19 +146,32 @@ public:
     virtual PipelineHandle CreatePipeline(const PipelineDesc& desc, ISwapChain& swap_chain) = 0;
 
     // Real GPU vertex/index buffers (the "Unified Cross-API Renderer" follow-
-    // up) — uploaded once from `data` (host-visible/upload-heap on both
-    // backends, matching this RHI's demo-scale "no staging buffer" trade-off
-    // elsewhere), read via ICommandList::BindVertexBuffer/BindIndexBuffer.
-    // `size_bytes` for CreateVertexBuffer must be a multiple of the
-    // PipelineDesc's fixed vertex stride (sizeof position+uv); `format`
-    // matters only for BindIndexBuffer's stride, not storage.
+    // up) — uploaded once from `data`, which must be non-null and paired with
+    // a non-zero size (invalid arguments throw std::invalid_argument). Buffers
+    // are host-visible/upload-heap on both backends, matching this RHI's
+    // demo-scale "no staging buffer" trade-off. Read them via
+    // ICommandList::BindVertexBuffer/BindIndexBuffer.
+    // `size_bytes` for CreateVertexBuffer must be a multiple of the selected
+    // pipeline vertex layout's stride; `format` matters only for
+    // BindIndexBuffer's stride, not storage.
     virtual BufferHandle CreateVertexBuffer(const void* data, u64 size_bytes) = 0;
     virtual BufferHandle CreateIndexBuffer(const void* data, u64 size_bytes, IndexFormat format) = 0;
+    // Replaces the contents of a host-visible vertex buffer without changing
+    // its handle. Used by CPU-deformed meshes such as the player skinning path.
+    // The source must be non-null, size non-zero and no larger than the buffer;
+    // invalid handles and ranges are logged and ignored by both backends. The
+    // caller must wait until the GPU is done reading the previous contents.
+    virtual void UpdateVertexBuffer(BufferHandle buffer, const void* data, u64 size_bytes) = 0;
 
-    // Uploads a tightly-packed RGBA8 texture into the device-global bindless
-    // table and returns its SampledTextureHandle — index i for the i-th
-    // texture created (see kMaxBindlessTextures) is exactly the integer a
-    // shader needs, via a push constant, to sample it from `Texture2D
+    // Uploads tightly-packed RGBA8 pixel data (non-null, with non-zero
+    // dimensions and a representable byte size; invalid arguments throw
+    // std::invalid_argument) into the device-global bindless table and returns
+    // its SampledTextureHandle. Index zero is permanently reserved for the
+    // white fallback; real textures receive indices 1 through
+    // kMaxBindlessTextures - 1. When that capacity is exhausted, the method
+    // logs an error and returns an invalid handle. The returned index is
+    // exactly the integer a shader needs, via a push constant, to sample it
+    // from `Texture2D
     // g_Textures[kMaxBindlessTextures] : register(t0)` (D3D12) / the
     // equivalent bindless-array binding (Vulkan). Self-contained: internally
     // records and submits its own short-lived upload command list and waits

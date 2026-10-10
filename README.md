@@ -847,6 +847,12 @@ individual components per channel. `GltfPrimitive` gained parallel
 `joint_indices`/`joint_weights` arrays, populated only when a primitive has
 both `JOINTS_0` and `WEIGHTS_0` accessors.
 
+Normalized integer vertex attributes are decoded to floating-point values for
+NORMAL/TANGENT (signed byte or short), TEXCOORD_0 (unsigned byte or short), and
+WEIGHTS_0 (unsigned byte or short). This supports compact glTF exports that
+previously produced zeroed skin weights or placeholder tangents when those
+attributes were quantized; JOINTS_0 remains unsigned byte/short indices.
+
 Two runtime entry points do the actual playback math:
 
 - `EvaluateAnimation(scene, animation, time_seconds, out_node_instances)` —

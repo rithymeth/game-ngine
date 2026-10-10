@@ -13,7 +13,7 @@ Entity GetParent(const World& world, const GuidIndex& guids, Entity entity) {
 }
 
 Mat4 LocalTransformMatrix(const Transform& transform) {
-    return Mat4::Translation(transform.position) * transform.rotation.ToMat4();
+    return Mat4::Translation(transform.position) * transform.rotation.ToMat4() * Mat4::Scale(transform.scale);
 }
 
 Mat4 ComputeWorldTransform(const World& world, const GuidIndex& guids, Entity entity) {
