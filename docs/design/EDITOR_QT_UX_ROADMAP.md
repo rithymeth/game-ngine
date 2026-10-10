@@ -26,15 +26,31 @@ dirty state, and undo/redo through the editor command stack. Rotation is
 edited as local pitch/yaw/roll degrees; the Qt self-test verifies quaternion
 normalization, Euler round-tripping, and undo. The target builds with Qt
 6.8.3/MSVC 2022.
+The Content Browser now gives users a useful no-project start state with
+direct Create/Open actions. Its File menu also exposes the persisted recent
+project list, backed by the shared editor-core model and capped at ten entries.
+In an open project, users can narrow the current folder by model, scene,
+sequence, or project type; empty folders and filtered no-match results have
+separate guidance. Search labels make its current-folder scope clear, and the
+unselected browser state reports the visible or matching entry count. This
+improves project entry and asset discovery but does not replace the fuller
+project hub in stage 3.
+Hierarchy filtering is keyboard reachable with Ctrl+F, reports matches against
+the scene entity count, and no longer switches Inspector targets while the
+user types; a selected entity stays selected while visible and clears if the
+filter hides it.
 The viewport now shows a depth-tested perspective representation of the active
 scene, renders project-relative glTF/GLB mesh instances with base-color
 materials and textures, and retains shaded proxies for missing assets and
-editor-only entities. It supports click-to-select, moves entities on the X/Z
-plane with optional whole-unit grid snapping, and provides a local-Y rotation
-ring with optional 15-degree snapping. It also supports right-drag orbit,
-middle-button pan, wheel dolly, Focus, and Fit All. Skeletal deformation, PBR
-lighting, X/Z rotation, and scale tools remain. Automated rotation interaction
-coverage remains pending.
+editor-only entities. It selects models by their visible bounds, moves them on
+the ground plane or along X/Y/Z handles, supports uniform scale by drag and
+per-axis scale in the Inspector, and provides a local-Y rotation ring. Move,
+rotation, and scale edits are undoable and serialized. Camera navigation uses
+right-drag orbit, middle-button pan, wheel zoom, and Shift speed boost. In Move
+mode WASD and Q/E move the selected object; in other modes those keys fly the
+camera. Focus and Fit All remain available. Skeletal deformation,
+PBR lighting, and full 3-axis rotation/scale gizmos remain. Viewport interaction
+coverage still needs automated input and visual smoke checks.
 Play control, existing tool panels, and most shared
 editor services are not migrated. Other platforms/backends and deployment
 still need validation. Keep the ImGui editor available until the migration

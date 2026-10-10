@@ -49,6 +49,7 @@ public:
     BufferHandle CreateIndexBuffer(const void* data, u64 size_bytes, IndexFormat) override {
         return CreateBufferInternal(data, size_bytes);
     }
+    void UpdateVertexBuffer(BufferHandle buffer, const void* data, u64 size_bytes) override;
     const gfx::Buffer& GetBuffer(BufferHandle handle) const { return *buffers_[handle.index]; }
 
     SampledTextureHandle CreateTexture(u32 width, u32 height, const u8* rgba8_pixels) override;
@@ -122,14 +123,9 @@ public:
         return previous;
     }
 
-    // A single depth buffer, shared by every backbuffer (recreated alongside
-    // them on resize) — the "Unified renderer: depth buffer + blend states"
-    // follow-up. Always bound in BeginRenderPass regardless of whether the
-    // pipeline that ends up drawing this frame actually depth-tests
-    // (PipelineDesc::depth_test toggles a pipeline's own DepthStencilState,
-    // independent of what's bound) — mirrors the Vulkan backend always
-    // including a depth attachment in its one default render pass.
-    D3D12_CPU_DESCRIPTOR_HANDLE DepthDSV() const { return depth_dsv_heap_->CPUHandle(0); }
+    // Each backbuffer has its own depth resource so frames in flight never
+    // share a writable depth attachment.
+    D3D12_CPU_DESCRIPTOR_HANDLE DepthDSV(u32 index) const { return depth_dsv_heap_->CPUHandle(index); }
 
 private:
     void CreateDepthBuffer(u32 width, u32 height);
@@ -139,7 +135,7 @@ private:
     std::vector<TextureHandle> handles_;
     std::vector<bool> used_before_;
 
-    ComPtr<ID3D12Resource> depth_resource_;
+    std::vector<ComPtr<ID3D12Resource>> depth_resources_;
     std::unique_ptr<DescriptorHeap> depth_dsv_heap_;
 };
 

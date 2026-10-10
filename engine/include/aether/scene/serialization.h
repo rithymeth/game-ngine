@@ -33,7 +33,9 @@ bool SaveScene(const World& world, const std::string& path);
 
 // Loads entities from a file written by SaveScene into `world` (which is not
 // cleared first — loading is additive). Returns false if the file can't be
-// read or isn't a recognized/supported-version Aether scene file.
+// read or isn't a recognized/supported-version Aether scene file. The full
+// binary record stream is validated before entities are appended, so truncated
+// files and strict unknown-component rejection do not partially load a scene.
 bool LoadScene(World& world, const std::string& path);
 bool LoadScene(World& world, const std::string& path, const SceneLoadOptions& options);
 
@@ -48,7 +50,9 @@ bool LoadSceneFromMemory(World& world, std::span<const u8> bytes, const std::str
 // docs/ROADMAP_DETAILS.md §A.3). Only reflected components can be written as
 // JSON; any other component is left out with a warning (and so is an entity
 // left with no components at all). Loading tolerates unknown components by
-// default and unknown fields in all modes.
+// default and unknown fields in all modes. JSON entities are collected before
+// appending to the destination world, so parse failures and strict unknown-
+// component rejection do not partially load a scene.
 bool SaveSceneJson(const World& world, const std::string& path);
 bool LoadSceneJson(World& world, const std::string& path);
 bool LoadSceneJson(World& world, const std::string& path, const SceneLoadOptions& options);

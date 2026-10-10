@@ -8,6 +8,10 @@
 #include "aether/script/inventory_api.h"
 #include "aether/script/loc_api.h"
 #include "aether/script/save_api.h"
+#if AETHER_SCRIPTING_PHYSICS
+#include "aether/physics/physics_scene.h"
+#include "aether/physics/physics_world.h"
+#endif
 
 #include "aether/core/log.h"
 
@@ -17,6 +21,7 @@
 #include <lualib.h>
 
 #include <algorithm>
+#include <cmath>
 
 namespace aether::script {
 
@@ -208,6 +213,104 @@ void ScriptSystem::InstallApi(bool install_kit_apis) {
     SetFunction(L, "OnCompleted", &InputOnCompleted);
     SetFunction(L, "OnCanceled", &InputOnCanceled);
     lua_setglobal(L, "Input");
+
+#if AETHER_SCRIPTING_PHYSICS
+    host_.RegisterNative("Physics", "AddForce", [this](NativeCall& call) {
+        if (!physics_scene_) return call.Fail("Physics isn't bound to a running scene");
+        if (!call.IsEntity(0) || !call.IsVector(1)) return call.Fail("Physics.AddForce(entity, forceVector) expected");
+        const JPH::BodyID body = physics_scene_->BodyOf(call.EntityArg(0));
+        if (body.IsInvalid()) return call.Return(false);
+        auto& interface = physics_scene_->Physics().BodyInterface();
+        if (interface.GetMotionType(body) != JPH::EMotionType::Dynamic) return call.Return(false);
+        const Vec3 force = call.Vector(1);
+        interface.AddForce(body, JPH::Vec3(force.x, force.y, force.z));
+        call.Return(true);
+    });
+    host_.RegisterNative("Physics", "AddImpulse", [this](NativeCall& call) {
+        if (!physics_scene_) return call.Fail("Physics isn't bound to a running scene");
+        if (!call.IsEntity(0) || !call.IsVector(1)) return call.Fail("Physics.AddImpulse(entity, impulseVector) expected");
+        const JPH::BodyID body = physics_scene_->BodyOf(call.EntityArg(0));
+        if (body.IsInvalid()) return call.Return(false);
+        auto& interface = physics_scene_->Physics().BodyInterface();
+        if (interface.GetMotionType(body) != JPH::EMotionType::Dynamic) return call.Return(false);
+        const Vec3 impulse = call.Vector(1);
+        interface.AddImpulse(body, JPH::Vec3(impulse.x, impulse.y, impulse.z));
+        call.Return(true);
+    });
+    host_.RegisterNative("Physics", "SetLinearVelocity", [this](NativeCall& call) {
+        if (!physics_scene_) return call.Fail("Physics isn't bound to a running scene");
+        if (!call.IsEntity(0) || !call.IsVector(1)) return call.Fail("Physics.SetLinearVelocity(entity, velocityVector) expected");
+        const JPH::BodyID body = physics_scene_->BodyOf(call.EntityArg(0));
+        if (body.IsInvalid()) return call.Return(false);
+        auto& interface = physics_scene_->Physics().BodyInterface();
+        if (interface.GetMotionType(body) != JPH::EMotionType::Dynamic) return call.Return(false);
+        const Vec3 velocity = call.Vector(1);
+        interface.SetLinearVelocity(body, JPH::Vec3(velocity.x, velocity.y, velocity.z));
+        call.Return(true);
+    });
+    host_.RegisterNative("Physics", "GetLinearVelocity", [this](NativeCall& call) {
+        if (!physics_scene_) return call.Fail("Physics isn't bound to a running scene");
+        if (!call.IsEntity(0)) return call.Fail("Physics.GetLinearVelocity(entity) expected");
+        const JPH::BodyID body = physics_scene_->BodyOf(call.EntityArg(0));
+        if (body.IsInvalid()) return call.Return(ScriptValue{});
+        const JPH::Vec3 velocity = physics_scene_->Physics().BodyInterface().GetLinearVelocity(body);
+        call.ReturnVector(Vec3{velocity.GetX(), velocity.GetY(), velocity.GetZ()});
+    });
+    host_.RegisterNative("Physics", "Raycast", [this](NativeCall& call) {
+        if (!physics_scene_) return call.Fail("Physics isn't bound to a running scene");
+        if (!call.IsVector(0) || !call.IsVector(1) || !call.IsNumber(2))
+            return call.Fail("Physics.Raycast(origin, direction, maxDistance, ignoreEntity?, layerMask?, includeTriggers?) expected");
+        const Vec3 origin = call.Vector(0);
+        Vec3 direction = call.Vector(1);
+        const f32 distance = static_cast<f32>(call.Number(2));
+        const f32 length = std::sqrt(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z);
+        if (!(distance > 0.0f) || !(length > 1e-6f)) {
+            call.Return(false); call.Return(ScriptValue{}); call.Return(ScriptValue{}); call.Return(ScriptValue{}); call.Return(0.0);
+            return;
+        }
+        direction = direction * (1.0f / length);
+        const Entity ignore = call.IsEntity(3) ? call.EntityArg(3) : kNullEntity;
+        const LayerMask layers = static_cast<LayerMask>(call.Number(4, kAllLayers));
+        const SceneHit hit = physics_scene_->RayCast(origin, origin + direction * distance, layers, ignore, call.Bool(5));
+        call.Return(hit.hit);
+        call.Return(hit.hit && !hit.entity.IsNull() ? ScriptValue(EntityRef{hit.entity}) : ScriptValue{});
+        if (hit.hit) {
+            call.ReturnVector(hit.point);
+            call.ReturnVector(hit.normal);
+            call.Return(static_cast<f64>(hit.distance));
+        } else {
+            call.Return(ScriptValue{}); call.Return(ScriptValue{}); call.Return(0.0);
+        }
+    });
+    host_.RegisterNative("Physics", "SphereCast", [this](NativeCall& call) {
+        if (!physics_scene_) return call.Fail("Physics isn't bound to a running scene");
+        if (!call.IsVector(0) || !call.IsVector(1) || !call.IsNumber(2) || !call.IsNumber(3))
+            return call.Fail("Physics.SphereCast(origin, direction, radius, maxDistance, ignoreEntity?, layerMask?, includeTriggers?) expected");
+        const Vec3 origin = call.Vector(0);
+        Vec3 direction = call.Vector(1);
+        const f32 radius = static_cast<f32>(call.Number(2));
+        const f32 distance = static_cast<f32>(call.Number(3));
+        const f32 length = std::sqrt(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z);
+        if (!(radius > 0.0f) || !(distance > 0.0f) || !(length > 1e-6f)) {
+            call.Return(false); call.Return(ScriptValue{}); call.Return(ScriptValue{}); call.Return(ScriptValue{}); call.Return(0.0);
+            return;
+        }
+        direction = direction * (1.0f / length);
+        const Entity ignore = call.IsEntity(4) ? call.EntityArg(4) : kNullEntity;
+        const LayerMask layers = static_cast<LayerMask>(call.Number(5, kAllLayers));
+        const SceneHit hit = physics_scene_->SphereCast(radius, origin, origin + direction * distance,
+                                                        layers, ignore, call.Bool(6));
+        call.Return(hit.hit);
+        call.Return(hit.hit && !hit.entity.IsNull() ? ScriptValue(EntityRef{hit.entity}) : ScriptValue{});
+        if (hit.hit) {
+            call.ReturnVector(hit.point);
+            call.ReturnVector(hit.normal);
+            call.Return(static_cast<f64>(hit.distance));
+        } else {
+            call.Return(ScriptValue{}); call.Return(ScriptValue{}); call.Return(0.0);
+        }
+    });
+#endif
 
     InstallSaveApi(host_); // SaveGames (Phase 28 step 4)
     InstallLocApi(host_);  // Localization (Phase 29 step 2)

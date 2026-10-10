@@ -101,6 +101,12 @@ u64 Device::Submit(ID3D12CommandList* const* lists, u32 count) {
 }
 
 void Device::WaitForFence(u64 fence_value) {
+    if (fence_value >= next_fence_value_) {
+        AETHER_LOG_ERROR("D3D12", "Cannot wait for graphics fence %llu: latest submitted value is %llu",
+                         static_cast<unsigned long long>(fence_value),
+                         static_cast<unsigned long long>(next_fence_value_ - 1));
+        return;
+    }
     if (IsFenceComplete(fence_value)) {
         return;
     }
@@ -116,6 +122,12 @@ u64 Device::SubmitCompute(ID3D12CommandList* const* lists, u32 count) {
 }
 
 void Device::WaitForComputeFence(u64 fence_value) {
+    if (fence_value >= next_compute_fence_value_) {
+        AETHER_LOG_ERROR("D3D12", "Cannot wait for compute fence %llu: latest submitted value is %llu",
+                         static_cast<unsigned long long>(fence_value),
+                         static_cast<unsigned long long>(next_compute_fence_value_ - 1));
+        return;
+    }
     if (IsComputeFenceComplete(fence_value)) {
         return;
     }
@@ -124,10 +136,22 @@ void Device::WaitForComputeFence(u64 fence_value) {
 }
 
 void Device::ComputeQueueWaitOnGraphics(u64 graphics_fence_value) {
+    if (graphics_fence_value == 0) return;
+    if (graphics_fence_value >= next_fence_value_) {
+        AETHER_LOG_ERROR("D3D12", "Cannot queue compute wait for unsubmitted graphics fence %llu",
+                         static_cast<unsigned long long>(graphics_fence_value));
+        return;
+    }
     AETHER_D3D_CHECK(compute_queue_->Wait(fence_.Get(), graphics_fence_value));
 }
 
 void Device::GraphicsQueueWaitOnCompute(u64 compute_fence_value) {
+    if (compute_fence_value == 0) return;
+    if (compute_fence_value >= next_compute_fence_value_) {
+        AETHER_LOG_ERROR("D3D12", "Cannot queue graphics wait for unsubmitted compute fence %llu",
+                         static_cast<unsigned long long>(compute_fence_value));
+        return;
+    }
     AETHER_D3D_CHECK(queue_->Wait(compute_fence_.Get(), compute_fence_value));
 }
 

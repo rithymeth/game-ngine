@@ -2,6 +2,7 @@
 
 #include "aether/core/base.h"
 #include "aether/ecs/entity.h"
+#include "aether/math/vec.h"
 
 #include <filesystem>
 #include <functional>
@@ -50,10 +51,12 @@ public:
     bool IsBool(usize i) const;
     bool IsFunction(usize i) const;
     bool IsEntity(usize i) const;
+    bool IsVector(usize i) const;
     std::string String(usize i, const std::string& fallback = {}) const;
     f64 Number(usize i, f64 fallback = 0.0) const;
     // An entity argument; the null entity if it isn't one.
     Entity EntityArg(usize i) const;
+    Vec3 Vector(usize i, const Vec3& fallback = Vec3{}) const;
     bool Bool(usize i, bool fallback = false) const;
     // A Luau function argument kept alive as a reference, for the host to
     // call later (LuauHost::CallRef); -1 if the argument isn't a function.
@@ -61,6 +64,7 @@ public:
     int Function(usize i) const;
     // Adds a return value (nil, boolean, number, string).
     void Return(const ScriptValue& value);
+    void ReturnVector(const Vec3& value);
     // Raises a script error from the call, once the function returns.
     void Fail(const std::string& message) { error_ = message; }
 

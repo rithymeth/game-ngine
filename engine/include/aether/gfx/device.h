@@ -28,7 +28,10 @@ public:
     u64 Submit(ID3D12CommandList* const* lists, u32 count);
 
     void WaitForFence(u64 fence_value);
-    bool IsFenceComplete(u64 fence_value) const { return fence_->GetCompletedValue() >= fence_value; }
+    bool IsFenceComplete(u64 fence_value) const {
+        return fence_value == 0 ||
+               (fence_ && fence_value < next_fence_value_ && fence_->GetCompletedValue() >= fence_value);
+    }
 
     // A second, independent queue (its own fence) for async compute: work
     // submitted here can execute on the GPU concurrently with the direct
@@ -40,7 +43,10 @@ public:
 
     u64 SubmitCompute(ID3D12CommandList* const* lists, u32 count);
     void WaitForComputeFence(u64 fence_value);
-    bool IsComputeFenceComplete(u64 fence_value) const { return compute_fence_->GetCompletedValue() >= fence_value; }
+    bool IsComputeFenceComplete(u64 fence_value) const {
+        return fence_value == 0 || (compute_fence_ && fence_value < next_compute_fence_value_ &&
+                                    compute_fence_->GetCompletedValue() >= fence_value);
+    }
 
     // GPU-side (not CPU-blocking) cross-queue waits: makes one queue's
     // future work wait for the other queue to reach a given fence value

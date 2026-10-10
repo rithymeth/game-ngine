@@ -2,6 +2,7 @@
 
 #include "aether/gfx/d3d12_common.h"
 #include "aether/gfx/descriptor_heap.h"
+#include "aether/assets/material.h"
 
 namespace aether::assets {
 class AssetManager;
@@ -32,9 +33,11 @@ struct MaterialData {
     u32 base_color_texture = DescriptorHeap::kInvalidIndex;
     u32 normal_texture = DescriptorHeap::kInvalidIndex;
     u32 metallic_roughness_texture = DescriptorHeap::kInvalidIndex;
-    u32 _pad0 = 0;
+    u32 occlusion_texture = DescriptorHeap::kInvalidIndex;
+    f32 occlusion_strength = 1.0f;
+    assets::MaterialAlphaMode alpha_mode = assets::MaterialAlphaMode::Opaque;
+    f32 alpha_cutoff = 0.5f;
     u32 _pad1 = 0;
-    u32 _pad2 = 0;
 };
 
 // Resolves a glTF material's texture references through `assets` (which

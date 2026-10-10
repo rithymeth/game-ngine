@@ -18,15 +18,18 @@ public:
     // Creates a DEFAULT-heap 2D RGBA8 texture and uploads `pixels` (tightly
     // packed, width * height * 4 bytes) via a temporary UPLOAD-heap staging
     // buffer, recorded onto `upload_cmd` (the caller submits it and waits on
-    // the fence before the texture is sampled). The staging buffer is kept
-    // alive for this Texture's lifetime rather than freed once the copy
-    // completes — acceptable at demo scale; a real asset pipeline would pool
-    // and recycle staging buffers instead.
+    // the fence before the texture is sampled). Keep the upload staging buffer
+    // until that fence completes, then call ReleaseUploadStaging() so it does
+    // not occupy GPU memory for the texture's full lifetime.
     Texture(Device& device, DescriptorHeap& bindless_heap, ID3D12GraphicsCommandList* upload_cmd, u32 width,
             u32 height, const u8* pixels);
 
     u32 BindlessIndex() const { return bindless_index_; }
     ID3D12Resource* Handle() const { return resource_.Get(); }
+
+    // Call only after the command list containing this texture's upload has
+    // completed on the GPU. Safe to call more than once.
+    void ReleaseUploadStaging() { upload_staging_.Reset(); }
 
 private:
     ComPtr<ID3D12Resource> resource_;

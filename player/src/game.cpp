@@ -627,6 +627,23 @@ void Game::StartRuntime() {
         }, false);
     runtime_->scripts->Register(*lifecycle_);
     runtime_->scripts->BindInput(&input_);
+#if AETHER_GAME_PHYSICS
+    runtime_->scripts->BindPhysicsScene(physics_ ? physics_->scene.get() : nullptr);
+    if (physics_ && physics_->scene) {
+        physics_->scene->SetEventHandler([this](const PhysicsEvent& event) {
+            if (!runtime_ || !runtime_->scripts) return;
+            const char* event_name = PhysicsEventName(event.type);
+            constexpr char prefix[] = "Event.";
+            const std::string full_name = event_name ? event_name : "";
+            const std::string method = full_name.rfind(prefix, 0) == 0
+                ? full_name.substr(sizeof(prefix) - 1) : full_name;
+            if (!method.empty()) {
+                runtime_->scripts->SendEvent(event.self, method,
+                    {script::EntityRef{event.other}, static_cast<f64>(event.approach_speed)});
+            }
+        });
+    }
+#endif
     kit::KitScriptApiContext api_context;
     api_context.install = [this](const std::string& kit_name) { runtime_->scripts->InstallKitApi(kit_name); };
     kits_.InstallScriptApi(&api_context);
@@ -968,7 +985,7 @@ void Game::UpdateProofMenu() {
         case 1: proof_menu_ = 2; proof_menu_row_ = 0; break;
         case 2: proof_menu_ = 3; break;
         case 3:
-            if (saves_ && saves_->Exists("first-contact")) {
+            if (saves_ && saves_->Exists(scene_.find("Campaign") != std::string::npos ? "aether-campaign" : "first-contact")) {
                 input_state_.SetButton(Key::F5, true); proof_load_input_ = true; proof_menu_ = 0;
             } else proof_settings_status_ = -2;
             break;

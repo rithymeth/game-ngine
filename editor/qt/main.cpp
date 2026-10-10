@@ -5,6 +5,7 @@
 #include "aether/core/log.h"
 #include "aether/ecs/archetype.h"
 #include "aether/gameplay/attribute_system.h"
+#include "aether/input/keys.h"
 #include "aether/physics/character.h"
 #include "aether/physics/components.h"
 #include "aether/plugin/plugin.h"
@@ -12,10 +13,17 @@
 #include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
 #include "aether/scene/serialization.h"
+#include "aether/scene/script_component.h"
 #include "aether/sequencer/player.h"
 #include "aether/sequencer/sequence_system.h"
 #include "core/scene_document.h"
+#include "core/recent_projects.h"
+#include "editor_play_runtime.h"
 #include "sequencer/sequence_document.h"
+#include "physics_component_panel.h"
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+#include "script_component_editor.h"
+#endif
 
 #include <QApplication>
 #include <QAbstractItemView>
@@ -23,6 +31,7 @@
 #include <QActionGroup>
 #include <QCloseEvent>
 #include <QCheckBox>
+#include <QColor>
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -33,13 +42,16 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFileSystemModel>
+#include <QFocusEvent>
 #include <QFormLayout>
+#include <QFrame>
 #include <QGroupBox>
 #include <QFont>
 #include <QElapsedTimer>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QKeySequence>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QInputDialog>
 #include <QLineEdit>
@@ -63,10 +75,16 @@
 #include <QStyle>
 #include <QSpinBox>
 #include <QSizePolicy>
+#include <QScrollArea>
+#include <QScrollBar>
+#include <QSet>
+#include <QStackedWidget>
 #include <QToolBar>
 #include <QTimer>
 #include <QTreeView>
 #include <QTreeWidget>
+#include <QTableWidget>
+#include <QTableWidgetItem>
 #include <QVBoxLayout>
 #include <QWindow>
 #include <QWidget>
@@ -78,6 +96,7 @@
 #include <cmath>
 #include <filesystem>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <set>
 #include <unordered_map>
@@ -86,6 +105,62 @@
 namespace rhi = aether::gfx::rhi;
 
 namespace {
+
+aether::input::Key InputKeyFromQt(int key) {
+    using aether::input::Key;
+    if (key >= Qt::Key_A && key <= Qt::Key_Z)
+        return static_cast<Key>(static_cast<int>(Key::A) + key - Qt::Key_A);
+    if (key >= Qt::Key_0 && key <= Qt::Key_9)
+        return static_cast<Key>(static_cast<int>(Key::Num0) + key - Qt::Key_0);
+    if (key >= Qt::Key_F1 && key <= Qt::Key_F12)
+        return static_cast<Key>(static_cast<int>(Key::F1) + key - Qt::Key_F1);
+    switch (key) {
+    case Qt::Key_Space: return Key::Space;
+    case Qt::Key_Return:
+    case Qt::Key_Enter: return Key::Enter;
+    case Qt::Key_Escape: return Key::Escape;
+    case Qt::Key_Tab:
+    case Qt::Key_Backtab: return Key::Tab;
+    case Qt::Key_Backspace: return Key::Backspace;
+    case Qt::Key_Delete: return Key::Delete;
+    case Qt::Key_Insert: return Key::Insert;
+    case Qt::Key_Home: return Key::Home;
+    case Qt::Key_End: return Key::End;
+    case Qt::Key_PageUp: return Key::PageUp;
+    case Qt::Key_PageDown: return Key::PageDown;
+    case Qt::Key_Shift: return Key::LeftShift;
+    case Qt::Key_Control: return Key::LeftCtrl;
+    case Qt::Key_Alt: return Key::LeftAlt;
+    case Qt::Key_Up: return Key::Up;
+    case Qt::Key_Down: return Key::Down;
+    case Qt::Key_Left: return Key::Left;
+    case Qt::Key_Right: return Key::Right;
+    case Qt::Key_Minus: return Key::Minus;
+    case Qt::Key_Equal: return Key::Equals;
+    case Qt::Key_BracketLeft: return Key::LeftBracket;
+    case Qt::Key_BracketRight: return Key::RightBracket;
+    case Qt::Key_Semicolon: return Key::Semicolon;
+    case Qt::Key_Apostrophe: return Key::Apostrophe;
+    case Qt::Key_Comma: return Key::Comma;
+    case Qt::Key_Period: return Key::Period;
+    case Qt::Key_Slash: return Key::Slash;
+    case Qt::Key_Backslash: return Key::Backslash;
+    case Qt::Key_QuoteLeft: return Key::Grave;
+    default: return Key::None;
+    }
+}
+
+aether::input::Key InputMouseKeyFromQt(Qt::MouseButton button) {
+    using aether::input::Key;
+    switch (button) {
+    case Qt::LeftButton: return Key::MouseLeft;
+    case Qt::RightButton: return Key::MouseRight;
+    case Qt::MiddleButton: return Key::MouseMiddle;
+    case Qt::BackButton: return Key::MouseButton4;
+    case Qt::ForwardButton: return Key::MouseButton5;
+    default: return Key::None;
+    }
+}
 
 void RegisterEditorComponentSchemas() {
     aether::RegisterAudioComponents();
@@ -99,6 +174,79 @@ void RegisterEditorComponentSchemas() {
     (void)aether::GetComponentId<aether::ConvexCollider>();
     (void)aether::GetComponentId<aether::MeshCollider>();
     (void)aether::GetComponentId<aether::CharacterMovement>();
+    (void)aether::GetComponentId<aether::Layer>();
+    (void)aether::GetComponentId<aether::ScriptComponent>();
+}
+
+std::vector<aether::u32> RemapCollisionMatrix(const std::vector<std::string>& source_names,
+                                              const std::vector<aether::u32>& source_masks,
+                                              const std::vector<std::string>& target_names) {
+    aether::ProjectSettings source;
+    source.layers = source_names;
+    source.collision_matrix = source_masks;
+    const aether::CollisionMatrix old_matrix = aether::MakeCollisionMatrix(source);
+    std::vector<aether::u32> result(target_names.size(), 0);
+    for (std::size_t row = 0; row < target_names.size(); ++row) {
+        for (std::size_t column = 0; column < target_names.size(); ++column) {
+            const auto old_row = std::find(source_names.begin(), source_names.end(), target_names[row]);
+            const auto old_column = std::find(source_names.begin(), source_names.end(), target_names[column]);
+            const bool collide = old_row == source_names.end() || old_column == source_names.end()
+                ? true : old_matrix.ShouldCollide(static_cast<aether::u8>(old_row - source_names.begin()),
+                                                  static_cast<aether::u8>(old_column - source_names.begin()));
+            if (collide) result[row] |= (1u << column);
+        }
+    }
+    return result;
+}
+
+bool ShowCollisionMatrixDialog(QWidget* parent, const std::vector<std::string>& names,
+                               const std::vector<std::string>& old_names,
+                               const std::vector<aether::u32>& old_masks,
+                               std::vector<aether::u32>& edited_masks) {
+    if (names.empty() || names.size() > aether::kMaxLayers) return false;
+    QDialog dialog(parent);
+    dialog.setWindowTitle("Collision Matrix");
+    dialog.resize(780, 580);
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* description = new QLabel("Checked pairs collide. The matrix stays symmetric.", &dialog);
+    layout->addWidget(description);
+    auto* table = new QTableWidget(static_cast<int>(names.size()), static_cast<int>(names.size()), &dialog);
+    QStringList labels;
+    for (const std::string& name : names) labels.push_back(QString::fromStdString(name));
+    table->setHorizontalHeaderLabels(labels);
+    table->setVerticalHeaderLabels(labels);
+    table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    table->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    table->setAlternatingRowColors(true);
+    const std::vector<aether::u32> initial = RemapCollisionMatrix(old_names, old_masks, names);
+    for (std::size_t row = 0; row < names.size(); ++row) {
+        for (std::size_t column = 0; column < names.size(); ++column) {
+            auto* cell = new QTableWidgetItem;
+            Qt::ItemFlags flags = Qt::ItemIsEnabled;
+            if (row <= column) flags |= Qt::ItemIsUserCheckable | Qt::ItemIsSelectable;
+            cell->setFlags(flags);
+            cell->setCheckState((initial[row] & (1u << column)) ? Qt::Checked : Qt::Unchecked);
+            table->setItem(static_cast<int>(row), static_cast<int>(column), cell);
+        }
+    }
+    QObject::connect(table, &QTableWidget::itemChanged, table, [table](QTableWidgetItem* item) {
+        if (!item || item->row() >= item->column()) return;
+        const QSignalBlocker blocker(table);
+        QTableWidgetItem* mirror = table->item(item->column(), item->row());
+        if (mirror) mirror->setCheckState(item->checkState());
+    });
+    layout->addWidget(table, 1);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dialog);
+    layout->addWidget(buttons);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    if (dialog.exec() != QDialog::Accepted) return false;
+    edited_masks.assign(names.size(), 0);
+    for (std::size_t row = 0; row < names.size(); ++row)
+        for (std::size_t column = 0; column < names.size(); ++column)
+            if (table->item(static_cast<int>(row), static_cast<int>(column))->checkState() == Qt::Checked)
+                edited_masks[row] |= (1u << column);
+    return true;
 }
 
 bool ValidatePluginModules(const aether::plugin::PluginManager& manager, std::string* error) {
@@ -129,26 +277,77 @@ bool StartDefaultEnginePlugins(aether::plugin::PluginManager& manager, std::stri
 }
 
 constexpr auto kStyle = R"(
-* { color: #d7e0ea; font-family: "Segoe UI"; font-size: 9pt; }
-QMainWindow, QWidget { background: #151a21; }
-QMenuBar { background: #10151b; border-bottom: 1px solid #28313b; padding: 4px; }
-QMenuBar::item { padding: 6px 10px; }
-QMenuBar::item:selected, QMenu::item:selected { background: #243b4b; }
-QMenu { background: #1b222a; border: 1px solid #34414d; }
-QToolBar { background: #11171e; border: 0; border-bottom: 1px solid #28313b; spacing: 6px; padding: 6px; }
-QToolButton, QPushButton { background: #202a34; border: 1px solid #34424e; border-radius: 4px; padding: 6px 12px; }
-QToolButton:hover, QPushButton:hover { background: #2a3946; }
-QPushButton#play { background: #48c99a; color: #102019; font-weight: 700; border: 0; padding: 7px 18px; }
+* { color: #dce4ec; font-family: "Segoe UI"; font-size: 9pt; }
+QMainWindow, QWidget { background: #171c23; }
+QMenuBar { background: #11161c; border-bottom: 1px solid #2a333d; padding: 3px 6px; }
+QMenuBar::item { padding: 6px 11px; border-radius: 4px; }
+QMenuBar::item:selected, QMenu::item:selected { background: #263943; color: #f1f7fa; }
+QMenu { background: #1b222a; border: 1px solid #34414d; padding: 5px; }
+QMenu::item { padding: 7px 26px 7px 10px; border-radius: 3px; }
+QMenu::separator { height: 1px; background: #303b46; margin: 5px 8px; }
+QToolBar { background: #11171e; border: 0; border-bottom: 1px solid #2a333d; spacing: 6px; padding: 5px 8px; }
+QToolBar::separator { width: 1px; background: #303b46; margin: 4px 5px; }
+QToolButton, QPushButton { background: #222c36; border: 1px solid #35424e; border-radius: 5px; padding: 6px 11px; }
+QToolButton:hover, QPushButton:hover { background: #2b3b47; border-color: #486171; }
+QToolButton:pressed, QPushButton:pressed { background: #20333c; }
+QToolButton:focus, QPushButton:focus { border-color: #53c7a4; }
+QToolButton:checked { background: #203a39; border-color: #3d9d88; color: #a2f2d7; }
+QToolButton:disabled, QPushButton:disabled { color: #687581; background: #1a2027; border-color: #29323b; }
+QPushButton#play { background: #35ba91; color: #0c211b; font-weight: 700; border: 0; padding: 7px 18px; }
+QPushButton#play:hover { background: #4bd2a7; }
+QPushButton#play:disabled { background: #235746; color: #91b9aa; }
+QPushButton#emptyStateAction { background: #277d70; color: #f0fffb; border: 0; font-weight: 600; }
+QPushButton#sequencePreviewButton { background: #277d70; color: #f0fffb; border-color: #318e7d; font-weight: 600; }
+QPushButton#sequencePreviewButton:hover { background: #319580; }
 QDockWidget { titlebar-close-icon: none; titlebar-normal-icon: none; }
-QDockWidget::title { background: #1b222a; border-bottom: 1px solid #303b46; padding: 8px 10px; font-weight: 600; }
+QDockWidget::title { background: #1b222a; border-bottom: 1px solid #303b46; padding: 8px 10px; font-weight: 700; color: #b9c6d1; }
 QDockWidget::close-button, QDockWidget::float-button { width: 0; }
-QTreeView, QPlainTextEdit { background: #151a21; border: 0; alternate-background-color: #19212a; }
-QTreeView::item { padding: 4px; }
-QTreeView::item:selected { background: #244657; }
+QTabBar::tab { background: #1a2027; border: 1px solid #2b3540; padding: 7px 12px; color: #a7b4bf; }
+QTabBar::tab:selected { background: #222d36; color: #eef5fa; border-bottom-color: #54c9a7; }
+QTabBar::tab:hover:!selected { background: #202a33; }
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QPlainTextEdit, QListWidget {
+    background: #11171d; border: 1px solid #303b46; border-radius: 5px; padding: 5px 7px; selection-background-color: #286b62;
+}
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QPlainTextEdit:focus,
+QListWidget:focus, QTreeWidget:focus { border-color: #53c7a4; }
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: #71808c; background: #181e24; }
+QComboBox QAbstractItemView { background: #1b222a; selection-background-color: #286b62; border: 1px solid #35424e; }
+QTreeWidget, QTreeView, QListView { background: #151a21; border: 0; alternate-background-color: #19212a; outline: 0; }
+QTreeWidget::item, QTreeView::item { padding: 5px 4px; border-radius: 3px; }
+QTreeWidget::item:selected, QTreeView::item:selected, QListView::item:selected { background: #244653; color: #f2f8fb; }
+QTreeWidget::item:hover:!selected, QTreeView::item:hover:!selected, QListView::item:hover:!selected { background: #202c35; }
+QListView::item { padding: 8px; border: 1px solid transparent; border-radius: 6px; }
+QListView::item:selected { border-color: #4b9c8a; }
+QGroupBox { border: 1px solid #303b46; border-radius: 6px; margin-top: 10px; padding: 10px 8px 8px; font-weight: 600; }
+QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; color: #aebdca; }
 QHeaderView::section { background: #1b222a; border: 0; border-bottom: 1px solid #303b46; padding: 6px; }
-QStatusBar { background: #10151b; border-top: 1px solid #28313b; }
-QLabel#muted { color: #81909e; }
-QLabel#section { color: #61d5b0; font-size: 8pt; font-weight: 700; letter-spacing: 1px; }
+QScrollBar:vertical { width: 10px; background: #151a21; margin: 2px; }
+QScrollBar::handle:vertical { background: #35424d; min-height: 28px; border-radius: 4px; }
+QScrollBar::handle:vertical:hover { background: #4a5d6a; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical, QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; height: 0; }
+QScrollBar:horizontal { height: 10px; background: #151a21; margin: 2px; }
+QScrollBar::handle:horizontal { background: #35424d; min-width: 28px; border-radius: 4px; }
+QStatusBar { background: #11161c; border-top: 1px solid #2a333d; color: #9eacb8; }
+QStatusBar::item { border: 0; }
+QSlider::groove:horizontal { height: 4px; background: #303b46; border-radius: 2px; }
+QSlider::sub-page:horizontal { background: #4bc5a3; border-radius: 2px; }
+QSlider::handle:horizontal { width: 13px; margin: -5px 0; border-radius: 7px; background: #dff8ef; border: 2px solid #36a98d; }
+QCheckBox { spacing: 7px; }
+QCheckBox::indicator { width: 15px; height: 15px; border: 1px solid #465562; border-radius: 4px; background: #11171d; }
+QCheckBox::indicator:checked { background: #36a98d; border-color: #52d4b1; }
+QCheckBox::indicator:disabled { background: #1a2027; border-color: #29323b; }
+QListWidget::item { padding: 5px 7px; border-radius: 4px; }
+QListWidget::item:selected { background: #244653; color: #f2f8fb; }
+QLabel#muted { color: #93a1ad; }
+QLabel#section { color: #67d4b5; font-size: 8pt; font-weight: 700; letter-spacing: 1px; }
+QLabel#emptyStateTitle { color: #e8f0f5; font-size: 12pt; font-weight: 700; }
+QLabel#emptyStateIcon { color: #5ac9a8; font-size: 26pt; font-weight: 600; }
+QLabel#brand { color: #eef4f8; font-size: 9pt; font-weight: 700; letter-spacing: 1px; }
+QLabel#workspaceLabel { color: #75dbbd; font-size: 8pt; font-weight: 700; letter-spacing: 1px; padding: 5px 8px; }
+QWidget#contentWelcomePanel { background: #151a21; border: 1px dashed #3a4854; border-radius: 10px; }
+QLabel#contentWelcomeTitle { color: #e8f0f5; font-size: 14pt; font-weight: 700; }
+QLabel#contentWelcomeDescription { color: #93a1ad; }
+QToolTip { background: #202a33; color: #edf4f8; border: 1px solid #42515e; padding: 5px 7px; }
 )";
 
 class RhiViewport final : public QWidget {
@@ -156,12 +355,19 @@ public:
     static constexpr float kStagedModelBelowWorldY = -10.0f;
 
     explicit RhiViewport(aether::editor::SceneDocument& document) : document_(document) {
+        setAccessibleName("3D World View");
+        setFocusPolicy(Qt::StrongFocus);
+        setMouseTracking(true);
         setAttribute(Qt::WA_NativeWindow);
         setAttribute(Qt::WA_PaintOnScreen);
         setAttribute(Qt::WA_NoSystemBackground);
         setAttribute(Qt::WA_OpaquePaintEvent);
+        navigation_clock_.start();
         timer_.setInterval(16);
-        QObject::connect(&timer_, &QTimer::timeout, [this] { Render(); });
+        QObject::connect(&timer_, &QTimer::timeout, [this] {
+            UpdateCameraNavigation();
+            Render();
+        });
         timer_.start();
     }
 
@@ -170,12 +376,19 @@ public:
         if (device_) device_->WaitForFence(fence_);
     }
 
-    void SetSelectedGuid(const aether::EntityGuid& guid) { selected_guid_ = guid; }
+    void SetSelectedGuid(const aether::EntityGuid& guid) {
+        if (guid != selected_guid_) EndKeyboardObjectMove();
+        selected_guid_ = guid;
+    }
     void SetToolMode(const QString& mode) {
+        EndKeyboardObjectMove();
         move_tool_ = mode == "Move";
         rotate_y_tool_ = mode == "Rotate Y";
-        setCursor((move_tool_ || rotate_y_tool_) ? Qt::SizeAllCursor : Qt::ArrowCursor);
-        if (!move_tool_ && !rotate_y_tool_) dragging_ = false;
+        scale_tool_ = mode == "Scale";
+        setCursor(move_tool_ || scale_tool_ ? Qt::SizeAllCursor
+                  : rotate_y_tool_ ? Qt::CrossCursor : Qt::ArrowCursor);
+        dragging_ = false;
+        drag_move_axis_ = -1;
     }
     void SetGridSnap(bool enabled) { grid_snap_ = enabled; }
     void SetContentRoot(const std::filesystem::path& content_root) {
@@ -189,13 +402,97 @@ public:
     void SetTransformChangedCallback(std::function<void(const aether::EntityGuid&)> callback) {
         transform_changed_ = std::move(callback);
     }
+    void SetInputCallbacks(std::function<void(aether::input::Key, bool)> button,
+                           std::function<void(float, float)> mouse_delta,
+                           std::function<void(float)> mouse_wheel,
+                           std::function<void()> clear) {
+        input_button_ = std::move(button);
+        input_mouse_delta_ = std::move(mouse_delta);
+        input_mouse_wheel_ = std::move(mouse_wheel);
+        input_clear_ = std::move(clear);
+    }
+    void SetPlayInputFocusChangedCallback(std::function<void(bool)> callback) {
+        play_input_focus_changed_ = std::move(callback);
+    }
+    void SetPlayInputActive(bool active) {
+        if (play_input_active_ == active) {
+            if (active) setFocus(Qt::OtherFocusReason);
+            NotifyPlayInputFocus();
+            return;
+        }
+        play_input_active_ = active;
+        navigation_keys_.clear();
+        EndKeyboardObjectMove();
+        has_play_mouse_position_ = false;
+        if (!active && input_clear_) input_clear_();
+        if (active) setFocus(Qt::OtherFocusReason);
+        NotifyPlayInputFocus();
+    }
 
 protected:
     QPaintEngine* paintEngine() const override { return nullptr; }
     void showEvent(QShowEvent* event) override { QWidget::showEvent(event); EnsureSurface(); Render(); }
     void resizeEvent(QResizeEvent*) override { EnsureSurface(); }
+    void keyPressEvent(QKeyEvent* event) override {
+        if (play_input_active_ && hasFocus()) {
+            const aether::input::Key key = InputKeyFromQt(event->key());
+            if (key != aether::input::Key::None) {
+                if (!event->isAutoRepeat() && input_button_) input_button_(key, true);
+                event->accept();
+                return;
+            }
+        }
+        if (IsCameraNavigationKey(event->key())) {
+            navigation_keys_.insert(event->key());
+            event->accept();
+            return;
+        }
+        QWidget::keyPressEvent(event);
+    }
+    void keyReleaseEvent(QKeyEvent* event) override {
+        if (play_input_active_ && hasFocus()) {
+            const aether::input::Key key = InputKeyFromQt(event->key());
+            if (key != aether::input::Key::None) {
+                if (!event->isAutoRepeat() && input_button_) input_button_(key, false);
+                event->accept();
+                return;
+            }
+        }
+        if (IsCameraNavigationKey(event->key())) {
+            if (event->isAutoRepeat()) {
+                event->accept();
+                return;
+            }
+            navigation_keys_.remove(event->key());
+            if (!HasTranslationKeyPressed()) EndKeyboardObjectMove();
+            event->accept();
+            return;
+        }
+        QWidget::keyReleaseEvent(event);
+    }
+    void focusOutEvent(QFocusEvent* event) override {
+        EndKeyboardObjectMove();
+        navigation_keys_.clear();
+        has_play_mouse_position_ = false;
+        if (play_input_active_ && input_clear_) input_clear_();
+        QWidget::focusOutEvent(event);
+        NotifyPlayInputFocus();
+    }
+    void focusInEvent(QFocusEvent* event) override {
+        QWidget::focusInEvent(event);
+        NotifyPlayInputFocus();
+    }
     void mousePressEvent(QMouseEvent* event) override {
         if (width() <= 0 || height() <= 0) return;
+        setFocus(Qt::MouseFocusReason);
+        if (play_input_active_) {
+            has_play_mouse_position_ = true;
+            last_play_mouse_position_ = event->position();
+            const aether::input::Key key = InputMouseKeyFromQt(event->button());
+            if (key != aether::input::Key::None && input_button_) input_button_(key, true);
+            event->accept();
+            return;
+        }
         if (event->button() == Qt::RightButton) {
             orbiting_ = true;
             camera_drag_start_ = event->position();
@@ -213,6 +510,32 @@ protected:
             return;
         }
         if (event->button() != Qt::LeftButton) return;
+        if (move_tool_) {
+            int axis = -1;
+            if (IsNearMoveGizmo(event->position(), axis)) {
+                const aether::Entity entity = document_.Guids().Find(document_.GetWorld(), selected_guid_);
+                if (const auto* transform = document_.GetWorld().GetComponent<aether::Transform>(entity)) {
+                    dragging_ = true;
+                    drag_guid_ = selected_guid_;
+                    drag_origin_ = aether::WorldPosition(document_.GetWorld(), document_.Guids(), entity);
+                    drag_start_ = event->position();
+                    drag_move_axis_ = axis;
+                    event->accept();
+                    return;
+                }
+            }
+        }
+        if (scale_tool_ && IsNearScaleHandle(event->position())) {
+            const aether::Entity entity = document_.Guids().Find(document_.GetWorld(), selected_guid_);
+            if (const auto* transform = document_.GetWorld().GetComponent<aether::Transform>(entity)) {
+                dragging_ = true;
+                drag_guid_ = selected_guid_;
+                drag_scale_origin_ = transform->scale;
+                drag_start_ = event->position();
+                event->accept();
+                return;
+            }
+        }
         if (rotate_y_tool_ && IsNearRotationRing(event->position())) {
             const aether::Entity entity = document_.Guids().Find(document_.GetWorld(), selected_guid_);
             if (const auto* transform = document_.GetWorld().GetComponent<aether::Transform>(entity)) {
@@ -227,18 +550,30 @@ protected:
         const aether::EntityGuid hit = PickEntity(event->position());
         if (hit.IsNull()) return;
         if (entity_selected_) entity_selected_(hit);
-        if (move_tool_ && hit == selected_guid_) {
+        if ((move_tool_ || scale_tool_) && hit == selected_guid_) {
             const aether::Entity entity = document_.Guids().Find(document_.GetWorld(), hit);
             if (const auto* transform = document_.GetWorld().GetComponent<aether::Transform>(entity)) {
                 dragging_ = true;
                 drag_guid_ = hit;
-                drag_origin_ = transform->position;
+                drag_origin_ = aether::WorldPosition(document_.GetWorld(), document_.Guids(), entity);
+                drag_scale_origin_ = transform->scale;
                 drag_start_ = event->position();
+                drag_move_axis_ = -1;
                 event->accept();
             }
         }
     }
     void mouseMoveEvent(QMouseEvent* event) override {
+        if (play_input_active_ && hasFocus()) {
+            if (has_play_mouse_position_ && input_mouse_delta_) {
+                const QPointF delta = event->position() - last_play_mouse_position_;
+                input_mouse_delta_(static_cast<float>(delta.x()), static_cast<float>(delta.y()));
+            }
+            last_play_mouse_position_ = event->position();
+            has_play_mouse_position_ = true;
+            event->accept();
+            return;
+        }
         if (orbiting_ && (event->buttons() & Qt::RightButton)) {
             const QPointF delta = event->position() - camera_drag_start_;
             camera_yaw_ = camera_yaw_start_ - static_cast<float>(delta.x()) * 0.008f;
@@ -260,9 +595,16 @@ protected:
         if (dragging_ && (event->buttons() & Qt::LeftButton)) ApplyActiveDrag(event->position(), false);
     }
     void mouseReleaseEvent(QMouseEvent* event) override {
+        if (play_input_active_) {
+            const aether::input::Key key = InputMouseKeyFromQt(event->button());
+            if (key != aether::input::Key::None && input_button_) input_button_(key, false);
+            event->accept();
+            return;
+        }
         if (event->button() == Qt::RightButton && orbiting_) {
             orbiting_ = false;
-            setCursor(move_tool_ ? Qt::SizeAllCursor : Qt::ArrowCursor);
+            setCursor(move_tool_ || scale_tool_ ? Qt::SizeAllCursor
+                      : rotate_y_tool_ ? Qt::CrossCursor : Qt::ArrowCursor);
             event->accept();
             return;
         }
@@ -274,9 +616,16 @@ protected:
         if (event->button() != Qt::LeftButton || !dragging_) return;
         ApplyActiveDrag(event->position(), true);
         dragging_ = false;
+        drag_move_axis_ = -1;
         event->accept();
     }
     void wheelEvent(QWheelEvent* event) override {
+        if (play_input_active_ && hasFocus()) {
+            if (input_mouse_wheel_)
+                input_mouse_wheel_(static_cast<float>(event->angleDelta().y()) / 120.0f);
+            event->accept();
+            return;
+        }
         if (width() <= 0 || height() <= 0 || event->angleDelta().y() == 0) return;
         camera_distance_ = std::clamp(camera_distance_ *
             std::pow(0.84f, static_cast<float>(event->angleDelta().y()) / 120.0f), 1.5f, 250.0f);
@@ -284,6 +633,66 @@ protected:
     }
 
 private:
+    void NotifyPlayInputFocus() {
+        if (play_input_focus_changed_) play_input_focus_changed_(play_input_active_ && hasFocus());
+    }
+
+    static bool IsCameraNavigationKey(int key) {
+        return key == Qt::Key_W || key == Qt::Key_A || key == Qt::Key_S || key == Qt::Key_D ||
+            key == Qt::Key_Q || key == Qt::Key_E || key == Qt::Key_Shift;
+    }
+
+    bool HasTranslationKeyPressed() const {
+        return navigation_keys_.contains(Qt::Key_W) || navigation_keys_.contains(Qt::Key_A) ||
+            navigation_keys_.contains(Qt::Key_S) || navigation_keys_.contains(Qt::Key_D) ||
+            navigation_keys_.contains(Qt::Key_Q) || navigation_keys_.contains(Qt::Key_E);
+    }
+
+    void EndKeyboardObjectMove() {
+        if (keyboard_move_guid_.IsNull()) return;
+        const aether::Entity entity = document_.Guids().Find(document_.GetWorld(), keyboard_move_guid_);
+        if (!entity.IsNull()) {
+            const aether::Vec3 position = aether::WorldPosition(document_.GetWorld(), document_.Guids(), entity);
+            if (SetWorldPosition(entity, position, true) && transform_changed_)
+                transform_changed_(keyboard_move_guid_);
+        }
+        keyboard_move_guid_ = {};
+    }
+
+    void UpdateCameraNavigation() {
+        const qint64 elapsed_ms = navigation_clock_.restart();
+        if (navigation_keys_.isEmpty() || elapsed_ms <= 0) return;
+        const float delta_time = std::clamp(static_cast<float>(elapsed_ms) / 1000.0f, 0.0f, 0.05f);
+        aether::Vec3 forward = CameraForward();
+        forward.y = 0.0f;
+        if (forward.LengthSq() > 0.0001f) forward = forward.Normalized();
+        aether::Vec3 right = CameraRight();
+        right.y = 0.0f;
+        if (right.LengthSq() > 0.0001f) right = right.Normalized();
+        aether::Vec3 movement{};
+        if (navigation_keys_.contains(Qt::Key_W)) movement = movement + forward;
+        if (navigation_keys_.contains(Qt::Key_S)) movement = movement - forward;
+        if (navigation_keys_.contains(Qt::Key_D)) movement = movement + right;
+        if (navigation_keys_.contains(Qt::Key_A)) movement = movement - right;
+        if (navigation_keys_.contains(Qt::Key_E)) movement.y += 1.0f;
+        if (navigation_keys_.contains(Qt::Key_Q)) movement.y -= 1.0f;
+        if (movement.LengthSq() < 0.0001f) return;
+        movement = movement.Normalized();
+        const float speed = std::max(1.0f, camera_distance_ * 0.12f) *
+            (navigation_keys_.contains(Qt::Key_Shift) ? 3.0f : 1.0f);
+        const aether::Entity selected = document_.Guids().Find(document_.GetWorld(), selected_guid_);
+        if (move_tool_ && !selected.IsNull() &&
+            document_.GetWorld().HasComponent<aether::Transform>(selected)) {
+            const aether::Vec3 position = aether::WorldPosition(document_.GetWorld(), document_.Guids(), selected);
+            if (SetWorldPosition(selected, position + movement * (speed * delta_time), false)) {
+                keyboard_move_guid_ = selected_guid_;
+                if (transform_changed_) transform_changed_(keyboard_move_guid_);
+            }
+            return;
+        }
+        camera_target_ = camera_target_ + movement * (speed * delta_time);
+    }
+
     aether::Vec3 CameraPosition() const {
         const float horizontal = std::cos(camera_pitch_) * camera_distance_;
         return camera_target_ + aether::Vec3{std::sin(camera_yaw_) * horizontal,
@@ -304,6 +713,50 @@ private:
         if (depth) *depth = clip.z / clip.w;
         screen = QPointF((x * 0.5f + 0.5f) * width(), (1.0f - (y * 0.5f + 0.5f)) * height());
         return true;
+    }
+
+    float MoveGizmoLength() const { return std::clamp(camera_distance_ * 0.075f, 0.9f, 2.2f); }
+
+    bool IsNearMoveGizmo(const QPointF& point, int& axis_hit) const {
+        axis_hit = -1;
+        const aether::Entity entity = document_.Guids().Find(document_.GetWorld(), selected_guid_);
+        if (entity.IsNull()) return false;
+        const aether::Vec3 origin = aether::WorldPosition(document_.GetWorld(), document_.Guids(), entity);
+        QPointF screen_origin;
+        if (!ProjectToScreen(origin, screen_origin)) return false;
+        const float length = MoveGizmoLength();
+        const aether::Vec3 axes[] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+        float closest_distance_sq = 16.0f * 16.0f;
+        for (int axis = 0; axis < 3; ++axis) {
+            const aether::Vec3 endpoint = origin + axes[axis] * length;
+            QPointF screen_endpoint;
+            if (!ProjectToScreen(endpoint, screen_endpoint)) continue;
+            const QPointF segment = screen_endpoint - screen_origin;
+            const QPointF offset = point - screen_origin;
+            const float segment_length_sq = static_cast<float>(segment.x() * segment.x() + segment.y() * segment.y());
+            if (segment_length_sq < 9.0f) continue;
+            const float t = std::clamp(static_cast<float>(
+                (offset.x() * segment.x() + offset.y() * segment.y()) / segment_length_sq), 0.0f, 1.0f);
+            if (t < 0.18f) continue;
+            const QPointF closest = screen_origin + segment * t;
+            const QPointF delta = point - closest;
+            const float distance_sq = static_cast<float>(delta.x() * delta.x() + delta.y() * delta.y());
+            if (distance_sq <= closest_distance_sq) {
+                closest_distance_sq = distance_sq;
+                axis_hit = axis;
+            }
+        }
+        return axis_hit >= 0;
+    }
+
+    bool IsNearScaleHandle(const QPointF& point) const {
+        const aether::Entity entity = document_.Guids().Find(document_.GetWorld(), selected_guid_);
+        if (entity.IsNull()) return false;
+        const aether::Vec3 origin = aether::WorldPosition(document_.GetWorld(), document_.Guids(), entity);
+        QPointF handle;
+        if (!ProjectToScreen(origin + aether::Vec3{0.0f, MoveGizmoLength() * 0.85f, 0.0f}, handle)) return false;
+        const QPointF delta = point - handle;
+        return delta.x() * delta.x() + delta.y() * delta.y() <= 18.0 * 18.0;
     }
 
 public:
@@ -471,7 +924,7 @@ private:
             out = found->second;
             return out.IsValid() && out.index != white_texture_.index;
         }
-        if (textures_.size() >= rhi::kMaxBindlessTextures) {
+        if (textures_.size() >= rhi::kMaxUserBindlessTextures) {
             AETHER_LOG_WARN("QtViewport", "Texture limit reached; using white for '%s'", key.c_str());
             out = white_texture_;
             return false;
@@ -558,28 +1011,72 @@ private:
         }
     }
 
-    aether::EntityGuid PickEntity(const QPointF& point) const {
-        float closest = 28.0f * 28.0f;
-        float closest_depth = 1.0f;
+    aether::EntityGuid PickEntity(const QPointF& point) {
+        float closest_center_distance_sq = std::numeric_limits<float>::max();
+        float closest_depth = std::numeric_limits<float>::max();
         aether::EntityGuid hit{};
         for (aether::Entity entity : document_.Entities()) {
-            const auto* transform = document_.GetWorld().GetComponent<aether::Transform>(entity);
             const auto* id = document_.GetWorld().GetComponent<aether::IdComponent>(entity);
-            if (!transform || !id) continue;
-            QPointF projected;
-            float depth = 0.0f;
-            if (!ProjectToScreen(aether::WorldPosition(document_.GetWorld(), document_.Guids(), entity), projected, &depth) ||
-                depth < 0.0f || depth > 1.0f) continue;
-            const float dx = static_cast<float>(point.x() - projected.x());
-            const float dy = static_cast<float>(point.y() - projected.y());
-            const float distance = dx * dx + dy * dy;
-            if (distance < closest || (std::abs(distance - closest) < 1.0f && depth < closest_depth)) {
-                closest = distance;
-                closest_depth = depth;
+            if (!id) continue;
+            Bounds bounds;
+            if (!EntityBounds(entity, bounds)) continue;
+            float left = std::numeric_limits<float>::max();
+            float top = std::numeric_limits<float>::max();
+            float right = std::numeric_limits<float>::lowest();
+            float bottom = std::numeric_limits<float>::lowest();
+            float nearest_depth = std::numeric_limits<float>::max();
+            for (int corner = 0; corner < 8; ++corner) {
+                const aether::Vec3 world_point{
+                    (corner & 1) ? bounds.maximum.x : bounds.minimum.x,
+                    (corner & 2) ? bounds.maximum.y : bounds.minimum.y,
+                    (corner & 4) ? bounds.maximum.z : bounds.minimum.z};
+                QPointF screen;
+                float depth = 0.0f;
+                if (!ProjectToScreen(world_point, screen, &depth) || depth < 0.0f || depth > 1.0f) continue;
+                left = std::min(left, static_cast<float>(screen.x()));
+                top = std::min(top, static_cast<float>(screen.y()));
+                right = std::max(right, static_cast<float>(screen.x()));
+                bottom = std::max(bottom, static_cast<float>(screen.y()));
+                nearest_depth = std::min(nearest_depth, depth);
+            }
+            if (nearest_depth == std::numeric_limits<float>::max()) continue;
+            const aether::Vec3 bounds_center = (bounds.minimum + bounds.maximum) * 0.5f;
+            QPointF projected_center;
+            float center_depth = nearest_depth;
+            if (ProjectToScreen(bounds_center, projected_center, &center_depth) &&
+                (center_depth < 0.0f || center_depth > 1.0f)) center_depth = nearest_depth;
+            constexpr float padding = 8.0f;
+            if (point.x() < left - padding || point.x() > right + padding ||
+                point.y() < top - padding || point.y() > bottom + padding) continue;
+            const float center_x = (left + right) * 0.5f;
+            const float center_y = (top + bottom) * 0.5f;
+            const float dx = static_cast<float>(point.x()) - center_x;
+            const float dy = static_cast<float>(point.y()) - center_y;
+            const float center_distance_sq = dx * dx + dy * dy;
+            if (center_depth < closest_depth - 0.002f ||
+                (std::abs(center_depth - closest_depth) <= 0.002f &&
+                 center_distance_sq < closest_center_distance_sq)) {
+                closest_center_distance_sq = center_distance_sq;
+                closest_depth = center_depth;
                 hit = id->guid;
             }
         }
         return hit;
+    }
+
+    bool SetWorldPosition(aether::Entity entity, const aether::Vec3& world_position, bool committed) {
+        aether::Vec3 local_position = world_position;
+        const aether::Entity parent = document_.ParentOf(entity);
+        if (!parent.IsNull()) {
+            const aether::Mat4 parent_world =
+                aether::ComputeWorldTransform(document_.GetWorld(), document_.Guids(), parent);
+            aether::Mat4 inverse;
+            if (!parent_world.TryInverse(inverse)) return false;
+            const aether::Vec4 local = inverse * aether::Vec4(world_position.x, world_position.y, world_position.z, 1.0f);
+            if (std::abs(local.w) < 0.0001f) return false;
+            local_position = {local.x / local.w, local.y / local.w, local.z / local.w};
+        }
+        return document_.SetPosition(entity, local_position, committed);
     }
 
     void ApplyDrag(const QPointF& point, bool committed) {
@@ -599,7 +1096,49 @@ private:
         }
         const aether::Entity entity = document_.Guids().Find(document_.GetWorld(), drag_guid_);
         if (entity.IsNull()) return;
-        if (document_.SetPosition(entity, position, committed) && transform_changed_)
+        if (SetWorldPosition(entity, position, committed) && transform_changed_)
+            transform_changed_(drag_guid_);
+    }
+
+    void ApplyAxisDrag(const QPointF& point, bool committed) {
+        const aether::Entity entity = document_.Guids().Find(document_.GetWorld(), drag_guid_);
+        if (entity.IsNull() || drag_move_axis_ < 0 || drag_move_axis_ > 2) return;
+        const aether::Vec3 axes[] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+        const float length = MoveGizmoLength();
+        QPointF origin_screen, endpoint_screen;
+        if (!ProjectToScreen(drag_origin_, origin_screen) ||
+            !ProjectToScreen(drag_origin_ + axes[drag_move_axis_] * length, endpoint_screen)) return;
+        const QPointF projected_axis = endpoint_screen - origin_screen;
+        const float projected_length_sq = static_cast<float>(
+            projected_axis.x() * projected_axis.x() + projected_axis.y() * projected_axis.y());
+        if (projected_length_sq < 9.0f) return;
+        const QPointF delta = point - drag_start_;
+        const float screen_fraction = static_cast<float>(
+            (delta.x() * projected_axis.x() + delta.y() * projected_axis.y()) / projected_length_sq);
+        float world_distance = std::clamp(screen_fraction, -10000.0f, 10000.0f) * length;
+        aether::Vec3 world_position = drag_origin_ + axes[drag_move_axis_] * world_distance;
+        if (grid_snap_) {
+            world_position.x = std::round(world_position.x);
+            world_position.y = std::round(world_position.y);
+            world_position.z = std::round(world_position.z);
+        }
+        if (SetWorldPosition(entity, world_position, committed) && transform_changed_)
+            transform_changed_(drag_guid_);
+    }
+
+    void ApplyUniformScaleDrag(const QPointF& point, bool committed) {
+        const aether::Entity entity = document_.Guids().Find(document_.GetWorld(), drag_guid_);
+        if (entity.IsNull()) return;
+        const float exponent = std::clamp(
+            static_cast<float>(drag_start_.y() - point.y()) * 0.01f, -8.0f, 8.0f);
+        const float multiplier = std::exp(exponent);
+        aether::Vec3 scale = drag_scale_origin_ * multiplier;
+        if (grid_snap_) {
+            scale.x = std::round(scale.x * 10.0f) / 10.0f;
+            scale.y = std::round(scale.y * 10.0f) / 10.0f;
+            scale.z = std::round(scale.z * 10.0f) / 10.0f;
+        }
+        if (document_.SetScale(entity, scale, committed) && transform_changed_)
             transform_changed_(drag_guid_);
     }
 
@@ -642,7 +1181,10 @@ private:
 
     void ApplyActiveDrag(const QPointF& point, bool committed) {
         if (move_tool_) {
-            ApplyDrag(point, committed);
+            if (drag_move_axis_ >= 0) ApplyAxisDrag(point, committed);
+            else ApplyDrag(point, committed);
+        } else if (scale_tool_) {
+            ApplyUniformScaleDrag(point, committed);
         } else if (rotate_y_tool_) {
             const float dx = static_cast<float>(point.x() - drag_start_.x());
             float angle = dx * 0.01f;
@@ -852,13 +1394,31 @@ float4 PSMain(VertexOut input) : SV_TARGET {
             const aether::Entity selected = document_.Guids().Find(document_.GetWorld(), selected_guid_);
             if (!selected.IsNull()) {
                 const aether::Vec3 position = aether::WorldPosition(document_.GetWorld(), document_.Guids(), selected);
-                DrawCube(aether::Mat4::Translation(position + aether::Vec3{0.65f, 0.0f, 0.0f}) *
-                             aether::Mat4::Scale({0.65f, 0.025f, 0.025f}), 1.0f, 0.18f, 0.18f);
-                DrawCube(aether::Mat4::Translation(position + aether::Vec3{0.0f, 0.65f, 0.0f}) *
-                             aether::Mat4::Scale({0.025f, 0.65f, 0.025f}), 0.20f, 0.95f, 0.30f);
-                DrawCube(aether::Mat4::Translation(position + aether::Vec3{0.0f, 0.0f, 0.65f}) *
-                             aether::Mat4::Scale({0.025f, 0.025f, 0.65f}), 0.22f, 0.48f, 1.0f);
-                if (rotate_y_tool_) DrawRotationRing(selected);
+                if (move_tool_) {
+                    const float length = MoveGizmoLength();
+                    const float thickness = std::clamp(length * 0.035f, 0.025f, 0.08f);
+                    DrawCube(aether::Mat4::Translation(position + aether::Vec3{length * 0.5f, 0.0f, 0.0f}) *
+                                 aether::Mat4::Scale({length * 0.5f, thickness, thickness}), 1.0f, 0.18f, 0.18f);
+                    DrawCube(aether::Mat4::Translation(position + aether::Vec3{0.0f, length * 0.5f, 0.0f}) *
+                                 aether::Mat4::Scale({thickness, length * 0.5f, thickness}), 0.20f, 0.95f, 0.30f);
+                    DrawCube(aether::Mat4::Translation(position + aether::Vec3{0.0f, 0.0f, length * 0.5f}) *
+                                 aether::Mat4::Scale({thickness, thickness, length * 0.5f}), 0.22f, 0.48f, 1.0f);
+                    DrawCube(aether::Mat4::Translation(position + aether::Vec3{length, 0.0f, 0.0f}) *
+                                 aether::Mat4::Scale({thickness * 1.8f, thickness * 1.8f, thickness * 1.8f}),
+                             1.0f, 0.18f, 0.18f);
+                    DrawCube(aether::Mat4::Translation(position + aether::Vec3{0.0f, length, 0.0f}) *
+                                 aether::Mat4::Scale({thickness * 1.8f, thickness * 1.8f, thickness * 1.8f}),
+                             0.20f, 0.95f, 0.30f);
+                    DrawCube(aether::Mat4::Translation(position + aether::Vec3{0.0f, 0.0f, length}) *
+                                 aether::Mat4::Scale({thickness * 1.8f, thickness * 1.8f, thickness * 1.8f}),
+                             0.22f, 0.48f, 1.0f);
+                } else if (scale_tool_) {
+                    const float handle = MoveGizmoLength() * 0.85f;
+                    DrawCube(aether::Mat4::Translation(position + aether::Vec3{0.0f, handle, 0.0f}) *
+                                 aether::Mat4::Scale({0.16f, 0.16f, 0.16f}), 1.0f, 0.72f, 0.24f);
+                } else if (rotate_y_tool_) {
+                    DrawRotationRing(selected);
+                }
             }
         }
         command_list_->EndRenderPass();
@@ -868,6 +1428,7 @@ float4 PSMain(VertexOut input) : SV_TARGET {
     }
 
     QTimer timer_;
+    QElapsedTimer navigation_clock_;
     std::unique_ptr<rhi::IDevice> device_;
     std::unique_ptr<rhi::ISwapChain> swap_chain_;
     std::unique_ptr<rhi::ICommandList> command_list_;
@@ -882,16 +1443,29 @@ float4 PSMain(VertexOut input) : SV_TARGET {
     aether::EntityGuid selected_guid_{};
     std::function<void(const aether::EntityGuid&)> entity_selected_;
     std::function<void(const aether::EntityGuid&)> transform_changed_;
+    std::function<void(aether::input::Key, bool)> input_button_;
+    std::function<void(float, float)> input_mouse_delta_;
+    std::function<void(float)> input_mouse_wheel_;
+    std::function<void()> input_clear_;
+    std::function<void(bool)> play_input_focus_changed_;
+    QSet<int> navigation_keys_;
+    bool play_input_active_ = false;
+    bool has_play_mouse_position_ = false;
+    QPointF last_play_mouse_position_;
+    aether::EntityGuid keyboard_move_guid_{};
     bool move_tool_ = false;
     bool fit_pending_ = false;
     bool rotate_y_tool_ = false;
+    bool scale_tool_ = false;
     bool grid_snap_ = false;
     bool dragging_ = false;
     bool panning_ = false;
     bool orbiting_ = false;
     aether::EntityGuid drag_guid_{};
     aether::Vec3 drag_origin_{};
+    aether::Vec3 drag_scale_origin_{1.0f, 1.0f, 1.0f};
     aether::Quaternion drag_rotation_origin_{};
+    int drag_move_axis_ = -1;
     QPointF drag_start_;
     QPointF camera_drag_start_;
     aether::Vec3 pan_origin_{};
@@ -951,6 +1525,11 @@ QTreeWidget* MakeHierarchy() {
     tree->setHeaderHidden(true);
     tree->setRootIsDecorated(true);
     tree->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    tree->setSelectionMode(QAbstractItemView::SingleSelection);
+    tree->setUniformRowHeights(true);
+    tree->setAnimated(true);
+    tree->setIndentation(16);
+    tree->setAccessibleName("World hierarchy");
     tree->setContextMenuPolicy(Qt::CustomContextMenu);
     auto* root = new QTreeWidgetItem(tree, {"WORLD"});
     root->setFlags(root->flags() & ~Qt::ItemIsSelectable);
@@ -995,11 +1574,26 @@ QWidget* MakeHierarchyPanel(QTreeWidget*& tree, QLineEdit*& filter,
     layout->setContentsMargins(8, 8, 8, 8);
     layout->setSpacing(6);
     filter = new QLineEdit(body);
+    filter->setObjectName("hierarchyFilter");
+    filter->setAccessibleName("Filter the World hierarchy");
     filter->setPlaceholderText("Filter entities…");
+    filter->setToolTip("Filter entity names. Matching ancestors remain visible for context. Press Ctrl+F to focus search.");
+    filter->setClearButtonEnabled(true);
+    auto* focus_hierarchy_search = new QAction("Focus Hierarchy Search", body);
+    focus_hierarchy_search->setShortcut(QKeySequence::Find);
+    focus_hierarchy_search->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    body->addAction(focus_hierarchy_search);
+    QObject::connect(focus_hierarchy_search, &QAction::triggered, filter, [filter] {
+        filter->setFocus(Qt::ShortcutFocusReason);
+        filter->selectAll();
+    });
     layout->addWidget(filter);
     auto* actions = new QHBoxLayout;
-    add = new QPushButton("+ Add", body);
+    add = new QPushButton("Add Entity", body);
+    add->setAccessibleName("Add entity to the World");
+    add->setToolTip("Create a new entity in the active world");
     duplicate = new QPushButton("Duplicate", body);
+    duplicate->setAccessibleName("Duplicate selected entity");
     duplicate->setEnabled(false);
     actions->addWidget(add);
     actions->addWidget(duplicate);
@@ -1025,18 +1619,24 @@ struct CameraInspectorWidgets {
     QDoubleSpinBox* focus_distance = nullptr;
 };
 
-QWidget* MakeInspector(QLabel*& selection_status, QLineEdit*& entity_name,
+QWidget* MakeInspector(QScrollArea*& inspector_scroll, QStackedWidget*& inspector_stack,
+                       QPushButton*& empty_add_entity,
+                       QLabel*& selection_status, QLineEdit*& entity_name,
                        std::array<QDoubleSpinBox*, 3>& position,
                        std::array<QDoubleSpinBox*, 3>& rotation,
+                       std::array<QDoubleSpinBox*, 3>& scale,
                        QPushButton*& reset_position, QPushButton*& reset_rotation,
+                       QPushButton*& reset_scale,
                        CameraInspectorWidgets& camera) {
     auto* body = new QWidget;
     auto* layout = new QVBoxLayout(body);
     layout->setContentsMargins(14, 14, 14, 14);
+    layout->setSpacing(10);
     selection_status = new QLabel("NO SELECTION · SELECT AN ENTITY");
     selection_status->setObjectName("section");
     layout->addWidget(selection_status);
     entity_name = new QLineEdit;
+    entity_name->setObjectName("entityNameField");
     entity_name->setPlaceholderText("Entity name");
     entity_name->setToolTip("Rename the selected scene entity");
     entity_name->setEnabled(false);
@@ -1053,11 +1653,18 @@ QWidget* MakeInspector(QLabel*& selection_status, QLineEdit*& entity_name,
     transform_header->addWidget(reset_position);
     layout->addLayout(transform_header);
     auto* transform_form = new QFormLayout;
+    transform_form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    transform_form->setHorizontalSpacing(12);
+    transform_form->setVerticalSpacing(6);
     for (int axis = 0; axis < 3; ++axis) {
         position[axis] = new QDoubleSpinBox;
         position[axis]->setRange(-100000.0, 100000.0);
         position[axis]->setDecimals(2);
         position[axis]->setSingleStep(0.1);
+        position[axis]->setSuffix(" m");
+        position[axis]->setKeyboardTracking(false);
+        position[axis]->setAccessibleName(QString("Local position %1 in meters").arg(QChar('X' + axis)));
+        position[axis]->setToolTip(QString("Local %1 position in meters").arg(QChar('X' + axis)));
         position[axis]->setEnabled(false);
         transform_form->addRow(QString(QChar('X' + axis)), position[axis]);
     }
@@ -1074,6 +1681,9 @@ QWidget* MakeInspector(QLabel*& selection_status, QLineEdit*& entity_name,
     rotation_header->addWidget(reset_rotation);
     layout->addLayout(rotation_header);
     auto* rotation_form = new QFormLayout;
+    rotation_form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    rotation_form->setHorizontalSpacing(12);
+    rotation_form->setVerticalSpacing(6);
     const char* rotation_labels[] = {"Pitch · X", "Yaw · Y", "Roll · Z"};
     for (int axis = 0; axis < 3; ++axis) {
         rotation[axis] = new QDoubleSpinBox;
@@ -1081,13 +1691,47 @@ QWidget* MakeInspector(QLabel*& selection_status, QLineEdit*& entity_name,
         rotation[axis]->setDecimals(2);
         rotation[axis]->setSingleStep(1.0);
         rotation[axis]->setSuffix("°");
+        rotation[axis]->setKeyboardTracking(false);
+        rotation[axis]->setAccessibleName(QString("Local %1 rotation in degrees").arg(QChar('X' + axis)));
+        rotation[axis]->setToolTip(QString("Local %1 rotation in degrees").arg(QChar('X' + axis)));
         rotation[axis]->setEnabled(false);
         rotation_form->addRow(rotation_labels[axis], rotation[axis]);
     }
     layout->addLayout(rotation_form);
 
+    auto* scale_header = new QHBoxLayout;
+    auto* scale_title = new QLabel("Scale · local multiplier");
+    scale_title->setObjectName("muted");
+    reset_scale = new QPushButton("Reset Scale");
+    reset_scale->setToolTip("Restore the imported object size (1× on each axis). This edit can be undone.");
+    reset_scale->setEnabled(false);
+    scale_header->addWidget(scale_title);
+    scale_header->addStretch();
+    scale_header->addWidget(reset_scale);
+    layout->addLayout(scale_header);
+    auto* scale_form = new QFormLayout;
+    scale_form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    scale_form->setHorizontalSpacing(12);
+    scale_form->setVerticalSpacing(6);
+    for (int axis = 0; axis < 3; ++axis) {
+        scale[axis] = new QDoubleSpinBox;
+        scale[axis]->setRange(-10000.0, 10000.0);
+        scale[axis]->setDecimals(3);
+        scale[axis]->setSingleStep(0.1);
+        scale[axis]->setSuffix("×");
+        scale[axis]->setKeyboardTracking(false);
+        scale[axis]->setAccessibleName(QString("Local scale %1").arg(QChar('X' + axis)));
+        scale[axis]->setToolTip(QString("Local %1 scale multiplier; 1 preserves the imported size").arg(QChar('X' + axis)));
+        scale[axis]->setEnabled(false);
+        scale_form->addRow(QString(QChar('X' + axis)), scale[axis]);
+    }
+    layout->addLayout(scale_form);
+
     camera.group = new QGroupBox("Camera", body);
     auto* camera_form = new QFormLayout(camera.group);
+    camera_form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    camera_form->setHorizontalSpacing(12);
+    camera_form->setVerticalSpacing(6);
     camera.projection = new QComboBox(camera.group);
     camera.projection->addItem("Perspective", static_cast<int>(aether::Projection::Perspective));
     camera.projection->addItem("Orthographic", static_cast<int>(aether::Projection::Orthographic));
@@ -1101,6 +1745,7 @@ QWidget* MakeInspector(QLabel*& selection_status, QLineEdit*& entity_name,
         spin->setDecimals(decimals);
         spin->setSingleStep(step);
         spin->setSuffix(suffix);
+        spin->setKeyboardTracking(false);
         return spin;
     };
     camera.fov = make_camera_spin("cameraFov", 1.0, 179.0, 2, 1.0, "°");
@@ -1108,10 +1753,13 @@ QWidget* MakeInspector(QLabel*& selection_status, QLineEdit*& entity_name,
     camera.ortho_height = make_camera_spin("cameraOrthoHeight", 0.01, 100000.0, 2, 0.1, " m");
     camera.ortho_height->setToolTip("Vertical view height for orthographic projection");
     camera.near_plane = make_camera_spin("cameraNearPlane", 0.001, 100000.0, 3, 0.1, " m");
+    camera.near_plane->setToolTip("Distance to the nearest visible point");
     camera.far_plane = make_camera_spin("cameraFarPlane", 0.01, 1000000.0, 2, 1.0, " m");
+    camera.far_plane->setToolTip("Distance to the furthest visible point");
     camera.priority = new QSpinBox(camera.group);
     camera.priority->setObjectName("cameraPriority");
     camera.priority->setRange(-100000, 100000);
+    camera.priority->setToolTip("Priority used when choosing the active camera");
     camera_form->addRow("Field of view", camera.fov);
     camera_form->addRow("Orthographic height", camera.ortho_height);
     camera_form->addRow("Near clip", camera.near_plane);
@@ -1122,6 +1770,9 @@ QWidget* MakeInspector(QLabel*& selection_status, QLineEdit*& entity_name,
 
     camera.cine_group = new QGroupBox("Cinematic Lens", body);
     auto* cine_form = new QFormLayout(camera.cine_group);
+    cine_form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    cine_form->setHorizontalSpacing(12);
+    cine_form->setVerticalSpacing(6);
     const auto make_lens_spin = [cine_group = camera.cine_group](const QString& name, double min, double max,
                                                                   double step, const QString& suffix) {
         auto* spin = new QDoubleSpinBox(cine_group);
@@ -1130,6 +1781,7 @@ QWidget* MakeInspector(QLabel*& selection_status, QLineEdit*& entity_name,
         spin->setDecimals(2);
         spin->setSingleStep(step);
         spin->setSuffix(suffix);
+        spin->setKeyboardTracking(false);
         return spin;
     };
     camera.focal_length = make_lens_spin("cineFocalLength", 1.0, 1000.0, 1.0, " mm");
@@ -1145,33 +1797,89 @@ QWidget* MakeInspector(QLabel*& selection_status, QLineEdit*& entity_name,
     camera.cine_group->setVisible(false);
     layout->addWidget(camera.cine_group);
 
-    auto* coverage = new QLabel("Qt Inspector coverage: Entity, Transform, Camera, Cine Camera");
-    coverage->setObjectName("muted");
-    coverage->setWordWrap(true);
-    layout->addWidget(coverage);
     layout->addStretch();
-    return body;
+
+    auto* empty = new QWidget;
+    auto* empty_layout = new QVBoxLayout(empty);
+    empty_layout->setContentsMargins(24, 30, 24, 30);
+    empty_layout->addStretch(1);
+    auto* empty_icon = new QLabel("◇", empty);
+    empty_icon->setObjectName("emptyStateIcon");
+    empty_icon->setAlignment(Qt::AlignCenter);
+    empty_layout->addWidget(empty_icon);
+    auto* empty_title = new QLabel("Nothing selected", empty);
+    empty_title->setObjectName("emptyStateTitle");
+    empty_title->setAlignment(Qt::AlignCenter);
+    empty_layout->addWidget(empty_title);
+    auto* empty_hint = new QLabel("Select an entity in the Hierarchy to inspect its properties.", empty);
+    empty_hint->setObjectName("muted");
+    empty_hint->setWordWrap(true);
+    empty_hint->setAlignment(Qt::AlignCenter);
+    empty_layout->addWidget(empty_hint);
+    empty_add_entity = new QPushButton("Create Entity…", empty);
+    empty_add_entity->setObjectName("emptyStateAction");
+    empty_add_entity->setAccessibleName("Create an entity");
+    empty_layout->addWidget(empty_add_entity, 0, Qt::AlignHCenter);
+    empty_layout->addStretch(2);
+
+    inspector_stack = new QStackedWidget;
+    inspector_stack->setObjectName("inspectorPages");
+    inspector_stack->addWidget(empty);
+    inspector_stack->addWidget(body);
+    inspector_stack->setCurrentWidget(empty);
+    inspector_scroll = new QScrollArea;
+    inspector_scroll->setObjectName("inspectorScrollArea");
+    inspector_scroll->setFrameShape(QFrame::NoFrame);
+    inspector_scroll->setWidgetResizable(true);
+    inspector_scroll->setWidget(inspector_stack);
+    return inspector_scroll;
 }
 
 QWidget* MakeContentBrowser(QComboBox*& breadcrumb, QFileSystemModel*& asset_model, QListView*& asset_view,
                             QPushButton*& parent_button, QPushButton*& new_folder_button,
-                            QPushButton*& place_model_button, QLineEdit*& asset_filter) {
+                            QPushButton*& place_model_button, QLineEdit*& asset_filter,
+                            QComboBox*& asset_type_filter,
+                            QLabel*& asset_context, QWidget*& welcome_panel,
+                            QPushButton*& welcome_open_project, QPushButton*& welcome_new_project) {
     auto* root = new QWidget;
     auto* layout = new QVBoxLayout(root);
     layout->setContentsMargins(12, 8, 12, 12);
     auto* navigation = new QHBoxLayout;
-    parent_button = new QPushButton("↑");
+    parent_button = new QPushButton("Up");
+    parent_button->setAccessibleName("Open parent folder");
     parent_button->setToolTip("Parent folder");
-    parent_button->setFixedWidth(34);
+    parent_button->setFixedWidth(48);
     new_folder_button = new QPushButton("+ Folder");
+    new_folder_button->setAccessibleName("Create a folder in Content");
     place_model_button = new QPushButton("Place Model");
+    place_model_button->setAccessibleName("Place selected model in the World");
     place_model_button->setObjectName("placeModelButton");
     place_model_button->setToolTip("Add the selected glTF or GLB asset to the active scene");
     place_model_button->setEnabled(false);
     asset_filter = new QLineEdit;
-    asset_filter->setPlaceholderText("Filter assets…");
+    asset_filter->setObjectName("contentSearch");
+    asset_filter->setAccessibleName("Search names in the current Content folder");
+    asset_filter->setPlaceholderText("Search this folder…");
+    asset_filter->setToolTip("Search file and folder names in the current Content folder. Combine with the asset type filter. Press Ctrl+F to focus search.");
     asset_filter->setClearButtonEnabled(true);
     asset_filter->setMaximumWidth(220);
+    auto* focus_content_search = new QAction("Focus Content Search", root);
+    focus_content_search->setShortcut(QKeySequence::Find);
+    focus_content_search->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    root->addAction(focus_content_search);
+    QObject::connect(focus_content_search, &QAction::triggered, asset_filter, [asset_filter] {
+        asset_filter->setFocus(Qt::ShortcutFocusReason);
+        asset_filter->selectAll();
+    });
+    asset_type_filter = new QComboBox(root);
+    asset_type_filter->setObjectName("contentTypeFilter");
+    asset_type_filter->setAccessibleName("Filter content by asset type");
+    asset_type_filter->setToolTip("Filter assets in the current folder by type. This combines with the name search.");
+    asset_type_filter->addItem("All Assets", QStringList{});
+    asset_type_filter->addItem("Models", QStringList{"gltf", "glb"});
+    asset_type_filter->addItem("Scenes", QStringList{"ascene", "aesc"});
+    asset_type_filter->addItem("Sequences", QStringList{"asequence"});
+    asset_type_filter->addItem("Projects", QStringList{"aproject"});
     breadcrumb = new QComboBox;
     breadcrumb->setObjectName("contentBreadcrumb");
     breadcrumb->setToolTip("Choose a parent folder in the project Content directory");
@@ -1181,23 +1889,63 @@ QWidget* MakeContentBrowser(QComboBox*& breadcrumb, QFileSystemModel*& asset_mod
     breadcrumb->setEnabled(false);
     navigation->addWidget(parent_button);
     navigation->addWidget(breadcrumb, 1);
+    navigation->addWidget(asset_type_filter);
     navigation->addWidget(asset_filter);
     navigation->addWidget(new_folder_button);
     navigation->addWidget(place_model_button);
     layout->addLayout(navigation);
+    asset_context = new QLabel("", root);
+    asset_context->setObjectName("muted");
+    asset_context->setWordWrap(true);
+    layout->addWidget(asset_context);
+    welcome_panel = new QWidget(root);
+    welcome_panel->setObjectName("contentWelcomePanel");
+    auto* welcome_layout = new QVBoxLayout(welcome_panel);
+    welcome_layout->setContentsMargins(24, 18, 24, 18);
+    welcome_layout->addStretch();
+    auto* welcome_title = new QLabel("Start with a project", welcome_panel);
+    welcome_title->setObjectName("contentWelcomeTitle");
+    welcome_title->setAlignment(Qt::AlignCenter);
+    welcome_layout->addWidget(welcome_title);
+    auto* welcome_description = new QLabel(
+        "Create a project or open one to browse assets, place models, and edit scenes.", welcome_panel);
+    welcome_description->setObjectName("contentWelcomeDescription");
+    welcome_description->setWordWrap(true);
+    welcome_description->setAlignment(Qt::AlignCenter);
+    welcome_layout->addWidget(welcome_description);
+    auto* welcome_actions = new QHBoxLayout;
+    welcome_actions->addStretch();
+    welcome_open_project = new QPushButton("Open Project…", welcome_panel);
+    welcome_open_project->setObjectName("emptyStateAction");
+    welcome_open_project->setAccessibleName("Open an existing Aether project");
+    welcome_open_project->setToolTip("Choose an existing .aproject file");
+    welcome_new_project = new QPushButton("Create Project…", welcome_panel);
+    welcome_new_project->setAccessibleName("Create a new Aether project");
+    welcome_new_project->setToolTip("Create a project with the standard Content folders");
+    welcome_actions->addWidget(welcome_open_project);
+    welcome_actions->addWidget(welcome_new_project);
+    welcome_actions->addStretch();
+    welcome_layout->addLayout(welcome_actions);
+    welcome_layout->addStretch();
+    layout->addWidget(welcome_panel, 1);
     asset_model = new QFileSystemModel(root);
     asset_model->setFilter(QDir::AllEntries | QDir::NoDotAndDotDot);
     asset_model->setRootPath(QString());
     asset_view = new QListView(root);
+    asset_view->setAccessibleName("Project content assets");
     asset_view->setModel(asset_model);
     asset_view->setViewMode(QListView::IconMode);
     asset_view->setFlow(QListView::LeftToRight);
     asset_view->setWrapping(true);
     asset_view->setResizeMode(QListView::Adjust);
     asset_view->setMovement(QListView::Static);
-    asset_view->setIconSize(QSize(36, 36));
-    asset_view->setGridSize(QSize(136, 88));
+    asset_view->setIconSize(QSize(48, 48));
+    asset_view->setGridSize(QSize(148, 104));
     asset_view->setSpacing(8);
+    asset_view->setUniformItemSizes(true);
+    asset_view->setWordWrap(true);
+    asset_view->setTextElideMode(Qt::ElideMiddle);
+    asset_view->setSelectionMode(QAbstractItemView::SingleSelection);
     asset_view->setEnabled(false);
     asset_view->setRootIndex(QModelIndex());
     layout->addWidget(asset_view, 1);
@@ -1211,70 +1959,123 @@ public:
         std::string plugin_error;
         if (!StartDefaultEnginePlugins(plugin_manager_, &plugin_error))
             AETHER_LOG_ERROR("Editor", "Couldn't start the engine plugins: %s", plugin_error.c_str());
+        LoadRecentProjects();
         setWindowTitle("Aether Engine · World Editor");
-        resize(1400, 800);
+        resize(1480, 900);
         setDockOptions(QMainWindow::AllowNestedDocks | QMainWindow::AllowTabbedDocks | QMainWindow::AnimatedDocks);
         BuildMenus(); BuildToolbar();
 
         viewport_ = new RhiViewport(scene_document_);
         viewport_->setMinimumSize(480, 300);
+        viewport_->SetInputCallbacks(
+            [this](aether::input::Key key, bool down) {
+                if (play_runtime_) play_runtime_->SetButton(key, down);
+            },
+            [this](float dx, float dy) {
+                if (play_runtime_) play_runtime_->AddMouseDelta(dx, dy);
+            },
+            [this](float delta) {
+                if (play_runtime_) play_runtime_->AddMouseWheel(delta);
+            },
+            [this] {
+                if (play_runtime_) play_runtime_->ClearInput();
+            });
+        viewport_->SetPlayInputFocusChangedCallback([this](bool) { UpdatePlayInputHint(); });
         setCentralWidget(viewport_);
-        auto* hierarchy = MakeDock("HIERARCHY",
+        hierarchy_dock_ = MakeDock("HIERARCHY",
                                    MakeHierarchyPanel(hierarchy_tree_, hierarchy_filter_, add_entity_button_,
                                                       duplicate_entity_button_),
                                    *this, Qt::LeftDockWidgetArea, "hierarchyDock");
-        auto* inspector = MakeDock("INSPECTOR", MakeInspector(inspector_status_, inspector_name_,
-                                                               position_fields_, rotation_fields_,
-                                                               reset_position_button_, reset_rotation_button_,
-                                                               camera_inspector_), *this,
+        auto* inspector_content = MakeInspector(inspector_scroll_, inspector_stack_,
+                                                               empty_add_entity_button_,
+                                                               inspector_status_, inspector_name_,
+                                                               position_fields_, rotation_fields_, scale_fields_,
+                                                               reset_position_button_, reset_rotation_button_, reset_scale_button_,
+                                                               camera_inspector_);
+        auto* inspector_body = inspector_stack_->widget(1);
+        auto* inspector_layout = qobject_cast<QVBoxLayout*>(inspector_body->layout());
+        physics_component_panel_ = new aether::editor::qt::PhysicsComponentPanel(scene_document_, [this] {
+            RefreshHierarchy(true);
+            UpdateSceneStatus();
+        }, inspector_body);
+        inspector_layout->insertWidget(inspector_layout->count() - 1, physics_component_panel_);
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+        script_component_editor_ = new aether::editor::qt::ScriptComponentEditor(scene_document_, [this] {
+            RefreshHierarchy(true);
+            UpdateSceneStatus();
+        }, inspector_body);
+        inspector_layout->insertWidget(inspector_layout->count() - 1, script_component_editor_);
+#endif
+        inspector_dock_ = MakeDock("INSPECTOR", inspector_content, *this,
                                    Qt::RightDockWidgetArea, "inspectorDock");
-        hierarchy->setMinimumWidth(220);
-        inspector->setMinimumWidth(280);
-        inspector->widget()->setMinimumWidth(260);
+        hierarchy_dock_->setMinimumWidth(230);
+        inspector_dock_->setMinimumWidth(300);
+        inspector_dock_->widget()->setMinimumWidth(280);
 
-        auto* content_dock = MakeDock("CONTENT BROWSER",
+        content_dock_ = MakeDock("CONTENT BROWSER",
                                       MakeContentBrowser(content_breadcrumb_, asset_model_, asset_view_,
                                                          parent_folder_button_, new_folder_button_,
-                                                         place_model_button_, asset_filter_), *this,
+                                                         place_model_button_, asset_filter_, asset_type_filter_,
+                                                         asset_context_,
+                                                         content_welcome_panel_, welcome_open_project_button_,
+                                                         welcome_new_project_button_), *this,
                                       Qt::BottomDockWidgetArea, "contentDock");
-        auto* output_dock = MakeDock("OUTPUT", new EditorLogConsole, *this, Qt::BottomDockWidgetArea, "outputDock");
-        auto* sequence_dock = MakeDock("ANIMATION · SEQUENCER", MakeSequenceEditor(), *this,
+        output_dock_ = MakeDock("OUTPUT", new EditorLogConsole, *this, Qt::BottomDockWidgetArea, "outputDock");
+        sequence_dock_ = MakeDock("ANIMATION · SEQUENCER", MakeSequenceEditor(), *this,
                                        Qt::BottomDockWidgetArea, "sequenceDock");
-        tabifyDockWidget(content_dock, output_dock);
-        tabifyDockWidget(content_dock, sequence_dock);
-        content_dock->raise();
-        resizeDocks({content_dock}, {230}, Qt::Vertical);
-        window_menu_->addAction(hierarchy->toggleViewAction());
-        window_menu_->addAction(inspector->toggleViewAction());
-        window_menu_->addAction(content_dock->toggleViewAction());
-        window_menu_->addAction(output_dock->toggleViewAction());
-        window_menu_->addAction(sequence_dock->toggleViewAction());
+        tabifyDockWidget(content_dock_, output_dock_);
+        tabifyDockWidget(content_dock_, sequence_dock_);
+        content_dock_->raise();
+        resizeDocks({content_dock_}, {280}, Qt::Vertical);
+        window_menu_->addAction(hierarchy_dock_->toggleViewAction());
+        window_menu_->addAction(inspector_dock_->toggleViewAction());
+        window_menu_->addAction(content_dock_->toggleViewAction());
+        window_menu_->addAction(output_dock_->toggleViewAction());
+        window_menu_->addAction(sequence_dock_->toggleViewAction());
+        window_menu_->addSeparator();
+        QAction* reset_layout_action = window_menu_->addAction("Reset Workspace Layout");
+        reset_layout_action->setToolTip("Restore Hierarchy, Inspector, and Content Browser to their default positions");
+        QObject::connect(reset_layout_action, &QAction::triggered, this, [this] { ResetWorkspaceLayout(); });
 
         QSettings settings("Aether", "EditorQt");
         if (settings.contains("window/geometry")) restoreGeometry(settings.value("window/geometry").toByteArray());
-        const bool restored_layout = settings.contains("window/state");
-        if (restored_layout) restoreState(settings.value("window/state").toByteArray());
-        else QTimer::singleShot(0, this, [this, hierarchy, inspector] {
-            resizeDocks({hierarchy, inspector}, {250, 300}, Qt::Horizontal);
+        const bool restored_layout = settings.contains("window/state") &&
+            restoreState(settings.value("window/state").toByteArray(), 1);
+        if (!restored_layout) QTimer::singleShot(0, this, [this] {
+            resizeDocks({hierarchy_dock_, inspector_dock_}, {270, 330}, Qt::Horizontal);
         });
         auto* palette_action = new QAction(this);
         palette_action->setShortcut(QKeySequence("Ctrl+K"));
         addAction(palette_action);
         QObject::connect(palette_action, &QAction::triggered, this, [this] { ShowCommandPalette(); });
         QObject::connect(search_button_, &QPushButton::clicked, this, [this] { ShowCommandPalette(); });
-        QObject::connect(hierarchy_filter_, &QLineEdit::textChanged, this, [this] { RefreshHierarchy(); });
+        QObject::connect(hierarchy_filter_, &QLineEdit::textChanged, this,
+                         [this](const QString&) { RefreshHierarchy(true); });
         QObject::connect(add_entity_button_, &QPushButton::clicked, this, [this] { ShowAddEntityMenu(); });
+        QObject::connect(empty_add_entity_button_, &QPushButton::clicked, create_entity_action_, &QAction::trigger);
         QObject::connect(duplicate_entity_button_, &QPushButton::clicked, this, [this] { DuplicateSelectedEntity(); });
         QObject::connect(parent_folder_button_, &QPushButton::clicked, this, [this] { NavigateContentParent(); });
+        QObject::connect(welcome_open_project_button_, &QPushButton::clicked,
+                         open_project_action_, &QAction::trigger);
+        QObject::connect(welcome_new_project_button_, &QPushButton::clicked,
+                         new_project_action_, &QAction::trigger);
         QObject::connect(new_folder_button_, &QPushButton::clicked, this, [this] { CreateContentFolder(); });
         QObject::connect(place_model_button_, &QPushButton::clicked, this, [this] { PlaceSelectedContentModel(); });
         QObject::connect(content_breadcrumb_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int index) {
             const QString path = content_breadcrumb_->itemData(index).toString();
             if (!path.isEmpty() && path != current_content_path_) SetContentDirectory(path);
         });
-        QObject::connect(asset_filter_, &QLineEdit::textChanged, this, [this](const QString& text) {
-            asset_model_->setNameFilters(text.isEmpty() ? QStringList{} : QStringList{"*" + text + "*"});
-            asset_model_->setNameFilterDisables(false);
+        QObject::connect(asset_filter_, &QLineEdit::textChanged, this, [this](const QString&) {
+            ApplyContentFilters();
+            UpdateSelectedContentAsset(asset_view_->currentIndex());
+        });
+        QObject::connect(asset_type_filter_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int) {
+            ApplyContentFilters();
+            UpdateSelectedContentAsset(asset_view_->currentIndex());
+        });
+        QObject::connect(asset_model_, &QFileSystemModel::directoryLoaded, this, [this](const QString& path) {
+            if (QDir::cleanPath(path) == QDir::cleanPath(current_content_path_))
+                UpdateSelectedContentAsset(asset_view_->currentIndex());
         });
         QObject::connect(asset_view_, &QListView::clicked, this, [this](const QModelIndex& index) {
             UpdateSelectedContentAsset(index);
@@ -1292,11 +2093,19 @@ public:
         });
         statusBar()->showMessage("●  EDITOR READY     D3D12 RHI     WORLD: MAIN WORLD");
         statusBar()->setStyleSheet("color: #74d6b1; padding-left: 8px;");
+        play_input_hint_ = new QLabel(this);
+        play_input_hint_->setObjectName("playInputHint");
+        play_input_hint_->setStyleSheet("color: #79dfbf; padding: 0 10px; font-weight: 600;");
+        play_input_hint_->setVisible(false);
+        statusBar()->addPermanentWidget(play_input_hint_);
         save_project_action_->setEnabled(false);
         parent_folder_button_->setEnabled(false);
         new_folder_button_->setEnabled(false);
         asset_filter_->setEnabled(false);
+        asset_type_filter_->setEnabled(false);
         asset_view_->setVisible(false);
+        asset_context_->setVisible(false);
+        content_welcome_panel_->setVisible(true);
         QObject::connect(hierarchy_tree_, &QTreeWidget::currentItemChanged, this,
             [this](QTreeWidgetItem* current, QTreeWidgetItem*) { SelectHierarchyItem(current); });
         QObject::connect(hierarchy_tree_, &QTreeWidget::customContextMenuRequested, this,
@@ -1342,6 +2151,12 @@ public:
             QObject::connect(field, &QDoubleSpinBox::editingFinished, this,
                              [this] { ApplyInspectorRotation(true); });
         }
+        for (auto* field : scale_fields_) {
+            QObject::connect(field, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+                             [this](double) { ApplyInspectorScale(false); });
+            QObject::connect(field, &QDoubleSpinBox::editingFinished, this,
+                             [this] { ApplyInspectorScale(true); });
+        }
         QObject::connect(reset_position_button_, &QPushButton::clicked, this, [this] {
             if (selected_entity_.IsNull() ||
                 !scene_document_.SetPosition(selected_entity_, aether::Vec3{}, true)) return;
@@ -1352,6 +2167,12 @@ public:
             if (selected_entity_.IsNull() ||
                 !scene_document_.SetRotation(selected_entity_, aether::Quaternion::Identity(), true)) return;
             SyncInspectorRotation();
+            UpdateSceneStatus();
+        });
+        QObject::connect(reset_scale_button_, &QPushButton::clicked, this, [this] {
+            if (selected_entity_.IsNull() ||
+                !scene_document_.SetScale(selected_entity_, aether::Vec3{1.0f, 1.0f, 1.0f}, true)) return;
+            SyncInspectorScale();
             UpdateSceneStatus();
         });
         QObject::connect(camera_inspector_.projection, qOverload<int>(&QComboBox::currentIndexChanged), this,
@@ -1768,89 +2589,150 @@ private:
 
         auto* body = new QWidget;
         auto* layout = new QVBoxLayout(body);
-        layout->setContentsMargins(10, 10, 10, 10);
-        layout->setSpacing(7);
+        layout->setContentsMargins(10, 7, 10, 8);
+        layout->setSpacing(5);
+        sequence_name_ = new QLineEdit(body);
+        sequence_fps_ = new QDoubleSpinBox(body);
+        sequence_duration_ = new QDoubleSpinBox(body);
 
         auto* file_row = new QHBoxLayout;
+        file_row->setSpacing(6);
         sequence_new_button_ = new QPushButton("New", body);
         sequence_open_button_ = new QPushButton("Open…", body);
         sequence_save_button_ = new QPushButton("Save", body);
+        sequence_new_button_->setToolTip("Start a new animation sequence");
+        sequence_open_button_->setToolTip("Open an animation sequence asset");
+        sequence_save_button_->setToolTip("Save the current animation sequence");
+        sequence_name_->setAccessibleName("Sequence name");
+        sequence_name_->setPlaceholderText("Sequence name");
+        sequence_fps_->setAccessibleName("Sequence frame rate");
+        sequence_fps_->setPrefix("FPS ");
+        sequence_fps_->setToolTip("Playback frame rate");
+        sequence_fps_->setFixedWidth(112);
+        sequence_duration_->setAccessibleName("Sequence duration");
+        sequence_duration_->setPrefix("Length ");
+        sequence_duration_->setToolTip("Sequence duration in seconds");
+        sequence_duration_->setFixedWidth(142);
         file_row->addWidget(sequence_new_button_);
         file_row->addWidget(sequence_open_button_);
         file_row->addWidget(sequence_save_button_);
-        file_row->addStretch();
+        file_row->addWidget(sequence_name_, 1);
+        file_row->addWidget(sequence_fps_);
+        file_row->addWidget(sequence_duration_);
         layout->addLayout(file_row);
-
-        auto* settings = new QFormLayout;
-        sequence_name_ = new QLineEdit(body);
-        sequence_fps_ = new QDoubleSpinBox(body);
         sequence_fps_->setRange(1.0, 240.0);
         sequence_fps_->setDecimals(2);
-        sequence_fps_->setSuffix(" fps");
-        sequence_duration_ = new QDoubleSpinBox(body);
         sequence_duration_->setRange(0.01, 3600.0);
         sequence_duration_->setDecimals(3);
         sequence_duration_->setSuffix(" s");
-        settings->addRow("Sequence", sequence_name_);
-        settings->addRow("Frame rate", sequence_fps_);
-        settings->addRow("Duration", sequence_duration_);
-        layout->addLayout(settings);
 
         sequence_target_ = new QLabel("Target: select an entity in the Hierarchy", body);
         sequence_target_->setObjectName("muted");
         layout->addWidget(sequence_target_);
+
+        auto* lists = new QHBoxLayout;
+        lists->setSpacing(12);
+        auto* tracks_panel = new QWidget(body);
+        auto* tracks_layout = new QVBoxLayout(tracks_panel);
+        tracks_layout->setContentsMargins(0, 0, 0, 0);
+        tracks_layout->setSpacing(4);
         auto* track_actions = new QHBoxLayout;
+        track_actions->setContentsMargins(0, 0, 0, 0);
+        track_actions->setSpacing(6);
+        auto* tracks_title = new QLabel("TRACKS", tracks_panel);
+        tracks_title->setObjectName("section");
         sequence_add_track_button_ = new QPushButton("+ Transform Track", body);
-        sequence_remove_track_button_ = new QPushButton("Remove Track", body);
+        sequence_remove_track_button_ = new QPushButton("Remove", body);
+        sequence_add_track_button_->setToolTip("Add a position track for the selected entity");
+        sequence_remove_track_button_->setToolTip("Remove the selected sequence track");
+        sequence_add_track_button_->setAccessibleName("Add transform track");
         sequence_add_track_button_->setEnabled(false);
         sequence_remove_track_button_->setEnabled(false);
+        track_actions->addWidget(tracks_title);
+        track_actions->addStretch();
         track_actions->addWidget(sequence_add_track_button_);
         track_actions->addWidget(sequence_remove_track_button_);
-        layout->addLayout(track_actions);
+        tracks_layout->addLayout(track_actions);
         sequence_track_list_ = new QListWidget(body);
-        sequence_track_list_->setMinimumHeight(72);
-        layout->addWidget(sequence_track_list_);
+        sequence_track_list_->setObjectName("sequenceTracks");
+        sequence_track_list_->setAccessibleName("Animation tracks");
+        sequence_track_list_->setMinimumHeight(48);
+        sequence_track_list_->setToolTip("Choose a track to inspect and edit its keys");
+        tracks_layout->addWidget(sequence_track_list_, 1);
+        lists->addWidget(tracks_panel, 1);
+
+        auto* keys_panel = new QWidget(body);
+        auto* keys_layout = new QVBoxLayout(keys_panel);
+        keys_layout->setContentsMargins(0, 0, 0, 0);
+        keys_layout->setSpacing(4);
+        auto* key_actions = new QHBoxLayout;
+        key_actions->setContentsMargins(0, 0, 0, 0);
+        key_actions->setSpacing(6);
+        auto* keys_title = new QLabel("POSITION KEYS", keys_panel);
+        keys_title->setObjectName("section");
+        sequence_set_key_button_ = new QPushButton("Set / Update", body);
+        sequence_remove_key_button_ = new QPushButton("Clear", body);
+        sequence_set_key_button_->setToolTip("Create or update a position key at the current time");
+        sequence_remove_key_button_->setToolTip("Remove the selected position key");
+        sequence_set_key_button_->setEnabled(false);
+        sequence_remove_key_button_->setEnabled(false);
+        key_actions->addWidget(keys_title);
+        key_actions->addStretch();
+        key_actions->addWidget(sequence_set_key_button_);
+        key_actions->addWidget(sequence_remove_key_button_);
+        keys_layout->addLayout(key_actions);
+        sequence_key_list_ = new QListWidget(body);
+        sequence_key_list_->setObjectName("sequenceKeys");
+        sequence_key_list_->setAccessibleName("Position keys");
+        sequence_key_list_->setMinimumHeight(48);
+        sequence_key_list_->setToolTip("Select a key to move the playhead to its time");
+        keys_layout->addWidget(sequence_key_list_, 1);
+        lists->addWidget(keys_panel, 1);
+        layout->addLayout(lists, 1);
 
         auto* time_row = new QHBoxLayout;
+        time_row->setSpacing(8);
+        auto* time_label = new QLabel("TIME", body);
+        time_label->setObjectName("section");
+        time_row->addWidget(time_label);
         sequence_time_slider_ = new QSlider(Qt::Horizontal, body);
         sequence_time_slider_->setRange(0, 5000);
+        sequence_time_slider_->setAccessibleName("Sequence playhead");
+        sequence_time_slider_->setToolTip("Scrub the sequence playhead");
         sequence_time_ = new QDoubleSpinBox(body);
         sequence_time_->setRange(0.0, 5.0);
         sequence_time_->setDecimals(3);
+        sequence_time_->setKeyboardTracking(false);
         sequence_time_->setSuffix(" s");
-        sequence_time_->setMaximumWidth(110);
+        sequence_time_->setFixedWidth(112);
+        sequence_time_->setAccessibleName("Playhead time");
         time_row->addWidget(sequence_time_slider_, 1);
         time_row->addWidget(sequence_time_);
         layout->addLayout(time_row);
 
         auto* transport = new QHBoxLayout;
+        transport->setSpacing(6);
         sequence_play_button_ = new QPushButton("▶ Preview", body);
-        sequence_pause_button_ = new QPushButton("Ⅱ", body);
-        sequence_stop_button_ = new QPushButton("■ Restore", body);
+        sequence_pause_button_ = new QPushButton("Ⅱ Pause", body);
+        sequence_stop_button_ = new QPushButton("■ Stop", body);
+        sequence_play_button_->setToolTip("Preview the animation in the active World");
+        sequence_pause_button_->setToolTip("Pause the sequence preview");
+        sequence_stop_button_->setToolTip("Stop preview and restore the edited World");
+        sequence_play_button_->setObjectName("sequencePreviewButton");
         sequence_pause_button_->setEnabled(false);
         sequence_stop_button_->setEnabled(false);
         sequence_loop_ = new QCheckBox("Loop", body);
+        sequence_loop_->setToolTip("Restart preview when it reaches the end");
         transport->addWidget(sequence_play_button_);
         transport->addWidget(sequence_pause_button_);
         transport->addWidget(sequence_stop_button_);
         transport->addWidget(sequence_loop_);
         transport->addStretch();
         layout->addLayout(transport);
-
-        auto* key_actions = new QHBoxLayout;
-        sequence_set_key_button_ = new QPushButton("Set / Update Position Key", body);
-        sequence_remove_key_button_ = new QPushButton("Clear Selected Key", body);
-        sequence_set_key_button_->setEnabled(false);
-        sequence_remove_key_button_->setEnabled(false);
-        key_actions->addWidget(sequence_set_key_button_);
-        key_actions->addWidget(sequence_remove_key_button_);
-        layout->addLayout(key_actions);
-        sequence_key_list_ = new QListWidget(body);
-        sequence_key_list_->setMinimumHeight(70);
-        layout->addWidget(sequence_key_list_);
         sequence_diagnostics_ = new QLabel(body);
         sequence_diagnostics_->setWordWrap(true);
         sequence_diagnostics_->setObjectName("muted");
+        sequence_diagnostics_->setMinimumHeight(18);
         layout->addWidget(sequence_diagnostics_);
 
         QObject::connect(sequence_new_button_, &QPushButton::clicked, this, [this] { NewSequence(); });
@@ -1900,6 +2782,8 @@ private:
         });
         sequence_timer_.setInterval(16);
         QObject::connect(&sequence_timer_, &QTimer::timeout, this, [this] { TickSequencePreview(); });
+        play_simulation_timer_.setInterval(16);
+        QObject::connect(&play_simulation_timer_, &QTimer::timeout, this, [this] { TickPlaySimulation(); });
         RefreshSequenceEditor();
         return body;
     }
@@ -2224,13 +3108,18 @@ private:
         return choice == QMessageBox::Discard;
     }
 
-    void RefreshHierarchy() {
+    void RefreshHierarchy(bool preserveSelection = false) {
         QTreeWidgetItem* selected = nullptr;
         const QString filter = hierarchy_filter_ ? hierarchy_filter_->text().trimmed() : QString();
+        const auto& scene_path = scene_document_.FilePath();
+        const QString scene_label = scene_path.empty()
+            ? QStringLiteral("Untitled Scene")
+            : QString::fromStdWString(scene_path.stem().wstring());
         {
             const QSignalBlocker blocker(hierarchy_tree_);
             hierarchy_tree_->clear();
-            auto* root = new QTreeWidgetItem(hierarchy_tree_, {"▾  Main World"});
+            auto* root = new QTreeWidgetItem(hierarchy_tree_,
+                {QString("%1  ·  %2 entities").arg(scene_label).arg(scene_document_.Entities().size())});
             root->setFlags(root->flags() & ~Qt::ItemIsSelectable);
             std::unordered_map<std::string, QTreeWidgetItem*> items;
             std::unordered_map<std::string, aether::Entity> item_entities;
@@ -2239,7 +3128,6 @@ private:
                 const auto* id = scene_document_.GetWorld().GetComponent<aether::IdComponent>(entity);
                 if (!id) continue;
                 const QString name = QString::fromStdString(scene_document_.Name(entity));
-                if (!filter.isEmpty() && !name.contains(filter, Qt::CaseInsensitive)) continue;
                 const std::string guid = aether::ToString(id->guid);
                 auto* item = new QTreeWidgetItem({"◇  " + name});
                 item->setData(0, Qt::UserRole, QString::fromStdString(guid));
@@ -2258,8 +3146,42 @@ private:
                 else
                     root->addChild(item);
             }
+            std::size_t matching_entities = 0;
+            if (!filter.isEmpty()) {
+                for (const auto& [guid, item] : ordered_items) {
+                    Q_UNUSED(guid);
+                    item->setHidden(true);
+                }
+                for (const auto& [guid, item] : ordered_items) {
+                    if (!item->text(0).mid(3).contains(filter, Qt::CaseInsensitive)) continue;
+                    ++matching_entities;
+                    for (QTreeWidgetItem* ancestor = item; ancestor && ancestor != root; ancestor = ancestor->parent())
+                        ancestor->setHidden(false);
+                }
+            } else {
+                matching_entities = ordered_items.size();
+            }
+            root->setText(0, filter.isEmpty()
+                ? QString("%1  ·  %2 entities").arg(scene_label).arg(ordered_items.size())
+                : QString("%1  ·  %2 matches / %3 entities")
+                      .arg(scene_label).arg(matching_entities).arg(ordered_items.size()));
+            if (matching_entities == 0) {
+                const QString message = filter.isEmpty() ? "No entities in this world yet" :
+                    QString("No entities match “%1”").arg(filter);
+                auto* empty_item = new QTreeWidgetItem(root, {message});
+                empty_item->setFlags(Qt::NoItemFlags);
+                empty_item->setForeground(0, QColor("#8997a4"));
+            }
             hierarchy_tree_->expandAll();
-            if (!selected && root->childCount() > 0) selected = root->child(0);
+            if (selected && selected->isHidden()) selected = nullptr;
+            if (!selected && !preserveSelection && !ordered_items.empty()) selected = ordered_items.front().second;
+            if (selected && selected->isHidden()) selected = nullptr;
+            if (!selected && !preserveSelection) {
+                for (const auto& [guid, item] : ordered_items) {
+                    Q_UNUSED(guid);
+                    if (!item->isHidden()) { selected = item; break; }
+                }
+            }
             hierarchy_tree_->setCurrentItem(selected ? selected : root);
         }
         SelectHierarchyItem(selected);
@@ -2304,11 +3226,18 @@ private:
             selected_entity_ = aether::kNullEntity;
             selected_guid_ = {};
             viewport_->SetSelectedGuid({});
+            inspector_stack_->setCurrentIndex(0);
+            inspector_scroll_->verticalScrollBar()->setValue(0);
             inspector_name_->clear();
             inspector_name_->setEnabled(false);
             inspector_status_->setText("NO SELECTION · SELECT AN ENTITY");
+            physics_component_panel_->SetEntity(aether::kNullEntity);
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+            script_component_editor_->SetEntity(aether::kNullEntity);
+#endif
             reset_position_button_->setEnabled(false);
             reset_rotation_button_->setEnabled(false);
+            reset_scale_button_->setEnabled(false);
             for (auto* field : position_fields_) {
                 const QSignalBlocker blocker(field);
                 field->setValue(0.0);
@@ -2317,6 +3246,11 @@ private:
             for (auto* field : rotation_fields_) {
                 const QSignalBlocker blocker(field);
                 field->setValue(0.0);
+                field->setEnabled(false);
+            }
+            for (auto* field : scale_fields_) {
+                const QSignalBlocker blocker(field);
+                field->setValue(1.0);
                 field->setEnabled(false);
             }
             camera_inspector_.group->setVisible(false);
@@ -2331,6 +3265,12 @@ private:
         if (selected_entity_.IsNull()) return;
         selected_guid_ = guid;
         viewport_->SetSelectedGuid(guid);
+        physics_component_panel_->SetEntity(selected_entity_);
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+        script_component_editor_->SetEntity(selected_entity_);
+#endif
+        inspector_stack_->setCurrentIndex(1);
+        inspector_scroll_->verticalScrollBar()->setValue(0);
         inspector_status_->setText("ENTITY · ACTIVE SELECTION");
         const QSignalBlocker name_blocker(inspector_name_);
         inspector_name_->setText(QString::fromStdString(scene_document_.Name(selected_entity_)));
@@ -2343,6 +3283,7 @@ private:
         if (cine_camera) SyncCineCameraInspector();
         reset_position_button_->setEnabled(transform != nullptr);
         reset_rotation_button_->setEnabled(transform != nullptr);
+        reset_scale_button_->setEnabled(transform != nullptr);
         for (std::size_t axis = 0; axis < position_fields_.size(); ++axis) {
             const QSignalBlocker blocker(position_fields_[axis]);
             position_fields_[axis]->setEnabled(transform != nullptr);
@@ -2352,6 +3293,7 @@ private:
             }
         }
         SyncInspectorRotation();
+        SyncInspectorScale();
         inspector_name_->setEnabled(true);
         delete_entity_action_->setEnabled(true);
         RefreshSequenceTarget();
@@ -2373,6 +3315,17 @@ private:
                                         static_cast<aether::f32>(rotation_fields_[2]->value())};
         if (scene_document_.SetRotation(selected_entity_, EulerDegreesToRotation(euler_degrees), committed)) {
             if (committed) SyncInspectorRotation();
+            UpdateSceneStatus();
+        }
+    }
+
+    void ApplyInspectorScale(bool committed) {
+        if (selected_entity_.IsNull()) return;
+        const aether::Vec3 scale{static_cast<aether::f32>(scale_fields_[0]->value()),
+                                 static_cast<aether::f32>(scale_fields_[1]->value()),
+                                 static_cast<aether::f32>(scale_fields_[2]->value())};
+        if (scene_document_.SetScale(selected_entity_, scale, committed)) {
+            if (committed) SyncInspectorScale();
             UpdateSceneStatus();
         }
     }
@@ -2436,6 +3389,7 @@ private:
             position_fields_[axis]->setValue(values[axis]);
         }
         SyncInspectorRotation();
+        SyncInspectorScale();
     }
 
     void SyncInspectorRotation() {
@@ -2447,6 +3401,17 @@ private:
         for (std::size_t axis = 0; axis < rotation_fields_.size(); ++axis) {
             const QSignalBlocker blocker(rotation_fields_[axis]);
             rotation_fields_[axis]->setValue(values[axis]);
+        }
+    }
+
+    void SyncInspectorScale() {
+        if (selected_entity_.IsNull()) return;
+        const auto* transform = scene_document_.GetWorld().GetComponent<aether::Transform>(selected_entity_);
+        if (!transform) return;
+        const float values[] = {transform->scale.x, transform->scale.y, transform->scale.z};
+        for (std::size_t axis = 0; axis < scale_fields_.size(); ++axis) {
+            const QSignalBlocker blocker(scale_fields_[axis]);
+            scale_fields_[axis]->setValue(values[axis]);
         }
     }
 
@@ -2469,12 +3434,17 @@ private:
         undo_action_->setEnabled(editing && scene_document_.CanUndo());
         redo_action_->setEnabled(editing && scene_document_.CanRedo());
         const bool has_selection = !selected_entity_.IsNull() && scene_document_.GetWorld().IsAlive(selected_entity_);
+        physics_component_panel_->setEnabled(editing);
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+        script_component_editor_->setEnabled(editing);
+#endif
         create_entity_action_->setEnabled(editing);
         create_camera_action_->setEnabled(editing);
         place_model_action_->setEnabled(editing && !project_file_.empty());
         duplicate_entity_action_->setEnabled(editing && has_selection);
         delete_entity_action_->setEnabled(editing && has_selection);
         add_entity_button_->setEnabled(editing);
+        empty_add_entity_button_->setEnabled(editing);
         duplicate_entity_button_->setEnabled(editing && has_selection);
         play_action_->setEnabled(!playing);
         pause_action_->setEnabled(playing);
@@ -2502,26 +3472,79 @@ private:
             .arg(mode)
             .arg(scene_document_.Entities().size())
             .arg(scene_document_.CanUndo() ? QString::fromStdString(scene_document_.UndoLabel()) : "READY"));
+        UpdatePlayInputHint();
+    }
+
+    void UpdatePlayInputHint() {
+        if (!play_input_hint_) return;
+        const auto state = scene_document_.PlayState();
+        const bool playing = state == aether::editor::PlaySession::State::Playing;
+        const bool paused = state == aether::editor::PlaySession::State::Paused;
+        play_input_hint_->setVisible(playing || paused);
+        if (paused) {
+            play_input_hint_->setText("Ⅱ  PLAY PAUSED");
+            play_input_hint_->setToolTip("Resume Play to send input to the game.");
+        } else if (playing && viewport_ && viewport_->hasFocus()) {
+            play_input_hint_->setText("●  GAME INPUT ACTIVE");
+            play_input_hint_->setToolTip("Keyboard and mouse input from the 3D view drive project input actions.");
+        } else if (playing) {
+            play_input_hint_->setText("○  CLICK 3D VIEW FOR GAME INPUT");
+            play_input_hint_->setToolTip("Focus the 3D view to send keyboard and mouse input to the game.");
+        }
     }
 
     void StartOrResumePlay() {
         StopSequencePreview();
+        const bool starting = scene_document_.PlayState() == aether::editor::PlaySession::State::Editing;
         scene_document_.Play();
+        if (starting) {
+            try {
+                const std::filesystem::path content_root = project_file_.empty()
+                    ? std::filesystem::path{} : aether::ProjectPaths::ForFile(project_file_).content;
+                play_runtime_ = std::make_unique<aether::editor::qt::EditorPlayRuntime>(
+                    scene_document_.GetWorld(), scene_document_.Guids(), content_root, project_settings_);
+            } catch (const std::exception& exception) {
+                play_runtime_.reset();
+                scene_document_.Stop();
+                QMessageBox::critical(this, "Couldn't start Play mode", QString::fromUtf8(exception.what()));
+                UpdateSceneStatus();
+                return;
+            }
+        }
+        viewport_->SetPlayInputActive(true);
+        play_clock_.start();
+        play_simulation_timer_.start();
         UpdateSceneStatus();
     }
 
     void PausePlay() {
+        play_simulation_timer_.stop();
+        viewport_->SetPlayInputActive(false);
         scene_document_.Pause();
         UpdateSceneStatus();
     }
 
     void StopPlay() {
         if (scene_document_.PlayState() == aether::editor::PlaySession::State::Editing) return;
+        play_simulation_timer_.stop();
+        viewport_->SetPlayInputActive(false);
+        if (play_runtime_) play_runtime_->Stop();
+        play_runtime_.reset();
         scene_document_.Stop();
         selected_entity_ = scene_document_.Guids().Find(scene_document_.GetWorld(), selected_guid_);
         if (selected_entity_.IsNull()) selected_guid_ = {};
         RefreshHierarchy();
         UpdateSceneStatus();
+    }
+
+    void TickPlaySimulation() {
+        if (!play_runtime_ || scene_document_.PlayState() != aether::editor::PlaySession::State::Playing) return;
+        const aether::f32 dt = static_cast<aether::f32>(play_clock_.restart()) / 1000.0f;
+        play_runtime_->Tick(dt);
+        if (!selected_entity_.IsNull() && scene_document_.GetWorld().IsAlive(selected_entity_)) {
+            SyncInspectorPosition();
+            viewport_->update();
+        }
     }
 
     void NewScene() {
@@ -2787,7 +3810,12 @@ private:
         plugin_manager_ = std::move(candidate_plugins);
         project_file_ = file;
         project_settings_ = std::move(settings);
+        physics_component_panel_->SetLayerNames(project_settings_.layers);
+        RememberRecentProject(file);
         viewport_->SetContentRoot(paths.content);
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+        script_component_editor_->SetContentRoot(paths.content);
+#endif
         selected_guid_ = {};
         selected_entity_ = aether::kNullEntity;
         RefreshHierarchy();
@@ -2798,10 +3826,64 @@ private:
         save_project_action_->setEnabled(true);
         new_folder_button_->setEnabled(true);
         asset_filter_->setEnabled(true);
+        asset_type_filter_->setEnabled(true);
         asset_view_->setEnabled(true);
         asset_view_->setVisible(true);
+        asset_context_->setVisible(true);
+        content_welcome_panel_->setVisible(false);
         content_breadcrumb_->setEnabled(true);
         UpdateSceneStatus();
+    }
+
+    void LoadRecentProjects() {
+        recent_projects_file_ = aether::editor::RecentProjects::DefaultConfigDir() / "recent_projects.json";
+        recent_projects_.Load(recent_projects_file_);
+        if (recent_projects_.RemoveMissing() != 0 && !recent_projects_.Save(recent_projects_file_)) {
+            AETHER_LOG_WARN("QtEditor", "Couldn't remove missing projects from the recent-project list");
+        }
+    }
+
+    void RememberRecentProject(const std::filesystem::path& file) {
+        std::error_code ec;
+        std::filesystem::path absolute = std::filesystem::absolute(file, ec);
+        if (ec) absolute = file;
+        recent_projects_.Add(absolute.lexically_normal());
+        if (!recent_projects_.Save(recent_projects_file_)) {
+            AETHER_LOG_WARN("QtEditor", "Couldn't save the recent-project list");
+        }
+        RefreshRecentProjectsMenu();
+    }
+
+    void ClearRecentProjects() {
+        const auto entries = recent_projects_.Entries();
+        for (const auto& entry : entries) recent_projects_.Remove(entry);
+        if (!recent_projects_.Save(recent_projects_file_)) {
+            AETHER_LOG_WARN("QtEditor", "Couldn't clear the recent-project list");
+        }
+        RefreshRecentProjectsMenu();
+    }
+
+    void RefreshRecentProjectsMenu() {
+        if (!recent_projects_menu_) return;
+        recent_projects_menu_->clear();
+        const auto& entries = recent_projects_.Entries();
+        if (entries.empty()) {
+            QAction* empty = recent_projects_menu_->addAction("No recent projects");
+            empty->setEnabled(false);
+            return;
+        }
+        for (const auto& entry : entries) {
+            const QString project_name = QString::fromStdWString(entry.stem().wstring());
+            const QString parent_name = QString::fromStdWString(entry.parent_path().filename().wstring());
+            const QString label = parent_name.isEmpty()
+                ? project_name : QString("%1   —   %2").arg(project_name, parent_name);
+            QAction* action = recent_projects_menu_->addAction(label);
+            action->setToolTip(QString::fromStdWString(entry.wstring()));
+            QObject::connect(action, &QAction::triggered, this, [this, entry] { OpenProject(entry); });
+        }
+        recent_projects_menu_->addSeparator();
+        QAction* clear = recent_projects_menu_->addAction("Clear Recent Projects");
+        QObject::connect(clear, &QAction::triggered, this, [this] { ClearRecentProjects(); });
     }
 
     void OpenContentAsset(const QString& path) {
@@ -2823,18 +3905,65 @@ private:
             PlaceModel(std::filesystem::path(path.toStdWString()));
             return;
         }
-        QMessageBox::information(this, "No Qt editor for this asset",
-                                 QString("%1 is visible in the Content Browser, but its editor has not been migrated to Qt yet.")
-                                     .arg(info.fileName()));
+        QMessageBox::information(this, "Asset preview unavailable",
+                                 QString("The current editor can't open %1 yet.").arg(info.fileName()));
     }
 
     void UpdateSelectedContentAsset(const QModelIndex& index) {
         selected_content_path_.clear();
-        if (index.isValid() && !asset_model_->isDir(index)) {
+        const bool is_directory = index.isValid() && asset_model_->isDir(index);
+        if (index.isValid() && !is_directory) {
             const QString suffix = asset_model_->fileInfo(index).suffix().toLower();
             if (suffix == "gltf" || suffix == "glb") selected_content_path_ = asset_model_->filePath(index);
         }
         place_model_button_->setEnabled(!project_file_.empty() && !selected_content_path_.isEmpty());
+        if (project_file_.empty()) {
+            asset_context_->setText("Open or create a project to browse its Content folder.");
+        } else if (is_directory) {
+            asset_context_->setText(QString("Folder · double-click to open %1").arg(asset_model_->fileName(index)));
+        } else if (index.isValid()) {
+            const QString name = asset_model_->fileName(index);
+            const QString suffix = asset_model_->fileInfo(index).suffix().toUpper();
+            asset_context_->setText(suffix == "GLTF" || suffix == "GLB"
+                ? QString("MODEL · %1 · Select Place Model or double-click to add it to the World").arg(name)
+                : QString("%1 ASSET · %2 · Double-click to open").arg(suffix.isEmpty() ? "FILE" : suffix, name));
+        } else if (asset_view_->model()->rowCount(asset_view_->rootIndex()) == 0) {
+            const bool loading = asset_model_->canFetchMore(asset_view_->rootIndex());
+            const bool filtered = !asset_filter_->text().trimmed().isEmpty() || asset_type_filter_->currentIndex() != 0;
+            asset_context_->setText(loading ? "Loading folder contents…" : filtered
+                ? "No matching items in this folder. Clear the search or choose All Assets."
+                : "This folder is empty. Add assets to Content or create a folder.");
+        } else {
+            const int visible_count = asset_view_->model()->rowCount(asset_view_->rootIndex());
+            const bool filtered = !asset_filter_->text().trimmed().isEmpty() || asset_type_filter_->currentIndex() != 0;
+            const QString noun = filtered ? "matching item" : "item";
+            const QString count = QString("%1 %2%3 in this folder")
+                .arg(visible_count)
+                .arg(noun)
+                .arg(visible_count == 1 ? "" : "s");
+            asset_context_->setText(QString("%1 · Select glTF or GLB models to place them in the World; double-click folders to browse.")
+                                        .arg(count));
+        }
+    }
+
+    void ApplyContentFilters() {
+        const QString query = asset_filter_->text().trimmed();
+        const QStringList suffixes = asset_type_filter_->currentData().toStringList();
+        QStringList patterns;
+        if (suffixes.isEmpty()) {
+            if (!query.isEmpty()) patterns.push_back("*" + query + "*");
+        } else {
+            QString name_query = query;
+            const QString query_suffix = QFileInfo(query).suffix().toLower();
+            if (!query_suffix.isEmpty() && suffixes.contains(query_suffix)) {
+                name_query = QFileInfo(query).completeBaseName();
+            }
+            for (const QString& suffix : suffixes) {
+                patterns.push_back("*" + name_query + "*." + suffix);
+            }
+        }
+        asset_model_->setNameFilters(patterns);
+        asset_model_->setNameFilterDisables(false);
     }
 
     void PlaceSelectedContentModel() {
@@ -2845,6 +3974,7 @@ private:
     bool PersistProjectSettings(const aether::ProjectSettings& candidate, std::string* error) {
         if (project_file_.empty() || !aether::SaveProject(project_file_, candidate, error)) return false;
         project_settings_ = candidate;
+        physics_component_panel_->SetLayerNames(project_settings_.layers);
         RefreshContentBreadcrumb();
         UpdateSceneStatus();
         return true;
@@ -2854,7 +3984,7 @@ private:
         if (project_file_.empty()) return;
         QDialog dialog(this);
         dialog.setWindowTitle("Project Settings");
-        dialog.resize(560, 650);
+        dialog.resize(820, 720);
         auto* layout = new QVBoxLayout(&dialog);
         auto* form = new QFormLayout;
         auto* name = new QLineEdit(QString::fromStdString(project_settings_.name), &dialog);
@@ -2896,6 +4026,35 @@ private:
         auto* always_cook = make_lines(project_settings_.always_cook);
         auto* plugins = make_lines(project_settings_.plugins);
         auto* layers = make_lines(project_settings_.layers);
+        auto* layers_row = new QWidget(&dialog);
+        auto* layers_layout = new QHBoxLayout(layers_row);
+        layers_layout->setContentsMargins(0, 0, 0, 0);
+        auto* collision_matrix_button = new QPushButton("Edit Matrix…", layers_row);
+        layers_layout->addWidget(layers, 1);
+        layers_layout->addWidget(collision_matrix_button);
+        std::vector<aether::u32> collision_matrix = project_settings_.collision_matrix;
+        std::vector<std::string> collision_matrix_layers = project_settings_.layers;
+        const auto parse_lines = [](const QPlainTextEdit* edit) {
+            std::vector<std::string> values;
+            for (const QString& line : edit->toPlainText().split('\n')) {
+                const QString value = line.trimmed();
+                if (!value.isEmpty()) values.push_back(value.toStdString());
+            }
+            return values;
+        };
+        QObject::connect(collision_matrix_button, &QPushButton::clicked, &dialog, [&] {
+            const std::vector<std::string> names = parse_lines(layers);
+            if (names.empty() || names.front() != "Default" || names.size() > aether::kMaxLayers) {
+                QMessageBox::warning(&dialog, "Invalid collision layers",
+                                     "Add 1–32 layer names and keep Default as the first layer before editing the matrix.");
+                return;
+            }
+            std::vector<aether::u32> edited;
+            if (ShowCollisionMatrixDialog(&dialog, names, collision_matrix_layers, collision_matrix, edited)) {
+                collision_matrix_layers = names;
+                collision_matrix = std::move(edited);
+            }
+        });
         form->addRow("Project name", name);
         form->addRow("Startup scene", startup_row);
         form->addRow("Fixed timestep", fixed_hz);
@@ -2907,7 +4066,7 @@ private:
         form->addRow("Default quality", quality);
         form->addRow("Always cook (one per line)", always_cook);
         form->addRow("Plugins (one per line)", plugins);
-        form->addRow("Collision layers (one per line)", layers);
+        form->addRow("Collision layers", layers_row);
         layout->addLayout(form);
         auto* buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dialog);
         layout->addWidget(buttons);
@@ -2931,17 +4090,12 @@ private:
                                  "Project name is required and the startup scene must be relative to Content/.");
             return;
         }
-        const auto parse_lines = [](const QPlainTextEdit* edit) {
-            std::vector<std::string> values;
-            for (const QString& line : edit->toPlainText().split('\n')) {
-                const QString value = line.trimmed();
-                if (!value.isEmpty()) values.push_back(value.toStdString());
-            }
-            return values;
-        };
         std::vector<std::string> layer_values = parse_lines(layers);
-        if (layer_values.empty() || layer_values.front() != "Default") {
-            QMessageBox::warning(this, "Invalid collision layers", "The first collision layer must be Default.");
+        const std::set<std::string> unique_layers(layer_values.begin(), layer_values.end());
+        if (layer_values.empty() || layer_values.front() != "Default" || layer_values.size() > aether::kMaxLayers ||
+            unique_layers.size() != layer_values.size()) {
+            QMessageBox::warning(this, "Invalid collision layers",
+                                 "Use 1–32 unique layer names and keep Default as the first layer.");
             return;
         }
         aether::ProjectSettings candidate = project_settings_;
@@ -2958,6 +4112,7 @@ private:
         candidate.always_cook = parse_lines(always_cook);
         candidate.plugins = parse_lines(plugins);
         candidate.layers = std::move(layer_values);
+        candidate.collision_matrix = RemapCollisionMatrix(collision_matrix_layers, collision_matrix, candidate.layers);
         std::string error;
         if (!PersistProjectSettings(candidate, &error)) {
             QMessageBox::critical(this, "Couldn't save project settings", QString::fromStdString(error));
@@ -3008,6 +4163,7 @@ private:
         asset_view_->setRootIndex(asset_model_->setRootPath(current_content_path_));
         parent_folder_button_->setEnabled(current_content_path_ != root);
         RefreshContentBreadcrumb();
+        UpdateSelectedContentAsset(QModelIndex());
     }
 
     void NavigateContentParent() {
@@ -3043,11 +4199,24 @@ private:
     void ShowCommandPalette() {
         QDialog dialog(this);
         dialog.setWindowTitle("Search actions");
-        dialog.setMinimumWidth(460);
+        dialog.setObjectName("commandPalette");
+        dialog.setMinimumSize(520, 400);
         auto* layout = new QVBoxLayout(&dialog);
+        layout->setContentsMargins(16, 16, 16, 16);
+        layout->setSpacing(10);
+        auto* title = new QLabel("Find a command or editor panel", &dialog);
+        title->setObjectName("emptyStateTitle");
+        layout->addWidget(title);
         auto* query = new QLineEdit(&dialog);
+        query->setObjectName("commandSearch");
         query->setPlaceholderText("Search commands and editor panels…");
+        query->setClearButtonEnabled(true);
         auto* results = new QListWidget(&dialog);
+        results->setAccessibleName("Command results");
+        results->setToolTip("Use the arrow keys to move through results, then press Enter");
+        auto* no_results = new QLabel("No matching commands. Try a shorter search.", &dialog);
+        no_results->setObjectName("muted");
+        no_results->setAlignment(Qt::AlignCenter);
         QStringList commands;
         if (new_scene_action_->isEnabled()) commands << "New Scene";
         if (open_scene_action_->isEnabled()) commands << "Open Scene…";
@@ -3064,18 +4233,29 @@ private:
         if (play_action_->isEnabled()) commands << play_action_->text();
         if (pause_action_->isEnabled()) commands << "Pause";
         if (stop_action_->isEnabled()) commands << "Stop";
-        commands << "Show Hierarchy" << "Show Inspector" << "Open Content Browser" << "Open Output" << "Open Animation Sequencer";
+        commands << "Show Hierarchy" << "Show Inspector" << "Open Content Browser" << "Open Output"
+                 << "Open Animation Sequencer" << "Reset Workspace Layout";
         for (const auto& command : commands) results->addItem(command);
-        layout->addWidget(query); layout->addWidget(results);
-        QObject::connect(query, &QLineEdit::textChanged, &dialog, [results](const QString& text) {
+        layout->addWidget(query);
+        layout->addWidget(results, 1);
+        layout->addWidget(no_results);
+        auto* keyboard_hint = new QLabel("↑ ↓  Navigate     Enter  Run     Esc  Close", &dialog);
+        keyboard_hint->setObjectName("muted");
+        keyboard_hint->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        layout->addWidget(keyboard_hint);
+        no_results->setVisible(false);
+        QObject::connect(query, &QLineEdit::textChanged, &dialog, [results, no_results](const QString& text) {
             int first_visible = -1;
+            int visible_count = 0;
             for (int i = 0; i < results->count(); ++i)
             {
                 const bool hidden = !results->item(i)->text().contains(text, Qt::CaseInsensitive);
                 results->item(i)->setHidden(hidden);
+                if (!hidden) ++visible_count;
                 if (!hidden && first_visible < 0) first_visible = i;
             }
             results->setCurrentRow(first_visible);
+            no_results->setVisible(visible_count == 0);
         });
         auto invoke = [this, results, &dialog] {
             auto* item = results->currentItem(); if (!item) return;
@@ -3096,6 +4276,7 @@ private:
             if (name == "Play" || name == "Resume") { dialog.accept(); StartOrResumePlay(); return; }
             if (name == "Pause") { dialog.accept(); PausePlay(); return; }
             if (name == "Stop") { dialog.accept(); StopPlay(); return; }
+            if (name == "Reset Workspace Layout") { dialog.accept(); ResetWorkspaceLayout(); return; }
             if (name == "Show Hierarchy" || name == "Show Inspector" ||
                 name == "Open Content Browser" || name == "Open Output" || name == "Open Animation Sequencer") {
             const QString dock_name = name == "Show Hierarchy" ? "hierarchyDock" :
@@ -3120,7 +4301,7 @@ private:
         }
         QSettings settings("Aether", "EditorQt");
         settings.setValue("window/geometry", saveGeometry());
-        settings.setValue("window/state", saveState());
+        settings.setValue("window/state", saveState(1));
         QMainWindow::closeEvent(event);
     }
 
@@ -3129,9 +4310,12 @@ private:
         new_scene_action_ = file->addAction("New Scene");
         open_scene_action_ = file->addAction("Open Scene…");
         save_scene_action_ = file->addAction("Save Scene", QKeySequence::Save);
+        save_scene_action_->setToolTip("Save the active scene (Ctrl+S)");
         file->addSeparator();
         new_project_action_ = file->addAction("New Project…");
         open_project_action_ = file->addAction("Open Project…");
+        recent_projects_menu_ = file->addMenu("Recent Projects");
+        RefreshRecentProjectsMenu();
         file->addSeparator();
         save_project_action_ = file->addAction("Project Settings…");
         save_project_action_->setEnabled(false);
@@ -3147,6 +4331,8 @@ private:
         auto* edit = menuBar()->addMenu("Edit");
         undo_action_ = edit->addAction("Undo"); undo_action_->setShortcut(QKeySequence::Undo);
         redo_action_ = edit->addAction("Redo"); redo_action_->setShortcut(QKeySequence::Redo);
+        undo_action_->setToolTip("Undo the last scene edit (Ctrl+Z)");
+        redo_action_->setToolTip("Redo the last undone scene edit (Ctrl+Y)");
         edit->addSeparator();
         create_entity_action_ = edit->addAction("Create Entity"); create_entity_action_->setShortcut(QKeySequence("Ctrl+Shift+N"));
         create_camera_action_ = edit->addAction("Create Camera");
@@ -3174,35 +4360,52 @@ private:
 
     void BuildToolbar() {
         auto* bar = addToolBar("Editor");
+        bar->setObjectName("editorToolbar");
         bar->setMovable(false);
-        bar->addWidget(new QLabel("  AETHER   /   WORLD"));
+        auto* brand = new QLabel("  AETHER ENGINE");
+        brand->setObjectName("brand");
+        bar->addWidget(brand);
         bar->addSeparator();
-        auto* world = new QPushButton("World");
-        world->setFlat(true);
-        world->setEnabled(false);
-        bar->addWidget(world);
+        auto* workspace = new QLabel("WORLD");
+        workspace->setObjectName("workspaceLabel");
+        bar->addWidget(workspace);
+        bar->addAction(save_scene_action_);
+        bar->addAction(undo_action_);
+        bar->addAction(redo_action_);
         bar->addSeparator();
         auto* spacer = new QWidget; spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred); bar->addWidget(spacer);
-        search_button_ = new QPushButton("⌕   Search actions     Ctrl+K"); search_button_->setMinimumWidth(220); bar->addWidget(search_button_);
+        search_button_ = new QPushButton("⌕   Search actions     Ctrl+K");
+        search_button_->setObjectName("commandSearchButton");
+        search_button_->setMinimumWidth(220);
+        search_button_->setToolTip("Search commands and editor panels (Ctrl+K)");
+        bar->addWidget(search_button_);
         play_button_ = new QPushButton("▶   Play"); play_button_->setObjectName("play"); bar->addWidget(play_button_);
         pause_button_ = new QPushButton("Ⅱ"); pause_button_->setToolTip("Pause Play session"); bar->addWidget(pause_button_);
         stop_button_ = new QPushButton("■"); stop_button_->setToolTip("Stop and restore the edited scene"); bar->addWidget(stop_button_);
+        pause_button_->setAccessibleName("Pause Play session");
+        stop_button_->setAccessibleName("Stop Play session");
         QObject::connect(play_button_, &QPushButton::clicked, play_action_, &QAction::trigger);
         QObject::connect(pause_button_, &QPushButton::clicked, pause_action_, &QAction::trigger);
         QObject::connect(stop_button_, &QPushButton::clicked, stop_action_, &QAction::trigger);
 
+        addToolBarBreak(Qt::TopToolBarArea);
         auto* viewport_bar = addToolBar("Viewport Tools");
         viewport_bar->setObjectName("viewportTools");
         viewport_bar->setMovable(false);
         auto* view_label = new QLabel("  WORLD VIEW · PERSPECTIVE");
-        view_label->setToolTip("Right-drag: orbit · Middle-drag: pan · Wheel: dolly");
+        view_label->setAccessibleName("3D World View navigation help");
+        view_label->setToolTip("Right-drag: orbit · Middle-drag: pan · Wheel: zoom · Move tool: WASD/QE moves selected object · Other tools: WASD/QE flies camera · Shift: faster");
         viewport_bar->addWidget(view_label);
         viewport_bar->addSeparator();
         auto* modes = new QActionGroup(viewport_bar);
         modes->setExclusive(true);
-        for (const auto* mode : {"Select", "Move", "Rotate Y"}) {
+        for (const auto* mode : {"Select", "Move", "Rotate Y", "Scale"}) {
             auto* action = viewport_bar->addAction(mode);
             action->setCheckable(true);
+            if (std::string(mode) == "Select") action->setToolTip("Select an entity in the viewport");
+            else if (std::string(mode) == "Move") action->setToolTip("Drag the selected object to move on the ground plane, use WASD/QE to move it, or drag an X/Y/Z handle for axis movement");
+            else if (std::string(mode) == "Rotate Y") action->setToolTip("Rotate the selected entity around its local Y axis");
+            else action->setToolTip("Drag the selected object or gold handle up/down to resize it uniformly");
             modes->addAction(action);
             const QString mode_name = QString::fromUtf8(mode);
             if (QString::fromUtf8(mode) == "Select") action->setChecked(true);
@@ -3210,9 +4413,11 @@ private:
                 const QString mode_name = QString::fromUtf8(mode);
                 viewport_->SetToolMode(mode_name);
                 if (mode_name == "Move")
-                    statusBar()->showMessage("●  MOVE TOOL     DRAG AN ENTITY IN THE 3D VIEW");
+                    statusBar()->showMessage("●  MOVE TOOL     DRAG OR USE WASD/QE TO MOVE OBJECT · DRAG X/Y/Z HANDLE FOR AXIS MOVE");
                 else if (mode_name == "Rotate Y")
                     statusBar()->showMessage("●  ROTATE Y TOOL     DRAG THE SELECTED ENTITY'S RING");
+                else if (mode_name == "Scale")
+                    statusBar()->showMessage("●  SCALE TOOL     DRAG SELECTED OBJECT UP/DOWN TO RESIZE UNIFORMLY");
                 else
                     statusBar()->showMessage("●  SELECT TOOL     CLICK AN ENTITY IN THE 3D VIEW");
             });
@@ -3220,7 +4425,7 @@ private:
         viewport_bar->addSeparator();
         auto* snap = viewport_bar->addAction("Grid Snap");
         snap->setCheckable(true);
-        snap->setToolTip("Move snaps to whole world units; Rotate Y snaps to 15-degree steps");
+        snap->setToolTip("Move snaps to whole world units; Rotate Y snaps to 15°; Scale snaps to 0.1");
         QObject::connect(snap, &QAction::toggled, this, [this](bool enabled) {
             viewport_->SetGridSnap(enabled);
         });
@@ -3235,16 +4440,53 @@ private:
         QObject::connect(fit, &QAction::triggered, this, [this] { viewport_->FitAll(); });
     }
 
+    void ResetWorkspaceLayout() {
+        addDockWidget(Qt::LeftDockWidgetArea, hierarchy_dock_);
+        addDockWidget(Qt::RightDockWidgetArea, inspector_dock_);
+        addDockWidget(Qt::BottomDockWidgetArea, content_dock_);
+        addDockWidget(Qt::BottomDockWidgetArea, output_dock_);
+        addDockWidget(Qt::BottomDockWidgetArea, sequence_dock_);
+        tabifyDockWidget(content_dock_, output_dock_);
+        tabifyDockWidget(content_dock_, sequence_dock_);
+        hierarchy_dock_->show();
+        inspector_dock_->show();
+        content_dock_->show();
+        output_dock_->show();
+        sequence_dock_->show();
+        resizeDocks({hierarchy_dock_, inspector_dock_}, {270, 330}, Qt::Horizontal);
+        resizeDocks({content_dock_}, {280}, Qt::Vertical);
+        content_dock_->raise();
+        QSettings settings("Aether", "EditorQt");
+        settings.setValue("window/geometry", saveGeometry());
+        settings.setValue("window/state", saveState(1));
+        statusBar()->showMessage("Workspace layout restored", 3000);
+    }
+
     QMenu* window_menu_ = nullptr;
+    QMenu* recent_projects_menu_ = nullptr;
+    QDockWidget* hierarchy_dock_ = nullptr;
+    QDockWidget* inspector_dock_ = nullptr;
+    QDockWidget* content_dock_ = nullptr;
+    QDockWidget* output_dock_ = nullptr;
+    QDockWidget* sequence_dock_ = nullptr;
     QPushButton* search_button_ = nullptr;
     QPushButton* play_button_ = nullptr;
     QPushButton* pause_button_ = nullptr;
     QPushButton* stop_button_ = nullptr;
     QLabel* inspector_status_ = nullptr;
+    QLabel* play_input_hint_ = nullptr;
     QLineEdit* inspector_name_ = nullptr;
+    QScrollArea* inspector_scroll_ = nullptr;
+    QStackedWidget* inspector_stack_ = nullptr;
+    QPushButton* empty_add_entity_button_ = nullptr;
     QPushButton* reset_position_button_ = nullptr;
     QPushButton* reset_rotation_button_ = nullptr;
+    QPushButton* reset_scale_button_ = nullptr;
     CameraInspectorWidgets camera_inspector_;
+    aether::editor::qt::PhysicsComponentPanel* physics_component_panel_ = nullptr;
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+    aether::editor::qt::ScriptComponentEditor* script_component_editor_ = nullptr;
+#endif
     QTreeWidget* hierarchy_tree_ = nullptr;
     QLineEdit* hierarchy_filter_ = nullptr;
     QPushButton* add_entity_button_ = nullptr;
@@ -3255,6 +4497,11 @@ private:
     aether::EntityGuid selected_guid_{};
     aether::Entity selected_entity_ = aether::kNullEntity;
     QComboBox* content_breadcrumb_ = nullptr;
+    QComboBox* asset_type_filter_ = nullptr;
+    QLabel* asset_context_ = nullptr;
+    QWidget* content_welcome_panel_ = nullptr;
+    QPushButton* welcome_open_project_button_ = nullptr;
+    QPushButton* welcome_new_project_button_ = nullptr;
     QAction* save_project_action_ = nullptr;
     QAction* new_scene_action_ = nullptr;
     QAction* open_scene_action_ = nullptr;
@@ -3281,7 +4528,10 @@ private:
     QString current_content_path_;
     std::array<QDoubleSpinBox*, 3> position_fields_{};
     std::array<QDoubleSpinBox*, 3> rotation_fields_{};
+    std::array<QDoubleSpinBox*, 3> scale_fields_{};
     std::filesystem::path project_file_;
+    std::filesystem::path recent_projects_file_;
+    aether::editor::RecentProjects recent_projects_;
     aether::ProjectSettings project_settings_;
     aether::editor::SequenceDocument sequence_document_;
     std::filesystem::path sequence_file_;
@@ -3291,6 +4541,9 @@ private:
     std::unordered_map<aether::EntityGuid, aether::Transform> sequence_preview_transforms_;
     QTimer sequence_timer_;
     QElapsedTimer sequence_clock_;
+    QTimer play_simulation_timer_;
+    QElapsedTimer play_clock_;
+    std::unique_ptr<aether::editor::qt::EditorPlayRuntime> play_runtime_;
     QLineEdit* sequence_name_ = nullptr;
     QDoubleSpinBox* sequence_fps_ = nullptr;
     QDoubleSpinBox* sequence_duration_ = nullptr;

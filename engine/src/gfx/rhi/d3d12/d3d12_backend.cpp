@@ -37,6 +37,7 @@ D3D12Device::D3D12Device(bool enable_debug_layer) : device_(enable_debug_layer) 
     setup_cmd.Close();
     ID3D12CommandList* setup_lists[] = {setup_cmd.Get()};
     device_.WaitForFence(device_.Submit(setup_lists, 1));
+    dummy_texture_->ReleaseUploadStaging();
 
     D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc{};
     srv_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -164,11 +165,17 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
     gfx::ShaderBytecode vs = gfx::CompileHLSL(desc.hlsl_source, desc.vs_entry.c_str(), "vs_5_1", "rhi_pipeline_vs");
     gfx::ShaderBytecode ps = gfx::CompileHLSL(desc.hlsl_source, desc.ps_entry.c_str(), "ps_5_1", "rhi_pipeline_ps");
 
-    // The one fixed vertex layout PipelineDesc::use_vertex_buffer means —
-    // see its comment for why this isn't a general attribute-list API.
-    D3D12_INPUT_ELEMENT_DESC input_elements[2] = {
+    // Keep POSITION / TEXCOORD as the default, with optional normal and
+    // tangent elements for lit, normal-mapped model vertices.
+    const bool has_normals = desc.vertex_layout == VertexLayout::PositionNormalUv;
+    const bool has_tangents = desc.vertex_layout == VertexLayout::PositionNormalUvTangent;
+    D3D12_INPUT_ELEMENT_DESC input_elements[4] = {
         {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-        {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, has_tangents || has_normals ? 24u : 12u,
+         D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        {"TANGENT", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 32,
+         D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
     };
 
     D3D12_GRAPHICS_PIPELINE_STATE_DESC pso_desc{};
@@ -176,7 +183,12 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
     pso_desc.VS = {vs.Data(), vs.Size()};
     pso_desc.PS = {ps.Data(), ps.Size()};
     if (desc.use_vertex_buffer) {
-        pso_desc.InputLayout = {input_elements, 2};
+        if (!has_tangents && !has_normals) {
+            // PositionUv has no NORMAL semantic. Its second element is UV.
+            input_elements[1] = input_elements[2];
+        }
+        const u32 element_count = has_tangents ? 4u : has_normals ? 3u : 2u;
+        pso_desc.InputLayout = {input_elements, element_count};
     }
     pso_desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
     pso_desc.RasterizerState.CullMode = desc.cull_back_face ? D3D12_CULL_MODE_BACK : D3D12_CULL_MODE_NONE;
@@ -201,7 +213,8 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
     // a PSO's DSVFormat to be compatible with whatever DSV is actually bound
     // at draw time, regardless of whether that PSO's own DepthEnable is set.
     pso_desc.DepthStencilState.DepthEnable = desc.depth_test ? TRUE : FALSE;
-    pso_desc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+    pso_desc.DepthStencilState.DepthWriteMask = desc.depth_write ? D3D12_DEPTH_WRITE_MASK_ALL
+                                                                  : D3D12_DEPTH_WRITE_MASK_ZERO;
     pso_desc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
     pso_desc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
 
@@ -218,13 +231,41 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
 }
 
 BufferHandle D3D12Device::CreateBufferInternal(const void* data, u64 size_bytes) {
+    if (!data || size_bytes == 0) {
+        AETHER_LOG_ERROR("D3D12", "RHI buffers require non-null initial data and a non-zero size");
+        throw std::invalid_argument("RHI buffers require non-null initial data and a non-zero size");
+    }
     auto buffer = std::make_unique<gfx::Buffer>(device_, size_bytes, gfx::BufferKind::Upload);
     buffer->Update(data, size_bytes);
     buffers_.push_back(std::move(buffer));
     return BufferHandle{static_cast<u32>(buffers_.size() - 1)};
 }
 
+void D3D12Device::UpdateVertexBuffer(BufferHandle buffer, const void* data, u64 size_bytes) {
+    if (!buffer.IsValid() || buffer.index >= buffers_.size()) {
+        AETHER_LOG_ERROR("D3D12", "UpdateVertexBuffer received an invalid buffer handle (%u)", buffer.index);
+        return;
+    }
+    if (!data || size_bytes == 0 || size_bytes > buffers_[buffer.index]->Size()) {
+        AETHER_LOG_ERROR("D3D12", "UpdateVertexBuffer received a null source or invalid size (%llu bytes)",
+                         static_cast<unsigned long long>(size_bytes));
+        return;
+    }
+    buffers_[buffer.index]->Update(data, size_bytes);
+}
+
 SampledTextureHandle D3D12Device::CreateTexture(u32 width, u32 height, const u8* rgba8_pixels) {
+    if (width == 0 || height == 0 || !rgba8_pixels ||
+        static_cast<u64>(width) > std::numeric_limits<u64>::max() / 4 / height) {
+        AETHER_LOG_ERROR("D3D12", "CreateTexture requires non-zero dimensions and non-null RGBA8 pixel data");
+        throw std::invalid_argument("CreateTexture requires non-zero dimensions and non-null RGBA8 pixel data");
+    }
+    if (sampled_textures_.size() >= kMaxUserBindlessTextures) {
+        AETHER_LOG_ERROR("D3D12", "CreateTexture exhausted the bindless texture table (capacity=%u real textures)",
+                         kMaxUserBindlessTextures);
+        return {};
+    }
+
     gfx::CommandList setup_cmd(device_);
     setup_cmd.Reset();
     auto texture =
@@ -232,6 +273,7 @@ SampledTextureHandle D3D12Device::CreateTexture(u32 width, u32 height, const u8*
     setup_cmd.Close();
     ID3D12CommandList* setup_lists[] = {setup_cmd.Get()};
     device_.WaitForFence(device_.Submit(setup_lists, 1));
+    texture->ReleaseUploadStaging();
 
     u32 index = texture->BindlessIndex();
     // Kept alive for bindless_texture_heap_'s lifetime — the descriptor at
@@ -267,20 +309,24 @@ void D3D12SwapChain::CreateDepthBuffer(u32 width, u32 height) {
     clear_value.Format = DXGI_FORMAT_D32_FLOAT;
     clear_value.DepthStencil.Depth = 1.0f;
 
-    depth_resource_.Reset();
-    AETHER_D3D_CHECK(device_.Native().Handle()->CreateCommittedResource(
-        &default_heap, D3D12_HEAP_FLAG_NONE, &depth_desc, D3D12_RESOURCE_STATE_DEPTH_WRITE, &clear_value,
-        IID_PPV_ARGS(&depth_resource_)));
-
     if (!depth_dsv_heap_) {
         depth_dsv_heap_ = std::make_unique<DescriptorHeap>(device_.Native(), D3D12_DESCRIPTOR_HEAP_TYPE_DSV,
-                                                             /*capacity=*/1, /*shader_visible=*/false);
-        depth_dsv_heap_->Allocate();
+                                                             swap_chain_.BufferCount(), /*shader_visible=*/false);
+        for (u32 i = 0; i < swap_chain_.BufferCount(); ++i) depth_dsv_heap_->Allocate();
     }
+
+    depth_resources_.clear();
+    depth_resources_.resize(swap_chain_.BufferCount());
     D3D12_DEPTH_STENCIL_VIEW_DESC dsv_desc{};
     dsv_desc.Format = DXGI_FORMAT_D32_FLOAT;
     dsv_desc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
-    device_.Native().Handle()->CreateDepthStencilView(depth_resource_.Get(), &dsv_desc, depth_dsv_heap_->CPUHandle(0));
+    for (u32 i = 0; i < swap_chain_.BufferCount(); ++i) {
+        AETHER_D3D_CHECK(device_.Native().Handle()->CreateCommittedResource(
+            &default_heap, D3D12_HEAP_FLAG_NONE, &depth_desc, D3D12_RESOURCE_STATE_DEPTH_WRITE, &clear_value,
+            IID_PPV_ARGS(&depth_resources_[i])));
+        device_.Native().Handle()->CreateDepthStencilView(depth_resources_[i].Get(), &dsv_desc,
+                                                           depth_dsv_heap_->CPUHandle(i));
+    }
 }
 
 void D3D12SwapChain::Resize(u32 width, u32 height) {
@@ -393,7 +439,7 @@ void D3D12CommandList::BeginRenderPass(ISwapChain& swap_chain, const ClearColor&
     // depth_test) — mirrors the Vulkan backend's default render pass always
     // having a depth attachment. A pipeline with depth_test=false simply
     // never reads or writes it.
-    D3D12_CPU_DESCRIPTOR_HANDLE dsv = d3d_swap.DepthDSV();
+    D3D12_CPU_DESCRIPTOR_HANDLE dsv = d3d_swap.DepthDSV(index);
     cmd_.Get()->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
     cmd_.Get()->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
 

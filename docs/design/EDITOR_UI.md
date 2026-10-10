@@ -327,7 +327,11 @@ Package ▾, Settings on the right.
 ### 6.3 Hierarchy
 
 - Columns: name (with icon), and eye/lock toggles on the right.
-- Search filters in place (keeps parents of matches visible and expanded).
+- Label the tree with the active scene name and entity count. Search entity
+  names in place with Ctrl+F (keeps matching parents visible and expanded,
+  shows the match count, and preserves selection when it still matches;
+  filtering out the selected entity clears Inspector selection rather than
+  silently retargeting edits).
 - Drag rows to reparent (a line indicator shows above, below, or "into").
   Alt-drag duplicates.
 - Right-click: Create Empty Child, Rename, Duplicate, Delete, Create
@@ -353,6 +357,10 @@ Package ▾, Settings on the right.
 Covered in [ROADMAP.md Phase 8](../ROADMAP.md). Additional rules:
 
 - Thumbnail size slider (64–256 px); list view for large folders.
+- Filter current-folder entries by supported asset type and name; search and
+  type filters combine. Label the folder scope, show the visible/matching
+  entry count when nothing is selected, focus search with Ctrl+F, and explain
+  how to clear a no-match result.
 - New assets are created with a name field focused for renaming right
   away.
 - Assets with import errors show a red ⚠ corner badge; hovering shows the
@@ -446,6 +454,7 @@ Every panel that can be empty explains what to do:
 |---|---|---|
 | Hierarchy | "This scene is empty. Drag assets from the Content Browser, or create an entity." | + Create |
 | Inspector | "Select something in the viewport or Hierarchy to see its properties." | — |
+| Content Browser with no project | "Create a project or open one to browse assets, place models, and edit scenes." | Open Project… · Create Project… |
 | Content Browser folder | "This folder is empty. Drag files here to import them." | Import… |
 | Blueprint event graph | "Right-click or press Tab to add your first node. Try Event BeginPlay." | Add BeginPlay |
 | Console | "No messages yet." | — |

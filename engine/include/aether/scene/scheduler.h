@@ -129,6 +129,7 @@ private:
 struct PreviousTransform {
     Vec3 position;
     Quaternion rotation;
+    Vec3 scale{1.0f, 1.0f, 1.0f};
 };
 
 // Copies Transform into PreviousTransform (adding nothing: only entities that
@@ -143,4 +144,5 @@ Transform InterpolateTransform(const PreviousTransform& previous, const Transfor
 
 } // namespace aether
 
-AETHER_REFLECT(aether::PreviousTransform, 1, AETHER_FIELD(position), AETHER_FIELD(rotation))
+AETHER_REFLECT(aether::PreviousTransform, 2,
+    AETHER_FIELD(position), AETHER_FIELD(rotation), AETHER_FIELD(scale))
