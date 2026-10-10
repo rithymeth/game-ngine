@@ -90,7 +90,7 @@ when advisory gates become required.
 | **39.2** | Backend parity harness: same scene on every backend, compared with a tolerance (`tools/functional`); lavapipe covers Vulkan in CI, D3D12 and Metal on the Windows and macOS jobs. | the screenshot test |
 | **39.3** | Advanced PBR terms (clear coat, sheen, anisotropy) in material codegen and shaders. | 39.2 to verify |
 | **39.4** | Subsurface, hair, cloth, decals. | 39.3 |
-| **39.5** | Meshlet cluster builder in the asset pipeline (meshoptimizer): an offline CPU step, testable here. `||` | - |
+| **39.5** | *(done: `aether/cook/meshlet_cook.h` `BuildMeshlets` on meshoptimizer (fetched at configure time, MIT, hidden behind the .cpp): meshlets of at most 64 vertices and 124 triangles by default, each with a bounding sphere and normal cone; deterministic; tests check every triangle is in exactly one meshlet. Not yet written into the cooked mesh or the pak, which is 39.6)*  Meshlet cluster builder in the asset pipeline (meshoptimizer): an offline CPU step, testable here. `||` | - |
 | **39.6** | Virtual-geometry runtime and its fallback for hardware without mesh shaders. *Needs hardware.* | 39.5 |
 | **39.7** | Virtual texturing. *Needs hardware.* | - |
 | **39.8** | GI, shadow and upscaler maturation. *Needs hardware.* | 39.2 |
@@ -127,7 +127,7 @@ when advisory gates become required.
 | **42.1** | Large-world coordinates (a double-precision origin) in `engine/math` and the ECS. A breaking change to `Transform` and serialization: **format version and migration required**. Touches physics, rendering, audio and networking. Highest-risk step. | - |
 | **42.2** | Async cell streaming with budgets (`streaming/`). `||` | - |
 | **42.3** | A generated test world (`tools/`), needed for the flythrough test. `||` | - |
-| **42.4** | LOD and HLOD generation (offline, `tools/cook`). `||` | - |
+| **42.4** | *(started: `GenerateLods` in the same header gives a chain of simplified index buffers with a relative error each, never growing from one level to the next. HLOD merging and writing LODs into the cooked mesh remain)*  LOD and HLOD generation (offline, `tools/cook`). `||` | - |
 | **42.5** | Stream audio, navmesh and gameplay data with the cells. | 42.2, 40.1 |
 | **42.6** | World-partition authoring: data layers, level instances at scale (`editor/src/world`). | 43.1 |
 | **42.7** | Automated flythrough with a hitch budget. Memory and CPU hitches run here; render hitches need hardware. | 42.1-42.3, 38.1 |
@@ -161,8 +161,8 @@ when advisory gates become required.
 
 | Step | Work | Needs |
 |---|---|---|
-| **45.1** | Input abstraction and remapping UI (`engine/input`). `||` | - |
-| **45.2** | Lifecycle, permissions and memory-pressure events in `platforms/` (the interface and a mock backend are testable here). `||` | - |
+| **45.1** | *(already done before this plan was written: actions, mapping contexts and saved rebinds; only a remapping UI is missing)*  Input abstraction and remapping UI (`engine/input`). `||` | - |
+| **45.2** | *(started: `aether/platform/lifecycle.h` has `PlatformLifecycle` (suspend, resume and memory-pressure events, permission requests asked once) and a `MockLifecycleBackend`; wiring a real backend through a platform plugin remains)*  Lifecycle, permissions and memory-pressure events in `platforms/` (the interface and a mock backend are testable here). `||` | - |
 | **45.3** | Android build: CMake toolchain, Gradle, signing. *CI-only* (NDK). | 45.2 |
 | **45.4** | iOS build. *CI-only* (macOS runners). | 45.2 |
 | **45.5** | Touch and haptics. | 45.1 |

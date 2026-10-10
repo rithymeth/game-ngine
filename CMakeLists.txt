@@ -144,6 +144,26 @@ else()
     target_compile_options(aether_bcenc PRIVATE -w)
 endif()
 
+# Phase 39 step 5 / Phase 42 step 4: meshlets and LODs for the cooker - Arseny Kapoulkine's meshoptimizer,
+# MIT. Only the library sources are built (its own CMakeLists has demos and gltfpack), and only the cooker
+# links it.
+FetchContent_Declare(
+    meshoptimizer
+    GIT_REPOSITORY https://github.com/zeux/meshoptimizer.git
+    GIT_TAG v0.22
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR do-not-build
+)
+FetchContent_MakeAvailable(meshoptimizer)
+file(GLOB _meshopt_sources ${meshoptimizer_SOURCE_DIR}/src/*.cpp)
+add_library(aether_meshopt STATIC ${_meshopt_sources})
+target_include_directories(aether_meshopt SYSTEM PUBLIC ${meshoptimizer_SOURCE_DIR}/src)
+if(MSVC)
+    target_compile_options(aether_meshopt PRIVATE /w)
+else()
+    target_compile_options(aether_meshopt PRIVATE -w)
+endif()
+
 set(_aether_shared_libs ${BUILD_SHARED_LIBS})
 set(BUILD_SHARED_LIBS OFF)
 FetchContent_MakeAvailable(lz4 zstd)

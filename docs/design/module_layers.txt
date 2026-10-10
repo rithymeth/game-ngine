@@ -1,6 +1,7 @@
 # Module layers (Phase 37 step 2). A target may link only to targets in a strictly lower layer.
 # Regenerate with tools/check_module_graph.py --update after an intentional change to the graph.
 aether_bcenc 0
+aether_meshopt 0
 aether_engine 1
 aether_animation 2
 aether_audio 2

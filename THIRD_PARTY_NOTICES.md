@@ -11,6 +11,7 @@ assign a license to Aether Engine or AETHER-01 source or original content.
 | LZ4 library | lz4.txt |
 | Zstandard | zstd.txt |
 | bc7enc | bc7enc.txt |
+| meshoptimizer | meshoptimizer.txt |
 | Jolt Physics | Jolt.txt |
 | Dear ImGui | Dear-ImGui.txt |
 | Vulkan Headers | Vulkan-Headers.md, Apache-2.0.txt, MIT.txt |
