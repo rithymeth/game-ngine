@@ -11,7 +11,7 @@
 using namespace aether;
 using namespace aether::platform;
 
-AETHER_TEST(Lifecycle_EventsReachSubscribersInOrderAndTrackSuspension) {
+AETHER_TEST(PlatformLifecycle_EventsReachSubscribersInOrderAndTrackSuspension) {
     PlatformLifecycle lifecycle;
     MockLifecycleBackend mock(lifecycle);
     std::vector<std::string> log;
@@ -26,7 +26,7 @@ AETHER_TEST(Lifecycle_EventsReachSubscribersInOrderAndTrackSuspension) {
     AETHER_CHECK((log == std::vector<std::string>{"a0", "b0", "a1", "b1"}));
 }
 
-AETHER_TEST(Lifecycle_MemoryPressureCarriesALevelAndHandlersCanUnsubscribe) {
+AETHER_TEST(PlatformLifecycle_MemoryPressureCarriesALevelAndHandlersCanUnsubscribe) {
     PlatformLifecycle lifecycle;
     MockLifecycleBackend mock(lifecycle);
     int critical = 0, moderate = 0, once = 0;
@@ -44,7 +44,7 @@ AETHER_TEST(Lifecycle_MemoryPressureCarriesALevelAndHandlersCanUnsubscribe) {
     AETHER_CHECK(moderate == 1 && critical == 1 && once == 1);
 }
 
-AETHER_TEST(Lifecycle_SubscribingDuringDispatchHearsOnlyTheNextEvent) {
+AETHER_TEST(PlatformLifecycle_SubscribingDuringDispatchHearsOnlyTheNextEvent) {
     PlatformLifecycle lifecycle;
     MockLifecycleBackend mock(lifecycle);
     int late = 0;
@@ -60,7 +60,7 @@ AETHER_TEST(Lifecycle_SubscribingDuringDispatchHearsOnlyTheNextEvent) {
     AETHER_CHECK(late == 1);
 }
 
-AETHER_TEST(Lifecycle_PermissionsAreAskedOnceAndRemembered) {
+AETHER_TEST(PlatformLifecycle_PermissionsAreAskedOnceAndRemembered) {
     PlatformLifecycle lifecycle;
     MockLifecycleBackend mock(lifecycle);
     mock.SetAnswer(Permission::Camera, false);
