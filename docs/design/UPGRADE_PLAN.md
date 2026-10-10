@@ -90,8 +90,8 @@ when advisory gates become required.
 | **39.2** | Backend parity harness: same scene on every backend, compared with a tolerance (`tools/functional`); lavapipe covers Vulkan in CI, D3D12 and Metal on the Windows and macOS jobs. | the screenshot test |
 | **39.3** | Advanced PBR terms (clear coat, sheen, anisotropy) in material codegen and shaders. | 39.2 to verify |
 | **39.4** | Subsurface, hair, cloth, decals. | 39.3 |
-| **39.5** | *(done: `aether/cook/meshlet_cook.h` `BuildMeshlets` on meshoptimizer (fetched at configure time, MIT, hidden behind the .cpp): meshlets of at most 64 vertices and 124 triangles by default, each with a bounding sphere and normal cone; deterministic; tests check every triangle is in exactly one meshlet. Not yet written into the cooked mesh or the pak, which is 39.6)*  Meshlet cluster builder in the asset pipeline (meshoptimizer): an offline CPU step, testable here. `||` | - |
-| **39.6** | Virtual-geometry runtime and its fallback for hardware without mesh shaders. *Needs hardware.* | 39.5 |
+| **39.5** | *(done: `aether/cook/meshlet_cook.h` `BuildMeshlets` on meshoptimizer (fetched at configure time, MIT, hidden behind the .cpp): meshlets of at most 64 vertices and 124 triangles by default, each with a bounding sphere and normal cone; deterministic; tests check every triangle is in exactly one meshlet. Written into the cooked mesh and the pak by 39.6a)*  Meshlet cluster builder in the asset pipeline (meshoptimizer): an offline CPU step, testable here. `||` | - |
+| **39.6** | *(39.6a done: `aether/cook/mesh_cook.h` `CookMesh`/`SaveAmesh`/`LoadAmesh`, an "AMSC" v1 container with each primitive's vertices, LOD chain and per-LOD meshlets and a CRC-32 trailer; the cooker writes `Cooked/<guid>.amesh` for every Mesh sub-asset (`cook_meshes`); skinned primitives keep level 0 only. The runtime below is still open.)* Virtual-geometry runtime and its fallback for hardware without mesh shaders. *Needs hardware.* | 39.5 |
 | **39.7** | Virtual texturing. *Needs hardware.* | - |
 | **39.8** | GI, shadow and upscaler maturation. *Needs hardware.* | 39.2 |
 
