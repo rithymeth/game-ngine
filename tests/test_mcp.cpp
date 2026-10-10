@@ -536,3 +536,86 @@ AETHER_TEST(Mcp_ToolsCanReturnImages) {
     AETHER_CHECK(content[1]["type"] == "image");
     AETHER_CHECK(content[1]["mimeType"] == "image/png");
 }
+
+#include "asset_tools.h"
+#include "aether/project/project.h"
+
+AETHER_TEST(Mcp_AssetToolsImportMoveAndCookAProject) {
+    namespace stdfs = std::filesystem;
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_asset_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+
+    ProjectPaths paths;
+    std::string error;
+    AETHER_CHECK(CreateProject(dir, "McpAssets", &paths, &error));
+
+    // A 2x2 uncompressed 32-bit TGA to import.
+    const stdfs::path tga = dir / "swatch.tga";
+    {
+        std::ofstream out(tga, std::ios::binary);
+        const unsigned char header[18] = {0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 2, 0, 32, 8};
+        out.write(reinterpret_cast<const char*>(header), sizeof(header));
+        const unsigned char pixels[16] = {255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255};
+        out.write(reinterpret_cast<const char*>(pixels), sizeof(pixels));
+    }
+
+    Harness h;
+    RegisterAssetTools(h.server);
+    AETHER_CHECK(h.Call("asset_list").is_error); // no project open yet
+    AETHER_CHECK(h.Call("project_open", {{"project_file", (dir / "nope.aproject").string()}}).is_error);
+
+    Harness::Result opened = h.Call("project_open", {{"project_file", paths.file.string()}});
+    AETHER_CHECK(!opened.is_error);
+    AETHER_CHECK(opened.value["name"] == "McpAssets");
+
+    // Paths cannot leave Content/.
+    AETHER_CHECK(h.Call("content_write", {{"path", "../escape.json"}, {"text", "{}"}}).is_error);
+    AETHER_CHECK(h.Call("content_write", {{"path", "Scenes/x.ameta"}, {"text", "{}"}}).is_error);
+    AETHER_CHECK(h.Call("content_read", {{"path", "../../etc/passwd"}}).is_error);
+
+    const Json scene = {{"$type", "Scene"}, {"$version", 1},
+                        {"entities", Json::array({{{"components", {{"Transform", {{"position", {1, 2, 3}}, {"rotation", {0, 0, 0, 1}}, {"scale", {1, 1, 1}}}}}}}})}};
+    Harness::Result wrote = h.Call("content_write", {{"path", "Scenes/start.ascene"}, {"text", scene.dump()}});
+    AETHER_CHECK(!wrote.is_error);
+    AETHER_CHECK(wrote.value["asset"]["importer"] == "Scene");
+    AETHER_CHECK(h.Call("content_read", {{"path", "Scenes/start.ascene"}}).value["text"] == scene.dump());
+    AETHER_CHECK(!h.Call("project_set", {{"startup_scene", "Scenes/start.ascene"}}).is_error);
+
+    Harness::Result added = h.Call("asset_add_files", {{"sources", {tga.string()}}, {"folder", "Textures"}});
+    AETHER_CHECK(!added.is_error);
+    AETHER_CHECK(added.value["import"]["failed"] == 0);
+    AETHER_CHECK(added.value["assets"][0]["importer"] == "Texture");
+    AETHER_CHECK(h.Call("asset_add_files", {{"sources", {tga.string()}}, {"folder", "Textures"}}).is_error); // exists
+
+    Json info = h.Call("asset_info", {{"asset", "Textures/swatch.tga"}}).value;
+    AETHER_CHECK(info["needs_import"] == false);
+    AETHER_CHECK(h.Call("asset_info", {{"asset", info["guid"]}}).value["path"] == "Textures/swatch.tga");
+    AETHER_CHECK(h.Call("asset_list", {{"types", {"Texture"}}, {"recursive", true}}).value["assets"].size() == 1);
+
+    AETHER_CHECK(!h.Call("asset_set_import_settings", {{"asset", "Textures/swatch.tga"}, {"settings", {{"mips", false}}}}).is_error);
+    AETHER_CHECK(h.Call("asset_info", {{"asset", "Textures/swatch.tga"}}).value["settings"]["mips"] == false);
+
+    AETHER_CHECK(!h.Call("asset_move", {{"from", "Textures/swatch.tga"}, {"to", "Textures/renamed.tga"}}).is_error);
+    Json moved = h.Call("asset_info", {{"asset", "Textures/renamed.tga"}}).value;
+    AETHER_CHECK(moved["guid"] == info["guid"]); // the GUID survives the move
+    AETHER_CHECK(h.Call("asset_info", {{"asset", "Textures/swatch.tga"}}).is_error);
+
+    Harness::Result cooked = h.Call("asset_cook", {{"output_dir", (dir / "Cooked").string()}, {"always_cook", {"Textures/"}}});
+    AETHER_CHECK(!cooked.is_error);
+    AETHER_CHECK(cooked.value["ok"] == true);
+    AETHER_CHECK(cooked.value["assets_cooked"].get<int>() >= 2);
+    AETHER_CHECK(stdfs::exists(cooked.value["pak_file"].get<std::string>()));
+
+    // The cooked archive runs in the hosted game.
+    RegisterGameTools(h.server);
+    Harness::Result loaded = h.Call("game_load", {{"paks", {cooked.value["pak_file"]}}, {"user_dir", (dir / "user").string()}});
+    AETHER_CHECK(!loaded.is_error);
+    AETHER_CHECK(loaded.value["entities"] == 1);
+    h.Call("game_unload");
+
+    AETHER_CHECK(!h.Call("asset_delete", {{"asset", "Textures/renamed.tga"}}).is_error);
+    AETHER_CHECK(h.Call("asset_info", {{"asset", "Textures/renamed.tga"}}).is_error);
+    AETHER_CHECK(h.Call("asset_cook", {{"output_dir", (dir / "Cooked2").string()}, {"configuration", "bogus"}}).is_error);
+    stdfs::remove_all(dir);
+}

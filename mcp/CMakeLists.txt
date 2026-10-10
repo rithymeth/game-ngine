@@ -3,7 +3,7 @@
 # command layer and the gameplay modules whose components it exposes -- not on
 # ImGui or any graphics backend, and never on Aether::AI
 # (docs/design/agent_gameplay_ai_boundary.md).
-add_library(aether_mcp STATIC mcp_server.cpp editor_tools.cpp modules.cpp simulation.cpp game_tools.cpp process.cpp build_tools.cpp screenshot.cpp)
+add_library(aether_mcp STATIC mcp_server.cpp editor_tools.cpp modules.cpp simulation.cpp game_tools.cpp process.cpp build_tools.cpp screenshot.cpp asset_tools.cpp)
 target_include_directories(aether_mcp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(aether_mcp PUBLIC Aether::Engine aether_editor_core nlohmann_json::nlohmann_json)
 # Modules whose components are exposed to agents.
