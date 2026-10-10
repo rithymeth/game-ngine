@@ -24,6 +24,7 @@
 #include "terrain_tools.h"
 #include "animation_tools.h"
 #include "ui_tools.h"
+#include "save_tools.h"
 #include "vfx_tools.h"
 
 #include <cstdio>
@@ -84,6 +85,7 @@ int main(int argc, char** argv) {
     mcp::RegisterScriptTools(server, project);
     mcp::RegisterAnimationTools(server, project);
     mcp::RegisterUiTools(server, project);
+    mcp::RegisterSaveTools(server);
     mcp::RegisterTilemapTools(server, project);
     mcp::RegisterTerrainTools(server);
     mcp::RegisterNavTools(server, session);

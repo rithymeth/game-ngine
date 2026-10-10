@@ -272,6 +272,17 @@ UI layouts (`.aui`) have no importer, so these tools take the layout as `definit
 | `ui_check` | Loads the layout (errors name the widget by path), lays it out at `width` x `height`, and reports duplicate names, bindings that name a missing widget or an unbindable property, and widgets that run past the screen or have no size. Returns the widget tree with rectangles, the bindings and the images used. |
 | `ui_preview` | Renders the layout to a PNG. Text shows as solid blocks (a fixed-width stand-in font) and images as flat grey rectangles, so it shows layout, anchoring, sizing, colour and clipping, not final art. |
 
+### Saves and settings (`save_*`)
+
+A game's saves live in a user folder it picks, so these take the folder as `directory`.
+
+| Tool | What it does |
+| --- | --- |
+| `save_list` | The `.asav` slots in a folder: struct type, schema version, time, size, whether each reads, whether a `.bak` sits beside it, and whether there is a settings file. |
+| `save_inspect` | What a save or settings file claims to be (kind, type, version, slot, time), whether its checksum matches, and the saved data as JSON. `backup` reads the `.bak`, which loading falls back to. |
+| `save_delete` | Deletes a slot and its backup. |
+| `save_settings` | Reads `settings.asettings` (defaults if missing). `set` merges top-level fields, validated as the game does (volumes clamped, window size bounds; each fix a warning) and written atomically with a backup; `reset` writes the defaults. |
+
 ### Running a cooked game (`game_*`)
 
 The editor tools edit the authored scene. The `game_*` tools instead host a full cooked
