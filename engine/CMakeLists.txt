@@ -200,6 +200,23 @@ if(WIN32)
     if(NOT AETHER_DXCOMPILER_DLL)
         message(WARNING "dxcompiler.dll not found; SPIR-V/DXIL shader compilation will fail at runtime")
     endif()
+
+    # DXC may dynamically load dxil.dll when compiling shaders. Keep the
+    # matching runtime beside editor/player executables just like dxcompiler.
+    if(AETHER_DXCOMPILER_DLL)
+        get_filename_component(_aether_dxcompiler_dir "${AETHER_DXCOMPILER_DLL}" DIRECTORY)
+        if(EXISTS "${_aether_dxcompiler_dir}/dxil.dll")
+            set(AETHER_DXIL_DLL "${_aether_dxcompiler_dir}/dxil.dll" CACHE FILEPATH "" FORCE)
+        endif()
+    endif()
+    if(NOT AETHER_DXIL_DLL)
+        find_file(AETHER_DXIL_DLL
+            NAMES dxil.dll
+            PATHS "$ENV{WindowsSdkDir}bin/$ENV{WindowsSDKVersion}x64"
+                  "$ENV{WindowsSdkDir}bin/$ENV{WindowsSDKVersion}"
+            PATH_SUFFIXES x64
+        )
+    endif()
 elseif(APPLE)
     target_compile_definitions(aether_engine PUBLIC AETHER_PLATFORM_MACOS)
 else()
