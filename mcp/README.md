@@ -118,6 +118,26 @@ Two limits of the engine, not of these tools: `.avfx` is not an asset-database t
 it is never cooked), and the player does not run `ParticleSystem` components, so there are no `game_*` tools
 for particles; an effect plays only in the editor's VFX tools or in anything that hosts a `vfx::ParticleWorld`.
 
+### Terrain workbench (`terrain_*`)
+
+The terrain module is a standalone library: the engine has no terrain component, no terrain asset type and no
+terrain in the player. So these tools keep **one terrain in the server's memory** (a workbench), separate from any
+scene or game, to author and analyse a heightmap terrain with the module's own brushes and math.
+
+| Tool | What it does |
+| --- | --- |
+| `terrain_create` | A new terrain: width x depth samples, cell size, flat or procedural (the engine's fixed-pattern fractal noise, heights in -scale..scale), vertical scale, chunk size, 1-4 paint layers (default Grass, Rock, Dirt) |
+| `terrain_info` / `terrain_sample` | Size, height range, chunk layout, layers; height, normal, slope and layer weights at world points |
+| `terrain_sculpt` | raise / lower / smooth / flatten / paint along a list of strokes with the editor's brush (radius, strength, falloff, amount); one undoable step per call |
+| `terrain_undo` / `terrain_redo` | Up to 20 steps |
+| `terrain_preview` | A top-down PNG returned as an image (and optionally saved): shaded, layers, slope or height; foliage shows as dark dots |
+| `terrain_chunks` | The render plan for a camera: the chunk grid, each chunk's LOD by distance, vertex and triangle counts per LOD, total triangles |
+| `terrain_scatter_foliage` / `terrain_clear_foliage` | Scatter foliage by spacing, density, height and slope limits and optional noise; counts, bounds, per-type breakdown |
+| `terrain_export` / `terrain_import` | Save and load as `<path>.r16` (16-bit heights), `<path>.splat` (RGBA8 weights) and `<path>.terrain.json` |
+
+The export files are this server's own format for keeping the workbench; nothing else in the engine reads them.
+Foliage and undo history are not saved. World heights are the stored heights times `vertical_scale`.
+
 Enum values are lowercase words (`"instant"`, `"count"`); `kit_schema` lists them. Write definitions,
 `kit_check` them, `asset_cook`, then `game_load` to play them.
 
@@ -188,6 +208,7 @@ Bad input is reported as a tool error (`isError`), never a crash, and a failed
 - `kit_tools.h/.cpp`, `project_host.h` -- the gameplay-kit data tools, and the open-project state they share with the asset tools.
 - `audio_tools.h/.cpp` -- cue validation and preview (audio components and live audio are in `editor_tools.cpp` and `game_tools.cpp`).
 - `vfx_tools.h/.cpp` -- particle effect schema, validation, files, check and headless simulation (the `ParticleSystem` component tools are in `editor_tools.cpp`).
+- `terrain_tools.h/.cpp` -- the terrain workbench.
 - `main.cpp` -- the `aether_mcp_server` executable.
 - Tests: `tests/test_mcp.cpp`.
 

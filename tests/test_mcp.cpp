@@ -542,6 +542,7 @@ AETHER_TEST(Mcp_ToolsCanReturnImages) {
 #include "asset_tools.h"
 #include "audio_tools.h"
 #include "kit_tools.h"
+#include "terrain_tools.h"
 #include "vfx_tools.h"
 #include "aether/project/project.h"
 
@@ -1186,5 +1187,134 @@ AETHER_TEST(Mcp_VfxToolsEditValidateSimulateAndCheck) {
     // A hand-edited, broken effect shows up as a problem.
     AETHER_CHECK(!h.Call("content_write", {{"path", "VFX/Bad.avfx"}, {"text", "{ not json"}}).is_error);
     AETHER_CHECK(h.Call("vfx_check").value["ok"] == false);
+    stdfs::remove_all(dir);
+}
+
+AETHER_TEST(Mcp_TerrainToolsSculptPaintPlanAndRoundTrip) {
+    namespace stdfs = std::filesystem;
+    Harness h;
+    RegisterTerrainTools(h.server);
+    auto height_at = [&](double x, double z) { return h.Call("terrain_sample", {{"points", {{x, z}}}}).value["points"][0]["height"].get<double>(); };
+    auto weight_at = [&](double x, double z, int layer) { return h.Call("terrain_sample", {{"points", {{x, z}}}}).value["points"][0]["layers"][layer]["weight"].get<double>(); };
+
+    AETHER_CHECK(h.Call("terrain_info").is_error); // nothing yet
+    AETHER_CHECK(h.Call("terrain_sculpt", {{"tool", "raise"}, {"strokes", {{1, 1}}}}).is_error);
+    AETHER_CHECK(h.Call("terrain_create", {{"width", 5}}).is_error);
+    AETHER_CHECK(h.Call("terrain_create", {{"kind", "volcanic"}}).is_error);
+    AETHER_CHECK(h.Call("terrain_create", {{"chunk_size", 20}}).is_error);
+    AETHER_CHECK(h.Call("terrain_create", {{"layers", Json::array({{{"name", "a"}}, {{"name", "b"}}, {{"name", "c"}}, {{"name", "d"}}, {{"name", "e"}}})}}).is_error);
+
+    // A flat 65 x 65 terrain, 2 m cells: 128 m across.
+    Json info = h.Call("terrain_create", {{"width", 65}, {"cell_size", 2}}).value;
+    AETHER_CHECK(info["world_size"]["width"] == 128);
+    AETHER_CHECK(info["heights"]["max"] == 0);
+    AETHER_CHECK(info["layers"].size() == 3);
+    AETHER_CHECK(info["chunks"]["total"] == 4);
+
+    // Sculpt: one undoable step per call.
+    Harness::Result raised = h.Call("terrain_sculpt", {{"tool", "raise"}, {"strokes", {{64, 64}}}, {"radius", 20}, {"strength", 1}, {"amount", 10}});
+    AETHER_CHECK(!raised.is_error);
+    AETHER_CHECK(raised.value["changed"] == true);
+    AETHER_CHECK(height_at(64, 64) > 5.0);
+    AETHER_CHECK(std::fabs(height_at(5, 5)) < 1e-6); // outside the brush
+    AETHER_CHECK(raised.value["terrain"]["undo_depth"] == 1);
+    const double peak = height_at(64, 64);
+    AETHER_CHECK(!h.Call("terrain_undo").is_error);
+    AETHER_CHECK(std::fabs(height_at(64, 64)) < 1e-6);
+    AETHER_CHECK(!h.Call("terrain_redo").is_error);
+    AETHER_CHECK(std::fabs(height_at(64, 64) - peak) < 1e-6);
+    AETHER_CHECK(h.Call("terrain_redo").is_error);
+
+    // Lowering, smoothing and flattening move the peak the way their names say.
+    const double shoulder = height_at(76, 64); // where the bump curves, so averaging neighbours changes it (its flat top it would not)
+    h.Call("terrain_sculpt", {{"tool", "smooth"}, {"strokes", {{64, 64}, {64, 64}, {64, 64}}}, {"radius", 20}, {"strength", 1}});
+    AETHER_CHECK(std::fabs(height_at(76, 64) - shoulder) > 1e-4);
+    const double smoothed = height_at(64, 64);
+    h.Call("terrain_sculpt", {{"tool", "lower"}, {"strokes", {{64, 64}}}, {"radius", 20}, {"strength", 1}, {"amount", 10}});
+    AETHER_CHECK(height_at(64, 64) < smoothed);
+    h.Call("terrain_sculpt", {{"tool", "flatten"}, {"strokes", {{64, 64}, {70, 64}}}, {"radius", 30}, {"strength", 1}});
+
+    // Bad sculpt requests change nothing.
+    const double before_bad = height_at(64, 64);
+    AETHER_CHECK(h.Call("terrain_sculpt", {{"tool", "dig"}, {"strokes", {{1, 1}}}}).is_error);
+    AETHER_CHECK(h.Call("terrain_sculpt", {{"tool", "raise"}, {"strokes", Json::array()}}).is_error);
+    AETHER_CHECK(h.Call("terrain_sculpt", {{"tool", "raise"}, {"strokes", {{1}}}}).is_error);
+    AETHER_CHECK(h.Call("terrain_sculpt", {{"tool", "paint"}, {"strokes", {{1, 1}}}}).is_error);
+    AETHER_CHECK(h.Call("terrain_sculpt", {{"tool", "paint"}, {"strokes", {{1, 1}}}, {"layer", "Lava"}}).is_error);
+    AETHER_CHECK(h.Call("terrain_sculpt", {{"tool", "paint"}, {"strokes", {{1, 1}}}, {"layer", 9}}).is_error);
+    AETHER_CHECK(height_at(64, 64) == before_bad);
+
+    // Paint a layer by name.
+    AETHER_CHECK(weight_at(30, 30, 0) > 0.99); // all Grass to begin with
+    AETHER_CHECK(!h.Call("terrain_sculpt", {{"tool", "paint"}, {"strokes", {{30, 30}, {30, 30}}}, {"radius", 15}, {"strength", 1}, {"layer", "Rock"}}).is_error);
+    AETHER_CHECK(weight_at(30, 30, 1) > 0.5);
+    AETHER_CHECK(weight_at(30, 30, 0) < 0.5);
+    AETHER_CHECK(weight_at(120, 120, 0) > 0.99); // far away: still Grass
+
+    // Chunks and LOD for a camera: near sees more detail than far.
+    Json near_camera = h.Call("terrain_chunks", {{"camera", {64, 10, 64}}}).value;
+    Json far_camera = h.Call("terrain_chunks", {{"camera", {5000, 5000, 5000}}}).value;
+    AETHER_CHECK(near_camera["chunks"] == 4);
+    AETHER_CHECK(near_camera["total_triangles"].get<int>() > far_camera["total_triangles"].get<int>());
+    AETHER_CHECK(near_camera["per_lod"].size() == 4);
+    AETHER_CHECK(near_camera["per_lod"][0]["triangles"].get<int>() > near_camera["per_lod"][3]["triangles"].get<int>());
+    AETHER_CHECK(h.Call("terrain_chunks", {{"camera", {1, 2}}}).is_error);
+
+    // Foliage: the seed repeats, filters filter, clear clears.
+    Json scatter = h.Call("terrain_scatter_foliage", {{"density", 1}, {"spacing", 4}, {"seed", 3}}).value;
+    AETHER_CHECK(scatter["instances"].get<int>() > 100);
+    AETHER_CHECK(h.Call("terrain_scatter_foliage", {{"density", 1}, {"spacing", 4}, {"seed", 3}}).value["instances"] == scatter["instances"]);
+    AETHER_CHECK(h.Call("terrain_scatter_foliage", {{"density", 1}, {"spacing", 4}, {"min_height", 1000}}).value["instances"] == 0);
+    AETHER_CHECK(h.Call("terrain_scatter_foliage", {{"density", 0.1}, {"spacing", 4}, {"seed", 3}}).value["instances"].get<int>() < scatter["instances"].get<int>());
+    AETHER_CHECK(h.Call("terrain_scatter_foliage", {{"types", {{{"scale_min", 3}, {"scale_max", 1}}}}}).is_error);
+    AETHER_CHECK(h.Call("terrain_scatter_foliage", {{"spacing", 0}}).is_error);
+    h.Call("terrain_scatter_foliage", {{"density", 1}, {"spacing", 4}});
+    AETHER_CHECK(h.Call("terrain_clear_foliage").value["removed"].get<int>() > 0);
+
+    // The picture: an image content item, and a PNG file if asked.
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_terrain_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+    Json rpc = h.Rpc("tools/call", {{"name", "terrain_preview"}, {"arguments", {{"mode", "layers"}, {"size", 128}, {"path", (dir / "look.png").string()}}}});
+    AETHER_CHECK(rpc["result"]["isError"] == false);
+    AETHER_CHECK(rpc["result"]["content"].size() == 2);
+    AETHER_CHECK(rpc["result"]["content"][1]["type"] == "image");
+    AETHER_CHECK(rpc["result"]["content"][1]["mimeType"] == "image/png");
+    {
+        std::ifstream png(dir / "look.png", std::ios::binary);
+        char magic[4] = {};
+        png.read(magic, 4);
+        AETHER_CHECK(magic[1] == 'P' && magic[2] == 'N' && magic[3] == 'G');
+    }
+    for (const char* mode : {"shaded", "slope", "height"}) AETHER_CHECK(!h.Call("terrain_preview", {{"mode", mode}, {"size", 64}}).is_error);
+    AETHER_CHECK(h.Call("terrain_preview", {{"mode", "xray"}}).is_error);
+    AETHER_CHECK(h.Call("terrain_preview", {{"size", 8}}).is_error);
+
+    // Export, wreck the terrain, import it back.
+    const double saved_peak = height_at(64, 64);
+    const double saved_rock = weight_at(30, 30, 1);
+    AETHER_CHECK(!h.Call("terrain_export", {{"path", (dir / "hills").string()}}).is_error);
+    AETHER_CHECK(stdfs::exists(dir / "hills.r16") && stdfs::exists(dir / "hills.splat") && stdfs::exists(dir / "hills.terrain.json"));
+    h.Call("terrain_create", {{"width", 17}});
+    AETHER_CHECK(h.Call("terrain_info").value["samples"]["width"] == 17);
+    Json imported = h.Call("terrain_import", {{"path", (dir / "hills").string()}}).value;
+    AETHER_CHECK(imported["samples"]["width"] == 65);
+    AETHER_CHECK(imported["world_size"]["width"] == 128);
+    AETHER_CHECK(imported["undo_depth"] == 0);
+    AETHER_CHECK(std::fabs(height_at(64, 64) - saved_peak) < 0.01 + std::fabs(saved_peak) * 1e-3); // 16-bit storage
+    AETHER_CHECK(std::fabs(weight_at(30, 30, 1) - saved_rock) < 0.02);
+    AETHER_CHECK(h.Call("terrain_import", {{"path", (dir / "nothing").string()}}).is_error);
+    {
+        std::ofstream bad(dir / "bad.terrain.json");
+        bad << "{\"format\": \"something-else\"}";
+    }
+    AETHER_CHECK(h.Call("terrain_import", {{"path", (dir / "bad").string()}}).is_error);
+    AETHER_CHECK(h.Call("terrain_info").value["samples"]["width"] == 65); // a failed import leaves the terrain alone
+
+    // The engine's procedural generator: hills with a height range, the same every time.
+    Json hills = h.Call("terrain_create", {{"width", 65}, {"kind", "procedural"}, {"scale", 8}}).value;
+    AETHER_CHECK(hills["heights"]["max"].get<double>() > hills["heights"]["min"].get<double>() + 1.0);
+    Json again = h.Call("terrain_create", {{"width", 65}, {"kind", "procedural"}, {"scale", 8}}).value;
+    AETHER_CHECK(again["heights"] == hills["heights"]);
     stdfs::remove_all(dir);
 }
