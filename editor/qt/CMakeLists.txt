@@ -12,7 +12,11 @@ target_compile_features(aether_editor_qt PRIVATE cxx_std_17)
 target_compile_definitions(aether_editor_qt PRIVATE
     AETHER_QT_TEST_MODEL_PATH="${CMAKE_SOURCE_DIR}/assets/models/test_textured_cube.gltf"
 )
-set_target_properties(aether_editor_qt PROPERTIES AUTOMOC ON)
+set_target_properties(aether_editor_qt PROPERTIES
+    AUTOMOC ON
+    OUTPUT_NAME aether_editor
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/editor"
+)
 
 if(AETHER_BUILD_SCRIPTING)
     target_sources(aether_editor_qt PRIVATE script_component_editor.cpp)

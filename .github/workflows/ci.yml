@@ -258,7 +258,7 @@ jobs:
           AETHER01_INPUT_TRACE: ${{ github.workspace }}/build/aether01-input-trace.json
         run: .\build\tests\Release\aether_tests.exe
       - name: Qt editor self-test
-        run: .\build\editor\qt\Release\aether_editor_qt.exe --self-test
+        run: .\build\editor\Release\aether_editor.exe --self-test
       - name: Functional tests
         run: .\build\tools\functional\Release\aether_functional.exe --quiet --junit functional-results.xml
       - name: Registered regression tests
@@ -307,7 +307,14 @@ jobs:
         run: |
           $out = "dist/AetherEditor"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
-          Copy-Item build/editor/Release/aether_editor.exe $out/
+          # The Qt editor owns the default executable name. Keep the former
+          # ImGui host available under an explicit legacy name.
+          $qtEditor = Join-Path $out "AetherEditor.exe"
+          Copy-Item build/editor/Release/aether_editor.exe $qtEditor
+          $qtDeploy = Get-Command windeployqt.exe -ErrorAction Stop
+          & $qtDeploy.Source --release --no-translations $qtEditor
+          if ($LASTEXITCODE -ne 0) { throw "Deploying the Qt editor runtime failed" }
+          Copy-Item build/editor/Release/aether_editor_legacy.exe (Join-Path $out "AetherEditorLegacy.exe")
           # The build tools and the player: cook a project, pack it, play it.
           Copy-Item build/tools/cook/Release/aether_cook.exe $out/
           Copy-Item build/tools/pak/Release/aether_pak.exe $out/
@@ -317,6 +324,10 @@ jobs:
           & build/tools/docgen/Release/aether_docgen.exe --out $out/api
           if ($LASTEXITCODE -ne 0) { throw "aether_docgen failed" }
           Get-ChildItem build/editor/Release -Filter *.dll | Copy-Item -Destination $out/
+          Set-Content -Path (Join-Path $out "EDITOR_README.txt") -Value @(
+            "Launch AetherEditor.exe for the current Qt-based Windows editor UI."
+            "Use AetherEditorLegacy.exe for tools that have not migrated yet."
+          ) -Encoding utf8
           Copy-Item -Recurse assets $out/assets
           Copy-Item README.md $out/
           Copy-Item THIRD_PARTY_NOTICES.md $out/
