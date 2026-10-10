@@ -6,6 +6,8 @@
 #include "aether/blueprint/graph.h"
 #include "aether/blueprint/validate.h"
 #include "aether/sequencer/sequence.h"
+#include "aether/sprite2d/tilemap.h"
+#include "tilemap_tools.h"
 #include "sequence_tools.h"
 #include "blueprint_tools.h"
 #include "aether/gameplay/gameplay_ability.h"
@@ -112,6 +114,32 @@ const std::vector<KitType>& Types() {
                          return {};
                      }});
 #endif
+        t.push_back({"tileset", ".atileset", "Tileset",
+                     "A tileset: a texture cut into equal tiles (numbered in reading order from 0 at the top left), with a collision flag per tile and autotile rules. "
+                     "tileset_create makes one from a texture and tileset_set edits it.",
+                     [] { return sprite2d::TilesetToJson(sprite2d::Tileset{}); },
+                     [](const std::string& text, Json& canonical) -> std::string {
+                         const Json parsed = Json::parse(text, nullptr, false);
+                         if (parsed.is_discarded()) return "tileset.parse: not valid JSON";
+                         sprite2d::Tileset tileset;
+                         std::string error;
+                         if (!sprite2d::TilesetFromJson(parsed, tileset, &error)) return "tileset.parse: " + error;
+                         canonical = sprite2d::TilesetToJson(tileset);
+                         return {};
+                     }});
+        t.push_back({"tilemap", ".atilemap", "Tilemap",
+                     "A tilemap: layers of cells over a tileset, row 0 the bottom row. A cell is a tile number, -1 for empty, or an autotile reference. tilemap_create, "
+                     "tilemap_paint (set, fill, line, replace and ASCII stamping), tilemap_ascii, tilemap_info and tilemap_preview make, edit and show one.",
+                     [] { return sprite2d::TilemapToJson(sprite2d::TilemapData{}); },
+                     [](const std::string& text, Json& canonical) -> std::string {
+                         const Json parsed = Json::parse(text, nullptr, false);
+                         if (parsed.is_discarded()) return "tilemap.parse: not valid JSON";
+                         sprite2d::TilemapData map;
+                         std::string error;
+                         if (!sprite2d::TilemapFromJson(parsed, map, &error)) return "tilemap.parse: " + error;
+                         canonical = sprite2d::TilemapToJson(map);
+                         return {};
+                     }});
         t.push_back({"sequence", ".asequence", "Sequence",
                      "A level sequence (a cutscene): tracks bound to entities that animate transforms and component fields, fire events, play sounds and animations, spawn "
                      "prefabs, cut between cameras, fade the screen and play other sequences. seq_validate, seq_evaluate and seq_events check and read it.",
@@ -228,6 +256,8 @@ Json SampleOf(const std::string& type) {
     }
     if (type == "blueprint") return BlueprintSampleJson();
     if (type == "sequence") return SequenceSampleJson();
+    if (type == "tileset") return TilesetSampleJson();
+    if (type == "tilemap") return TilemapSampleJson();
     if (type == "sound_cue") {
         audio::SoundCue c;
         c.name = "footstep";
@@ -317,6 +347,16 @@ std::vector<std::string> NotesOf(const std::string& type) {
     if (type == "quest") {
         return {"objectives[].kind: count | tag | flag; ids unique; required >= 1",
                 "prerequisites name quests; reward_effects name effects; reward_items[].item names an item (kit_check verifies them)"};
+    }
+    if (type == "tileset") {
+        return {"tile_size and texture_size are in pixels; tiles are numbered 0.. in reading order from the top left (columns = (texture width - 2 x margin + spacing) / (tile width + spacing))",
+                "solid lists the tile numbers that block; autotiles[].tiles has 16 entries, one per mask of same-kind neighbours (north 1, east 2, south 4, west 8; 0 an island, 15 surrounded; -1 draws nothing)",
+                "tileset_create reads the texture size from the file; tileset_set changes solid tiles and autotile rules"};
+    }
+    if (type == "tilemap") {
+        return {"size is width x height cells; layers[].cells are width x height values, row-major from the BOTTOM row (y grows up, x grows right)",
+                "a cell is a tile number (0 or more), -1 for empty, or -2 - N for autotile N (tilemap_paint takes \"autotile:N\" instead)",
+                "tilemap_ascii shows a layer as text and tilemap_paint stamps text back; tilemap_info checks the tiles against the tileset"};
     }
     if (type == "sequence") {
         return {"tracks[].type: transform (position channels x, y, z and rotation keys) | property (a component field: component, field and its channels) | event (keys fire as the playhead crosses them) | "
@@ -465,7 +505,7 @@ void RegisterKitTools(McpServer& server, std::shared_ptr<detail::AssetHost> host
     server.AddTool({"kit_schema",
                     "The shape of one definition type: a sample with every field set, the allowed words and cross-reference rules (notes), "
                     "the blank definition, and (if a project is open) an existing example from it.",
-                    Schema({{"type", {{"type", "string"}, {"description", "effect, ability, item, quest, sound_cue, blueprint, sequence, input_action or input_mapping"}}}}, {"type"}),
+                    Schema({{"type", {{"type", "string"}, {"description", "effect, ability, item, quest, sound_cue, blueprint, sequence, tileset, tilemap, input_action or input_mapping"}}}}, {"type"}),
                     [host](const Json& args) -> Json {
                         const KitType& t = RequireType(RequireString(args, "type"));
                         Json out = {{"type", t.name}, {"extension", t.extension}, {"description", t.description}, {"blank", t.blank()}, {"notes", NotesOf(t.name)}};

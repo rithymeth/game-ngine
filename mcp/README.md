@@ -215,6 +215,24 @@ schema with a working sample, validate, put, get, list; a sequence with a diagno
 Evaluation is a pure function of time, as in the player. The `game_*sequence*` tools above play and control
 sequences in the hosted game.
 
+### 2D levels: tilesets and tilemaps (`tileset_*`, `tilemap_*`)
+
+A tileset (`.atileset`) cuts a texture into equal tiles, numbered in reading order from 0 at the top left, with a
+collision flag per tile and autotile rules. A tilemap (`.atilemap`) is layers of cells over a tileset, row 0 the
+bottom row. Both are real asset types, so they also go through the `kit_*` tools (`type: "tileset"` and
+`"tilemap"`).
+
+| Tool | What it does |
+| --- | --- |
+| `tileset_create` / `tileset_info` / `tileset_set` | Make a tileset from a texture in the project (its size is read from the file) with a tile size, margin and spacing; read its grid, solid tiles and autotiles; change the solid tiles (replace, add, remove) and the autotile rules, with every tile number checked against the grid |
+| `tilemap_create` | A map over a tileset: width x height cells with named layers, all empty |
+| `tilemap_ascii` | A layer as text, top row first: `.` for empty, a symbol per distinct tile in order of first use, `~ = + *` for autotiles; returns the legend; with `solid`, a second grid of the cells that block |
+| `tilemap_paint` | Edit with a list of operations that run on a copy and are saved only if all succeed: `set`, `fill`, `line`, `replace`, `ascii` (stamp text rows with a legend at a position), `clear`, `resize` (keeps what fits), `add_layer`; returns the cells changed and warnings for tiles the tileset lacks |
+| `tilemap_info` | Size, layers, how often each tile and autotile is used, and problems (a tile the tileset does not have, a missing autotile, a layer of the wrong size, a tileset not in the project) |
+| `tilemap_preview` | A PNG returned as an image, drawn from the tileset texture's real tile pictures with the autotiles resolved to the tile each cell shows; optionally the solid cells tinted red and a layer filter |
+
+A cell is a tile number, `-1` for empty, or `"autotile:N"`.
+
 Enum values are lowercase words (`"instant"`, `"count"`); `kit_schema` lists them. Write definitions,
 `kit_check` them, `asset_cook`, then `game_load` to play them.
 
@@ -291,6 +309,7 @@ Bad input is reported as a tool error (`isError`), never a crash, and a failed
 - `blueprint_tools.h/.cpp` -- the Blueprint node, validate, compile and run tools.
 - `loc_tools.h/.cpp` -- the localization tools.
 - `sequence_tools.h/.cpp` -- the level sequence tools (the `SequenceComponent` tools are in `editor_tools.cpp`, the live ones in `game_tools.cpp`).
+- `tilemap_tools.h/.cpp` -- the tileset and tilemap tools.
 - `main.cpp` -- the `aether_mcp_server` executable.
 - Tests: `tests/test_mcp.cpp`.
 

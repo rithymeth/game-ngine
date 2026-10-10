@@ -543,11 +543,13 @@ AETHER_TEST(Mcp_ToolsCanReturnImages) {
 #include "audio_tools.h"
 #include "blueprint_tools.h"
 #include "kit_tools.h"
+#include "tilemap_tools.h"
 #include "sequence_tools.h"
 #include "loc_tools.h"
 #include "nav_tools.h"
 #include "terrain_tools.h"
 #include "vfx_tools.h"
+#include "aether/assets/image.h"
 #include "aether/project/project.h"
 
 AETHER_TEST(Mcp_AssetToolsImportMoveAndCookAProject) {
@@ -1993,4 +1995,158 @@ AETHER_TEST(Mcp_SequenceToolsValidateEvaluateAndPlay) {
     AETHER_CHECK(editor.Call("sequence_component_list").value.size() == 1);
     AETHER_CHECK(!editor.Call("sequence_component_remove", {{"entity", cutscene}}).is_error);
     AETHER_CHECK(editor.Call("sequence_component_remove", {{"entity", cutscene}}).is_error);
+}
+
+AETHER_TEST(Mcp_TilemapToolsBuildPaintReadAndPreviewALevel) {
+    namespace stdfs = std::filesystem;
+    Harness h;
+    auto project = MakeAssetHost();
+    RegisterAssetTools(h.server, project);
+    RegisterKitTools(h.server, project);
+    RegisterTilemapTools(h.server, project);
+
+    AETHER_CHECK(h.Call("tilemap_info", {{"asset", "Levels/x.atilemap"}}).is_error); // needs a project
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_tile_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+    ProjectPaths paths;
+    std::string error;
+    AETHER_CHECK(CreateProject(dir, "McpTiles", &paths, &error));
+    {
+        // A 64 x 64 sheet of 4 x 4 tiles of 16 px: tile n is a flat colour (n * 16 + 8, 255 - n * 16, 100).
+        std::ofstream out(dir / "tiles.tga", std::ios::binary);
+        const unsigned char header[18] = {0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64, 0, 64, 0, 32, 0x28}; // top-left origin
+        out.write(reinterpret_cast<const char*>(header), sizeof(header));
+        for (int y = 0; y < 64; ++y) {
+            for (int x = 0; x < 64; ++x) {
+                const int n = (y / 16) * 4 + (x / 16);
+                const unsigned char bgra[4] = {100, static_cast<unsigned char>(255 - n * 16), static_cast<unsigned char>(n * 16 + 8), 255};
+                out.write(reinterpret_cast<const char*>(bgra), 4);
+            }
+        }
+    }
+    AETHER_CHECK(!h.Call("project_open", {{"project_file", paths.file.string()}}).is_error);
+    AETHER_CHECK(!h.Call("asset_add_files", {{"sources", {(dir / "tiles.tga").string()}}, {"folder", "Textures"}}).is_error);
+    AETHER_CHECK(!h.Call("content_write", {{"path", "Notes/readme.json"}, {"text", "{}"}}).is_error);
+
+    // --- the tileset
+    AETHER_CHECK(h.Call("tileset_create", {{"path", "Tilesets/Ground"}, {"texture", "Textures/tiles.tga"}, {"tile_width", 100}, {"tile_height", 100}}).is_error); // does not fit
+    AETHER_CHECK(h.Call("tileset_create", {{"path", "Tilesets/Ground"}, {"texture", "Textures/nothing.tga"}, {"tile_width", 16}, {"tile_height", 16}}).is_error);
+    AETHER_CHECK(h.Call("tileset_create", {{"path", "Tilesets/Ground"}, {"texture", "Textures/tiles.tga"}, {"tile_width", 0}, {"tile_height", 16}}).is_error);
+    AETHER_CHECK(h.Call("tileset_create", {{"path", "Tilesets/Ground"}, {"texture", "Textures/tiles.tga"}, {"tile_width", 16}, {"tile_height", 16}, {"solid_tiles", {99}}}).is_error);
+    Json made = h.Call("tileset_create", {{"path", "Tilesets/Ground"}, {"texture", "Textures/tiles.tga"}, {"tile_width", 16}, {"tile_height", 16}, {"solid_tiles", {1, 2}}}).value;
+    AETHER_CHECK(made["path"] == "Tilesets/Ground.atileset");
+    AETHER_CHECK(made["columns"] == 4 && made["rows"] == 4 && made["tile_count"] == 16);
+    AETHER_CHECK(made["texture_size"]["width"] == 64);
+    AETHER_CHECK(h.Call("tileset_create", {{"path", "Tilesets/Ground"}, {"texture", "Textures/tiles.tga"}, {"tile_width", 16}, {"tile_height", 16}}).is_error); // exists
+    Json info = h.Call("tileset_info", {{"asset", "Tilesets/Ground.atileset"}}).value;
+    AETHER_CHECK(info["solid_tiles"] == Json::array({1, 2}));
+    AETHER_CHECK(info["texture"] == "Textures/tiles.tga");
+    AETHER_CHECK(h.Call("tileset_info", {{"asset", "Textures/tiles.tga"}}).is_error); // not a tileset
+
+    AETHER_CHECK(!h.Call("tileset_set", {{"asset", "Tilesets/Ground.atileset"}, {"remove_solid", {2}}, {"add_solid", {3}}}).is_error);
+    AETHER_CHECK(h.Call("tileset_info", {{"asset", "Tilesets/Ground.atileset"}}).value["solid_tiles"] == Json::array({1, 3}));
+    AETHER_CHECK(h.Call("tileset_set", {{"asset", "Tilesets/Ground.atileset"}, {"add_solid", {16}}}).is_error);
+    AETHER_CHECK(h.Call("tileset_set", {{"asset", "Tilesets/Ground.atileset"}, {"autotiles", {{{"name", "Ground"}, {"tiles", {1, 2}}}}}}).is_error); // needs 16 tiles
+    const Json sixteen = Json::array({9, 9, 10, 11, 9, 9, 12, 8, 9, 9, 10, 11, 9, 9, 12, 8});
+    AETHER_CHECK(!h.Call("tileset_set", {{"asset", "Tilesets/Ground.atileset"}, {"autotiles", {{{"name", "Ground"}, {"tiles", sixteen}}}}}).is_error);
+    AETHER_CHECK(h.Call("tileset_info", {{"asset", "Tilesets/Ground.atileset"}}).value["autotiles"][0]["tiles"] == sixteen);
+
+    // --- the map, laid out as text
+    AETHER_CHECK(h.Call("tilemap_create", {{"path", "Levels/Cave"}, {"tileset", "Tilesets/Ground.atileset"}, {"width", 0}, {"height", 4}}).is_error);
+    AETHER_CHECK(h.Call("tilemap_create", {{"path", "Levels/Cave"}, {"tileset", "Textures/tiles.tga"}, {"width", 8}, {"height", 4}}).is_error);
+    Json created = h.Call("tilemap_create", {{"path", "Levels/Cave"}, {"tileset", "Tilesets/Ground.atileset"}, {"width", 8}, {"height", 4}, {"layers", {"Ground", "Props"}}}).value;
+    AETHER_CHECK(created["path"] == "Levels/Cave.atilemap");
+    AETHER_CHECK(h.Call("tilemap_info", {{"asset", "Levels/Cave.atilemap"}}).value["ok"] == true);
+
+    const Json legend = {{"a", 5}, {"#", 1}, {"@", "autotile:0"}};
+    Json painted = h.Call("tilemap_paint", {{"asset", "Levels/Cave.atilemap"}, {"layer", "Ground"},
+                                            {"ops", {{{"ascii", {"........", "..aa....", "#......#", "@@@@@@@@"}}, {"legend", legend}}}}}).value;
+    AETHER_CHECK(painted["cells_changed"] == 12);
+    AETHER_CHECK(painted["warnings"].empty());
+    Json rows = h.Call("tilemap_ascii", {{"asset", "Levels/Cave.atilemap"}, {"layer", "Ground"}, {"legend", legend}}).value;
+    AETHER_CHECK(rows["rows"] == Json::array({"........", "..aa....", "#......#", "@@@@@@@@"}));
+    Json automatic = h.Call("tilemap_ascii", {{"asset", "Levels/Cave.atilemap"}, {"solid", true}}).value; // symbols chosen in order of first use
+    AETHER_CHECK(automatic["rows"] == Json::array({"........", "..00....", "1......1", "~~~~~~~~"}));
+    AETHER_CHECK(automatic["legend"]["0"] == 5 && automatic["legend"]["1"] == 1 && automatic["legend"]["~"] == "autotile:0");
+    AETHER_CHECK(automatic["solid_rows"] == Json::array({"........", "........", "#......#", "........"})); // tile 1 blocks, 5 and the autotile do not
+    Json usage = h.Call("tilemap_info", {{"asset", "Levels/Cave.atilemap"}}).value;
+    AETHER_CHECK(usage["layers"][0]["usage"]["5"] == 2 && usage["layers"][0]["usage"]["1"] == 2 && usage["layers"][0]["usage"]["autotile:0"] == 8);
+    AETHER_CHECK(usage["layers"][0]["cells_used"] == 12);
+    AETHER_CHECK(usage["layers"][1]["cells_used"] == 0);
+    AETHER_CHECK(usage["tileset"] == "Tilesets/Ground.atileset" && usage["tileset_tiles"] == 16);
+
+    // A failed operation saves nothing.
+    AETHER_CHECK(h.Call("tilemap_paint", {{"asset", "Levels/Cave.atilemap"}, {"ops", {{{"fill", {0, 0, 7, 3}}, {"cell", 7}}, {{"set", {50, 50}}, {"cell", 1}}}}}).is_error);
+    AETHER_CHECK(h.Call("tilemap_ascii", {{"asset", "Levels/Cave.atilemap"}, {"legend", legend}}).value["rows"] == rows["rows"]);
+    AETHER_CHECK(h.Call("tilemap_paint", {{"asset", "Levels/Cave.atilemap"}, {"ops", {{{"ascii", {"zz"}}}}}}).is_error); // a symbol not in the legend
+    AETHER_CHECK(h.Call("tilemap_paint", {{"asset", "Levels/Cave.atilemap"}, {"ops", {{{"ascii", {"##"}}, {"legend", {{"#", 1}}}, {"at", {7, 0}}}}}}).is_error); // runs off the map
+    AETHER_CHECK(h.Call("tilemap_paint", {{"asset", "Levels/Cave.atilemap"}, {"ops", {{{"dance", true}}}}}).is_error);
+    AETHER_CHECK(h.Call("tilemap_paint", {{"asset", "Levels/Cave.atilemap"}, {"layer", "Nothing"}, {"ops", {{{"clear", true}}}}}).is_error);
+    AETHER_CHECK(h.Call("tilemap_paint", {{"asset", "Levels/Cave.atilemap"}, {"ops", {{{"set", {1, 1}}, {"cell", "lava"}}}}}).is_error);
+    AETHER_CHECK(h.Call("tilemap_paint", {{"asset", "Levels/Cave.atilemap"}, {"ops", Json::array()}}).is_error);
+
+    // The other operations: fill, line, replace, clear, layers, resize.
+    AETHER_CHECK(!h.Call("tilemap_paint", {{"asset", "Levels/Cave.atilemap"}, {"layer", "Props"}, {"ops", {{{"fill", {1, 1, 2, 2}}, {"cell", 6}}}}}).is_error);
+    AETHER_CHECK(h.Call("tilemap_info", {{"asset", "Levels/Cave.atilemap"}}).value["layers"][1]["cells_used"] == 4);
+    Json line = h.Call("tilemap_paint", {{"asset", "Levels/Cave.atilemap"}, {"layer", "Props"}, {"ops", {{{"line", {0, 0, 7, 3}}, {"cell", 7}}}}}).value;
+    AETHER_CHECK(line["cells_changed"].get<int>() >= 8); // a diagonal across the map
+    AETHER_CHECK(!h.Call("tilemap_paint", {{"asset", "Levels/Cave.atilemap"}, {"layer", "Props"}, {"ops", {{{"replace", {{"from", 7}, {"to", -1}}}}}}}).is_error);
+    Json after_replace = h.Call("tilemap_info", {{"asset", "Levels/Cave.atilemap"}}).value;
+    AETHER_CHECK(!after_replace["layers"][1]["usage"].contains("7"));
+    AETHER_CHECK(!h.Call("tilemap_paint", {{"asset", "Levels/Cave.atilemap"}, {"layer", "Props"}, {"ops", {{{"clear", true}}}}}).is_error);
+    AETHER_CHECK(h.Call("tilemap_info", {{"asset", "Levels/Cave.atilemap"}}).value["layers"][1]["cells_used"] == 0);
+    Json resized = h.Call("tilemap_paint", {{"asset", "Levels/Cave.atilemap"}, {"ops", {{{"resize", {10, 5}}}, {{"add_layer", "Extra"}}, {{"set", {9, 4}}, {"cell", 3}}}}}).value;
+    AETHER_CHECK(resized["resized"] == true && resized["width"] == 10 && resized["height"] == 5 && resized["layers_added"] == 1);
+    Json grown = h.Call("tilemap_ascii", {{"asset", "Levels/Cave.atilemap"}, {"legend", legend}}).value;
+    AETHER_CHECK(grown["rows"][4] == "@@@@@@@@.."); // the cells that fit were kept, and the new top row is empty
+    AETHER_CHECK(grown["rows"][0] == ".........0"); // only the tile 3 set at (9, 4); the legend has no symbol for it, so one is assigned
+    AETHER_CHECK(h.Call("tilemap_paint", {{"asset", "Levels/Cave.atilemap"}, {"ops", {{{"resize", {0, 5}}}}}}).is_error);
+
+    // A tile the tileset does not have is reported.
+    Json bad = h.Call("tilemap_paint", {{"asset", "Levels/Cave.atilemap"}, {"ops", {{{"set", {0, 0}}, {"cell", 99}}, {{"set", {1, 0}}, {"cell", "autotile:3"}}}}}).value;
+    AETHER_CHECK(bad["warnings"].size() == 2);
+    Json broken = h.Call("tilemap_info", {{"asset", "Levels/Cave.atilemap"}}).value;
+    AETHER_CHECK(broken["ok"] == false && broken["problems"].size() == 2);
+    const Json fix_ops = Json::array({Json{{"replace", Json{{"from", 99}, {"to", 5}}}}, Json{{"replace", Json{{"from", "autotile:3"}, {"to", -1}}}}});
+    AETHER_CHECK(!h.Call("tilemap_paint", {{"asset", "Levels/Cave.atilemap"}, {"ops", fix_ops}}).is_error);
+    AETHER_CHECK(h.Call("tilemap_info", {{"asset", "Levels/Cave.atilemap"}}).value["ok"] == true);
+
+    // --- the picture, drawn from the real tile pictures
+    AETHER_CHECK(!h.Call("tilemap_paint", {{"asset", "Levels/Cave.atilemap"}, {"ops", {{{"clear", true}}, {{"ascii", {"..aa..", "#....#", "@@@@@@"}}, {"legend", legend}}}}}).is_error);
+    AETHER_CHECK(!h.Call("tilemap_paint", {{"asset", "Levels/Cave.atilemap"}, {"ops", {{{"resize", {6, 3}}}}}}).is_error);
+    const stdfs::path picture = dir / "level.png";
+    Json rpc = h.Rpc("tools/call", {{"name", "tilemap_preview"}, {"arguments", {{"asset", "Levels/Cave.atilemap"}, {"scale", 2}, {"path", picture.string()}, {"show_solid", true}}}});
+    AETHER_CHECK(rpc["result"]["isError"] == false);
+    AETHER_CHECK(rpc["result"]["content"].size() == 2 && rpc["result"]["content"][1]["mimeType"] == "image/png");
+    Json meta = Json::parse(rpc["result"]["content"][0]["text"].get<std::string>());
+    AETHER_CHECK(meta["width"] == 6 * 16 * 2 && meta["height"] == 3 * 16 * 2 && meta["textured"] == true);
+    assets::ImageData img;
+    AETHER_CHECK(assets::DecodeImageFile(picture.string(), img));
+    AETHER_CHECK(img.width == 192 && img.height == 96);
+    auto pixel = [&](int x, int y) { return &img.pixels[(static_cast<std::size_t>(y) * img.width + static_cast<std::size_t>(x)) * 4]; };
+    // Cell (2, 2) is tile 5 (the top row of the 3-row map): its flat colour (88, 175, 100).
+    const unsigned char* tile5 = pixel((2 * 16 + 8) * 2, (3 - 1 - 2) * 16 * 2 + 16);
+    AETHER_CHECK(std::abs(tile5[0] - 88) <= 2 && std::abs(tile5[1] - 175) <= 2 && std::abs(tile5[2] - 100) <= 2);
+    // The autotile's cell on the bottom row resolves to a tile of the rules (9 here), not to the autotile itself.
+    const unsigned char* ground = pixel((2 * 16 + 8) * 2, (3 - 1 - 0) * 16 * 2 + 16);
+    AETHER_CHECK(std::abs(ground[0] - (9 * 16 + 8)) <= 2 || std::abs(ground[0] - (10 * 16 + 8)) <= 2 || std::abs(ground[0] - (11 * 16 + 8)) <= 2 || std::abs(ground[0] - (12 * 16 + 8)) <= 2 || std::abs(ground[0] - (8 * 16 + 8)) <= 2);
+    // Tile 1 (a solid cell, with show_solid) is tinted red: more red than tile 1's own red channel would be.
+    const unsigned char* solid = pixel((0 * 16 + 8) * 2, (3 - 1 - 1) * 16 * 2 + 16);
+    AETHER_CHECK(solid[0] > 100 && solid[1] < 200);
+    // A layer filter draws only that layer: the Ground cell is background.
+    Json only_props = Json::parse(h.Rpc("tools/call", {{"name", "tilemap_preview"}, {"arguments", {{"asset", "Levels/Cave.atilemap"}, {"layers", {"Props"}}, {"scale", 1}}}})["result"]["content"][0]["text"].get<std::string>());
+    AETHER_CHECK(only_props["layers_drawn"] == Json::array({"Props"}));
+    AETHER_CHECK(h.Call("tilemap_preview", {{"asset", "Levels/Cave.atilemap"}, {"scale", 99}}).is_error);
+
+    // --- kit_* tools know both types
+    for (const char* type : {"tileset", "tilemap"}) {
+        Json schema = h.Call("kit_schema", {{"type", type}}).value;
+        AETHER_CHECK(schema.contains("sample") && schema.contains("notes"));
+        AETHER_CHECK(h.Call("kit_validate", {{"type", type}, {"definition", schema["sample"]}}).value["ok"] == true);
+    }
+    AETHER_CHECK(h.Call("kit_list", {{"type", "tilemap"}}).value[0]["valid"] == true);
+    AETHER_CHECK(h.Call("kit_list", {{"type", "tileset"}}).value[0]["valid"] == true);
+    AETHER_CHECK(h.Call("kit_validate", {{"type", "tilemap"}, {"definition", {{"$type", "Nonsense"}}}}).value["ok"] == false);
+    stdfs::remove_all(dir);
 }
