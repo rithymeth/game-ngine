@@ -8,7 +8,7 @@
 # on MoltenVK and the editor shell; runs unit, functional and registered regressions.
 #
 # Windows: MSVC builds the engine, D3D12 editor, and Qt editor spike, runs
-# their tests and registered regressions, and packages the production editor (aether_editor.exe, its
+# their tests and registered regressions, and packages the production Qt editor (aether_editor.exe, its
 # DLLs and assets) as a downloadable artifact. Pushing a tag v* - or running
 # the workflow by hand with a release_tag - also publishes the package as a
 # GitHub release.
@@ -307,8 +307,8 @@ jobs:
         run: |
           $out = "dist/AetherEditor"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
-          # The Qt editor owns the default executable name. Keep the former
-          # ImGui host available under an explicit legacy name.
+          # The Qt host is the current Windows editor UI. Keep the established
+          # ImGui host beside it for tools that have not migrated yet.
           $qtEditor = Join-Path $out "AetherEditor.exe"
           Copy-Item build/editor/Release/aether_editor.exe $qtEditor
           $qtDeploy = Get-Command windeployqt.exe -ErrorAction Stop
@@ -429,10 +429,8 @@ jobs:
             build/aether01-input-trace.json
             build/aether01-playthrough-*.log
           if-no-files-found: error
-      - name: Screenshot the packaged editor
-        # Runs the zip's editor for 120 frames on WARP (hosted runners have
-        # no GPU; the editor falls back to the software device) and saves
-        # the last frame, so every run shows what the editor looks like.
+      - name: Screenshot the packaged legacy editor fallback
+        # The legacy host currently provides frame-limited capture hooks.
         continue-on-error: true
         timeout-minutes: 10
         shell: pwsh
@@ -442,7 +440,7 @@ jobs:
         run: |
           Expand-Archive dist/AetherEditor-windows-x64.zip -DestinationPath run -Force
           Push-Location run
-          ./aether_editor.exe
+          ./AetherEditorLegacy.exe
           Pop-Location
           if (-not (Test-Path editor-screenshot.png)) { throw "the editor wrote no screenshot" }
       - name: Upload the screenshot
