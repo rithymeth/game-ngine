@@ -13,6 +13,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <iostream>
 
 #ifdef _WIN32
@@ -31,6 +32,8 @@ int main(int argc, char** argv) {
 
     mcp::RegisterBuiltinComponents();
     mcp::EditorSession session;
+    std::error_code cwd_error;
+    session.scene_root = std::filesystem::current_path(cwd_error); // scene tools stay in the working folder unless --scene-root says otherwise
 
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--scene") == 0 && i + 1 < argc) {
@@ -40,8 +43,10 @@ int main(int argc, char** argv) {
                 return 1;
             }
             editor::EnsureAllGuids(session.world, session.guids);
+        } else if (std::strcmp(argv[i], "--scene-root") == 0 && i + 1 < argc) {
+            session.scene_root = argv[++i];
         } else {
-            std::fprintf(stderr, "usage: aether_mcp_server [--scene scene.json]\n");
+            std::fprintf(stderr, "usage: aether_mcp_server [--scene scene.json] [--scene-root folder]\n");
             return 1;
         }
     }
