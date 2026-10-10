@@ -24,8 +24,7 @@ namespace aether::assets {
 // general asset database (no reference counting, no unloading, no async
 // streaming — see the README's asset pipeline section for what's still
 // open). Every loaded Texture is kept alive for the AssetManager's own
-// lifetime, matching gfx::Texture's existing "demo-scale" persistent-upload
-// contract.
+// lifetime; upload staging can be released once its submitted fence completes.
 class AssetManager {
 public:
     AssetManager(gfx::Device& device, gfx::DescriptorHeap& bindless_heap);
@@ -38,9 +37,16 @@ public:
     // `path`. On a cache miss, decodes the file and records the GPU upload
     // onto `upload_cmd` — the caller submits it and waits on the fence
     // before sampling the texture, same contract as gfx::Texture's own
-    // constructor. Returns DescriptorHeap::kInvalidIndex if the file
-    // couldn't be loaded (logged via aether::assets::DecodeImageFile).
+    // constructor. Call ReleaseUploadStagingAfterFence with that submission's
+    // fence to free upload-only memory. Returns DescriptorHeap::kInvalidIndex
+    // if the file couldn't be loaded (logged via aether::assets::DecodeImageFile).
     u32 LoadTexture(const std::string& path, ID3D12GraphicsCommandList* upload_cmd);
+
+    // Waits for the specified upload fence, then releases staging resources
+    // for every cached texture. The texture resources and descriptors remain
+    // alive; pass a non-zero fence from this AssetManager's device, returned
+    // by a submission that includes these uploads.
+    void ReleaseUploadStagingAfterFence(u64 fence_value);
 
     // Number of distinct textures actually loaded (cache hits don't count
     // again) — mainly for tests to verify the cache is doing its job.

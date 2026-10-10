@@ -4,6 +4,7 @@
 add_library(aether_editor_core STATIC
     command_stack.cpp
     commands.cpp
+    recent_projects.cpp
     scene_document.cpp
     play_session.cpp
     ../sequencer/sequence_document.cpp

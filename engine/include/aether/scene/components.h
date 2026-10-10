@@ -18,12 +18,12 @@ struct EntityName {
     std::string value;
 };
 
-// An entity's position and orientation, relative to its parent if it has a
-// Parent (see hierarchy.h), otherwise in world space. Plain data. (Lived in
-// the physics module until Phase 7; it isn't physics-specific.)
+// An entity's position, orientation and scale, relative to its parent if it
+// has a Parent (see hierarchy.h), otherwise in world space. Plain data.
 struct Transform {
     Vec3 position;
     Quaternion rotation;
+    Vec3 scale{1.0f, 1.0f, 1.0f};
 };
 
 // A model-carrying entity's reference to a glTF asset — not the loaded
@@ -50,9 +50,10 @@ inline void SetModelPath(ModelRenderer& renderer, const std::string& path) {
 
 AETHER_REFLECT(aether::EntityName, 1, AETHER_FIELD(value, Field_EditAnywhere, {.category = "Entity"}))
 
-AETHER_REFLECT(aether::Transform, 1,
+AETHER_REFLECT(aether::Transform, 2,
     AETHER_FIELD(position, Field_EditAnywhere, {.units = "m"}),
-    AETHER_FIELD(rotation, Field_EditAnywhere)
+    AETHER_FIELD(rotation, Field_EditAnywhere),
+    AETHER_FIELD(scale, Field_EditAnywhere, {.tooltip = "Local scale; 1 is the model's imported size"})
 )
 
 AETHER_REFLECT(aether::ModelRenderer, 1,

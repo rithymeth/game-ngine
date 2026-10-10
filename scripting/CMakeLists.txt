@@ -20,6 +20,12 @@ target_include_directories(aether_scripting PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/i
 target_compile_features(aether_scripting PUBLIC cxx_std_20)
 # Luau's headers stay private: engine code talks to LuauHost, not to lua.h.
 target_link_libraries(aether_scripting PUBLIC Aether::Engine PRIVATE Luau.VM Luau.Compiler Aether::Save Aether::Loc Aether::Gameplay)
+if(AETHER_BUILD_PHYSICS)
+    target_link_libraries(aether_scripting PRIVATE Aether::Physics)
+    target_compile_definitions(aether_scripting PRIVATE AETHER_SCRIPTING_PHYSICS=1)
+else()
+    target_compile_definitions(aether_scripting PRIVATE AETHER_SCRIPTING_PHYSICS=0)
+endif()
 
 if(TARGET Aether::Inventory)
     target_link_libraries(aether_scripting PRIVATE Aether::Inventory)

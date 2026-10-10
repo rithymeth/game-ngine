@@ -274,6 +274,7 @@ void RecordPreviousTransforms(World& world) {
     world.ForEach<Transform, PreviousTransform>([](const Transform& t, PreviousTransform& previous) {
         previous.position = t.position;
         previous.rotation = t.rotation;
+        previous.scale = t.scale;
     });
 }
 
@@ -300,6 +301,7 @@ Transform InterpolateTransform(const PreviousTransform& previous, const Transfor
     Transform result;
     result.position = previous.position + (current.position - previous.position) * alpha;
     result.rotation = NlerpRotation(previous.rotation, current.rotation, alpha);
+    result.scale = previous.scale + (current.scale - previous.scale) * alpha;
     return result;
 }
 

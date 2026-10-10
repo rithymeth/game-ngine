@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -326,6 +327,7 @@ VulkanDevice::~VulkanDevice() {
             vkDestroySemaphore(device_, compute_timeline_semaphore_, nullptr);
         }
         for (const BufferRecord& buffer : buffers_) {
+            if (buffer.mapped) vkUnmapMemory(device_, buffer.memory);
             vkDestroyBuffer(device_, buffer.buffer, nullptr);
             vkFreeMemory(device_, buffer.memory, nullptr);
         }
@@ -409,9 +411,15 @@ u64 VulkanDevice::SubmitCompute(ICommandList& cmd) {
 }
 
 void VulkanDevice::WaitForComputeFence(u64 fence_value) {
-    if (fence_value == 0 || IsComputeFenceComplete(fence_value)) {
+    if (fence_value == 0) {
         return;
     }
+    if (fence_value >= next_compute_fence_value_) {
+        AETHER_LOG_ERROR("Vulkan", "Cannot wait for unsubmitted compute fence %llu",
+                         static_cast<unsigned long long>(fence_value));
+        return;
+    }
+    if (IsComputeFenceComplete(fence_value)) return;
     VkSemaphoreWaitInfo wait_info{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
     wait_info.semaphoreCount = 1;
     wait_info.pSemaphores = &compute_timeline_semaphore_;
@@ -420,16 +428,32 @@ void VulkanDevice::WaitForComputeFence(u64 fence_value) {
 }
 
 bool VulkanDevice::IsComputeFenceComplete(u64 fence_value) const {
+    if (fence_value == 0) return true;
+    if (fence_value >= next_compute_fence_value_) return false;
     u64 current_value = 0;
     vkGetSemaphoreCounterValue(device_, compute_timeline_semaphore_, &current_value);
     return current_value >= fence_value;
 }
 
 void VulkanDevice::ComputeQueueWaitOnGraphics(u64 graphics_fence_value) {
+    pending_compute_wait_ = {};
+    if (graphics_fence_value == 0) return;
+    if (graphics_fence_value >= next_fence_value_) {
+        AETHER_LOG_ERROR("Vulkan", "Cannot queue compute wait for unsubmitted graphics fence %llu",
+                         static_cast<unsigned long long>(graphics_fence_value));
+        return;
+    }
     pending_compute_wait_ = {true, timeline_semaphore_, graphics_fence_value};
 }
 
 void VulkanDevice::GraphicsQueueWaitOnCompute(u64 compute_fence_value) {
+    pending_graphics_wait_ = {};
+    if (compute_fence_value == 0) return;
+    if (compute_fence_value >= next_compute_fence_value_) {
+        AETHER_LOG_ERROR("Vulkan", "Cannot queue graphics wait for unsubmitted compute fence %llu",
+                         static_cast<unsigned long long>(compute_fence_value));
+        return;
+    }
     pending_graphics_wait_ = {true, compute_timeline_semaphore_, compute_fence_value};
 }
 
@@ -457,13 +481,134 @@ u32 FindMemoryType(VkPhysicalDevice physical_device, u32 type_bits, VkMemoryProp
     throw std::runtime_error("no suitable Vulkan memory type");
 }
 
+class ScopedBufferRecord final {
+public:
+    explicit ScopedBufferRecord(VkDevice device) : device_(device) {}
+    ~ScopedBufferRecord() { Reset(); }
+    ScopedBufferRecord(const ScopedBufferRecord&) = delete;
+    ScopedBufferRecord& operator=(const ScopedBufferRecord&) = delete;
+
+    BufferRecord& Get() { return record_; }
+
+    BufferRecord Release() {
+        BufferRecord released = record_;
+        record_ = {};
+        return released;
+    }
+
+    void Reset() {
+        if (record_.mapped && record_.memory != VK_NULL_HANDLE) vkUnmapMemory(device_, record_.memory);
+        if (record_.buffer != VK_NULL_HANDLE) vkDestroyBuffer(device_, record_.buffer, nullptr);
+        if (record_.memory != VK_NULL_HANDLE) vkFreeMemory(device_, record_.memory, nullptr);
+        record_ = {};
+    }
+
+private:
+    VkDevice device_ = VK_NULL_HANDLE;
+    BufferRecord record_{};
+};
+
+class ScopedSampledTextureRecord final {
+public:
+    explicit ScopedSampledTextureRecord(VkDevice device) : device_(device) {}
+    ~ScopedSampledTextureRecord() { Reset(); }
+    ScopedSampledTextureRecord(const ScopedSampledTextureRecord&) = delete;
+    ScopedSampledTextureRecord& operator=(const ScopedSampledTextureRecord&) = delete;
+
+    SampledTextureRecord& Get() { return record_; }
+
+    SampledTextureRecord Release() {
+        SampledTextureRecord released = record_;
+        record_ = {};
+        return released;
+    }
+
+    void Reset() {
+        if (record_.view != VK_NULL_HANDLE) vkDestroyImageView(device_, record_.view, nullptr);
+        if (record_.image != VK_NULL_HANDLE) vkDestroyImage(device_, record_.image, nullptr);
+        if (record_.memory != VK_NULL_HANDLE) vkFreeMemory(device_, record_.memory, nullptr);
+        record_ = {};
+    }
+
+private:
+    VkDevice device_ = VK_NULL_HANDLE;
+    SampledTextureRecord record_{};
+};
+
+class ScopedCommandPool final {
+public:
+    explicit ScopedCommandPool(VkDevice device) : device_(device) {}
+    ~ScopedCommandPool() {
+        if (pool_ != VK_NULL_HANDLE) vkDestroyCommandPool(device_, pool_, nullptr);
+    }
+    ScopedCommandPool(const ScopedCommandPool&) = delete;
+    ScopedCommandPool& operator=(const ScopedCommandPool&) = delete;
+
+    VkCommandPool& Get() { return pool_; }
+
+    VkCommandPool Release() {
+        VkCommandPool released = pool_;
+        pool_ = VK_NULL_HANDLE;
+        return released;
+    }
+
+private:
+    VkDevice device_ = VK_NULL_HANDLE;
+    VkCommandPool pool_ = VK_NULL_HANDLE;
+};
+
+class ScopedShaderModule final {
+public:
+    ScopedShaderModule(VkDevice device, const gfx::ShaderBytecode& bytecode)
+        : device_(device), module_(CreateShaderModuleFromBytecode(device, bytecode)) {}
+    ~ScopedShaderModule() {
+        if (module_ != VK_NULL_HANDLE) vkDestroyShaderModule(device_, module_, nullptr);
+    }
+    ScopedShaderModule(const ScopedShaderModule&) = delete;
+    ScopedShaderModule& operator=(const ScopedShaderModule&) = delete;
+
+    VkShaderModule Get() const { return module_; }
+
+private:
+    VkDevice device_ = VK_NULL_HANDLE;
+    VkShaderModule module_ = VK_NULL_HANDLE;
+};
+
+class ScopedPipelineRecord final {
+public:
+    explicit ScopedPipelineRecord(VkDevice device) : device_(device) {}
+    ~ScopedPipelineRecord() { Reset(); }
+    ScopedPipelineRecord(const ScopedPipelineRecord&) = delete;
+    ScopedPipelineRecord& operator=(const ScopedPipelineRecord&) = delete;
+
+    PipelineRecord& Get() { return record_; }
+
+    void Release() { record_ = {}; }
+
+    void Reset() {
+        if (record_.pipeline != VK_NULL_HANDLE) vkDestroyPipeline(device_, record_.pipeline, nullptr);
+        if (record_.layout != VK_NULL_HANDLE) vkDestroyPipelineLayout(device_, record_.layout, nullptr);
+        record_ = {};
+    }
+
+private:
+    VkDevice device_ = VK_NULL_HANDLE;
+    PipelineRecord record_{};
+};
+
 // Host-visible + host-coherent — see BufferRecord's comment for why this is
 // the right trade-off for vertex/index data at this RHI's demo scale (and
 // also reused for CreateTexture's staging buffer, which is genuinely
 // short-lived regardless).
 BufferRecord CreateHostVisibleBuffer(VkDevice device, VkPhysicalDevice physical_device, VkDeviceSize size,
-                                      VkBufferUsageFlags usage, const void* data) {
-    BufferRecord result;
+                                      VkBufferUsageFlags usage, const void* data, bool keep_mapped = false) {
+    if (!data || size == 0) {
+        AETHER_LOG_ERROR("Vulkan", "Host-visible buffers require non-null initial data and a non-zero size");
+        throw std::invalid_argument("Host-visible buffers require non-null initial data and a non-zero size");
+    }
+    ScopedBufferRecord owned_result(device);
+    BufferRecord& result = owned_result.Get();
+    result.size_bytes = size;
     VkBufferCreateInfo buffer_info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
     buffer_info.size = size;
     buffer_info.usage = usage;
@@ -481,9 +626,13 @@ BufferRecord CreateHostVisibleBuffer(VkDevice device, VkPhysicalDevice physical_
 
     void* mapped = nullptr;
     AETHER_VK_CHECK(vkMapMemory(device, result.memory, 0, size, 0, &mapped));
+    result.mapped = mapped;
     std::memcpy(mapped, data, static_cast<usize>(size));
-    vkUnmapMemory(device, result.memory);
-    return result;
+    if (!keep_mapped) {
+        vkUnmapMemory(device, result.memory);
+        result.mapped = nullptr;
+    }
+    return owned_result.Release();
 }
 } // namespace
 
@@ -492,10 +641,12 @@ BufferHandle VulkanDevice::CreateBufferInternal(const void* data, u64 size_bytes
     // made it — simpler than tracking per-buffer usage flags, and harmless:
     // an unused usage bit on a host-visible buffer costs nothing at this
     // demo's scale.
-    BufferRecord record = CreateHostVisibleBuffer(device_, physical_device_, size_bytes,
-                                                   VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                                                   data);
-    buffers_.push_back(record);
+    ScopedBufferRecord owned_record(device_);
+    owned_record.Get() = CreateHostVisibleBuffer(device_, physical_device_, size_bytes,
+                                                  VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                                                  data, true);
+    buffers_.push_back(owned_record.Get());
+    owned_record.Release();
     return BufferHandle{static_cast<u32>(buffers_.size() - 1)};
 }
 
@@ -507,12 +658,36 @@ BufferHandle VulkanDevice::CreateIndexBuffer(const void* data, u64 size_bytes, I
     return CreateBufferInternal(data, size_bytes);
 }
 
-SampledTextureRecord VulkanDevice::UploadTextureRecord(u32 width, u32 height, const u8* rgba8_pixels) {
-    VkDeviceSize image_size = static_cast<VkDeviceSize>(width) * height * 4;
-    BufferRecord staging =
-        CreateHostVisibleBuffer(device_, physical_device_, image_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, rgba8_pixels);
+void VulkanDevice::UpdateVertexBuffer(BufferHandle buffer, const void* data, u64 size_bytes) {
+    if (!buffer.IsValid() || buffer.index >= buffers_.size()) {
+        AETHER_LOG_ERROR("Vulkan", "UpdateVertexBuffer received an invalid buffer handle (%u)", buffer.index);
+        return;
+    }
+    BufferRecord& record = buffers_[buffer.index];
+    if (!data || !record.mapped || size_bytes == 0 || size_bytes > record.size_bytes) {
+        AETHER_LOG_ERROR("Vulkan", "UpdateVertexBuffer received a null source, unmapped buffer, or invalid size "
+                                    "(%llu bytes; capacity %llu)",
+                         static_cast<unsigned long long>(size_bytes),
+                         static_cast<unsigned long long>(record.size_bytes));
+        return;
+    }
+    std::memcpy(record.mapped, data, static_cast<usize>(size_bytes));
+}
 
-    SampledTextureRecord record;
+SampledTextureRecord VulkanDevice::UploadTextureRecord(u32 width, u32 height, const u8* rgba8_pixels) {
+    if (width == 0 || height == 0 || !rgba8_pixels ||
+        static_cast<VkDeviceSize>(width) > std::numeric_limits<VkDeviceSize>::max() / 4 / height) {
+        AETHER_LOG_ERROR("Vulkan", "CreateTexture requires non-zero dimensions and non-null RGBA8 pixel data");
+        throw std::invalid_argument("CreateTexture requires non-zero dimensions and non-null RGBA8 pixel data");
+    }
+    VkDeviceSize image_size = static_cast<VkDeviceSize>(width) * height * 4;
+    ScopedBufferRecord owned_staging(device_);
+    owned_staging.Get() =
+        CreateHostVisibleBuffer(device_, physical_device_, image_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, rgba8_pixels);
+    const BufferRecord& staging = owned_staging.Get();
+
+    ScopedSampledTextureRecord owned_record(device_);
+    SampledTextureRecord& record = owned_record.Get();
     VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     image_info.imageType = VK_IMAGE_TYPE_2D;
     image_info.format = VK_FORMAT_R8G8B8A8_UNORM;
@@ -569,10 +744,26 @@ SampledTextureRecord VulkanDevice::UploadTextureRecord(u32 width, u32 height, co
                           nullptr, 0, nullptr, 1, &to_shader_read);
 
     cmd->Close();
-    WaitForFence(Submit(*cmd, nullptr));
+    const u64 upload_fence = Submit(*cmd, nullptr);
+    try {
+        WaitForFence(upload_fence);
+    } catch (...) {
+        // If a timeline wait itself fails after submission, don't release the
+        // image or staging memory while queued commands may still reference
+        // them. Device-idle is only a failure-path recovery attempt; normal
+        // uploads continue to wait on their exact fence above.
+        const VkResult idle_result = vkDeviceWaitIdle(device_);
+        if (idle_result != VK_SUCCESS) {
+            AETHER_LOG_ERROR("Vulkan", "Device idle failed after texture upload wait failure (VkResult=%d); "
+                                      "leaving upload resources for device teardown",
+                             static_cast<int>(idle_result));
+            owned_staging.Release();
+            owned_record.Release();
+        }
+        throw;
+    }
 
-    vkDestroyBuffer(device_, staging.buffer, nullptr);
-    vkFreeMemory(device_, staging.memory, nullptr);
+    owned_staging.Reset();
 
     VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     view_info.image = record.image;
@@ -581,13 +772,29 @@ SampledTextureRecord VulkanDevice::UploadTextureRecord(u32 width, u32 height, co
     view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     AETHER_VK_CHECK(vkCreateImageView(device_, &view_info, nullptr, &record.view));
 
-    return record;
+    return owned_record.Release();
 }
 
 SampledTextureHandle VulkanDevice::CreateTexture(u32 width, u32 height, const u8* rgba8_pixels) {
-    SampledTextureRecord record = UploadTextureRecord(width, height, rgba8_pixels);
-    u32 index = static_cast<u32>(sampled_textures_.size());
+    if (width == 0 || height == 0 || !rgba8_pixels ||
+        static_cast<VkDeviceSize>(width) > std::numeric_limits<VkDeviceSize>::max() / 4 / height) {
+        AETHER_LOG_ERROR("Vulkan", "CreateTexture requires non-zero dimensions and non-null RGBA8 pixel data");
+        throw std::invalid_argument("CreateTexture requires non-zero dimensions and non-null RGBA8 pixel data");
+    }
+    if (sampled_textures_.size() >= kMaxUserBindlessTextures) {
+        AETHER_LOG_ERROR("Vulkan", "CreateTexture exhausted the bindless texture table (capacity=%u real textures)",
+                         kMaxUserBindlessTextures);
+        return {};
+    }
+
+    ScopedSampledTextureRecord owned_record(device_);
+    owned_record.Get() = UploadTextureRecord(width, height, rgba8_pixels);
+    const SampledTextureRecord record = owned_record.Get();
+    // Slot zero remains the white fallback, matching the D3D12 descriptor
+    // heap and the RHI's no-texture convention.
+    u32 index = static_cast<u32>(sampled_textures_.size()) + kFirstUserBindlessTextureIndex;
     sampled_textures_.push_back(record);
+    owned_record.Release();
 
     VkDescriptorImageInfo image_desc{};
     image_desc.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -670,11 +877,10 @@ void VulkanDevice::CreateBindlessTextureInfrastructure() {
     sampler_write.pImageInfo = &sampler_desc;
     vkUpdateDescriptorSets(device_, 1, &sampler_write, 0, nullptr);
 
-    // A 1x1 white dummy texture, duplicated into every bindless texture
-    // slot up front — see SampledTextureRecord dummy_texture_'s header
-    // comment for why every slot needs a valid descriptor before any
-    // enable_bindless_textures pipeline draws, not just the indices a real
-    // CreateTexture() call has claimed so far.
+    // A 1x1 white dummy texture, permanently kept in slot zero and copied
+    // into every other bindless texture slot up front — see the
+    // SampledTextureRecord dummy_texture_ header comment for why every slot
+    // needs a valid descriptor before any bindless pipeline draws.
     const u8 white_pixel[4] = {255, 255, 255, 255};
     dummy_texture_ = UploadTextureRecord(1, 1, white_pixel);
 
@@ -696,7 +902,8 @@ void VulkanDevice::CreateBindlessTextureInfrastructure() {
 PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain& swap_chain) {
     auto& vk_swap = static_cast<VulkanSwapChain&>(swap_chain);
 
-    PipelineRecord record;
+    ScopedPipelineRecord owned_record(device_);
+    PipelineRecord& record = owned_record.Get();
 
     if (desc.enable_bindless_textures) {
         AETHER_ASSERT(desc.push_constant_size_bytes > 0);
@@ -720,34 +927,37 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
         gfx::CompileHLSLToSPIRV(desc.hlsl_source, desc.vs_entry.c_str(), "vs_6_0", "rhi_pipeline_vs");
     gfx::ShaderBytecode ps_spirv =
         gfx::CompileHLSLToSPIRV(desc.hlsl_source, desc.ps_entry.c_str(), "ps_6_0", "rhi_pipeline_ps");
-    VkShaderModule vs_module = CreateShaderModuleFromBytecode(device_, vs_spirv);
-    VkShaderModule ps_module = CreateShaderModuleFromBytecode(device_, ps_spirv);
+    ScopedShaderModule owned_vs_module(device_, vs_spirv);
+    ScopedShaderModule owned_ps_module(device_, ps_spirv);
 
     VkPipelineShaderStageCreateInfo stages[2]{};
     stages[0] = VkPipelineShaderStageCreateInfo{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
     stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-    stages[0].module = vs_module;
+    stages[0].module = owned_vs_module.Get();
     stages[0].pName = desc.vs_entry.c_str();
     stages[1] = VkPipelineShaderStageCreateInfo{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
     stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    stages[1].module = ps_module;
+    stages[1].module = owned_ps_module.Get();
     stages[1].pName = desc.ps_entry.c_str();
 
-    // The one fixed vertex layout PipelineDesc::use_vertex_buffer means —
-    // see its comment for why this isn't a general attribute-list API. Must
-    // match the D3D12 backend's D3D12_INPUT_ELEMENT_DESC layout exactly.
-    VkVertexInputBindingDescription vertex_binding{0, 20 /* sizeof(float3 pos) + sizeof(float2 uv) */,
-                                                    VK_VERTEX_INPUT_RATE_VERTEX};
-    VkVertexInputAttributeDescription vertex_attributes[2] = {
+    // Keep POSITION / TEXCOORD as the default and match optional NORMAL and
+    // TANGENT elements in the D3D12 backend exactly.
+    const bool has_normals = desc.vertex_layout == VertexLayout::PositionNormalUv;
+    const bool has_tangents = desc.vertex_layout == VertexLayout::PositionNormalUvTangent;
+    VkVertexInputBindingDescription vertex_binding{
+        0, has_tangents ? 48u : has_normals ? 32u : 20u, VK_VERTEX_INPUT_RATE_VERTEX};
+    VkVertexInputAttributeDescription vertex_attributes[4] = {
         {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0},
-        {1, 0, VK_FORMAT_R32G32_SFLOAT, 12},
+        {1, 0, has_normals || has_tangents ? VK_FORMAT_R32G32B32_SFLOAT : VK_FORMAT_R32G32_SFLOAT, 12},
+        {2, 0, VK_FORMAT_R32G32_SFLOAT, 24},
+        {3, 0, VK_FORMAT_R32G32B32A32_SFLOAT, 32},
     };
 
     VkPipelineVertexInputStateCreateInfo vertex_input{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
     if (desc.use_vertex_buffer) {
         vertex_input.vertexBindingDescriptionCount = 1;
         vertex_input.pVertexBindingDescriptions = &vertex_binding;
-        vertex_input.vertexAttributeDescriptionCount = 2;
+        vertex_input.vertexAttributeDescriptionCount = has_tangents ? 4u : has_normals ? 3u : 2u;
         vertex_input.pVertexAttributeDescriptions = vertex_attributes;
     }
 
@@ -794,7 +1004,7 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
     // of testing/writing against it.
     VkPipelineDepthStencilStateCreateInfo depth_stencil{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
     depth_stencil.depthTestEnable = desc.depth_test ? VK_TRUE : VK_FALSE;
-    depth_stencil.depthWriteEnable = desc.depth_test ? VK_TRUE : VK_FALSE;
+    depth_stencil.depthWriteEnable = desc.depth_test && desc.depth_write ? VK_TRUE : VK_FALSE;
     depth_stencil.depthCompareOp = VK_COMPARE_OP_LESS;
 
     VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
@@ -820,12 +1030,10 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
     VkResult pipeline_result =
         vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &record.pipeline);
 
-    vkDestroyShaderModule(device_, vs_module, nullptr);
-    vkDestroyShaderModule(device_, ps_module, nullptr);
-
     AETHER_VK_CHECK(pipeline_result);
 
     pipelines_.push_back(record);
+    owned_record.Release();
     return PipelineHandle{static_cast<u32>(pipelines_.size() - 1)};
 }
 
@@ -881,9 +1089,15 @@ u64 VulkanDevice::Submit(ICommandList& cmd, ISwapChain* wait_on_swap_chain) {
 }
 
 void VulkanDevice::WaitForFence(u64 fence_value) {
-    if (fence_value == 0 || IsFenceComplete(fence_value)) {
+    if (fence_value == 0) {
         return;
     }
+    if (fence_value >= next_fence_value_) {
+        AETHER_LOG_ERROR("Vulkan", "Cannot wait for unsubmitted graphics fence %llu",
+                         static_cast<unsigned long long>(fence_value));
+        return;
+    }
+    if (IsFenceComplete(fence_value)) return;
     VkSemaphoreWaitInfo wait_info{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
     wait_info.semaphoreCount = 1;
     wait_info.pSemaphores = &timeline_semaphore_;
@@ -892,19 +1106,55 @@ void VulkanDevice::WaitForFence(u64 fence_value) {
 }
 
 bool VulkanDevice::IsFenceComplete(u64 fence_value) const {
+    if (fence_value == 0) return true;
+    if (fence_value >= next_fence_value_) return false;
     u64 current_value = 0;
     vkGetSemaphoreCounterValue(device_, timeline_semaphore_, &current_value);
     return current_value >= fence_value;
 }
 
 TextureHandle VulkanDevice::RegisterTexture(VkImage image) {
+    if (image == VK_NULL_HANDLE) {
+        AETHER_LOG_ERROR("Vulkan", "Cannot register a null texture image");
+        return {};
+    }
+    for (usize i = 0; i < textures_.size(); ++i) {
+        const u32 index = static_cast<u32>(i);
+        if (textures_[index].image == VK_NULL_HANDLE) {
+            textures_[index].image = image;
+            return TextureHandle{index};
+        }
+    }
     TextureHandle handle{static_cast<u32>(textures_.size())};
     textures_.push_back({image});
     return handle;
 }
 
 void VulkanDevice::UpdateTexture(TextureHandle handle, VkImage image) {
-    textures_[handle.index] = {image};
+    if (!handle.IsValid() || handle.index >= textures_.size() || image == VK_NULL_HANDLE ||
+        textures_[handle.index].image == VK_NULL_HANDLE) {
+        AETHER_LOG_ERROR("Vulkan", "Cannot update an invalid texture handle (%u)", handle.index);
+        return;
+    }
+    textures_[handle.index].image = image;
+}
+
+void VulkanDevice::UnregisterTexture(TextureHandle handle) {
+    if (!handle.IsValid() || handle.index >= textures_.size() ||
+        textures_[handle.index].image == VK_NULL_HANDLE) {
+        AETHER_LOG_ERROR("Vulkan", "Cannot unregister an invalid texture handle (%u)", handle.index);
+        return;
+    }
+    textures_[handle.index].image = VK_NULL_HANDLE;
+}
+
+VkImage VulkanDevice::GetTexture(TextureHandle handle) const {
+    if (!handle.IsValid() || handle.index >= textures_.size() ||
+        textures_[handle.index].image == VK_NULL_HANDLE) {
+        AETHER_LOG_ERROR("Vulkan", "Cannot resolve an invalid texture handle (%u)", handle.index);
+        return VK_NULL_HANDLE;
+    }
+    return textures_[handle.index].image;
 }
 
 // --------------------------------------------------------------------------
@@ -948,6 +1198,10 @@ VulkanSwapChain::~VulkanSwapChain() {
     if (surface_ != VK_NULL_HANDLE) {
         vkDestroySurfaceKHR(device_.Instance(), surface_, nullptr);
     }
+    for (TextureHandle handle : handles_) {
+        device_.UnregisterTexture(handle);
+    }
+    handles_.clear();
 }
 
 // One render pass for this swapchain's format (stable across resize — only
@@ -968,7 +1222,7 @@ void VulkanSwapChain::CreateDefaultRenderPass() {
     color_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     color_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
-    // Always present (see depth_image_'s header comment) so any pipeline —
+    // Always present (see depth resource vectors' header comment) so any pipeline —
     // whether or not PipelineDesc::depth_test is set — can run in this one
     // render pass; loadOp=CLEAR every frame regardless of whether the
     // current draw actually depth-tests is harmless (same "always clear,
@@ -1029,44 +1283,51 @@ void VulkanSwapChain::CreateDepthResources() {
     image_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
     image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    AETHER_VK_CHECK(vkCreateImage(device_.Handle(), &image_info, nullptr, &depth_image_));
+    depth_images_.resize(image_views_.size(), VK_NULL_HANDLE);
+    depth_memories_.resize(image_views_.size(), VK_NULL_HANDLE);
+    depth_image_views_.resize(image_views_.size(), VK_NULL_HANDLE);
+    for (usize i = 0; i < image_views_.size(); ++i) {
+        AETHER_VK_CHECK(vkCreateImage(device_.Handle(), &image_info, nullptr, &depth_images_[i]));
 
-    VkMemoryRequirements mem_reqs{};
-    vkGetImageMemoryRequirements(device_.Handle(), depth_image_, &mem_reqs);
-    VkMemoryAllocateInfo alloc_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-    alloc_info.allocationSize = mem_reqs.size;
-    alloc_info.memoryTypeIndex =
-        FindMemoryType(device_.PhysicalDevice(), mem_reqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    AETHER_VK_CHECK(vkAllocateMemory(device_.Handle(), &alloc_info, nullptr, &depth_memory_));
-    AETHER_VK_CHECK(vkBindImageMemory(device_.Handle(), depth_image_, depth_memory_, 0));
+        VkMemoryRequirements mem_reqs{};
+        vkGetImageMemoryRequirements(device_.Handle(), depth_images_[i], &mem_reqs);
+        VkMemoryAllocateInfo alloc_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        alloc_info.allocationSize = mem_reqs.size;
+        alloc_info.memoryTypeIndex =
+            FindMemoryType(device_.PhysicalDevice(), mem_reqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        AETHER_VK_CHECK(vkAllocateMemory(device_.Handle(), &alloc_info, nullptr, &depth_memories_[i]));
+        AETHER_VK_CHECK(vkBindImageMemory(device_.Handle(), depth_images_[i], depth_memories_[i], 0));
 
-    VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-    view_info.image = depth_image_;
-    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    view_info.format = kDepthFormat;
-    view_info.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
-    AETHER_VK_CHECK(vkCreateImageView(device_.Handle(), &view_info, nullptr, &depth_image_view_));
+        VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        view_info.image = depth_images_[i];
+        view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view_info.format = kDepthFormat;
+        view_info.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+        AETHER_VK_CHECK(vkCreateImageView(device_.Handle(), &view_info, nullptr, &depth_image_views_[i]));
+    }
 }
 
 void VulkanSwapChain::DestroyDepthResources() {
-    if (depth_image_view_ != VK_NULL_HANDLE) {
-        vkDestroyImageView(device_.Handle(), depth_image_view_, nullptr);
-        depth_image_view_ = VK_NULL_HANDLE;
+    for (usize i = 0; i < depth_images_.size(); ++i) {
+        if (depth_image_views_[i] != VK_NULL_HANDLE) {
+            vkDestroyImageView(device_.Handle(), depth_image_views_[i], nullptr);
+        }
+        if (depth_images_[i] != VK_NULL_HANDLE) {
+            vkDestroyImage(device_.Handle(), depth_images_[i], nullptr);
+        }
+        if (depth_memories_[i] != VK_NULL_HANDLE) {
+            vkFreeMemory(device_.Handle(), depth_memories_[i], nullptr);
+        }
     }
-    if (depth_image_ != VK_NULL_HANDLE) {
-        vkDestroyImage(device_.Handle(), depth_image_, nullptr);
-        depth_image_ = VK_NULL_HANDLE;
-    }
-    if (depth_memory_ != VK_NULL_HANDLE) {
-        vkFreeMemory(device_.Handle(), depth_memory_, nullptr);
-        depth_memory_ = VK_NULL_HANDLE;
-    }
+    depth_image_views_.clear();
+    depth_images_.clear();
+    depth_memories_.clear();
 }
 
 void VulkanSwapChain::CreateFramebuffers() {
     framebuffers_.resize(image_views_.size());
     for (usize i = 0; i < image_views_.size(); ++i) {
-        VkImageView attachments[] = {image_views_[i], depth_image_view_};
+        VkImageView attachments[] = {image_views_[i], depth_image_views_[i]};
         VkFramebufferCreateInfo fb_info{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
         fb_info.renderPass = default_render_pass_;
         fb_info.attachmentCount = 2;
@@ -1189,13 +1450,16 @@ void VulkanSwapChain::CreateSwapchainAndImages(u32 width, u32 height) {
     std::vector<VkImage> images(actual_image_count);
     vkGetSwapchainImagesKHR(device_.Handle(), swapchain_, &actual_image_count, images.data());
 
-    handles_.clear();
     image_views_.clear();
-    for (VkImage image : images) {
-        handles_.push_back(device_.RegisterTexture(image));
+    for (usize i = 0; i < images.size(); ++i) {
+        if (i < handles_.size()) {
+            device_.UpdateTexture(handles_[i], images[i]);
+        } else {
+            handles_.push_back(device_.RegisterTexture(images[i]));
+        }
 
         VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-        view_info.image = image;
+        view_info.image = images[i];
         view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
         view_info.format = format_;
         view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
@@ -1203,6 +1467,10 @@ void VulkanSwapChain::CreateSwapchainAndImages(u32 width, u32 height) {
         AETHER_VK_CHECK(vkCreateImageView(device_.Handle(), &view_info, nullptr, &view));
         image_views_.push_back(view);
     }
+    for (usize i = images.size(); i < handles_.size(); ++i) {
+        device_.UnregisterTexture(handles_[i]);
+    }
+    handles_.resize(images.size());
 
     CreateDepthResources();
     CreateFramebuffers();
@@ -1267,6 +1535,8 @@ void VulkanSwapChain::Resize(u32 width, u32 height) {
     DestroySwapchainAndImages();
     CreateSwapchainAndImages(width, height);
     CreateSyncObjects();
+    frame_index_ = 0;
+    current_image_index_ = 0;
 }
 
 void VulkanSwapChain::AcquireNextImage() {
@@ -1311,37 +1581,40 @@ void VulkanSwapChain::Present(bool vsync) {
 }
 
 bool VulkanSwapChain::ReadBack(std::vector<u8>& rgba8) {
-    if (!can_read_back_ || handles_.empty()) {
+    if (!can_read_back_ || handles_.empty() || current_image_index_ >= handles_.size()) {
         return false;
     }
     VkDevice device = device_.Handle();
+    VkImage image = device_.GetTexture(handles_[current_image_index_]);
+    if (image == VK_NULL_HANDLE) return false;
     AETHER_VK_CHECK(vkQueueWaitIdle(device_.Queue()));
 
     const VkDeviceSize size = static_cast<VkDeviceSize>(extent_.width) * extent_.height * 4;
+    ScopedBufferRecord owned_readback(device);
+    BufferRecord& readback = owned_readback.Get();
+    readback.size_bytes = size;
     VkBufferCreateInfo buffer_info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
     buffer_info.size = size;
     buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    VkBuffer buffer = VK_NULL_HANDLE;
-    AETHER_VK_CHECK(vkCreateBuffer(device, &buffer_info, nullptr, &buffer));
+    AETHER_VK_CHECK(vkCreateBuffer(device, &buffer_info, nullptr, &readback.buffer));
     VkMemoryRequirements mem_reqs{};
-    vkGetBufferMemoryRequirements(device, buffer, &mem_reqs);
+    vkGetBufferMemoryRequirements(device, readback.buffer, &mem_reqs);
     VkMemoryAllocateInfo alloc_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
     alloc_info.allocationSize = mem_reqs.size;
     alloc_info.memoryTypeIndex =
         FindMemoryType(device_.PhysicalDevice(), mem_reqs.memoryTypeBits,
                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    VkDeviceMemory memory = VK_NULL_HANDLE;
-    AETHER_VK_CHECK(vkAllocateMemory(device, &alloc_info, nullptr, &memory));
-    AETHER_VK_CHECK(vkBindBufferMemory(device, buffer, memory, 0));
+    AETHER_VK_CHECK(vkAllocateMemory(device, &alloc_info, nullptr, &readback.memory));
+    AETHER_VK_CHECK(vkBindBufferMemory(device, readback.buffer, readback.memory, 0));
 
     VkCommandPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
     pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
     pool_info.queueFamilyIndex = device_.QueueFamilyIndex();
-    VkCommandPool pool = VK_NULL_HANDLE;
-    AETHER_VK_CHECK(vkCreateCommandPool(device, &pool_info, nullptr, &pool));
+    ScopedCommandPool owned_pool(device);
+    AETHER_VK_CHECK(vkCreateCommandPool(device, &pool_info, nullptr, &owned_pool.Get()));
     VkCommandBufferAllocateInfo cmd_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-    cmd_info.commandPool = pool;
+    cmd_info.commandPool = owned_pool.Get();
     cmd_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     cmd_info.commandBufferCount = 1;
     VkCommandBuffer cmd = VK_NULL_HANDLE;
@@ -1352,7 +1625,6 @@ bool VulkanSwapChain::ReadBack(std::vector<u8>& rgba8) {
     AETHER_VK_CHECK(vkBeginCommandBuffer(cmd, &begin));
     // Both ways of drawing a frame (the default render pass, and
     // TransitionTexture to Present) leave the image in PRESENT_SRC.
-    VkImage image = device_.GetTexture(handles_[current_image_index_]);
     VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
     barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
@@ -1367,7 +1639,7 @@ bool VulkanSwapChain::ReadBack(std::vector<u8>& rgba8) {
     VkBufferImageCopy region{};
     region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     region.imageExtent = {extent_.width, extent_.height, 1};
-    vkCmdCopyImageToBuffer(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, 1, &region);
+    vkCmdCopyImageToBuffer(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback.buffer, 1, &region);
     barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
     barrier.dstAccessMask = 0;
     barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
@@ -1379,11 +1651,28 @@ bool VulkanSwapChain::ReadBack(std::vector<u8>& rgba8) {
     VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &cmd;
-    AETHER_VK_CHECK(vkQueueSubmit(device_.Queue(), 1, &submit, VK_NULL_HANDLE));
-    AETHER_VK_CHECK(vkQueueWaitIdle(device_.Queue()));
+    bool submitted = false;
+    try {
+        AETHER_VK_CHECK(vkQueueSubmit(device_.Queue(), 1, &submit, VK_NULL_HANDLE));
+        submitted = true;
+        AETHER_VK_CHECK(vkQueueWaitIdle(device_.Queue()));
+    } catch (...) {
+        if (submitted) {
+            const VkResult idle_result = vkDeviceWaitIdle(device);
+            if (idle_result != VK_SUCCESS) {
+                AETHER_LOG_ERROR("Vulkan", "Device idle failed after readback wait failure (VkResult=%d); "
+                                          "leaving readback resources for device teardown",
+                                 static_cast<int>(idle_result));
+                owned_readback.Release();
+                owned_pool.Release();
+            }
+        }
+        throw;
+    }
 
     void* mapped = nullptr;
-    AETHER_VK_CHECK(vkMapMemory(device, memory, 0, size, 0, &mapped));
+    AETHER_VK_CHECK(vkMapMemory(device, readback.memory, 0, size, 0, &mapped));
+    readback.mapped = mapped;
     rgba8.resize(static_cast<usize>(size));
     const u8* src = static_cast<const u8*>(mapped);
     const bool bgra = format_ == VK_FORMAT_B8G8R8A8_UNORM || format_ == VK_FORMAT_B8G8R8A8_SRGB;
@@ -1393,27 +1682,26 @@ bool VulkanSwapChain::ReadBack(std::vector<u8>& rgba8) {
         rgba8[i + 2] = src[i + (bgra ? 0 : 2)];
         rgba8[i + 3] = src[i + 3];
     }
-    vkUnmapMemory(device, memory);
-
-    vkDestroyCommandPool(device, pool, nullptr);
-    vkDestroyBuffer(device, buffer, nullptr);
-    vkFreeMemory(device, memory, nullptr);
+    vkUnmapMemory(device, readback.memory);
+    readback.mapped = nullptr;
     return true;
 }
 
 // --------------------------------------------------------------------------
 
 VulkanCommandList::VulkanCommandList(VulkanDevice& device, u32 queue_family_index) : device_(device) {
+    ScopedCommandPool owned_pool(device_.Handle());
     VkCommandPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
     pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     pool_info.queueFamilyIndex = queue_family_index;
-    AETHER_VK_CHECK(vkCreateCommandPool(device_.Handle(), &pool_info, nullptr, &command_pool_));
+    AETHER_VK_CHECK(vkCreateCommandPool(device_.Handle(), &pool_info, nullptr, &owned_pool.Get()));
 
     VkCommandBufferAllocateInfo alloc_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-    alloc_info.commandPool = command_pool_;
+    alloc_info.commandPool = owned_pool.Get();
     alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     alloc_info.commandBufferCount = 1;
     AETHER_VK_CHECK(vkAllocateCommandBuffers(device_.Handle(), &alloc_info, &command_buffer_));
+    command_pool_ = owned_pool.Release();
 }
 
 VulkanCommandList::~VulkanCommandList() {
@@ -1433,12 +1721,15 @@ void VulkanCommandList::Close() {
 }
 
 void VulkanCommandList::TransitionTexture(TextureHandle texture, ResourceState before, ResourceState after) {
+    const VkImage image = device_.GetTexture(texture);
+    if (image == VK_NULL_HANDLE) return;
+
     VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     barrier.oldLayout = ToVkImageLayout(before);
     barrier.newLayout = ToVkImageLayout(after);
     barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.image = device_.GetTexture(texture);
+    barrier.image = image;
     barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     // Conservative (TOP_OF_PIPE -> BOTTOM_OF_PIPE, ALL access) rather than
     // precisely scoped src/dst stage+access masks: correct but not
@@ -1453,6 +1744,9 @@ void VulkanCommandList::TransitionTexture(TextureHandle texture, ResourceState b
 }
 
 void VulkanCommandList::ClearRenderTarget(TextureHandle texture, const ClearColor& color) {
+    const VkImage image = device_.GetTexture(texture);
+    if (image == VK_NULL_HANDLE) return;
+
     VkClearColorValue clear_value{};
     clear_value.float32[0] = color.r;
     clear_value.float32[1] = color.g;
@@ -1462,7 +1756,7 @@ void VulkanCommandList::ClearRenderTarget(TextureHandle texture, const ClearColo
     VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     // Requires the image to already be in ResourceState::RenderTarget (see
     // ToVkImageLayout's comment for why that maps to TRANSFER_DST here).
-    vkCmdClearColorImage(command_buffer_, device_.GetTexture(texture), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+    vkCmdClearColorImage(command_buffer_, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                           &clear_value, 1, &range);
 }
 

@@ -80,6 +80,57 @@ struct AETHER_ALIGN(16) Mat4 {
         r = _mm_add_ps(r, _mm_mul_ps(cols[3].simd, _mm_shuffle_ps(v.simd, v.simd, _MM_SHUFFLE(3, 3, 3, 3))));
         return Vec4(r);
     }
+
+    // Inverts a general 4x4 matrix with pivoted Gauss-Jordan elimination.
+    // Returns false for a singular or numerically near-singular matrix.
+    bool TryInverse(Mat4& out, f64 epsilon = 1e-12) const {
+        f64 augmented[4][8]{};
+        for (usize row = 0; row < 4; ++row) {
+            for (usize column = 0; column < 4; ++column) {
+                const Vec4& source = cols[column];
+                const f32 values[4] = {source.x, source.y, source.z, source.w};
+                augmented[row][column] = values[row];
+            }
+            augmented[row][row + 4] = 1.0;
+        }
+
+        for (usize column = 0; column < 4; ++column) {
+            usize pivot_row = column;
+            for (usize row = column + 1; row < 4; ++row) {
+                if (std::abs(augmented[row][column]) > std::abs(augmented[pivot_row][column])) {
+                    pivot_row = row;
+                }
+            }
+            if (std::abs(augmented[pivot_row][column]) <= epsilon) return false;
+            if (pivot_row != column) {
+                for (usize entry = 0; entry < 8; ++entry) {
+                    const f64 value = augmented[pivot_row][entry];
+                    augmented[pivot_row][entry] = augmented[column][entry];
+                    augmented[column][entry] = value;
+                }
+            }
+
+            const f64 pivot = augmented[column][column];
+            for (usize entry = 0; entry < 8; ++entry) augmented[column][entry] /= pivot;
+            for (usize row = 0; row < 4; ++row) {
+                if (row == column) continue;
+                const f64 factor = augmented[row][column];
+                for (usize entry = 0; entry < 8; ++entry) {
+                    augmented[row][entry] -= factor * augmented[column][entry];
+                }
+            }
+        }
+
+        out.cols[0] = Vec4(static_cast<f32>(augmented[0][4]), static_cast<f32>(augmented[1][4]),
+                           static_cast<f32>(augmented[2][4]), static_cast<f32>(augmented[3][4]));
+        out.cols[1] = Vec4(static_cast<f32>(augmented[0][5]), static_cast<f32>(augmented[1][5]),
+                           static_cast<f32>(augmented[2][5]), static_cast<f32>(augmented[3][5]));
+        out.cols[2] = Vec4(static_cast<f32>(augmented[0][6]), static_cast<f32>(augmented[1][6]),
+                           static_cast<f32>(augmented[2][6]), static_cast<f32>(augmented[3][6]));
+        out.cols[3] = Vec4(static_cast<f32>(augmented[0][7]), static_cast<f32>(augmented[1][7]),
+                           static_cast<f32>(augmented[2][7]), static_cast<f32>(augmented[3][7]));
+        return true;
+    }
 };
 
 } // namespace aether

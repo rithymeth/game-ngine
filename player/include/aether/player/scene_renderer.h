@@ -17,7 +17,8 @@ public:
     SceneRenderer(const SceneRenderer&) = delete;
     SceneRenderer& operator=(const SceneRenderer&) = delete;
 
-    void Draw(Game& game, gfx::rhi::ICommandList& commands);
+    // frame_index selects the fence-protected per-frame buffers for animated meshes.
+    void Draw(Game& game, gfx::rhi::ICommandList& commands, u32 frame_index);
 
 private:
     struct Impl;

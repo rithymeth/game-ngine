@@ -12,9 +12,14 @@ namespace stdfs = std::filesystem;
 
 stdfs::path RecentProjects::DefaultConfigDir() {
 #if defined(_WIN32)
-    if (const char* appdata = std::getenv("APPDATA")) {
-        return stdfs::path(appdata) / "Aether";
+    char* appdata = nullptr;
+    std::size_t appdata_size = 0;
+    if (_dupenv_s(&appdata, &appdata_size, "APPDATA") == 0 && appdata != nullptr) {
+        const stdfs::path config_dir = stdfs::path(appdata) / "Aether";
+        std::free(appdata);
+        return config_dir;
     }
+    std::free(appdata);
 #else
     if (const char* xdg = std::getenv("XDG_CONFIG_HOME"); xdg != nullptr && *xdg != '\0') {
         return stdfs::path(xdg) / "aether";
