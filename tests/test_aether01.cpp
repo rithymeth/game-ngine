@@ -19,6 +19,31 @@ namespace fs = std::filesystem;
 
 #if AETHER_TEST_HAS_SCRIPTING
 namespace {
+struct ProofProject {
+    fs::path root;
+    fs::path pak_file;
+
+    ProofProject() {
+        root = fs::temp_directory_path() / "aether01_proof_tests" /
+               (std::string("shared") + assets::ToString(assets::NewAssetGuid()));
+        fs::create_directories(root);
+        const auto source = fs::path(AETHER_REPO_ASSETS_DIR).parent_path() / "games/AETHER-01";
+        fs::copy(source, root / "project", fs::copy_options::recursive | fs::copy_options::overwrite_existing);
+        cook::CookOptions options;
+        options.project_file = root / "project/AETHER-01.aproject";
+        options.output_dir = root / "cooked";
+        const auto cooked = cook::Cook(options);
+        AETHER_CHECK(cooked.ok);
+        pak_file = cooked.pak_file;
+    }
+
+};
+
+const ProofProject& GetProofProject() {
+    static const ProofProject project;
+    return project;
+}
+
 struct ProofRun {
     fs::path root;
     player::GamePackage package;
@@ -33,19 +58,14 @@ struct ProofRun {
         record = std::string(name) == "ending";
         root = fs::temp_directory_path() / "aether01_proof_tests" / (std::string(name) + assets::ToString(assets::NewAssetGuid()));
         fs::create_directories(root);
-        const auto source = fs::path(AETHER_REPO_ASSETS_DIR).parent_path() / "games/AETHER-01";
-        fs::copy(source, root / "project", fs::copy_options::recursive | fs::copy_options::overwrite_existing);
-        cook::CookOptions options;
-        options.project_file = root / "project/AETHER-01.aproject";
-        options.output_dir = root / "cooked";
-        const auto cooked = cook::Cook(options);
-        AETHER_CHECK(cooked.ok);
+        const auto& project = GetProofProject();
         std::string error;
-        AETHER_CHECK(package.Mount(cooked.pak_file.string(), 0, &error));
+        AETHER_CHECK(package.Mount(project.pak_file.string(), 0, &error));
         AETHER_CHECK(package.LoadManifest(&error));
         AETHER_CHECK(package.FindAsset("fonts/Roboto-Medium.ttf") != nullptr);
         Start();
     }
+
     void Start() {
         game.reset();
         game = std::make_unique<player::Game>(package);
