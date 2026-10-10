@@ -220,6 +220,37 @@ void RegisterSequenceEditorTools(McpServer& server, EditorSession& s);
 #if AETHER_MCP_INTERACTION
 void RegisterInteractionEditorTools(McpServer& server, EditorSession& s);
 #endif
+std::filesystem::path ResolveScenePath(const std::filesystem::path& root, const std::string& requested, std::string& error) {
+    namespace fs = std::filesystem;
+    if (requested.empty()) {
+        error = "path is empty";
+        return {};
+    }
+    const fs::path given(requested);
+    const std::string ext = given.extension().string();
+    if (ext != ".json" && ext != ".aesc") {
+        error = "scene files end in .json or .aesc";
+        return {};
+    }
+    if (root.empty()) return given;
+    std::error_code ec;
+    const fs::path base = fs::weakly_canonical(root, ec);
+    if (ec) {
+        error = "the scene folder can't be resolved";
+        return {};
+    }
+    const fs::path full = fs::weakly_canonical(given.is_absolute() ? given : base / given, ec);
+    if (ec) {
+        error = "can't resolve " + requested;
+        return {};
+    }
+    const fs::path rel = full.lexically_relative(base);
+    if (rel.empty() || *rel.begin() == "..") {
+        error = requested + " is outside the scene folder";
+        return {};
+    }
+    return full;
+}
 
 void RegisterEditorTools(McpServer& server, EditorSession& s) {
     server.AddTool({"editor_state",
@@ -463,7 +494,9 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
 
     server.AddTool({"save_scene", "Save the scene to a file: JSON (.json, human-readable) or binary (.aesc).",
                     Schema({{"path", {{"type", "string"}}}}, {"path"}), [&s](const Json& args) -> Json {
-                        std::string path = RequireString(args, "path");
+                        std::string error;
+                        const std::string path = ResolveScenePath(s.scene_root, RequireString(args, "path"), error).string();
+                        if (path.empty()) throw ToolError(error);
                         bool binary = path.size() >= 5 && path.compare(path.size() - 5, 5, ".aesc") == 0;
                         bool ok = binary ? SaveScene(s.world, path) : SaveSceneJson(s.world, path);
                         if (!ok) {
@@ -481,7 +514,9 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         if (!s.play.IsEditing()) {
                             throw ToolError("Stop play mode before loading a scene");
                         }
-                        std::string path = RequireString(args, "path");
+                        std::string error;
+                        const std::string path = ResolveScenePath(s.scene_root, RequireString(args, "path"), error).string();
+                        if (path.empty()) throw ToolError(error);
                         if (args.value("replace", false)) {
                             for (Entity e : AllEntities(s)) {
                                 s.world.DestroyEntity(e);
