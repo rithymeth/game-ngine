@@ -11,8 +11,17 @@
 
 #include "mcp_server.h"
 
+#include <memory>
+
 namespace aether::mcp {
 
-void RegisterAssetTools(McpServer& server);
+namespace detail {
+struct AssetHost;
+}
+
+// `host` is the open project, shared with the kit tools (see RegisterKitTools).
+void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> host);
+// Makes the shared project holder.
+std::shared_ptr<detail::AssetHost> MakeAssetHost();
 
 } // namespace aether::mcp

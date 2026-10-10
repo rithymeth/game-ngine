@@ -58,6 +58,25 @@ These use the engine's own asset database, importers and cooker, in process, on 
 | `asset_scan` | Rescan after changing files outside the tools |
 | `asset_cook` | Cook into an `.apak` (configuration, extra roots, compression, strict, encryption, patch); returns the archive path, sizes, warnings and the cooked assets |
 
+### Gameplay kit data (`kit_*`)
+
+The definitions a game is built from: effects (`.aeffect`), abilities (`.aability`), items (`.aitem`),
+quests (`.aquest`) and input actions and mappings (`.aaction`, `.amapping`). They use the kits' own
+parsers and validators, so what they accept is what the game loads, and they work on the project opened
+with `project_open`.
+
+| Tool | What it does |
+| --- | --- |
+| `kit_types` | The types, their extensions, and how many the project has |
+| `kit_schema` | One type's shape: a sample with every field set, the allowed words and cross-reference rules, the blank definition, and an example from the project |
+| `kit_validate` | Check a definition without writing it: ok, or the kit's named error (`effect.bad_duration: ...`) |
+| `kit_put` | Validate, then write normalized JSON under `Content/` (extension added) and scan it; nothing is written if it is invalid |
+| `kit_list` / `kit_get` | The project's definitions with their names and validity; read one |
+| `kit_check` | Every definition must parse and validate, names must be unique, and references must resolve: an ability's cost and cooldown effects, an item's use and equip effects, a quest's reward effects, reward items and prerequisites |
+
+Enum values are lowercase words (`"instant"`, `"count"`); `kit_schema` lists them. Write definitions,
+`kit_check` them, `asset_cook`, then `game_load` to play them.
+
 ### Running a cooked game (`game_*`)
 
 The editor tools edit the authored scene. The `game_*` tools instead host a full cooked
@@ -119,6 +138,7 @@ Bad input is reported as a tool error (`isError`), never a crash, and a failed
 - `build_tools.h/.cpp`, `process.h/.cpp` -- the build/test/run tools and the child-process runner.
 - `screenshot.h/.cpp` -- the off-screen renderer behind `game_screenshot`.
 - `asset_tools.h/.cpp` -- the project, asset, import and cook tools.
+- `kit_tools.h/.cpp`, `project_host.h` -- the gameplay-kit data tools, and the open-project state they share with the asset tools.
 - `main.cpp` -- the `aether_mcp_server` executable.
 - Tests: `tests/test_mcp.cpp`.
 
