@@ -14,9 +14,9 @@ ASan/UBSan, Linux TSan, fuzz, Windows MSVC/D3D12, and macOS Apple Silicon
 MoltenVK jobs. Its Windows job also passed unit and functional checks, the
 AETHER-01 cook and launch, scene rendering checks, editor packaging, and
 source-independent proof-game packaging and launch. The separate Release job
-was skipped; clang-tidy was skipped as advisory. This is exact-commit CI
-evidence, not a published v0.27.3 release or a performance run on the GDD's
-minimum and recommended hardware.
+was skipped; clang-tidy was skipped as advisory. These checks did not validate
+a tagged package, and this evidence does not include a performance run on the
+GDD's minimum or recommended hardware.
 
 The follow-up change in PR #186 also passed the platform matrix. In addition,
 its Windows job built the optional Qt editor and passed the Qt editor
