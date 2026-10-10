@@ -29,6 +29,7 @@ add_library(aether_engine STATIC
     src/kit/kit_registry.cpp
     src/ecs/archetype.cpp
     src/scene/serialization.cpp
+    src/scene/test_world.cpp
     src/scene/entity_guid.cpp
     src/scene/hierarchy.cpp
     src/scene/prefab.cpp
