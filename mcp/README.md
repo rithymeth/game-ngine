@@ -285,6 +285,16 @@ A game's saves live in a user folder it picks, so these take the folder as `dire
 | `save_delete` | Deletes a slot and its backup. |
 | `save_settings` | Reads `settings.asettings` (defaults if missing). `set` merges top-level fields, validated as the game does (volumes clamped, window size bounds; each fix a warning) and written atomically with a backup; `reset` writes the defaults. |
 
+### World partition (`world_*`)
+
+The cooked game does not stream a partitioned world, so the simulation runs the streamer on a scratch world, not the hosted game.
+
+| Tool | What it does |
+| --- | --- |
+| `world_partition` | Splits the editor scene into grid cells on the ground plane. Without `directory` it is a dry run (cells, entity counts, bounds, the largest cell, the persistent count) for choosing a cell size; with it, writes `world.aworld`, `persistent.aesc` and `cells/<x_z>.aesc`. |
+| `world_partition_info` | Reads a partitioned world's index and checks every cell file and the persistent scene exist; lists missing files and files not in the index. |
+| `world_stream_simulate` | Walks a streaming source along a path over the world and reports, per waypoint, the cells that loaded and unloaded, those now loaded, and the entity count. |
+
 ### Running a cooked game (`game_*`)
 
 The editor tools edit the authored scene. The `game_*` tools instead host a full cooked

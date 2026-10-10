@@ -546,6 +546,7 @@ AETHER_TEST(Mcp_ToolsCanReturnImages) {
 #include "animation_tools.h"
 #include "ui_tools.h"
 #include "save_tools.h"
+#include "streaming_tools.h"
 #include "aether/save/save_system.h"
 #include "aether/save/settings.h"
 #include "aether/ui/basic.h"
@@ -2440,6 +2441,49 @@ AETHER_TEST(Mcp_UiThemeAndAnimationTools) {
     AETHER_CHECK(rejected.is_error && rejected.text.find("sparkle") != std::string::npos); // the loader says so already
     AETHER_CHECK(h.Call("ui_animation_sample", {{"definition", layout}, {"animation", "Nope"}}).is_error);
     AETHER_CHECK(h.Call("ui_animation_sample", {{"definition", layout}}).value["animations"][0]["tracks"][0]["samples"].size() == 5);
+}
+
+AETHER_TEST(Mcp_StreamingToolsPartitionInspectAndStreamAWorld) {
+    namespace stdfs = std::filesystem;
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_world";
+    stdfs::remove_all(dir);
+    Harness h;
+    RegisterStreamingTools(h.server, h.session);
+    h.Create({{"Transform", {{"position", {10, 0, 10}}}}});
+    h.Create({{"Transform", {{"position", {20, 0, 30}}}}});
+    h.Create({{"Transform", {{"position", {250, 0, 10}}}}});
+    h.Create({{"Transform", {{"position", {-50, 0, 340}}}}});
+    h.Create(); // no Transform: stays in the persistent scene
+
+    Json plan = h.Call("world_partition", {{"cell_size", 100}}).value;
+    AETHER_CHECK(plan["written"] == false && plan["cell_count"] == 3 && plan["persistent_entities"] == 1 && plan["total_entities"] == 5);
+    AETHER_CHECK(plan["largest_cell_entities"] == 2 && plan["cells"][0]["name"] == "-1_3");
+    AETHER_CHECK(!stdfs::exists(dir));
+    AETHER_CHECK(h.Call("world_partition", {{"cell_size", 0.5}}).is_error);
+
+    AETHER_CHECK(h.Call("world_partition", {{"cell_size", 100}, {"directory", dir.string()}}).value["written"] == true);
+    AETHER_CHECK(stdfs::exists(dir / "world.aworld") && stdfs::exists(dir / "cells" / "0_0.aesc"));
+    Json info = h.Call("world_partition_info", {{"directory", dir.string()}}).value;
+    AETHER_CHECK(info["ok"] == true && info["cell_count"] == 3 && info["cells"][0].contains("bytes"));
+    AETHER_CHECK(h.Call("world_partition_info", {{"directory", (dir / "nope").string()}}).is_error);
+
+    // The player walks from the first cluster far away: the first cells load, then unload.
+    Json walk = h.Call("world_stream_simulate", {{"directory", dir.string()},
+                                                 {"path", Json::array({Json::array({10, 0, 10}), Json::array({10, 0, 1000})})},
+                                                 {"radius", 150}})
+                    .value;
+    AETHER_CHECK(walk["steps"].size() == 2);
+    AETHER_CHECK(walk["steps"][0]["loaded_cells"] == Json::array({Json::array({0, 0})}));
+    AETHER_CHECK(walk["steps"][0]["loaded"][0]["entities"] == 2);
+    AETHER_CHECK(walk["steps"][1]["loaded_cells"].empty() && walk["steps"][1]["unloaded"].size() == 1);
+    AETHER_CHECK(walk["steps"][1]["entities"] == 1); // just the streaming source
+    AETHER_CHECK(h.Call("world_stream_simulate", {{"directory", dir.string()}, {"path", Json::array()}}).is_error);
+    AETHER_CHECK(h.Call("world_stream_simulate", {{"directory", dir.string()}, {"path", Json::array({Json::array({1, 2})})}}).is_error);
+
+    stdfs::remove(dir / "cells" / "0_0.aesc");
+    Json broken = h.Call("world_partition_info", {{"directory", dir.string()}}).value;
+    AETHER_CHECK(broken["ok"] == false && broken["problems"].dump().find("0_0") != std::string::npos);
+    stdfs::remove_all(dir);
 }
 
 #if AETHER_MCP_SCRIPTING
