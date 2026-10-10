@@ -1,5 +1,7 @@
 #include "game_tools.h"
 
+#include "screenshot.h"
+
 #include "aether/input/keys.h"
 #include "aether/player/game.h"
 #include "aether/player/user_paths.h"
@@ -9,6 +11,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 
 namespace aether::mcp {
@@ -27,8 +30,11 @@ struct GameHost {
     std::unique_ptr<Game> game;
     std::vector<std::string> mounted;
     std::vector<std::string> notes; // module start-up messages, load warnings
+    std::unique_ptr<GameScreenshotter> shots; // made on the first game_screenshot
+    unsigned shot_counter = 0;
 
     void Unload() {
+        if (shots) shots->Reset(); // it draws the game and package below
         if (game) game->EndPlay();
         game.reset();
         package.reset();
@@ -117,6 +123,21 @@ Json EntityJson(const World& world, Entity e) {
                                                                   : Json("<unreflected component>");
     }
     return {{"entity", EntityKey(world, e)}, {"components", components}};
+}
+
+std::string Base64(const std::vector<u8>& bytes) {
+    static const char* kAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve((bytes.size() + 2) / 3 * 4);
+    for (usize i = 0; i < bytes.size(); i += 3) {
+        const u32 n = (static_cast<u32>(bytes[i]) << 16) | (i + 1 < bytes.size() ? static_cast<u32>(bytes[i + 1]) << 8 : 0) |
+                      (i + 2 < bytes.size() ? bytes[i + 2] : 0);
+        out.push_back(kAlphabet[(n >> 18) & 63]);
+        out.push_back(kAlphabet[(n >> 12) & 63]);
+        out.push_back(i + 1 < bytes.size() ? kAlphabet[(n >> 6) & 63] : '=');
+        out.push_back(i + 2 < bytes.size() ? kAlphabet[n & 63] : '=');
+    }
+    return out;
 }
 
 Json StatsJson(Game& game) {
@@ -240,6 +261,53 @@ void RegisterGameTools(McpServer& server) {
              for (i64 i = 0; i < frames && !game.ExitRequested(); ++i) last = game.Tick(static_cast<f32>(dt));
              Json out = StatsJson(game);
              out["frame"] = last.frame;
+             return out;
+         }});
+
+    server.AddTool(
+        {"game_screenshot",
+         "Render the game's current frame off screen and return it as a PNG image (also saved to `path`). Needs a graphics device "
+         "(Direct3D 12 or Vulkan). Draws what the player draws: the cooked scene and its HUD. Step the game first to see "
+         "movement.",
+         Schema({{"width", {{"type", "integer"}, {"description", "64-3840 (default: the project's window width)"}}},
+                 {"height", {{"type", "integer"}, {"description", "64-2160 (default: the project's window height)"}}},
+                 {"path", {{"type", "string"}, {"description", "Where to save the PNG (default: a temp folder)"}}},
+                 {"backend", {{"type", "string"}, {"description", "d3d12 or vulkan"}}},
+                 {"inline", {{"type", "boolean"}, {"description", "Return the image in the reply (default true)"}}}}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             const player::GameManifest& manifest = host->package->Manifest();
+             auto dimension = [&](const char* key, u32 fallback, u32 lo, u32 hi) {
+                 if (!args.contains(key)) return std::clamp(fallback, lo, hi);
+                 if (!args[key].is_number_integer()) throw ToolError(std::string("\"") + key + "\" must be an integer");
+                 const long long v = args[key].get<long long>();
+                 if (v < lo || v > hi) throw ToolError(std::string("\"") + key + "\" must be between " + std::to_string(lo) + " and " + std::to_string(hi));
+                 return static_cast<u32>(v);
+             };
+             const u32 width = dimension("width", manifest.window_width, 64, 3840);
+             const u32 height = dimension("height", manifest.window_height, 64, 2160);
+             const std::string backend = args.contains("backend") && args["backend"].is_string() ? args["backend"].get<std::string>() : "";
+             if (!host->shots) host->shots = std::make_unique<GameScreenshotter>();
+             GameScreenshotter::Result r = host->shots->Capture(game, *host->package, width, height, backend);
+             if (!r.ok) throw ToolError("Screenshot failed: " + r.error);
+
+             stdfs::path path;
+             if (args.contains("path") && args["path"].is_string()) {
+                 path = args["path"].get<std::string>();
+             } else {
+                 path = stdfs::temp_directory_path() / "aether_mcp_screenshots" / ("shot_" + std::to_string(++host->shot_counter) + ".png");
+             }
+             std::error_code ec;
+             if (path.has_parent_path()) stdfs::create_directories(path.parent_path(), ec);
+             {
+                 std::ofstream file(path, std::ios::binary);
+                 file.write(reinterpret_cast<const char*>(r.png.data()), static_cast<std::streamsize>(r.png.size()));
+                 if (!file) throw ToolError("Could not write " + path.string());
+             }
+             Json out = {{"path", path.string()}, {"width", r.width}, {"height", r.height}, {"bytes", r.png.size()}, {"frame", game.Stats().frames}};
+             if (!args.contains("inline") || !args["inline"].is_boolean() || args["inline"].get<bool>()) {
+                 out["mcp_content"] = Json::array({{{"type", "image"}, {"data", Base64(r.png)}, {"mimeType", "image/png"}}});
+             }
              return out;
          }});
 

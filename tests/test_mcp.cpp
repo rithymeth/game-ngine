@@ -520,3 +520,19 @@ AETHER_TEST(Mcp_BuildToolsFindTheBuildAndRefuseEscapes) {
     AETHER_CHECK(none.Call("build").is_error);
     stdfs::remove_all(dir);
 }
+
+AETHER_TEST(Mcp_ToolsCanReturnImages) {
+    McpServer server("test", "0");
+    server.AddTool({"pic", "An image", {{"type", "object"}, {"properties", Json::object()}}, [](const Json&) -> Json {
+                        return {{"note", "hi"}, {"mcp_content", Json::array({{{"type", "image"}, {"data", "AAAA"}, {"mimeType", "image/png"}}})}};
+                    }});
+    Json req = {{"jsonrpc", "2.0"}, {"id", 1}, {"method", "tools/call"}, {"params", {{"name", "pic"}, {"arguments", Json::object()}}}};
+    Json resp = *server.HandleMessage(req);
+    const Json& content = resp["result"]["content"];
+    AETHER_CHECK(resp["result"]["isError"] == false);
+    AETHER_CHECK(content.size() == 2);
+    AETHER_CHECK(content[0]["type"] == "text");
+    AETHER_CHECK(content[0]["text"].get<std::string>().find("mcp_content") == std::string::npos);
+    AETHER_CHECK(content[1]["type"] == "image");
+    AETHER_CHECK(content[1]["mimeType"] == "image/png");
+}
