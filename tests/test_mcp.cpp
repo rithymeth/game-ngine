@@ -545,6 +545,9 @@ AETHER_TEST(Mcp_ToolsCanReturnImages) {
 #include "kit_tools.h"
 #include "animation_tools.h"
 #include "ui_tools.h"
+#include "save_tools.h"
+#include "aether/save/save_system.h"
+#include "aether/save/settings.h"
 #include "aether/ui/basic.h"
 #include "aether/ui/layout_file.h"
 #include "aether/ui/panels.h"
@@ -2310,6 +2313,65 @@ AETHER_TEST(Mcp_UiToolsListCheckAndPreviewALayout) {
     AETHER_CHECK(!preview.is_error);
     AETHER_CHECK(preview.value["width"] == 960 && preview.value["quads"].get<int>() >= 2);
     AETHER_CHECK(h.Call("ui_preview", {{"definition", clean}, {"width", 5000}}).is_error);
+}
+
+AETHER_TEST(Mcp_SaveToolsListInspectDeleteAndEditSettings) {
+    namespace stdfs = std::filesystem;
+    namespace sv = aether::save;
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_saves";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+    Harness h;
+    RegisterSaveTools(h.server);
+
+    AETHER_CHECK(h.Call("save_list", {{"directory", (dir / "nope").string()}}).is_error);
+    AETHER_CHECK(h.Call("save_list", {{"directory", dir.string()}}).value["count"] == 0);
+
+    {
+        sv::SaveSystem saves(dir);
+        sv::GameSettings gs;
+        gs.language = "fr";
+        AETHER_CHECK(saves.Save("slot1", gs).ok);
+        gs.language = "de";
+        AETHER_CHECK(saves.Save("slot1", gs).ok); // the first save becomes slot1.asav.bak
+    }
+    Json list = h.Call("save_list", {{"directory", dir.string()}}).value;
+    AETHER_CHECK(list["count"] == 1 && list["slots"][0]["slot"] == "slot1" && list["slots"][0]["valid"] == true && list["slots"][0]["has_backup"] == true);
+
+    Json info = h.Call("save_inspect", {{"directory", dir.string()}, {"slot", "slot1"}}).value;
+    AETHER_CHECK(info["kind"] == "aether.save" && info["checksum_ok"] == true && info["data"]["language"] == "de");
+    AETHER_CHECK(h.Call("save_inspect", {{"directory", dir.string()}, {"slot", "slot1"}, {"backup", true}}).value["data"]["language"] == "fr");
+    AETHER_CHECK(h.Call("save_inspect", {{"directory", dir.string()}, {"slot", "bad/slot"}}).is_error);
+    AETHER_CHECK(h.Call("save_inspect", {{"directory", dir.string()}, {"slot", "ghost"}}).is_error);
+    AETHER_CHECK(h.Call("save_inspect", {{"directory", dir.string()}, {"slot", "slot1"}, {"max_data", 10}}).value["data_truncated"] == true);
+
+    // Tamper with the data: the checksum no longer holds.
+    {
+        std::ifstream in(dir / "slot1.asav", std::ios::binary);
+        std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        in.close();
+        const usize at = text.find("\"de\"");
+        AETHER_CHECK(at != std::string::npos);
+        text.replace(at, 4, "\"xx\"");
+        std::ofstream(dir / "slot1.asav", std::ios::binary) << text;
+    }
+    AETHER_CHECK(h.Call("save_inspect", {{"directory", dir.string()}, {"slot", "slot1"}}).value["checksum_ok"] == false);
+
+    // Settings: defaults when missing, clamped and written when set, reset back.
+    Json settings = h.Call("save_settings", {{"directory", dir.string()}}).value;
+    AETHER_CHECK(settings["settings"]["language"] == "en" && !settings.contains("written"));
+    Json set = h.Call("save_settings", {{"directory", dir.string()}, {"set", {{"music", 3.5}, {"width", 1920}, {"language", "ja"}}}}).value;
+    AETHER_CHECK(set["written"] == true && set["settings"]["music"] == 1.0 && set["settings"]["width"] == 1920 && set["warnings"].size() >= 1);
+    AETHER_CHECK(h.Call("save_settings", {{"directory", dir.string()}}).value["settings"]["language"] == "ja");
+    AETHER_CHECK(h.Call("save_list", {{"directory", dir.string()}}).value["has_settings"] == true);
+    AETHER_CHECK(h.Call("save_settings", {{"directory", dir.string()}, {"set", {{"nonsense", 1}}}}).is_error);
+    AETHER_CHECK(h.Call("save_inspect", {{"file", (dir / "settings.asettings").string()}}).value["kind"] == "aether.settings");
+    AETHER_CHECK(h.Call("save_settings", {{"directory", dir.string()}, {"reset", true}}).value["settings"]["language"] == "en");
+
+    AETHER_CHECK(!h.Call("save_delete", {{"directory", dir.string()}, {"slot", "slot1"}}).is_error);
+    AETHER_CHECK(!stdfs::exists(dir / "slot1.asav") && !stdfs::exists(dir / "slot1.asav.bak"));
+    AETHER_CHECK(h.Call("save_delete", {{"directory", dir.string()}, {"slot", "slot1"}}).is_error);
+    stdfs::remove_all(dir);
 }
 
 #if AETHER_MCP_SCRIPTING
