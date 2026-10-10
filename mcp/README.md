@@ -252,6 +252,16 @@ math, string, table, bit32, utf8, buffer, coroutine, vector and `os.clock`, and 
 Enum values are lowercase words (`"instant"`, `"count"`); `kit_schema` lists them. Write definitions,
 `kit_check` them, `asset_cook`, then `game_load` to play them.
 
+### Animation (`anim_*`)
+
+Animation graphs (`.aanim`), blend spaces (`.ablend`) and montages (`.amontage`) have no importer, so these tools take the data as `definition` (JSON) or a `file` under the open project's `Content/`.
+
+| Tool | What it does |
+| --- | --- |
+| `anim_validate` | The animation module's own diagnostics for a `graph` (AG001..AG011), `blend_space` (BS001..BS006) or `montage` (MN001..MN004). Give `clips` / `blend_spaces` to also check the assets a graph names exist. |
+| `anim_blend_weights` | The clip weights a blend space gives at `points` (or an even `grid`), plus the 2D triangulation. |
+| `anim_graph_simulate` | Runs a graph headless over `steps` (set variables, fire triggers, play / stop montages, advance `dt`) and reports each state machine's state, the state changes and the events (notifies, montage sections). Clips are stand-ins of a given length: there is no skeleton, so poses are not produced. |
+
 ### Running a cooked game (`game_*`)
 
 The editor tools edit the authored scene. The `game_*` tools instead host a full cooked
