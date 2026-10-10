@@ -4,6 +4,7 @@
 #include "aether/assets/gltf_references.h"
 #include "aether/assets/image.h"
 #include "aether/assets/importer.h"
+#include "aether/cook/mesh_cook.h"
 #include "aether/cook/texture_cook.h"
 #include "aether/core/log.h"
 #include "aether/platform/filesystem.h"
@@ -307,6 +308,21 @@ CookReport Cook(const CookOptions& options) {
                     writer.Add("Imported/" + assets::ToString(sub.guid) + ".bin", sub.data);
                     report.original_bytes += sub.data.size();
                     sub_assets.push_back({{"guid", assets::ToString(sub.guid)}, {"key", sub.key}, {"importer", sub.importer}});
+                    if (options.cook_meshes && sub.importer == "Mesh") {
+                        assets::MeshData mesh_data;
+                        CookedMesh cooked_mesh;
+                        std::string mesh_error;
+                        if (!assets::DecodeMeshData(sub.data, mesh_data) ||
+                            !CookMesh(mesh_data, MeshCookSettings{}, cooked_mesh, &mesh_error)) {
+                            report.warnings.push_back(record.path + " (" + sub.key + "): can't cook mesh" +
+                                                      (mesh_error.empty() ? "" : ": " + mesh_error));
+                        } else {
+                            // cooked_mesh.warnings (skinned primitives) stay out of the report so strict_validation projects keep cooking.
+                            const std::vector<u8> amesh = SaveAmesh(cooked_mesh);
+                            writer.Add("Cooked/" + assets::ToString(sub.guid) + ".amesh", amesh);
+                            report.original_bytes += amesh.size();
+                        }
+                    }
                 }
             } else {
                 report.warnings.push_back("Importing " + record.path + " failed: " + output.error);
