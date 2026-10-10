@@ -307,7 +307,14 @@ jobs:
         run: |
           $out = "dist/AetherEditor"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
-          Copy-Item build/editor/Release/aether_editor.exe $out/
+          # The Qt host is the current Windows editor UI. Keep the established
+          # ImGui host beside it for tools that have not migrated yet.
+          $qtEditor = Join-Path $out "AetherEditor.exe"
+          Copy-Item build/editor/qt/Release/aether_editor_qt.exe $qtEditor
+          $qtDeploy = Get-Command windeployqt.exe -ErrorAction Stop
+          & $qtDeploy.Source --release --no-translations $qtEditor
+          if ($LASTEXITCODE -ne 0) { throw "Deploying the Qt editor runtime failed" }
+          Copy-Item build/editor/Release/aether_editor.exe (Join-Path $out "AetherEditorLegacy.exe")
           # The build tools and the player: cook a project, pack it, play it.
           Copy-Item build/tools/cook/Release/aether_cook.exe $out/
           Copy-Item build/tools/pak/Release/aether_pak.exe $out/
@@ -317,6 +324,10 @@ jobs:
           & build/tools/docgen/Release/aether_docgen.exe --out $out/api
           if ($LASTEXITCODE -ne 0) { throw "aether_docgen failed" }
           Get-ChildItem build/editor/Release -Filter *.dll | Copy-Item -Destination $out/
+          Set-Content -Path (Join-Path $out "EDITOR_README.txt") -Value @(
+            "Launch AetherEditor.exe for the current Qt-based Windows editor UI."
+            "Use AetherEditorLegacy.exe for tools that have not migrated yet."
+          ) -Encoding utf8
           Copy-Item -Recurse assets $out/assets
           Copy-Item README.md $out/
           Copy-Item THIRD_PARTY_NOTICES.md $out/
