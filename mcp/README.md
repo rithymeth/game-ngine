@@ -262,6 +262,16 @@ Animation graphs (`.aanim`), blend spaces (`.ablend`) and montages (`.amontage`)
 | `anim_blend_weights` | The clip weights a blend space gives at `points` (or an even `grid`), plus the 2D triangulation. |
 | `anim_graph_simulate` | Runs a graph headless over `steps` (set variables, fire triggers, play / stop montages, advance `dt`) and reports each state machine's state, the state changes and the events (notifies, montage sections). Clips are stand-ins of a given length: there is no skeleton, so poses are not produced. |
 
+### UI layouts (`ui_*`)
+
+UI layouts (`.aui`) have no importer, so these tools take the layout as `definition` (JSON) or a `file` under the open project's `Content/`.
+
+| Tool | What it does |
+| --- | --- |
+| `ui_widget_types` | Every widget type, how many children it takes, and what it saves by default, so a layout can be written without guessing field names. |
+| `ui_check` | Loads the layout (errors name the widget by path), lays it out at `width` x `height`, and reports duplicate names, bindings that name a missing widget or an unbindable property, and widgets that run past the screen or have no size. Returns the widget tree with rectangles, the bindings and the images used. |
+| `ui_preview` | Renders the layout to a PNG. Text shows as solid blocks (a fixed-width stand-in font) and images as flat grey rectangles, so it shows layout, anchoring, sizing, colour and clipping, not final art. |
+
 ### Running a cooked game (`game_*`)
 
 The editor tools edit the authored scene. The `game_*` tools instead host a full cooked

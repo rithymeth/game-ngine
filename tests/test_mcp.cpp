@@ -544,6 +544,10 @@ AETHER_TEST(Mcp_ToolsCanReturnImages) {
 #include "blueprint_tools.h"
 #include "kit_tools.h"
 #include "animation_tools.h"
+#include "ui_tools.h"
+#include "aether/ui/basic.h"
+#include "aether/ui/layout_file.h"
+#include "aether/ui/panels.h"
 #include "aether/animation/anim_graph.h"
 #include "script_tools.h"
 #include "tilemap_tools.h"
@@ -2247,6 +2251,65 @@ AETHER_TEST(Mcp_AnimationToolsValidateBlendAndSimulateAGraph) {
                         {"steps", Json::array({Json{{"play_montage", mt_json}, {"dt", 0.1}}, Json{{"dt", 0.1}, {"repeat", 5}}})}})
                     .value;
     AETHER_CHECK(mont["steps"][0]["events"][0]["type"] == "MontageStarted");
+}
+
+AETHER_TEST(Mcp_UiToolsListCheckAndPreviewALayout) {
+    namespace ui = aether::ui;
+    Harness h;
+    auto project = MakeAssetHost();
+    RegisterUiTools(h.server, project);
+
+    Json types = h.Call("ui_widget_types").value;
+    AETHER_CHECK(types["count"].get<int>() > 5);
+    AETHER_CHECK(h.Call("ui_widget_types", {{"type", "Text"}}).value["widgets"][0]["default"]["type"] == "Text");
+    AETHER_CHECK(h.Call("ui_widget_types", {{"type", "Nope"}}).is_error);
+
+    auto root = std::make_unique<ui::Canvas>();
+    root->name = "Menu";
+    auto* panel = root->Add<ui::Image>(ui::Brush::Solid({1.0f, 0.0f, 0.0f, 1.0f}));
+    panel->name = "Panel";
+    panel->desired_size = {200, 100};
+    panel->slot.anchors = ui::Anchors::Point(0.0f, 0.0f);
+    panel->slot.auto_size = true;
+    auto* title = root->Add<ui::Text>("HELLO");
+    title->name = "Title";
+    title->slot.anchors = ui::Anchors::Point(0.0f, 0.0f);
+    title->slot.position = {300, 20};
+    auto* twin = root->Add<ui::Text>("again");
+    twin->name = "Title";
+    twin->slot.position = {1800, 20}; // runs off a 1920 wide screen with the default 100 wide slot? placed to overflow
+    twin->slot.size = {400, 30};
+    twin->slot.anchors = ui::Anchors::Point(0.0f, 0.0f);
+    const std::vector<ui::Binding> bindings = {{"Title", "text", "game.title"}, {"Ghost", "text", "game.x"}, {"Title", "color", "game.title"}};
+    const Json layout = Json::parse(ui::SaveLayout(*root, bindings));
+
+    Json checked = h.Call("ui_check", {{"definition", layout}}).value;
+    AETHER_CHECK(checked["ok"] == false);
+    AETHER_CHECK(checked["widgets"] == 4);
+    std::string all = checked["problems"].dump();
+    AETHER_CHECK(all.find("used by 2 widgets") != std::string::npos);
+    AETHER_CHECK(all.find("Ghost") != std::string::npos);
+    AETHER_CHECK(all.find("can't be bound") != std::string::npos);
+    AETHER_CHECK(all.find("past the screen") != std::string::npos);
+    AETHER_CHECK(checked["tree"]["children"].size() == 3);
+    AETHER_CHECK(checked["tree"]["children"][0]["rect"][2] == 200);
+    AETHER_CHECK(checked["bindings"].size() == 3);
+
+    // A clean layout passes, and a bad one says where it is wrong.
+    Json clean = layout;
+    clean["bindings"] = Json::array();
+    clean["root"]["children"].erase(clean["root"]["children"].size() - 1);
+    AETHER_CHECK(h.Call("ui_check", {{"definition", clean}}).value["ok"] == true);
+    Json broken = layout;
+    broken["root"]["children"][0]["type"] = "Imge";
+    const auto bad = h.Call("ui_check", {{"definition", broken}});
+    AETHER_CHECK(bad.is_error && bad.text.find("Imge") != std::string::npos);
+
+    // The preview: the red panel's pixels are red, and the picture comes back as image content.
+    const auto preview = h.Call("ui_preview", {{"definition", clean}, {"width", 960}, {"height", 540}});
+    AETHER_CHECK(!preview.is_error);
+    AETHER_CHECK(preview.value["width"] == 960 && preview.value["quads"].get<int>() >= 2);
+    AETHER_CHECK(h.Call("ui_preview", {{"definition", clean}, {"width", 5000}}).is_error);
 }
 
 #if AETHER_MCP_SCRIPTING
