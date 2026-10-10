@@ -3,6 +3,7 @@
 #include "test_framework.h"
 
 #include <filesystem>
+#include <map>
 #include <set>
 #include <sstream>
 
@@ -795,3 +796,116 @@ AETHER_TEST(Mcp_GameAttributesReadAndChangeLiveValues) {
     h.Call("game_unload");
     stdfs::remove_all(dir);
 }
+
+#if AETHER_MCP_INTERACTION
+AETHER_TEST(Mcp_InteractableToolsEditCheckAndDriveTheGame) {
+    namespace stdfs = std::filesystem;
+    // --- the editor scene: validated, undoable edits
+    Harness h;
+    std::string door = h.Create({{"Transform", Json::object()}});
+    AETHER_CHECK(h.Call("interactable_list").value.empty());
+    AETHER_CHECK(h.Call("interactable_set", {{"entity", door}, {"fields", {{"range", -1}}}}).is_error);
+    AETHER_CHECK(h.Call("interactable_set", {{"entity", door}, {"fields", {{"required_tags", {"not a tag"}}}}}).is_error);
+    AETHER_CHECK(h.Call("interactable_set", {{"entity", door}, {"fields", {{"colour", "red"}}}}).is_error);
+    AETHER_CHECK(h.Call("interactable_set", {{"entity", door}, {"fields", {{"used", true}}}}).is_error);
+    AETHER_CHECK(!h.Components(door).contains("Interactable")); // a refused edit leaves nothing behind
+
+    Harness::Result set = h.Call("interactable_set", {{"entity", door}, {"fields", {{"prompt", "Open"}, {"range", 2.5}, {"one_shot", true}, {"required_tags", {"Item.Key"}}}}});
+    AETHER_CHECK(!set.is_error);
+    AETHER_CHECK(set.value["interactable"]["prompt"] == "Open");
+    AETHER_CHECK(set.value["interactable"]["one_shot"] == true);
+    AETHER_CHECK(!h.Call("interactable_set", {{"entity", door}, {"fields", {{"cooldown", 3}}}}).is_error); // partial update
+    AETHER_CHECK(h.Components(door)["Interactable"]["prompt"] == "Open");
+    AETHER_CHECK(h.Components(door)["Interactable"]["cooldown"] == 3);
+    h.Call("undo");
+    AETHER_CHECK(h.Components(door)["Interactable"]["cooldown"] == 0);
+    h.Call("undo");
+    AETHER_CHECK(!h.Components(door).contains("Interactable")); // add + set were one step
+    h.Call("redo");
+    AETHER_CHECK(h.Call("interactable_list").value.size() == 1);
+    AETHER_CHECK(!h.Call("interactable_remove", {{"entity", door}}).is_error);
+    AETHER_CHECK(h.Call("interactable_remove", {{"entity", door}}).is_error);
+
+    // --- the project: references to effects and abilities are checked
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_interact_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+    ProjectPaths paths;
+    std::string error;
+    AETHER_CHECK(CreateProject(dir, "McpInteract", &paths, &error));
+    auto project = MakeAssetHost();
+    RegisterAssetTools(h.server, project);
+    RegisterKitTools(h.server, project);
+    AETHER_CHECK(!h.Call("project_open", {{"project_file", paths.file.string()}}).is_error);
+    const Json project_scene = {{"$type", "Scene"}, {"$version", 1},
+                                {"entities", Json::array({{{"components", {{"Interactable", {{"prompt", "Drink"}, {"effect", "Heal"}, {"ability", "Missing"}}}}}}})}};
+    AETHER_CHECK(!h.Call("content_write", {{"path", "Scenes/start.ascene"}, {"text", project_scene.dump()}}).is_error);
+    AETHER_CHECK(h.Call("interaction_project").value["interactables"].size() == 1);
+    AETHER_CHECK(!h.Call("kit_put", {{"type", "effect"}, {"path", "Fx/Heal"}, {"definition", {{"name", "Heal"}, {"duration_policy", "instant"}}}}).is_error);
+    Json check = h.Call("kit_check").value;
+    AETHER_CHECK(check["ok"] == false);
+    AETHER_CHECK(check["problems"].size() == 1); // Heal exists, the ability does not
+    AETHER_CHECK(check["problems"][0]["problem"].get<std::string>().find("Missing") != std::string::npos);
+    stdfs::remove_all(dir);
+
+    // --- the running game
+    const stdfs::path gdir = stdfs::temp_directory_path() / "aether_mcp_interact_game_test";
+    stdfs::remove_all(gdir);
+    stdfs::create_directories(gdir);
+    const Json manifest = {{"$type", "CookManifest"}, {"$version", 1}, {"project", "McpInteractGame"}, {"configuration", "Development"},
+                           {"startup_scene", "Scenes/start.ascene"}, {"fixed_timestep_hz", 60.0}, {"gravity", {0.0, -9.81, 0.0}},
+                           {"layers", {"Default"}}, {"collision_matrix", Json::array()},
+                           {"assets", Json::array({{{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/start.ascene"}, {"importer", "Scene"}}})},
+                           {"files", Json::array()}};
+    auto transform_at = [](double x) { return Json{{"position", {x, 0, 0}}, {"rotation", {0, 0, 0, 1}}, {"scale", {1, 1, 1}}}; };
+    const Json scene = {{"$type", "Scene"}, {"$version", 1},
+                        {"entities", Json::array({
+                            {{"components", {{"EntityName", {{"value", "Player"}}}, {"Transform", transform_at(0)}}}},
+                            {{"components", {{"EntityName", {{"value", "Lever"}}}, {"Transform", transform_at(1)}, {"Interactable", {{"prompt", "Pull"}, {"range", 2}, {"one_shot", true}}}}}},
+                            {{"components", {{"EntityName", {{"value", "Chest"}}}, {"Transform", transform_at(50)}, {"Interactable", {{"prompt", "Open"}, {"range", 2}}}}}},
+                            {{"components", {{"EntityName", {{"value", "Vault"}}}, {"Transform", transform_at(1)}, {"Interactable", {{"prompt", "Unlock"}, {"range", 2}, {"required_tags", {"Item.Key"}}}}}}}})}};
+    pak::PakWriter writer;
+    writer.Add("Manifest.json", manifest.dump());
+    writer.Add("Content/Scenes/start.ascene", scene.dump());
+    AETHER_CHECK(writer.Write((gdir / "game.apak").string(), &error));
+
+    RegisterGameTools(h.server);
+    AETHER_CHECK(!h.Call("game_load", {{"paks", {(gdir / "game.apak").string()}}, {"user_dir", (gdir / "user").string()}}).is_error);
+    h.Call("game_step", {{"frames", 2}});
+    std::map<std::string, std::string> who;
+    const Harness::Result everyone = h.Call("game_list_entities"); // kept alive: the loop reads into it
+    for (const Json& e : everyone.value["entities"]) {
+        if (e.contains("name")) who[e["name"]] = e["entity"];
+    }
+    AETHER_CHECK(who.size() == 4);
+
+    Json rows = h.Call("game_interactables", {{"interactor", who["Player"]}}).value;
+    AETHER_CHECK(rows.size() == 3);
+    std::map<std::string, std::string> reasons;
+    for (const Json& r : rows) reasons[r["name"]] = r["reason"];
+    AETHER_CHECK(reasons["Lever"] == "none");
+    AETHER_CHECK(reasons["Chest"] == "out_of_range");
+    AETHER_CHECK(reasons["Vault"] == "missing_tag");
+
+    AETHER_CHECK(h.Call("game_can_interact", {{"interactor", who["Player"]}, {"target", who["Lever"]}}).value["can_interact"] == true);
+    Json focus = h.Call("game_interaction_focus", {{"interactor", who["Player"]}}).value;
+    AETHER_CHECK(focus["target"] == who["Lever"]);
+    AETHER_CHECK(focus["prompt"] == "Pull");
+
+    Harness::Result pulled = h.Call("game_interact", {{"interactor", who["Player"]}, {"target", who["Lever"]}});
+    AETHER_CHECK(pulled.value["interacted"] == true);
+    Json again = h.Call("game_interact", {{"interactor", who["Player"]}, {"target", who["Lever"]}}).value;
+    AETHER_CHECK(again["interacted"] == false);
+    AETHER_CHECK(again["reason"] == "used"); // one shot
+    AETHER_CHECK(h.Call("game_interact", {{"interactor", who["Player"]}, {"target", who["Chest"]}}).value["reason"] == "out_of_range");
+
+    AETHER_CHECK(!h.Call("game_set_interactable", {{"target", who["Lever"]}, {"reset", true}}).is_error);
+    AETHER_CHECK(h.Call("game_can_interact", {{"interactor", who["Player"]}, {"target", who["Lever"]}}).value["can_interact"] == true);
+    AETHER_CHECK(!h.Call("game_set_interactable", {{"target", who["Lever"]}, {"enabled", false}}).is_error);
+    AETHER_CHECK(h.Call("game_can_interact", {{"interactor", who["Player"]}, {"target", who["Lever"]}}).value["reason"] == "disabled");
+    AETHER_CHECK(h.Call("game_set_interactable", {{"target", who["Player"]}, {"enabled", true}}).is_error); // not an interactable
+    AETHER_CHECK(h.Call("game_set_interactable", {{"target", who["Lever"]}}).is_error);
+    h.Call("game_unload");
+    stdfs::remove_all(gdir);
+}
+#endif

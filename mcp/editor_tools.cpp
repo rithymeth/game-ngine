@@ -2,6 +2,10 @@
 
 #include "aether/reflection/serialize.h"
 #include "aether/gameplay/attribute_set.h"
+#include "aether/gameplay/gameplay_tag.h"
+#if AETHER_MCP_INTERACTION
+#include "aether/interaction/interactable.h"
+#endif
 #include "aether/scene/components.h"
 #include "aether/scene/hierarchy.h"
 #include "aether/scene/serialization.h"
@@ -9,6 +13,7 @@
 
 #include <algorithm>
 #include <new>
+#include <set>
 
 namespace aether::mcp {
 
@@ -208,6 +213,9 @@ const Json kGuidProp = {{"type", "string"}, {"description", "Entity GUID, as ret
 } // namespace
 
 void RegisterAttributeTools(McpServer& server, EditorSession& s);
+#if AETHER_MCP_INTERACTION
+void RegisterInteractionEditorTools(McpServer& server, EditorSession& s);
+#endif
 
 void RegisterEditorTools(McpServer& server, EditorSession& s) {
     server.AddTool({"editor_state",
@@ -579,6 +587,9 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         return {{"move", move}, {"jump", jump}};
                     }});
     RegisterAttributeTools(server, s);
+#if AETHER_MCP_INTERACTION
+    RegisterInteractionEditorTools(server, s);
+#endif
 }
 
 
@@ -691,5 +702,107 @@ void RegisterAttributeTools(McpServer& server, EditorSession& s) {
                         return {{"attributes", AttributesJson(*s.world.GetComponent<gas::AttributeSet>(e))}};
                     }});
 }
+
+
+#if AETHER_MCP_INTERACTION
+// ---------------------------------------------------------------------------
+// Interaction. There is no interaction asset: what can be used is the Interactable component on an
+// entity (a door, a lever, a chest, a person to talk to), saved in scenes and prefabs. These tools edit it
+// as one undoable step with the checks the game cannot make for a hand-edited value.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Throws a ToolError naming the first thing wrong with a partial Interactable.
+void ValidateInteractableFields(const Json& fields) {
+    static const std::set<std::string> kKnown = {"enabled", "prompt", "prompt_key", "range", "required_tags", "blocked_tags", "effect", "ability", "one_shot", "cooldown"};
+    for (auto& [key, value] : fields.items()) {
+        if (key == "used" || key == "remaining") {
+            throw ToolError("\"" + key + "\" is runtime state (a spent or cooling interactable); use game_reset_interactable in a running game");
+        }
+        if (kKnown.count(key) == 0) throw ToolError("Unknown Interactable field \"" + key + "\"");
+        const bool is_bool = key == "enabled" || key == "one_shot";
+        const bool is_number = key == "range" || key == "cooldown";
+        const bool is_list = key == "required_tags" || key == "blocked_tags";
+        if (is_bool && !value.is_boolean()) throw ToolError("\"" + key + "\" must be true or false");
+        if (is_number) {
+            if (!value.is_number() || !(value.get<double>() >= 0.0)) throw ToolError("\"" + key + "\" must be a number, 0 or more");
+        }
+        if (is_list) {
+            if (!value.is_array()) throw ToolError("\"" + key + "\" must be an array of tag names");
+            for (const Json& tag : value) {
+                if (!tag.is_string() || !gas::GameplayTag::ValidName(tag.get<std::string>())) {
+                    throw ToolError("\"" + key + "\" has a bad tag name (tags are dotted words such as State.Stunned)");
+                }
+            }
+        }
+        if (!is_bool && !is_number && !is_list && !value.is_string()) throw ToolError("\"" + key + "\" must be a string");
+    }
+}
+
+} // namespace
+
+void RegisterInteractionEditorTools(McpServer& server, EditorSession& s) {
+    const Json kGuidProp = {{"type", "string"}, {"description", "Entity GUID"}};
+
+    server.AddTool({"interactable_list", "Entities in the editor scene that have an Interactable, with its settings.", Schema(Json::object()),
+                    [&s](const Json&) -> Json {
+                        const ComponentId id = GetComponentId<interact::Interactable>();
+                        Json out = Json::array();
+                        for (Entity e : AllEntities(s)) {
+                            if (!s.world.HasComponentRaw(e, id)) continue;
+                            const IdComponent* idc = s.world.GetComponent<IdComponent>(e);
+                            out.push_back({{"entity", idc ? ToString(idc->guid) : ""}, {"interactable", ComponentJson(s, e, id)}});
+                        }
+                        return out;
+                    }});
+
+    server.AddTool(
+        {"interactable_set",
+         "Make an entity something the player can use, or change how: adds an Interactable if it has none and applies the given fields "
+         "(a partial update). One undoable step. Fields: enabled, prompt, prompt_key (localization), range (0 = no limit), required_tags "
+         "and blocked_tags (dotted tag names the user must / must not have), effect (an effect applied to the user), ability (an ability "
+         "the user activates), one_shot, cooldown (seconds). What using it does is its script's or Blueprint's OnInteract.",
+         Schema({{"entity", kGuidProp},
+                 {"fields", {{"type", "object"}, {"description", "e.g. {\"prompt\": \"Open\", \"range\": 2.5, \"one_shot\": true}"}}}},
+                {"entity", "fields"}),
+         [&s](const Json& args) -> Json {
+             Entity e = RequireEntity(s, args);
+             EntityGuid guid = RequireGuid(args, "entity");
+             if (!args["fields"].is_object()) throw ToolError("\"fields\" must be an object");
+             ValidateInteractableFields(args["fields"]);
+             const ComponentId id = GetComponentId<interact::Interactable>();
+             editor::CommandContext ctx = s.Context();
+             s.stack.BeginTransaction("Set interactable");
+             if (!s.world.HasComponentRaw(e, id)) s.stack.Execute(ctx, std::make_unique<editor::AddComponentCommand>(guid, id));
+             Json warnings = Json::array();
+             std::vector<u8> before;
+             std::vector<u8> after;
+             try {
+                 after = PatchedBytes(s, e, id, args["fields"], before, warnings);
+             } catch (...) {
+                 s.stack.EndTransaction();
+                 s.stack.Undo(ctx);
+                 throw;
+             }
+             s.stack.Execute(ctx, std::make_unique<SetComponentCommand>(guid, id, before, after));
+             s.stack.EndTransaction();
+             Json out = {{"interactable", ComponentJson(s, e, id)}};
+             if (!warnings.empty()) out["warnings"] = warnings;
+             return out;
+         }});
+
+    server.AddTool({"interactable_remove", "Make an entity no longer usable (removes its Interactable). Undoable.",
+                    Schema({{"entity", kGuidProp}}, {"entity"}), [&s](const Json& args) -> Json {
+                        Entity e = RequireEntity(s, args);
+                        EntityGuid guid = RequireGuid(args, "entity");
+                        const ComponentId id = GetComponentId<interact::Interactable>();
+                        if (!s.world.HasComponentRaw(e, id)) throw ToolError("Entity has no Interactable");
+                        editor::CommandContext ctx = s.Context();
+                        s.stack.Execute(ctx, std::make_unique<editor::RemoveComponentCommand>(guid, id));
+                        return {{"removed", true}};
+                    }});
+}
+#endif // AETHER_MCP_INTERACTION
 
 } // namespace aether::mcp

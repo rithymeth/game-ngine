@@ -84,6 +84,14 @@ modifies an attribute no scene or prefab defines. A hand-written scene should sa
 the game only computes `current` when an attribute changes, so without it the value starts at 0
 (`attribute_project` warns about this; `attribute_define` always saves it).
 
+**Interaction.** There is no interaction asset either: what can be used is the `Interactable` component
+(prompt, range, required/blocked tags, an effect and ability applied to the user, one-shot, cooldown), saved
+in scenes and prefabs. `interactable_set` (validated, one undoable step, adds the component if needed),
+`interactable_list` and `interactable_remove` edit editor entities; `interaction_project` lists the project's;
+`kit_check` verifies that each one's effect and ability exist. The `game_interact*` tools above drive the
+running game. Reasons use the names scripts hear (`out_of_range`, `missing_tag`, `blocked_tag`, `cooldown`,
+`used`, `disabled`, `action_failed`).
+
 Enum values are lowercase words (`"instant"`, `"count"`); `kit_schema` lists them. Write definitions,
 `kit_check` them, `asset_cook`, then `game_load` to play them.
 
@@ -102,6 +110,7 @@ saves and localization. The game has its own world, separate from the editor's.
 | `game_input` | Hold keys/axes (`{"W": 1}`), mouse delta for one frame, or clear |
 | `game_screenshot` | Render the current frame off screen (what the player draws: scene and HUD) and return it as a PNG image, also saved to `path`. Needs a graphics device (D3D12 or Vulkan); `width`, `height`, `backend`, `inline` |
 | `game_attributes` / `game_set_attribute` | An entity's attributes in the running game; set a base, add a delta or define one with bounds, through the game's own attribute system (events fire, bounds apply) |
+| `game_interactables` / `game_can_interact` / `game_interact` / `game_interaction_focus` / `game_set_interactable` | The interaction kit in the running game: list usable things (and why an interactor can't use each), check, use (range, tags, cooldown, effect and ability apply, OnInteract is queued for the target's script), find what would be prompted, enable/disable/reset |
 | `game_set_paused` | Freeze or resume the simulation |
 | `game_load_scene` | Switch to another cooked scene |
 | `game_systems` | The game's systems in execution order by phase (filled after the first step) |
