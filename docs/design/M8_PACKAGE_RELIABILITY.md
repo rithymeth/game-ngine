@@ -55,6 +55,18 @@ The full local build succeeds. CTest passes 20/20 entries, including
 1,066/1,066 unit tests and 2/2 functional scenarios. A CLI probe also rejects a
 Windows junction at `Paks` without changing its target files.
 
+On 2026-10-10, a Windows working-tree recheck cooked the current AETHER-01
+project into two independent Development output folders. Both `Game.apak`
+files had SHA-256
+`51adba07b35c1a5d3b05b277cf59c983ffa6c4d70776e79fac59642e1519a7ad`; both
+`CookManifest.json` files had SHA-256
+`fda0c681e632a129f2e91d1e5c3bb511111b4a5930c67c107d304101e37a9137`. The
+second cook reported four reused textures and zero recooks. The standalone
+player loaded that archive for 120 frames and reached `MissionStage` 5. This
+working-tree check is not clean-checkout or cross-platform evidence. The
+Windows CI workflow now repeats the cook, checks cache reuse and both hashes;
+that CI evidence is pending its next run.
+
 Two strict Development cooks of AETHER-01 produce identical archive and
 cook-manifest bytes. The local archive SHA-256 is
 `8f680f38fb4c737d343cf036748b6359e68145a397271312d647a7349e941dec`;

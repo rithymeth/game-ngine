@@ -1,14 +1,14 @@
 # Continuous integration (Phase 24 step 1, docs/design/PHASE_SPECS.md §24.1).
 #
 # Linux: the portable engine, editor UI, scripting and tests with GCC,
-# Clang, ASan/UBSan and the physics module; runs the unit tests and the
-# functional tests (aether_functional), and keeps the JUnit report.
+# Clang, ASan/UBSan and the physics module; runs unit, functional, checked-in
+# fuzz-corpus and registered API/release-gate regressions, and keeps JUnit.
 #
 # macOS (Apple Silicon): the engine, scripting, physics, the Vulkan backend
-# on MoltenVK and the editor shell; runs the unit and functional tests.
+# on MoltenVK and the editor shell; runs unit, functional and registered regressions.
 #
 # Windows: MSVC builds the engine, D3D12 editor, and Qt editor spike, runs
-# their tests, and packages the production editor (aether_editor.exe, its
+# their tests and registered regressions, and packages the production editor (aether_editor.exe, its
 # DLLs and assets) as a downloadable artifact. Pushing a tag v* - or running
 # the workflow by hand with a release_tag - also publishes the package as a
 # GitHub release.
@@ -94,10 +94,9 @@ jobs:
           -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_SANDBOX=OFF
           -DAETHER_PLATFORM_PLUGINS=platforms/example
       - name: Module graph
-        # Phase 37 step 2: no dependency cycles, and links go down the layers in
-        # docs/design/module_layers.txt. Advisory for now (it becomes required
-        # once it has been green for a while).
-        continue-on-error: true
+        # Phase 37 step 2: required architectural boundary check. The layer map
+        # covers the union of first-party targets across supported configurations.
+        if: matrix.name == 'GCC'
         run: |
           cmake --graphviz=build/graph.dot build
           python3 tools/check_module_graph.py --dot build/graph.dot
@@ -113,6 +112,8 @@ jobs:
         run: xvfb-run -a ./build/tests/aether_tests
       - name: Functional tests
         run: ./build/tools/functional/aether_functional --quiet --junit functional-results.xml
+      - name: Registered regression tests
+        run: ctest --test-dir build --output-on-failure --parallel 4 -R "^(fuzz_replay_.*|module_graph_catches_a_cycle|api_stability_annotations|production_gate_table|m8_gate_table)$"
       - name: Benchmarks
         # Phase 38 steps 1 and 6: the report is kept as an artifact, and compared with the checked-in
         # baseline (bench/baseline.json) by calibration-normalized time. Advisory (continue-on-error)
@@ -193,6 +194,8 @@ jobs:
         run: ./build/tests/aether_tests
       - name: Functional tests
         run: ./build/tools/functional/aether_functional --quiet --junit functional-results.xml
+      - name: Registered regression tests
+        run: ctest --test-dir build --output-on-failure --parallel 4 -R "^(fuzz_replay_.*|module_graph_catches_a_cycle|api_stability_annotations|production_gate_table|m8_gate_table)$"
       - name: Screenshot the editor shell
         # Offscreen through MoltenVK; hosted runners may have no Metal
         # device, so this reports without failing the job.
@@ -240,6 +243,12 @@ jobs:
         # Vulkan is off: hosted runners have no Vulkan loader to link
         # against. The D3D12 editor and the rest build as usual.
         run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DAETHER_BUILD_VULKAN=OFF -DAETHER_BUILD_QT_EDITOR=ON
+      - name: Module graph
+        # Check the Windows editor and D3D12 target set against the same
+        # cross-configuration layer map enforced by the Linux GCC job.
+        run: |
+          cmake --graphviz=build/graph.dot build
+          python tools/check_module_graph.py --dot build/graph.dot
       - name: Build
         run: cmake --build build --config Release --parallel
       - name: Unit tests
@@ -252,6 +261,8 @@ jobs:
         run: .\build\editor\qt\Release\aether_editor_qt.exe --self-test
       - name: Functional tests
         run: .\build\tools\functional\Release\aether_functional.exe --quiet --junit functional-results.xml
+      - name: Registered regression tests
+        run: ctest --test-dir build -C Release --output-on-failure --parallel 4 -R "^(fuzz_replay_.*|module_graph_catches_a_cycle|api_stability_annotations|production_gate_table|m8_gate_table)$"
       - name: Cook and launch the AETHER-01 proof project
         shell: pwsh
         run: |
@@ -259,6 +270,23 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & .\build\player\Release\aether_player.exe --pak build\aether01-cooked\Game.apak --headless --frames 120 --report
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify repeat cook and incremental texture cache
+        shell: pwsh
+        run: |
+          $repeat = "build\aether01-cooked-repeat"
+          $output = & .\build\tools\cook\Release\aether_cook.exe games\AETHER-01\AETHER-01.aproject --out $repeat --config development
+          if ($LASTEXITCODE -ne 0) { throw "repeat AETHER-01 cook failed" }
+          $summary = $output -join "`n"
+          Write-Host $summary
+          if ($summary -notmatch 'texture cache: ([1-9][0-9]*) reused, 0 cooked') {
+            throw "repeat cook did not reuse the texture cache"
+          }
+          foreach ($file in @("Game.apak", "CookManifest.json")) {
+            $first = (Get-FileHash "build\aether01-cooked\$file" -Algorithm SHA256).Hash
+            $second = (Get-FileHash "$repeat\$file" -Algorithm SHA256).Hash
+            if ($first -ne $second) { throw "repeat cook changed $file ($first != $second)" }
+            Write-Host "$file SHA256 $first"
+          }
       - name: Render the AETHER-01 proof scene
         shell: pwsh
         run: |
