@@ -74,6 +74,16 @@ with `project_open`.
 | `kit_list` / `kit_get` | The project's definitions with their names and validity; read one |
 | `kit_check` | Every definition must parse and validate, names must be unique, and references must resolve: an ability's cost and cooldown effects, an item's use and equip effects, a quest's reward effects, reward items and prerequisites |
 
+**Attributes.** There is no attribute-definition file: an entity's stats (Health, Mana, ...) are the
+`AttributeSet` component's data, saved in scenes and prefabs. So the attribute tools work on that:
+`attribute_list`, `attribute_define` (a list of `{name, base, min?, max?}`, adds the component if needed, one
+undoable step, bounds applied as the game does) and `attribute_remove` on editor entities;
+`attribute_project` lists what the project's scenes and prefabs define; `game_attributes` /
+`game_set_attribute` act on the running game. `kit_check` warns (it cannot know about scripts) when an effect
+modifies an attribute no scene or prefab defines. A hand-written scene should save `current` beside `base`:
+the game only computes `current` when an attribute changes, so without it the value starts at 0
+(`attribute_project` warns about this; `attribute_define` always saves it).
+
 Enum values are lowercase words (`"instant"`, `"count"`); `kit_schema` lists them. Write definitions,
 `kit_check` them, `asset_cook`, then `game_load` to play them.
 
@@ -91,6 +101,7 @@ saves and localization. The game has its own world, separate from the editor's.
 | `game_state` | Frames, time, entity/physics/script counts, script and Blueprint errors, load warnings |
 | `game_input` | Hold keys/axes (`{"W": 1}`), mouse delta for one frame, or clear |
 | `game_screenshot` | Render the current frame off screen (what the player draws: scene and HUD) and return it as a PNG image, also saved to `path`. Needs a graphics device (D3D12 or Vulkan); `width`, `height`, `backend`, `inline` |
+| `game_attributes` / `game_set_attribute` | An entity's attributes in the running game; set a base, add a delta or define one with bounds, through the game's own attribute system (events fire, bounds apply) |
 | `game_set_paused` | Freeze or resume the simulation |
 | `game_load_scene` | Switch to another cooked scene |
 | `game_systems` | The game's systems in execution order by phase (filled after the first step) |

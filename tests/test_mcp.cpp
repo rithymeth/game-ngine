@@ -688,3 +688,110 @@ AETHER_TEST(Mcp_KitToolsValidateWriteAndCrossCheckDefinitions) {
     AETHER_CHECK(invalid == 1);
     stdfs::remove_all(dir);
 }
+
+AETHER_TEST(Mcp_AttributeToolsEditUndoAndCheckTheProject) {
+    namespace stdfs = std::filesystem;
+    Harness h;
+    std::string hero = h.Create({{"Transform", Json::object()}});
+    AETHER_CHECK(h.Call("attribute_list", {{"entity", hero}}).value["attributes"].empty());
+
+    Harness::Result defined = h.Call("attribute_define", {{"entity", hero}, {"attributes", {{{"name", "Mana"}, {"base", 50}, {"min", 0}, {"max", 100}},
+                                                                                                   {{"name", "Health"}, {"base", 150}, {"min", 0}, {"max", 100}}}}});
+    AETHER_CHECK(!defined.is_error);
+    Json attrs = h.Call("attribute_list", {{"entity", hero}}).value["attributes"];
+    AETHER_CHECK(attrs.size() == 2);
+    AETHER_CHECK(attrs[0]["name"] == "Health"); // sorted by name
+    AETHER_CHECK(attrs[0]["base"] == 100);      // clamped into the bounds
+    AETHER_CHECK(attrs[1]["base"] == 50);
+
+    // Redefine one, undo the whole step, redo.
+    AETHER_CHECK(!h.Call("attribute_define", {{"entity", hero}, {"attributes", {{{"name", "Mana"}, {"base", 75}, {"min", 0}, {"max", 100}}}}}).is_error);
+    AETHER_CHECK(h.Call("attribute_list", {{"entity", hero}}).value["attributes"][1]["base"] == 75);
+    h.Call("undo");
+    AETHER_CHECK(h.Call("attribute_list", {{"entity", hero}}).value["attributes"][1]["base"] == 50);
+    h.Call("redo");
+    AETHER_CHECK(h.Call("attribute_list", {{"entity", hero}}).value["attributes"][1]["base"] == 75);
+
+    AETHER_CHECK(!h.Call("attribute_remove", {{"entity", hero}, {"names", {"Mana"}}}).is_error);
+    AETHER_CHECK(h.Call("attribute_list", {{"entity", hero}}).value["attributes"].size() == 1);
+    AETHER_CHECK(h.Call("attribute_remove", {{"entity", hero}, {"names", {"Mana"}}}).is_error); // already gone
+    AETHER_CHECK(h.Call("attribute_define", {{"entity", hero}, {"attributes", Json::array()}}).is_error);
+    AETHER_CHECK(h.Call("attribute_define", {{"entity", hero}, {"attributes", {{{"name", "Bad"}, {"base", "text"}}}}}).is_error);
+    // A whole add-component-and-define is one undo step on a fresh entity.
+    std::string other = h.Create({{"Transform", Json::object()}});
+    AETHER_CHECK(!h.Call("attribute_define", {{"entity", other}, {"attributes", {{{"name", "Stamina"}, {"base", 10}}}}}).is_error);
+    h.Call("undo");
+    AETHER_CHECK(!h.Components(other).contains("AttributeSet"));
+
+    // The project's scenes define attributes; kit_check warns about effects that modify unknown ones.
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_attr_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+    ProjectPaths paths;
+    std::string error;
+    AETHER_CHECK(CreateProject(dir, "McpAttrs", &paths, &error));
+    auto project = MakeAssetHost();
+    RegisterAssetTools(h.server, project);
+    RegisterKitTools(h.server, project);
+    AETHER_CHECK(!h.Call("project_open", {{"project_file", paths.file.string()}}).is_error);
+    const Json scene = {{"$type", "Scene"}, {"$version", 1},
+                        {"entities", Json::array({{{"components", {{"AttributeSet", {{"attributes", {{{"name", "Health"}, {"base", 100}, {"min", 0}, {"max", 100}}}}}}}}}})}};
+    AETHER_CHECK(!h.Call("content_write", {{"path", "Scenes/start.ascene"}, {"text", scene.dump()}}).is_error);
+    Json listed = h.Call("attribute_project").value;
+    AETHER_CHECK(listed["attributes"].size() == 1);
+    AETHER_CHECK(listed["attributes"][0]["name"] == "Health");
+    AETHER_CHECK(listed["attributes"][0]["defined_in"][0] == "Scenes/start.ascene");
+    AETHER_CHECK(listed["warnings"].size() == 1); // saved without "current"
+    AETHER_CHECK(listed["warnings"][0]["warning"].get<std::string>().find("current") != std::string::npos);
+
+    auto effect = [](const char* name, const char* attribute) {
+        return Json{{"name", name}, {"duration_policy", "instant"}, {"modifiers", {{{"attribute", attribute}, {"op", "add"}, {"magnitude", 1}}}}};
+    };
+    AETHER_CHECK(!h.Call("kit_put", {{"type", "effect"}, {"path", "Fx/Heal"}, {"definition", effect("Heal", "Health")}}).is_error);
+    AETHER_CHECK(!h.Call("kit_put", {{"type", "effect"}, {"path", "Fx/Drain"}, {"definition", effect("Drain", "Sanity")}}).is_error);
+    Json check = h.Call("kit_check").value;
+    AETHER_CHECK(check["ok"] == true); // a warning, not a problem
+    AETHER_CHECK(check["warnings"].size() == 1);
+    AETHER_CHECK(check["warnings"][0]["warning"].get<std::string>().find("Sanity") != std::string::npos);
+    stdfs::remove_all(dir);
+}
+
+AETHER_TEST(Mcp_GameAttributesReadAndChangeLiveValues) {
+    namespace stdfs = std::filesystem;
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_game_attr_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+    const Json manifest = {{"$type", "CookManifest"}, {"$version", 1}, {"project", "McpAttr"}, {"configuration", "Development"},
+                           {"startup_scene", "Scenes/start.ascene"}, {"fixed_timestep_hz", 60.0}, {"gravity", {0.0, -9.81, 0.0}},
+                           {"layers", {"Default"}}, {"collision_matrix", Json::array()},
+                           {"assets", Json::array({{{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/start.ascene"}, {"importer", "Scene"}}})},
+                           {"files", Json::array()}};
+    const Json scene = {{"$type", "Scene"}, {"$version", 1},
+                        {"entities", Json::array({{{"components", {{"AttributeSet", {{"attributes", {{{"name", "Health"}, {"base", 80}, {"current", 80}, {"min", 0}, {"max", 100}}}}}}}}}})}};
+    pak::PakWriter writer;
+    writer.Add("Manifest.json", manifest.dump());
+    writer.Add("Content/Scenes/start.ascene", scene.dump());
+    std::string error;
+    AETHER_CHECK(writer.Write((dir / "game.apak").string(), &error));
+
+    Harness h;
+    RegisterGameTools(h.server);
+    AETHER_CHECK(!h.Call("game_load", {{"paks", {(dir / "game.apak").string()}}, {"user_dir", (dir / "user").string()}}).is_error);
+    h.Call("game_step", {{"frames", 2}});
+    std::string who = h.Call("game_list_entities", {{"component", "AttributeSet"}}).value["entities"][0]["entity"];
+
+    Json before = h.Call("game_attributes", {{"entity", who}}).value["attributes"];
+    AETHER_CHECK(before.size() == 1);
+    AETHER_CHECK(before[0]["current"] == 80);
+
+    Harness::Result set = h.Call("game_set_attribute", {{"entity", who}, {"name", "Health"}, {"delta", -30}});
+    AETHER_CHECK(!set.is_error);
+    AETHER_CHECK(set.value["base"] == 50);
+    AETHER_CHECK(h.Call("game_set_attribute", {{"entity", who}, {"name", "Health"}, {"base", 500}}).value["base"] == 100); // clamped
+    AETHER_CHECK(!h.Call("game_set_attribute", {{"entity", who}, {"name", "Mana"}, {"define", {{"base", 5}, {"min", 0}, {"max", 10}}}}).is_error);
+    AETHER_CHECK(h.Call("game_attributes", {{"entity", who}}).value["attributes"].size() == 2);
+    AETHER_CHECK(h.Call("game_set_attribute", {{"entity", who}, {"name", "Nope"}, {"base", 1}}).is_error);
+    AETHER_CHECK(h.Call("game_set_attribute", {{"entity", who}, {"name", "Health"}}).is_error); // needs one mode
+    h.Call("game_unload");
+    stdfs::remove_all(dir);
+}
