@@ -538,6 +538,7 @@ AETHER_TEST(Mcp_ToolsCanReturnImages) {
 }
 
 #include "asset_tools.h"
+#include "kit_tools.h"
 #include "aether/project/project.h"
 
 AETHER_TEST(Mcp_AssetToolsImportMoveAndCookAProject) {
@@ -561,7 +562,9 @@ AETHER_TEST(Mcp_AssetToolsImportMoveAndCookAProject) {
     }
 
     Harness h;
-    RegisterAssetTools(h.server);
+    auto project = MakeAssetHost();
+    RegisterAssetTools(h.server, project);
+    RegisterKitTools(h.server, project);
     AETHER_CHECK(h.Call("asset_list").is_error); // no project open yet
     AETHER_CHECK(h.Call("project_open", {{"project_file", (dir / "nope.aproject").string()}}).is_error);
 
@@ -617,5 +620,71 @@ AETHER_TEST(Mcp_AssetToolsImportMoveAndCookAProject) {
     AETHER_CHECK(!h.Call("asset_delete", {{"asset", "Textures/renamed.tga"}}).is_error);
     AETHER_CHECK(h.Call("asset_info", {{"asset", "Textures/renamed.tga"}}).is_error);
     AETHER_CHECK(h.Call("asset_cook", {{"output_dir", (dir / "Cooked2").string()}, {"configuration", "bogus"}}).is_error);
+    stdfs::remove_all(dir);
+}
+
+AETHER_TEST(Mcp_KitToolsValidateWriteAndCrossCheckDefinitions) {
+    namespace stdfs = std::filesystem;
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_kit_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+    ProjectPaths paths;
+    std::string error;
+    AETHER_CHECK(CreateProject(dir, "McpKits", &paths, &error));
+
+    Harness h;
+    auto project = MakeAssetHost();
+    RegisterAssetTools(h.server, project);
+    RegisterKitTools(h.server, project);
+    AETHER_CHECK(h.Call("kit_list").is_error); // no project open
+    AETHER_CHECK(!h.Call("project_open", {{"project_file", paths.file.string()}}).is_error);
+
+    // Every type's sample is a definition its own kit accepts.
+    Json types = h.Call("kit_types").value;
+    AETHER_CHECK(types.size() >= 4);
+    for (const Json& t : types) {
+        Json schema = h.Call("kit_schema", {{"type", t["type"]}}).value;
+        AETHER_CHECK(schema.contains("notes"));
+        if (schema.contains("sample")) {
+            Json verdict = h.Call("kit_validate", {{"type", t["type"]}, {"definition", schema["sample"]}}).value;
+            AETHER_CHECK(verdict["ok"] == true);
+        }
+    }
+    AETHER_CHECK(h.Call("kit_schema", {{"type", "nonsense"}}).is_error);
+
+    Json bad = h.Call("kit_validate", {{"type", "effect"}, {"definition", {{"name", ""}}}}).value;
+    AETHER_CHECK(bad["ok"] == false);
+    AETHER_CHECK(bad["error"].get<std::string>().find("effect.name_empty") != std::string::npos);
+
+    const Json heal = {{"name", "Heal"}, {"duration_policy", "instant"}, {"modifiers", {{{"attribute", "Health"}, {"op", "add"}, {"magnitude", 25}}}}};
+    Harness::Result put = h.Call("kit_put", {{"type", "effect"}, {"path", "Gameplay/Heal"}, {"definition", heal}});
+    AETHER_CHECK(!put.is_error);
+    AETHER_CHECK(put.value["path"] == "Gameplay/Heal.aeffect");
+    AETHER_CHECK(stdfs::exists(paths.content / "Gameplay" / "Heal.aeffect"));
+    AETHER_CHECK(h.Call("kit_put", {{"type", "effect"}, {"path", "Gameplay/Heal"}, {"definition", heal}}).is_error); // exists
+    AETHER_CHECK(!h.Call("kit_put", {{"type", "effect"}, {"path", "Gameplay/Heal"}, {"definition", heal}, {"overwrite", true}}).is_error);
+
+    // Invalid definitions are refused and nothing is written.
+    AETHER_CHECK(h.Call("kit_put", {{"type", "effect"}, {"path", "Gameplay/Bad"}, {"definition", {{"name", "Bad"}, {"duration_policy", "Instant"}}}}).is_error);
+    AETHER_CHECK(!stdfs::exists(paths.content / "Gameplay" / "Bad.aeffect"));
+    AETHER_CHECK(h.Call("kit_put", {{"type", "effect"}, {"path", "../Escape"}, {"definition", heal}}).is_error);
+
+    AETHER_CHECK(!h.Call("kit_put", {{"type", "ability"}, {"path", "Gameplay/Potion"}, {"definition", {{"name", "Potion"}, {"cost", "Heal"}, {"cooldown", "Missing"}}}}).is_error);
+    Json got = h.Call("kit_get", {{"asset", "Gameplay/Heal.aeffect"}}).value;
+    AETHER_CHECK(got["type"] == "effect");
+    AETHER_CHECK(got["definition"]["name"] == "Heal");
+
+    Json check = h.Call("kit_check").value;
+    AETHER_CHECK(check["ok"] == false);
+    AETHER_CHECK(check["problems"].size() == 1);
+    AETHER_CHECK(check["problems"][0]["problem"].get<std::string>().find("Missing") != std::string::npos);
+
+    // A hand-edited, broken file shows up as invalid.
+    AETHER_CHECK(!h.Call("content_write", {{"path", "Gameplay/Broken.aeffect"}, {"text", "{ not json"}}).is_error);
+    Json listed = h.Call("kit_list", {{"type", "effect"}}).value;
+    AETHER_CHECK(listed.size() == 2);
+    unsigned invalid = 0;
+    for (const Json& row : listed) invalid += row["valid"] == false ? 1 : 0;
+    AETHER_CHECK(invalid == 1);
     stdfs::remove_all(dir);
 }

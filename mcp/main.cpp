@@ -13,6 +13,7 @@
 #include "build_tools.h"
 #include "editor_tools.h"
 #include "game_tools.h"
+#include "kit_tools.h"
 
 #include <cstdio>
 #include <cstring>
@@ -57,7 +58,9 @@ int main(int argc, char** argv) {
     mcp::McpServer server("aether-editor", "0.1.0");
     mcp::RegisterEditorTools(server, session);
     mcp::RegisterGameTools(server);
-    mcp::RegisterAssetTools(server);
+    auto project = mcp::MakeAssetHost(); // the open project, shared by the asset and kit tools
+    mcp::RegisterAssetTools(server, project);
+    mcp::RegisterKitTools(server, project);
     std::error_code ec;
     mcp::RegisterBuildTools(server, mcp::FindBuildContext(build_dir, std::filesystem::absolute(argv[0], ec).parent_path()));
     server.RunStdio(std::cin, std::cout);
