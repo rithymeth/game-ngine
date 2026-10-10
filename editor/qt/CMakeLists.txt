@@ -1,4 +1,5 @@
-add_executable(aether_editor_qt WIN32 main.cpp editor_play_runtime.cpp physics_component_panel.cpp)
+add_executable(aether_editor_qt WIN32 main.cpp editor_play_runtime.cpp physics_component_panel.cpp
+    animation_editor_widget.cpp)
 target_link_libraries(aether_editor_qt PRIVATE
     Aether::Engine
     Aether::Audio

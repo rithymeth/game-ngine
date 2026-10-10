@@ -424,6 +424,7 @@ void ParseNodeHierarchy(const Json& gltf, GltfScene& out_scene) {
     for (usize i = 0; i < node_count; ++i) {
         const Json& node_json = nodes_json[i];
         GltfNode& node = out_scene.nodes[i];
+        node.name = node_json.value("name", std::string{});
         ParseNodeTRS(node_json, node);
         if (node_json.contains("mesh")) {
             node.mesh_index = node_json["mesh"].get<i32>();

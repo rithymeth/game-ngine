@@ -88,6 +88,7 @@ struct GltfNodeInstance {
 // the target of an animation channel, so `matrix` is used verbatim and
 // translation/rotation/scale are left at their defaults (never read).
 struct GltfNode {
+    std::string name;
     Vec3 translation{0.0f, 0.0f, 0.0f};
     Quaternion rotation = Quaternion::Identity();
     Vec3 scale{1.0f, 1.0f, 1.0f};
