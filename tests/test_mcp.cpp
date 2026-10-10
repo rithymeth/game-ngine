@@ -2,6 +2,7 @@
 #include "mcp_server.h"
 #include "test_framework.h"
 
+#include <cmath>
 #include <filesystem>
 #include <map>
 #include <set>
@@ -539,6 +540,7 @@ AETHER_TEST(Mcp_ToolsCanReturnImages) {
 }
 
 #include "asset_tools.h"
+#include "audio_tools.h"
 #include "kit_tools.h"
 #include "aether/project/project.h"
 
@@ -909,3 +911,167 @@ AETHER_TEST(Mcp_InteractableToolsEditCheckAndDriveTheGame) {
     stdfs::remove_all(gdir);
 }
 #endif
+
+AETHER_TEST(Mcp_AudioToolsEditCheckPreviewAndDriveTheGame) {
+    namespace stdfs = std::filesystem;
+    // --- the editor scene: validated, undoable audio components
+    Harness h;
+    std::string speaker = h.Create({{"Transform", Json::object()}});
+    AETHER_CHECK(h.Call("audio_set", {{"entity", speaker}, {"component", "Transform"}, {"fields", Json::object()}}).is_error);
+    AETHER_CHECK(h.Call("audio_set", {{"entity", speaker}, {"component", "AudioSource"}, {"fields", {{"pitch", 0}}}}).is_error);
+    AETHER_CHECK(h.Call("audio_set", {{"entity", speaker}, {"component", "AudioSource"}, {"fields", {{"playing", true}}}}).is_error);
+    AETHER_CHECK(h.Call("audio_set", {{"entity", speaker}, {"component", "ReverbZone"}, {"fields", {{"wet", 2}}}}).is_error);
+    AETHER_CHECK(h.Call("audio_set", {{"entity", speaker}, {"component", "ReverbZone"}, {"fields", {{"loudness", 1}}}}).is_error);
+    AETHER_CHECK(!h.Components(speaker).contains("AudioSource")); // a refused edit leaves nothing behind
+
+    AETHER_CHECK(!h.Call("audio_set", {{"entity", speaker}, {"component", "AudioSource"}, {"fields", {{"cue", "Audio/blip.acue"}, {"volume_db", -6}, {"auto_play", false}}}}).is_error);
+    AETHER_CHECK(h.Components(speaker)["AudioSource"]["cue"] == "Audio/blip.acue");
+    AETHER_CHECK(h.Components(speaker)["AudioSource"]["auto_play"] == false);
+    AETHER_CHECK(!h.Call("audio_set", {{"entity", speaker}, {"component", "ReverbZone"}, {"fields", {{"radius", 5}, {"wet", 0.5}}}}).is_error);
+    AETHER_CHECK(!h.Call("audio_set", {{"entity", speaker}, {"component", "AudioListener"}, {"fields", Json::object()}}).is_error); // just add it
+    AETHER_CHECK(h.Call("audio_list").value.size() == 1);
+    h.Call("undo");
+    AETHER_CHECK(!h.Components(speaker).contains("AudioListener"));
+    h.Call("undo");
+    h.Call("undo");
+    AETHER_CHECK(!h.Components(speaker).contains("AudioSource")); // add + set were one step
+    h.Call("redo");
+    AETHER_CHECK(!h.Call("audio_remove", {{"entity", speaker}, {"component", "AudioSource"}}).is_error);
+    AETHER_CHECK(h.Call("audio_remove", {{"entity", speaker}, {"component", "AudioSource"}}).is_error);
+
+    // --- cues work without a project, too
+    const Json random_cue = {{"version", 1}, {"name", "pick"}, {"root", 1},
+                             {"output", {{"bus", "SFX"}}},
+                             {"nodes", Json::array({{{"id", 1}, {"type", "Random"}, {"children", {2, 3}}},
+                                                    {{"id", 2}, {"type", "Wave"}, {"sound", "Audio/a.wav"}},
+                                                    {{"id", 3}, {"type", "Wave"}, {"sound", "Audio/b.wav"}}})}};
+    auto auto_project = MakeAssetHost();
+    RegisterAssetTools(h.server, auto_project);
+    RegisterKitTools(h.server, auto_project);
+    RegisterAudioTools(h.server, auto_project);
+    Json verdict = h.Call("cue_validate", {{"definition", random_cue}}).value;
+    AETHER_CHECK(verdict["ok"] == true);
+    AETHER_CHECK(verdict["sounds_checked_against_project"] == false);
+    Json preview = h.Call("cue_preview", {{"definition", random_cue}, {"plays", 6}, {"seed", 7}}).value;
+    AETHER_CHECK(preview["plays"].size() == 6);
+    std::set<std::string> picked;
+    for (const Json& run : preview["plays"]) {
+        AETHER_CHECK(run["items"].size() == 1);
+        picked.insert(run["items"][0]["sound"].get<std::string>());
+    }
+    AETHER_CHECK(picked.size() == 2); // both sounds came up over six plays
+    Json again = h.Call("cue_preview", {{"definition", random_cue}, {"plays", 6}, {"seed", 7}}).value;
+    AETHER_CHECK(again["plays"] == preview["plays"]); // the seed makes it repeatable
+    AETHER_CHECK(h.Call("cue_validate", {{"definition", {{"nodes", Json::array()}}}}).value["ok"] == false); // no output
+    AETHER_CHECK(h.Call("cue_preview", {{"definition", random_cue}, {"plays", 0}}).is_error);
+    AETHER_CHECK(h.Call("cue_validate").is_error);
+    AETHER_CHECK(h.Call("cue_validate", {{"cue", "Audio/x.acue"}}).is_error); // needs a project for that
+
+    // --- a project with a real sound, a cue and a scene that uses them
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_audio_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+    ProjectPaths paths;
+    std::string error;
+    AETHER_CHECK(CreateProject(dir, "McpAudio", &paths, &error));
+    {
+        // A 0.1 s, 8 kHz, 16-bit mono WAV.
+        const stdfs::path wav = dir / "blip.wav";
+        std::ofstream out(wav, std::ios::binary);
+        const unsigned data_bytes = 800 * 2;
+        auto u32le = [&](unsigned v) { const char b[4] = {char(v & 255), char((v >> 8) & 255), char((v >> 16) & 255), char((v >> 24) & 255)}; out.write(b, 4); };
+        auto u16le = [&](unsigned v) { const char b[2] = {char(v & 255), char((v >> 8) & 255)}; out.write(b, 2); };
+        out.write("RIFF", 4); u32le(36 + data_bytes); out.write("WAVEfmt ", 8);
+        u32le(16); u16le(1); u16le(1); u32le(8000); u32le(16000); u16le(2); u16le(16);
+        out.write("data", 4); u32le(data_bytes);
+        for (int i = 0; i < 800; ++i) u16le(static_cast<unsigned>(static_cast<int>(8000.0 * std::sin(i * 0.3)) & 0xFFFF));
+    }
+    AETHER_CHECK(!h.Call("project_open", {{"project_file", paths.file.string()}}).is_error);
+    AETHER_CHECK(!h.Call("asset_add_files", {{"sources", {(dir / "blip.wav").string()}}, {"folder", "Audio"}}).is_error);
+
+    const Json blip = {{"version", 1}, {"name", "blip"}, {"root", 1}, {"output", {{"bus", "SFX"}, {"volume_db", -6}, {"spatial", false}}},
+                       {"nodes", Json::array({{{"id", 1}, {"type", "Wave"}, {"sound", "Audio/blip.wav"}}})}};
+    AETHER_CHECK(!h.Call("kit_put", {{"type", "sound_cue"}, {"path", "Audio/blip"}, {"definition", blip}}).is_error);
+    AETHER_CHECK(h.Call("kit_schema", {{"type", "sound_cue"}}).value.contains("sample"));
+    Json sample = h.Call("kit_schema", {{"type", "sound_cue"}}).value["sample"];
+    AETHER_CHECK(h.Call("kit_validate", {{"type", "sound_cue"}, {"definition", sample}}).value["ok"] == true);
+    AETHER_CHECK(h.Call("kit_put", {{"type", "sound_cue"}, {"path", "Audio/bad"}, {"definition", {{"nodes", Json::array()}}}}).is_error);
+
+    Json by_asset = h.Call("cue_validate", {{"cue", "Audio/blip.acue"}}).value;
+    AETHER_CHECK(by_asset["ok"] == true);
+    AETHER_CHECK(by_asset["sounds_checked_against_project"] == true);
+    // The preview reads the real length of the project's .wav (0.1 s), where it assumes one for sounds it cannot read.
+    Json real = h.Call("cue_preview", {{"cue", "Audio/blip.acue"}, {"plays", 1}}).value;
+    AETHER_CHECK(real["assumed_length_sounds"].empty());
+    AETHER_CHECK(std::fabs(real["sound_lengths"]["Audio/blip.wav"].get<double>() - 0.1) < 1e-6);
+    AETHER_CHECK(std::fabs(real["plays"][0]["duration"].get<double>() - 0.1) < 1e-6);
+    Json missing = h.Call("cue_validate", {{"definition", random_cue}}).value; // a.wav and b.wav are not in this project
+    AETHER_CHECK(missing["ok"] == false);
+    AETHER_CHECK(missing["diagnostics"][0]["code"] == "CU007");
+
+    // kit_check: the Random cue's missing sounds, and a scene naming a cue that is not there.
+    AETHER_CHECK(!h.Call("kit_put", {{"type", "sound_cue"}, {"path", "Audio/pick"}, {"definition", random_cue}}).is_error);
+    auto scene_with = [](const char* cue) {
+        return Json{{"$type", "Scene"}, {"$version", 1},
+                    {"entities", Json::array({{{"components", {{"Transform", {{"position", {0, 0, 0}}, {"rotation", {0, 0, 0, 1}}, {"scale", {1, 1, 1}}}},
+                                                                  {"AudioListener", {{"active", true}}},
+                                                                  {"AudioSource", {{"cue", cue}, {"auto_play", false}}}}}}})}};
+    };
+    AETHER_CHECK(!h.Call("content_write", {{"path", "Scenes/start.ascene"}, {"text", scene_with("Audio/nothing.acue").dump()}}).is_error);
+    Json check = h.Call("kit_check").value;
+    AETHER_CHECK(check["ok"] == false);
+    unsigned cue_problems = 0, source_problems = 0;
+    for (const Json& pr : check["problems"]) {
+        const std::string text = pr["problem"];
+        if (text.find("CU007") != std::string::npos) ++cue_problems;
+        if (text.find("AudioSource's cue") != std::string::npos) ++source_problems;
+    }
+    AETHER_CHECK(cue_problems == 2);   // pick.acue's a.wav and b.wav
+    AETHER_CHECK(source_problems == 1);
+
+    AETHER_CHECK(!h.Call("asset_delete", {{"asset", "Audio/pick.acue"}}).is_error);
+    AETHER_CHECK(!h.Call("content_write", {{"path", "Scenes/start.ascene"}, {"text", scene_with("Audio/blip.acue").dump()}}).is_error);
+    AETHER_CHECK(h.Call("kit_check").value["ok"] == true);
+
+    // --- cook it and run the audio in the hosted game
+    AETHER_CHECK(!h.Call("project_set", {{"startup_scene", "Scenes/start.ascene"}}).is_error);
+    Harness::Result cooked = h.Call("asset_cook", {{"output_dir", (dir / "Cooked").string()}, {"always_cook", {"Audio/"}}});
+    AETHER_CHECK(!cooked.is_error);
+    AETHER_CHECK(cooked.value["ok"] == true);
+    RegisterGameTools(h.server);
+    AETHER_CHECK(h.Call("game_audio_state").is_error); // no game yet
+    AETHER_CHECK(!h.Call("game_load", {{"paks", {cooked.value["pak_file"]}}, {"user_dir", (dir / "user").string()}}).is_error);
+    h.Call("game_step", {{"frames", 3}});
+
+    Json state = h.Call("game_audio_state").value;
+    AETHER_CHECK(state["buses"].size() >= 2);
+    AETHER_CHECK(state["listener"].is_string());
+    AETHER_CHECK(state["problems"].empty());
+
+    AETHER_CHECK(h.Call("game_play_sound", {{"cue", "Audio/blip.acue"}}).value["played"] == true);
+    AETHER_CHECK(h.Call("game_audio_state").value["cues_playing"].get<int>() >= 1);
+    AETHER_CHECK(h.Call("game_play_sound", {{"cue", "Audio/blip.acue"}, {"location", {1, 0, 0}}, {"volume_db", -3}}).value["played"] == true);
+    Json nothing = h.Call("game_play_sound", {{"cue", "Audio/ghost.acue"}}).value;
+    AETHER_CHECK(nothing["played"] == false);
+    AETHER_CHECK(!nothing["problems"].empty()); // the missing cue is reported
+    AETHER_CHECK(h.Call("game_play_sound", {{"cue", "Audio/blip.acue"}, {"pitch", 0}}).is_error);
+    AETHER_CHECK(h.Call("game_play_sound", {{"cue", "Audio/blip.acue"}, {"location", {1, 2}}}).is_error);
+
+    Json bus = h.Call("game_set_bus", {{"bus", "SFX"}, {"volume_db", -12}}).value;
+    AETHER_CHECK(bus["volume_db"] == -12);
+    AETHER_CHECK(h.Call("game_set_bus", {{"bus", "SFX"}, {"muted", true}}).value["muted"] == true);
+    AETHER_CHECK(h.Call("game_set_bus", {{"bus", "NoSuchBus"}, {"volume_db", 0}}).is_error);
+    AETHER_CHECK(h.Call("game_set_bus", {{"bus", "SFX"}}).is_error);
+    AETHER_CHECK(!h.Call("game_stop_sounds").is_error);
+    AETHER_CHECK(h.Call("game_audio_state").value["cues_playing"] == 0);
+
+    const Harness::Result everyone = h.Call("game_list_entities", {{"component", "AudioSource"}});
+    const std::string source = everyone.value["entities"][0]["entity"];
+    AETHER_CHECK(!h.Call("game_audio_source", {{"entity", source}, {"action", "play"}}).is_error);
+    AETHER_CHECK(!h.Call("game_audio_source", {{"entity", source}, {"action", "set_volume"}, {"value", -9}}).is_error);
+    AETHER_CHECK(h.Call("game_audio_source", {{"entity", source}, {"action", "explode"}}).is_error);
+    h.Call("game_step", {{"frames", 2}});
+    AETHER_CHECK(h.Call("game_audio_source", {{"entity", source}, {"action", "stop"}}).value["volume_db"] == -9);
+    h.Call("game_unload");
+    stdfs::remove_all(dir);
+}

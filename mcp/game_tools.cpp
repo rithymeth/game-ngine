@@ -2,6 +2,7 @@
 
 #include "screenshot.h"
 
+#include "aether/audio/audio_system.h"
 #include "aether/gameplay/attribute_library.h"
 #include "aether/gameplay/attribute_set.h"
 #include "aether/input/keys.h"
@@ -588,6 +589,117 @@ void RegisterGameTools(McpServer& server) {
                     }});
 
 #endif // AETHER_MCP_INTERACTION
+    // -- Audio (the running game's mixer, cue player and AudioSource components) ---------------------------------
+    server.AddTool({"game_audio_state",
+                    "The running game's audio: voices and cues playing, the listener, reverb, every bus (volume, muted) and the cue problems found "
+                    "so far (a missing or invalid cue is reported once).",
+                    Schema(Json::object()), [host](const Json&) -> Json {
+                        Game& game = host->Require();
+                        audio::AudioSystem* audio = game.AudioSystem();
+                        if (audio == nullptr) throw ToolError("This game has no audio system (load a scene first)");
+                        audio::Mixer& mixer = audio->GetMixer();
+                        Json buses = Json::array();
+                        for (usize b = 0; b < mixer.BusCount(); ++b) {
+                            buses.push_back({{"name", mixer.BusName(static_cast<audio::BusId>(b))},
+                                             {"volume_db", mixer.BusVolume(static_cast<audio::BusId>(b))},
+                                             {"muted", mixer.BusMuted(static_cast<audio::BusId>(b))}});
+                        }
+                        Json out = {{"voices", mixer.VoiceCount()},
+                                    {"cues_playing", audio->Player().ActiveCount()},
+                                    {"sample_rate", mixer.SampleRate()},
+                                    {"buses", buses},
+                                    {"problems", audio->Problems()}};
+                        out["listener"] = audio->ListenerEntity().IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), audio->ListenerEntity()));
+                        out["reverb"] = {{"active", audio->HasReverb()}, {"strength", audio->ReverbStrength()}, {"wet", audio->ReverbWet()}, {"room_size", audio->ReverbRoomSize()}};
+                        return out;
+                    }});
+
+    server.AddTool(
+        {"game_play_sound",
+         "Play a sound cue in the running game, once: in 2D, or at a `location` [x,y,z] (a spatial cue is heard from there). Returns whether "
+         "anything started (false: the cue doesn't exist or plays nothing). Step the game to let it run; game_audio_state shows it playing.",
+         Schema({{"cue", {{"type", "string"}, {"description", "Cue asset path, e.g. Audio/hurt.acue"}}},
+                 {"location", {{"type", "array"}, {"items", {{"type", "number"}}}}},
+                 {"volume_db", {{"type", "number"}}},
+                 {"pitch", {{"type", "number"}}}},
+                {"cue"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             audio::AudioSystem* audio = game.AudioSystem();
+             if (audio == nullptr) throw ToolError("This game has no audio system (load a scene first)");
+             const std::string cue = RequireString(args, "cue");
+             const f32 volume = args.contains("volume_db") && args["volume_db"].is_number() ? args["volume_db"].get<f32>() : 0.0f;
+             const f32 pitch = args.contains("pitch") && args["pitch"].is_number() ? args["pitch"].get<f32>() : 1.0f;
+             if (!(pitch > 0.0f)) throw ToolError("\"pitch\" must be above 0");
+             audio::CueHandle handle = 0;
+             if (args.contains("location")) {
+                 const Json& l = args["location"];
+                 if (!l.is_array() || l.size() != 3 || !l[0].is_number() || !l[1].is_number() || !l[2].is_number()) throw ToolError("\"location\" must be [x, y, z]");
+                 handle = audio->PlaySoundAtLocation(cue, Vec3(l[0].get<f32>(), l[1].get<f32>(), l[2].get<f32>()), volume, pitch);
+             } else {
+                 handle = audio->PlaySound2D(cue, volume, pitch);
+             }
+             return {{"played", handle != 0}, {"cue", cue}, {"problems", audio->Problems()}};
+         }});
+
+    server.AddTool({"game_set_bus",
+                    "Change a mixer bus in the running game: its volume (dB, optionally faded over seconds) and/or mute. Buses: Master, Music, SFX, UI, Voice "
+                    "(game_audio_state lists them).",
+                    Schema({{"bus", {{"type", "string"}}}, {"volume_db", {{"type", "number"}}}, {"fade_seconds", {{"type", "number"}}}, {"muted", {{"type", "boolean"}}}}, {"bus"}),
+                    [host](const Json& args) -> Json {
+                        Game& game = host->Require();
+                        audio::AudioSystem* audio = game.AudioSystem();
+                        if (audio == nullptr) throw ToolError("This game has no audio system (load a scene first)");
+                        const std::string bus = RequireString(args, "bus");
+                        if (!args.contains("volume_db") && !args.contains("muted")) throw ToolError("Give \"volume_db\" and/or \"muted\"");
+                        const audio::BusId id = audio->GetMixer().FindBus(bus);
+                        if (id == audio::Mixer::kInvalidBus) throw ToolError("No bus \"" + bus + "\"");
+                        if (args.contains("volume_db")) {
+                            if (!args["volume_db"].is_number()) throw ToolError("\"volume_db\" must be a number");
+                            const f32 fade = args.contains("fade_seconds") && args["fade_seconds"].is_number() ? std::max(0.0f, args["fade_seconds"].get<f32>()) : 0.0f;
+                            audio->SetBusVolume(bus, args["volume_db"].get<f32>(), fade);
+                        }
+                        if (args.contains("muted")) {
+                            if (!args["muted"].is_boolean()) throw ToolError("\"muted\" must be true or false");
+                            audio->GetMixer().SetBusMuted(id, args["muted"].get<bool>());
+                        }
+                        return {{"bus", bus}, {"volume_db", audio->GetMixer().BusVolume(id)}, {"muted", audio->GetMixer().BusMuted(id)}};
+                    }});
+
+    server.AddTool({"game_stop_sounds", "Stop every sound playing in the running game.", Schema(Json::object()), [host](const Json&) -> Json {
+                        Game& game = host->Require();
+                        audio::AudioSystem* audio = game.AudioSystem();
+                        if (audio == nullptr) throw ToolError("This game has no audio system (load a scene first)");
+                        audio->StopAll();
+                        return {{"voices", audio->GetMixer().VoiceCount()}};
+                    }});
+
+    server.AddTool(
+        {"game_audio_source",
+         "Control an entity's AudioSource in the running game: play, stop, fade_in / fade_out (value = seconds), set_volume (value = dB) or set_cue "
+         "(text = cue path). The request is applied by the next frame's audio update, so step the game; the reply shows the component's state.",
+         Schema({{"entity", {{"type", "string"}}},
+                 {"action", {{"type", "string"}, {"description", "play | stop | fade_in | fade_out | set_volume | set_cue"}}},
+                 {"value", {{"type", "number"}}},
+                 {"text", {{"type", "string"}}}},
+                {"entity", "action"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             Entity e = RequireEntity(game, args);
+             AudioSource* source = game.GetWorld().GetComponent<AudioSource>(e);
+             if (source == nullptr) throw ToolError("The entity has no AudioSource");
+             const std::string action = RequireString(args, "action");
+             const f32 value = args.contains("value") && args["value"].is_number() ? args["value"].get<f32>() : 0.0f;
+             if (action == "play") source->Play();
+             else if (action == "stop") source->Stop();
+             else if (action == "fade_in") source->FadeIn(value);
+             else if (action == "fade_out") source->FadeOut(value);
+             else if (action == "set_volume") source->SetVolume(value);
+             else if (action == "set_cue") source->SetCue(RequireString(args, "text"));
+             else throw ToolError("\"action\" must be play, stop, fade_in, fade_out, set_volume or set_cue");
+             return {{"action", action}, {"cue", source->cue}, {"playing", source->playing}, {"volume_db", source->volume_db}, {"queued_commands", source->commands.size()}};
+         }});
+
     server.AddTool({"game_destroy_entity", "Destroy an entity in the running game (its OnDestroy runs).",
                     Schema({{"entity", {{"type", "string"}}}}, {"entity"}), [host](const Json& args) -> Json {
                         Game& game = host->Require();

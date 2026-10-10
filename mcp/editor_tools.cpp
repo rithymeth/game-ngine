@@ -213,6 +213,7 @@ const Json kGuidProp = {{"type", "string"}, {"description", "Entity GUID, as ret
 } // namespace
 
 void RegisterAttributeTools(McpServer& server, EditorSession& s);
+void RegisterAudioEditorTools(McpServer& server, EditorSession& s);
 #if AETHER_MCP_INTERACTION
 void RegisterInteractionEditorTools(McpServer& server, EditorSession& s);
 #endif
@@ -587,6 +588,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         return {{"move", move}, {"jump", jump}};
                     }});
     RegisterAttributeTools(server, s);
+    RegisterAudioEditorTools(server, s);
 #if AETHER_MCP_INTERACTION
     RegisterInteractionEditorTools(server, s);
 #endif
@@ -804,5 +806,119 @@ void RegisterInteractionEditorTools(McpServer& server, EditorSession& s) {
                     }});
 }
 #endif // AETHER_MCP_INTERACTION
+
+
+// ---------------------------------------------------------------------------
+// Audio components. AudioSource (plays a cue from an entity), AudioListener (where the player hears from) and
+// ReverbZone (a space with its own reverb) are components saved in scenes and prefabs; audio_set edits them as one
+// validated, undoable step.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+bool IsAudioComponent(const std::string& name) { return name == "AudioSource" || name == "AudioListener" || name == "ReverbZone"; }
+
+// Throws a ToolError naming the first thing wrong with a partial audio component.
+void ValidateAudioFields(const std::string& component, const Json& fields) {
+    auto number = [&](const std::string& key, const Json& v, double lo, double hi) {
+        if (!v.is_number() || !(v.get<double>() >= lo) || !(v.get<double>() <= hi)) {
+            throw ToolError("\"" + key + "\" must be a number from " + std::to_string(lo) + " to " + std::to_string(hi));
+        }
+    };
+    for (auto& [key, value] : fields.items()) {
+        if (component == "AudioSource") {
+            if (key == "playing" || key == "commands") throw ToolError("\"" + key + "\" is runtime state; use game_audio_source in a running game");
+            if (key == "cue") { if (!value.is_string()) throw ToolError("\"cue\" must be a cue asset path (a string)"); }
+            else if (key == "auto_play") { if (!value.is_boolean()) throw ToolError("\"auto_play\" must be true or false"); }
+            else if (key == "volume_db") number(key, value, -120.0, 24.0);
+            else if (key == "pitch") { number(key, value, 0.0, 8.0); if (!(value.get<double>() > 0.0)) throw ToolError("\"pitch\" must be above 0"); }
+            else throw ToolError("Unknown AudioSource field \"" + key + "\" (cue, auto_play, volume_db, pitch)");
+        } else if (component == "AudioListener") {
+            if (key != "active") throw ToolError("Unknown AudioListener field \"" + key + "\" (active)");
+            if (!value.is_boolean()) throw ToolError("\"active\" must be true or false");
+        } else {
+            if (key == "radius" || key == "blend_distance") number(key, value, 0.0, 100000.0);
+            else if (key == "priority") { if (!value.is_number_integer()) throw ToolError("\"priority\" must be an integer"); }
+            else if (key == "room_size" || key == "damping" || key == "wet") number(key, value, 0.0, 1.0);
+            else throw ToolError("Unknown ReverbZone field \"" + key + "\" (radius, blend_distance, priority, room_size, damping, wet)");
+        }
+    }
+}
+
+} // namespace
+
+void RegisterAudioEditorTools(McpServer& server, EditorSession& s) {
+    const Json kGuidProp = {{"type", "string"}, {"description", "Entity GUID"}};
+
+    server.AddTool({"audio_list", "Entities in the editor scene with an AudioSource, AudioListener or ReverbZone, and their settings.", Schema(Json::object()),
+                    [&s](const Json&) -> Json {
+                        Json out = Json::array();
+                        for (Entity e : AllEntities(s)) {
+                            Json row = Json::object();
+                            for (const char* name : {"AudioSource", "AudioListener", "ReverbZone"}) {
+                                const ComponentId id = FindComponentIdByName(name);
+                                if (id != kInvalidComponentId && s.world.HasComponentRaw(e, id)) row[name] = ComponentJson(s, e, id);
+                            }
+                            if (row.empty()) continue;
+                            const IdComponent* idc = s.world.GetComponent<IdComponent>(e);
+                            row["entity"] = idc ? ToString(idc->guid) : "";
+                            out.push_back(row);
+                        }
+                        return out;
+                    }});
+
+    server.AddTool(
+        {"audio_set",
+         "Add an audio component to an entity if it has none and apply fields (a partial update), as one undoable step. AudioSource: cue (a "
+         "cue asset path such as Audio/hurt.acue), auto_play, volume_db, pitch. AudioListener: active (the first active one hears). "
+         "ReverbZone: radius, blend_distance, priority, room_size, damping, wet (0..1).",
+         Schema({{"entity", kGuidProp},
+                 {"component", {{"type", "string"}, {"description", "AudioSource, AudioListener or ReverbZone"}}},
+                 {"fields", {{"type", "object"}, {"description", "e.g. {\"cue\": \"Audio/ambient.acue\", \"volume_db\": -6}"}}}},
+                {"entity", "component"}),
+         [&s](const Json& args) -> Json {
+             Entity e = RequireEntity(s, args);
+             EntityGuid guid = RequireGuid(args, "entity");
+             const std::string name = RequireString(args, "component");
+             if (!IsAudioComponent(name)) throw ToolError("\"component\" must be AudioSource, AudioListener or ReverbZone");
+             const Json fields = args.contains("fields") ? args["fields"] : Json::object();
+             if (!fields.is_object()) throw ToolError("\"fields\" must be an object");
+             ValidateAudioFields(name, fields);
+             const ComponentId id = RequireComponent(name);
+             editor::CommandContext ctx = s.Context();
+             s.stack.BeginTransaction("Set " + name);
+             if (!s.world.HasComponentRaw(e, id)) s.stack.Execute(ctx, std::make_unique<editor::AddComponentCommand>(guid, id));
+             Json warnings = Json::array();
+             if (!fields.empty()) {
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 try {
+                     after = PatchedBytes(s, e, id, fields, before, warnings);
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     s.stack.Undo(ctx);
+                     throw;
+                 }
+                 s.stack.Execute(ctx, std::make_unique<SetComponentCommand>(guid, id, before, after));
+             }
+             s.stack.EndTransaction();
+             Json out = {{"component", name}, {"value", ComponentJson(s, e, id)}};
+             if (!warnings.empty()) out["warnings"] = warnings;
+             return out;
+         }});
+
+    server.AddTool({"audio_remove", "Remove an AudioSource, AudioListener or ReverbZone from an entity. Undoable.",
+                    Schema({{"entity", kGuidProp}, {"component", {{"type", "string"}}}}, {"entity", "component"}), [&s](const Json& args) -> Json {
+                        Entity e = RequireEntity(s, args);
+                        EntityGuid guid = RequireGuid(args, "entity");
+                        const std::string name = RequireString(args, "component");
+                        if (!IsAudioComponent(name)) throw ToolError("\"component\" must be AudioSource, AudioListener or ReverbZone");
+                        const ComponentId id = RequireComponent(name);
+                        if (!s.world.HasComponentRaw(e, id)) throw ToolError("Entity has no " + name);
+                        editor::CommandContext ctx = s.Context();
+                        s.stack.Execute(ctx, std::make_unique<editor::RemoveComponentCommand>(guid, id));
+                        return {{"removed", name}};
+                    }});
+}
 
 } // namespace aether::mcp

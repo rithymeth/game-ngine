@@ -92,6 +92,17 @@ in scenes and prefabs. `interactable_set` (validated, one undoable step, adds th
 running game. Reasons use the names scripts hear (`out_of_range`, `missing_tag`, `blocked_tag`, `cooldown`,
 `used`, `disabled`, `action_failed`).
 
+**Audio.** Sound cues (`.acue`) are a real asset type, so they go through the same `kit_*` tools
+(`type: "sound_cue"`: schema with a sample, validate, put, get, list, check) plus two cue-specific ones:
+`cue_validate` returns every diagnostic with its code (CU001...), severity and node, and checks each Wave's sound
+against the open project's Sound assets; `cue_preview` evaluates the cue graph (Random picks, Sequence order,
+Modulator ranges, Loops, Delays) and lists which sounds it would play, when, how loud and at what pitch, over
+several plays with a repeatable `seed`, with no audio output. Sound lengths come from the project's `.wav`
+files (other formats are assumed to last a second, and listed). `audio_set` / `audio_list` / `audio_remove`
+edit the `AudioSource`, `AudioListener` and `ReverbZone` components on editor entities (validated, one undoable
+step), and `kit_check` also verifies each cue (with its sounds) and that every scene's `AudioSource` names a
+cue that exists. The `game_audio_*` tools above drive the running game.
+
 Enum values are lowercase words (`"instant"`, `"count"`); `kit_schema` lists them. Write definitions,
 `kit_check` them, `asset_cook`, then `game_load` to play them.
 
@@ -111,6 +122,7 @@ saves and localization. The game has its own world, separate from the editor's.
 | `game_screenshot` | Render the current frame off screen (what the player draws: scene and HUD) and return it as a PNG image, also saved to `path`. Needs a graphics device (D3D12 or Vulkan); `width`, `height`, `backend`, `inline` |
 | `game_attributes` / `game_set_attribute` | An entity's attributes in the running game; set a base, add a delta or define one with bounds, through the game's own attribute system (events fire, bounds apply) |
 | `game_interactables` / `game_can_interact` / `game_interact` / `game_interaction_focus` / `game_set_interactable` | The interaction kit in the running game: list usable things (and why an interactor can't use each), check, use (range, tags, cooldown, effect and ability apply, OnInteract is queued for the target's script), find what would be prompted, enable/disable/reset |
+| `game_audio_state` / `game_play_sound` / `game_set_bus` / `game_stop_sounds` / `game_audio_source` | The audio kit in the running game: voices, cues playing, listener, reverb, every bus and the cue problems found; play a cue in 2D or at a location; set a bus's volume (faded) or mute; stop everything; play/stop/fade/set volume or cue on an entity's AudioSource |
 | `game_set_paused` | Freeze or resume the simulation |
 | `game_load_scene` | Switch to another cooked scene |
 | `game_systems` | The game's systems in execution order by phase (filled after the first step) |
@@ -159,6 +171,7 @@ Bad input is reported as a tool error (`isError`), never a crash, and a failed
 - `screenshot.h/.cpp` -- the off-screen renderer behind `game_screenshot`.
 - `asset_tools.h/.cpp` -- the project, asset, import and cook tools.
 - `kit_tools.h/.cpp`, `project_host.h` -- the gameplay-kit data tools, and the open-project state they share with the asset tools.
+- `audio_tools.h/.cpp` -- cue validation and preview (audio components and live audio are in `editor_tools.cpp` and `game_tools.cpp`).
 - `main.cpp` -- the `aether_mcp_server` executable.
 - Tests: `tests/test_mcp.cpp`.
 
