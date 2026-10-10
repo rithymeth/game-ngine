@@ -5,6 +5,9 @@
 #include "aether/gameplay/attribute_library.h"
 #include "aether/gameplay/attribute_set.h"
 #include "aether/input/keys.h"
+#if AETHER_MCP_INTERACTION
+#include "aether/interaction/interaction_system.h"
+#endif
 #include "aether/player/game.h"
 #include "aether/player/user_paths.h"
 #include "aether/reflection/serialize.h"
@@ -494,6 +497,97 @@ void RegisterGameTools(McpServer& server) {
                      {"max", gas::Attributes::GetAttributeMax(e, name, 0.0f)}};
          }});
 
+#if AETHER_MCP_INTERACTION
+    // -- Interaction (the Interactable component and the game's InteractionSystem) ---------------------------------
+    server.AddTool(
+        {"game_interactables",
+         "The usable things in the running game: entities with an Interactable, with prompt, range, state (enabled, used, cooling down) and, "
+         "if an `interactor` is given, whether and why it can use each (the reason names are the ones scripts hear: out_of_range, "
+         "missing_tag, blocked_tag, cooldown, used, disabled...).",
+         Schema({{"interactor", {{"type", "string"}, {"description", "Entity that would use them (GUID or #index)"}}}}), [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             interact::InteractionSystem* system = interact::InteractionSystem::Active();
+             Entity interactor{};
+             if (args.contains("interactor")) interactor = RequireEntity(game, Json{{"entity", args["interactor"]}});
+             Json out = Json::array();
+             for (Entity e : AllEntities(world)) {
+                 const interact::Interactable* i = world.GetComponent<interact::Interactable>(e);
+                 if (i == nullptr) continue;
+                 Json row = {{"entity", EntityKey(world, e)}, {"enabled", i->enabled}, {"prompt", i->prompt}, {"range", i->range},
+                             {"one_shot", i->one_shot}, {"used", i->used}, {"cooldown", i->cooldown}, {"remaining", i->remaining}};
+                 if (const EntityName* n = world.GetComponent<EntityName>(e)) row["name"] = n->value;
+                 if (!interactor.IsNull() && system != nullptr) row["reason"] = interact::ReasonName(system->Check(interactor, e));
+                 out.push_back(row);
+             }
+             return out;
+         }});
+
+    server.AddTool({"game_interact",
+                    "Make `interactor` use `target` the way the game does: checks range, tags, cooldown, applies the target's effect and ability to the "
+                    "interactor, starts its cooldown, and queues OnInteract for the target's script/Blueprint (heard on the next frame; step the game). "
+                    "Returns whether it worked and, if not, the reason.",
+                    Schema({{"interactor", {{"type", "string"}}}, {"target", {{"type", "string"}}}}, {"interactor", "target"}),
+                    [host](const Json& args) -> Json {
+                        Game& game = host->Require();
+                        interact::InteractionSystem* system = interact::InteractionSystem::Active();
+                        if (system == nullptr) throw ToolError("This game has no interaction system");
+                        Entity interactor = FindEntity(game, RequireString(args, "interactor"));
+                        Entity target = FindEntity(game, RequireString(args, "target"));
+                        const interact::Reason reason = system->Interact(interactor, target);
+                        return {{"interacted", reason == interact::Reason::None}, {"reason", interact::ReasonName(reason)}};
+                    }});
+
+    server.AddTool({"game_can_interact", "Whether `interactor` could use `target` right now, and if not why (out_of_range, missing_tag, ...). Changes nothing.",
+                    Schema({{"interactor", {{"type", "string"}}}, {"target", {{"type", "string"}}}}, {"interactor", "target"}),
+                    [host](const Json& args) -> Json {
+                        Game& game = host->Require();
+                        interact::InteractionSystem* system = interact::InteractionSystem::Active();
+                        if (system == nullptr) throw ToolError("This game has no interaction system");
+                        const interact::Reason reason = system->Check(FindEntity(game, RequireString(args, "interactor")), FindEntity(game, RequireString(args, "target")));
+                        return {{"can_interact", reason == interact::Reason::None}, {"reason", interact::ReasonName(reason)}};
+                    }});
+
+    server.AddTool(
+        {"game_interaction_focus",
+         "What `interactor` would be prompted to use: the nearest usable target within its range, in front of `forward` ([x,y,z]; omit to look all "
+         "round), measured from the interactor's position. Returns the target, its distance and prompt, or null.",
+         Schema({{"interactor", {{"type", "string"}}}, {"forward", {{"type", "array"}, {"items", {{"type", "number"}}}}}}, {"interactor"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             interact::InteractionSystem* system = interact::InteractionSystem::Active();
+             if (system == nullptr) throw ToolError("This game has no interaction system");
+             Entity interactor = FindEntity(game, RequireString(args, "interactor"));
+             const Transform* t = game.GetWorld().GetComponent<Transform>(interactor);
+             if (t == nullptr) throw ToolError("The interactor has no Transform");
+             Vec3 forward{0.0f, 0.0f, 0.0f};
+             if (args.contains("forward")) {
+                 const Json& f = args["forward"];
+                 if (!f.is_array() || f.size() != 3 || !f[0].is_number() || !f[1].is_number() || !f[2].is_number()) throw ToolError("\"forward\" must be [x, y, z]");
+                 forward = Vec3(f[0].get<f32>(), f[1].get<f32>(), f[2].get<f32>());
+             }
+             const interact::FocusResult focus = system->Focus(interactor, t->position, forward);
+             if (focus.target.IsNull()) return {{"target", nullptr}};
+             return {{"target", EntityKey(game.GetWorld(), focus.target)}, {"distance", focus.distance}, {"prompt", focus.prompt}};
+         }});
+
+    server.AddTool({"game_set_interactable", "Enable or disable an interactable in the running game, and/or reset a spent one-shot or cooling one so it can be used again.",
+                    Schema({{"target", {{"type", "string"}}}, {"enabled", {{"type", "boolean"}}}, {"reset", {{"type", "boolean"}}}}, {"target"}),
+                    [host](const Json& args) -> Json {
+                        Game& game = host->Require();
+                        interact::InteractionSystem* system = interact::InteractionSystem::Active();
+                        if (system == nullptr) throw ToolError("This game has no interaction system");
+                        Entity target = FindEntity(game, RequireString(args, "target"));
+                        if (!args.contains("enabled") && !args.contains("reset")) throw ToolError("Give \"enabled\" and/or \"reset\"");
+                        if (args.contains("enabled")) {
+                            if (!args["enabled"].is_boolean() || !system->SetEnabled(target, args["enabled"].get<bool>())) throw ToolError("The target is not an interactable (or \"enabled\" is not a boolean)");
+                        }
+                        if (args.contains("reset") && args["reset"].is_boolean() && args["reset"].get<bool>() && !system->Reset(target)) throw ToolError("The target is not an interactable");
+                        const interact::Interactable* i = game.GetWorld().GetComponent<interact::Interactable>(target);
+                        return {{"enabled", i->enabled}, {"used", i->used}, {"remaining", i->remaining}};
+                    }});
+
+#endif // AETHER_MCP_INTERACTION
     server.AddTool({"game_destroy_entity", "Destroy an entity in the running game (its OnDestroy runs).",
                     Schema({{"entity", {{"type", "string"}}}}, {"entity"}), [host](const Json& args) -> Json {
                         Game& game = host->Require();

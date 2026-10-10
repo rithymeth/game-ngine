@@ -302,6 +302,35 @@ std::map<std::string, ProjectAttribute> CollectProjectAttributes(OpenProject& p,
     return found;
 }
 
+// Every use of a component (by its reflected name) in the project's JSON scenes and prefabs: where, and its saved value.
+struct SceneComponent {
+    std::string path;
+    Json value;
+};
+
+std::vector<SceneComponent> CollectSceneComponents(OpenProject& p, const std::string& component, std::vector<std::string>& unreadable) {
+    std::vector<SceneComponent> found;
+    for (const AssetRecord* r : p.database->All()) {
+        if (r->IsSubAsset() || (r->importer != "Scene" && r->importer != "Prefab")) continue;
+        const fs::path file = p.database->SourcePath(r->guid);
+        if (file.extension() == ".aesc") {
+            unreadable.push_back(r->path + " (binary scene)");
+            continue;
+        }
+        Json doc = Json::parse(ReadText(file), nullptr, false);
+        if (!doc.is_object() || !doc.contains("entities") || !doc["entities"].is_array()) {
+            unreadable.push_back(r->path);
+            continue;
+        }
+        for (const Json& entity : doc["entities"]) {
+            if (!entity.is_object() || !entity.contains("components") || !entity["components"].is_object()) continue;
+            const Json& comps = entity["components"];
+            if (comps.contains(component) && comps[component].is_object()) found.push_back({r->path, comps[component]});
+        }
+    }
+    return found;
+}
+
 } // namespace
 
 void RegisterKitTools(McpServer& server, std::shared_ptr<detail::AssetHost> host) {
@@ -449,9 +478,22 @@ void RegisterKitTools(McpServer& server, std::shared_ptr<detail::AssetHost> host
          }});
 
     server.AddTool(
+        {"interaction_project",
+         "The interactables the open project's scenes and prefabs define (Interactable components): prompt, range, tags, the effect and "
+         "ability each applies, and where. There is no interaction asset file; use interactable_set on an editor entity, or edit a scene "
+         "with content_write. kit_check verifies the effects and abilities exist.",
+         Schema(Json::object()), [host](const Json&) -> Json {
+             OpenProject& p = host->Require();
+             std::vector<std::string> unreadable;
+             Json list = Json::array();
+             for (const SceneComponent& c : CollectSceneComponents(p, "Interactable", unreadable)) list.push_back({{"path", c.path}, {"interactable", c.value}});
+             return {{"interactables", list}, {"not_scanned", unreadable}};
+         }});
+
+    server.AddTool(
         {"kit_check",
          "Check every kit definition in the open project: each must parse and validate, and cross-references must resolve (an ability's cost "
-         "and cooldown effects, an item's use and equip effects, a quest's reward effects, reward items and prerequisites). Also "
+         "and cooldown effects, an item's use and equip effects, a quest's reward effects, reward items and prerequisites, an Interactable's effect and ability). Also "
          "reports duplicate names. Warns (not an error) when an effect modifies an attribute no scene or prefab defines.",
          Schema(Json::object()), [host](const Json&) -> Json {
              OpenProject& p = host->Require();
@@ -518,6 +560,15 @@ void RegisterKitTools(McpServer& server, std::shared_ptr<detail::AssetHost> host
                          for (const Json& r : j["reward_items"]) need(d, "item", "reward item", r.value("item", std::string()));
                      }
                  }
+             }
+
+             // Interactables name the effect they apply and the ability they trigger.
+             std::vector<std::string> not_scanned;
+             for (const SceneComponent& c : CollectSceneComponents(p, "Interactable", not_scanned)) {
+                 const std::string effect = c.value.value("effect", std::string());
+                 const std::string ability = c.value.value("ability", std::string());
+                 if (!effect.empty() && names["effect"].count(effect) == 0) problem(c.path, "an Interactable's effect \"" + effect + "\" is not an effect in the project");
+                 if (!ability.empty() && names["ability"].count(ability) == 0) problem(c.path, "an Interactable's ability \"" + ability + "\" is not an ability in the project");
              }
 
              Json warnings = Json::array();
