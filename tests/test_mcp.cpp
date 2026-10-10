@@ -2315,3 +2315,26 @@ AETHER_TEST(Mcp_ScriptToolsCheckCompleteRunSimulateAndCheckTheProject) {
     stdfs::remove_all(dir);
 }
 #endif
+AETHER_TEST(Mcp_SceneToolsStayInsideTheSceneFolder) {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / "aether_mcp_sandbox";
+    fs::remove_all(root);
+    fs::create_directories(root / "scenes");
+    const fs::path outside = fs::temp_directory_path() / "aether_mcp_outside.json";
+    fs::remove(outside);
+
+    Harness h;
+    h.session.scene_root = root;
+    h.Create({{"Transform", {{"position", {1, 2, 3}}}}});
+    AETHER_CHECK(!h.Call("save_scene", {{"path", "scenes/a.json"}}).is_error); // relative: inside
+    AETHER_CHECK(fs::exists(root / "scenes/a.json"));
+    AETHER_CHECK(!h.Call("save_scene", {{"path", (root / "scenes/b.aesc").string()}}).is_error); // absolute but inside
+    AETHER_CHECK(h.Call("save_scene", {{"path", outside.string()}}).is_error);                    // absolute, outside
+    AETHER_CHECK(h.Call("save_scene", {{"path", "../aether_mcp_outside.json"}}).is_error);        // dot-dot escape
+    AETHER_CHECK(h.Call("save_scene", {{"path", "scenes/../../aether_mcp_outside.json"}}).is_error);
+    AETHER_CHECK(!fs::exists(outside));
+    AETHER_CHECK(h.Call("save_scene", {{"path", "scenes/notes.txt"}}).is_error); // not a scene file
+    AETHER_CHECK(h.Call("load_scene", {{"path", "/etc/passwd.json"}}).is_error);
+    AETHER_CHECK(!h.Call("load_scene", {{"path", "scenes/a.json"}}).is_error);
+    fs::remove_all(root);
+}

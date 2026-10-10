@@ -14,7 +14,7 @@ and talks JSON-RPC over stdio.
 
 ```
 cmake --build <build-dir> --target aether_mcp_server
-claude mcp add aether -- <build-dir>/mcp/aether_mcp_server [--scene scene.json]
+claude mcp add aether -- <build-dir>/mcp/aether_mcp_server [--scene scene.json] [--scene-root folder]
 ```
 
 stdout carries the protocol only; engine logging below Error is switched off
@@ -34,7 +34,7 @@ and errors go to stderr.
 | `set_component` | Partial update: only the fields named change |
 | `reparent` | Parent or detach an entity; rejects cycles |
 | `undo` / `redo` | Walk the editor history |
-| `save_scene` / `load_scene` | `.json` (readable) or `.aesc` (binary); load can `replace` |
+| `save_scene` / `load_scene` | `.json` (readable) or `.aesc` (binary); load can `replace` |. They stay inside the scene folder (the working folder, or `--scene-root`): relative paths resolve there, and absolute paths, `..` and symlinks that leave it are refused
 | `play` / `pause` / `stop` | Play-in-Editor; stop restores the scene exactly. `play` starts the simulation systems |
 | `list_systems` | The simulation systems in execution order, with enabled state (play mode) |
 | `set_system_enabled` | Turn one system on or off |

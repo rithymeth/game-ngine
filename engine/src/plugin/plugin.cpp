@@ -90,6 +90,7 @@ bool CreatePluginScaffold(const stdfs::path& parent, const std::string& name, st
     d.friendly_name = name;
     d.description = "";
     d.engine_version = kEngineVersion;
+    d.abi = kPluginAbi;
     d.has_content = true;
     d.modules.push_back({name, ModuleType::Runtime, LoadingPhase::Default});
     const stdfs::path file = dir / (name + kPluginExtension);
@@ -269,6 +270,10 @@ bool PluginManager::Resolve(const std::vector<std::string>& requested, std::stri
         if (!d.engine_version.empty() && CompareVersions(d.engine_version, kEngineVersion) > 0) {
             return Fail(error, "The plugin '" + d.name + "' needs engine " + d.engine_version + " or newer (this is " +
                                    kEngineVersion + ")");
+        }
+        if (d.abi != 0 && d.abi != kPluginAbi) {
+            return Fail(error, "The plugin '" + d.name + "' was built for plugin ABI " + std::to_string(d.abi) +
+                                   " but this engine uses ABI " + std::to_string(kPluginAbi) + "; rebuild it against this engine");
         }
         p.enabled = true;
         p.enabled_reason = queue[q].second;
