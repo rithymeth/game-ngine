@@ -15,6 +15,7 @@ add_library(aether_engine STATIC
     src/platform/platform_plugin.cpp
     src/platform/lifecycle.cpp
     src/cook/mesh_cook.cpp
+    src/cook/mesh_summary.cpp
     src/cook/meshlet_cook.cpp
     src/platform/process.cpp
     src/pak/pak.cpp
