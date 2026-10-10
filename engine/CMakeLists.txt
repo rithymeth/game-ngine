@@ -13,6 +13,7 @@ add_library(aether_engine STATIC
     src/platform/filesystem.cpp
     src/platform/window_events.cpp
     src/platform/platform_plugin.cpp
+    src/platform/lifecycle.cpp
     src/platform/process.cpp
     src/pak/pak.cpp
     src/pak/vfs.cpp
