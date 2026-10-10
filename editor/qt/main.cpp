@@ -21,6 +21,7 @@
 #include "editor_play_runtime.h"
 #include "sequencer/sequence_document.h"
 #include "physics_component_panel.h"
+#include "animation_editor_widget.h"
 #if defined(AETHER_QT_EDITOR_SCRIPTING)
 #include "script_component_editor.h"
 #endif
@@ -84,6 +85,7 @@
 #include <QSet>
 #include <QStackedWidget>
 #include <QToolBar>
+#include <QToolButton>
 #include <QTimer>
 #include <QTreeView>
 #include <QTreeWidget>
@@ -421,6 +423,44 @@ public:
         drag_move_axis_ = -1;
     }
     void SetGridSnap(bool enabled) { grid_snap_ = enabled; }
+    void SetGridVisible(bool visible) { grid_visible_ = visible; }
+    void SetViewPreset(const QString& preset) {
+        if (preset == "Perspective") {
+            orthographic_ = false;
+            camera_yaw_ = 0.35f;
+            camera_pitch_ = 0.42f;
+        } else if (preset == "Orthographic") {
+            orthographic_ = true;
+        } else if (preset == "Top") {
+            orthographic_ = true;
+            camera_yaw_ = 0.0f;
+            camera_pitch_ = 1.48f;
+        } else if (preset == "Bottom") {
+            orthographic_ = true;
+            camera_yaw_ = 0.0f;
+            camera_pitch_ = -1.48f;
+        } else if (preset == "Front") {
+            orthographic_ = true;
+            camera_yaw_ = 0.0f;
+            camera_pitch_ = 0.0f;
+        } else if (preset == "Back") {
+            orthographic_ = true;
+            camera_yaw_ = aether::kPi;
+            camera_pitch_ = 0.0f;
+        } else if (preset == "Left") {
+            orthographic_ = true;
+            camera_yaw_ = -aether::kPi * 0.5f;
+            camera_pitch_ = 0.0f;
+        } else if (preset == "Right") {
+            orthographic_ = true;
+            camera_yaw_ = aether::kPi * 0.5f;
+            camera_pitch_ = 0.0f;
+        } else if (preset == "Isometric") {
+            orthographic_ = true;
+            camera_yaw_ = 0.72f;
+            camera_pitch_ = 0.58f;
+        }
+    }
     void SetContentRoot(const std::filesystem::path& content_root) {
         if (content_root_ == content_root) return;
         content_root_ = content_root;
@@ -580,7 +620,7 @@ protected:
         const aether::EntityGuid hit = PickEntity(event->position());
         if (hit.IsNull()) return;
         if (entity_selected_) entity_selected_(hit);
-        if ((move_tool_ || scale_tool_) && hit == selected_guid_) {
+        if (!rotate_y_tool_ && hit == selected_guid_) {
             const aether::Entity entity = document_.Guids().Find(document_.GetWorld(), hit);
             if (const auto* transform = document_.GetWorld().GetComponent<aether::Transform>(entity)) {
                 dragging_ = true;
@@ -589,6 +629,10 @@ protected:
                 drag_scale_origin_ = transform->scale;
                 drag_start_ = event->position();
                 drag_move_axis_ = -1;
+                if (!scale_tool_ && !ScreenToWorldOnPlane(drag_start_, drag_origin_, CameraForward(), drag_plane_start_)) {
+                    dragging_ = false;
+                    return;
+                }
                 event->accept();
             }
         }
@@ -608,7 +652,7 @@ protected:
             const QPointF delta = event->position() - camera_drag_start_;
             camera_yaw_ = camera_yaw_start_ - static_cast<float>(delta.x()) * 0.008f;
             camera_pitch_ = std::clamp(camera_pitch_start_ + static_cast<float>(delta.y()) * 0.006f,
-                                       0.08f, 1.48f);
+                                       -1.48f, 1.48f);
             event->accept();
             return;
         }
@@ -732,8 +776,10 @@ private:
     aether::Vec3 CameraRight() const { return CameraForward().Cross({0.0f, 1.0f, 0.0f}).Normalized(); }
     aether::Mat4 ViewProjection() const {
         const float aspect = static_cast<float>(std::max(width(), 1)) / static_cast<float>(std::max(height(), 1));
-        return aether::Mat4::PerspectiveRH(aether::Radians(55.0f), aspect, 0.05f, 1000.0f) *
-            aether::Mat4::LookAtRH(CameraPosition(), camera_target_, {0.0f, 1.0f, 0.0f});
+        const aether::Mat4 projection = orthographic_
+            ? aether::OrthographicRH(camera_distance_ * aspect, camera_distance_, 0.05f, 1000.0f)
+            : aether::Mat4::PerspectiveRH(aether::Radians(55.0f), aspect, 0.05f, 1000.0f);
+        return projection * aether::Mat4::LookAtRH(CameraPosition(), camera_target_, {0.0f, 1.0f, 0.0f});
     }
     bool ProjectToScreen(const aether::Vec3& world, QPointF& screen, float* depth = nullptr) const {
         const aether::Vec4 clip = ViewProjection() * aether::Vec4(world.x, world.y, world.z, 1.0f);
@@ -742,6 +788,36 @@ private:
         const float y = clip.y / clip.w;
         if (depth) *depth = clip.z / clip.w;
         screen = QPointF((x * 0.5f + 0.5f) * width(), (1.0f - (y * 0.5f + 0.5f)) * height());
+        return true;
+    }
+
+    bool ScreenToWorldOnPlane(const QPointF& point, const aether::Vec3& plane_point,
+                              const aether::Vec3& plane_normal, aether::Vec3& world) const {
+        aether::Vec3 ray_origin, ray_direction;
+        if (!ScreenRayFromPoint(point, ray_origin, ray_direction)) return false;
+        const float denominator = ray_direction.Dot(plane_normal);
+        if (std::abs(denominator) < 0.0001f) return false;
+        const float distance = (plane_point - ray_origin).Dot(plane_normal) / denominator;
+        if (distance < 0.0f) return false;
+        world = ray_origin + ray_direction * distance;
+        return true;
+    }
+
+    bool ScreenRayFromPoint(const QPointF& point, aether::Vec3& ray_origin,
+                            aether::Vec3& ray_direction) const {
+        if (width() <= 0 || height() <= 0) return false;
+        aether::Mat4 inverse;
+        if (!ViewProjection().TryInverse(inverse)) return false;
+        const float x = static_cast<float>(point.x()) * 2.0f / static_cast<float>(width()) - 1.0f;
+        const float y = 1.0f - static_cast<float>(point.y()) * 2.0f / static_cast<float>(height());
+        const aether::Vec4 near_clip = inverse * aether::Vec4(x, y, 0.0f, 1.0f);
+        const aether::Vec4 far_clip = inverse * aether::Vec4(x, y, 1.0f, 1.0f);
+        if (std::abs(near_clip.w) < 0.0001f || std::abs(far_clip.w) < 0.0001f) return false;
+        ray_origin = {near_clip.x / near_clip.w, near_clip.y / near_clip.w,
+                      near_clip.z / near_clip.w};
+        const aether::Vec3 far_point{far_clip.x / far_clip.w, far_clip.y / far_clip.w,
+                                     far_clip.z / far_clip.w};
+        ray_direction = (far_point - ray_origin).Normalized();
         return true;
     }
 
@@ -1042,52 +1118,42 @@ private:
     }
 
     aether::EntityGuid PickEntity(const QPointF& point) {
-        float closest_center_distance_sq = std::numeric_limits<float>::max();
-        float closest_depth = std::numeric_limits<float>::max();
+        aether::Vec3 ray_origin, ray_direction;
+        if (!ScreenRayFromPoint(point, ray_origin, ray_direction)) return {};
+        const float origin[] = {ray_origin.x, ray_origin.y, ray_origin.z};
+        const float direction[] = {ray_direction.x, ray_direction.y, ray_direction.z};
+        float closest_distance = std::numeric_limits<float>::max();
         aether::EntityGuid hit{};
         for (aether::Entity entity : document_.Entities()) {
             const auto* id = document_.GetWorld().GetComponent<aether::IdComponent>(entity);
             if (!id) continue;
             Bounds bounds;
             if (!EntityBounds(entity, bounds)) continue;
-            float left = std::numeric_limits<float>::max();
-            float top = std::numeric_limits<float>::max();
-            float right = std::numeric_limits<float>::lowest();
-            float bottom = std::numeric_limits<float>::lowest();
-            float nearest_depth = std::numeric_limits<float>::max();
-            for (int corner = 0; corner < 8; ++corner) {
-                const aether::Vec3 world_point{
-                    (corner & 1) ? bounds.maximum.x : bounds.minimum.x,
-                    (corner & 2) ? bounds.maximum.y : bounds.minimum.y,
-                    (corner & 4) ? bounds.maximum.z : bounds.minimum.z};
-                QPointF screen;
-                float depth = 0.0f;
-                if (!ProjectToScreen(world_point, screen, &depth) || depth < 0.0f || depth > 1.0f) continue;
-                left = std::min(left, static_cast<float>(screen.x()));
-                top = std::min(top, static_cast<float>(screen.y()));
-                right = std::max(right, static_cast<float>(screen.x()));
-                bottom = std::max(bottom, static_cast<float>(screen.y()));
-                nearest_depth = std::min(nearest_depth, depth);
+            const float minimum[] = {bounds.minimum.x, bounds.minimum.y, bounds.minimum.z};
+            const float maximum[] = {bounds.maximum.x, bounds.maximum.y, bounds.maximum.z};
+            float near_distance = 0.0f;
+            float far_distance = std::numeric_limits<float>::max();
+            bool intersects = true;
+            for (int axis = 0; axis < 3; ++axis) {
+                if (std::abs(direction[axis]) < 0.000001f) {
+                    if (origin[axis] < minimum[axis] || origin[axis] > maximum[axis]) {
+                        intersects = false;
+                        break;
+                    }
+                    continue;
+                }
+                float first = (minimum[axis] - origin[axis]) / direction[axis];
+                float second = (maximum[axis] - origin[axis]) / direction[axis];
+                if (first > second) std::swap(first, second);
+                near_distance = std::max(near_distance, first);
+                far_distance = std::min(far_distance, second);
+                if (near_distance > far_distance) {
+                    intersects = false;
+                    break;
+                }
             }
-            if (nearest_depth == std::numeric_limits<float>::max()) continue;
-            const aether::Vec3 bounds_center = (bounds.minimum + bounds.maximum) * 0.5f;
-            QPointF projected_center;
-            float center_depth = nearest_depth;
-            if (ProjectToScreen(bounds_center, projected_center, &center_depth) &&
-                (center_depth < 0.0f || center_depth > 1.0f)) center_depth = nearest_depth;
-            constexpr float padding = 8.0f;
-            if (point.x() < left - padding || point.x() > right + padding ||
-                point.y() < top - padding || point.y() > bottom + padding) continue;
-            const float center_x = (left + right) * 0.5f;
-            const float center_y = (top + bottom) * 0.5f;
-            const float dx = static_cast<float>(point.x()) - center_x;
-            const float dy = static_cast<float>(point.y()) - center_y;
-            const float center_distance_sq = dx * dx + dy * dy;
-            if (center_depth < closest_depth - 0.002f ||
-                (std::abs(center_depth - closest_depth) <= 0.002f &&
-                 center_distance_sq < closest_center_distance_sq)) {
-                closest_center_distance_sq = center_distance_sq;
-                closest_depth = center_depth;
+            if (intersects && far_distance >= 0.0f && near_distance < closest_distance) {
+                closest_distance = near_distance;
                 hit = id->guid;
             }
         }
@@ -1110,16 +1176,9 @@ private:
     }
 
     void ApplyDrag(const QPointF& point, bool committed) {
-        if (width() <= 0 || height() <= 0) return;
-        const float units_per_pixel = camera_distance_ * 0.0017f;
-        const float dx = static_cast<float>(point.x() - drag_start_.x()) * units_per_pixel;
-        const float dy = static_cast<float>(point.y() - drag_start_.y()) * units_per_pixel;
-        const aether::Vec3 right = CameraRight();
-        aether::Vec3 ground_forward = CameraForward();
-        ground_forward.y = 0.0f;
-        if (ground_forward.LengthSq() > 0.0001f) ground_forward = ground_forward.Normalized();
-        aether::Vec3 position = drag_origin_ + right * dx - ground_forward * dy;
-        position.y = drag_origin_.y;
+        aether::Vec3 cursor_world;
+        if (!ScreenToWorldOnPlane(point, drag_origin_, CameraForward(), cursor_world)) return;
+        aether::Vec3 position = drag_origin_ + (cursor_world - drag_plane_start_);
         if (grid_snap_) {
             position.x = std::round(position.x);
             position.z = std::round(position.z);
@@ -1210,7 +1269,7 @@ private:
     }
 
     void ApplyActiveDrag(const QPointF& point, bool committed) {
-        if (move_tool_) {
+        if (move_tool_ || (!scale_tool_ && !rotate_y_tool_)) {
             if (drag_move_axis_ >= 0) ApplyAxisDrag(point, committed);
             else ApplyDrag(point, committed);
         } else if (scale_tool_) {
@@ -1349,20 +1408,29 @@ float4 PSMain(VertexOut input) : SV_TARGET {
         command_list_->BeginRenderPass(*swap_chain_, {0.075f, 0.105f, 0.13f, 1.0f});
         if (scene_pipeline_.IsValid()) {
             command_list_->BindPipeline(scene_pipeline_);
-            const int grid_center_x = static_cast<int>(std::round(camera_target_.x));
-            const int grid_center_z = static_cast<int>(std::round(camera_target_.z));
-            constexpr int grid_radius = 20;
-            for (int offset = -grid_radius; offset <= grid_radius; ++offset) {
-                const int x = grid_center_x + offset;
-                const int z = grid_center_z + offset;
-                const bool x_axis = x == 0;
-                const bool z_axis = z == 0;
-                DrawCube(aether::Mat4::Translation({static_cast<float>(x), -0.055f, static_cast<float>(grid_center_z)}) *
-                             aether::Mat4::Scale({x_axis ? 0.025f : 0.009f, 0.01f, static_cast<float>(grid_radius)}),
-                         x_axis ? 0.28f : 0.16f, x_axis ? 0.63f : 0.22f, x_axis ? 0.52f : 0.27f);
-                DrawCube(aether::Mat4::Translation({static_cast<float>(grid_center_x), -0.055f, static_cast<float>(z)}) *
-                             aether::Mat4::Scale({static_cast<float>(grid_radius), 0.01f, z_axis ? 0.025f : 0.009f}),
-                         z_axis ? 0.54f : 0.16f, z_axis ? 0.30f : 0.22f, z_axis ? 0.27f : 0.27f);
+            if (grid_visible_) {
+                const float target_grid_step = std::max(camera_distance_ / 12.0f, 0.1f);
+                const float decade = std::pow(10.0f, std::floor(std::log10(target_grid_step)));
+                const float normalized_step = target_grid_step / decade;
+                const float grid_step = std::clamp(
+                    (normalized_step >= 5.0f ? 5.0f : normalized_step >= 2.0f ? 2.0f : 1.0f) * decade,
+                    0.1f, 50.0f);
+                const float grid_center_x = std::round(camera_target_.x / grid_step) * grid_step;
+                const float grid_center_z = std::round(camera_target_.z / grid_step) * grid_step;
+                constexpr int grid_radius = 20;
+                for (int offset = -grid_radius; offset <= grid_radius; ++offset) {
+                    const float x = grid_center_x + static_cast<float>(offset) * grid_step;
+                    const float z = grid_center_z + static_cast<float>(offset) * grid_step;
+                    const bool x_axis = std::abs(x) < grid_step * 0.5f;
+                    const bool z_axis = std::abs(z) < grid_step * 0.5f;
+                    const float extent = static_cast<float>(grid_radius) * grid_step;
+                    DrawCube(aether::Mat4::Translation({x, -0.055f, grid_center_z}) *
+                                 aether::Mat4::Scale({x_axis ? 0.025f : 0.009f, 0.01f, extent}),
+                             x_axis ? 0.28f : 0.16f, x_axis ? 0.63f : 0.22f, x_axis ? 0.52f : 0.27f);
+                    DrawCube(aether::Mat4::Translation({grid_center_x, -0.055f, z}) *
+                                 aether::Mat4::Scale({extent, 0.01f, z_axis ? 0.025f : 0.009f}),
+                             z_axis ? 0.54f : 0.16f, z_axis ? 0.30f : 0.22f, z_axis ? 0.27f : 0.27f);
+                }
             }
             for (aether::Entity entity : document_.Entities()) {
                 const auto* transform = document_.GetWorld().GetComponent<aether::Transform>(entity);
@@ -1488,6 +1556,8 @@ float4 PSMain(VertexOut input) : SV_TARGET {
     bool rotate_y_tool_ = false;
     bool scale_tool_ = false;
     bool grid_snap_ = false;
+    bool grid_visible_ = true;
+    bool orthographic_ = false;
     bool dragging_ = false;
     bool panning_ = false;
     bool orbiting_ = false;
@@ -1497,6 +1567,7 @@ float4 PSMain(VertexOut input) : SV_TARGET {
     aether::Quaternion drag_rotation_origin_{};
     int drag_move_axis_ = -1;
     QPointF drag_start_;
+    aether::Vec3 drag_plane_start_{};
     QPointF camera_drag_start_;
     aether::Vec3 pan_origin_{};
     aether::Vec3 camera_target_{0.0f, 0.8f, 0.0f};
@@ -2170,8 +2241,13 @@ public:
         output_dock_ = MakeDock("OUTPUT", new EditorLogConsole, *this, Qt::BottomDockWidgetArea, "outputDock");
         sequence_dock_ = MakeDock("ANIMATION · SEQUENCER", MakeSequenceEditor(), *this,
                                        Qt::BottomDockWidgetArea, "sequenceDock");
+        animation_editor_widget_ = new aether::editor::qt::AnimationEditorWidget(
+            [this](const QString& message) { statusBar()->showMessage(message, 5000); });
+        animation_editor_dock_ = MakeDock("ANIMATION · CLIP EDITOR", animation_editor_widget_, *this,
+                                           Qt::BottomDockWidgetArea, "animationEditorDock");
         tabifyDockWidget(content_dock_, output_dock_);
         tabifyDockWidget(content_dock_, sequence_dock_);
+        tabifyDockWidget(content_dock_, animation_editor_dock_);
         content_dock_->raise();
         resizeDocks({content_dock_}, {230}, Qt::Vertical);
         window_menu_->addAction(hierarchy_dock_->toggleViewAction());
@@ -2179,6 +2255,7 @@ public:
         window_menu_->addAction(content_dock_->toggleViewAction());
         window_menu_->addAction(output_dock_->toggleViewAction());
         window_menu_->addAction(sequence_dock_->toggleViewAction());
+        window_menu_->addAction(animation_editor_dock_->toggleViewAction());
         window_menu_->addSeparator();
         QAction* reset_layout_action = window_menu_->addAction("Reset Workspace Layout");
         reset_layout_action->setToolTip("Restore Hierarchy, Inspector, and Content Browser to their default positions");
@@ -4401,7 +4478,7 @@ private:
         if (pause_action_->isEnabled()) commands << "Pause";
         if (stop_action_->isEnabled()) commands << "Stop";
         commands << "Show Hierarchy" << "Show Inspector" << "Open Content Browser" << "Open Output"
-                 << "Open Animation Sequencer" << "Reset Workspace Layout";
+                 << "Open Animation Sequencer" << "Open Animation Editor" << "Reset Workspace Layout";
         for (const auto& command : commands) results->addItem(command);
         layout->addWidget(query);
         layout->addWidget(results, 1);
@@ -4445,11 +4522,13 @@ private:
             if (name == "Stop") { dialog.accept(); StopPlay(); return; }
             if (name == "Reset Workspace Layout") { dialog.accept(); ResetWorkspaceLayout(); return; }
             if (name == "Show Hierarchy" || name == "Show Inspector" ||
-                name == "Open Content Browser" || name == "Open Output" || name == "Open Animation Sequencer") {
+                name == "Open Content Browser" || name == "Open Output" || name == "Open Animation Sequencer" ||
+                name == "Open Animation Editor") {
             const QString dock_name = name == "Show Hierarchy" ? "hierarchyDock" :
                 name == "Show Inspector" ? "inspectorDock" :
                 name == "Open Content Browser" ? "contentDock" :
-                name == "Open Output" ? "outputDock" : "sequenceDock";
+                name == "Open Output" ? "outputDock" :
+                name == "Open Animation Editor" ? "animationEditorDock" : "sequenceDock";
             if (auto* dock = findChild<QDockWidget*>(dock_name)) dock->show(), dock->raise();
             dialog.accept();
             }
@@ -4462,7 +4541,8 @@ private:
     void closeEvent(QCloseEvent* event) override {
         if (scene_document_.PlayState() != aether::editor::PlaySession::State::Editing) StopPlay();
         StopSequencePreview();
-        if (!ConfirmDiscardSequenceChanges() || !ConfirmDiscardSceneChanges()) {
+        if (!animation_editor_widget_->ConfirmDiscardChanges(this) ||
+            !ConfirmDiscardSequenceChanges() || !ConfirmDiscardSceneChanges()) {
             event->ignore();
             return;
         }
@@ -4585,15 +4665,29 @@ private:
         viewport_bar->setMovable(false);
         auto* view_title = new QLabel("SCENE VIEW");
         view_title->setObjectName("viewportTitle");
-        auto* view_hint = new QLabel("ORBIT  RMB   ·   PAN  MMB   ·   ZOOM  WHEEL");
+        auto* view_hint = new QLabel("DRAG OBJECT   ·   ORBIT RMB   ·   PAN MMB   ·   ZOOM WHEEL");
         view_hint->setObjectName("viewportHint");
         view_hint->setAccessibleName("3D World View navigation help");
-        view_hint->setToolTip("Right-drag: orbit · Middle-drag: pan · Wheel: zoom · Move tool: WASD/QE moves selected object · Other tools: WASD/QE flies camera · Shift: faster");
-        auto* perspective = new QLabel("PERSPECTIVE");
-        perspective->setObjectName("viewportPerspective");
+        view_hint->setToolTip("Left-drag a selected object to move it across the view plane · Move tool: drag X/Y/Z handles or use WASD/QE · Right-drag: orbit · Middle-drag: pan · Wheel: zoom · Shift: faster");
         viewport_bar->addWidget(view_title);
         viewport_bar->addSeparator();
-        viewport_bar->addWidget(perspective);
+        auto* view_button = new QToolButton(viewport_bar);
+        view_button->setText("Perspective ▾");
+        view_button->setObjectName("viewportViewMenu");
+        view_button->setPopupMode(QToolButton::InstantPopup);
+        view_button->setToolTip("Choose a perspective, orthographic, or axis-aligned scene view");
+        auto* view_menu = new QMenu(view_button);
+        for (const auto* preset : {"Perspective", "Orthographic", "Isometric", "Top", "Bottom", "Front", "Back", "Left", "Right"}) {
+            const QString preset_name = QString::fromUtf8(preset);
+            QAction* preset_action = view_menu->addAction(preset_name);
+            QObject::connect(preset_action, &QAction::triggered, this, [this, preset_name, view_button] {
+                viewport_->SetViewPreset(preset_name);
+                view_button->setText(preset_name + " ▾");
+                statusBar()->showMessage(QString("Scene view: %1").arg(preset_name), 2500);
+            });
+        }
+        view_button->setMenu(view_menu);
+        viewport_bar->addWidget(view_button);
         viewport_bar->addWidget(view_hint);
         viewport_bar->addSeparator();
         auto* modes = new QActionGroup(viewport_bar);
@@ -4601,8 +4695,8 @@ private:
         for (const auto* mode : {"Select", "Move", "Rotate Y", "Scale"}) {
             auto* action = viewport_bar->addAction(mode);
             action->setCheckable(true);
-            if (std::string(mode) == "Select") action->setToolTip("Select an entity in the viewport");
-            else if (std::string(mode) == "Move") action->setToolTip("Drag the selected object to move on the ground plane, use WASD/QE to move it, or drag an X/Y/Z handle for axis movement");
+            if (std::string(mode) == "Select") action->setToolTip("Click to select; drag a selected entity to move it on a plane facing the camera");
+            else if (std::string(mode) == "Move") action->setToolTip("Drag a selected entity across the view plane, use WASD/QE, or drag an X/Y/Z handle for axis movement");
             else if (std::string(mode) == "Rotate Y") action->setToolTip("Rotate the selected entity around its local Y axis");
             else action->setToolTip("Drag the selected object or gold handle up/down to resize it uniformly");
             modes->addAction(action);
@@ -4612,7 +4706,7 @@ private:
                 const QString mode_name = QString::fromUtf8(mode);
                 viewport_->SetToolMode(mode_name);
                 if (mode_name == "Move")
-                    statusBar()->showMessage("●  MOVE TOOL     DRAG OR USE WASD/QE TO MOVE OBJECT · DRAG X/Y/Z HANDLE FOR AXIS MOVE");
+                    statusBar()->showMessage("●  MOVE TOOL     DRAG OBJECT ACROSS VIEW PLANE · WASD/QE TO MOVE · DRAG X/Y/Z HANDLE FOR AXIS MOVE");
                 else if (mode_name == "Rotate Y")
                     statusBar()->showMessage("●  ROTATE Y TOOL     DRAG THE SELECTED ENTITY'S RING");
                 else if (mode_name == "Scale")
@@ -4627,6 +4721,13 @@ private:
         snap->setToolTip("Move snaps to whole world units; Rotate Y snaps to 15°; Scale snaps to 0.1");
         QObject::connect(snap, &QAction::toggled, this, [this](bool enabled) {
             viewport_->SetGridSnap(enabled);
+        });
+        auto* grid = viewport_bar->addAction("▦  Grid");
+        grid->setCheckable(true);
+        grid->setChecked(true);
+        grid->setToolTip("Show or hide the adaptive scene grid and world axes");
+        QObject::connect(grid, &QAction::toggled, this, [this](bool visible) {
+            viewport_->SetGridVisible(visible);
         });
         viewport_bar->addSeparator();
         auto* focus = viewport_bar->addAction("◎  Focus");
@@ -4645,13 +4746,16 @@ private:
         addDockWidget(Qt::BottomDockWidgetArea, content_dock_);
         addDockWidget(Qt::BottomDockWidgetArea, output_dock_);
         addDockWidget(Qt::BottomDockWidgetArea, sequence_dock_);
+        addDockWidget(Qt::BottomDockWidgetArea, animation_editor_dock_);
         tabifyDockWidget(content_dock_, output_dock_);
         tabifyDockWidget(content_dock_, sequence_dock_);
+        tabifyDockWidget(content_dock_, animation_editor_dock_);
         hierarchy_dock_->show();
         inspector_dock_->show();
         content_dock_->show();
         output_dock_->show();
         sequence_dock_->show();
+        animation_editor_dock_->show();
         resizeDocks({hierarchy_dock_, inspector_dock_}, {270, 330}, Qt::Horizontal);
         resizeDocks({content_dock_}, {280}, Qt::Vertical);
         content_dock_->raise();
@@ -4668,6 +4772,8 @@ private:
     QDockWidget* content_dock_ = nullptr;
     QDockWidget* output_dock_ = nullptr;
     QDockWidget* sequence_dock_ = nullptr;
+    QDockWidget* animation_editor_dock_ = nullptr;
+    aether::editor::qt::AnimationEditorWidget* animation_editor_widget_ = nullptr;
     QPushButton* search_button_ = nullptr;
     QPushButton* play_button_ = nullptr;
     QPushButton* pause_button_ = nullptr;
