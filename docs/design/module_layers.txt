@@ -6,8 +6,8 @@ aether_animation 2
 aether_audio 2
 aether_bench_lib 2
 aether_blueprint 2
-aether_cook 2
-aether_functional 2
+aether_cook 3
+aether_functional 3
 aether_gltf_demo 2
 aether_gameplay 2
 aether_loc 2
