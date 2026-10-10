@@ -246,6 +246,8 @@ AETHER_TEST(Effect_JsonRoundTripAndErrors) {
     CHECK(fails(R"({"name":"x","modifiers":[{"attribute":"a"}]})", "effect.bad_modifier"));
     CHECK(fails(R"({"name":"x","period":1})", "effect.period_on_instant"));
     CHECK(fails(R"({"name":"x","stacking":"stack","max_stacks":0})", "effect.bad_stack"));
+    CHECK(fails(R"({"name":"x","execute_on_apply":""})", "effect.bad_flag"));
+    CHECK(fails(R"({"name":"x","per_source":1})", "effect.bad_flag"));
     CHECK(fails(R"({"name":"x","granted_tags":["bad tag!"]})", "effect.bad_tag"));
     CHECK(fails(R"({"name":"x","require":{"op":"xor"}})", "effect.bad_tag"));
 }

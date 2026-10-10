@@ -268,3 +268,34 @@ AETHER_TEST(Plugin_ThroughTheCookIntoThePlayer) {
     g_events = nullptr;
     ModuleRegistry::Get().UnregisterForTesting("Coins");
 }
+
+AETHER_TEST(Plugin_AbiMustMatchTheEngine) {
+    const stdfs::path dir = Dir("Abi");
+    PluginDescriptor current = Desc("Current");
+    current.abi = kPluginAbi;
+    PluginDescriptor legacy = Desc("Legacy"); // abi 0: written before the field existed
+    PluginDescriptor future = Desc("Future");
+    future.abi = kPluginAbi + 1;
+    Install(dir, current);
+    Install(dir, legacy);
+    Install(dir, future);
+
+    std::string error;
+    PluginDescriptor back;
+    CHECK(LoadPluginDescriptor(dir / "Future/Future.aplugin", back, &error) && back.abi == kPluginAbi + 1);
+
+    PluginManager ok;
+    ok.AddSearchPath(dir, PluginSource::Project);
+    ok.Discover();
+    CHECK(ok.Resolve({"Current", "Legacy"}, &error));
+
+    PluginManager bad;
+    bad.AddSearchPath(dir, PluginSource::Project);
+    bad.Discover();
+    CHECK(!bad.Resolve({"Future"}, &error) && error.find("plugin ABI") != std::string::npos);
+
+    // A new scaffold carries the current ABI.
+    stdfs::path file;
+    CHECK(CreatePluginScaffold(dir, "Fresh", &file, &error));
+    CHECK(LoadPluginDescriptor(file, back, &error) && back.abi == kPluginAbi);
+}

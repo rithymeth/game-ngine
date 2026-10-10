@@ -138,6 +138,9 @@ bool EffectFromJson(const std::string& text, GameplayEffect& out, std::string* e
         if (!j["max_stacks"].is_number_integer()) return Fail(error, "effect.bad_stack: 'max_stacks' is a whole number");
         e.max_stacks = j["max_stacks"].get<i32>();
     }
+    for (const char* key : {"per_source", "execute_on_apply"}) {
+        if (j.contains(key) && !j[key].is_boolean()) return Fail(error, std::string("effect.bad_flag: '") + key + "' is true or false");
+    }
     e.per_source = j.value("per_source", false);
     e.execute_on_apply = j.value("execute_on_apply", false);
     if (j.contains("period")) {
