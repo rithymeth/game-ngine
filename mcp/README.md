@@ -271,6 +271,8 @@ UI layouts (`.aui`) have no importer, so these tools take the layout as `definit
 | `ui_widget_types` | Every widget type, how many children it takes, and what it saves by default, so a layout can be written without guessing field names. |
 | `ui_check` | Loads the layout (errors name the widget by path), lays it out at `width` x `height`, and reports duplicate names, bindings that name a missing widget or an unbindable property, and widgets that run past the screen or have no size. Returns the widget tree with rectangles, the bindings and the images used. |
 | `ui_preview` | Renders the layout to a PNG. Text shows as solid blocks (a fixed-width stand-in font) and images as flat grey rectangles, so it shows layout, anchoring, sizing, colour and clipping, not final art. |
+| `ui_theme_check` | Loads a theme (`.atheme`) and lists its palette, control and text styles and images. With a layout it reports each widget `style_class` the theme has no style for. `ui_preview` takes `theme` / `theme_file` to see a layout styled by one. |
+| `ui_animation_sample` | Checks the animations in a layout (each track's widget exists, keys in time order) and evaluates every track at the times you give, to show what moves when. |
 
 ### Saves and settings (`save_*`)
 
