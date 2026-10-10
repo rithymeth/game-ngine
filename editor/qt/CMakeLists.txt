@@ -18,6 +18,12 @@ set_target_properties(aether_editor_qt PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/editor"
 )
 
+if(CMAKE_CONFIGURATION_TYPES)
+    set(_aether_qt_editor_runtime_dir "${CMAKE_BINARY_DIR}/editor/$<CONFIG>")
+else()
+    set(_aether_qt_editor_runtime_dir "${CMAKE_BINARY_DIR}/editor")
+endif()
+
 # The Qt editor is the default Windows launch target. Deploy its Qt runtime
 # beside the executable in the build tree as well as in release packages, so
 # opening build/editor/aether_editor.exe doesn't fall back to an older editor
@@ -31,7 +37,7 @@ if(WIN32)
     )
     add_custom_command(TARGET aether_editor_qt POST_BUILD
         COMMAND "${AETHER_WINDEPLOYQT_EXECUTABLE}" --release --no-translations
-                "$<TARGET_FILE:aether_editor_qt>"
+                "${_aether_qt_editor_runtime_dir}/aether_editor.exe"
         VERBATIM
         COMMENT "Deploying the Qt runtime for the default editor executable"
     )
@@ -39,14 +45,14 @@ if(WIN32)
     if(AETHER_DXCOMPILER_DLL)
         add_custom_command(TARGET aether_editor_qt POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${AETHER_DXCOMPILER_DLL}" "$<TARGET_FILE_DIR:aether_editor_qt>/dxcompiler.dll"
+                    "${AETHER_DXCOMPILER_DLL}" "${_aether_qt_editor_runtime_dir}/dxcompiler.dll"
             VERBATIM
         )
     endif()
     if(AETHER_DXIL_DLL)
         add_custom_command(TARGET aether_editor_qt POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${AETHER_DXIL_DLL}" "$<TARGET_FILE_DIR:aether_editor_qt>/dxil.dll"
+                    "${AETHER_DXIL_DLL}" "${_aether_qt_editor_runtime_dir}/dxil.dll"
             VERBATIM
         )
     endif()
