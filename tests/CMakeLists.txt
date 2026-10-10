@@ -4,6 +4,8 @@ add_executable(aether_tests
     test_math.cpp
     test_filesystem.cpp
     test_job_system.cpp
+    test_platform_lifecycle.cpp
+    test_meshlet_cook.cpp
     test_kit_registry.cpp
     test_ecs.cpp
     test_serialization.cpp
