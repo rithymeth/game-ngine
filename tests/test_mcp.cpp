@@ -547,6 +547,9 @@ AETHER_TEST(Mcp_ToolsCanReturnImages) {
 #include "ui_tools.h"
 #include "save_tools.h"
 #include "streaming_tools.h"
+#include "material_tools.h"
+#include "aether/renderer/material.h"
+#include "aether/renderer/material_instance.h"
 #include "aether/save/save_system.h"
 #include "aether/save/settings.h"
 #include "aether/ui/basic.h"
@@ -2484,6 +2487,68 @@ AETHER_TEST(Mcp_StreamingToolsPartitionInspectAndStreamAWorld) {
     Json broken = h.Call("world_partition_info", {{"directory", dir.string()}}).value;
     AETHER_CHECK(broken["ok"] == false && broken["problems"].dump().find("0_0") != std::string::npos);
     stdfs::remove_all(dir);
+}
+
+AETHER_TEST(Mcp_MaterialToolsValidateCompileAndResolve) {
+    namespace mt = aether::mat;
+    Harness h;
+    auto project = MakeAssetHost();
+    RegisterMaterialTools(h.server, project);
+
+    mt::Material m;
+    m.parameters.push_back({"Albedo", mt::PinType::Texture, {}, "albedo-guid", ""});
+    m.parameters.push_back({"Tint", mt::PinType::Float3, {1, 0.8f, 0.6f, 0}, "", ""});
+    m.parameters.push_back({"Roughness", mt::PinType::Float, {0.4f, 0, 0, 0}, "", ""});
+    const mt::NodeId out = m.Add("Material.Output");
+    const mt::NodeId sample = m.Add("Texture.Sample"), mul = m.Add("Math.Multiply");
+    m.Connect(m.Add("Param.Texture:Albedo"), "value", sample, "texture").Connect(sample, "rgb", mul, "a");
+    m.Connect(m.Add("Param.Vector:Tint"), "value", mul, "b").Connect(mul, "result", out, "BaseColor");
+    m.Connect(m.Add("Param.Scalar:Roughness"), "value", out, "Roughness");
+    const Json good = mt::MaterialToJson(m);
+
+    // The node library, with the material's own parameter nodes when given one.
+    Json all = h.Call("mat_node_types").value;
+    AETHER_CHECK(all["count"].get<int>() > 20 && all["categories"].size() > 2);
+    Json found = h.Call("mat_node_types", {{"search", "multiply"}}).value;
+    AETHER_CHECK(found["count"].get<int>() >= 1 && found["nodes"][0]["id"] == "Math.Multiply" && found["nodes"][0]["inputs"].size() == 2);
+    AETHER_CHECK(h.Call("mat_node_types", {{"search", "Tint"}, {"definition", good}}).value["nodes"][0]["id"] == "Param.Vector:Tint");
+
+    Json ok = h.Call("mat_validate", {{"definition", good}}).value;
+    AETHER_CHECK(ok["ok"] == true && ok["summary"]["parameters"].size() == 3 && ok["types"].size() > 3);
+
+    // A float into a texture pin is a type error, and a second Material Output is MT001.
+    mt::Material bad = m;
+    bad.Connect(bad.Add("Const.Float", {{"value", 1}}), "value", sample, "texture");
+    Json bad_result = h.Call("mat_validate", {{"definition", mt::MaterialToJson(bad)}}).value;
+    AETHER_CHECK(bad_result["ok"] == false && bad_result["errors"].get<int>() >= 1 && bad_result["diagnostics"][0]["code"].get<std::string>().rfind("MT", 0) == 0);
+
+    Json compiled = h.Call("mat_compile", {{"definition", good}, {"hlsl", false}}).value;
+    AETHER_CHECK(compiled["ok"] == true && !compiled.contains("hlsl") && compiled["hlsl_bytes"].get<int>() > 100);
+    AETHER_CHECK(compiled["textures"].size() == 1 && compiled["textures"][0]["name"] == "Albedo");
+    AETHER_CHECK(compiled["parameter_buffer"]["slots"].size() == 2 && compiled["parameter_buffer"]["bytes"].get<int>() % 16 == 0);
+    AETHER_CHECK(h.Call("mat_compile", {{"definition", good}}).value["hlsl"].get<std::string>().find("EvaluateMaterial") != std::string::npos);
+    Json not_compiled = h.Call("mat_compile", {{"definition", mt::MaterialToJson(bad)}}).value;
+    AETHER_CHECK(not_compiled["ok"] == false && not_compiled["diagnostics"].size() >= 1);
+    AETHER_CHECK(h.Call("mat_validate", {{"definition", {{"nonsense", 1}}}}).is_error);
+
+    // An instance chain: the parent overrides Tint, the child overrides Roughness and Tint again, and a stale name is reported.
+    mt::MaterialInstance parent, child;
+    parent.parent = "M_Base.amat";
+    parent.SetValue("Tint", Vec4(1, 0, 0, 0));
+    child.parent = "MI_Parent.amati";
+    child.SetValue("Roughness", Vec4(0.9f, 0, 0, 0));
+    child.SetValue("Tint", Vec4(0, 1, 0, 0));
+    child.SetValue("Gone", Vec4(1, 0, 0, 0));
+    Json resolved = h.Call("mat_instance_resolve",
+                           {{"material", good}, {"instances", Json::array({mt::InstanceToJson(parent), mt::InstanceToJson(child)})}})
+                        .value;
+    Json by_name = Json::object();
+    for (const Json& p : resolved["parameters"]) by_name[p["name"].get<std::string>()] = p;
+    AETHER_CHECK(by_name["Tint"]["value"][1] == 1.0 && by_name["Tint"]["source"] == 2);
+    AETHER_CHECK(by_name["Roughness"]["source"] == 2 && by_name["Albedo"]["source"] == 0 && by_name["Albedo"]["texture"] == "albedo-guid");
+    AETHER_CHECK(resolved["diagnostics"].size() == 1 && resolved["diagnostics"][0]["code"] == "MI001");
+    AETHER_CHECK(resolved["buffer_bytes"].get<int>() > 0);
+    AETHER_CHECK(h.Call("mat_instance_resolve", {{"material", good}, {"instances", Json::array({Json{{"parameters", 5}}})}}).is_error);
 }
 
 #if AETHER_MCP_SCRIPTING
