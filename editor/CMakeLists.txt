@@ -1,4 +1,5 @@
 add_executable(aether_editor main.cpp)
+set_target_properties(aether_editor PROPERTIES OUTPUT_NAME aether_editor_legacy)
 target_link_libraries(aether_editor PRIVATE Aether::Engine Aether::Physics Aether::EditorUI ImGui::ImGui)
 if(NOT AETHER_BUILD_EDITOR_UI)
     message(FATAL_ERROR "The editor needs AETHER_BUILD_EDITOR_UI=ON (its generic Inspector lives there)")
@@ -15,5 +16,11 @@ if(AETHER_DXCOMPILER_DLL)
     add_custom_command(TARGET aether_editor POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${AETHER_DXCOMPILER_DLL}" "$<TARGET_FILE_DIR:aether_editor>/dxcompiler.dll"
+    )
+endif()
+if(AETHER_DXIL_DLL)
+    add_custom_command(TARGET aether_editor POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${AETHER_DXIL_DLL}" "$<TARGET_FILE_DIR:aether_editor>/dxil.dll"
     )
 endif()

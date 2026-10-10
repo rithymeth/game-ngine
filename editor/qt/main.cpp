@@ -42,6 +42,8 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFileSystemModel>
+#include <QPainter>
+#include <QPainterPath>
 #include <QFocusEvent>
 #include <QFormLayout>
 #include <QFrame>
@@ -55,6 +57,7 @@
 #include <QLabel>
 #include <QInputDialog>
 #include <QLineEdit>
+#include <QLinearGradient>
 #include <QListWidget>
 #include <QListView>
 #include <QMainWindow>
@@ -72,6 +75,7 @@
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QSlider>
+#include <QStyledItemDelegate>
 #include <QStyle>
 #include <QSpinBox>
 #include <QSizePolicy>
@@ -279,28 +283,37 @@ bool StartDefaultEnginePlugins(aether::plugin::PluginManager& manager, std::stri
 constexpr auto kStyle = R"(
 * { color: #dce4ec; font-family: "Segoe UI"; font-size: 9pt; }
 QMainWindow, QWidget { background: #171c23; }
-QMenuBar { background: #11161c; border-bottom: 1px solid #2a333d; padding: 3px 6px; }
+QMainWindow { border: 1px solid #29343e; }
+QWidget#brandLockup { background: transparent; }
+QMenuBar { background: #10151b; border-bottom: 1px solid #29343e; padding: 3px 6px; }
 QMenuBar::item { padding: 6px 11px; border-radius: 4px; }
 QMenuBar::item:selected, QMenu::item:selected { background: #263943; color: #f1f7fa; }
 QMenu { background: #1b222a; border: 1px solid #34414d; padding: 5px; }
 QMenu::item { padding: 7px 26px 7px 10px; border-radius: 3px; }
 QMenu::separator { height: 1px; background: #303b46; margin: 5px 8px; }
-QToolBar { background: #11171e; border: 0; border-bottom: 1px solid #2a333d; spacing: 6px; padding: 5px 8px; }
-QToolBar::separator { width: 1px; background: #303b46; margin: 4px 5px; }
+QToolBar { background: #11171e; border: 0; border-bottom: 1px solid #2a333d; spacing: 6px; padding: 5px 10px; }
+QToolBar#editorToolbar { background: #10151b; padding: 7px 12px; }
+QToolBar#viewportTools { background: #171e25; padding: 4px 10px; }
+QToolBar::separator { width: 1px; background: #303b46; margin: 4px 7px; }
 QToolButton, QPushButton { background: #222c36; border: 1px solid #35424e; border-radius: 5px; padding: 6px 11px; }
+QToolBar#editorToolbar QToolButton { background: transparent; border-color: transparent; padding: 7px 9px; }
+QToolBar#editorToolbar QToolButton:hover { background: #202a33; border-color: #303d48; }
+QToolBar#viewportTools QToolButton { background: #202a33; border-color: #303d48; padding: 6px 12px; }
+QToolBar#viewportTools QToolButton:checked { background: #17443f; border-color: #36a98d; color: #a9f5dc; }
+QToolBar#viewportTools QToolButton:hover:!checked { background: #293741; border-color: #465a68; }
 QToolButton:hover, QPushButton:hover { background: #2b3b47; border-color: #486171; }
 QToolButton:pressed, QPushButton:pressed { background: #20333c; }
 QToolButton:focus, QPushButton:focus { border-color: #53c7a4; }
 QToolButton:checked { background: #203a39; border-color: #3d9d88; color: #a2f2d7; }
 QToolButton:disabled, QPushButton:disabled { color: #687581; background: #1a2027; border-color: #29323b; }
-QPushButton#play { background: #35ba91; color: #0c211b; font-weight: 700; border: 0; padding: 7px 18px; }
+QPushButton#play { background: #35ba91; color: #0c211b; font-weight: 700; border: 0; padding: 8px 20px; }
 QPushButton#play:hover { background: #4bd2a7; }
 QPushButton#play:disabled { background: #235746; color: #91b9aa; }
 QPushButton#emptyStateAction { background: #277d70; color: #f0fffb; border: 0; font-weight: 600; }
 QPushButton#sequencePreviewButton { background: #277d70; color: #f0fffb; border-color: #318e7d; font-weight: 600; }
 QPushButton#sequencePreviewButton:hover { background: #319580; }
 QDockWidget { titlebar-close-icon: none; titlebar-normal-icon: none; }
-QDockWidget::title { background: #1b222a; border-bottom: 1px solid #303b46; padding: 8px 10px; font-weight: 700; color: #b9c6d1; }
+QDockWidget::title { background: #1a2129; border-bottom: 1px solid #303b46; padding: 9px 12px; font-weight: 700; color: #c2ced8; letter-spacing: 1px; }
 QDockWidget::close-button, QDockWidget::float-button { width: 0; }
 QTabBar::tab { background: #1a2027; border: 1px solid #2b3540; padding: 7px 12px; color: #a7b4bf; }
 QTabBar::tab:selected { background: #222d36; color: #eef5fa; border-bottom-color: #54c9a7; }
@@ -327,8 +340,25 @@ QScrollBar::handle:vertical:hover { background: #4a5d6a; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical, QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; height: 0; }
 QScrollBar:horizontal { height: 10px; background: #151a21; margin: 2px; }
 QScrollBar::handle:horizontal { background: #35424d; min-width: 28px; border-radius: 4px; }
-QStatusBar { background: #11161c; border-top: 1px solid #2a333d; color: #9eacb8; }
+QStatusBar { background: #10151b; border-top: 1px solid #2a333d; color: #9eacb8; }
 QStatusBar::item { border: 0; }
+QLabel#brandGlyph { color: #10251f; background: #45c6a0; border-radius: 7px; font-size: 13pt; font-weight: 900; min-width: 28px; max-width: 28px; min-height: 28px; max-height: 28px; }
+QLabel#brandName { color: #eff6fa; font-size: 10pt; font-weight: 800; letter-spacing: 1.2px; }
+QLabel#brandSubline { color: #778894; font-size: 7pt; font-weight: 700; letter-spacing: 1px; }
+QLabel#workspaceLabel { background: #172923; border: 1px solid #275446; border-radius: 5px; }
+QLabel#viewportTitle { color: #e6eef3; font-size: 8pt; font-weight: 800; letter-spacing: 1px; padding: 0 4px; }
+QLabel#viewportHint { color: #8d9ba7; font-size: 8pt; padding: 0 5px; }
+QLabel#viewportPerspective { color: #a7bac6; background: #202a33; border: 1px solid #35434f; border-radius: 4px; font-size: 8pt; font-weight: 700; padding: 5px 8px; }
+QLabel#sceneStateBadge, QLabel#rendererBadge { color: #99aab5; background: #1b242c; border: 1px solid #303d47; border-radius: 4px; font-size: 8pt; font-weight: 700; padding: 3px 7px; }
+QLabel#sceneStateBadge[state="saved"] { color: #8ee3c6; background: #172923; border-color: #285848; }
+QLabel#sceneStateBadge[state="dirty"] { color: #ffd28d; background: #30271a; border-color: #66502a; }
+QLabel#sceneStateBadge[state="playing"] { color: #a8d2ff; background: #192738; border-color: #345577; }
+QLabel#sceneStateBadge[state="paused"] { color: #f0c99d; background: #30251d; border-color: #654632; }
+QLabel#axisX { color: #ff9e9b; background: #382322; border: 1px solid #68403d; }
+QLabel#axisY { color: #a3e4ae; background: #203326; border: 1px solid #3c6344; }
+QLabel#axisZ { color: #9ec7ff; background: #202c3c; border: 1px solid #3a5476; }
+QLabel#axisX, QLabel#axisY, QLabel#axisZ { border-radius: 4px; min-width: 20px; max-width: 20px; min-height: 20px; max-height: 20px; font-size: 8pt; font-weight: 800; }
+QLabel#axisCaption { color: #9eacb8; font-size: 8pt; }
 QSlider::groove:horizontal { height: 4px; background: #303b46; border-radius: 2px; }
 QSlider::sub-page:horizontal { background: #4bc5a3; border-radius: 2px; }
 QSlider::handle:horizontal { width: 13px; margin: -5px 0; border-radius: 7px; background: #dff8ef; border: 2px solid #36a98d; }
@@ -1656,6 +1686,23 @@ QWidget* MakeInspector(QScrollArea*& inspector_scroll, QStackedWidget*& inspecto
     transform_form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     transform_form->setHorizontalSpacing(12);
     transform_form->setVerticalSpacing(6);
+    const auto make_axis_label = [](int axis, const QString& caption = QString{}) {
+        auto* row = new QWidget;
+        auto* row_layout = new QHBoxLayout(row);
+        row_layout->setContentsMargins(0, 0, 0, 0);
+        row_layout->setSpacing(6);
+        if (!caption.isEmpty()) {
+            auto* text = new QLabel(caption, row);
+            text->setObjectName("axisCaption");
+            row_layout->addWidget(text);
+        }
+        auto* badge = new QLabel(QString(QChar('X' + axis)), row);
+        badge->setObjectName(QString("axis%1").arg(QChar('X' + axis)));
+        badge->setAlignment(Qt::AlignCenter);
+        row_layout->addWidget(badge);
+        row_layout->addStretch();
+        return row;
+    };
     for (int axis = 0; axis < 3; ++axis) {
         position[axis] = new QDoubleSpinBox;
         position[axis]->setRange(-100000.0, 100000.0);
@@ -1666,7 +1713,7 @@ QWidget* MakeInspector(QScrollArea*& inspector_scroll, QStackedWidget*& inspecto
         position[axis]->setAccessibleName(QString("Local position %1 in meters").arg(QChar('X' + axis)));
         position[axis]->setToolTip(QString("Local %1 position in meters").arg(QChar('X' + axis)));
         position[axis]->setEnabled(false);
-        transform_form->addRow(QString(QChar('X' + axis)), position[axis]);
+        transform_form->addRow(make_axis_label(axis), position[axis]);
     }
     layout->addLayout(transform_form);
 
@@ -1684,7 +1731,7 @@ QWidget* MakeInspector(QScrollArea*& inspector_scroll, QStackedWidget*& inspecto
     rotation_form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     rotation_form->setHorizontalSpacing(12);
     rotation_form->setVerticalSpacing(6);
-    const char* rotation_labels[] = {"Pitch · X", "Yaw · Y", "Roll · Z"};
+    const char* rotation_labels[] = {"PITCH", "YAW", "ROLL"};
     for (int axis = 0; axis < 3; ++axis) {
         rotation[axis] = new QDoubleSpinBox;
         rotation[axis]->setRange(-36000.0, 36000.0);
@@ -1695,7 +1742,7 @@ QWidget* MakeInspector(QScrollArea*& inspector_scroll, QStackedWidget*& inspecto
         rotation[axis]->setAccessibleName(QString("Local %1 rotation in degrees").arg(QChar('X' + axis)));
         rotation[axis]->setToolTip(QString("Local %1 rotation in degrees").arg(QChar('X' + axis)));
         rotation[axis]->setEnabled(false);
-        rotation_form->addRow(rotation_labels[axis], rotation[axis]);
+        rotation_form->addRow(make_axis_label(axis, QString::fromUtf8(rotation_labels[axis])), rotation[axis]);
     }
     layout->addLayout(rotation_form);
 
@@ -1723,7 +1770,7 @@ QWidget* MakeInspector(QScrollArea*& inspector_scroll, QStackedWidget*& inspecto
         scale[axis]->setAccessibleName(QString("Local scale %1").arg(QChar('X' + axis)));
         scale[axis]->setToolTip(QString("Local %1 scale multiplier; 1 preserves the imported size").arg(QChar('X' + axis)));
         scale[axis]->setEnabled(false);
-        scale_form->addRow(QString(QChar('X' + axis)), scale[axis]);
+        scale_form->addRow(make_axis_label(axis), scale[axis]);
     }
     layout->addLayout(scale_form);
 
@@ -1835,6 +1882,105 @@ QWidget* MakeInspector(QScrollArea*& inspector_scroll, QStackedWidget*& inspecto
     return inspector_scroll;
 }
 
+class AssetBrowserDelegate final : public QStyledItemDelegate {
+public:
+    explicit AssetBrowserDelegate(const QFileSystemModel& model, QObject* parent = nullptr)
+        : QStyledItemDelegate(parent), model_(model) {}
+
+    void paint(QPainter* painter, const QStyleOptionViewItem& option,
+               const QModelIndex& index) const override {
+        QStyledItemDelegate::paint(painter, option, index);
+        if (!index.isValid()) return;
+
+        const QFileInfo info = model_.fileInfo(index);
+        const QRect icon_rect(option.rect.center().x() - 24, option.rect.top() + 5, 48, 48);
+        painter->save();
+        QColor icon_back("#151a21");
+        if (option.state & QStyle::State_Selected) icon_back = QColor("#244653");
+        else if (option.state & QStyle::State_MouseOver) icon_back = QColor("#202c35");
+        painter->fillRect(icon_rect, icon_back);
+        painter->setRenderHint(QPainter::Antialiasing, true);
+        painter->translate(icon_rect.topLeft());
+
+        if (info.isDir()) {
+            QPainterPath rear;
+            rear.moveTo(5, 11); rear.lineTo(20, 11); rear.lineTo(25, 16);
+            rear.lineTo(44, 16); rear.lineTo(44, 38); rear.lineTo(5, 38); rear.closeSubpath();
+            painter->setPen(QPen(QColor("#527f80"), 1.2));
+            painter->setBrush(QColor("#294b55"));
+            painter->drawPath(rear);
+
+            QPainterPath front;
+            front.moveTo(4, 19); front.lineTo(44, 19); front.lineTo(41, 41);
+            front.quadTo(40.7, 43, 38.5, 43); front.lineTo(7, 43);
+            front.quadTo(4.5, 43, 4, 40); front.closeSubpath();
+            QLinearGradient folder_fill(0, 19, 0, 43);
+            folder_fill.setColorAt(0.0, QColor("#5bd0af"));
+            folder_fill.setColorAt(1.0, QColor("#277b77"));
+            painter->setPen(QPen(QColor("#68d6b7"), 1.1));
+            painter->setBrush(folder_fill);
+            painter->drawPath(front);
+            painter->setPen(QPen(QColor(255, 255, 255, 68), 1.0));
+            painter->drawLine(QPointF(8, 23), QPointF(39, 23));
+        } else {
+            const QString extension = info.suffix().toLower();
+            QString badge = "FILE";
+            QColor accent("#8da0ae");
+            if (extension == "gltf" || extension == "glb" || extension == "fbx" || extension == "obj") {
+                badge = "3D"; accent = QColor("#55d7b5");
+            } else if (extension == "ascene" || extension == "aesc") {
+                badge = "SCN"; accent = QColor("#b9a0ff");
+            } else if (extension == "asequence" || extension == "anim") {
+                badge = "ANIM"; accent = QColor("#8bbcff");
+            } else if (extension == "png" || extension == "jpg" || extension == "jpeg" ||
+                       extension == "tga" || extension == "hdr" || extension == "exr") {
+                badge = "IMG"; accent = QColor("#f4bd72");
+            } else if (extension == "lua" || extension == "luau" || extension == "cs" ||
+                       extension == "cpp" || extension == "h" || extension == "hpp") {
+                badge = "CODE"; accent = QColor("#86b9ff");
+            } else if (extension == "wav" || extension == "ogg" || extension == "mp3" || extension == "flac") {
+                badge = "SFX"; accent = QColor("#ec9bc7");
+            }
+
+            QPainterPath page;
+            page.moveTo(10, 4); page.lineTo(29, 4); page.lineTo(39, 14);
+            page.lineTo(39, 41); page.quadTo(39, 44, 36, 44); page.lineTo(11, 44);
+            page.quadTo(8, 44, 8, 41); page.lineTo(8, 7); page.quadTo(8, 4, 10, 4);
+            page.closeSubpath();
+            painter->setPen(QPen(QColor("#455967"), 1.2));
+            painter->setBrush(QColor("#202c36"));
+            painter->drawPath(page);
+            QPainterPath fold;
+            fold.moveTo(29, 4); fold.lineTo(29, 13); fold.quadTo(29, 14, 31, 14); fold.lineTo(39, 14);
+            painter->setPen(QPen(QColor("#455967"), 1.0));
+            painter->setBrush(QColor("#33434f"));
+            painter->drawPath(fold);
+            painter->setPen(QPen(accent, 2.2, Qt::SolidLine, Qt::RoundCap));
+            painter->drawLine(QPointF(14, 20), QPointF(14, 37));
+            painter->setPen(QPen(QColor("#738490"), 1.2, Qt::SolidLine, Qt::RoundCap));
+            painter->drawLine(QPointF(20, 23), QPointF(33, 23));
+            painter->drawLine(QPointF(20, 28), QPointF(33, 28));
+            painter->drawLine(QPointF(20, 33), QPointF(29, 33));
+
+            const QRectF badge_rect(22, 35, 22, 11);
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(QColor("#172128"));
+            painter->drawRoundedRect(badge_rect, 3, 3);
+            painter->setPen(accent);
+            QFont badge_font = painter->font();
+            badge_font.setPointSizeF(5.8);
+            badge_font.setBold(true);
+            painter->setFont(badge_font);
+            painter->drawText(badge_rect, Qt::AlignCenter, badge);
+        }
+
+        painter->restore();
+    }
+
+private:
+    const QFileSystemModel& model_;
+};
+
 QWidget* MakeContentBrowser(QComboBox*& breadcrumb, QFileSystemModel*& asset_model, QListView*& asset_view,
                             QPushButton*& parent_button, QPushButton*& new_folder_button,
                             QPushButton*& place_model_button, QLineEdit*& asset_filter,
@@ -1934,6 +2080,7 @@ QWidget* MakeContentBrowser(QComboBox*& breadcrumb, QFileSystemModel*& asset_mod
     asset_view = new QListView(root);
     asset_view->setAccessibleName("Project content assets");
     asset_view->setModel(asset_model);
+    asset_view->setItemDelegate(new AssetBrowserDelegate(*asset_model, asset_view));
     asset_view->setViewMode(QListView::IconMode);
     asset_view->setFlow(QListView::LeftToRight);
     asset_view->setWrapping(true);
@@ -2008,9 +2155,9 @@ public:
 #endif
         inspector_dock_ = MakeDock("INSPECTOR", inspector_content, *this,
                                    Qt::RightDockWidgetArea, "inspectorDock");
-        hierarchy_dock_->setMinimumWidth(230);
-        inspector_dock_->setMinimumWidth(300);
-        inspector_dock_->widget()->setMinimumWidth(280);
+        hierarchy_dock_->setMinimumWidth(190);
+        inspector_dock_->setMinimumWidth(250);
+        inspector_dock_->widget()->setMinimumWidth(240);
 
         content_dock_ = MakeDock("CONTENT BROWSER",
                                       MakeContentBrowser(content_breadcrumb_, asset_model_, asset_view_,
@@ -2026,7 +2173,7 @@ public:
         tabifyDockWidget(content_dock_, output_dock_);
         tabifyDockWidget(content_dock_, sequence_dock_);
         content_dock_->raise();
-        resizeDocks({content_dock_}, {280}, Qt::Vertical);
+        resizeDocks({content_dock_}, {230}, Qt::Vertical);
         window_menu_->addAction(hierarchy_dock_->toggleViewAction());
         window_menu_->addAction(inspector_dock_->toggleViewAction());
         window_menu_->addAction(content_dock_->toggleViewAction());
@@ -2041,8 +2188,10 @@ public:
         if (settings.contains("window/geometry")) restoreGeometry(settings.value("window/geometry").toByteArray());
         const bool restored_layout = settings.contains("window/state") &&
             restoreState(settings.value("window/state").toByteArray(), 1);
-        if (!restored_layout) QTimer::singleShot(0, this, [this] {
-            resizeDocks({hierarchy_dock_, inspector_dock_}, {270, 330}, Qt::Horizontal);
+        const bool compact_screen = screen() && screen()->availableGeometry().width() < 1600;
+        if (!restored_layout || compact_screen) QTimer::singleShot(0, this, [this] {
+            resizeDocks({hierarchy_dock_, inspector_dock_}, {230, 270}, Qt::Horizontal);
+            resizeDocks({content_dock_}, {210}, Qt::Vertical);
         });
         auto* palette_action = new QAction(this);
         palette_action->setShortcut(QKeySequence("Ctrl+K"));
@@ -2091,8 +2240,16 @@ public:
             if (asset_model_->isDir(index)) SetContentDirectory(path);
             else OpenContentAsset(path);
         });
-        statusBar()->showMessage("●  EDITOR READY     D3D12 RHI     WORLD: MAIN WORLD");
-        statusBar()->setStyleSheet("color: #74d6b1; padding-left: 8px;");
+        statusBar()->showMessage("Ready · World Editor");
+        renderer_badge_ = new QLabel("D3D12 · RHI", this);
+        renderer_badge_->setObjectName("rendererBadge");
+        renderer_badge_->setToolTip("Active graphics backend");
+        status_state_badge_ = new QLabel("SCENE SAVED", this);
+        status_state_badge_->setObjectName("sceneStateBadge");
+        status_state_badge_->setProperty("state", "saved");
+        status_state_badge_->setToolTip("Scene save state");
+        statusBar()->addPermanentWidget(renderer_badge_);
+        statusBar()->addPermanentWidget(status_state_badge_);
         play_input_hint_ = new QLabel(this);
         play_input_hint_->setObjectName("playInputHint");
         play_input_hint_->setStyleSheet("color: #79dfbf; padding: 0 10px; font-weight: 600;");
@@ -3466,12 +3623,22 @@ private:
         sequence_play_button_->setEnabled(editing && !sequence_timer_.isActive());
         sequence_pause_button_->setEnabled(editing && sequence_timer_.isActive());
         sequence_stop_button_->setEnabled(editing && sequence_preview_active_);
-        const QString mode = editing ? (scene_document_.IsDirty() ? "UNSAVED SCENE" : "SCENE SAVED")
-                                     : (playing ? "PLAYING · CHANGES ARE TEMPORARY" : "PLAY PAUSED");
-        statusBar()->showMessage(QString("●  %1     %2 ENTITIES     %3")
-            .arg(mode)
+        const QString state = editing ? (scene_document_.IsDirty() ? "dirty" : "saved")
+                                      : (playing ? "playing" : "paused");
+        const QString state_text = editing ? (scene_document_.IsDirty() ? "UNSAVED" : "SAVED")
+                                           : (playing ? "PLAYING" : "PAUSED");
+        for (QLabel* badge : {toolbar_state_badge_, status_state_badge_}) {
+            if (!badge) continue;
+            badge->setText(state_text);
+            badge->setProperty("state", state);
+            badge->style()->unpolish(badge);
+            badge->style()->polish(badge);
+        }
+        const QString undo_label = scene_document_.CanUndo()
+            ? QString::fromStdString(scene_document_.UndoLabel()) : QStringLiteral("Ready");
+        statusBar()->showMessage(QString("%1 entities   ·   %2")
             .arg(scene_document_.Entities().size())
-            .arg(scene_document_.CanUndo() ? QString::fromStdString(scene_document_.UndoLabel()) : "READY"));
+            .arg(undo_label));
         UpdatePlayInputHint();
     }
 
@@ -4362,21 +4529,45 @@ private:
         auto* bar = addToolBar("Editor");
         bar->setObjectName("editorToolbar");
         bar->setMovable(false);
-        auto* brand = new QLabel("  AETHER ENGINE");
-        brand->setObjectName("brand");
-        bar->addWidget(brand);
+        auto* brand_lockup = new QWidget;
+        brand_lockup->setObjectName("brandLockup");
+        auto* brand_layout = new QHBoxLayout(brand_lockup);
+        brand_layout->setContentsMargins(0, 0, 4, 0);
+        brand_layout->setSpacing(8);
+        auto* brand_glyph = new QLabel("A");
+        brand_glyph->setObjectName("brandGlyph");
+        brand_glyph->setAlignment(Qt::AlignCenter);
+        auto* brand_copy = new QVBoxLayout;
+        brand_copy->setContentsMargins(0, 0, 0, 0);
+        brand_copy->setSpacing(0);
+        auto* brand_name = new QLabel("AETHER");
+        brand_name->setObjectName("brandName");
+        auto* brand_subline = new QLabel("WORLD EDITOR");
+        brand_subline->setObjectName("brandSubline");
+        brand_copy->addWidget(brand_name);
+        brand_copy->addWidget(brand_subline);
+        brand_layout->addWidget(brand_glyph, 0, Qt::AlignVCenter);
+        brand_layout->addLayout(brand_copy);
+        bar->addWidget(brand_lockup);
         bar->addSeparator();
-        auto* workspace = new QLabel("WORLD");
+        auto* workspace = new QLabel("  WORLD  ");
         workspace->setObjectName("workspaceLabel");
         bar->addWidget(workspace);
         bar->addAction(save_scene_action_);
         bar->addAction(undo_action_);
         bar->addAction(redo_action_);
+        toolbar_state_badge_ = new QLabel("SAVED");
+        toolbar_state_badge_->setObjectName("sceneStateBadge");
+        toolbar_state_badge_->setProperty("state", "saved");
+        toolbar_state_badge_->setToolTip("Scene save and play state");
+        bar->addWidget(toolbar_state_badge_);
         bar->addSeparator();
         auto* spacer = new QWidget; spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred); bar->addWidget(spacer);
-        search_button_ = new QPushButton("⌕   Search actions     Ctrl+K");
+        spacer->setMaximumWidth(180);
+        search_button_ = new QPushButton("⌕  Search  Ctrl+K");
         search_button_->setObjectName("commandSearchButton");
-        search_button_->setMinimumWidth(220);
+        search_button_->setMinimumWidth(168);
+        search_button_->setMaximumWidth(190);
         search_button_->setToolTip("Search commands and editor panels (Ctrl+K)");
         bar->addWidget(search_button_);
         play_button_ = new QPushButton("▶   Play"); play_button_->setObjectName("play"); bar->addWidget(play_button_);
@@ -4392,10 +4583,18 @@ private:
         auto* viewport_bar = addToolBar("Viewport Tools");
         viewport_bar->setObjectName("viewportTools");
         viewport_bar->setMovable(false);
-        auto* view_label = new QLabel("  WORLD VIEW · PERSPECTIVE");
-        view_label->setAccessibleName("3D World View navigation help");
-        view_label->setToolTip("Right-drag: orbit · Middle-drag: pan · Wheel: zoom · Move tool: WASD/QE moves selected object · Other tools: WASD/QE flies camera · Shift: faster");
-        viewport_bar->addWidget(view_label);
+        auto* view_title = new QLabel("SCENE VIEW");
+        view_title->setObjectName("viewportTitle");
+        auto* view_hint = new QLabel("ORBIT  RMB   ·   PAN  MMB   ·   ZOOM  WHEEL");
+        view_hint->setObjectName("viewportHint");
+        view_hint->setAccessibleName("3D World View navigation help");
+        view_hint->setToolTip("Right-drag: orbit · Middle-drag: pan · Wheel: zoom · Move tool: WASD/QE moves selected object · Other tools: WASD/QE flies camera · Shift: faster");
+        auto* perspective = new QLabel("PERSPECTIVE");
+        perspective->setObjectName("viewportPerspective");
+        viewport_bar->addWidget(view_title);
+        viewport_bar->addSeparator();
+        viewport_bar->addWidget(perspective);
+        viewport_bar->addWidget(view_hint);
         viewport_bar->addSeparator();
         auto* modes = new QActionGroup(viewport_bar);
         modes->setExclusive(true);
@@ -4423,18 +4622,18 @@ private:
             });
         }
         viewport_bar->addSeparator();
-        auto* snap = viewport_bar->addAction("Grid Snap");
+        auto* snap = viewport_bar->addAction("⌗  Snap");
         snap->setCheckable(true);
         snap->setToolTip("Move snaps to whole world units; Rotate Y snaps to 15°; Scale snaps to 0.1");
         QObject::connect(snap, &QAction::toggled, this, [this](bool enabled) {
             viewport_->SetGridSnap(enabled);
         });
         viewport_bar->addSeparator();
-        auto* focus = viewport_bar->addAction("Focus");
+        auto* focus = viewport_bar->addAction("◎  Focus");
         focus->setToolTip("Focus selected entity (F)");
         focus->setShortcut(QKeySequence(Qt::Key_F));
         QObject::connect(focus, &QAction::triggered, this, [this] { viewport_->FocusSelection(); });
-        auto* fit = viewport_bar->addAction("Fit All");
+        auto* fit = viewport_bar->addAction("▣  Frame All");
         fit->setToolTip("Frame all scene entities (Home)");
         fit->setShortcut(QKeySequence(Qt::Key_Home));
         QObject::connect(fit, &QAction::triggered, this, [this] { viewport_->FitAll(); });
@@ -4475,6 +4674,9 @@ private:
     QPushButton* stop_button_ = nullptr;
     QLabel* inspector_status_ = nullptr;
     QLabel* play_input_hint_ = nullptr;
+    QLabel* toolbar_state_badge_ = nullptr;
+    QLabel* status_state_badge_ = nullptr;
+    QLabel* renderer_badge_ = nullptr;
     QLineEdit* inspector_name_ = nullptr;
     QScrollArea* inspector_scroll_ = nullptr;
     QStackedWidget* inspector_stack_ = nullptr;
