@@ -29,21 +29,21 @@ struct SceneLoadOptions {
 // should do before allowing a scene to be saved. Version 1 files (written
 // before the component registry could exceed 64 types) still load, including
 // their raw-byte components into types that have since become reflected.
-bool SaveScene(const World& world, const std::string& path);
+[[nodiscard]] bool SaveScene(const World& world, const std::string& path);
 
 // Loads entities from a file written by SaveScene into `world` (which is not
 // cleared first — loading is additive). Returns false if the file can't be
 // read or isn't a recognized/supported-version Aether scene file. The full
 // binary record stream is validated before entities are appended, so truncated
 // files and strict unknown-component rejection do not partially load a scene.
-bool LoadScene(World& world, const std::string& path);
-bool LoadScene(World& world, const std::string& path, const SceneLoadOptions& options);
+[[nodiscard]] bool LoadScene(World& world, const std::string& path);
+[[nodiscard]] bool LoadScene(World& world, const std::string& path, const SceneLoadOptions& options);
 
 // The same binary format, in memory: what Play-in-Editor uses to snapshot the
 // edited world and restore it on Stop. `source_name` only labels log output.
 std::vector<u8> SaveSceneToMemory(const World& world);
-bool LoadSceneFromMemory(World& world, std::span<const u8> bytes, const std::string& source_name = "<memory>");
-bool LoadSceneFromMemory(World& world, std::span<const u8> bytes, const std::string& source_name,
+[[nodiscard]] bool LoadSceneFromMemory(World& world, std::span<const u8> bytes, const std::string& source_name = "<memory>");
+[[nodiscard]] bool LoadSceneFromMemory(World& world, std::span<const u8> bytes, const std::string& source_name,
                          const SceneLoadOptions& options);
 
 // JSON scene files: the human-readable, diff-friendly form (see
@@ -53,12 +53,12 @@ bool LoadSceneFromMemory(World& world, std::span<const u8> bytes, const std::str
 // default and unknown fields in all modes. JSON entities are collected before
 // appending to the destination world, so parse failures and strict unknown-
 // component rejection do not partially load a scene.
-bool SaveSceneJson(const World& world, const std::string& path);
-bool LoadSceneJson(World& world, const std::string& path);
-bool LoadSceneJson(World& world, const std::string& path, const SceneLoadOptions& options);
+[[nodiscard]] bool SaveSceneJson(const World& world, const std::string& path);
+[[nodiscard]] bool LoadSceneJson(World& world, const std::string& path);
+[[nodiscard]] bool LoadSceneJson(World& world, const std::string& path, const SceneLoadOptions& options);
 // The same from a JSON scene in memory (e.g. read from an .apak); `source_name` is for messages.
-bool LoadSceneJsonFromMemory(World& world, std::span<const u8> bytes, const std::string& source_name = "<memory>");
-bool LoadSceneJsonFromMemory(World& world, std::span<const u8> bytes, const std::string& source_name,
+[[nodiscard]] bool LoadSceneJsonFromMemory(World& world, std::span<const u8> bytes, const std::string& source_name = "<memory>");
+[[nodiscard]] bool LoadSceneJsonFromMemory(World& world, std::span<const u8> bytes, const std::string& source_name,
                              const SceneLoadOptions& options);
 
 } // namespace aether
