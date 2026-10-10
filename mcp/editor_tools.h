@@ -14,6 +14,9 @@
 #include "core/command_stack.h"
 #include "core/play_session.h"
 #include "mcp_server.h"
+#include "simulation.h"
+
+#include <memory>
 
 namespace aether::mcp {
 
@@ -23,6 +26,8 @@ struct EditorSession {
     editor::EditorHooks hooks;
     editor::CommandStack stack;
     editor::PlaySession play;
+    // Exists from Play to Stop; runs the physics systems (see simulation.h).
+    std::unique_ptr<Simulation> sim;
 
     editor::CommandContext Context() { return editor::CommandContext(world, guids, &hooks); }
 };

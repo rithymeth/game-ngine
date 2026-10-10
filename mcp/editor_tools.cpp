@@ -206,13 +206,6 @@ const Json kGuidProp = {{"type", "string"}, {"description", "Entity GUID, as ret
 
 } // namespace
 
-void RegisterBuiltinComponents() {
-    GetComponentId<Transform>();
-    GetComponentId<Parent>();
-    GetComponentId<IdComponent>();
-    GetComponentId<ModelRenderer>();
-}
-
 void RegisterEditorTools(McpServer& server, EditorSession& s) {
     server.AddTool({"editor_state",
                     "Summary of the editor session: entity count, undo/redo availability, unsaved changes, play state.",
@@ -492,10 +485,14 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                     }});
 
     server.AddTool({"play",
-                    "Enter play mode (or resume from pause). The scene is snapshotted and restored exactly on stop.",
+                    "Enter play mode (or resume from pause). The scene is snapshotted and restored exactly on stop. "
+                    "Starts the simulation systems (see list_systems); advance them with step_simulation.",
                     Schema(Json::object()), [&s](const Json&) -> Json {
                         editor::CommandContext ctx = s.Context();
                         s.play.Play(ctx, s.stack);
+                        if (!s.play.IsEditing() && !s.sim) {
+                            s.sim = std::make_unique<Simulation>(s.world);
+                        }
                         return {{"play_state", PlayStateName(s.play.GetState())}};
                     }});
     server.AddTool({"pause", "Pause play mode.", Schema(Json::object()), [&s](const Json&) -> Json {
@@ -504,10 +501,79 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                     }});
     server.AddTool({"stop", "Leave play mode, restoring the scene as it was before play.", Schema(Json::object()),
                     [&s](const Json&) -> Json {
+                        s.sim.reset(); // its physics bodies go before the world is rebuilt
                         editor::CommandContext ctx = s.Context();
                         s.play.Stop(ctx, s.stack);
                         editor::EnsureAllGuids(s.world, s.guids);
                         return {{"play_state", PlayStateName(s.play.GetState())}};
+                    }});
+
+    // -- Systems ------------------------------------------------------------
+    server.AddTool({"list_systems",
+                    "The simulation systems in execution order (phase by phase), with whether each is enabled. "
+                    "Available in play mode.",
+                    Schema(Json::object()), [&s](const Json&) -> Json {
+                        if (!s.sim) throw ToolError("No simulation: call play first");
+                        Json out = Json::array();
+                        for (const Simulation::SystemInfo& info : s.sim->Systems()) {
+                            out.push_back({{"name", info.name}, {"phase", SystemPhaseName(info.phase)}, {"enabled", info.enabled}});
+                        }
+                        return out;
+                    }});
+    server.AddTool({"set_system_enabled", "Turn one simulation system on or off.",
+                    Schema({{"system", {{"type", "string"}, {"description", "A name from list_systems"}}},
+                            {"enabled", {{"type", "boolean"}}}},
+                           {"system", "enabled"}),
+                    [&s](const Json& args) -> Json {
+                        if (!s.sim) throw ToolError("No simulation: call play first");
+                        if (!args.contains("enabled") || !args["enabled"].is_boolean()) {
+                            throw ToolError("Missing boolean argument \"enabled\"");
+                        }
+                        const std::string name = RequireString(args, "system");
+                        if (!s.sim->SetEnabled(name, args["enabled"].get<bool>())) {
+                            throw ToolError("No system named \"" + name + "\"");
+                        }
+                        return {{"system", name}, {"enabled", args["enabled"].get<bool>()}};
+                    }});
+    server.AddTool({"step_simulation",
+                    "Advance the running simulation by a number of frames (default 1) of dt seconds (default 1/60), "
+                    "running every enabled system. Works in play mode and while paused.",
+                    Schema({{"frames", {{"type", "integer"}, {"description", "Frames to run, 1-10000 (default 1)"}}},
+                            {"dt", {{"type", "number"}, {"description", "Seconds per frame (default 1/60)"}}}}),
+                    [&s](const Json& args) -> Json {
+                        if (!s.sim) throw ToolError("No simulation: call play first");
+                        i64 frames = 1;
+                        if (args.contains("frames")) {
+                            if (!args["frames"].is_number_integer()) throw ToolError("\"frames\" must be an integer");
+                            frames = args["frames"].get<i64>();
+                        }
+                        if (frames < 1 || frames > 10000) throw ToolError("\"frames\" must be between 1 and 10000");
+                        f64 dt = 1.0 / 60.0;
+                        if (args.contains("dt")) {
+                            if (!args["dt"].is_number()) throw ToolError("\"dt\" must be a number");
+                            dt = args["dt"].get<f64>();
+                        }
+                        if (!(dt > 0.0 && dt <= 1.0)) throw ToolError("\"dt\" must be in (0, 1] seconds");
+                        FrameContext last;
+                        for (i64 i = 0; i < frames; ++i) {
+                            last = s.sim->Step(static_cast<f32>(dt));
+                        }
+                        return {{"frames_run", frames},
+                                {"frame", last.frame},
+                                {"fixed_steps", last.fixed_step},
+                                {"time", last.time},
+                                {"entities", s.world.EntityCount()}};
+                    }});
+    server.AddTool({"set_platformer_input",
+                    "Set the input fed to 2D platformer controllers every fixed step until changed.",
+                    Schema({{"move", {{"type", "number"}, {"description", "-1 (left) to 1 (right)"}}},
+                            {"jump", {{"type", "boolean"}}}}),
+                    [&s](const Json& args) -> Json {
+                        if (!s.sim) throw ToolError("No simulation: call play first");
+                        const f32 move = args.contains("move") && args["move"].is_number() ? std::clamp(args["move"].get<f32>(), -1.0f, 1.0f) : 0.0f;
+                        const bool jump = args.contains("jump") && args["jump"].is_boolean() && args["jump"].get<bool>();
+                        s.sim->SetPlatformerInput(move, jump);
+                        return {{"move", move}, {"jump", jump}};
                     }});
 }
 

@@ -3,6 +3,7 @@
 #include "test_framework.h"
 
 #include <filesystem>
+#include <set>
 #include <sstream>
 
 using namespace aether;
@@ -339,3 +340,56 @@ AETHER_TEST(Mcp_ListReportsTheSchemaVersionAndStdioSkipsHugeLines) {
     AETHER_CHECK(lines.size() == 2);
     AETHER_CHECK(lines[0]["error"]["code"] == -32600 && lines[1]["id"] == 9 && lines[1].contains("result"));
 }
+
+AETHER_TEST(Mcp_ExposesEveryModuleComponent) {
+    Harness h;
+    Json types = h.Call("list_component_types").value;
+    std::set<std::string> names;
+    for (const Json& t : types) names.insert(t["name"].get<std::string>());
+    for (const char* wanted : {"Transform", "Camera", "ParticleSystem", "AudioSource", "Animator", "NavAgent", "WidgetComponent",
+                               "Rigidbody2D", "AbilityContainer", "StreamingSource", "BlueprintInstance", "SequenceComponent"}) {
+        AETHER_CHECK(names.count(wanted) == 1);
+    }
+}
+
+AETHER_TEST(Mcp_SystemsRunOnlyWhilePlaying) {
+    Harness h;
+    AETHER_CHECK(h.Call("list_systems").is_error);
+    AETHER_CHECK(h.Call("step_simulation").is_error);
+
+    std::string e = h.Create({{"Transform", {{"position", kPos123}}}});
+    AETHER_CHECK(!h.Call("play").is_error);
+    Json systems = h.Call("list_systems").value;
+    AETHER_CHECK(systems.size() >= 2);
+    AETHER_CHECK(systems[0]["enabled"] == true);
+
+    Harness::Result stepped = h.Call("step_simulation", {{"frames", 30}});
+    AETHER_CHECK(!stepped.is_error);
+    AETHER_CHECK(stepped.value["frames_run"] == 30);
+    AETHER_CHECK(stepped.value["fixed_steps"] == 30);
+
+    AETHER_CHECK(h.Call("step_simulation", {{"frames", 0}}).is_error);
+    AETHER_CHECK(h.Call("step_simulation", {{"dt", -1}}).is_error);
+    AETHER_CHECK(h.Call("set_system_enabled", {{"system", "NoSuchSystem"}, {"enabled", false}}).is_error);
+    AETHER_CHECK(!h.Call("set_system_enabled", {{"system", systems[0]["name"]}, {"enabled", false}}).is_error);
+    AETHER_CHECK(h.Call("list_systems").value[0]["enabled"] == false);
+
+    AETHER_CHECK(!h.Call("stop").is_error);
+    AETHER_CHECK(h.Call("step_simulation").is_error);
+    AETHER_CHECK(h.Components(e)["Transform"]["position"] == kPos123);
+}
+
+#if AETHER_MCP_PHYSICS
+AETHER_TEST(Mcp_PhysicsFallsWhilePlayingAndStopRestores) {
+    Harness h;
+    std::string ball = h.Create({{"Transform", {{"position", {0, 10, 0}}}}, {"RigidBody", Json::object()}, {"SphereCollider", Json::object()}});
+    h.Create({{"Transform", Json::object()}, {"RigidBody", {{"motion", "Static"}}}, {"BoxCollider", {{"half_extents", {20, 0.5, 20}}}}});
+    h.Call("play");
+    h.Call("step_simulation", {{"frames", 120}});
+    const f32 fallen = h.Components(ball)["Transform"]["position"][1].get<f32>();
+    AETHER_CHECK(fallen < 2.0f);
+    AETHER_CHECK(fallen > 0.0f);
+    h.Call("stop");
+    AETHER_CHECK(h.Components(ball)["Transform"]["position"][1].get<f32>() == 10.0f);
+}
+#endif
