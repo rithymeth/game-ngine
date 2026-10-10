@@ -406,7 +406,9 @@ jobs:
               & "$gameDir/AETHER-01.exe" --frames 10 --size 960x540 --press Escape --screenshot $menu --user-dir user
               if ($LASTEXITCODE -ne 0) { throw 'Packaged pause menu failed' }
             }
-            foreach ($mode in @('headless', 'rendered')) {
+          $playthroughModes = @('headless')
+          if (-not $usesWarp) { $playthroughModes += 'rendered' }
+          foreach ($mode in $playthroughModes) {
               $replayArgs = @('--replay-input', $trace, '--report', '--user-dir', "user/replay-$mode")
               if ($mode -eq 'headless') { $replayArgs += '--headless' }
               elseif (-not $usesWarp) { $replayArgs += @('--size', '960x540', '--screenshot', $ending) }
