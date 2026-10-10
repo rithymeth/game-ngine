@@ -6,7 +6,7 @@ namespace aether {
 // it was last saved with. Matches the published engine release version.
 inline constexpr int kEngineVersionMajor = 0;
 inline constexpr int kEngineVersionMinor = 27;
-inline constexpr int kEngineVersionPatch = 4;
-inline constexpr const char* kEngineVersion = "0.27.4";
+inline constexpr int kEngineVersionPatch = 5;
+inline constexpr const char* kEngineVersion = "0.27.5";
 
 } // namespace aether
