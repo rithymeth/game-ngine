@@ -247,7 +247,9 @@ ProcessResult RunProcess(const ProcessSpec& spec) {
         args.push_back(nullptr);
         for (std::string& e : env_strings) envp.push_back(e.data());
         envp.push_back(nullptr);
-        execvpe(args[0], args.data(), envp.data());
+        // execvpe is a GNU extension (macOS has none): in the child, make the new environment the process's own, then execvp.
+        environ = envp.data();
+        execvp(args[0], args.data());
         _exit(127);
     }
     close(fds[1]);
