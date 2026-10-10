@@ -542,6 +542,7 @@ AETHER_TEST(Mcp_ToolsCanReturnImages) {
 #include "asset_tools.h"
 #include "audio_tools.h"
 #include "kit_tools.h"
+#include "nav_tools.h"
 #include "terrain_tools.h"
 #include "vfx_tools.h"
 #include "aether/project/project.h"
@@ -1317,4 +1318,183 @@ AETHER_TEST(Mcp_TerrainToolsSculptPaintPlanAndRoundTrip) {
     Json again = h.Call("terrain_create", {{"width", 65}, {"kind", "procedural"}, {"scale", 8}}).value;
     AETHER_CHECK(again["heights"] == hills["heights"]);
     stdfs::remove_all(dir);
+}
+
+AETHER_TEST(Mcp_NavToolsBakeQuerySimulateAndEditComponents) {
+    namespace stdfs = std::filesystem;
+    Harness h;
+    RegisterTerrainTools(h.server);
+    RegisterNavTools(h.server, h.session);
+    auto path_length = [&](Json start, Json end, Json extra = Json::object()) {
+        Json args = extra;
+        args["queries"] = Json::array({{{"start", start}, {"end", end}}});
+        Json r = h.Call("nav_path", args).value["paths"][0];
+        return r["status"] == "complete" ? r["length"].get<double>() : -1.0;
+    };
+
+    // --- nothing baked yet; bad geometry is refused as a whole
+    AETHER_CHECK(h.Call("nav_path", {{"queries", {{{"start", {0, 0, 0}}, {"end", {1, 0, 1}}}}}}).is_error);
+    AETHER_CHECK(h.Call("nav_bake").is_error); // no geometry
+    AETHER_CHECK(h.Call("nav_geometry_add", {{"planes", {{{"center", {0, 0, 0}}, {"half_x", 5}, {"half_z", 5}}}}, {"boxes", {{{"center", {0, 0, 0}}}}}}).is_error);
+    AETHER_CHECK(h.Call("nav_info").value["geometry"]["triangles"] == 0); // the valid plane was not kept either
+    AETHER_CHECK(h.Call("nav_geometry_add", {{"volumes", {{{"shape", "cone"}}}}}).is_error);
+    AETHER_CHECK(h.Call("nav_geometry_add", {{"planes", {{{"center", {0, 0}}, {"half_x", 1}, {"half_z", 1}}}}}).is_error);
+    AETHER_CHECK(h.Call("nav_geometry_add", {{"triangles", {{{"vertices", {{0, 0, 0}, {1, 0, 0}, {0, 0, 1}}}, {"indices", {0, 1, 5}}}}}}).is_error);
+    AETHER_CHECK(h.Call("nav_geometry_add", {{"planes", {{{"center", {0, 0, 0}}, {"half_x", 1}, {"half_z", 1}, {"area", 64}}}}}).is_error);
+
+    // --- a floor with a wall across the middle, a pillar, and a band of area 2 across the south
+    AETHER_CHECK(!h.Call("nav_geometry_add", {{"planes", {{{"center", {20, 0, 20}}, {"half_x", 20}, {"half_z", 20}}}},
+                                              {"boxes", {{{"center", {20, 1.5, 20}}, {"half_extents", {1, 1.5, 12}}}}},
+                                              {"volumes", {{{"shape", "cylinder"}, {"center", {8, 0, 8}}, {"radius", 3}, {"height", 2}},
+                                                           {{"shape", "box"}, {"center", {32, 0, 6}}, {"half_extents", {6, 1, 6}}, {"area", 2}}}}}).is_error);
+    Json baked = h.Call("nav_bake", {{"agent_radius", 0.5}}).value;
+    AETHER_CHECK(baked["baked"] == true);
+    AETHER_CHECK(baked["bake"]["polygons"].get<int>() > 5);
+    AETHER_CHECK(baked["from_geometry"] == true);
+    AETHER_CHECK(h.Call("nav_bake", {{"agent_radius", -1}}).is_error);
+
+    // --- paths go round the wall: longer than the straight line, and complete
+    const double straight = std::sqrt(30.0 * 30.0 + 0.0);
+    const double around = path_length({5, 0, 20}, {35, 0, 20});
+    AETHER_CHECK(around > straight + 5.0);
+    AETHER_CHECK(path_length({5, 0, 3}, {35, 0, 3}) > 0.0);
+    // Area costs steer routes: the area-2 patch (x 26 to 38, z 0 to 12) is on the direct line from (23,0,6) to (39,0,6).
+    const double direct = path_length({23, 0, 6}, {39, 0, 6});
+    const double costly = path_length({23, 0, 6}, {39, 0, 6}, {{"area_costs", {{"2", 50}}}});
+    AETHER_CHECK(direct > 0.0);
+    AETHER_CHECK(costly > direct + 1.0); // detours round the costly area
+    AETHER_CHECK(h.Call("nav_path", {{"queries", {{{"start", {5, 0, 5}}, {"end", {35, 0, 35}}}}}, {"area_costs", {{"2", 0.5}}}}).is_error);
+    AETHER_CHECK(h.Call("nav_path", {{"queries", Json::array()}}).is_error);
+
+    // --- the other questions
+    AETHER_CHECK(h.Call("nav_query", {{"kind", "reachable"}, {"a", {5, 0, 5}}, {"b", {35, 0, 35}}}).value["reachable"] == true);
+    Json ray = h.Call("nav_query", {{"kind", "raycast"}, {"start", {5, 0, 20}}, {"end", {35, 0, 20}}}).value;
+    AETHER_CHECK(ray["blocked"] == true); // the wall is in the way
+    AETHER_CHECK(h.Call("nav_query", {{"kind", "raycast"}, {"start", {3, 0, 30}}, {"end", {12, 0, 30}}}).value["blocked"] == false);
+    Json nearest = h.Call("nav_query", {{"kind", "nearest"}, {"points", {{20, 0.1, 3}, {500, 0, 500}}}}).value["points"];
+    AETHER_CHECK(nearest[0]["on_mesh"] == true);
+    AETHER_CHECK(nearest[1]["on_mesh"] == false);
+    Json random_a = h.Call("nav_query", {{"kind", "random"}, {"count", 5}, {"seed", 9}}).value;
+    Json random_b = h.Call("nav_query", {{"kind", "random"}, {"count", 5}, {"seed", 9}}).value;
+    AETHER_CHECK(random_a["points"].size() == 5);
+    AETHER_CHECK(random_a == random_b); // the seed repeats
+    AETHER_CHECK(h.Call("nav_query", {{"kind", "teleport"}}).is_error);
+    AETHER_CHECK(h.Call("nav_query", {{"kind", "random"}, {"count", 0}}).is_error);
+
+    // --- an island the ground does not reach, then a link that does
+    AETHER_CHECK(!h.Call("nav_geometry_add", {{"planes", {{{"center", {70, 0, 20}}, {"half_x", 8}, {"half_z", 8}}}}}).is_error);
+    AETHER_CHECK(!h.Call("nav_bake", {{"agent_radius", 0.5}}).is_error);
+    AETHER_CHECK(h.Call("nav_query", {{"kind", "reachable"}, {"a", {5, 0, 5}}, {"b", {70, 0, 20}}}).value["reachable"] == false);
+    AETHER_CHECK(!h.Call("nav_geometry_add", {{"links", {{{"start", {38, 0, 20}}, {"end", {64, 0, 20}}, {"radius", 1.5}}}}}).is_error);
+    // Detour joins an off-mesh link only inside a tile or between neighbouring ones, so a long link needs one big tile.
+    Json linked = h.Call("nav_bake", {{"agent_radius", 0.5}, {"tile_size", 0}}).value;
+    AETHER_CHECK(linked["links_in_mesh"].get<int>() >= 1);
+    AETHER_CHECK(h.Call("nav_query", {{"kind", "reachable"}, {"a", {5, 0, 5}}, {"b", {70, 0, 20}}}).value["reachable"] == true);
+    Json over = h.Call("nav_path", {{"queries", {{{"start", {5, 0, 5}}, {"end", {70, 0, 20}}}}}}).value["paths"][0];
+    AETHER_CHECK(over["status"] == "complete");
+    AETHER_CHECK(!over["link_starts_at_points"].empty());
+
+    // --- the picture
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_nav_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+    Json rpc = h.Rpc("tools/call", {{"name", "nav_preview"}, {"arguments", {{"size", 128}, {"path", (dir / "nav.png").string()}, {"paths", {{{"start", {5, 0, 5}}, {"end", {35, 0, 35}}}}}, {"points", {{10, 0, 10}}}}}});
+    AETHER_CHECK(rpc["result"]["isError"] == false);
+    AETHER_CHECK(rpc["result"]["content"].size() == 2);
+    AETHER_CHECK(rpc["result"]["content"][1]["mimeType"] == "image/png");
+    {
+        std::ifstream png(dir / "nav.png", std::ios::binary);
+        char magic[4] = {};
+        png.read(magic, 4);
+        AETHER_CHECK(magic[1] == 'P' && magic[2] == 'N' && magic[3] == 'G');
+    }
+    AETHER_CHECK(h.Call("nav_preview", {{"size", 5}}).is_error);
+
+    // --- a crowd crossing the floor: arrivals, detours and spacing
+    Json crowd = h.Call("nav_simulate", {{"agents", {{{"start", {3, 0, 3}}, {"goal", {37, 0, 37}}}, {{"start", {37, 0, 37}}, {"goal", {3, 0, 3}}}, {{"start", {3, 0, 37}}, {"goal", {37, 0, 3}}}}}, {"seconds", 60}}).value;
+    AETHER_CHECK(crowd["arrived"] == 3);
+    AETHER_CHECK(crowd["failed"] == 0);
+    for (const Json& a : crowd["agents"]) {
+        AETHER_CHECK(a["status"] == "arrived");
+        AETHER_CHECK(a["arrived_at"].get<double>() > 1.0);
+        AETHER_CHECK(a["distance_walked"].get<double>() > 30.0);
+        AETHER_CHECK(a["distance_walked"].get<double>() < a["shortest_path_length"].get<double>() * 1.5);
+        AETHER_CHECK(!a["samples"].empty());
+    }
+    AETHER_CHECK(crowd["closest_agent_distance"].get<double>() > 0.1);
+    AETHER_CHECK(h.Call("nav_simulate", {{"agents", {{{"start", {900, 0, 900}}, {"goal", {3, 0, 3}}}}}}).is_error); // start off the mesh
+    AETHER_CHECK(h.Call("nav_simulate", {{"agents", {{{"start", {3, 0, 3}}}}}}).is_error);
+    AETHER_CHECK(h.Call("nav_simulate", {{"agents", Json::array()}}).is_error);
+
+    // --- save and load the mesh
+    const std::size_t polygons = h.Call("nav_info").value["polygons"].get<std::size_t>();
+    AETHER_CHECK(!h.Call("nav_export", {{"path", (dir / "level").string()}}).is_error);
+    AETHER_CHECK(stdfs::exists(dir / "level.anav"));
+    AETHER_CHECK(!h.Call("nav_geometry_clear").is_error);
+    AETHER_CHECK(!h.Call("nav_geometry_add", {{"planes", {{{"center", {0, 0, 0}}, {"half_x", 3}, {"half_z", 3}}}}}).is_error);
+    AETHER_CHECK(!h.Call("nav_bake").is_error);
+    AETHER_CHECK(h.Call("nav_info").value["polygons"].get<std::size_t>() != polygons);
+    Json imported = h.Call("nav_import", {{"path", (dir / "level.anav").string()}}).value;
+    AETHER_CHECK(imported["polygons"].get<std::size_t>() == polygons);
+    AETHER_CHECK(imported["from_geometry"] == false);
+    AETHER_CHECK(path_length({5, 0, 20}, {35, 0, 20}) > 0.0); // the loaded mesh answers queries
+    {
+        std::ofstream bad(dir / "bad.anav", std::ios::binary);
+        bad << "not a mesh";
+    }
+    AETHER_CHECK(h.Call("nav_import", {{"path", (dir / "bad.anav").string()}}).is_error);
+    AETHER_CHECK(h.Call("nav_import", {{"path", (dir / "none.anav").string()}}).is_error);
+    AETHER_CHECK(h.Call("nav_info").value["polygons"].get<std::size_t>() == polygons); // a failed import leaves the mesh alone
+
+    // --- the sculpted terrain as ground
+    AETHER_CHECK(h.Call("nav_geometry_add_terrain").is_error); // no terrain yet
+    AETHER_CHECK(!h.Call("terrain_create", {{"width", 65}, {"depth", 65}, {"cell_size", 1}}).is_error);
+    AETHER_CHECK(!h.Call("terrain_sculpt", {{"tool", "raise"}, {"strokes", {{32, 32}}}, {"radius", 8}, {"strength", 1}, {"amount", 12}}).is_error); // a steep hill in the middle
+    AETHER_CHECK(!h.Call("nav_geometry_clear").is_error);
+    Json terrain = h.Call("nav_geometry_add_terrain", {{"stride", 1}}).value;
+    AETHER_CHECK(terrain["triangles"] == 64 * 64 * 2);
+    AETHER_CHECK(h.Call("nav_geometry_add_terrain", {{"stride", 99}}).is_error);
+    AETHER_CHECK(!h.Call("nav_bake", {{"agent_radius", 0.5}, {"agent_max_slope", 35}}).is_error);
+    const double hill = path_length({5, 0, 32}, {59, 0, 32});
+    AETHER_CHECK(hill > 54.0); // over or round the hill, never shorter than straight across
+    stdfs::remove_all(dir);
+
+    // --- the editor scene's navigation components
+    std::string agent = h.Create({{"Transform", Json::object()}});
+    AETHER_CHECK(h.Call("nav_component_list").value.empty());
+    AETHER_CHECK(h.Call("nav_component_set", {{"entity", agent}, {"component", "Transform"}, {"fields", Json::object()}}).is_error);
+    AETHER_CHECK(h.Call("nav_component_set", {{"entity", agent}, {"component", "NavAgent"}, {"fields", {{"radius", 9}}}}).is_error);
+    AETHER_CHECK(h.Call("nav_component_set", {{"entity", agent}, {"component", "NavAgent"}, {"fields", {{"avoidance_quality", 7}}}}).is_error);
+    AETHER_CHECK(h.Call("nav_component_set", {{"entity", agent}, {"component", "NavAgent"}, {"fields", {{"status", "Moving"}}}}).is_error);
+    AETHER_CHECK(h.Call("nav_component_set", {{"entity", agent}, {"component", "NavAgent"}, {"fields", {{"speed", 3}}}}).is_error);
+    AETHER_CHECK(h.Call("nav_component_set", {{"entity", agent}, {"component", "NavObstacle"}, {"fields", {{"shape", "Sphere"}}}}).is_error);
+    AETHER_CHECK(h.Call("nav_component_set", {{"entity", agent}, {"component", "NavModifierVolume"}, {"fields", {{"area", 64}}}}).is_error);
+    AETHER_CHECK(!h.Components(agent).contains("NavAgent")); // refused edits leave nothing behind
+
+    AETHER_CHECK(!h.Call("nav_component_set", {{"entity", agent}, {"component", "NavAgent"}, {"fields", {{"radius", 0.4}, {"max_speed", 5}}}}).is_error);
+    AETHER_CHECK(h.Components(agent)["NavAgent"]["max_speed"] == 5);
+    AETHER_CHECK(!h.Call("nav_component_set", {{"entity", agent}, {"component", "NavAgent"}, {"fields", {{"allow_partial", true}}}}).is_error);
+    h.Call("undo");
+    AETHER_CHECK(h.Components(agent)["NavAgent"]["allow_partial"] == false);
+    h.Call("undo");
+    AETHER_CHECK(!h.Components(agent).contains("NavAgent")); // add + set were one step
+    h.Call("redo");
+
+    std::string pillar = h.Create({{"Transform", {{"position", {10, 0, 10}}, {"rotation", {0, 0, 0, 1}}, {"scale", {1, 1, 1}}}}});
+    AETHER_CHECK(!h.Call("nav_component_set", {{"entity", pillar}, {"component", "NavObstacle"}, {"fields", {{"shape", "Cylinder"}, {"radius", 2}}}}).is_error);
+    std::string pond = h.Create({{"Transform", {{"position", {20, 0, 20}}, {"rotation", {0, 0, 0, 1}}, {"scale", {1, 1, 1}}}}});
+    AETHER_CHECK(!h.Call("nav_component_set", {{"entity", pond}, {"component", "NavModifierVolume"}, {"fields", {{"half_extents", {3, 1, 3}}, {"area", 2}}}}).is_error);
+    std::string jump = h.Create({{"Transform", {{"position", {0, 0, 0}}, {"rotation", {0, 0, 0, 1}}, {"scale", {1, 1, 1}}}}});
+    AETHER_CHECK(!h.Call("nav_component_set", {{"entity", jump}, {"component", "NavLinkProxy"}, {"fields", {{"start", {1, 0, 0}}, {"end", {1, 0, 5}}}}}).is_error);
+    AETHER_CHECK(h.Call("nav_component_list").value.size() == 4);
+
+    AETHER_CHECK(!h.Call("nav_geometry_clear").is_error);
+    Json from_scene = h.Call("nav_geometry_add_scene").value;
+    AETHER_CHECK(from_scene["added"]["obstacles"] == 1);
+    AETHER_CHECK(from_scene["added"]["modifier_volumes"] == 1);
+    AETHER_CHECK(from_scene["added"]["links"] == 1);
+    AETHER_CHECK(from_scene["volumes"] == 2);
+    AETHER_CHECK(from_scene["links"] == 1);
+    AETHER_CHECK(!h.Call("nav_component_remove", {{"entity", pillar}, {"component", "NavObstacle"}}).is_error);
+    AETHER_CHECK(h.Call("nav_component_remove", {{"entity", pillar}, {"component", "NavObstacle"}}).is_error);
 }

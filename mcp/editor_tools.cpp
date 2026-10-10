@@ -215,6 +215,7 @@ const Json kGuidProp = {{"type", "string"}, {"description", "Entity GUID, as ret
 void RegisterAttributeTools(McpServer& server, EditorSession& s);
 void RegisterAudioEditorTools(McpServer& server, EditorSession& s);
 void RegisterParticleEditorTools(McpServer& server, EditorSession& s);
+void RegisterNavEditorTools(McpServer& server, EditorSession& s);
 #if AETHER_MCP_INTERACTION
 void RegisterInteractionEditorTools(McpServer& server, EditorSession& s);
 #endif
@@ -591,6 +592,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
     RegisterAttributeTools(server, s);
     RegisterAudioEditorTools(server, s);
     RegisterParticleEditorTools(server, s);
+    RegisterNavEditorTools(server, s);
 #if AETHER_MCP_INTERACTION
     RegisterInteractionEditorTools(server, s);
 #endif
@@ -1009,6 +1011,143 @@ void RegisterParticleEditorTools(McpServer& server, EditorSession& s) {
                         editor::CommandContext ctx = s.Context();
                         s.stack.Execute(ctx, std::make_unique<editor::RemoveComponentCommand>(guid, id));
                         return {{"removed", true}};
+                    }});
+}
+
+
+// ---------------------------------------------------------------------------
+// Navigation components. NavAgent (walks the mesh), NavObstacle (carves a hole), NavModifierVolume (relabels the ground)
+// and NavLinkProxy (an off-mesh link) are saved in scenes and prefabs; nav_component_set edits them as one validated,
+// undoable step.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+bool IsNavComponent(const std::string& name) { return name == "NavAgent" || name == "NavObstacle" || name == "NavModifierVolume" || name == "NavLinkProxy"; }
+
+void ValidateNavFields(const std::string& component, const Json& fields) {
+    auto number = [&](const std::string& key, const Json& v, double lo, double hi) {
+        if (!v.is_number() || !(v.get<double>() >= lo) || !(v.get<double>() <= hi)) throw ToolError("\"" + key + "\" must be a number from " + std::to_string(lo) + " to " + std::to_string(hi));
+    };
+    auto integer = [&](const std::string& key, const Json& v, long long lo, long long hi) {
+        if (!v.is_number_integer() || v.get<long long>() < lo || v.get<long long>() > hi) throw ToolError("\"" + key + "\" must be an integer from " + std::to_string(lo) + " to " + std::to_string(hi));
+    };
+    auto boolean = [&](const std::string& key, const Json& v) { if (!v.is_boolean()) throw ToolError("\"" + key + "\" must be true or false"); };
+    auto vec = [&](const std::string& key, const Json& v, bool positive) {
+        if (!v.is_array() || v.size() != 3 || !v[0].is_number() || !v[1].is_number() || !v[2].is_number()) throw ToolError("\"" + key + "\" must be [x, y, z]");
+        if (positive && !(v[0].get<double>() > 0 && v[1].get<double>() > 0 && v[2].get<double>() > 0)) throw ToolError("\"" + key + "\" must be above 0 on every axis");
+    };
+    for (auto& [key, value] : fields.items()) {
+        if (component == "NavAgent") {
+            if (key == "status" || key == "goal" || key == "velocity" || key == "remaining" || key == "commands") throw ToolError("\"" + key + "\" is runtime state, not saved");
+            if (key == "radius") number(key, value, 0.05, 4.0);
+            else if (key == "height") number(key, value, 0.1, 20.0);
+            else if (key == "max_speed") number(key, value, 0.0, 100.0);
+            else if (key == "max_acceleration") number(key, value, 0.0, 1000.0);
+            else if (key == "stopping_distance" || key == "goal_tolerance") number(key, value, 0.0, 100.0);
+            else if (key == "base_offset") number(key, value, -10.0, 10.0);
+            else if (key == "avoidance_quality") integer(key, value, 0, 3);
+            else if (key == "separation_weight") number(key, value, 0.0, 20.0);
+            else if (key == "turn_speed") number(key, value, 0.0, 10000.0);
+            else if (key == "update_rotation" || key == "allow_partial") boolean(key, value);
+            else throw ToolError("Unknown NavAgent field \"" + key + "\"");
+        } else if (component == "NavObstacle") {
+            if (key == "shape") { if (!value.is_string() || (value != "Box" && value != "Cylinder")) throw ToolError("\"shape\" must be Box or Cylinder"); }
+            else if (key == "center") vec(key, value, false);
+            else if (key == "half_extents") vec(key, value, true);
+            else if (key == "radius" || key == "height") number(key, value, 0.0, 1000.0);
+            else if (key == "move_threshold") number(key, value, 0.0, 100.0);
+            else if (key == "carve") boolean(key, value);
+            else throw ToolError("Unknown NavObstacle field \"" + key + "\"");
+        } else if (component == "NavModifierVolume") {
+            if (key == "half_extents") vec(key, value, true);
+            else if (key == "area") integer(key, value, 0, 63);
+            else throw ToolError("Unknown NavModifierVolume field \"" + key + "\" (half_extents, area)");
+        } else {
+            if (key == "start" || key == "end") vec(key, value, false);
+            else if (key == "radius") number(key, value, 0.0, 100.0);
+            else if (key == "area") integer(key, value, 1, 63);
+            else if (key == "user_id") integer(key, value, -2147483647, 2147483647);
+            else if (key == "bidirectional" || key == "enabled") boolean(key, value);
+            else throw ToolError("Unknown NavLinkProxy field \"" + key + "\"");
+        }
+    }
+}
+
+} // namespace
+
+void RegisterNavEditorTools(McpServer& server, EditorSession& s) {
+    const Json kGuidProp = {{"type", "string"}, {"description", "Entity GUID"}};
+
+    server.AddTool({"nav_component_list", "Entities in the editor scene with a NavAgent, NavObstacle, NavModifierVolume or NavLinkProxy, and their settings.", Schema(Json::object()),
+                    [&s](const Json&) -> Json {
+                        Json out = Json::array();
+                        for (Entity e : AllEntities(s)) {
+                            Json row = Json::object();
+                            for (const char* name : {"NavAgent", "NavObstacle", "NavModifierVolume", "NavLinkProxy"}) {
+                                const ComponentId id = FindComponentIdByName(name);
+                                if (id != kInvalidComponentId && s.world.HasComponentRaw(e, id)) row[name] = ComponentJson(s, e, id);
+                            }
+                            if (row.empty()) continue;
+                            const IdComponent* idc = s.world.GetComponent<IdComponent>(e);
+                            row["entity"] = idc ? ToString(idc->guid) : "";
+                            out.push_back(row);
+                        }
+                        return out;
+                    }});
+
+    server.AddTool(
+        {"nav_component_set",
+         "Add a navigation component to an entity if it has none and apply fields (a partial update), as one undoable step. NavAgent: radius, height, max_speed, "
+         "max_acceleration, stopping_distance, base_offset, avoidance_quality (0-3), separation_weight, update_rotation, turn_speed, allow_partial, goal_tolerance. "
+         "NavObstacle: shape (Box | Cylinder), center, half_extents, radius, height, move_threshold, carve. NavModifierVolume: half_extents, area (0 blocks, 63 ground). "
+         "NavLinkProxy: start, end (in the entity's space), radius, bidirectional, area, user_id, enabled.",
+         Schema({{"entity", kGuidProp},
+                 {"component", {{"type", "string"}, {"description", "NavAgent, NavObstacle, NavModifierVolume or NavLinkProxy"}}},
+                 {"fields", {{"type", "object"}}}},
+                {"entity", "component"}),
+         [&s](const Json& args) -> Json {
+             Entity e = RequireEntity(s, args);
+             EntityGuid guid = RequireGuid(args, "entity");
+             const std::string name = RequireString(args, "component");
+             if (!IsNavComponent(name)) throw ToolError("\"component\" must be NavAgent, NavObstacle, NavModifierVolume or NavLinkProxy");
+             const Json fields = args.contains("fields") ? args["fields"] : Json::object();
+             if (!fields.is_object()) throw ToolError("\"fields\" must be an object");
+             ValidateNavFields(name, fields);
+             const ComponentId id = RequireComponent(name);
+             editor::CommandContext ctx = s.Context();
+             s.stack.BeginTransaction("Set " + name);
+             if (!s.world.HasComponentRaw(e, id)) s.stack.Execute(ctx, std::make_unique<editor::AddComponentCommand>(guid, id));
+             Json warnings = Json::array();
+             if (!fields.empty()) {
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 try {
+                     after = PatchedBytes(s, e, id, fields, before, warnings);
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     s.stack.Undo(ctx);
+                     throw;
+                 }
+                 s.stack.Execute(ctx, std::make_unique<SetComponentCommand>(guid, id, before, after));
+             }
+             s.stack.EndTransaction();
+             Json out = {{"component", name}, {"value", ComponentJson(s, e, id)}};
+             if (!warnings.empty()) out["warnings"] = warnings;
+             return out;
+         }});
+
+    server.AddTool({"nav_component_remove", "Remove a NavAgent, NavObstacle, NavModifierVolume or NavLinkProxy from an entity. Undoable.",
+                    Schema({{"entity", kGuidProp}, {"component", {{"type", "string"}}}}, {"entity", "component"}), [&s](const Json& args) -> Json {
+                        Entity e = RequireEntity(s, args);
+                        EntityGuid guid = RequireGuid(args, "entity");
+                        const std::string name = RequireString(args, "component");
+                        if (!IsNavComponent(name)) throw ToolError("\"component\" must be NavAgent, NavObstacle, NavModifierVolume or NavLinkProxy");
+                        const ComponentId id = RequireComponent(name);
+                        if (!s.world.HasComponentRaw(e, id)) throw ToolError("Entity has no " + name);
+                        editor::CommandContext ctx = s.Context();
+                        s.stack.Execute(ctx, std::make_unique<editor::RemoveComponentCommand>(guid, id));
+                        return {{"removed", name}};
                     }});
 }
 
