@@ -453,3 +453,70 @@ AETHER_TEST(Mcp_GameToolsHostACookedGame) {
     AETHER_CHECK(h.Call("game_state").is_error);
     stdfs::remove_all(dir);
 }
+
+#include "build_tools.h"
+#include "process.h"
+
+#include <fstream>
+
+AETHER_TEST(Mcp_RunProcessCapturesOutputAndKillsOnTimeout) {
+    ProcessSpec echo;
+    echo.command_line = "echo hello-from-child";
+    ProcessResult ok = RunProcess(echo);
+    AETHER_CHECK(ok.started);
+    AETHER_CHECK(ok.exit_code == 0);
+    AETHER_CHECK(ok.output.find("hello-from-child") != std::string::npos);
+
+    ProcessSpec fail;
+    fail.command_line = "exit 3";
+    AETHER_CHECK(RunProcess(fail).exit_code == 3);
+
+    ProcessSpec missing;
+    missing.argv = {"definitely-not-a-real-program-xyz"};
+    AETHER_CHECK(!RunProcess(missing).started || RunProcess(missing).exit_code != 0);
+
+    ProcessSpec slow;
+#ifdef _WIN32
+    slow.command_line = "ping -n 30 127.0.0.1 >nul";
+#else
+    slow.command_line = "sleep 30";
+#endif
+    slow.timeout_ms = 300;
+    ProcessResult killed = RunProcess(slow);
+    AETHER_CHECK(killed.timed_out);
+    AETHER_CHECK(killed.seconds < 10.0);
+}
+
+AETHER_TEST(Mcp_BuildToolsFindTheBuildAndRefuseEscapes) {
+    namespace stdfs = std::filesystem;
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_build_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir / "sub" / "deeper");
+    {
+        std::ofstream cache(dir / "CMakeCache.txt");
+        cache << "CMAKE_HOME_DIRECTORY:INTERNAL=/src/project\nCMAKE_GENERATOR:INTERNAL=Ninja\nAETHER_BUILD_MCP:BOOL=ON\n";
+    }
+    BuildContext found = FindBuildContext("", dir / "sub" / "deeper"); // walks up to the cache
+    AETHER_CHECK(!found.build_dir.empty());
+    AETHER_CHECK(found.source_dir == "/src/project");
+    AETHER_CHECK(FindBuildContext((dir / "nope").string(), dir).build_dir.empty());
+
+    Harness h;
+    RegisterBuildTools(h.server, found);
+    Harness::Result info = h.Call("build_info");
+    AETHER_CHECK(!info.is_error);
+    AETHER_CHECK(info.value["generator"] == "Ninja");
+    AETHER_CHECK(info.value["options"]["AETHER_BUILD_MCP"] == "ON");
+
+    AETHER_CHECK(h.Call("run_program", {{"program", "../../../Windows/System32/cmd"}}).is_error);
+    AETHER_CHECK(h.Call("run_program", {{"program", "/bin/sh"}}).is_error);
+    AETHER_CHECK(h.Call("run_program", {{"program", "missing_tool"}}).is_error);
+    AETHER_CHECK(h.Call("build", {{"target", "--evil"}}).is_error);
+    AETHER_CHECK(h.Call("build", {{"timeout_seconds", 0}}).is_error);
+    AETHER_CHECK(h.Call("run_tests").is_error); // aether_tests isn't in this fake build
+
+    Harness none;
+    RegisterBuildTools(none.server, BuildContext{});
+    AETHER_CHECK(none.Call("build").is_error);
+    stdfs::remove_all(dir);
+}

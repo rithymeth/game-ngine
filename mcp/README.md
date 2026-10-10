@@ -64,6 +64,23 @@ saves and localization. The game has its own world, separate from the editor's.
 The plugin modules Audio, Navigation, Networking and Physics are linked into the server so manifests
 that name them start; AI is not (see below).
 
+### Building, testing and running the engine
+
+These tools act on one CMake build directory: `--build-dir <dir>`, else `$AETHER_BUILD_DIR`, else the
+nearest `CMakeCache.txt` above the server executable (the server is built inside it). On Windows an
+MSVC build gets the Visual Studio environment automatically (from the `vcvars64.bat` beside the
+compiler the cache names). Calls block until the process ends or times out; a timeout kills the whole
+process tree.
+
+| Tool | What it does |
+| --- | --- |
+| `build_info` | Build dir, source dir, generator, build type, compiler and the `AETHER_BUILD_*` / `AETHER_KIT_*` options |
+| `configure` | Run CMake, optionally setting cache variables |
+| `build` | `cmake --build`, all or one `target`; returns success, compiler errors, warning count, output tail |
+| `build_targets` | Target names, optionally filtered |
+| `run_tests` | Run `aether_tests` (optional `filter`, optional `build_first`); pass/fail counts and each failure with its output |
+| `run_program` | Run any program inside the build dir (`aether_player --headless --frames N`, the functional runner, the cooker) with args, environment and timeout; no shell |
+
 Entities are addressed by GUID (from `list_entities`), which survives
 undo/redo and save/load. Component values use the engine's reflection JSON
 (`Vec3` is `[x, y, z]`, entity references are GUID strings).
@@ -81,6 +98,7 @@ Bad input is reported as a tool error (`isError`), never a crash, and a failed
 - `simulation.h/.cpp` -- the systems that run in play mode (3D physics and characters, 2D physics with
   platformers and camera follow, previous-transform recording) on the engine's scheduler.
 - `game_tools.h/.cpp` -- the `game_*` tools over a hosted `player::Game`.
+- `build_tools.h/.cpp`, `process.h/.cpp` -- the build/test/run tools and the child-process runner.
 - `main.cpp` -- the `aether_mcp_server` executable.
 - Tests: `tests/test_mcp.cpp`.
 
