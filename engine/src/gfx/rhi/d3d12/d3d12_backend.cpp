@@ -194,17 +194,27 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
     pso_desc.RasterizerState.CullMode = desc.cull_back_face ? D3D12_CULL_MODE_BACK : D3D12_CULL_MODE_NONE;
     pso_desc.RasterizerState.DepthClipEnable = TRUE;
 
-    pso_desc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    // D3D12_GRAPHICS_PIPELINE_STATE_DESC is zero-initialized above, but a
+    // zeroed D3D12_RENDER_TARGET_BLEND_DESC is not the API's default state:
+    // its blend factors and operations are invalid enum values. Set the
+    // complete default render-target blend state before optionally enabling
+    // alpha blending, otherwise CreateGraphicsPipelineState rejects the
+    // editor viewport pipeline with E_INVALIDARG on Windows.
+    auto& render_target_blend = pso_desc.BlendState.RenderTarget[0];
+    render_target_blend.SrcBlend = D3D12_BLEND_ONE;
+    render_target_blend.DestBlend = D3D12_BLEND_ZERO;
+    render_target_blend.BlendOp = D3D12_BLEND_OP_ADD;
+    render_target_blend.SrcBlendAlpha = D3D12_BLEND_ONE;
+    render_target_blend.DestBlendAlpha = D3D12_BLEND_ZERO;
+    render_target_blend.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+    render_target_blend.LogicOp = D3D12_LOGIC_OP_NOOP;
+    render_target_blend.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
     if (desc.enable_blending) {
         // Standard non-premultiplied alpha blending, matching the Vulkan
         // backend's equivalent VkPipelineColorBlendAttachmentState exactly.
-        pso_desc.BlendState.RenderTarget[0].BlendEnable = TRUE;
-        pso_desc.BlendState.RenderTarget[0].SrcBlend = D3D12_BLEND_SRC_ALPHA;
-        pso_desc.BlendState.RenderTarget[0].DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
-        pso_desc.BlendState.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
-        pso_desc.BlendState.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
-        pso_desc.BlendState.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_ZERO;
-        pso_desc.BlendState.RenderTarget[0].BlendOpAlpha = D3D12_BLEND_OP_ADD;
+        render_target_blend.BlendEnable = TRUE;
+        render_target_blend.SrcBlend = D3D12_BLEND_SRC_ALPHA;
+        render_target_blend.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
     }
 
     // Always declared with the swap chain's own D32_FLOAT depth format
