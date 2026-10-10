@@ -54,6 +54,7 @@ saves and localization. The game has its own world, separate from the editor's.
 | `game_step` | Run N frames (1-100000) of `dt` seconds (default: the project's fixed step) |
 | `game_state` | Frames, time, entity/physics/script counts, script and Blueprint errors, load warnings |
 | `game_input` | Hold keys/axes (`{"W": 1}`), mouse delta for one frame, or clear |
+| `game_screenshot` | Render the current frame off screen (what the player draws: scene and HUD) and return it as a PNG image, also saved to `path`. Needs a graphics device (D3D12 or Vulkan); `width`, `height`, `backend`, `inline` |
 | `game_set_paused` | Freeze or resume the simulation |
 | `game_load_scene` | Switch to another cooked scene |
 | `game_systems` | The game's systems in execution order by phase (filled after the first step) |
@@ -99,6 +100,7 @@ Bad input is reported as a tool error (`isError`), never a crash, and a failed
   platformers and camera follow, previous-transform recording) on the engine's scheduler.
 - `game_tools.h/.cpp` -- the `game_*` tools over a hosted `player::Game`.
 - `build_tools.h/.cpp`, `process.h/.cpp` -- the build/test/run tools and the child-process runner.
+- `screenshot.h/.cpp` -- the off-screen renderer behind `game_screenshot`.
 - `main.cpp` -- the `aether_mcp_server` executable.
 - Tests: `tests/test_mcp.cpp`.
 
@@ -107,5 +109,5 @@ Gameplay AI (`Aether::AI`: behaviour trees, perception) is deliberately not link
 must not depend on it (`docs/design/agent_gameplay_ai_boundary.md`).
 
 The editor's `play` simulation (above) is deliberately small: physics only. For audio, scripting,
-sequences and the gameplay kits, load the cooked game with `game_load`. Nothing is drawn: there is no
-window or graphics device, so no screenshots yet.
+sequences and the gameplay kits, load the cooked game with `game_load`. The simulation itself is headless;
+`game_screenshot` makes a hidden window and graphics device on first use, so it works only where one exists.

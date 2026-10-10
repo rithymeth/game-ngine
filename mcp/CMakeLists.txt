@@ -3,7 +3,7 @@
 # command layer and the gameplay modules whose components it exposes -- not on
 # ImGui or any graphics backend, and never on Aether::AI
 # (docs/design/agent_gameplay_ai_boundary.md).
-add_library(aether_mcp STATIC mcp_server.cpp editor_tools.cpp modules.cpp simulation.cpp game_tools.cpp process.cpp build_tools.cpp)
+add_library(aether_mcp STATIC mcp_server.cpp editor_tools.cpp modules.cpp simulation.cpp game_tools.cpp process.cpp build_tools.cpp screenshot.cpp)
 target_include_directories(aether_mcp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(aether_mcp PUBLIC Aether::Engine aether_editor_core nlohmann_json::nlohmann_json)
 # Modules whose components are exposed to agents.
@@ -20,6 +20,8 @@ foreach(kit Physics Inventory Interaction Quests)
         target_compile_definitions(aether_mcp PUBLIC AETHER_MCP_${kit_upper}=0)
     endif()
 endforeach()
+# stb_image_write.h, for encoding the screenshots (the stb repo the engine already fetches).
+target_include_directories(aether_mcp PRIVATE ${stb_SOURCE_DIR})
 add_library(Aether::MCP ALIAS aether_mcp)
 
 add_executable(aether_mcp_server main.cpp)
