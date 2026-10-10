@@ -245,7 +245,7 @@ Bad input is reported as a tool error (`isError`), never a crash, and a failed
 - `simulation.h/.cpp` -- the systems that run in play mode (3D physics and characters, 2D physics with
   platformers and camera follow, previous-transform recording) on the engine's scheduler.
 - `game_tools.h/.cpp` -- the `game_*` tools over a hosted `player::Game`.
-- `build_tools.h/.cpp`, `process.h/.cpp` -- the build/test/run tools and the child-process runner.
+- `build_tools.h/.cpp`, `subprocess.h/.cpp` -- the build/test/run tools and the child-process runner.
 - `screenshot.h/.cpp` -- the off-screen renderer behind `game_screenshot`.
 - `asset_tools.h/.cpp` -- the project, asset, import and cook tools.
 - `kit_tools.h/.cpp`, `project_host.h` -- the gameplay-kit data tools, and the open-project state they share with the asset tools.
