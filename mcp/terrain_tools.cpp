@@ -4,7 +4,7 @@
 #include "aether/terrain/splat.h"
 #include "aether/terrain/terrain.h"
 
-#include <stb_image_write.h>
+#include "image_util.h"
 
 #include <algorithm>
 #include <cmath>
@@ -81,20 +81,6 @@ double Number(const Json& args, const char* key, double fallback, double lo, dou
         throw ToolError(std::string("\"") + key + "\" must be a number from " + std::to_string(lo) + " to " + std::to_string(hi));
     }
     return args[key].get<double>();
-}
-
-std::string Base64(const std::vector<u8>& bytes) {
-    static const char* kAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string out;
-    out.reserve((bytes.size() + 2) / 3 * 4);
-    for (usize i = 0; i < bytes.size(); i += 3) {
-        const u32 n = (static_cast<u32>(bytes[i]) << 16) | (i + 1 < bytes.size() ? static_cast<u32>(bytes[i + 1]) << 8 : 0) | (i + 2 < bytes.size() ? bytes[i + 2] : 0);
-        out.push_back(kAlphabet[(n >> 18) & 63]);
-        out.push_back(kAlphabet[(n >> 12) & 63]);
-        out.push_back(i + 1 < bytes.size() ? kAlphabet[(n >> 6) & 63] : '=');
-        out.push_back(i + 2 < bytes.size() ? kAlphabet[n & 63] : '=');
-    }
-    return out;
 }
 
 std::vector<tr::SplatmapLayer> DefaultLayers() {
@@ -185,17 +171,6 @@ Vec3 HeightColor(f32 t) {
     return stops[std::size(stops) - 1].c;
 }
 
-std::vector<u8> EncodePng(const std::vector<u8>& rgba, u32 w, u32 h) {
-    std::vector<u8> png;
-    stbi_write_png_to_func(
-        [](void* ctx, void* data, int size) {
-            auto* out = static_cast<std::vector<u8>*>(ctx);
-            out->insert(out->end(), static_cast<u8*>(data), static_cast<u8*>(data) + size);
-        },
-        &png, static_cast<int>(w), static_cast<int>(h), 4, rgba.data(), static_cast<int>(w) * 4);
-    return png;
-}
-
 // ---------------------------------------------------------------------------
 // Files: <path>.r16 (heights, little-endian 16-bit across min..max), <path>.splat (RGBA8 weights), <path>.terrain.json
 // ---------------------------------------------------------------------------
@@ -215,10 +190,46 @@ std::vector<u8> ReadBytes(const fs::path& file) {
     return std::vector<u8>(raw.begin(), raw.end());
 }
 
+std::shared_ptr<Workbench>& SharedBench() {
+    static std::shared_ptr<Workbench> bench = std::make_shared<Workbench>();
+    return bench;
+}
+
 } // namespace
 
+bool TerrainTriangles(u32 stride, std::vector<Vec3>& vertices, std::vector<u32>& indices, std::string* error) {
+    const Workbench& w = *SharedBench();
+    if (!w.exists) {
+        if (error != nullptr) *error = "No terrain: call terrain_create (or terrain_import) first";
+        return false;
+    }
+    stride = std::max(1u, stride);
+    const tr::Heightmap& hm = w.data.heightmap;
+    const u32 nx = (hm.width - 1) / stride + 1, nz = (hm.height - 1) / stride + 1;
+    if (nx < 2 || nz < 2) {
+        if (error != nullptr) *error = "The terrain is too small for that stride";
+        return false;
+    }
+    vertices.reserve(vertices.size() + static_cast<usize>(nx) * nz);
+    const u32 base = static_cast<u32>(vertices.size());
+    for (u32 j = 0; j < nz; ++j) {
+        for (u32 i = 0; i < nx; ++i) {
+            const f32 x = static_cast<f32>(i * stride) * hm.cell_size, z = static_cast<f32>(j * stride) * hm.cell_size;
+            vertices.push_back(Vec3(x, w.HeightAt(x, z), z));
+        }
+    }
+    for (u32 j = 0; j + 1 < nz; ++j) {
+        for (u32 i = 0; i + 1 < nx; ++i) {
+            const u32 a = base + j * nx + i, b = a + 1, c = a + nx, d = c + 1;
+            indices.insert(indices.end(), {a, c, b, b, c, d}); // both triangles face up
+        }
+    }
+    return true;
+}
+
 void RegisterTerrainTools(McpServer& server) {
-    auto bench = std::make_shared<Workbench>();
+    SharedBench() = std::make_shared<Workbench>(); // each server starts with an empty workbench; TerrainTriangles reads the latest
+    auto bench = SharedBench();
 
     server.AddTool(
         {"terrain_create",
@@ -482,7 +493,7 @@ void RegisterTerrainTools(McpServer& server) {
                  rgba[o + 1] = 40;
                  rgba[o + 2] = 20;
              }
-             const std::vector<u8> png = EncodePng(rgba, pw, ph);
+             const std::vector<u8> png = EncodePngRgba(rgba, pw, ph);
              if (png.empty()) throw ToolError("Could not encode the PNG");
              Json out = {{"mode", mode}, {"width", pw}, {"height", ph}, {"bytes", png.size()}, {"height_range", {{"min", st.min}, {"max", st.max}}},
                          {"world_size", {{"width", W}, {"depth", D}}}};
@@ -490,7 +501,7 @@ void RegisterTerrainTools(McpServer& server) {
                  WriteBytes(args["path"].get<std::string>(), png.data(), png.size());
                  out["path"] = args["path"];
              }
-             out["mcp_content"] = Json::array({{{"type", "image"}, {"data", Base64(png)}, {"mimeType", "image/png"}}});
+             out["mcp_content"] = Json::array({{{"type", "image"}, {"data", Base64Encode(png)}, {"mimeType", "image/png"}}});
              return out;
          }});
 

@@ -9,10 +9,18 @@
 // (.r16 heights, .splat weights and a .terrain.json) are the MCP server's own interchange format, for keeping and sharing
 // the workbench; nothing else in the engine reads them yet.
 
+#include "aether/math/vec.h"
 #include "mcp_server.h"
+
+#include <string>
+#include <vector>
 
 namespace aether::mcp {
 
 void RegisterTerrainTools(McpServer& server);
+
+// The workbench terrain as triangles in world space (heights times vertical scale), one quad per `stride` samples, facing
+// up. False (with a reason) when there is no terrain. For the navigation tools, which bake a mesh over it.
+bool TerrainTriangles(u32 stride, std::vector<Vec3>& vertices, std::vector<u32>& indices, std::string* error = nullptr);
 
 } // namespace aether::mcp

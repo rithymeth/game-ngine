@@ -138,6 +138,30 @@ scene or game, to author and analyse a heightmap terrain with the module's own b
 The export files are this server's own format for keeping the workbench; nothing else in the engine reads them.
 Foliage and undo history are not saved. World heights are the stored heights times `vertical_scale`.
 
+### Navigation workbench (`nav_*`)
+
+A navigation workbench in the server's memory: describe the ground, bake a mesh with Recast, query it with
+Detour, look at it, and run a crowd over it. The player does not run navigation (no `NavWorld` or `NavCrowd` in
+the cooked game), so this is separate from the hosted game. Geometry from `ModelRenderer` entities is not
+available (it needs the model assets): describe the ground with shapes and triangles, the terrain workbench, or
+the scene's navigation components.
+
+| Tool | What it does |
+| --- | --- |
+| `nav_geometry_add` | Planes, boxes, triangles, volumes (relabel the ground: area 0 blocks it, others are water, mud, road) and off-mesh links; all or nothing |
+| `nav_geometry_add_terrain` / `nav_geometry_add_scene` | The terrain workbench's heightmap as ground; the editor scene's `NavObstacle`, `NavModifierVolume` and `NavLinkProxy` as volumes and links |
+| `nav_geometry_clear` / `nav_info` | Empty the geometry; geometry counts, the last bake's settings, tiles, polygons, links |
+| `nav_bake` | Recast bake for an agent size (height, radius, max climb, max slope, cell size, tile size); stats and time |
+| `nav_path` | Up to 50 shortest paths with `area_costs` and `excluded_areas`: status (complete, partial, none), length, corners, off-mesh link starts |
+| `nav_query` | nearest point on the mesh, raycast along the mesh, random points (repeatable seed, optionally near a centre), reachability |
+| `nav_preview` | Top-down PNG returned as an image: polygons by area, links, optional routes and points |
+| `nav_simulate` | A crowd of `NavAgent`s walks to their goals on the engine's own Detour crowd: arrival times, distance walked against the shortest path, outcomes, the closest any two agents came, sampled trajectories |
+| `nav_export` / `nav_import` | The mesh as a `.anav` file (the engine's format) |
+| `nav_component_set` / `nav_component_list` / `nav_component_remove` | Edit `NavAgent`, `NavObstacle`, `NavModifierVolume` and `NavLinkProxy` on editor entities, validated, one undoable step |
+
+Detour joins an off-mesh link only inside a tile or between neighbouring tiles, so bake with `tile_size: 0` for
+long links.
+
 Enum values are lowercase words (`"instant"`, `"count"`); `kit_schema` lists them. Write definitions,
 `kit_check` them, `asset_cook`, then `game_load` to play them.
 
@@ -209,6 +233,7 @@ Bad input is reported as a tool error (`isError`), never a crash, and a failed
 - `audio_tools.h/.cpp` -- cue validation and preview (audio components and live audio are in `editor_tools.cpp` and `game_tools.cpp`).
 - `vfx_tools.h/.cpp` -- particle effect schema, validation, files, check and headless simulation (the `ParticleSystem` component tools are in `editor_tools.cpp`).
 - `terrain_tools.h/.cpp` -- the terrain workbench.
+- `nav_tools.h/.cpp` -- the navigation workbench (the nav component tools are in `editor_tools.cpp`); `image_util.h` -- PNG and base64 helpers for tools that return a picture.
 - `main.cpp` -- the `aether_mcp_server` executable.
 - Tests: `tests/test_mcp.cpp`.
 
