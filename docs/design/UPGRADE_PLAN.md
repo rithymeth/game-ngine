@@ -126,7 +126,7 @@ when advisory gates become required.
 |---|---|---|
 | **42.1** | Large-world coordinates (a double-precision origin) in `engine/math` and the ECS. A breaking change to `Transform` and serialization: **format version and migration required**. Touches physics, rendering, audio and networking. Highest-risk step. | - |
 | **42.2** | Async cell streaming with budgets (`streaming/`). `||` | - |
-| **42.3** | A generated test world (`tools/`), needed for the flythrough test. `||` | - |
+| **42.3** | *(done: `aether/scene/test_world.h` `GenerateTestWorld`: a deterministic grid of buildings and scattered props from a seed, sized by its parameters; a library function, not a `tools/` program, so the flythrough test can call it directly.)* A generated test world, needed for the flythrough test. `||` | - |
 | **42.4** | *(started: `GenerateLods` in the same header gives a chain of simplified index buffers with a relative error each, never growing from one level to the next. HLOD merging and writing LODs into the cooked mesh remain)*  LOD and HLOD generation (offline, `tools/cook`). `||` | - |
 | **42.5** | Stream audio, navmesh and gameplay data with the cells. | 42.2, 40.1 |
 | **42.6** | World-partition authoring: data layers, level instances at scale (`editor/src/world`). | 43.1 |
