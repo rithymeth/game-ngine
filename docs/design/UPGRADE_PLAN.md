@@ -130,7 +130,7 @@ when advisory gates become required.
 | **42.4** | *(started: `GenerateLods` in the same header gives a chain of simplified index buffers with a relative error each, never growing from one level to the next. HLOD merging and writing LODs into the cooked mesh remain)*  LOD and HLOD generation (offline, `tools/cook`). `||` | - |
 | **42.5** | Stream audio, navmesh and gameplay data with the cells. | 42.2, 40.1 |
 | **42.6** | World-partition authoring: data layers, level instances at scale (`editor/src/world`). | 43.1 |
-| **42.7** | Automated flythrough with a hitch budget. Memory and CPU hitches run here; render hitches need hardware. | 42.1-42.3, 38.1 |
+| **42.7** | *(started: the `world/flythrough_120_frames` benchmark crosses the generated test world and gathers what is in range each frame; the hitch budget over streaming and memory is still to come)* Automated flythrough with a hitch budget. Memory and CPU hitches run here; render hitches need hardware. | 42.1-42.3, 38.1 |
 
 ## Phase 43: Editor 2.0
 
@@ -174,7 +174,7 @@ when advisory gates become required.
 | Step | Work | Needs |
 |---|---|---|
 | **46.1** | CMake package config (`install(EXPORT)`, `AetherConfig.cmake`) for all modules. | - |
-| **46.2** | A versioned plugin ABI (an ABI integer in the descriptor and the load path). | 37.3 |
+| **46.2** | *(done: `kPluginAbi` and `PluginDescriptor::abi`; a plugin built for another ABI is refused with a clear message when it is enabled, a descriptor without the field is accepted, new scaffolds carry the current ABI)* A versioned plugin ABI (an ABI integer in the descriptor and the load path). | 37.3 |
 | **46.3** | Plugin packaging and dependency resolution. | 46.2 |
 | **46.4** | Templates built in CI against the installed SDK. | 46.1 |
 | **46.5** | A clean-machine SDK test job: install into a fresh prefix, build a sample in a container. Runs on Linux here. | 46.1 |
