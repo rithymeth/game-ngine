@@ -214,6 +214,7 @@ const Json kGuidProp = {{"type", "string"}, {"description", "Entity GUID, as ret
 
 void RegisterAttributeTools(McpServer& server, EditorSession& s);
 void RegisterAudioEditorTools(McpServer& server, EditorSession& s);
+void RegisterParticleEditorTools(McpServer& server, EditorSession& s);
 #if AETHER_MCP_INTERACTION
 void RegisterInteractionEditorTools(McpServer& server, EditorSession& s);
 #endif
@@ -589,6 +590,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                     }});
     RegisterAttributeTools(server, s);
     RegisterAudioEditorTools(server, s);
+    RegisterParticleEditorTools(server, s);
 #if AETHER_MCP_INTERACTION
     RegisterInteractionEditorTools(server, s);
 #endif
@@ -918,6 +920,95 @@ void RegisterAudioEditorTools(McpServer& server, EditorSession& s) {
                         editor::CommandContext ctx = s.Context();
                         s.stack.Execute(ctx, std::make_unique<editor::RemoveComponentCommand>(guid, id));
                         return {{"removed", name}};
+                    }});
+}
+
+
+// ---------------------------------------------------------------------------
+// Particle systems. The ParticleSystem component plays a particle effect (.avfx) at an entity; it is saved in scenes
+// and prefabs. particle_set edits it as one validated, undoable step.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+void ValidateParticleFields(const Json& fields) {
+    auto number = [&](const std::string& key, const Json& v, double lo, double hi) {
+        if (!v.is_number() || !(v.get<double>() >= lo) || !(v.get<double>() <= hi)) {
+            throw ToolError("\"" + key + "\" must be a number from " + std::to_string(lo) + " to " + std::to_string(hi));
+        }
+    };
+    for (auto& [key, value] : fields.items()) {
+        if (key == "active" || key == "commands") throw ToolError("\"" + key + "\" is runtime state, not saved");
+        if (key == "asset") { if (!value.is_string()) throw ToolError("\"asset\" must be an .avfx path (a string)"); }
+        else if (key == "auto_activate" || key == "destroy_when_finished") { if (!value.is_boolean()) throw ToolError("\"" + key + "\" must be true or false"); }
+        else if (key == "time_scale") { number(key, value, 0.0, 100.0); }
+        else if (key == "cull_distance" || key == "lod_distance") number(key, value, 0.0, 1.0e6);
+        else if (key == "lod_spawn_scale") number(key, value, 0.0, 1.0);
+        else throw ToolError("Unknown ParticleSystem field \"" + key + "\" (asset, auto_activate, time_scale, cull_distance, lod_distance, lod_spawn_scale, destroy_when_finished)");
+    }
+}
+
+} // namespace
+
+void RegisterParticleEditorTools(McpServer& server, EditorSession& s) {
+    const Json kGuidProp = {{"type", "string"}, {"description", "Entity GUID"}};
+
+    server.AddTool({"particle_list", "Entities in the editor scene with a ParticleSystem component, and its settings.", Schema(Json::object()),
+                    [&s](const Json&) -> Json {
+                        const ComponentId id = FindComponentIdByName("ParticleSystem");
+                        Json out = Json::array();
+                        if (id == kInvalidComponentId) return out;
+                        for (Entity e : AllEntities(s)) {
+                            if (!s.world.HasComponentRaw(e, id)) continue;
+                            const IdComponent* idc = s.world.GetComponent<IdComponent>(e);
+                            out.push_back({{"entity", idc ? ToString(idc->guid) : ""}, {"particle_system", ComponentJson(s, e, id)}});
+                        }
+                        return out;
+                    }});
+
+    server.AddTool(
+        {"particle_set",
+         "Make an entity play a particle effect, or change how: adds a ParticleSystem if it has none and applies the fields (a partial update), as one "
+         "undoable step. Fields: asset (an .avfx path under Content/, e.g. VFX/Sparks.avfx), auto_activate, time_scale, cull_distance and lod_distance "
+         "(0 = never), lod_spawn_scale (0..1, spawn share beyond lod_distance), destroy_when_finished (one-shots).",
+         Schema({{"entity", kGuidProp}, {"fields", {{"type", "object"}, {"description", "e.g. {\"asset\": \"VFX/Sparks.avfx\", \"destroy_when_finished\": true}"}}}}, {"entity", "fields"}),
+         [&s](const Json& args) -> Json {
+             Entity e = RequireEntity(s, args);
+             EntityGuid guid = RequireGuid(args, "entity");
+             if (!args["fields"].is_object()) throw ToolError("\"fields\" must be an object");
+             ValidateParticleFields(args["fields"]);
+             const ComponentId id = RequireComponent("ParticleSystem");
+             editor::CommandContext ctx = s.Context();
+             s.stack.BeginTransaction("Set ParticleSystem");
+             if (!s.world.HasComponentRaw(e, id)) s.stack.Execute(ctx, std::make_unique<editor::AddComponentCommand>(guid, id));
+             Json warnings = Json::array();
+             if (!args["fields"].empty()) {
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 try {
+                     after = PatchedBytes(s, e, id, args["fields"], before, warnings);
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     s.stack.Undo(ctx);
+                     throw;
+                 }
+                 s.stack.Execute(ctx, std::make_unique<SetComponentCommand>(guid, id, before, after));
+             }
+             s.stack.EndTransaction();
+             Json out = {{"particle_system", ComponentJson(s, e, id)}};
+             if (!warnings.empty()) out["warnings"] = warnings;
+             return out;
+         }});
+
+    server.AddTool({"particle_remove", "Remove an entity's ParticleSystem component. Undoable.", Schema({{"entity", kGuidProp}}, {"entity"}),
+                    [&s](const Json& args) -> Json {
+                        Entity e = RequireEntity(s, args);
+                        EntityGuid guid = RequireGuid(args, "entity");
+                        const ComponentId id = RequireComponent("ParticleSystem");
+                        if (!s.world.HasComponentRaw(e, id)) throw ToolError("Entity has no ParticleSystem");
+                        editor::CommandContext ctx = s.Context();
+                        s.stack.Execute(ctx, std::make_unique<editor::RemoveComponentCommand>(guid, id));
+                        return {{"removed", true}};
                     }});
 }
 

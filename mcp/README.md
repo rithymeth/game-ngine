@@ -103,6 +103,21 @@ edit the `AudioSource`, `AudioListener` and `ReverbZone` components on editor en
 step), and `kit_check` also verifies each cue (with its sounds) and that every scene's `AudioSource` names a
 cue that exists. The `game_audio_*` tools above drive the running game.
 
+**VFX.** Particle effects (`.avfx`) are an emitter of modules (Spawn, Initialize, Update, Render) plus declared
+parameters. `vfx_schema` returns a sample effect and the default fields of every module; `vfx_validate` gives
+the module's own diagnostics (FX001...); `vfx_put` / `vfx_get` / `vfx_list` write, read and list effects under
+`Content/` (refusing an effect with error diagnostics); `vfx_check` validates them all and verifies that every
+scene's `ParticleSystem` component names an `.avfx` that exists; `particle_set` / `particle_list` /
+`particle_remove` edit the `ParticleSystem` component on editor entities (validated, one undoable step).
+`vfx_simulate` runs an effect headless, with no GPU: particle counts over time per emitter, the peak, how many
+were born, when a one-shot finishes, the bounds of what is alive and a sample of particles (position, size,
+colour, age). The same effect, seed and steps always give the same result, and `parameters` sets the effect's
+declared parameters first (a bound `Intensity` really changes the spawn rate).
+
+Two limits of the engine, not of these tools: `.avfx` is not an asset-database type (no importer, so no GUID and
+it is never cooked), and the player does not run `ParticleSystem` components, so there are no `game_*` tools
+for particles; an effect plays only in the editor's VFX tools or in anything that hosts a `vfx::ParticleWorld`.
+
 Enum values are lowercase words (`"instant"`, `"count"`); `kit_schema` lists them. Write definitions,
 `kit_check` them, `asset_cook`, then `game_load` to play them.
 
@@ -172,6 +187,7 @@ Bad input is reported as a tool error (`isError`), never a crash, and a failed
 - `asset_tools.h/.cpp` -- the project, asset, import and cook tools.
 - `kit_tools.h/.cpp`, `project_host.h` -- the gameplay-kit data tools, and the open-project state they share with the asset tools.
 - `audio_tools.h/.cpp` -- cue validation and preview (audio components and live audio are in `editor_tools.cpp` and `game_tools.cpp`).
+- `vfx_tools.h/.cpp` -- particle effect schema, validation, files, check and headless simulation (the `ParticleSystem` component tools are in `editor_tools.cpp`).
 - `main.cpp` -- the `aether_mcp_server` executable.
 - Tests: `tests/test_mcp.cpp`.
 

@@ -542,6 +542,7 @@ AETHER_TEST(Mcp_ToolsCanReturnImages) {
 #include "asset_tools.h"
 #include "audio_tools.h"
 #include "kit_tools.h"
+#include "vfx_tools.h"
 #include "aether/project/project.h"
 
 AETHER_TEST(Mcp_AssetToolsImportMoveAndCookAProject) {
@@ -1073,5 +1074,117 @@ AETHER_TEST(Mcp_AudioToolsEditCheckPreviewAndDriveTheGame) {
     h.Call("game_step", {{"frames", 2}});
     AETHER_CHECK(h.Call("game_audio_source", {{"entity", source}, {"action", "stop"}}).value["volume_db"] == -9);
     h.Call("game_unload");
+    stdfs::remove_all(dir);
+}
+
+AETHER_TEST(Mcp_VfxToolsEditValidateSimulateAndCheck) {
+    namespace stdfs = std::filesystem;
+    // --- the editor scene: validated, undoable ParticleSystem edits
+    Harness h;
+    std::string spark = h.Create({{"Transform", Json::object()}});
+    AETHER_CHECK(h.Call("particle_list").value.empty());
+    AETHER_CHECK(h.Call("particle_set", {{"entity", spark}, {"fields", {{"time_scale", -1}}}}).is_error);
+    AETHER_CHECK(h.Call("particle_set", {{"entity", spark}, {"fields", {{"lod_spawn_scale", 2}}}}).is_error);
+    AETHER_CHECK(h.Call("particle_set", {{"entity", spark}, {"fields", {{"active", true}}}}).is_error);
+    AETHER_CHECK(h.Call("particle_set", {{"entity", spark}, {"fields", {{"colour", "red"}}}}).is_error);
+    AETHER_CHECK(!h.Components(spark).contains("ParticleSystem")); // a refused edit leaves nothing behind
+    AETHER_CHECK(!h.Call("particle_set", {{"entity", spark}, {"fields", {{"asset", "VFX/Sparks.avfx"}, {"destroy_when_finished", true}}}}).is_error);
+    AETHER_CHECK(!h.Call("particle_set", {{"entity", spark}, {"fields", {{"cull_distance", 80}}}}).is_error);
+    AETHER_CHECK(h.Components(spark)["ParticleSystem"]["asset"] == "VFX/Sparks.avfx");
+    AETHER_CHECK(h.Components(spark)["ParticleSystem"]["cull_distance"] == 80);
+    h.Call("undo");
+    AETHER_CHECK(h.Components(spark)["ParticleSystem"]["cull_distance"] == 0);
+    h.Call("undo");
+    AETHER_CHECK(!h.Components(spark).contains("ParticleSystem")); // add + set were one step
+    h.Call("redo");
+    AETHER_CHECK(h.Call("particle_list").value.size() == 1);
+    AETHER_CHECK(!h.Call("particle_remove", {{"entity", spark}}).is_error);
+    AETHER_CHECK(h.Call("particle_remove", {{"entity", spark}}).is_error);
+
+    // --- the format, without a project
+    auto project = MakeAssetHost();
+    RegisterAssetTools(h.server, project);
+    RegisterVfxTools(h.server, project);
+    Json schema = h.Call("vfx_schema").value;
+    AETHER_CHECK(schema["modules"]["spawn"].size() == 3);
+    AETHER_CHECK(schema["modules"]["spawn"].contains("SpawnRate"));
+    AETHER_CHECK(schema["modules"]["render"].size() == 4);
+    const Json sample = schema["sample"];
+    AETHER_CHECK(h.Call("vfx_validate", {{"definition", sample}}).value["ok"] == true);
+    Json broken = sample;
+    broken["emitters"][0]["max_particles"] = 0;
+    Json verdict = h.Call("vfx_validate", {{"definition", broken}}).value;
+    AETHER_CHECK(verdict["ok"] == false);
+    AETHER_CHECK(verdict["diagnostics"][0]["code"] == "FX003");
+    AETHER_CHECK(h.Call("vfx_validate", {{"definition", "{ not json"}}).is_error);
+    AETHER_CHECK(h.Call("vfx_validate").is_error);
+    AETHER_CHECK(h.Call("vfx_list").is_error); // needs a project
+
+    // --- simulation: deterministic, parameter-driven
+    Json run = h.Call("vfx_simulate", {{"definition", sample}, {"seconds", 2}, {"seed", 5}}).value;
+    AETHER_CHECK(run["ok"] == true);
+    AETHER_CHECK(run["emitters"][0]["born"].get<int>() > 50);
+    AETHER_CHECK(run["peak_alive"].get<int>() > 0);
+    AETHER_CHECK(run["loops_on"] == true); // a looping emitter does not finish
+    AETHER_CHECK(run["timeline"].size() >= 5);
+    Json same = h.Call("vfx_simulate", {{"definition", sample}, {"seconds", 2}, {"seed", 5}}).value;
+    AETHER_CHECK(same == run); // same effect, seed and steps: same result
+    Json other = h.Call("vfx_simulate", {{"definition", sample}, {"seconds", 2}, {"seed", 6}}).value;
+    AETHER_CHECK(other["emitters"][0]["sample_particles"] != run["emitters"][0]["sample_particles"]);
+    Json hot = h.Call("vfx_simulate", {{"definition", sample}, {"seconds", 2}, {"seed", 5}, {"parameters", {{"Intensity", 300}}}}).value;
+    AETHER_CHECK(hot["emitters"][0]["born"].get<int>() > 2 * run["emitters"][0]["born"].get<int>()); // the bound spawn rate followed it
+    AETHER_CHECK(h.Call("vfx_simulate", {{"definition", sample}, {"parameters", {{"Nope", 1}}}}).is_error);
+    AETHER_CHECK(h.Call("vfx_simulate", {{"definition", sample}, {"parameters", {{"Intensity", "loud"}}}}).is_error);
+    AETHER_CHECK(h.Call("vfx_simulate", {{"definition", sample}, {"seconds", 99}}).is_error);
+    AETHER_CHECK(h.Call("vfx_simulate", {{"definition", broken}}).value["ok"] == false); // errors are reported, not simulated
+
+    // A one-shot finishes.
+    Json one_shot = sample;
+    one_shot["emitters"][0]["looping"] = false;
+    one_shot["emitters"][0]["duration"] = 0.5;
+    Json shot = h.Call("vfx_simulate", {{"definition", one_shot}, {"seconds", 5}, {"dt", 0.02}}).value;
+    AETHER_CHECK(shot["loops_on"] == false);
+    AETHER_CHECK(shot["finished_at"].get<double>() > 0.4);
+    AETHER_CHECK(shot["alive_at_end"] == 0);
+
+    // --- a project: effects live under Content/ and scenes refer to them
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_vfx_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+    ProjectPaths paths;
+    std::string error;
+    AETHER_CHECK(CreateProject(dir, "McpVfx", &paths, &error));
+    AETHER_CHECK(!h.Call("project_open", {{"project_file", paths.file.string()}}).is_error);
+    AETHER_CHECK(h.Call("vfx_put", {{"path", "VFX/Broken"}, {"definition", broken}}).is_error);
+    AETHER_CHECK(!stdfs::exists(paths.content / "VFX" / "Broken.avfx"));
+    Harness::Result put = h.Call("vfx_put", {{"path", "VFX/Sparks"}, {"definition", sample}});
+    AETHER_CHECK(!put.is_error);
+    AETHER_CHECK(put.value["path"] == "VFX/Sparks.avfx");
+    AETHER_CHECK(stdfs::exists(paths.content / "VFX" / "Sparks.avfx"));
+    AETHER_CHECK(h.Call("vfx_put", {{"path", "VFX/Sparks"}, {"definition", sample}}).is_error); // exists
+    AETHER_CHECK(!h.Call("vfx_put", {{"path", "VFX/Sparks"}, {"definition", sample}, {"overwrite", true}}).is_error);
+    AETHER_CHECK(h.Call("vfx_put", {{"path", "../Escape"}, {"definition", sample}}).is_error);
+    AETHER_CHECK(h.Call("vfx_get", {{"asset", "VFX/Sparks.avfx"}}).value["definition"]["name"] == "Sparks");
+    Json listed = h.Call("vfx_list").value;
+    AETHER_CHECK(listed.size() == 1);
+    AETHER_CHECK(listed[0]["valid"] == true);
+    AETHER_CHECK(h.Call("vfx_simulate", {{"asset", "VFX/Sparks.avfx"}, {"seconds", 1}}).value["ok"] == true);
+    AETHER_CHECK(h.Call("vfx_simulate", {{"asset", "VFX/Missing.avfx"}}).is_error);
+
+    auto scene_with = [](const char* asset) {
+        return Json{{"$type", "Scene"}, {"$version", 1},
+                    {"entities", Json::array({{{"components", {{"Transform", {{"position", {0, 0, 0}}, {"rotation", {0, 0, 0, 1}}, {"scale", {1, 1, 1}}}},
+                                                                  {"ParticleSystem", {{"asset", asset}}}}}}})}};
+    };
+    AETHER_CHECK(!h.Call("content_write", {{"path", "Scenes/start.ascene"}, {"text", scene_with("VFX/Gone.avfx").dump()}}).is_error);
+    Json check = h.Call("vfx_check").value;
+    AETHER_CHECK(check["ok"] == false);
+    AETHER_CHECK(check["scene_uses"] == 1);
+    AETHER_CHECK(check["problems"][0]["problem"].get<std::string>().find("VFX/Gone.avfx") != std::string::npos);
+    AETHER_CHECK(!h.Call("content_write", {{"path", "Scenes/start.ascene"}, {"text", scene_with("VFX/Sparks.avfx").dump()}}).is_error);
+    AETHER_CHECK(h.Call("vfx_check").value["ok"] == true);
+    // A hand-edited, broken effect shows up as a problem.
+    AETHER_CHECK(!h.Call("content_write", {{"path", "VFX/Bad.avfx"}, {"text", "{ not json"}}).is_error);
+    AETHER_CHECK(h.Call("vfx_check").value["ok"] == false);
     stdfs::remove_all(dir);
 }

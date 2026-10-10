@@ -15,6 +15,7 @@
 #include "editor_tools.h"
 #include "game_tools.h"
 #include "kit_tools.h"
+#include "vfx_tools.h"
 
 #include <cstdio>
 #include <cstring>
@@ -63,6 +64,7 @@ int main(int argc, char** argv) {
     mcp::RegisterAssetTools(server, project);
     mcp::RegisterKitTools(server, project);
     mcp::RegisterAudioTools(server, project);
+    mcp::RegisterVfxTools(server, project);
     std::error_code ec;
     mcp::RegisterBuildTools(server, mcp::FindBuildContext(build_dir, std::filesystem::absolute(argv[0], ec).parent_path()));
     server.RunStdio(std::cin, std::cout);
