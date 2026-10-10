@@ -41,6 +41,23 @@ and errors go to stderr.
 | `step_simulation` | Run N frames (1-10000) of `dt` seconds through the fixed-timestep frame loop |
 | `set_platformer_input` | Move/jump input for 2D platformer controllers |
 
+### Assets, import and cook
+
+These use the engine's own asset database, importers and cooker, in process, on a project opened with
+`project_open`. The cooked archive can go straight into `game_load`.
+
+| Tool | What it does |
+| --- | --- |
+| `project_open` / `project_info` / `project_set` | Open an `.aproject` (scans `Content/`, giving new files GUIDs); read or change startup scene, `always_cook`, plugins |
+| `asset_list` / `asset_info` / `asset_references` | Browse and search content by folder/name/type; one asset's settings, dependencies and referencers; the reference graph |
+| `asset_add_files` | Copy source files (textures, models, audio) into `Content/<folder>`, scan and import them |
+| `asset_import` | (Re)import one asset, or everything pending; served from the derived-data cache when unchanged |
+| `asset_set_import_settings` | Merge importer settings into the `.ameta` (e.g. a texture's `cook_format`) and reimport |
+| `asset_move` / `asset_create_folder` / `asset_delete` | Move/rename (GUIDs and references survive; glTF URIs rewritten), make folders, delete (refused while referenced unless `force`) |
+| `content_read` / `content_write` | Read and write text files under `Content/` (scenes, prefabs, materials, JSON assets); paths cannot leave `Content/`, `.ameta` is not writable |
+| `asset_scan` | Rescan after changing files outside the tools |
+| `asset_cook` | Cook into an `.apak` (configuration, extra roots, compression, strict, encryption, patch); returns the archive path, sizes, warnings and the cooked assets |
+
 ### Running a cooked game (`game_*`)
 
 The editor tools edit the authored scene. The `game_*` tools instead host a full cooked
@@ -101,6 +118,7 @@ Bad input is reported as a tool error (`isError`), never a crash, and a failed
 - `game_tools.h/.cpp` -- the `game_*` tools over a hosted `player::Game`.
 - `build_tools.h/.cpp`, `process.h/.cpp` -- the build/test/run tools and the child-process runner.
 - `screenshot.h/.cpp` -- the off-screen renderer behind `game_screenshot`.
+- `asset_tools.h/.cpp` -- the project, asset, import and cook tools.
 - `main.cpp` -- the `aether_mcp_server` executable.
 - Tests: `tests/test_mcp.cpp`.
 
