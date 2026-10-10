@@ -295,6 +295,17 @@ The cooked game does not stream a partitioned world, so the simulation runs the 
 | `world_partition_info` | Reads a partitioned world's index and checks every cell file and the persistent scene exist; lists missing files and files not in the index. |
 | `world_stream_simulate` | Walks a streaming source along a path over the world and reports, per waypoint, the cells that loaded and unloaded, those now loaded, and the entity count. |
 
+### Materials (`mat_*`)
+
+Materials (`.amat`), functions (`.amf`) and instances (`.amati`) have no importer, so these tools take them as JSON (`definition`, `material`, `instances`) or a file under the open project's `Content/`. Graphs are checked and compiled on the CPU only: no shader is built and nothing is drawn.
+
+| Tool | What it does |
+| --- | --- |
+| `mat_node_types` | The node library: each node's id, title, category and pins. Filter by `category` or `search`; give a material to include its parameter nodes. |
+| `mat_validate` | The renderer's analysis (MT001..MT013), the inferred type of every connected pin, and a summary. `functions` supplies material functions for `Function.Call` nodes. |
+| `mat_compile` | Compiles a graph to the HLSL include: defines, the parameter buffer layout, sampled textures, needed features, a cost estimate and the permutation key. The HLSL text is included unless `hlsl` is false. |
+| `mat_instance_resolve` | Applies an instance chain (parent first) to a material: each parameter's final value and which level set it, with MI001 / MI002 diagnostics for stale or mismatched overrides. |
+
 ### Running a cooked game (`game_*`)
 
 The editor tools edit the authored scene. The `game_*` tools instead host a full cooked

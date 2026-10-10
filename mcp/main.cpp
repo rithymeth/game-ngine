@@ -26,6 +26,7 @@
 #include "ui_tools.h"
 #include "save_tools.h"
 #include "streaming_tools.h"
+#include "material_tools.h"
 #include "vfx_tools.h"
 
 #include <cstdio>
@@ -88,6 +89,7 @@ int main(int argc, char** argv) {
     mcp::RegisterUiTools(server, project);
     mcp::RegisterSaveTools(server);
     mcp::RegisterStreamingTools(server, session);
+    mcp::RegisterMaterialTools(server, project);
     mcp::RegisterTilemapTools(server, project);
     mcp::RegisterTerrainTools(server);
     mcp::RegisterNavTools(server, session);
