@@ -17,6 +17,7 @@
 #include "game_tools.h"
 #include "kit_tools.h"
 #include "loc_tools.h"
+#include "script_tools.h"
 #include "sequence_tools.h"
 #include "tilemap_tools.h"
 #include "nav_tools.h"
@@ -74,6 +75,7 @@ int main(int argc, char** argv) {
     mcp::RegisterBlueprintTools(server, project);
     mcp::RegisterLocTools(server, project);
     mcp::RegisterSequenceTools(server, project);
+    mcp::RegisterScriptTools(server, project);
     mcp::RegisterTilemapTools(server, project);
     mcp::RegisterTerrainTools(server);
     mcp::RegisterNavTools(server, session);

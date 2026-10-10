@@ -233,6 +233,22 @@ bottom row. Both are real asset types, so they also go through the `kit_*` tools
 
 A cell is a tile number, `-1` for empty, or `"autotile:N"`.
 
+### Luau scripts (`script_*`)
+
+Scripts (`.luau`) are modules that return a table (a class) with lifecycle callbacks, run on entities through a
+`ScriptComponent`. Built only where the engine has the Luau scripting module.
+
+| Tool | What it does |
+| --- | --- |
+| `script_check` | Compile a script (text or a project asset): ok, or the error with its line; and what the script is: its exposed variables (name, kind, default, `--@range`, `--@tooltip`) and the lifecycle callbacks it defines |
+| `script_complete` | Code completion for the engine API at a position (a byte `cursor`, or `line` and `column`): `world:` methods, component names after `:Get("`, a component's reflected fields, `self.` fields, callbacks after `function Class:`, keywords, globals, locals |
+| `script_run` | Run Luau in the sandbox: what `print` wrote, the returned values, the error with its line; optionally call a global function afterwards (`call: {function, args}`) to test it on its own; a fresh world is bound; a runaway script stops at the instruction budget |
+| `script_simulate` | Run a script class on an entity as the game does, headless: OnCreate, OnEnable, OnStart, then N ticks of OnFixedUpdate, OnUpdate, OnLateUpdate and timers (`Timer.After`, `Timer.Every`), then OnDisable and OnDestroy; with overridden `variables` (checked against their kinds), extra `components` and other `entities` for the script to find; returns prints, errors, the entity's final transform and every exposed variable's value |
+| `script_check_project` | Every script in the project must compile, and every `ScriptComponent` in the scenes and prefabs must name a script that exists, overriding only variables it exposes with values of the right kind |
+
+Scripts reach gameplay through the same APIs as in the game (`Attributes`, `Timer`, `Input`, ...); the sandbox has
+math, string, table, bit32, utf8, buffer, coroutine, vector and `os.clock`, and no file or network access.
+
 Enum values are lowercase words (`"instant"`, `"count"`); `kit_schema` lists them. Write definitions,
 `kit_check` them, `asset_cook`, then `game_load` to play them.
 
@@ -310,6 +326,7 @@ Bad input is reported as a tool error (`isError`), never a crash, and a failed
 - `loc_tools.h/.cpp` -- the localization tools.
 - `sequence_tools.h/.cpp` -- the level sequence tools (the `SequenceComponent` tools are in `editor_tools.cpp`, the live ones in `game_tools.cpp`).
 - `tilemap_tools.h/.cpp` -- the tileset and tilemap tools.
+- `script_tools.h/.cpp` -- the Luau script tools (compiled out where the engine has no scripting module).
 - `main.cpp` -- the `aether_mcp_server` executable.
 - Tests: `tests/test_mcp.cpp`.
 
