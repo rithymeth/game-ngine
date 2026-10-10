@@ -11,6 +11,7 @@
 #include "aether/scene/components.h"
 
 #include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <set>
 #include <span>
