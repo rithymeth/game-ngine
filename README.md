@@ -5866,8 +5866,9 @@ Spec: [PHASE_SPECS.md, Phase 24](docs/design/PHASE_SPECS.md).
     unit and functional tests.
   - Windows: an MSVC build of everything, the D3D12 editor included.
 - **The packaged editor**: the Windows job packages
-  `AetherEditor-windows-x64.zip` (`aether_editor.exe`, its DLLs and the
-  assets) as a download on each run.
+  `AetherEditor-windows-x64.zip` (`AetherEditor.exe`, the Qt runtime, the
+  optional `AetherEditorLegacy.exe`, engine DLLs and assets) as a download on
+  each run. The Qt editor is the default application in the package.
 - **Releases**: a `v*` tag publishes the zip as a GitHub release.
 - **Assets**: the editor finds `assets/` next to its executable, so the
   zip runs anywhere.
@@ -6079,10 +6080,10 @@ editor.AddMenuItem("Tools/Hello/Say hello", function() editor.Log("hi") end, "Ct
 
 The editor's sample project ships this one: open the **Hello Panel** tool.
 
-**Every tool in both editors.** The Windows editor (`aether_editor.exe`,
+**Legacy editor tools.** The ImGui Windows editor (`aether_editor_legacy.exe`,
 D3D12) and the portable shell (`aether_editor_shell`, Vulkan) host the
-same set of tool editors (`editor/src/workspace`). Each one opens on a
-sample document:
+shared tool editors (`editor/src/workspace`). Each one opens on a sample
+document:
 
 - **Scripting**: the Blueprint editor and the Luau code editor.
 - **Rendering**: the Material editor and the particle system (VFX) editor.
@@ -6107,10 +6108,11 @@ Physics, Dear ImGui, Vulkan-Headers, stb_image, nlohmann/json, and — on a
 Vulkan-enabled Windows build — a SPIR-V-capable `dxcompiler.dll` release).
 
 ```bash
-cmake -S . -B build
+cmake -S . -B build -DAETHER_BUILD_QT_EDITOR=ON
 cmake --build build --config RelWithDebInfo
 ./build/sandbox/aether_sandbox.exe          # Windows only; Phase 3/4 bindless + GPU-culling demo
-./build/editor/aether_editor.exe            # Windows only; the D3D12 editor: 3D view, physics and every tool editor
+./build/editor/aether_editor.exe            # Windows only; current Qt/D3D12 editor
+./build/editor/aether_editor_legacy.exe     # Optional ImGui editor for tools still migrating
 AETHER_RHI_BACKEND=vulkan ./build/rhi_demo/aether_rhi_demo.exe   # or =d3d12 (default); swappable RHI proof
 ctest --test-dir build --output-on-failure
 ```
