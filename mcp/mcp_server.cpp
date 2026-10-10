@@ -108,7 +108,25 @@ Json McpServer::HandleToolCall(const Json& params) {
     }
     try {
         Json result = tool->handler(args);
+        // A handler may attach MCP content items (images) under "mcp_content"; they ride beside the JSON text.
+        Json extra = Json::array();
+        if (result.is_object() && result.contains("mcp_content") && result["mcp_content"].is_array()) {
+            extra = std::move(result["mcp_content"]);
+            result.erase("mcp_content");
+        }
         std::string text = result.is_string() ? result.get<std::string>() : result.dump(2);
+        if (!extra.empty()) {
+            std::size_t extra_bytes = 0;
+            for (const Json& item : extra) extra_bytes += item.value("data", std::string()).size();
+            if (text.size() + extra_bytes > kMaxResultBytes) {
+                return TextResult("The result is too large (" + std::to_string(text.size() + extra_bytes) + " bytes, limit " +
+                                      std::to_string(kMaxResultBytes) + "); ask for less",
+                                  true);
+            }
+            Json response = TextResult(text, false);
+            for (Json& item : extra) response["content"].push_back(std::move(item));
+            return response;
+        }
         if (text.size() > kMaxResultBytes) {
             return TextResult("The result is too large (" + std::to_string(text.size()) + " bytes, limit " +
                                   std::to_string(kMaxResultBytes) + "); ask for less",

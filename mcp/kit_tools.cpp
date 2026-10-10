@@ -1,0 +1,707 @@
+#include "kit_tools.h"
+
+#include "project_host.h"
+
+#include "aether/audio/cue.h"
+#include "aether/blueprint/graph.h"
+#include "aether/blueprint/validate.h"
+#include "blueprint_tools.h"
+#include "aether/gameplay/gameplay_ability.h"
+#include "aether/gameplay/gameplay_effect.h"
+#include "aether/input/actions.h"
+#include "aether/input/bindings.h"
+#include "aether/reflection/serialize.h"
+
+#if AETHER_MCP_INVENTORY
+#include "aether/inventory/item_def.h"
+#endif
+#if AETHER_MCP_QUESTS
+#include "aether/quests/quest_def.h"
+#endif
+
+#include <atomic>
+#include <fstream>
+#include <functional>
+#include <map>
+#include <set>
+#include <sstream>
+
+namespace aether::mcp {
+
+namespace {
+
+using namespace detail;
+
+// One kind of kit definition: its file type, a blank one to learn the shape from, and the kit's own
+// parser and validator (the ones the game loads it with).
+struct KitType {
+    std::string name;        // the tool-facing name: "effect"
+    std::string extension;   // ".aeffect"
+    std::string importer;    // the asset database's name for it
+    std::string description;
+    std::function<Json()> blank;
+    // Empty string if `text` parses and validates; else the kit's error. `canonical` gets the normalized JSON.
+    std::function<std::string(const std::string& text, Json& canonical)> check;
+};
+
+Json Wrapped(const char* type, Json data) { return {{"$type", type}, {"data", std::move(data)}}; }
+
+// The input loaders read files: check text by way of a temporary one.
+template <typename T, typename Loader>
+std::string CheckViaFile(const std::string& text, const char* extension, Loader load, Json& canonical) {
+    static std::atomic<unsigned> counter{0};
+    const fs::path file = fs::temp_directory_path() / ("aether_mcp_kit_" + std::to_string(++counter) + extension);
+    {
+        std::ofstream out(file, std::ios::binary | std::ios::trunc);
+        out << text;
+    }
+    T value;
+    std::string error;
+    const bool ok = load(file, value, &error);
+    std::error_code ec;
+    fs::remove(file, ec);
+    if (!ok) return error.empty() ? "Not a valid definition" : error;
+    canonical = Json::parse(text, nullptr, false);
+    return {};
+}
+
+const std::vector<KitType>& Types() {
+    static const std::vector<KitType> types = [] {
+        std::vector<KitType> t;
+        t.push_back({"effect", ".aeffect", "GameplayEffect",
+                     "A change to an entity's attributes, instant or lasting, with the tags it needs and grants.",
+                     [] { return gas::EffectToJson(gas::GameplayEffect{}); },
+                     [](const std::string& text, Json& canonical) -> std::string {
+                         gas::GameplayEffect e;
+                         std::string error;
+                         if (!gas::EffectFromJson(text, e, &error)) return error;
+                         canonical = gas::EffectToJson(e);
+                         return {};
+                     }});
+        t.push_back({"ability", ".aability", "GameplayAbility",
+                     "Something an entity can do (a jump, a fireball), gated by tags, paid for with an effect, put on cooldown by another.",
+                     [] { return gas::AbilityToJson(gas::GameplayAbility{}); },
+                     [](const std::string& text, Json& canonical) -> std::string {
+                         gas::GameplayAbility a;
+                         std::string error;
+                         if (!gas::AbilityFromJson(text, a, &error)) return error;
+                         canonical = gas::AbilityToJson(a);
+                         return {};
+                     }});
+#if AETHER_MCP_INVENTORY
+        t.push_back({"item", ".aitem", "ItemDefinition", "What a kind of item is: stacking, weight, tags, equip slot, what it does when used.",
+                     [] { return inv::ItemToJson(inv::ItemDef{}); },
+                     [](const std::string& text, Json& canonical) -> std::string {
+                         inv::ItemDef i;
+                         std::string error;
+                         if (!inv::ItemFromJson(text, i, &error)) return error;
+                         canonical = inv::ItemToJson(i);
+                         return {};
+                     }});
+#endif
+#if AETHER_MCP_QUESTS
+        t.push_back({"quest", ".aquest", "QuestDefinition", "A quest: objectives, prerequisites and rewards.",
+                     [] { return quest::QuestToJson(quest::QuestDef{}); },
+                     [](const std::string& text, Json& canonical) -> std::string {
+                         quest::QuestDef q;
+                         std::string error;
+                         if (!quest::QuestFromJson(text, q, &error)) return error;
+                         canonical = quest::QuestToJson(q);
+                         return {};
+                     }});
+#endif
+        t.push_back({"blueprint", ".abp", "Blueprint",
+                     "A Blueprint: visual scripting. Variables, event graphs (BeginPlay, Tick, custom events), function and macro graphs, dispatchers and interfaces, "
+                     "as nodes and links. Pins come from each node's type (bp_node_types, bp_node_info); bp_validate, bp_compile and bp_run check and run it.",
+                     [] { return bp::BlueprintToJson(bp::Blueprint{}); },
+                     [](const std::string& text, Json& canonical) -> std::string {
+                         const Json parsed = Json::parse(text, nullptr, false);
+                         if (parsed.is_discarded()) return "blueprint.parse: not valid JSON";
+                         bp::Blueprint blueprint;
+                         std::string error;
+                         if (!bp::BlueprintFromJson(parsed, blueprint, &error)) return "blueprint.parse: " + error;
+                         const bp::ValidationResult result = bp::ValidateBlueprint(blueprint);
+                         for (const bp::Diagnostic& d : result.diagnostics) {
+                             if (d.severity == bp::Severity::Error) return "blueprint." + d.code + " (" + d.graph + (d.node ? ", node " + std::to_string(d.node) : "") + "): " + d.message;
+                         }
+                         canonical = bp::BlueprintToJson(blueprint);
+                         return {};
+                     }});
+        t.push_back({"sound_cue", ".acue", "SoundCue",
+                     "A sound cue: a small graph (Wave, Random, Sequence, Modulator, Concatenator, Loop, Mix, Delay) deciding what plays each time, "
+                     "plus output settings (bus, volume, pitch, spatial attenuation).",
+                     [] { return audio::CueToJson(audio::SoundCue{}); },
+                     [](const std::string& text, Json& canonical) -> std::string {
+                         audio::SoundCue cue;
+                         std::string error;
+                         if (!audio::LoadCue(text, cue, &error)) return "cue.parse: " + error;
+                         for (const audio::CueDiagnostic& d : audio::ValidateCue(cue)) {
+                             if (d.error) return "cue." + d.code + ": " + d.message;
+                         }
+                         canonical = audio::CueToJson(cue);
+                         return {};
+                     }});
+        t.push_back({"input_action", ".aaction", "InputAction", "A named input action (Jump, Move): its value type.",
+                     [] { return Wrapped("InputAction", reflect::ToJson(input::InputAction{})); },
+                     [](const std::string& text, Json& canonical) {
+                         return CheckViaFile<input::InputAction>(text, ".aaction", input::LoadInputAction, canonical);
+                     }});
+        t.push_back({"input_mapping", ".amapping", "InputMapping", "A mapping context: which keys and buttons drive which actions, with modifiers and triggers.",
+                     [] { return Wrapped("InputMappingContext", reflect::ToJson(input::InputMappingContext{})); },
+                     [](const std::string& text, Json& canonical) {
+                         return CheckViaFile<input::InputMappingContext>(text, ".amapping", input::LoadMappingContext, canonical);
+                     }});
+        return t;
+    }();
+    return types;
+}
+
+const KitType& RequireType(const std::string& name) {
+    for (const KitType& t : Types()) {
+        if (t.name == name) return t;
+    }
+    std::string known;
+    for (const KitType& t : Types()) known += (known.empty() ? "" : ", ") + t.name;
+    throw ToolError("Unknown kit type \"" + name + "\". Known: " + known);
+}
+
+const KitType* TypeOfImporter(const std::string& importer) {
+    for (const KitType& t : Types()) {
+        if (t.importer == importer) return &t;
+    }
+    return nullptr;
+}
+
+// A definition with every field set, so the shape is visible (the "blank" one shows only what is not
+// default). Built from the kit's own structs, so it is always something the kit accepts.
+Json SampleOf(const std::string& type) {
+    using gas::GameplayTag;
+    using gas::TagQuery;
+    if (type == "effect") {
+        gas::GameplayEffect e;
+        e.name = "Regeneration";
+        e.duration_policy = gas::GameplayEffect::Duration::Timed;
+        e.duration = 10.0f;
+        e.modifiers = {{"Health", gas::GameplayEffect::Op::Add, 5.0f}};
+        e.stacking = gas::GameplayEffect::Stacking::StackCount;
+        e.max_stacks = 3;
+        e.per_source = true;
+        e.period = 1.0f;
+        e.execute_on_apply = true;
+        e.require = TagQuery::All({GameplayTag::Make("State.Alive")});
+        e.blocked = TagQuery::Any({GameplayTag::Make("State.Poisoned")});
+        e.granted_tags = {GameplayTag::Make("State.Regenerating")};
+        e.remove_on_tags = {GameplayTag::Make("State.Dead")};
+        return gas::EffectToJson(e);
+    }
+    if (type == "ability") {
+        gas::GameplayAbility a;
+        a.name = "Fireball";
+        a.tags = {GameplayTag::Make("Ability.Spell")};
+        a.activation_required = TagQuery::All({GameplayTag::Make("State.Alive")});
+        a.activation_blocked = TagQuery::Any({GameplayTag::Make("State.Stunned")});
+        a.cancel_abilities_with_tags = TagQuery::Any({GameplayTag::Make("Ability.Channel")});
+        a.block_abilities_with_tags = TagQuery::Any({GameplayTag::Make("Ability.Spell")});
+        a.activation_owned_tags = {GameplayTag::Make("State.Casting")};
+        a.cost = "FireballCost";
+        a.cooldown = "FireballCooldown";
+        a.max_duration = 2.0f;
+        a.commit_on_activate = false;
+        return gas::AbilityToJson(a);
+    }
+    if (type == "blueprint") return BlueprintSampleJson();
+    if (type == "sound_cue") {
+        audio::SoundCue c;
+        c.name = "footstep";
+        audio::CueNode modulator;
+        modulator.id = 1;
+        modulator.type = audio::CueNodeType::Modulator;
+        modulator.children = {2};
+        modulator.volume_min_db = -2.0f;
+        modulator.volume_max_db = 0.0f;
+        modulator.pitch_min = 0.95f;
+        modulator.pitch_max = 1.05f;
+        audio::CueNode random;
+        random.id = 2;
+        random.type = audio::CueNodeType::Random;
+        random.children = {3, 4};
+        random.weights = {2.0f, 1.0f};
+        random.no_repeat = true;
+        audio::CueNode a;
+        a.id = 3;
+        a.type = audio::CueNodeType::Wave;
+        a.sound = "Audio/step_a.wav";
+        audio::CueNode b = a;
+        b.id = 4;
+        b.sound = "Audio/step_b.wav";
+        c.nodes = {modulator, random, a, b};
+        c.root = 1;
+        c.volume_db = -3.0f;
+        c.bus = "SFX";
+        c.priority = 100;
+        c.spatial = true;
+        c.attenuation.model = audio::AttenuationModel::Inverse;
+        c.attenuation.min_distance = 1.0f;
+        c.attenuation.max_distance = 30.0f;
+        c.occlusion = true;
+        return audio::CueToJson(c);
+    }
+#if AETHER_MCP_INVENTORY
+    if (type == "item") {
+        inv::ItemDef i;
+        i.name = "HealthPotion";
+        i.display_key = "item.health_potion";
+        i.icon = "Textures/potion.png";
+        i.max_stack = 10;
+        i.weight = 0.5f;
+        i.tags = {GameplayTag::Make("Item.Consumable")};
+        i.equip_slot = "Belt";
+        i.equip_effects = {"BeltBuff"};
+        i.use_effect = "Heal";
+        i.consume_on_use = true;
+        return inv::ItemToJson(i);
+    }
+#endif
+#if AETHER_MCP_QUESTS
+    if (type == "quest") {
+        quest::QuestDef q;
+        q.name = "ClearTheCellar";
+        q.title = "Clear the cellar";
+        q.title_key = "quest.cellar.title";
+        q.description = "Something is down there.";
+        q.description_key = "quest.cellar.description";
+        q.objectives = {{"rats", "Kill the rats", "quest.cellar.rats", quest::Objective::Kind::Count, "Rat", 5, false},
+                        {"key", "Find the key", "", quest::Objective::Kind::Flag, "CellarKey", 1, true}};
+        q.prerequisites = {"MeetTheInnkeeper"};
+        q.reward_effects = {"Heal"};
+        q.reward_items = {{"HealthPotion", 2}};
+        return quest::QuestToJson(q);
+    }
+#endif
+    return Json();
+}
+
+// What the JSON does not say: the allowed words, and how definitions refer to each other.
+std::vector<std::string> NotesOf(const std::string& type) {
+    if (type == "effect") {
+        return {"duration_policy: instant | timed | infinite (timed needs duration > 0)",
+                "modifiers[].op: add | multiply | override",
+                "stacking: none | refresh | stack (stack uses max_stacks)",
+                "period > 0 applies the modifiers every period seconds (not on instant effects)",
+                "require / blocked are tag queries: {\"op\":\"all|any|none\",\"tags\":[...]} or {\"op\":\"and|or\",\"children\":[...]}",
+                "Tag names are dotted: State.Stunned. Tags match hierarchically."};
+    }
+    if (type == "ability") {
+        return {"cost names an instant effect, cooldown a timed effect: both by effect name (kit_check verifies they exist)",
+                "the *_tags queries use the same format as an effect's require / blocked"};
+    }
+    if (type == "item") return {"use_effect and equip_effects name effects (kit_check verifies them)", "max_stack >= 1"};
+    if (type == "quest") {
+        return {"objectives[].kind: count | tag | flag; ids unique; required >= 1",
+                "prerequisites name quests; reward_effects name effects; reward_items[].item names an item (kit_check verifies them)"};
+    }
+    if (type == "blueprint") {
+        return {"bp_node_types lists the node ids you can use; bp_node_info shows a node's pins; links join an output pin to an input pin: {\"from\": [node, \"pin\"], \"to\": [node, \"pin\"]}",
+                "Exec pins carry the flow, data pins carry values; types convert where they can (int to float), else bp_validate says why not",
+                "bp_validate gives the BP001... diagnostics, bp_compile compiles to bytecode, bp_run runs it headless and shows prints, variables and errors"};
+    }
+    if (type == "sound_cue") {
+        return {"nodes[].type: Wave (sound, looping; no children) | Random (weights, no_repeat) | Sequence | Modulator (volume_db [min,max], pitch [min,max]; one child) | "
+                "Concatenator | Loop (count, 0 = forever; one child) | Mix (input_db per child) | Delay (delay [min,max] seconds; one child)",
+                "root is the id of the node the output plays; Wave sounds are content paths of Sound assets (kit_check verifies they exist)",
+                "output: bus (Master, Music, SFX, UI, Voice), volume_db, pitch > 0, priority 0-255, virtual: Continue | Restart | Stop, spatial, spatial_blend, "
+                "attenuation.model: None | Inverse | Linear | Logarithmic | Custom, doppler, occlusion",
+                "cue_validate gives every diagnostic with its code; cue_preview shows what the cue would play, with no audio"};
+    }
+    if (type == "input_action") return {"value_type: Bool | Axis1D | Axis2D | Axis3D"};
+    if (type == "input_mapping") return {"bindings[] map a key to an action with optional modifiers (DeadZone, Negate, Swizzle, Scale) and triggers; see the example"};
+    return {};
+}
+
+// The definition argument: a JSON object, or the file's text.
+std::string DefinitionText(const Json& args) {
+    if (!args.contains("definition")) throw ToolError("Missing argument \"definition\" (the definition as a JSON object)");
+    const Json& d = args["definition"];
+    if (d.is_object()) return d.dump(2);
+    if (d.is_string()) return d.get<std::string>();
+    throw ToolError("\"definition\" must be a JSON object or a string of JSON");
+}
+
+std::string ReadText(const fs::path& file) {
+    std::ifstream in(file, std::ios::binary);
+    std::stringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
+
+// "name" of a definition, for listings and cross-references.
+std::string NameOf(const Json& canonical) {
+    const Json& body = canonical.is_object() && canonical.contains("data") && canonical["data"].is_object() ? canonical["data"] : canonical;
+    return body.is_object() && body.contains("name") && body["name"].is_string() ? body["name"].get<std::string>() : std::string();
+}
+
+// The attributes the project's scenes and prefabs define (entities' AttributeSet components), by name.
+// Attributes can also be defined at run time by scripts, so a name missing here is a warning, not an error.
+struct ProjectAttribute {
+    std::vector<std::string> defined_in;
+    std::vector<std::string> lacks_current; // places where the saved attribute has no "current" value
+    Json first;                             // the first definition found: base, min, max
+};
+
+std::map<std::string, ProjectAttribute> CollectProjectAttributes(OpenProject& p, std::vector<std::string>& unreadable) {
+    std::map<std::string, ProjectAttribute> found;
+    for (const AssetRecord* r : p.database->All()) {
+        if (r->IsSubAsset() || (r->importer != "Scene" && r->importer != "Prefab")) continue;
+        const fs::path file = p.database->SourcePath(r->guid);
+        if (file.extension() == ".aesc") {
+            unreadable.push_back(r->path + " (binary scene)");
+            continue;
+        }
+        Json doc = Json::parse(ReadText(file), nullptr, false);
+        if (!doc.is_object() || !doc.contains("entities") || !doc["entities"].is_array()) {
+            unreadable.push_back(r->path);
+            continue;
+        }
+        for (const Json& entity : doc["entities"]) {
+            if (!entity.is_object() || !entity.contains("components") || !entity["components"].is_object()) continue;
+            const Json& comps = entity["components"];
+            if (!comps.contains("AttributeSet") || !comps["AttributeSet"].is_object()) continue;
+            const Json& set = comps["AttributeSet"];
+            if (!set.contains("attributes") || !set["attributes"].is_array()) continue;
+            for (const Json& a : set["attributes"]) {
+                if (!a.is_object() || !a.contains("name") || !a["name"].is_string()) continue;
+                ProjectAttribute& pa = found[a["name"].get<std::string>()];
+                if (std::find(pa.defined_in.begin(), pa.defined_in.end(), r->path) == pa.defined_in.end()) pa.defined_in.push_back(r->path);
+                if (!a.contains("current") && std::find(pa.lacks_current.begin(), pa.lacks_current.end(), r->path) == pa.lacks_current.end()) {
+                    pa.lacks_current.push_back(r->path);
+                }
+                if (pa.first.is_null()) {
+                    pa.first = Json::object();
+                    for (const char* key : {"base", "min", "max"}) {
+                        if (a.contains(key)) pa.first[key] = a[key];
+                    }
+                }
+            }
+        }
+    }
+    return found;
+}
+
+// Every use of a component (by its reflected name) in the project's JSON scenes and prefabs: where, and its saved value.
+struct SceneComponent {
+    std::string path;
+    Json value;
+};
+
+std::vector<SceneComponent> CollectSceneComponents(OpenProject& p, const std::string& component, std::vector<std::string>& unreadable) {
+    std::vector<SceneComponent> found;
+    for (const AssetRecord* r : p.database->All()) {
+        if (r->IsSubAsset() || (r->importer != "Scene" && r->importer != "Prefab")) continue;
+        const fs::path file = p.database->SourcePath(r->guid);
+        if (file.extension() == ".aesc") {
+            unreadable.push_back(r->path + " (binary scene)");
+            continue;
+        }
+        Json doc = Json::parse(ReadText(file), nullptr, false);
+        if (!doc.is_object() || !doc.contains("entities") || !doc["entities"].is_array()) {
+            unreadable.push_back(r->path);
+            continue;
+        }
+        for (const Json& entity : doc["entities"]) {
+            if (!entity.is_object() || !entity.contains("components") || !entity["components"].is_object()) continue;
+            const Json& comps = entity["components"];
+            if (comps.contains(component) && comps[component].is_object()) found.push_back({r->path, comps[component]});
+        }
+    }
+    return found;
+}
+
+} // namespace
+
+void RegisterKitTools(McpServer& server, std::shared_ptr<detail::AssetHost> host) {
+    server.AddTool({"kit_types",
+                    "The gameplay-kit definition types: file extension, what each is, and how many the open project has. Use kit_schema for the "
+                    "shape of one.",
+                    Schema(Json::object()), [host](const Json&) -> Json {
+                        Json out = Json::array();
+                        for (const KitType& t : Types()) {
+                            Json row = {{"type", t.name}, {"extension", t.extension}, {"importer", t.importer}, {"description", t.description}};
+                            if (host->project) {
+                                usize n = 0;
+                                for (const AssetRecord* r : host->project->database->All()) {
+                                    if (!r->IsSubAsset() && r->importer == t.importer) ++n;
+                                }
+                                row["in_project"] = n;
+                            }
+                            out.push_back(row);
+                        }
+                        return out;
+                    }});
+
+    server.AddTool({"kit_schema",
+                    "The shape of one definition type: a sample with every field set, the allowed words and cross-reference rules (notes), "
+                    "the blank definition, and (if a project is open) an existing example from it.",
+                    Schema({{"type", {{"type", "string"}, {"description", "effect, ability, item, quest, sound_cue, blueprint, input_action or input_mapping"}}}}, {"type"}),
+                    [host](const Json& args) -> Json {
+                        const KitType& t = RequireType(RequireString(args, "type"));
+                        Json out = {{"type", t.name}, {"extension", t.extension}, {"description", t.description}, {"blank", t.blank()}, {"notes", NotesOf(t.name)}};
+                        Json sample = SampleOf(t.name);
+                        if (!sample.is_null()) out["sample"] = sample;
+                        if (host->project) {
+                            for (const AssetRecord* r : host->project->database->All()) {
+                                if (r->IsSubAsset() || r->importer != t.importer) continue;
+                                const fs::path file = host->project->database->SourcePath(r->guid);
+                                Json parsed = Json::parse(ReadText(file), nullptr, false);
+                                if (!parsed.is_discarded()) {
+                                    out["example"] = {{"path", r->path}, {"definition", parsed}};
+                                    break;
+                                }
+                            }
+                        }
+                        return out;
+                    }});
+
+    server.AddTool({"kit_validate",
+                    "Check a definition with the kit's own parser and validator without writing anything. Returns ok, or the kit's named error "
+                    "(e.g. \"effect.name_empty: ...\").",
+                    Schema({{"type", {{"type", "string"}}}, {"definition", {{"description", "The definition: a JSON object, or its text"}}}}, {"type", "definition"}),
+                    [](const Json& args) -> Json {
+                        const KitType& t = RequireType(RequireString(args, "type"));
+                        Json canonical;
+                        const std::string error = t.check(DefinitionText(args), canonical);
+                        if (!error.empty()) return {{"ok", false}, {"error", error}};
+                        return {{"ok", true}, {"normalized", canonical}};
+                    }});
+
+    server.AddTool({"kit_list",
+                    "The kit definitions in the open project (all types, or one): path, definition name and whether it parses and validates.",
+                    Schema({{"type", {{"type", "string"}, {"description", "Only this type"}}}}), [host](const Json& args) -> Json {
+                        OpenProject& p = host->Require();
+                        const KitType* only = args.contains("type") ? &RequireType(RequireString(args, "type")) : nullptr;
+                        Json out = Json::array();
+                        for (const AssetRecord* r : p.database->All()) {
+                            if (r->IsSubAsset()) continue;
+                            const KitType* t = TypeOfImporter(r->importer);
+                            if (t == nullptr || (only != nullptr && t != only)) continue;
+                            Json canonical;
+                            const std::string text = ReadText(p.database->SourcePath(r->guid));
+                            const std::string error = t->check(text, canonical);
+                            Json row = {{"type", t->name}, {"path", r->path}, {"name", NameOf(canonical)}, {"valid", error.empty()}};
+                            if (!error.empty()) row["error"] = error;
+                            out.push_back(row);
+                        }
+                        return out;
+                    }});
+
+    server.AddTool({"kit_get", "Read one definition from the open project, as JSON.",
+                    Schema({{"asset", {{"type", "string"}, {"description", "Content path or GUID"}}}}, {"asset"}), [host](const Json& args) -> Json {
+                        OpenProject& p = host->Require();
+                        const AssetRecord& r = FindAsset(p, RequireString(args, "asset"));
+                        const KitType* t = TypeOfImporter(r.importer);
+                        if (t == nullptr) throw ToolError(r.path + " is not a kit definition (it is a " + r.importer + ")");
+                        Json parsed = Json::parse(ReadText(p.database->SourcePath(r.guid)), nullptr, false);
+                        if (parsed.is_discarded()) throw ToolError(r.path + " is not valid JSON");
+                        return {{"type", t->name}, {"path", r.path}, {"definition", parsed}};
+                    }});
+
+    server.AddTool(
+        {"kit_put",
+         "Create or replace a definition in the open project: validated with the kit's parser first (nothing is written if it is invalid), "
+         "then saved as normalized JSON with the right extension and scanned so it has a GUID.",
+         Schema({{"type", {{"type", "string"}}},
+                 {"path", {{"type", "string"}, {"description", "Under Content/, e.g. Gameplay/Effects/Heal (the extension is added)"}}},
+                 {"definition", {{"description", "The definition: a JSON object, or its text"}}},
+                 {"overwrite", {{"type", "boolean"}, {"description", "Replace an existing file (default false)"}}}},
+                {"type", "path", "definition"}),
+         [host](const Json& args) -> Json {
+             OpenProject& p = host->Require();
+             const KitType& t = RequireType(RequireString(args, "type"));
+             std::string rel = CleanRelative(RequireString(args, "path"));
+             if (rel.empty()) throw ToolError("\"path\" must name a file under Content/");
+             if (fs::path(rel).extension() != t.extension) rel += t.extension;
+             Json canonical;
+             const std::string error = t.check(DefinitionText(args), canonical);
+             if (!error.empty()) throw ToolError("Invalid " + t.name + ": " + error);
+
+             const fs::path file = p.paths.content / rel;
+             std::error_code ec;
+             if (fs::exists(file, ec) && !OptBool(args, "overwrite", false)) throw ToolError(rel + " already exists (pass overwrite)");
+             fs::create_directories(file.parent_path(), ec);
+             {
+                 std::ofstream out(file, std::ios::binary | std::ios::trunc);
+                 const std::string text = canonical.dump(2) + "\n";
+                 out.write(text.data(), static_cast<std::streamsize>(text.size()));
+                 if (!out) throw ToolError("Could not write " + rel);
+             }
+             p.database->Scan();
+             Json out = {{"type", t.name}, {"path", rel}, {"name", NameOf(canonical)}};
+             if (const AssetRecord* r = p.database->FindByPath(rel)) out["guid"] = assets::ToString(r->guid);
+             return out;
+         }});
+
+    server.AddTool(
+        {"attribute_project",
+         "The attributes the open project's scenes and prefabs define on entities (AttributeSet components): each name, where it is "
+         "defined and its first base/min/max. There is no separate attribute-definition file; to change them use attribute_define on an "
+         "entity (then save the scene) or edit the scene with content_write.",
+         Schema(Json::object()), [host](const Json&) -> Json {
+             OpenProject& p = host->Require();
+             std::vector<std::string> unreadable;
+             const auto found = CollectProjectAttributes(p, unreadable);
+             Json list = Json::array();
+             Json warnings = Json::array();
+             for (const auto& [name, a] : found) {
+                 list.push_back({{"name", name}, {"defined_in", a.defined_in}, {"first", a.first}});
+                 for (const std::string& path : a.lacks_current) {
+                     warnings.push_back({{"path", path},
+                                         {"warning", "attribute \"" + name + "\" is saved without a \"current\" value; the game reads current, which is only "
+                                                     "computed when the attribute changes, so it starts at 0. Redefine it with attribute_define "
+                                                     "(which saves current) or add \"current\" next to \"base\"."}});
+                 }
+             }
+             return {{"attributes", list}, {"warnings", warnings}, {"not_scanned", unreadable}};
+         }});
+
+    server.AddTool(
+        {"interaction_project",
+         "The interactables the open project's scenes and prefabs define (Interactable components): prompt, range, tags, the effect and "
+         "ability each applies, and where. There is no interaction asset file; use interactable_set on an editor entity, or edit a scene "
+         "with content_write. kit_check verifies the effects and abilities exist.",
+         Schema(Json::object()), [host](const Json&) -> Json {
+             OpenProject& p = host->Require();
+             std::vector<std::string> unreadable;
+             Json list = Json::array();
+             for (const SceneComponent& c : CollectSceneComponents(p, "Interactable", unreadable)) list.push_back({{"path", c.path}, {"interactable", c.value}});
+             return {{"interactables", list}, {"not_scanned", unreadable}};
+         }});
+
+    server.AddTool(
+        {"kit_check",
+         "Check every kit definition in the open project: each must parse and validate, and cross-references must resolve (an ability's cost "
+         "and cooldown effects, an item's use and equip effects, a quest's reward effects, reward items and prerequisites, an Interactable's effect and ability; a sound cue's diagnostics, with its Wave sounds checked against the project, and an AudioSource's cue). Also "
+         "reports duplicate names. Warns (not an error) when an effect modifies an attribute no scene or prefab defines.",
+         Schema(Json::object()), [host](const Json&) -> Json {
+             OpenProject& p = host->Require();
+             struct Def {
+                 const KitType* type;
+                 std::string path;
+                 Json canonical;
+             };
+             std::vector<Def> defs;
+             Json problems = Json::array();
+             auto problem = [&](const std::string& path, const std::string& message) { problems.push_back({{"path", path}, {"problem", message}}); };
+
+             for (const AssetRecord* r : p.database->All()) {
+                 if (r->IsSubAsset()) continue;
+                 const KitType* t = TypeOfImporter(r->importer);
+                 if (t == nullptr) continue;
+                 Json canonical;
+                 const std::string error = t->check(ReadText(p.database->SourcePath(r->guid)), canonical);
+                 if (!error.empty()) {
+                     problem(r->path, error);
+                     continue;
+                 }
+                 defs.push_back({t, r->path, canonical});
+             }
+
+             std::map<std::string, std::set<std::string>> names; // type -> names
+             std::map<std::pair<std::string, std::string>, std::string> first_seen;
+             for (const Def& d : defs) {
+                 const std::string name = NameOf(d.canonical);
+                 if (name.empty()) continue;
+                 if (!names[d.type->name].insert(name).second) {
+                     problem(d.path, "duplicate " + d.type->name + " name \"" + name + "\" (also in " + first_seen[{d.type->name, name}] + ")");
+                 } else {
+                     first_seen[{d.type->name, name}] = d.path;
+                 }
+             }
+
+             auto need = [&](const Def& d, const char* kind, const std::string& what, const std::string& reference) {
+                 if (reference.empty()) return;
+                 if (names[kind].count(reference) == 0) problem(d.path, what + " \"" + reference + "\" is not a " + kind + " in the project");
+             };
+             auto strings = [](const Json& j, const char* key) {
+                 std::vector<std::string> out;
+                 if (j.is_object() && j.contains(key) && j[key].is_array()) {
+                     for (const Json& v : j[key]) {
+                         if (v.is_string()) out.push_back(v.get<std::string>());
+                     }
+                 }
+                 return out;
+             };
+             for (const Def& d : defs) {
+                 const Json& j = d.canonical;
+                 const std::string& kind = d.type->name;
+                 if (kind == "ability") {
+                     need(d, "effect", "cost", j.value("cost", std::string()));
+                     need(d, "effect", "cooldown", j.value("cooldown", std::string()));
+                 } else if (kind == "item") {
+                     need(d, "effect", "use_effect", j.value("use_effect", std::string()));
+                     for (const std::string& e : strings(j, "equip_effects")) need(d, "effect", "equip effect", e);
+                 } else if (kind == "quest") {
+                     for (const std::string& e : strings(j, "reward_effects")) need(d, "effect", "reward effect", e);
+                     for (const std::string& q : strings(j, "prerequisites")) need(d, "quest", "prerequisite", q);
+                     if (j.contains("reward_items") && j["reward_items"].is_array()) {
+                         for (const Json& r : j["reward_items"]) need(d, "item", "reward item", r.value("item", std::string()));
+                     }
+                 }
+             }
+
+             // Interactables name the effect they apply and the ability they trigger.
+             std::vector<std::string> not_scanned;
+             for (const SceneComponent& c : CollectSceneComponents(p, "Interactable", not_scanned)) {
+                 const std::string effect = c.value.value("effect", std::string());
+                 const std::string ability = c.value.value("ability", std::string());
+                 if (!effect.empty() && names["effect"].count(effect) == 0) problem(c.path, "an Interactable's effect \"" + effect + "\" is not an effect in the project");
+                 if (!ability.empty() && names["ability"].count(ability) == 0) problem(c.path, "an Interactable's ability \"" + ability + "\" is not an ability in the project");
+             }
+
+             Json warnings = Json::array();
+             std::vector<std::string> unreadable;
+             const auto attributes = CollectProjectAttributes(p, unreadable);
+
+             // Sound cues: the audio kit's own diagnostics, with the Wave sounds checked against the project's Sound assets.
+             // Scenes' AudioSource components name a cue asset.
+             {
+                 std::set<std::string> sounds, cue_paths;
+                 for (const AssetRecord* r : p.database->All()) {
+                     if (r->IsSubAsset()) continue;
+                     if (r->importer == "Sound") sounds.insert(r->path);
+                     if (r->importer == "SoundCue") cue_paths.insert(r->path);
+                 }
+                 for (const Def& d : defs) {
+                     if (d.type->name != "sound_cue") continue;
+                     audio::SoundCue cue;
+                     if (!audio::CueFromJson(d.canonical, cue)) continue;
+                     for (const audio::CueDiagnostic& diag : audio::ValidateCue(cue, [&](const std::string& s) { return sounds.count(s) != 0; })) {
+                         const std::string message = diag.code + " (node " + std::to_string(diag.node) + "): " + diag.message;
+                         if (diag.error) problem(d.path, message);
+                         else warnings.push_back({{"path", d.path}, {"warning", message}});
+                     }
+                 }
+                 std::vector<std::string> not_scanned_audio;
+                 for (const SceneComponent& c : CollectSceneComponents(p, "AudioSource", not_scanned_audio)) {
+                     const std::string cue = c.value.value("cue", std::string());
+                     if (!cue.empty() && cue_paths.count(cue) == 0) problem(c.path, "an AudioSource's cue \"" + cue + "\" is not a sound cue in the project");
+                 }
+             }
+
+             std::set<std::string> warned;
+             for (const Def& d : defs) {
+                 if (d.type->name != "effect" || !d.canonical.contains("modifiers") || !d.canonical["modifiers"].is_array()) continue;
+                 for (const Json& m : d.canonical["modifiers"]) {
+                     const std::string attribute = m.value("attribute", std::string());
+                     if (attribute.empty() || attributes.count(attribute) != 0 || !warned.insert(d.path + "|" + attribute).second) continue;
+                     warnings.push_back({{"path", d.path},
+                                         {"warning", "modifies attribute \"" + attribute + "\", which no scene or prefab in the project defines "
+                                                     "(fine if a script defines it at run time)"}});
+                 }
+             }
+
+             Json counts = Json::object();
+             for (const Def& d : defs) counts[d.type->name] = counts.value(d.type->name, 0) + 1;
+             return {{"ok", problems.empty()}, {"definitions", defs.size()}, {"by_type", counts}, {"problems", problems}, {"warnings", warnings}};
+         }});
+}
+
+} // namespace aether::mcp

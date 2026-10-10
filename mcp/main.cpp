@@ -9,10 +9,21 @@
 #include "aether/core/log.h"
 #include "aether/scene/serialization.h"
 #include "core/commands.h"
+#include "asset_tools.h"
+#include "blueprint_tools.h"
+#include "audio_tools.h"
+#include "build_tools.h"
 #include "editor_tools.h"
+#include "game_tools.h"
+#include "kit_tools.h"
+#include "nav_tools.h"
+#include "terrain_tools.h"
+#include "vfx_tools.h"
 
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <string>
 #include <iostream>
 
 #ifdef _WIN32
@@ -32,8 +43,11 @@ int main(int argc, char** argv) {
     mcp::RegisterBuiltinComponents();
     mcp::EditorSession session;
 
+    std::string build_dir;
     for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--scene") == 0 && i + 1 < argc) {
+        if (std::strcmp(argv[i], "--build-dir") == 0 && i + 1 < argc) {
+            build_dir = argv[++i];
+        } else if (std::strcmp(argv[i], "--scene") == 0 && i + 1 < argc) {
             const char* path = argv[++i];
             if (!LoadSceneJson(session.world, path)) {
                 std::fprintf(stderr, "aether_mcp_server: could not load scene %s\n", path);
@@ -41,13 +55,24 @@ int main(int argc, char** argv) {
             }
             editor::EnsureAllGuids(session.world, session.guids);
         } else {
-            std::fprintf(stderr, "usage: aether_mcp_server [--scene scene.json]\n");
+            std::fprintf(stderr, "usage: aether_mcp_server [--scene scene.json] [--build-dir <cmake build dir>]\n");
             return 1;
         }
     }
 
     mcp::McpServer server("aether-editor", "0.1.0");
     mcp::RegisterEditorTools(server, session);
+    mcp::RegisterGameTools(server);
+    auto project = mcp::MakeAssetHost(); // the open project, shared by the asset and kit tools
+    mcp::RegisterAssetTools(server, project);
+    mcp::RegisterKitTools(server, project);
+    mcp::RegisterAudioTools(server, project);
+    mcp::RegisterVfxTools(server, project);
+    mcp::RegisterBlueprintTools(server, project);
+    mcp::RegisterTerrainTools(server);
+    mcp::RegisterNavTools(server, session);
+    std::error_code ec;
+    mcp::RegisterBuildTools(server, mcp::FindBuildContext(build_dir, std::filesystem::absolute(argv[0], ec).parent_path()));
     server.RunStdio(std::cin, std::cout);
     return 0;
 }

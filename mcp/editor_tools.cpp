@@ -1,6 +1,11 @@
 #include "editor_tools.h"
 
 #include "aether/reflection/serialize.h"
+#include "aether/gameplay/attribute_set.h"
+#include "aether/gameplay/gameplay_tag.h"
+#if AETHER_MCP_INTERACTION
+#include "aether/interaction/interactable.h"
+#endif
 #include "aether/scene/components.h"
 #include "aether/scene/hierarchy.h"
 #include "aether/scene/serialization.h"
@@ -8,6 +13,7 @@
 
 #include <algorithm>
 #include <new>
+#include <set>
 
 namespace aether::mcp {
 
@@ -205,6 +211,14 @@ Json Schema(Json properties, std::vector<std::string> required = {}) {
 const Json kGuidProp = {{"type", "string"}, {"description", "Entity GUID, as returned by list_entities"}};
 
 } // namespace
+
+void RegisterAttributeTools(McpServer& server, EditorSession& s);
+void RegisterAudioEditorTools(McpServer& server, EditorSession& s);
+void RegisterParticleEditorTools(McpServer& server, EditorSession& s);
+void RegisterNavEditorTools(McpServer& server, EditorSession& s);
+#if AETHER_MCP_INTERACTION
+void RegisterInteractionEditorTools(McpServer& server, EditorSession& s);
+#endif
 
 void RegisterEditorTools(McpServer& server, EditorSession& s) {
     server.AddTool({"editor_state",
@@ -574,6 +588,566 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         const bool jump = args.contains("jump") && args["jump"].is_boolean() && args["jump"].get<bool>();
                         s.sim->SetPlatformerInput(move, jump);
                         return {{"move", move}, {"jump", jump}};
+                    }});
+    RegisterAttributeTools(server, s);
+    RegisterAudioEditorTools(server, s);
+    RegisterParticleEditorTools(server, s);
+    RegisterNavEditorTools(server, s);
+#if AETHER_MCP_INTERACTION
+    RegisterInteractionEditorTools(server, s);
+#endif
+}
+
+
+// ---------------------------------------------------------------------------
+// Attributes. There is no attribute-definition file: an entity's stats (Health, Mana, ...) are the
+// AttributeSet component's data, saved in scenes and prefabs. These tools edit that component as one
+// undoable step, keeping its attributes sorted and clamped the way the game does (AttributeSet::Define).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+Json AttributeJson(const gas::Attribute& a) {
+    return {{"name", a.name}, {"base", a.base}, {"current", a.current}, {"min", a.min}, {"max", a.max}};
+}
+
+Json AttributesJson(const gas::AttributeSet& set) {
+    Json out = Json::array();
+    for (const gas::Attribute& a : set.attributes) out.push_back(AttributeJson(a));
+    return out;
+}
+
+// Replaces the entity's AttributeSet with `next` as one undoable step (adding the component first if the entity has none).
+void CommitAttributeSet(EditorSession& s, Entity e, EntityGuid guid, const gas::AttributeSet& next, const std::string& label) {
+    const ComponentId id = GetComponentId<gas::AttributeSet>();
+    editor::CommandContext ctx = s.Context();
+    s.stack.BeginTransaction(label);
+    if (!s.world.HasComponentRaw(e, id)) {
+        s.stack.Execute(ctx, std::make_unique<editor::AddComponentCommand>(guid, id));
+    }
+    Json patch = {{"attributes", AttributesJson(next)}};
+    Json warnings = Json::array();
+    std::vector<u8> before;
+    std::vector<u8> after;
+    try {
+        after = PatchedBytes(s, e, id, patch, before, warnings);
+    } catch (...) {
+        s.stack.EndTransaction();
+        s.stack.Undo(ctx);
+        throw;
+    }
+    s.stack.Execute(ctx, std::make_unique<SetComponentCommand>(guid, id, before, after));
+    s.stack.EndTransaction();
+}
+
+} // namespace
+
+void RegisterAttributeTools(McpServer& server, EditorSession& s) {
+    const Json kGuidProp = {{"type", "string"}, {"description", "Entity GUID"}};
+
+    server.AddTool({"attribute_list", "The entity's attributes (name, base, current, min, max). Empty if it has no AttributeSet.",
+                    Schema({{"entity", kGuidProp}}, {"entity"}), [&s](const Json& args) -> Json {
+                        Entity e = RequireEntity(s, args);
+                        const gas::AttributeSet* set = s.world.GetComponent<gas::AttributeSet>(e);
+                        return {{"entity", RequireString(args, "entity")}, {"attributes", set ? AttributesJson(*set) : Json::array()}};
+                    }});
+
+    server.AddTool(
+        {"attribute_define",
+         "Create or redefine attributes on an entity, adding an AttributeSet if it has none. One undoable step for the whole list. "
+         "An existing attribute gets the new base and bounds (the base is clamped into them; min above max is read as the range "
+         "[max, min]). Omitted min/max mean unbounded.",
+         Schema({{"entity", kGuidProp},
+                 {"attributes", {{"type", "array"},
+                                 {"description", "[{name, base, min?, max?}, ...]"},
+                                 {"items", {{"type", "object"}}}}}},
+                {"entity", "attributes"}),
+         [&s](const Json& args) -> Json {
+             Entity e = RequireEntity(s, args);
+             EntityGuid guid = RequireGuid(args, "entity");
+             if (!args["attributes"].is_array() || args["attributes"].empty()) throw ToolError("\"attributes\" must be a non-empty array");
+             gas::AttributeSet next;
+             if (const gas::AttributeSet* current = s.world.GetComponent<gas::AttributeSet>(e)) next = *current;
+             Json defined = Json::array();
+             for (const Json& a : args["attributes"]) {
+                 if (!a.is_object() || !a.contains("name") || !a["name"].is_string()) throw ToolError("Each attribute needs a string \"name\"");
+                 const auto number = [&](const char* key, f32 fallback) {
+                     if (!a.contains(key)) return fallback;
+                     if (!a[key].is_number()) throw ToolError(std::string("\"") + key + "\" of " + a["name"].get<std::string>() + " must be a number");
+                     return a[key].get<f32>();
+                 };
+                 const std::string name = a["name"].get<std::string>();
+                 const f32 base = number("base", 0.0f);
+                 if (!next.Define(name, base, number("min", -3.0e38f), number("max", 3.0e38f))) {
+                     throw ToolError("Could not define \"" + name + "\": a bad name or a NaN");
+                 }
+                 defined.push_back(name);
+             }
+             CommitAttributeSet(s, e, guid, next, "Define attributes");
+             const gas::AttributeSet* now = s.world.GetComponent<gas::AttributeSet>(e);
+             return {{"defined", defined}, {"attributes", now ? AttributesJson(*now) : Json::array()}};
+         }});
+
+    server.AddTool({"attribute_remove", "Remove attributes from an entity by name. Undoable. Names it doesn't have are an error.",
+                    Schema({{"entity", kGuidProp}, {"names", {{"type", "array"}, {"items", {{"type", "string"}}}}}}, {"entity", "names"}),
+                    [&s](const Json& args) -> Json {
+                        Entity e = RequireEntity(s, args);
+                        EntityGuid guid = RequireGuid(args, "entity");
+                        const gas::AttributeSet* current = s.world.GetComponent<gas::AttributeSet>(e);
+                        if (current == nullptr) throw ToolError("Entity has no AttributeSet");
+                        if (!args["names"].is_array() || args["names"].empty()) throw ToolError("\"names\" must be a non-empty array of strings");
+                        gas::AttributeSet next = *current;
+                        for (const Json& n : args["names"]) {
+                            if (!n.is_string()) throw ToolError("\"names\" must be an array of strings");
+                            const std::string name = n.get<std::string>();
+                            const auto it = std::find_if(next.attributes.begin(), next.attributes.end(), [&](const gas::Attribute& a) { return a.name == name; });
+                            if (it == next.attributes.end()) throw ToolError("No attribute \"" + name + "\" on this entity");
+                            next.attributes.erase(it);
+                        }
+                        CommitAttributeSet(s, e, guid, next, "Remove attributes");
+                        return {{"attributes", AttributesJson(*s.world.GetComponent<gas::AttributeSet>(e))}};
+                    }});
+}
+
+
+#if AETHER_MCP_INTERACTION
+// ---------------------------------------------------------------------------
+// Interaction. There is no interaction asset: what can be used is the Interactable component on an
+// entity (a door, a lever, a chest, a person to talk to), saved in scenes and prefabs. These tools edit it
+// as one undoable step with the checks the game cannot make for a hand-edited value.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Throws a ToolError naming the first thing wrong with a partial Interactable.
+void ValidateInteractableFields(const Json& fields) {
+    static const std::set<std::string> kKnown = {"enabled", "prompt", "prompt_key", "range", "required_tags", "blocked_tags", "effect", "ability", "one_shot", "cooldown"};
+    for (auto& [key, value] : fields.items()) {
+        if (key == "used" || key == "remaining") {
+            throw ToolError("\"" + key + "\" is runtime state (a spent or cooling interactable); use game_reset_interactable in a running game");
+        }
+        if (kKnown.count(key) == 0) throw ToolError("Unknown Interactable field \"" + key + "\"");
+        const bool is_bool = key == "enabled" || key == "one_shot";
+        const bool is_number = key == "range" || key == "cooldown";
+        const bool is_list = key == "required_tags" || key == "blocked_tags";
+        if (is_bool && !value.is_boolean()) throw ToolError("\"" + key + "\" must be true or false");
+        if (is_number) {
+            if (!value.is_number() || !(value.get<double>() >= 0.0)) throw ToolError("\"" + key + "\" must be a number, 0 or more");
+        }
+        if (is_list) {
+            if (!value.is_array()) throw ToolError("\"" + key + "\" must be an array of tag names");
+            for (const Json& tag : value) {
+                if (!tag.is_string() || !gas::GameplayTag::ValidName(tag.get<std::string>())) {
+                    throw ToolError("\"" + key + "\" has a bad tag name (tags are dotted words such as State.Stunned)");
+                }
+            }
+        }
+        if (!is_bool && !is_number && !is_list && !value.is_string()) throw ToolError("\"" + key + "\" must be a string");
+    }
+}
+
+} // namespace
+
+void RegisterInteractionEditorTools(McpServer& server, EditorSession& s) {
+    const Json kGuidProp = {{"type", "string"}, {"description", "Entity GUID"}};
+
+    server.AddTool({"interactable_list", "Entities in the editor scene that have an Interactable, with its settings.", Schema(Json::object()),
+                    [&s](const Json&) -> Json {
+                        const ComponentId id = GetComponentId<interact::Interactable>();
+                        Json out = Json::array();
+                        for (Entity e : AllEntities(s)) {
+                            if (!s.world.HasComponentRaw(e, id)) continue;
+                            const IdComponent* idc = s.world.GetComponent<IdComponent>(e);
+                            out.push_back({{"entity", idc ? ToString(idc->guid) : ""}, {"interactable", ComponentJson(s, e, id)}});
+                        }
+                        return out;
+                    }});
+
+    server.AddTool(
+        {"interactable_set",
+         "Make an entity something the player can use, or change how: adds an Interactable if it has none and applies the given fields "
+         "(a partial update). One undoable step. Fields: enabled, prompt, prompt_key (localization), range (0 = no limit), required_tags "
+         "and blocked_tags (dotted tag names the user must / must not have), effect (an effect applied to the user), ability (an ability "
+         "the user activates), one_shot, cooldown (seconds). What using it does is its script's or Blueprint's OnInteract.",
+         Schema({{"entity", kGuidProp},
+                 {"fields", {{"type", "object"}, {"description", "e.g. {\"prompt\": \"Open\", \"range\": 2.5, \"one_shot\": true}"}}}},
+                {"entity", "fields"}),
+         [&s](const Json& args) -> Json {
+             Entity e = RequireEntity(s, args);
+             EntityGuid guid = RequireGuid(args, "entity");
+             if (!args["fields"].is_object()) throw ToolError("\"fields\" must be an object");
+             ValidateInteractableFields(args["fields"]);
+             const ComponentId id = GetComponentId<interact::Interactable>();
+             editor::CommandContext ctx = s.Context();
+             s.stack.BeginTransaction("Set interactable");
+             if (!s.world.HasComponentRaw(e, id)) s.stack.Execute(ctx, std::make_unique<editor::AddComponentCommand>(guid, id));
+             Json warnings = Json::array();
+             std::vector<u8> before;
+             std::vector<u8> after;
+             try {
+                 after = PatchedBytes(s, e, id, args["fields"], before, warnings);
+             } catch (...) {
+                 s.stack.EndTransaction();
+                 s.stack.Undo(ctx);
+                 throw;
+             }
+             s.stack.Execute(ctx, std::make_unique<SetComponentCommand>(guid, id, before, after));
+             s.stack.EndTransaction();
+             Json out = {{"interactable", ComponentJson(s, e, id)}};
+             if (!warnings.empty()) out["warnings"] = warnings;
+             return out;
+         }});
+
+    server.AddTool({"interactable_remove", "Make an entity no longer usable (removes its Interactable). Undoable.",
+                    Schema({{"entity", kGuidProp}}, {"entity"}), [&s](const Json& args) -> Json {
+                        Entity e = RequireEntity(s, args);
+                        EntityGuid guid = RequireGuid(args, "entity");
+                        const ComponentId id = GetComponentId<interact::Interactable>();
+                        if (!s.world.HasComponentRaw(e, id)) throw ToolError("Entity has no Interactable");
+                        editor::CommandContext ctx = s.Context();
+                        s.stack.Execute(ctx, std::make_unique<editor::RemoveComponentCommand>(guid, id));
+                        return {{"removed", true}};
+                    }});
+}
+#endif // AETHER_MCP_INTERACTION
+
+
+// ---------------------------------------------------------------------------
+// Audio components. AudioSource (plays a cue from an entity), AudioListener (where the player hears from) and
+// ReverbZone (a space with its own reverb) are components saved in scenes and prefabs; audio_set edits them as one
+// validated, undoable step.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+bool IsAudioComponent(const std::string& name) { return name == "AudioSource" || name == "AudioListener" || name == "ReverbZone"; }
+
+// Throws a ToolError naming the first thing wrong with a partial audio component.
+void ValidateAudioFields(const std::string& component, const Json& fields) {
+    auto number = [&](const std::string& key, const Json& v, double lo, double hi) {
+        if (!v.is_number() || !(v.get<double>() >= lo) || !(v.get<double>() <= hi)) {
+            throw ToolError("\"" + key + "\" must be a number from " + std::to_string(lo) + " to " + std::to_string(hi));
+        }
+    };
+    for (auto& [key, value] : fields.items()) {
+        if (component == "AudioSource") {
+            if (key == "playing" || key == "commands") throw ToolError("\"" + key + "\" is runtime state; use game_audio_source in a running game");
+            if (key == "cue") { if (!value.is_string()) throw ToolError("\"cue\" must be a cue asset path (a string)"); }
+            else if (key == "auto_play") { if (!value.is_boolean()) throw ToolError("\"auto_play\" must be true or false"); }
+            else if (key == "volume_db") number(key, value, -120.0, 24.0);
+            else if (key == "pitch") { number(key, value, 0.0, 8.0); if (!(value.get<double>() > 0.0)) throw ToolError("\"pitch\" must be above 0"); }
+            else throw ToolError("Unknown AudioSource field \"" + key + "\" (cue, auto_play, volume_db, pitch)");
+        } else if (component == "AudioListener") {
+            if (key != "active") throw ToolError("Unknown AudioListener field \"" + key + "\" (active)");
+            if (!value.is_boolean()) throw ToolError("\"active\" must be true or false");
+        } else {
+            if (key == "radius" || key == "blend_distance") number(key, value, 0.0, 100000.0);
+            else if (key == "priority") { if (!value.is_number_integer()) throw ToolError("\"priority\" must be an integer"); }
+            else if (key == "room_size" || key == "damping" || key == "wet") number(key, value, 0.0, 1.0);
+            else throw ToolError("Unknown ReverbZone field \"" + key + "\" (radius, blend_distance, priority, room_size, damping, wet)");
+        }
+    }
+}
+
+} // namespace
+
+void RegisterAudioEditorTools(McpServer& server, EditorSession& s) {
+    const Json kGuidProp = {{"type", "string"}, {"description", "Entity GUID"}};
+
+    server.AddTool({"audio_list", "Entities in the editor scene with an AudioSource, AudioListener or ReverbZone, and their settings.", Schema(Json::object()),
+                    [&s](const Json&) -> Json {
+                        Json out = Json::array();
+                        for (Entity e : AllEntities(s)) {
+                            Json row = Json::object();
+                            for (const char* name : {"AudioSource", "AudioListener", "ReverbZone"}) {
+                                const ComponentId id = FindComponentIdByName(name);
+                                if (id != kInvalidComponentId && s.world.HasComponentRaw(e, id)) row[name] = ComponentJson(s, e, id);
+                            }
+                            if (row.empty()) continue;
+                            const IdComponent* idc = s.world.GetComponent<IdComponent>(e);
+                            row["entity"] = idc ? ToString(idc->guid) : "";
+                            out.push_back(row);
+                        }
+                        return out;
+                    }});
+
+    server.AddTool(
+        {"audio_set",
+         "Add an audio component to an entity if it has none and apply fields (a partial update), as one undoable step. AudioSource: cue (a "
+         "cue asset path such as Audio/hurt.acue), auto_play, volume_db, pitch. AudioListener: active (the first active one hears). "
+         "ReverbZone: radius, blend_distance, priority, room_size, damping, wet (0..1).",
+         Schema({{"entity", kGuidProp},
+                 {"component", {{"type", "string"}, {"description", "AudioSource, AudioListener or ReverbZone"}}},
+                 {"fields", {{"type", "object"}, {"description", "e.g. {\"cue\": \"Audio/ambient.acue\", \"volume_db\": -6}"}}}},
+                {"entity", "component"}),
+         [&s](const Json& args) -> Json {
+             Entity e = RequireEntity(s, args);
+             EntityGuid guid = RequireGuid(args, "entity");
+             const std::string name = RequireString(args, "component");
+             if (!IsAudioComponent(name)) throw ToolError("\"component\" must be AudioSource, AudioListener or ReverbZone");
+             const Json fields = args.contains("fields") ? args["fields"] : Json::object();
+             if (!fields.is_object()) throw ToolError("\"fields\" must be an object");
+             ValidateAudioFields(name, fields);
+             const ComponentId id = RequireComponent(name);
+             editor::CommandContext ctx = s.Context();
+             s.stack.BeginTransaction("Set " + name);
+             if (!s.world.HasComponentRaw(e, id)) s.stack.Execute(ctx, std::make_unique<editor::AddComponentCommand>(guid, id));
+             Json warnings = Json::array();
+             if (!fields.empty()) {
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 try {
+                     after = PatchedBytes(s, e, id, fields, before, warnings);
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     s.stack.Undo(ctx);
+                     throw;
+                 }
+                 s.stack.Execute(ctx, std::make_unique<SetComponentCommand>(guid, id, before, after));
+             }
+             s.stack.EndTransaction();
+             Json out = {{"component", name}, {"value", ComponentJson(s, e, id)}};
+             if (!warnings.empty()) out["warnings"] = warnings;
+             return out;
+         }});
+
+    server.AddTool({"audio_remove", "Remove an AudioSource, AudioListener or ReverbZone from an entity. Undoable.",
+                    Schema({{"entity", kGuidProp}, {"component", {{"type", "string"}}}}, {"entity", "component"}), [&s](const Json& args) -> Json {
+                        Entity e = RequireEntity(s, args);
+                        EntityGuid guid = RequireGuid(args, "entity");
+                        const std::string name = RequireString(args, "component");
+                        if (!IsAudioComponent(name)) throw ToolError("\"component\" must be AudioSource, AudioListener or ReverbZone");
+                        const ComponentId id = RequireComponent(name);
+                        if (!s.world.HasComponentRaw(e, id)) throw ToolError("Entity has no " + name);
+                        editor::CommandContext ctx = s.Context();
+                        s.stack.Execute(ctx, std::make_unique<editor::RemoveComponentCommand>(guid, id));
+                        return {{"removed", name}};
+                    }});
+}
+
+
+// ---------------------------------------------------------------------------
+// Particle systems. The ParticleSystem component plays a particle effect (.avfx) at an entity; it is saved in scenes
+// and prefabs. particle_set edits it as one validated, undoable step.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+void ValidateParticleFields(const Json& fields) {
+    auto number = [&](const std::string& key, const Json& v, double lo, double hi) {
+        if (!v.is_number() || !(v.get<double>() >= lo) || !(v.get<double>() <= hi)) {
+            throw ToolError("\"" + key + "\" must be a number from " + std::to_string(lo) + " to " + std::to_string(hi));
+        }
+    };
+    for (auto& [key, value] : fields.items()) {
+        if (key == "active" || key == "commands") throw ToolError("\"" + key + "\" is runtime state, not saved");
+        if (key == "asset") { if (!value.is_string()) throw ToolError("\"asset\" must be an .avfx path (a string)"); }
+        else if (key == "auto_activate" || key == "destroy_when_finished") { if (!value.is_boolean()) throw ToolError("\"" + key + "\" must be true or false"); }
+        else if (key == "time_scale") { number(key, value, 0.0, 100.0); }
+        else if (key == "cull_distance" || key == "lod_distance") number(key, value, 0.0, 1.0e6);
+        else if (key == "lod_spawn_scale") number(key, value, 0.0, 1.0);
+        else throw ToolError("Unknown ParticleSystem field \"" + key + "\" (asset, auto_activate, time_scale, cull_distance, lod_distance, lod_spawn_scale, destroy_when_finished)");
+    }
+}
+
+} // namespace
+
+void RegisterParticleEditorTools(McpServer& server, EditorSession& s) {
+    const Json kGuidProp = {{"type", "string"}, {"description", "Entity GUID"}};
+
+    server.AddTool({"particle_list", "Entities in the editor scene with a ParticleSystem component, and its settings.", Schema(Json::object()),
+                    [&s](const Json&) -> Json {
+                        const ComponentId id = FindComponentIdByName("ParticleSystem");
+                        Json out = Json::array();
+                        if (id == kInvalidComponentId) return out;
+                        for (Entity e : AllEntities(s)) {
+                            if (!s.world.HasComponentRaw(e, id)) continue;
+                            const IdComponent* idc = s.world.GetComponent<IdComponent>(e);
+                            out.push_back({{"entity", idc ? ToString(idc->guid) : ""}, {"particle_system", ComponentJson(s, e, id)}});
+                        }
+                        return out;
+                    }});
+
+    server.AddTool(
+        {"particle_set",
+         "Make an entity play a particle effect, or change how: adds a ParticleSystem if it has none and applies the fields (a partial update), as one "
+         "undoable step. Fields: asset (an .avfx path under Content/, e.g. VFX/Sparks.avfx), auto_activate, time_scale, cull_distance and lod_distance "
+         "(0 = never), lod_spawn_scale (0..1, spawn share beyond lod_distance), destroy_when_finished (one-shots).",
+         Schema({{"entity", kGuidProp}, {"fields", {{"type", "object"}, {"description", "e.g. {\"asset\": \"VFX/Sparks.avfx\", \"destroy_when_finished\": true}"}}}}, {"entity", "fields"}),
+         [&s](const Json& args) -> Json {
+             Entity e = RequireEntity(s, args);
+             EntityGuid guid = RequireGuid(args, "entity");
+             if (!args["fields"].is_object()) throw ToolError("\"fields\" must be an object");
+             ValidateParticleFields(args["fields"]);
+             const ComponentId id = RequireComponent("ParticleSystem");
+             editor::CommandContext ctx = s.Context();
+             s.stack.BeginTransaction("Set ParticleSystem");
+             if (!s.world.HasComponentRaw(e, id)) s.stack.Execute(ctx, std::make_unique<editor::AddComponentCommand>(guid, id));
+             Json warnings = Json::array();
+             if (!args["fields"].empty()) {
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 try {
+                     after = PatchedBytes(s, e, id, args["fields"], before, warnings);
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     s.stack.Undo(ctx);
+                     throw;
+                 }
+                 s.stack.Execute(ctx, std::make_unique<SetComponentCommand>(guid, id, before, after));
+             }
+             s.stack.EndTransaction();
+             Json out = {{"particle_system", ComponentJson(s, e, id)}};
+             if (!warnings.empty()) out["warnings"] = warnings;
+             return out;
+         }});
+
+    server.AddTool({"particle_remove", "Remove an entity's ParticleSystem component. Undoable.", Schema({{"entity", kGuidProp}}, {"entity"}),
+                    [&s](const Json& args) -> Json {
+                        Entity e = RequireEntity(s, args);
+                        EntityGuid guid = RequireGuid(args, "entity");
+                        const ComponentId id = RequireComponent("ParticleSystem");
+                        if (!s.world.HasComponentRaw(e, id)) throw ToolError("Entity has no ParticleSystem");
+                        editor::CommandContext ctx = s.Context();
+                        s.stack.Execute(ctx, std::make_unique<editor::RemoveComponentCommand>(guid, id));
+                        return {{"removed", true}};
+                    }});
+}
+
+
+// ---------------------------------------------------------------------------
+// Navigation components. NavAgent (walks the mesh), NavObstacle (carves a hole), NavModifierVolume (relabels the ground)
+// and NavLinkProxy (an off-mesh link) are saved in scenes and prefabs; nav_component_set edits them as one validated,
+// undoable step.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+bool IsNavComponent(const std::string& name) { return name == "NavAgent" || name == "NavObstacle" || name == "NavModifierVolume" || name == "NavLinkProxy"; }
+
+void ValidateNavFields(const std::string& component, const Json& fields) {
+    auto number = [&](const std::string& key, const Json& v, double lo, double hi) {
+        if (!v.is_number() || !(v.get<double>() >= lo) || !(v.get<double>() <= hi)) throw ToolError("\"" + key + "\" must be a number from " + std::to_string(lo) + " to " + std::to_string(hi));
+    };
+    auto integer = [&](const std::string& key, const Json& v, long long lo, long long hi) {
+        if (!v.is_number_integer() || v.get<long long>() < lo || v.get<long long>() > hi) throw ToolError("\"" + key + "\" must be an integer from " + std::to_string(lo) + " to " + std::to_string(hi));
+    };
+    auto boolean = [&](const std::string& key, const Json& v) { if (!v.is_boolean()) throw ToolError("\"" + key + "\" must be true or false"); };
+    auto vec = [&](const std::string& key, const Json& v, bool positive) {
+        if (!v.is_array() || v.size() != 3 || !v[0].is_number() || !v[1].is_number() || !v[2].is_number()) throw ToolError("\"" + key + "\" must be [x, y, z]");
+        if (positive && !(v[0].get<double>() > 0 && v[1].get<double>() > 0 && v[2].get<double>() > 0)) throw ToolError("\"" + key + "\" must be above 0 on every axis");
+    };
+    for (auto& [key, value] : fields.items()) {
+        if (component == "NavAgent") {
+            if (key == "status" || key == "goal" || key == "velocity" || key == "remaining" || key == "commands") throw ToolError("\"" + key + "\" is runtime state, not saved");
+            if (key == "radius") number(key, value, 0.05, 4.0);
+            else if (key == "height") number(key, value, 0.1, 20.0);
+            else if (key == "max_speed") number(key, value, 0.0, 100.0);
+            else if (key == "max_acceleration") number(key, value, 0.0, 1000.0);
+            else if (key == "stopping_distance" || key == "goal_tolerance") number(key, value, 0.0, 100.0);
+            else if (key == "base_offset") number(key, value, -10.0, 10.0);
+            else if (key == "avoidance_quality") integer(key, value, 0, 3);
+            else if (key == "separation_weight") number(key, value, 0.0, 20.0);
+            else if (key == "turn_speed") number(key, value, 0.0, 10000.0);
+            else if (key == "update_rotation" || key == "allow_partial") boolean(key, value);
+            else throw ToolError("Unknown NavAgent field \"" + key + "\"");
+        } else if (component == "NavObstacle") {
+            if (key == "shape") { if (!value.is_string() || (value != "Box" && value != "Cylinder")) throw ToolError("\"shape\" must be Box or Cylinder"); }
+            else if (key == "center") vec(key, value, false);
+            else if (key == "half_extents") vec(key, value, true);
+            else if (key == "radius" || key == "height") number(key, value, 0.0, 1000.0);
+            else if (key == "move_threshold") number(key, value, 0.0, 100.0);
+            else if (key == "carve") boolean(key, value);
+            else throw ToolError("Unknown NavObstacle field \"" + key + "\"");
+        } else if (component == "NavModifierVolume") {
+            if (key == "half_extents") vec(key, value, true);
+            else if (key == "area") integer(key, value, 0, 63);
+            else throw ToolError("Unknown NavModifierVolume field \"" + key + "\" (half_extents, area)");
+        } else {
+            if (key == "start" || key == "end") vec(key, value, false);
+            else if (key == "radius") number(key, value, 0.0, 100.0);
+            else if (key == "area") integer(key, value, 1, 63);
+            else if (key == "user_id") integer(key, value, -2147483647, 2147483647);
+            else if (key == "bidirectional" || key == "enabled") boolean(key, value);
+            else throw ToolError("Unknown NavLinkProxy field \"" + key + "\"");
+        }
+    }
+}
+
+} // namespace
+
+void RegisterNavEditorTools(McpServer& server, EditorSession& s) {
+    const Json kGuidProp = {{"type", "string"}, {"description", "Entity GUID"}};
+
+    server.AddTool({"nav_component_list", "Entities in the editor scene with a NavAgent, NavObstacle, NavModifierVolume or NavLinkProxy, and their settings.", Schema(Json::object()),
+                    [&s](const Json&) -> Json {
+                        Json out = Json::array();
+                        for (Entity e : AllEntities(s)) {
+                            Json row = Json::object();
+                            for (const char* name : {"NavAgent", "NavObstacle", "NavModifierVolume", "NavLinkProxy"}) {
+                                const ComponentId id = FindComponentIdByName(name);
+                                if (id != kInvalidComponentId && s.world.HasComponentRaw(e, id)) row[name] = ComponentJson(s, e, id);
+                            }
+                            if (row.empty()) continue;
+                            const IdComponent* idc = s.world.GetComponent<IdComponent>(e);
+                            row["entity"] = idc ? ToString(idc->guid) : "";
+                            out.push_back(row);
+                        }
+                        return out;
+                    }});
+
+    server.AddTool(
+        {"nav_component_set",
+         "Add a navigation component to an entity if it has none and apply fields (a partial update), as one undoable step. NavAgent: radius, height, max_speed, "
+         "max_acceleration, stopping_distance, base_offset, avoidance_quality (0-3), separation_weight, update_rotation, turn_speed, allow_partial, goal_tolerance. "
+         "NavObstacle: shape (Box | Cylinder), center, half_extents, radius, height, move_threshold, carve. NavModifierVolume: half_extents, area (0 blocks, 63 ground). "
+         "NavLinkProxy: start, end (in the entity's space), radius, bidirectional, area, user_id, enabled.",
+         Schema({{"entity", kGuidProp},
+                 {"component", {{"type", "string"}, {"description", "NavAgent, NavObstacle, NavModifierVolume or NavLinkProxy"}}},
+                 {"fields", {{"type", "object"}}}},
+                {"entity", "component"}),
+         [&s](const Json& args) -> Json {
+             Entity e = RequireEntity(s, args);
+             EntityGuid guid = RequireGuid(args, "entity");
+             const std::string name = RequireString(args, "component");
+             if (!IsNavComponent(name)) throw ToolError("\"component\" must be NavAgent, NavObstacle, NavModifierVolume or NavLinkProxy");
+             const Json fields = args.contains("fields") ? args["fields"] : Json::object();
+             if (!fields.is_object()) throw ToolError("\"fields\" must be an object");
+             ValidateNavFields(name, fields);
+             const ComponentId id = RequireComponent(name);
+             editor::CommandContext ctx = s.Context();
+             s.stack.BeginTransaction("Set " + name);
+             if (!s.world.HasComponentRaw(e, id)) s.stack.Execute(ctx, std::make_unique<editor::AddComponentCommand>(guid, id));
+             Json warnings = Json::array();
+             if (!fields.empty()) {
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 try {
+                     after = PatchedBytes(s, e, id, fields, before, warnings);
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     s.stack.Undo(ctx);
+                     throw;
+                 }
+                 s.stack.Execute(ctx, std::make_unique<SetComponentCommand>(guid, id, before, after));
+             }
+             s.stack.EndTransaction();
+             Json out = {{"component", name}, {"value", ComponentJson(s, e, id)}};
+             if (!warnings.empty()) out["warnings"] = warnings;
+             return out;
+         }});
+
+    server.AddTool({"nav_component_remove", "Remove a NavAgent, NavObstacle, NavModifierVolume or NavLinkProxy from an entity. Undoable.",
+                    Schema({{"entity", kGuidProp}, {"component", {{"type", "string"}}}}, {"entity", "component"}), [&s](const Json& args) -> Json {
+                        Entity e = RequireEntity(s, args);
+                        EntityGuid guid = RequireGuid(args, "entity");
+                        const std::string name = RequireString(args, "component");
+                        if (!IsNavComponent(name)) throw ToolError("\"component\" must be NavAgent, NavObstacle, NavModifierVolume or NavLinkProxy");
+                        const ComponentId id = RequireComponent(name);
+                        if (!s.world.HasComponentRaw(e, id)) throw ToolError("Entity has no " + name);
+                        editor::CommandContext ctx = s.Context();
+                        s.stack.Execute(ctx, std::make_unique<editor::RemoveComponentCommand>(guid, id));
+                        return {{"removed", name}};
                     }});
 }
 
