@@ -37,6 +37,8 @@ struct CookOptions {
     // "normal_map", "srgb", "mips").
     bool cook_textures = true;
     u32 texture_quality = 2;             // 0 (fastest) .. 4 (best)
+    // Meshes: LODs and meshlets (Cooked/<guid>.amesh), see mesh_cook.h.
+    bool cook_meshes = true;
     // Refuse to write an archive when scanning, importing, or cooking reports
     // any warning. Use for release candidates that require a clean content set.
     bool strict_validation = false;
