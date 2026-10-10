@@ -393,3 +393,63 @@ AETHER_TEST(Mcp_PhysicsFallsWhilePlayingAndStopRestores) {
     AETHER_CHECK(h.Components(ball)["Transform"]["position"][1].get<f32>() == 10.0f);
 }
 #endif
+
+#include "aether/assets/asset_guid.h"
+#include "aether/pak/pak.h"
+#include "game_tools.h"
+
+AETHER_TEST(Mcp_GameToolsHostACookedGame) {
+    namespace stdfs = std::filesystem;
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_game_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+
+    const Json transform = {{"position", {1, 2, 3}}, {"rotation", {0, 0, 0, 1}}, {"scale", {1, 1, 1}}};
+    const Json manifest = {{"$type", "CookManifest"}, {"$version", 1}, {"project", "McpDemo"}, {"configuration", "Development"},
+                           {"startup_scene", "Scenes/start.ascene"}, {"fixed_timestep_hz", 60.0}, {"gravity", {0.0, -9.81, 0.0}},
+                           {"layers", {"Default"}}, {"collision_matrix", Json::array()},
+                           {"assets", Json::array({{{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/start.ascene"}, {"importer", "Scene"}}})},
+                           {"files", Json::array()}};
+    const Json scene = {{"$type", "Scene"}, {"$version", 1},
+                        {"entities", Json::array({{{"components", {{"Transform", transform}, {"Tags", {{"names", {"Hero"}}}}}}}})}};
+    pak::PakWriter writer;
+    writer.Add("Manifest.json", manifest.dump());
+    writer.Add("Content/Scenes/start.ascene", scene.dump());
+    const stdfs::path file = dir / "game.apak";
+    std::string error;
+    AETHER_CHECK(writer.Write(file.string(), &error));
+
+    Harness h;
+    RegisterGameTools(h.server);
+    AETHER_CHECK(h.Call("game_state").is_error); // nothing loaded yet
+    AETHER_CHECK(h.Call("game_load", {{"paks", {(dir / "missing.apak").string()}}, {"user_dir", (dir / "user").string()}}).is_error);
+
+    Harness::Result loaded = h.Call("game_load", {{"paks", {file.string()}}, {"user_dir", (dir / "user").string()}});
+    AETHER_CHECK(!loaded.is_error);
+    AETHER_CHECK(loaded.value["project"] == "McpDemo");
+    AETHER_CHECK(loaded.value["playing"] == true);
+    AETHER_CHECK(loaded.value["entities"] == 1);
+
+    Harness::Result stepped = h.Call("game_step", {{"frames", 10}});
+    AETHER_CHECK(!stepped.is_error);
+    AETHER_CHECK(stepped.value["frames"] == 10);
+    AETHER_CHECK(h.Call("game_step", {{"frames", 0}}).is_error);
+
+    Json systems = h.Call("game_systems").value;
+    AETHER_CHECK(systems.contains("FixedUpdate"));
+
+    Harness::Result listed = h.Call("game_list_entities", {{"tag", "Hero"}});
+    AETHER_CHECK(listed.value["total"] == 1);
+    const std::string hero = listed.value["entities"][0]["entity"];
+    AETHER_CHECK(h.Call("game_get_entity", {{"entity", hero}}).value["components"]["Transform"]["position"] == kPos123);
+
+    Harness::Result set = h.Call("game_set_component", {{"entity", hero}, {"component", "Transform"}, {"values", {{"position", {9, 9, 9}}}}});
+    AETHER_CHECK(!set.is_error);
+    AETHER_CHECK(h.Call("game_get_entity", {{"entity", hero}}).value["components"]["Transform"]["position"] == Json::array({9, 9, 9}));
+    AETHER_CHECK(h.Call("game_set_component", {{"entity", hero}, {"component", "Nope"}, {"values", Json::object()}}).is_error);
+    AETHER_CHECK(h.Call("game_input", {{"set", {{"NoSuchKey", 1}}}}).is_error);
+
+    AETHER_CHECK(!h.Call("game_unload").is_error);
+    AETHER_CHECK(h.Call("game_state").is_error);
+    stdfs::remove_all(dir);
+}

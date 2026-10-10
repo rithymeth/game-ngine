@@ -53,7 +53,7 @@ aether_replay_sequence 3
 aether_templates 3
 aether_ui 3
 aether_docgen 4
-aether_mcp 4
+aether_mcp 6
 aether_module_AI 4
 aether_replay_gameplay 4
 aether_scripting 4
@@ -61,7 +61,7 @@ aether_bench 5
 aether_editor_qt 5
 aether_editor_ui 5
 aether_game 5
-aether_mcp_server 5
+aether_mcp_server 7
 aether_editor 6
 aether_editor_vulkan 6
 aether_player 6

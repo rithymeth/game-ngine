@@ -10,6 +10,7 @@
 #include "aether/scene/serialization.h"
 #include "core/commands.h"
 #include "editor_tools.h"
+#include "game_tools.h"
 
 #include <cstdio>
 #include <cstring>
@@ -48,6 +49,7 @@ int main(int argc, char** argv) {
 
     mcp::McpServer server("aether-editor", "0.1.0");
     mcp::RegisterEditorTools(server, session);
+    mcp::RegisterGameTools(server);
     server.RunStdio(std::cin, std::cout);
     return 0;
 }

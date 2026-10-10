@@ -41,6 +41,29 @@ and errors go to stderr.
 | `step_simulation` | Run N frames (1-10000) of `dt` seconds through the fixed-timestep frame loop |
 | `set_platformer_input` | Move/jump input for 2D platformer controllers |
 
+### Running a cooked game (`game_*`)
+
+The editor tools edit the authored scene. The `game_*` tools instead host a full cooked
+`Game` (the `player/` runtime) headless, so **every system runs**: 3D and 2D physics, Luau scripts,
+Blueprints, audio, sequences, the gameplay kits (abilities, effects, inventory, interaction, quests),
+saves and localization. The game has its own world, separate from the editor's.
+
+| Tool | What it does |
+| --- | --- |
+| `game_load` | Mount `.apak` archives (or a folder of them / a loose cook), load the startup scene or `scene`, start modules, begin play |
+| `game_step` | Run N frames (1-100000) of `dt` seconds (default: the project's fixed step) |
+| `game_state` | Frames, time, entity/physics/script counts, script and Blueprint errors, load warnings |
+| `game_input` | Hold keys/axes (`{"W": 1}`), mouse delta for one frame, or clear |
+| `game_set_paused` | Freeze or resume the simulation |
+| `game_load_scene` | Switch to another cooked scene |
+| `game_systems` | The game's systems in execution order by phase (filled after the first step) |
+| `game_list_entities` / `game_get_entity` | Inspect the running world (filter by component or tag) |
+| `game_set_component` / `game_destroy_entity` | Change the live world (not undoable; gone on reload) |
+| `game_unload` | Stop and unload |
+
+The plugin modules Audio, Navigation, Networking and Physics are linked into the server so manifests
+that name them start; AI is not (see below).
+
 Entities are addressed by GUID (from `list_entities`), which survives
 undo/redo and save/load. Component values use the engine's reflection JSON
 (`Vec3` is `[x, y, z]`, entity references are GUID strings).
@@ -57,6 +80,7 @@ Bad input is reported as a tool error (`isError`), never a crash, and a failed
   navigation, renderer, sequencer, 2D, streaming, UI, VFX, and physics and the genre kits when built).
 - `simulation.h/.cpp` -- the systems that run in play mode (3D physics and characters, 2D physics with
   platformers and camera follow, previous-transform recording) on the engine's scheduler.
+- `game_tools.h/.cpp` -- the `game_*` tools over a hosted `player::Game`.
 - `main.cpp` -- the `aether_mcp_server` executable.
 - Tests: `tests/test_mcp.cpp`.
 
@@ -64,5 +88,6 @@ Every module's components are registered at startup, so all of them can be liste
 Gameplay AI (`Aether::AI`: behaviour trees, perception) is deliberately not linked: the editor/MCP side
 must not depend on it (`docs/design/agent_gameplay_ai_boundary.md`).
 
-Systems that need project assets or a window (audio output, particles, sequences, UI, scripting) are not
-in the headless simulation; they need a full `Game`.
+The editor's `play` simulation (above) is deliberately small: physics only. For audio, scripting,
+sequences and the gameplay kits, load the cooked game with `game_load`. Nothing is drawn: there is no
+window or graphics device, so no screenshots yet.
