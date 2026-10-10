@@ -35,7 +35,11 @@ and errors go to stderr.
 | `reparent` | Parent or detach an entity; rejects cycles |
 | `undo` / `redo` | Walk the editor history |
 | `save_scene` / `load_scene` | `.json` (readable) or `.aesc` (binary); load can `replace` |
-| `play` / `pause` / `stop` | Play-in-Editor; stop restores the scene exactly |
+| `play` / `pause` / `stop` | Play-in-Editor; stop restores the scene exactly. `play` starts the simulation systems |
+| `list_systems` | The simulation systems in execution order, with enabled state (play mode) |
+| `set_system_enabled` | Turn one system on or off |
+| `step_simulation` | Run N frames (1-10000) of `dt` seconds through the fixed-timestep frame loop |
+| `set_platformer_input` | Move/jump input for 2D platformer controllers |
 
 Entities are addressed by GUID (from `list_entities`), which survives
 undo/redo and save/load. Component values use the engine's reflection JSON
@@ -49,9 +53,16 @@ Bad input is reported as a tool error (`isError`), never a crash, and a failed
   `tools/call`; transport-independent `HandleMessage`, plus the stdio loop.
 - `editor_tools.h/.cpp` -- the tools above, over an `EditorSession` (world,
   GUID index, command stack, play session).
+- `modules.cpp` -- registers every module's components (animation, audio, Blueprint, gameplay/GAS,
+  navigation, renderer, sequencer, 2D, streaming, UI, VFX, and physics and the genre kits when built).
+- `simulation.h/.cpp` -- the systems that run in play mode (3D physics and characters, 2D physics with
+  platformers and camera follow, previous-transform recording) on the engine's scheduler.
 - `main.cpp` -- the `aether_mcp_server` executable.
 - Tests: `tests/test_mcp.cpp`.
 
-Only components registered in the process are visible. The server registers
-the built-ins (`Transform`, `Parent`, `IdComponent`, `ModelRenderer`); to expose
-more (physics, audio, ...) call `GetComponentId<T>()` for them in `main.cpp`.
+Every module's components are registered at startup, so all of them can be listed, added and edited.
+Gameplay AI (`Aether::AI`: behaviour trees, perception) is deliberately not linked: the editor/MCP side
+must not depend on it (`docs/design/agent_gameplay_ai_boundary.md`).
+
+Systems that need project assets or a window (audio output, particles, sequences, UI, scripting) are not
+in the headless simulation; they need a full `Game`.

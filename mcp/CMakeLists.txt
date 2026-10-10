@@ -1,9 +1,24 @@
 # Model Context Protocol server for the editor's scene (see mcp_server.h,
-# editor_tools.h). Headless: depends only on the engine and the editor's
-# portable command layer, not on ImGui or any graphics backend.
-add_library(aether_mcp STATIC mcp_server.cpp editor_tools.cpp)
+# editor_tools.h). Headless: depends only on the engine, the editor's portable
+# command layer and the gameplay modules whose components it exposes -- not on
+# ImGui or any graphics backend, and never on Aether::AI
+# (docs/design/agent_gameplay_ai_boundary.md).
+add_library(aether_mcp STATIC mcp_server.cpp editor_tools.cpp modules.cpp simulation.cpp)
 target_include_directories(aether_mcp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(aether_mcp PUBLIC Aether::Engine aether_editor_core nlohmann_json::nlohmann_json)
+# Modules whose components are exposed to agents.
+target_link_libraries(aether_mcp PRIVATE
+    Aether::Animation Aether::Audio Aether::Blueprint Aether::Gameplay Aether::Nav
+    Aether::Renderer Aether::Sequencer Aether::Sprite2D Aether::Streaming Aether::UI Aether::VFX)
+foreach(kit Physics Inventory Interaction Quests)
+    string(TOUPPER ${kit} kit_upper)
+    if(TARGET Aether::${kit})
+        target_link_libraries(aether_mcp PRIVATE Aether::${kit})
+        target_compile_definitions(aether_mcp PUBLIC AETHER_MCP_${kit_upper}=1)
+    else()
+        target_compile_definitions(aether_mcp PUBLIC AETHER_MCP_${kit_upper}=0)
+    endif()
+endforeach()
 add_library(Aether::MCP ALIAS aether_mcp)
 
 add_executable(aether_mcp_server main.cpp)
