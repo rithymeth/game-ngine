@@ -9,11 +9,14 @@
 #include "aether/core/log.h"
 #include "aether/scene/serialization.h"
 #include "core/commands.h"
+#include "build_tools.h"
 #include "editor_tools.h"
 #include "game_tools.h"
 
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <string>
 #include <iostream>
 
 #ifdef _WIN32
@@ -33,8 +36,11 @@ int main(int argc, char** argv) {
     mcp::RegisterBuiltinComponents();
     mcp::EditorSession session;
 
+    std::string build_dir;
     for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--scene") == 0 && i + 1 < argc) {
+        if (std::strcmp(argv[i], "--build-dir") == 0 && i + 1 < argc) {
+            build_dir = argv[++i];
+        } else if (std::strcmp(argv[i], "--scene") == 0 && i + 1 < argc) {
             const char* path = argv[++i];
             if (!LoadSceneJson(session.world, path)) {
                 std::fprintf(stderr, "aether_mcp_server: could not load scene %s\n", path);
@@ -42,7 +48,7 @@ int main(int argc, char** argv) {
             }
             editor::EnsureAllGuids(session.world, session.guids);
         } else {
-            std::fprintf(stderr, "usage: aether_mcp_server [--scene scene.json]\n");
+            std::fprintf(stderr, "usage: aether_mcp_server [--scene scene.json] [--build-dir <cmake build dir>]\n");
             return 1;
         }
     }
@@ -50,6 +56,8 @@ int main(int argc, char** argv) {
     mcp::McpServer server("aether-editor", "0.1.0");
     mcp::RegisterEditorTools(server, session);
     mcp::RegisterGameTools(server);
+    std::error_code ec;
+    mcp::RegisterBuildTools(server, mcp::FindBuildContext(build_dir, std::filesystem::absolute(argv[0], ec).parent_path()));
     server.RunStdio(std::cin, std::cout);
     return 0;
 }
