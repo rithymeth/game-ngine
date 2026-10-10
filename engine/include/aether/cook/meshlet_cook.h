@@ -10,7 +10,7 @@
 //                  renderer culls by.
 //   GenerateLods   simplifies a mesh to a chain of coarser versions for distance LODs.
 //
-// The results are in memory only. Writing them into the cooked mesh and the pak is a later step (39.6).
+// The results are in memory only; mesh_cook.h writes them into the cooked mesh (39.6a).
 
 #include "aether/core/base.h"
 #include "aether/math/math.h"
