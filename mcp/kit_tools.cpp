@@ -3,6 +3,9 @@
 #include "project_host.h"
 
 #include "aether/audio/cue.h"
+#include "aether/blueprint/graph.h"
+#include "aether/blueprint/validate.h"
+#include "blueprint_tools.h"
 #include "aether/gameplay/gameplay_ability.h"
 #include "aether/gameplay/gameplay_effect.h"
 #include "aether/input/actions.h"
@@ -107,6 +110,23 @@ const std::vector<KitType>& Types() {
                          return {};
                      }});
 #endif
+        t.push_back({"blueprint", ".abp", "Blueprint",
+                     "A Blueprint: visual scripting. Variables, event graphs (BeginPlay, Tick, custom events), function and macro graphs, dispatchers and interfaces, "
+                     "as nodes and links. Pins come from each node's type (bp_node_types, bp_node_info); bp_validate, bp_compile and bp_run check and run it.",
+                     [] { return bp::BlueprintToJson(bp::Blueprint{}); },
+                     [](const std::string& text, Json& canonical) -> std::string {
+                         const Json parsed = Json::parse(text, nullptr, false);
+                         if (parsed.is_discarded()) return "blueprint.parse: not valid JSON";
+                         bp::Blueprint blueprint;
+                         std::string error;
+                         if (!bp::BlueprintFromJson(parsed, blueprint, &error)) return "blueprint.parse: " + error;
+                         const bp::ValidationResult result = bp::ValidateBlueprint(blueprint);
+                         for (const bp::Diagnostic& d : result.diagnostics) {
+                             if (d.severity == bp::Severity::Error) return "blueprint." + d.code + " (" + d.graph + (d.node ? ", node " + std::to_string(d.node) : "") + "): " + d.message;
+                         }
+                         canonical = bp::BlueprintToJson(blueprint);
+                         return {};
+                     }});
         t.push_back({"sound_cue", ".acue", "SoundCue",
                      "A sound cue: a small graph (Wave, Random, Sequence, Modulator, Concatenator, Loop, Mix, Delay) deciding what plays each time, "
                      "plus output settings (bus, volume, pitch, spatial attenuation).",
@@ -189,6 +209,7 @@ Json SampleOf(const std::string& type) {
         a.commit_on_activate = false;
         return gas::AbilityToJson(a);
     }
+    if (type == "blueprint") return BlueprintSampleJson();
     if (type == "sound_cue") {
         audio::SoundCue c;
         c.name = "footstep";
@@ -278,6 +299,11 @@ std::vector<std::string> NotesOf(const std::string& type) {
     if (type == "quest") {
         return {"objectives[].kind: count | tag | flag; ids unique; required >= 1",
                 "prerequisites name quests; reward_effects name effects; reward_items[].item names an item (kit_check verifies them)"};
+    }
+    if (type == "blueprint") {
+        return {"bp_node_types lists the node ids you can use; bp_node_info shows a node's pins; links join an output pin to an input pin: {\"from\": [node, \"pin\"], \"to\": [node, \"pin\"]}",
+                "Exec pins carry the flow, data pins carry values; types convert where they can (int to float), else bp_validate says why not",
+                "bp_validate gives the BP001... diagnostics, bp_compile compiles to bytecode, bp_run runs it headless and shows prints, variables and errors"};
     }
     if (type == "sound_cue") {
         return {"nodes[].type: Wave (sound, looping; no children) | Random (weights, no_repeat) | Sequence | Modulator (volume_db [min,max], pitch [min,max]; one child) | "
@@ -415,7 +441,7 @@ void RegisterKitTools(McpServer& server, std::shared_ptr<detail::AssetHost> host
     server.AddTool({"kit_schema",
                     "The shape of one definition type: a sample with every field set, the allowed words and cross-reference rules (notes), "
                     "the blank definition, and (if a project is open) an existing example from it.",
-                    Schema({{"type", {{"type", "string"}, {"description", "effect, ability, item, quest, sound_cue, input_action or input_mapping"}}}}, {"type"}),
+                    Schema({{"type", {{"type", "string"}, {"description", "effect, ability, item, quest, sound_cue, blueprint, input_action or input_mapping"}}}}, {"type"}),
                     [host](const Json& args) -> Json {
                         const KitType& t = RequireType(RequireString(args, "type"));
                         Json out = {{"type", t.name}, {"extension", t.extension}, {"description", t.description}, {"blank", t.blank()}, {"notes", NotesOf(t.name)}};

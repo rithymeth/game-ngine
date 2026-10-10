@@ -10,6 +10,7 @@
 #include "aether/scene/serialization.h"
 #include "core/commands.h"
 #include "asset_tools.h"
+#include "blueprint_tools.h"
 #include "audio_tools.h"
 #include "build_tools.h"
 #include "editor_tools.h"
@@ -67,6 +68,7 @@ int main(int argc, char** argv) {
     mcp::RegisterKitTools(server, project);
     mcp::RegisterAudioTools(server, project);
     mcp::RegisterVfxTools(server, project);
+    mcp::RegisterBlueprintTools(server, project);
     mcp::RegisterTerrainTools(server);
     mcp::RegisterNavTools(server, session);
     std::error_code ec;
