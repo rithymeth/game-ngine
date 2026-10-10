@@ -543,6 +543,7 @@ AETHER_TEST(Mcp_ToolsCanReturnImages) {
 #include "audio_tools.h"
 #include "blueprint_tools.h"
 #include "kit_tools.h"
+#include "script_tools.h"
 #include "tilemap_tools.h"
 #include "sequence_tools.h"
 #include "loc_tools.h"
@@ -2150,3 +2151,167 @@ AETHER_TEST(Mcp_TilemapToolsBuildPaintReadAndPreviewALevel) {
     AETHER_CHECK(h.Call("kit_validate", {{"type", "tilemap"}, {"definition", {{"$type", "Nonsense"}}}}).value["ok"] == false);
     stdfs::remove_all(dir);
 }
+
+#if AETHER_MCP_SCRIPTING
+AETHER_TEST(Mcp_ScriptToolsCheckCompleteRunSimulateAndCheckTheProject) {
+    namespace stdfs = std::filesystem;
+    Harness h;
+    auto project = MakeAssetHost();
+    RegisterAssetTools(h.server, project);
+    RegisterScriptTools(h.server, project);
+
+    const std::string spin =
+        "local Spin = {}\n"
+        "--@range 0 720\n"
+        "--@tooltip degrees per second\n"
+        "Spin.speed = 180\n"
+        "Spin.label = 'turner'\n"
+        "function Spin:OnStart() print('started', self.speed) end\n"
+        "function Spin:OnUpdate(dt)\n"
+        "  local t = self.entity:Get('Transform')\n"
+        "  t.position = vector.create(t.position.x + dt, 0, 0)\n"
+        "end\n"
+        "return Spin\n";
+
+    // --- check: what a script is, and where it breaks
+    Json checked = h.Call("script_check", {{"source", spin}}).value;
+    AETHER_CHECK(checked["ok"] == true);
+    AETHER_CHECK(checked["class"]["callbacks"] == Json::array({"OnStart", "OnUpdate"}));
+    Json vars = checked["class"]["variables"];
+    AETHER_CHECK(vars.size() == 2);
+    for (const Json& v : vars) {
+        if (v["name"] == "speed") {
+            AETHER_CHECK(v["kind"] == "number" && v["default"] == 180 && v["range"] == Json::array({0, 720}) && v["tooltip"] == "degrees per second");
+        } else {
+            AETHER_CHECK(v["name"] == "label" && v["kind"] == "string" && v["default"] == "turner");
+        }
+    }
+    Json broken = h.Call("script_check", {{"source", "local a = 1\nlocal b = = 2\nreturn {}"}}).value;
+    AETHER_CHECK(broken["ok"] == false);
+    AETHER_CHECK(broken["error"]["line"] == 2);
+    AETHER_CHECK(!broken["error"]["message"].get<std::string>().empty());
+    AETHER_CHECK(h.Call("script_check").is_error);
+    AETHER_CHECK(h.Call("script_check", {{"asset", "Scripts/x.luau"}}).is_error); // no project yet
+    AETHER_CHECK(h.Call("script_check", {{"source", 5}}).is_error);
+
+    // --- completion
+    auto labels = [&](const Json& items) {
+        std::set<std::string> out;
+        for (const Json& i : items) out.insert(i["label"].get<std::string>());
+        return out;
+    };
+    Json after_world = h.Call("script_complete", {{"source", "local x = world:"}}).value;
+    AETHER_CHECK(labels(after_world["items"]).count("Spawn") == 1);
+    AETHER_CHECK(labels(after_world["items"]).count("EntitiesWith") == 1);
+    Json callbacks = h.Call("script_complete", {{"source", "local Spin = {}\nfunction Spin:"}}).value;
+    AETHER_CHECK(labels(callbacks["items"]).count("OnUpdate") == 1);
+    Json components = h.Call("script_complete", {{"source", "local t = e:Get(\""}, {"limit", 500}}).value;
+    AETHER_CHECK(labels(components["items"]).count("Transform") == 1);
+    Json by_position = h.Call("script_complete", {{"source", "local a = 1\nlocal b = world:"}, {"line", 2}, {"column", 17}}).value;
+    AETHER_CHECK(labels(by_position["items"]).count("Spawn") == 1);
+    AETHER_CHECK(h.Call("script_complete", {{"source", "x"}, {"cursor", 99}}).is_error);
+    AETHER_CHECK(h.Call("script_complete", {{"source", "x\ny"}, {"line", 9}, {"column", 1}}).is_error);
+    AETHER_CHECK(h.Call("script_complete", {{"source", "x"}, {"cursor", -1}}).is_error);
+
+    // --- run in the sandbox
+    Json ran = h.Call("script_run", {{"source", "print('hi', 2)\nreturn 1, 'a', true"}}).value;
+    AETHER_CHECK(ran["ok"] == true);
+    AETHER_CHECK(ran["prints"] == Json::array({"hi\t2"}));
+    AETHER_CHECK(ran["returned"] == Json::array({1, "a", true}));
+    Json failed = h.Call("script_run", {{"source", "local x = 1\nerror('boom')"}}).value;
+    AETHER_CHECK(failed["ok"] == false);
+    AETHER_CHECK(failed["error"]["message"].get<std::string>().find("boom") != std::string::npos);
+    AETHER_CHECK(failed["error"]["line"] == 2);
+    Json called = h.Call("script_run", {{"source", "function add(a, b) return a + b end"}, {"call", {{"function", "add"}, {"args", {2, 3}}}}}).value;
+    AETHER_CHECK(called["ok"] == true);
+    AETHER_CHECK(called["call"]["returned"] == Json::array({5}));
+    Json missing = h.Call("script_run", {{"source", "x = 1"}, {"call", {{"function", "nothing"}}}}).value;
+    AETHER_CHECK(missing["ok"] == false && missing["call"]["ok"] == false);
+    AETHER_CHECK(h.Call("script_run", {{"source", "x = 1"}, {"call", {{"args", {1}}}}}).is_error);
+    AETHER_CHECK(h.Call("script_run", {{"source", "x = 1"}, {"call", {{"function", "f"}, {"args", {Json::array()}}}}}).is_error);
+    Json runaway = h.Call("script_run", {{"source", "while true do end"}, {"instruction_budget", 5000}}).value;
+    AETHER_CHECK(runaway["ok"] == false); // stopped by the budget instead of hanging
+    Json sandbox = h.Call("script_run", {{"source", "return os.execute == nil, io == nil, os.clock() >= 0"}}).value;
+    AETHER_CHECK(sandbox["returned"] == Json::array({true, true, true}));
+    AETHER_CHECK(h.Call("script_run", {{"source", "local e = world:Spawn()\nreturn e ~= nil"}}).value["entities_in_world"] == 1);
+    AETHER_CHECK(h.Call("script_run", {{"source", "return 1"}, {"instruction_budget", -1}}).is_error);
+
+    // --- simulate a class on an entity
+    Json sim = h.Call("script_simulate", {{"source", spin}, {"ticks", 60}}).value;
+    AETHER_CHECK(sim["ok"] == true);
+    AETHER_CHECK(sim["prints"] == Json::array({"started\t180"}));
+    AETHER_CHECK(std::fabs(sim["transform"]["position"][0].get<double>() - 1.0) < 0.01); // one unit in a second
+    AETHER_CHECK(sim["fields"]["speed"] == 180);
+    AETHER_CHECK(sim["instances"] == 1);
+    Json overridden = h.Call("script_simulate", {{"source", spin}, {"ticks", 1}, {"variables", {{"speed", 90}}}}).value;
+    AETHER_CHECK(overridden["prints"] == Json::array({"started\t90"}));
+    AETHER_CHECK(overridden["fields"]["speed"] == 90);
+    AETHER_CHECK(h.Call("script_simulate", {{"source", spin}, {"variables", {{"nope", 1}}}}).is_error);
+    AETHER_CHECK(h.Call("script_simulate", {{"source", spin}, {"variables", {{"speed", "fast"}}}}).is_error);
+    Json compile_fail = h.Call("script_simulate", {{"source", "local = 1"}}).value;
+    AETHER_CHECK(compile_fail["ok"] == false && compile_fail["stage"] == "compile");
+    AETHER_CHECK(h.Call("script_simulate", {{"source", spin}, {"ticks", 99999}}).is_error);
+    AETHER_CHECK(h.Call("script_simulate", {{"source", spin}, {"components", {{"NoSuchComponent", Json::object()}}}}).is_error);
+
+    const std::string crashing = "local C = {}\nfunction C:OnUpdate(dt) error('oops') end\nreturn C\n";
+    Json crashed = h.Call("script_simulate", {{"source", crashing}, {"ticks", 3}}).value;
+    AETHER_CHECK(crashed["ok"] == false);
+    AETHER_CHECK(!crashed["errors"].empty());
+    AETHER_CHECK(crashed["errors"][0]["message"].get<std::string>().find("oops") != std::string::npos);
+
+    const std::string timers = "local T = {}\nfunction T:OnStart() Timer.After(0.5, function() print('ding') end) end\nreturn T\n";
+    Json timed = h.Call("script_simulate", {{"source", timers}, {"ticks", 60}}).value;
+    AETHER_CHECK(timed["prints"] == Json::array({"ding"}));
+    AETHER_CHECK(timed["timers_pending"] == 0);
+    AETHER_CHECK(h.Call("script_simulate", {{"source", timers}, {"ticks", 10}}).value["prints"].empty()); // 10 ticks is 0.17 s: not yet
+
+    const std::string finder = "local F = {}\nfunction F:OnStart() print(#world:EntitiesWith('Tags')) end\nreturn F\n";
+    const Json hero = Json{{"Tags", Json{{"names", Json::array({"Hero"})}}}};
+    const Json rat = Json{{"components", Json{{"Tags", Json{{"names", Json::array({"Rat"})}}}}}};
+    Json found = h.Call("script_simulate", {{"source", finder}, {"ticks", 1}, {"components", hero}, {"entities", Json::array({rat, rat})}}).value;
+    AETHER_CHECK(found["prints"] == Json::array({"3"})); // the scripted entity and two more
+    AETHER_CHECK(found["entities"] == 3);
+
+    // --- the project: scripts compile and scenes use them correctly
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_script_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+    ProjectPaths paths;
+    std::string error;
+    AETHER_CHECK(CreateProject(dir, "McpScripts", &paths, &error));
+    AETHER_CHECK(!h.Call("project_open", {{"project_file", paths.file.string()}}).is_error);
+    Json good = h.Call("content_write", {{"path", "Scripts/Spin.luau"}, {"text", spin}}).value;
+    AETHER_CHECK(good["asset"]["importer"] == "Script");
+    const std::string good_guid = good["asset"]["guid"];
+    AETHER_CHECK(!h.Call("content_write", {{"path", "Scripts/Bad.luau"}, {"text", "local x = = 1"}}).is_error);
+    AETHER_CHECK(h.Call("script_check", {{"asset", "Scripts/Spin.luau"}}).value["ok"] == true);
+    AETHER_CHECK(h.Call("script_check", {{"asset", "Scripts/Bad.luau"}}).value["ok"] == false);
+    AETHER_CHECK(h.Call("script_check", {{"asset", "Scripts/Nothing.luau"}}).is_error);
+    AETHER_CHECK(h.Call("script_simulate", {{"asset", "Scripts/Spin.luau"}, {"ticks", 30}}).value["ok"] == true);
+    AETHER_CHECK(h.Call("script_run", {{"asset", "Scripts/Spin.luau"}}).value["ok"] == true);
+
+    auto scene_with = [&](Json components) {
+        return Json{{"$type", "Scene"}, {"$version", 1}, {"entities", Json::array({Json{{"components", Json{{"ScriptComponent", components}}}}})}};
+    };
+    auto write_scene = [&](const Json& scene) { AETHER_CHECK(!h.Call("content_write", {{"path", "Scenes/start.ascene"}, {"text", scene.dump()}}).is_error); };
+    write_scene(scene_with({{"script", good_guid}, {"properties", {{{"name", "speed"}, {"value", "5"}}}}}));
+    Json project_check = h.Call("script_check_project").value;
+    AETHER_CHECK(project_check["script_components"] == 1);
+    AETHER_CHECK(project_check["ok"] == false);
+    AETHER_CHECK(project_check["problems"].size() == 1); // only Bad.luau
+    AETHER_CHECK(project_check["problems"][0]["path"] == "Scripts/Bad.luau");
+    AETHER_CHECK(!h.Call("asset_delete", {{"asset", "Scripts/Bad.luau"}}).is_error);
+    AETHER_CHECK(h.Call("script_check_project").value["ok"] == true);
+    write_scene(scene_with({{"script", good_guid}, {"properties", {{{"name", "colour"}, {"value", "\"red\""}}}}}));
+    Json unknown = h.Call("script_check_project").value;
+    AETHER_CHECK(unknown["ok"] == false);
+    AETHER_CHECK(unknown["problems"][0]["problem"].get<std::string>().find("does not expose") != std::string::npos);
+    write_scene(scene_with({{"script", good_guid}, {"properties", {{{"name", "speed"}, {"value", "\"fast\""}}}}}));
+    AETHER_CHECK(h.Call("script_check_project").value["problems"][0]["problem"].get<std::string>().find("does not fit") != std::string::npos);
+    write_scene(scene_with({{"script", "00000000-0000-4000-8000-0000000000aa"}}));
+    AETHER_CHECK(h.Call("script_check_project").value["problems"][0]["problem"].get<std::string>().find("not a script in the project") != std::string::npos);
+    write_scene(scene_with({{"script", ""}}));
+    AETHER_CHECK(h.Call("script_check_project").value["problems"][0]["problem"].get<std::string>().find("has no script") != std::string::npos);
+    stdfs::remove_all(dir);
+}
+#endif

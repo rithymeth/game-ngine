@@ -3,7 +3,7 @@
 # command layer and the gameplay modules whose components it exposes -- not on
 # ImGui or any graphics backend, and never on Aether::AI
 # (docs/design/agent_gameplay_ai_boundary.md).
-add_library(aether_mcp STATIC mcp_server.cpp editor_tools.cpp modules.cpp simulation.cpp game_tools.cpp subprocess.cpp build_tools.cpp screenshot.cpp asset_tools.cpp kit_tools.cpp audio_tools.cpp vfx_tools.cpp terrain_tools.cpp nav_tools.cpp blueprint_tools.cpp loc_tools.cpp sequence_tools.cpp tilemap_tools.cpp)
+add_library(aether_mcp STATIC mcp_server.cpp editor_tools.cpp modules.cpp simulation.cpp game_tools.cpp subprocess.cpp build_tools.cpp screenshot.cpp asset_tools.cpp kit_tools.cpp audio_tools.cpp vfx_tools.cpp terrain_tools.cpp nav_tools.cpp blueprint_tools.cpp loc_tools.cpp sequence_tools.cpp tilemap_tools.cpp script_tools.cpp)
 target_include_directories(aether_mcp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(aether_mcp PUBLIC Aether::Engine aether_editor_core nlohmann_json::nlohmann_json)
 # Modules whose components are exposed to agents.
@@ -22,6 +22,13 @@ foreach(kit Physics Inventory Interaction Quests)
 endforeach()
 # stb_image_write.h, for encoding the screenshots (the stb repo the engine already fetches).
 target_include_directories(aether_mcp PRIVATE ${stb_SOURCE_DIR})
+# Luau scripting tools, where the engine has the scripting module.
+if(TARGET Aether::Scripting)
+    target_link_libraries(aether_mcp PRIVATE Aether::Scripting)
+    target_compile_definitions(aether_mcp PUBLIC AETHER_MCP_SCRIPTING=1)
+else()
+    target_compile_definitions(aether_mcp PUBLIC AETHER_MCP_SCRIPTING=0)
+endif()
 add_library(Aether::MCP ALIAS aether_mcp)
 
 add_executable(aether_mcp_server main.cpp)
