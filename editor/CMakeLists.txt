@@ -18,3 +18,9 @@ if(AETHER_DXCOMPILER_DLL)
                 "${AETHER_DXCOMPILER_DLL}" "$<TARGET_FILE_DIR:aether_editor>/dxcompiler.dll"
     )
 endif()
+if(AETHER_DXIL_DLL)
+    add_custom_command(TARGET aether_editor POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${AETHER_DXIL_DLL}" "$<TARGET_FILE_DIR:aether_editor>/dxil.dll"
+    )
+endif()

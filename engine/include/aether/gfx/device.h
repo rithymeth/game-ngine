@@ -29,8 +29,13 @@ public:
 
     void WaitForFence(u64 fence_value);
     bool IsFenceComplete(u64 fence_value) const {
-        return fence_value == 0 ||
-               (fence_ && fence_value < next_fence_value_ && fence_->GetCompletedValue() >= fence_value);
+        if (fence_value == 0) return true;
+        if (!fence_ || fence_value >= next_fence_value_) return false;
+        const u64 completed = fence_->GetCompletedValue();
+        // D3D12 reports UINT64_MAX when the device has been removed. It must
+        // not be treated as an ordinary completed fence or callers may reset
+        // allocators and reuse resources after the GPU has failed.
+        return completed != ~u64{0} && completed >= fence_value;
     }
 
     // A second, independent queue (its own fence) for async compute: work
@@ -44,8 +49,10 @@ public:
     u64 SubmitCompute(ID3D12CommandList* const* lists, u32 count);
     void WaitForComputeFence(u64 fence_value);
     bool IsComputeFenceComplete(u64 fence_value) const {
-        return fence_value == 0 || (compute_fence_ && fence_value < next_compute_fence_value_ &&
-                                    compute_fence_->GetCompletedValue() >= fence_value);
+        if (fence_value == 0) return true;
+        if (!compute_fence_ || fence_value >= next_compute_fence_value_) return false;
+        const u64 completed = compute_fence_->GetCompletedValue();
+        return completed != ~u64{0} && completed >= fence_value;
     }
 
     // GPU-side (not CPU-blocking) cross-queue waits: makes one queue's

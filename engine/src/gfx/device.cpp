@@ -6,6 +6,15 @@ namespace aether::gfx {
 
 namespace {
 
+void ThrowIfFenceDeviceRemoved(ID3D12Device* device, ID3D12Fence* fence, const char* queue_name) {
+    if (!device || !fence || fence->GetCompletedValue() != ~u64{0}) return;
+
+    const HRESULT reason = device->GetDeviceRemovedReason();
+    AETHER_LOG_FATAL("D3D12", "%s device was removed (reason=0x%08lX)", queue_name,
+                     static_cast<unsigned long>(reason));
+    throw std::runtime_error(std::string("D3D12 ") + queue_name + " device was removed");
+}
+
 ComPtr<IDXGIAdapter1> PickHardwareAdapter(IDXGIFactory6& factory) {
     ComPtr<IDXGIAdapter1> adapter;
     for (u32 i = 0; factory.EnumAdapterByGpuPreference(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
@@ -83,8 +92,13 @@ Device::Device(bool enable_debug_layer) {
 }
 
 Device::~Device() {
-    WaitForFence(next_fence_value_ - 1);
-    WaitForComputeFence(next_compute_fence_value_ - 1);
+    try {
+        WaitForFence(next_fence_value_ - 1);
+        WaitForComputeFence(next_compute_fence_value_ - 1);
+    } catch (const std::exception& error) {
+        // Destructors must stay noexcept even after device removal.
+        AETHER_LOG_WARN("D3D12", "Could not drain queues during device teardown: %s", error.what());
+    }
     if (fence_event_) {
         CloseHandle(fence_event_);
     }
@@ -107,11 +121,13 @@ void Device::WaitForFence(u64 fence_value) {
                          static_cast<unsigned long long>(next_fence_value_ - 1));
         return;
     }
+    ThrowIfFenceDeviceRemoved(device_.Get(), fence_.Get(), "graphics queue");
     if (IsFenceComplete(fence_value)) {
         return;
     }
     AETHER_D3D_CHECK(fence_->SetEventOnCompletion(fence_value, fence_event_));
     WaitForSingleObject(fence_event_, INFINITE);
+    ThrowIfFenceDeviceRemoved(device_.Get(), fence_.Get(), "graphics queue");
 }
 
 u64 Device::SubmitCompute(ID3D12CommandList* const* lists, u32 count) {
@@ -128,11 +144,13 @@ void Device::WaitForComputeFence(u64 fence_value) {
                          static_cast<unsigned long long>(next_compute_fence_value_ - 1));
         return;
     }
+    ThrowIfFenceDeviceRemoved(device_.Get(), compute_fence_.Get(), "compute queue");
     if (IsComputeFenceComplete(fence_value)) {
         return;
     }
     AETHER_D3D_CHECK(compute_fence_->SetEventOnCompletion(fence_value, compute_fence_event_));
     WaitForSingleObject(compute_fence_event_, INFINITE);
+    ThrowIfFenceDeviceRemoved(device_.Get(), compute_fence_.Get(), "compute queue");
 }
 
 void Device::ComputeQueueWaitOnGraphics(u64 graphics_fence_value) {

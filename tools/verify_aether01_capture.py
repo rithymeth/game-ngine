@@ -21,7 +21,7 @@ def verify(path: Path, menu: bool = False, ending: bool = False) -> None:
     stride = width * 4
     if offset < 14 + dib_size or offset + stride * height > len(data):
         raise ValueError("truncated BMP pixels")
-    scene_red = hud_cyan = hud_text = player_white = 0
+    scene_red = hud_cyan = hud_text = player_visible = 0
     menu_header = 0
     ending_title = ending_archive = 0
     menu_rows = [0] * 6
@@ -46,10 +46,13 @@ def verify(path: Path, menu: bool = False, ending: bool = False) -> None:
                 hud_cyan += 1
             if 24 <= x < 936 and 22 <= y < 90 and min(red, green, blue) > 150:
                 hud_text += 1
-            if 400 < x < 560 and 300 < y < 440 and min(red, green, blue) > 240:
-                player_white += 1
-    counts = dict(scene_red=scene_red, hud_cyan=hud_cyan, hud_text=hud_text, player_white=player_white)
-    minimums = dict(scene_red=40000, hud_cyan=1200, hud_text=500, player_white=1000)
+            # The player is rendered with pale grey armor rather than white;
+            # keep the region bounded so unrelated bright scene pixels don't
+            # satisfy this check.
+            if 400 < x < 560 and 300 < y < 440 and min(red, green, blue) > 150:
+                player_visible += 1
+    counts = dict(scene_red=scene_red, hud_cyan=hud_cyan, hud_text=hud_text, player_visible=player_visible)
+    minimums = dict(scene_red=40000, hud_cyan=1200, hud_text=500, player_visible=1000)
     if menu:
         counts = dict(menu_header=menu_header, **{f"menu_row_{i}": count for i, count in enumerate(menu_rows)})
         minimums = dict(menu_header=300, **{f"menu_row_{i}": 60 for i in range(6)})
