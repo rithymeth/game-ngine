@@ -543,6 +543,8 @@ AETHER_TEST(Mcp_ToolsCanReturnImages) {
 #include "audio_tools.h"
 #include "blueprint_tools.h"
 #include "kit_tools.h"
+#include "animation_tools.h"
+#include "aether/animation/anim_graph.h"
 #include "script_tools.h"
 #include "tilemap_tools.h"
 #include "sequence_tools.h"
@@ -2150,6 +2152,101 @@ AETHER_TEST(Mcp_TilemapToolsBuildPaintReadAndPreviewALevel) {
     AETHER_CHECK(h.Call("kit_list", {{"type", "tileset"}}).value[0]["valid"] == true);
     AETHER_CHECK(h.Call("kit_validate", {{"type", "tilemap"}, {"definition", {{"$type", "Nonsense"}}}}).value["ok"] == false);
     stdfs::remove_all(dir);
+}
+
+AETHER_TEST(Mcp_AnimationToolsValidateBlendAndSimulateAGraph) {
+    namespace an = aether::anim;
+    Harness h;
+    auto project = MakeAssetHost();
+    RegisterAnimationTools(h.server, project);
+
+    // A blend space: Idle at 0, Walk at 1, Run at 3.
+    an::BlendSpace space;
+    space.x = {"Speed", 0.0f, 3.0f};
+    space.samples = {{"Idle", 0, 0, 1}, {"Walk", 1, 0, 1}, {"Run", 3, 0, 1}};
+    const Json space_json = an::BlendSpaceToJson(space);
+    AETHER_CHECK(h.Call("anim_validate", {{"type", "blend_space"}, {"definition", space_json}}).value["ok"] == true);
+    Json bad_space = space_json;
+    bad_space["samples"].push_back(bad_space["samples"][0]);
+    Json bad = h.Call("anim_validate", {{"type", "blend_space"}, {"definition", bad_space}}).value;
+    AETHER_CHECK(bad["ok"] == false);
+    AETHER_CHECK(bad["diagnostics"][0]["code"] == "BS002");
+
+    Json w = h.Call("anim_blend_weights", {{"definition", space_json}, {"points", Json::array({Json{{"x", 0.5}}, Json{{"x", 9}}})}}).value;
+    const Json half = w["points"][0]["weights"];
+    AETHER_CHECK(half.size() == 2);
+    AETHER_CHECK(std::abs(half[0]["weight"].get<f32>() - 0.5f) < 0.01f);
+    AETHER_CHECK(w["points"][1]["weights"][0]["clip"] == "Run"); // clamped to the axis end
+    AETHER_CHECK(h.Call("anim_blend_weights", {{"definition", space_json}, {"grid", 4}}).value["points"].size() == 4);
+
+    // A graph: Idle <-> Move on a bool, Attack by trigger once Move/Idle, back when finished.
+    an::AnimGraph g;
+    g.variables = {{"moving", an::VarType::Bool, 0.0f}, {"hit", an::VarType::Trigger, 0.0f}};
+    an::AnimNode idle, run, hit, sm;
+    idle.id = 1; idle.kind = an::AnimNodeKind::Clip; idle.asset = "Idle";
+    run.id = 2; run.kind = an::AnimNodeKind::Clip; run.asset = "Run";
+    hit.id = 3; hit.kind = an::AnimNodeKind::Clip; hit.asset = "Hit"; hit.loop = false;
+    sm.id = 4; sm.kind = an::AnimNodeKind::StateMachine; sm.machine = "Locomotion";
+    g.nodes = {idle, run, hit, sm};
+    g.output = 4;
+    an::StateMachine m;
+    m.name = "Locomotion";
+    m.states = {{"Idle", 1}, {"Run", 2}, {"Hit", 3}};
+    an::Transition to_run, to_idle, to_hit, from_hit;
+    to_run.from = 0; to_run.to = 1; to_run.blend_time = 0.1f; to_run.conditions = {{"moving", an::CompareOp::IsTrue, 0}};
+    to_idle.from = 1; to_idle.to = 0; to_idle.blend_time = 0.1f; to_idle.conditions = {{"moving", an::CompareOp::IsFalse, 0}};
+    to_hit.from = an::kAnyState; to_hit.to = 2; to_hit.blend_time = 0.0f; to_hit.priority = 5; to_hit.conditions = {{"hit", an::CompareOp::Triggered, 0}};
+    from_hit.from = 2; from_hit.to = 0; from_hit.when_finished = true; from_hit.blend_time = 0.0f;
+    m.transitions = {to_run, to_idle, to_hit, from_hit};
+    g.machines = {m};
+    const Json graph_json = an::AnimGraphToJson(g);
+
+    Json ok = h.Call("anim_validate", {{"type", "graph"}, {"definition", graph_json}}).value;
+    AETHER_CHECK(ok["ok"] == true);
+    Json missing = h.Call("anim_validate", {{"type", "graph"}, {"definition", graph_json}, {"clips", Json::array({"Idle", "Run"})}}).value;
+    AETHER_CHECK(missing["ok"] == false);
+    AETHER_CHECK(missing["diagnostics"][0]["code"] == "AG010");
+    Json broken = graph_json;
+    broken["output"] = 99;
+    const auto broken_result = h.Call("anim_validate", {{"type", "graph"}, {"definition", broken}});
+    AETHER_CHECK(broken_result.is_error || broken_result.value["ok"] == false);
+
+    Json sim = h.Call("anim_graph_simulate",
+                      {{"definition", graph_json},
+                       {"clips", {{"Hit", 0.5}}},
+                       {"steps", Json::array({Json{{"dt", 0.1}},
+                                              Json{{"set", {{"moving", true}}}, {"dt", 0.1}, {"repeat", 5}},
+                                              Json{{"trigger", Json::array({"hit"})}, {"dt", 0.1}},
+                                              Json{{"set", {{"moving", false}}}, {"dt", 0.1}, {"repeat", 8}}})}})
+                   .value;
+    const Json steps = sim["steps"];
+    AETHER_CHECK(steps.size() == 4);
+    AETHER_CHECK(steps[0]["states"]["Locomotion"]["state"] == "Idle");
+    AETHER_CHECK(steps[1]["states"]["Locomotion"]["state"] == "Run");
+    AETHER_CHECK(steps[1]["state_changes"][0]["to"] == "Run");
+    AETHER_CHECK(steps[2]["states"]["Locomotion"]["state"] == "Hit");
+    AETHER_CHECK(steps[3]["states"]["Locomotion"]["state"] == "Idle"); // the hit clip finished after 0.5s
+
+    // A bad variable and a bad step are reported, not ignored.
+    AETHER_CHECK(h.Call("anim_graph_simulate", {{"definition", graph_json}, {"steps", Json::array({Json{{"set", {{"nope", 1}}}}})}}).is_error);
+    AETHER_CHECK(h.Call("anim_graph_simulate", {{"definition", graph_json}}).is_error);
+
+    // Montages: validate, then play one in a slot over a graph and see its sections go by.
+    an::Montage mt;
+    mt.name = "Swing";
+    mt.clip = "Swing";
+    mt.sections = {{"Windup", 0.0f, "Hit"}, {"Hit", 0.4f, ""}};
+    const Json mt_json = an::MontageToJson(mt);
+    AETHER_CHECK(h.Call("anim_validate", {{"type", "montage"}, {"definition", mt_json}}).value["ok"] == true);
+    Json bad_mt = mt_json;
+    bad_mt["sections"][0]["next"] = "Nowhere";
+    AETHER_CHECK(h.Call("anim_validate", {{"type", "montage"}, {"definition", bad_mt}}).value["diagnostics"][0]["code"] == "MN002");
+    Json mont = h.Call("anim_graph_simulate",
+                       {{"definition", graph_json},
+                        {"clips", {{"Swing", 1.0}}},
+                        {"steps", Json::array({Json{{"play_montage", mt_json}, {"dt", 0.1}}, Json{{"dt", 0.1}, {"repeat", 5}}})}})
+                    .value;
+    AETHER_CHECK(mont["steps"][0]["events"][0]["type"] == "MontageStarted");
 }
 
 #if AETHER_MCP_SCRIPTING
