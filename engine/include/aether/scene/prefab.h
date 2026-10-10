@@ -85,8 +85,8 @@ struct PrefabData {
 //   {"id": 1, "parent": 0, "components": {"Transform": {...}}}, ...]}.
 // A nested entity adds "prefab": {"source": guid, "overrides": [...],
 // "removed": [...]}; a variant adds a top-level "base" of the same shape.
-bool SavePrefab(const PrefabData& prefab, const std::filesystem::path& path, std::string* error = nullptr);
-bool LoadPrefab(const std::filesystem::path& path, PrefabData& out, std::string* error = nullptr);
+[[nodiscard]] bool SavePrefab(const PrefabData& prefab, const std::filesystem::path& path, std::string* error = nullptr);
+[[nodiscard]] bool LoadPrefab(const std::filesystem::path& path, PrefabData& out, std::string* error = nullptr);
 nlohmann::json PrefabToJson(const PrefabData& prefab);
 bool PrefabFromJson(const nlohmann::json& json, PrefabData& out, std::string* error = nullptr);
 
