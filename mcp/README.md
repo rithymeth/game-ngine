@@ -181,6 +181,23 @@ Give the Blueprint as `definition` (JSON) or `asset` (a path in the open project
 or world around the test entity, so traces find nothing, and a runaway loop stops at the instruction budget
 (BP202) instead of hanging.
 
+### Localization (`loc_*`)
+
+The project's string tables (`.astrings`: CSV with a column per language), the strings its content uses, and the
+loc module's own message format, plural rules and pseudo-localization.
+
+| Tool | What it does |
+| --- | --- |
+| `loc_status` | The tables, key count and each language's completeness, fallback chain and direction, with the first missing keys |
+| `loc_get` / `loc_set` / `loc_remove` | Read a key in every language; add or change translations (a new language becomes a column; language tags are normalized, so `pt_br` is `pt-BR`; an empty text removes one) or delete a key; the `.astrings` file is made on first use and scanned |
+| `loc_validate` | Every translation must use the same placeholders as the source text, and every message must be well-formed (no unclosed brace); errors name the key and language |
+| `loc_gather` | The strings the content uses (Text widgets' `text_key`, `LocText` values, Blueprint `Localize` nodes with literal keys) against the table: new keys and unused keys; changes nothing |
+| `loc_sync` | Bring the table up to date with the content (new keys get their source text, no translation is touched, no key is removed); optionally write `.po` files per language and apply returned ones; reports only unless `write` is true |
+| `loc_export_po` / `loc_import_po` | gettext `.po` files for translators and back (empty and fuzzy entries are skipped) |
+| `loc_format` | Preview how a message formats and pluralizes in a language (`{name}`, `{count\|s}`, `{n\|one:coin;other:coins}`), with the problems found and each number's plural category; no project needed |
+| `loc_language` | A tag's normalized form, fallback chain, direction and the plural category of sample numbers |
+| `loc_pseudo` | Pseudo-localize text: accents, about a third longer, in `[ ]`, placeholders kept |
+
 Enum values are lowercase words (`"instant"`, `"count"`); `kit_schema` lists them. Write definitions,
 `kit_check` them, `asset_cook`, then `game_load` to play them.
 
@@ -254,6 +271,7 @@ Bad input is reported as a tool error (`isError`), never a crash, and a failed
 - `terrain_tools.h/.cpp` -- the terrain workbench.
 - `nav_tools.h/.cpp` -- the navigation workbench (the nav component tools are in `editor_tools.cpp`); `image_util.h` -- PNG and base64 helpers for tools that return a picture.
 - `blueprint_tools.h/.cpp` -- the Blueprint node, validate, compile and run tools.
+- `loc_tools.h/.cpp` -- the localization tools.
 - `main.cpp` -- the `aether_mcp_server` executable.
 - Tests: `tests/test_mcp.cpp`.
 

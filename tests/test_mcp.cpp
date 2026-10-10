@@ -543,6 +543,7 @@ AETHER_TEST(Mcp_ToolsCanReturnImages) {
 #include "audio_tools.h"
 #include "blueprint_tools.h"
 #include "kit_tools.h"
+#include "loc_tools.h"
 #include "nav_tools.h"
 #include "terrain_tools.h"
 #include "vfx_tools.h"
@@ -1635,5 +1636,158 @@ AETHER_TEST(Mcp_BlueprintToolsFindValidateCompileAndRun) {
     Json check = h.Call("kit_check").value;
     AETHER_CHECK(check["ok"] == false);
     AETHER_CHECK(check["problems"][0]["problem"].get<std::string>().find("blueprint.") != std::string::npos);
+    stdfs::remove_all(dir);
+}
+
+AETHER_TEST(Mcp_LocToolsFormatEditGatherValidateAndRoundTrip) {
+    namespace stdfs = std::filesystem;
+    Harness h;
+    auto project = MakeAssetHost();
+    RegisterAssetTools(h.server, project);
+    RegisterLocTools(h.server, project);
+
+    // --- formatting and languages need no project
+    AETHER_CHECK(h.Call("loc_format", {{"pattern", "{count} coin{count|s}"}, {"args", {{"count", 1}}}}).value["text"] == "1 coin");
+    AETHER_CHECK(h.Call("loc_format", {{"pattern", "{count} coin{count|s}"}, {"args", {{"count", 2}}}}).value["text"] == "2 coins");
+    Json forms = h.Call("loc_format", {{"pattern", "{n|one:apple;other:apples}"}, {"args", {{"n", 1}}}}).value;
+    AETHER_CHECK(forms["text"] == "apple");
+    AETHER_CHECK(forms["plural_categories"]["n"] == "one");
+    AETHER_CHECK(h.Call("loc_format", {{"pattern", "{n|one:яблоко;few:яблока;many:яблок;other:яблока}"}, {"language", "ru"}, {"args", {{"n", 5}}}}).value["text"] == "яблок");
+    Json hello = h.Call("loc_format", {{"pattern", "Hi {name}!"}, {"args", {{"name", "Ada"}}}}).value;
+    AETHER_CHECK(hello["text"] == "Hi Ada!");
+    AETHER_CHECK(hello["problems"].empty());
+    AETHER_CHECK(!h.Call("loc_format", {{"pattern", "Hi {name}!"}}).value["problems"].empty()); // an argument that was not given
+    AETHER_CHECK(!h.Call("loc_format", {{"pattern", "Hi {name"}, {"args", {{"name", "x"}}}}).value["problems"].empty()); // an unclosed brace
+    AETHER_CHECK(h.Call("loc_format", {{"pattern", "x"}, {"args", {{"a", Json::array()}}}}).is_error);
+    AETHER_CHECK(h.Call("loc_format", {{"pattern", "x"}, {"language", ""}}).is_error);
+
+    Json lang = h.Call("loc_language", {{"language", "pt_br"}}).value;
+    AETHER_CHECK(lang["language"] == "pt-BR");
+    AETHER_CHECK(lang["fallback_chain"] == Json::array({"pt-BR", "pt", "en"}));
+    AETHER_CHECK(lang["right_to_left"] == false);
+    AETHER_CHECK(h.Call("loc_language", {{"language", "ar"}}).value["right_to_left"] == true);
+    Json ru = h.Call("loc_language", {{"language", "ru"}, {"numbers", {1, 2, 5, 21}}}).value["plural_categories"];
+    AETHER_CHECK(ru[0]["category"] == "one" && ru[1]["category"] == "few" && ru[2]["category"] == "many" && ru[3]["category"] == "one");
+    AETHER_CHECK(h.Call("loc_language", {{"language", "ja"}, {"numbers", {1, 2}}}).value["plural_categories"][1]["category"] == "other");
+
+    Json pseudo = h.Call("loc_pseudo", {{"texts", {"Hello {name}!", "Quit"}}}).value;
+    AETHER_CHECK(pseudo["language"] == "qps-Ploc");
+    const std::string first = pseudo["results"][0]["pseudo"];
+    AETHER_CHECK(first.front() == '[' && first.back() == ']');
+    AETHER_CHECK(first.find("{name}") != std::string::npos); // placeholders survive, so it still formats
+    AETHER_CHECK(pseudo["results"][0]["bytes_after"].get<int>() > pseudo["results"][0]["bytes_before"].get<int>());
+    AETHER_CHECK(h.Call("loc_pseudo", {{"texts", {"x"}}, {"expansion", 9}}).is_error);
+    AETHER_CHECK(h.Call("loc_pseudo").is_error);
+    AETHER_CHECK(h.Call("loc_status").is_error); // needs a project
+
+    // --- a project's string table
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_loc_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+    ProjectPaths paths;
+    std::string error;
+    AETHER_CHECK(CreateProject(dir, "McpLoc", &paths, &error));
+    AETHER_CHECK(!h.Call("project_open", {{"project_file", paths.file.string()}}).is_error);
+    AETHER_CHECK(h.Call("loc_status").value["keys"] == 0);
+
+    AETHER_CHECK(!h.Call("loc_set", {{"key", "menu.play"}, {"translations", {{"en", "Play"}, {"fr", "Jouer"}}}}).is_error);
+    AETHER_CHECK(stdfs::exists(paths.content / "Localization" / "Strings.astrings")); // made on first use
+    AETHER_CHECK(h.Call("loc_get", {{"key", "menu.play"}}).value["translations"]["fr"] == "Jouer");
+    AETHER_CHECK(!h.Call("loc_set", {{"key", "items.count"}, {"translations", {{"en", "{count} item{count|s}"}, {"fr", "{n} objets"}, {"pt_br", "{count} itens"}}}}).is_error);
+    AETHER_CHECK(!h.Call("loc_set", {{"key", "bad"}, {"translations", {{"en", "Hello"}, {"de", "Hallo {name"}}}}).is_error);
+    AETHER_CHECK(h.Call("loc_get", {{"key", "items.count"}}).value["translations"].contains("pt-BR")); // tags are normalized
+    AETHER_CHECK(h.Call("loc_set", {{"key", "menu.play"}, {"translations", {{"", "x"}}}}).is_error);
+    AETHER_CHECK(h.Call("loc_set", {{"key", "menu.play"}, {"translations", {{"en", 5}}}}).is_error);
+    AETHER_CHECK(h.Call("loc_get", {{"key", "nothing"}}).is_error);
+
+    Json status = h.Call("loc_status", {{"missing_limit", 5}}).value;
+    AETHER_CHECK(status["keys"] == 3);
+    AETHER_CHECK(status["tables"].size() == 1);
+    for (const Json& l : status["languages"]) {
+        if (l["language"] == "fr") AETHER_CHECK(l["translated"] == 2 && l["missing"] == 1);
+        if (l["language"] == "pt-BR") AETHER_CHECK(l["fallback_chain"] == Json::array({"pt-BR", "pt", "en"}));
+    }
+
+    // Validation: placeholders must match the source text, and messages must be well-formed.
+    Json check = h.Call("loc_validate").value;
+    AETHER_CHECK(check["ok"] == false);
+    bool mismatch = false, unclosed = false;
+    for (const Json& pr : check["problems"]) {
+        if (pr["key"] == "items.count" && pr["language"] == "fr") {
+            mismatch = true;
+            AETHER_CHECK(pr["missing"] == Json::array({"count"}));
+            AETHER_CHECK(pr["extra"] == Json::array({"n"}));
+        }
+        if (pr["key"] == "bad" && pr["language"] == "de") unclosed = true;
+    }
+    AETHER_CHECK(mismatch && unclosed);
+    AETHER_CHECK(!h.Call("loc_set", {{"key", "items.count"}, {"translations", {{"fr", "{count} objet{count|s}"}}}}).is_error);
+    AETHER_CHECK(!h.Call("loc_set", {{"key", "bad"}, {"translations", {{"de", ""}}}}).is_error); // removes the broken one
+    AETHER_CHECK(h.Call("loc_validate").value["ok"] == true);
+
+    // --- the content's strings against the table
+    const Json scene = {{"$type", "Scene"}, {"$version", 1},
+                        {"entities", Json::array({{{"components", {{"Label", {{"text_key", "menu.play"}, {"text", "Play"}}}}}},
+                                                  {{"components", {{"Label", {{"text_key", "menu.quit"}, {"text", "Quit"}}}}}}})}};
+    AETHER_CHECK(!h.Call("content_write", {{"path", "Scenes/menu.ascene"}, {"text", scene.dump()}}).is_error);
+    Json gathered = h.Call("loc_gather").value;
+    AETHER_CHECK(gathered["found"] == 2);
+    AETHER_CHECK(gathered["new_keys"] == Json::array({"menu.quit"}));
+    bool unused_has_items = false;
+    for (const Json& k : gathered["unused_keys"]) unused_has_items = unused_has_items || k == "items.count";
+    AETHER_CHECK(unused_has_items);
+
+    Json dry = h.Call("loc_sync").value; // reports only
+    AETHER_CHECK(dry["ok"] == true);
+    AETHER_CHECK(dry["written"] == false);
+    AETHER_CHECK(dry["added"] == 1);
+    AETHER_CHECK(h.Call("loc_get", {{"key", "menu.quit"}}).is_error); // nothing was written
+    const stdfs::path po_dir = dir / "po";
+    Json applied = h.Call("loc_sync", {{"write", true}, {"po_out", po_dir.string()}, {"languages", {"fr"}}}).value;
+    AETHER_CHECK(applied["written"] == true);
+    AETHER_CHECK(applied["po_written"] == 1);
+    AETHER_CHECK(h.Call("loc_get", {{"key", "menu.quit"}}).value["translations"]["en"] == "Quit");
+    AETHER_CHECK(stdfs::exists(po_dir / "fr.po"));
+    AETHER_CHECK(h.Call("loc_sync", {{"write", true}}).value["added"] == 0); // a second run has nothing to add
+
+    // --- .po files for translators
+    const stdfs::path po_file = dir / "fr_export.po";
+    AETHER_CHECK(!h.Call("loc_export_po", {{"language", "fr"}, {"path", po_file.string()}}).is_error);
+    std::string po;
+    {
+        std::ifstream in(po_file, std::ios::binary);
+        po.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    AETHER_CHECK(po.find("msgctxt \"menu.play\"") != std::string::npos);
+    AETHER_CHECK(po.find("msgstr \"Jouer\"") != std::string::npos);
+    const std::size_t quit = po.find("msgid \"Quit\"");
+    AETHER_CHECK(quit != std::string::npos);
+    const std::size_t str = po.find("msgstr \"\"", quit);
+    AETHER_CHECK(str != std::string::npos);
+    po.replace(str, 9, "msgstr \"Quitter\"");
+    {
+        std::ofstream out(po_file, std::ios::binary | std::ios::trunc);
+        out << po;
+    }
+    Json imported = h.Call("loc_import_po", {{"path", po_file.string()}}).value; // language from the file's own header
+    AETHER_CHECK(imported["language"] == "fr");
+    AETHER_CHECK(imported["translations_after"].get<int>() == imported["translations_before"].get<int>() + 1);
+    AETHER_CHECK(h.Call("loc_get", {{"key", "menu.quit"}}).value["translations"]["fr"] == "Quitter");
+    AETHER_CHECK(h.Call("loc_import_po", {{"path", (dir / "none.po").string()}}).is_error);
+    AETHER_CHECK(h.Call("loc_export_po", {{"language", "fr"}}).is_error);
+
+    // --- pseudo-localize a key from the table, then remove keys
+    Json from_key = h.Call("loc_pseudo", {{"key", "items.count"}}).value;
+    AETHER_CHECK(from_key["results"][0]["pseudo"].get<std::string>().find("{count|s}") != std::string::npos);
+    AETHER_CHECK(h.Call("loc_pseudo", {{"key", "no.such.key"}}).is_error);
+    AETHER_CHECK(!h.Call("loc_remove", {{"key", "menu.quit"}}).is_error);
+    AETHER_CHECK(h.Call("loc_remove", {{"key", "menu.quit"}}).is_error);
+    AETHER_CHECK(h.Call("loc_status").value["keys"] == 3);
+
+    // Two tables: the tools ask which one.
+    AETHER_CHECK(!h.Call("loc_set", {{"key", "ui.back"}, {"translations", {{"en", "Back"}}}, {"strings", "Localization/Extra"}}).is_error);
+    AETHER_CHECK(h.Call("loc_status").value["tables"].size() == 2);
+    AETHER_CHECK(h.Call("loc_set", {{"key", "ui.next"}, {"translations", {{"en", "Next"}}}}).is_error);
+    AETHER_CHECK(h.Call("loc_get", {{"key", "ui.back"}}).value["translations"]["en"] == "Back"); // the merged view sees both
     stdfs::remove_all(dir);
 }
