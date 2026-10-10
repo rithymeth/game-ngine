@@ -162,6 +162,25 @@ the scene's navigation components.
 Detour joins an off-mesh link only inside a tile or between neighbouring tiles, so bake with `tile_size: 0` for
 long links.
 
+### Blueprints (`bp_*`)
+
+Blueprints (`.abp`) are the engine's visual scripting. They are a real asset type, so they go through the same
+`kit_*` tools (`type: "blueprint"`: schema with a working sample, validate, put, get, list, check; a Blueprint
+with a validation error is refused by `kit_put` and reported by `kit_check`). The Blueprint tools add what an
+agent needs to write a graph and test it:
+
+| Tool | What it does |
+| --- | --- |
+| `bp_node_types` | The node types you can use (id, title, category), searchable by id, title or category and filterable by category; give a Blueprint to include its own variables, functions and custom events |
+| `bp_node_info` | A node type's pins: name, direction, type (exec, bool, int, float, string, Vec3, Quat, Entity, a struct, `Array<T>`) and default, plus its title, category and kind |
+| `bp_validate` | The Blueprint module's own diagnostics (BP001...): code, severity, graph, node, pin, message |
+| `bp_compile` | Compile to bytecode: diagnostics, each event's and function's instruction count, optionally the disassembly |
+| `bp_run` | Run it headless on a test entity: BeginPlay, then your `events` (with arguments), then N ticks; returns what Print String printed, every variable's final value, runtime errors (BP201-BP203...), instructions run, game time and pending latent actions |
+
+Give the Blueprint as `definition` (JSON) or `asset` (a path in the open project). `bp_run` has no physics
+or world around the test entity, so traces find nothing, and a runaway loop stops at the instruction budget
+(BP202) instead of hanging.
+
 Enum values are lowercase words (`"instant"`, `"count"`); `kit_schema` lists them. Write definitions,
 `kit_check` them, `asset_cook`, then `game_load` to play them.
 
@@ -234,6 +253,7 @@ Bad input is reported as a tool error (`isError`), never a crash, and a failed
 - `vfx_tools.h/.cpp` -- particle effect schema, validation, files, check and headless simulation (the `ParticleSystem` component tools are in `editor_tools.cpp`).
 - `terrain_tools.h/.cpp` -- the terrain workbench.
 - `nav_tools.h/.cpp` -- the navigation workbench (the nav component tools are in `editor_tools.cpp`); `image_util.h` -- PNG and base64 helpers for tools that return a picture.
+- `blueprint_tools.h/.cpp` -- the Blueprint node, validate, compile and run tools.
 - `main.cpp` -- the `aether_mcp_server` executable.
 - Tests: `tests/test_mcp.cpp`.
 

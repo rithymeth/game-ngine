@@ -541,6 +541,7 @@ AETHER_TEST(Mcp_ToolsCanReturnImages) {
 
 #include "asset_tools.h"
 #include "audio_tools.h"
+#include "blueprint_tools.h"
 #include "kit_tools.h"
 #include "nav_tools.h"
 #include "terrain_tools.h"
@@ -1497,4 +1498,142 @@ AETHER_TEST(Mcp_NavToolsBakeQuerySimulateAndEditComponents) {
     AETHER_CHECK(from_scene["links"] == 1);
     AETHER_CHECK(!h.Call("nav_component_remove", {{"entity", pillar}, {"component", "NavObstacle"}}).is_error);
     AETHER_CHECK(h.Call("nav_component_remove", {{"entity", pillar}, {"component", "NavObstacle"}}).is_error);
+}
+
+AETHER_TEST(Mcp_BlueprintToolsFindValidateCompileAndRun) {
+    namespace stdfs = std::filesystem;
+    Harness h;
+    auto project = MakeAssetHost();
+    RegisterAssetTools(h.server, project);
+    RegisterKitTools(h.server, project);
+    RegisterBlueprintTools(h.server, project);
+
+    // --- the palette and a node's pins
+    Json palette = h.Call("bp_node_types", {{"search", "branch"}}).value;
+    AETHER_CHECK(palette["total"].get<int>() >= 1);
+    bool found_branch = false;
+    for (const Json& n : palette["nodes"]) found_branch = found_branch || n["id"] == "Flow.Branch";
+    AETHER_CHECK(found_branch);
+    AETHER_CHECK(h.Call("bp_node_types", {{"limit", 5}}).value["nodes"].size() == 5);
+    Json flow = h.Call("bp_node_types", {{"category", "Flow Control"}, {"limit", 500}}).value;
+    for (const Json& n : flow["nodes"]) AETHER_CHECK(n["category"] == "Flow Control");
+    AETHER_CHECK(flow["categories"].size() > 10);
+
+    Json branch = h.Call("bp_node_info", {{"type", "Flow.Branch"}}).value;
+    AETHER_CHECK(branch["kind"] == "impure");
+    AETHER_CHECK(branch["pins"].size() == 4);
+    AETHER_CHECK(branch["pins"][1]["name"] == "condition");
+    AETHER_CHECK(branch["pins"][1]["type"] == "bool");
+    AETHER_CHECK(h.Call("bp_node_info", {{"type", "Flow.Nonsense"}}).is_error);
+    AETHER_CHECK(h.Call("bp_node_info", {{"type", "Var.Get:Count"}}).is_error); // no such variable without a Blueprint
+
+    const Json sample = h.Call("kit_schema", {{"type", "blueprint"}}).value["sample"];
+    Json with_blueprint = h.Call("bp_node_info", {{"type", "Var.Get:Count"}, {"definition", sample}}).value;
+    AETHER_CHECK(with_blueprint["kind"] == "pure");
+    AETHER_CHECK(with_blueprint["pins"][0]["type"] == "int");
+    Json custom = h.Call("bp_node_info", {{"type", "Event.Custom"}, {"config", {{"name", "Boom"}}}}).value;
+    AETHER_CHECK(custom["title"] == "Boom");
+    AETHER_CHECK(custom["event_key"] == "Event.Custom:Boom");
+    Json own = h.Call("bp_node_types", {{"definition", sample}, {"search", "Count"}}).value;
+    bool has_get = false;
+    for (const Json& n : own["nodes"]) has_get = has_get || n["id"] == "Var.Get:Count";
+    AETHER_CHECK(has_get); // the Blueprint's own variables join the palette
+
+    // --- validate and compile
+    Json valid = h.Call("bp_validate", {{"definition", sample}}).value;
+    AETHER_CHECK(valid["ok"] == true);
+    AETHER_CHECK(valid["errors"] == 0);
+    Json broken = sample;
+    broken["graphs"][0]["links"].push_back({{"from", {99, "then"}}, {"to", {1, "exec"}}});
+    Json bad = h.Call("bp_validate", {{"definition", broken}}).value;
+    AETHER_CHECK(bad["ok"] == false);
+    AETHER_CHECK(bad["errors"].get<int>() >= 1);
+    AETHER_CHECK(bad["diagnostics"][0]["code"].get<std::string>().rfind("BP", 0) == 0);
+    AETHER_CHECK(h.Call("bp_validate", {{"definition", "{ not json"}}).is_error);
+    AETHER_CHECK(h.Call("bp_validate").is_error);
+    AETHER_CHECK(h.Call("bp_validate", {{"definition", {{"graphs", 5}}}}).is_error);
+
+    Json compiled = h.Call("bp_compile", {{"definition", sample}, {"disassemble", true}}).value;
+    AETHER_CHECK(compiled["ok"] == true);
+    bool begin = false, hit = false;
+    for (const Json& e : compiled["events"]) {
+        begin = begin || e == "Event.BeginPlay";
+        hit = hit || e == "Event.Custom:Hit";
+    }
+    AETHER_CHECK(begin && hit);
+    AETHER_CHECK(compiled["functions"][0]["instructions"].get<int>() > 0);
+    AETHER_CHECK(!compiled["functions"][0]["listing"].get<std::string>().empty());
+    AETHER_CHECK(h.Call("bp_compile", {{"definition", broken}}).value["ok"] == false);
+
+    // --- run it
+    Json ran = h.Call("bp_run", {{"definition", sample}}).value;
+    AETHER_CHECK(ran["ok"] == true);
+    AETHER_CHECK(ran["prints"] == Json::array({"Hello from BeginPlay"}));
+    AETHER_CHECK(ran["variables"]["Count"] == 5);
+    Json hits = h.Call("bp_run", {{"definition", sample}, {"events", {{{"event", "Event.Custom:Hit"}}, {{"event", "Event.Custom:Hit"}}}}}).value;
+    AETHER_CHECK(hits["variables"]["Count"] == 7);
+    AETHER_CHECK(hits["prints"].size() == 3);
+    AETHER_CHECK(hits["prints"][2] == "Hit!");
+    AETHER_CHECK(h.Call("bp_run", {{"definition", sample}, {"begin_play", false}}).value["variables"]["Count"] == 0);
+    Json missing_event = h.Call("bp_run", {{"definition", sample}, {"events", {{{"event", "Event.Custom:Nope"}}}}}).value;
+    AETHER_CHECK(missing_event["events"][1]["ran"] == false);
+    AETHER_CHECK(h.Call("bp_run", {{"definition", sample}, {"events", {{{"nope", 1}}}}}).is_error);
+    AETHER_CHECK(h.Call("bp_run", {{"definition", sample}, {"ticks", 99999}}).is_error);
+    AETHER_CHECK(h.Call("bp_run", {{"definition", sample}, {"events", {{{"event", "Event.Custom:Hit"}, {"args", {{{"a", 1}}}}}}}}).is_error);
+    Json refused = h.Call("bp_run", {{"definition", broken}}).value;
+    AETHER_CHECK(refused["ok"] == false);
+    AETHER_CHECK(refused["stage"] == "compile");
+
+    // Ticks: a Blueprint that counts frames.
+    const Json ticker = {{"$type", "Blueprint"}, {"$version", 1},
+                         {"variables", {{{"name", "Ticks"}, {"type", "int"}, {"default", 0}}}},
+                         {"graphs", {{{"name", "EventGraph"}, {"kind", "EventGraph"},
+                                      {"nodes", {{{"id", 1}, {"type", "Event.Tick"}, {"pos", {0, 0}}},
+                                                 {{"id", 2}, {"type", "Var.Set:Ticks"}, {"pos", {200, 0}}},
+                                                 {{"id", 3}, {"type", "Math.Add:int"}, {"pos", {0, 200}}, {"defaults", {{"b", 1}}}},
+                                                 {{"id", 4}, {"type", "Var.Get:Ticks"}, {"pos", {-200, 200}}}}},
+                                      {"links", {{{"from", {1, "then"}}, {"to", {2, "exec"}}},
+                                                 {{"from", {4, "value"}}, {"to", {3, "a"}}},
+                                                 {{"from", {3, "result"}}, {"to", {2, "value"}}}}}}}}};
+    Json ticked = h.Call("bp_run", {{"definition", ticker}, {"ticks", 30}}).value;
+    AETHER_CHECK(ticked["ok"] == true);
+    AETHER_CHECK(ticked["variables"]["Ticks"] == 30);
+    AETHER_CHECK(std::fabs(ticked["game_time"].get<double>() - 0.5) < 0.01);
+
+    // A runaway loop hits the instruction budget (BP202) instead of hanging.
+    const Json runaway = {{"$type", "Blueprint"}, {"$version", 1},
+                          {"graphs", {{{"name", "EventGraph"}, {"kind", "EventGraph"},
+                                       {"nodes", {{{"id", 1}, {"type", "Event.BeginPlay"}, {"pos", {0, 0}}},
+                                                  {{"id", 2}, {"type", "Flow.ForLoop"}, {"pos", {200, 0}}, {"defaults", {{"first", 0}, {"last", 100000000}}}}}},
+                                       {"links", {{{"from", {1, "then"}}, {"to", {2, "exec"}}}}}}}}};
+    Json budget = h.Call("bp_run", {{"definition", runaway}, {"instruction_budget", 5000}}).value;
+    AETHER_CHECK(budget["ok"] == false);
+    AETHER_CHECK(budget["errors"][0]["code"] == "BP202");
+
+    // --- Blueprints in a project go through the kit tools, and the Blueprint tools read them by path
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_bp_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+    ProjectPaths paths;
+    std::string error;
+    AETHER_CHECK(CreateProject(dir, "McpBp", &paths, &error));
+    AETHER_CHECK(h.Call("bp_validate", {{"asset", "Blueprints/BP_Demo.abp"}}).is_error); // no project yet
+    AETHER_CHECK(!h.Call("project_open", {{"project_file", paths.file.string()}}).is_error);
+    AETHER_CHECK(h.Call("kit_put", {{"type", "blueprint"}, {"path", "Blueprints/BP_Broken"}, {"definition", broken}}).is_error);
+    AETHER_CHECK(!stdfs::exists(paths.content / "Blueprints" / "BP_Broken.abp"));
+    Harness::Result put = h.Call("kit_put", {{"type", "blueprint"}, {"path", "Blueprints/BP_Demo"}, {"definition", sample}});
+    AETHER_CHECK(!put.is_error);
+    AETHER_CHECK(put.value["path"] == "Blueprints/BP_Demo.abp");
+    AETHER_CHECK(h.Call("kit_list", {{"type", "blueprint"}}).value[0]["valid"] == true);
+    AETHER_CHECK(h.Call("kit_get", {{"asset", "Blueprints/BP_Demo.abp"}}).value["definition"]["variables"][0]["name"] == "Count");
+    AETHER_CHECK(h.Call("bp_validate", {{"asset", "Blueprints/BP_Demo.abp"}}).value["ok"] == true);
+    AETHER_CHECK(h.Call("bp_run", {{"asset", "Blueprints/BP_Demo.abp"}}).value["variables"]["Count"] == 5);
+    AETHER_CHECK(h.Call("bp_validate", {{"asset", "Nothing.abp"}}).is_error);
+    AETHER_CHECK(h.Call("kit_check").value["ok"] == true);
+    // A hand-edited, broken Blueprint shows up as a problem.
+    AETHER_CHECK(!h.Call("content_write", {{"path", "Blueprints/BP_Bad.abp"}, {"text", broken.dump()}}).is_error);
+    Json check = h.Call("kit_check").value;
+    AETHER_CHECK(check["ok"] == false);
+    AETHER_CHECK(check["problems"][0]["problem"].get<std::string>().find("blueprint.") != std::string::npos);
+    stdfs::remove_all(dir);
 }
