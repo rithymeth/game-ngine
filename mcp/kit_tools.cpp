@@ -255,6 +255,53 @@ std::string NameOf(const Json& canonical) {
     return body.is_object() && body.contains("name") && body["name"].is_string() ? body["name"].get<std::string>() : std::string();
 }
 
+// The attributes the project's scenes and prefabs define (entities' AttributeSet components), by name.
+// Attributes can also be defined at run time by scripts, so a name missing here is a warning, not an error.
+struct ProjectAttribute {
+    std::vector<std::string> defined_in;
+    std::vector<std::string> lacks_current; // places where the saved attribute has no "current" value
+    Json first;                             // the first definition found: base, min, max
+};
+
+std::map<std::string, ProjectAttribute> CollectProjectAttributes(OpenProject& p, std::vector<std::string>& unreadable) {
+    std::map<std::string, ProjectAttribute> found;
+    for (const AssetRecord* r : p.database->All()) {
+        if (r->IsSubAsset() || (r->importer != "Scene" && r->importer != "Prefab")) continue;
+        const fs::path file = p.database->SourcePath(r->guid);
+        if (file.extension() == ".aesc") {
+            unreadable.push_back(r->path + " (binary scene)");
+            continue;
+        }
+        Json doc = Json::parse(ReadText(file), nullptr, false);
+        if (!doc.is_object() || !doc.contains("entities") || !doc["entities"].is_array()) {
+            unreadable.push_back(r->path);
+            continue;
+        }
+        for (const Json& entity : doc["entities"]) {
+            if (!entity.is_object() || !entity.contains("components") || !entity["components"].is_object()) continue;
+            const Json& comps = entity["components"];
+            if (!comps.contains("AttributeSet") || !comps["AttributeSet"].is_object()) continue;
+            const Json& set = comps["AttributeSet"];
+            if (!set.contains("attributes") || !set["attributes"].is_array()) continue;
+            for (const Json& a : set["attributes"]) {
+                if (!a.is_object() || !a.contains("name") || !a["name"].is_string()) continue;
+                ProjectAttribute& pa = found[a["name"].get<std::string>()];
+                if (std::find(pa.defined_in.begin(), pa.defined_in.end(), r->path) == pa.defined_in.end()) pa.defined_in.push_back(r->path);
+                if (!a.contains("current") && std::find(pa.lacks_current.begin(), pa.lacks_current.end(), r->path) == pa.lacks_current.end()) {
+                    pa.lacks_current.push_back(r->path);
+                }
+                if (pa.first.is_null()) {
+                    pa.first = Json::object();
+                    for (const char* key : {"base", "min", "max"}) {
+                        if (a.contains(key)) pa.first[key] = a[key];
+                    }
+                }
+            }
+        }
+    }
+    return found;
+}
+
 } // namespace
 
 void RegisterKitTools(McpServer& server, std::shared_ptr<detail::AssetHost> host) {
@@ -379,10 +426,33 @@ void RegisterKitTools(McpServer& server, std::shared_ptr<detail::AssetHost> host
          }});
 
     server.AddTool(
+        {"attribute_project",
+         "The attributes the open project's scenes and prefabs define on entities (AttributeSet components): each name, where it is "
+         "defined and its first base/min/max. There is no separate attribute-definition file; to change them use attribute_define on an "
+         "entity (then save the scene) or edit the scene with content_write.",
+         Schema(Json::object()), [host](const Json&) -> Json {
+             OpenProject& p = host->Require();
+             std::vector<std::string> unreadable;
+             const auto found = CollectProjectAttributes(p, unreadable);
+             Json list = Json::array();
+             Json warnings = Json::array();
+             for (const auto& [name, a] : found) {
+                 list.push_back({{"name", name}, {"defined_in", a.defined_in}, {"first", a.first}});
+                 for (const std::string& path : a.lacks_current) {
+                     warnings.push_back({{"path", path},
+                                         {"warning", "attribute \"" + name + "\" is saved without a \"current\" value; the game reads current, which is only "
+                                                     "computed when the attribute changes, so it starts at 0. Redefine it with attribute_define "
+                                                     "(which saves current) or add \"current\" next to \"base\"."}});
+                 }
+             }
+             return {{"attributes", list}, {"warnings", warnings}, {"not_scanned", unreadable}};
+         }});
+
+    server.AddTool(
         {"kit_check",
          "Check every kit definition in the open project: each must parse and validate, and cross-references must resolve (an ability's cost "
          "and cooldown effects, an item's use and equip effects, a quest's reward effects, reward items and prerequisites). Also "
-         "reports duplicate names.",
+         "reports duplicate names. Warns (not an error) when an effect modifies an attribute no scene or prefab defines.",
          Schema(Json::object()), [host](const Json&) -> Json {
              OpenProject& p = host->Require();
              struct Def {
@@ -450,9 +520,24 @@ void RegisterKitTools(McpServer& server, std::shared_ptr<detail::AssetHost> host
                  }
              }
 
+             Json warnings = Json::array();
+             std::vector<std::string> unreadable;
+             const auto attributes = CollectProjectAttributes(p, unreadable);
+             std::set<std::string> warned;
+             for (const Def& d : defs) {
+                 if (d.type->name != "effect" || !d.canonical.contains("modifiers") || !d.canonical["modifiers"].is_array()) continue;
+                 for (const Json& m : d.canonical["modifiers"]) {
+                     const std::string attribute = m.value("attribute", std::string());
+                     if (attribute.empty() || attributes.count(attribute) != 0 || !warned.insert(d.path + "|" + attribute).second) continue;
+                     warnings.push_back({{"path", d.path},
+                                         {"warning", "modifies attribute \"" + attribute + "\", which no scene or prefab in the project defines "
+                                                     "(fine if a script defines it at run time)"}});
+                 }
+             }
+
              Json counts = Json::object();
              for (const Def& d : defs) counts[d.type->name] = counts.value(d.type->name, 0) + 1;
-             return {{"ok", problems.empty()}, {"definitions", defs.size()}, {"by_type", counts}, {"problems", problems}};
+             return {{"ok", problems.empty()}, {"definitions", defs.size()}, {"by_type", counts}, {"problems", problems}, {"warnings", warnings}};
          }});
 }
 

@@ -1,6 +1,7 @@
 #include "editor_tools.h"
 
 #include "aether/reflection/serialize.h"
+#include "aether/gameplay/attribute_set.h"
 #include "aether/scene/components.h"
 #include "aether/scene/hierarchy.h"
 #include "aether/scene/serialization.h"
@@ -205,6 +206,8 @@ Json Schema(Json properties, std::vector<std::string> required = {}) {
 const Json kGuidProp = {{"type", "string"}, {"description", "Entity GUID, as returned by list_entities"}};
 
 } // namespace
+
+void RegisterAttributeTools(McpServer& server, EditorSession& s);
 
 void RegisterEditorTools(McpServer& server, EditorSession& s) {
     server.AddTool({"editor_state",
@@ -574,6 +577,118 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         const bool jump = args.contains("jump") && args["jump"].is_boolean() && args["jump"].get<bool>();
                         s.sim->SetPlatformerInput(move, jump);
                         return {{"move", move}, {"jump", jump}};
+                    }});
+    RegisterAttributeTools(server, s);
+}
+
+
+// ---------------------------------------------------------------------------
+// Attributes. There is no attribute-definition file: an entity's stats (Health, Mana, ...) are the
+// AttributeSet component's data, saved in scenes and prefabs. These tools edit that component as one
+// undoable step, keeping its attributes sorted and clamped the way the game does (AttributeSet::Define).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+Json AttributeJson(const gas::Attribute& a) {
+    return {{"name", a.name}, {"base", a.base}, {"current", a.current}, {"min", a.min}, {"max", a.max}};
+}
+
+Json AttributesJson(const gas::AttributeSet& set) {
+    Json out = Json::array();
+    for (const gas::Attribute& a : set.attributes) out.push_back(AttributeJson(a));
+    return out;
+}
+
+// Replaces the entity's AttributeSet with `next` as one undoable step (adding the component first if the entity has none).
+void CommitAttributeSet(EditorSession& s, Entity e, EntityGuid guid, const gas::AttributeSet& next, const std::string& label) {
+    const ComponentId id = GetComponentId<gas::AttributeSet>();
+    editor::CommandContext ctx = s.Context();
+    s.stack.BeginTransaction(label);
+    if (!s.world.HasComponentRaw(e, id)) {
+        s.stack.Execute(ctx, std::make_unique<editor::AddComponentCommand>(guid, id));
+    }
+    Json patch = {{"attributes", AttributesJson(next)}};
+    Json warnings = Json::array();
+    std::vector<u8> before;
+    std::vector<u8> after;
+    try {
+        after = PatchedBytes(s, e, id, patch, before, warnings);
+    } catch (...) {
+        s.stack.EndTransaction();
+        s.stack.Undo(ctx);
+        throw;
+    }
+    s.stack.Execute(ctx, std::make_unique<SetComponentCommand>(guid, id, before, after));
+    s.stack.EndTransaction();
+}
+
+} // namespace
+
+void RegisterAttributeTools(McpServer& server, EditorSession& s) {
+    const Json kGuidProp = {{"type", "string"}, {"description", "Entity GUID"}};
+
+    server.AddTool({"attribute_list", "The entity's attributes (name, base, current, min, max). Empty if it has no AttributeSet.",
+                    Schema({{"entity", kGuidProp}}, {"entity"}), [&s](const Json& args) -> Json {
+                        Entity e = RequireEntity(s, args);
+                        const gas::AttributeSet* set = s.world.GetComponent<gas::AttributeSet>(e);
+                        return {{"entity", RequireString(args, "entity")}, {"attributes", set ? AttributesJson(*set) : Json::array()}};
+                    }});
+
+    server.AddTool(
+        {"attribute_define",
+         "Create or redefine attributes on an entity, adding an AttributeSet if it has none. One undoable step for the whole list. "
+         "An existing attribute gets the new base and bounds (the base is clamped into them; min above max is read as the range "
+         "[max, min]). Omitted min/max mean unbounded.",
+         Schema({{"entity", kGuidProp},
+                 {"attributes", {{"type", "array"},
+                                 {"description", "[{name, base, min?, max?}, ...]"},
+                                 {"items", {{"type", "object"}}}}}},
+                {"entity", "attributes"}),
+         [&s](const Json& args) -> Json {
+             Entity e = RequireEntity(s, args);
+             EntityGuid guid = RequireGuid(args, "entity");
+             if (!args["attributes"].is_array() || args["attributes"].empty()) throw ToolError("\"attributes\" must be a non-empty array");
+             gas::AttributeSet next;
+             if (const gas::AttributeSet* current = s.world.GetComponent<gas::AttributeSet>(e)) next = *current;
+             Json defined = Json::array();
+             for (const Json& a : args["attributes"]) {
+                 if (!a.is_object() || !a.contains("name") || !a["name"].is_string()) throw ToolError("Each attribute needs a string \"name\"");
+                 const auto number = [&](const char* key, f32 fallback) {
+                     if (!a.contains(key)) return fallback;
+                     if (!a[key].is_number()) throw ToolError(std::string("\"") + key + "\" of " + a["name"].get<std::string>() + " must be a number");
+                     return a[key].get<f32>();
+                 };
+                 const std::string name = a["name"].get<std::string>();
+                 const f32 base = number("base", 0.0f);
+                 if (!next.Define(name, base, number("min", -3.0e38f), number("max", 3.0e38f))) {
+                     throw ToolError("Could not define \"" + name + "\": a bad name or a NaN");
+                 }
+                 defined.push_back(name);
+             }
+             CommitAttributeSet(s, e, guid, next, "Define attributes");
+             const gas::AttributeSet* now = s.world.GetComponent<gas::AttributeSet>(e);
+             return {{"defined", defined}, {"attributes", now ? AttributesJson(*now) : Json::array()}};
+         }});
+
+    server.AddTool({"attribute_remove", "Remove attributes from an entity by name. Undoable. Names it doesn't have are an error.",
+                    Schema({{"entity", kGuidProp}, {"names", {{"type", "array"}, {"items", {{"type", "string"}}}}}}, {"entity", "names"}),
+                    [&s](const Json& args) -> Json {
+                        Entity e = RequireEntity(s, args);
+                        EntityGuid guid = RequireGuid(args, "entity");
+                        const gas::AttributeSet* current = s.world.GetComponent<gas::AttributeSet>(e);
+                        if (current == nullptr) throw ToolError("Entity has no AttributeSet");
+                        if (!args["names"].is_array() || args["names"].empty()) throw ToolError("\"names\" must be a non-empty array of strings");
+                        gas::AttributeSet next = *current;
+                        for (const Json& n : args["names"]) {
+                            if (!n.is_string()) throw ToolError("\"names\" must be an array of strings");
+                            const std::string name = n.get<std::string>();
+                            const auto it = std::find_if(next.attributes.begin(), next.attributes.end(), [&](const gas::Attribute& a) { return a.name == name; });
+                            if (it == next.attributes.end()) throw ToolError("No attribute \"" + name + "\" on this entity");
+                            next.attributes.erase(it);
+                        }
+                        CommitAttributeSet(s, e, guid, next, "Remove attributes");
+                        return {{"attributes", AttributesJson(*s.world.GetComponent<gas::AttributeSet>(e))}};
                     }});
 }
 

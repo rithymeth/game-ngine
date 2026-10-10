@@ -2,6 +2,8 @@
 
 #include "screenshot.h"
 
+#include "aether/gameplay/attribute_library.h"
+#include "aether/gameplay/attribute_set.h"
 #include "aether/input/keys.h"
 #include "aether/player/game.h"
 #include "aether/player/user_paths.h"
@@ -435,6 +437,61 @@ void RegisterGameTools(McpServer& server) {
              Json out = EntityJson(world, e);
              if (!report.warnings.empty()) out["warnings"] = report.warnings;
              return out;
+         }});
+
+    server.AddTool({"game_attributes", "The attributes (name, base, current, min, max) of an entity in the running game.",
+                    Schema({{"entity", {{"type", "string"}, {"description", "GUID or #index"}}}}, {"entity"}), [host](const Json& args) -> Json {
+                        Game& game = host->Require();
+                        Entity e = RequireEntity(game, args);
+                        const gas::AttributeSet* set = game.GetWorld().GetComponent<gas::AttributeSet>(e);
+                        Json list = Json::array();
+                        if (set != nullptr) {
+                            for (const gas::Attribute& a : set->attributes) {
+                                list.push_back({{"name", a.name}, {"base", a.base}, {"current", a.current}, {"min", a.min}, {"max", a.max}});
+                            }
+                        }
+                        return {{"entity", EntityKey(game.GetWorld(), e)}, {"attributes", list}};
+                    }});
+
+    server.AddTool(
+        {"game_set_attribute",
+         "Change an attribute of a running entity the way the game's own code does (so attribute-changed events fire and bounds apply): "
+         "set its `base`, add a `delta` to the base, or `define` it with bounds. Effects and abilities then see the new value.",
+         Schema({{"entity", {{"type", "string"}}},
+                 {"name", {{"type", "string"}}},
+                 {"base", {{"type", "number"}, {"description", "Set the base to this"}}},
+                 {"delta", {{"type", "number"}, {"description", "Add this to the base"}}},
+                 {"define", {{"type", "object"}, {"description", "{base, min?, max?}: create or redefine the attribute"}}}},
+                {"entity", "name"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             Entity e = RequireEntity(game, args);
+             const std::string name = RequireString(args, "name");
+             const int modes = (args.contains("base") ? 1 : 0) + (args.contains("delta") ? 1 : 0) + (args.contains("define") ? 1 : 0);
+             if (modes != 1) throw ToolError("Give exactly one of \"base\", \"delta\" or \"define\"");
+             auto number = [](const Json& j, const char* key, f32 fallback) {
+                 if (!j.contains(key)) return fallback;
+                 if (!j[key].is_number()) throw ToolError(std::string("\"") + key + "\" must be a number");
+                 return j[key].get<f32>();
+             };
+             bool ok = false;
+             if (args.contains("define")) {
+                 if (!args["define"].is_object()) throw ToolError("\"define\" must be an object");
+                 const Json& d = args["define"];
+                 ok = gas::Attributes::DefineAttribute(e, name, number(d, "base", 0.0f), number(d, "min", -3.0e38f), number(d, "max", 3.0e38f));
+             } else if (!gas::Attributes::HasAttribute(e, name)) {
+                 throw ToolError("The entity has no attribute \"" + name + "\" (use define to create it)");
+             } else if (args.contains("base")) {
+                 ok = gas::Attributes::SetAttributeBase(e, name, number(args, "base", 0.0f));
+             } else {
+                 ok = gas::Attributes::AddAttributeBase(e, name, number(args, "delta", 0.0f));
+             }
+             if (!ok) throw ToolError("The change was refused (a NaN, a bad name, or no attribute system is active)");
+             return {{"name", name},
+                     {"base", gas::Attributes::GetAttributeBase(e, name, 0.0f)},
+                     {"current", gas::Attributes::GetAttribute(e, name, 0.0f)},
+                     {"min", gas::Attributes::GetAttributeMin(e, name, 0.0f)},
+                     {"max", gas::Attributes::GetAttributeMax(e, name, 0.0f)}};
          }});
 
     server.AddTool({"game_destroy_entity", "Destroy an entity in the running game (its OnDestroy runs).",
