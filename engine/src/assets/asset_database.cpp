@@ -305,7 +305,9 @@ ScanResult AssetDatabase::Scan() {
             }
         }
         if (changed) {
-            SaveAssetMeta(entry.meta_file, entry.meta);
+            std::string meta_error;
+            if (!SaveAssetMeta(entry.meta_file, entry.meta, &meta_error))
+                AETHER_LOG_WARN("Assets", "Couldn't write %s: %s", entry.meta_file.string().c_str(), meta_error.c_str());
         }
         AssetRecord record;
         record.guid = entry.meta.guid;

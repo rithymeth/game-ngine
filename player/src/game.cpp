@@ -503,7 +503,8 @@ void Game::LoadInputAssets() {
             warnings_.push_back(error);
             continue;
         }
-        input_library_.AddFromText(asset.importer, asset.path,
+        // A bad file is recorded in input_library_.Errors(), logged just below.
+        (void)input_library_.AddFromText(asset.importer, asset.path,
                                    std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
     }
     for (const std::string& e : input_library_.Errors()) AETHER_LOG_WARN("Player", "%s", e.c_str());

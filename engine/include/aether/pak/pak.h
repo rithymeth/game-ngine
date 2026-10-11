@@ -33,7 +33,7 @@ struct PakKey {
     std::array<u8, 32> bytes{};
 
     // 64 hex digits; false for anything else.
-    static bool FromHex(std::string_view hex, PakKey& out);
+    [[nodiscard]] static bool FromHex(std::string_view hex, PakKey& out);
     std::string ToHex() const;
     // A new random key.
     static PakKey Generate();
@@ -87,7 +87,7 @@ public:
     usize AddDirectory(const std::string& directory, const std::string& prefix = "");
 
     // Writes the archive; false (and `error`) on failure.
-    bool Write(const std::string& file, std::string* error = nullptr) const;
+    [[nodiscard]] bool Write(const std::string& file, std::string* error = nullptr) const;
     // The archive's bytes in memory.
     std::vector<u8> Build() const;
 
