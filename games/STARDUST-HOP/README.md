@@ -13,6 +13,7 @@ reach the golden pad to win. Fall off and you come back at the last flag. After 
 | Mouse / right stick | turn the camera |
 | Space / A button | jump |
 | R | start over |
+| On-screen stick and JUMP button (touch) | the same Move and Jump actions; `UI/TouchControls.aui`, hide with `visible: false` on its entity |
 
 The score, the messages and the key hints are the game's own on-screen UI: `Content/UI/Hud.aui`, shown by a `WidgetComponent`
 and changed by `Hopper.luau` with the `UI` table (`UI.SetText`, `UI.SetValue`), drawn by the player over the scene.

@@ -95,6 +95,9 @@ add({"Transform": tf((gx, gtop + 4.0, gz - 1.7)), "PointLight": {"$v": 1, "color
 
 # the on-screen UI: UI/Hud.aui (made by build3.py), shown by a WidgetComponent and changed by the script
 add({"Transform": tf((0, 0, 0)), "WidgetComponent": {"$v": 1, "layout": "UI/Hud.aui", "z": 0, "visible": True}, "Tags": {"$v": 1, "names": ["Hud"]}})
+# touch controls (UI/TouchControls.aui): a thumb stick and a jump button that drive the same Move and Jump actions as the keyboard and pad.
+# Set `visible` to false to hide them on a desktop build.
+add({"Transform": tf((0, 0, 0)), "WidgetComponent": {"$v": 1, "layout": "UI/TouchControls.aui", "z": 1, "visible": True}, "Tags": {"$v": 1, "names": ["TouchControls"]}})
 for _ in range(40):
     add({"Transform": tf(FAR), "ModelRenderer": model("models/spark.gltf"), "Tags": {"$v": 1, "names": ["Confetti"]}})
 

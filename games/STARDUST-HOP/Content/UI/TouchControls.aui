@@ -1,0 +1,78 @@
+{
+ "$type": "Layout",
+ "version": 1,
+ "root": {
+  "type": "Canvas",
+  "name": "TouchControls",
+  "children": [
+   {
+    "type": "VirtualStick",
+    "name": "MoveStick",
+    "radius": 90,
+    "slot": {
+     "anchors": [
+      0,
+      1,
+      0,
+      1
+     ],
+     "alignment": [
+      0,
+      1
+     ],
+     "position": [
+      70,
+      -70
+     ],
+     "size": [
+      300,
+      300
+     ]
+    }
+   },
+   {
+    "type": "Button",
+    "name": "JumpButton",
+    "hold_key": "GamepadA",
+    "padding": [
+     40,
+     28,
+     40,
+     28
+    ],
+    "slot": {
+     "anchors": [
+      1,
+      1,
+      1,
+      1
+     ],
+     "alignment": [
+      1,
+      1
+     ],
+     "position": [
+      -90,
+      -110
+     ],
+     "auto_size": true
+    },
+    "children": [
+     {
+      "type": "Text",
+      "name": "JumpLabel",
+      "text": "JUMP",
+      "size": 44,
+      "color": [
+       1,
+       1,
+       1,
+       1
+      ],
+      "justify": "Center"
+     }
+    ]
+   }
+  ]
+ }
+}

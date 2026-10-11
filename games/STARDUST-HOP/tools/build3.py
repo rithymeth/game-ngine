@@ -8,7 +8,7 @@ from mcpc import Mcp
 REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 GAME = os.path.abspath(os.path.join(HERE, ".."))
 if not os.path.exists(os.path.join(GAME, "STARDUST-HOP.aproject")):  # run from the scratch copy
-    REPO = r"D:\game-ngine\.claude\worktrees\sample-game-127bbf"
+    REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
     GAME = os.path.join(REPO, "games", "STARDUST-HOP")
 
 m = Mcp()
@@ -66,6 +66,23 @@ if prev:
     import base64
     os.makedirs(os.path.join(HERE, "_shots"), exist_ok=True)
     open(os.path.join(HERE, "_shots", "hud_preview.png"), "wb").write(base64.b64decode(prev[0]["data"]))
+
+# on-screen touch controls: a thumb stick (the left stick keys, so the Move binding works unchanged) and a jump button (the pad's A)
+touch = {
+    "type": "Canvas", "name": "TouchControls",
+    "children": [
+        {"type": "VirtualStick", "name": "MoveStick", "radius": 90,
+         "slot": {"anchors": [0, 1, 0, 1], "alignment": [0, 1], "position": [70, -70], "size": [300, 300]}},
+        {"type": "Button", "name": "JumpButton", "hold_key": "GamepadA", "padding": [40, 28, 40, 28],
+         "slot": {"anchors": [1, 1, 1, 1], "alignment": [1, 1], "position": [-90, -110], "auto_size": True},
+         "children": [{"type": "Text", "name": "JumpLabel", "text": "JUMP", "size": 44, "color": [1, 1, 1, 1], "justify": "Center"}]},
+    ],
+}
+touch_layout = {"$type": "Layout", "version": 1, "root": touch}
+checked = m.call("ui_check", {"definition": touch_layout})
+print("touch ui_check:", json.dumps({k: checked[k] for k in ("ok", "problems", "widgets")}))
+assert checked and checked["ok"], checked
+assert m.call("content_write", {"path": "UI/TouchControls.aui", "text": json.dumps(touch_layout, indent=1)})
 
 settings = m.call("project_info")
 cook = sorted(set(settings["always_cook"]) | {"UI/", "fonts/"})

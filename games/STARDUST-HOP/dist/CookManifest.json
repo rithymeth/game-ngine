@@ -214,6 +214,16 @@
       "sub_assets": []
     },
     {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "1c410611-764f-4867-9722-b87a7c257687",
+      "imported": false,
+      "importer": "UILayout",
+      "path": "UI/TouchControls.aui",
+      "sub_assets": []
+    },
+    {
       "cooked": "Cooked/863cd661-024e-47d2-b92e-60f1d08c1850.atex",
       "cooked_format": "bc7",
       "dependencies": [],
