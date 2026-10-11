@@ -94,7 +94,8 @@ nlohmann::json TilesetToJson(const Tileset& t) {
             {"autotiles", autotiles}};
 }
 
-bool TilesetFromJson(const nlohmann::json& data, Tileset& out, std::string* error) {
+namespace {
+bool TilesetFromJsonImpl(const nlohmann::json& data, Tileset& out, std::string* error) {
     const auto fail = [&](const std::string& why) {
         if (error) *error = why;
         return false;
@@ -103,6 +104,9 @@ bool TilesetFromJson(const nlohmann::json& data, Tileset& out, std::string* erro
     Tileset t;
     const std::string texture = data.value("texture", "");
     if (!texture.empty() && !assets::ParseAssetGuid(texture, t.texture)) return fail("bad texture GUID");
+    for (const char* key : {"texture_size", "tile_size"}) {
+        if (data.contains(key) && !(data[key].is_array() && data[key].size() == 2)) return fail(std::string("'") + key + "' is two numbers");
+    }
     if (data.contains("texture_size")) {
         t.texture_width = data["texture_size"][0].get<u32>();
         t.texture_height = data["texture_size"][1].get<u32>();
@@ -114,7 +118,11 @@ bool TilesetFromJson(const nlohmann::json& data, Tileset& out, std::string* erro
     if (t.tile_width == 0 || t.tile_height == 0) return fail("the tile size is zero");
     t.margin = data.value("margin", 0u);
     t.spacing = data.value("spacing", 0u);
-    for (const nlohmann::json& s : data.value("solid", nlohmann::json::array())) t.SetSolid(s.get<i32>(), true);
+    for (const nlohmann::json& s : data.value("solid", nlohmann::json::array())) {
+        const i32 tile = s.get<i32>();
+        if (tile >= (1 << 20)) return fail("a solid tile index is too large");
+        t.SetSolid(tile, true);
+    }
     for (const nlohmann::json& a : data.value("autotiles", nlohmann::json::array())) {
         Autotile at;
         at.name = a.value("name", "");
@@ -126,6 +134,11 @@ bool TilesetFromJson(const nlohmann::json& data, Tileset& out, std::string* erro
     }
     out = std::move(t);
     return true;
+}
+} // namespace
+
+bool TilesetFromJson(const nlohmann::json& data, Tileset& out, std::string* error) {
+    return GuardJsonLoader(error, "tileset", [&] { return TilesetFromJsonImpl(data, out, error); });
 }
 
 bool LoadTileset(const std::filesystem::path& file, Tileset& out, std::string* error) {
@@ -188,7 +201,8 @@ nlohmann::json TilemapToJson(const TilemapData& m) {
             {"size", {m.width, m.height}}, {"layers", layers}};
 }
 
-bool TilemapFromJson(const nlohmann::json& data, TilemapData& out, std::string* error) {
+namespace {
+bool TilemapFromJsonImpl(const nlohmann::json& data, TilemapData& out, std::string* error) {
     const auto fail = [&](const std::string& why) {
         if (error) *error = why;
         return false;
@@ -214,6 +228,11 @@ bool TilemapFromJson(const nlohmann::json& data, TilemapData& out, std::string* 
     }
     out = std::move(m);
     return true;
+}
+} // namespace
+
+bool TilemapFromJson(const nlohmann::json& data, TilemapData& out, std::string* error) {
+    return GuardJsonLoader(error, "tilemap", [&] { return TilemapFromJsonImpl(data, out, error); });
 }
 
 bool LoadTilemap(const std::filesystem::path& file, TilemapData& out, std::string* error) {
