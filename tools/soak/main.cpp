@@ -10,10 +10,12 @@
 #include "aether/scene/test_world.h"
 #include "aether/streaming/streamer.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <memory>
 #include <new>
 #include <string>
 #include <vector>

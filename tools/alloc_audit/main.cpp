@@ -15,7 +15,11 @@
 #include "aether/nav/navmesh.h"
 #include "aether/scene/components.h"
 
+#include <algorithm>
 #include <cstdio>
+#ifdef _WIN32
+#include <malloc.h>
+#endif
 #include <cstdlib>
 #include <functional>
 #include <memory>
@@ -31,8 +35,14 @@ void* operator new(std::size_t size) {
 void* operator new[](std::size_t size) { return operator new(size); }
 void* operator new(std::size_t size, std::align_val_t alignment) {
     aether::alloc_track::OnAllocation(size);
+    const std::size_t align = static_cast<std::size_t>(alignment) < sizeof(void*) ? sizeof(void*) : static_cast<std::size_t>(alignment);
+#ifdef _WIN32
+    void* p = _aligned_malloc(size ? size : 1, align);
+    if (p == nullptr) throw std::bad_alloc();
+#else
     void* p = nullptr;
-    if (posix_memalign(&p, static_cast<std::size_t>(alignment) < sizeof(void*) ? sizeof(void*) : static_cast<std::size_t>(alignment), size ? size : 1) != 0) throw std::bad_alloc();
+    if (posix_memalign(&p, align, size ? size : 1) != 0) throw std::bad_alloc();
+#endif
     return p;
 }
 void* operator new[](std::size_t size, std::align_val_t alignment) { return operator new(size, alignment); }
@@ -40,10 +50,18 @@ void operator delete(void* p) noexcept { std::free(p); }
 void operator delete[](void* p) noexcept { std::free(p); }
 void operator delete(void* p, std::size_t) noexcept { std::free(p); }
 void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
+#ifdef _WIN32
+// Memory from _aligned_malloc must go back through _aligned_free.
+void operator delete(void* p, std::align_val_t) noexcept { _aligned_free(p); }
+void operator delete[](void* p, std::align_val_t) noexcept { _aligned_free(p); }
+void operator delete(void* p, std::size_t, std::align_val_t) noexcept { _aligned_free(p); }
+void operator delete[](void* p, std::size_t, std::align_val_t) noexcept { _aligned_free(p); }
+#else
 void operator delete(void* p, std::align_val_t) noexcept { std::free(p); }
 void operator delete[](void* p, std::align_val_t) noexcept { std::free(p); }
 void operator delete(void* p, std::size_t, std::align_val_t) noexcept { std::free(p); }
 void operator delete[](void* p, std::size_t, std::align_val_t) noexcept { std::free(p); }
+#endif
 
 using namespace aether;
 
