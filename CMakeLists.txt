@@ -144,6 +144,8 @@ set(ASTCENC_CLI OFF CACHE BOOL "" FORCE)
 set(ASTCENC_UNITTEST OFF CACHE BOOL "" FORCE)
 set(ASTCENC_SHAREDLIB OFF CACHE BOOL "" FORCE)
 set(ASTCENC_ISA_NONE ON CACHE BOOL "" FORCE)
+set(ASTCENC_UNIVERSAL_BUILD OFF CACHE BOOL "" FORCE) # macOS: one architecture (the universal build refuses ISA_NONE)
+set(ASTCENC_WERROR OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(astcenc)
 add_library(aether_bcenc STATIC
     ${bc7enc_SOURCE_DIR}/bc7enc.cpp
