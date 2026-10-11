@@ -1,9 +1,11 @@
 #include "aether/blueprint/compiler.h"
 #include "aether/blueprint/vm.h"
 #include "aether/nav/crowd.h"
+#include "aether/core/log.h"
 #include "test_framework.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -37,6 +39,7 @@ ModelRenderer Model(const char* name) {
 bool Meshes(const ModelRenderer& m, std::vector<Vec3>& v, std::vector<u32>& i) {
     NavGeometry g;
     if (std::strcmp(m.asset_path, "floor") == 0) g.AddPlane(Vec3(0, 0, 0), 10, 10);
+    else if (std::strcmp(m.asset_path, "big") == 0) g.AddPlane(Vec3(0, 0, 0), 40, 40);
     else if (std::strcmp(m.asset_path, "pad") == 0) g.AddPlane(Vec3(0, 0, 0), 3, 3);
     else if (std::strcmp(m.asset_path, "wall") == 0) g.AddBox(Vec3(0, 1.5f, 0), Vec3(0.5f, 1.5f, 6.0f));
     else return false;
@@ -347,4 +350,50 @@ AETHER_TEST(NavCrowd_BlueprintNodes) {
     });
     CHECK(printed == std::vector<std::string>{"arrived"});
     CHECK(Flat(s.Pos(e), Vec3(5, 0, 5)) < 0.4f);
+}
+
+AETHER_TEST(NavCrowd_ThousandAgentsCrossAnOpenField) {
+    World world;
+    NavWorld nav{world, Meshes};
+    world.CreateEntity(At({0, 0, 0}), Model("big"));
+    NavMeshSettings settings;
+    settings.tile_size = 60;
+    CHECK(nav.Bake(settings));
+    NavCrowd crowd{world, nav, 1024};
+    constexpr int kAgents = 1000;
+    std::vector<Entity> agents;
+    for (int i = 0; i < kAgents; ++i) {
+        const f32 x = -38.0f + static_cast<f32>(i % 40) * 1.9f, z = -38.0f + static_cast<f32>(i / 40) * 1.2f;
+        NavAgent a;
+        a.radius = 0.4f;
+        a.avoidance_quality = 1; // the crowd setting a large group would use
+        const Entity e = world.CreateEntity(At({x, 0, z}), a);
+        world.GetComponent<NavAgent>(e)->MoveTo(Vec3(x, 0, z + 30.0f)); // one direction: a stream, not a head-on swap
+        agents.push_back(e);
+    }
+    f64 worst_ms = 0.0, total_ms = 0.0;
+    int frames = 0;
+    for (; frames < 900; ++frames) {
+        const auto start = std::chrono::steady_clock::now();
+        nav.Update(0);
+        crowd.Update(1.0f / 30.0f);
+        const f64 ms = std::chrono::duration<f64, std::milli>(std::chrono::steady_clock::now() - start).count();
+        worst_ms = std::max(worst_ms, ms);
+        total_ms += ms;
+        bool any_moving = false;
+        for (Entity e : agents) any_moving = any_moving || world.GetComponent<NavAgent>(e)->IsMoving();
+        if (!any_moving) break;
+    }
+    int arrived = 0, failed = 0;
+    for (Entity e : agents) {
+        const NavAgent& a = *world.GetComponent<NavAgent>(e);
+        arrived += a.HasArrived() ? 1 : 0;
+        failed += a.HasFailed() ? 1 : 0;
+    }
+    AETHER_LOG_INFO("Test", "1000 agents: %d frames, %.2f ms average, %.2f ms worst, %d arrived, %d failed", frames,
+                    total_ms / std::max(frames, 1), worst_ms, arrived, failed);
+    CHECK(crowd.AgentCount() == static_cast<usize>(kAgents));
+    CHECK(failed == 0);
+    CHECK(arrived >= kAgents * 95 / 100); // a few may still be jostling at the goal
+    CHECK(worst_ms < 500.0);
 }

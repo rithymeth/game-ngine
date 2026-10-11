@@ -8,6 +8,10 @@ namespace aether::net {
 struct RpcConfig {
     u8 reliable_channel = 0;   // a ReliableOrdered channel
     u8 unreliable_channel = 1; // for Fn_Unreliable calls
+    // Server side, per client: a token bucket that refills at calls_per_second up to call_burst, so one client
+    // cannot flood the server with calls. Active once Tick() has been called; 0 calls_per_second turns it off.
+    f64 calls_per_second = 120.0;
+    f64 call_burst = 60.0;
 };
 
 struct RpcStats {
@@ -17,6 +21,7 @@ struct RpcStats {
     u32 rejected = 0;    // incoming calls not allowed (from a client that doesn't own the entity, or the wrong kind)
     u32 unknown = 0;     // incoming calls for an entity, component or function this side doesn't have
     u32 malformed = 0;
+    u32 throttled = 0;   // incoming calls dropped because the client was over its rate
 };
 
 // Routes remote calls over a NetHost (Phase 22 step 3,
@@ -44,6 +49,9 @@ public:
     RemoteCallResult Route(Entity entity, const reflect::TypeInfo& component, const reflect::FunctionInfo& function,
                            std::span<reflect::Any> args) override;
 
+    // Refills the clients' call budgets; call once per frame on the server.
+    void Tick(f64 now);
+
     // Runs the calls in the host's events; true when `event` was one.
     bool HandleEvent(const NetEvent& event);
 
@@ -65,6 +73,12 @@ private:
     RpcConfig config_;
     PeerId caller_ = kNoPeer;
     RpcStats stats_;
+    struct Bucket {
+        f64 tokens = 0;
+    };
+    std::unordered_map<PeerId, Bucket> buckets_;
+    f64 last_tick_ = 0;
+    bool ticked_ = false;
 };
 
 } // namespace aether::net

@@ -4,6 +4,7 @@
 #include "aether/streaming/partition.h"
 
 #include <functional>
+#include <memory>
 #include <set>
 
 namespace aether::streaming {
@@ -40,6 +41,19 @@ public:
 
     void Update();
 
+    // Async loading (Phase 42 step 2): with an executor set, reading a cell's bytes (the CellLoader, which must then be
+    // thread-safe) runs through it, e.g. a job system; Update() only applies finished reads to the world, so the
+    // world is still touched from one thread. A cell that is no longer wanted when its read finishes is dropped.
+    // An executor that runs the task inline works (tests use one that queues and runs on demand).
+    using Executor = std::function<void(std::function<void()>)>;
+    void SetExecutor(Executor executor) { executor_ = std::move(executor); }
+    usize max_inflight_reads = 4;
+    // Budgets for applying finished cells in one Update; 0 = none. At least one cell is applied when any is ready,
+    // so a single big cell cannot stall forever.
+    usize max_entities_per_update = 0;
+    f64 apply_budget_ms = 0.0;
+    usize InFlight() const;
+
     usize max_loads_per_update = 2;
     usize max_unloads_per_update = 4;
     f32 unload_margin = 1.25f;
@@ -61,6 +75,8 @@ public:
 
 private:
     bool LoadCell(const CellCoord& cell);
+    bool ApplyCell(const CellCoord& cell, std::vector<u8>& bytes);
+    void UpdateAsync(const std::vector<std::pair<f32, CellCoord>>& wanted);
     void UnloadCell(const CellCoord& cell);
     f32 DistanceToCell(const Vec3& local, const CellCoord& cell) const;
 
@@ -75,6 +91,10 @@ private:
     std::vector<CellCoord> pending_;
     std::vector<StreamingEvent> events_;
     std::vector<std::string> problems_;
+
+    struct Shared; // reads in flight and finished, shared with the executor's tasks
+    Executor executor_;
+    std::shared_ptr<Shared> shared_;
 };
 
 // Moves everything back near (0, 0, 0) when `focus` strays more than

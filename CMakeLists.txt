@@ -409,6 +409,11 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(recastnavigation)
 # AI and navigation (Phase 20): navmeshes, agents, behaviour trees, perception.
 add_subdirectory(nav)
+if(TARGET aether_bench)
+    # The navigation benchmarks; nav is added after bench/, so the benchmark executable picks them up here.
+    target_sources(aether_bench PRIVATE bench/src/bench_nav.cpp)
+    target_link_libraries(aether_bench PRIVATE Aether::Nav)
+endif()
 add_subdirectory(ai)
 
 if(AETHER_BUILD_SCRIPTING)
@@ -496,6 +501,12 @@ endif()
 
 # Phase 23: the functional test runner (headless, any platform).
 add_subdirectory(tools/functional)
+if(TARGET aether_ai AND TARGET aether_nav)
+    add_subdirectory(tools/alloc_audit)
+endif()
+if(TARGET aether_streaming AND TARGET aether_net)
+    add_subdirectory(tools/soak)
+endif()
 add_subdirectory(tools/fuzz)
 # Phase 25: the .apak archive tool and the cooker.
 add_subdirectory(tools/pak)

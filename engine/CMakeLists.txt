@@ -1,5 +1,6 @@
 add_library(aether_engine STATIC
     src/core/log.cpp
+    src/core/alloc_track.cpp
     src/core/cvar.cpp
     src/core/console.cpp
     src/core/profiler.cpp
@@ -24,6 +25,7 @@ add_library(aether_engine STATIC
     src/docs/api_docs.cpp
     src/cook/package.cpp
     src/plugin/plugin.cpp
+    src/plugin/package.cpp
     src/cook/texture_cook.cpp
     src/math/math.cpp
     src/job/job_system.cpp
