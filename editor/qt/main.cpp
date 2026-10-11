@@ -3945,7 +3945,10 @@ private:
             const auto relative = path.lexically_relative(content);
             if (!relative.empty() && *relative.begin() != "..") {
                 project_settings_.startup_scene = relative.generic_string();
-                aether::SaveProject(project_file_, project_settings_, nullptr);
+                std::string project_error;
+                if (!aether::SaveProject(project_file_, project_settings_, &project_error))
+                    statusBar()->showMessage("Scene saved, but the startup scene couldn't be recorded in the project: " +
+                                             QString::fromStdString(project_error));
             }
         }
         UpdateSceneStatus();

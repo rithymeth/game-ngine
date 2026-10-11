@@ -260,7 +260,7 @@ std::filesystem::path MakePackage(const char* dir_name, const assets::AssetGuid&
     if (!script.empty()) writer.Add("Content/Scripts/Hero.luau", script);
     const std::filesystem::path file = dir / "Game.apak";
     std::string error;
-    writer.Write(file.string(), &error);
+    AETHER_CHECK(writer.Write(file.string(), &error));
     return file;
 }
 
