@@ -1,0 +1,3632 @@
+{
+ "$type": "Scene",
+ "$version": 1,
+ "entities": [
+  {
+   "guid": "18eec774-6dc8-496d-b41a-d17b00d19a49",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      3,
+      7
+     ],
+     "rotation": [
+      -0.14943814,
+      0,
+      0,
+      0.9887711
+     ]
+    },
+    "Camera": {
+     "$v": 1,
+     "projection": "Perspective",
+     "fov_degrees": 62.0,
+     "near_plane": 0.1,
+     "far_plane": 600.0,
+     "ortho_height": 10.0,
+     "priority": 0
+    },
+    "AudioListener": {
+     "$v": 1,
+     "active": true
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "MainCamera"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "62ebe518-c12d-460e-9ac1-4fafa58f09a7",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      0.05,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "8a2fe911-9615-41b1-8b94-64edcb4488c7",
+     "asset_path": "models/player.gltf"
+    },
+    "CharacterMovement": {
+     "$v": 1,
+     "acceleration": 22.0,
+     "air_acceleration": 8.0,
+     "air_control": 0.6,
+     "braking": 28.0,
+     "coyote_time": 0.12,
+     "flying": false,
+     "gravity_scale": 1.35,
+     "height": 1.8,
+     "jump_buffer": 0.12,
+     "jump_velocity": 6.2,
+     "mass": 70.0,
+     "max_slope_degrees": 45.0,
+     "radius": 0.33,
+     "run_speed": 6.5,
+     "step_height": 0.3,
+     "walk_speed": 6.5
+    },
+    "ScriptComponent": {
+     "$v": 1,
+     "script": "43ad835a-2abe-497c-aa6a-6308ba8725c9",
+     "properties": []
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Player"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "c315c219-1379-42a3-9225-dcfc4f527f39",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      0,
+      -25
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "7188dbce-ca09-44ce-95cd-65bc6980aba6",
+     "asset_path": "models/sky.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Sky"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "58b960a1-3f59-4edc-a061-389760d50894",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      0,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "AudioSource": {
+     "$v": 1,
+     "cue": "Audio/ambient.acue",
+     "auto_play": true,
+     "volume_db": 0,
+     "pitch": 1
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "AmbientAudio"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "458fa672-c2f7-4d80-aed1-4876a8a37e8d",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      0,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "AudioSource": {
+     "$v": 1,
+     "cue": "Audio/coin.acue",
+     "auto_play": false,
+     "volume_db": 0,
+     "pitch": 1
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "SfxCoin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "12a74df5-039b-42b1-a618-f751b97b4d6a",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      0,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "AudioSource": {
+     "$v": 1,
+     "cue": "Audio/jump.acue",
+     "auto_play": false,
+     "volume_db": 0,
+     "pitch": 1
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "SfxJump"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "3aa39d27-556d-4003-bd79-0b52042ded95",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      0,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "AudioSource": {
+     "$v": 1,
+     "cue": "Audio/fall.acue",
+     "auto_play": false,
+     "volume_db": 0,
+     "pitch": 1
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "SfxFall"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "34273593-feda-44e4-9041-5fcd75963873",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      0,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "AudioSource": {
+     "$v": 1,
+     "cue": "Audio/checkpoint.acue",
+     "auto_play": false,
+     "volume_db": 0,
+     "pitch": 1
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "SfxCheckpoint"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "0e2be2e4-ff84-4a8a-bd3f-d8f9d72e9218",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      0,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "AudioSource": {
+     "$v": 1,
+     "cue": "Audio/win.acue",
+     "auto_play": false,
+     "volume_db": 0,
+     "pitch": 1
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "SfxWin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "392db9a1-4a5c-4642-8fff-2ee5732928bd",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0.0,
+      -0.5,
+      0.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9a145ad6-2865-4ca4-bd11-a6259cf531c1",
+     "asset_path": "models/plat_8x8.gltf"
+    },
+    "BoxCollider": {
+     "$v": 1,
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "half_extents": [
+      4.0,
+      0.5,
+      4.0
+     ],
+     "friction": 0.6,
+     "is_trigger": false,
+     "report_stay": false,
+     "restitution": 0.0
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Platform",
+      "Start"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "60e7ed4e-cb89-4861-9e7e-6b73808ebc90",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0.0,
+      0.09999999999999998,
+      -8.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "111fdf28-eb8c-471e-988e-07286ebc22d2",
+     "asset_path": "models/plat_4x4.gltf"
+    },
+    "BoxCollider": {
+     "$v": 1,
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "half_extents": [
+      2.0,
+      0.5,
+      2.0
+     ],
+     "friction": 0.6,
+     "is_trigger": false,
+     "report_stay": false,
+     "restitution": 0.0
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Platform",
+      "P1"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "e65bfc52-8dbc-415f-a296-0ba5a577e4f7",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      3.5,
+      0.7,
+      -12.5
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "111fdf28-eb8c-471e-988e-07286ebc22d2",
+     "asset_path": "models/plat_4x4.gltf"
+    },
+    "BoxCollider": {
+     "$v": 1,
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "half_extents": [
+      2.0,
+      0.5,
+      2.0
+     ],
+     "friction": 0.6,
+     "is_trigger": false,
+     "report_stay": false,
+     "restitution": 0.0
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Platform",
+      "P2"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "63148b1d-8508-4e94-9de6-51d92c0d936e",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      3.5,
+      1.3,
+      -17.5
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "111fdf28-eb8c-471e-988e-07286ebc22d2",
+     "asset_path": "models/plat_4x4.gltf"
+    },
+    "BoxCollider": {
+     "$v": 1,
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "half_extents": [
+      2.0,
+      0.5,
+      2.0
+     ],
+     "friction": 0.6,
+     "is_trigger": false,
+     "report_stay": false,
+     "restitution": 0.0
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Platform",
+      "P3"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "d861e12a-93c3-4de7-8967-283dd7b16177",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      -0.5,
+      1.9,
+      -21.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "111fdf28-eb8c-471e-988e-07286ebc22d2",
+     "asset_path": "models/plat_4x4.gltf"
+    },
+    "BoxCollider": {
+     "$v": 1,
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "half_extents": [
+      2.0,
+      0.5,
+      2.0
+     ],
+     "friction": 0.6,
+     "is_trigger": false,
+     "report_stay": false,
+     "restitution": 0.0
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Platform",
+      "P4"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "be4cb2b9-0a08-44e3-86d9-af0066734d57",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      -5.0,
+      2.5,
+      -23.5
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "111fdf28-eb8c-471e-988e-07286ebc22d2",
+     "asset_path": "models/plat_4x4.gltf"
+    },
+    "BoxCollider": {
+     "$v": 1,
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "half_extents": [
+      2.0,
+      0.5,
+      2.0
+     ],
+     "friction": 0.6,
+     "is_trigger": false,
+     "report_stay": false,
+     "restitution": 0.0
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Platform",
+      "P5"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "51da2203-4516-4e38-a8a4-8742b0abdf21",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      -9.0,
+      3.1,
+      -27.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "111fdf28-eb8c-471e-988e-07286ebc22d2",
+     "asset_path": "models/plat_4x4.gltf"
+    },
+    "BoxCollider": {
+     "$v": 1,
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "half_extents": [
+      2.0,
+      0.5,
+      2.0
+     ],
+     "friction": 0.6,
+     "is_trigger": false,
+     "report_stay": false,
+     "restitution": 0.0
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Platform",
+      "P6"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "7db9d05a-9962-45fe-a27d-4b6ec7deac17",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      -9.0,
+      3.7,
+      -32.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "7d7cb79d-bcf7-4a06-aa90-1108effde1c9",
+     "asset_path": "models/plat_6x6.gltf"
+    },
+    "BoxCollider": {
+     "$v": 1,
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "half_extents": [
+      3.0,
+      0.5,
+      3.0
+     ],
+     "friction": 0.6,
+     "is_trigger": false,
+     "report_stay": false,
+     "restitution": 0.0
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Platform",
+      "P7"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "130e96a9-8ff1-44b2-a766-4542b8a2168c",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      -4.0,
+      4.3,
+      -35.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "111fdf28-eb8c-471e-988e-07286ebc22d2",
+     "asset_path": "models/plat_4x4.gltf"
+    },
+    "BoxCollider": {
+     "$v": 1,
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "half_extents": [
+      2.0,
+      0.5,
+      2.0
+     ],
+     "friction": 0.6,
+     "is_trigger": false,
+     "report_stay": false,
+     "restitution": 0.0
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Platform",
+      "P8"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "741b0270-d5bd-4df7-9b75-2f5d4ef10d9f",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      1.0,
+      4.9,
+      -37.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "111fdf28-eb8c-471e-988e-07286ebc22d2",
+     "asset_path": "models/plat_4x4.gltf"
+    },
+    "BoxCollider": {
+     "$v": 1,
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "half_extents": [
+      2.0,
+      0.5,
+      2.0
+     ],
+     "friction": 0.6,
+     "is_trigger": false,
+     "report_stay": false,
+     "restitution": 0.0
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Platform",
+      "P9"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "18fcc9d2-46e6-4582-9c61-0bcca4961a1e",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      6.0,
+      5.5,
+      -39.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "111fdf28-eb8c-471e-988e-07286ebc22d2",
+     "asset_path": "models/plat_4x4.gltf"
+    },
+    "BoxCollider": {
+     "$v": 1,
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "half_extents": [
+      2.0,
+      0.5,
+      2.0
+     ],
+     "friction": 0.6,
+     "is_trigger": false,
+     "report_stay": false,
+     "restitution": 0.0
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Platform",
+      "P10"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "49e7fcc2-8390-4b42-8c12-363374612952",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      11.0,
+      6.1,
+      -41.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "111fdf28-eb8c-471e-988e-07286ebc22d2",
+     "asset_path": "models/plat_4x4.gltf"
+    },
+    "BoxCollider": {
+     "$v": 1,
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "half_extents": [
+      2.0,
+      0.5,
+      2.0
+     ],
+     "friction": 0.6,
+     "is_trigger": false,
+     "report_stay": false,
+     "restitution": 0.0
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Platform",
+      "P11"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "d5964cb5-5abb-4e6c-ae22-35ed6d13fdb6",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      14.0,
+      6.7,
+      -46.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "111fdf28-eb8c-471e-988e-07286ebc22d2",
+     "asset_path": "models/plat_4x4.gltf"
+    },
+    "BoxCollider": {
+     "$v": 1,
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "half_extents": [
+      2.0,
+      0.5,
+      2.0
+     ],
+     "friction": 0.6,
+     "is_trigger": false,
+     "report_stay": false,
+     "restitution": 0.0
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Platform",
+      "P12"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "a7fff3a8-7d2f-4678-a85b-47e59872c0b0",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      14.0,
+      7.3,
+      -53.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9a145ad6-2865-4ca4-bd11-a6259cf531c1",
+     "asset_path": "models/plat_8x8.gltf"
+    },
+    "BoxCollider": {
+     "$v": 1,
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "half_extents": [
+      4.0,
+      0.5,
+      4.0
+     ],
+     "friction": 0.6,
+     "is_trigger": false,
+     "report_stay": false,
+     "restitution": 0.0
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Platform",
+      "Goal"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "dc5b5c85-816f-470c-8331-b78437f93760",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0.0,
+      1.7000000000000002,
+      -8.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+     "asset_path": "models/coin.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Coin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "0608d23d-8017-46b6-b67b-8d9fb1aac203",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      3.5,
+      2.3,
+      -12.5
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+     "asset_path": "models/coin.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Coin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "d9b72a48-d1f2-4b09-8912-45c6a2ee43e4",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      3.5,
+      2.9000000000000004,
+      -17.5
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+     "asset_path": "models/coin.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Coin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "9de91622-23f3-47f7-a585-ed305eb8a20d",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      -0.5,
+      3.5,
+      -21.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+     "asset_path": "models/coin.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Coin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "0d7486ab-144d-4cec-9019-bf25c2984fae",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      -5.0,
+      4.1,
+      -23.5
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+     "asset_path": "models/coin.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Coin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "adcc01cf-0491-4108-9e6d-c7b4303c589c",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      -9.0,
+      4.7,
+      -27.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+     "asset_path": "models/coin.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Coin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "bef37918-2133-463b-bb65-7590cc9c24b3",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      -9.0,
+      5.300000000000001,
+      -32.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+     "asset_path": "models/coin.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Coin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "d71ee5fa-cb93-443e-9315-befad37d6d94",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      -4.0,
+      5.9,
+      -35.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+     "asset_path": "models/coin.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Coin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "7cb785f3-545e-4c0a-a1c1-f6ba6a284a70",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      1.0,
+      6.5,
+      -37.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+     "asset_path": "models/coin.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Coin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "9cb82066-255e-485d-838f-ce2497ef72fc",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      6.0,
+      7.1,
+      -39.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+     "asset_path": "models/coin.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Coin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "3033c3cf-ffc7-4e9c-9d79-87b49dc87491",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      11.0,
+      7.699999999999999,
+      -41.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+     "asset_path": "models/coin.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Coin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "7b581f41-f66c-4f5d-a6d4-619d9e1168f3",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      14.0,
+      8.3,
+      -46.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+     "asset_path": "models/coin.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Coin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "bf794fb0-1d7a-4d6d-a08c-b26ac14897b6",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0.0,
+      2.4,
+      -3.8
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+     "asset_path": "models/coin.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Coin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "9f97f85a-2389-4f5d-86ae-37dea4c37b06",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      -7.0,
+      5.6,
+      -29.5
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+     "asset_path": "models/coin.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Coin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "2418fa88-54cd-45cc-91f3-a28532526886",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      8.5,
+      8.6,
+      -43.5
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+     "asset_path": "models/coin.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Coin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "437956f5-cd38-4071-aaae-4ee65c0b98bf",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      4.7,
+      1.8,
+      -18.4
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "00512fef-d66a-4a3d-8b36-9dcd7df6c750",
+     "asset_path": "models/checkpoint.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Checkpoint"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "b6032bfa-93a8-4e97-b5b8-0b3a69c5cec2",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      -7.4,
+      4.2,
+      -33.6
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "00512fef-d66a-4a3d-8b36-9dcd7df6c750",
+     "asset_path": "models/checkpoint.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Checkpoint"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "f3e7daeb-5118-48a9-b7cd-2440eeec3f9f",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      14.0,
+      7.8,
+      -53.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "3b8058bd-b0f6-4a71-b059-8a1df33e9758",
+     "asset_path": "models/goal.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Goal"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "9c52606e-6f72-46bf-b674-f26f506ad4d2",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "04c3b19a-65ea-4057-bbd9-839ec07efa38",
+     "asset_path": "models/pip_on.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "PipOn"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "d4819942-a194-4dfd-85b5-c5db3d37914c",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "04c3b19a-65ea-4057-bbd9-839ec07efa38",
+     "asset_path": "models/pip_on.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "PipOn"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "000aab31-99ee-41a9-9a52-171a277cf880",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "04c3b19a-65ea-4057-bbd9-839ec07efa38",
+     "asset_path": "models/pip_on.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "PipOn"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "53419fed-9808-4502-8f4e-b4a430d0f5e1",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "04c3b19a-65ea-4057-bbd9-839ec07efa38",
+     "asset_path": "models/pip_on.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "PipOn"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "a689469c-c83f-45d4-8dae-c50935a75f69",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "04c3b19a-65ea-4057-bbd9-839ec07efa38",
+     "asset_path": "models/pip_on.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "PipOn"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "c63c8398-5fda-4cdc-961b-acee4f0e37f1",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "04c3b19a-65ea-4057-bbd9-839ec07efa38",
+     "asset_path": "models/pip_on.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "PipOn"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "28aa813a-ab00-4fbd-8aee-f4cadb0d4938",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "04c3b19a-65ea-4057-bbd9-839ec07efa38",
+     "asset_path": "models/pip_on.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "PipOn"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "f490f973-5550-460a-8de5-75f3ac91ad34",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "04c3b19a-65ea-4057-bbd9-839ec07efa38",
+     "asset_path": "models/pip_on.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "PipOn"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "265d749f-410a-4b6e-a345-14da3629b7c7",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "04c3b19a-65ea-4057-bbd9-839ec07efa38",
+     "asset_path": "models/pip_on.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "PipOn"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "7c2cfb45-1617-45f7-93ac-e880541d64cc",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "04c3b19a-65ea-4057-bbd9-839ec07efa38",
+     "asset_path": "models/pip_on.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "PipOn"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "64ba84bc-2b11-4e19-902b-6a04bc16cc99",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "04c3b19a-65ea-4057-bbd9-839ec07efa38",
+     "asset_path": "models/pip_on.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "PipOn"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "ca87c757-6bc2-4535-9245-27fc7700d670",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "04c3b19a-65ea-4057-bbd9-839ec07efa38",
+     "asset_path": "models/pip_on.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "PipOn"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "689f4b29-e853-41a9-8f32-37f35a457de4",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "04c3b19a-65ea-4057-bbd9-839ec07efa38",
+     "asset_path": "models/pip_on.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "PipOn"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "f5f5e993-30fc-43ae-98aa-4a806e40123d",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "04c3b19a-65ea-4057-bbd9-839ec07efa38",
+     "asset_path": "models/pip_on.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "PipOn"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "53797986-8373-4c98-8897-b6726de23197",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "04c3b19a-65ea-4057-bbd9-839ec07efa38",
+     "asset_path": "models/pip_on.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "PipOn"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "fd8a86af-fee5-4958-8840-23ab3717f3e3",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "cb4e23bf-96c2-4333-904d-1bbbeace3567",
+     "asset_path": "models/pip_off.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "PipOff"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "6d7d50bc-9863-41d7-8f31-c840be95cf24",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "cb4e23bf-96c2-4333-904d-1bbbeace3567",
+     "asset_path": "models/pip_off.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "PipOff"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "d51c8ae0-d021-4dc5-b3f5-e6b601b26a12",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "cb4e23bf-96c2-4333-904d-1bbbeace3567",
+     "asset_path": "models/pip_off.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "PipOff"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "dd181a34-2aca-4748-add8-b2b95e3fc8f9",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "cb4e23bf-96c2-4333-904d-1bbbeace3567",
+     "asset_path": "models/pip_off.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "PipOff"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "034cb93b-3f17-4ddd-ac03-c8faf98ce2a8",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "cb4e23bf-96c2-4333-904d-1bbbeace3567",
+     "asset_path": "models/pip_off.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "PipOff"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "9811af2d-992a-42f1-943f-edb3d83c57b0",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "cb4e23bf-96c2-4333-904d-1bbbeace3567",
+     "asset_path": "models/pip_off.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "PipOff"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "a6759829-a38b-421a-bb67-308302e84096",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "cb4e23bf-96c2-4333-904d-1bbbeace3567",
+     "asset_path": "models/pip_off.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "PipOff"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "c04451c0-2265-477f-b174-d4d74d1233e1",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "cb4e23bf-96c2-4333-904d-1bbbeace3567",
+     "asset_path": "models/pip_off.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "PipOff"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "233da311-6917-413e-92ac-3d5422b809c9",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "cb4e23bf-96c2-4333-904d-1bbbeace3567",
+     "asset_path": "models/pip_off.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "PipOff"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "cb39d05e-ce3e-4b71-8173-7afe3c36f386",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "cb4e23bf-96c2-4333-904d-1bbbeace3567",
+     "asset_path": "models/pip_off.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "PipOff"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "3e619f39-317d-4ee9-855a-6fb6463e5e84",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "cb4e23bf-96c2-4333-904d-1bbbeace3567",
+     "asset_path": "models/pip_off.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "PipOff"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "53ffceaf-25fd-4083-8de8-ef374f7b3575",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "cb4e23bf-96c2-4333-904d-1bbbeace3567",
+     "asset_path": "models/pip_off.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "PipOff"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "3e646dd7-f64e-4582-8120-ac24af847e23",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "cb4e23bf-96c2-4333-904d-1bbbeace3567",
+     "asset_path": "models/pip_off.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "PipOff"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "b0daa3a7-3202-4afa-a88e-a7f94127a324",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "cb4e23bf-96c2-4333-904d-1bbbeace3567",
+     "asset_path": "models/pip_off.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "PipOff"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "c0ec2c76-6b11-433c-b654-aba66941732c",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "cb4e23bf-96c2-4333-904d-1bbbeace3567",
+     "asset_path": "models/pip_off.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "PipOff"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "03797d5a-6fa1-4cf7-a7f5-28160443ca48",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "9f6ef6a7-f6ef-4501-9f61-4b1c770befa6",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "8af429f5-038c-4a6d-b518-38ca395a87f5",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "d0bf8d16-1fd1-4a82-80a8-1f8cdc9b481c",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "941f4473-07d6-47e9-968d-bc495af79073",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "a15860e2-2c77-4c85-8016-cb9a42b30bb3",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "610b7e0b-1904-44e3-8f23-d252a15ea4eb",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "bd4ad357-e3f5-47e6-baf2-fadeaea41d6e",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "7f6e2bb0-b6a9-49ab-bcdc-65e8cf6424b8",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "fc41f7f0-b776-49f5-ae9e-4b2c78b3b6c1",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "90c46909-b27b-46f0-a954-4c635837b166",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "ca76fc5b-facc-4d54-9665-fbaa2579df5e",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "53186705-a7fd-40db-ab94-a5473ce9b2db",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "e5d8fa48-c68b-4198-ba95-1248e433ce2d",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "9a36b950-f0f0-4471-b545-e8c0862de299",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "00ab8992-f8a1-4334-a975-e1707ceda290",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "512a2816-c546-4f6b-884a-75a856ccf515",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "06e476cb-ac56-4ad6-b38b-202df106f55d",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "4c89c487-681f-4177-a8a3-20351b528438",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "07d1c4e8-1a1f-4a00-ab3a-f714baac49ed",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "41634423-0b16-4cfd-b1a0-4773120a1db8",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "68a64608-80f7-4c94-bed5-d9b339842f4b",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "f1b9028c-4ef4-4f32-b4a7-23045c798267",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "e04730ec-81c2-4595-bf2f-4ce6061809b0",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "8587332b-3f85-47f5-92b6-efa5d6faed37",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "27a73677-9723-4c3f-974c-602f92a09d50",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "7494944b-f49b-413c-bc2f-d8748072b6ba",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "a10de04d-d2c9-4b34-bcb0-e4ee05848486",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "c6da17e9-3f08-41ac-89dd-49d683b3efaf",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "1aeb473a-637c-4401-ab35-99fc63b240a5",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "4875bfb5-54c5-4ead-a4b6-9ab0ee6f6d67",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "f2727c55-8a0f-41f7-a253-8718dbe2c498",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "98900730-7d75-4c5c-ae3d-d1b3fbe74d70",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "9f4ae8c7-a223-4ce9-bdf0-9ed797899920",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "b041ff42-7670-405c-aa7d-d0b6cb829087",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "d049d42e-30ec-4bec-a192-8c9d0c0876d2",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "b9fd5b88-9344-41da-8749-4867b6ba206c",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "68b1bc4b-b48f-4f32-9ba4-83532ec6ea3a",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "1c15ccbf-95f4-4b9a-9822-aa19a6c0a767",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "d2e94b6f-31f7-466d-9c26-3954899448a7",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  }
+ ]
+}
