@@ -7,6 +7,9 @@
 #include "aether/project/project.h"
 #include "aether/scene/components.h"
 #include "aether/scene/gameplay.h"
+#include "aether/platform/window.h"
+#include "../player/src/package_textures.h"
+#include "aether/cook/texture_cook.h"
 #include "aether/scene/script_component.h"
 #include "aether/sequencer/sequence.h"
 #include "aether/sequencer/sequence_system.h"
@@ -434,6 +437,204 @@ AETHER_TEST(Player_ShowsADataDrivenUiThatScriptsChange) {
     CHECK(status != nullptr && status->text == "clicked");
     CHECK(game.ScriptErrors().empty());
     game.EndPlay();
+}
+
+// On-screen controls: the pointers (the mouse, each finger) press the UI's buttons and drag a virtual stick, a press the UI takes is hidden
+// from gameplay, and a button or stick writes the keys it names so the game's actions follow.
+AETHER_TEST(Player_PointersDriveTheUiAndVirtualControls) {
+    if (!Game::HasScripting()) return;
+    const stdfs::path dir = TestDir("UiPointers");
+    auto root = std::make_unique<ui::Canvas>();
+    root->name = "Hud";
+    auto* play = root->Add<ui::Button>();
+    play->name = "Play";
+    play->hold_key = "GamepadA";
+    play->slot.anchors = ui::Anchors::Point(0, 0);
+    play->slot.position = {100, 100};
+    play->slot.size = {200, 80};
+    play->Add<ui::Text>("Play");
+    auto* stick = root->Add<ui::VirtualStick>();
+    stick->name = "Stick";
+    stick->radius = 60.0f;
+    stick->slot.anchors = ui::Anchors::Point(0, 0);
+    stick->slot.position = {400, 100};
+    stick->slot.size = {200, 200};
+    root->Add<ui::Text>("idle")->name = "Status";
+    const std::string layout = ui::SaveLayout(*root);
+    const std::string script_guid = assets::ToString(assets::NewAssetGuid());
+    const char* script =
+        "local Hud = {}\n"
+        "function Hud:OnUpdate(dt)\n"
+        "  if UI.WasClicked('Play') then UI.SetText('Status', 'clicked') end\n"
+        "end\n"
+        "return Hud\n";
+    ScriptComponent component;
+    assets::AssetGuid parsed;
+    CHECK(assets::ParseAssetGuid(script_guid, parsed));
+    component.script.guid = parsed;
+    const json scene = {{"$type", "Scene"}, {"$version", 1},
+        {"entities", json::array({{{"components", {{"WidgetComponent", {{"layout", "UI/Hud.aui"}, {"z", 0}, {"visible", true}}}}}},
+                                  {{"components", {{"ScriptComponent", reflect::ToJson(component)}}}}})}};
+    json manifest = Manifest("Scenes/start.ascene", "unused");
+    manifest["assets"] = json::array({{{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/start.ascene"}, {"importer", "Scene"}},
+                                      {{"guid", script_guid}, {"path", "Scripts/Hud.luau"}, {"importer", "Script"}},
+                                      {{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "UI/Hud.aui"}, {"importer", "Test"}}});
+    pak::PakWriter writer;
+    CHECK(writer.Add("Manifest.json", manifest.dump()));
+    CHECK(writer.Add("Content/Scenes/start.ascene", scene.dump()));
+    CHECK(writer.Add("Content/Scripts/Hud.luau", std::string(script)));
+    CHECK(writer.Add("Content/UI/Hud.aui", layout));
+    const stdfs::path pak = dir / "Game.apak";
+    CHECK(writer.Write(pak.string()));
+
+    GamePackage package;
+    std::string error;
+    CHECK(package.Mount(pak.string(), 0, &error));
+    CHECK(package.LoadManifest(&error));
+    Game game(package);
+    CHECK(game.LoadStartupScene(&error));
+    game.BeginPlay();
+    for (int i = 0; i < 6; ++i) game.Tick(1.0f / 60.0f); // the layout appears on the first frame
+    ui::Viewport* viewport = game.Ui();
+    CHECK(viewport != nullptr && viewport->LayerCount() == 1);
+    viewport->scale_settings.rule = ui::ScaleSettings::Rule::None; // one layout unit per pixel
+    viewport->SetSize({1280, 720});
+    ui::BuiltinFont font;
+    viewport->Layout(font);
+    CHECK(dynamic_cast<ui::Button*>(viewport->Find("Play"))->Geometry().w == 200.0f);
+
+    using input::Key;
+    input::InputState& in = game.Input();
+    // A press on empty space is for gameplay; the UI leaves the mouse button alone.
+    in.SetPointer(0, 900, 600, true, true);
+    in.SetButton(Key::MouseLeft, true);
+    game.Tick(1.0f / 60.0f);
+    CHECK(in.IsDown(Key::MouseLeft) && !in.IsDown(Key::GamepadA));
+    in.SetPointer(0, 900, 600, false, true);
+    in.SetButton(Key::MouseLeft, false);
+    game.Tick(1.0f / 60.0f);
+
+    // A press on the button is the UI's: the button holds the pad's A, gameplay does not see the mouse button, and the release clicks.
+    in.SetPointer(0, 150, 130, false, true);
+    game.Tick(1.0f / 60.0f); // hover
+    in.SetPointer(0, 150, 130, true, true);
+    in.SetButton(Key::MouseLeft, true);
+    game.Tick(1.0f / 60.0f);
+    CHECK(dynamic_cast<ui::Button*>(viewport->Find("Play"))->IsPressed());
+    CHECK(in.IsDown(Key::GamepadA) && !in.IsDown(Key::MouseLeft));
+    in.SetPointer(0, 150, 130, false, true);
+    in.SetButton(Key::MouseLeft, false);
+    game.Tick(1.0f / 60.0f);
+    CHECK(!in.IsDown(Key::GamepadA)); // released with the button
+    for (int i = 0; i < 4; ++i) game.Tick(1.0f / 60.0f);
+    auto* status = dynamic_cast<ui::Text*>(viewport->Find("Status"));
+    CHECK(status != nullptr && status->text == "clicked");
+
+    // A finger on the stick: dragging 30 pixels right of where it landed is half of the stick's 60 pixel reach.
+    const auto touch = [&](WindowEventType type, bool down, f32 x, f32 y) {
+        WindowEvent e;
+        e.type = type, e.pointer = 5, e.down = down, e.x = x, e.y = y;
+        const WindowEvent events[] = {e};
+        ApplyWindowEvents(events, in);
+    };
+    touch(WindowEventType::Touch, true, 500, 200);
+    game.Tick(1.0f / 60.0f);
+    CHECK(!in.IsDown(Key::MouseLeft)); // the first finger is the left button, and the stick took it
+    touch(WindowEventType::TouchMove, true, 530, 200);
+    game.Tick(1.0f / 60.0f);
+    CHECK(std::fabs(in.Value(Key::GamepadLeftStickX) - 0.5f) < 1e-3f && std::fabs(in.Value(Key::GamepadLeftStickY)) < 1e-3f);
+    touch(WindowEventType::TouchMove, true, 500, 100); // far above: clamped to full deflection, up is negative
+    game.Tick(1.0f / 60.0f);
+    CHECK(std::fabs(in.Value(Key::GamepadLeftStickY) + 1.0f) < 1e-3f && std::fabs(in.Value(Key::GamepadLeftStickX)) < 1e-3f);
+    touch(WindowEventType::Touch, false, 500, 100);
+    game.Tick(1.0f / 60.0f);
+    CHECK(in.Value(Key::GamepadLeftStickX) == 0.0f && in.Value(Key::GamepadLeftStickY) == 0.0f);
+    game.EndPlay();
+}
+
+// The platform's lifecycle (§45.2): suspended, the game stands still and queued saves are written; resumed, it carries on without the time that
+// passed; memory pressure is counted.
+AETHER_TEST(Player_SuspendStopsTheGameWritesSavesAndResumeSkipsTheGap) {
+    const stdfs::path dir = TestDir("Lifecycle");
+    const stdfs::path pak = MakePak(dir, "Game.apak");
+    GamePackage package;
+    std::string error;
+    CHECK(package.Mount(pak.string(), 0, &error));
+    CHECK(package.LoadManifest(&error));
+    Game game(package);
+    game.SetUserPaths(ResolveUserPaths("Demo", dir / "user"));
+    CHECK(game.LoadStartupScene(&error));
+    game.BeginPlay();
+    for (int i = 0; i < 30; ++i) game.Tick(1.0f / 60.0f);
+    const GameStats before = game.Stats();
+    CHECK(before.frames == 30);
+
+    // A save is queued, then the app goes to the background: it is on disk before Dispatch returns.
+    save::GameSettings settings;
+    settings.language = "fr";
+    game.Saves()->SaveAsync("pause", settings);
+    platform::MockLifecycleBackend backend(game.Platform());
+    backend.InjectSuspend();
+    CHECK(game.Suspended());
+    CHECK(stdfs::exists(game.Saves()->Directory() / "pause.asav"));
+    // Suspended, time does not pass however long the host says it did.
+    for (int i = 0; i < 10; ++i) game.Tick(1.0f);
+    CHECK(game.Stats().frames == before.frames && std::fabs(game.Stats().time - before.time) < 1e-6);
+
+    // Resumed: the first frame ignores the time that was spent away; then time runs again.
+    backend.InjectResume();
+    CHECK(!game.Suspended());
+    game.Tick(5.0f);
+    CHECK(std::fabs(game.Stats().time - before.time) < 1e-6);
+    game.Tick(1.0f / 60.0f);
+    CHECK(game.Stats().time > before.time && game.Stats().time < before.time + 0.1);
+
+    backend.InjectMemoryPressure(platform::MemoryLevel::Critical);
+    backend.InjectMemoryPressure(platform::MemoryLevel::Moderate);
+    CHECK(game.MemoryPressureEvents() == 2);
+    game.EndPlay();
+}
+
+// A package whose source images were stripped: the renderer's texture loader decodes the cooked copy instead.
+AETHER_TEST(Player_LoadsATextureFromItsCookedCopyWhenTheSourceIsStripped) {
+    const stdfs::path dir = TestDir("StrippedTexture");
+    // A 40 x 24 colour gradient, cooked as ASTC 6x6.
+    const u32 w = 40, h = 24;
+    std::vector<u8> source(static_cast<usize>(w) * h * 4);
+    for (u32 y = 0; y < h; ++y) {
+        for (u32 x = 0; x < w; ++x) {
+            u8* p = &source[(static_cast<usize>(y) * w + x) * 4];
+            p[0] = static_cast<u8>(x * 255 / (w - 1)), p[1] = static_cast<u8>(y * 255 / (h - 1)), p[2] = 128, p[3] = 255;
+        }
+    }
+    cook::TextureCookSettings settings;
+    settings.target = cook::TextureTarget::Mobile;
+    settings.quality = 3;
+    const cook::CookedTexture cooked = cook::CookTexture(source, w, h, settings);
+    CHECK(cooked.format == cook::TextureFormat::ASTC_6x6);
+    json manifest = Manifest("Scenes/start.ascene", "unused");
+    manifest["assets"] = json::array({{{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/start.ascene"}, {"importer", "Scene"}},
+                                      {{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Textures/grad.png"}, {"importer", "Texture"},
+                                       {"cooked", "Cooked/grad.atex"}, {"cooked_format", "astc6x6"}}});
+    pak::PakWriter writer;
+    CHECK(writer.Add("Manifest.json", manifest.dump()));
+    CHECK(writer.Add("Content/Scenes/start.ascene", json{{"$type", "Scene"}, {"$version", 1}, {"entities", json::array()}}.dump()));
+    CHECK(writer.Add("Cooked/grad.atex", cook::SaveAtex(cooked))); // no Content/Textures/grad.png
+    const stdfs::path pak = dir / "Game.apak";
+    CHECK(writer.Write(pak.string()));
+    GamePackage package;
+    std::string error;
+    CHECK(package.Mount(pak.string(), 0, &error));
+    CHECK(package.LoadManifest(&error));
+
+    assets::ImageData image;
+    CHECK(LoadPackageTexture(package, "Textures/grad.png", image, &error));
+    CHECK(image.width == w && image.height == h && image.pixels.size() == source.size());
+    f64 worst = 0;
+    for (usize i = 0; i < source.size(); ++i) worst = std::max(worst, std::fabs(static_cast<f64>(source[i]) - image.pixels[i]));
+    CHECK(worst < 24.0); // lossy, but the same picture
+    // Neither the source nor a cooked copy: refused with a reason.
+    CHECK(!LoadPackageTexture(package, "Textures/none.png", image, &error) && error.find("none.png") != std::string::npos);
 }
 
 AETHER_TEST(Player_FixedRateAndPatchPaks) {

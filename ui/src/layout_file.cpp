@@ -233,10 +233,28 @@ std::map<std::string, WidgetType>& Registry() {
             [=](const Button& b, json& j) {
                 focusable_save(b, j);
                 j["padding"] = M4(b.padding);
+                if (!b.hold_key.empty()) j["hold_key"] = b.hold_key;
             },
             [=](Button& b, const json& j, TR, std::string*) {
                 focusable_load(b, j);
                 b.padding = ReadM4(j.value("padding", json()), b.padding);
+                b.hold_key = j.value("hold_key", b.hold_key);
+                return true;
+            }));
+        add(Type<VirtualStick>(
+            "VirtualStick",
+            [=](const VirtualStick& s, json& j) {
+                const VirtualStick defaults;
+                focusable_save(s, j);
+                if (s.key_x != defaults.key_x) j["key_x"] = s.key_x;
+                if (s.key_y != defaults.key_y) j["key_y"] = s.key_y;
+                if (s.radius != defaults.radius) j["radius"] = s.radius;
+                if (s.fixed) j["fixed"] = true;
+            },
+            [=](VirtualStick& s, const json& j, TR, std::string*) {
+                focusable_load(s, j);
+                s.key_x = j.value("key_x", s.key_x), s.key_y = j.value("key_y", s.key_y);
+                s.radius = j.value("radius", s.radius), s.fixed = j.value("fixed", s.fixed);
                 return true;
             }));
         add(Type<Toggle>(
