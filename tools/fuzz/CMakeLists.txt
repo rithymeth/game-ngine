@@ -53,6 +53,7 @@ aether_fuzz_target(gltf fuzz_gltf.cpp Aether::Engine)
 # Loaders that read untrusted JSON (Phase 47 step 1, second batch).
 aether_fuzz_target(prefab fuzz_prefab.cpp Aether::Engine)
 aether_fuzz_target(plugin fuzz_plugin.cpp Aether::Engine)
+aether_fuzz_target(input fuzz_input.cpp Aether::Engine)
 if(TARGET aether_renderer)
     aether_fuzz_target(material fuzz_material.cpp Aether::Renderer)
 endif()

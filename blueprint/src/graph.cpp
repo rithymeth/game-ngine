@@ -195,7 +195,7 @@ bool BlueprintFromJsonImpl(const json& j, Blueprint& out, std::string* error) {
         if (error != nullptr) *error = text;
         return false;
     };
-    if (!j.is_object() || j.value("$type", "") != "Blueprint") {
+    if (!j.is_object() || JsonString(j, "$type") != "Blueprint") {
         return fail("not a Blueprint file");
     }
     if (JsonVersion(j) > kFormatVersion) {

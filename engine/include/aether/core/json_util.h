@@ -10,6 +10,16 @@
 
 namespace aether {
 
+// A string field of a JSON object, or `fallback` if the value is not an object, the key is missing, or the
+// field is not a string. `j.value("$type", "")` throws on a number or an array, and nothing in a loader
+// catches it; read "$type" and other untrusted text fields through this.
+inline std::string JsonString(const nlohmann::json& j, const char* key, const std::string& fallback = std::string()) {
+    if (!j.is_object()) return fallback;
+    const auto it = j.find(key);
+    if (it == j.end() || !it->is_string()) return fallback;
+    return it->get<std::string>();
+}
+
 // The "$version" of a saved JSON document, or `fallback` if it is missing, not a whole number, or not a
 // JSON object at all. nlohmann's `j.value("$version", 0)` throws on a string or an array where a number
 // is expected, and nothing in a loader catches it: a malformed file would end the process. (Found by the
