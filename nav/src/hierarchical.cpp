@@ -33,6 +33,7 @@ bool HierarchicalPathfinder::Build(const NavMesh& mesh) {
     if (!mesh.Loaded() || nav == nullptr) return false;
     mesh_ = &mesh;
 
+    const f32 merge = std::max(mesh.Data().tile_world_size * 0.25f, mesh.Data().settings.cell_size * 4.0f);
     std::map<std::pair<i32, i32>, std::vector<u32>> by_tile;
     for (const NavMeshData::Tile& t : mesh.Data().tiles) {
         const dtMeshTile* tile = nav->getTileAt(t.x, t.z, 0);
@@ -51,6 +52,16 @@ bool HierarchicalPathfinder::Build(const NavMesh& mesh) {
                 portal.tile_x = t.x, portal.tile_z = t.z;
                 portal.to_x = t.x + kDx[side], portal.to_z = t.z + kDz[side];
                 portal.point = Vec3((a[0] + b[0]) * 0.5f, (a[1] + b[1]) * 0.5f, (a[2] + b[2]) * 0.5f);
+                // One portal per stretch of border: a polygon edge within `merge` of one already kept toward the
+                // same neighbour is the same gap as far as the coarse graph is concerned.
+                bool near_kept = false;
+                for (u32 other : by_tile[{t.x, t.z}])
+                    if (portals_[other].to_x == portal.to_x && portals_[other].to_z == portal.to_z &&
+                        Dist(portals_[other].point, portal.point) < merge) {
+                        near_kept = true;
+                        break;
+                    }
+                if (near_kept) continue;
                 by_tile[{t.x, t.z}].push_back(static_cast<u32>(portals_.size()));
                 portals_.push_back(std::move(portal));
             }
@@ -68,7 +79,7 @@ bool HierarchicalPathfinder::Build(const NavMesh& mesh) {
                 }
     }
     // Across a border: to the nearest portal on the other side that leads back, if it is really the same gap.
-    const f32 tolerance = mesh.Data().settings.cell_size * 3.0f + mesh.Data().settings.agent_radius;
+    const f32 tolerance = merge * 1.5f; // the twin on the other side may have been kept at a different spot
     for (u32 a = 0; a < portals_.size(); ++a) {
         const auto it = by_tile.find({portals_[a].to_x, portals_[a].to_z});
         if (it == by_tile.end()) continue;
