@@ -2616,6 +2616,39 @@ AETHER_TEST(Mcp_PrefabToolsMakeInstantiateOverrideAndApply) {
     stdfs::remove_all(dir);
 }
 
+#if AETHER_MCP_TEMPLATES
+AETHER_TEST(Mcp_ProjectCreateMakesBlankAndTemplateProjects) {
+    namespace stdfs = std::filesystem;
+    Harness h;
+    auto project = MakeAssetHost();
+    RegisterAssetTools(h.server, project);
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_new_projects";
+    stdfs::remove_all(dir);
+
+    Json templates = h.Call("project_templates").value;
+    AETHER_CHECK(templates["count"].get<int>() >= 6);
+    bool has_platformer = false;
+    for (const Json& t : templates["templates"]) has_platformer = has_platformer || t["id"] == "platformer_2d";
+    AETHER_CHECK(has_platformer);
+
+    Json blank = h.Call("project_create", {{"parent_dir", dir.string()}, {"name", "Empty"}}).value;
+    AETHER_CHECK(blank["name"] == "Empty" && stdfs::exists(dir / "Empty" / "Empty.aproject") && stdfs::is_directory(dir / "Empty" / "Content"));
+    AETHER_CHECK(h.Call("project_info").value["name"] == "Empty"); // it is open
+
+    Json third = h.Call("project_create", {{"parent_dir", dir.string()}, {"name", "Runner"}, {"template", "third_person"}}).value;
+    AETHER_CHECK(third["template"] == "third_person" && third["startup_scene"] == "Scenes/Main.ascene");
+    AETHER_CHECK(stdfs::exists(dir / "Runner" / "Content" / "Scenes" / "Main.ascene"));
+    AETHER_CHECK(h.Call("project_info").value["name"] == "Runner"); // and now this one
+    AETHER_CHECK(h.Call("asset_info", {{"asset", "Scenes/Main.ascene"}}).value["importer"] == "Scene");
+
+    AETHER_CHECK(h.Call("project_create", {{"parent_dir", dir.string()}, {"name", "Runner"}}).is_error);                         // exists
+    AETHER_CHECK(h.Call("project_create", {{"parent_dir", dir.string()}, {"name", "bad/name"}}).is_error);                       // not a folder name
+    AETHER_CHECK(h.Call("project_create", {{"parent_dir", dir.string()}, {"name", "Other"}, {"template", "nope"}}).is_error);   // no such template
+    AETHER_CHECK(h.Call("project_info").value["name"] == "Runner");                                                              // failures leave it open
+    stdfs::remove_all(dir);
+}
+#endif
+
 #if AETHER_MCP_SCRIPTING
 AETHER_TEST(Mcp_ScriptToolsCheckCompleteRunSimulateAndCheckTheProject) {
     namespace stdfs = std::filesystem;

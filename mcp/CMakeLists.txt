@@ -29,6 +29,13 @@ if(TARGET Aether::Scripting)
 else()
     target_compile_definitions(aether_mcp PUBLIC AETHER_MCP_SCRIPTING=0)
 endif()
+# Project templates, for project_create (they are made before this directory).
+if(TARGET Aether::Templates)
+    target_link_libraries(aether_mcp PRIVATE Aether::Templates)
+    target_compile_definitions(aether_mcp PUBLIC AETHER_MCP_TEMPLATES=1)
+else()
+    target_compile_definitions(aether_mcp PUBLIC AETHER_MCP_TEMPLATES=0)
+endif()
 add_library(Aether::MCP ALIAS aether_mcp)
 
 add_executable(aether_mcp_server main.cpp)

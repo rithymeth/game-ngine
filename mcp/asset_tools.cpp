@@ -8,6 +8,9 @@
 #include "aether/assets/importer.h"
 #include "aether/cook/cooker.h"
 #include "aether/project/project.h"
+#if AETHER_MCP_TEMPLATES
+#include "aether/templates/templates.h"
+#endif
 
 #include <algorithm>
 #include <filesystem>
@@ -36,6 +39,25 @@ Json ProjectJson(OpenProject& p) {
             {"assets", sources}};
 }
 
+Json OpenProjectFile(AssetHost& host, const fs::path& file) {
+    std::error_code ec;
+    if (!fs::is_regular_file(file, ec)) throw ToolError("No such project file: " + file.string());
+    auto project = std::make_unique<OpenProject>();
+    std::string error;
+    std::vector<std::string> warnings;
+    if (!LoadProject(file, project->settings, &error, &warnings)) throw ToolError(error);
+    project->paths = ProjectPaths::ForFile(fs::absolute(file, ec));
+    if (!EnsureProjectFolders(project->paths, &error)) throw ToolError(error);
+    project->database = std::make_unique<AssetDatabase>(project->paths.content);
+    const assets::ScanResult scan = project->database->Scan();
+    project->cache = std::make_unique<assets::DerivedDataCache>(project->paths.intermediate / "DerivedDataCache");
+    host.project = std::move(project);
+    Json out = ProjectJson(*host.project);
+    out["scan"] = ScanJson(scan);
+    out["warnings"] = warnings;
+    return out;
+}
+
 // A file inside Content/ for reading or writing text.
 fs::path ContentFile(OpenProject& p, const std::string& relative) {
     const std::string rel = CleanRelative(relative);
@@ -54,23 +76,53 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
          "Open a project (.aproject) for the asset and cook tools: reads its settings and scans Content/ (new source files get an "
          ".ameta with a GUID). Replaces any open project.",
          Schema({{"project_file", {{"type", "string"}, {"description", "Path to the .aproject file"}}}}, {"project_file"}),
+         [host](const Json& args) -> Json { return OpenProjectFile(*host, RequireString(args, "project_file")); }});
+
+    server.AddTool(
+        {"project_templates",
+         "The project templates project_create can start from (blank, first_person, third_person, top_down, vehicle, platformer_2d): id, name, genre, description, what each "
+         "contains, and whether it is available in this build.",
+         Schema(Json::object()),
+         [](const Json&) -> Json {
+             Json out = Json::array();
+#if AETHER_MCP_TEMPLATES
+             for (const templates::ProjectTemplate& t : templates::ProjectTemplates()) {
+                 Json j = {{"id", t.id}, {"name", t.name}, {"genre", t.genre}, {"description", t.description}, {"features", t.features}, {"available", t.available}};
+                 if (!t.available) j["unavailable_reason"] = t.unavailable_reason;
+                 out.push_back(j);
+             }
+#endif
+             return {{"count", out.size()}, {"templates", out}};
+         }});
+
+    server.AddTool(
+        {"project_create",
+         "Create a new project in `<parent_dir>/<name>/` (the standard folders and `<name>.aproject`) and open it for the asset and cook tools. With `template` (see project_templates) "
+         "the project starts from that template: a startup scene, a controller script, input bindings and a Blueprint. Fails if the folder exists and isn't empty, or the name isn't a "
+         "valid folder name.",
+         Schema({{"parent_dir", {{"type", "string"}, {"description", "Folder to make the project folder in (made if missing)"}}},
+                 {"name", {{"type", "string"}}},
+                 {"template", {{"type", "string"}, {"description", "A template id from project_templates; omit for an empty project"}}}},
+                {"parent_dir", "name"}),
          [host](const Json& args) -> Json {
-             const fs::path file = RequireString(args, "project_file");
+             const fs::path parent = RequireString(args, "parent_dir");
+             const std::string name = RequireString(args, "name");
+             const std::string template_id = OptString(args, "template");
              std::error_code ec;
-             if (!fs::is_regular_file(file, ec)) throw ToolError("No such project file: " + file.string());
-             auto project = std::make_unique<OpenProject>();
+             fs::create_directories(parent, ec);
+             ProjectPaths paths;
              std::string error;
-             std::vector<std::string> warnings;
-             if (!LoadProject(file, project->settings, &error, &warnings)) throw ToolError(error);
-             project->paths = ProjectPaths::ForFile(fs::absolute(file, ec));
-             if (!EnsureProjectFolders(project->paths, &error)) throw ToolError(error);
-             project->database = std::make_unique<AssetDatabase>(project->paths.content);
-             const assets::ScanResult scan = project->database->Scan();
-             project->cache = std::make_unique<assets::DerivedDataCache>(project->paths.intermediate / "DerivedDataCache");
-             host->project = std::move(project);
-             Json out = ProjectJson(*host->project);
-             out["scan"] = ScanJson(scan);
-             out["warnings"] = warnings;
+             if (template_id.empty()) {
+                 if (!CreateProject(parent, name, &paths, &error)) throw ToolError(error);
+             } else {
+#if AETHER_MCP_TEMPLATES
+                 if (!templates::CreateProjectFromTemplate(parent, name, template_id, &paths, &error)) throw ToolError(error);
+#else
+                 throw ToolError("This build has no project templates");
+#endif
+             }
+             Json out = OpenProjectFile(*host, paths.file);
+             if (!template_id.empty()) out["template"] = template_id;
              return out;
          }});
 
