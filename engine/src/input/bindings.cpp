@@ -1,4 +1,5 @@
 #include "aether/input/bindings.h"
+#include "aether/core/json_util.h"
 
 #include "aether/platform/filesystem.h"
 #include "aether/reflection/serialize.h"
@@ -38,7 +39,7 @@ bool SaveTyped(const char* kind, const T& object, const stdfs::path& file, std::
 template <typename T>
 bool ParseTyped(const char* kind, std::string_view text, const std::string& source, T& out, std::string* error) {
     const reflect::Json json = reflect::Json::parse(text.begin(), text.end(), nullptr, /*allow_exceptions=*/false);
-    if (json.is_discarded() || !json.is_object() || json.value("$type", "") != kind || !json.contains("data")) {
+    if (json.is_discarded() || !json.is_object() || JsonString(json, "$type") != kind || !json.contains("data")) {
         SetError(error, source + " isn't " + std::string(kind) + " data");
         return false;
     }

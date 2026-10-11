@@ -1,4 +1,5 @@
 #include "aether/sprite2d/tilemap.h"
+#include "aether/core/json_util.h"
 
 #include "aether/platform/filesystem.h"
 
@@ -98,7 +99,7 @@ bool TilesetFromJson(const nlohmann::json& data, Tileset& out, std::string* erro
         if (error) *error = why;
         return false;
     };
-    if (!data.is_object() || data.value("$type", "") != "Tileset") return fail("not a tileset");
+    if (!data.is_object() || JsonString(data, "$type") != "Tileset") return fail("not a tileset");
     Tileset t;
     const std::string texture = data.value("texture", "");
     if (!texture.empty() && !assets::ParseAssetGuid(texture, t.texture)) return fail("bad texture GUID");
@@ -192,7 +193,7 @@ bool TilemapFromJson(const nlohmann::json& data, TilemapData& out, std::string* 
         if (error) *error = why;
         return false;
     };
-    if (!data.is_object() || data.value("$type", "") != "Tilemap") return fail("not a tilemap");
+    if (!data.is_object() || JsonString(data, "$type") != "Tilemap") return fail("not a tilemap");
     TilemapData m;
     const std::string tileset = data.value("tileset", "");
     if (!tileset.empty() && !assets::ParseAssetGuid(tileset, m.tileset)) return fail("bad tileset GUID");

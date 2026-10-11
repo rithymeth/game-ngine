@@ -156,7 +156,7 @@ bool GamePackage::LoadManifest(std::string* error) {
         std::string dlc_text;
         if (!vfs_.ReadText(path, dlc_text, &read_error)) return Fail(error, read_error);
         const json d = json::parse(dlc_text, nullptr, /*allow_exceptions=*/false);
-        if (d.is_discarded() || !d.is_object() || d.value("$type", "") != "DlcManifest") {
+        if (d.is_discarded() || !d.is_object() || JsonString(d, "$type") != "DlcManifest") {
             return Fail(error, path + " isn't a DLC manifest");
         }
         GameManifest part;

@@ -334,7 +334,7 @@ static bool BlendSpaceFromJsonImpl(const json& j, BlendSpace& out, std::string* 
         if (error != nullptr) *error = message;
         return false;
     };
-    if (!j.is_object() || j.value("$type", "") != "BlendSpace") return fail("not a blend space file");
+    if (!j.is_object() || JsonString(j, "$type") != "BlendSpace") return fail("not a blend space file");
     if (JsonVersion(j) > kFormatVersion) return fail("saved by a newer version of the engine");
     BlendSpace s;
     const json dims = j.value("dimensions", json(1));
