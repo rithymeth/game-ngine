@@ -548,6 +548,8 @@ AETHER_TEST(Mcp_ToolsCanReturnImages) {
 #include "save_tools.h"
 #include "streaming_tools.h"
 #include "material_tools.h"
+#include "prefab_tools.h"
+#include "aether/scene/prefab.h"
 #include "aether/renderer/material.h"
 #include "aether/renderer/material_instance.h"
 #include "aether/save/save_system.h"
@@ -2549,6 +2551,69 @@ AETHER_TEST(Mcp_MaterialToolsValidateCompileAndResolve) {
     AETHER_CHECK(resolved["diagnostics"].size() == 1 && resolved["diagnostics"][0]["code"] == "MI001");
     AETHER_CHECK(resolved["buffer_bytes"].get<int>() > 0);
     AETHER_CHECK(h.Call("mat_instance_resolve", {{"material", good}, {"instances", Json::array({Json{{"parameters", 5}}})}}).is_error);
+}
+
+AETHER_TEST(Mcp_PrefabToolsMakeInstantiateOverrideAndApply) {
+    namespace stdfs = std::filesystem;
+    Harness h;
+    auto project = MakeAssetHost();
+    RegisterAssetTools(h.server, project);
+    RegisterPrefabTools(h.server, project, h.session);
+
+    AETHER_CHECK(h.Call("prefab_info", {{"prefab", "Prefabs/x.aprefab"}}).is_error); // needs a project
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_prefab_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+    ProjectPaths paths;
+    std::string error;
+    AETHER_CHECK(CreateProject(dir, "McpPrefabs", &paths, &error));
+    AETHER_CHECK(!h.Call("project_open", {{"project_file", paths.file.string()}}).is_error);
+
+    // A crate with a lid: two entities.
+    const std::string crate = h.Create({{"Transform", {{"position", {0, 0, 0}}}}});
+    const std::string lid = h.Create({{"Transform", {{"position", {1, 0, 0}}}}});
+    AETHER_CHECK(!h.Call("reparent", {{"entity", lid}, {"parent", crate}}).is_error);
+    Json made = h.Call("prefab_make", {{"entity", crate}, {"path", "Prefabs/Crate.aprefab"}}).value;
+    AETHER_CHECK(made["entities"] == 2 && made.contains("guid"));
+    AETHER_CHECK(h.Call("prefab_make", {{"entity", crate}, {"path", "Prefabs/Crate.aprefab"}}).is_error); // exists
+    AETHER_CHECK(!h.Call("prefab_make", {{"entity", crate}, {"path", "Prefabs/Crate.aprefab"}, {"overwrite", true}}).is_error);
+    AETHER_CHECK(h.Call("prefab_make", {{"entity", crate}, {"path", "Prefabs/Crate.txt"}}).is_error);
+
+    Json info = h.Call("prefab_info", {{"prefab", "Prefabs/Crate.aprefab"}}).value;
+    AETHER_CHECK(info["entities"].size() == 2 && info["entities"][0]["parent"] == 0 && info["entities"][1]["parent"] == info["entities"][0]["id"]);
+    AETHER_CHECK(info["flattened"]["ok"] == true && info["flattened"]["entities"] == 2 && info["built_on_it"].empty());
+    AETHER_CHECK(h.Call("prefab_info", {{"prefab", "Prefabs/Crate.aprefab"}, {"scenes", true}}).value.contains("scenes"));
+    AETHER_CHECK(h.Call("prefab_info", {{"prefab", "Prefabs/Missing.aprefab"}}).is_error);
+
+    // Place an instance, give its lid an override, then revert it.
+    const std::size_t before = h.session.world.EntityCount();
+    Json placed = h.Call("prefab_instantiate", {{"prefab", "Prefabs/Crate.aprefab"}, {"position", {10, 0, 0}}}).value;
+    AETHER_CHECK(placed["report"]["ok"] == true && h.session.world.EntityCount() == before + 2);
+    const std::string instance = placed["entity"];
+    AETHER_CHECK(h.Call("prefab_overrides", {{"entity", instance}}).value["overrides"].empty());
+    AETHER_CHECK(h.Call("prefab_overrides", {{"entity", crate}}).is_error); // not an instance
+
+    EntityGuid instance_guid;
+    AETHER_CHECK(ParseEntityGuid(instance, instance_guid));
+    aether::Entity root = h.session.guids.Find(h.session.world, instance_guid);
+    auto* inst = h.session.world.GetComponent<aether::PrefabInstance>(root);
+    AETHER_CHECK(inst != nullptr);
+    const aether::PrefabLocalId lid_id = info["entities"][1]["id"].get<aether::PrefabLocalId>();
+    aether::SetOverride(*inst, lid_id, "Transform", "position", Json::array({5, 0, 0}));
+    Json overrides = h.Call("prefab_overrides", {{"entity", instance}}).value;
+    AETHER_CHECK(overrides["overrides"].size() == 1 && overrides["overrides"][0]["field_path"] == "position" && overrides["overrides"][0]["value"][0] == 5);
+    Json reverted = h.Call("prefab_revert", {{"entity", instance}, {"component", "Transform"}}).value;
+    AETHER_CHECK(reverted["removed"] == 1 && reverted["remaining"] == 0 && reverted["report"]["ok"] == true);
+
+    // An override applied to the prefab changes the asset.
+    inst = h.session.world.GetComponent<aether::PrefabInstance>(root);
+    aether::SetOverride(*inst, lid_id, "Transform", "position", Json::array({7, 0, 0}));
+    Json applied = h.Call("prefab_apply", {{"entity", instance}}).value;
+    AETHER_CHECK(applied["applied"] == 1 && applied["remaining"] == 0 && applied["instances_resolved"].get<int>() >= 1 && applied["failed"] == 0);
+    const std::string text = h.Call("content_read", {{"path", "Prefabs/Crate.aprefab"}}).value["text"];
+    AETHER_CHECK(text.find("7") != std::string::npos);
+    AETHER_CHECK(h.Call("prefab_apply", {{"entity", instance}}).value["applied"] == 0);
+    stdfs::remove_all(dir);
 }
 
 #if AETHER_MCP_SCRIPTING

@@ -306,6 +306,19 @@ Materials (`.amat`), functions (`.amf`) and instances (`.amati`) have no importe
 | `mat_compile` | Compiles a graph to the HLSL include: defines, the parameter buffer layout, sampled textures, needed features, a cost estimate and the permutation key. The HLSL text is included unless `hlsl` is false. |
 | `mat_instance_resolve` | Applies an instance chain (parent first) to a material: each parameter's final value and which level set it, with MI001 / MI002 diagnostics for stale or mismatched overrides. |
 
+### Prefabs (`prefab_*`)
+
+Prefabs are project assets, so these need `project_open`. They act on the editor scene's world directly: the entities they create or change are not on the undo stack.
+
+| Tool | What it does |
+| --- | --- |
+| `prefab_info` | Looks inside a prefab: entities, nested prefabs, the variant base, what it flattens to (or why it can't), orphaned overrides and the prefabs built on it. `scenes` also checks every scene that uses it. |
+| `prefab_make` | Captures an entity and its descendants from the editor scene as a new `.aprefab` under `Content/`. |
+| `prefab_instantiate` | Places an instance in the editor scene, at `position` or where the prefab's root is. |
+| `prefab_overrides` | Lists an instance's overrides and deleted entities. |
+| `prefab_revert` | Removes overrides (all, or one entity / component / field path) and re-resolves the instance. |
+| `prefab_apply` | Writes overrides into the prefab asset, saves it, and re-resolves every instance of it or of prefabs built on it in the editor scene. |
+
 ### Running a cooked game (`game_*`)
 
 The editor tools edit the authored scene. The `game_*` tools instead host a full cooked
