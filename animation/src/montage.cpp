@@ -75,7 +75,7 @@ static bool MontageFromJsonImpl(const json& j, Montage& out, std::string* error)
         if (error != nullptr) *error = message;
         return false;
     };
-    if (!j.is_object() || j.value("$type", "") != "Montage") return fail("not a montage file");
+    if (!j.is_object() || JsonString(j, "$type") != "Montage") return fail("not a montage file");
     if (JsonVersion(j) > kFormatVersion) return fail("saved by a newer version of the engine");
     Montage m;
     m.name = j.value("name", "");

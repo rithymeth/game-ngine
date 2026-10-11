@@ -3,6 +3,8 @@
 #include "aether/blueprint/graph.h"
 #include "aether/core/json_util.h"
 #include "aether/ecs/world.h"
+#include "aether/input/bindings.h"
+#include "aether/save/envelope.h"
 #include "aether/animation/anim_graph.h"
 #include "aether/animation/blend_space.h"
 #include "aether/animation/montage.h"
@@ -114,5 +116,21 @@ AETHER_TEST(LoaderRobustness_ManifestWithWrongTypesFailsCleanly) {
         std::string error;
         AETHER_CHECK(!player::ParseGameManifest(text, manifest, &error));
         AETHER_CHECK(!error.empty());
+    }
+}
+
+AETHER_TEST(LoaderRobustness_JsonStringReadsOnlyStrings) {
+    using nlohmann::json;
+    AETHER_CHECK(JsonString(json{{"$type", "Scene"}}, "$type") == "Scene");
+    AETHER_CHECK(JsonString(json{{"$type", 5}}, "$type").empty() && JsonString(json{{"$type", json::array()}}, "$type").empty());
+    AETHER_CHECK(JsonString(json::object(), "$type", "none") == "none" && JsonString(json::array(), "$type").empty() && JsonString(json(7), "$type").empty());
+}
+
+AETHER_TEST(LoaderRobustness_InputAssetsWithNonStringTypeFailCleanly) {
+    input::InputAssetLibrary library;
+    std::string error;
+    for (const char* text : {R"({"$type":5,"data":{}})", R"({"$type":["InputAction"],"data":{}})", R"({"$type":null})", R"([])"}) {
+        AETHER_CHECK(!library.AddFromText("InputAction", "bad.aaction", text, &error));
+        AETHER_CHECK(!library.AddFromText("InputMapping", "bad.amapping", text, &error));
     }
 }

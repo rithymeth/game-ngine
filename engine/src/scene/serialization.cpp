@@ -423,7 +423,7 @@ bool LoadSceneJsonFromMemoryImpl(World& world, std::span<const u8> bytes, const 
     using reflect::Json;
     RegisterSceneComponents();
     Json scene = Json::parse(bytes.begin(), bytes.end(), nullptr, /*allow_exceptions=*/false);
-    if (scene.is_discarded() || !scene.is_object() || scene.value("$type", "") != "Scene") {
+    if (scene.is_discarded() || !scene.is_object() || JsonString(scene, "$type") != "Scene") {
         AETHER_LOG_ERROR("Scene", "Not an Aether JSON scene file: %s", path.c_str());
         return false;
     }

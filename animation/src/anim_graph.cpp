@@ -902,7 +902,7 @@ static bool AnimGraphFromJsonImpl(const json& j, AnimGraph& out, std::string* er
         if (error != nullptr) *error = message;
         return false;
     };
-    if (!j.is_object() || j.value("$type", "") != "AnimGraph") return fail("not an animation graph file");
+    if (!j.is_object() || JsonString(j, "$type") != "AnimGraph") return fail("not an animation graph file");
     if (JsonVersion(j) > kFormatVersion) return fail("saved by a newer version of the engine");
     AnimGraph g;
     for (const json& v : j.value("variables", json::array())) {

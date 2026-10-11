@@ -1,4 +1,5 @@
 #include "aether/save/save_system.h"
+#include "aether/core/json_util.h"
 
 #include "aether/core/log.h"
 #include "aether/save/envelope.h"
@@ -91,7 +92,7 @@ std::vector<SlotInfo> SaveSystem::ListSlots() const {
         std::vector<u8> bytes;
         if (fs::ReadFileBytes(file.string(), bytes)) {
             const Json j = Json::parse(bytes.begin(), bytes.end(), nullptr, false);
-            if (!j.is_discarded() && j.is_object() && j.value("$type", "") == "aether.save") {
+            if (!j.is_discarded() && j.is_object() && JsonString(j, "$type") == "aether.save") {
                 info.type = j.value("type", "");
                 info.timestamp = j.value("timestamp_utc", static_cast<u64>(0));
                 info.version = static_cast<u16>(j.value("type_version", 0u));
