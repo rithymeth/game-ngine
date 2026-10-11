@@ -116,7 +116,7 @@ when advisory gates become required.
 | **41.2** *(done: `LoopbackNetwork` simulates seeded loss, latency, jitter and duplication; `Net_LoopbackNetworkAppliesJitterAndDuplication` checks delay bounds and duplicate delivery, and `Net_ReliableUnderBadConditions` exercises recovery under all four conditions)* | Network conditioner (loss, latency, jitter) in `net/`. `||` | - |
 | **41.3** | Replication priority, relevancy and a bandwidth budget. **Done**: `SetRelevancy`, `SetPriority`, `ReplicationConfig::bytes_per_second` (fair share per client); defaults unchanged. | 41.2 |
 | **41.4** | Session and matchmaking interface with a local backend. `||` | - |
-| **41.5** | Server-authority and input-validation audit. `||` | - |
+| **41.5** | Server-authority and input-validation audit. **Done**: ownership, kind and argument checks were already enforced and are now tested with hostile input; added a per-client RPC token bucket (`RpcConfig::calls_per_second`, `RpcRouter::Tick`); movement floods were already capped. `||` | - |
 | **41.6** | Ability prediction and rollback (`gameplay/`). | 41.3, 37.4 |
 | **41.7** | 64-player soak sample on the harness. Loopback only here; real networks and platform services are not testable in this container. | 41.1-41.3 |
 
