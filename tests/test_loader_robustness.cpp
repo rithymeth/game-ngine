@@ -13,6 +13,8 @@
 #include "aether/renderer/material_instance.h"
 #include "aether/scene/prefab.h"
 #include "aether/scene/serialization.h"
+#include "aether/sprite2d/atlas.h"
+#include "aether/sprite2d/tilemap.h"
 #include "aether/sequencer/sequence.h"
 
 #include <cstdio>
@@ -133,4 +135,25 @@ AETHER_TEST(LoaderRobustness_InputAssetsWithNonStringTypeFailCleanly) {
         AETHER_CHECK(!library.AddFromText("InputAction", "bad.aaction", text, &error));
         AETHER_CHECK(!library.AddFromText("InputMapping", "bad.amapping", text, &error));
     }
+}
+
+AETHER_TEST(LoaderRobustness_SpriteAtlasTilesetAndTilemapWithWrongTypesFailCleanly) {
+    using nlohmann::json;
+    std::string error;
+    sprite2d::SpriteAtlas atlas;
+    for (const char* text : {R"({"$type":"SpriteAtlas","texture":5})", R"({"$type":"SpriteAtlas","frames":"x"})", R"({"$type":"SpriteAtlas","frames":[{"name":5}]})",
+                             R"({"$type":"SpriteAtlas","frames":[{"name":"a","w":8,"h":8,"pivot":["a","b"]}]})"}) {
+        AETHER_CHECK(!sprite2d::AtlasFromJson(json::parse(text), atlas, &error));
+    }
+    sprite2d::Tileset tileset;
+    for (const char* text : {R"({"$type":"Tileset","tile_size":[]})", R"({"$type":"Tileset","tile_size":["a","b"]})", R"({"$type":"Tileset","tile_size":[16,16],"solid":["x"]})",
+                             R"({"$type":"Tileset","tile_size":[16,16],"solid":[2147483647]})", R"({"$type":"Tileset","tile_size":[16,16],"autotiles":[{"tiles":["a"]}]})"}) {
+        AETHER_CHECK(!sprite2d::TilesetFromJson(json::parse(text), tileset, &error));
+    }
+    AETHER_CHECK(sprite2d::TilesetFromJson(json::parse(R"({"$type":"Tileset","tile_size":[16,16],"solid":[3]})"), tileset, &error));
+    sprite2d::TilemapData map;
+    for (const char* text : {R"({"$type":"Tilemap","size":["a",1]})", R"({"$type":"Tilemap","size":[2,1],"layers":[{"name":"g","cells":"no"}]})", R"({"$type":"Tilemap","size":[2,1],"layers":[7]})"}) {
+        AETHER_CHECK(!sprite2d::TilemapFromJson(json::parse(text), map, &error));
+    }
+    AETHER_CHECK(sprite2d::TilemapFromJson(json::parse(R"({"$type":"Tilemap","size":[2,1],"layers":[{"name":"g","cells":[0,1]}]})"), map, &error));
 }

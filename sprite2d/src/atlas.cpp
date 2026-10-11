@@ -49,7 +49,8 @@ nlohmann::json AtlasToJson(const SpriteAtlas& atlas) {
             {"clips", clips}};
 }
 
-bool AtlasFromJson(const nlohmann::json& data, SpriteAtlas& out, std::string* error) {
+namespace {
+bool AtlasFromJsonImpl(const nlohmann::json& data, SpriteAtlas& out, std::string* error) {
     const auto fail = [&](const std::string& why) {
         if (error) *error = why;
         return false;
@@ -91,6 +92,12 @@ bool AtlasFromJson(const nlohmann::json& data, SpriteAtlas& out, std::string* er
     }
     out = std::move(atlas);
     return true;
+}
+} // namespace
+
+// A field of the wrong type makes nlohmann throw; a damaged atlas must fail, not end the process.
+bool AtlasFromJson(const nlohmann::json& data, SpriteAtlas& out, std::string* error) {
+    return GuardJsonLoader(error, "sprite atlas", [&] { return AtlasFromJsonImpl(data, out, error); });
 }
 
 bool LoadAtlas(const std::filesystem::path& file, SpriteAtlas& out, std::string* error) {
