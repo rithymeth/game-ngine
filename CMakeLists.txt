@@ -409,6 +409,11 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(recastnavigation)
 # AI and navigation (Phase 20): navmeshes, agents, behaviour trees, perception.
 add_subdirectory(nav)
+if(TARGET aether_bench)
+    # The navigation benchmarks; nav is added after bench/, so the benchmark executable picks them up here.
+    target_sources(aether_bench PRIVATE bench/src/bench_nav.cpp)
+    target_link_libraries(aether_bench PRIVATE Aether::Nav)
+endif()
 add_subdirectory(ai)
 
 if(AETHER_BUILD_SCRIPTING)
