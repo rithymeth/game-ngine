@@ -102,7 +102,7 @@ when advisory gates become required.
 | **40.1** | Navmesh tiles streamed in and out, dynamic obstacles (`nav/`). `||` | - |
 | **40.2** | Hierarchical pathfinding (`nav/`). `||` | - |
 | **40.3** | Crowds of 1000 agents plus a bench in the 38.1 harness. | 38.1, 40.1 |
-| **40.4** | Utility AI, GOAP and state trees next to behavior trees (`ai/`). `||` | - |
+| **40.4** | *(done: `ai/utility.h` (`UtilityBrain`: response curves, considerations over blackboard numbers, compensated scores, inertia against flip-flopping), `ai/state_tree.h` (`StateTree`: hierarchical states, ordered transitions, enter/exit effects on the blackboard, a per-tick transition cap) and `ai/goap.h` (`PlanGoap`: cheapest plan by uniform-cost search over up to 64 facts, with a node budget); utility brains and state trees save as versioned JSON and have a fuzz target. Hooking them into `bt_runtime` ticking and the behavior debugger (40.6) is still to do)* Utility AI, GOAP and state trees next to behavior trees (`ai/`). `||` | - |
 | **40.5** | Perception 2.0 (`ai/`). | - |
 | **40.6** | Behavior debugger and visualization (`editor/src/ai`). | 40.4 |
 | **40.7** | Optional ONNX runtime layer (`AETHER_AI_ONNX`, deterministic fallback, licence review). Windows and macOS are CI checks. | - |
