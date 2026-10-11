@@ -258,6 +258,12 @@ bool BlueprintFromJsonImpl(const json& j, Blueprint& out, std::string* error) {
                 node.x = pos[0].get<float>();
                 node.y = pos[1].get<float>();
             }
+            // Nodes read their config and defaults as objects; anything else is a damaged file.
+            for (const char* key : {"config", "defaults"}) {
+                if (n.contains(key) && !n[key].is_object()) {
+                    return fail("graph '" + graph.name + "': node " + std::to_string(node.id) + " has a '" + key + "' that isn't an object");
+                }
+            }
             node.config = n.value("config", json::object());
             node.defaults = n.value("defaults", json::object());
             node.comment = n.value("comment", "");
