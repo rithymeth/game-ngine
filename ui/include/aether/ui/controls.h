@@ -48,6 +48,9 @@ public:
     Margin padding{16, 8, 16, 8};
     std::function<void()> on_clicked, on_pressed, on_released;
     std::function<void(bool)> on_hovered;
+    // A key (or pad button) name from input::KeyName ("GamepadA", "Space") the player holds down while this button is pressed, so an
+    // on-screen button drives the same actions as the keyboard or pad. Empty: none.
+    std::string hold_key;
     bool IsPressed() const { return pressed_; }
 
     bool OnPointerDown(const PointerEvent&, UIInputRouter&) override;
@@ -64,6 +67,35 @@ protected:
 
 private:
     bool pressed_ = false;
+};
+
+// An on-screen thumb stick for touch screens. Press inside it and drag: `value` is the drag from where the finger landed (or from the centre
+// when `fixed`), divided by `radius` and clamped to the unit circle, +x right and +y down (the way the engine reports a pad's stick, where
+// pushing forward is negative). Lifting the finger returns it to zero. The player writes `value` to the keys named `key_x` and `key_y`
+// (the left stick by default), so a game's Move binding needs no change. Not focusable.
+class VirtualStick : public Control {
+public:
+    const char* TypeName() const override { return "VirtualStick"; }
+    VirtualStick() { focusable = false; }
+    std::string key_x = "GamepadLeftStickX", key_y = "GamepadLeftStickY";
+    f32 radius = 60.0f;   // layout units of drag for full deflection
+    bool fixed = false;   // measure from the widget's centre rather than where the finger landed
+    Vec2 value;           // -1..1 per axis
+    bool IsActive() const { return active_; }
+    std::function<void(Vec2)> on_changed;
+
+    bool OnPointerDown(const PointerEvent& e, UIInputRouter&) override;
+    void OnPointerMove(const PointerEvent& e, UIInputRouter&) override;
+    void OnPointerUp(const PointerEvent& e, bool inside, UIInputRouter&) override;
+
+protected:
+    Vec2 ComputeDesired(const LayoutContext&) override { return {160.0f, 160.0f}; }
+    void PaintSelf(DrawList& list, const PaintContext& ctx) const override;
+
+private:
+    void Drag(Vec2 position);
+    bool active_ = false;
+    Vec2 origin_;
 };
 
 // A check box.

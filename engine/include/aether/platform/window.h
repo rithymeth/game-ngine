@@ -21,7 +21,7 @@ struct WindowDesc {
 // §24.3), the same on every platform: keys and buttons in the engine's
 // input::Key terms, mouse movement and wheel, typed characters, gamepad
 // axes, focus, resizes and the close request.
-enum class WindowEventType : u8 { Key, Char, MouseMove, Scroll, Axis, Focus, Resize, Close };
+enum class WindowEventType : u8 { Key, Char, MouseMove, Scroll, Axis, Focus, Resize, Close, Touch, TouchMove };
 
 struct WindowEvent {
     WindowEventType type = WindowEventType::Key;
@@ -30,7 +30,10 @@ struct WindowEvent {
     f32 x = 0, y = 0;                  // MouseMove: the cursor (pixels); Resize: the size; Axis: x is the value
     f32 dx = 0, dy = 0;                // MouseMove: the movement; Scroll: the wheel (dy is vertical)
     u32 codepoint = 0;                 // Char: the Unicode character typed
+    u32 pointer = 0;                   // Touch, TouchMove: the finger's id (any number, stable while it is down)
 };
+// Touch: `down` true is a finger landing at (x, y), false is it lifting (or the system cancelling it). TouchMove: a finger that is down moved to
+// (x, y). Both in window pixels. ApplyWindowEvents turns them into input::InputState pointers.
 
 // Applies a frame's window events to the raw input state: keys and buttons,
 // mouse movement and wheel (accumulated), gamepad axes; losing focus

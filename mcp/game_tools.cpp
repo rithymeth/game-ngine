@@ -1,5 +1,7 @@
 #include "game_tools.h"
 
+#include "aether/platform/window.h"
+
 #include "screenshot.h"
 
 #include "aether/audio/audio_system.h"
@@ -330,9 +332,14 @@ void RegisterGameTools(McpServer& server) {
         {"game_input",
          "Set input for the game. Each entry of `set` is a key name (e.g. \"W\", \"Space\", \"MouseLeft\") and a value: 1 or 0 for "
          "buttons, -1..1 for axes. Values are held until changed. `mouse_delta` [dx, dy] applies to the next frame only. "
-         "`clear` releases everything first.",
+         "`clear` releases everything first. Pointers (for the game's on-screen UI, in window pixels): `mouse` {x, y, down} puts the mouse "
+         "cursor there (and holds or releases its left button), in the UI's pixel space (the window or screenshot size once the game has been drawn, "
+         "1920 x 1080 before), and `touches` is a list of {id, x, y, phase} with phase \"down\", \"move\" "
+         "or \"up\" for fingers (up to 9 at once; the first finger also holds MouseLeft). The result lists the pointers that are active.",
          Schema({{"set", {{"type", "object"}, {"description", "{ \"W\": 1, \"Space\": 0 }"}}},
                  {"mouse_delta", {{"type", "array"}, {"items", {{"type", "number"}}}}},
+                 {"mouse", {{"type", "object"}, {"description", "{ \"x\": 100, \"y\": 80, \"down\": true }"}}},
+                 {"touches", {{"type", "array"}, {"items", {{"type", "object"}}}, {"description", "[{ \"id\": 1, \"x\": 100, \"y\": 80, \"phase\": \"down\" }]"}}},
                  {"clear", {{"type", "boolean"}}}}),
          [host](const Json& args) -> Json {
              Game& game = host->Require();
@@ -356,7 +363,73 @@ void RegisterGameTools(McpServer& server) {
                  }
                  game.Input().AddMouseDelta(d[0].get<f32>(), d[1].get<f32>());
              }
-             return {{"applied", applied}};
+             std::vector<WindowEvent> events;
+             if (args.contains("mouse")) {
+                 const Json& m = args["mouse"];
+                 if (!m.is_object() || !m.contains("x") || !m.contains("y") || !m["x"].is_number() || !m["y"].is_number()) {
+                     throw ToolError("\"mouse\" must be { x, y, down? } with numbers");
+                 }
+                 WindowEvent move;
+                 move.type = WindowEventType::MouseMove;
+                 move.x = m["x"].get<f32>(), move.y = m["y"].get<f32>();
+                 events.push_back(move);
+                 if (m.contains("down")) {
+                     WindowEvent button;
+                     button.type = WindowEventType::Key, button.key = input::Key::MouseLeft, button.down = m["down"].is_boolean() && m["down"].get<bool>();
+                     events.push_back(button);
+                 }
+             }
+             if (args.contains("touches")) {
+                 if (!args["touches"].is_array()) throw ToolError("\"touches\" must be a list of { id, x, y, phase }");
+                 for (const Json& t : args["touches"]) {
+                     if (!t.is_object() || !t.contains("id") || !t["id"].is_number_integer() || !t.contains("x") || !t["x"].is_number() ||
+                         !t.contains("y") || !t["y"].is_number() || !t.contains("phase") || !t["phase"].is_string()) {
+                         throw ToolError("Each touch is { id, x, y, phase } with phase \"down\", \"move\" or \"up\"");
+                     }
+                     const std::string phase = t["phase"].get<std::string>();
+                     if (phase != "down" && phase != "move" && phase != "up") throw ToolError("A touch's phase is \"down\", \"move\" or \"up\", not \"" + phase + "\"");
+                     WindowEvent e;
+                     e.type = phase == "move" ? WindowEventType::TouchMove : WindowEventType::Touch;
+                     e.down = phase == "down";
+                     e.pointer = static_cast<u32>(t["id"].get<i64>());
+                     e.x = t["x"].get<f32>(), e.y = t["y"].get<f32>();
+                     events.push_back(e);
+                 }
+             }
+             if (!events.empty()) ApplyWindowEvents(events, game.Input());
+             Json pointers = Json::array();
+             for (usize i = 0; i < input::InputState::kMaxPointers; ++i) {
+                 const input::InputState::Pointer& p = game.Input().GetPointer(i);
+                 if (p.active) pointers.push_back({{"slot", i}, {"x", p.x}, {"y", p.y}, {"down", p.down}});
+             }
+             return {{"applied", applied}, {"pointers", pointers}};
+         }});
+
+    server.AddTool(
+        {"game_lifecycle",
+         "Send the game a platform lifecycle event, as a phone's operating system would: \"suspend\" (the app goes to the background: the game stops "
+         "advancing, audio output stops and queued saves are written), \"resume\" (audio restarts; the next frame ignores the time that passed) or "
+         "\"memory_pressure\" with a `level` of \"moderate\" or \"critical\" (counted; the game has no cache to drop safely yet). Returns whether the game is "
+         "suspended and how many memory-pressure events it has seen.",
+         Schema({{"event", {{"type", "string"}, {"enum", Json::array({"suspend", "resume", "memory_pressure"})}}},
+                 {"level", {{"type", "string"}, {"enum", Json::array({"moderate", "critical"})}}}},
+                {"event"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             const std::string event = RequireString(args, "event");
+             platform::LifecycleMessage message;
+             if (event == "suspend") message.event = platform::LifecycleEvent::Suspend;
+             else if (event == "resume") message.event = platform::LifecycleEvent::Resume;
+             else if (event == "memory_pressure") {
+                 message.event = platform::LifecycleEvent::MemoryPressure;
+                 const std::string level = args.contains("level") && args["level"].is_string() ? args["level"].get<std::string>() : "moderate";
+                 if (level != "moderate" && level != "critical") throw ToolError("level is \"moderate\" or \"critical\"");
+                 message.level = level == "critical" ? platform::MemoryLevel::Critical : platform::MemoryLevel::Moderate;
+             } else {
+                 throw ToolError("event is \"suspend\", \"resume\" or \"memory_pressure\"");
+             }
+             game.Platform().Dispatch(message);
+             return {{"suspended", game.Suspended()}, {"memory_pressure_events", game.MemoryPressureEvents()}};
          }});
 
     server.AddTool({"game_load_scene", "Replace the game's world with another cooked scene and begin play.",

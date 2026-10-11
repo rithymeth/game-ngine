@@ -4,7 +4,9 @@
 #include "project_host.h"
 
 #include "aether/ui/animation.h"
+#include "aether/input/keys.h"
 #include "aether/ui/basic.h"
+#include "aether/ui/controls.h"
 #include "aether/ui/layout_file.h"
 #include "aether/ui/theme.h"
 #include "aether/ui/viewport.h"
@@ -85,6 +87,7 @@ struct Walk {
     std::map<std::string, std::vector<std::string>> by_name;
     Json problems = Json::array();
     bool truncated = false;
+    f32 touch_target = 0.0f; // controls smaller than this (layout units) in either direction are reported; 0 checks nothing
 };
 
 Json WalkTree(const ui::Widget& w, const std::string& path, Walk& walk, u32 depth) {
@@ -108,6 +111,23 @@ Json WalkTree(const ui::Widget& w, const std::string& path, Walk& walk, u32 dept
             const bool inside_scroller = w.Parent() != nullptr && (std::string(w.Parent()->TypeName()).find("Scroll") != std::string::npos);
             if (!inside_scroller) walk.problems.push_back({{"widget", here}, {"problem", "extends past the screen"}, {"rect", RectJson(g)}});
         }
+    }
+    // Controls a finger has to hit: big enough (when asked), and the keys they drive must be real key names.
+    if (w.Interactive() && w.TakesSpace() && w.visibility == ui::Visibility::Visible && w.enabled && walk.touch_target > 0.0f &&
+        (g.w < walk.touch_target || g.h < walk.touch_target)) {
+        walk.problems.push_back({{"widget", here}, {"problem", "too small to tap: " + std::to_string(static_cast<int>(g.w)) + " x " + std::to_string(static_cast<int>(g.h)) +
+                                                                  " (at least " + std::to_string(static_cast<int>(walk.touch_target)) + " each way)"}, {"rect", RectJson(g)}});
+    }
+    const auto check_key = [&](const std::string& key, const char* what) {
+        if (!key.empty() && input::KeyFromName(key) == input::Key::None) {
+            walk.problems.push_back({{"widget", here}, {"problem", std::string(what) + " \"" + key + "\" is not a key name (see input::KeyName: \"Space\", \"GamepadA\", \"GamepadLeftStickX\" ...)"}});
+        }
+    };
+    if (const auto* button = dynamic_cast<const ui::Button*>(&w)) check_key(button->hold_key, "hold_key");
+    if (const auto* stick = dynamic_cast<const ui::VirtualStick*>(&w)) {
+        check_key(stick->key_x, "key_x");
+        check_key(stick->key_y, "key_y");
+        if (stick->key_x.empty() || stick->key_y.empty()) walk.problems.push_back({{"widget", here}, {"problem", "a virtual stick needs both key_x and key_y"}});
     }
     if (w.ChildCount() > 0) {
         if (depth >= 24 || walk.count > 800) {
@@ -187,7 +207,8 @@ void RegisterUiTools(McpServer& server, std::shared_ptr<AssetHost> host) {
     server.AddTool(
         {"ui_check",
          "Check a UI layout (.aui): it must load (errors name the widget by path), and the result lists problems found after laying it out on a screen of `width` x `height` "
-         "(default 1920x1080): duplicate widget names, bindings that name a missing widget or a property that can't be bound, widgets that extend past the screen or have no size. "
+         "(default 1920x1080): duplicate widget names, bindings that name a missing widget or a property that can't be bound, widgets that extend past the screen or have no size, and "
+         "keys a Button's `hold_key` or a VirtualStick's `key_x` / `key_y` name that are not key names; with `touch_target` also controls too small for a finger. "
          "It also returns the widget tree with each widget's rectangle in layout units, the images the layout uses and the bindings. `scale` \"none\" lays out 1 unit per pixel "
          "instead of fitting the reference resolution; `direction` \"rtl\" mirrors it. Give `definition` (JSON) or `file`.",
          Schema({{"definition", {{"description", "The layout: a JSON object, or its text"}}},
@@ -195,7 +216,8 @@ void RegisterUiTools(McpServer& server, std::shared_ptr<AssetHost> host) {
                  {"width", {{"type", "number"}}},
                  {"height", {{"type", "number"}}},
                  {"scale", {{"type", "string"}, {"enum", Json::array({"fit", "none"})}}},
-                 {"direction", {{"type", "string"}, {"enum", Json::array({"ltr", "rtl"})}}}}),
+                 {"direction", {{"type", "string"}, {"enum", Json::array({"ltr", "rtl"})}}},
+                 {"touch_target", {{"type", "number"}, {"description", "Report controls smaller than this many layout units either way (44 to 48 is the usual finger-sized minimum); omitted: no check"}}}}),
          [host](const Json& args) -> Json {
              std::string from;
              Loaded l = LoadOrThrow(ReadLayoutText(*host, args, &from));
@@ -206,6 +228,7 @@ void RegisterUiTools(McpServer& server, std::shared_ptr<AssetHost> host) {
 
              Walk walk;
              walk.screen = laid.viewport.LayoutSize();
+             walk.touch_target = NumberOr(args, "touch_target", 0.0f);
              const Json tree = WalkTree(*laid.root, "", walk, 0);
              for (const auto& [name, paths] : walk.by_name) {
                  if (paths.size() > 1) walk.problems.push_back({{"widget", name}, {"problem", "name used by " + std::to_string(paths.size()) + " widgets"}, {"paths", paths}});

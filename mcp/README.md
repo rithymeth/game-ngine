@@ -271,7 +271,7 @@ UI layouts (`.aui`) have no importer, so these tools take the layout as `definit
 | Tool | What it does |
 | --- | --- |
 | `ui_widget_types` | Every widget type, how many children it takes, and what it saves by default, so a layout can be written without guessing field names. |
-| `ui_check` | Loads the layout (errors name the widget by path), lays it out at `width` x `height`, and reports duplicate names, bindings that name a missing widget or an unbindable property, and widgets that run past the screen or have no size. Returns the widget tree with rectangles, the bindings and the images used. |
+| `ui_check` | Loads the layout (errors name the widget by path), lays it out at `width` x `height`, and reports duplicate names, bindings that name a missing widget or an unbindable property, widgets that run past the screen or have no size, and keys a button's `hold_key` or a virtual stick's `key_x` / `key_y` name that are not key names; with `touch_target` (say 44) also controls too small for a finger. Returns the widget tree with rectangles, the bindings and the images used. |
 | `ui_preview` | Renders the layout to a PNG. Text shows as solid blocks (a fixed-width stand-in font) and images as flat grey rectangles, so it shows layout, anchoring, sizing, colour and clipping, not final art. |
 | `ui_theme_check` | Loads a theme (`.atheme`) and lists its palette, control and text styles and images. With a layout it reports each widget `style_class` the theme has no style for. `ui_preview` takes `theme` / `theme_file` to see a layout styled by one. |
 | `ui_animation_sample` | Checks the animations in a layout (each track's widget exists, keys in time order) and evaluates every track at the times you give, to show what moves when. |
@@ -333,7 +333,8 @@ saves and localization. The game has its own world, separate from the editor's.
 | `game_load` | Mount `.apak` archives (or a folder of them / a loose cook), load the startup scene or `scene`, start modules, begin play |
 | `game_step` | Run N frames (1-100000) of `dt` seconds (default: the project's fixed step) |
 | `game_state` | Frames, time, entity/physics/script counts, script and Blueprint errors, load warnings |
-| `game_input` | Hold keys/axes (`{"W": 1}`), mouse delta for one frame, or clear |
+| `game_lifecycle` | Send suspend, resume or memory-pressure, as a phone's OS would: the game stands still, audio stops and saves are written; resume skips the time that passed |
+| `game_input` | Hold keys/axes (`{"W": 1}`), mouse delta for one frame, or clear; `mouse` and `touches` move pointers for the game's on-screen UI (taps, drags on a virtual stick) |
 | `game_screenshot` | Render the current frame off screen (what the player draws: scene and HUD) and return it as a PNG image, also saved to `path`. Needs a graphics device (D3D12 or Vulkan); `width`, `height`, `backend`, `inline` |
 | `game_attributes` / `game_set_attribute` | An entity's attributes in the running game; set a base, add a delta or define one with bounds, through the game's own attribute system (events fire, bounds apply) |
 | `game_interactables` / `game_can_interact` / `game_interact` / `game_interaction_focus` / `game_set_interactable` | The interaction kit in the running game: list usable things (and why an interactor can't use each), check, use (range, tags, cooldown, effect and ability apply, OnInteract is queued for the target's script), find what would be prompted, enable/disable/reset |

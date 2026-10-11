@@ -133,8 +133,30 @@ void ApplyWindowEvents(std::span<const WindowEvent> events, input::InputState& s
         switch (e.type) {
         case WindowEventType::Key:
             if (e.key != Key::None) state.SetButton(e.key, e.down);
+            if (e.key == Key::MouseLeft) {
+                const input::InputState::Pointer& mouse = state.GetPointer(0);
+                state.SetPointer(0, mouse.x, mouse.y, e.down, true);
+            }
             break;
-        case WindowEventType::MouseMove: state.AddMouseDelta(e.dx, e.dy); break;
+        case WindowEventType::MouseMove: {
+            state.AddMouseDelta(e.dx, e.dy);
+            const input::InputState::Pointer& mouse = state.GetPointer(0);
+            state.SetPointer(0, e.x, e.y, mouse.down, true);
+            break;
+        }
+        case WindowEventType::Touch: {
+            const i32 slot = state.TouchSlot(e.pointer, e.down);
+            if (slot < 0) break; // a lift for a finger that never landed, or ten fingers already down
+            state.SetPointer(static_cast<usize>(slot), e.x, e.y, e.down, e.down);
+            if (slot == 1) state.SetButton(Key::MouseLeft, e.down); // the first finger is the left button
+            if (!e.down) state.ReleaseTouchSlot(e.pointer);
+            break;
+        }
+        case WindowEventType::TouchMove: {
+            const i32 slot = state.TouchSlot(e.pointer, false);
+            if (slot >= 0) state.SetPointer(static_cast<usize>(slot), e.x, e.y, true, true);
+            break;
+        }
         case WindowEventType::Scroll: state.AddWheel(e.dy); break;
         case WindowEventType::Axis:
             if (e.key != Key::None) state.SetAxis(e.key, e.x);

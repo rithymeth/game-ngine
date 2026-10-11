@@ -450,6 +450,13 @@ AETHER_TEST(Mcp_GameToolsHostACookedGame) {
     AETHER_CHECK(h.Call("game_get_entity", {{"entity", hero}}).value["components"]["Transform"]["position"] == Json::array({9, 9, 9}));
     AETHER_CHECK(h.Call("game_set_component", {{"entity", hero}, {"component", "Nope"}, {"values", Json::object()}}).is_error);
     AETHER_CHECK(h.Call("game_input", {{"set", {{"NoSuchKey", 1}}}}).is_error);
+    Json pointed = h.Call("game_input", {{"mouse", {{"x", 100}, {"y", 80}, {"down", true}}}, {"touches", Json::array({Json{{"id", 3}, {"x", 10}, {"y", 20}, {"phase", "down"}}})}}).value;
+    AETHER_CHECK(pointed["pointers"].size() == 2 && pointed["pointers"][0]["slot"] == 0 && pointed["pointers"][0]["down"] == true && pointed["pointers"][0]["x"] == 100);
+    AETHER_CHECK(pointed["pointers"][1]["slot"] == 1 && pointed["pointers"][1]["y"] == 20);
+    Json lifted = h.Call("game_input", {{"touches", Json::array({Json{{"id", 3}, {"x", 10}, {"y", 20}, {"phase", "up"}}})}}).value;
+    AETHER_CHECK(lifted["pointers"].size() == 1);
+    AETHER_CHECK(h.Call("game_input", {{"touches", Json::array({Json{{"id", 3}, {"x", 1}, {"y", 1}, {"phase", "wiggle"}}})}}).is_error);
+    AETHER_CHECK(h.Call("game_input", {{"mouse", {{"x", "far"}}}}).is_error);
 
     AETHER_CHECK(!h.Call("game_unload").is_error);
     AETHER_CHECK(h.Call("game_state").is_error);
@@ -2381,6 +2388,45 @@ AETHER_TEST(Mcp_SaveToolsListInspectDeleteAndEditSettings) {
     AETHER_CHECK(!stdfs::exists(dir / "slot1.asav") && !stdfs::exists(dir / "slot1.asav.bak"));
     AETHER_CHECK(h.Call("save_delete", {{"directory", dir.string()}, {"slot", "slot1"}}).is_error);
     stdfs::remove_all(dir);
+}
+
+AETHER_TEST(Mcp_UiCheckFlagsSmallTouchTargetsAndBadControlKeys) {
+    namespace ui = aether::ui;
+    Harness h;
+    auto project = MakeAssetHost();
+    RegisterUiTools(h.server, project);
+    auto root = std::make_unique<ui::Canvas>();
+    root->name = "Hud";
+    auto* tiny = root->Add<ui::Button>();
+    tiny->name = "Tiny";
+    tiny->hold_key = "Spacebar"; // not a key name
+    tiny->padding = ui::Margin::All(0);
+    tiny->slot.anchors = ui::Anchors::Point(0, 0);
+    tiny->slot.position = {10, 10};
+    tiny->slot.size = {30, 30};
+    auto* big = root->Add<ui::Button>();
+    big->name = "Big";
+    big->hold_key = "GamepadA";
+    big->slot.anchors = ui::Anchors::Point(0, 0);
+    big->slot.position = {100, 10};
+    big->slot.size = {120, 80};
+    auto* stick = root->Add<ui::VirtualStick>();
+    stick->name = "Stick";
+    stick->key_x = "GamepadLeftStickX";
+    stick->key_y = "LeftStickWhy";
+    stick->slot.anchors = ui::Anchors::Point(0, 0);
+    stick->slot.position = {300, 10};
+    stick->slot.size = {200, 200};
+    const Json layout = Json::parse(ui::SaveLayout(*root));
+
+    const std::string plain = h.Call("ui_check", {{"definition", layout}}).value["problems"].dump();
+    AETHER_CHECK(plain.find("Spacebar") != std::string::npos && plain.find("LeftStickWhy") != std::string::npos);
+    AETHER_CHECK(plain.find("too small") == std::string::npos); // only when asked
+    const Json strict = h.Call("ui_check", {{"definition", layout}, {"touch_target", 44}}).value;
+    const std::string problems = strict["problems"].dump();
+    AETHER_CHECK(strict["ok"] == false && problems.find("too small to tap") != std::string::npos && problems.find("Tiny") != std::string::npos);
+    AETHER_CHECK(problems.find("30 x 30") != std::string::npos);
+    AETHER_CHECK(problems.find("Canvas/Big") == std::string::npos && problems.find("Canvas/Stick") == std::string::npos || problems.find("too small to tap") == problems.rfind("too small to tap"));
 }
 
 AETHER_TEST(Mcp_UiThemeAndAnimationTools) {

@@ -16,6 +16,7 @@
 #include "aether/math/math.h"
 #include "aether/pak/vfs.h"
 #include "aether/loc/localization.h"
+#include "aether/platform/lifecycle.h"
 #include "aether/plugin/plugin.h"
 #include "aether/player/settings_apply.h"
 #include "aether/player/user_paths.h"
@@ -30,6 +31,7 @@
 #include "aether/sequencer/sequence.h"
 #include "aether/sprite2d/tilemap.h"
 
+#include <array>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -223,6 +225,15 @@ public:
     // the Luau `UI` table and the Blueprint UI library act on) and updated each frame. The player draws it over the scene when it has layers,
     // in place of the built-in HUD. Null before the first scene is loaded.
     ui::Viewport* Ui();
+
+    // The platform's events (§45.2): the host (a phone's activity, or a test through platform::MockLifecycleBackend) dispatches Suspend, Resume
+    // and MemoryPressure here. On Suspend the game stops advancing (Tick returns at once with no time passing), audio output stops, and queued
+    // saves are written before the call returns. On Resume audio restarts and the first Tick after it ignores the time that went by, so the
+    // game does not jump ahead. MemoryPressure is counted and passed to anything that subscribed (the game has no cache it can drop safely
+    // yet: the renderer's GPU textures and models cannot be freed through the RHI today). Subscribe to react to the events yourself.
+    platform::PlatformLifecycle& Platform() { return platform_; }
+    bool Suspended() const { return platform_.Suspended(); }
+    u32 MemoryPressureEvents() const { return memory_pressure_events_; }
     // The package path of an image a layout uses (a quad of the UI's draw list carries its id as `texture`, ids start at 1); empty if unknown. The
     // renderer turns these into textures when it draws the UI.
     std::string UiImagePath(u32 id) const;
@@ -327,6 +338,24 @@ private:
     SettingsTargets settings_targets_;
     u64 settings_observer_ = 0;
     void RefreshSaveContext();
+    void OnPlatformEvent(const platform::LifecycleMessage& message);
+    platform::PlatformLifecycle platform_;
+    bool audio_was_running_ = false; // output was on when the game was suspended
+    bool skip_next_dt_ = false;      // the first Tick after a resume
+    u32 memory_pressure_events_ = 0;
+    // The UI's pointers and on-screen controls (§18.2): the pointers in input_state_ (the mouse, and each finger) drive the UI's widgets, and a
+    // press the UI takes is hidden from gameplay (Key::MouseLeft is released); then VirtualStick and Button::hold_key widgets write the keys
+    // they name, so on-screen controls feed the same actions as a keyboard or pad. Run at the start of each Tick, before the actions update.
+    void UpdateUiPointers(f32 dt);
+    void ApplyVirtualControls();
+    std::array<input::InputState::Pointer, input::InputState::kMaxPointers> ui_pointers_{}; // as of the last Tick
+    std::array<bool, input::InputState::kMaxPointers> ui_pointer_used_{};                   // pressed on something the UI took
+    struct HeldControl {
+        const void* widget = nullptr; // identity only: the widget may be gone
+        input::Key key_a = input::Key::None, key_b = input::Key::None;
+        bool stick = false;
+    };
+    std::vector<HeldControl> ui_held_; // controls that wrote input last Tick
 };
 
 } // namespace aether::player
