@@ -57,6 +57,7 @@ Bad input is reported as a tool error (`isError`), never a crash, and a failed
   navigation, renderer, sequencer, 2D, streaming, UI, VFX, and physics and the genre kits when built).
 - `simulation.h/.cpp` -- the systems that run in play mode (3D physics and characters, 2D physics with
   platformers and camera follow, previous-transform recording) on the engine's scheduler.
+- `permissions.h/.cpp` -- the per-project permission file (see below).
 - `main.cpp` -- the `aether_mcp_server` executable.
 - Tests: `tests/test_mcp.cpp`.
 
@@ -66,3 +67,25 @@ must not depend on it (`docs/design/agent_gameplay_ai_boundary.md`).
 
 Systems that need project assets or a window (audio output, particles, sequences, UI, scripting) are not
 in the headless simulation; they need a full `Game`.
+
+## Permissions, confirmation and the session log
+
+`<scene folder>/.aether/agent_permissions.json` says what an agent may do:
+
+```json
+{ "$type": "AgentPermissions", "$version": 1, "default": "allow",
+  "tools": { "destroy_entity": "confirm", "save_scene": "deny" } }
+```
+
+Each tool gets `allow`, `confirm` or `deny`: the tool's own entry, else `default`, else the built-in rule (the
+destructive tools -- `destroy_entity`, `remove_component`, `save_scene`, `load_scene` -- ask first and the rest
+run). A missing file means the built-in rule; an unreadable one is reported on stderr and the built-in rule
+applies.
+
+A `confirm` tool does not run on the first call. It answers `{"status": "confirmation_required", "token": ...}`;
+after the person approves, the client repeats the same call with `"confirm_token": "<token>"`. A token works once,
+only for the same tool and arguments, and expires after five minutes.
+
+Every call is appended to `.aether/agent_session.jsonl` as `{"time_ms", "tool", "args_hash", "outcome"}`
+(outcome: `ok`, `error`, `denied`, `confirmation_required` or `confirmation_invalid`). Arguments are hashed, not
+stored. The log stops growing at 8 MiB.

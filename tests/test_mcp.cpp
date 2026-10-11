@@ -417,3 +417,110 @@ AETHER_TEST(Mcp_SceneToolsStayInsideTheSceneFolder) {
     AETHER_CHECK(!h.Call("load_scene", {{"path", "scenes/a.json"}}).is_error);
     fs::remove_all(root);
 }
+
+namespace {
+
+PermissionPolicy PolicyFrom(const std::string& text, std::string* error = nullptr) {
+    PermissionPolicy policy;
+    const bool ok = PermissionPolicy::FromBytes(std::span<const unsigned char>(reinterpret_cast<const unsigned char*>(text.data()), text.size()), policy, error);
+    return ok ? policy : PermissionPolicy();
+}
+
+} // namespace
+
+AETHER_TEST(Mcp_PermissionFileParsesStrictly) {
+    std::string error;
+    PermissionPolicy none; // built-in rule: destructive asks, the rest runs
+    AETHER_CHECK(none.For("destroy_entity", true) == Permission::Confirm && none.For("list_entities", false) == Permission::Allow);
+
+    const PermissionPolicy policy = PolicyFrom(R"({"$type":"AgentPermissions","default":"allow","tools":{"destroy_entity":"deny","save_scene":"confirm"}})", &error);
+    AETHER_CHECK(policy.RuleCount() == 2 && policy.For("destroy_entity", true) == Permission::Deny && policy.For("save_scene", false) == Permission::Confirm);
+    AETHER_CHECK(policy.For("remove_component", true) == Permission::Allow); // the file's default beats the built-in rule
+
+    for (const char* bad : {R"({"$type":"AgentPermissions","default":"maybe"})", R"({"$type":"AgentPermissions","tools":[]})", R"({"$type":"AgentPermissions","tools":{"x":5}})",
+                            R"({"$type":5})", R"({"tools":{}})", "[]", "not json", ""}) {
+        PermissionPolicy out;
+        const std::string text = bad;
+        AETHER_CHECK(!PermissionPolicy::FromBytes(std::span<const unsigned char>(reinterpret_cast<const unsigned char*>(text.data()), text.size()), out, &error) && !error.empty());
+    }
+    const std::string huge(kMaxPermissionFileBytes + 1, ' ');
+    PermissionPolicy out;
+    AETHER_CHECK(!PermissionPolicy::FromBytes(std::span<const unsigned char>(reinterpret_cast<const unsigned char*>(huge.data()), huge.size()), out, &error));
+}
+
+AETHER_TEST(Mcp_DeniedToolsDoNotRunAndDestructiveOnesAskFirst) {
+    Harness h;
+    const std::string guid = h.Create();
+    AETHER_CHECK(!guid.empty());
+    h.server.SetPolicy(PolicyFrom(R"({"$type":"AgentPermissions","tools":{"undo":"deny"}})"));
+
+    auto undo = h.Call("undo");
+    AETHER_CHECK(undo.is_error && undo.text.find("denied") != std::string::npos);
+
+    // destroy_entity is destructive: the built-in rule asks first and nothing happens yet.
+    auto ask = h.Call("destroy_entity", {{"entity", guid}});
+    AETHER_CHECK(!ask.is_error && ask.value["status"] == "confirmation_required" && ask.value["token"].is_string());
+    AETHER_CHECK(!h.Call("get_entity", {{"entity", guid}}).is_error); // still there
+    const std::string token = ask.value["token"];
+
+    // A token is for one call: a different entity, a wrong token and a repeat are all refused.
+    AETHER_CHECK(h.Call("destroy_entity", {{"entity", "someone-else"}, {"confirm_token", token}}).is_error);
+    AETHER_CHECK(h.Call("destroy_entity", {{"entity", guid}, {"confirm_token", "0000000000000000"}}).is_error);
+    AETHER_CHECK(!h.Call("get_entity", {{"entity", guid}}).is_error);
+
+    auto done = h.Call("destroy_entity", {{"entity", guid}, {"confirm_token", token}});
+    AETHER_CHECK(!done.is_error);
+    AETHER_CHECK(h.Call("get_entity", {{"entity", guid}}).is_error);
+    AETHER_CHECK(h.Call("destroy_entity", {{"entity", guid}, {"confirm_token", token}}).is_error); // spent
+
+    // Reading and ordinary edits are not asked about.
+    AETHER_CHECK(!h.Call("list_entities").is_error && !h.Call("editor_state").is_error);
+}
+
+AETHER_TEST(Mcp_ConfirmationsExpireAndAreBounded) {
+    Harness h;
+    auto now = std::chrono::steady_clock::now();
+    h.server.SetClock([&now] { return now; });
+    h.server.SetPolicy(PermissionPolicy());
+    const std::string guid = h.Create();
+
+    const std::string token = h.Call("destroy_entity", {{"entity", guid}}).value["token"];
+    now += McpServer::kConfirmationLifetime + std::chrono::seconds(1);
+    AETHER_CHECK(h.Call("destroy_entity", {{"entity", guid}, {"confirm_token", token}}).is_error); // expired
+    AETHER_CHECK(!h.Call("get_entity", {{"entity", guid}}).is_error);
+
+    for (std::size_t i = 0; i < McpServer::kMaxPendingConfirmations; ++i) {
+        AETHER_CHECK(h.Call("destroy_entity", {{"entity", guid + std::to_string(i)}}).value["status"] == "confirmation_required");
+    }
+    auto full = h.Call("destroy_entity", {{"entity", guid}});
+    AETHER_CHECK(full.is_error && full.text.find("Too many") != std::string::npos);
+    now += McpServer::kConfirmationLifetime + std::chrono::seconds(1);
+    AETHER_CHECK(h.Call("destroy_entity", {{"entity", guid}}).value["status"] == "confirmation_required"); // space again
+}
+
+AETHER_TEST(Mcp_SessionLogRecordsEachCallWithoutItsArguments) {
+    Harness h;
+    std::vector<Json> records;
+    h.server.SetAuditSink([&records](const Json& record) { records.push_back(record); });
+    h.server.SetPolicy(PolicyFrom(R"({"$type":"AgentPermissions","tools":{"undo":"deny"}})"));
+    const std::string guid = h.Create({{"Transform", {{"position", {4, 5, 6}}}}});
+
+    (void)h.Call("list_entities");
+    (void)h.Call("undo");
+    const std::string token = h.Call("destroy_entity", {{"entity", guid}}).value["token"];
+    (void)h.Call("destroy_entity", {{"entity", guid}, {"confirm_token", "bad"}});
+    (void)h.Call("destroy_entity", {{"entity", guid}, {"confirm_token", token}});
+    (void)h.Call("get_entity", {{"entity", "missing"}});
+
+    std::vector<std::string> outcomes;
+    for (const Json& r : records) outcomes.push_back(r["tool"].get<std::string>() + ":" + r["outcome"].get<std::string>());
+    const std::vector<std::string> expected = {"create_entity:ok", "list_entities:ok", "undo:denied", "destroy_entity:confirmation_required",
+                                               "destroy_entity:confirmation_invalid", "destroy_entity:ok", "get_entity:error"};
+    AETHER_CHECK(outcomes == expected);
+    for (const Json& r : records) {
+        AETHER_CHECK(r["args_hash"].is_string() && r["args_hash"].get<std::string>().size() == 16 && r["time_ms"].is_number());
+        AETHER_CHECK(r.dump().find("4") == std::string::npos || r.dump().find("position") == std::string::npos); // no argument content
+    }
+    // The same arguments hash the same way; the confirm token is not part of them.
+    AETHER_CHECK(records[3]["args_hash"] == records[5]["args_hash"]);
+}
