@@ -130,7 +130,7 @@ when advisory gates become required.
 | **42.4** | *(started: `GenerateLods` in the same header gives a chain of simplified index buffers with a relative error each, never growing from one level to the next. HLOD merging and writing LODs into the cooked mesh remain)*  LOD and HLOD generation (offline, `tools/cook`). `||` | - |
 | **42.5** | Stream audio, navmesh and gameplay data with the cells. | 42.2, 40.1 |
 | **42.6** | World-partition authoring: data layers, level instances at scale (`editor/src/world`). | 43.1 |
-| **42.7** | *(started: the `world/flythrough_120_frames` benchmark crosses the generated test world and gathers what is in range each frame; the hitch budget over streaming and memory is still to come)* Automated flythrough with a hitch budget. Memory and CPU hitches run here; render hitches need hardware. | 42.1-42.3, 38.1 |
+| **42.7** | *(started: the `world/flythrough_120_frames` benchmark crosses the generated test world and gathers what is in range each frame; `Streaming_FlythroughStaysInsideTheHitchBudget` now flies the world through the async streamer with deterministic budgets on entities applied per frame and entities alive, plus a loose frame-time bound; a worst Update of about 35 ms for 400 entities is the number to bring down)* Automated flythrough with a hitch budget. Memory and CPU hitches run here; render hitches need hardware. | 42.1-42.3, 38.1 |
 
 ## Phase 43: Editor 2.0
 
