@@ -1,4 +1,5 @@
 #include "aether/ui/animation.h"
+#include "aether/core/json_util.h"
 
 #include "aether/ui/basic.h"
 #include "aether/ui/controls.h"
@@ -140,12 +141,14 @@ nlohmann::json AnimationToJson(const UIAnimation& a) {
     return {{"name", a.name}, {"tracks", tracks}};
 }
 
-bool AnimationFromJson(const nlohmann::json& j, UIAnimation& out, std::string* error) {
+namespace {
+bool AnimationFromJsonImpl(const nlohmann::json& j, UIAnimation& out, std::string* error) {
     auto fail = [&](const std::string& m) {
-        if (error != nullptr) *error = "animation '" + j.value("name", std::string()) + "': " + m;
+        if (error != nullptr) *error = "animation '" + JsonString(j, "name") + "': " + m;
         return false;
     };
     UIAnimation a;
+    if (!j.is_object()) return fail("it is not an object");
     a.name = j.value("name", std::string());
     if (a.name.empty()) return fail("it needs a name");
     for (const auto& tj : j.value("tracks", nlohmann::json::array())) {
@@ -164,6 +167,12 @@ bool AnimationFromJson(const nlohmann::json& j, UIAnimation& out, std::string* e
     }
     out = std::move(a);
     return true;
+}
+} // namespace
+
+bool AnimationFromJson(const nlohmann::json& j, UIAnimation& out, std::string* error) {
+    // A field of the wrong type makes nlohmann throw; a damaged animation must fail, not end the process.
+    return GuardJsonLoader(error, "UI animation", [&] { return AnimationFromJsonImpl(j, out, error); });
 }
 
 // --- The animator --------------------------------------------------------------------------------
