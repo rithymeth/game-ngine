@@ -125,6 +125,17 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
         param.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
         params.push_back(param);
     }
+    // The frame constants: a root CBV at b0, space2 (the HLSL's `register(b0, space2)`).
+    u32 frame_constants_root_index = ~0u;
+    if (desc.frame_constants_size_bytes > 0) {
+        AETHER_ASSERT(desc.frame_constants_size_bytes % 16 == 0);
+        D3D12_ROOT_PARAMETER param{};
+        param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+        param.Descriptor = {/*ShaderRegister=*/0, /*RegisterSpace=*/2};
+        param.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+        frame_constants_root_index = static_cast<u32>(params.size());
+        params.push_back(param);
+    }
 
     D3D12_STATIC_SAMPLER_DESC sampler{};
     sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
@@ -156,6 +167,7 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
     }
 
     PipelineRecord record;
+    record.frame_constants_root_index = frame_constants_root_index;
     AETHER_D3D_CHECK(device_.Handle()->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(),
                                                             IID_PPV_ARGS(&record.root_signature)));
 
@@ -249,6 +261,16 @@ BufferHandle D3D12Device::CreateBufferInternal(const void* data, u64 size_bytes)
     buffer->Update(data, size_bytes);
     buffers_.push_back(std::move(buffer));
     return BufferHandle{static_cast<u32>(buffers_.size() - 1)};
+}
+
+BufferHandle D3D12Device::CreateConstantBuffer(u64 size_bytes) {
+    if (size_bytes == 0) {
+        AETHER_LOG_ERROR("D3D12", "CreateConstantBuffer requires a non-zero size");
+        throw std::invalid_argument("CreateConstantBuffer requires a non-zero size");
+    }
+    const u64 padded = (size_bytes + 255) / 256 * 256; // constant data is read in 256-byte units
+    const std::vector<u8> zeros(static_cast<usize>(padded), 0);
+    return CreateBufferInternal(zeros.data(), padded);
 }
 
 void D3D12Device::UpdateVertexBuffer(BufferHandle buffer, const void* data, u64 size_bytes) {
@@ -474,6 +496,7 @@ void D3D12CommandList::BindPipeline(PipelineHandle pipeline) {
     cmd_.Get()->SetGraphicsRootSignature(record.root_signature.Get());
     cmd_.Get()->SetPipelineState(record.pso.Get());
     cmd_.Get()->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    frame_constants_root_index_ = record.frame_constants_root_index;
 }
 
 void D3D12CommandList::SetPushConstants(const void* data, u32 size_bytes) {
@@ -504,6 +527,14 @@ void D3D12CommandList::BindIndexBuffer(BufferHandle buffer, IndexFormat format) 
 
 void D3D12CommandList::DrawIndexed(u32 index_count) {
     cmd_.Get()->DrawIndexedInstanced(index_count, 1, 0, 0, 0);
+}
+
+void D3D12CommandList::BindFrameConstants(BufferHandle buffer) {
+    if (frame_constants_root_index_ == ~0u || !buffer.IsValid()) {
+        AETHER_LOG_ERROR("D3D12", "BindFrameConstants needs a pipeline made with frame_constants_size_bytes and a valid buffer");
+        return;
+    }
+    cmd_.Get()->SetGraphicsRootConstantBufferView(frame_constants_root_index_, device_.GetBuffer(buffer).GPUAddress());
 }
 
 void D3D12CommandList::BindBindlessTextures() {

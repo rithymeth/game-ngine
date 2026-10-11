@@ -7,8 +7,15 @@
 #include "aether/project/project.h"
 #include "aether/scene/components.h"
 #include "aether/scene/gameplay.h"
+#include "aether/scene/script_component.h"
 #include "aether/sequencer/sequence.h"
 #include "aether/sequencer/sequence_system.h"
+#include "aether/ui/basic.h"
+#include "aether/ui/controls.h"
+#include "aether/ui/layout_file.h"
+#include "aether/ui/panels.h"
+#include "aether/ui/viewport.h"
+#include "aether/ui/widget_system.h"
 #include "aether/reflection/serialize.h"
 #include "test_framework.h"
 
@@ -335,6 +342,98 @@ AETHER_TEST(Player_RunsTheStartupSceneFromAPak) {
     CHECK(updates == 60 && fixed == 60);
     game.EndPlay();
     CHECK(!game.IsPlaying());
+}
+
+// A game with its own UI: a WidgetComponent shows a layout from the pak, a script changes it by widget name (the Luau UI table), and the
+// player's viewport holds it for the renderer to draw.
+AETHER_TEST(Player_ShowsADataDrivenUiThatScriptsChange) {
+    if (!Game::HasScripting()) return;
+    const stdfs::path dir = TestDir("Ui");
+    auto root = std::make_unique<ui::Canvas>();
+    root->name = "Hud";
+    root->Add<ui::Text>("Score 0")->name = "Score";
+    root->Add<ui::ProgressBar>()->name = "Health";
+    root->Add<ui::Text>("secret")->name = "Secret";
+    root->Add<ui::Button>()->name = "Play";
+    root->FindAs<ui::Button>("Play")->Add<ui::Text>("Play");
+    root->Add<ui::Text>("idle")->name = "Status";
+    auto* icon = root->Add<ui::Image>();
+    icon->brush.kind = ui::Brush::Kind::Image;
+    icon->brush.image = "UI/icon.png";
+    icon->desired_size = {32, 32};
+    const std::string layout = ui::SaveLayout(*root);
+    const std::string script_guid = assets::ToString(assets::NewAssetGuid());
+    const char* script =
+        "local Hud = {}\n"
+        "function Hud:OnUpdate(dt)\n"
+        "  self.t = (self.t or 0) + dt\n"
+        "  UI.SetText('Score', 'Score ' .. math.floor(self.t * 10))\n"
+        "  UI.SetValue('Health', 0.25)\n"
+        "  UI.SetVisible('Secret', false)\n"
+        "  Hud.found, Hud.missing = UI.Exists('Score'), UI.SetText('Nope', 'x')\n"
+        "  if UI.WasClicked('Play') then UI.SetText('Status', 'clicked') end\n"
+        "end\n"
+        "return Hud\n";
+    ScriptComponent component;
+    assets::AssetGuid parsed;
+    CHECK(assets::ParseAssetGuid(script_guid, parsed));
+    component.script.guid = parsed;
+    const json scene = {{"$type", "Scene"}, {"$version", 1},
+        {"entities", json::array({{{"components", {{"WidgetComponent", {{"layout", "UI/Hud.aui"}, {"z", 0}, {"visible", true}}}}}},
+                                  {{"components", {{"ScriptComponent", reflect::ToJson(component)}}}}})}};
+    json manifest = Manifest("Scenes/start.ascene", "unused");
+    manifest["assets"] = json::array({{{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/start.ascene"}, {"importer", "Scene"}},
+                                      {{"guid", script_guid}, {"path", "Scripts/Hud.luau"}, {"importer", "Script"}},
+                                      {{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "UI/Hud.aui"}, {"importer", "Test"}}});
+    pak::PakWriter writer;
+    CHECK(writer.Add("Manifest.json", manifest.dump()));
+    CHECK(writer.Add("Content/Scenes/start.ascene", scene.dump()));
+    CHECK(writer.Add("Content/Scripts/Hud.luau", std::string(script)));
+    CHECK(writer.Add("Content/UI/Hud.aui", layout));
+    const stdfs::path pak = dir / "Game.apak";
+    CHECK(writer.Write(pak.string()));
+
+    GamePackage package;
+    std::string error;
+    CHECK(package.Mount(pak.string(), 0, &error));
+    CHECK(package.LoadManifest(&error));
+    Game game(package);
+    CHECK(game.LoadStartupScene(&error));
+    CHECK(game.Ui() != nullptr && game.Ui()->LayerCount() == 0); // shown on the first frame
+    game.BeginPlay();
+    for (int i = 0; i < 12; ++i) game.Tick(1.0f / 60.0f);
+    CHECK(game.ScriptErrors().empty() && game.Warnings().empty());
+    ui::Viewport* viewport = game.Ui();
+    CHECK(viewport->LayerCount() == 1);
+    auto* score = dynamic_cast<ui::Text*>(viewport->Find("Score"));
+    CHECK(score != nullptr && score->text != "Score 0" && score->text.rfind("Score ", 0) == 0);
+    auto* health = dynamic_cast<ui::ProgressBar*>(viewport->Find("Health"));
+    CHECK(health != nullptr && std::fabs(health->percent - 0.25f) < 1e-4f);
+    CHECK(viewport->Find("Secret")->visibility == ui::Visibility::Collapsed);
+    // The first draw: layout and paint produce quads for the visible widgets.
+    ui::BuiltinFont font;
+    viewport->SetSize({1280, 720});
+    viewport->Layout(font);
+    const ui::DrawList painted = viewport->Paint(font);
+    CHECK(!painted.quads.empty());
+    // The icon's quad names its image by id; the game maps it back to the layout's path.
+    bool icon_found = false;
+    for (const ui::DrawQuad& quad : painted.quads) icon_found = icon_found || (quad.texture != 0 && game.UiImagePath(quad.texture) == "UI/icon.png");
+    CHECK(icon_found && game.UiImagePath(0).empty() && game.UiImagePath(99).empty());
+    // The keys drive it: Tab focuses the button, Enter presses it, and the script sees the click on a later frame.
+    const auto tap = [&](input::Key key) {
+        game.Input().SetButton(key, true);
+        game.Tick(1.0f / 60.0f);
+        game.Input().SetButton(key, false);
+        game.Tick(1.0f / 60.0f);
+    };
+    tap(input::Key::Tab);
+    tap(input::Key::Enter);
+    for (int i = 0; i < 4; ++i) game.Tick(1.0f / 60.0f);
+    auto* status = dynamic_cast<ui::Text*>(viewport->Find("Status"));
+    CHECK(status != nullptr && status->text == "clicked");
+    CHECK(game.ScriptErrors().empty());
+    game.EndPlay();
 }
 
 AETHER_TEST(Player_FixedRateAndPatchPaks) {

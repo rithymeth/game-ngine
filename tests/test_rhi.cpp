@@ -1,6 +1,8 @@
 #include "aether/gfx/rhi/device.h"
 #include "test_framework.h"
 
+#include <stdexcept>
+
 using namespace aether;
 using namespace aether::gfx::rhi;
 
@@ -161,3 +163,28 @@ AETHER_TEST(RHI_VulkanBackendUnavailableReturnsNull) {
 }
 
 #endif
+
+AETHER_TEST(RHI_D3D12FrameConstantBuffersAreCreatedAndUpdated) {
+    auto device = CreateDevice(Backend::D3D12, /*enable_debug_layer=*/false);
+    AETHER_CHECK(device->SupportsFrameConstants());
+    const BufferHandle buffer = device->CreateConstantBuffer(80); // padded to 256 inside
+    AETHER_CHECK(buffer.IsValid());
+    const f32 data[20] = {1.0f, 2.0f, 3.0f, 4.0f};
+    device->UpdateConstantBuffer(buffer, data, sizeof(data)); // in range: accepted
+    device->UpdateConstantBuffer(buffer, data, 4096);          // out of range: logged and ignored, not a crash
+    bool threw = false;
+    try {
+        device->CreateConstantBuffer(0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    AETHER_CHECK(threw);
+}
+
+AETHER_TEST(RHI_VulkanLeavesFrameConstantsUnsupportedForNow) {
+    if (!IsBackendAvailable(Backend::Vulkan)) return;
+    auto device = CreateDevice(Backend::Vulkan, /*enable_debug_layer=*/false);
+    if (!device) return;
+    AETHER_CHECK(!device->SupportsFrameConstants());
+    AETHER_CHECK(!device->CreateConstantBuffer(64).IsValid()); // the renderer falls back to its own constants
+}

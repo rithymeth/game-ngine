@@ -6,8 +6,10 @@
 #include "aether/gameplay/attribute_set.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
+#include "frame_lights.h"
 #include "aether/ui/draw.h"
 #include "aether/ui/font.h"
+#include "aether/ui/viewport.h"
 
 #include <nlohmann/json.hpp>
 
@@ -217,6 +219,45 @@ PSInput VSMain(VSInput input) {
     output.local_position = input.position;
     return output;
 }
+#ifdef AETHER_FRAME_DATA
+// Everything a frame shares (filled by player/src/frame_lights.cpp: keep the two layouts in step).
+struct FrameData {
+    float4 camera_world;
+    float4 sun_direction;
+    float4 sun_color;
+    float4 sky_color;
+    uint4 counts;
+    float4 point_position_range[8];
+    float4 point_color[8];
+    float4 spot_position_range[4];
+    float4 spot_direction_outer[4];
+    float4 spot_color_inner[4];
+};
+ConstantBuffer<FrameData> g_Frame : register(b0, space2);
+#endif
+
+// The surface's response to one light from direction `light_direction` (towards the light), before the light's own radiance: the
+// diffuse and specular terms times N.L.
+float3 SurfaceLight(float3 light_direction, float3 normal, float3 view_direction, float3 base_color, float metallic, float roughness, float3 f0) {
+    float3 half_vector = normalize(view_direction + light_direction);
+    float n_dot_l = saturate(dot(normal, light_direction));
+    float n_dot_v = max(saturate(dot(normal, view_direction)), 1e-4);
+    float n_dot_h = saturate(dot(normal, half_vector));
+    float v_dot_h = saturate(dot(view_direction, half_vector));
+    const float pi = 3.14159265;
+    float alpha = roughness * roughness;
+    float alpha_squared = alpha * alpha;
+    float distribution_denominator = n_dot_h * n_dot_h * (alpha_squared - 1.0) + 1.0;
+    float distribution = alpha_squared / max(pi * distribution_denominator * distribution_denominator, 1e-5);
+    float geometry_k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
+    float geometry_v = n_dot_v / (n_dot_v * (1.0 - geometry_k) + geometry_k);
+    float geometry_l = n_dot_l / (n_dot_l * (1.0 - geometry_k) + geometry_k);
+    float3 fresnel = f0 + (1.0 - f0) * pow(1.0 - v_dot_h, 5.0);
+    float3 specular = distribution * geometry_v * geometry_l * fresnel / max(4.0 * n_dot_v * n_dot_l, 1e-4);
+    float3 diffuse = (1.0 - fresnel) * (1.0 - metallic) * base_color / pi;
+    return (diffuse + specular) * n_dot_l;
+}
+
 float4 PSMain(PSInput input) : SV_TARGET {
     uint base_index = g_PC.g_MaterialTextures & 63;
     uint normal_index = (g_PC.g_MaterialTextures >> 6) & 63;
@@ -252,7 +293,6 @@ float4 PSMain(PSInput input) : SV_TARGET {
         normal = normalize(tangent * tangent_normal.x + bitangent * tangent_normal.y + normal * tangent_normal.z);
     }
 
-    float3 light_direction = normalize(float3(-0.4, 0.8, -0.35));
     float ambient_occlusion = 1.0;
     if (occlusion_index < 32) {
         float occlusion_sample = g_Textures[occlusion_index].Sample(g_Sampler, input.uv).r;
@@ -260,29 +300,43 @@ float4 PSMain(PSInput input) : SV_TARGET {
     }
     float3 view_local = g_PC.g_CameraLocal - input.local_position;
     float3 view_direction = normalize(ApplyModelTransform(view_local));
-    float3 half_vector = normalize(view_direction + light_direction);
-    float n_dot_l = saturate(dot(normal, light_direction));
-    float n_dot_v = max(saturate(dot(normal, view_direction)), 1e-4);
-    float n_dot_h = saturate(dot(normal, half_vector));
-    float v_dot_h = saturate(dot(view_direction, half_vector));
-
-    const float pi = 3.14159265;
-    float alpha = roughness * roughness;
-    float alpha_squared = alpha * alpha;
-    float distribution_denominator = n_dot_h * n_dot_h * (alpha_squared - 1.0) + 1.0;
-    float distribution = alpha_squared / max(pi * distribution_denominator * distribution_denominator, 1e-5);
-    float geometry_k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
-    float geometry_v = n_dot_v / (n_dot_v * (1.0 - geometry_k) + geometry_k);
-    float geometry_l = n_dot_l / (n_dot_l * (1.0 - geometry_k) + geometry_k);
     float3 f0 = lerp(0.04.xxx, base_color, metallic);
-    float3 fresnel = f0 + (1.0 - f0) * pow(1.0 - v_dot_h, 5.0);
-    float3 specular = distribution * geometry_v * geometry_l * fresnel / max(4.0 * n_dot_v * n_dot_l, 1e-4);
-    float3 diffuse = (1.0 - fresnel) * (1.0 - metallic) * base_color / pi;
+    // The sun and the sky's ambient light: the scene's own (DirectionalLight and SkyLight components, through the frame
+    // constants), or the fixed ones this shader always had.
+    float3 sun_direction = normalize(float3(-0.4, 0.8, -0.35));
+    float3 sun_radiance = float3(3.0, 3.0, 3.0);
+    float3 sky_tint = float3(1.0, 1.0, 1.0);
+#ifdef AETHER_FRAME_DATA
+    sun_direction = normalize(g_Frame.sun_direction.xyz);
+    sun_radiance = g_Frame.sun_color.rgb;
+    sky_tint = g_Frame.sky_color.rgb;
+#endif
     // Broad sky and room fill keeps metallic characters readable outside
     // the key light. The environment term includes reflected metal color.
     float sky_fill = 0.28 + 0.14 * saturate(normal.y);
-    float3 environment = base_color * (1.0 - metallic) * sky_fill + f0 * (0.45 + 0.25 * roughness);
-    float3 color = environment * ambient_occlusion + (diffuse + specular) * n_dot_l * 3.0;
+    float3 environment = (base_color * (1.0 - metallic) * sky_fill + f0 * (0.45 + 0.25 * roughness)) * sky_tint;
+    float3 color = environment * ambient_occlusion + SurfaceLight(sun_direction, normal, view_direction, base_color, metallic, roughness, f0) * sun_radiance;
+#ifdef AETHER_FRAME_DATA
+    // The world position of this pixel: the camera minus the (world-space) vector from the pixel to the camera.
+    float3 world_position = g_Frame.camera_world.xyz - ApplyModelTransform(view_local);
+    for (uint point_index = 0; point_index < g_Frame.counts.x; ++point_index) {
+        float3 to_light = g_Frame.point_position_range[point_index].xyz - world_position;
+        float distance = max(length(to_light), 1e-4);
+        float falloff = saturate(1.0 - pow(distance / g_Frame.point_position_range[point_index].w, 4.0));
+        falloff = falloff * falloff / (distance * distance + 1.0);
+        color += SurfaceLight(to_light / distance, normal, view_direction, base_color, metallic, roughness, f0) * g_Frame.point_color[point_index].rgb * falloff;
+    }
+    for (uint spot_index = 0; spot_index < g_Frame.counts.y; ++spot_index) {
+        float3 to_light = g_Frame.spot_position_range[spot_index].xyz - world_position;
+        float distance = max(length(to_light), 1e-4);
+        float3 light_direction = to_light / distance;
+        float cone = smoothstep(g_Frame.spot_direction_outer[spot_index].w, g_Frame.spot_color_inner[spot_index].w,
+                                dot(-light_direction, g_Frame.spot_direction_outer[spot_index].xyz));
+        float falloff = saturate(1.0 - pow(distance / g_Frame.spot_position_range[spot_index].w, 4.0));
+        falloff = falloff * falloff / (distance * distance + 1.0);
+        color += SurfaceLight(light_direction, normal, view_direction, base_color, metallic, roughness, f0) * g_Frame.spot_color_inner[spot_index].rgb * falloff * cone;
+    }
+#endif
     float3 emissive = float3((g_PC.g_AlphaOptions >> 2) & 15,
                              (g_PC.g_AlphaOptions >> 6) & 15,
                              (g_PC.g_AlphaOptions >> 10) & 15) * (4.0 / 15.0);
@@ -348,6 +402,11 @@ PSInput VSMain(uint vertex_id : SV_VertexID) {
 
 float4 PSMain(PSInput input) : SV_TARGET {
     float alpha = g_PC.g_Color.a;
+    if (g_PC.g_UseTexture == 2) {
+        // A picture (UI image): its colour times the tint, its alpha times the tint's.
+        float4 picture = g_Textures[g_PC.g_TextureIndex].Sample(g_Sampler, input.uv);
+        return float4(g_PC.g_Color.rgb * picture.rgb, alpha * picture.a);
+    }
     if (g_PC.g_UseTexture != 0) {
         float sample_value = g_Textures[g_PC.g_TextureIndex].Sample(g_Sampler, input.uv).r;
         if (g_PC.g_UseSdf != 0) {
@@ -438,6 +497,10 @@ struct SceneRenderer::Impl {
     PipelineHandle pipeline;
     PipelineHandle transparent_pipeline;
     PipelineHandle hud_pipeline;
+    // The scene's lights, as frame constants (one buffer per frame in flight) where the device has them; else the shader's fixed light.
+    static constexpr usize kFrameBuffers = 8;
+    std::vector<BufferHandle> frame_buffers;
+    bool legacy_hud = false; // the AETHER-01 HUD, drawn when the game has no UI of its own
     SampledTextureHandle white_texture;
     std::unique_ptr<ui::SdfFont> hud_font;
     std::unordered_map<std::string, Model> models;
@@ -451,6 +514,11 @@ struct SceneRenderer::Impl {
     Impl(IDevice& d, ISwapChain& s, const GamePackage& p) : device(d), swap_chain(s), package(p) {
         PipelineDesc desc;
         desc.hlsl_source = kSceneShader;
+        if (device.SupportsFrameConstants()) {
+            desc.hlsl_source = std::string("#define AETHER_FRAME_DATA 1\n") + kSceneShader;
+            desc.frame_constants_size_bytes = sizeof(FrameData);
+            for (usize i = 0; i < kFrameBuffers; ++i) frame_buffers.push_back(device.CreateConstantBuffer(sizeof(FrameData)));
+        }
         desc.push_constant_size_bytes = sizeof(DrawConstants);
         desc.use_vertex_buffer = true;
         desc.vertex_layout = VertexLayout::PositionNormalUvTangent;
@@ -472,8 +540,9 @@ struct SceneRenderer::Impl {
             ++sampled_texture_count;
             textures.emplace("", white_texture);
         }
-        // This first proof HUD is specific to the AETHER-01 content contract.
-        if (package.Manifest().project != "AETHER-01") return;
+        // The built-in HUD is specific to the AETHER-01 content contract; every game can show its own UI (WidgetComponent layouts)
+        // with the same pipeline and font.
+        legacy_hud = package.Manifest().project == "AETHER-01";
 
         PipelineDesc hud_desc;
         hud_desc.hlsl_source = kHudShader;
@@ -487,7 +556,9 @@ struct SceneRenderer::Impl {
             std::string error;
             hud_font = ui::SdfFont::FromMemory(std::move(font_bytes), {}, &error);
             if (hud_font) {
-                hud_font->Prewarm("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:/-%");
+                // Printable ASCII: the built-in HUD uses capitals and digits, and a game's own UI layouts any text. (The atlas is
+                // uploaded once, here; glyphs outside this set would draw as blanks.)
+                hud_font->Prewarm(" !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~");
                 const auto& atlas = hud_font->AtlasPixels();
                 std::vector<u8> rgba(atlas.size() * 4);
                 for (usize i = 0; i < atlas.size(); ++i) {
@@ -509,7 +580,8 @@ struct SceneRenderer::Impl {
                 AETHER_LOG_WARN("PlayerRenderer", "Couldn't load the AETHER-01 HUD font: %s", error.c_str());
             }
         } else {
-            AETHER_LOG_WARN("PlayerRenderer", "Cooked package has no fonts/Roboto-Medium.ttf; HUD text is unavailable");
+            if (legacy_hud) AETHER_LOG_WARN("PlayerRenderer", "Cooked package has no fonts/Roboto-Medium.ttf; HUD text is unavailable");
+            else AETHER_LOG_INFO("PlayerRenderer", "Cooked package has no fonts/Roboto-Medium.ttf; UI text is unavailable");
         }
     }
 
@@ -519,6 +591,22 @@ struct SceneRenderer::Impl {
         const f32 width = static_cast<f32>(swap_chain.Width());
         const f32 height = static_cast<f32>(swap_chain.Height());
         if (width <= 0 || height <= 0) return;
+
+        // A game with its own UI (WidgetComponent layouts) shows that, not the built-in HUD, which belongs to AETHER-01.
+        if (ui::Viewport* viewport = game.Ui(); viewport != nullptr && viewport->LayerCount() > 0) {
+            viewport->SetSize({width, height});
+            viewport->Layout(*hud_font);
+            ui::DrawList list = viewport->Paint(*hud_font);
+            // Image quads carry the game's image id; make each a texture (text quads are distance-field ones and keep the font's).
+            for (ui::DrawQuad& quad : list.quads) {
+                if (quad.texture == 0 || quad.sdf_range > 0.0f) continue;
+                SampledTextureHandle texture;
+                quad.texture = LoadTexture(game.UiImagePath(quad.texture), texture) ? texture.index : 0; // 0: drawn as its tint
+            }
+            SubmitHudQuads(commands, list, width, height);
+            return;
+        }
+        if (!legacy_hud) return;
 
         const auto read_attribute = [&](Entity entity, const char* name, f32 fallback) {
             if (!world.HasComponent<gas::AttributeSet>(entity)) return fallback;
@@ -808,6 +896,11 @@ struct SceneRenderer::Impl {
             text(menu_state == 2 ? "LEFT/RIGHT ADJUST   ESC BACK" : "ARROWS SELECT   ENTER CONFIRM   ESC BACK",
                  mx + 24, my + 344, 12, muted, 435);
         }
+        SubmitHudQuads(commands, list, width, height);
+    }
+
+    // Draws a UI draw list (quads in pixels, each clipped) with the HUD pipeline.
+    void SubmitHudQuads(ICommandList& commands, const ui::DrawList& list, f32 width, f32 height) {
         commands.BindPipeline(hud_pipeline);
         commands.BindBindlessTextures();
         for (const ui::DrawQuad& quad : list.quads) {
@@ -835,7 +928,7 @@ struct SceneRenderer::Impl {
             constants.sdf_edge = quad.sdf_edge;
             constants.sdf_softness = quad.sdf_softness;
             constants.texture_index = quad.texture;
-            constants.use_texture = quad.texture != 0 ? 1u : 0u;
+            constants.use_texture = quad.texture == 0 ? 0u : (quad.sdf_range > 0.0f ? 1u : 2u); // 1: a font atlas (one channel), 2: a picture
             constants.use_sdf = quad.sdf_range > 0.0f ? 1u : 0u;
             commands.SetPushConstants(&constants, sizeof(constants));
             commands.Draw(6);
@@ -1076,6 +1169,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
 
     commands.BeginRenderPass(renderer.swap_chain, {0.015f, 0.025f, 0.045f, 1.0f});
     std::vector<PendingTransparentDraw> transparent_draws;
+    BufferHandle frame_buffer; // this frame's lights, when the device has frame constants
     const Entity camera_entity = FindActiveCamera(world, guids);
     const Camera* camera = world.IsAlive(camera_entity) ? world.GetComponent<Camera>(camera_entity) : nullptr;
     if (camera) {
@@ -1084,7 +1178,14 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         const Mat4 view_projection = CameraProjection(*camera, aspect) * CameraView(world, guids, camera_entity);
         const Mat4 camera_transform = ComputeWorldTransform(world, guids, camera_entity);
         const Vec3 camera_position{camera_transform.cols[3].x, camera_transform.cols[3].y, camera_transform.cols[3].z};
+        if (!renderer.frame_buffers.empty()) {
+            // The sun, sky and nearby point and spot lights of this scene (the previous use of this slot's frame has finished).
+            frame_buffer = renderer.frame_buffers[frame_index % renderer.frame_buffers.size()];
+            const FrameData frame_data = BuildFrameData(world, guids, camera_position);
+            renderer.device.UpdateConstantBuffer(frame_buffer, &frame_data, sizeof(frame_data));
+        }
         commands.BindPipeline(renderer.pipeline);
+        if (frame_buffer.IsValid()) commands.BindFrameConstants(frame_buffer);
         commands.BindBindlessTextures();
         world.ForEachArchetype([&](const Archetype& archetype) {
             if (!archetype.Mask().test(GetComponentId<Transform>()) || !archetype.Mask().test(GetComponentId<ModelRenderer>())) return;
@@ -1278,6 +1379,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                                         ? renderer.transparent_pipeline
                                                         : renderer.pipeline;
         commands.BindPipeline(transparent_pipeline);
+        if (frame_buffer.IsValid()) commands.BindFrameConstants(frame_buffer);
         commands.BindBindlessTextures();
         for (const PendingTransparentDraw& draw : transparent_draws) {
             commands.BindVertexBuffer(draw.vertices, sizeof(SceneVertex));
