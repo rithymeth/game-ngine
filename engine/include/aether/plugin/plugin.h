@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -66,6 +67,11 @@ struct PluginDescriptor {
 
 inline constexpr const char* kPluginExtension = ".aplugin";
 
+// Reads a descriptor from bytes (`source` names it in messages). A descriptor larger than kMaxPluginDescriptorBytes,
+// not an object, of the wrong type, or with an invalid plugin or module name is refused, never thrown on.
+inline constexpr usize kMaxPluginDescriptorBytes = 1024 * 1024;
+[[nodiscard]] bool LoadPluginDescriptorFromMemory(std::span<const u8> bytes, const std::string& source, PluginDescriptor& out,
+                                                  std::string* error = nullptr);
 [[nodiscard]] bool LoadPluginDescriptor(const std::filesystem::path& file, PluginDescriptor& out, std::string* error = nullptr);
 [[nodiscard]] bool SavePluginDescriptor(const std::filesystem::path& file, const PluginDescriptor& descriptor,
                           std::string* error = nullptr);

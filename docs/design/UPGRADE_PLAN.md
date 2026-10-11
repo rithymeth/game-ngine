@@ -192,7 +192,7 @@ when advisory gates become required.
 | **47.5** | Soak and leak gates. | 38.7 |
 | **47.6** | A screenshot and functional test farm per platform. | - |
 | **47.7** | Accessibility and localization regression checks. | - |
-| **47.8** | Security review of the plugin and MCP surfaces. | 44.3 |
+| **47.8** | *(started: the MCP scene tools are confined to a scene folder; the plugin descriptor loader reads from bytes with a 1 MiB cap and no longer throws on a non-string `$type`, with a fuzz target and corpus. Still to review: plugin Content mounts and symlinks, and the MCP simulation tools)* Security review of the plugin and MCP surfaces. | 44.3 |
 
 ## Phase 48: Aether 1.0
 
