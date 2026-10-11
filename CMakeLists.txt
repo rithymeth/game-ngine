@@ -496,6 +496,9 @@ endif()
 
 # Phase 23: the functional test runner (headless, any platform).
 add_subdirectory(tools/functional)
+if(TARGET aether_ai)
+    add_subdirectory(tools/alloc_audit)
+endif()
 add_subdirectory(tools/fuzz)
 # Phase 25: the .apak archive tool and the cooker.
 add_subdirectory(tools/pak)

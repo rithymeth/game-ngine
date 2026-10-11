@@ -1,5 +1,6 @@
 add_library(aether_engine STATIC
     src/core/log.cpp
+    src/core/alloc_track.cpp
     src/core/cvar.cpp
     src/core/console.cpp
     src/core/profiler.cpp
