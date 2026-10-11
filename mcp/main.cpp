@@ -29,12 +29,19 @@
 #include "material_tools.h"
 #include "prefab_tools.h"
 #include "vfx_tools.h"
+#include "permissions.h"
+
+#include "aether/platform/filesystem.h"
 
 #include <cstdio>
+#include <fstream>
 #include <cstring>
 #include <filesystem>
 #include <string>
 #include <iostream>
+#include <string>
+#include <vector>
+#include <memory>
 
 #ifdef _WIN32
 #include <fcntl.h>
@@ -97,6 +104,43 @@ int main(int argc, char** argv) {
     mcp::RegisterNavTools(server, session);
     std::error_code ec;
     mcp::RegisterBuildTools(server, mcp::FindBuildContext(build_dir, std::filesystem::absolute(argv[0], ec).parent_path()));
+
+    // Work undo cannot bring back, from the tool groups above: the built-in permission rule asks the person before these run.
+    for (const char* name : {"asset_delete", "content_write", "save_delete", "prefab_apply"}) server.MarkDestructive(name);
+
+    // Permissions and the session log live in <scene folder>/.aether/. A missing permission file means the
+    // built-in rule (destructive tools ask first); an unreadable one is reported and the same rule applies.
+    const std::filesystem::path state_dir = session.scene_root / ".aether";
+    {
+        mcp::PermissionPolicy policy;
+        std::vector<u8> bytes;
+        const std::filesystem::path file = state_dir / "agent_permissions.json";
+        if (fs::ReadFileBytes(file.string(), bytes)) {
+            std::string error;
+            if (!mcp::PermissionPolicy::FromBytes(bytes, policy, &error)) {
+                std::fprintf(stderr, "aether_mcp_server: %s: %s; using the built-in rule\n", file.string().c_str(), error.c_str());
+                policy = mcp::PermissionPolicy();
+            }
+        }
+        server.SetPolicy(std::move(policy));
+    }
+    {
+        // One JSON record per line, capped so a long session cannot fill the disk.
+        const std::filesystem::path log_file = state_dir / "agent_session.jsonl";
+        auto written = std::make_shared<std::uintmax_t>(0);
+        std::error_code ec;
+        std::filesystem::create_directories(state_dir, ec);
+        if (const auto size = std::filesystem::file_size(log_file, ec); !ec) *written = size;
+        constexpr std::uintmax_t kMaxLogBytes = 8u * 1024u * 1024u;
+        server.SetAuditSink([log_file, written](const mcp::Json& record) {
+            if (*written >= kMaxLogBytes) return;
+            std::ofstream out(log_file, std::ios::app);
+            if (!out) return;
+            const std::string line = record.dump();
+            out << line << '\n';
+            *written += line.size() + 1;
+        });
+    }
     server.RunStdio(std::cin, std::cout);
     return 0;
 }

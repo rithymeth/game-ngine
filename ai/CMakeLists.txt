@@ -7,6 +7,9 @@ add_library(aether_ai STATIC
     src/bt_runtime.cpp
     src/bt_world.cpp
     src/perception.cpp
+    src/utility.cpp
+    src/state_tree.cpp
+    src/goap.cpp
     src/debug_draw.cpp
 )
 target_include_directories(aether_ai PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

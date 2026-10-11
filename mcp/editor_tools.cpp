@@ -1265,6 +1265,9 @@ void RegisterSequenceEditorTools(McpServer& server, EditorSession& s) {
                         s.stack.Execute(ctx, std::make_unique<editor::RemoveComponentCommand>(guid, id));
                         return {{"removed", true}};
                     }});
+
+    // Work undo cannot bring back: the built-in permission rule asks the person before these run (permissions.h).
+    for (const char* name : {"destroy_entity", "remove_component", "save_scene", "load_scene"}) server.MarkDestructive(name);
 }
 
 } // namespace aether::mcp

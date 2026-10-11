@@ -3,6 +3,8 @@
 #include "aether/blueprint/graph.h"
 #include "aether/core/json_util.h"
 #include "aether/ecs/world.h"
+#include "aether/input/bindings.h"
+#include "aether/save/envelope.h"
 #include "aether/animation/anim_graph.h"
 #include "aether/animation/blend_space.h"
 #include "aether/animation/montage.h"
@@ -11,7 +13,10 @@
 #include "aether/renderer/material_instance.h"
 #include "aether/scene/prefab.h"
 #include "aether/scene/serialization.h"
+#include "aether/sprite2d/atlas.h"
+#include "aether/sprite2d/tilemap.h"
 #include "aether/sequencer/sequence.h"
+#include "aether/ui/animation.h"
 
 #include <cstdio>
 #include <string>
@@ -115,4 +120,61 @@ AETHER_TEST(LoaderRobustness_ManifestWithWrongTypesFailsCleanly) {
         AETHER_CHECK(!player::ParseGameManifest(text, manifest, &error));
         AETHER_CHECK(!error.empty());
     }
+}
+
+AETHER_TEST(LoaderRobustness_JsonStringReadsOnlyStrings) {
+    using nlohmann::json;
+    AETHER_CHECK(JsonString(json{{"$type", "Scene"}}, "$type") == "Scene");
+    AETHER_CHECK(JsonString(json{{"$type", 5}}, "$type").empty() && JsonString(json{{"$type", json::array()}}, "$type").empty());
+    AETHER_CHECK(JsonString(json::object(), "$type", "none") == "none" && JsonString(json::array(), "$type").empty() && JsonString(json(7), "$type").empty());
+}
+
+AETHER_TEST(LoaderRobustness_InputAssetsWithNonStringTypeFailCleanly) {
+    input::InputAssetLibrary library;
+    std::string error;
+    for (const char* text : {R"({"$type":5,"data":{}})", R"({"$type":["InputAction"],"data":{}})", R"({"$type":null})", R"([])"}) {
+        AETHER_CHECK(!library.AddFromText("InputAction", "bad.aaction", text, &error));
+        AETHER_CHECK(!library.AddFromText("InputMapping", "bad.amapping", text, &error));
+    }
+}
+
+AETHER_TEST(LoaderRobustness_SpriteAtlasTilesetAndTilemapWithWrongTypesFailCleanly) {
+    using nlohmann::json;
+    std::string error;
+    sprite2d::SpriteAtlas atlas;
+    for (const char* text : {R"({"$type":"SpriteAtlas","texture":5})", R"({"$type":"SpriteAtlas","frames":"x"})", R"({"$type":"SpriteAtlas","frames":[{"name":5}]})",
+                             R"({"$type":"SpriteAtlas","frames":[{"name":"a","w":8,"h":8,"pivot":["a","b"]}]})"}) {
+        AETHER_CHECK(!sprite2d::AtlasFromJson(json::parse(text), atlas, &error));
+    }
+    sprite2d::Tileset tileset;
+    for (const char* text : {R"({"$type":"Tileset","tile_size":[]})", R"({"$type":"Tileset","tile_size":["a","b"]})", R"({"$type":"Tileset","tile_size":[16,16],"solid":["x"]})",
+                             R"({"$type":"Tileset","tile_size":[16,16],"solid":[2147483647]})", R"({"$type":"Tileset","tile_size":[16,16],"autotiles":[{"tiles":["a"]}]})"}) {
+        AETHER_CHECK(!sprite2d::TilesetFromJson(json::parse(text), tileset, &error));
+    }
+    AETHER_CHECK(sprite2d::TilesetFromJson(json::parse(R"({"$type":"Tileset","tile_size":[16,16],"solid":[3]})"), tileset, &error));
+    sprite2d::TilemapData map;
+    for (const char* text : {R"({"$type":"Tilemap","size":["a",1]})", R"({"$type":"Tilemap","size":[2,1],"layers":[{"name":"g","cells":"no"}]})", R"({"$type":"Tilemap","size":[2,1],"layers":[7]})"}) {
+        AETHER_CHECK(!sprite2d::TilemapFromJson(json::parse(text), map, &error));
+    }
+    AETHER_CHECK(sprite2d::TilemapFromJson(json::parse(R"({"$type":"Tilemap","size":[2,1],"layers":[{"name":"g","cells":[0,1]}]})"), map, &error));
+}
+
+AETHER_TEST(LoaderRobustness_BlueprintNodeSettingsAndUiAnimationsWithWrongTypesFailCleanly) {
+    using nlohmann::json;
+    std::string error;
+    bp::Blueprint blueprint;
+    for (const char* key : {"config", "defaults"}) {
+        json node = {{"id", 1u}, {"type", "Event.BeginPlay"}};
+        node[key] = "x";
+        const json bp = {{"$type", "Blueprint"}, {"$version", 1}, {"parent", "native:Entity"}, {"graphs", json::array({json{{"name", "EventGraph"}, {"kind", "EventGraph"}, {"nodes", json::array({node})}}})}};
+        const bool loaded = bp::BlueprintFromJson(bp, blueprint, &error);
+        if (loaded || error.find(key) == std::string::npos) std::printf("    blueprint error was: %s\n", error.c_str());
+        AETHER_CHECK(!loaded && error.find(key) != std::string::npos);
+    }
+    ui::UIAnimation animation;
+    for (const char* text : {R"({"name":5,"tracks":"x"})", R"({"name":"a","tracks":[{"widget":"w","property":"opacity","keys":[["a",1]]}]})",
+                             R"({"name":"a","tracks":[{"widget":"w","property":"opacity","keys":[[0,1,5]]}]})", R"([1,2])", R"("text")"}) {
+        AETHER_CHECK(!ui::AnimationFromJson(json::parse(text), animation, &error));
+    }
+    AETHER_CHECK(ui::AnimationFromJson(json::parse(R"({"name":"a","tracks":[{"widget":"w","property":"opacity","keys":[[0,0],[1,1,"Linear"]]}]})"), animation, &error));
 }

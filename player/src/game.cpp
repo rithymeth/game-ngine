@@ -157,7 +157,7 @@ bool GamePackage::LoadManifest(std::string* error) {
         std::string dlc_text;
         if (!vfs_.ReadText(path, dlc_text, &read_error)) return Fail(error, read_error);
         const json d = json::parse(dlc_text, nullptr, /*allow_exceptions=*/false);
-        if (d.is_discarded() || !d.is_object() || d.value("$type", "") != "DlcManifest") {
+        if (d.is_discarded() || !d.is_object() || JsonString(d, "$type") != "DlcManifest") {
             return Fail(error, path + " isn't a DLC manifest");
         }
         GameManifest part;
@@ -506,7 +506,8 @@ void Game::LoadInputAssets() {
             warnings_.push_back(error);
             continue;
         }
-        input_library_.AddFromText(asset.importer, asset.path,
+        // A bad file is recorded in input_library_.Errors(), logged just below.
+        (void)input_library_.AddFromText(asset.importer, asset.path,
                                    std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
     }
     for (const std::string& e : input_library_.Errors()) AETHER_LOG_WARN("Player", "%s", e.c_str());

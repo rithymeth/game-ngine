@@ -5,7 +5,7 @@ add_executable(aether_tests
     test_filesystem.cpp
     test_job_system.cpp
     test_platform_lifecycle.cpp
-    test_meshlet_cook.cpp test_mesh_cook.cpp test_test_world.cpp
+    test_meshlet_cook.cpp test_mesh_cook.cpp test_mesh_summary.cpp test_format_versions.cpp test_ai_decision.cpp test_alloc_track.cpp test_test_world.cpp
     test_kit_registry.cpp
     test_ecs.cpp
     test_serialization.cpp
@@ -107,7 +107,7 @@ if(TARGET Aether::Scripting)
     target_link_libraries(aether_tests PRIVATE Aether::Scripting)
 endif()
 
-target_sources(aether_tests PRIVATE test_blueprint_graph.cpp test_blueprint_vm.cpp test_blueprint_latent.cpp test_blueprint_nodes.cpp test_blueprint_arrays.cpp test_blueprint_world.cpp test_blueprint_messages.cpp test_blueprint_macros.cpp test_blueprint_sort.cpp test_blueprint_debugger.cpp test_blueprint_samples.cpp test_renderer.cpp test_renderer_lighting.cpp test_frame_graph.cpp test_post.cpp test_material_graph.cpp test_material_codegen.cpp test_material_instance.cpp test_material_functions.cpp test_animation.cpp test_animation_blending.cpp test_anim_graph.cpp test_animator.cpp test_ik.cpp test_audio.cpp test_audio_3d.cpp test_audio_cues.cpp test_audio_system.cpp test_audio_threading.cpp test_ui_layout.cpp test_ui_input.cpp test_ui_assets.cpp test_ui_widgets.cpp test_ui_text.cpp test_ui_fallback.cpp test_ui_loc.cpp test_vfx_particles.cpp test_vfx_render.cpp test_vfx_events.cpp test_vfx_components.cpp test_vfx_gpu.cpp test_nav_mesh.cpp test_nav_dynamic.cpp test_nav_crowd.cpp test_ai_behavior_tree.cpp
+target_sources(aether_tests PRIVATE test_blueprint_graph.cpp test_blueprint_vm.cpp test_blueprint_latent.cpp test_blueprint_nodes.cpp test_blueprint_arrays.cpp test_blueprint_world.cpp test_blueprint_messages.cpp test_blueprint_macros.cpp test_blueprint_sort.cpp test_blueprint_debugger.cpp test_blueprint_samples.cpp test_renderer.cpp test_renderer_lighting.cpp test_frame_graph.cpp test_post.cpp test_material_graph.cpp test_material_codegen.cpp test_material_instance.cpp test_material_functions.cpp test_animation.cpp test_animation_blending.cpp test_anim_graph.cpp test_animator.cpp test_ik.cpp test_audio.cpp test_audio_3d.cpp test_audio_cues.cpp test_audio_system.cpp test_audio_threading.cpp test_ui_layout.cpp test_ui_input.cpp test_ui_assets.cpp test_ui_widgets.cpp test_ui_text.cpp test_ui_fallback.cpp test_ui_loc.cpp test_vfx_particles.cpp test_vfx_render.cpp test_vfx_events.cpp test_vfx_components.cpp test_vfx_gpu.cpp test_nav_mesh.cpp test_nav_dynamic.cpp test_nav_crowd.cpp test_nav_hierarchical.cpp test_streaming_flythrough.cpp test_ai_behavior_tree.cpp
     test_terrain.cpp
     test_terrain_splat.cpp
     test_terrain_renderer.cpp

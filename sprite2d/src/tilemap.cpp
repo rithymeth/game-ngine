@@ -1,4 +1,5 @@
 #include "aether/sprite2d/tilemap.h"
+#include "aether/core/json_util.h"
 
 #include "aether/platform/filesystem.h"
 
@@ -7,6 +8,11 @@
 #include <fstream>
 
 namespace aether::sprite2d {
+
+namespace {
+constexpr int kTilesetFormatVersion = 1;
+constexpr int kTilemapFormatVersion = 1;
+} // namespace
 
 u32 Tileset::Columns() const {
     if (tile_width == 0 || texture_width < 2 * margin) return 0;
@@ -83,7 +89,7 @@ nlohmann::json TilesetToJson(const Tileset& t) {
         if (t.solid[i]) solid.push_back(i);
     }
     return {{"$type", "Tileset"},
-            {"$version", 1},
+            {"$version", kTilesetFormatVersion},
             {"texture", assets::ToString(t.texture)},
             {"texture_size", {t.texture_width, t.texture_height}},
             {"tile_size", {t.tile_width, t.tile_height}},
@@ -93,15 +99,20 @@ nlohmann::json TilesetToJson(const Tileset& t) {
             {"autotiles", autotiles}};
 }
 
-bool TilesetFromJson(const nlohmann::json& data, Tileset& out, std::string* error) {
+namespace {
+bool TilesetFromJsonImpl(const nlohmann::json& data, Tileset& out, std::string* error) {
     const auto fail = [&](const std::string& why) {
         if (error) *error = why;
         return false;
     };
-    if (!data.is_object() || data.value("$type", "") != "Tileset") return fail("not a tileset");
+    if (!data.is_object() || JsonString(data, "$type") != "Tileset") return fail("not a tileset");
+    if (JsonVersion(data) > kTilesetFormatVersion) return fail("saved by a newer version of the engine");
     Tileset t;
     const std::string texture = data.value("texture", "");
     if (!texture.empty() && !assets::ParseAssetGuid(texture, t.texture)) return fail("bad texture GUID");
+    for (const char* key : {"texture_size", "tile_size"}) {
+        if (data.contains(key) && !(data[key].is_array() && data[key].size() == 2)) return fail(std::string("'") + key + "' is two numbers");
+    }
     if (data.contains("texture_size")) {
         t.texture_width = data["texture_size"][0].get<u32>();
         t.texture_height = data["texture_size"][1].get<u32>();
@@ -113,7 +124,11 @@ bool TilesetFromJson(const nlohmann::json& data, Tileset& out, std::string* erro
     if (t.tile_width == 0 || t.tile_height == 0) return fail("the tile size is zero");
     t.margin = data.value("margin", 0u);
     t.spacing = data.value("spacing", 0u);
-    for (const nlohmann::json& s : data.value("solid", nlohmann::json::array())) t.SetSolid(s.get<i32>(), true);
+    for (const nlohmann::json& s : data.value("solid", nlohmann::json::array())) {
+        const i32 tile = s.get<i32>();
+        if (tile >= (1 << 20)) return fail("a solid tile index is too large");
+        t.SetSolid(tile, true);
+    }
     for (const nlohmann::json& a : data.value("autotiles", nlohmann::json::array())) {
         Autotile at;
         at.name = a.value("name", "");
@@ -125,6 +140,11 @@ bool TilesetFromJson(const nlohmann::json& data, Tileset& out, std::string* erro
     }
     out = std::move(t);
     return true;
+}
+} // namespace
+
+bool TilesetFromJson(const nlohmann::json& data, Tileset& out, std::string* error) {
+    return GuardJsonLoader(error, "tileset", [&] { return TilesetFromJsonImpl(data, out, error); });
 }
 
 bool LoadTileset(const std::filesystem::path& file, Tileset& out, std::string* error) {
@@ -183,16 +203,18 @@ nlohmann::json TilemapToJson(const TilemapData& m) {
     for (const TileLayer& l : m.layers) {
         layers.push_back({{"name", l.name}, {"collides", l.collides}, {"cells", l.cells}});
     }
-    return {{"$type", "Tilemap"}, {"$version", 1}, {"tileset", assets::ToString(m.tileset)},
+    return {{"$type", "Tilemap"}, {"$version", kTilemapFormatVersion}, {"tileset", assets::ToString(m.tileset)},
             {"size", {m.width, m.height}}, {"layers", layers}};
 }
 
-bool TilemapFromJson(const nlohmann::json& data, TilemapData& out, std::string* error) {
+namespace {
+bool TilemapFromJsonImpl(const nlohmann::json& data, TilemapData& out, std::string* error) {
     const auto fail = [&](const std::string& why) {
         if (error) *error = why;
         return false;
     };
-    if (!data.is_object() || data.value("$type", "") != "Tilemap") return fail("not a tilemap");
+    if (!data.is_object() || JsonString(data, "$type") != "Tilemap") return fail("not a tilemap");
+    if (JsonVersion(data) > kTilemapFormatVersion) return fail("saved by a newer version of the engine");
     TilemapData m;
     const std::string tileset = data.value("tileset", "");
     if (!tileset.empty() && !assets::ParseAssetGuid(tileset, m.tileset)) return fail("bad tileset GUID");
@@ -213,6 +235,11 @@ bool TilemapFromJson(const nlohmann::json& data, TilemapData& out, std::string* 
     }
     out = std::move(m);
     return true;
+}
+} // namespace
+
+bool TilemapFromJson(const nlohmann::json& data, TilemapData& out, std::string* error) {
+    return GuardJsonLoader(error, "tilemap", [&] { return TilemapFromJsonImpl(data, out, error); });
 }
 
 bool LoadTilemap(const std::filesystem::path& file, TilemapData& out, std::string* error) {
