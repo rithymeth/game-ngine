@@ -74,3 +74,25 @@ AETHER_TEST(NavHierarchical_NearbyAndUnbuiltCasesFallBack) {
     CHECK(h.Stats().direct == 1 && h.Stats().legs == 1);
     CHECK(!h.Build(NavMesh())); // nothing loaded
 }
+
+AETHER_TEST(NavHierarchical_FollowsASerpentineOfWalls) {
+    // A serpentine of walls forces a path far longer than the straight line, over many tiles.
+    NavGeometry g;
+    g.AddPlane(Vec3(0, 0, 0), 150, 150);
+    for (int i = 0; i < 9; ++i) {
+        const f32 x = -135.0f + static_cast<f32>(i) * 30.0f;
+        const f32 z_center = (i % 2 == 0) ? 15.0f : -15.0f; // a gap at the top, then at the bottom
+        g.volumes.push_back(NavVolume::Box(Vec3(x, 0, z_center), Vec3(2, 2, 135)));
+    }
+    NavMesh mesh;
+    CHECK(Bake(g, mesh));
+    HierarchicalPathfinder h;
+    CHECK(h.Build(mesh));
+    NavPath plain, hier;
+    CHECK(mesh.FindPath(Vec3(-145, 0, 0), Vec3(145, 0, 0), plain));
+    CHECK(h.FindPath(Vec3(-145, 0, 0), Vec3(145, 0, 0), hier));
+    CHECK(plain.status == PathStatus::Complete && hier.status == PathStatus::Complete);
+    CHECK(hier.Length() > 290.0f * 5.0f);          // it really snakes: many times the straight line
+    CHECK(hier.Length() <= plain.Length() * 1.15f); // and stays near the shortest
+    CHECK(h.Stats().legs > 10);
+}
