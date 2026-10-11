@@ -19,6 +19,7 @@ aether_net 2
 aether_pak 2
 aether_physics 2
 aether_renderer 2
+aether_replay_ai 4
 aether_replay_assetmeta 2
 aether_replay_gltf 2
 aether_replay_input 2
