@@ -299,3 +299,20 @@ AETHER_TEST(Plugin_AbiMustMatchTheEngine) {
     CHECK(CreatePluginScaffold(dir, "Fresh", &file, &error));
     CHECK(LoadPluginDescriptor(file, back, &error) && back.abi == kPluginAbi);
 }
+
+AETHER_TEST(Plugin_DescriptorLoaderRefusesMalformedInputWithoutThrowing) {
+    const auto load = [](const std::string& text, std::string& error) {
+        PluginDescriptor d;
+        return LoadPluginDescriptorFromMemory(std::span<const u8>(reinterpret_cast<const u8*>(text.data()), text.size()), "test.aplugin", d, &error);
+    };
+    std::string error;
+    CHECK(load(R"({"$type":"Plugin","name":"Coins","modules":[{"name":"Coins"}]})", error));
+    CHECK(!load(R"({"$type":5})", error) && error.find("isn't a plugin descriptor") != std::string::npos); // used to throw
+    CHECK(!load(R"({"$type":"Plugin","name":["a"]})", error));
+    (void)load(R"({"$type":"Plugin","name":"Coins","modules":"no","abi":"one"})", error); // a wrong-typed field keeps its default; it must not throw
+    CHECK(!load(R"({"$type":"Plugin","name":"../escape"})", error) && error.find("valid plugin name") != std::string::npos);
+    CHECK(!load(R"({"$type":"Plugin","name":"Coins","modules":[{"name":"a/b"}]})", error) && error.find("valid module name") != std::string::npos);
+    CHECK(!load("[]", error));
+    CHECK(!load("", error));
+    CHECK(!load(std::string(kMaxPluginDescriptorBytes + 1, ' '), error) && error.find("too large") != std::string::npos);
+}

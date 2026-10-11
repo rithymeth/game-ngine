@@ -1,5 +1,6 @@
 #include "aether/plugin/plugin.h"
 
+#include "aether/core/json_util.h"
 #include "aether/core/log.h"
 #include "aether/core/version.h"
 #include "aether/platform/filesystem.h"
@@ -50,22 +51,33 @@ int CompareVersions(const std::string& a, const std::string& b) {
     return 0;
 }
 
+bool LoadPluginDescriptorFromMemory(std::span<const u8> bytes, const std::string& source, PluginDescriptor& out, std::string* error) {
+    if (bytes.size() > kMaxPluginDescriptorBytes) return Fail(error, source + " is too large to be a plugin descriptor");
+    return GuardJsonLoader(error, "plugin descriptor", [&] {
+        const reflect::Json json = reflect::Json::parse(bytes.begin(), bytes.end(), nullptr, /*allow_exceptions=*/false);
+        const auto type = json.is_object() ? json.find("$type") : json.end();
+        if (json.is_discarded() || !json.is_object() || type == json.end() || !type->is_string() || type->get<std::string>() != "Plugin") {
+            return Fail(error, source + " isn't a plugin descriptor");
+        }
+        PluginDescriptor d;
+        if (!reflect::FromJson(d, json)) return Fail(error, source + " can't be read as a plugin descriptor");
+        if (!IsValidPluginName(d.name)) return Fail(error, source + ": '" + d.name + "' isn't a valid plugin name");
+        for (const ModuleDesc& m : d.modules) {
+            if (!IsValidPluginName(m.name)) return Fail(error, source + ": '" + m.name + "' isn't a valid module name");
+        }
+        if (d.friendly_name.empty()) d.friendly_name = d.name;
+        out = std::move(d);
+        return true;
+    });
+}
+
 bool LoadPluginDescriptor(const stdfs::path& file, PluginDescriptor& out, std::string* error) {
+    std::error_code size_error;
+    const auto size = stdfs::file_size(file, size_error);
+    if (!size_error && size > kMaxPluginDescriptorBytes) return Fail(error, file.string() + " is too large to be a plugin descriptor");
     std::vector<u8> bytes;
     if (!fs::ReadFileBytes(file.string(), bytes)) return Fail(error, "Can't read " + file.string());
-    const reflect::Json json = reflect::Json::parse(bytes.begin(), bytes.end(), nullptr, /*allow_exceptions=*/false);
-    if (json.is_discarded() || !json.is_object() || json.value("$type", "") != "Plugin") {
-        return Fail(error, file.string() + " isn't a plugin descriptor");
-    }
-    PluginDescriptor d;
-    if (!reflect::FromJson(d, json)) return Fail(error, file.string() + " can't be read as a plugin descriptor");
-    if (!IsValidPluginName(d.name)) return Fail(error, file.string() + ": '" + d.name + "' isn't a valid plugin name");
-    for (const ModuleDesc& m : d.modules) {
-        if (!IsValidPluginName(m.name)) return Fail(error, file.string() + ": '" + m.name + "' isn't a valid module name");
-    }
-    if (d.friendly_name.empty()) d.friendly_name = d.name;
-    out = std::move(d);
-    return true;
+    return LoadPluginDescriptorFromMemory(bytes, file.string(), out, error);
 }
 
 bool SavePluginDescriptor(const stdfs::path& file, const PluginDescriptor& descriptor, std::string* error) {
