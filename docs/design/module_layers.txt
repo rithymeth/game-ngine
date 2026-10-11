@@ -3,6 +3,7 @@
 aether_bcenc 0
 aether_meshopt 0
 aether_engine 1
+aether_alloc_audit 4
 aether_animation 2
 aether_audio 2
 aether_bench_lib 2
