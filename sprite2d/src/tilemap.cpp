@@ -9,6 +9,11 @@
 
 namespace aether::sprite2d {
 
+namespace {
+constexpr int kTilesetFormatVersion = 1;
+constexpr int kTilemapFormatVersion = 1;
+} // namespace
+
 u32 Tileset::Columns() const {
     if (tile_width == 0 || texture_width < 2 * margin) return 0;
     return (texture_width - 2 * margin + spacing) / (tile_width + spacing);
@@ -84,7 +89,7 @@ nlohmann::json TilesetToJson(const Tileset& t) {
         if (t.solid[i]) solid.push_back(i);
     }
     return {{"$type", "Tileset"},
-            {"$version", 1},
+            {"$version", kTilesetFormatVersion},
             {"texture", assets::ToString(t.texture)},
             {"texture_size", {t.texture_width, t.texture_height}},
             {"tile_size", {t.tile_width, t.tile_height}},
@@ -101,6 +106,7 @@ bool TilesetFromJsonImpl(const nlohmann::json& data, Tileset& out, std::string* 
         return false;
     };
     if (!data.is_object() || JsonString(data, "$type") != "Tileset") return fail("not a tileset");
+    if (JsonVersion(data) > kTilesetFormatVersion) return fail("saved by a newer version of the engine");
     Tileset t;
     const std::string texture = data.value("texture", "");
     if (!texture.empty() && !assets::ParseAssetGuid(texture, t.texture)) return fail("bad texture GUID");
@@ -197,7 +203,7 @@ nlohmann::json TilemapToJson(const TilemapData& m) {
     for (const TileLayer& l : m.layers) {
         layers.push_back({{"name", l.name}, {"collides", l.collides}, {"cells", l.cells}});
     }
-    return {{"$type", "Tilemap"}, {"$version", 1}, {"tileset", assets::ToString(m.tileset)},
+    return {{"$type", "Tilemap"}, {"$version", kTilemapFormatVersion}, {"tileset", assets::ToString(m.tileset)},
             {"size", {m.width, m.height}}, {"layers", layers}};
 }
 
@@ -208,6 +214,7 @@ bool TilemapFromJsonImpl(const nlohmann::json& data, TilemapData& out, std::stri
         return false;
     };
     if (!data.is_object() || JsonString(data, "$type") != "Tilemap") return fail("not a tilemap");
+    if (JsonVersion(data) > kTilemapFormatVersion) return fail("saved by a newer version of the engine");
     TilemapData m;
     const std::string tileset = data.value("tileset", "");
     if (!tileset.empty() && !assets::ParseAssetGuid(tileset, m.tileset)) return fail("bad tileset GUID");
