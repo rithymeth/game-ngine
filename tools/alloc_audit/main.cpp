@@ -5,16 +5,20 @@
 // A path goes in `kMustNotAllocate` once it has been shown clean; a path that allocates by design (building
 // something) goes in `kAllocatesByDesign` so the figure stays visible and the counter itself stays checked.
 
+#include "aether/ai/behavior_tree.h"
 #include "aether/ai/blackboard.h"
+#include "aether/ai/bt_runtime.h"
 #include "aether/ai/state_tree.h"
 #include "aether/ai/utility.h"
 #include "aether/core/alloc_track.h"
 #include "aether/ecs/world.h"
+#include "aether/nav/navmesh.h"
 #include "aether/scene/components.h"
 
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <memory>
 #include <new>
 #include <string>
 #include <vector>
@@ -83,6 +87,12 @@ int main() {
     ai::UtilityBrain brain;
     ai::StateTree tree;
     std::vector<Entity> made;
+    ai::BehaviorTreeAsset bt_asset;
+    std::unique_ptr<ai::BehaviorTreeInstance> bt;
+    ai::Blackboard bt_board;
+    ai::BtHooks bt_hooks;
+    nav::NavMesh navmesh;
+    nav::NavPath nav_path;
 
     const std::vector<Case> cases = {
         {"ecs: iterate Transform+Velocity over 10k entities", true,
@@ -129,6 +139,41 @@ int main() {
          },
          [&] {
              for (int i = 0; i < 100; ++i) (void)tree.Tick(blackboard);
+         }},
+
+        {"behavior tree: tick a running wait", true,
+         [&] {
+             bt_asset.root.type = ai::BtNodeType::Sequence;
+             ai::BtNode wait;
+             wait.type = ai::BtNodeType::Wait;
+             wait.seconds = 1e6f;
+             bt_asset.root.children.push_back(wait);
+             bt = std::make_unique<ai::BehaviorTreeInstance>(bt_asset);
+         },
+         [&] {
+             ai::BtContext ctx{nullptr, kNullEntity, &bt_board, &bt_hooks};
+             for (int i = 0; i < 100; ++i) (void)bt->Tick(ctx, 0.016f);
+         }},
+
+        {"nav: nearest point", true,
+         [&] {
+             nav::NavGeometry g;
+             g.AddPlane(Vec3(0, 0, 0), 30, 30);
+             nav::NavMeshData data;
+             if (!nav::BuildNavMesh(g, nav::NavMeshSettings{}, data) || !navmesh.Load(data)) std::abort();
+         },
+         [&] {
+             Vec3 p;
+             for (int i = 0; i < 20; ++i) (void)navmesh.NearestPoint(Vec3(1, 0, 1), p);
+         }},
+        {"nav: raycast", true, nullptr,
+         [&] {
+             Vec3 hit;
+             for (int i = 0; i < 20; ++i) (void)navmesh.Raycast(Vec3(-20, 0, -20), Vec3(20, 0, 20), hit);
+         }},
+        {"nav: find path into a reused NavPath", true, nullptr,
+         [&] {
+             for (int i = 0; i < 20; ++i) (void)navmesh.FindPath(Vec3(-20, 0, -20), Vec3(20, 0, 20), nav_path);
          }},
 
         // The counter itself: these allocate, so a figure of 0 would mean the hook is not in place.
