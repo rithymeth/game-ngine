@@ -1,0 +1,46 @@
+{
+  "name": "ambient",
+  "nodes": [
+    {
+      "children": [
+        2
+      ],
+      "count": 0,
+      "id": 1,
+      "pos": [
+        0.0,
+        0.0
+      ],
+      "type": "Loop"
+    },
+    {
+      "id": 2,
+      "pos": [
+        0.0,
+        0.0
+      ],
+      "sound": "Audio/ambient.wav",
+      "type": "Wave"
+    }
+  ],
+  "output": {
+    "attenuation": {
+      "lowpass_at_max_hz": 0.0,
+      "max_distance": 50.0,
+      "min_distance": 1.0,
+      "model": "Inverse",
+      "rolloff": 1.0
+    },
+    "bus": "Music",
+    "doppler": 1.0,
+    "occlusion": false,
+    "pitch": 1.0,
+    "priority": 128,
+    "spatial": false,
+    "spatial_blend": 1.0,
+    "virtual": "Continue",
+    "volume_db": -14.0
+  },
+  "root": 1,
+  "version": 1
+}
