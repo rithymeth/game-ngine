@@ -151,8 +151,8 @@ when advisory gates become required.
 |---|---|---|
 | **44.1** *(done for the protocol audit: malformed fields, required arguments, schema property types, handler exceptions and message/result limits are tested; `tests/test_mcp.cpp` drives initialize and tool calls through a stub stdio client; `tools/list` reports the schema version)* | Audit and harden `mcp/` (`editor_tools.cpp`, `mcp_server.cpp`): version the tool schemas, test the protocol with a stub client. | - |
 | **44.2** | Every edit through the undo stack with agent attribution. | 44.1 |
-| **44.3** | A permission file in the project and a session log. | 44.1 |
-| **44.4** | Confirmation flow for destructive tools. | 44.3 |
+| **44.3** | *(done: `mcp/permissions.h` `PermissionPolicy`, read from `<scene folder>/.aether/agent_permissions.json` (allow, confirm or deny per tool, a default, 1 MiB cap, strict parsing); every tool call is recorded in `.aether/agent_session.jsonl` with the tool, outcome and a hash of the arguments, never the arguments, capped at 8 MiB)* A permission file in the project and a session log. | 44.1 |
+| **44.4** | *(done: `Tool::destructive` marks `destroy_entity`, `remove_component`, `save_scene` and `load_scene`; the built-in rule answers "confirm" with a single-use token that expires after 5 minutes (at most 32 outstanding) and runs the call only when it is repeated with the same arguments plus `confirm_token`)* Confirmation flow for destructive tools. | 44.3 |
 | **44.5** | Tools for scenes, assets and kits, generated per kit. | 37.1, 44.2 |
 | **44.6** | Build, test and bounded Play-in-Editor capture tools (capture needs a GPU). | 44.2 |
 | **44.7** | Reference agents (code, asset, level/game design), outside the engine. | 44.5, 44.6 |
