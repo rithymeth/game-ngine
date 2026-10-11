@@ -13,8 +13,6 @@ m = Mcp()
 assert m.call("project_open", {"project_file": os.path.join(GAME, "STARDUST-HOP.aproject")})
 
 # one more model: the dark gem shown for a coin you don't have yet
-assert m.call("content_write", {"path": "models/pip_on.gltf", "text": geom.gltf([(geom.box(0.12, 0.12, 0.12), (1.0, 0.8, 0.2), (0, 0, 0), (1.0, 0.75, 0.15))], "pip_on")})
-assert m.call("content_write", {"path": "models/pip_off.gltf", "text": geom.gltf([(geom.box(0.12, 0.12, 0.12), (0.22, 0.24, 0.30), (0, 0, 0), None)], "pip_off")})
 assert m.call("content_write", {"path": "models/sky.gltf", "text": geom.gltf([(geom.inside_sphere(320), (0.0, 0.0, 0.0), (0, 0, 0), (0.30, 0.52, 0.95))], "sky")})
 assert m.call("content_write", {"path": "Scripts/Hopper.luau", "text": open(os.path.join(HERE, "Hopper.luau"), encoding="utf-8").read(), "overwrite": True}) is not None
 
@@ -59,6 +57,9 @@ def add(components):
 
 
 FAR = (0, -500, 0)
+# lights: a low warm sun, a blue sky, and (below) a glow at the goal and a cool light at each flag; the player draws them with its shader
+add({"Transform": tf((0, 0, 0), euler(-38, 28)), "DirectionalLight": {"$v": 1, "color": [1.0, 0.86, 0.66], "intensity": 3.6, "cast_shadows": False}, "Tags": {"$v": 1, "names": ["Sun"]}})
+add({"Transform": tf((0, 0, 0)), "SkyLight": {"$v": 1, "color": [0.45, 0.62, 1.0], "intensity": 0.9}, "Tags": {"$v": 1, "names": ["Sky"]}})
 add({"Transform": tf((0, 3, 7), (-0.14943814, 0, 0, 0.9887711)),
      "Camera": {"$v": 1, "projection": "Perspective", "fov_degrees": 62.0, "near_plane": 0.1, "far_plane": 600.0, "ortho_height": 10.0, "priority": 0},
      "AudioListener": {"$v": 1, "active": True}, "Tags": {"$v": 1, "names": ["MainCamera"]}})
@@ -86,14 +87,14 @@ by_name = {p[0]: p for p in level.PLATFORMS}
 for name, dx, dz in (("P3", 1.2, -0.9), ("P7", 1.6, -1.6)):
     _, x, z, top, sx, sz = by_name[name]
     add({"Transform": tf((x + dx, top, z + dz)), "ModelRenderer": model("models/checkpoint.gltf"), "Tags": {"$v": 1, "names": ["Checkpoint"]}})
+    add({"Transform": tf((x + dx, top + 2.4, z + dz)), "PointLight": {"$v": 1, "color": [0.3, 0.8, 1.0], "intensity": 24.0, "range": 7.0, "cast_shadows": False}, "Tags": {"$v": 1, "names": ["FlagLight"]}})
 
 _, gx, gz, gtop, _, _ = by_name[level.GOAL]
 add({"Transform": tf((gx, gtop, gz)), "ModelRenderer": model("models/goal.gltf"), "Tags": {"$v": 1, "names": ["Goal"]}})
+add({"Transform": tf((gx, gtop + 4.0, gz - 1.7)), "PointLight": {"$v": 1, "color": [1.0, 0.82, 0.4], "intensity": 80.0, "range": 16.0, "cast_shadows": False}, "Tags": {"$v": 1, "names": ["GoalLight"]}})
 
-for _ in coins:
-    add({"Transform": tf(FAR), "ModelRenderer": model("models/pip_on.gltf"), "Tags": {"$v": 1, "names": ["PipOn"]}})
-for _ in coins:
-    add({"Transform": tf(FAR), "ModelRenderer": model("models/pip_off.gltf"), "Tags": {"$v": 1, "names": ["PipOff"]}})
+# the on-screen UI: UI/Hud.aui (made by build3.py), shown by a WidgetComponent and changed by the script
+add({"Transform": tf((0, 0, 0)), "WidgetComponent": {"$v": 1, "layout": "UI/Hud.aui", "z": 0, "visible": True}, "Tags": {"$v": 1, "names": ["Hud"]}})
 for _ in range(40):
     add({"Transform": tf(FAR), "ModelRenderer": model("models/spark.gltf"), "Tags": {"$v": 1, "names": ["Confetti"]}})
 

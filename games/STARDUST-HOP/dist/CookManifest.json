@@ -177,7 +177,6 @@
       "cooked_format": "",
       "dependencies": [
         "00512fef-d66a-4a3d-8b36-9dcd7df6c750",
-        "04c3b19a-65ea-4057-bbd9-839ec07efa38",
         "111fdf28-eb8c-471e-988e-07286ebc22d2",
         "3b8058bd-b0f6-4a71-b059-8a1df33e9758",
         "43ad835a-2abe-497c-aa6a-6308ba8725c9",
@@ -186,7 +185,6 @@
         "8a2fe911-9615-41b1-8b94-64edcb4488c7",
         "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
         "9a145ad6-2865-4ca4-bd11-a6259cf531c1",
-        "cb4e23bf-96c2-4333-904d-1bbbeace3567",
         "f86a565c-c4d6-411a-9aa9-f66c8e59d450"
       ],
       "guid": "60ccdfee-8197-4424-a52e-994f60343a56",
@@ -203,6 +201,36 @@
       "imported": false,
       "importer": "Script",
       "path": "Scripts/Hopper.luau",
+      "sub_assets": []
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "fb6cd30e-7930-4401-aaf1-00cc8f76e463",
+      "imported": false,
+      "importer": "UILayout",
+      "path": "UI/Hud.aui",
+      "sub_assets": []
+    },
+    {
+      "cooked": "Cooked/863cd661-024e-47d2-b92e-60f1d08c1850.atex",
+      "cooked_format": "bc7",
+      "dependencies": [],
+      "guid": "863cd661-024e-47d2-b92e-60f1d08c1850",
+      "imported": true,
+      "importer": "Texture",
+      "path": "UI/coin.png",
+      "sub_assets": []
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "39b257a5-c487-4ad8-a521-64b5a82bce49",
+      "imported": false,
+      "importer": "Font",
+      "path": "fonts/Roboto-Medium.ttf",
       "sub_assets": []
     },
     {
@@ -295,48 +323,6 @@
           "guid": "4b8e9561-8022-43de-868e-8ab4597b56c7",
           "importer": "Mesh",
           "key": "mesh:2"
-        }
-      ]
-    },
-    {
-      "cooked": "",
-      "cooked_format": "",
-      "dependencies": [],
-      "guid": "cb4e23bf-96c2-4333-904d-1bbbeace3567",
-      "imported": true,
-      "importer": "Model",
-      "path": "models/pip_off.gltf",
-      "sub_assets": [
-        {
-          "guid": "2ae3297c-d3da-41ed-b7a2-458912323aaf",
-          "importer": "Material",
-          "key": "material:0"
-        },
-        {
-          "guid": "25042ec7-7e0c-48d9-9b33-8898c299ea57",
-          "importer": "Mesh",
-          "key": "mesh:0"
-        }
-      ]
-    },
-    {
-      "cooked": "",
-      "cooked_format": "",
-      "dependencies": [],
-      "guid": "04c3b19a-65ea-4057-bbd9-839ec07efa38",
-      "imported": true,
-      "importer": "Model",
-      "path": "models/pip_on.gltf",
-      "sub_assets": [
-        {
-          "guid": "35381dc3-e7ab-4526-8f5c-1834f96a4a5a",
-          "importer": "Material",
-          "key": "material:0"
-        },
-        {
-          "guid": "61bc83c5-855d-47ef-91f7-0de7e4efef54",
-          "importer": "Mesh",
-          "key": "mesh:0"
         }
       ]
     },
