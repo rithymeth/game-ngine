@@ -1,0 +1,1 @@
+{"version":1,"name":"Neon","colors":{"accent":"#00FFAA","panel":[0.1,0.1,0.15,0.9]},"styles":{"Button.Primary":{"extends":"Button","accent":"@accent","text_size":28},"Button":{"normal":"@panel","hovered":"#333344"},"Default":{"normal":"#222222"}},"text":{"Default":{"color":"#CCCCCC","size":18}}}

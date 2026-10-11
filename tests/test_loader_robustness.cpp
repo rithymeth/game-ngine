@@ -16,6 +16,7 @@
 #include "aether/sprite2d/atlas.h"
 #include "aether/sprite2d/tilemap.h"
 #include "aether/sequencer/sequence.h"
+#include "aether/ui/animation.h"
 
 #include <cstdio>
 #include <string>
@@ -156,4 +157,24 @@ AETHER_TEST(LoaderRobustness_SpriteAtlasTilesetAndTilemapWithWrongTypesFailClean
         AETHER_CHECK(!sprite2d::TilemapFromJson(json::parse(text), map, &error));
     }
     AETHER_CHECK(sprite2d::TilemapFromJson(json::parse(R"({"$type":"Tilemap","size":[2,1],"layers":[{"name":"g","cells":[0,1]}]})"), map, &error));
+}
+
+AETHER_TEST(LoaderRobustness_BlueprintNodeSettingsAndUiAnimationsWithWrongTypesFailCleanly) {
+    using nlohmann::json;
+    std::string error;
+    bp::Blueprint blueprint;
+    for (const char* key : {"config", "defaults"}) {
+        json node = {{"id", 1u}, {"type", "Event.BeginPlay"}};
+        node[key] = "x";
+        const json bp = {{"$type", "Blueprint"}, {"$version", 1}, {"parent", "native:Entity"}, {"graphs", json::array({json{{"name", "EventGraph"}, {"kind", "EventGraph"}, {"nodes", json::array({node})}}})}};
+        const bool loaded = bp::BlueprintFromJson(bp, blueprint, &error);
+        if (loaded || error.find(key) == std::string::npos) std::printf("    blueprint error was: %s\n", error.c_str());
+        AETHER_CHECK(!loaded && error.find(key) != std::string::npos);
+    }
+    ui::UIAnimation animation;
+    for (const char* text : {R"({"name":5,"tracks":"x"})", R"({"name":"a","tracks":[{"widget":"w","property":"opacity","keys":[["a",1]]}]})",
+                             R"({"name":"a","tracks":[{"widget":"w","property":"opacity","keys":[[0,1,5]]}]})", R"([1,2])", R"("text")"}) {
+        AETHER_CHECK(!ui::AnimationFromJson(json::parse(text), animation, &error));
+    }
+    AETHER_CHECK(ui::AnimationFromJson(json::parse(R"({"name":"a","tracks":[{"widget":"w","property":"opacity","keys":[[0,0],[1,1,"Linear"]]}]})"), animation, &error));
 }

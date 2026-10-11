@@ -1,0 +1,1 @@
+{"$type":"Blueprint","$version":1,"parent":"native:Entity","graphs":[{"name":"EventGraph","kind":"EventGraph","nodes":[{"id":1,"type":"Event.BeginPlay","config":"x"}]}]}
