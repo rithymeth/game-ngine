@@ -7,6 +7,7 @@
 #include "aether/script/quests_api.h"
 #include "aether/script/inventory_api.h"
 #include "aether/script/loc_api.h"
+#include "aether/script/ui_api.h"
 #include "aether/script/save_api.h"
 #if AETHER_SCRIPTING_PHYSICS
 #include "aether/physics/physics_scene.h"
@@ -314,6 +315,7 @@ void ScriptSystem::InstallApi(bool install_kit_apis) {
 
     InstallSaveApi(host_); // SaveGames (Phase 28 step 4)
     InstallLocApi(host_);  // Localization (Phase 29 step 2)
+    InstallUiApi(host_);   // UI: text, bars and visibility by widget name
     if (install_kit_apis) {
         InstallKitApi("Quests");
         InstallKitApi("Interaction");

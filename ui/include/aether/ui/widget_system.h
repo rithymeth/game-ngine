@@ -87,6 +87,9 @@ public:
     bool FocusWidget(Entity entity, const std::string& widget);
     Widget* RootOf(Entity entity) const;
     Widget* FindWidget(Entity entity, const std::string& widget) const;
+    // The entity whose layout holds a widget of this name (the first, by entity index), or kNullEntity. For scripts, which name widgets
+    // without knowing which entity shows them.
+    Entity EntityShowing(const std::string& widget) const;
     UIAnimator* AnimatorOf(Entity entity) const;
     DataBinder* BinderOf(Entity entity) const;
     // Sources every widget's bindings can read besides the entity's components ("game.score").

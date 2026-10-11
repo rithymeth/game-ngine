@@ -74,6 +74,17 @@ struct PipelineDesc {
     // Ignored when depth_test is false. True preserves every pipeline's
     // previous behavior.
     bool depth_write = true;
+
+    // Reserves a per-frame constant block for the pipeline: the shader reads
+    //   ConstantBuffer<FrameData> g_Frame : register(b0, space2);
+    // (space2 maps to descriptor set 2 on Vulkan), `frame_constants_size_bytes`
+    // being FrameData's size, a multiple of 16. Fill a buffer made by
+    // IDevice::CreateConstantBuffer and bind it with ICommandList::
+    // BindFrameConstants before drawing. Unlike push constants (small, set per
+    // draw), this holds what a whole frame shares: lights, the camera, fog.
+    // 0 (the default) means none. Only for devices where SupportsFrameConstants()
+    // is true; others ignore the field and the shader must not name g_Frame.
+    u32 frame_constants_size_bytes = 0;
 };
 
 // Backend-agnostic device/queue/submission layer, extended with a genuinely
@@ -162,6 +173,17 @@ public:
     // invalid handles and ranges are logged and ignored by both backends. The
     // caller must wait until the GPU is done reading the previous contents.
     virtual void UpdateVertexBuffer(BufferHandle buffer, const void* data, u64 size_bytes) = 0;
+
+    // Frame constants (see PipelineDesc::frame_constants_size_bytes). Devices that
+    // support them (D3D12 today) return true; the others leave the three calls
+    // inert (CreateConstantBuffer returns an invalid handle), so a renderer can
+    // fall back to constants of its own. A constant buffer is host-visible,
+    // zero-filled when made, and updated in place; keep one per frame in flight
+    // (the GPU may still be reading the last frame's) and update it only after
+    // that frame's fence has passed.
+    virtual bool SupportsFrameConstants() const { return false; }
+    virtual BufferHandle CreateConstantBuffer(u64 /*size_bytes*/) { return {}; }
+    virtual void UpdateConstantBuffer(BufferHandle /*buffer*/, const void* /*data*/, u64 /*size_bytes*/) {}
 
     // Uploads tightly-packed RGBA8 pixel data (non-null, with non-zero
     // dimensions and a representable byte size; invalid arguments throw

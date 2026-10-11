@@ -27,6 +27,7 @@ struct TextureRecord {
 struct PipelineRecord {
     ComPtr<ID3D12RootSignature> root_signature;
     ComPtr<ID3D12PipelineState> pso;
+    u32 frame_constants_root_index = ~0u; // the root CBV for PipelineDesc::frame_constants_size_bytes, if any
 };
 
 class D3D12Device final : public IDevice {
@@ -50,6 +51,9 @@ public:
         return CreateBufferInternal(data, size_bytes);
     }
     void UpdateVertexBuffer(BufferHandle buffer, const void* data, u64 size_bytes) override;
+    bool SupportsFrameConstants() const override { return true; }
+    BufferHandle CreateConstantBuffer(u64 size_bytes) override;
+    void UpdateConstantBuffer(BufferHandle buffer, const void* data, u64 size_bytes) override { UpdateVertexBuffer(buffer, data, size_bytes); }
     const gfx::Buffer& GetBuffer(BufferHandle handle) const { return *buffers_[handle.index]; }
 
     SampledTextureHandle CreateTexture(u32 width, u32 height, const u8* rgba8_pixels) override;
@@ -159,6 +163,7 @@ public:
     void BindIndexBuffer(BufferHandle buffer, IndexFormat format) override;
     void DrawIndexed(u32 index_count) override;
     void BindBindlessTextures() override;
+    void BindFrameConstants(BufferHandle buffer) override;
 
     void* NativeHandle() const override { return cmd_.Get(); }
 
@@ -166,6 +171,7 @@ private:
     D3D12Device& device_;
     gfx::CommandList cmd_;
     ID3D12Resource* active_backbuffer_ = nullptr; // set by BeginRenderPass, consumed by EndRenderPass
+    u32 frame_constants_root_index_ = ~0u;        // of the pipeline BindPipeline last bound
 };
 
 } // namespace aether::gfx::rhi::d3d12_backend

@@ -1,5 +1,6 @@
 #include "aether/player/game.h"
 #include "game_runtime.h"
+#include "aether/renderer/components.h"
 #include "aether/core/json_util.h"
 #include "aether/audio/backend.h"
 #include "aether/audio/audio_system.h"
@@ -391,6 +392,8 @@ bool Game::LoadStartupScene(std::string* error) {
 bool Game::LoadScene(const std::string& path, std::string* error) {
     StartModules(); // their components, before the scene names them
     bp::RegisterBlueprintComponents(); // BlueprintInstance, before scene deserialization
+    ui::RegisterWidgetComponents(); // WidgetComponent (§18.4)
+    RegisterRenderComponents(); // lights (DirectionalLight, SkyLight, PointLight, SpotLight) and post-process volumes, so scenes can name them
     RegisterSequenceComponents(); // SequenceComponent (§27.2)
     RegisterAudioComponents(); // cooked AudioSource/AudioListener/ReverbZone before deserialization
     kits_.RegisterComponents(); // the gameplay kits' components: attributes, tags, items, interactables, quests (§30)
@@ -615,6 +618,37 @@ void Game::StartRuntime() {
         return InstantiatePrefab(*world_, guids_, guid, *data, &placed);
     });
     runtime_->sequences->MakeActive();
+    // The on-screen UI: layouts come from the package; a theme asset (.atheme), if the game ships one, styles every layout.
+    runtime_->ui_router = std::make_unique<ui::UIInputRouter>(runtime_->ui_viewport, runtime_->ui_font);
+    runtime_->ui_bridge = std::make_unique<ui::UIInputBridge>(*runtime_->ui_router);
+    for (const GameManifest::Asset& asset : package_.Manifest().assets) {
+        if (stdfs::path(asset.path).extension() != ".atheme") continue;
+        std::vector<u8> bytes;
+        std::string error;
+        if (package_.ReadContent(asset.path, bytes, &error) && ui::LoadTheme(std::string(bytes.begin(), bytes.end()), runtime_->ui_theme, {}, &error)) {
+            runtime_->ui_has_theme = true;
+        } else {
+            warnings_.push_back("UI: " + asset.path + ": " + error);
+        }
+        break;
+    }
+    runtime_->ui = std::make_unique<ui::UISystem>(
+        *world_, runtime_->ui_viewport, *runtime_->ui_router,
+        [this](const std::string& layout, ui::LayoutDocument& out, std::string* error) {
+            std::vector<u8> bytes;
+            if (!package_.ReadContent(layout, bytes, error)) return false;
+            // Images get ids (their order of appearance, from 1); the renderer maps them back to paths and loads them.
+            const ui::TextureResolver textures = [this](const std::string& image) -> u32 {
+                std::vector<std::string>& images = runtime_->ui_images;
+                const auto found = std::find(images.begin(), images.end(), image);
+                if (found != images.end()) return static_cast<u32>(found - images.begin()) + 1;
+                images.push_back(image);
+                return static_cast<u32>(images.size());
+            };
+            return ui::LoadLayout(std::string(bytes.begin(), bytes.end()), out, textures, error);
+        },
+        runtime_->ui_has_theme ? &runtime_->ui_theme : nullptr);
+    runtime_->ui->MakeActive();
 #if AETHER_GAME_SCRIPTING
     runtime_->scripts = std::make_unique<script::ScriptSystem>(
         runtime_->host, *world_, guids_, [this](const assets::AssetGuid& guid, std::string& source, std::string& name) {
@@ -648,6 +682,13 @@ void Game::StartRuntime() {
     api_context.install = [this](const std::string& kit_name) { runtime_->scripts->InstallKitApi(kit_name); };
     kits_.InstallScriptApi(&api_context);
 #endif
+}
+
+ui::Viewport* Game::Ui() { return runtime_ ? &runtime_->ui_viewport : nullptr; }
+
+std::string Game::UiImagePath(u32 id) const {
+    if (!runtime_ || id == 0 || id > runtime_->ui_images.size()) return {};
+    return runtime_->ui_images[id - 1];
 }
 
 std::vector<std::string> Game::ScriptErrors() const {
@@ -806,7 +847,13 @@ void Game::BuildFrame() {
     update.name = "Player.Update";
     update.phase = SystemPhase::Update;
     update.main_thread_only = true;
-    update.run = [this](World&, const FrameContext& frame) { lifecycle_->Update(frame.dt); };
+    update.run = [this](World&, const FrameContext& frame) {
+        // Menus: the keys and the pad move focus and press the focused control (only when the game has UI on screen, so a game
+        // without one never sees its input used here); scripts read the clicks next frame through UI.WasClicked.
+        if (runtime_ && runtime_->ui_bridge && runtime_->ui_viewport.LayerCount() > 0) runtime_->ui_bridge->Update(input_state_, frame.dt);
+        lifecycle_->Update(frame.dt);
+        if (runtime_ && runtime_->ui) runtime_->ui->Update(frame.dt); // after scripts, so what they set shows this frame
+    };
     scheduler_.Add(std::move(update));
     // Level sequences (§27) animate after gameplay's Update and before
     // scripts and Blueprints see their events.

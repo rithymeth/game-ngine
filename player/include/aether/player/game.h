@@ -37,6 +37,10 @@
 #include <unordered_map>
 #include <vector>
 
+namespace aether::ui {
+class Viewport;
+}
+
 // The player's game runtime (Phase 25 step 4, docs/design/PHASE_SPECS.md
 // §25.4): a cooked game, without the editor. GamePackage mounts the cooked
 // .apak archives and reads their Manifest.json; Game loads the startup
@@ -215,6 +219,13 @@ public:
     // the first write. Call before the first scene is loaded.
     void SetUserPaths(const UserPaths& paths);
     save::SaveSystem* Saves() { return saves_.get(); }
+    // The on-screen UI (§18.4): the layouts (.aui) that WidgetComponent entities show, run by a UISystem for this scene (the active one, which
+    // the Luau `UI` table and the Blueprint UI library act on) and updated each frame. The player draws it over the scene when it has layers,
+    // in place of the built-in HUD. Null before the first scene is loaded.
+    ui::Viewport* Ui();
+    // The package path of an image a layout uses (a quad of the UI's draw list carries its id as `texture`, ids start at 1); empty if unknown. The
+    // renderer turns these into textures when it draws the UI.
+    std::string UiImagePath(u32 id) const;
     // The game's text (§29.2): the cooked `.astrings` tables merged, and the
     // language, which follows Settings().language both ways. Always there; made
     // the active Localization (the one Blueprints and scripts use) for this game's life.

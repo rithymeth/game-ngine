@@ -158,6 +158,14 @@ Widget* UISystem::FindWidget(Entity e, const std::string& widget) const {
     return root != nullptr ? root->Find(widget) : nullptr;
 }
 
+Entity UISystem::EntityShowing(const std::string& widget) const {
+    for (const auto& entry : instances_) {
+        const Instance& in = *entry.second;
+        if (in.root != nullptr && in.root->Find(widget) != nullptr) return in.entity;
+    }
+    return kNullEntity;
+}
+
 UIAnimator* UISystem::AnimatorOf(Entity e) const {
     const Instance* in = Find(e);
     return in != nullptr ? in->animator.get() : nullptr;
