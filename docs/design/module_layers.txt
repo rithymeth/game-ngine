@@ -22,6 +22,7 @@ aether_renderer 2
 aether_replay_assetmeta 2
 aether_replay_gltf 2
 aether_replay_pak 2
+aether_replay_plugin 2
 aether_replay_prefab 2
 aether_replay_scene 2
 aether_replay_texture 2
