@@ -1,7 +1,7 @@
 -- Stardust Hop: the player's script. WASD or the left stick runs, the mouse or the right stick turns the
 -- camera, Space or the A button jumps, R starts over. Collect the coins, touch the flags to move your respawn
--- point, and reach the golden pad at the end. There is no text on screen in this engine build, so the score is
--- shown in the world: a row of gems floats in the top-left of the view (lit gold when you hold that coin).
+-- point, and reach the golden pad at the end. The score and messages are the game's own UI (UI/Hud.aui, shown
+-- by a WidgetComponent), changed here by widget name with the UI table.
 local Hopper = {}
 
 --@range 0 30
@@ -55,7 +55,7 @@ function Hopper:OnCreate()
     self.character.run_speed = self.speed
     self.character.jump_velocity = self.jump_speed
 
-    self.coins, self.checkpoints, self.pips_on, self.pips_off, self.confetti = {}, {}, {}, {}, {}
+    self.coins, self.checkpoints, self.confetti = {}, {}, {}
     self.sfx = {}
     self.goal = nil
     for _, entity in ipairs(world:EntitiesWith("Tags")) do
@@ -66,10 +66,6 @@ function Hopper:OnCreate()
                 table.insert(self.checkpoints, {entity = entity, position = entity:Get("Transform").position, reached = false})
             elseif tag == "Goal" then
                 self.goal = entity
-            elseif tag == "PipOn" then
-                table.insert(self.pips_on, entity)
-            elseif tag == "PipOff" then
-                table.insert(self.pips_off, entity)
             elseif tag == "Confetti" then
                 table.insert(self.confetti, {entity = entity, velocity = vector.zero, life = 0})
             elseif string.sub(tag, 1, 3) == "Sfx" then
@@ -77,8 +73,8 @@ function Hopper:OnCreate()
             end
         end
     end
-    -- Keep the pips in the same order as the coins' tags were found.
     self.total = #self.coins
+    self.message_time = 0
     self.collected = 0
     self.time = 0
     self.won = false
@@ -86,6 +82,16 @@ function Hopper:OnCreate()
     self.jump_cooldown = 0
     self.fall_cooldown = 0
     print("Stardust Hop: " .. self.total .. " coins to find")
+end
+
+function Hopper:Say(text, seconds)
+    self.message_time = seconds
+    UI.SetText("Message", text)
+end
+
+function Hopper:RefreshHud()
+    UI.SetText("CoinText", "COINS  " .. self.collected .. " / " .. self.total)
+    UI.SetValue("CoinBar", self.total > 0 and self.collected / self.total or 0)
 end
 
 function Hopper:Reset()
@@ -104,6 +110,8 @@ function Hopper:Reset()
     self.spawn = self.start
     self.yaw, self.pitch = 0, -0.28
     self:Teleport(self.start)
+    self:RefreshHud()
+    self:Say("", 0)
 end
 
 function Hopper:Teleport(position)
@@ -131,22 +139,19 @@ function Hopper:UpdateCamera(player_position)
     local camera_transform = self.camera:Get("Transform")
     camera_transform.position = target - forward * self.distance
     camera_transform.rotation = Quat(self.yaw, self.pitch)
-
-    -- The gem row: tied to the camera so it stays in the corner of the view.
-    local right = vector.create(cy, 0, -sy)
-    local up = vector.cross(right, forward)
-    local origin = camera_transform.position + forward * 3.0 + right * -1.55 + up * 1.05
-    for i = 1, self.total do
-        local spot = origin + right * ((i - 1) * 0.17)
-        local lit = self.pips_on[i]
-        local dark = self.pips_off[i]
-        if lit ~= nil then lit:Get("Transform").position = (i <= self.collected) and spot or FAR end
-        if dark ~= nil then dark:Get("Transform").position = (i > self.collected) and spot or FAR end
-    end
 end
 
 function Hopper:OnUpdate(dt)
     self.time += dt
+    if self.message_time > 0 then
+        self.message_time -= dt
+        if self.message_time <= 0 then UI.SetText("Message", "") end
+    end
+    if not self.hud_ready and UI.Exists("CoinText") then
+        self.hud_ready = true -- the layout appears on the first frame, after scripts have started
+        self:RefreshHud()
+        self:Say("COLLECT THE COINS - REACH THE GOLD PAD", 4)
+    end
     self.jump_cooldown = math.max(0, self.jump_cooldown - dt)
     self.fall_cooldown = math.max(0, self.fall_cooldown - dt)
     local transform = self.entity:Get("Transform")
@@ -189,7 +194,8 @@ function Hopper:OnUpdate(dt)
                 self.collected += 1
                 coin_transform.position = FAR
                 Play(self.sfx.SfxCoin)
-                print("Coins " .. self.collected .. "/" .. self.total)
+                self:RefreshHud()
+                if self.collected == self.total then self:Say("ALL COINS!", 2.5) end
             end
         end
     end
@@ -200,7 +206,7 @@ function Hopper:OnUpdate(dt)
             checkpoint.reached = true
             self.spawn = checkpoint.position + vector.create(1.2, 0.2, 0)
             Play(self.sfx.SfxCheckpoint)
-            print("Checkpoint reached")
+            self:Say("CHECKPOINT", 1.8)
         end
     end
 
@@ -209,7 +215,7 @@ function Hopper:OnUpdate(dt)
         self.fall_cooldown = 1
         Play(self.sfx.SfxFall)
         self:Teleport(self.spawn)
-        print("Respawn")
+        self:Say("TRY AGAIN", 1.5)
     end
 
     -- The goal.
@@ -221,7 +227,7 @@ function Hopper:OnUpdate(dt)
             self.win_time = 0
             Play(self.sfx.SfxWin)
             self:Burst()
-            print("You win with " .. self.collected .. "/" .. self.total .. " coins in " .. string.format("%.1f", self.time) .. "s")
+            self:Say("YOU WIN!  " .. self.collected .. " / " .. self.total .. " COINS", 7)
         end
     end
 

@@ -14,8 +14,8 @@ reach the golden pad to win. Fall off and you come back at the last flag. After 
 | Space / A button | jump |
 | R | start over |
 
-There is no on-screen text in this engine's player, so the score is drawn in the world: a row of gems floats in the top
-left of the view and each one lights up gold as you collect a coin.
+The score, the messages and the key hints are the game's own on-screen UI: `Content/UI/Hud.aui`, shown by a `WidgetComponent`
+and changed by `Hopper.luau` with the `UI` table (`UI.SetText`, `UI.SetValue`), drawn by the player over the scene.
 
 ## Play it
 
@@ -35,6 +35,7 @@ Everything is in `tools/` (Python, talking to the MCP server over stdio; run the
 | --- | --- |
 | `build1.py` | Creates the project file; writes the glTF models (platforms, player, coin, goal, flags ...) with `content_write`; synthesizes the sounds and imports them with `asset_add_files`; makes the sound cues and input bindings with `kit_put`. |
 | `build2.py` | Writes `Hopper.luau` and the level scene (`Scenes/Main.ascene`) from `level.py`, then checks the script with `script_check` and `script_check_project`. |
+| `build3.py` | Draws the coin icon, checks the HUD layout with `ui_check`, writes `UI/Hud.aui` and the font it needs, previews it with `ui_preview`, and adds `UI/` and `fonts/` to the cook. |
 | `ship.py` | Cooks the game into `dist/`. |
 | `bot.py` | Cooks, loads the game with `game_load` and plays it: steers the player with `game_input`, steps with `game_step`, reads entities with `game_get_entity` and takes screenshots with `game_screenshot`. |
 
@@ -44,4 +45,5 @@ Everything is in `tools/` (Python, talking to the MCP server over stdio; run the
 
 - The player's `CharacterMovement` is the engine's Jolt character controller; platforms are `BoxCollider`s.
 - `Hopper.luau` runs the whole game: camera orbit, coin pickup, flags, respawn, the win burst and the reset.
-- The scene has no lights: this player lights the scene itself, and does not register light components.
+- The scene is lit by its own components: a warm `DirectionalLight` sun, a blue `SkyLight`, a gold `PointLight` over the goal and a cool one at each flag. The player draws them (no shadows yet).
+- UI text is drawn with `fonts/Roboto-Medium.ttf` (copied from the engine sample; see `fonts/LICENSE-Roboto.txt`). The coin icon in the HUD is a PNG drawn by `build3.py` (PIL) and imported with `asset_add_files`.
