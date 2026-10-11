@@ -4,6 +4,7 @@
 #include "project_host.h"
 
 #include "aether/ui/animation.h"
+#include "aether/ui/basic.h"
 #include "aether/ui/layout_file.h"
 #include "aether/ui/theme.h"
 #include "aether/ui/viewport.h"
@@ -98,7 +99,10 @@ Json WalkTree(const ui::Widget& w, const std::string& path, Walk& walk, u32 dept
     if (w.TakesSpace() && w.visibility == ui::Visibility::Visible) {
         if (g.w <= 0.0f || g.h <= 0.0f) {
             // Containers with no size are usually a mistake; a Spacer may legitimately have one axis.
-            if (std::string(w.TypeName()) != "Spacer") walk.problems.push_back({{"widget", here}, {"problem", "has no size (" + std::to_string(g.w) + " x " + std::to_string(g.h) + ")"}});
+            // (An empty Text has no width until a script fills it in; that is not a mistake either.)
+            const auto* text = dynamic_cast<const ui::Text*>(&w);
+            const bool empty_text = text != nullptr && text->Shown().empty();
+            if (std::string(w.TypeName()) != "Spacer" && !empty_text) walk.problems.push_back({{"widget", here}, {"problem", "has no size (" + std::to_string(g.w) + " x " + std::to_string(g.h) + ")"}});
         }
         if (g.x < -0.5f || g.y < -0.5f || g.Right() > walk.screen.x + 0.5f || g.Bottom() > walk.screen.y + 0.5f) {
             const bool inside_scroller = w.Parent() != nullptr && (std::string(w.Parent()->TypeName()).find("Scroll") != std::string::npos);
