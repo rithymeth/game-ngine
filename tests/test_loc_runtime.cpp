@@ -53,7 +53,7 @@ stdfs::path MakeGame(const stdfs::path& dir, const std::vector<std::pair<std::st
     for (const auto& [path, text] : tables) writer.Add("Content/" + path, text);
     const stdfs::path file = dir / "Game.apak";
     std::string error;
-    writer.Write(file.string(), &error);
+    AETHER_CHECK(writer.Write(file.string(), &error));
     return file;
 }
 

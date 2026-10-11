@@ -21,10 +21,10 @@ struct UserBindings;
 // Input actions (.aaction) and mapping contexts (.amapping) are reflected
 // JSON files in the content folder, found through the AssetDatabase
 // (importers "InputAction" / "InputMapping").
-bool SaveInputAction(const InputAction& action, const std::filesystem::path& file, std::string* error = nullptr);
-bool LoadInputAction(const std::filesystem::path& file, InputAction& out, std::string* error = nullptr);
-bool SaveMappingContext(const InputMappingContext& context, const std::filesystem::path& file, std::string* error = nullptr);
-bool LoadMappingContext(const std::filesystem::path& file, InputMappingContext& out, std::string* error = nullptr);
+[[nodiscard]] bool SaveInputAction(const InputAction& action, const std::filesystem::path& file, std::string* error = nullptr);
+[[nodiscard]] bool LoadInputAction(const std::filesystem::path& file, InputAction& out, std::string* error = nullptr);
+[[nodiscard]] bool SaveMappingContext(const InputMappingContext& context, const std::filesystem::path& file, std::string* error = nullptr);
+[[nodiscard]] bool LoadMappingContext(const std::filesystem::path& file, InputMappingContext& out, std::string* error = nullptr);
 
 // Every input asset in a project, loaded. Bindings refer to actions by name,
 // so asset names (not paths) are what matter.
@@ -38,7 +38,7 @@ public:
     // database on disk (a packaged game reads them from its archives).
     // `importer` is "InputAction" or "InputMapping"; `path` names it in
     // messages (and a nameless context after its file). A bad one is also in Errors().
-    bool AddFromText(const std::string& importer, const std::string& path, std::string_view text,
+    [[nodiscard]] bool AddFromText(const std::string& importer, const std::string& path, std::string_view text,
                      std::string* error = nullptr);
 
     const std::vector<InputAction>& Actions() const { return actions_; }
@@ -98,9 +98,9 @@ InputMappingContext ApplyUserBindings(const InputMappingContext& context, const 
 std::vector<std::pair<std::string, u32>> FindConflicts(const InputMappingContext& context, Key key,
                                                        const std::string& except_action = "", u32 except_slot = 0);
 
-bool SaveUserBindings(const UserBindings& user, const std::filesystem::path& file, std::string* error = nullptr);
+[[nodiscard]] bool SaveUserBindings(const UserBindings& user, const std::filesystem::path& file, std::string* error = nullptr);
 // A missing file is not an error: no rebinds.
-bool LoadUserBindings(const std::filesystem::path& file, UserBindings& out, std::string* error = nullptr);
+[[nodiscard]] bool LoadUserBindings(const std::filesystem::path& file, UserBindings& out, std::string* error = nullptr);
 // Where a project keeps a player's rebinds.
 std::filesystem::path UserBindingsPath(const std::filesystem::path& saved_dir);
 
