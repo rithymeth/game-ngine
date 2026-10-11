@@ -29,6 +29,9 @@ class Mcp:
             val = json.loads(text)
         except Exception:
             val = text
+        if isinstance(val, dict) and val.get("status") == "confirmation_required":
+            # The server's permission rule wants the person to approve this tool; a script must not carry on as if it had run.
+            raise RuntimeError(name + " needs approval (" + val.get("message", "") + "): allow it in <scene folder>/.aether/agent_permissions.json")
         if res.get("isError"):
             if not quiet:
                 print("ERROR", name, val)
