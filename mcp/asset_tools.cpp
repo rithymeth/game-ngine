@@ -403,6 +403,8 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
                  {"strict", {{"type", "boolean"}, {"description", "Refuse to write the archive if anything warns"}}},
                  {"include_imported", {{"type", "boolean"}}},
                  {"cook_textures", {{"type", "boolean"}}},
+                 {"strip_source_textures", {{"type", "boolean"}, {"description", "Leave each cooked texture's source image out of the archive (the player decodes the cooked copy)"}}},
+                 {"texture_target", {{"type", "string"}, {"description", "desktop (default: BC formats) or mobile (ASTC): what automatic texture format choice picks from"}}},
                  {"cook_meshes", {{"type", "boolean"}}},
                  {"key", {{"type", "string"}, {"description", "64 hex digits: encrypt the archive"}}},
                  {"patch_of", {{"type", "string"}, {"description", "Earlier .apak: write only what changed since"}}},
@@ -426,6 +428,10 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
              o.strict_validation = OptBool(args, "strict", false);
              o.include_imported = OptBool(args, "include_imported", true);
              o.cook_textures = OptBool(args, "cook_textures", true);
+             o.strip_source_textures = OptBool(args, "strip_source_textures", false);
+             if (args.contains("texture_target") && !cook::ParseTextureTarget(OptString(args, "texture_target"), o.texture_target)) {
+                 throw ToolError("\"texture_target\" must be desktop or mobile");
+             }
              o.cook_meshes = OptBool(args, "cook_meshes", true);
              if (args.contains("key")) {
                  pak::PakKey key;

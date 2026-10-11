@@ -167,3 +167,83 @@ AETHER_TEST(TextureCook_AutoFormatAndContainer) {
     bad[8] = 77; // format
     CHECK(!LoadAtex(bad, loaded, &error) && error.find("format") != std::string::npos);
 }
+
+// ASTC (mobile): the same cook, decode and container tests as the BC formats, with astc-encoder behind them.
+AETHER_TEST(TextureCook_AstcFormatsRoundTripWithinQualityBounds) {
+    struct Case {
+        TextureFormat format;
+        u32 block;
+        f64 min_psnr;
+    };
+    const Case cases[] = {{TextureFormat::ASTC_4x4, 4, 38.0}, {TextureFormat::ASTC_6x6, 6, 34.0}, {TextureFormat::ASTC_8x8, 8, 30.0}};
+    for (const Case& c : cases) {
+        // Sizes that are not multiples of the block: the edge blocks repeat the last row and column.
+        const u32 w = 53, h = 37;
+        const std::vector<u8> src = Gradient(w, h, true);
+        const CookedTexture t = CookTexture(src, w, h, Fixed(c.format));
+        CHECK(t.format == c.format && t.mips.size() == 6); // 53x37 down to 1x1
+        CHECK(t.mips[0].data.size() == MipBytes(c.format, w, h) && BlockBytes(c.format) == 16 && BlockWidth(c.format) == c.block);
+        CHECK(MipBytes(c.format, w, h) == static_cast<usize>((w + c.block - 1) / c.block) * ((h + c.block - 1) / c.block) * 16);
+        const std::vector<u8> back = DecodeMip(t, 0);
+        CHECK(back.size() == src.size());
+        const f64 psnr = Psnr(src, back, 4);
+        if (psnr < c.min_psnr) std::printf("    %s psnr %.2f (needs %.1f)\n", TextureFormatName(c.format), psnr, c.min_psnr);
+        CHECK(psnr >= c.min_psnr);
+        // The container carries it, and refuses a mip whose size does not match the block size.
+        CookedTexture loaded;
+        std::string error;
+        CHECK(LoadAtex(SaveAtex(t), loaded, &error) && loaded.format == c.format && loaded.mips.size() == t.mips.size());
+        CHECK(DecodeMip(loaded, 0) == back);
+    }
+    // Bigger blocks are smaller on disk.
+    const std::vector<u8> src = Gradient(64, 64, false);
+    CHECK(CookTexture(src, 64, 64, Fixed(TextureFormat::ASTC_8x8)).mips[0].data.size() < CookTexture(src, 64, 64, Fixed(TextureFormat::ASTC_4x4)).mips[0].data.size());
+}
+
+AETHER_TEST(TextureCook_AstcNormalMapsKeepTheirDirection) {
+    // A bumpy field of unit normals: the decode must give back x and y close to the source and a z that rebuilds to a unit vector.
+    const u32 w = 32, h = 32;
+    std::vector<u8> src(static_cast<usize>(w) * h * 4);
+    for (u32 y = 0; y < h; ++y) {
+        for (u32 x = 0; x < w; ++x) {
+            const f32 nx = 0.5f * std::sin(static_cast<f32>(x) * 0.4f), ny = 0.5f * std::cos(static_cast<f32>(y) * 0.4f);
+            const f32 nz = std::sqrt(1.0f - nx * nx - ny * ny);
+            u8* p = &src[(static_cast<usize>(y) * w + x) * 4];
+            p[0] = static_cast<u8>(std::lround((nx + 1.0f) * 127.5f));
+            p[1] = static_cast<u8>(std::lround((ny + 1.0f) * 127.5f));
+            p[2] = static_cast<u8>(std::lround((nz + 1.0f) * 127.5f));
+            p[3] = 255;
+        }
+    }
+    TextureCookSettings s = Fixed(TextureFormat::ASTC_4x4);
+    s.normal_map = true;
+    s.srgb = false;
+    const CookedTexture t = CookTexture(src, w, h, s);
+    CHECK(t.normal_map && !t.srgb);
+    const std::vector<u8> back = DecodeMip(t, 0);
+    f64 worst = 0;
+    for (usize i = 0; i < src.size(); i += 4) {
+        worst = std::max(worst, std::fabs(static_cast<f64>(src[i]) - back[i]));
+        worst = std::max(worst, std::fabs(static_cast<f64>(src[i + 1]) - back[i + 1]));
+        const f32 nx = back[i] / 127.5f - 1.0f, ny = back[i + 1] / 127.5f - 1.0f, nz = back[i + 2] / 127.5f - 1.0f;
+        CHECK(std::fabs(nx * nx + ny * ny + nz * nz - 1.0f) < 0.15f);
+    }
+    CHECK(worst < 12.0);
+}
+
+AETHER_TEST(TextureCook_AutoPicksAstcForMobileAndKeepsBcForDesktop) {
+    const std::vector<u8> colour = Gradient(16, 16, false);
+    const std::vector<u8> with_alpha = Gradient(16, 16, true);
+    CHECK(ChooseTextureFormat(colour, false, TextureTarget::Mobile) == TextureFormat::ASTC_6x6);
+    CHECK(ChooseTextureFormat(with_alpha, false, TextureTarget::Mobile) == TextureFormat::ASTC_4x4);
+    CHECK(ChooseTextureFormat(colour, true, TextureTarget::Mobile) == TextureFormat::ASTC_4x4);
+    CHECK(ChooseTextureFormat(colour, false, TextureTarget::Desktop) == TextureFormat::BC7 && ChooseTextureFormat(colour, false) == TextureFormat::BC7);
+    CHECK(ChooseTextureFormat(colour, true, TextureTarget::Desktop) == TextureFormat::BC5);
+    TextureCookSettings s;
+    s.target = TextureTarget::Mobile;
+    CHECK(CookTexture(colour, 16, 16, s).format == TextureFormat::ASTC_6x6);
+    TextureFormat parsed;
+    CHECK(ParseTextureFormat("ASTC4x4", parsed) && parsed == TextureFormat::ASTC_4x4 && ParseTextureFormat("astc8x8", parsed) && parsed == TextureFormat::ASTC_8x8);
+    TextureTarget target;
+    CHECK(ParseTextureTarget("Mobile", target) && target == TextureTarget::Mobile && !ParseTextureTarget("tablet", target));
+}

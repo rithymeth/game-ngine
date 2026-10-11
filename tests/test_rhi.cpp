@@ -1,7 +1,9 @@
 #include "aether/gfx/rhi/device.h"
 #include "test_framework.h"
 
+#include <span>
 #include <stdexcept>
+#include <vector>
 
 using namespace aether;
 using namespace aether::gfx::rhi;
@@ -187,4 +189,44 @@ AETHER_TEST(RHI_VulkanLeavesFrameConstantsUnsupportedForNow) {
     if (!device) return;
     AETHER_CHECK(!device->SupportsFrameConstants());
     AETHER_CHECK(!device->CreateConstantBuffer(64).IsValid()); // the renderer falls back to its own constants
+}
+
+AETHER_TEST(RHI_D3D12CreatesBlockCompressedTexturesWithMips) {
+    auto device = CreateDevice(Backend::D3D12, /*enable_debug_layer=*/false);
+    AETHER_CHECK(device->SupportsCompressedTexture(CompressedTextureFormat::BC1) && device->SupportsCompressedTexture(CompressedTextureFormat::BC7));
+    // 20 x 12: the mip chain 20x12, 10x6, 5x3, 2x1, 1x1 (levels below one block still take a whole block).
+    const u32 sizes[5][2] = {{20, 12}, {10, 6}, {5, 3}, {2, 1}, {1, 1}};
+    std::vector<std::vector<u8>> data;
+    std::vector<CompressedMip> mips;
+    for (const auto& s : sizes) {
+        data.emplace_back(static_cast<usize>((s[0] + 3) / 4) * ((s[1] + 3) / 4) * 16, 0x55);
+        mips.push_back({data.back().data(), s[0], s[1], data.back().size()});
+    }
+    const SampledTextureHandle texture = device->CreateCompressedTexture(CompressedTextureFormat::BC7, 20, 12, mips);
+    AETHER_CHECK(texture.IsValid() && texture.index >= kFirstUserBindlessTextureIndex);
+    // BC1 blocks are 8 bytes.
+    std::vector<std::vector<u8>> bc1_data;
+    std::vector<CompressedMip> bc1;
+    for (const auto& s : sizes) {
+        bc1_data.emplace_back(static_cast<usize>((s[0] + 3) / 4) * ((s[1] + 3) / 4) * 8, 0x22);
+        bc1.push_back({bc1_data.back().data(), s[0], s[1], bc1_data.back().size()});
+    }
+    AETHER_CHECK(device->CreateCompressedTexture(CompressedTextureFormat::BC1, 20, 12, bc1).IsValid());
+    // A level of the wrong size, a missing level list and a zero size are refused.
+    std::vector<CompressedMip> wrong = mips;
+    wrong[1].size_bytes -= 1;
+    bool threw = false;
+    try {
+        device->CreateCompressedTexture(CompressedTextureFormat::BC7, 20, 12, wrong);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    AETHER_CHECK(threw);
+    threw = false;
+    try {
+        device->CreateCompressedTexture(CompressedTextureFormat::BC7, 20, 12, std::span<const CompressedMip>());
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    AETHER_CHECK(threw);
 }

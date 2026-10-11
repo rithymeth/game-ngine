@@ -75,4 +75,16 @@ constexpr u32 kMaxUserBindlessTextures = kMaxBindlessTextures - kFirstUserBindle
 
 enum class IndexFormat { UInt16, UInt32 };
 
+// Block-compressed colour formats a shader can sample as it samples RGBA8 (all four channels, unorm): BC1 (RGB, 4 bits a pixel), BC3 (RGBA, 8)
+// and BC7 (RGBA, 8, best quality). BC4 and BC5 hold one and two channels and the sampled value would not be the colour the shader expects, so
+// they are not offered. Block size is 4 x 4 texels, 8 bytes (BC1) or 16 (BC3, BC7).
+enum class CompressedTextureFormat : u8 { BC1, BC3, BC7 };
+// One level of a compressed texture: the bytes of its blocks, rows of blocks top to bottom, tightly packed, ceil(width / 4) blocks a row.
+struct CompressedMip {
+    const u8* data = nullptr;
+    u32 width = 0, height = 0;
+    u64 size_bytes = 0;
+};
+constexpr u32 CompressedBlockBytes(CompressedTextureFormat f) { return f == CompressedTextureFormat::BC1 ? 8u : 16u; }
+
 } // namespace aether::gfx::rhi

@@ -211,6 +211,42 @@ AETHER_TEST(Cook_CooksWhatTheGameReaches) {
     CHECK(stdfs::exists(report.manifest_file) && report.pak_bytes > 0 && report.pak_bytes == stdfs::file_size(report.pak_file));
 }
 
+// A mobile cook: ASTC textures, and the source images left out of the archive.
+AETHER_TEST(Cook_MobileTargetCooksAstcAndCanStripTheSourceTextures) {
+    const stdfs::path project = MakeProject("MobileCook");
+    cook::CookOptions options;
+    options.project_file = project;
+    options.output_dir = project.parent_path() / "Mobile";
+    options.texture_target = cook::TextureTarget::Mobile;
+    options.strip_source_textures = true;
+    const cook::CookReport report = cook::Cook(options);
+    CHECK(report.ok);
+    pak::PakReader reader;
+    std::string error;
+    CHECK(reader.Open(report.pak_file.string(), &error));
+    std::string text;
+    CHECK(reader.ReadText("Manifest.json", text));
+    const json manifest = json::parse(text);
+    usize textures = 0;
+    for (const json& a : manifest["assets"]) {
+        if (a["importer"] != "Texture") continue;
+        ++textures;
+        CHECK(a["cooked_format"].get<std::string>().rfind("astc", 0) == 0);
+        CHECK(reader.Contains(a["cooked"].get<std::string>()));
+        CHECK(!reader.Contains("Content/" + a["path"].get<std::string>())); // the source is not in the archive
+    }
+    CHECK(textures == 2);
+
+    // Without the option the sources stay beside the cooked copies.
+    options.output_dir = project.parent_path() / "Both";
+    options.strip_source_textures = false;
+    const cook::CookReport both = cook::Cook(options);
+    CHECK(both.ok);
+    pak::PakReader reader_both;
+    CHECK(reader_both.Open(both.pak_file.string(), &error) && reader_both.Contains("Content/Textures/a.png"));
+    CHECK(report.pak_bytes < both.pak_bytes);
+}
+
 AETHER_TEST(Cook_RefusesNothingToCook) {
     const stdfs::path parent = stdfs::temp_directory_path() / "aether_cook_tests";
     stdfs::remove_all(parent / "Empty");
