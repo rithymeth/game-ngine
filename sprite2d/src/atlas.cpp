@@ -1,4 +1,5 @@
 #include "aether/sprite2d/atlas.h"
+#include "aether/core/json_util.h"
 
 #include "aether/platform/filesystem.h"
 
@@ -53,7 +54,7 @@ bool AtlasFromJson(const nlohmann::json& data, SpriteAtlas& out, std::string* er
         if (error) *error = why;
         return false;
     };
-    if (!data.is_object() || data.value("$type", "") != "SpriteAtlas") return fail("not a sprite atlas");
+    if (!data.is_object() || JsonString(data, "$type") != "SpriteAtlas") return fail("not a sprite atlas");
     SpriteAtlas atlas;
     const std::string texture = data.value("texture", "");
     if (!texture.empty() && !assets::ParseAssetGuid(texture, atlas.texture)) return fail("bad texture GUID");

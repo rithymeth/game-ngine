@@ -1,4 +1,5 @@
 #include "aether/project/project.h"
+#include "aether/core/json_util.h"
 
 #include "aether/core/log.h"
 #include "aether/platform/filesystem.h"
@@ -143,7 +144,7 @@ bool LoadProject(const stdfs::path& project_file, ProjectSettings& out, std::str
         return false;
     }
     reflect::Json json = reflect::Json::parse(bytes.begin(), bytes.end(), nullptr, /*allow_exceptions=*/false);
-    if (json.is_discarded() || !json.is_object() || json.value("$type", "") != "Project") {
+    if (json.is_discarded() || !json.is_object() || JsonString(json, "$type") != "Project") {
         SetError(error, project_file.string() + " isn't an Aether project file");
         return false;
     }
