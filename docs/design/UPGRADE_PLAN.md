@@ -114,7 +114,7 @@ when advisory gates become required.
 |---|---|---|
 | **41.1** | Headless dedicated-server target (`net/`, `player/`): no window, RHI or audio. | - |
 | **41.2** *(done: `LoopbackNetwork` simulates seeded loss, latency, jitter and duplication; `Net_LoopbackNetworkAppliesJitterAndDuplication` checks delay bounds and duplicate delivery, and `Net_ReliableUnderBadConditions` exercises recovery under all four conditions)* | Network conditioner (loss, latency, jitter) in `net/`. `||` | - |
-| **41.3** | Replication priority, relevancy and a bandwidth budget. | 41.2 |
+| **41.3** | Replication priority, relevancy and a bandwidth budget. **Done**: `SetRelevancy`, `SetPriority`, `ReplicationConfig::bytes_per_second` (fair share per client); defaults unchanged. | 41.2 |
 | **41.4** | Session and matchmaking interface with a local backend. `||` | - |
 | **41.5** | Server-authority and input-validation audit. `||` | - |
 | **41.6** | Ability prediction and rollback (`gameplay/`). | 41.3, 37.4 |

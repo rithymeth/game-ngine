@@ -308,11 +308,21 @@ void ReplicationServer::Update(f64 now) {
     last_send_ = now;
     ReplicatedState current;
     Gather(current);
+    clients_ = std::max<usize>(connected.size(), 1);
     for (PeerId id : connected) {
         Peer& p = peers_[id];
         if (p.history.empty()) p.history.resize(config_.history);
         SendTo(id, p, current, now);
     }
+}
+
+usize ReplicationServer::SnapshotBudget() const {
+    usize budget = config_.byte_budget;
+    if (config_.bytes_per_second > 0) {
+        const f64 share = static_cast<f64>(config_.bytes_per_second) * config_.send_interval / static_cast<f64>(clients_);
+        budget = std::min(budget, std::max(static_cast<usize>(share), ReplicationConfig::kMinSnapshotBytes));
+    }
+    return budget;
 }
 
 void ReplicationServer::SendTo(PeerId id, Peer& peer, const ReplicatedState& current, f64 now) {
@@ -335,10 +345,15 @@ void ReplicationServer::SendTo(PeerId id, Peer& peer, const ReplicatedState& cur
             }
     auto relevant = [&](u32 net_id, const ReplicatedEntity& e) {
         const Meta& m = meta_[net_id];
+        if (relevancy_) {
+            auto ent = entities_.find(net_id);
+            if (ent != entities_.end() && !relevancy_(id, ent->second)) return false;
+        }
         return !has_viewer || m.radius <= 0 || e.owner == id || !m.has_position ||
                (m.position - viewer).Length() <= m.radius;
     };
 
+    const usize budget = SnapshotBudget();
     const u16 snapshot = peer.next_snapshot++;
     if (peer.next_snapshot == kNone) peer.next_snapshot = 0;
     History& record = peer.history[snapshot % peer.history.size()];
@@ -360,7 +375,7 @@ void ReplicationServer::SendTo(PeerId id, Peer& peer, const ReplicatedState& cur
     std::sort(gone.begin(), gone.end());
     const usize updates_reserve = 2 + 4; // the update count, and room for at least one id
     for (u32 net_id : gone) {
-        if (msg.size() + 4 + updates_reserve > config_.byte_budget) break;
+        if (msg.size() + 4 + updates_reserve > budget) break;
         w.U32(net_id);
         record.state.erase(net_id);
         peer.accumulators.erase(net_id);
@@ -387,7 +402,15 @@ void ReplicationServer::SendTo(PeerId id, Peer& peer, const ReplicatedState& cur
             continue;
         }
         f32& acc = peer.accumulators[net_id];
-        acc += std::max(meta_[net_id].priority, 0.001f);
+        f32 weight = meta_[net_id].priority;
+        if (priority_) {
+            auto ent = entities_.find(net_id);
+            if (ent != entities_.end()) {
+                const Meta& m = meta_[net_id];
+                weight *= priority_(id, ent->second, has_viewer && m.has_position ? (m.position - viewer).Length() : 0.0f);
+            }
+        }
+        acc += std::max(weight, 0.001f);
         candidates.push_back({net_id, acc, entry, std::move(costs), b == base_state.end()});
     }
     std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
@@ -398,7 +421,7 @@ void ReplicationServer::SendTo(PeerId id, Peer& peer, const ReplicatedState& cur
     u16 updates = 0;
     u32 deferred = 0;
     for (Candidate& c : candidates) {
-        if (msg.size() + c.bytes.size() > config_.byte_budget) {
+        if (msg.size() + c.bytes.size() > budget) {
             ++deferred;
             continue;
         }

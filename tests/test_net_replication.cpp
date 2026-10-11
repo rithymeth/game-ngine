@@ -294,3 +294,58 @@ AETHER_TEST(Replication_BudgetSharesByPriority) {
     CHECK(lag(units[25]) * 2 < total / 50.0); // well ahead of the average
     CHECK(worst > lag(units[25]));
 }
+
+AETHER_TEST(Replication_CustomRelevancyHidesEntities) {
+    ReplSim sim;
+    auto& client = sim.AddClient();
+    Entity visible = sim.Spawn({0, 0, 0}), hidden = sim.Spawn({1, 0, 0});
+    sim.rs->SetRelevancy([&](PeerId, Entity e) { return e != hidden; });
+    sim.Step(120);
+    CHECK(sim.server_peers.size() == 1);
+    CHECK(sim.rs->PeerHas(sim.server_peers[0], sim.NetId(visible)));
+    CHECK(!sim.rs->PeerHas(sim.server_peers[0], sim.NetId(hidden)));
+    CHECK(client.rc->Entities().size() == 1);
+}
+
+AETHER_TEST(Replication_BandwidthCapIsSharedAndHonoured) {
+    ReplicationConfig cfg;
+    cfg.bytes_per_second = 4000; // 200 bytes per snapshot for one client, 100 for two
+    ReplSim sim(cfg);
+    sim.AddClient();
+    sim.AddClient();
+    for (int i = 0; i < 40; ++i) sim.Spawn({static_cast<f32>(i), 0, 0});
+    sim.Step(10);
+    CHECK(sim.server_peers.size() == 2);
+    CHECK(sim.rs->SnapshotBudget() == 100);
+    for (int i = 0; i < 60; ++i) {
+        sim.Step();
+        for (PeerId p : sim.server_peers) CHECK(sim.rs->Stats(p).last_bytes <= 100);
+    }
+}
+
+AETHER_TEST(Replication_StarvedEntitiesEventuallyArrive) {
+    ReplicationConfig cfg;
+    cfg.byte_budget = 200; // far fewer entities per snapshot than exist
+    ReplSim sim(cfg);
+    auto& client = sim.AddClient();
+    constexpr int kCount = 30;
+    for (int i = 0; i < kCount; ++i) sim.Spawn({static_cast<f32>(i), 0, 0});
+    sim.rs->SetPriority([](PeerId, Entity, f32 distance) { return 1.0f + distance * 0.0f; });
+    sim.Step(1200);
+    CHECK(client.rc->Entities().size() == kCount);
+}
+
+AETHER_TEST(Replication_PriorityFunctionOrdersSends) {
+    ReplicationConfig cfg;
+    cfg.byte_budget = 120; // a handful per snapshot
+    ReplSim sim(cfg);
+    auto& client = sim.AddClient();
+    std::vector<Entity> all;
+    for (int i = 0; i < 20; ++i) all.push_back(sim.Spawn({static_cast<f32>(i), 0, 0}));
+    const Entity vip = all[7];
+    sim.rs->SetPriority([&](PeerId, Entity e, f32) { return e == vip ? 1000.0f : 1.0f; });
+    sim.Step(8); // connect and a few snapshots
+    bool found = false;
+    for (const auto& [net_id, e] : client.rc->Entities()) found = found || net_id == sim.NetId(vip);
+    CHECK(found);
+}
