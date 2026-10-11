@@ -72,7 +72,7 @@ private:
 };
 
 void RegisterRecording(const std::string& name) {
-    ModuleRegistry::Get().Register(name, [name] { return std::make_unique<RecordingModule>(name); });
+    AETHER_CHECK(ModuleRegistry::Get().Register(name, [name] { return std::make_unique<RecordingModule>(name); }));
 }
 
 } // namespace

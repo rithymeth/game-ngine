@@ -63,7 +63,7 @@ stdfs::path MakeGame(const stdfs::path& dir) {
     writer.Add("Content/Scenes/start.ascene", scene.dump(2));
     const stdfs::path file = dir / "Game.apak";
     std::string error;
-    writer.Write(file.string(), &error);
+    AETHER_CHECK(writer.Write(file.string(), &error));
     return file;
 }
 
