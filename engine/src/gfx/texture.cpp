@@ -5,8 +5,10 @@
 #include "aether/gfx/device.h"
 #include "aether/core/log.h"
 
+#include <algorithm>
 #include <cstring>
 #include <stdexcept>
+#include <vector>
 
 namespace aether::gfx {
 
@@ -92,6 +94,88 @@ Texture::Texture(Device& device, DescriptorHeap& bindless_heap, ID3D12GraphicsCo
     srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
     srv_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     srv_desc.Texture2D.MipLevels = 1;
+    device.Handle()->CreateShaderResourceView(resource_.Get(), &srv_desc, bindless_heap.CPUHandle(bindless_index_));
+}
+
+Texture::Texture(Device& device, DescriptorHeap& bindless_heap, ID3D12GraphicsCommandList* upload_cmd, DXGI_FORMAT format, u32 width, u32 height,
+                 const MipData* mips, u32 mip_count) {
+    if (!bindless_heap.CanAllocate()) {
+        AETHER_LOG_ERROR("Texture", "Cannot create texture: bindless descriptor heap is exhausted");
+        throw std::length_error("Cannot create texture: bindless descriptor heap is exhausted");
+    }
+    D3D12_HEAP_PROPERTIES default_heap{};
+    default_heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+    D3D12_RESOURCE_DESC tex_desc{};
+    tex_desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    tex_desc.Width = width;
+    tex_desc.Height = height;
+    tex_desc.DepthOrArraySize = 1;
+    tex_desc.MipLevels = static_cast<UINT16>(mip_count);
+    tex_desc.Format = format;
+    tex_desc.SampleDesc.Count = 1;
+    tex_desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    AETHER_D3D_CHECK(device.Handle()->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &tex_desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                                               IID_PPV_ARGS(&resource_)));
+
+    std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> footprints(mip_count);
+    std::vector<UINT> rows(mip_count);
+    std::vector<UINT64> row_sizes(mip_count);
+    UINT64 total_bytes = 0;
+    device.Handle()->GetCopyableFootprints(&tex_desc, 0, mip_count, 0, footprints.data(), rows.data(), row_sizes.data(), &total_bytes);
+
+    D3D12_HEAP_PROPERTIES upload_heap{};
+    upload_heap.Type = D3D12_HEAP_TYPE_UPLOAD;
+    D3D12_RESOURCE_DESC upload_desc{};
+    upload_desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    upload_desc.Width = total_bytes;
+    upload_desc.Height = 1;
+    upload_desc.DepthOrArraySize = 1;
+    upload_desc.MipLevels = 1;
+    upload_desc.Format = DXGI_FORMAT_UNKNOWN;
+    upload_desc.SampleDesc.Count = 1;
+    upload_desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    AETHER_D3D_CHECK(device.Handle()->CreateCommittedResource(&upload_heap, D3D12_HEAP_FLAG_NONE, &upload_desc, D3D12_RESOURCE_STATE_GENERIC_READ,
+                                                               nullptr, IID_PPV_ARGS(&upload_staging_)));
+
+    u8* mapped = nullptr;
+    D3D12_RANGE no_read{0, 0};
+    AETHER_D3D_CHECK(upload_staging_->Map(0, &no_read, reinterpret_cast<void**>(&mapped)));
+    for (u32 level = 0; level < mip_count; ++level) {
+        // The device's block rows (it rounds each level up to whole blocks) against the caller's: copy what both have.
+        const u32 copy_rows = std::min<u32>(rows[level], mips[level].block_rows);
+        const u32 copy_bytes = static_cast<u32>(std::min<UINT64>(row_sizes[level], mips[level].row_bytes));
+        for (u32 row = 0; row < copy_rows; ++row) {
+            std::memcpy(mapped + footprints[level].Offset + static_cast<u64>(row) * footprints[level].Footprint.RowPitch,
+                        mips[level].data + static_cast<u64>(row) * mips[level].row_bytes, copy_bytes);
+        }
+    }
+    upload_staging_->Unmap(0, nullptr);
+
+    for (u32 level = 0; level < mip_count; ++level) {
+        D3D12_TEXTURE_COPY_LOCATION dst{};
+        dst.pResource = resource_.Get();
+        dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        dst.SubresourceIndex = level;
+        D3D12_TEXTURE_COPY_LOCATION src{};
+        src.pResource = upload_staging_.Get();
+        src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        src.PlacedFootprint = footprints[level];
+        upload_cmd->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    }
+    D3D12_RESOURCE_BARRIER barrier = TransitionBarrier(resource_.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    upload_cmd->ResourceBarrier(1, &barrier);
+
+    bindless_index_ = bindless_heap.Allocate();
+    if (bindless_index_ == DescriptorHeap::kInvalidIndex) {
+        AETHER_LOG_ERROR("Texture", "Cannot create texture: bindless descriptor allocation failed");
+        throw std::length_error("Cannot create texture: bindless descriptor allocation failed");
+    }
+    D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc{};
+    srv_desc.Format = format;
+    srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srv_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srv_desc.Texture2D.MipLevels = mip_count;
     device.Handle()->CreateShaderResourceView(resource_.Get(), &srv_desc, bindless_heap.CPUHandle(bindless_index_));
 }
 

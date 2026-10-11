@@ -314,6 +314,44 @@ SampledTextureHandle D3D12Device::CreateTexture(u32 width, u32 height, const u8*
     return SampledTextureHandle{index};
 }
 
+SampledTextureHandle D3D12Device::CreateCompressedTexture(CompressedTextureFormat format, u32 width, u32 height, std::span<const CompressedMip> mips) {
+    const u32 block_bytes = CompressedBlockBytes(format);
+    if (width == 0 || height == 0 || mips.empty() || mips.size() > 16) {
+        AETHER_LOG_ERROR("D3D12", "CreateCompressedTexture requires non-zero dimensions and 1 to 16 mip levels");
+        throw std::invalid_argument("CreateCompressedTexture requires non-zero dimensions and 1 to 16 mip levels");
+    }
+    std::vector<gfx::Texture::MipData> levels;
+    u32 w = width, h = height;
+    for (const CompressedMip& mip : mips) {
+        const u32 blocks_x = (w + 3) / 4, blocks_y = (h + 3) / 4;
+        if (mip.data == nullptr || mip.width != w || mip.height != h || mip.size_bytes != static_cast<u64>(blocks_x) * blocks_y * block_bytes) {
+            AETHER_LOG_ERROR("D3D12", "CreateCompressedTexture: a mip level does not match its size or format");
+            throw std::invalid_argument("CreateCompressedTexture: a mip level does not match its size or format");
+        }
+        levels.push_back({mip.data, w, h, blocks_x * block_bytes, blocks_y});
+        w = std::max(1u, w / 2);
+        h = std::max(1u, h / 2);
+    }
+    if (sampled_textures_.size() >= kMaxUserBindlessTextures) {
+        AETHER_LOG_ERROR("D3D12", "CreateCompressedTexture exhausted the bindless texture table (capacity=%u real textures)", kMaxUserBindlessTextures);
+        return {};
+    }
+    const DXGI_FORMAT dxgi = format == CompressedTextureFormat::BC1 ? DXGI_FORMAT_BC1_UNORM
+                             : format == CompressedTextureFormat::BC3 ? DXGI_FORMAT_BC3_UNORM
+                                                                      : DXGI_FORMAT_BC7_UNORM;
+    gfx::CommandList setup_cmd(device_);
+    setup_cmd.Reset();
+    auto texture = std::make_unique<gfx::Texture>(device_, *bindless_texture_heap_, setup_cmd.Get(), dxgi, width, height, levels.data(),
+                                                  static_cast<u32>(levels.size()));
+    setup_cmd.Close();
+    ID3D12CommandList* setup_lists[] = {setup_cmd.Get()};
+    device_.WaitForFence(device_.Submit(setup_lists, 1));
+    texture->ReleaseUploadStaging();
+    const u32 index = texture->BindlessIndex();
+    sampled_textures_.push_back(std::move(texture));
+    return SampledTextureHandle{index};
+}
+
 D3D12SwapChain::D3D12SwapChain(D3D12Device& device, void* hwnd, u32 width, u32 height, u32 buffer_count)
     : device_(device), swap_chain_(device.Native(), hwnd, width, height, buffer_count) {
     for (u32 i = 0; i < swap_chain_.BufferCount(); ++i) {

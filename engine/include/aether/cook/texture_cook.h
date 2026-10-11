@@ -20,7 +20,17 @@ enum class TextureFormat : u8 {
     BC4 = 3,   // one channel (red), 4 bpp
     BC5 = 4,   // two channels (red, green: normal maps), 8 bpp
     BC7 = 5,   // RGBA at high quality, 8 bpp
+    // ASTC (mobile GPUs; most desktop GPUs have no support): RGBA in 16-byte blocks of the given size, so 8, 3.56 and 2 bits per pixel.
+    ASTC_4x4 = 6,
+    ASTC_6x6 = 7,
+    ASTC_8x8 = 8,
 };
+// The texels one block covers along each axis (4 for the BC formats, 1 for RGBA8).
+u32 BlockWidth(TextureFormat f);
+// Where a cook's textures are going. Desktop: BC formats. Mobile: ASTC.
+enum class TextureTarget : u8 { Desktop, Mobile };
+const char* TextureTargetName(TextureTarget t);
+[[nodiscard]] bool ParseTextureTarget(const std::string& name, TextureTarget& out);
 const char* TextureFormatName(TextureFormat f);
 [[nodiscard]] bool ParseTextureFormat(const std::string& name, TextureFormat& out);
 // Bytes per 4x4 block, or 0 for RGBA8.
@@ -32,6 +42,7 @@ struct TextureCookSettings {
     // Auto picks from the content: BC5 for normal maps, BC4 for grey
     // images without alpha, BC7 otherwise.
     bool auto_format = true;
+    TextureTarget target = TextureTarget::Desktop; // what Auto chooses from: BC for desktop, ASTC for mobile
     TextureFormat format = TextureFormat::BC7;
     bool mips = true;
     bool srgb = true;         // colour data: mips are filtered in linear light
@@ -54,8 +65,9 @@ struct CookedTexture {
     std::vector<CookedMip> mips; // largest first, down to 1x1
 };
 
-// The format Auto chooses for this image.
-TextureFormat ChooseTextureFormat(std::span<const u8> rgba, bool normal_map);
+// The format Auto chooses for this image. Desktop: BC5 for normal maps, BC4 for grey images without alpha, BC7 otherwise. Mobile: ASTC 4x4 for
+// normal maps and images with alpha (where block artefacts show most), ASTC 6x6 for the rest.
+TextureFormat ChooseTextureFormat(std::span<const u8> rgba, bool normal_map, TextureTarget target = TextureTarget::Desktop);
 // The mip chain, largest first (the image itself) down to 1x1: a 2x2 box
 // filter, in linear light for sRGB colour; normal maps are renormalized.
 std::vector<CookedMip> GenerateMips(std::span<const u8> rgba, u32 width, u32 height, bool srgb, bool normal_map);

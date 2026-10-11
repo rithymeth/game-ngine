@@ -7,6 +7,7 @@
 #include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
 #include "frame_lights.h"
+#include "package_textures.h"
 #include "aether/ui/draw.h"
 #include "aether/ui/font.h"
 #include "aether/ui/viewport.h"
@@ -949,10 +950,33 @@ struct SceneRenderer::Impl {
             out = white_texture;
             return false;
         }
-        std::vector<u8> bytes;
+        // A package whose sources were stripped: BC1, BC3 and BC7 colour textures stay compressed on the GPU as cooked (a quarter of the memory,
+        // with their mips), where the device can; everything else is decoded to RGBA8 below.
+        if (!PackageHasTextureSource(package, path)) {
+            cook::CookedTexture cooked;
+            if (LoadPackageCookedTexture(package, path, cooked) && !cooked.normal_map && !cooked.mips.empty()) {
+                const bool bc1 = cooked.format == cook::TextureFormat::BC1, bc3 = cooked.format == cook::TextureFormat::BC3,
+                           bc7 = cooked.format == cook::TextureFormat::BC7;
+                if (bc1 || bc3 || bc7) {
+                    const CompressedTextureFormat format = bc1 ? CompressedTextureFormat::BC1
+                                                                     : bc3 ? CompressedTextureFormat::BC3 : CompressedTextureFormat::BC7;
+                    if (device.SupportsCompressedTexture(format)) {
+                        std::vector<CompressedMip> mips;
+                        for (const cook::CookedMip& mip : cooked.mips) mips.push_back({mip.data.data(), mip.width, mip.height, mip.data.size()});
+                        out = device.CreateCompressedTexture(format, cooked.width, cooked.height, mips);
+                        if (out.IsValid()) {
+                            ++sampled_texture_count;
+                            textures.emplace(path, out);
+                            return out.index != white_texture.index;
+                        }
+                    }
+                }
+            }
+        }
         assets::ImageData image;
-        if (!package.ReadContent(path, bytes) || !assets::DecodeImageFromMemory(bytes, image)) {
-            AETHER_LOG_WARN("PlayerRenderer", "Couldn't load model texture '%s'; using the white fallback", path.c_str());
+        std::string why;
+        if (!LoadPackageTexture(package, path, image, &why)) {
+            AETHER_LOG_WARN("PlayerRenderer", "Couldn't load model texture '%s' (%s); using the white fallback", path.c_str(), why.c_str());
             out = white_texture;
             return false;
         }

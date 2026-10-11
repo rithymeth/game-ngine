@@ -1,6 +1,7 @@
 #include "aether/cook/texture_cook.h"
 
 #include <bc7decomp.h>
+#include <astcenc.h>
 #include <bc7enc.h>
 #include <rgbcx.h>
 
@@ -64,8 +65,68 @@ void FetchBlock(const std::vector<u8>& rgba, u32 width, u32 height, u32 bx, u32 
     }
 }
 
-std::vector<u8> EncodeMip(const CookedMip& mip, TextureFormat format, u32 quality, bool srgb) {
+bool IsAstc(TextureFormat f) { return f == TextureFormat::ASTC_4x4 || f == TextureFormat::ASTC_6x6 || f == TextureFormat::ASTC_8x8; }
+
+// quality 0..4 is astc-encoder's fastest, fast, medium, thorough and exhaustive presets.
+f32 AstcPreset(u32 quality) {
+    switch (std::min<u32>(quality, 4)) {
+        case 0: return ASTCENC_PRE_FASTEST;
+        case 1: return ASTCENC_PRE_FAST;
+        case 2: return ASTCENC_PRE_MEDIUM;
+        case 3: return ASTCENC_PRE_THOROUGH;
+        default: return ASTCENC_PRE_EXHAUSTIVE;
+    }
+}
+
+// ASTC: the whole mip at once. Colour in sRGB or linear; normal maps through astc-encoder's normal-map mode (x in red, y in alpha).
+std::vector<u8> EncodeAstc(const CookedMip& mip, TextureFormat format, u32 quality, bool srgb, bool normal_map) {
+    const u32 block = BlockWidth(format);
+    std::vector<u8> out(MipBytes(format, mip.width, mip.height), 0);
+    astcenc_config config{};
+    const astcenc_profile profile = srgb ? ASTCENC_PRF_LDR_SRGB : ASTCENC_PRF_LDR;
+    const unsigned flags = normal_map ? ASTCENC_FLG_MAP_NORMAL : 0u;
+    if (astcenc_config_init(profile, block, block, 1, AstcPreset(quality), flags, &config) != ASTCENC_SUCCESS) return {};
+    astcenc_context* context = nullptr;
+    if (astcenc_context_alloc(&config, 1, &context, nullptr) != ASTCENC_SUCCESS) return {};
+    std::vector<u8> pixels = mip.data; // astc-encoder takes a mutable pointer
+    void* slice = pixels.data();
+    astcenc_image image{};
+    image.dim_x = mip.width, image.dim_y = mip.height, image.dim_z = 1;
+    image.data_type = ASTCENC_TYPE_U8;
+    image.data = &slice;
+    // Normal maps: x goes to red and green to alpha, as the normal-map mode expects (rrrg).
+    const astcenc_swizzle swizzle = normal_map ? astcenc_swizzle{ASTCENC_SWZ_R, ASTCENC_SWZ_R, ASTCENC_SWZ_R, ASTCENC_SWZ_G}
+                                               : astcenc_swizzle{ASTCENC_SWZ_R, ASTCENC_SWZ_G, ASTCENC_SWZ_B, ASTCENC_SWZ_A};
+    const astcenc_error status = astcenc_compress_image(context, &image, &swizzle, out.data(), out.size(), 0);
+    astcenc_context_free(context);
+    return status == ASTCENC_SUCCESS ? out : std::vector<u8>{};
+}
+
+std::vector<u8> DecodeAstc(const CookedTexture& texture, const CookedMip& mip) {
+    const u32 block = BlockWidth(texture.format);
+    astcenc_config config{};
+    const astcenc_profile profile = texture.srgb ? ASTCENC_PRF_LDR_SRGB : ASTCENC_PRF_LDR;
+    const unsigned flags = ASTCENC_FLG_DECOMPRESS_ONLY | (texture.normal_map ? ASTCENC_FLG_MAP_NORMAL : 0u);
+    if (astcenc_config_init(profile, block, block, 1, ASTCENC_PRE_FASTEST, flags, &config) != ASTCENC_SUCCESS) return {};
+    astcenc_context* context = nullptr;
+    if (astcenc_context_alloc(&config, 1, &context, nullptr) != ASTCENC_SUCCESS) return {};
+    std::vector<u8> out(static_cast<usize>(mip.width) * mip.height * 4, 0);
+    void* slice = out.data();
+    astcenc_image image{};
+    image.dim_x = mip.width, image.dim_y = mip.height, image.dim_z = 1;
+    image.data_type = ASTCENC_TYPE_U8;
+    image.data = &slice;
+    // Normal maps come back as red = x, alpha = y, with z rebuilt: the same layout DecodeMip gives for BC5.
+    const astcenc_swizzle swizzle = texture.normal_map ? astcenc_swizzle{ASTCENC_SWZ_R, ASTCENC_SWZ_A, ASTCENC_SWZ_Z, ASTCENC_SWZ_1}
+                                                       : astcenc_swizzle{ASTCENC_SWZ_R, ASTCENC_SWZ_G, ASTCENC_SWZ_B, ASTCENC_SWZ_A};
+    const astcenc_error status = astcenc_decompress_image(context, mip.data.data(), mip.data.size(), &image, &swizzle, 0);
+    astcenc_context_free(context);
+    return status == ASTCENC_SUCCESS ? out : std::vector<u8>{};
+}
+
+std::vector<u8> EncodeMip(const CookedMip& mip, TextureFormat format, u32 quality, bool srgb, bool normal_map) {
     if (format == TextureFormat::RGBA8) return mip.data;
+    if (IsAstc(format)) return EncodeAstc(mip, format, quality, srgb, normal_map);
     const u32 bw = (mip.width + 3) / 4, bh = (mip.height + 3) / 4;
     const u32 block_bytes = BlockBytes(format);
     std::vector<u8> out(static_cast<usize>(bw) * bh * block_bytes);
@@ -86,7 +147,10 @@ std::vector<u8> EncodeMip(const CookedMip& mip, TextureFormat format, u32 qualit
                 case TextureFormat::BC4: rgbcx::encode_bc4(dst, block); break;
                 case TextureFormat::BC5: rgbcx::encode_bc5(dst, block); break;
                 case TextureFormat::BC7: bc7enc_compress_block(dst, block, &bc7); break;
-                case TextureFormat::RGBA8: break;
+                case TextureFormat::RGBA8:
+                case TextureFormat::ASTC_4x4:
+                case TextureFormat::ASTC_6x6:
+                case TextureFormat::ASTC_8x8: break;
             }
         }
     }
@@ -103,13 +167,27 @@ const char* TextureFormatName(TextureFormat f) {
         case TextureFormat::BC4: return "bc4";
         case TextureFormat::BC5: return "bc5";
         case TextureFormat::BC7: return "bc7";
+        case TextureFormat::ASTC_4x4: return "astc4x4";
+        case TextureFormat::ASTC_6x6: return "astc6x6";
+        case TextureFormat::ASTC_8x8: return "astc8x8";
     }
     return "?";
 }
 
+const char* TextureTargetName(TextureTarget t) { return t == TextureTarget::Mobile ? "mobile" : "desktop"; }
+
+bool ParseTextureTarget(const std::string& name, TextureTarget& out) {
+    std::string lower;
+    for (char c : name) lower += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (lower == "desktop") out = TextureTarget::Desktop;
+    else if (lower == "mobile") out = TextureTarget::Mobile;
+    else return false;
+    return true;
+}
+
 bool ParseTextureFormat(const std::string& name, TextureFormat& out) {
-    for (TextureFormat f : {TextureFormat::RGBA8, TextureFormat::BC1, TextureFormat::BC3, TextureFormat::BC4,
-                            TextureFormat::BC5, TextureFormat::BC7}) {
+    for (TextureFormat f : {TextureFormat::RGBA8, TextureFormat::BC1, TextureFormat::BC3, TextureFormat::BC4, TextureFormat::BC5, TextureFormat::BC7,
+                            TextureFormat::ASTC_4x4, TextureFormat::ASTC_6x6, TextureFormat::ASTC_8x8}) {
         std::string lower;
         for (char c : name) lower += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         if (lower == TextureFormatName(f)) {
@@ -126,24 +204,39 @@ u32 BlockBytes(TextureFormat f) {
         case TextureFormat::BC4: return 8;
         case TextureFormat::BC3:
         case TextureFormat::BC5:
-        case TextureFormat::BC7: return 16;
+        case TextureFormat::BC7:
+        case TextureFormat::ASTC_4x4:
+        case TextureFormat::ASTC_6x6:
+        case TextureFormat::ASTC_8x8: return 16;
         case TextureFormat::RGBA8: return 0;
     }
     return 0;
 }
 
-usize MipBytes(TextureFormat f, u32 width, u32 height) {
-    if (f == TextureFormat::RGBA8) return static_cast<usize>(width) * height * 4;
-    return static_cast<usize>((width + 3) / 4) * ((height + 3) / 4) * BlockBytes(f);
+u32 BlockWidth(TextureFormat f) {
+    switch (f) {
+        case TextureFormat::ASTC_6x6: return 6;
+        case TextureFormat::ASTC_8x8: return 8;
+        case TextureFormat::RGBA8: return 1;
+        default: return 4; // the BC formats and ASTC 4x4
+    }
 }
 
-TextureFormat ChooseTextureFormat(std::span<const u8> rgba, bool normal_map) {
-    if (normal_map) return TextureFormat::BC5;
+usize MipBytes(TextureFormat f, u32 width, u32 height) {
+    if (f == TextureFormat::RGBA8) return static_cast<usize>(width) * height * 4;
+    const u32 b = BlockWidth(f);
+    return static_cast<usize>((width + b - 1) / b) * ((height + b - 1) / b) * BlockBytes(f);
+}
+
+TextureFormat ChooseTextureFormat(std::span<const u8> rgba, bool normal_map, TextureTarget target) {
+    const bool mobile = target == TextureTarget::Mobile;
+    if (normal_map) return mobile ? TextureFormat::ASTC_4x4 : TextureFormat::BC5;
     bool grey = true;
     for (usize i = 0; i + 3 < rgba.size(); i += 4) {
-        if (rgba[i + 3] != 255) return TextureFormat::BC7; // has alpha
+        if (rgba[i + 3] != 255) return mobile ? TextureFormat::ASTC_4x4 : TextureFormat::BC7; // has alpha
         if (rgba[i] != rgba[i + 1] || rgba[i] != rgba[i + 2]) grey = false;
     }
+    if (mobile) return TextureFormat::ASTC_6x6;
     return grey ? TextureFormat::BC4 : TextureFormat::BC7;
 }
 
@@ -205,7 +298,7 @@ CookedTexture CookTexture(std::span<const u8> rgba, u32 width, u32 height, const
     texture.width = width;
     texture.height = height;
     texture.normal_map = settings.normal_map;
-    texture.format = settings.auto_format ? ChooseTextureFormat(rgba, settings.normal_map) : settings.format;
+    texture.format = settings.auto_format ? ChooseTextureFormat(rgba, settings.normal_map, settings.target) : settings.format;
     // Single- and two-channel formats hold data, not colour.
     texture.srgb = settings.srgb && !settings.normal_map && texture.format != TextureFormat::BC4 &&
                    texture.format != TextureFormat::BC5;
@@ -217,7 +310,7 @@ CookedTexture CookTexture(std::span<const u8> rgba, u32 width, u32 height, const
         levels.push_back({width, height, std::vector<u8>(rgba.begin(), rgba.begin() + static_cast<usize>(width) * height * 4)});
     }
     for (CookedMip& level : levels) {
-        CookedMip mip{level.width, level.height, EncodeMip(level, texture.format, settings.quality, texture.srgb)};
+        CookedMip mip{level.width, level.height, EncodeMip(level, texture.format, settings.quality, texture.srgb, settings.normal_map)};
         texture.mips.push_back(std::move(mip));
     }
     return texture;
@@ -227,6 +320,7 @@ std::vector<u8> DecodeMip(const CookedTexture& texture, usize index) {
     if (index >= texture.mips.size()) return {};
     const CookedMip& mip = texture.mips[index];
     if (texture.format == TextureFormat::RGBA8) return mip.data;
+    if (IsAstc(texture.format)) return DecodeAstc(texture, mip);
     InitEncoders();
     std::vector<u8> out(static_cast<usize>(mip.width) * mip.height * 4);
     const u32 bw = (mip.width + 3) / 4, bh = (mip.height + 3) / 4;
@@ -260,7 +354,10 @@ std::vector<u8> DecodeMip(const CookedTexture& texture, usize index) {
                 case TextureFormat::BC7:
                     bc7decomp::unpack_bc7(src, reinterpret_cast<bc7decomp::color_rgba*>(block));
                     break;
-                case TextureFormat::RGBA8: break;
+                case TextureFormat::RGBA8:
+                case TextureFormat::ASTC_4x4:
+                case TextureFormat::ASTC_6x6:
+                case TextureFormat::ASTC_8x8: break;
             }
             for (u32 y = 0; y < 4; ++y) {
                 for (u32 x = 0; x < 4; ++x) {
@@ -302,7 +399,7 @@ bool LoadAtex(std::span<const u8> bytes, CookedTexture& out, std::string* error)
     if (bytes.size() < 24 || std::memcmp(bytes.data(), kMagic, 4) != 0) return fail("not an .atex texture");
     if (Get32(bytes.data() + 4) != kVersion) return fail("unsupported .atex version");
     CookedTexture t;
-    if (bytes[8] > static_cast<u8>(TextureFormat::BC7)) return fail("unknown texture format");
+    if (bytes[8] > static_cast<u8>(TextureFormat::ASTC_8x8)) return fail("unknown texture format");
     t.format = static_cast<TextureFormat>(bytes[8]);
     t.srgb = (bytes[9] & 1) != 0;
     t.normal_map = (bytes[9] & 2) != 0;

@@ -57,6 +57,8 @@ public:
     const gfx::Buffer& GetBuffer(BufferHandle handle) const { return *buffers_[handle.index]; }
 
     SampledTextureHandle CreateTexture(u32 width, u32 height, const u8* rgba8_pixels) override;
+    bool SupportsCompressedTexture(CompressedTextureFormat) const override { return true; } // BC1, BC3 and BC7 are core D3D12
+    SampledTextureHandle CreateCompressedTexture(CompressedTextureFormat format, u32 width, u32 height, std::span<const CompressedMip> mips) override;
     DescriptorHeap& BindlessTextureHeap() { return *bindless_texture_heap_; }
 
     std::unique_ptr<ICommandList> CreateComputeCommandList() override;

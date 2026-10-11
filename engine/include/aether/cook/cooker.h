@@ -1,6 +1,7 @@
 #pragma once
 
 #include "aether/assets/asset_database.h"
+#include "aether/cook/texture_cook.h"
 #include "aether/pak/pak.h"
 
 #include <nlohmann/json.hpp>
@@ -35,8 +36,13 @@ struct CookOptions {
     // Textures: block-compressed with mips (Cooked/<guid>.atex), per their
     // .ameta settings ("cook_format": auto|rgba8|bc1|bc3|bc4|bc5|bc7,
     // "normal_map", "srgb", "mips").
+    // `cook_format` also takes astc4x4|astc6x6|astc8x8 (mobile GPUs). With auto, `texture_target` picks the family: desktop BC, mobile ASTC.
     bool cook_textures = true;
     u32 texture_quality = 2;             // 0 (fastest) .. 4 (best)
+    TextureTarget texture_target = TextureTarget::Desktop;
+    // Leave a cooked texture's source image out of the archive (only the cooked copy goes in): smaller packages, for a build that decodes the
+    // cooked form (the player does, falling back to it when the source is absent). A texture that could not be cooked keeps its source.
+    bool strip_source_textures = false;
     // Meshes: LODs and meshlets (Cooked/<guid>.amesh), see mesh_cook.h.
     bool cook_meshes = true;
     // Refuse to write an archive when scanning, importing, or cooking reports

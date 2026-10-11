@@ -281,7 +281,9 @@ CookReport Cook(const CookOptions& options) {
         }
         cooked.bytes = bytes.size();
         report.original_bytes += bytes.size();
-        writer.Add("Content/" + record.path, bytes);
+        // A texture's source goes in after it is cooked, and only if there is no cooked copy to stand in for it (strip_source_textures).
+        const bool defer_source = options.strip_source_textures && options.cook_textures && record.importer == "Texture";
+        if (!defer_source) writer.Add("Content/" + record.path, bytes);
 
         // A .gltf's buffers and images that aren't assets themselves.
         if (record.importer == "Model") {
@@ -337,6 +339,7 @@ CookReport Cook(const CookOptions& options) {
             if (assets::LoadAssetMeta(database.MetaPath(guid), meta)) settings_json = meta.settings;
             TextureCookSettings tex;
             tex.quality = options.texture_quality;
+            tex.target = options.texture_target;
             const auto bool_setting = [&](const char* name, bool fallback) {
                 const auto it = settings_json.find(name);
                 if (it == settings_json.end()) return fallback;
@@ -360,6 +363,7 @@ CookReport Cook(const CookOptions& options) {
                 }
             }
             const json texture_settings = {{"quality", tex.quality},
+                                           {"target", TextureTargetName(tex.target)},
                                            {"auto_format", tex.auto_format},
                                            {"format", TextureFormatName(tex.format)},
                                            {"mips", tex.mips},
@@ -385,6 +389,7 @@ CookReport Cook(const CookOptions& options) {
                     report.warnings.push_back("Can't decode " + record.path + " to cook it");
                 }
             }
+            if (atex.empty() && defer_source) writer.Add("Content/" + record.path, bytes);
             if (!atex.empty()) {
                 cooked.cooked = "Cooked/" + assets::ToString(guid) + ".atex";
                 cooked.cooked_bytes = atex.size();

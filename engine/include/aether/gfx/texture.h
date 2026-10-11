@@ -24,6 +24,17 @@ public:
     Texture(Device& device, DescriptorHeap& bindless_heap, ID3D12GraphicsCommandList* upload_cmd, u32 width,
             u32 height, const u8* pixels);
 
+    // The same for a block-compressed texture: `format` is a BC DXGI format, and `mips` hold each level's blocks (row pitch `row_bytes[i]`
+    // bytes of blocks, `block_rows[i]` rows), largest first. The texture gets that many mip levels.
+    struct MipData {
+        const u8* data = nullptr;
+        u32 width = 0, height = 0;
+        u32 row_bytes = 0;   // one row of blocks, tightly packed
+        u32 block_rows = 0;
+    };
+    Texture(Device& device, DescriptorHeap& bindless_heap, ID3D12GraphicsCommandList* upload_cmd, DXGI_FORMAT format, u32 width, u32 height,
+            const MipData* mips, u32 mip_count);
+
     u32 BindlessIndex() const { return bindless_index_; }
     ID3D12Resource* Handle() const { return resource_.Get(); }
 
