@@ -1,0 +1,8 @@
+Aether crash report
+version: 0.27.6
+signal: 11
+--- backtrace ---
+#0 main
+--- log ---
+[INFO] hi
+--- end ---

@@ -705,7 +705,7 @@ static bool MaterialFromJsonImpl(const json& j, Material& out, std::string* erro
         if (error != nullptr) *error = message;
         return false;
     };
-    const std::string type = j.is_object() ? j.value("$type", "") : "";
+    const std::string type = j.is_object() ? JsonString(j, "$type") : "";
     if (type != "Material" && type != "MaterialFunction") return fail("not a material file");
     if (JsonVersion(j) > kFormatVersion) return fail("saved by a newer version of the engine");
     Material m;

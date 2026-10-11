@@ -1,4 +1,5 @@
 #include "aether/save/envelope.h"
+#include "aether/core/json_util.h"
 
 #include "aether/core/log.h"
 #include "aether/pak/pak.h"
@@ -104,7 +105,7 @@ EnvelopeInfo InspectBytes(std::span<const u8> bytes) {
     }
     // A field of the wrong type (a number where the name goes) makes nlohmann's value() throw; that is a damaged file.
     try {
-        info.kind = j.value("$type", "");
+        info.kind = JsonString(j, "$type");
         info.format = j.value("format", 0u);
         info.type = j.value("type", "");
         info.type_version = j.value("type_version", 0u);
@@ -137,7 +138,7 @@ SaveResult ReadFromMemory(std::span<const u8> bytes, const std::string& source, 
     }
     // A field of the wrong type makes nlohmann's value() throw: that is a damaged file, not a crash.
     try {
-        if (envelope.value("$type", "") != kind) {
+        if (JsonString(envelope, "$type") != kind) {
             return Fail(SaveError::Corrupt, source + " isn't a readable " + std::string(kind) + " file");
         }
         if (envelope.value("format", 0u) == 0 || envelope.value("format", 0u) > kFormat) {

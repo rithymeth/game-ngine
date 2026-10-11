@@ -97,11 +97,11 @@ bool CreateProject(const std::filesystem::path& parent_dir, const std::string& n
 // ones are ignored (the reflection archive's usual tolerance); a file that
 // isn't JSON, or isn't a project file, fails. Warnings (e.g. a project saved
 // by a newer engine) go to `warnings` if given, otherwise to the log.
-bool LoadProject(const std::filesystem::path& project_file, ProjectSettings& out, std::string* error,
+[[nodiscard]] bool LoadProject(const std::filesystem::path& project_file, ProjectSettings& out, std::string* error,
                  std::vector<std::string>* warnings = nullptr);
 
 // Writes the settings (deterministic JSON, stamped with this engine version).
-bool SaveProject(const std::filesystem::path& project_file, const ProjectSettings& settings, std::string* error);
+[[nodiscard]] bool SaveProject(const std::filesystem::path& project_file, const ProjectSettings& settings, std::string* error);
 
 // Makes sure Content/, Config/, Saved/ and Intermediate/ exist (e.g. after a
 // fresh clone, where the ignored folders are missing).

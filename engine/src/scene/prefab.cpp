@@ -383,7 +383,7 @@ bool PrefabFromJson(const Json& json, PrefabData& out, std::string* error) {
 }
 
 static bool PrefabFromJsonImpl(const Json& json, PrefabData& out, std::string* error) {
-    if (!json.is_object() || json.value("$type", "") != "Prefab") {
+    if (!json.is_object() || JsonString(json, "$type") != "Prefab") {
         SetError(error, "Not an Aether prefab");
         return false;
     }

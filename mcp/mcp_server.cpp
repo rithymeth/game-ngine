@@ -1,6 +1,10 @@
 #include "mcp_server.h"
 
+#include <cstdint>
+#include <iomanip>
 #include <istream>
+#include <random>
+#include <sstream>
 #include <new>
 #include <ostream>
 
@@ -22,6 +26,26 @@ Json ErrorResponse(const Json& id, int code, const std::string& message) {
 
 Json OkResponse(const Json& id, Json result) {
     return {{"jsonrpc", "2.0"}, {"id", id}, {"result", std::move(result)}};
+}
+
+
+// FNV-1a 64: a stable fingerprint of the arguments for the audit log (not a security hash).
+std::string ArgsHash(const std::string& text) {
+    std::uint64_t hash = 1469598103934665603ull;
+    for (unsigned char c : text) {
+        hash ^= c;
+        hash *= 1099511628211ull;
+    }
+    std::ostringstream out;
+    out << std::hex << std::setw(16) << std::setfill('0') << hash;
+    return out.str();
+}
+
+std::string NewConfirmationToken() {
+    static std::mt19937_64 rng{std::random_device{}()};
+    std::ostringstream out;
+    out << std::hex << std::setw(16) << std::setfill('0') << rng();
+    return out.str();
 }
 
 // A protocol-level failure inside a handler (as opposed to a ToolError).
@@ -63,6 +87,26 @@ bool McpServer::AddTool(Tool tool) {
     return true;
 }
 
+std::chrono::steady_clock::time_point McpServer::Now() const {
+    return clock_ ? clock_() : std::chrono::steady_clock::now();
+}
+
+void McpServer::Audit(const std::string& tool, const std::string& args_key, const char* outcome) const {
+    if (!audit_) return;
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    audit_({{"time_ms", ms}, {"tool", tool}, {"args_hash", ArgsHash(args_key)}, {"outcome", outcome}});
+}
+
+bool McpServer::MarkDestructive(const std::string& name) {
+    for (Tool& tool : tools_) {
+        if (tool.name == name) {
+            tool.destructive = true;
+            return true;
+        }
+    }
+    return false;
+}
+
 Json McpServer::HandleToolCall(const Json& params) {
     if (!params.is_object() || !params.contains("name") || !params["name"].is_string()) {
         throw RpcError{kInvalidParams, "tools/call needs a string \"name\""};
@@ -84,6 +128,13 @@ Json McpServer::HandleToolCall(const Json& params) {
     if (!args.is_object()) {
         throw RpcError{kInvalidParams, "\"arguments\" must be an object"};
     }
+    // A confirmation token is not an argument of the tool; take it out before anything else reads the arguments.
+    std::string confirm_token;
+    if (const auto it = args.find("confirm_token"); it != args.end()) {
+        if (it->is_string()) confirm_token = it->get<std::string>();
+        args.erase(it);
+    }
+    const std::string args_key = args.dump();
     // The schema's "required" arguments must be there, before the handler runs.
     if (tool->input_schema.is_object()) {
         const auto required = tool->input_schema.find("required");
@@ -104,6 +155,44 @@ Json McpServer::HandleToolCall(const Json& params) {
                     throw RpcError{kInvalidParams, "Argument '" + it.key() + "' must be " + expected};
                 }
             }
+        }
+    }
+    if (policy_) {
+        const Permission permission = policy_->For(tool->name, tool->destructive);
+        if (permission == Permission::Deny) {
+            Audit(name, args_key, "denied");
+            return TextResult("The tool '" + name + "' is denied by this project's agent permissions", true);
+        }
+        if (permission == Permission::Confirm) {
+            const auto now = Now();
+            for (auto it = pending_.begin(); it != pending_.end();) {
+                it = it->second.expires <= now ? pending_.erase(it) : std::next(it);
+            }
+            const auto found = confirm_token.empty() ? pending_.end() : pending_.find(confirm_token);
+            if (!confirm_token.empty() &&
+                (found == pending_.end() || found->second.tool != name || found->second.args_key != args_key)) {
+                Audit(name, args_key, "confirmation_invalid");
+                return TextResult("The confirmation token is not valid for this call (it may have expired, been used already, or the arguments changed). "
+                                  "Call '" + name + "' without a token to get a new one",
+                                  true);
+            }
+            if (confirm_token.empty()) {
+                if (pending_.size() >= kMaxPendingConfirmations) {
+                    Audit(name, args_key, "confirmation_invalid");
+                    return TextResult("Too many confirmations are waiting; answer or wait for them to expire", true);
+                }
+                const std::string token = NewConfirmationToken();
+                pending_[token] = {name, args_key, now + kConfirmationLifetime};
+                Audit(name, args_key, "confirmation_required");
+                const Json answer = {{"status", "confirmation_required"},
+                                     {"tool", name},
+                                     {"token", token},
+                                     {"expires_in_seconds", static_cast<int>(kConfirmationLifetime.count())},
+                                     {"message", "This tool needs the person's approval. After they approve, call '" + name +
+                                                     "' again with the same arguments plus \"confirm_token\": \"" + token + "\"."}};
+                return TextResult(answer.dump(2), false);
+            }
+            pending_.erase(found); // single use
         }
     }
     try {
@@ -128,18 +217,23 @@ Json McpServer::HandleToolCall(const Json& params) {
             return response;
         }
         if (text.size() > kMaxResultBytes) {
+            Audit(name, args_key, "error");
             return TextResult("The result is too large (" + std::to_string(text.size()) + " bytes, limit " +
                                   std::to_string(kMaxResultBytes) + "); ask for less",
                               true);
         }
+        Audit(name, args_key, "ok");
         return TextResult(text, false);
     } catch (const ToolError& e) {
+        Audit(name, args_key, "error");
         return TextResult(e.what(), true);
     } catch (const Json::exception& e) {
+        Audit(name, args_key, "error");
         return TextResult(std::string("Bad arguments: ") + e.what(), true);
     } catch (const std::bad_alloc&) {
         throw;
     } catch (const std::exception& e) {
+        Audit(name, args_key, "error");
         return TextResult(std::string("The tool failed: ") + e.what(), true);
     }
 }

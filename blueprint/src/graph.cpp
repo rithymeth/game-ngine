@@ -195,7 +195,7 @@ bool BlueprintFromJsonImpl(const json& j, Blueprint& out, std::string* error) {
         if (error != nullptr) *error = text;
         return false;
     };
-    if (!j.is_object() || j.value("$type", "") != "Blueprint") {
+    if (!j.is_object() || JsonString(j, "$type") != "Blueprint") {
         return fail("not a Blueprint file");
     }
     if (JsonVersion(j) > kFormatVersion) {
@@ -257,6 +257,12 @@ bool BlueprintFromJsonImpl(const json& j, Blueprint& out, std::string* error) {
             if (pos.is_array() && pos.size() == 2 && pos[0].is_number() && pos[1].is_number()) {
                 node.x = pos[0].get<float>();
                 node.y = pos[1].get<float>();
+            }
+            // Nodes read their config and defaults as objects; anything else is a damaged file.
+            for (const char* key : {"config", "defaults"}) {
+                if (n.contains(key) && !n[key].is_object()) {
+                    return fail("graph '" + graph.name + "': node " + std::to_string(node.id) + " has a '" + key + "' that isn't an object");
+                }
             }
             node.config = n.value("config", json::object());
             node.defaults = n.value("defaults", json::object());

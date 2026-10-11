@@ -1,4 +1,5 @@
 #include "aether/sprite2d/atlas.h"
+#include "aether/core/json_util.h"
 
 #include "aether/platform/filesystem.h"
 
@@ -9,6 +10,10 @@
 #include <numeric>
 
 namespace aether::sprite2d {
+
+namespace {
+constexpr int kAtlasFormatVersion = 1;
+} // namespace
 
 const SpriteFrame* SpriteAtlas::FindFrame(std::string_view name) const {
     for (const SpriteFrame& f : frames) {
@@ -43,17 +48,19 @@ nlohmann::json AtlasToJson(const SpriteAtlas& atlas) {
     for (const SpriteClip& c : atlas.clips) {
         clips.push_back({{"name", c.name}, {"frames", c.frames}, {"fps", c.fps}, {"loop", c.loop}});
     }
-    return {{"$type", "SpriteAtlas"}, {"$version", 1},       {"texture", assets::ToString(atlas.texture)},
+    return {{"$type", "SpriteAtlas"}, {"$version", kAtlasFormatVersion}, {"texture", assets::ToString(atlas.texture)},
             {"width", atlas.width},   {"height", atlas.height}, {"frames", frames},
             {"clips", clips}};
 }
 
-bool AtlasFromJson(const nlohmann::json& data, SpriteAtlas& out, std::string* error) {
+namespace {
+bool AtlasFromJsonImpl(const nlohmann::json& data, SpriteAtlas& out, std::string* error) {
     const auto fail = [&](const std::string& why) {
         if (error) *error = why;
         return false;
     };
-    if (!data.is_object() || data.value("$type", "") != "SpriteAtlas") return fail("not a sprite atlas");
+    if (!data.is_object() || JsonString(data, "$type") != "SpriteAtlas") return fail("not a sprite atlas");
+    if (JsonVersion(data) > kAtlasFormatVersion) return fail("saved by a newer version of the engine");
     SpriteAtlas atlas;
     const std::string texture = data.value("texture", "");
     if (!texture.empty() && !assets::ParseAssetGuid(texture, atlas.texture)) return fail("bad texture GUID");
@@ -90,6 +97,12 @@ bool AtlasFromJson(const nlohmann::json& data, SpriteAtlas& out, std::string* er
     }
     out = std::move(atlas);
     return true;
+}
+} // namespace
+
+// A field of the wrong type makes nlohmann throw; a damaged atlas must fail, not end the process.
+bool AtlasFromJson(const nlohmann::json& data, SpriteAtlas& out, std::string* error) {
+    return GuardJsonLoader(error, "sprite atlas", [&] { return AtlasFromJsonImpl(data, out, error); });
 }
 
 bool LoadAtlas(const std::filesystem::path& file, SpriteAtlas& out, std::string* error) {

@@ -163,3 +163,43 @@ AETHER_TEST(Rpc_BlueprintsRouteThroughTheNetwork) {
     // The multicast, called on clients, ran on each of them locally.
     CHECK(sim.Weapon(c1, pawn)->effect == "bp" && sim.Weapon(c2, pawn)->effect == "bp" && sim.Weapon(pawn).effect.empty());
 }
+
+AETHER_TEST(Rpc_ServerThrottlesAFloodingClient) {
+    RpcSim sim;
+    auto& c1 = sim.AddClient();
+    sim.Step(10);
+    const Entity pawn = sim.Spawn({0, 0, 0}, sim.peers[0]);
+    sim.Step(10);
+    const Entity mine = c1.replication->FindEntity(sim.NetId(pawn));
+    // 500 calls in one frame: the burst (60) runs, the rest are dropped, and the server stays well.
+    for (int i = 0; i < 500; ++i) Call(c1.world, mine, "Fire", {i32{1}});
+    sim.Step(3);
+    CHECK(sim.Weapon(pawn).shots <= 70);
+    CHECK(sim.rpc->Stats().throttled > 400);
+    // After a pause the client can call again.
+    sim.Step(120);
+    const i32 before = sim.Weapon(pawn).shots;
+    Call(c1.world, mine, "Fire", {i32{1}});
+    sim.Step(5);
+    CHECK(sim.Weapon(pawn).shots == before + 1);
+}
+
+AETHER_TEST(Rpc_ServerRefusesClientKindsAndGarbage) {
+    RpcSim sim;
+    auto& c1 = sim.AddClient();
+    sim.Step(10);
+    const Entity pawn = sim.Spawn({0, 0, 0}, sim.peers[0]);
+    sim.Step(10);
+    // Truncated and hostile calls are counted and never run.
+    net::NetEvent junk;
+    junk.type = net::NetEventType::Message;
+    junk.peer = sim.peers[0];
+    junk.channel = 0;
+    junk.data = {3, 0xFF, 0xFF}; // an RPC header cut short
+    CHECK(sim.rpc->HandleEvent(junk));
+    CHECK(sim.rpc->Stats().malformed == 1);
+    junk.data = {3, 1, 0, 0, 0, 9, 9, 9, 9, 8, 8, 8, 8, 0}; // a real net id, unknown component
+    CHECK(sim.rpc->HandleEvent(junk));
+    CHECK(sim.rpc->Stats().unknown == 1 && sim.Weapon(pawn).shots == 0);
+    (void)c1;
+}

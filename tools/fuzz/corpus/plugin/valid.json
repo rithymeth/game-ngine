@@ -1,0 +1,1 @@
+{"$type":"Plugin","name":"Coins","version":"1.0.0","abi":1,"modules":[{"name":"Coins"}],"dependencies":[{"name":"Core","min_version":"1.0"}]}

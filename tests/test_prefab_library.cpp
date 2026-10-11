@@ -67,7 +67,7 @@ struct Project {
     ~Project() { stdfs::remove_all(dir); }
 
     assets::AssetGuid Write(const std::string& path, const PrefabData& data) {
-        SavePrefab(data, dir / "Content" / path);
+        AETHER_CHECK(SavePrefab(data, dir / "Content" / path));
         db->Scan();
         return db->FindByPath(path)->guid;
     }
@@ -222,7 +222,7 @@ AETHER_TEST(PrefabLibrary_FileEditsReachInstancesThroughHotReload) {
 
     // Edited outside the editor (a text editor, a version-control update).
     coin.entities[0].components["Purse"]["gold"] = 77;
-    SavePrefab(coin, p.dir / "Content/coin.aprefab");
+    AETHER_CHECK(SavePrefab(coin, p.dir / "Content/coin.aprefab"));
     stdfs::last_write_time(p.dir / "Content/coin.aprefab", stdfs::file_time_type::clock::now() + 10s);
     reloader.Update(t += 10ms);
     std::vector<assets::AssetChange> changes = reloader.Update(t += 300ms);

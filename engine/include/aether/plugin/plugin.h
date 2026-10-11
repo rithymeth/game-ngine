@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -66,8 +67,13 @@ struct PluginDescriptor {
 
 inline constexpr const char* kPluginExtension = ".aplugin";
 
-bool LoadPluginDescriptor(const std::filesystem::path& file, PluginDescriptor& out, std::string* error = nullptr);
-bool SavePluginDescriptor(const std::filesystem::path& file, const PluginDescriptor& descriptor,
+// Reads a descriptor from bytes (`source` names it in messages). A descriptor larger than kMaxPluginDescriptorBytes,
+// not an object, of the wrong type, or with an invalid plugin or module name is refused, never thrown on.
+inline constexpr usize kMaxPluginDescriptorBytes = 1024 * 1024;
+[[nodiscard]] bool LoadPluginDescriptorFromMemory(std::span<const u8> bytes, const std::string& source, PluginDescriptor& out,
+                                                  std::string* error = nullptr);
+[[nodiscard]] bool LoadPluginDescriptor(const std::filesystem::path& file, PluginDescriptor& out, std::string* error = nullptr);
+[[nodiscard]] bool SavePluginDescriptor(const std::filesystem::path& file, const PluginDescriptor& descriptor,
                           std::string* error = nullptr);
 // Valid names are identifiers: a letter, then letters, digits and '_'.
 bool IsValidPluginName(const std::string& name);
@@ -83,7 +89,7 @@ bool CreatePluginScaffold(const std::filesystem::path& parent, const std::string
 // The plugins a project gets: the engine's (EnginePluginsDir) and its own
 // (<project>/Plugins), discovered and resolved against its `plugins` list.
 class PluginManager;
-bool ResolveProjectPlugins(const std::filesystem::path& project_file, PluginManager& out, std::string* error = nullptr,
+[[nodiscard]] bool ResolveProjectPlugins(const std::filesystem::path& project_file, PluginManager& out, std::string* error = nullptr,
                            std::vector<std::string>* warnings = nullptr);
 
 // --- Modules -----------------------------------------------------------------
@@ -105,7 +111,7 @@ public:
     using Factory = std::function<std::unique_ptr<IModule>()>;
     static ModuleRegistry& Get();
     // False (and nothing registered) when the name is taken.
-    bool Register(const std::string& name, Factory factory);
+    [[nodiscard]] bool Register(const std::string& name, Factory factory);
     bool Has(const std::string& name) const;
     std::unique_ptr<IModule> Create(const std::string& name) const;
     std::vector<std::string> Names() const;
@@ -153,7 +159,7 @@ public:
     // after its dependencies. False with `error` for a missing or too-old
     // required dependency, a plugin that needs a newer engine, an unknown
     // requested plugin, or a dependency cycle. Warnings go to `warnings`.
-    bool Resolve(const std::vector<std::string>& requested, std::string* error = nullptr,
+    [[nodiscard]] bool Resolve(const std::vector<std::string>& requested, std::string* error = nullptr,
                  std::vector<std::string>* warnings = nullptr);
     // Enabled plugins in dependency order (after Resolve).
     std::vector<const PluginInfo*> Enabled() const;
@@ -190,7 +196,7 @@ private:
 namespace detail {
 struct ModuleRegistrar {
     ModuleRegistrar(const char* name, ModuleRegistry::Factory factory) {
-        ModuleRegistry::Get().Register(name, std::move(factory));
+        (void)ModuleRegistry::Get().Register(name, std::move(factory)); // a static initialiser can't report; a duplicate name keeps the first
     }
 };
 } // namespace detail

@@ -27,7 +27,7 @@ struct AssetGuid {
 
 AssetGuid NewAssetGuid();
 std::string ToString(const AssetGuid& guid);
-bool ParseAssetGuid(std::string_view text, AssetGuid& out);
+[[nodiscard]] bool ParseAssetGuid(std::string_view text, AssetGuid& out);
 
 namespace detail {
 nlohmann::json AssetGuidToJson(const void* object);
