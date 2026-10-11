@@ -199,7 +199,7 @@ when advisory gates become required.
 | Step | Work | Needs |
 |---|---|---|
 | **48.1** *(started: `tools/gate.py` validates a versioned production-gates table, reports pass/fail/n-a statuses, and supports a strict `--require-complete` release check; initial rows are honestly marked `n/a yet`; the table is a CTest check)* | `tools/gate.py`: checks each row of the production gate table and reports pass or fail; rows start as "n/a yet". | - |
-| **48.2** | Format-version audit; migration tools for every serialized format; a corpus of old projects in the tests. | - |
+| **48.2** | *(started: `docs/design/format_versions.txt` lists every serialized format with its version and what a loader does with an older or newer file; `tests/test_format_versions.cpp` checks that each JSON loader refuses a file from a newer engine and that the default saved documents carry a version and round-trip. The audit found three loaders that accepted any version (sprite atlas, tileset, tilemap); they now refuse a newer one. No format has a second version yet, so the old-project corpus and migration tools wait for the first bump)* Format-version audit; migration tools for every serialized format; a corpus of old projects in the tests. | - |
 | **48.3** | API freeze: promote the stable annotations and block removals in CI. | 37.3 |
 | **48.4** | Three sample games (the existing coin run and gem hop, plus one new). | - |
 | **48.5** | Release builds with checksums and signing (extends the release job). *Signing needs certificates: the user's decision.* | - |
