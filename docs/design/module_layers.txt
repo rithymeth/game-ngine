@@ -26,6 +26,7 @@ aether_replay_pak 2
 aether_replay_plugin 2
 aether_replay_prefab 2
 aether_replay_scene 2
+aether_replay_sprite2d 2
 aether_replay_texture 2
 aether_rhi_demo 2
 aether_sandbox 2
