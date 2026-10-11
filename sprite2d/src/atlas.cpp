@@ -11,6 +11,10 @@
 
 namespace aether::sprite2d {
 
+namespace {
+constexpr int kAtlasFormatVersion = 1;
+} // namespace
+
 const SpriteFrame* SpriteAtlas::FindFrame(std::string_view name) const {
     for (const SpriteFrame& f : frames) {
         if (f.name == name) return &f;
@@ -44,7 +48,7 @@ nlohmann::json AtlasToJson(const SpriteAtlas& atlas) {
     for (const SpriteClip& c : atlas.clips) {
         clips.push_back({{"name", c.name}, {"frames", c.frames}, {"fps", c.fps}, {"loop", c.loop}});
     }
-    return {{"$type", "SpriteAtlas"}, {"$version", 1},       {"texture", assets::ToString(atlas.texture)},
+    return {{"$type", "SpriteAtlas"}, {"$version", kAtlasFormatVersion}, {"texture", assets::ToString(atlas.texture)},
             {"width", atlas.width},   {"height", atlas.height}, {"frames", frames},
             {"clips", clips}};
 }
@@ -56,6 +60,7 @@ bool AtlasFromJsonImpl(const nlohmann::json& data, SpriteAtlas& out, std::string
         return false;
     };
     if (!data.is_object() || JsonString(data, "$type") != "SpriteAtlas") return fail("not a sprite atlas");
+    if (JsonVersion(data) > kAtlasFormatVersion) return fail("saved by a newer version of the engine");
     SpriteAtlas atlas;
     const std::string texture = data.value("texture", "");
     if (!texture.empty() && !assets::ParseAssetGuid(texture, atlas.texture)) return fail("bad texture GUID");

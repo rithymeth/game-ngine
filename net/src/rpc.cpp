@@ -3,6 +3,7 @@
 #include "aether/core/log.h"
 #include "aether/reflection/bytes.h"
 
+#include <algorithm>
 #include <vector>
 
 namespace aether::net {
@@ -114,7 +115,24 @@ bool RpcRouter::HandleEvent(const NetEvent& event) {
     return true;
 }
 
+void RpcRouter::Tick(f64 now) {
+    if (!IsServer() || config_.calls_per_second <= 0) return;
+    const f64 add = ticked_ ? std::max(0.0, now - last_tick_) * config_.calls_per_second : config_.call_burst;
+    ticked_ = true;
+    last_tick_ = now;
+    for (auto& [peer, bucket] : buckets_) bucket.tokens = std::min(config_.call_burst, bucket.tokens + add);
+}
+
 void RpcRouter::Receive(PeerId from, std::span<const u8> data) {
+    if (IsServer() && ticked_ && config_.calls_per_second > 0) {
+        auto [it, fresh] = buckets_.try_emplace(from);
+        if (fresh) it->second.tokens = config_.call_burst;
+        if (it->second.tokens < 1.0) {
+            ++stats_.throttled;
+            return;
+        }
+        it->second.tokens -= 1.0;
+    }
     In in{data};
     in.U8();
     const u32 net_id = in.U32(), component_hash = in.U32(), function_hash = in.U32();

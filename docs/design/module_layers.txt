@@ -3,6 +3,8 @@
 aether_bcenc 0
 aether_meshopt 0
 aether_engine 1
+aether_alloc_audit 4
+aether_soak 3
 aether_animation 2
 aether_audio 2
 aether_bench_lib 2
@@ -19,6 +21,7 @@ aether_net 2
 aether_pak 2
 aether_physics 2
 aether_renderer 2
+aether_replay_ai 4
 aether_replay_assetmeta 2
 aether_replay_gltf 2
 aether_replay_input 2
@@ -28,6 +31,7 @@ aether_replay_prefab 2
 aether_replay_scene 2
 aether_replay_sprite2d 3
 aether_replay_texture 2
+aether_replay_files 3
 aether_replay_ui 4
 aether_rhi_demo 2
 aether_sandbox 2

@@ -32,6 +32,14 @@ struct ReplicationConfig {
     usize byte_budget = 1000; // per snapshot per client (at most Connection::kMaxFragment)
     f64 send_interval = 1.0 / 20.0;
     u32 history = 64;         // snapshots remembered per client (deltas are against one of them)
+    // Server-wide cap on snapshot bytes per second, shared fairly between connected clients (each
+    // snapshot is limited to min(byte_budget, bytes_per_second * send_interval / clients), never below
+    // kMinSnapshotBytes). 0 = no cap: byte_budget alone applies, as before.
+    usize bytes_per_second = 0;
+    static constexpr usize kMinSnapshotBytes = 64;
+    // The profile keeps per-entity costs for this many entities; beyond it, the costs of despawned ones are folded
+    // into NetProfile::retired_*.
+    usize max_profiled_entities = 4096;
 };
 
 // The replicated state of one entity: per component (by name hash) the
@@ -80,6 +88,7 @@ struct NetProfile {
         std::map<u32, ComponentCost> components; // by name hash
     };
     std::unordered_map<u32, EntityCost> entities; // by net id
+    u64 retired_entities = 0, retired_bytes = 0; // despawned entities folded away once the table is full (a soak found it growing forever)
     u64 snapshot_bytes = 0; // everything, headers and despawns included
     u32 snapshots = 0, despawns = 0;
     f64 since = 0.0; // when it was reset (the caller's clock)
@@ -103,6 +112,17 @@ public:
     // of an entity it owns; without that, everything is relevant.
     void SetViewer(PeerId peer, const Vec3& position);
     void ClearViewer(PeerId peer);
+
+    // Game-side relevancy, ANDed with the radius rule: false hides the entity from that client (it is
+    // despawned there). Called on the sending thread for every candidate, so keep it cheap.
+    using RelevancyFn = std::function<bool(PeerId peer, Entity entity)>;
+    void SetRelevancy(RelevancyFn fn) { relevancy_ = std::move(fn); }
+    // Scales the priority an entity accumulates per snapshot for a client (default 1; <= 0 counts as the
+    // smallest positive value so nothing starves forever). `distance` is from the client's viewer, or 0.
+    using PriorityFn = std::function<f32(PeerId peer, Entity entity, f32 distance)>;
+    void SetPriority(PriorityFn fn) { priority_ = std::move(fn); }
+    // The per-snapshot byte limit one client gets right now.
+    usize SnapshotBudget() const;
 
     // Takes the acks out of the host's events; true when `event` was one
     // (or a disconnect it needed to see; those are left for the game too: false).
@@ -155,6 +175,9 @@ private:
     std::unordered_map<u32, Meta> meta_;
     std::unordered_map<PeerId, Peer> peers_;
     NetProfile profile_;
+    RelevancyFn relevancy_;
+    PriorityFn priority_;
+    usize clients_ = 1; // connected clients at the last Update, for the shared bandwidth cap
 };
 
 // Rebuilds the server's world from its snapshots (Phase 22 step 2): spawns

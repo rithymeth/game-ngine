@@ -5,6 +5,8 @@
 #include "aether/scene/serialization.h"
 
 #include <algorithm>
+#include <chrono>
+#include <mutex>
 #include <cmath>
 #include <fstream>
 #include <unordered_set>
@@ -25,6 +27,22 @@ std::vector<Entity> AllEntities(const World& world) {
 u64 Key(Entity e) { return (static_cast<u64>(e.generation) << 32) | e.index; }
 const std::vector<Entity> kNone;
 } // namespace
+
+struct WorldStreamer::Shared {
+    struct Result {
+        bool ok = false;
+        std::vector<u8> bytes;
+    };
+    std::mutex mutex;
+    std::set<CellCoord> inflight;       // requested, not yet finished
+    std::map<CellCoord, Result> ready;  // finished, waiting for Update to apply
+};
+
+usize WorldStreamer::InFlight() const {
+    if (!shared_) return 0;
+    std::lock_guard lock(shared_->mutex);
+    return shared_->inflight.size() + shared_->ready.size();
+}
 
 WorldStreamer::WorldStreamer(World& world, WorldIndex index, CellLoader loader, GuidIndex* guids)
     : world_(world), index_(std::move(index)), loader_(std::move(loader)), guids_(guids) {
@@ -76,6 +94,10 @@ bool WorldStreamer::LoadCell(const CellCoord& cell) {
         problems_.push_back("cell " + CellName(cell) + " couldn't be read");
         return false;
     }
+    return ApplyCell(cell, bytes);
+}
+
+bool WorldStreamer::ApplyCell(const CellCoord& cell, std::vector<u8>& bytes) {
     std::unordered_set<u64> before;
     for (Entity e : AllEntities(world_)) before.insert(Key(e));
     if (!LoadSceneFromMemory(world_, bytes, "cell " + CellName(cell))) {
@@ -161,6 +183,10 @@ void WorldStreamer::Update() {
     }
     std::sort(wanted.begin(), wanted.end());
     pending_.clear();
+    if (executor_) {
+        UpdateAsync(wanted);
+        return;
+    }
     usize loads = 0;
     for (const auto& [n, cell] : wanted) {
         if (loads < max_loads_per_update) {
@@ -170,6 +196,70 @@ void WorldStreamer::Update() {
             pending_.push_back(cell);
         }
     }
+}
+
+void WorldStreamer::UpdateAsync(const std::vector<std::pair<f32, CellCoord>>& wanted) {
+    if (!shared_) shared_ = std::make_shared<Shared>();
+    const auto start = std::chrono::steady_clock::now();
+    std::set<CellCoord> want;
+    for (const auto& [n, cell] : wanted) want.insert(cell);
+
+    // Apply finished reads, nearest first, within the budgets; drop the ones nobody wants any more.
+    std::map<CellCoord, Shared::Result> ready;
+    {
+        std::lock_guard lock(shared_->mutex);
+        ready.swap(shared_->ready);
+    }
+    usize applied = 0, entities = 0;
+    std::vector<std::pair<CellCoord, Shared::Result>> later;
+    for (const auto& [n, cell] : wanted) {
+        auto it = ready.find(cell);
+        if (it == ready.end()) continue;
+        const bool over_entities = max_entities_per_update != 0 && entities >= max_entities_per_update;
+        const bool over_time = apply_budget_ms > 0.0 && applied > 0 &&
+            std::chrono::duration<f64, std::milli>(std::chrono::steady_clock::now() - start).count() >= apply_budget_ms;
+        if (applied >= max_loads_per_update || over_entities || over_time) {
+            later.emplace_back(cell, std::move(it->second));
+        } else if (!it->second.ok) {
+            failed_[cell] = CellState::Failed;
+            problems_.push_back("cell " + CellName(cell) + " couldn't be read");
+        } else if (ApplyCell(cell, it->second.bytes)) {
+            entities += events_.back().entities;
+            ++applied;
+        }
+        ready.erase(it);
+    }
+    {
+        // Unapplied results wait for the next Update; unwanted ones are discarded with `ready`.
+        std::lock_guard lock(shared_->mutex);
+        for (auto& [cell, result] : later) shared_->ready[cell] = std::move(result);
+    }
+
+    // Request more reads for the nearest wanted cells that are not requested yet.
+    for (const auto& [n, cell] : wanted) {
+        if (loaded_.count(cell) != 0 || failed_.count(cell) != 0) continue;
+        bool request = false;
+        {
+            std::lock_guard lock(shared_->mutex);
+            if (shared_->ready.count(cell) != 0 || shared_->inflight.count(cell) != 0) continue;
+            if (shared_->inflight.size() + shared_->ready.size() < max_inflight_reads) {
+                shared_->inflight.insert(cell);
+                request = true;
+            }
+        }
+        if (!request) {
+            pending_.push_back(cell);
+            continue;
+        }
+        executor_([shared = shared_, loader = loader_, cell] {
+            Shared::Result result;
+            result.ok = loader && loader(cell, result.bytes);
+            std::lock_guard lock(shared->mutex);
+            shared->inflight.erase(cell);
+            shared->ready[cell] = std::move(result);
+        });
+    }
+    for (const auto& [cell, result] : later) pending_.push_back(cell);
 }
 
 bool FloatingOrigin::Update(World& world, const Vec3& focus, const GuidIndex* guids) {

@@ -3,6 +3,7 @@
 # tests headless on every platform.
 add_library(aether_nav STATIC
     src/navmesh.cpp
+    src/hierarchical.cpp
     src/dynamic.cpp
     src/components.cpp
     src/crowd.cpp
