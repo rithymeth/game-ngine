@@ -539,7 +539,10 @@ bool NavMesh::NearestPoint(const Vec3& p, Vec3& out, const Vec3& extents, u8* ar
 }
 
 bool NavMesh::FindPath(const Vec3& start, const Vec3& end, NavPath& out, const NavQueryFilter& f) const {
-    out = {};
+    // Clear rather than reassign: a NavPath reused from one query to the next keeps its capacity (no allocation).
+    out.status = PathStatus::None;
+    out.points.clear();
+    out.flags.clear();
     if (query_ == nullptr) return false;
     const AreaFilter filter(f);
     const float ext[3] = {2.0f, 4.0f, 2.0f};
@@ -563,6 +566,8 @@ bool NavMesh::FindPath(const Vec3& start, const Vec3& end, NavPath& out, const N
     unsigned char straight_flags[kMaxPathPolys];
     int nstraight = 0;
     if (dtStatusFailed(query_->findStraightPath(s, target, polys, npolys, straight, straight_flags, nullptr, &nstraight, kMaxPathPolys))) return false;
+    out.points.reserve(static_cast<usize>(nstraight));
+    out.flags.reserve(static_cast<usize>(nstraight));
     for (int i = 0; i < nstraight; ++i) {
         out.points.push_back(Vec3(straight[i * 3], straight[i * 3 + 1], straight[i * 3 + 2]));
         out.flags.push_back((straight_flags[i] & DT_STRAIGHTPATH_OFFMESH_CONNECTION) != 0 ? kNavPointLinkStart : 0);

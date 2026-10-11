@@ -496,7 +496,7 @@ endif()
 
 # Phase 23: the functional test runner (headless, any platform).
 add_subdirectory(tools/functional)
-if(TARGET aether_ai)
+if(TARGET aether_ai AND TARGET aether_nav)
     add_subdirectory(tools/alloc_audit)
 endif()
 add_subdirectory(tools/fuzz)
