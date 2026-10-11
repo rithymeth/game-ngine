@@ -37,6 +37,9 @@ struct ReplicationConfig {
     // kMinSnapshotBytes). 0 = no cap: byte_budget alone applies, as before.
     usize bytes_per_second = 0;
     static constexpr usize kMinSnapshotBytes = 64;
+    // The profile keeps per-entity costs for this many entities; beyond it, the costs of despawned ones are folded
+    // into NetProfile::retired_*.
+    usize max_profiled_entities = 4096;
 };
 
 // The replicated state of one entity: per component (by name hash) the
@@ -85,6 +88,7 @@ struct NetProfile {
         std::map<u32, ComponentCost> components; // by name hash
     };
     std::unordered_map<u32, EntityCost> entities; // by net id
+    u64 retired_entities = 0, retired_bytes = 0; // despawned entities folded away once the table is full (a soak found it growing forever)
     u64 snapshot_bytes = 0; // everything, headers and despawns included
     u32 snapshots = 0, despawns = 0;
     f64 since = 0.0; // when it was reset (the caller's clock)

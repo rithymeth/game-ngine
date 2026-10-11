@@ -349,3 +349,19 @@ AETHER_TEST(Replication_PriorityFunctionOrdersSends) {
     for (const auto& [net_id, e] : client.rc->Entities()) found = found || net_id == sim.NetId(vip);
     CHECK(found);
 }
+
+AETHER_TEST(Replication_ProfileTableStaysBounded) {
+    ReplicationConfig cfg;
+    cfg.max_profiled_entities = 16;
+    ReplSim sim(cfg);
+    sim.AddClient();
+    for (int round = 0; round < 10; ++round) {
+        std::vector<Entity> made;
+        for (int i = 0; i < 12; ++i) made.push_back(sim.Spawn({static_cast<f32>(i), 0, 0}));
+        sim.Step(20);
+        for (Entity e : made) sim.server_world.DestroyEntity(e);
+        sim.Step(20);
+    }
+    CHECK(sim.rs->Profile().entities.size() <= 16 + 12);
+    CHECK(sim.rs->Profile().retired_entities > 0 && sim.rs->Profile().retired_bytes > 0);
+}

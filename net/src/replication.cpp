@@ -309,6 +309,17 @@ void ReplicationServer::Update(f64 now) {
     ReplicatedState current;
     Gather(current);
     clients_ = std::max<usize>(connected.size(), 1);
+    if (profile_.entities.size() > config_.max_profiled_entities) {
+        for (auto it = profile_.entities.begin(); it != profile_.entities.end();) {
+            if (entities_.count(it->first) != 0) {
+                ++it;
+                continue;
+            }
+            ++profile_.retired_entities;
+            profile_.retired_bytes += it->second.bytes;
+            it = profile_.entities.erase(it);
+        }
+    }
     for (PeerId id : connected) {
         Peer& p = peers_[id];
         if (p.history.empty()) p.history.resize(config_.history);
