@@ -175,7 +175,7 @@ when advisory gates become required.
 |---|---|---|
 | **46.1** | CMake package config (`install(EXPORT)`, `AetherConfig.cmake`) for all modules. | - |
 | **46.2** | *(done: `kPluginAbi` and `PluginDescriptor::abi`; a plugin built for another ABI is refused with a clear message when it is enabled, a descriptor without the field is accepted, new scaffolds carry the current ABI)* A versioned plugin ABI (an ABI integer in the descriptor and the load path). | 37.3 |
-| **46.3** | Plugin packaging and dependency resolution. | 46.2 |
+| **46.3** | Plugin packaging and dependency resolution. **Done** (`aether/plugin/package.h`): `PackagePlugin` to one `.apkg`, `InspectPluginPackage`, `UnmetDependencies`, and a staged `InstallPluginPackage` that refuses mismatched names, several folders, newer ABIs and damaged entries. Not yet: a CLI or editor command, and installing dependencies automatically. | 46.2 |
 | **46.4** | Templates built in CI against the installed SDK. | 46.1 |
 | **46.5** | A clean-machine SDK test job: install into a fresh prefix, build a sample in a container. Runs on Linux here. | 46.1 |
 | **46.6** | Marketplace specification and a local registry. *The hosting and signing model is the user's decision.* | 46.3 |

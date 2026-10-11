@@ -2,6 +2,7 @@
 #include "aether/core/version.h"
 #include "aether/pak/pak.h"
 #include "aether/player/game.h"
+#include "aether/plugin/package.h"
 #include "aether/plugin/plugin.h"
 #include "aether/project/project.h"
 #include "aether/reflection/serialize.h"
@@ -315,4 +316,83 @@ AETHER_TEST(Plugin_DescriptorLoaderRefusesMalformedInputWithoutThrowing) {
     CHECK(!load("[]", error));
     CHECK(!load("", error));
     CHECK(!load(std::string(kMaxPluginDescriptorBytes + 1, ' '), error) && error.find("too large") != std::string::npos);
+}
+
+AETHER_TEST(Plugin_PackageRoundTripAndInstall) {
+    const stdfs::path dir = Dir("Package");
+    PluginDescriptor d = Desc("Coins", {{"Physics", "1.2", false}, {"Fancy", "", true}}, {{"Coins", ModuleType::Runtime, LoadingPhase::Default}});
+    d.has_content = true;
+    d.version = "2.0.0";
+    Install(dir / "src", d);
+    stdfs::create_directories(dir / "src/Coins/Content/Textures");
+    std::ofstream(dir / "src/Coins/Content/Textures/coin.txt") << "shiny";
+    std::string error;
+    CHECK(PackagePlugin(dir / "src/Coins", dir / "Coins.apkg", &error));
+
+    PluginDescriptor seen;
+    CHECK(InspectPluginPackage(dir / "Coins.apkg", seen, &error) && seen.name == "Coins" && seen.version == "2.0.0");
+
+    // Dependencies: Physics 1.2+ is required, Fancy is optional.
+    PluginInfo physics;
+    physics.descriptor = Desc("Physics");
+    physics.descriptor.version = "1.0.0";
+    CHECK(UnmetDependencies(seen, {}).size() == 1);
+    CHECK(UnmetDependencies(seen, {physics}).size() == 1 && UnmetDependencies(seen, {physics})[0].find("found 1.0.0") != std::string::npos);
+    physics.descriptor.version = "1.3.0";
+    CHECK(UnmetDependencies(seen, {physics}).empty());
+
+    // Install, refuse a second install, replace.
+    CHECK(InstallPluginPackage(dir / "Coins.apkg", dir / "Plugins", false, &error));
+    CHECK(stdfs::exists(dir / "Plugins/Coins/Coins.aplugin") && stdfs::exists(dir / "Plugins/Coins/Content/Textures/coin.txt"));
+    CHECK(!InstallPluginPackage(dir / "Coins.apkg", dir / "Plugins", false, &error) && error.find("already exists") != std::string::npos);
+    CHECK(InstallPluginPackage(dir / "Coins.apkg", dir / "Plugins", true, &error));
+    CHECK(!stdfs::exists(dir / "Plugins/.Coins.previous") && !stdfs::exists(dir / "Plugins/.Coins.installing"));
+
+    // The installed folder is discovered like any other.
+    PluginManager manager;
+    manager.AddSearchPath(dir / "Plugins", PluginSource::Project);
+    manager.Discover();
+    CHECK(manager.Find("Coins") != nullptr);
+}
+
+AETHER_TEST(Plugin_PackageRefusesHostileArchives) {
+    const stdfs::path dir = Dir("PackageHostile");
+    std::string error;
+    PluginDescriptor d = Desc("Good");
+    PluginDescriptor out;
+
+    // A descriptor for another name than the folder.
+    {
+        pak::PakWriter w;
+        CHECK(SavePluginDescriptor(dir / "tmp.aplugin", Desc("Other")));
+        CHECK(w.AddFile("Good/Good.aplugin", (dir / "tmp.aplugin").string()));
+        CHECK(w.Write((dir / "mismatch.apkg").string()));
+        CHECK(!InspectPluginPackage(dir / "mismatch.apkg", out, &error) && error.find("folder") != std::string::npos);
+    }
+    // Two top folders.
+    {
+        pak::PakWriter w;
+        CHECK(SavePluginDescriptor(dir / "g.aplugin", d));
+        CHECK(w.AddFile("Good/Good.aplugin", (dir / "g.aplugin").string()));
+        CHECK(w.Add("Evil/payload.txt", std::string("x")));
+        CHECK(w.Write((dir / "two.apkg").string()));
+        CHECK(!InspectPluginPackage(dir / "two.apkg", out, &error));
+        CHECK(!InstallPluginPackage(dir / "two.apkg", dir / "Plugins", false, &error));
+        CHECK(!stdfs::exists(dir / "Plugins/Good") && !stdfs::exists(dir / "Plugins/Evil"));
+    }
+    // A traversal path is not even a legal archive path.
+    {
+        pak::PakWriter w;
+        CHECK(!w.Add("Good/../../escape.txt", std::string("x")));
+    }
+    // A plugin for another ABI.
+    {
+        PluginDescriptor future = Desc("Future");
+        future.abi = kPluginAbi + 1;
+        Install(dir / "src", future);
+        CHECK(!PackagePlugin(dir / "src/Future", dir / "Future.apkg", &error) && error.find("ABI") != std::string::npos);
+    }
+    // Not an archive at all.
+    std::ofstream(dir / "junk.apkg") << "not a package";
+    CHECK(!InspectPluginPackage(dir / "junk.apkg", out, &error));
 }
