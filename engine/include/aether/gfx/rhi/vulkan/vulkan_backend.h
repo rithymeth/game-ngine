@@ -36,6 +36,7 @@ struct BufferRecord {
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkDeviceSize size_bytes = 0;
     void* mapped = nullptr;
+    VkDescriptorSet constants_set = VK_NULL_HANDLE; // frame constants: the set that points at this buffer (see CreateConstantBuffer)
 };
 
 // A real (device-local, staged) sampled texture — unlike BufferRecord above,
@@ -81,6 +82,15 @@ public:
     const BufferRecord& GetBuffer(BufferHandle handle) const { return buffers_[handle.index]; }
 
     SampledTextureHandle CreateTexture(u32 width, u32 height, const u8* rgba8_pixels) override;
+    bool SupportsCompressedTexture(CompressedTextureFormat format) const override;
+    SampledTextureHandle CreateCompressedTexture(CompressedTextureFormat format, u32 width, u32 height, std::span<const CompressedMip> mips) override;
+
+    // Frame constants (PipelineDesc::frame_constants_size_bytes): descriptor set 2, one uniform buffer at binding 0, which is where the HLSL's
+    // `register(b0, space2)` lands under DXC's default mapping (space N is set N, register bN is binding N).
+    bool SupportsFrameConstants() const override { return true; }
+    BufferHandle CreateConstantBuffer(u64 size_bytes) override;
+    void UpdateConstantBuffer(BufferHandle buffer, const void* data, u64 size_bytes) override { UpdateVertexBuffer(buffer, data, size_bytes); }
+    VkDescriptorSetLayout FrameConstantsSetLayout() const { return frame_constants_set_layout_; }
 
     // The device-global bindless texture table — TWO descriptor sets, not
     // one: set 0 is a SAMPLED_IMAGE array (kMaxBindlessTextures slots,
@@ -164,6 +174,11 @@ private:
     VkDescriptorSet bindless_texture_set_ = VK_NULL_HANDLE;
     VkDescriptorSet bindless_sampler_set_ = VK_NULL_HANDLE;
     VkSampler bindless_sampler_ = VK_NULL_HANDLE;
+    // Frame constants: one uniform buffer per set, one set per constant buffer, allocated from this pool.
+    VkDescriptorSetLayout frame_constants_set_layout_ = VK_NULL_HANDLE;
+    VkDescriptorPool frame_constants_pool_ = VK_NULL_HANDLE;
+    static constexpr u32 kMaxConstantBuffers = 64;
+    u32 constant_buffer_count_ = 0;
 
     // A 1x1 white dummy image, permanently retained for slot zero and also
     // referenced by every other bindless descriptor slot before real
@@ -176,6 +191,15 @@ private:
     BufferHandle CreateBufferInternal(const void* data, u64 size_bytes);
     void CreateBindlessTextureInfrastructure();
     SampledTextureRecord UploadTextureRecord(u32 width, u32 height, const u8* rgba8_pixels);
+    // One image of `format` with the given levels (largest first; each `size` bytes of tightly packed texels or blocks), staged and copied.
+    struct ImageLevel {
+        const u8* data = nullptr;
+        u64 size = 0;
+        u32 width = 0, height = 0;
+    };
+    SampledTextureRecord UploadImageRecord(VkFormat format, u32 width, u32 height, const std::vector<ImageLevel>& levels);
+    // Writes `record` into slot `index` of the bindless table.
+    void WriteBindlessTexture(u32 index, const SampledTextureRecord& record);
 };
 
 // A window swap chain (VkSurfaceKHR + VkSwapchainKHR) or, when created
@@ -303,6 +327,7 @@ public:
     void BindIndexBuffer(BufferHandle buffer, IndexFormat format) override;
     void DrawIndexed(u32 index_count) override;
     void BindBindlessTextures() override;
+    void BindFrameConstants(BufferHandle buffer) override;
 
     void* NativeHandle() const override { return command_buffer_; }
 

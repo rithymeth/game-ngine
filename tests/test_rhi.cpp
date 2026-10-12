@@ -183,12 +183,52 @@ AETHER_TEST(RHI_D3D12FrameConstantBuffersAreCreatedAndUpdated) {
     AETHER_CHECK(threw);
 }
 
-AETHER_TEST(RHI_VulkanLeavesFrameConstantsUnsupportedForNow) {
+AETHER_TEST(RHI_VulkanFrameConstantBuffersAreCreatedAndUpdated) {
     if (!IsBackendAvailable(Backend::Vulkan)) return;
     auto device = CreateDevice(Backend::Vulkan, /*enable_debug_layer=*/false);
     if (!device) return;
-    AETHER_CHECK(!device->SupportsFrameConstants());
-    AETHER_CHECK(!device->CreateConstantBuffer(64).IsValid()); // the renderer falls back to its own constants
+    AETHER_CHECK(device->SupportsFrameConstants());
+    const BufferHandle buffer = device->CreateConstantBuffer(80); // padded to 256 inside
+    AETHER_CHECK(buffer.IsValid());
+    const f32 data[20] = {1.0f, 2.0f, 3.0f, 4.0f};
+    device->UpdateConstantBuffer(buffer, data, sizeof(data));
+    device->UpdateConstantBuffer(buffer, data, 4096); // out of range: logged and ignored
+    bool threw = false;
+    try {
+        device->CreateConstantBuffer(0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    AETHER_CHECK(threw);
+}
+
+AETHER_TEST(RHI_VulkanCreatesBlockCompressedTexturesWhereTheGpuHasThem) {
+    if (!IsBackendAvailable(Backend::Vulkan)) return;
+    auto device = CreateDevice(Backend::Vulkan, /*enable_debug_layer=*/false);
+    if (!device) return;
+    const u32 sizes[5][2] = {{20, 12}, {10, 6}, {5, 3}, {2, 1}, {1, 1}};
+    std::vector<std::vector<u8>> data;
+    std::vector<CompressedMip> mips;
+    for (const auto& s : sizes) {
+        data.emplace_back(static_cast<usize>((s[0] + 3) / 4) * ((s[1] + 3) / 4) * 16, 0x55);
+        mips.push_back({data.back().data(), s[0], s[1], data.back().size()});
+    }
+    if (!device->SupportsCompressedTexture(CompressedTextureFormat::BC7)) {
+        // A GPU without BC (a phone's): no support is the answer, not an error.
+        AETHER_CHECK(!device->CreateCompressedTexture(CompressedTextureFormat::BC7, 20, 12, mips).IsValid());
+        return;
+    }
+    const SampledTextureHandle texture = device->CreateCompressedTexture(CompressedTextureFormat::BC7, 20, 12, mips);
+    AETHER_CHECK(texture.IsValid() && texture.index >= kFirstUserBindlessTextureIndex);
+    std::vector<CompressedMip> wrong = mips;
+    wrong[1].size_bytes -= 1;
+    bool threw = false;
+    try {
+        device->CreateCompressedTexture(CompressedTextureFormat::BC7, 20, 12, wrong);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    AETHER_CHECK(threw);
 }
 
 AETHER_TEST(RHI_D3D12CreatesBlockCompressedTexturesWithMips) {
