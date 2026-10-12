@@ -484,6 +484,13 @@ bool PakReader::Parse(std::string* error, std::span<const PakKey> keys) {
     }
     if (encrypted_) ChaCha20Xor(key_, NonceFor(index_offset, "INDX"), 0, index);
 
+    // The count sits in the header, outside the index's checksum. Every entry takes at least a length, a one-byte path and 32 bytes of fields, so a
+    // count the index cannot hold is damage; trusting it would reserve memory for billions of entries.
+    constexpr u64 kMinEntryBytes = 2 + 1 + 32;
+    if (count > index.size() / kMinEntryBytes) {
+        SetError(error, "the entry count does not fit the index (damaged header)");
+        return false;
+    }
     usize p = 0;
     entries_.reserve(static_cast<usize>(count));
     for (u64 i = 0; i < count; ++i) {
