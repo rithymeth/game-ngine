@@ -157,6 +157,10 @@ struct GameStats {
     usize script_errors = 0;
     usize blueprint_instances = 0;
     usize blueprint_errors = 0;
+    usize behavior_trees_running = 0; // BehaviorTreeComponents whose tree is running
+    usize nav_agents = 0;             // NavAgents the crowd is walking (0 without a navigation mesh)
+    bool nav_mesh_loaded = false;
+    usize behavior_tree_problems = 0; // trees that could not be found or loaded, and tree/blackboard mismatches
 };
 
 class Game {
@@ -197,6 +201,39 @@ public:
     static bool HasPhysics();
     // Whether this player was built with Luau scripting.
     static bool HasScripting();
+
+    // What the Behavior Tree world reported (a tree path the package does not hold, a damaged tree, a blackboard key that does not fit).
+    std::vector<std::string> BehaviorTreeProblems() const;
+    // Why the scene has no navigation mesh or an agent could not use it (empty when all is well).
+    std::vector<std::string> NavigationProblems() const;
+
+    // Runs a Luau chunk in the game's own script VM, with the game's world, natives (UI, Timer, ...) and globals, and reports what it printed and
+    // returned. Globals it defines stay in the VM. False (with `error` set) when this player has no scripting or no scene is loaded.
+    struct LuauValue {
+        enum class Kind : u8 { Nil, Bool, Number, String, Entity } kind = Kind::Nil;
+        bool boolean = false;
+        f64 number = 0.0;
+        std::string text; // String, and "Entity(<index>)" for an entity
+    };
+    struct LuauRun {
+        bool ok = false;
+        std::string error; // "chunk:line: message"
+        std::vector<std::string> prints;
+        std::vector<LuauValue> values;
+    };
+    bool RunLuau(const std::string& source, const std::string& chunk_name, LuauRun& out);
+
+    // Physics queries on the 3D scene as of the last step (nothing without physics or a loaded scene: HasPhysics()). `layers` is a mask of collision
+    // layers to hit (all by default); trigger volumes are skipped unless asked for.
+    struct RayHit {
+        bool hit = false;
+        Entity entity;
+        Vec3 point{0, 0, 0};
+        Vec3 normal{0, 0, 0};
+        f32 distance = 0.0f;
+    };
+    RayHit RayCast(const Vec3& from, const Vec3& to, u32 layers = 0xFFFFFFFFu, bool include_triggers = false) const;
+    std::vector<Entity> OverlapSphere(const Vec3& center, f32 radius, u32 layers = 0xFFFFFFFFu, bool include_triggers = false) const;
 
     // 2D physics (§26.6): bodies and colliders in the scene, with the solid
     // cells of its tilemaps, step with the 3D physics each fixed step, and

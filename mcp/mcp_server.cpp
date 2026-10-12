@@ -107,6 +107,14 @@ bool McpServer::MarkDestructive(const std::string& name) {
     return false;
 }
 
+std::vector<std::string> McpServer::MarkStandardDestructiveTools() {
+    std::vector<std::string> missing;
+    for (const char* name : kStandardDestructiveTools) {
+        if (!MarkDestructive(name)) missing.push_back(name);
+    }
+    return missing;
+}
+
 Json McpServer::HandleToolCall(const Json& params) {
     if (!params.is_object() || !params.contains("name") || !params["name"].is_string()) {
         throw RpcError{kInvalidParams, "tools/call needs a string \"name\""};

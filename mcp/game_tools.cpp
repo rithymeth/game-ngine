@@ -172,6 +172,11 @@ Json StatsJson(Game& game) {
             {"script_errors", s.script_errors},
             {"blueprint_instances", s.blueprint_instances},
             {"blueprint_errors", s.blueprint_errors},
+            {"nav_mesh_loaded", s.nav_mesh_loaded},
+            {"nav_agents", s.nav_agents},
+            {"navigation_problems", game.NavigationProblems()},
+            {"behavior_trees_running", s.behavior_trees_running},
+            {"behavior_tree_problems", game.BehaviorTreeProblems()},
             {"errors", errors},
             {"warnings", game.Warnings()}};
 }
@@ -189,6 +194,20 @@ std::vector<std::string> ApplyComponentValues(World& world, Entity e, ComponentI
     reflect::LoadReport report;
     if (!reflect::FromJson(*info.reflected, data, merged, &report)) throw ToolError("Value does not match the shape of " + ComponentName(id));
     return report.warnings;
+}
+
+Vec3 RequireVec3(const Json& args, const char* key) {
+    if (!args.contains(key) || !args[key].is_array() || args[key].size() != 3) throw ToolError(std::string("\"") + key + "\" must be an array of three numbers [x, y, z]");
+    for (const Json& n : args[key]) {
+        if (!n.is_number()) throw ToolError(std::string("\"") + key + "\" must be an array of three numbers [x, y, z]");
+    }
+    return {args[key][0].get<f32>(), args[key][1].get<f32>(), args[key][2].get<f32>()};
+}
+
+u32 LayerMaskArg(const Json& args) {
+    if (!args.contains("layers")) return 0xFFFFFFFFu;
+    if (!args["layers"].is_number_integer() || args["layers"].get<i64>() < 0 || args["layers"].get<i64>() > 0xFFFFFFFFll) throw ToolError("\"layers\" must be a non-negative integer mask (bit n = layer n)");
+    return static_cast<u32>(args["layers"].get<i64>());
 }
 
 const char* VisibilityName(ui::Visibility v) {
@@ -380,6 +399,75 @@ void RegisterGameTools(McpServer& server) {
              if (id == GetComponentId<Transform>() || id == GetComponentId<IdComponent>()) throw ToolError(ComponentName(id) + " cannot be removed from a running entity");
              world.RemoveComponentRaw(e, id);
              return EntityJson(world, e);
+         }});
+
+    server.AddTool(
+        {"game_run_luau",
+         "Run a Luau chunk inside the running game's own script VM: its world, its natives (UI.*, Timer.*, ...) and the globals scripts defined. "
+         "Returns what it printed, the values it returned, and the error with its line if it failed. Globals the chunk defines stay in the VM; "
+         "changes it makes to the world are live and not undoable. Step the game to see scripts react.",
+         Schema({{"source", {{"type", "string"}, {"description", "The Luau source"}}}}, {"source"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             const std::string source = RequireString(args, "source");
+             Game::LuauRun run;
+             if (!game.RunLuau(source, "game_run_luau", run)) throw ToolError("Cannot run Luau: " + run.error);
+             Json values = Json::array();
+             for (const Game::LuauValue& v : run.values) {
+                 switch (v.kind) {
+                 case Game::LuauValue::Kind::Nil: values.push_back(nullptr); break;
+                 case Game::LuauValue::Kind::Bool: values.push_back(v.boolean); break;
+                 case Game::LuauValue::Kind::Number: values.push_back(v.number); break;
+                 case Game::LuauValue::Kind::String:
+                 case Game::LuauValue::Kind::Entity: values.push_back(v.text); break;
+                 }
+             }
+             Json out = {{"ok", run.ok}, {"returned", values}, {"prints", run.prints}};
+             if (!run.ok) out["error"] = run.error;
+             return out;
+         }});
+
+    server.AddTool(
+        {"game_raycast",
+         "Cast a ray through the running game's 3D physics from one point to another and report the first body hit: the entity, the point, the surface "
+         "normal and the distance. Uses the bodies as of the last step. Trigger volumes are skipped unless `include_triggers`.",
+         Schema({{"from", {{"type", "array"}, {"items", {{"type", "number"}}}, {"description", "[x, y, z]"}}},
+                 {"to", {{"type", "array"}, {"items", {{"type", "number"}}}, {"description", "[x, y, z]"}}},
+                 {"layers", {{"type", "integer"}, {"description", "Collision layer mask (bit n = layer n); default all"}}},
+                 {"include_triggers", {{"type", "boolean"}}}},
+                {"from", "to"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             if (!Game::HasPhysics()) throw ToolError("This player was built without physics");
+             const Vec3 from = RequireVec3(args, "from"), to = RequireVec3(args, "to");
+             const bool triggers = args.contains("include_triggers") && args["include_triggers"].is_boolean() && args["include_triggers"].get<bool>();
+             const Game::RayHit hit = game.RayCast(from, to, LayerMaskArg(args), triggers);
+             if (!hit.hit) return {{"hit", false}};
+             Json out = {{"hit", true}, {"point", Json::array({hit.point.x, hit.point.y, hit.point.z})},
+                         {"normal", Json::array({hit.normal.x, hit.normal.y, hit.normal.z})}, {"distance", hit.distance}};
+             if (game.GetWorld().IsAlive(hit.entity)) out["entity"] = EntityKey(game.GetWorld(), hit.entity);
+             return out;
+         }});
+
+    server.AddTool(
+        {"game_overlap_sphere",
+         "The entities whose physics bodies touch a sphere in the running game (as of the last step).",
+         Schema({{"center", {{"type", "array"}, {"items", {{"type", "number"}}}, {"description", "[x, y, z]"}}},
+                 {"radius", {{"type", "number"}}},
+                 {"layers", {{"type", "integer"}, {"description", "Collision layer mask (bit n = layer n); default all"}}},
+                 {"include_triggers", {{"type", "boolean"}}}},
+                {"center", "radius"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             if (!Game::HasPhysics()) throw ToolError("This player was built without physics");
+             const Vec3 center = RequireVec3(args, "center");
+             if (!args["radius"].is_number() || args["radius"].get<f64>() <= 0.0) throw ToolError("\"radius\" must be a positive number");
+             const bool triggers = args.contains("include_triggers") && args["include_triggers"].is_boolean() && args["include_triggers"].get<bool>();
+             Json entities = Json::array();
+             for (const Entity e : game.OverlapSphere(center, args["radius"].get<f32>(), LayerMaskArg(args), triggers)) {
+                 if (game.GetWorld().IsAlive(e)) entities.push_back(EntityKey(game.GetWorld(), e));
+             }
+             return {{"count", entities.size()}, {"entities", entities}};
          }});
 
     server.AddTool(

@@ -106,7 +106,9 @@ int main(int argc, char** argv) {
     mcp::RegisterBuildTools(server, mcp::FindBuildContext(build_dir, std::filesystem::absolute(argv[0], ec).parent_path()));
 
     // Work undo cannot bring back, from the tool groups above: the built-in permission rule asks the person before these run.
-    for (const char* name : {"asset_delete", "save_delete", "prefab_apply"}) server.MarkDestructive(name);
+    for (const std::string& name : server.MarkStandardDestructiveTools()) {
+        std::fprintf(stderr, "aether_mcp_server: warning: '%s' is meant to need confirmation but is not a registered tool\n", name.c_str());
+    }
 
     // Permissions and the session log live in <scene folder>/.aether/. A missing permission file means the
     // built-in rule (destructive tools ask first); an unreadable one is reported and the same rule applies.
