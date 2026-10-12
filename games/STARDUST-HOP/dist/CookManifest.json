@@ -1,0 +1,603 @@
+{
+  "$type": "CookManifest",
+  "$version": 1,
+  "assets": [
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "687d8e1a-87f3-4d23-bf41-c24738669332",
+      "imported": false,
+      "importer": "SoundCue",
+      "path": "Audio/ambient.acue",
+      "sub_assets": []
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "2495bffc-9edb-4b0a-9027-3cb7f634e3a3",
+      "imported": false,
+      "importer": "Sound",
+      "path": "Audio/ambient.wav",
+      "sub_assets": []
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "852c4d08-9241-4256-af5a-0251fb3ef488",
+      "imported": false,
+      "importer": "SoundCue",
+      "path": "Audio/checkpoint.acue",
+      "sub_assets": []
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "89733462-4b61-48c5-85ac-123fdb82e3ed",
+      "imported": false,
+      "importer": "Sound",
+      "path": "Audio/checkpoint.wav",
+      "sub_assets": []
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "3190112f-72eb-4dc7-ad56-3fbf47a3bb04",
+      "imported": false,
+      "importer": "SoundCue",
+      "path": "Audio/coin.acue",
+      "sub_assets": []
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "80e43cda-497d-4f5b-a5c8-23e4f95859eb",
+      "imported": false,
+      "importer": "Sound",
+      "path": "Audio/coin.wav",
+      "sub_assets": []
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "57aa8c01-05fb-4070-af07-13daa9cfbaf9",
+      "imported": false,
+      "importer": "SoundCue",
+      "path": "Audio/fall.acue",
+      "sub_assets": []
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "1def4124-fc02-4048-8e68-6d0533ec54d3",
+      "imported": false,
+      "importer": "Sound",
+      "path": "Audio/fall.wav",
+      "sub_assets": []
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "0d790a4e-685e-4704-af23-283e0d96cedc",
+      "imported": false,
+      "importer": "SoundCue",
+      "path": "Audio/jump.acue",
+      "sub_assets": []
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "374a3ff8-0bcc-4d0a-bd6e-c3e27ef58f9a",
+      "imported": false,
+      "importer": "Sound",
+      "path": "Audio/jump.wav",
+      "sub_assets": []
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "e6c27689-c8df-48ce-8996-7efcde3f98ae",
+      "imported": false,
+      "importer": "SoundCue",
+      "path": "Audio/win.acue",
+      "sub_assets": []
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "18f30f54-8575-4668-9562-2070af3a6371",
+      "imported": false,
+      "importer": "Sound",
+      "path": "Audio/win.wav",
+      "sub_assets": []
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "0d4fbed2-628a-48d1-aadf-5714514e7c1b",
+      "imported": false,
+      "importer": "InputMapping",
+      "path": "Input/Gameplay.amapping",
+      "sub_assets": []
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "244006f9-757c-4cf3-a05f-61b0fee92bb9",
+      "imported": false,
+      "importer": "InputAction",
+      "path": "Input/Jump.aaction",
+      "sub_assets": []
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "33423a52-15ad-45c1-9cb9-e0a5dc8c6565",
+      "imported": false,
+      "importer": "InputAction",
+      "path": "Input/Look.aaction",
+      "sub_assets": []
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "1aaad21a-6844-4434-9c41-051e78062687",
+      "imported": false,
+      "importer": "InputAction",
+      "path": "Input/Move.aaction",
+      "sub_assets": []
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "eb138bdc-649b-4f83-9942-2126a3b281b9",
+      "imported": false,
+      "importer": "InputAction",
+      "path": "Input/Restart.aaction",
+      "sub_assets": []
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [
+        "00512fef-d66a-4a3d-8b36-9dcd7df6c750",
+        "111fdf28-eb8c-471e-988e-07286ebc22d2",
+        "3b8058bd-b0f6-4a71-b059-8a1df33e9758",
+        "43ad835a-2abe-497c-aa6a-6308ba8725c9",
+        "7188dbce-ca09-44ce-95cd-65bc6980aba6",
+        "7d7cb79d-bcf7-4a06-aa90-1108effde1c9",
+        "8a2fe911-9615-41b1-8b94-64edcb4488c7",
+        "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+        "9a145ad6-2865-4ca4-bd11-a6259cf531c1",
+        "f86a565c-c4d6-411a-9aa9-f66c8e59d450"
+      ],
+      "guid": "60ccdfee-8197-4424-a52e-994f60343a56",
+      "imported": false,
+      "importer": "Scene",
+      "path": "Scenes/Main.ascene",
+      "sub_assets": []
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "43ad835a-2abe-497c-aa6a-6308ba8725c9",
+      "imported": false,
+      "importer": "Script",
+      "path": "Scripts/Hopper.luau",
+      "sub_assets": []
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "fb6cd30e-7930-4401-aaf1-00cc8f76e463",
+      "imported": false,
+      "importer": "UILayout",
+      "path": "UI/Hud.aui",
+      "sub_assets": []
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "1c410611-764f-4867-9722-b87a7c257687",
+      "imported": false,
+      "importer": "UILayout",
+      "path": "UI/TouchControls.aui",
+      "sub_assets": []
+    },
+    {
+      "cooked": "Cooked/863cd661-024e-47d2-b92e-60f1d08c1850.atex",
+      "cooked_format": "bc7",
+      "dependencies": [],
+      "guid": "863cd661-024e-47d2-b92e-60f1d08c1850",
+      "imported": true,
+      "importer": "Texture",
+      "path": "UI/coin.png",
+      "sub_assets": []
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "39b257a5-c487-4ad8-a521-64b5a82bce49",
+      "imported": false,
+      "importer": "Font",
+      "path": "fonts/Roboto-Medium.ttf",
+      "sub_assets": []
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "00512fef-d66a-4a3d-8b36-9dcd7df6c750",
+      "imported": true,
+      "importer": "Model",
+      "path": "models/checkpoint.gltf",
+      "sub_assets": [
+        {
+          "guid": "1c64506f-7ef0-4933-9a9b-da6cb116eaeb",
+          "importer": "Material",
+          "key": "material:0"
+        },
+        {
+          "guid": "5f8d6089-2838-4d0e-bab4-ccabac1f7f62",
+          "importer": "Material",
+          "key": "material:1"
+        },
+        {
+          "guid": "34a95f94-3bcb-4db9-aba1-6210a3fa7d43",
+          "importer": "Mesh",
+          "key": "mesh:0"
+        },
+        {
+          "guid": "8ddc3beb-75a0-4d52-a2ae-69763ea9398b",
+          "importer": "Mesh",
+          "key": "mesh:1"
+        }
+      ]
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+      "imported": true,
+      "importer": "Model",
+      "path": "models/coin.gltf",
+      "sub_assets": [
+        {
+          "guid": "941b932d-cfce-4691-925f-b2b5593bd84a",
+          "importer": "Material",
+          "key": "material:0"
+        },
+        {
+          "guid": "76d721b6-7dac-47b3-98fa-500f6e5855a3",
+          "importer": "Mesh",
+          "key": "mesh:0"
+        }
+      ]
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "3b8058bd-b0f6-4a71-b059-8a1df33e9758",
+      "imported": true,
+      "importer": "Model",
+      "path": "models/goal.gltf",
+      "sub_assets": [
+        {
+          "guid": "bf79b14b-207e-4113-844f-d1ee58fd85b1",
+          "importer": "Material",
+          "key": "material:0"
+        },
+        {
+          "guid": "913d3470-0fdf-4178-a4d7-f0b61c1766ed",
+          "importer": "Material",
+          "key": "material:1"
+        },
+        {
+          "guid": "0628ccbf-7354-4d69-91fb-715fd164074c",
+          "importer": "Material",
+          "key": "material:2"
+        },
+        {
+          "guid": "10ca6506-8a15-49d4-973d-09e8f4b6cb54",
+          "importer": "Mesh",
+          "key": "mesh:0"
+        },
+        {
+          "guid": "bd7d8804-5533-4adb-bea9-aa25ac453ff1",
+          "importer": "Mesh",
+          "key": "mesh:1"
+        },
+        {
+          "guid": "4b8e9561-8022-43de-868e-8ab4597b56c7",
+          "importer": "Mesh",
+          "key": "mesh:2"
+        }
+      ]
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "111fdf28-eb8c-471e-988e-07286ebc22d2",
+      "imported": true,
+      "importer": "Model",
+      "path": "models/plat_4x4.gltf",
+      "sub_assets": [
+        {
+          "guid": "405f6b5c-e970-4096-be4e-307898e4342a",
+          "importer": "Material",
+          "key": "material:0"
+        },
+        {
+          "guid": "3dda0819-6b70-47f9-ae17-828d03b41157",
+          "importer": "Material",
+          "key": "material:1"
+        },
+        {
+          "guid": "1f31b50e-9642-4835-a0d3-946c6517c8b2",
+          "importer": "Mesh",
+          "key": "mesh:0"
+        },
+        {
+          "guid": "6c9db5b6-20fc-49c3-a624-4700da6aa229",
+          "importer": "Mesh",
+          "key": "mesh:1"
+        }
+      ]
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "7d7cb79d-bcf7-4a06-aa90-1108effde1c9",
+      "imported": true,
+      "importer": "Model",
+      "path": "models/plat_6x6.gltf",
+      "sub_assets": [
+        {
+          "guid": "8cfa54b9-4eb2-4a3f-aead-ab0e03fc314d",
+          "importer": "Material",
+          "key": "material:0"
+        },
+        {
+          "guid": "fe8da858-2f2b-4acb-918a-2fa74501ae0b",
+          "importer": "Material",
+          "key": "material:1"
+        },
+        {
+          "guid": "d88b047a-38ed-473f-8afe-e17c8f3aec27",
+          "importer": "Mesh",
+          "key": "mesh:0"
+        },
+        {
+          "guid": "2372659a-6adf-452d-9de4-08c9bd4f4f8b",
+          "importer": "Mesh",
+          "key": "mesh:1"
+        }
+      ]
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "9a145ad6-2865-4ca4-bd11-a6259cf531c1",
+      "imported": true,
+      "importer": "Model",
+      "path": "models/plat_8x8.gltf",
+      "sub_assets": [
+        {
+          "guid": "4e8c0225-b8da-406a-a620-557d92835c61",
+          "importer": "Material",
+          "key": "material:0"
+        },
+        {
+          "guid": "c8bb3bd2-0f5c-4c6b-9a8c-8146d7ccb2e8",
+          "importer": "Material",
+          "key": "material:1"
+        },
+        {
+          "guid": "67c530bc-1baf-4514-9561-8f22e470e76d",
+          "importer": "Mesh",
+          "key": "mesh:0"
+        },
+        {
+          "guid": "3b649106-6468-4e7f-a8bd-f3182fce22fa",
+          "importer": "Mesh",
+          "key": "mesh:1"
+        }
+      ]
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "8a2fe911-9615-41b1-8b94-64edcb4488c7",
+      "imported": true,
+      "importer": "Model",
+      "path": "models/player.gltf",
+      "sub_assets": [
+        {
+          "guid": "5f6b5fbe-18e5-4cb3-8e22-62caee5a80d3",
+          "importer": "Material",
+          "key": "material:0"
+        },
+        {
+          "guid": "7eea2708-f827-47bd-a368-32036a1e888b",
+          "importer": "Material",
+          "key": "material:1"
+        },
+        {
+          "guid": "bfbde40b-61ff-412d-b166-809650605517",
+          "importer": "Material",
+          "key": "material:2"
+        },
+        {
+          "guid": "0b23220d-530a-40e4-9b7d-10e277c0b483",
+          "importer": "Material",
+          "key": "material:3"
+        },
+        {
+          "guid": "8202b645-52a3-49ce-8235-7217b0c78c90",
+          "importer": "Mesh",
+          "key": "mesh:0"
+        },
+        {
+          "guid": "811ad91d-c878-47dc-b526-c79be5a55008",
+          "importer": "Mesh",
+          "key": "mesh:1"
+        },
+        {
+          "guid": "32ae5e40-65cc-4ee3-bb5a-860d4abd0c42",
+          "importer": "Mesh",
+          "key": "mesh:2"
+        },
+        {
+          "guid": "f33e8e18-2a60-4efa-8271-379ba108f0aa",
+          "importer": "Mesh",
+          "key": "mesh:3"
+        }
+      ]
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "7188dbce-ca09-44ce-95cd-65bc6980aba6",
+      "imported": true,
+      "importer": "Model",
+      "path": "models/sky.gltf",
+      "sub_assets": [
+        {
+          "guid": "f5d2c7cd-3b1f-4d84-985d-bc67ff1d3579",
+          "importer": "Material",
+          "key": "material:0"
+        },
+        {
+          "guid": "d38e7e26-adc2-4439-9a36-93987521a5c4",
+          "importer": "Mesh",
+          "key": "mesh:0"
+        }
+      ]
+    },
+    {
+      "cooked": "",
+      "cooked_format": "",
+      "dependencies": [],
+      "guid": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+      "imported": true,
+      "importer": "Model",
+      "path": "models/spark.gltf",
+      "sub_assets": [
+        {
+          "guid": "c9aac2a0-a393-4752-8501-b7fbf85993ca",
+          "importer": "Material",
+          "key": "material:0"
+        },
+        {
+          "guid": "92f64b30-73f7-4d3e-80e6-0bc1d3e16270",
+          "importer": "Mesh",
+          "key": "mesh:0"
+        }
+      ]
+    }
+  ],
+  "collision_matrix": [],
+  "configuration": "Shipping",
+  "default_quality": "High",
+  "files": [],
+  "fixed_timestep_hz": 60.0,
+  "gravity": [
+    0.0,
+    -9.8100004196167,
+    0.0
+  ],
+  "layers": [
+    "Default"
+  ],
+  "modules": [
+    "Navigation",
+    "AI",
+    "Audio",
+    "Networking",
+    "Physics"
+  ],
+  "plugins": [
+    "Navigation",
+    "AI",
+    "Audio",
+    "Networking",
+    "Physics"
+  ],
+  "project": "STARDUST-HOP",
+  "quality_presets": [
+    {
+      "$v": 1,
+      "bloom": false,
+      "msaa_samples": 1,
+      "name": "Low",
+      "resolution_scale": 0.75,
+      "shadow_cascades": 2,
+      "shadow_resolution": 1024,
+      "view_distance": 300.0
+    },
+    {
+      "$v": 1,
+      "bloom": true,
+      "msaa_samples": 1,
+      "name": "Medium",
+      "resolution_scale": 1.0,
+      "shadow_cascades": 3,
+      "shadow_resolution": 1024,
+      "view_distance": 600.0
+    },
+    {
+      "$v": 1,
+      "bloom": true,
+      "msaa_samples": 2,
+      "name": "High",
+      "resolution_scale": 1.0,
+      "shadow_cascades": 4,
+      "shadow_resolution": 2048,
+      "view_distance": 1000.0
+    },
+    {
+      "$v": 1,
+      "bloom": true,
+      "msaa_samples": 4,
+      "name": "Epic",
+      "resolution_scale": 1.0,
+      "shadow_cascades": 4,
+      "shadow_resolution": 4096,
+      "view_distance": 2500.0
+    }
+  ],
+  "startup_scene": "Scenes/Main.ascene",
+  "window": {
+    "height": 720,
+    "title": "Stardust Hop",
+    "vsync": true,
+    "width": 1280
+  }
+}

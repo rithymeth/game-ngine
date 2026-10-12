@@ -264,8 +264,16 @@ VkDevice CreateLogicalDevice(VkPhysicalDevice physical_device, const PhysicalDev
         }
     }
 
+    // Block-compressed (BC) textures where the GPU supports them: what CreateCompressedTexture uploads (desktop GPUs; most phones have ASTC instead).
+    VkPhysicalDeviceFeatures supported_features{};
+    vkGetPhysicalDeviceFeatures(physical_device, &supported_features);
+    VkPhysicalDeviceFeatures enabled_features{};
+    enabled_features.textureCompressionBC = supported_features.textureCompressionBC;
+    enabled_features.textureCompressionASTC_LDR = supported_features.textureCompressionASTC_LDR; // what phones have instead
+
     VkDeviceCreateInfo device_info{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
     device_info.pNext = &features_12;
+    device_info.pEnabledFeatures = &enabled_features;
     device_info.queueCreateInfoCount = static_cast<u32>(queue_infos.size());
     device_info.pQueueCreateInfos = queue_infos.data();
     device_info.enabledExtensionCount = static_cast<u32>(extensions.size());
@@ -337,9 +345,15 @@ VulkanDevice::~VulkanDevice() {
             vkFreeMemory(device_, record.memory, nullptr);
         };
         for (const SampledTextureRecord& texture : sampled_textures_) {
-            destroy_texture_record(texture);
+            if (texture.image != VK_NULL_HANDLE) destroy_texture_record(texture);
         }
         destroy_texture_record(dummy_texture_);
+        if (frame_constants_pool_ != VK_NULL_HANDLE) {
+            vkDestroyDescriptorPool(device_, frame_constants_pool_, nullptr);
+        }
+        if (frame_constants_set_layout_ != VK_NULL_HANDLE) {
+            vkDestroyDescriptorSetLayout(device_, frame_constants_set_layout_, nullptr);
+        }
         if (bindless_pool_ != VK_NULL_HANDLE) {
             vkDestroyDescriptorPool(device_, bindless_pool_, nullptr);
         }
@@ -643,7 +657,7 @@ BufferHandle VulkanDevice::CreateBufferInternal(const void* data, u64 size_bytes
     // demo's scale.
     ScopedBufferRecord owned_record(device_);
     owned_record.Get() = CreateHostVisibleBuffer(device_, physical_device_, size_bytes,
-                                                  VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                                                  VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                                   data, true);
     buffers_.push_back(owned_record.Get());
     owned_record.Release();
@@ -680,19 +694,32 @@ SampledTextureRecord VulkanDevice::UploadTextureRecord(u32 width, u32 height, co
         AETHER_LOG_ERROR("Vulkan", "CreateTexture requires non-zero dimensions and non-null RGBA8 pixel data");
         throw std::invalid_argument("CreateTexture requires non-zero dimensions and non-null RGBA8 pixel data");
     }
-    VkDeviceSize image_size = static_cast<VkDeviceSize>(width) * height * 4;
+    return UploadImageRecord(VK_FORMAT_R8G8B8A8_UNORM, width, height, {{rgba8_pixels, static_cast<u64>(width) * height * 4, width, height}});
+}
+
+SampledTextureRecord VulkanDevice::UploadImageRecord(VkFormat format, u32 width, u32 height, const std::vector<ImageLevel>& levels) {
+    const u32 level_count = static_cast<u32>(levels.size());
+    // The levels go into one staging buffer back to back, each starting on a 16-byte boundary (a multiple of every texel and block size here).
+    std::vector<VkDeviceSize> offsets;
+    VkDeviceSize image_size = 0;
+    for (const ImageLevel& level : levels) {
+        offsets.push_back(image_size);
+        image_size += (static_cast<VkDeviceSize>(level.size) + 15) / 16 * 16;
+    }
+    std::vector<u8> packed(static_cast<usize>(image_size), 0);
+    for (u32 i = 0; i < level_count; ++i) std::memcpy(packed.data() + offsets[i], levels[i].data, static_cast<usize>(levels[i].size));
     ScopedBufferRecord owned_staging(device_);
     owned_staging.Get() =
-        CreateHostVisibleBuffer(device_, physical_device_, image_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, rgba8_pixels);
+        CreateHostVisibleBuffer(device_, physical_device_, image_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, packed.data());
     const BufferRecord& staging = owned_staging.Get();
 
     ScopedSampledTextureRecord owned_record(device_);
     SampledTextureRecord& record = owned_record.Get();
     VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     image_info.imageType = VK_IMAGE_TYPE_2D;
-    image_info.format = VK_FORMAT_R8G8B8A8_UNORM;
+    image_info.format = format;
     image_info.extent = {width, height, 1};
-    image_info.mipLevels = 1;
+    image_info.mipLevels = level_count;
     image_info.arrayLayers = 1;
     image_info.samples = VK_SAMPLE_COUNT_1_BIT;
     image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
@@ -720,16 +747,20 @@ SampledTextureRecord VulkanDevice::UploadTextureRecord(u32 width, u32 height, co
     to_dst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     to_dst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     to_dst.image = record.image;
-    to_dst.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    to_dst.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, level_count, 0, 1};
     to_dst.srcAccessMask = 0;
     to_dst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     vkCmdPipelineBarrier(native_cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr,
                           0, nullptr, 1, &to_dst);
 
-    VkBufferImageCopy region{};
-    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    region.imageExtent = {width, height, 1};
-    vkCmdCopyBufferToImage(native_cmd, staging.buffer, record.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    std::vector<VkBufferImageCopy> regions(level_count);
+    for (u32 i = 0; i < level_count; ++i) {
+        regions[i] = {};
+        regions[i].bufferOffset = offsets[i];
+        regions[i].imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, i, 0, 1};
+        regions[i].imageExtent = {levels[i].width, levels[i].height, 1};
+    }
+    vkCmdCopyBufferToImage(native_cmd, staging.buffer, record.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, level_count, regions.data());
 
     VkImageMemoryBarrier to_shader_read{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     to_shader_read.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -737,7 +768,7 @@ SampledTextureRecord VulkanDevice::UploadTextureRecord(u32 width, u32 height, co
     to_shader_read.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     to_shader_read.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     to_shader_read.image = record.image;
-    to_shader_read.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    to_shader_read.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, level_count, 0, 1};
     to_shader_read.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     to_shader_read.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
     vkCmdPipelineBarrier(native_cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
@@ -768,8 +799,8 @@ SampledTextureRecord VulkanDevice::UploadTextureRecord(u32 width, u32 height, co
     VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     view_info.image = record.image;
     view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    view_info.format = VK_FORMAT_R8G8B8A8_UNORM;
-    view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    view_info.format = format;
+    view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, level_count, 0, 1};
     AETHER_VK_CHECK(vkCreateImageView(device_, &view_info, nullptr, &record.view));
 
     return owned_record.Release();
@@ -781,7 +812,7 @@ SampledTextureHandle VulkanDevice::CreateTexture(u32 width, u32 height, const u8
         AETHER_LOG_ERROR("Vulkan", "CreateTexture requires non-zero dimensions and non-null RGBA8 pixel data");
         throw std::invalid_argument("CreateTexture requires non-zero dimensions and non-null RGBA8 pixel data");
     }
-    if (sampled_textures_.size() >= kMaxUserBindlessTextures) {
+    if (TextureTableFull()) {
         AETHER_LOG_ERROR("Vulkan", "CreateTexture exhausted the bindless texture table (capacity=%u real textures)",
                          kMaxUserBindlessTextures);
         return {};
@@ -792,10 +823,14 @@ SampledTextureHandle VulkanDevice::CreateTexture(u32 width, u32 height, const u8
     const SampledTextureRecord record = owned_record.Get();
     // Slot zero remains the white fallback, matching the D3D12 descriptor
     // heap and the RHI's no-texture convention.
-    u32 index = static_cast<u32>(sampled_textures_.size()) + kFirstUserBindlessTextureIndex;
-    sampled_textures_.push_back(record);
+    const u32 index = StoreTextureRecord(record);
     owned_record.Release();
 
+    WriteBindlessTexture(index, record);
+    return SampledTextureHandle{index};
+}
+
+void VulkanDevice::WriteBindlessTexture(u32 index, const SampledTextureRecord& record) {
     VkDescriptorImageInfo image_desc{};
     image_desc.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     image_desc.imageView = record.view;
@@ -808,8 +843,123 @@ SampledTextureHandle VulkanDevice::CreateTexture(u32 width, u32 height, const u8
     write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     write.pImageInfo = &image_desc;
     vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+}
 
+namespace {
+VkFormat VkFormatOf(CompressedTextureFormat format) {
+    switch (format) {
+    case CompressedTextureFormat::BC1: return VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
+    case CompressedTextureFormat::BC3: return VK_FORMAT_BC3_UNORM_BLOCK;
+    case CompressedTextureFormat::BC7: return VK_FORMAT_BC7_UNORM_BLOCK;
+    case CompressedTextureFormat::ASTC_4x4: return VK_FORMAT_ASTC_4x4_UNORM_BLOCK;
+    case CompressedTextureFormat::ASTC_6x6: return VK_FORMAT_ASTC_6x6_UNORM_BLOCK;
+    case CompressedTextureFormat::ASTC_8x8: return VK_FORMAT_ASTC_8x8_UNORM_BLOCK;
+    }
+    return VK_FORMAT_BC7_UNORM_BLOCK;
+}
+} // namespace
+
+bool VulkanDevice::SupportsCompressedTexture(CompressedTextureFormat format) const {
+    VkPhysicalDeviceFeatures features{};
+    vkGetPhysicalDeviceFeatures(physical_device_, &features);
+    const bool astc = format == CompressedTextureFormat::ASTC_4x4 || format == CompressedTextureFormat::ASTC_6x6 || format == CompressedTextureFormat::ASTC_8x8;
+    // The device was made with these features only where the GPU has them, so using the formats without them would be invalid.
+    if (astc ? !features.textureCompressionASTC_LDR : !features.textureCompressionBC) return false;
+    VkFormatProperties props{};
+    vkGetPhysicalDeviceFormatProperties(physical_device_, VkFormatOf(format), &props);
+    return (props.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) != 0 &&
+           (props.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0;
+}
+
+SampledTextureHandle VulkanDevice::CreateCompressedTexture(CompressedTextureFormat format, u32 width, u32 height, std::span<const CompressedMip> mips) {
+    if (width == 0 || height == 0 || mips.empty() || mips.size() > 16) {
+        AETHER_LOG_ERROR("Vulkan", "CreateCompressedTexture requires non-zero dimensions and 1 to 16 mip levels");
+        throw std::invalid_argument("CreateCompressedTexture requires non-zero dimensions and 1 to 16 mip levels");
+    }
+    std::vector<ImageLevel> levels;
+    u32 w = width, h = height;
+    for (const CompressedMip& mip : mips) {
+        if (mip.data == nullptr || mip.width != w || mip.height != h || mip.size_bytes != CompressedLevelBytes(format, w, h)) {
+            AETHER_LOG_ERROR("Vulkan", "CreateCompressedTexture: a mip level does not match its size or format");
+            throw std::invalid_argument("CreateCompressedTexture: a mip level does not match its size or format");
+        }
+        levels.push_back({mip.data, mip.size_bytes, w, h});
+        w = std::max(1u, w / 2);
+        h = std::max(1u, h / 2);
+    }
+    if (!SupportsCompressedTexture(format)) {
+        AETHER_LOG_ERROR("Vulkan", "CreateCompressedTexture: this device cannot sample that format");
+        return {};
+    }
+    if (TextureTableFull()) {
+        AETHER_LOG_ERROR("Vulkan", "CreateCompressedTexture exhausted the bindless texture table (capacity=%u real textures)", kMaxUserBindlessTextures);
+        return {};
+    }
+    ScopedSampledTextureRecord owned_record(device_);
+    owned_record.Get() = UploadImageRecord(VkFormatOf(format), width, height, levels);
+    const SampledTextureRecord record = owned_record.Get();
+    const u32 index = StoreTextureRecord(record);
+    owned_record.Release();
+    WriteBindlessTexture(index, record);
     return SampledTextureHandle{index};
+}
+
+u32 VulkanDevice::StoreTextureRecord(const SampledTextureRecord& record) {
+    if (!free_texture_slots_.empty()) {
+        const u32 position = free_texture_slots_.back();
+        free_texture_slots_.pop_back();
+        sampled_textures_[position] = record;
+        return position + kFirstUserBindlessTextureIndex;
+    }
+    sampled_textures_.push_back(record);
+    return static_cast<u32>(sampled_textures_.size() - 1) + kFirstUserBindlessTextureIndex;
+}
+
+bool VulkanDevice::DestroyTexture(SampledTextureHandle texture) {
+    if (!texture.IsValid() || texture.index < kFirstUserBindlessTextureIndex) return false;
+    const u32 position = texture.index - kFirstUserBindlessTextureIndex;
+    if (position >= sampled_textures_.size() || sampled_textures_[position].image == VK_NULL_HANDLE) return false;
+    AETHER_VK_CHECK(vkDeviceWaitIdle(device_)); // nothing in flight still reads it
+    const SampledTextureRecord record = sampled_textures_[position];
+    WriteBindlessTexture(texture.index, dummy_texture_); // a stale handle samples white, not freed memory
+    vkDestroyImageView(device_, record.view, nullptr);
+    vkDestroyImage(device_, record.image, nullptr);
+    vkFreeMemory(device_, record.memory, nullptr);
+    sampled_textures_[position] = {};
+    free_texture_slots_.push_back(position);
+    return true;
+}
+
+BufferHandle VulkanDevice::CreateConstantBuffer(u64 size_bytes) {
+    if (size_bytes == 0) {
+        AETHER_LOG_ERROR("Vulkan", "CreateConstantBuffer requires a non-zero size");
+        throw std::invalid_argument("CreateConstantBuffer requires a non-zero size");
+    }
+    if (constant_buffer_count_ >= kMaxConstantBuffers) {
+        AETHER_LOG_ERROR("Vulkan", "CreateConstantBuffer: out of constant buffers (capacity=%u)", kMaxConstantBuffers);
+        return {};
+    }
+    const u64 padded = (size_bytes + 255) / 256 * 256; // covers any minUniformBufferOffsetAlignment
+    const std::vector<u8> zeros(static_cast<usize>(padded), 0);
+    const BufferHandle handle = CreateBufferInternal(zeros.data(), padded);
+    BufferRecord& record = buffers_[handle.index];
+
+    VkDescriptorSetAllocateInfo alloc{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    alloc.descriptorPool = frame_constants_pool_;
+    alloc.descriptorSetCount = 1;
+    alloc.pSetLayouts = &frame_constants_set_layout_;
+    AETHER_VK_CHECK(vkAllocateDescriptorSets(device_, &alloc, &record.constants_set));
+    ++constant_buffer_count_;
+
+    VkDescriptorBufferInfo buffer_desc{record.buffer, 0, padded};
+    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    write.dstSet = record.constants_set;
+    write.dstBinding = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    write.pBufferInfo = &buffer_desc;
+    vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+    return handle;
 }
 
 void VulkanDevice::CreateBindlessTextureInfrastructure() {
@@ -897,6 +1047,23 @@ void VulkanDevice::CreateBindlessTextureInfrastructure() {
     texture_write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     texture_write.pImageInfo = image_infos.data();
     vkUpdateDescriptorSets(device_, 1, &texture_write, 0, nullptr);
+
+    // Frame constants: set 2, one uniform buffer, visible to both stages; a pool with a set per constant buffer.
+    VkDescriptorSetLayoutBinding constants_binding{};
+    constants_binding.binding = 0;
+    constants_binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    constants_binding.descriptorCount = 1;
+    constants_binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutCreateInfo constants_layout_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    constants_layout_info.bindingCount = 1;
+    constants_layout_info.pBindings = &constants_binding;
+    AETHER_VK_CHECK(vkCreateDescriptorSetLayout(device_, &constants_layout_info, nullptr, &frame_constants_set_layout_));
+    VkDescriptorPoolSize constants_pool_size{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kMaxConstantBuffers};
+    VkDescriptorPoolCreateInfo constants_pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    constants_pool_info.maxSets = kMaxConstantBuffers;
+    constants_pool_info.poolSizeCount = 1;
+    constants_pool_info.pPoolSizes = &constants_pool_size;
+    AETHER_VK_CHECK(vkCreateDescriptorPool(device_, &constants_pool_info, nullptr, &frame_constants_pool_));
 }
 
 PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain& swap_chain) {
@@ -916,8 +1083,14 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
         layout_info.pushConstantRangeCount = 1;
         layout_info.pPushConstantRanges = &push_range;
     }
-    VkDescriptorSetLayout bindless_set_layouts[2] = {bindless_texture_set_layout_, bindless_sampler_set_layout_};
-    if (desc.enable_bindless_textures) {
+    // Sets 0 and 1: the bindless textures and sampler. Set 2: the frame constants (which need the other two, so the set indices match the HLSL spaces).
+    VkDescriptorSetLayout bindless_set_layouts[3] = {bindless_texture_set_layout_, bindless_sampler_set_layout_, frame_constants_set_layout_};
+    if (desc.frame_constants_size_bytes > 0) {
+        AETHER_ASSERT(desc.enable_bindless_textures);
+        AETHER_ASSERT(desc.frame_constants_size_bytes % 16 == 0);
+        layout_info.setLayoutCount = 3;
+        layout_info.pSetLayouts = bindless_set_layouts;
+    } else if (desc.enable_bindless_textures) {
         layout_info.setLayoutCount = 2;
         layout_info.pSetLayouts = bindless_set_layouts;
     }
@@ -1841,6 +2014,15 @@ void VulkanCommandList::BindIndexBuffer(BufferHandle buffer, IndexFormat format)
 
 void VulkanCommandList::DrawIndexed(u32 index_count) {
     vkCmdDrawIndexed(command_buffer_, index_count, 1, 0, 0, 0);
+}
+
+void VulkanCommandList::BindFrameConstants(BufferHandle buffer) {
+    if (!buffer.IsValid() || device_.GetBuffer(buffer).constants_set == VK_NULL_HANDLE) {
+        AETHER_LOG_ERROR("Vulkan", "BindFrameConstants needs a buffer made by CreateConstantBuffer");
+        return;
+    }
+    const VkDescriptorSet set = device_.GetBuffer(buffer).constants_set;
+    vkCmdBindDescriptorSets(command_buffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, bound_pipeline_layout_, 2, 1, &set, 0, nullptr);
 }
 
 void VulkanCommandList::BindBindlessTextures() {

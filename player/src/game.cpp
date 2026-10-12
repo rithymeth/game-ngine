@@ -1,5 +1,7 @@
 #include "aether/player/game.h"
 #include "game_runtime.h"
+#include "aether/renderer/components.h"
+#include "aether/ui/controls.h"
 #include "aether/core/json_util.h"
 #include "aether/audio/backend.h"
 #include "aether/audio/audio_system.h"
@@ -115,6 +117,12 @@ bool ParseGameManifest(std::string_view text, GameManifest& out, std::string* er
     return true;
 }
 
+RenderSize ScaledRenderSize(u32 window_width, u32 window_height, f32 resolution_scale) {
+    const f32 scale = std::clamp(resolution_scale > 0.0f ? resolution_scale : 1.0f, 0.25f, 1.0f);
+    const auto side = [&](u32 n) { return std::max(1u, static_cast<u32>(std::lround(static_cast<f64>(n) * scale))); };
+    return {side(window_width), side(window_height)};
+}
+
 const QualityPreset* ChooseQuality(const GameManifest& manifest, const std::string& requested) {
     for (const std::string& name : {requested, manifest.default_quality}) {
         for (const QualityPreset& p : manifest.quality_presets) {
@@ -223,6 +231,7 @@ bool Game::HasScripting() { return AETHER_GAME_SCRIPTING != 0; }
 Game::Game(GamePackage& package)
     : package_(package), world_(std::make_unique<World>()), settings_(std::make_unique<save::SettingsStore<save::GameSettings>>(std::filesystem::path())) {
     lifecycle_ = std::make_unique<Lifecycle>(*world_, guids_);
+    platform_.Subscribe([this](const platform::LifecycleMessage& message) { OnPlatformEvent(message); });
     BuildKits();
     localization_ = std::make_unique<loc::Localization>();
     localization_->MakeActive();
@@ -391,6 +400,8 @@ bool Game::LoadStartupScene(std::string* error) {
 bool Game::LoadScene(const std::string& path, std::string* error) {
     StartModules(); // their components, before the scene names them
     bp::RegisterBlueprintComponents(); // BlueprintInstance, before scene deserialization
+    ui::RegisterWidgetComponents(); // WidgetComponent (§18.4)
+    RegisterRenderComponents(); // lights (DirectionalLight, SkyLight, PointLight, SpotLight) and post-process volumes, so scenes can name them
     RegisterSequenceComponents(); // SequenceComponent (§27.2)
     RegisterAudioComponents(); // cooked AudioSource/AudioListener/ReverbZone before deserialization
     kits_.RegisterComponents(); // the gameplay kits' components: attributes, tags, items, interactables, quests (§30)
@@ -575,6 +586,7 @@ void Game::StartRuntime() {
         }, &guids_);
     ApplyAudioSettings();
     runtime_->blueprints = std::make_unique<bp::BlueprintSystem>(*world_);
+    runtime_->blueprints->VM().SetPrintHandler([](Entity, const std::string& text) { AETHER_LOG_INFO("Blueprint", "%s", text.c_str()); });
     runtime_->blueprints->SetLoader([this](const assets::AssetGuid& guid, bp::Blueprint& out, std::string& name) {
         const GameManifest::Asset* asset = package_.FindAssetByGuid(assets::ToString(guid));
         std::vector<u8> bytes;
@@ -616,7 +628,40 @@ void Game::StartRuntime() {
         return InstantiatePrefab(*world_, guids_, guid, *data, &placed);
     });
     runtime_->sequences->MakeActive();
+    // The on-screen UI: layouts come from the package; a theme asset (.atheme), if the game ships one, styles every layout.
+    runtime_->ui_router = std::make_unique<ui::UIInputRouter>(runtime_->ui_viewport, runtime_->ui_font);
+    runtime_->ui_bridge = std::make_unique<ui::UIInputBridge>(*runtime_->ui_router);
+    for (const GameManifest::Asset& asset : package_.Manifest().assets) {
+        if (stdfs::path(asset.path).extension() != ".atheme") continue;
+        std::vector<u8> bytes;
+        std::string error;
+        if (package_.ReadContent(asset.path, bytes, &error) && ui::LoadTheme(std::string(bytes.begin(), bytes.end()), runtime_->ui_theme, {}, &error)) {
+            runtime_->ui_has_theme = true;
+        } else {
+            warnings_.push_back("UI: " + asset.path + ": " + error);
+        }
+        break;
+    }
+    runtime_->ui = std::make_unique<ui::UISystem>(
+        *world_, runtime_->ui_viewport, *runtime_->ui_router,
+        [this](const std::string& layout, ui::LayoutDocument& out, std::string* error) {
+            std::vector<u8> bytes;
+            if (!package_.ReadContent(layout, bytes, error)) return false;
+            // Images get ids (their order of appearance, from 1); the renderer maps them back to paths and loads them.
+            const ui::TextureResolver textures = [this](const std::string& image) -> u32 {
+                std::vector<std::string>& images = runtime_->ui_images;
+                const auto found = std::find(images.begin(), images.end(), image);
+                if (found != images.end()) return static_cast<u32>(found - images.begin()) + 1;
+                images.push_back(image);
+                return static_cast<u32>(images.size());
+            };
+            return ui::LoadLayout(std::string(bytes.begin(), bytes.end()), out, textures, error);
+        },
+        runtime_->ui_has_theme ? &runtime_->ui_theme : nullptr);
+    runtime_->ui->MakeActive();
 #if AETHER_GAME_SCRIPTING
+    // print() in a script goes to the log (category "Script"), where the console and the MCP server's log_recent can see it.
+    runtime_->host.SetPrintHandler([](const std::string& text) { AETHER_LOG_INFO("Script", "%s", text.c_str()); });
     runtime_->scripts = std::make_unique<script::ScriptSystem>(
         runtime_->host, *world_, guids_, [this](const assets::AssetGuid& guid, std::string& source, std::string& name) {
             const GameManifest::Asset* asset = package_.FindAssetByGuid(assets::ToString(guid));
@@ -649,6 +694,13 @@ void Game::StartRuntime() {
     api_context.install = [this](const std::string& kit_name) { runtime_->scripts->InstallKitApi(kit_name); };
     kits_.InstallScriptApi(&api_context);
 #endif
+}
+
+ui::Viewport* Game::Ui() { return runtime_ ? &runtime_->ui_viewport : nullptr; }
+
+std::string Game::UiImagePath(u32 id) const {
+    if (!runtime_ || id == 0 || id > runtime_->ui_images.size()) return {};
+    return runtime_->ui_images[id - 1];
 }
 
 std::vector<std::string> Game::ScriptErrors() const {
@@ -807,7 +859,13 @@ void Game::BuildFrame() {
     update.name = "Player.Update";
     update.phase = SystemPhase::Update;
     update.main_thread_only = true;
-    update.run = [this](World&, const FrameContext& frame) { lifecycle_->Update(frame.dt); };
+    update.run = [this](World&, const FrameContext& frame) {
+        // Menus: the keys and the pad move focus and press the focused control (only when the game has UI on screen, so a game
+        // without one never sees its input used here); scripts read the clicks next frame through UI.WasClicked.
+        if (runtime_ && runtime_->ui_bridge && runtime_->ui_viewport.LayerCount() > 0) runtime_->ui_bridge->Update(input_state_, frame.dt);
+        lifecycle_->Update(frame.dt);
+        if (runtime_ && runtime_->ui) runtime_->ui->Update(frame.dt); // after scripts, so what they set shows this frame
+    };
     scheduler_.Add(std::move(update));
     // Level sequences (§27) animate after gameplay's Update and before
     // scripts and Blueprints see their events.
@@ -942,9 +1000,114 @@ void Game::BuildFrame() {
     loop_ = std::make_unique<FrameLoop>(scheduler_, FixedTimestep(1.0f / package_.Manifest().fixed_timestep_hz));
 }
 
+void Game::UpdateUiPointers(f32 dt) {
+    if (!runtime_ || !runtime_->ui_router || runtime_->ui_viewport.LayerCount() == 0) return;
+    ui::UIInputRouter& router = *runtime_->ui_router;
+    // A windowed player lays the UI out as it draws; without a renderer (tests, the MCP server) nobody has, and a layer nobody has laid out has no
+    // rectangles to hit. Lay it out here, once per layer, with the built-in font (its size, 1920 x 1080 unless a renderer set one, is the pixel space
+    // pointers are in).
+    for (usize layer = 0; layer < runtime_->ui_viewport.LayerCount(); ++layer) {
+        const ui::Widget* root = runtime_->ui_viewport.Layer(layer);
+        if (root != nullptr && root->Geometry().Empty()) {
+            runtime_->ui_viewport.Layout(runtime_->ui_font);
+            break;
+        }
+    }
+    for (usize i = 0; i < input::InputState::kMaxPointers; ++i) {
+        const input::InputState::Pointer now = input_state_.GetPointer(i);
+        const input::InputState::Pointer before = ui_pointers_[i];
+        const ui::Vec2 at{now.x * ui_pointer_scale_x_, now.y * ui_pointer_scale_y_};
+        const u32 id = static_cast<u32>(i);
+        if (now.active && (!before.active || now.x != before.x || now.y != before.y)) router.PointerMove(at, id);
+        if (now.active && now.down && !before.down) ui_pointer_used_[i] = router.PointerDown(at, 0, id);
+        if (!now.down && before.down) router.PointerUp(at, 0, id);
+        // The mouse and the first finger are also Key::MouseLeft: gameplay must not see a press the UI took.
+        if (ui_pointer_used_[i] && now.down && i <= 1) input_state_.SetButton(input::Key::MouseLeft, false);
+        if (!now.down) ui_pointer_used_[i] = false;
+        ui_pointers_[i] = now;
+    }
+    router.Tick(dt);
+}
+
+void Game::ApplyVirtualControls() {
+    if (!runtime_ || runtime_->ui_viewport.LayerCount() == 0) {
+        ui_held_.clear();
+        return;
+    }
+    std::vector<HeldControl> now;
+    const auto visit = [&](auto&& self, ui::Widget& widget) -> void {
+        if (auto* stick = dynamic_cast<ui::VirtualStick*>(&widget)) {
+            if (stick->IsActive()) {
+                const input::Key x = input::KeyFromName(stick->key_x), y = input::KeyFromName(stick->key_y);
+                if (x != input::Key::None) input_state_.SetAxis(x, stick->value.x);
+                if (y != input::Key::None) input_state_.SetAxis(y, stick->value.y);
+                now.push_back({stick, x, y, true});
+            }
+        } else if (auto* button = dynamic_cast<ui::Button*>(&widget); button != nullptr && !button->hold_key.empty() && button->IsPressed()) {
+            const input::Key key = input::KeyFromName(button->hold_key);
+            if (key != input::Key::None) input_state_.SetButton(key, true);
+            now.push_back({button, key, input::Key::None, false});
+        }
+        for (usize c = 0; c < widget.ChildCount(); ++c) self(self, *widget.Child(c));
+    };
+    for (usize layer = 0; layer < runtime_->ui_viewport.LayerCount(); ++layer) {
+        if (ui::Widget* root = runtime_->ui_viewport.Layer(layer)) visit(visit, *root);
+    }
+    // What was held last Tick and is not now (the finger lifted, or the widget went away) is released.
+    for (const HeldControl& before : ui_held_) {
+        const bool still = std::any_of(now.begin(), now.end(), [&](const HeldControl& h) { return h.widget == before.widget; });
+        if (still) continue;
+        if (before.stick) {
+            if (before.key_a != input::Key::None) input_state_.SetAxis(before.key_a, 0.0f);
+            if (before.key_b != input::Key::None) input_state_.SetAxis(before.key_b, 0.0f);
+        } else if (before.key_a != input::Key::None) {
+            input_state_.SetButton(before.key_a, false);
+        }
+    }
+    ui_held_ = std::move(now);
+}
+
+void Game::OnPlatformEvent(const platform::LifecycleMessage& message) {
+    switch (message.event) {
+    case platform::LifecycleEvent::Suspend:
+        // In the background: no sound, nothing half-written. (PlatformLifecycle ignores a second Suspend, so this runs once.)
+        audio_was_running_ = runtime_ && runtime_->output && runtime_->output->Running();
+        if (audio_was_running_) runtime_->output->Stop();
+        if (saves_) {
+            saves_->Flush();
+            saves_->Pump();
+        }
+        break;
+    case platform::LifecycleEvent::Resume:
+        skip_next_dt_ = true;
+        if (audio_was_running_ && runtime_ && runtime_->output) {
+            std::string error;
+            if (!runtime_->output->Start(480, &error)) AETHER_LOG_WARN("Player", "Audio did not restart after resume: %s", error.c_str());
+        }
+        audio_was_running_ = false;
+        break;
+    case platform::LifecycleEvent::MemoryPressure:
+        ++memory_pressure_events_;
+        if (message.level == platform::MemoryLevel::Critical) ++critical_memory_pressure_events_;
+        break;
+    }
+}
+
 FrameContext Game::Tick(f32 dt) {
     if (!loop_) BuildFrame();
+    if (platform_.Suspended()) {
+        // In the background the game stands still: no time passes and input is left alone.
+        FrameContext frame = last_frame_;
+        frame.dt = 0;
+        return frame;
+    }
+    if (skip_next_dt_) {
+        dt = 0.0f; // the time spent suspended is not game time
+        skip_next_dt_ = false;
+    }
     UpdateProofMenu();
+    UpdateUiPointers(dt);
+    ApplyVirtualControls();
     input_.Update(input_state_, dt); // the host's keys and mouse, as this frame's actions
     if (paused_) {
         input_state_.EndFrame();

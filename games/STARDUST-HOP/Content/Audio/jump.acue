@@ -1,0 +1,34 @@
+{
+  "name": "jump",
+  "nodes": [
+    {
+      "id": 1,
+      "pos": [
+        0.0,
+        0.0
+      ],
+      "sound": "Audio/jump.wav",
+      "type": "Wave"
+    }
+  ],
+  "output": {
+    "attenuation": {
+      "lowpass_at_max_hz": 0.0,
+      "max_distance": 50.0,
+      "min_distance": 1.0,
+      "model": "Inverse",
+      "rolloff": 1.0
+    },
+    "bus": "SFX",
+    "doppler": 1.0,
+    "occlusion": false,
+    "pitch": 1.0,
+    "priority": 128,
+    "spatial": false,
+    "spatial_blend": 1.0,
+    "virtual": "Continue",
+    "volume_db": -8.0
+  },
+  "root": 1,
+  "version": 1
+}

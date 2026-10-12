@@ -2,9 +2,9 @@
 # aether_game is its runtime (mounting the paks, loading the startup scene,
 # the frame loop); aether_player is the executable around it.
 add_library(aether_game STATIC src/game.cpp src/game_kits.cpp src/user_paths.cpp src/settings_apply.cpp src/bindings_migrate.cpp
-                               src/scene_renderer.cpp)
+                               src/scene_renderer.cpp src/frame_lights.cpp src/package_textures.cpp)
 target_include_directories(aether_game PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(aether_game PUBLIC Aether::Engine Aether::UI Aether::Audio)
+target_link_libraries(aether_game PUBLIC Aether::Engine Aether::UI Aether::Audio Aether::Renderer)
 if(TARGET Aether::Physics)
     target_link_libraries(aether_game PRIVATE Aether::Physics)
     target_compile_definitions(aether_game PRIVATE AETHER_GAME_PHYSICS=1)

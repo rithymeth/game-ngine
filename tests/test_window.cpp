@@ -99,3 +99,72 @@ AETHER_TEST(Window_GlfwWindowUnderADisplay) {
     CHECK(window.TakeEvents().empty());
 }
 #endif
+
+AETHER_TEST(Window_TouchEventsFillThePointerSlots) {
+    input::InputState state;
+    const auto touch = [](u32 id, bool down, f32 x, f32 y) {
+        WindowEvent e;
+        e.type = WindowEventType::Touch, e.pointer = id, e.down = down, e.x = x, e.y = y;
+        return e;
+    };
+    const auto moved = [](u32 id, f32 x, f32 y) {
+        WindowEvent e;
+        e.type = WindowEventType::TouchMove, e.pointer = id, e.x = x, e.y = y;
+        return e;
+    };
+    // The mouse is pointer 0: it follows the cursor and the left button.
+    WindowEvent cursor;
+    cursor.type = WindowEventType::MouseMove, cursor.x = 40, cursor.y = 50, cursor.dx = 1, cursor.dy = 1;
+    WindowEvent click;
+    click.type = WindowEventType::Key, click.key = Key::MouseLeft, click.down = true;
+    std::vector<WindowEvent> events = {cursor, click};
+    ApplyWindowEvents(events, state);
+    CHECK(state.GetPointer(0).active && state.GetPointer(0).down && state.GetPointer(0).x == 40 && state.GetPointer(0).y == 50);
+
+    // Two fingers take slots 1 and 2; the first also holds the left mouse button.
+    events = {touch(7, true, 10, 20), touch(9, true, 30, 40)};
+    ApplyWindowEvents(events, state);
+    CHECK(state.GetPointer(1).down && state.GetPointer(1).x == 10 && state.GetPointer(2).down && state.GetPointer(2).y == 40);
+    CHECK(state.IsDown(Key::MouseLeft));
+    events = {moved(7, 12, 22), moved(99, 1, 1)}; // a finger that never landed is ignored
+    ApplyWindowEvents(events, state);
+    CHECK(state.GetPointer(1).x == 12 && state.GetPointer(1).y == 22 && state.GetPointer(1).down);
+    // Lifting the first frees its slot and lets go of the button; the next finger takes the lowest free slot.
+    events = {touch(7, false, 12, 22)};
+    ApplyWindowEvents(events, state);
+    CHECK(!state.GetPointer(1).down && !state.GetPointer(1).active && !state.IsDown(Key::MouseLeft) && state.GetPointer(2).down);
+    events = {touch(11, true, 70, 80)};
+    ApplyWindowEvents(events, state);
+    CHECK(state.GetPointer(1).down && state.GetPointer(1).x == 70);
+    events = {touch(123, false, 0, 0)}; // a lift for a finger that is not down
+    ApplyWindowEvents(events, state);
+    CHECK(state.GetPointer(1).down && state.GetPointer(2).down);
+    // Past the slots there is nowhere to put a finger.
+    events.clear();
+    for (u32 id = 200; id < 215; ++id) events.push_back(touch(id, true, 1, 1));
+    ApplyWindowEvents(events, state);
+    CHECK(state.TouchSlot(214, false) == -1);
+    // Losing focus lets go of everything.
+    WindowEvent lost;
+    lost.type = WindowEventType::Focus, lost.down = false;
+    events = {lost};
+    ApplyWindowEvents(events, state);
+    CHECK(!state.GetPointer(1).down && !state.GetPointer(0).down && state.TouchSlot(11, false) == -1);
+}
+
+#if defined(_WIN32)
+AETHER_TEST(Window_CursorModeIsRememberedAndCleanlyReleased) {
+    WindowDesc desc;
+    desc.title = "Aether cursor test";
+    desc.width = 320, desc.height = 200;
+    desc.visible = false;
+    Window window(desc);
+    CHECK(window.IsValid() && window.GetCursorMode() == CursorMode::Normal);
+    window.SetCursorMode(CursorMode::Hidden);
+    CHECK(window.GetCursorMode() == CursorMode::Hidden);
+    window.SetCursorMode(CursorMode::Locked); // clipped only while the window is in front; never left clipped after it is gone
+    CHECK(window.GetCursorMode() == CursorMode::Locked && window.PumpMessages());
+    window.SetCursorMode(CursorMode::Normal);
+    CHECK(window.GetCursorMode() == CursorMode::Normal);
+}
+#endif

@@ -5,6 +5,7 @@
 #include "aether/gfx/rhi/types.h"
 
 #include <memory>
+#include <span>
 #include <string>
 
 namespace aether::gfx::rhi {
@@ -74,6 +75,17 @@ struct PipelineDesc {
     // Ignored when depth_test is false. True preserves every pipeline's
     // previous behavior.
     bool depth_write = true;
+
+    // Reserves a per-frame constant block for the pipeline: the shader reads
+    //   ConstantBuffer<FrameData> g_Frame : register(b0, space2);
+    // (space2 maps to descriptor set 2 on Vulkan), `frame_constants_size_bytes`
+    // being FrameData's size, a multiple of 16. Fill a buffer made by
+    // IDevice::CreateConstantBuffer and bind it with ICommandList::
+    // BindFrameConstants before drawing. Unlike push constants (small, set per
+    // draw), this holds what a whole frame shares: lights, the camera, fog.
+    // 0 (the default) means none. Only for devices where SupportsFrameConstants()
+    // is true; others ignore the field and the shader must not name g_Frame.
+    u32 frame_constants_size_bytes = 0;
 };
 
 // Backend-agnostic device/queue/submission layer, extended with a genuinely
@@ -162,6 +174,31 @@ public:
     // invalid handles and ranges are logged and ignored by both backends. The
     // caller must wait until the GPU is done reading the previous contents.
     virtual void UpdateVertexBuffer(BufferHandle buffer, const void* data, u64 size_bytes) = 0;
+
+    // Frame constants (see PipelineDesc::frame_constants_size_bytes). Devices that
+    // support them (D3D12 today) return true; the others leave the three calls
+    // inert (CreateConstantBuffer returns an invalid handle), so a renderer can
+    // fall back to constants of its own. A constant buffer is host-visible,
+    // zero-filled when made, and updated in place; keep one per frame in flight
+    // (the GPU may still be reading the last frame's) and update it only after
+    // that frame's fence has passed.
+    virtual bool SupportsFrameConstants() const { return false; }
+    virtual BufferHandle CreateConstantBuffer(u64 /*size_bytes*/) { return {}; }
+    virtual void UpdateConstantBuffer(BufferHandle /*buffer*/, const void* /*data*/, u64 /*size_bytes*/) {}
+
+    // Block-compressed textures (BC1, BC3, BC7: see CompressedTextureFormat), kept compressed on the GPU with their whole mip chain: a quarter
+    // of the memory of RGBA8, and mips for the sampler. The handle indexes the same bindless table as CreateTexture. Devices that cannot (Vulkan
+    // here until it is implemented; ASTC is not offered anywhere yet) answer false and an invalid handle, and the caller decodes to RGBA8 and
+    // uses CreateTexture. `mips` run largest first; each level's size must be the block count times the block size, and every level down to the
+    // last one given must be there (a texture may stop before 1 x 1). Invalid arguments throw std::invalid_argument; a full table returns an
+    // invalid handle as CreateTexture does.
+    virtual bool SupportsCompressedTexture(CompressedTextureFormat /*format*/) const { return false; }
+    virtual SampledTextureHandle CreateCompressedTexture(CompressedTextureFormat /*format*/, u32 /*width*/, u32 /*height*/, std::span<const CompressedMip> /*mips*/) { return {}; }
+
+    // Frees a texture made by CreateTexture or CreateCompressedTexture (the GPU memory and its bindless slot, which the next texture reuses).
+    // Waits for the GPU to go idle first, so call it between frames (a memory-pressure handler, a level change), not mid-frame; nothing may
+    // still draw with the handle afterwards. False for the fallback (slot 0), an invalid handle or one already freed; the default does nothing.
+    virtual bool DestroyTexture(SampledTextureHandle /*texture*/) { return false; }
 
     // Uploads tightly-packed RGBA8 pixel data (non-null, with non-zero
     // dimensions and a representable byte size; invalid arguments throw

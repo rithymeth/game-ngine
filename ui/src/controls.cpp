@@ -148,6 +148,53 @@ void Slider::PaintSelf(DrawList& list, const PaintContext& ctx) const {
     list.AddBrush({g.x + (g.w - thumb) * t, g.y, thumb, thumb}, IsHovered() ? style.hovered : style.accent, ctx.opacity);
 }
 
+// --- VirtualStick ----------------------------------------------------------------------------------
+
+void VirtualStick::Drag(Vec2 position) {
+    const f32 r = std::max(radius, 1.0f);
+    f32 x = (position.x - origin_.x) / r, y = (position.y - origin_.y) / r;
+    const f32 length = std::sqrt(x * x + y * y);
+    if (length > 1.0f) x /= length, y /= length;
+    const Vec2 next{x, y};
+    const bool changed = next.x != value.x || next.y != value.y;
+    value = next;
+    if (changed && on_changed) on_changed(value);
+}
+
+bool VirtualStick::OnPointerDown(const PointerEvent& e, UIInputRouter&) {
+    active_ = true;
+    const Rect& g = Geometry();
+    origin_ = fixed ? Vec2{g.x + g.w * 0.5f, g.y + g.h * 0.5f} : e.position;
+    Drag(e.position);
+    return true;
+}
+
+void VirtualStick::OnPointerMove(const PointerEvent& e, UIInputRouter&) {
+    if (active_) Drag(e.position);
+}
+
+void VirtualStick::OnPointerUp(const PointerEvent&, bool, UIInputRouter&) {
+    active_ = false;
+    const bool changed = value.x != 0.0f || value.y != 0.0f;
+    value = {};
+    if (changed && on_changed) on_changed(value);
+}
+
+void VirtualStick::PaintSelf(DrawList& list, const PaintContext& ctx) const {
+    const Rect& g = Geometry();
+    const f32 opacity = ctx.opacity * (IsEnabled() ? 1.0f : 0.6f);
+    // The base: the widget's own rectangle, or a square of the stick's reach around where the finger landed.
+    Rect base = g;
+    Vec2 centre{g.x + g.w * 0.5f, g.y + g.h * 0.5f};
+    if (active_ && !fixed) {
+        base = {origin_.x - radius, origin_.y - radius, radius * 2.0f, radius * 2.0f};
+        centre = origin_;
+    }
+    list.AddBrush(base, StateBrush(active_), opacity * 0.6f);
+    const f32 knob = std::max(radius * 0.7f, 8.0f);
+    list.AddBrush({centre.x + value.x * radius - knob * 0.5f, centre.y + value.y * radius - knob * 0.5f, knob, knob}, style.accent, opacity);
+}
+
 // --- ProgressBar -----------------------------------------------------------------------------------
 
 void ProgressBar::PaintSelf(DrawList& list, const PaintContext& ctx) const {

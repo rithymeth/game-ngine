@@ -243,7 +243,12 @@ int main(int argc, char** argv) {
     } chosen;
     SettingsTargets targets;
     targets.set_window = [&](u32 w, u32 h, bool fullscreen, bool vsync) { chosen = {w, h, fullscreen, vsync}; };
+    // A quality change made while playing (the settings menu) is picked up by the frame loop; the one the loading below reports is not.
+    std::string live_quality;
+    bool quality_changed = false;
+    targets.set_quality = [&](const std::string& name) { live_quality = name, quality_changed = true; };
     for (const std::string& w : game.LoadSettings(targets)) AETHER_LOG_WARN("Player", "%s", w.c_str());
+    quality_changed = false;
     // A settings file counts only if there is one: the defaults (1280x720,
     // High) must not override the project's own.
     std::error_code settings_ec;
@@ -267,6 +272,7 @@ int main(int argc, char** argv) {
                         quality->msaa_samples);
     }
     const bool vsync = have_settings ? chosen.vsync : manifest.vsync;
+    f32 render_scale = quality ? quality->resolution_scale : 1.0f;
     if (have_settings && chosen.fullscreen) AETHER_LOG_WARN("Player", "Fullscreen is saved in the settings but isn't supported by this window yet");
 
     const bool loaded = options.scene.empty() ? game.LoadStartupScene(&error) : game.LoadScene(options.scene, &error);
@@ -305,6 +311,7 @@ int main(int argc, char** argv) {
         std::vector<u64> frame_fences;
         std::unique_ptr<SceneRenderer> scene_renderer;
         bool resized = false;
+        bool can_stretch = false; // whether the swap chain may be smaller than the window (D3D12)
         if (!options.headless) {
             WindowDesc desc;
             desc.title = !manifest.window_title.empty() ? manifest.window_title
@@ -331,7 +338,14 @@ int main(int argc, char** argv) {
 #endif
             device = rhi::CreateDevice(backend, config == cook::BuildConfiguration::Debug);
             if (device) {
-                swap_chain = device->CreateSwapChain(native, window->Width(), window->Height(), 2);
+                // A swap chain smaller than the window is stretched to fit by D3D12's flip model; a Vulkan surface has to match the window.
+                if (backend != rhi::Backend::D3D12 && render_scale < 1.0f) {
+                    AETHER_LOG_WARN("Player", "Resolution scale x%.2f needs a stretched swap chain, which only D3D12 has here; drawing at full size", render_scale);
+                    render_scale = 1.0f;
+                }
+                can_stretch = backend == rhi::Backend::D3D12;
+                const RenderSize first = ScaledRenderSize(window->Width(), window->Height(), render_scale);
+                swap_chain = device->CreateSwapChain(native, first.width, first.height, 2);
                 const u32 frame_count = std::max(swap_chain->BufferCount(), 1u);
                 command_lists.reserve(frame_count);
                 frame_fences.assign(frame_count, 0);
@@ -339,6 +353,7 @@ int main(int argc, char** argv) {
                     command_lists.push_back(device->CreateCommandList());
                 }
                 scene_renderer = std::make_unique<SceneRenderer>(*device, *swap_chain, package);
+                if (quality) scene_renderer->SetViewDistance(quality->view_distance);
                 window->on_resize = [&](u32, u32) { resized = true; };
             } else {
                 AETHER_LOG_WARN("Player", "No graphics device; running without drawing");
@@ -385,6 +400,21 @@ int main(int argc, char** argv) {
                 }
                 game.Input() = replay_held;
             }
+            if (quality_changed) {
+                quality_changed = false;
+                if (const QualityPreset* next = ChooseQuality(manifest, live_quality); next && next->name == live_quality) {
+                    AETHER_LOG_INFO("Player", "Quality: %s (resolution x%.2f, view distance %.0f m)", next->name.c_str(), next->resolution_scale, next->view_distance);
+                    render_scale = can_stretch ? next->resolution_scale : 1.0f;
+                    if (scene_renderer) scene_renderer->SetViewDistance(next->view_distance);
+                    resized = true; // the swap chain is rebuilt at the new size
+                } else {
+                    AETHER_LOG_WARN("Player", "No quality preset '%s'", live_quality.c_str());
+                }
+            }
+            if (swap_chain && window && window->Width() > 0 && window->Height() > 0) {
+                game.SetUiPointerScale(static_cast<f32>(swap_chain->Width()) / static_cast<f32>(window->Width()),
+                                       static_cast<f32>(swap_chain->Height()) / static_cast<f32>(window->Height()));
+            }
             game.Tick(dt);
             if (game.ExitRequested()) break;
 
@@ -392,7 +422,8 @@ int main(int argc, char** argv) {
                 device->WaitForFence(frame_fences[frame_slot]);
                 if (resized) {
                     for (u64 pending_fence : frame_fences) device->WaitForFence(pending_fence);
-                    swap_chain->Resize(window->Width(), window->Height());
+                    const RenderSize size = ScaledRenderSize(window->Width(), window->Height(), render_scale);
+                    swap_chain->Resize(size.width, size.height);
                     resized = false;
                 }
                 swap_chain->AcquireNextImage();
