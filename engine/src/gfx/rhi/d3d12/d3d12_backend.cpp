@@ -316,6 +316,7 @@ SampledTextureHandle D3D12Device::CreateTexture(u32 width, u32 height, const u8*
 
 SampledTextureHandle D3D12Device::CreateCompressedTexture(CompressedTextureFormat format, u32 width, u32 height, std::span<const CompressedMip> mips) {
     const u32 block_bytes = CompressedBlockBytes(format);
+    const u32 block = CompressedBlockWidth(format);
     if (width == 0 || height == 0 || mips.empty() || mips.size() > 16) {
         AETHER_LOG_ERROR("D3D12", "CreateCompressedTexture requires non-zero dimensions and 1 to 16 mip levels");
         throw std::invalid_argument("CreateCompressedTexture requires non-zero dimensions and 1 to 16 mip levels");
@@ -323,7 +324,7 @@ SampledTextureHandle D3D12Device::CreateCompressedTexture(CompressedTextureForma
     std::vector<gfx::Texture::MipData> levels;
     u32 w = width, h = height;
     for (const CompressedMip& mip : mips) {
-        const u32 blocks_x = (w + 3) / 4, blocks_y = (h + 3) / 4;
+        const u32 blocks_x = (w + block - 1) / block, blocks_y = (h + block - 1) / block;
         if (mip.data == nullptr || mip.width != w || mip.height != h || mip.size_bytes != static_cast<u64>(blocks_x) * blocks_y * block_bytes) {
             AETHER_LOG_ERROR("D3D12", "CreateCompressedTexture: a mip level does not match its size or format");
             throw std::invalid_argument("CreateCompressedTexture: a mip level does not match its size or format");
@@ -332,6 +333,7 @@ SampledTextureHandle D3D12Device::CreateCompressedTexture(CompressedTextureForma
         w = std::max(1u, w / 2);
         h = std::max(1u, h / 2);
     }
+    if (!SupportsCompressedTexture(format)) return {}; // ASTC: D3D12 has none
     if (sampled_textures_.size() >= kMaxUserBindlessTextures) {
         AETHER_LOG_ERROR("D3D12", "CreateCompressedTexture exhausted the bindless texture table (capacity=%u real textures)", kMaxUserBindlessTextures);
         return {};
@@ -350,6 +352,16 @@ SampledTextureHandle D3D12Device::CreateCompressedTexture(CompressedTextureForma
     const u32 index = texture->BindlessIndex();
     sampled_textures_.push_back(std::move(texture));
     return SampledTextureHandle{index};
+}
+
+bool D3D12Device::DestroyTexture(SampledTextureHandle texture) {
+    const auto it = std::find_if(sampled_textures_.begin(), sampled_textures_.end(),
+                                 [&](const std::unique_ptr<gfx::Texture>& t) { return t->BindlessIndex() == texture.index; });
+    if (!texture.IsValid() || it == sampled_textures_.end()) return false;
+    device_.WaitForFence(device_.Submit(nullptr, 0)); // everything submitted so far has finished, so nothing still reads it
+    bindless_texture_heap_->Free(texture.index);
+    sampled_textures_.erase(it);
+    return true;
 }
 
 D3D12SwapChain::D3D12SwapChain(D3D12Device& device, void* hwnd, u32 width, u32 height, u32 buffer_count)

@@ -269,6 +269,7 @@ VkDevice CreateLogicalDevice(VkPhysicalDevice physical_device, const PhysicalDev
     vkGetPhysicalDeviceFeatures(physical_device, &supported_features);
     VkPhysicalDeviceFeatures enabled_features{};
     enabled_features.textureCompressionBC = supported_features.textureCompressionBC;
+    enabled_features.textureCompressionASTC_LDR = supported_features.textureCompressionASTC_LDR; // what phones have instead
 
     VkDeviceCreateInfo device_info{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
     device_info.pNext = &features_12;
@@ -344,7 +345,7 @@ VulkanDevice::~VulkanDevice() {
             vkFreeMemory(device_, record.memory, nullptr);
         };
         for (const SampledTextureRecord& texture : sampled_textures_) {
-            destroy_texture_record(texture);
+            if (texture.image != VK_NULL_HANDLE) destroy_texture_record(texture);
         }
         destroy_texture_record(dummy_texture_);
         if (frame_constants_pool_ != VK_NULL_HANDLE) {
@@ -811,7 +812,7 @@ SampledTextureHandle VulkanDevice::CreateTexture(u32 width, u32 height, const u8
         AETHER_LOG_ERROR("Vulkan", "CreateTexture requires non-zero dimensions and non-null RGBA8 pixel data");
         throw std::invalid_argument("CreateTexture requires non-zero dimensions and non-null RGBA8 pixel data");
     }
-    if (sampled_textures_.size() >= kMaxUserBindlessTextures) {
+    if (TextureTableFull()) {
         AETHER_LOG_ERROR("Vulkan", "CreateTexture exhausted the bindless texture table (capacity=%u real textures)",
                          kMaxUserBindlessTextures);
         return {};
@@ -822,8 +823,7 @@ SampledTextureHandle VulkanDevice::CreateTexture(u32 width, u32 height, const u8
     const SampledTextureRecord record = owned_record.Get();
     // Slot zero remains the white fallback, matching the D3D12 descriptor
     // heap and the RHI's no-texture convention.
-    u32 index = static_cast<u32>(sampled_textures_.size()) + kFirstUserBindlessTextureIndex;
-    sampled_textures_.push_back(record);
+    const u32 index = StoreTextureRecord(record);
     owned_record.Release();
 
     WriteBindlessTexture(index, record);
@@ -851,6 +851,9 @@ VkFormat VkFormatOf(CompressedTextureFormat format) {
     case CompressedTextureFormat::BC1: return VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
     case CompressedTextureFormat::BC3: return VK_FORMAT_BC3_UNORM_BLOCK;
     case CompressedTextureFormat::BC7: return VK_FORMAT_BC7_UNORM_BLOCK;
+    case CompressedTextureFormat::ASTC_4x4: return VK_FORMAT_ASTC_4x4_UNORM_BLOCK;
+    case CompressedTextureFormat::ASTC_6x6: return VK_FORMAT_ASTC_6x6_UNORM_BLOCK;
+    case CompressedTextureFormat::ASTC_8x8: return VK_FORMAT_ASTC_8x8_UNORM_BLOCK;
     }
     return VK_FORMAT_BC7_UNORM_BLOCK;
 }
@@ -859,7 +862,9 @@ VkFormat VkFormatOf(CompressedTextureFormat format) {
 bool VulkanDevice::SupportsCompressedTexture(CompressedTextureFormat format) const {
     VkPhysicalDeviceFeatures features{};
     vkGetPhysicalDeviceFeatures(physical_device_, &features);
-    if (!features.textureCompressionBC) return false; // the device was made without it, so using these formats would be invalid
+    const bool astc = format == CompressedTextureFormat::ASTC_4x4 || format == CompressedTextureFormat::ASTC_6x6 || format == CompressedTextureFormat::ASTC_8x8;
+    // The device was made with these features only where the GPU has them, so using the formats without them would be invalid.
+    if (astc ? !features.textureCompressionASTC_LDR : !features.textureCompressionBC) return false;
     VkFormatProperties props{};
     vkGetPhysicalDeviceFormatProperties(physical_device_, VkFormatOf(format), &props);
     return (props.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) != 0 &&
@@ -875,8 +880,7 @@ SampledTextureHandle VulkanDevice::CreateCompressedTexture(CompressedTextureForm
     std::vector<ImageLevel> levels;
     u32 w = width, h = height;
     for (const CompressedMip& mip : mips) {
-        const u64 blocks = static_cast<u64>((w + 3) / 4) * ((h + 3) / 4);
-        if (mip.data == nullptr || mip.width != w || mip.height != h || mip.size_bytes != blocks * block_bytes) {
+        if (mip.data == nullptr || mip.width != w || mip.height != h || mip.size_bytes != CompressedLevelBytes(format, w, h)) {
             AETHER_LOG_ERROR("Vulkan", "CreateCompressedTexture: a mip level does not match its size or format");
             throw std::invalid_argument("CreateCompressedTexture: a mip level does not match its size or format");
         }
@@ -888,18 +892,43 @@ SampledTextureHandle VulkanDevice::CreateCompressedTexture(CompressedTextureForm
         AETHER_LOG_ERROR("Vulkan", "CreateCompressedTexture: this device cannot sample that format");
         return {};
     }
-    if (sampled_textures_.size() >= kMaxUserBindlessTextures) {
+    if (TextureTableFull()) {
         AETHER_LOG_ERROR("Vulkan", "CreateCompressedTexture exhausted the bindless texture table (capacity=%u real textures)", kMaxUserBindlessTextures);
         return {};
     }
     ScopedSampledTextureRecord owned_record(device_);
     owned_record.Get() = UploadImageRecord(VkFormatOf(format), width, height, levels);
     const SampledTextureRecord record = owned_record.Get();
-    const u32 index = static_cast<u32>(sampled_textures_.size()) + kFirstUserBindlessTextureIndex;
-    sampled_textures_.push_back(record);
+    const u32 index = StoreTextureRecord(record);
     owned_record.Release();
     WriteBindlessTexture(index, record);
     return SampledTextureHandle{index};
+}
+
+u32 VulkanDevice::StoreTextureRecord(const SampledTextureRecord& record) {
+    if (!free_texture_slots_.empty()) {
+        const u32 position = free_texture_slots_.back();
+        free_texture_slots_.pop_back();
+        sampled_textures_[position] = record;
+        return position + kFirstUserBindlessTextureIndex;
+    }
+    sampled_textures_.push_back(record);
+    return static_cast<u32>(sampled_textures_.size() - 1) + kFirstUserBindlessTextureIndex;
+}
+
+bool VulkanDevice::DestroyTexture(SampledTextureHandle texture) {
+    if (!texture.IsValid() || texture.index < kFirstUserBindlessTextureIndex) return false;
+    const u32 position = texture.index - kFirstUserBindlessTextureIndex;
+    if (position >= sampled_textures_.size() || sampled_textures_[position].image == VK_NULL_HANDLE) return false;
+    AETHER_VK_CHECK(vkDeviceWaitIdle(device_)); // nothing in flight still reads it
+    const SampledTextureRecord record = sampled_textures_[position];
+    WriteBindlessTexture(texture.index, dummy_texture_); // a stale handle samples white, not freed memory
+    vkDestroyImageView(device_, record.view, nullptr);
+    vkDestroyImage(device_, record.image, nullptr);
+    vkFreeMemory(device_, record.memory, nullptr);
+    sampled_textures_[position] = {};
+    free_texture_slots_.push_back(position);
+    return true;
 }
 
 BufferHandle VulkanDevice::CreateConstantBuffer(u64 size_bytes) {

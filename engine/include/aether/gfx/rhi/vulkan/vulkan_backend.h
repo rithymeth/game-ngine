@@ -84,6 +84,7 @@ public:
     SampledTextureHandle CreateTexture(u32 width, u32 height, const u8* rgba8_pixels) override;
     bool SupportsCompressedTexture(CompressedTextureFormat format) const override;
     SampledTextureHandle CreateCompressedTexture(CompressedTextureFormat format, u32 width, u32 height, std::span<const CompressedMip> mips) override;
+    bool DestroyTexture(SampledTextureHandle texture) override;
 
     // Frame constants (PipelineDesc::frame_constants_size_bytes): descriptor set 2, one uniform buffer at binding 0, which is where the HLSL's
     // `register(b0, space2)` lands under DXC's default mapping (space N is set N, register bN is binding N).
@@ -166,7 +167,11 @@ private:
     std::vector<TextureRecord> textures_;
     std::vector<PipelineRecord> pipelines_;
     std::vector<BufferRecord> buffers_;
-    std::vector<SampledTextureRecord> sampled_textures_;
+    std::vector<SampledTextureRecord> sampled_textures_; // position i is bindless slot i + kFirstUserBindlessTextureIndex; a freed one is empty
+    std::vector<u32> free_texture_slots_;                // positions in sampled_textures_ DestroyTexture emptied, reused first
+    // Stores `record` in the first free position (or a new one) and returns its bindless index.
+    u32 StoreTextureRecord(const SampledTextureRecord& record);
+    bool TextureTableFull() const { return sampled_textures_.size() - free_texture_slots_.size() >= kMaxUserBindlessTextures; }
 
     VkDescriptorSetLayout bindless_texture_set_layout_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout bindless_sampler_set_layout_ = VK_NULL_HANDLE;

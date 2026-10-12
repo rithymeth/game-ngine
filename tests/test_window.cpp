@@ -151,3 +151,20 @@ AETHER_TEST(Window_TouchEventsFillThePointerSlots) {
     ApplyWindowEvents(events, state);
     CHECK(!state.GetPointer(1).down && !state.GetPointer(0).down && state.TouchSlot(11, false) == -1);
 }
+
+#if defined(_WIN32)
+AETHER_TEST(Window_CursorModeIsRememberedAndCleanlyReleased) {
+    WindowDesc desc;
+    desc.title = "Aether cursor test";
+    desc.width = 320, desc.height = 200;
+    desc.visible = false;
+    Window window(desc);
+    CHECK(window.IsValid() && window.GetCursorMode() == CursorMode::Normal);
+    window.SetCursorMode(CursorMode::Hidden);
+    CHECK(window.GetCursorMode() == CursorMode::Hidden);
+    window.SetCursorMode(CursorMode::Locked); // clipped only while the window is in front; never left clipped after it is gone
+    CHECK(window.GetCursorMode() == CursorMode::Locked && window.PumpMessages());
+    window.SetCursorMode(CursorMode::Normal);
+    CHECK(window.GetCursorMode() == CursorMode::Normal);
+}
+#endif

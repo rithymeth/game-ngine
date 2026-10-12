@@ -11,6 +11,8 @@
 #endif
 #include <Windows.h>
 
+#include <vector>
+
 namespace aether {
 
 namespace {
@@ -20,6 +22,20 @@ constexpr const wchar_t* kWindowClassName = L"AetherWindowClass";
 } // namespace
 
 struct WindowBackendAccess {
+    static void ApplyCursorClip(Window& w) {
+        HWND hwnd = static_cast<HWND>(w.native_handle_);
+        if (w.cursor_mode_ == CursorMode::Locked && GetForegroundWindow() == hwnd) {
+            RECT client;
+            GetClientRect(hwnd, &client);
+            POINT top_left{client.left, client.top}, bottom_right{client.right, client.bottom};
+            ClientToScreen(hwnd, &top_left);
+            ClientToScreen(hwnd, &bottom_right);
+            const RECT screen{top_left.x, top_left.y, bottom_right.x, bottom_right.y};
+            ClipCursor(&screen);
+        } else {
+            ClipCursor(nullptr);
+        }
+    }
     static void MouseAt(Window& w, f32 x, f32 y) {
         WindowEvent e;
         e.type = WindowEventType::MouseMove;
@@ -50,8 +66,41 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                                      static_cast<i64>(lparam));
     }
 
+    // A finger also makes Windows synthesize mouse messages; those would count the same touch twice, so they are dropped (the flag is in the
+    // message's extra info) and WM_TOUCH below is the one source.
+    const bool synthesized_from_touch = (GetMessageExtraInfo() & 0xFFFFFF00) == 0xFF515700;
+    if (window && synthesized_from_touch &&
+        (msg == WM_MOUSEMOVE || (msg >= WM_LBUTTONDOWN && msg <= WM_MBUTTONUP) || msg == WM_XBUTTONDOWN || msg == WM_XBUTTONUP)) {
+        return 0;
+    }
+
     if (window) {
         switch (msg) {
+            case WM_TOUCH: {
+                const UINT count = LOWORD(wparam);
+                std::vector<TOUCHINPUT> inputs(count);
+                if (count > 0 && GetTouchInputInfo(reinterpret_cast<HTOUCHINPUT>(lparam), count, inputs.data(), sizeof(TOUCHINPUT))) {
+                    for (const TOUCHINPUT& in : inputs) {
+                        POINT point{in.x / 100, in.y / 100}; // hundredths of a pixel, in screen space
+                        ScreenToClient(hwnd, &point);
+                        WindowEvent e;
+                        e.pointer = in.dwID;
+                        e.x = static_cast<f32>(point.x), e.y = static_cast<f32>(point.y);
+                        if (in.dwFlags & TOUCHEVENTF_DOWN) {
+                            e.type = WindowEventType::Touch, e.down = true;
+                        } else if (in.dwFlags & TOUCHEVENTF_UP) {
+                            e.type = WindowEventType::Touch, e.down = false;
+                        } else if (in.dwFlags & TOUCHEVENTF_MOVE) {
+                            e.type = WindowEventType::TouchMove;
+                        } else {
+                            continue;
+                        }
+                        window->PushEvent(e);
+                    }
+                }
+                CloseTouchInputHandle(reinterpret_cast<HTOUCHINPUT>(lparam));
+                return 0;
+            }
             case WM_KEYDOWN:
             case WM_SYSKEYDOWN:
             case WM_KEYUP:
@@ -101,6 +150,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             }
             case WM_SETFOCUS:
             case WM_KILLFOCUS: {
+                WindowBackendAccess::ApplyCursorClip(*window); // runs again below on SETFOCUS once the window is foreground
                 WindowEvent e;
                 e.type = WindowEventType::Focus;
                 e.down = msg == WM_SETFOCUS;
@@ -112,6 +162,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     }
 
     switch (msg) {
+        case WM_SETCURSOR:
+            if (window && window->GetCursorMode() != CursorMode::Normal && LOWORD(lparam) == HTCLIENT) {
+                SetCursor(nullptr);
+                return TRUE;
+            }
+            return DefWindowProcW(hwnd, msg, wparam, lparam);
         case WM_CREATE: {
             auto* create_struct = reinterpret_cast<CREATESTRUCTW*>(lparam);
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(create_struct->lpCreateParams));
@@ -126,6 +182,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             PostQuitMessage(0);
             return 0;
         case WM_SIZE:
+            if (window) WindowBackendAccess::ApplyCursorClip(*window);
             if (window && wparam != SIZE_MINIMIZED) {
                 window->NotifyResized(LOWORD(lparam), HIWORD(lparam));
             }
@@ -164,6 +221,7 @@ Window::Window(const WindowDesc& desc) : width_(desc.width), height_(desc.height
                                  GetModuleHandleW(nullptr), this);
     AETHER_ASSERT(hwnd != nullptr);
     native_handle_ = hwnd;
+    RegisterTouchWindow(hwnd, 0); // WM_TOUCH for each finger (a no-op without a touch screen)
 
     ShowWindow(hwnd, desc.visible ? SW_SHOW : SW_HIDE);
     AETHER_LOG_INFO("Window", "Created %ux%u window \"%s\"", desc.width, desc.height, desc.title.c_str());
@@ -171,6 +229,7 @@ Window::Window(const WindowDesc& desc) : width_(desc.width), height_(desc.height
 
 Window::~Window() {
     if (native_handle_) {
+        if (cursor_mode_ == CursorMode::Locked) ClipCursor(nullptr);
         DestroyWindow(static_cast<HWND>(native_handle_));
     }
 }
@@ -179,6 +238,13 @@ const char* Window::Backend() const { return "win32"; }
 
 void Window::SetTitle(const std::string& title) {
     if (native_handle_) SetWindowTextW(static_cast<HWND>(native_handle_), ToWide(title).c_str());
+}
+
+void Window::SetCursorMode(CursorMode mode) {
+    cursor_mode_ = mode;
+    if (!native_handle_) return;
+    WindowBackendAccess::ApplyCursorClip(*this);
+    SetCursor(mode == CursorMode::Normal ? LoadCursorW(nullptr, IDC_ARROW) : nullptr);
 }
 
 void Window::RequestClose() {

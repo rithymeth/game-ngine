@@ -1077,7 +1077,10 @@ void Game::OnPlatformEvent(const platform::LifecycleMessage& message) {
         }
         audio_was_running_ = false;
         break;
-    case platform::LifecycleEvent::MemoryPressure: ++memory_pressure_events_; break;
+    case platform::LifecycleEvent::MemoryPressure:
+        ++memory_pressure_events_;
+        if (message.level == platform::MemoryLevel::Critical) ++critical_memory_pressure_events_;
+        break;
     }
 }
 

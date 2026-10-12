@@ -49,6 +49,10 @@ input::Key KeyFromGlfwMouseButton(int button);
 input::Key KeyFromGlfwGamepadButton(int button);
 input::Key KeyFromGlfwGamepadAxis(int axis);
 
+// What the mouse cursor does over a window. Hidden: invisible over the client area, free to leave. Locked: invisible and kept inside the window
+// (a first-person camera); on Win32 that is a clip to the client rectangle, on GLFW the cursor is disabled and reports unbounded movement.
+enum class CursorMode : u8 { Normal, Hidden, Locked };
+
 // A native window: Win32 on Windows, GLFW elsewhere (X11, Wayland, Cocoa).
 // It owns the OS window and its event pump, and nothing else - no
 // rendering, no input mapping. The graphics backend builds a swap chain
@@ -83,6 +87,9 @@ public:
     bool IsMinimized() const { return width_ == 0 || height_ == 0; }
     void SetTitle(const std::string& title);
     void RequestClose();
+    // Takes effect at once; the window remembers it (the OS releases a lock when focus is lost, and it is taken again on regaining focus).
+    void SetCursorMode(CursorMode mode);
+    CursorMode GetCursorMode() const { return cursor_mode_; }
 
     // Fired synchronously from PumpMessages when a resize is detected (e.g.
     // so the caller can resize its swap chain).
@@ -109,6 +116,7 @@ private:
     bool should_close_ = false;
     f32 last_mouse_x_ = 0, last_mouse_y_ = 0;
     bool has_mouse_ = false;
+    CursorMode cursor_mode_ = CursorMode::Normal;
     std::vector<WindowEvent> events_;
     friend struct WindowBackendAccess;
 };

@@ -231,6 +231,34 @@ AETHER_TEST(RHI_VulkanCreatesBlockCompressedTexturesWhereTheGpuHasThem) {
     AETHER_CHECK(threw);
 }
 
+AETHER_TEST(RHI_D3D12DestroyTextureFreesTheSlotForReuse) {
+    auto device = CreateDevice(Backend::D3D12, /*enable_debug_layer=*/false);
+    const u8 px[4] = {255, 0, 0, 255};
+    const SampledTextureHandle a = device->CreateTexture(1, 1, px);
+    const SampledTextureHandle b = device->CreateTexture(1, 1, px);
+    AETHER_CHECK(a.IsValid() && b.IsValid() && a.index != b.index);
+    AETHER_CHECK(device->DestroyTexture(a));
+    AETHER_CHECK(!device->DestroyTexture(a));           // already gone
+    AETHER_CHECK(!device->DestroyTexture(SampledTextureHandle{})); // not a texture
+    const SampledTextureHandle c = device->CreateTexture(1, 1, px);
+    AETHER_CHECK(c.index == a.index);                    // the slot came back
+    // Churn well past the table's capacity: only live textures count.
+    for (u32 i = 0; i < kMaxUserBindlessTextures * 2; ++i) {
+        const SampledTextureHandle t = device->CreateTexture(1, 1, px);
+        AETHER_CHECK(t.IsValid());
+        AETHER_CHECK(device->DestroyTexture(t));
+    }
+}
+
+AETHER_TEST(RHI_D3D12HasNoAstc) {
+    auto device = CreateDevice(Backend::D3D12, /*enable_debug_layer=*/false);
+    AETHER_CHECK(!device->SupportsCompressedTexture(CompressedTextureFormat::ASTC_4x4) && !device->SupportsCompressedTexture(CompressedTextureFormat::ASTC_8x8));
+    const std::vector<u8> block(16, 0);
+    const CompressedMip mip{block.data(), 4, 4, 16};
+    AETHER_CHECK(!device->CreateCompressedTexture(CompressedTextureFormat::ASTC_4x4, 4, 4, std::span<const CompressedMip>(&mip, 1)).IsValid());
+    AETHER_CHECK(CompressedLevelBytes(CompressedTextureFormat::ASTC_6x6, 13, 7) == 3 * 2 * 16 && CompressedBlockWidth(CompressedTextureFormat::ASTC_8x8) == 8);
+}
+
 AETHER_TEST(RHI_D3D12CreatesBlockCompressedTexturesWithMips) {
     auto device = CreateDevice(Backend::D3D12, /*enable_debug_layer=*/false);
     AETHER_CHECK(device->SupportsCompressedTexture(CompressedTextureFormat::BC1) && device->SupportsCompressedTexture(CompressedTextureFormat::BC7));
@@ -269,4 +297,44 @@ AETHER_TEST(RHI_D3D12CreatesBlockCompressedTexturesWithMips) {
         threw = true;
     }
     AETHER_CHECK(threw);
+}
+
+AETHER_TEST(RHI_VulkanCreatesAstcTexturesWhereTheGpuHasThem) {
+    if (!IsBackendAvailable(Backend::Vulkan)) return;
+    auto device = CreateDevice(Backend::Vulkan, /*enable_debug_layer=*/false);
+    if (!device) return;
+    for (const CompressedTextureFormat format : {CompressedTextureFormat::ASTC_4x4, CompressedTextureFormat::ASTC_6x6, CompressedTextureFormat::ASTC_8x8}) {
+        // 30 x 18: 30x18, 15x9, 7x4, 3x2, 1x1; each level a whole number of blocks.
+        const u32 sizes[5][2] = {{30, 18}, {15, 9}, {7, 4}, {3, 2}, {1, 1}};
+        std::vector<std::vector<u8>> data;
+        std::vector<CompressedMip> mips;
+        for (const auto& s : sizes) {
+            data.emplace_back(static_cast<usize>(CompressedLevelBytes(format, s[0], s[1])), 0);
+            mips.push_back({data.back().data(), s[0], s[1], data.back().size()});
+        }
+        if (!device->SupportsCompressedTexture(format)) {
+            AETHER_CHECK(!device->CreateCompressedTexture(format, 30, 18, mips).IsValid()); // unsupported is an answer, not an error
+            continue;
+        }
+        AETHER_CHECK(device->CreateCompressedTexture(format, 30, 18, mips).IsValid());
+    }
+}
+
+AETHER_TEST(RHI_VulkanDestroyTextureFreesTheSlotForReuse) {
+    if (!IsBackendAvailable(Backend::Vulkan)) return;
+    auto device = CreateDevice(Backend::Vulkan, /*enable_debug_layer=*/false);
+    if (!device) return;
+    const u8 px[4] = {255, 0, 0, 255};
+    const SampledTextureHandle a = device->CreateTexture(1, 1, px);
+    const SampledTextureHandle b = device->CreateTexture(1, 1, px);
+    AETHER_CHECK(a.IsValid() && b.IsValid() && a.index != b.index);
+    AETHER_CHECK(device->DestroyTexture(a));
+    AETHER_CHECK(!device->DestroyTexture(a));
+    AETHER_CHECK(!device->DestroyTexture(SampledTextureHandle{}));
+    AETHER_CHECK(device->CreateTexture(1, 1, px).index == a.index);
+    for (u32 i = 0; i < kMaxUserBindlessTextures * 2; ++i) {
+        const SampledTextureHandle t = device->CreateTexture(1, 1, px);
+        AETHER_CHECK(t.IsValid());
+        AETHER_CHECK(device->DestroyTexture(t));
+    }
 }

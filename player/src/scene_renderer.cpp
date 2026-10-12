@@ -507,6 +507,7 @@ struct SceneRenderer::Impl {
     std::unordered_map<std::string, Model> models;
     std::unordered_map<std::string, SampledTextureHandle> textures;
     u32 sampled_texture_count = 0;
+    u32 seen_critical_pressure = 0;
     Entity animated_player;
     Vec3 previous_player_position{};
     f64 previous_animation_time = 0.0;
@@ -950,16 +951,24 @@ struct SceneRenderer::Impl {
             out = white_texture;
             return false;
         }
-        // A package whose sources were stripped: BC1, BC3 and BC7 colour textures stay compressed on the GPU as cooked (a quarter of the memory,
-        // with their mips), where the device can; everything else is decoded to RGBA8 below.
+        // A package whose sources were stripped: BC and ASTC colour textures stay compressed on the GPU as cooked (a quarter of the memory or
+        // less, with their mips), where the device can; everything else is decoded to RGBA8 below.
         if (!PackageHasTextureSource(package, path)) {
             cook::CookedTexture cooked;
             if (LoadPackageCookedTexture(package, path, cooked) && !cooked.normal_map && !cooked.mips.empty()) {
-                const bool bc1 = cooked.format == cook::TextureFormat::BC1, bc3 = cooked.format == cook::TextureFormat::BC3,
-                           bc7 = cooked.format == cook::TextureFormat::BC7;
-                if (bc1 || bc3 || bc7) {
-                    const CompressedTextureFormat format = bc1 ? CompressedTextureFormat::BC1
-                                                                     : bc3 ? CompressedTextureFormat::BC3 : CompressedTextureFormat::BC7;
+                // BC1, BC3, BC7 and ASTC colour textures map to the device's formats; BC4 and BC5 (one and two channels) and normal maps do not.
+                CompressedTextureFormat format = CompressedTextureFormat::BC7;
+                bool direct = true;
+                switch (cooked.format) {
+                case cook::TextureFormat::BC1: format = CompressedTextureFormat::BC1; break;
+                case cook::TextureFormat::BC3: format = CompressedTextureFormat::BC3; break;
+                case cook::TextureFormat::BC7: format = CompressedTextureFormat::BC7; break;
+                case cook::TextureFormat::ASTC_4x4: format = CompressedTextureFormat::ASTC_4x4; break;
+                case cook::TextureFormat::ASTC_6x6: format = CompressedTextureFormat::ASTC_6x6; break;
+                case cook::TextureFormat::ASTC_8x8: format = CompressedTextureFormat::ASTC_8x8; break;
+                default: direct = false; break;
+                }
+                if (direct) {
                     if (device.SupportsCompressedTexture(format)) {
                         std::vector<CompressedMip> mips;
                         for (const cook::CookedMip& mip : cooked.mips) mips.push_back({mip.data.data(), mip.width, mip.height, mip.data.size()});
@@ -1139,6 +1148,28 @@ struct SceneRenderer::Impl {
         return true;
     }
 
+    // Critical memory pressure: frees every GPU texture but the white fallback (the device waits for the GPU first, so this runs between
+    // frames). Models keep their meshes and lose their textures (drawn white, as if untextured); UI images are loaded again on demand.
+    u32 TrimTextures() {
+        u32 freed = 0;
+        for (auto it = textures.begin(); it != textures.end();) {
+            if (it->second.index != white_texture.index && device.DestroyTexture(it->second)) ++freed;
+            it = it->second.index != white_texture.index ? textures.erase(it) : std::next(it);
+        }
+        sampled_texture_count -= std::min(sampled_texture_count, freed); // the font atlas and the white texture stay
+        for (auto& [path, model] : models) {
+            for (auto& primitives : model.meshes) {
+                for (Primitive& primitive : primitives) {
+                    primitive.base_color_texture = primitive.normal_texture = primitive.metallic_roughness_texture = primitive.occlusion_texture = white_texture;
+                    primitive.has_base_color_texture = primitive.has_normal_texture = primitive.has_metallic_roughness_texture =
+                        primitive.has_occlusion_texture = false;
+                }
+            }
+        }
+        if (freed > 0) AETHER_LOG_INFO("PlayerRenderer", "Memory pressure: freed %u GPU texture(s)", freed);
+        return freed;
+    }
+
     Model* FindModel(const std::string& path) {
         auto [it, inserted] = models.try_emplace(path);
         if (inserted) LoadModel(path, it->second);
@@ -1160,6 +1191,10 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     };
 
     Impl& renderer = *impl_;
+    if (game.CriticalMemoryPressureEvents() != renderer.seen_critical_pressure) {
+        renderer.seen_critical_pressure = game.CriticalMemoryPressureEvents();
+        renderer.TrimTextures();
+    }
     World& world = game.GetWorld();
     GuidIndex& guids = game.Guids();
     const f64 game_time = game.Stats().time;

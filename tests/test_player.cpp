@@ -591,7 +591,7 @@ AETHER_TEST(Player_SuspendStopsTheGameWritesSavesAndResumeSkipsTheGap) {
 
     backend.InjectMemoryPressure(platform::MemoryLevel::Critical);
     backend.InjectMemoryPressure(platform::MemoryLevel::Moderate);
-    CHECK(game.MemoryPressureEvents() == 2);
+    CHECK(game.MemoryPressureEvents() == 2 && game.CriticalMemoryPressureEvents() == 1);
     game.EndPlay();
 }
 

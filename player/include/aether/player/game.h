@@ -229,11 +229,13 @@ public:
     // The platform's events (§45.2): the host (a phone's activity, or a test through platform::MockLifecycleBackend) dispatches Suspend, Resume
     // and MemoryPressure here. On Suspend the game stops advancing (Tick returns at once with no time passing), audio output stops, and queued
     // saves are written before the call returns. On Resume audio restarts and the first Tick after it ignores the time that went by, so the
-    // game does not jump ahead. MemoryPressure is counted and passed to anything that subscribed (the game has no cache it can drop safely
-    // yet: the renderer's GPU textures and models cannot be freed through the RHI today). Subscribe to react to the events yourself.
+    // game does not jump ahead. MemoryPressure is counted and passed to anything that subscribed (the renderer answers a Critical one
+    // by freeing its GPU textures before the next frame: models fall back to untextured white until the game is restarted, UI images reload on
+    // demand). Subscribe to react to the events yourself.
     platform::PlatformLifecycle& Platform() { return platform_; }
     bool Suspended() const { return platform_.Suspended(); }
     u32 MemoryPressureEvents() const { return memory_pressure_events_; }
+    u32 CriticalMemoryPressureEvents() const { return critical_memory_pressure_events_; } // the renderer frees textures when this goes up
     // The package path of an image a layout uses (a quad of the UI's draw list carries its id as `texture`, ids start at 1); empty if unknown. The
     // renderer turns these into textures when it draws the UI.
     std::string UiImagePath(u32 id) const;
@@ -343,6 +345,7 @@ private:
     bool audio_was_running_ = false; // output was on when the game was suspended
     bool skip_next_dt_ = false;      // the first Tick after a resume
     u32 memory_pressure_events_ = 0;
+    u32 critical_memory_pressure_events_ = 0;
     // The UI's pointers and on-screen controls (§18.2): the pointers in input_state_ (the mouse, and each finger) drive the UI's widgets, and a
     // press the UI takes is hidden from gameplay (Key::MouseLeft is released); then VirtualStick and Button::hold_key widgets write the keys
     // they name, so on-screen controls feed the same actions as a keyboard or pad. Run at the start of each Tick, before the actions update.
