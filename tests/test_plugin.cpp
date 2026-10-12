@@ -396,3 +396,104 @@ AETHER_TEST(Plugin_PackageRefusesHostileArchives) {
     std::ofstream(dir / "junk.apkg") << "not a package";
     CHECK(!InspectPluginPackage(dir / "junk.apkg", out, &error));
 }
+
+namespace {
+std::string ReadAll(const stdfs::path& file) {
+    std::ifstream in(file, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+// A Coins plugin of `version` whose coin.txt says `payload`, packed into `package`.
+void MakeCoinsPackage(const stdfs::path& dir, const std::string& version, const std::string& payload, const stdfs::path& package) {
+    PluginDescriptor d = Desc("Coins");
+    d.has_content = true;
+    d.version = version;
+    stdfs::remove_all(dir / ("src_" + version));
+    Install(dir / ("src_" + version), d);
+    stdfs::create_directories(dir / ("src_" + version) / "Coins/Content/Textures");
+    std::ofstream(dir / ("src_" + version) / "Coins/Content/Textures/coin.txt", std::ios::binary) << payload;
+    std::string error;
+    AETHER_CHECK(PackagePlugin(dir / ("src_" + version) / "Coins", package, &error));
+}
+
+// No half-installed leftovers beside the plugin: no staging or aside folder.
+bool NoLeftovers(const stdfs::path& plugins) {
+    return !stdfs::exists(plugins / ".Coins.installing") && !stdfs::exists(plugins / ".Coins.previous");
+}
+} // namespace
+
+// Damage the new package in every possible single-byte way: an install either fails and leaves the old plugin exactly as it was, or succeeds with a
+// complete, loadable plugin. Never a mixture, never a staging folder left behind.
+AETHER_TEST(Plugin_AnyCorruptedPackageEitherInstallsWholeOrLeavesTheOldOneUntouched) {
+    const stdfs::path dir = Dir("PackageCorruption");
+    MakeCoinsPackage(dir, "1.0.0", "old coin", dir / "Coins1.apkg");
+    MakeCoinsPackage(dir, "2.0.0", "new coin with a longer body so the file has some size to it", dir / "Coins2.apkg");
+    stdfs::remove_all(dir / "baseline");
+    std::string error;
+    CHECK(InstallPluginPackage(dir / "Coins1.apkg", dir / "baseline", false, &error));
+    const std::string old_descriptor = ReadAll(dir / "baseline/Coins/Coins.aplugin");
+    const std::string old_coin = ReadAll(dir / "baseline/Coins/Content/Textures/coin.txt");
+    CHECK(old_coin == "old coin");
+
+    const std::string good = ReadAll(dir / "Coins2.apkg");
+    CHECK(good.size() > 100);
+    usize failed = 0, succeeded = 0;
+    for (usize i = 0; i < good.size(); ++i) {
+        std::string bad = good;
+        bad[i] = static_cast<char>(bad[i] ^ 0xFF);
+        std::ofstream(dir / "Bad.apkg", std::ios::binary).write(bad.data(), static_cast<std::streamsize>(bad.size()));
+        stdfs::remove_all(dir / "work");
+        stdfs::copy(dir / "baseline", dir / "work", stdfs::copy_options::recursive);
+        std::string why;
+        bool fine = false;
+        if (!InstallPluginPackage(dir / "Bad.apkg", dir / "work", true, &why)) {
+            ++failed;
+            fine = ReadAll(dir / "work/Coins/Coins.aplugin") == old_descriptor && ReadAll(dir / "work/Coins/Content/Textures/coin.txt") == old_coin &&
+                   NoLeftovers(dir / "work");
+        } else {
+            ++succeeded;
+            PluginDescriptor installed;
+            fine = LoadPluginDescriptor(dir / "work/Coins/Coins.aplugin", installed, &why) && stdfs::exists(dir / "work/Coins/Content/Textures/coin.txt") &&
+                   NoLeftovers(dir / "work");
+        }
+        if (!fine) {
+            std::printf("    flipping byte %zu of the package left a damaged or mixed install\n", i);
+            CHECK(fine);
+            break; // one broken byte is enough to report
+        }
+    }
+    CHECK(failed > 0 && failed + succeeded == good.size());
+}
+
+// A package that cannot be written out whole (a file and a folder with the same path) fails cleanly over an existing install.
+AETHER_TEST(Plugin_AnInstallThatCannotFinishRestoresTheOldPlugin) {
+    const stdfs::path dir = Dir("PackageCollision");
+    MakeCoinsPackage(dir, "1.0.0", "old coin", dir / "Coins1.apkg");
+    std::string error;
+    CHECK(InstallPluginPackage(dir / "Coins1.apkg", dir / "Plugins", false, &error));
+
+    SavePluginDescriptor(dir / "c.aplugin", Desc("Coins"));
+    pak::PakWriter w;
+    CHECK(w.AddFile("Coins/Coins.aplugin", (dir / "c.aplugin").string()));
+    CHECK(w.Add("Coins/Content", std::string("a file where a folder is needed")));
+    CHECK(w.Add("Coins/Content/x.txt", std::string("x")));
+    CHECK(w.Write((dir / "Collide.apkg").string()));
+    CHECK(!InstallPluginPackage(dir / "Collide.apkg", dir / "Plugins", true, &error) && !error.empty());
+    CHECK(ReadAll(dir / "Plugins/Coins/Content/Textures/coin.txt") == "old coin");
+    CHECK(NoLeftovers(dir / "Plugins"));
+    // And with nothing installed before, a failed install leaves nothing at all.
+    CHECK(!InstallPluginPackage(dir / "Collide.apkg", dir / "Fresh", false, &error));
+    CHECK(!stdfs::exists(dir / "Fresh/Coins") && NoLeftovers(dir / "Fresh"));
+}
+
+// An earlier install that died halfway left its staging folder: the next install is not confused by it.
+AETHER_TEST(Plugin_InstallSweepsAStaleStagingFolder) {
+    const stdfs::path dir = Dir("PackageStale");
+    MakeCoinsPackage(dir, "1.0.0", "fresh coin", dir / "Coins1.apkg");
+    stdfs::create_directories(dir / "Plugins/.Coins.installing/Junk");
+    std::ofstream(dir / "Plugins/.Coins.installing/Junk/left-over.txt") << "from a crashed install";
+    std::string error;
+    CHECK(InstallPluginPackage(dir / "Coins1.apkg", dir / "Plugins", false, &error));
+    CHECK(ReadAll(dir / "Plugins/Coins/Content/Textures/coin.txt") == "fresh coin");
+    CHECK(!stdfs::exists(dir / "Plugins/Coins/Junk") && !stdfs::exists(dir / "Plugins/.Coins.installing"));
+}
