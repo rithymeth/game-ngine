@@ -872,7 +872,6 @@ bool VulkanDevice::SupportsCompressedTexture(CompressedTextureFormat format) con
 }
 
 SampledTextureHandle VulkanDevice::CreateCompressedTexture(CompressedTextureFormat format, u32 width, u32 height, std::span<const CompressedMip> mips) {
-    const u32 block_bytes = CompressedBlockBytes(format);
     if (width == 0 || height == 0 || mips.empty() || mips.size() > 16) {
         AETHER_LOG_ERROR("Vulkan", "CreateCompressedTexture requires non-zero dimensions and 1 to 16 mip levels");
         throw std::invalid_argument("CreateCompressedTexture requires non-zero dimensions and 1 to 16 mip levels");
