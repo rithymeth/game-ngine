@@ -195,6 +195,11 @@ public:
     virtual bool SupportsCompressedTexture(CompressedTextureFormat /*format*/) const { return false; }
     virtual SampledTextureHandle CreateCompressedTexture(CompressedTextureFormat /*format*/, u32 /*width*/, u32 /*height*/, std::span<const CompressedMip> /*mips*/) { return {}; }
 
+    // Frees a texture made by CreateTexture or CreateCompressedTexture (the GPU memory and its bindless slot, which the next texture reuses).
+    // Waits for the GPU to go idle first, so call it between frames (a memory-pressure handler, a level change), not mid-frame; nothing may
+    // still draw with the handle afterwards. False for the fallback (slot 0), an invalid handle or one already freed; the default does nothing.
+    virtual bool DestroyTexture(SampledTextureHandle /*texture*/) { return false; }
+
     // Uploads tightly-packed RGBA8 pixel data (non-null, with non-zero
     // dimensions and a representable byte size; invalid arguments throw
     // std::invalid_argument) into the device-global bindless table and returns

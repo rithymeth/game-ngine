@@ -166,6 +166,13 @@ void Window::SetTitle(const std::string& title) {
     if (platform_window_) glfwSetWindowTitle(static_cast<GLFWwindow*>(platform_window_), title.c_str());
 }
 
+void Window::SetCursorMode(CursorMode mode) {
+    cursor_mode_ = mode;
+    if (!platform_window_) return;
+    glfwSetInputMode(static_cast<GLFWwindow*>(platform_window_), GLFW_CURSOR,
+                     mode == CursorMode::Normal ? GLFW_CURSOR_NORMAL : mode == CursorMode::Hidden ? GLFW_CURSOR_HIDDEN : GLFW_CURSOR_DISABLED);
+}
+
 void Window::RequestClose() {
     if (platform_window_) NotifyClosed();
 }
