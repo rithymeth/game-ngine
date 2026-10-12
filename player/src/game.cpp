@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
 #include <system_error>
 
 #include "aether/blueprint/graph.h"
@@ -225,7 +226,83 @@ struct Game::Physics {
 struct Game::Physics {};
 #endif
 
+namespace {
+// print() in a script: the log, where the console and the MCP server's log_recent can read it.
+[[maybe_unused]] void LogScriptPrint(const std::string& text) { AETHER_LOG_INFO("Script", "%s", text.c_str()); }
+} // namespace
+
+bool Game::RunLuau(const std::string& source, const std::string& chunk_name, LuauRun& out) {
+    out = {};
+#if AETHER_GAME_SCRIPTING
+    if (!runtime_) {
+        out.error = "no scene is loaded";
+        return false;
+    }
+    runtime_->host.SetPrintHandler([&out](const std::string& text) {
+        if (out.prints.size() < 2000) out.prints.push_back(text);
+        LogScriptPrint(text);
+    });
+    const script::ScriptResult run = runtime_->host.Run(source, chunk_name);
+    runtime_->host.SetPrintHandler(LogScriptPrint);
+    out.ok = run.ok;
+    out.error = run.error;
+    for (const script::ScriptValue& v : run.values) {
+        LuauValue value;
+        if (const bool* b = std::get_if<bool>(&v)) value.kind = LuauValue::Kind::Bool, value.boolean = *b;
+        else if (const f64* n = std::get_if<f64>(&v)) value.kind = LuauValue::Kind::Number, value.number = *n;
+        else if (const std::string* s = std::get_if<std::string>(&v)) value.kind = LuauValue::Kind::String, value.text = *s;
+        else if (const script::EntityRef* e = std::get_if<script::EntityRef>(&v)) value.kind = LuauValue::Kind::Entity, value.text = e->entity.IsNull() ? "" : "Entity(" + std::to_string(e->entity.index) + ")";
+        out.values.push_back(std::move(value));
+    }
+    return true;
+#else
+    (void)source, (void)chunk_name;
+    out.error = "this player was built without scripting";
+    return false;
+#endif
+}
+
+std::vector<std::string> Game::NavigationProblems() const {
+    std::vector<std::string> out;
+#if AETHER_GAME_NAV
+    if (runtime_) {
+        out = runtime_->nav_notes;
+        if (runtime_->crowd) out.insert(out.end(), runtime_->crowd->Problems().begin(), runtime_->crowd->Problems().end());
+    }
+#endif
+    return out;
+}
+
+std::vector<std::string> Game::BehaviorTreeProblems() const {
+#if AETHER_GAME_AI
+    if (runtime_ && runtime_->behavior_trees) return runtime_->behavior_trees->Problems();
+#endif
+    return {};
+}
+
 bool Game::HasPhysics() { return AETHER_GAME_PHYSICS != 0; }
+
+Game::RayHit Game::RayCast(const Vec3& from, const Vec3& to, u32 layers, bool include_triggers) const {
+    RayHit out;
+#if AETHER_GAME_PHYSICS
+    if (physics_ && physics_->scene) {
+        const SceneHit hit = physics_->scene->RayCast(from, to, layers, kNullEntity, include_triggers);
+        out = {hit.hit, hit.entity, hit.point, hit.normal, hit.distance};
+    }
+#else
+    (void)from, (void)to, (void)layers, (void)include_triggers;
+#endif
+    return out;
+}
+
+std::vector<Entity> Game::OverlapSphere(const Vec3& center, f32 radius, u32 layers, bool include_triggers) const {
+#if AETHER_GAME_PHYSICS
+    if (physics_ && physics_->scene) return physics_->scene->OverlapSphere(center, radius, layers, kNullEntity, include_triggers);
+#else
+    (void)center, (void)radius, (void)layers, (void)include_triggers;
+#endif
+    return {};
+}
 bool Game::HasScripting() { return AETHER_GAME_SCRIPTING != 0; }
 
 Game::Game(GamePackage& package)
@@ -401,6 +478,14 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     StartModules(); // their components, before the scene names them
     bp::RegisterBlueprintComponents(); // BlueprintInstance, before scene deserialization
     ui::RegisterWidgetComponents(); // WidgetComponent (§18.4)
+#if AETHER_GAME_AI
+    RegisterBehaviorTreeComponents(); // so scenes can name BehaviorTreeComponent
+    RegisterPerceptionComponents();   // AIPerception and AIStimuliSource
+#endif
+#if AETHER_GAME_NAV
+    RegisterNavComponents(); // NavObstacle, NavModifierVolume, NavLinkProxy
+    (void)GetComponentId<NavAgent>();
+#endif
     RegisterRenderComponents(); // lights (DirectionalLight, SkyLight, PointLight, SpotLight) and post-process volumes, so scenes can name them
     RegisterSequenceComponents(); // SequenceComponent (§27.2)
     RegisterAudioComponents(); // cooked AudioSource/AudioListener/ReverbZone before deserialization
@@ -449,6 +534,7 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     guids_.Rebuild(*world_);
     lifecycle_ = std::make_unique<Lifecycle>(*world_, guids_);
     RefreshSaveContext();
+    scene_ = path; // StartRuntime reads the scene's name (its navigation mesh is Navigation/<name>.anav)
     StartRuntime();
     BuildRuntimeStages();
     // 2D physics: the scene's tilemaps are read from the package when first needed.
@@ -585,6 +671,76 @@ void Game::StartRuntime() {
             return it == runtime_->cues.end() ? nullptr : &it->second;
         }, &guids_);
     ApplyAudioSettings();
+#if AETHER_GAME_NAV
+    {
+        // The scene's navigation mesh: Navigation/<scene name>.anav in the package (baked by the nav_* tools or the editor; list it in always_cook).
+        const std::string mesh_path = "Navigation/" + std::filesystem::path(scene_).stem().string() + ".anav";
+        std::vector<u8> bytes;
+        if (package_.ReadContent(mesh_path, bytes)) {
+            nav::NavMeshData data;
+            std::string error;
+            auto world_nav = std::make_unique<nav::NavWorld>(*world_, [](const ModelRenderer&, std::vector<Vec3>&, std::vector<u32>&) { return false; }, &guids_);
+            if (nav::LoadNavMesh(bytes, data, &error) && world_nav->Load(data, &error)) {
+                runtime_->nav = std::move(world_nav);
+                runtime_->nav->MakeActive();
+                runtime_->crowd = std::make_unique<nav::NavCrowd>(*world_, *runtime_->nav);
+            } else {
+                runtime_->nav_notes.push_back(mesh_path + ": " + (error.empty() ? std::string("not a navigation mesh") : error));
+                warnings_.push_back("Navigation: " + runtime_->nav_notes.back());
+            }
+        }
+    }
+#endif
+#if AETHER_GAME_AI
+    runtime_->behavior_trees = std::make_unique<ai::BehaviorTreeWorld>(*world_, [this](const std::string& name) -> const ai::BehaviorTreeAsset* {
+        const auto found = runtime_->trees.find(name);
+        if (found != runtime_->trees.end()) return found->second.get();
+        std::unique_ptr<ai::BehaviorTreeAsset> tree;
+        std::vector<u8> bytes;
+        if (package_.ReadContent(name, bytes)) {
+            const nlohmann::json json = nlohmann::json::parse(bytes.begin(), bytes.end(), nullptr, false);
+            std::string error;
+            auto loaded = std::make_unique<ai::BehaviorTreeAsset>();
+            if (!json.is_discarded() && ai::LoadBehaviorTree(json, *loaded, &error)) {
+                tree = std::move(loaded);
+            } else {
+                warnings_.push_back("Behavior Tree: " + name + ": " + (error.empty() ? std::string("not valid JSON") : error));
+            }
+        }
+        return runtime_->trees.emplace(name, std::move(tree)).first->second.get();
+    });
+    runtime_->behavior_trees->MakeActive();
+    runtime_->perception = std::make_unique<ai::PerceptionWorld>(*world_);
+    runtime_->perception->MakeActive();
+#if AETHER_GAME_NAV
+    if (runtime_->nav && runtime_->nav->Ready()) runtime_->perception->UseNavMeshLineOfSight(runtime_->nav->Mesh()); // walls are where the mesh stops
+#endif
+    runtime_->behavior_trees->hooks.log = [](Entity, const std::string& text) { AETHER_LOG_INFO("BehaviorTree", "%s", text.c_str()); };
+    // Blueprint tasks and services are Event.Custom:<event> on the entity's Blueprint; the task ends when the graph calls Behavior Trees > Finish Task.
+    runtime_->behavior_trees->hooks.run_blueprint = [this](Entity e, const std::string& event) {
+        return runtime_->blueprints != nullptr && runtime_->blueprints->VM().Dispatch(e, "Event.Custom:" + event);
+    };
+    runtime_->behavior_trees->hooks.abort_blueprint = [this](Entity e, const std::string& event) {
+        if (runtime_->blueprints) runtime_->blueprints->VM().Dispatch(e, "Event.Custom:" + event + "Aborted");
+    };
+    runtime_->behavior_trees->hooks.blueprint_service = [this](Entity e, const std::string& event) {
+        if (runtime_->blueprints) runtime_->blueprints->VM().Dispatch(e, "Event.Custom:" + event);
+    };
+#if AETHER_GAME_SCRIPTING
+    // Luau tasks and services call a global function of the game's script VM with the entity, the frame time and (for tasks) whether it just started.
+    runtime_->behavior_trees->hooks.run_luau = [this](Entity e, const std::string& function, f32 dt, bool first) {
+        const script::ScriptResult r = runtime_->host.Call(function, {script::EntityRef{e}, static_cast<f64>(dt), first});
+        if (!r.ok || r.values.empty()) return ai::BtStatus::Failure;
+        const std::string* verdict = std::get_if<std::string>(&r.values.front());
+        if (verdict != nullptr && *verdict == "running") return ai::BtStatus::Running;
+        if (verdict != nullptr && *verdict == "success") return ai::BtStatus::Success;
+        return ai::BtStatus::Failure;
+    };
+    runtime_->behavior_trees->hooks.luau_service = [this](Entity e, const std::string& function, f32 dt) {
+        (void)runtime_->host.Call(function, {script::EntityRef{e}, static_cast<f64>(dt)});
+    };
+#endif
+#endif
     runtime_->blueprints = std::make_unique<bp::BlueprintSystem>(*world_);
     runtime_->blueprints->VM().SetPrintHandler([](Entity, const std::string& text) { AETHER_LOG_INFO("Blueprint", "%s", text.c_str()); });
     runtime_->blueprints->SetLoader([this](const assets::AssetGuid& guid, bp::Blueprint& out, std::string& name) {
@@ -661,7 +817,7 @@ void Game::StartRuntime() {
     runtime_->ui->MakeActive();
 #if AETHER_GAME_SCRIPTING
     // print() in a script goes to the log (category "Script"), where the console and the MCP server's log_recent can see it.
-    runtime_->host.SetPrintHandler([](const std::string& text) { AETHER_LOG_INFO("Script", "%s", text.c_str()); });
+    runtime_->host.SetPrintHandler(LogScriptPrint);
     runtime_->scripts = std::make_unique<script::ScriptSystem>(
         runtime_->host, *world_, guids_, [this](const assets::AssetGuid& guid, std::string& source, std::string& name) {
             const GameManifest::Asset* asset = package_.FindAssetByGuid(assets::ToString(guid));
@@ -989,6 +1145,49 @@ void Game::BuildFrame() {
         if (runtime_ && runtime_->scripts) runtime_->scripts->Tick(frame.dt);
 #endif
         if (runtime_ && runtime_->blueprints) runtime_->blueprints->Update(frame.dt);
+#if AETHER_GAME_AI
+        if (runtime_ && runtime_->perception) {
+            runtime_->perception->Update(frame.dt); // before the trees, so they act on what was just sensed
+            // What was noticed or forgotten reaches the perceiver's scripts (OnTargetPerceived(actor, sense, sensed), OnTargetForgotten(actor)) and Blueprints.
+            for (const ai::PerceptionEvent& e : runtime_->perception->Events()) {
+                if (!world_->IsAlive(e.perceiver)) continue;
+                const std::string sense = ai::PerceptionWorld::SenseName(e.sense);
+#if AETHER_GAME_SCRIPTING
+                if (runtime_->scripts) {
+                    if (e.forgotten) runtime_->scripts->SendEvent(e.perceiver, "OnTargetForgotten", {script::EntityRef{e.actor}});
+                    else runtime_->scripts->SendEvent(e.perceiver, "OnTargetPerceived", {script::EntityRef{e.actor}, sense, e.sensed});
+                }
+#endif
+                if (runtime_->blueprints) {
+                    if (e.forgotten) {
+                        const bp::VmValue args[] = {e.actor};
+                        runtime_->blueprints->VM().Dispatch(e.perceiver, ai::PerceptionWorld::kForgottenEvent, args);
+                    } else {
+                        const bp::VmValue args[] = {e.actor, sense, e.sensed};
+                        runtime_->blueprints->VM().Dispatch(e.perceiver, ai::PerceptionWorld::kPerceivedEvent, args);
+                    }
+                }
+            }
+        }
+        if (runtime_ && runtime_->behavior_trees) runtime_->behavior_trees->Update(frame.dt);
+#endif
+#if AETHER_GAME_NAV
+        if (runtime_ && runtime_->nav) runtime_->nav->Update();
+        if (runtime_ && runtime_->crowd) {
+            runtime_->crowd->Update(frame.dt); // after the trees, so a MoveTo is walked this frame
+            // A finished move reaches the agent's scripts (OnMoveCompleted(success)) and Blueprints.
+            for (const nav::MoveCompletedEvent& e : runtime_->crowd->Events()) {
+                if (!world_->IsAlive(e.entity)) continue;
+#if AETHER_GAME_SCRIPTING
+                if (runtime_->scripts) runtime_->scripts->SendEvent(e.entity, "OnMoveCompleted", {e.success});
+#endif
+                if (runtime_->blueprints) {
+                    const bp::VmValue args[] = {e.success};
+                    runtime_->blueprints->VM().Dispatch(e.entity, nav::NavCrowd::kMoveCompletedEvent, args);
+                }
+            }
+        }
+#endif
     };
     scheduler_.Add(std::move(scripting));
     SystemDesc late;
@@ -1200,6 +1399,14 @@ GameStats Game::Stats() const {
     }
     s.script_errors = ScriptErrors().size();
     s.blueprint_errors = BlueprintErrors().size();
+#if AETHER_GAME_NAV
+    if (runtime_ && runtime_->crowd) s.nav_agents = runtime_->crowd->AgentCount();
+    s.nav_mesh_loaded = runtime_ && runtime_->nav && runtime_->nav->Ready();
+#endif
+#if AETHER_GAME_AI
+    world_->ForEach<BehaviorTreeComponent>([&](const BehaviorTreeComponent& c) { s.behavior_trees_running += c.running ? 1 : 0; });
+    s.behavior_tree_problems = BehaviorTreeProblems().size();
+#endif
     return s;
 }
 

@@ -28,6 +28,15 @@
 #if AETHER_GAME_SCRIPTING
 #include "aether/script/script_system.h"
 #endif
+#if AETHER_GAME_AI
+#include "aether/ai/bt_world.h"
+#include "aether/ai/behavior_tree.h"
+#include "aether/ai/perception.h"
+#endif
+#if AETHER_GAME_NAV
+#include "aether/nav/crowd.h"
+#include "aether/nav/navmesh.h"
+#endif
 
 namespace aether::player {
 
@@ -68,6 +77,16 @@ struct Game::Runtime {
     std::unique_ptr<script::ScriptSystem> scripts;
 #endif
     std::unique_ptr<bp::BlueprintSystem> blueprints;
+#if AETHER_GAME_NAV
+    std::unique_ptr<nav::NavWorld> nav;   // the scene's baked mesh, when the package holds one
+    std::unique_ptr<nav::NavCrowd> crowd; // the NavAgents on it
+    std::vector<std::string> nav_notes;
+#endif
+#if AETHER_GAME_AI
+    std::map<std::string, std::unique_ptr<ai::BehaviorTreeAsset>> trees; // by content path; null for one that could not be loaded
+    std::unique_ptr<ai::BehaviorTreeWorld> behavior_trees;
+    std::unique_ptr<ai::PerceptionWorld> perception; // sight, hearing and damage for AIPerception components
+#endif
 };
 
 } // namespace aether::player

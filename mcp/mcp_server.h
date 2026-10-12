@@ -55,6 +55,12 @@ struct Tool {
     bool destructive = false;
 };
 
+class McpServer;
+
+// The tools, registered outside the editor group, whose work undo cannot bring back (deleting a project asset, a save slot, writing a prefab over
+// its source). The built-in permission rule asks before these run. The editor group flags its own.
+inline constexpr const char* kStandardDestructiveTools[] = {"asset_delete", "save_delete", "prefab_apply"};
+
 class McpServer {
 public:
     McpServer(std::string name, std::string version);
@@ -64,6 +70,9 @@ public:
     const std::vector<Tool>& Tools() const { return tools_; }
     // Flags an existing tool as destructive (Tool::destructive). False if there is no such tool.
     bool MarkDestructive(const std::string& name);
+    // Flags kStandardDestructiveTools. Returns the names that no registered tool has (a tool renamed or left unregistered would otherwise lose its
+    // protection without a sound); empty when all were found.
+    std::vector<std::string> MarkStandardDestructiveTools();
 
     // Handles one JSON-RPC message. Returns the response, or nullopt for a
     // notification (which gets none).

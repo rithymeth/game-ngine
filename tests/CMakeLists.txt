@@ -33,6 +33,10 @@ add_executable(aether_tests
 )
 
 target_link_libraries(aether_tests PRIVATE Aether::Engine)
+if(MSVC)
+    # test_mcp.cpp holds enough tests that its object file needs the larger section table.
+    target_compile_options(aether_tests PRIVATE /bigobj)
+endif()
 
 if(TARGET coin_run_game)
     target_sources(aether_tests PRIVATE test_coin_run.cpp)

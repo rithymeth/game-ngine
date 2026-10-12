@@ -3154,3 +3154,504 @@ AETHER_TEST(Mcp_GameSpawnsEntitiesAndEditsTheirComponents) {
     h.Call("game_unload");
     stdfs::remove_all(dir);
 }
+
+// game_raycast and game_overlap_sphere query the running game's physics.
+AETHER_TEST(Mcp_GamePhysicsQueriesFindBodies) {
+    if (!aether::player::Game::HasPhysics()) return;
+    namespace stdfs = std::filesystem;
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_game_physics_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+    const Json manifest = {{"$type", "CookManifest"}, {"$version", 1}, {"project", "McpPhysics"}, {"configuration", "Development"},
+                           {"startup_scene", "Scenes/start.ascene"}, {"fixed_timestep_hz", 60.0}, {"gravity", {0.0, -9.81, 0.0}},
+                           {"layers", {"Default"}}, {"collision_matrix", Json::array()},
+                           {"assets", Json::array({{{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/start.ascene"}, {"importer", "Scene"}}})},
+                           {"files", Json::array()}};
+    const Json transform = {{"position", {0, 0, 0}}, {"rotation", {0, 0, 0, 1}}, {"scale", {1, 1, 1}}};
+    const Json scene = {{"$type", "Scene"}, {"$version", 1},
+                        {"entities", Json::array({{{"components", {{"Transform", transform}, {"BoxCollider", {{"half_extents", {1, 1, 1}}}}, {"Tags", {{"names", {"Wall"}}}}}}}})}};
+    pak::PakWriter writer;
+    writer.Add("Manifest.json", manifest.dump());
+    writer.Add("Content/Scenes/start.ascene", scene.dump());
+    const stdfs::path file = dir / "game.apak";
+    AETHER_CHECK(writer.Write(file.string()));
+
+    Harness h;
+    RegisterGameTools(h.server);
+    AETHER_CHECK(h.Call("game_raycast", {{"from", {0, 5, 0}}, {"to", {0, -5, 0}}}).is_error); // no game yet
+    AETHER_CHECK(!h.Call("game_load", {{"paks", {file.string()}}, {"user_dir", (dir / "user").string()}}).is_error);
+    AETHER_CHECK(!h.Call("game_step", {{"frames", 2}}).is_error);
+
+    Json down = h.Call("game_raycast", {{"from", {0, 5, 0}}, {"to", {0, -5, 0}}}).value;
+    AETHER_CHECK(down["hit"] == true && std::fabs(down["distance"].get<double>() - 4.0) < 0.05 && std::fabs(down["point"][1].get<double>() - 1.0) < 0.05);
+    AETHER_CHECK(down.contains("entity") && std::fabs(down["normal"][1].get<double>() - 1.0) < 0.01);
+    AETHER_CHECK(h.Call("game_raycast", {{"from", {10, 5, 0}}, {"to", {10, -5, 0}}}).value["hit"] == false);
+    AETHER_CHECK(h.Call("game_raycast", {{"from", {0, 5, 0}}, {"to", {0, -5, 0}}, {"layers", 0}}).value["hit"] == false); // no layer selected
+    AETHER_CHECK(h.Call("game_raycast", {{"from", {0, 5}}, {"to", {0, -5, 0}}}).is_error);
+    AETHER_CHECK(h.Call("game_raycast", {{"from", {0, 5, 0}}}).is_error);
+
+    Json near = h.Call("game_overlap_sphere", {{"center", {0, 1.5, 0}}, {"radius", 1.0}}).value;
+    AETHER_CHECK(near["count"] == 1 && near["entities"][0] == down["entity"]);
+    AETHER_CHECK(h.Call("game_overlap_sphere", {{"center", {20, 0, 0}}, {"radius", 1.0}}).value["count"] == 0);
+    AETHER_CHECK(h.Call("game_overlap_sphere", {{"center", {0, 0, 0}}, {"radius", 0}}).is_error);
+    h.Call("game_unload");
+    stdfs::remove_all(dir);
+}
+
+// game_run_luau runs a chunk in the running game's own VM.
+AETHER_TEST(Mcp_GameRunLuauUsesTheGamesVm) {
+    if (!aether::player::Game::HasScripting()) return;
+    namespace stdfs = std::filesystem;
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_game_luau_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+    const Json manifest = {{"$type", "CookManifest"}, {"$version", 1}, {"project", "McpLuau"}, {"configuration", "Development"},
+                           {"startup_scene", "Scenes/start.ascene"}, {"fixed_timestep_hz", 60.0}, {"gravity", {0.0, -9.81, 0.0}},
+                           {"layers", {"Default"}}, {"collision_matrix", Json::array()},
+                           {"assets", Json::array({{{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/start.ascene"}, {"importer", "Scene"}}})},
+                           {"files", Json::array()}};
+    const Json scene = {{"$type", "Scene"}, {"$version", 1}, {"entities", Json::array({{{"components", {{"Tags", {{"names", {"Seen"}}}}}}}})}};
+    pak::PakWriter writer;
+    writer.Add("Manifest.json", manifest.dump());
+    writer.Add("Content/Scenes/start.ascene", scene.dump());
+    const stdfs::path file = dir / "game.apak";
+    AETHER_CHECK(writer.Write(file.string()));
+
+    Harness h;
+    RegisterGameTools(h.server);
+    AETHER_CHECK(h.Call("game_run_luau", {{"source", "return 1"}}).is_error); // no game yet
+    AETHER_CHECK(!h.Call("game_load", {{"paks", {file.string()}}, {"user_dir", (dir / "user").string()}}).is_error);
+
+    Json ran = h.Call("game_run_luau", {{"source", "print('hello', 7)\nreturn 2 + 3, 'x', true, nil"}}).value;
+    AETHER_CHECK(ran["ok"] == true && ran["prints"] == Json::array({"hello\t7"}));
+    AETHER_CHECK(ran["returned"].size() >= 3 && ran["returned"][0] == 5 && ran["returned"][1] == "x" && ran["returned"][2] == true);
+    // The game's world is bound: the scene's tagged entity is there, and a global stays for the next chunk.
+    Json world = h.Call("game_run_luau", {{"source", "seen_count = #world:EntitiesWith('Tags')\nreturn seen_count"}}).value;
+    AETHER_CHECK(world["ok"] == true && world["returned"][0] == 1);
+    AETHER_CHECK(h.Call("game_run_luau", {{"source", "return seen_count"}}).value["returned"][0] == 1);
+    // The print also reached the log.
+    AETHER_CHECK(h.Call("log_recent", {{"category", "Script"}, {"contains", "hello"}}).value["count"] == 1);
+    // A failing chunk reports its error rather than failing the tool.
+    Json broken = h.Call("game_run_luau", {{"source", "local x = 1\nerror('boom')"}}).value;
+    AETHER_CHECK(broken["ok"] == false && broken["error"].get<std::string>().find("boom") != std::string::npos);
+    AETHER_CHECK(h.Call("game_run_luau", {{"source", "local x = = 1"}}).value["ok"] == false);
+    AETHER_CHECK(h.Call("game_run_luau", {}).is_error);
+    h.Call("game_unload");
+    stdfs::remove_all(dir);
+}
+
+namespace {
+// Every tool group, registered as aether_mcp_server's main() does.
+void RegisterEverything(Harness& h, std::shared_ptr<mcp::detail::AssetHost> project) {
+    RegisterGameTools(h.server);
+    RegisterAssetTools(h.server, project);
+    RegisterKitTools(h.server, project);
+    RegisterAudioTools(h.server, project);
+    RegisterVfxTools(h.server, project);
+    RegisterBlueprintTools(h.server, project);
+    RegisterLocTools(h.server, project);
+    RegisterSequenceTools(h.server, project);
+    RegisterScriptTools(h.server, project);
+    RegisterAnimationTools(h.server, project);
+    RegisterUiTools(h.server, project);
+    RegisterSaveTools(h.server);
+    RegisterStreamingTools(h.server, h.session);
+    RegisterMaterialTools(h.server, project);
+    RegisterPrefabTools(h.server, project, h.session);
+    RegisterTilemapTools(h.server, project);
+    RegisterTerrainTools(h.server);
+    RegisterNavTools(h.server, h.session);
+}
+} // namespace
+
+// Which tools the built-in rule asks about is a decision, so it is written down: a tool added to or dropped from this list should be noticed.
+AETHER_TEST(Mcp_TheToolsThatNeedConfirmationAreExactlyTheKnownOnes) {
+    Harness h;
+    RegisterEverything(h, MakeAssetHost());
+    AETHER_CHECK(h.server.MarkStandardDestructiveTools().empty()); // every named tool exists, so none silently lost its protection
+    std::set<std::string> flagged;
+    for (const Tool& t : h.server.Tools()) {
+        if (t.destructive) flagged.insert(t.name);
+    }
+    const std::set<std::string> expected = {"asset_delete", "destroy_entity", "load_scene", "prefab_apply", "remove_component", "save_delete", "save_scene"};
+    AETHER_CHECK(flagged == expected);
+    McpServer empty{"x", "0"};
+    AETHER_CHECK(empty.MarkStandardDestructiveTools().size() == 3); // all three missing is reported, not ignored
+}
+
+// The default rule really stops asset_delete: nothing is deleted without the matching token, and the token is no good for anything else.
+AETHER_TEST(Mcp_AssetDeleteNeedsItsOwnConfirmationAndDeletesNothingWithout) {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "aether_mcp_perm_delete";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    Harness h;
+    RegisterEverything(h, MakeAssetHost());
+    h.server.MarkStandardDestructiveTools();
+    h.server.SetPolicy(PermissionPolicy()); // the built-in rule, no file
+    ProjectPaths paths;
+    std::string error;
+    AETHER_CHECK(CreateProject(dir, "McpPerm", &paths, &error));
+    AETHER_CHECK(!h.Call("project_open", {{"project_file", paths.file.string()}}).is_error);
+    AETHER_CHECK(!h.Call("content_write", {{"path", "Scripts/A.luau"}, {"text", "return {}"}}).is_error);
+    AETHER_CHECK(!h.Call("content_write", {{"path", "Scripts/B.luau"}, {"text", "return {}"}}).is_error);
+    const fs::path a = paths.content / "Scripts" / "A.luau", b = paths.content / "Scripts" / "B.luau";
+    AETHER_CHECK(fs::exists(a) && fs::exists(b));
+
+    // Without a token: asked, not done.
+    Json ask = h.Call("asset_delete", {{"asset", "Scripts/A.luau"}}).value;
+    AETHER_CHECK(ask["status"] == "confirmation_required" && fs::exists(a));
+    const std::string token = ask["token"];
+    // The token for a.txt does not delete b.txt, does not run another tool, and an invented token runs nothing.
+    AETHER_CHECK(h.Call("asset_delete", {{"asset", "Scripts/B.luau"}, {"confirm_token", token}}).is_error && fs::exists(b));
+    AETHER_CHECK(h.Call("save_delete", {{"directory", dir.string()}, {"slot", "x"}, {"confirm_token", token}}).is_error);
+    AETHER_CHECK(h.Call("asset_delete", {{"asset", "Scripts/A.luau"}, {"confirm_token", "not-a-token"}}).is_error && fs::exists(a));
+    AETHER_CHECK(h.Call("asset_delete", {{"asset", "Scripts/A.luau"}, {"confirm_token", 5}}).value["status"] == "confirmation_required" && fs::exists(a)); // a non-string token is no token
+    // The right call goes through once, and the token is spent.
+    AETHER_CHECK(!h.Call("asset_delete", {{"asset", "Scripts/A.luau"}, {"confirm_token", token}}).is_error);
+    AETHER_CHECK(!fs::exists(a) && fs::exists(b));
+    AETHER_CHECK(h.Call("asset_delete", {{"asset", "Scripts/A.luau"}, {"confirm_token", token}}).is_error);
+    // A deny rule beats the token flow entirely.
+    h.server.SetPolicy(PolicyFrom(R"({"$type":"AgentPermissions","tools":{"asset_delete":"deny"}})"));
+    AETHER_CHECK(h.Call("asset_delete", {{"asset", "Scripts/B.luau"}}).is_error && fs::exists(b));
+    fs::remove_all(dir);
+}
+
+// A Behavior Tree (.abt) in the package runs on its entity in the hosted game: the tree is read from the package, ticks each frame, and its Log task
+// reaches the log. A tree the package does not hold is reported as a problem, not a crash.
+AETHER_TEST(Mcp_GameRunsBehaviorTreesFromThePackage) {
+    namespace stdfs = std::filesystem;
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_game_bt_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+    const Json tree = {{"$type", "BehaviorTree"}, {"$version", 1}, {"name", "Guard"},
+                       {"root", {{"type", "Sequence"}, {"children", Json::array({{{"type", "Log"}, {"event", "bt-guard-marker"}},
+                                                                                 {{"type", "Wait"}, {"seconds", 100.0}}})}}}};
+    const Json manifest = {{"$type", "CookManifest"}, {"$version", 1}, {"project", "McpBt"}, {"configuration", "Development"},
+                           {"startup_scene", "Scenes/start.ascene"}, {"fixed_timestep_hz", 60.0}, {"gravity", {0.0, -9.81, 0.0}},
+                           {"layers", {"Default"}}, {"collision_matrix", Json::array()},
+                           {"assets", Json::array({{{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/start.ascene"}, {"importer", "Scene"}},
+                                                   {{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "AI/Guard.abt"}, {"importer", "BehaviorTree"}}})},
+                           {"files", Json::array()}};
+    const Json scene = {{"$type", "Scene"}, {"$version", 1},
+                        {"entities", Json::array({{{"components", {{"BehaviorTreeComponent", {{"tree", "AI/Guard.abt"}}}}}},
+                                                  {{"components", {{"BehaviorTreeComponent", {{"tree", "AI/Missing.abt"}}}}}}})}};
+    pak::PakWriter writer;
+    writer.Add("Manifest.json", manifest.dump());
+    writer.Add("Content/Scenes/start.ascene", scene.dump());
+    writer.Add("Content/AI/Guard.abt", tree.dump());
+    const stdfs::path file = dir / "game.apak";
+    AETHER_CHECK(writer.Write(file.string()));
+
+    Harness h;
+    RegisterGameTools(h.server);
+    AETHER_CHECK(!h.Call("log_clear").is_error);
+    AETHER_CHECK(!h.Call("game_load", {{"paks", {file.string()}}, {"user_dir", (dir / "user").string()}}).is_error);
+    AETHER_CHECK(!h.Call("game_step", {{"frames", 5}}).is_error);
+    Json state = h.Call("game_state").value;
+    AETHER_CHECK(state["behavior_trees_running"] == 1);
+    AETHER_CHECK(state["behavior_tree_problems"].size() >= 1); // the missing tree
+    AETHER_CHECK(h.Call("log_recent", {{"category", "BehaviorTree"}, {"contains", "bt-guard-marker"}}).value["count"] == 1); // logged once, not every frame
+    AETHER_CHECK(!h.Call("game_step", {{"frames", 30}}).is_error);
+    AETHER_CHECK(h.Call("log_recent", {{"category", "BehaviorTree"}, {"contains", "bt-guard-marker"}}).value["count"] == 1); // the Wait holds the tree
+    h.Call("game_unload");
+    stdfs::remove_all(dir);
+}
+
+#include "aether/ai/behavior_tree.h"
+#include "aether/nav/crowd.h"
+#include "aether/nav/navmesh.h"
+
+// A baked navigation mesh in the package (Navigation/<scene>.anav) is loaded by the game, and a NavAgent whose Behavior Tree says MoveTo walks across it.
+AETHER_TEST(Mcp_GameAgentsWalkTheScenesNavigationMesh) {
+    namespace stdfs = std::filesystem;
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_game_nav_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+
+    nav::NavGeometry ground;
+    ground.AddPlane(Vec3(0, 0, 0), 10, 10);
+    nav::NavMeshData baked;
+    std::string error;
+    AETHER_CHECK(nav::BuildNavMesh(ground, nav::NavMeshSettings{}, baked, &error));
+    const std::vector<u8> anav = nav::SaveNavMesh(baked);
+
+    ai::BlackboardAsset board;
+    board.Add("Goal", ai::BlackboardType::Vector, Vec3(6, 0, 0));
+    ai::BehaviorTreeAsset tree;
+    tree.name = "Walker";
+    tree.blackboard = board;
+    tree.root.type = ai::BtNodeType::Sequence;
+    ai::BtNode move;
+    move.type = ai::BtNodeType::MoveTo;
+    move.key = "Goal";
+    move.acceptance = 0.5f;
+    ai::BtNode say;
+    say.type = ai::BtNodeType::Log;
+    say.event = "nav-arrived-marker";
+    ai::BtNode wait;
+    wait.type = ai::BtNodeType::Wait;
+    wait.seconds = 100.0f;
+    tree.root.children = {move, say, wait};
+
+    const Json manifest = {{"$type", "CookManifest"}, {"$version", 1}, {"project", "McpNav"}, {"configuration", "Development"},
+                           {"startup_scene", "Scenes/start.ascene"}, {"fixed_timestep_hz", 60.0}, {"gravity", {0.0, -9.81, 0.0}},
+                           {"layers", {"Default"}}, {"collision_matrix", Json::array()},
+                           {"assets", Json::array({{{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/start.ascene"}, {"importer", "Scene"}},
+                                                   {{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "AI/Walker.abt"}, {"importer", "BehaviorTree"}},
+                                                   {{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Navigation/start.anav"}, {"importer", "NavMesh"}}})},
+                           {"files", Json::array()}};
+    const Json transform = {{"position", {-6, 0, 0}}, {"rotation", {0, 0, 0, 1}}, {"scale", {1, 1, 1}}};
+    const Json scene = {{"$type", "Scene"}, {"$version", 1},
+                        {"entities", Json::array({{{"components", {{"Transform", transform}, {"NavAgent", Json::object()}, {"BehaviorTreeComponent", {{"tree", "AI/Walker.abt"}}}}}}})}};
+    pak::PakWriter writer;
+    writer.Add("Manifest.json", manifest.dump());
+    writer.Add("Content/Scenes/start.ascene", scene.dump());
+    writer.Add("Content/AI/Walker.abt", ai::SaveBehaviorTree(tree).dump());
+    writer.Add("Content/Navigation/start.anav", std::span<const u8>(anav));
+    const stdfs::path file = dir / "game.apak";
+    AETHER_CHECK(writer.Write(file.string()));
+
+    Harness h;
+    RegisterGameTools(h.server);
+    AETHER_CHECK(!h.Call("log_clear").is_error);
+    AETHER_CHECK(!h.Call("game_load", {{"paks", {file.string()}}, {"user_dir", (dir / "user").string()}}).is_error);
+    AETHER_CHECK(!h.Call("game_step", {{"frames", 10}}).is_error);
+    Json early = h.Call("game_state").value;
+    AETHER_CHECK(early["nav_mesh_loaded"] == true && early["nav_agents"] == 1 && early["navigation_problems"].empty());
+    AETHER_CHECK(h.Call("log_recent", {{"contains", "nav-arrived-marker"}}).value["count"] == 0); // still walking
+
+    AETHER_CHECK(!h.Call("game_step", {{"frames", 420}}).is_error); // 7 seconds at 3.5 m/s covers the 12 metres
+    AETHER_CHECK(h.Call("log_recent", {{"category", "BehaviorTree"}, {"contains", "nav-arrived-marker"}}).value["count"] == 1);
+    Json entities = h.Call("game_list_entities").value;
+    const std::string key = entities["entities"][0]["entity"];
+    const Json at = h.Call("game_get_entity", {{"entity", key}}).value["components"]["Transform"]["position"];
+    AETHER_CHECK(std::fabs(at[0].get<double>() - 6.0) < 0.8 && std::fabs(at[2].get<double>()) < 0.8);
+    h.Call("game_unload");
+    stdfs::remove_all(dir);
+
+    // A scene without a mesh simply has no navigation; a damaged one is reported.
+    stdfs::create_directories(dir);
+    pak::PakWriter bad;
+    bad.Add("Manifest.json", manifest.dump());
+    bad.Add("Content/Scenes/start.ascene", scene.dump());
+    bad.Add("Content/AI/Walker.abt", ai::SaveBehaviorTree(tree).dump());
+    bad.Add("Content/Navigation/start.anav", std::string("not a navigation mesh"));
+    AETHER_CHECK(bad.Write((dir / "bad.apak").string()));
+    AETHER_CHECK(!h.Call("game_load", {{"paks", {(dir / "bad.apak").string()}}, {"user_dir", (dir / "user").string()}}).is_error);
+    Json broken = h.Call("game_state").value;
+    AETHER_CHECK(broken["nav_mesh_loaded"] == false && broken["navigation_problems"].size() == 1);
+    AETHER_CHECK(!h.Call("game_step", {{"frames", 5}}).is_error); // no crash with agents but no mesh
+    h.Call("game_unload");
+    stdfs::remove_all(dir);
+}
+
+// AIPerception senses an entity with an AIStimuliSource and writes it to the Behavior Tree's blackboard, which switches the tree's branch; out of range,
+// and past forget_after, it switches back.
+AETHER_TEST(Mcp_GameAiNoticesAndForgetsATarget) {
+    namespace stdfs = std::filesystem;
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_game_perception_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+
+    ai::BlackboardAsset board;
+    board.Add("Target", ai::BlackboardType::Entity);
+    const auto log = [](const char* text) {
+        ai::BtNode n;
+        n.type = ai::BtNodeType::Log;
+        n.event = text;
+        return n;
+    };
+    ai::BtNode wait;
+    wait.type = ai::BtNodeType::Wait;
+    wait.seconds = 100.0f;
+    ai::BtNode spotted;
+    spotted.type = ai::BtNodeType::Sequence;
+    spotted.children = {log("perc-spotted-marker"), wait};
+    ai::BtDecorator sees;
+    sees.type = ai::BtDecoratorType::BlackboardCondition;
+    sees.key = "Target";
+    sees.op = ai::BtCompare::IsSet;
+    sees.abort = ai::BtAbort::Self;
+    spotted.decorators.push_back(sees);
+    ai::BtNode idle;
+    idle.type = ai::BtNodeType::Sequence;
+    idle.children = {log("perc-idle-marker"), wait};
+    ai::BehaviorTreeAsset tree;
+    tree.name = "Watcher";
+    tree.blackboard = board;
+    tree.root.type = ai::BtNodeType::Selector;
+    tree.root.children = {spotted, idle};
+
+    const Json manifest = {{"$type", "CookManifest"}, {"$version", 1}, {"project", "McpPerception"}, {"configuration", "Development"},
+                           {"startup_scene", "Scenes/start.ascene"}, {"fixed_timestep_hz", 60.0}, {"gravity", {0.0, -9.81, 0.0}},
+                           {"layers", {"Default"}}, {"collision_matrix", Json::array()},
+                           {"assets", Json::array({{{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/start.ascene"}, {"importer", "Scene"}},
+                                                   {{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "AI/Watcher.abt"}, {"importer", "BehaviorTree"}}})},
+                           {"files", Json::array()}};
+    const auto at = [](double x, double y, double z) { return Json{{"position", {x, y, z}}, {"rotation", {0, 0, 0, 1}}, {"scale", {1, 1, 1}}}; };
+    const Json scene = {{"$type", "Scene"}, {"$version", 1},
+        {"entities", Json::array({
+            {{"components", {{"Transform", at(0, 0, 0)},
+                             {"AIPerception", {{"sight_radius", 15.0}, {"lose_sight_radius", 18.0}, {"fov_degrees", 120.0}, {"forget_after", 1.0}, {"target_key", "Target"}}},
+                             {"BehaviorTreeComponent", {{"tree", "AI/Watcher.abt"}}}}}},
+            {{"components", {{"Transform", at(0, 0, 8)}, {"AIStimuliSource", Json::object()}, {"Tags", {{"names", {"Intruder"}}}}}}}})}};
+    pak::PakWriter writer;
+    writer.Add("Manifest.json", manifest.dump());
+    writer.Add("Content/Scenes/start.ascene", scene.dump());
+    writer.Add("Content/AI/Watcher.abt", ai::SaveBehaviorTree(tree).dump());
+    const stdfs::path file = dir / "game.apak";
+    AETHER_CHECK(writer.Write(file.string()));
+
+    Harness h;
+    RegisterGameTools(h.server);
+    AETHER_CHECK(!h.Call("log_clear").is_error);
+    AETHER_CHECK(!h.Call("game_load", {{"paks", {file.string()}}, {"user_dir", (dir / "user").string()}}).is_error);
+    AETHER_CHECK(!h.Call("game_step", {{"frames", 30}}).is_error);
+    AETHER_CHECK(h.Call("log_recent", {{"contains", "perc-spotted-marker"}}).value["count"] == 1); // the guard saw the intruder 8 metres ahead
+
+    // The intruder runs off beyond the sight radius: after forget_after the guard drops back to idle.
+    const std::string key = h.Call("game_list_entities", {{"tag", "Intruder"}}).value["entities"][0]["entity"];
+    AETHER_CHECK(!h.Call("game_set_component", {{"entity", key}, {"component", "Transform"}, {"values", {{"position", {0, 0, 200}}}}}).is_error);
+    AETHER_CHECK(!h.Call("game_step", {{"frames", 180}}).is_error);
+    AETHER_CHECK(h.Call("log_recent", {{"contains", "perc-idle-marker"}}).value["count"] == 1);
+
+    // Behind the guard is outside a 120 degree cone: not seen again.
+    AETHER_CHECK(!h.Call("game_set_component", {{"entity", key}, {"component", "Transform"}, {"values", {{"position", {0, 0, -8}}}}}).is_error);
+    AETHER_CHECK(!h.Call("game_step", {{"frames", 30}}).is_error);
+    AETHER_CHECK(h.Call("log_recent", {{"contains", "perc-spotted-marker"}}).value["count"] == 1);
+    h.Call("game_unload");
+    stdfs::remove_all(dir);
+}
+
+// Perception and navigation events reach the entity's own script.
+AETHER_TEST(Mcp_GameScriptsHearPerceptionAndMoveEvents) {
+    if (!aether::player::Game::HasScripting()) return;
+    namespace stdfs = std::filesystem;
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_game_ai_events_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+
+    nav::NavGeometry ground;
+    ground.AddPlane(Vec3(0, 0, 0), 10, 10);
+    nav::NavMeshData baked;
+    std::string error;
+    AETHER_CHECK(nav::BuildNavMesh(ground, nav::NavMeshSettings{}, baked, &error));
+    const std::vector<u8> anav = nav::SaveNavMesh(baked);
+
+    const std::string script_guid = assets::ToString(assets::NewAssetGuid());
+    const std::string script =
+        "local Sentry = {}\n"
+        "function Sentry:OnStart()\n"
+        "  self.entity:Get('NavAgent'):MoveTo(vector.create(4, 0, 0))\n"
+        "end\n"
+        "function Sentry:OnTargetPerceived(actor, sense, sensed)\n"
+        "  print('ev-perceived', sense, sensed)\n"
+        "end\n"
+        "function Sentry:OnTargetForgotten(actor) print('ev-forgotten') end\n"
+        "function Sentry:OnMoveCompleted(success) print('ev-move-done', success) end\n"
+        "return Sentry\n";
+    const Json manifest = {{"$type", "CookManifest"}, {"$version", 1}, {"project", "McpAiEvents"}, {"configuration", "Development"},
+                           {"startup_scene", "Scenes/start.ascene"}, {"fixed_timestep_hz", 60.0}, {"gravity", {0.0, -9.81, 0.0}},
+                           {"layers", {"Default"}}, {"collision_matrix", Json::array()},
+                           {"assets", Json::array({{{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/start.ascene"}, {"importer", "Scene"}},
+                                                   {{"guid", script_guid}, {"path", "Scripts/Sentry.luau"}, {"importer", "Script"}},
+                                                   {{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Navigation/start.anav"}, {"importer", "NavMesh"}}})},
+                           {"files", Json::array()}};
+    const auto at = [](double x, double y, double z) { return Json{{"position", {x, y, z}}, {"rotation", {0, 0, 0, 1}}, {"scale", {1, 1, 1}}}; };
+    const Json scene = {{"$type", "Scene"}, {"$version", 1},
+        {"entities", Json::array({
+            {{"components", {{"Transform", at(0, 0, 0)}, {"NavAgent", Json::object()}, {"ScriptComponent", {{"script", script_guid}}},
+                             {"AIPerception", {{"sight_radius", 15.0}, {"fov_degrees", 360.0}, {"forget_after", 1.0}}}}}},
+            {{"components", {{"Transform", at(0, 0, 0.0)}, {"AIStimuliSource", Json::object()}, {"Tags", {{"names", {"Walker"}}}}}}}})}};
+    pak::PakWriter writer;
+    writer.Add("Manifest.json", manifest.dump());
+    writer.Add("Content/Scenes/start.ascene", scene.dump());
+    writer.Add("Content/Scripts/Sentry.luau", script);
+    writer.Add("Content/Navigation/start.anav", std::span<const u8>(anav));
+    const stdfs::path file = dir / "game.apak";
+    AETHER_CHECK(writer.Write(file.string()));
+
+    Harness h;
+    RegisterGameTools(h.server);
+    AETHER_CHECK(!h.Call("log_clear").is_error);
+    AETHER_CHECK(!h.Call("game_load", {{"paks", {file.string()}}, {"user_dir", (dir / "user").string()}}).is_error);
+    AETHER_CHECK(!h.Call("game_step", {{"frames", 240}}).is_error); // four metres at 3.5 m/s
+    AETHER_CHECK(h.Call("log_recent", {{"category", "Script"}, {"contains", "ev-move-done"}}).value["count"] == 1);
+    AETHER_CHECK(h.Call("log_recent", {{"category", "Script"}, {"contains", "ev-perceived"}}).value["count"] >= 1);
+    // The other entity goes beyond sight: forgotten after a second.
+    const std::string key = h.Call("game_list_entities", {{"tag", "Walker"}}).value["entities"][0]["entity"];
+    AETHER_CHECK(!h.Call("game_set_component", {{"entity", key}, {"component", "Transform"}, {"values", {{"position", {0, 0, 300}}}}}).is_error);
+    AETHER_CHECK(!h.Call("game_step", {{"frames", 180}}).is_error);
+    AETHER_CHECK(h.Call("log_recent", {{"category", "Script"}, {"contains", "ev-forgotten"}}).value["count"] >= 1);
+    AETHER_CHECK(h.Call("game_state").value["script_errors"] == 0);
+    h.Call("game_unload");
+    stdfs::remove_all(dir);
+}
+
+#include "aether/blueprint/graph.h"
+#include "aether/blueprint/compiler.h"
+
+// A Behavior Tree's RunBlueprint task fires Event.Custom:<name> on the entity's Blueprint and ends when the graph calls Finish Task.
+AETHER_TEST(Mcp_GameBlueprintTasksRunInBehaviorTrees) {
+    namespace stdfs = std::filesystem;
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_game_bt_bp_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+
+    bp::Blueprint blueprint;
+    bp::Graph events;
+    events.name = "EventGraph";
+    blueprint.graphs.push_back(events);
+    bp::GraphBuilder b(*blueprint.FindGraph("EventGraph"));
+    const bp::NodeId patrol = b.Add("Event.Custom", {{"name", "Patrol"}});
+    const bp::NodeId print = b.Add("Debug.Print");
+    b.Default(print, "text", "bp-task-ran");
+    const bp::NodeId finish = b.Add("Call.Native:BehaviorTrees.FinishTask");
+    const bp::NodeId self = b.Add("Entity.Self");
+    b.Default(finish, "success", true);
+    b.Connect(patrol, "then", print, "exec").Connect(print, "then", finish, "exec").Connect(self, "self", finish, "entity");
+    AETHER_CHECK(bp::CompileBlueprint(blueprint).Ok());
+
+    ai::BtNode task;
+    task.type = ai::BtNodeType::RunBlueprint;
+    task.event = "Patrol";
+    ai::BtNode done;
+    done.type = ai::BtNodeType::Log;
+    done.event = "bp-task-done-marker";
+    ai::BtNode wait;
+    wait.type = ai::BtNodeType::Wait;
+    wait.seconds = 100.0f;
+    ai::BehaviorTreeAsset tree;
+    tree.name = "Patroller";
+    tree.root.type = ai::BtNodeType::Sequence;
+    tree.root.children = {task, done, wait};
+
+    const std::string bp_guid = assets::ToString(assets::NewAssetGuid());
+    const Json manifest = {{"$type", "CookManifest"}, {"$version", 1}, {"project", "McpBtBp"}, {"configuration", "Development"},
+                           {"startup_scene", "Scenes/start.ascene"}, {"fixed_timestep_hz", 60.0}, {"gravity", {0.0, -9.81, 0.0}},
+                           {"layers", {"Default"}}, {"collision_matrix", Json::array()},
+                           {"assets", Json::array({{{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/start.ascene"}, {"importer", "Scene"}},
+                                                   {{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "AI/Patroller.abt"}, {"importer", "BehaviorTree"}},
+                                                   {{"guid", bp_guid}, {"path", "Blueprints/Patrol.abp"}, {"importer", "Blueprint"}}})},
+                           {"files", Json::array()}};
+    const Json scene = {{"$type", "Scene"}, {"$version", 1},
+        {"entities", Json::array({{{"components", {{"BlueprintInstance", {{"blueprint", bp_guid}}}, {"BehaviorTreeComponent", {{"tree", "AI/Patroller.abt"}}}}}}})}};
+    pak::PakWriter writer;
+    writer.Add("Manifest.json", manifest.dump());
+    writer.Add("Content/Scenes/start.ascene", scene.dump());
+    writer.Add("Content/AI/Patroller.abt", ai::SaveBehaviorTree(tree).dump());
+    writer.Add("Content/Blueprints/Patrol.abp", bp::BlueprintToJson(blueprint).dump());
+    const stdfs::path file = dir / "game.apak";
+    AETHER_CHECK(writer.Write(file.string()));
+
+    Harness h;
+    RegisterGameTools(h.server);
+    AETHER_CHECK(!h.Call("log_clear").is_error);
+    AETHER_CHECK(!h.Call("game_load", {{"paks", {file.string()}}, {"user_dir", (dir / "user").string()}}).is_error);
+    AETHER_CHECK(!h.Call("game_step", {{"frames", 10}}).is_error);
+    AETHER_CHECK(h.Call("log_recent", {{"category", "Blueprint"}, {"contains", "bp-task-ran"}}).value["count"] == 1);
+    AETHER_CHECK(h.Call("log_recent", {{"category", "BehaviorTree"}, {"contains", "bp-task-done-marker"}}).value["count"] == 1);
+    h.Call("game_unload");
+    stdfs::remove_all(dir);
+}
