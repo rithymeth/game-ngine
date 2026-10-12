@@ -1,0 +1,205 @@
+{
+  "calibration_ms": 1.592,
+  "results": [
+    {
+      "iterations": 20,
+      "max_ms": 0.22597,
+      "median_ms": 0.1794,
+      "min_ms": 0.15343500000000002,
+      "name": "ecs/iterate_100k",
+      "normalized": 0.11592891760904685,
+      "p95_ms": 0.22094999999999998,
+      "samples": 15
+    },
+    {
+      "iterations": 10,
+      "max_ms": 0.08435000000000001,
+      "median_ms": 0.02273,
+      "min_ms": 0.02212,
+      "name": "ecs/query_50k_of_100k",
+      "normalized": 0.014688206785137317,
+      "p95_ms": 0.07335,
+      "samples": 15
+    },
+    {
+      "iterations": 5,
+      "max_ms": 1.52388,
+      "median_ms": 1.34812,
+      "min_ms": 0.8800399999999999,
+      "name": "ecs/create_destroy_10k",
+      "normalized": 0.8711599353796445,
+      "p95_ms": 1.48098,
+      "samples": 15
+    },
+    {
+      "iterations": 5,
+      "max_ms": 2.1805399999999997,
+      "median_ms": 2.1425799999999997,
+      "min_ms": 2.11148,
+      "name": "ecs/add_remove_component_10k",
+      "normalized": 1.38454281098546,
+      "p95_ms": 2.1718800000000003,
+      "samples": 15
+    },
+    {
+      "iterations": 20,
+      "max_ms": 0.10828,
+      "median_ms": 0.096495,
+      "min_ms": 0.092085,
+      "name": "jobs/batch_1024",
+      "normalized": 0.062355411954765745,
+      "p95_ms": 0.10303,
+      "samples": 15
+    },
+    {
+      "iterations": 5,
+      "max_ms": 62.06992,
+      "median_ms": 55.61922,
+      "min_ms": 51.379639999999995,
+      "name": "scene/save_binary_10k",
+      "normalized": 35.94133764135702,
+      "p95_ms": 59.59576,
+      "samples": 15
+    },
+    {
+      "iterations": 5,
+      "max_ms": 85.84742,
+      "median_ms": 78.04132,
+      "min_ms": 76.0034,
+      "name": "scene/load_binary_10k",
+      "normalized": 50.43057835218093,
+      "p95_ms": 82.51404,
+      "samples": 15
+    },
+    {
+      "iterations": 3,
+      "max_ms": 88.35156666666667,
+      "median_ms": 81.7235,
+      "min_ms": 78.73426666666667,
+      "name": "scene/save_json_10k",
+      "normalized": 52.81001615508885,
+      "p95_ms": 87.25123333333333,
+      "samples": 15
+    },
+    {
+      "iterations": 3,
+      "max_ms": 125.20183333333334,
+      "median_ms": 117.91466666666668,
+      "min_ms": 116.05113333333333,
+      "name": "scene/load_json_10k",
+      "normalized": 76.19687668282175,
+      "p95_ms": 123.32063333333333,
+      "samples": 15
+    },
+    {
+      "iterations": 3,
+      "max_ms": 227.22303333333332,
+      "median_ms": 225.4469333333333,
+      "min_ms": 206.64376666666666,
+      "name": "cook/texture_bc7_256",
+      "normalized": 145.6846095853527,
+      "p95_ms": 227.18016666666665,
+      "samples": 15
+    },
+    {
+      "iterations": 3,
+      "max_ms": 180.7526333333333,
+      "median_ms": 174.79163333333335,
+      "min_ms": 172.70803333333333,
+      "name": "cook/texture_bc1_512_mips",
+      "normalized": 112.9509746903608,
+      "p95_ms": 176.92933333333335,
+      "samples": 15
+    },
+    {
+      "iterations": 10,
+      "max_ms": 0.00859,
+      "median_ms": 0.00762,
+      "min_ms": 0.007330000000000001,
+      "name": "cook/atex_roundtrip_256",
+      "normalized": 0.004924071082390953,
+      "p95_ms": 0.00822,
+      "samples": 15
+    },
+    {
+      "iterations": 3,
+      "max_ms": 2.6748,
+      "median_ms": 2.5829,
+      "min_ms": 2.5663,
+      "name": "world/flythrough_120_frames",
+      "normalized": 1.6690791599353796,
+      "p95_ms": 2.6451333333333333,
+      "samples": 15
+    },
+    {
+      "iterations": 10,
+      "max_ms": 0.28546,
+      "median_ms": 0.27691,
+      "min_ms": 0.26853,
+      "name": "bp/loop_arith_10k",
+      "normalized": 0.17894022617124392,
+      "p95_ms": 0.28403,
+      "samples": 15
+    },
+    {
+      "iterations": 20,
+      "max_ms": 0.13569,
+      "median_ms": 0.12989,
+      "min_ms": 0.12648500000000001,
+      "name": "bp/tick_1k_instances",
+      "normalized": 0.08393537964458804,
+      "p95_ms": 0.13185,
+      "samples": 15
+    },
+    {
+      "iterations": 10,
+      "max_ms": 2.78554,
+      "median_ms": 2.68705,
+      "min_ms": 2.6418500000000003,
+      "name": "luau/call_10k",
+      "normalized": 1.7363812600969306,
+      "p95_ms": 2.76524,
+      "samples": 15
+    },
+    {
+      "iterations": 10,
+      "max_ms": 1.05271,
+      "median_ms": 0.9651,
+      "min_ms": 0.93596,
+      "name": "luau/loop_100k",
+      "normalized": 0.6236510500807754,
+      "p95_ms": 1.00661,
+      "samples": 15
+    },
+    {
+      "iterations": 3,
+      "max_ms": 78.67246666666666,
+      "median_ms": 43.67433333333333,
+      "min_ms": 42.429233333333336,
+      "name": "nav/crowd_1000_agents_30_frames",
+      "normalized": 28.222509423801828,
+      "p95_ms": 77.5196,
+      "samples": 15
+    },
+    {
+      "iterations": 5,
+      "max_ms": 0.26326,
+      "median_ms": 0.21586,
+      "min_ms": 0.20903999999999998,
+      "name": "nav/path_across_100_tiles_plain",
+      "normalized": 0.13948949919224554,
+      "p95_ms": 0.22364,
+      "samples": 15
+    },
+    {
+      "iterations": 5,
+      "max_ms": 0.92624,
+      "median_ms": 0.8720000000000001,
+      "min_ms": 0.81046,
+      "name": "nav/path_across_100_tiles_hierarchical",
+      "normalized": 0.5634894991922456,
+      "p95_ms": 0.92132,
+      "samples": 15
+    }
+  ]
+}

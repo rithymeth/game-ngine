@@ -1,0 +1,205 @@
+{
+  "calibration_ms": 1.6577,
+  "results": [
+    {
+      "iterations": 20,
+      "max_ms": 0.22168000000000002,
+      "median_ms": 0.170725,
+      "min_ms": 0.15358,
+      "name": "ecs/iterate_100k",
+      "normalized": 0.10703761755485892,
+      "p95_ms": 0.19981,
+      "samples": 15
+    },
+    {
+      "iterations": 10,
+      "max_ms": 0.03019,
+      "median_ms": 0.02258,
+      "min_ms": 0.0215,
+      "name": "ecs/query_50k_of_100k",
+      "normalized": 0.014156739811912225,
+      "p95_ms": 0.02719,
+      "samples": 15
+    },
+    {
+      "iterations": 5,
+      "max_ms": 1.5358,
+      "median_ms": 1.37364,
+      "min_ms": 0.9002800000000001,
+      "name": "ecs/create_destroy_10k",
+      "normalized": 0.8612163009404389,
+      "p95_ms": 1.4684,
+      "samples": 15
+    },
+    {
+      "iterations": 5,
+      "max_ms": 2.21554,
+      "median_ms": 2.13968,
+      "min_ms": 2.07334,
+      "name": "ecs/add_remove_component_10k",
+      "normalized": 1.3414921630094043,
+      "p95_ms": 2.19006,
+      "samples": 15
+    },
+    {
+      "iterations": 20,
+      "max_ms": 0.102335,
+      "median_ms": 0.10073000000000001,
+      "min_ms": 0.089325,
+      "name": "jobs/batch_1024",
+      "normalized": 0.06315360501567399,
+      "p95_ms": 0.101545,
+      "samples": 15
+    },
+    {
+      "iterations": 5,
+      "max_ms": 58.26314,
+      "median_ms": 57.44818,
+      "min_ms": 52.48764,
+      "name": "scene/save_binary_10k",
+      "normalized": 36.01766771159875,
+      "p95_ms": 57.946979999999996,
+      "samples": 15
+    },
+    {
+      "iterations": 5,
+      "max_ms": 90.25208,
+      "median_ms": 82.65182,
+      "min_ms": 80.81672,
+      "name": "scene/load_binary_10k",
+      "normalized": 51.81932288401254,
+      "p95_ms": 87.00266,
+      "samples": 15
+    },
+    {
+      "iterations": 3,
+      "max_ms": 91.10306666666666,
+      "median_ms": 87.33640000000001,
+      "min_ms": 83.78503333333333,
+      "name": "scene/save_json_10k",
+      "normalized": 54.756363636363645,
+      "p95_ms": 88.88416666666666,
+      "samples": 15
+    },
+    {
+      "iterations": 3,
+      "max_ms": 132.279,
+      "median_ms": 117.17066666666666,
+      "min_ms": 115.71159999999999,
+      "name": "scene/load_json_10k",
+      "normalized": 73.46123301985371,
+      "p95_ms": 130.60543333333334,
+      "samples": 15
+    },
+    {
+      "iterations": 3,
+      "max_ms": 244.55780000000001,
+      "median_ms": 224.4257,
+      "min_ms": 222.22536666666667,
+      "name": "cook/texture_bc7_256",
+      "normalized": 140.70576802507838,
+      "p95_ms": 229.56896666666668,
+      "samples": 15
+    },
+    {
+      "iterations": 3,
+      "max_ms": 180.36266666666666,
+      "median_ms": 174.33036666666666,
+      "min_ms": 173.0936,
+      "name": "cook/texture_bc1_512_mips",
+      "normalized": 109.2980355276907,
+      "p95_ms": 175.49033333333333,
+      "samples": 15
+    },
+    {
+      "iterations": 10,
+      "max_ms": 0.00891,
+      "median_ms": 0.00762,
+      "min_ms": 0.007430000000000001,
+      "name": "cook/atex_roundtrip_256",
+      "normalized": 0.00477742946708464,
+      "p95_ms": 0.00793,
+      "samples": 15
+    },
+    {
+      "iterations": 3,
+      "max_ms": 2.6862999999999997,
+      "median_ms": 2.6144000000000003,
+      "min_ms": 2.5984000000000003,
+      "name": "world/flythrough_120_frames",
+      "normalized": 1.6391222570532917,
+      "p95_ms": 2.6837666666666666,
+      "samples": 15
+    },
+    {
+      "iterations": 10,
+      "max_ms": 0.28347,
+      "median_ms": 0.27737,
+      "min_ms": 0.2703,
+      "name": "bp/loop_arith_10k",
+      "normalized": 0.17389968652037618,
+      "p95_ms": 0.28314,
+      "samples": 15
+    },
+    {
+      "iterations": 20,
+      "max_ms": 0.129765,
+      "median_ms": 0.127385,
+      "min_ms": 0.12657000000000002,
+      "name": "bp/tick_1k_instances",
+      "normalized": 0.07986520376175549,
+      "p95_ms": 0.128705,
+      "samples": 15
+    },
+    {
+      "iterations": 10,
+      "max_ms": 2.75977,
+      "median_ms": 2.6827300000000003,
+      "min_ms": 2.64222,
+      "name": "luau/call_10k",
+      "normalized": 1.6819623824451413,
+      "p95_ms": 2.74392,
+      "samples": 15
+    },
+    {
+      "iterations": 10,
+      "max_ms": 0.9535,
+      "median_ms": 0.9270099999999999,
+      "min_ms": 0.90199,
+      "name": "luau/loop_100k",
+      "normalized": 0.5811974921630093,
+      "p95_ms": 0.9524100000000001,
+      "samples": 15
+    },
+    {
+      "iterations": 3,
+      "max_ms": 77.18566666666666,
+      "median_ms": 43.5246,
+      "min_ms": 39.01446666666667,
+      "name": "nav/crowd_1000_agents_30_frames",
+      "normalized": 27.288150470219435,
+      "p95_ms": 72.35466666666666,
+      "samples": 15
+    },
+    {
+      "iterations": 5,
+      "max_ms": 0.22212,
+      "median_ms": 0.21386,
+      "min_ms": 0.20894,
+      "name": "nav/path_across_100_tiles_plain",
+      "normalized": 0.13408150470219435,
+      "p95_ms": 0.21838000000000002,
+      "samples": 15
+    },
+    {
+      "iterations": 5,
+      "max_ms": 0.8848,
+      "median_ms": 0.83504,
+      "min_ms": 0.8001799999999999,
+      "name": "nav/path_across_100_tiles_hierarchical",
+      "normalized": 0.5235360501567399,
+      "p95_ms": 0.8644000000000001,
+      "samples": 15
+    }
+  ]
+}
