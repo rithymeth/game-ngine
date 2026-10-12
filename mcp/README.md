@@ -333,6 +333,13 @@ saves and localization. The game has its own world, separate from the editor's.
 | `game_load` | Mount `.apak` archives (or a folder of them / a loose cook), load the startup scene or `scene`, start modules, begin play |
 | `game_step` | Run N frames (1-100000) of `dt` seconds (default: the project's fixed step) |
 | `game_state` | Frames, time, entity/physics/script counts, script and Blueprint errors, load warnings |
+| `log_recent` | The engine's last 512 log lines, including what scripts and Blueprints `print()` (categories `Script`, `Blueprint`); filter by level, category, text, time |
+| `log_clear` | Forget the recent log lines |
+| `game_spawn_entity` | Create an entity in the running game from component name -> fields (a Transform is always added), with optional tags |
+| `game_add_component` | Add a component to a running entity (or merge values onto an existing one) |
+| `game_remove_component` | Remove a component from a running entity |
+| `game_ui` | The running game's UI: each layer's widget tree with type, name, rectangle, visibility, enabled, and the text, value or percent a widget shows; or one widget by name |
+| `game_ui_click` | Click a widget of the game's UI by name (hover, press, release over its middle, a frame between each) |
 | `game_lifecycle` | Send suspend, resume or memory-pressure, as a phone's OS would: the game stands still, audio stops and saves are written; resume skips the time that passed |
 | `game_input` | Hold keys/axes (`{"W": 1}`), mouse delta for one frame, or clear; `mouse` and `touches` move pointers for the game's on-screen UI (taps, drags on a virtual stick) |
 | `game_screenshot` | Render the current frame off screen (what the player draws: scene and HUD) and return it as a PNG image, also saved to `path`. Needs a graphics device (D3D12 or Vulkan); `width`, `height`, `backend`, `inline` |
