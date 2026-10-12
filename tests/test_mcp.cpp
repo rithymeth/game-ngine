@@ -463,6 +463,51 @@ AETHER_TEST(Mcp_GameToolsHostACookedGame) {
     stdfs::remove_all(dir);
 }
 
+#include "aether/player/game.h"
+
+// print() in a game's scripts reaches the log, and log_recent reads it back with filters.
+AETHER_TEST(Mcp_LogRecentShowsWhatScriptsPrint) {
+    if (!aether::player::Game::HasScripting()) return;
+    namespace stdfs = std::filesystem;
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_log_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+    const std::string script_guid = assets::ToString(assets::NewAssetGuid());
+    const Json manifest = {{"$type", "CookManifest"}, {"$version", 1}, {"project", "McpLog"}, {"configuration", "Development"},
+                           {"startup_scene", "Scenes/start.ascene"}, {"fixed_timestep_hz", 60.0}, {"gravity", {0.0, -9.81, 0.0}},
+                           {"layers", {"Default"}}, {"collision_matrix", Json::array()},
+                           {"assets", Json::array({{{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/start.ascene"}, {"importer", "Scene"}},
+                                                   {{"guid", script_guid}, {"path", "Scripts/Talk.luau"}, {"importer", "Script"}}})},
+                           {"files", Json::array()}};
+    const Json scene = {{"$type", "Scene"}, {"$version", 1},
+                        {"entities", Json::array({{{"components", {{"ScriptComponent", {{"script", script_guid}}}}}}})}};
+    pak::PakWriter writer;
+    writer.Add("Manifest.json", manifest.dump());
+    writer.Add("Content/Scenes/start.ascene", scene.dump());
+    writer.Add("Content/Scripts/Talk.luau", std::string("local T = {}\nfunction T:OnStart() print('mcp-log-marker', 42) end\nreturn T\n"));
+    const stdfs::path file = dir / "game.apak";
+    AETHER_CHECK(writer.Write(file.string()));
+
+    Harness h;
+    RegisterGameTools(h.server);
+    AETHER_CHECK(!h.Call("log_clear").is_error);
+    AETHER_CHECK(!h.Call("game_load", {{"paks", {file.string()}}, {"user_dir", (dir / "user").string()}}).is_error);
+    AETHER_CHECK(!h.Call("game_step", {{"frames", 2}}).is_error);
+
+    Json found = h.Call("log_recent", {{"category", "Script"}, {"contains", "mcp-log-marker"}}).value;
+    AETHER_CHECK(found["count"] == 1 && found["lines"][0]["message"] == "mcp-log-marker\t42" && found["lines"][0]["level"] == "INFO");
+    AETHER_CHECK(h.Call("log_recent", {{"category", "Script"}, {"level", "Error"}}).value["count"] == 0);
+    const f64 when = found["lines"][0]["time"].get<f64>();
+    AETHER_CHECK(h.Call("log_recent", {{"since", when + 1000.0}}).value["count"] == 0);
+    AETHER_CHECK(h.Call("log_recent", {{"limit", 1}}).value["lines"].size() == 1);
+    AETHER_CHECK(h.Call("log_recent", {{"level", "Loud"}}).is_error);
+    AETHER_CHECK(h.Call("log_recent", {{"limit", 0}}).is_error);
+    AETHER_CHECK(!h.Call("log_clear").is_error);
+    AETHER_CHECK(h.Call("log_recent", {{"contains", "mcp-log-marker"}}).value["count"] == 0);
+    h.Call("game_unload");
+    stdfs::remove_all(dir);
+}
+
 #include "build_tools.h"
 #include "subprocess.h"
 
@@ -2987,4 +3032,125 @@ AETHER_TEST(Mcp_SessionLogRecordsEachCallWithoutItsArguments) {
     }
     // The same arguments hash the same way; the confirm token is not part of them.
     AETHER_CHECK(records[3]["args_hash"] == records[5]["args_hash"]);
+}
+
+// game_ui shows the running game's UI and game_ui_click presses a widget the way a player would.
+AETHER_TEST(Mcp_GameUiShowsWidgetsAndClicksThem) {
+    if (!aether::player::Game::HasScripting()) return;
+    namespace stdfs = std::filesystem;
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_game_ui_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+    auto root = std::make_unique<ui::Canvas>();
+    root->name = "Hud";
+    auto* play = root->Add<ui::Button>();
+    play->name = "Play";
+    play->slot.anchors = ui::Anchors::Point(0, 0);
+    play->slot.position = {100, 100};
+    play->slot.size = {200, 80};
+    play->Add<ui::Text>("Play");
+    auto* status = root->Add<ui::Text>("idle");
+    status->name = "Status";
+    auto* bar = root->Add<ui::ProgressBar>();
+    bar->name = "Health";
+    bar->percent = 0.5f;
+    const std::string layout = ui::SaveLayout(*root);
+    const std::string script_guid = assets::ToString(assets::NewAssetGuid());
+    const std::string script =
+        "local Hud = {}\n"
+        "function Hud:OnUpdate(dt)\n"
+        "  if UI.WasClicked('Play') then UI.SetText('Status', 'clicked') end\n"
+        "end\n"
+        "return Hud\n";
+    const Json scene = {{"$type", "Scene"}, {"$version", 1},
+        {"entities", Json::array({{{"components", {{"WidgetComponent", {{"layout", "UI/Hud.aui"}, {"z", 0}, {"visible", true}}}}}},
+                                  {{"components", {{"ScriptComponent", {{"script", script_guid}}}}}}})}};
+    const Json manifest = {{"$type", "CookManifest"}, {"$version", 1}, {"project", "McpUi"}, {"configuration", "Development"},
+                           {"startup_scene", "Scenes/start.ascene"}, {"fixed_timestep_hz", 60.0}, {"gravity", {0.0, -9.81, 0.0}},
+                           {"layers", {"Default"}}, {"collision_matrix", Json::array()},
+                           {"assets", Json::array({{{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/start.ascene"}, {"importer", "Scene"}},
+                                                   {{"guid", script_guid}, {"path", "Scripts/Hud.luau"}, {"importer", "Script"}},
+                                                   {{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "UI/Hud.aui"}, {"importer", "Test"}}})},
+                           {"files", Json::array()}};
+    pak::PakWriter writer;
+    writer.Add("Manifest.json", manifest.dump());
+    writer.Add("Content/Scenes/start.ascene", scene.dump());
+    writer.Add("Content/Scripts/Hud.luau", script);
+    writer.Add("Content/UI/Hud.aui", layout);
+    const stdfs::path file = dir / "game.apak";
+    AETHER_CHECK(writer.Write(file.string()));
+
+    Harness h;
+    RegisterGameTools(h.server);
+    AETHER_CHECK(h.Call("game_ui").is_error); // no game yet
+    AETHER_CHECK(!h.Call("game_load", {{"paks", {file.string()}}, {"user_dir", (dir / "user").string()}}).is_error);
+    AETHER_CHECK(!h.Call("game_step", {{"frames", 6}}).is_error); // the layout appears on the first frames
+
+    Json all = h.Call("game_ui").value;
+    AETHER_CHECK(all["layers"].size() == 1 && all["layers"][0]["name"] == "Hud");
+    Json status_before = h.Call("game_ui", {{"widget", "Status"}}).value["widget"];
+    AETHER_CHECK(status_before["type"] == "Text" && status_before["text"] == "idle");
+    AETHER_CHECK(h.Call("game_ui", {{"widget", "Health"}}).value["widget"]["percent"] == 0.5);
+    Json button = h.Call("game_ui", {{"widget", "Play"}}).value["widget"];
+    AETHER_CHECK(button["interactive"] == true && button["enabled"] == true && button["rect"][2] == 200);
+    AETHER_CHECK(h.Call("game_ui", {{"widget", "Nothing"}}).is_error);
+
+    Harness::Result clicked = h.Call("game_ui_click", {{"widget", "Play"}});
+    AETHER_CHECK(!clicked.is_error && clicked.value["widget"] == "Play");
+    AETHER_CHECK(h.Call("game_ui", {{"widget", "Status"}}).value["widget"]["text"] == "clicked");
+    AETHER_CHECK(h.Call("game_ui_click", {{"widget", "Nothing"}}).is_error);
+    AETHER_CHECK(h.Call("game_ui_click", {}).is_error);
+    h.Call("game_unload");
+    stdfs::remove_all(dir);
+}
+
+// game_spawn_entity, game_add_component and game_remove_component change the running world.
+AETHER_TEST(Mcp_GameSpawnsEntitiesAndEditsTheirComponents) {
+    namespace stdfs = std::filesystem;
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_game_spawn_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+    const Json manifest = {{"$type", "CookManifest"}, {"$version", 1}, {"project", "McpSpawn"}, {"configuration", "Development"},
+                           {"startup_scene", "Scenes/start.ascene"}, {"fixed_timestep_hz", 60.0}, {"gravity", {0.0, -9.81, 0.0}},
+                           {"layers", {"Default"}}, {"collision_matrix", Json::array()},
+                           {"assets", Json::array({{{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/start.ascene"}, {"importer", "Scene"}}})},
+                           {"files", Json::array()}};
+    const Json scene = {{"$type", "Scene"}, {"$version", 1}, {"entities", Json::array()}};
+    pak::PakWriter writer;
+    writer.Add("Manifest.json", manifest.dump());
+    writer.Add("Content/Scenes/start.ascene", scene.dump());
+    const stdfs::path file = dir / "game.apak";
+    AETHER_CHECK(writer.Write(file.string()));
+
+    Harness h;
+    RegisterGameTools(h.server);
+    AETHER_CHECK(h.Call("game_spawn_entity", {{"components", Json::object()}}).is_error); // no game yet
+    AETHER_CHECK(!h.Call("game_load", {{"paks", {file.string()}}, {"user_dir", (dir / "user").string()}}).is_error);
+    AETHER_CHECK(h.Call("game_state").value["entities"] == 0);
+
+    Harness::Result spawned = h.Call("game_spawn_entity", {{"components", {{"Transform", {{"position", {4, 5, 6}}}}}}, {"tags", {"Crate", "Loot"}}});
+    AETHER_CHECK(!spawned.is_error);
+    const std::string key = spawned.value["entity"];
+    AETHER_CHECK(spawned.value["components"]["Transform"]["position"] == Json::array({4, 5, 6}));
+    AETHER_CHECK(spawned.value["components"]["Tags"]["names"] == Json::array({"Crate", "Loot"}));
+    AETHER_CHECK(h.Call("game_state").value["entities"] == 1);
+    AETHER_CHECK(h.Call("game_list_entities", {{"tag", "Loot"}}).value["total"] == 1);
+    AETHER_CHECK(!h.Call("game_step", {{"frames", 3}}).is_error);
+
+    AETHER_CHECK(h.Call("game_spawn_entity", {{"components", {{"NoSuchComponent", Json::object()}}}}).is_error);
+    AETHER_CHECK(h.Call("game_spawn_entity", {{"components", {{"Transform", 5}}}}).is_error);
+    AETHER_CHECK(h.Call("game_state").value["entities"] == 1); // the failed spawn left nothing behind
+    AETHER_CHECK(h.Call("game_spawn_entity", {{"components", "Transform"}}).is_error);
+
+    Harness::Result added = h.Call("game_add_component", {{"entity", key}, {"component", "PointLight"}, {"values", {{"range", 25.0}}}});
+    AETHER_CHECK(!added.is_error);
+    AETHER_CHECK(added.value["added"] == true && added.value["components"]["PointLight"]["range"] == 25.0);
+    Harness::Result merged = h.Call("game_add_component", {{"entity", key}, {"component", "PointLight"}, {"values", {{"intensity", 3.0}}}});
+    AETHER_CHECK(merged.value["added"] == false && merged.value["components"]["PointLight"]["range"] == 25.0 && merged.value["components"]["PointLight"]["intensity"] == 3.0);
+    AETHER_CHECK(!h.Call("game_remove_component", {{"entity", key}, {"component", "PointLight"}}).is_error);
+    AETHER_CHECK(h.Call("game_remove_component", {{"entity", key}, {"component", "PointLight"}}).is_error); // already gone
+    AETHER_CHECK(h.Call("game_remove_component", {{"entity", key}, {"component", "Transform"}}).is_error);
+    AETHER_CHECK(!h.Call("game_destroy_entity", {{"entity", key}}).is_error);
+    h.Call("game_unload");
+    stdfs::remove_all(dir);
 }

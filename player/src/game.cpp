@@ -586,6 +586,7 @@ void Game::StartRuntime() {
         }, &guids_);
     ApplyAudioSettings();
     runtime_->blueprints = std::make_unique<bp::BlueprintSystem>(*world_);
+    runtime_->blueprints->VM().SetPrintHandler([](Entity, const std::string& text) { AETHER_LOG_INFO("Blueprint", "%s", text.c_str()); });
     runtime_->blueprints->SetLoader([this](const assets::AssetGuid& guid, bp::Blueprint& out, std::string& name) {
         const GameManifest::Asset* asset = package_.FindAssetByGuid(assets::ToString(guid));
         std::vector<u8> bytes;
@@ -659,6 +660,8 @@ void Game::StartRuntime() {
         runtime_->ui_has_theme ? &runtime_->ui_theme : nullptr);
     runtime_->ui->MakeActive();
 #if AETHER_GAME_SCRIPTING
+    // print() in a script goes to the log (category "Script"), where the console and the MCP server's log_recent can see it.
+    runtime_->host.SetPrintHandler([](const std::string& text) { AETHER_LOG_INFO("Script", "%s", text.c_str()); });
     runtime_->scripts = std::make_unique<script::ScriptSystem>(
         runtime_->host, *world_, guids_, [this](const assets::AssetGuid& guid, std::string& source, std::string& name) {
             const GameManifest::Asset* asset = package_.FindAssetByGuid(assets::ToString(guid));

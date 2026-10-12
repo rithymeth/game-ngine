@@ -5,6 +5,7 @@
 #include "screenshot.h"
 
 #include "aether/audio/audio_system.h"
+#include "aether/core/log.h"
 #include "aether/sequencer/sequence_system.h"
 #include "aether/gameplay/attribute_library.h"
 #include "aether/gameplay/attribute_set.h"
@@ -17,6 +18,9 @@
 #include "aether/reflection/serialize.h"
 #include "aether/scene/entity_guid.h"
 #include "aether/scene/gameplay.h"
+#include "aether/ui/basic.h"
+#include "aether/ui/controls.h"
+#include "aether/ui/viewport.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -174,6 +178,56 @@ Json StatsJson(Game& game) {
 
 } // namespace
 
+// Merges `values` (a partial object of fields) onto the component `id` of `e`, which must have it. Returns the load warnings.
+std::vector<std::string> ApplyComponentValues(World& world, Entity e, ComponentId id, const Json& values) {
+    if (!values.is_object()) throw ToolError("The values for " + ComponentName(id) + " must be an object of fields");
+    void* data = world.GetComponentRaw(e, id);
+    if (data == nullptr) throw ToolError("Entity has no " + ComponentName(id));
+    const ComponentInfo& info = GetComponentInfo(id);
+    Json merged = reflect::ToJson(*info.reflected, data);
+    merged.merge_patch(values);
+    reflect::LoadReport report;
+    if (!reflect::FromJson(*info.reflected, data, merged, &report)) throw ToolError("Value does not match the shape of " + ComponentName(id));
+    return report.warnings;
+}
+
+const char* VisibilityName(ui::Visibility v) {
+    switch (v) {
+    case ui::Visibility::Visible: return "Visible";
+    case ui::Visibility::Hidden: return "Hidden";
+    case ui::Visibility::Collapsed: return "Collapsed";
+    case ui::Visibility::HitTestInvisible: return "HitTestInvisible";
+    case ui::Visibility::SelfHitTestInvisible: return "SelfHitTestInvisible";
+    }
+    return "Visible";
+}
+
+// One widget and what it shows, then its children.
+Json UiWidgetJson(const ui::Widget& w, usize& budget) {
+    const ui::Rect& g = w.Geometry();
+    Json j = {{"type", w.TypeName()}, {"rect", Json::array({g.x, g.y, g.w, g.h})}, {"visibility", VisibilityName(w.visibility)}, {"enabled", w.IsEnabled()}};
+    if (!w.name.empty()) j["name"] = w.name;
+    if (const auto* text = dynamic_cast<const ui::Text*>(&w)) j["text"] = text->text;
+    if (const auto* slider = dynamic_cast<const ui::Slider*>(&w)) j["value"] = slider->value;
+    if (const auto* toggle = dynamic_cast<const ui::Toggle*>(&w)) j["checked"] = toggle->checked;
+    if (const auto* bar = dynamic_cast<const ui::ProgressBar*>(&w)) j["percent"] = bar->percent;
+    if (const auto* input = dynamic_cast<const ui::TextInput*>(&w)) j["text"] = input->text;
+    if (w.Interactive()) j["interactive"] = true;
+    if (w.ChildCount() > 0) {
+        Json children = Json::array();
+        for (usize i = 0; i < w.ChildCount(); ++i) {
+            if (budget == 0) {
+                j["truncated"] = true;
+                break;
+            }
+            --budget;
+            children.push_back(UiWidgetJson(*w.Child(i), budget));
+        }
+        j["children"] = std::move(children);
+    }
+    return j;
+}
+
 void RegisterGameTools(McpServer& server) {
     auto host = std::make_shared<GameHost>();
 
@@ -244,6 +298,197 @@ void RegisterGameTools(McpServer& server) {
 
     server.AddTool({"game_state", "Frames, time, entity and physics counts, script/Blueprint errors and load warnings of the hosted game.",
                     Schema(Json::object()), [host](const Json&) -> Json { return StatsJson(host->Require()); }});
+
+    server.AddTool(
+        {"game_spawn_entity",
+         "Create a new entity in the running game with the components named in `components` (component name -> fields to set, {} for defaults). "
+         "A Transform is always added. Gets a GUID; scripts, physics and the other systems pick it up on the next frame. Not undoable; gone when "
+         "the game is reloaded.",
+         Schema({{"components", {{"type", "object"}, {"description", "e.g. {\"Transform\": {\"position\": [0,1,0]}, \"ModelRenderer\": {...}}"}}},
+                 {"tags", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "Tags to give it"}}}},
+                {"components"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["components"].is_object()) throw ToolError("\"components\" must be an object of component name -> fields");
+             std::vector<std::pair<ComponentId, Json>> wanted;
+             ComponentMask mask;
+             mask.set(GetComponentId<Transform>());
+             for (const auto& [name, values] : args["components"].items()) {
+                 const ComponentId id = RequireComponent(name);
+                 mask.set(id);
+                 wanted.emplace_back(id, values);
+             }
+             if (args.contains("tags")) {
+                 if (!args["tags"].is_array()) throw ToolError("\"tags\" must be an array of strings");
+                 mask.set(GetComponentId<Tags>());
+             }
+             const Entity e = world.CreateEntityRaw(mask);
+             EnsureGuid(world, e, &game.Guids());
+             std::vector<std::string> warnings;
+             try {
+                 for (const auto& [id, values] : wanted) {
+                     for (const std::string& w : ApplyComponentValues(world, e, id, values)) warnings.push_back(w);
+                 }
+                 if (args.contains("tags")) {
+                     Tags* tags = world.GetComponent<Tags>(e);
+                     for (const Json& tag : args["tags"]) {
+                         if (!tag.is_string()) throw ToolError("\"tags\" must be an array of strings");
+                         tags->names.push_back(tag.get<std::string>());
+                     }
+                 }
+             } catch (...) {
+                 game.GetLifecycle().Destroy(e); // a half-made entity is not left behind
+                 throw;
+             }
+             Json out = EntityJson(world, e);
+             if (!warnings.empty()) out["warnings"] = warnings;
+             return out;
+         }});
+
+    server.AddTool(
+        {"game_add_component",
+         "Add a component to a running entity (default values, then `values` merged on); if it already has one, `values` are merged onto it. Not undoable.",
+         Schema({{"entity", {{"type", "string"}, {"description", "GUID or #index"}}},
+                 {"component", {{"type", "string"}}},
+                 {"values", {{"type", "object"}, {"description", "Fields to set (optional)"}}}},
+                {"entity", "component"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             const Entity e = RequireEntity(game, args);
+             const ComponentId id = RequireComponent(RequireString(args, "component"));
+             const bool had = world.HasComponentRaw(e, id);
+             if (!had) world.AddComponentRaw(e, id);
+             std::vector<std::string> warnings;
+             if (args.contains("values")) warnings = ApplyComponentValues(world, e, id, args["values"]);
+             Json out = EntityJson(world, e);
+             out["added"] = !had;
+             if (!warnings.empty()) out["warnings"] = warnings;
+             return out;
+         }});
+
+    server.AddTool(
+        {"game_remove_component", "Remove a component from a running entity. Not undoable.",
+         Schema({{"entity", {{"type", "string"}, {"description", "GUID or #index"}}}, {"component", {{"type", "string"}}}}, {"entity", "component"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             const Entity e = RequireEntity(game, args);
+             const ComponentId id = RequireComponent(RequireString(args, "component"));
+             if (!world.HasComponentRaw(e, id)) throw ToolError("Entity has no " + ComponentName(id));
+             if (id == GetComponentId<Transform>() || id == GetComponentId<IdComponent>()) throw ToolError(ComponentName(id) + " cannot be removed from a running entity");
+             world.RemoveComponentRaw(e, id);
+             return EntityJson(world, e);
+         }});
+
+    server.AddTool(
+        {"game_ui",
+         "The hosted game's UI as it is now: each layer's widget tree with type, name, rectangle (layout units), visibility, enabled, and what it "
+         "shows (Text and TextInput text, Slider value, Toggle checked, ProgressBar percent). Interactive widgets are marked. Optionally just one widget by name.",
+         Schema({{"widget", {{"type", "string"}, {"description", "Only this widget (and its children), by name"}}}}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             ui::Viewport* viewport = game.Ui();
+             if (viewport == nullptr) return {{"layers", Json::array()}, {"note", "the game has no UI yet"}};
+             usize budget = 2000;
+             if (args.contains("widget")) {
+                 if (!args["widget"].is_string()) throw ToolError("\"widget\" must be a string");
+                 const ui::Widget* found = viewport->Find(args["widget"].get<std::string>());
+                 if (found == nullptr) throw ToolError("No widget named \"" + args["widget"].get<std::string>() + "\" in the game's UI");
+                 return {{"widget", UiWidgetJson(*found, budget)}};
+             }
+             Json layers = Json::array();
+             for (usize i = 0; i < viewport->LayerCount(); ++i) {
+                 if (const ui::Widget* root = viewport->Layer(i)) layers.push_back(UiWidgetJson(*root, budget));
+             }
+             const ui::Vec2 size = viewport->Size();
+             return {{"size", Json::array({size.x, size.y})}, {"layers", layers}};
+         }});
+
+    server.AddTool(
+        {"game_ui_click",
+         "Click a widget of the hosted game's UI by name, the way a player would: the pointer moves to the middle of the widget, presses and "
+         "lets go, with a frame between each. Returns where it clicked. Fails for a widget that is hidden, collapsed or disabled.",
+         Schema({{"widget", {{"type", "string"}, {"description", "The widget's name"}}}}, {"widget"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             const std::string name = RequireString(args, "widget");
+             ui::Viewport* viewport = game.Ui();
+             ui::Widget* widget = viewport != nullptr ? viewport->Find(name) : nullptr;
+             if (widget == nullptr) throw ToolError("No widget named \"" + name + "\" in the game's UI");
+             if (widget->visibility != ui::Visibility::Visible && widget->visibility != ui::Visibility::SelfHitTestInvisible) throw ToolError("\"" + name + "\" is not visible");
+             if (!widget->IsEnabled()) throw ToolError("\"" + name + "\" is disabled");
+             const ui::Rect g = widget->Geometry();
+             if (g.Empty()) throw ToolError("\"" + name + "\" has no size yet (step the game a frame so the UI is laid out)");
+             // Pointers are in pixels, geometry in layout units.
+             const ui::Vec2 layout = viewport->LayoutSize();
+             const ui::Vec2 pixels = viewport->Size();
+             const f32 sx = layout.x > 0.0f ? pixels.x / layout.x : 1.0f, sy = layout.y > 0.0f ? pixels.y / layout.y : 1.0f;
+             const f32 x = (g.x + g.w * 0.5f) * sx, y = (g.y + g.h * 0.5f) * sy;
+             const f32 dt = 1.0f / static_cast<f32>(host->package->Manifest().fixed_timestep_hz);
+             input::InputState& in = game.Input();
+             in.SetPointer(0, x, y, false, true);
+             game.Tick(dt); // hover
+             in.SetPointer(0, x, y, true, true);
+             in.SetButton(input::Key::MouseLeft, true);
+             game.Tick(dt); // press
+             in.SetPointer(0, x, y, false, true);
+             in.SetButton(input::Key::MouseLeft, false);
+             game.Tick(dt); // release: the click
+             game.Tick(dt); // scripts see it a frame later
+             return {{"widget", name}, {"at", Json::array({x, y})}, {"type", widget->TypeName()}};
+         }});
+
+    server.AddTool(
+        {"log_recent",
+         "The engine's recent log lines (the last 512), oldest first: engine and system messages, and what the game's scripts and Blueprints "
+         "print() (categories \"Script\" and \"Blueprint\"). Filter by minimum level, category, text, or time (seconds since the logger started).",
+         Schema({{"level", {{"type", "string"}, {"enum", Json::array({"Trace", "Info", "Warn", "Error", "Fatal"})}, {"description", "Minimum level, any case (default Trace: everything); lines report levels in upper case"}}},
+                 {"category", {{"type", "string"}, {"description", "Only this category, e.g. \"Script\""}}},
+                 {"contains", {{"type", "string"}, {"description", "Only lines whose message contains this text"}}},
+                 {"since", {{"type", "number"}, {"description", "Only lines at or after this logger time (the \"time\" of a line you saw)"}}},
+                 {"limit", {{"type", "integer"}, {"description", "Most recent N matching lines, 1-512 (default 100)"}}}}),
+         [](const Json& args) -> Json {
+             LogLevel minimum = LogLevel::Trace;
+             if (args.contains("level")) {
+                 const std::string name = args["level"].is_string() ? args["level"].get<std::string>() : "";
+                 bool found = false;
+                 for (const LogLevel l : {LogLevel::Trace, LogLevel::Info, LogLevel::Warn, LogLevel::Error, LogLevel::Fatal}) {
+                     const std::string level_name = LogLevelName(l); // upper case ("INFO"); a request may use any case
+                     if (name.size() == level_name.size() &&
+                         std::equal(name.begin(), name.end(), level_name.begin(), [](char a, char b) { return std::toupper(static_cast<unsigned char>(a)) == std::toupper(static_cast<unsigned char>(b)); })) {
+                         minimum = l, found = true;
+                     }
+                 }
+                 if (!found) throw ToolError("\"level\" must be Trace, Info, Warn, Error or Fatal");
+             }
+             const std::string category = args.value("category", std::string());
+             const std::string contains = args.value("contains", std::string());
+             const f64 since = args.contains("since") && args["since"].is_number() ? args["since"].get<f64>() : -1.0;
+             i64 limit = 100;
+             if (args.contains("limit")) {
+                 if (!args["limit"].is_number_integer()) throw ToolError("\"limit\" must be an integer");
+                 limit = args["limit"].get<i64>();
+             }
+             if (limit < 1 || limit > 512) throw ToolError("\"limit\" must be between 1 and 512");
+             Json lines = Json::array();
+             for (const LogLine& line : Logger::Instance().Recent()) {
+                 if (static_cast<int>(line.level) < static_cast<int>(minimum)) continue;
+                 if (!category.empty() && line.category != category) continue;
+                 if (!contains.empty() && line.message.find(contains) == std::string::npos) continue;
+                 if (since >= 0.0 && line.time < since) continue;
+                 lines.push_back({{"time", line.time}, {"level", LogLevelName(line.level)}, {"category", line.category}, {"message", line.message}});
+             }
+             while (static_cast<i64>(lines.size()) > limit) lines.erase(lines.begin());
+             return {{"count", lines.size()}, {"lines", lines}};
+         }});
+
+    server.AddTool(
+        {"log_clear", "Forget the recent log lines (log_recent starts empty).", Schema(Json::object()), [](const Json&) -> Json {
+             Logger::Instance().ClearRecent();
+             return {{"cleared", true}};
+         }});
 
     server.AddTool(
         {"game_step",
