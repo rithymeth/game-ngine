@@ -549,7 +549,35 @@ AETHER_TEST(Player_PointersDriveTheUiAndVirtualControls) {
     touch(WindowEventType::Touch, false, 500, 100);
     game.Tick(1.0f / 60.0f);
     CHECK(in.Value(Key::GamepadLeftStickX) == 0.0f && in.Value(Key::GamepadLeftStickY) == 0.0f);
+
+    // Drawn at three quarters of the window's size (a quality preset's resolution scale), the button that is at 150, 130 in the UI is at 200, 173
+    // in window pixels: the host's scale makes that press hit it.
+    game.SetUiPointerScale(0.75f, 0.75f);
+    in.SetPointer(0, 200, 173, false, true);
+    game.Tick(1.0f / 60.0f);
+    in.SetPointer(0, 200, 173, true, true);
+    in.SetButton(Key::MouseLeft, true);
+    game.Tick(1.0f / 60.0f);
+    CHECK(dynamic_cast<ui::Button*>(viewport->Find("Play"))->IsPressed() && in.IsDown(Key::GamepadA));
+    in.SetPointer(0, 200, 173, false, true);
+    in.SetButton(Key::MouseLeft, false);
+    game.Tick(1.0f / 60.0f);
     game.EndPlay();
+}
+
+AETHER_TEST(Player_ScaledRenderSizeFollowsTheResolutionScale) {
+    RenderSize full = ScaledRenderSize(1280, 720, 1.0f);
+    CHECK(full.width == 1280 && full.height == 720);
+    RenderSize three_quarters = ScaledRenderSize(1280, 720, 0.75f);
+    CHECK(three_quarters.width == 960 && three_quarters.height == 540);
+    RenderSize clamped_low = ScaledRenderSize(1280, 720, 0.01f); // held to a quarter
+    CHECK(clamped_low.width == 320 && clamped_low.height == 180);
+    RenderSize clamped_high = ScaledRenderSize(1280, 720, 2.0f);  // never larger than the window
+    CHECK(clamped_high.width == 1280 && clamped_high.height == 720);
+    RenderSize tiny = ScaledRenderSize(1, 1, 0.25f);
+    CHECK(tiny.width == 1 && tiny.height == 1);
+    RenderSize odd = ScaledRenderSize(1001, 563, 0.5f);
+    CHECK(odd.width == 501 && odd.height == 282);
 }
 
 // The platform's lifecycle (§45.2): suspended, the game stands still and queued saves are written; resumed, it carries on without the time that

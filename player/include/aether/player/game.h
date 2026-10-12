@@ -94,6 +94,12 @@ bool ParseGameManifest(std::string_view text, GameManifest& out, std::string* er
 
 // The preset to run with: `requested` if it names one, else the manifest's
 // default, else the first; null when there are none.
+// The size to draw a window of `window_width` x `window_height` at for a quality preset's resolution scale: each side scaled and rounded, at least
+// 1, and the scale held to 0.25 to 1 (a window is never drawn larger than it is).
+struct RenderSize {
+    u32 width = 1, height = 1;
+};
+RenderSize ScaledRenderSize(u32 window_width, u32 window_height, f32 resolution_scale);
 const QualityPreset* ChooseQuality(const GameManifest& manifest, const std::string& requested = "");
 
 // The cooked game's files: one or more mounted .apak archives (or folders,
@@ -234,6 +240,10 @@ public:
     // demand). Subscribe to react to the events yourself.
     platform::PlatformLifecycle& Platform() { return platform_; }
     bool Suspended() const { return platform_.Suspended(); }
+    // The UI is laid out in the swap chain's pixels and pointers arrive in window pixels. With a quality preset's resolution scale the two differ
+    // (a 1280 x 720 window drawn into 960 x 540); the host sets how many UI pixels one window pixel is (0.75 there) and pointers are scaled by it
+    // for the UI's hit tests. 1 by default.
+    void SetUiPointerScale(f32 x, f32 y) { ui_pointer_scale_x_ = x > 0.0f ? x : 1.0f, ui_pointer_scale_y_ = y > 0.0f ? y : 1.0f; }
     u32 MemoryPressureEvents() const { return memory_pressure_events_; }
     u32 CriticalMemoryPressureEvents() const { return critical_memory_pressure_events_; } // the renderer frees textures when this goes up
     // The package path of an image a layout uses (a quad of the UI's draw list carries its id as `texture`, ids start at 1); empty if unknown. The
@@ -345,6 +355,7 @@ private:
     bool audio_was_running_ = false; // output was on when the game was suspended
     bool skip_next_dt_ = false;      // the first Tick after a resume
     u32 memory_pressure_events_ = 0;
+    f32 ui_pointer_scale_x_ = 1.0f, ui_pointer_scale_y_ = 1.0f;
     u32 critical_memory_pressure_events_ = 0;
     // The UI's pointers and on-screen controls (§18.2): the pointers in input_state_ (the mouse, and each finger) drive the UI's widgets, and a
     // press the UI takes is hidden from gameplay (Key::MouseLeft is released); then VirtualStick and Button::hold_key widgets write the keys

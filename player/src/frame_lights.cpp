@@ -46,6 +46,14 @@ std::vector<Entity> EntitiesWith(const World& world) {
 
 } // namespace
 
+Camera LimitViewDistance(const Camera& camera, f32 view_distance) {
+    Camera limited = camera;
+    if (camera.projection == Projection::Perspective && view_distance > 0.0f && view_distance < camera.far_plane) {
+        limited.far_plane = std::max(view_distance, camera.near_plane * 2.0f);
+    }
+    return limited;
+}
+
 FrameData BuildFrameData(const World& world, const GuidIndex& guids, const Vec3& camera_position) {
     FrameData data;
     Set4(data.camera_world, camera_position.x, camera_position.y, camera_position.z, 1.0f);

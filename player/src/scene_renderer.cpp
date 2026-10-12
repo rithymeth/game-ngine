@@ -508,6 +508,7 @@ struct SceneRenderer::Impl {
     std::unordered_map<std::string, SampledTextureHandle> textures;
     u32 sampled_texture_count = 0;
     u32 seen_critical_pressure = 0;
+    f32 view_distance = 0.0f;
     Entity animated_player;
     Vec3 previous_player_position{};
     f64 previous_animation_time = 0.0;
@@ -1181,6 +1182,8 @@ SceneRenderer::SceneRenderer(IDevice& device, ISwapChain& swap_chain, const Game
     : impl_(std::make_unique<Impl>(device, swap_chain, package)) {}
 SceneRenderer::~SceneRenderer() = default;
 
+void SceneRenderer::SetViewDistance(f32 metres) { impl_->view_distance = metres; }
+
 void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     struct PendingTransparentDraw {
         BufferHandle vertices;
@@ -1234,7 +1237,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     if (camera) {
         const f32 aspect = static_cast<f32>(renderer.swap_chain.Width()) /
                            static_cast<f32>(std::max(renderer.swap_chain.Height(), 1u));
-        const Mat4 view_projection = CameraProjection(*camera, aspect) * CameraView(world, guids, camera_entity);
+        const Mat4 view_projection = CameraProjection(LimitViewDistance(*camera, renderer.view_distance), aspect) * CameraView(world, guids, camera_entity);
         const Mat4 camera_transform = ComputeWorldTransform(world, guids, camera_entity);
         const Vec3 camera_position{camera_transform.cols[3].x, camera_transform.cols[3].y, camera_transform.cols[3].z};
         if (!renderer.frame_buffers.empty()) {
