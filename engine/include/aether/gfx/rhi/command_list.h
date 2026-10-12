@@ -79,6 +79,12 @@ public:
     // SetPushConstants' data, not by anything this call takes.
     virtual void BindBindlessTextures() = 0;
 
+    // Binds a constant buffer (IDevice::CreateConstantBuffer) as the bound
+    // pipeline's frame constants (PipelineDesc::frame_constants_size_bytes > 0).
+    // Call after BindPipeline; the binding holds for the draws that follow,
+    // until the next BindPipeline. A no-op on devices without support.
+    virtual void BindFrameConstants(BufferHandle /*buffer*/) {}
+
     // Escape hatch: the backend-native command list/buffer pointer
     // (ID3D12GraphicsCommandList* for D3D12, VkCommandBuffer for Vulkan,
     // reinterpret_cast from a uintptr_t on the Vulkan side since VkCommandBuffer

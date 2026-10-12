@@ -10,6 +10,7 @@ add_library(aether_scripting STATIC
     src/debug_bindings.cpp
     src/save_api.cpp
     src/loc_api.cpp
+    src/ui_api.cpp
     src/gameplay_api.cpp
     src/inventory_api.cpp
     src/interaction_api.cpp
@@ -19,7 +20,7 @@ add_library(aether_scripting STATIC
 target_include_directories(aether_scripting PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aether_scripting PUBLIC cxx_std_20)
 # Luau's headers stay private: engine code talks to LuauHost, not to lua.h.
-target_link_libraries(aether_scripting PUBLIC Aether::Engine PRIVATE Luau.VM Luau.Compiler Aether::Save Aether::Loc Aether::Gameplay)
+target_link_libraries(aether_scripting PUBLIC Aether::Engine PRIVATE Luau.VM Luau.Compiler Aether::Save Aether::Loc Aether::Gameplay Aether::UI)
 if(AETHER_BUILD_PHYSICS)
     target_link_libraries(aether_scripting PRIVATE Aether::Physics)
     target_compile_definitions(aether_scripting PRIVATE AETHER_SCRIPTING_PHYSICS=1)

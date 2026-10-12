@@ -132,11 +132,28 @@ FetchContent_Declare(
     SOURCE_SUBDIR do-not-build
 )
 FetchContent_MakeAvailable(bc7enc)
+# Mobile textures: ASTC through ARM's astc-encoder (Apache-2.0), built without SIMD (the scalar path) so one binary runs on any CPU the cooker
+# runs on. Only the library is built.
+FetchContent_Declare(
+    astcenc
+    GIT_REPOSITORY https://github.com/ARM-software/astc-encoder.git
+    GIT_TAG 5.4.0
+    GIT_SHALLOW TRUE
+)
+set(ASTCENC_CLI OFF CACHE BOOL "" FORCE)
+set(ASTCENC_UNITTEST OFF CACHE BOOL "" FORCE)
+set(ASTCENC_SHAREDLIB OFF CACHE BOOL "" FORCE)
+set(ASTCENC_ISA_NONE ON CACHE BOOL "" FORCE)
+set(ASTCENC_UNIVERSAL_BUILD OFF CACHE BOOL "" FORCE) # macOS: one architecture (the universal build refuses ISA_NONE)
+set(ASTCENC_WERROR OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(astcenc)
 add_library(aether_bcenc STATIC
     ${bc7enc_SOURCE_DIR}/bc7enc.cpp
     ${bc7enc_SOURCE_DIR}/bc7decomp.cpp
     ${bc7enc_SOURCE_DIR}/rgbcx.cpp
 )
+target_link_libraries(aether_bcenc PUBLIC astcenc-none-static)
+target_include_directories(aether_bcenc SYSTEM PUBLIC ${astcenc_SOURCE_DIR}/Source)
 target_include_directories(aether_bcenc SYSTEM PUBLIC ${bc7enc_SOURCE_DIR})
 if(MSVC)
     target_compile_options(aether_bcenc PRIVATE /w)

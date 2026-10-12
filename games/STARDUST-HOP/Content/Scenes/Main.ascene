@@ -1,0 +1,2971 @@
+{
+ "$type": "Scene",
+ "$version": 1,
+ "entities": [
+  {
+   "guid": "607d7ef8-db8e-42b1-9ddc-012940972358",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      0,
+      0
+     ],
+     "rotation": [
+      -0.31589738888134267,
+      0.22874164613368447,
+      0.07876206507316076,
+      0.9174326330185848
+     ]
+    },
+    "DirectionalLight": {
+     "$v": 1,
+     "color": [
+      1.0,
+      0.86,
+      0.66
+     ],
+     "intensity": 3.6,
+     "cast_shadows": false
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Sun"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "012279b1-a05f-495d-ace0-dd44e08fbc30",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      0,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "SkyLight": {
+     "$v": 1,
+     "color": [
+      0.45,
+      0.62,
+      1.0
+     ],
+     "intensity": 0.9
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Sky"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "e2c5cc35-f16d-4408-9d6f-501aea1e055c",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      3,
+      7
+     ],
+     "rotation": [
+      -0.14943814,
+      0,
+      0,
+      0.9887711
+     ]
+    },
+    "Camera": {
+     "$v": 1,
+     "projection": "Perspective",
+     "fov_degrees": 62.0,
+     "near_plane": 0.1,
+     "far_plane": 600.0,
+     "ortho_height": 10.0,
+     "priority": 0
+    },
+    "AudioListener": {
+     "$v": 1,
+     "active": true
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "MainCamera"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "a8ff334e-900e-4bc8-9952-56faf865e70a",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      0.05,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "8a2fe911-9615-41b1-8b94-64edcb4488c7",
+     "asset_path": "models/player.gltf"
+    },
+    "CharacterMovement": {
+     "$v": 1,
+     "acceleration": 22.0,
+     "air_acceleration": 8.0,
+     "air_control": 0.6,
+     "braking": 28.0,
+     "coyote_time": 0.12,
+     "flying": false,
+     "gravity_scale": 1.35,
+     "height": 1.8,
+     "jump_buffer": 0.12,
+     "jump_velocity": 6.2,
+     "mass": 70.0,
+     "max_slope_degrees": 45.0,
+     "radius": 0.33,
+     "run_speed": 6.5,
+     "step_height": 0.3,
+     "walk_speed": 6.5
+    },
+    "ScriptComponent": {
+     "$v": 1,
+     "script": "43ad835a-2abe-497c-aa6a-6308ba8725c9",
+     "properties": []
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Player"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "76b72c1b-464a-4d3b-a2de-5a83f70c7512",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      0,
+      -25
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "7188dbce-ca09-44ce-95cd-65bc6980aba6",
+     "asset_path": "models/sky.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Sky"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "bb2eeb50-dac6-411e-91b1-c58ce457ff7a",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      0,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "AudioSource": {
+     "$v": 1,
+     "cue": "Audio/ambient.acue",
+     "auto_play": true,
+     "volume_db": 0,
+     "pitch": 1
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "AmbientAudio"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "e94d92cc-9db3-478c-a557-17a3301ae439",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      0,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "AudioSource": {
+     "$v": 1,
+     "cue": "Audio/coin.acue",
+     "auto_play": false,
+     "volume_db": 0,
+     "pitch": 1
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "SfxCoin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "40710420-e8da-4f38-9308-89341c41cde9",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      0,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "AudioSource": {
+     "$v": 1,
+     "cue": "Audio/jump.acue",
+     "auto_play": false,
+     "volume_db": 0,
+     "pitch": 1
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "SfxJump"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "0f91820f-2ece-4683-8b6e-e0cd2838d029",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      0,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "AudioSource": {
+     "$v": 1,
+     "cue": "Audio/fall.acue",
+     "auto_play": false,
+     "volume_db": 0,
+     "pitch": 1
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "SfxFall"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "07a0c867-2a45-4905-9257-96e421a7972b",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      0,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "AudioSource": {
+     "$v": 1,
+     "cue": "Audio/checkpoint.acue",
+     "auto_play": false,
+     "volume_db": 0,
+     "pitch": 1
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "SfxCheckpoint"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "3be95dfb-1edd-4044-b443-30949feab14c",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      0,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "AudioSource": {
+     "$v": 1,
+     "cue": "Audio/win.acue",
+     "auto_play": false,
+     "volume_db": 0,
+     "pitch": 1
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "SfxWin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "42bceb2e-5c92-417c-9aba-81dcda3413fe",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0.0,
+      -0.5,
+      0.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9a145ad6-2865-4ca4-bd11-a6259cf531c1",
+     "asset_path": "models/plat_8x8.gltf"
+    },
+    "BoxCollider": {
+     "$v": 1,
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "half_extents": [
+      4.0,
+      0.5,
+      4.0
+     ],
+     "friction": 0.6,
+     "is_trigger": false,
+     "report_stay": false,
+     "restitution": 0.0
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Platform",
+      "Start"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "471527d0-c156-4be6-b94e-48f652d4a14d",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0.0,
+      0.09999999999999998,
+      -8.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "111fdf28-eb8c-471e-988e-07286ebc22d2",
+     "asset_path": "models/plat_4x4.gltf"
+    },
+    "BoxCollider": {
+     "$v": 1,
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "half_extents": [
+      2.0,
+      0.5,
+      2.0
+     ],
+     "friction": 0.6,
+     "is_trigger": false,
+     "report_stay": false,
+     "restitution": 0.0
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Platform",
+      "P1"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "ed1e862f-735a-463f-870b-5c8ff6c099a5",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      3.5,
+      0.7,
+      -12.5
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "111fdf28-eb8c-471e-988e-07286ebc22d2",
+     "asset_path": "models/plat_4x4.gltf"
+    },
+    "BoxCollider": {
+     "$v": 1,
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "half_extents": [
+      2.0,
+      0.5,
+      2.0
+     ],
+     "friction": 0.6,
+     "is_trigger": false,
+     "report_stay": false,
+     "restitution": 0.0
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Platform",
+      "P2"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "7adf785f-56de-475d-8c7a-c8d3a56dcfcd",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      3.5,
+      1.3,
+      -17.5
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "111fdf28-eb8c-471e-988e-07286ebc22d2",
+     "asset_path": "models/plat_4x4.gltf"
+    },
+    "BoxCollider": {
+     "$v": 1,
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "half_extents": [
+      2.0,
+      0.5,
+      2.0
+     ],
+     "friction": 0.6,
+     "is_trigger": false,
+     "report_stay": false,
+     "restitution": 0.0
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Platform",
+      "P3"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "907b91cd-34bd-4732-9034-c9bd2dfdfb97",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      -0.5,
+      1.9,
+      -21.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "111fdf28-eb8c-471e-988e-07286ebc22d2",
+     "asset_path": "models/plat_4x4.gltf"
+    },
+    "BoxCollider": {
+     "$v": 1,
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "half_extents": [
+      2.0,
+      0.5,
+      2.0
+     ],
+     "friction": 0.6,
+     "is_trigger": false,
+     "report_stay": false,
+     "restitution": 0.0
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Platform",
+      "P4"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "3a991b37-b080-4389-8a0f-9532c73f957c",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      -5.0,
+      2.5,
+      -23.5
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "111fdf28-eb8c-471e-988e-07286ebc22d2",
+     "asset_path": "models/plat_4x4.gltf"
+    },
+    "BoxCollider": {
+     "$v": 1,
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "half_extents": [
+      2.0,
+      0.5,
+      2.0
+     ],
+     "friction": 0.6,
+     "is_trigger": false,
+     "report_stay": false,
+     "restitution": 0.0
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Platform",
+      "P5"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "ff6fe66f-7493-4a26-af39-aeb84fd4b7e3",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      -9.0,
+      3.1,
+      -27.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "111fdf28-eb8c-471e-988e-07286ebc22d2",
+     "asset_path": "models/plat_4x4.gltf"
+    },
+    "BoxCollider": {
+     "$v": 1,
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "half_extents": [
+      2.0,
+      0.5,
+      2.0
+     ],
+     "friction": 0.6,
+     "is_trigger": false,
+     "report_stay": false,
+     "restitution": 0.0
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Platform",
+      "P6"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "240d4d6d-de36-429c-bad6-e644f4b01da6",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      -9.0,
+      3.7,
+      -32.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "7d7cb79d-bcf7-4a06-aa90-1108effde1c9",
+     "asset_path": "models/plat_6x6.gltf"
+    },
+    "BoxCollider": {
+     "$v": 1,
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "half_extents": [
+      3.0,
+      0.5,
+      3.0
+     ],
+     "friction": 0.6,
+     "is_trigger": false,
+     "report_stay": false,
+     "restitution": 0.0
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Platform",
+      "P7"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "d127144c-fedd-406f-a1fa-d7de51ba947a",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      -4.0,
+      4.3,
+      -35.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "111fdf28-eb8c-471e-988e-07286ebc22d2",
+     "asset_path": "models/plat_4x4.gltf"
+    },
+    "BoxCollider": {
+     "$v": 1,
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "half_extents": [
+      2.0,
+      0.5,
+      2.0
+     ],
+     "friction": 0.6,
+     "is_trigger": false,
+     "report_stay": false,
+     "restitution": 0.0
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Platform",
+      "P8"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "36f92659-e2b6-4e2c-a921-682bd4af12f4",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      1.0,
+      4.9,
+      -37.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "111fdf28-eb8c-471e-988e-07286ebc22d2",
+     "asset_path": "models/plat_4x4.gltf"
+    },
+    "BoxCollider": {
+     "$v": 1,
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "half_extents": [
+      2.0,
+      0.5,
+      2.0
+     ],
+     "friction": 0.6,
+     "is_trigger": false,
+     "report_stay": false,
+     "restitution": 0.0
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Platform",
+      "P9"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "82fb288d-771b-4ee7-bc7d-180d3fef2356",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      6.0,
+      5.5,
+      -39.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "111fdf28-eb8c-471e-988e-07286ebc22d2",
+     "asset_path": "models/plat_4x4.gltf"
+    },
+    "BoxCollider": {
+     "$v": 1,
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "half_extents": [
+      2.0,
+      0.5,
+      2.0
+     ],
+     "friction": 0.6,
+     "is_trigger": false,
+     "report_stay": false,
+     "restitution": 0.0
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Platform",
+      "P10"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "456fd07a-0337-40a0-a899-e26d67f95e2d",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      11.0,
+      6.1,
+      -41.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "111fdf28-eb8c-471e-988e-07286ebc22d2",
+     "asset_path": "models/plat_4x4.gltf"
+    },
+    "BoxCollider": {
+     "$v": 1,
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "half_extents": [
+      2.0,
+      0.5,
+      2.0
+     ],
+     "friction": 0.6,
+     "is_trigger": false,
+     "report_stay": false,
+     "restitution": 0.0
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Platform",
+      "P11"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "98811c4e-8c7d-4380-9ab3-3d7d03d52fa4",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      14.0,
+      6.7,
+      -46.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "111fdf28-eb8c-471e-988e-07286ebc22d2",
+     "asset_path": "models/plat_4x4.gltf"
+    },
+    "BoxCollider": {
+     "$v": 1,
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "half_extents": [
+      2.0,
+      0.5,
+      2.0
+     ],
+     "friction": 0.6,
+     "is_trigger": false,
+     "report_stay": false,
+     "restitution": 0.0
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Platform",
+      "P12"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "77796726-dc67-43c5-9af5-c06f3f5a6dd2",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      14.0,
+      7.3,
+      -53.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9a145ad6-2865-4ca4-bd11-a6259cf531c1",
+     "asset_path": "models/plat_8x8.gltf"
+    },
+    "BoxCollider": {
+     "$v": 1,
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "half_extents": [
+      4.0,
+      0.5,
+      4.0
+     ],
+     "friction": 0.6,
+     "is_trigger": false,
+     "report_stay": false,
+     "restitution": 0.0
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Platform",
+      "Goal"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "40ea0afc-a744-4649-bd46-079516cfb7f8",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0.0,
+      1.7000000000000002,
+      -8.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+     "asset_path": "models/coin.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Coin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "19122c64-fda6-4638-87c1-3eef44c98d49",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      3.5,
+      2.3,
+      -12.5
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+     "asset_path": "models/coin.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Coin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "a616da7a-9754-4b3d-9c55-91976dc9d231",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      3.5,
+      2.9000000000000004,
+      -17.5
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+     "asset_path": "models/coin.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Coin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "334c3614-d03e-450b-b40a-d5d27169db20",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      -0.5,
+      3.5,
+      -21.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+     "asset_path": "models/coin.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Coin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "81e4c9c5-50ea-42b5-8633-138c93691e0d",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      -5.0,
+      4.1,
+      -23.5
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+     "asset_path": "models/coin.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Coin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "19fe9d0b-d5f8-4b57-8622-197684095766",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      -9.0,
+      4.7,
+      -27.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+     "asset_path": "models/coin.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Coin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "b0ea1e2e-e1b7-4198-8437-381a722d8f19",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      -9.0,
+      5.300000000000001,
+      -32.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+     "asset_path": "models/coin.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Coin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "5ef5c887-902e-4b6e-8c4e-a6d0635e8f42",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      -4.0,
+      5.9,
+      -35.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+     "asset_path": "models/coin.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Coin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "1f37e543-33c5-45aa-9167-dfc6acba6e03",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      1.0,
+      6.5,
+      -37.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+     "asset_path": "models/coin.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Coin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "0cd5940c-4c1c-445d-b75a-505cdb2326e4",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      6.0,
+      7.1,
+      -39.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+     "asset_path": "models/coin.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Coin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "b2058a0e-08db-4a2c-8cf4-844349b89138",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      11.0,
+      7.699999999999999,
+      -41.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+     "asset_path": "models/coin.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Coin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "4d62ca27-2c7a-4173-9c17-71c567c3db9b",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      14.0,
+      8.3,
+      -46.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+     "asset_path": "models/coin.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Coin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "8e529de9-0087-4fdc-adda-992337d3fa8e",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0.0,
+      2.4,
+      -3.8
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+     "asset_path": "models/coin.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Coin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "dbbe4265-9618-48e2-bf49-2ed2a54ef6ec",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      -7.0,
+      5.6,
+      -29.5
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+     "asset_path": "models/coin.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Coin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "d8c02ba7-4fa5-4b0e-b673-92d264455744",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      8.5,
+      8.6,
+      -43.5
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "9578fbde-e4df-44b4-bd0b-ff7d39bdfa5f",
+     "asset_path": "models/coin.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Coin"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "e9e79c97-077a-44d7-a32b-4d31588b9318",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      4.7,
+      1.8,
+      -18.4
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "00512fef-d66a-4a3d-8b36-9dcd7df6c750",
+     "asset_path": "models/checkpoint.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Checkpoint"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "1ca78ade-afed-4e2d-b8e3-bce1977b77d8",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      4.7,
+      4.2,
+      -18.4
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "PointLight": {
+     "$v": 1,
+     "color": [
+      0.3,
+      0.8,
+      1.0
+     ],
+     "intensity": 24.0,
+     "range": 7.0,
+     "cast_shadows": false
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "FlagLight"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "833a4da0-9042-420a-b19c-0e2405b813bb",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      -7.4,
+      4.2,
+      -33.6
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "00512fef-d66a-4a3d-8b36-9dcd7df6c750",
+     "asset_path": "models/checkpoint.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Checkpoint"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "60c79d84-7a82-4621-8855-719e311ec971",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      -7.4,
+      6.6,
+      -33.6
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "PointLight": {
+     "$v": 1,
+     "color": [
+      0.3,
+      0.8,
+      1.0
+     ],
+     "intensity": 24.0,
+     "range": 7.0,
+     "cast_shadows": false
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "FlagLight"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "48539e26-3485-4aa5-a087-2fc80c1fc4fc",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      14.0,
+      7.8,
+      -53.0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "3b8058bd-b0f6-4a71-b059-8a1df33e9758",
+     "asset_path": "models/goal.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Goal"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "3bec8a4d-6cfa-4d34-8900-f62ff2ee7071",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      14.0,
+      11.8,
+      -54.7
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "PointLight": {
+     "$v": 1,
+     "color": [
+      1.0,
+      0.82,
+      0.4
+     ],
+     "intensity": 80.0,
+     "range": 16.0,
+     "cast_shadows": false
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "GoalLight"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "6a4efe52-218c-4086-b253-0a1b0fa1ae05",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      0,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "WidgetComponent": {
+     "$v": 1,
+     "layout": "UI/Hud.aui",
+     "z": 0,
+     "visible": true
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Hud"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "f41d508e-abc1-4564-96f6-dc06033e7d08",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      0,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "WidgetComponent": {
+     "$v": 1,
+     "layout": "UI/TouchControls.aui",
+     "z": 1,
+     "visible": true
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "TouchControls"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "2ee7277d-7aa3-43b7-bdd5-a21cc81b3ceb",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "f71dcfa6-ba45-4594-9b9f-c7d5ade9765e",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "a7388a63-0105-4170-8b6e-f1bac300c792",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "61d8f6fb-9a7c-4638-9877-f06ed554ba4a",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "dacb66ff-a6e6-496b-8c27-9853b50fb894",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "b607dc1f-a913-41a1-9ff1-dc67391c2e13",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "cf96bd83-8f5f-4992-a7dd-beb03f9040b2",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "d08d5e68-f2f2-4941-9f7e-fe98d5f8c67a",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "444a1c5e-ada9-4a2e-9e37-55bfeccd670a",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "f7a242c2-df32-4550-adca-af83156e8935",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "f345bba9-2942-4091-9126-f4af042b76d7",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "5b03a546-b605-4b0b-bafb-756c1da542fe",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "42a21ef8-ff04-438c-b3f5-8911e660b2e4",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "d4e40290-771f-4584-8ff2-a83c48e039f7",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "35bee372-ee37-4c97-aad2-a447e5f32681",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "970f2f1a-dc37-4e01-bceb-3726dabfe81b",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "9ab060a4-58dd-4a6e-95ce-1d4f2bc0af30",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "b2dc75b8-bf69-43d8-b853-0ef706d8e4c5",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "5dac321b-0713-4c66-8ab0-521975b0d934",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "905103ef-0190-48de-ac1f-d73cffd44b10",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "f3615fc2-f7b3-4d8e-adf7-ddf0055f7efc",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "009690a4-5ff2-403f-8493-e7d04cc5547c",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "3c8351c5-57c2-4b59-b2a5-33de3fbdcd5d",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "fdf31a8a-de0a-4c9f-9457-3a6787be6b22",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "17f01b04-6ac9-419f-a21a-f7484d5fa171",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "fbea0325-ae30-4cbe-a909-cc2c27402797",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "62cbb80b-b1c0-4ba2-bfd6-4f9df80e4fb8",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "d8fcdfa9-87a5-401c-94db-304f5d6562de",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "65558fa7-c956-4154-ba05-6225f8b32457",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "7c508126-6645-4201-b4b7-15fdb2ec057d",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "a5146d74-ffc8-4f1e-a1ea-5daf8d9f530b",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "fb7a2c37-f509-4a42-b43a-303ae56e0cc0",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "f271536a-b62b-45b2-9420-c6b9941720d9",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "c692673d-5f75-403c-8dc8-9c91905a0fd7",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "a733028c-7cc8-409c-bb1e-21a6d1cc027a",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "58370052-6d8e-4569-91fe-2fe9fba86cd0",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "f4114379-e019-46a1-b709-f83945d18fae",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "711c4caa-9a66-4417-9fe5-c5a1b98723b7",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "f12bfd77-76f9-4ae0-a96a-4511dbcf4a1a",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  },
+  {
+   "guid": "f6ad8777-7d40-4565-8e52-8ae7806308da",
+   "components": {
+    "Transform": {
+     "$v": 1,
+     "position": [
+      0,
+      -500,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0,
+      1
+     ]
+    },
+    "ModelRenderer": {
+     "$v": 1,
+     "model": "f86a565c-c4d6-411a-9aa9-f66c8e59d450",
+     "asset_path": "models/spark.gltf"
+    },
+    "Tags": {
+     "$v": 1,
+     "names": [
+      "Confetti"
+     ]
+    }
+   }
+  }
+ ]
+}

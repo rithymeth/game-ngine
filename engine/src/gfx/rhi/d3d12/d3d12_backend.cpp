@@ -125,6 +125,17 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
         param.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
         params.push_back(param);
     }
+    // The frame constants: a root CBV at b0, space2 (the HLSL's `register(b0, space2)`).
+    u32 frame_constants_root_index = ~0u;
+    if (desc.frame_constants_size_bytes > 0) {
+        AETHER_ASSERT(desc.frame_constants_size_bytes % 16 == 0);
+        D3D12_ROOT_PARAMETER param{};
+        param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+        param.Descriptor = {/*ShaderRegister=*/0, /*RegisterSpace=*/2};
+        param.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+        frame_constants_root_index = static_cast<u32>(params.size());
+        params.push_back(param);
+    }
 
     D3D12_STATIC_SAMPLER_DESC sampler{};
     sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
@@ -156,6 +167,7 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
     }
 
     PipelineRecord record;
+    record.frame_constants_root_index = frame_constants_root_index;
     AETHER_D3D_CHECK(device_.Handle()->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(),
                                                             IID_PPV_ARGS(&record.root_signature)));
 
@@ -251,6 +263,16 @@ BufferHandle D3D12Device::CreateBufferInternal(const void* data, u64 size_bytes)
     return BufferHandle{static_cast<u32>(buffers_.size() - 1)};
 }
 
+BufferHandle D3D12Device::CreateConstantBuffer(u64 size_bytes) {
+    if (size_bytes == 0) {
+        AETHER_LOG_ERROR("D3D12", "CreateConstantBuffer requires a non-zero size");
+        throw std::invalid_argument("CreateConstantBuffer requires a non-zero size");
+    }
+    const u64 padded = (size_bytes + 255) / 256 * 256; // constant data is read in 256-byte units
+    const std::vector<u8> zeros(static_cast<usize>(padded), 0);
+    return CreateBufferInternal(zeros.data(), padded);
+}
+
 void D3D12Device::UpdateVertexBuffer(BufferHandle buffer, const void* data, u64 size_bytes) {
     if (!buffer.IsValid() || buffer.index >= buffers_.size()) {
         AETHER_LOG_ERROR("D3D12", "UpdateVertexBuffer received an invalid buffer handle (%u)", buffer.index);
@@ -290,6 +312,56 @@ SampledTextureHandle D3D12Device::CreateTexture(u32 width, u32 height, const u8*
     // `index` points at texture->Handle(), which must stay valid.
     sampled_textures_.push_back(std::move(texture));
     return SampledTextureHandle{index};
+}
+
+SampledTextureHandle D3D12Device::CreateCompressedTexture(CompressedTextureFormat format, u32 width, u32 height, std::span<const CompressedMip> mips) {
+    const u32 block_bytes = CompressedBlockBytes(format);
+    const u32 block = CompressedBlockWidth(format);
+    if (width == 0 || height == 0 || mips.empty() || mips.size() > 16) {
+        AETHER_LOG_ERROR("D3D12", "CreateCompressedTexture requires non-zero dimensions and 1 to 16 mip levels");
+        throw std::invalid_argument("CreateCompressedTexture requires non-zero dimensions and 1 to 16 mip levels");
+    }
+    std::vector<gfx::Texture::MipData> levels;
+    u32 w = width, h = height;
+    for (const CompressedMip& mip : mips) {
+        const u32 blocks_x = (w + block - 1) / block, blocks_y = (h + block - 1) / block;
+        if (mip.data == nullptr || mip.width != w || mip.height != h || mip.size_bytes != static_cast<u64>(blocks_x) * blocks_y * block_bytes) {
+            AETHER_LOG_ERROR("D3D12", "CreateCompressedTexture: a mip level does not match its size or format");
+            throw std::invalid_argument("CreateCompressedTexture: a mip level does not match its size or format");
+        }
+        levels.push_back({mip.data, w, h, blocks_x * block_bytes, blocks_y});
+        w = std::max(1u, w / 2);
+        h = std::max(1u, h / 2);
+    }
+    if (!SupportsCompressedTexture(format)) return {}; // ASTC: D3D12 has none
+    if (sampled_textures_.size() >= kMaxUserBindlessTextures) {
+        AETHER_LOG_ERROR("D3D12", "CreateCompressedTexture exhausted the bindless texture table (capacity=%u real textures)", kMaxUserBindlessTextures);
+        return {};
+    }
+    const DXGI_FORMAT dxgi = format == CompressedTextureFormat::BC1 ? DXGI_FORMAT_BC1_UNORM
+                             : format == CompressedTextureFormat::BC3 ? DXGI_FORMAT_BC3_UNORM
+                                                                      : DXGI_FORMAT_BC7_UNORM;
+    gfx::CommandList setup_cmd(device_);
+    setup_cmd.Reset();
+    auto texture = std::make_unique<gfx::Texture>(device_, *bindless_texture_heap_, setup_cmd.Get(), dxgi, width, height, levels.data(),
+                                                  static_cast<u32>(levels.size()));
+    setup_cmd.Close();
+    ID3D12CommandList* setup_lists[] = {setup_cmd.Get()};
+    device_.WaitForFence(device_.Submit(setup_lists, 1));
+    texture->ReleaseUploadStaging();
+    const u32 index = texture->BindlessIndex();
+    sampled_textures_.push_back(std::move(texture));
+    return SampledTextureHandle{index};
+}
+
+bool D3D12Device::DestroyTexture(SampledTextureHandle texture) {
+    const auto it = std::find_if(sampled_textures_.begin(), sampled_textures_.end(),
+                                 [&](const std::unique_ptr<gfx::Texture>& t) { return t->BindlessIndex() == texture.index; });
+    if (!texture.IsValid() || it == sampled_textures_.end()) return false;
+    device_.WaitForFence(device_.Submit(nullptr, 0)); // everything submitted so far has finished, so nothing still reads it
+    bindless_texture_heap_->Free(texture.index);
+    sampled_textures_.erase(it);
+    return true;
 }
 
 D3D12SwapChain::D3D12SwapChain(D3D12Device& device, void* hwnd, u32 width, u32 height, u32 buffer_count)
@@ -474,6 +546,7 @@ void D3D12CommandList::BindPipeline(PipelineHandle pipeline) {
     cmd_.Get()->SetGraphicsRootSignature(record.root_signature.Get());
     cmd_.Get()->SetPipelineState(record.pso.Get());
     cmd_.Get()->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    frame_constants_root_index_ = record.frame_constants_root_index;
 }
 
 void D3D12CommandList::SetPushConstants(const void* data, u32 size_bytes) {
@@ -504,6 +577,14 @@ void D3D12CommandList::BindIndexBuffer(BufferHandle buffer, IndexFormat format) 
 
 void D3D12CommandList::DrawIndexed(u32 index_count) {
     cmd_.Get()->DrawIndexedInstanced(index_count, 1, 0, 0, 0);
+}
+
+void D3D12CommandList::BindFrameConstants(BufferHandle buffer) {
+    if (frame_constants_root_index_ == ~0u || !buffer.IsValid()) {
+        AETHER_LOG_ERROR("D3D12", "BindFrameConstants needs a pipeline made with frame_constants_size_bytes and a valid buffer");
+        return;
+    }
+    cmd_.Get()->SetGraphicsRootConstantBufferView(frame_constants_root_index_, device_.GetBuffer(buffer).GPUAddress());
 }
 
 void D3D12CommandList::BindBindlessTextures() {

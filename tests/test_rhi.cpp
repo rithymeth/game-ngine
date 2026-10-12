@@ -1,6 +1,10 @@
 #include "aether/gfx/rhi/device.h"
 #include "test_framework.h"
 
+#include <span>
+#include <stdexcept>
+#include <vector>
+
 using namespace aether;
 using namespace aether::gfx::rhi;
 
@@ -161,3 +165,176 @@ AETHER_TEST(RHI_VulkanBackendUnavailableReturnsNull) {
 }
 
 #endif
+
+AETHER_TEST(RHI_D3D12FrameConstantBuffersAreCreatedAndUpdated) {
+    auto device = CreateDevice(Backend::D3D12, /*enable_debug_layer=*/false);
+    AETHER_CHECK(device->SupportsFrameConstants());
+    const BufferHandle buffer = device->CreateConstantBuffer(80); // padded to 256 inside
+    AETHER_CHECK(buffer.IsValid());
+    const f32 data[20] = {1.0f, 2.0f, 3.0f, 4.0f};
+    device->UpdateConstantBuffer(buffer, data, sizeof(data)); // in range: accepted
+    device->UpdateConstantBuffer(buffer, data, 4096);          // out of range: logged and ignored, not a crash
+    bool threw = false;
+    try {
+        device->CreateConstantBuffer(0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    AETHER_CHECK(threw);
+}
+
+AETHER_TEST(RHI_VulkanFrameConstantBuffersAreCreatedAndUpdated) {
+    if (!IsBackendAvailable(Backend::Vulkan)) return;
+    auto device = CreateDevice(Backend::Vulkan, /*enable_debug_layer=*/false);
+    if (!device) return;
+    AETHER_CHECK(device->SupportsFrameConstants());
+    const BufferHandle buffer = device->CreateConstantBuffer(80); // padded to 256 inside
+    AETHER_CHECK(buffer.IsValid());
+    const f32 data[20] = {1.0f, 2.0f, 3.0f, 4.0f};
+    device->UpdateConstantBuffer(buffer, data, sizeof(data));
+    device->UpdateConstantBuffer(buffer, data, 4096); // out of range: logged and ignored
+    bool threw = false;
+    try {
+        device->CreateConstantBuffer(0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    AETHER_CHECK(threw);
+}
+
+AETHER_TEST(RHI_VulkanCreatesBlockCompressedTexturesWhereTheGpuHasThem) {
+    if (!IsBackendAvailable(Backend::Vulkan)) return;
+    auto device = CreateDevice(Backend::Vulkan, /*enable_debug_layer=*/false);
+    if (!device) return;
+    const u32 sizes[5][2] = {{20, 12}, {10, 6}, {5, 3}, {2, 1}, {1, 1}};
+    std::vector<std::vector<u8>> data;
+    std::vector<CompressedMip> mips;
+    for (const auto& s : sizes) {
+        data.emplace_back(static_cast<usize>((s[0] + 3) / 4) * ((s[1] + 3) / 4) * 16, 0x55);
+        mips.push_back({data.back().data(), s[0], s[1], data.back().size()});
+    }
+    if (!device->SupportsCompressedTexture(CompressedTextureFormat::BC7)) {
+        // A GPU without BC (a phone's): no support is the answer, not an error.
+        AETHER_CHECK(!device->CreateCompressedTexture(CompressedTextureFormat::BC7, 20, 12, mips).IsValid());
+        return;
+    }
+    const SampledTextureHandle texture = device->CreateCompressedTexture(CompressedTextureFormat::BC7, 20, 12, mips);
+    AETHER_CHECK(texture.IsValid() && texture.index >= kFirstUserBindlessTextureIndex);
+    std::vector<CompressedMip> wrong = mips;
+    wrong[1].size_bytes -= 1;
+    bool threw = false;
+    try {
+        device->CreateCompressedTexture(CompressedTextureFormat::BC7, 20, 12, wrong);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    AETHER_CHECK(threw);
+}
+
+AETHER_TEST(RHI_D3D12DestroyTextureFreesTheSlotForReuse) {
+    auto device = CreateDevice(Backend::D3D12, /*enable_debug_layer=*/false);
+    const u8 px[4] = {255, 0, 0, 255};
+    const SampledTextureHandle a = device->CreateTexture(1, 1, px);
+    const SampledTextureHandle b = device->CreateTexture(1, 1, px);
+    AETHER_CHECK(a.IsValid() && b.IsValid() && a.index != b.index);
+    AETHER_CHECK(device->DestroyTexture(a));
+    AETHER_CHECK(!device->DestroyTexture(a));           // already gone
+    AETHER_CHECK(!device->DestroyTexture(SampledTextureHandle{})); // not a texture
+    const SampledTextureHandle c = device->CreateTexture(1, 1, px);
+    AETHER_CHECK(c.index == a.index);                    // the slot came back
+    // Churn well past the table's capacity: only live textures count.
+    for (u32 i = 0; i < kMaxUserBindlessTextures * 2; ++i) {
+        const SampledTextureHandle t = device->CreateTexture(1, 1, px);
+        AETHER_CHECK(t.IsValid());
+        AETHER_CHECK(device->DestroyTexture(t));
+    }
+}
+
+AETHER_TEST(RHI_D3D12HasNoAstc) {
+    auto device = CreateDevice(Backend::D3D12, /*enable_debug_layer=*/false);
+    AETHER_CHECK(!device->SupportsCompressedTexture(CompressedTextureFormat::ASTC_4x4) && !device->SupportsCompressedTexture(CompressedTextureFormat::ASTC_8x8));
+    const std::vector<u8> block(16, 0);
+    const CompressedMip mip{block.data(), 4, 4, 16};
+    AETHER_CHECK(!device->CreateCompressedTexture(CompressedTextureFormat::ASTC_4x4, 4, 4, std::span<const CompressedMip>(&mip, 1)).IsValid());
+    AETHER_CHECK(CompressedLevelBytes(CompressedTextureFormat::ASTC_6x6, 13, 7) == 3 * 2 * 16 && CompressedBlockWidth(CompressedTextureFormat::ASTC_8x8) == 8);
+}
+
+AETHER_TEST(RHI_D3D12CreatesBlockCompressedTexturesWithMips) {
+    auto device = CreateDevice(Backend::D3D12, /*enable_debug_layer=*/false);
+    AETHER_CHECK(device->SupportsCompressedTexture(CompressedTextureFormat::BC1) && device->SupportsCompressedTexture(CompressedTextureFormat::BC7));
+    // 20 x 12: the mip chain 20x12, 10x6, 5x3, 2x1, 1x1 (levels below one block still take a whole block).
+    const u32 sizes[5][2] = {{20, 12}, {10, 6}, {5, 3}, {2, 1}, {1, 1}};
+    std::vector<std::vector<u8>> data;
+    std::vector<CompressedMip> mips;
+    for (const auto& s : sizes) {
+        data.emplace_back(static_cast<usize>((s[0] + 3) / 4) * ((s[1] + 3) / 4) * 16, 0x55);
+        mips.push_back({data.back().data(), s[0], s[1], data.back().size()});
+    }
+    const SampledTextureHandle texture = device->CreateCompressedTexture(CompressedTextureFormat::BC7, 20, 12, mips);
+    AETHER_CHECK(texture.IsValid() && texture.index >= kFirstUserBindlessTextureIndex);
+    // BC1 blocks are 8 bytes.
+    std::vector<std::vector<u8>> bc1_data;
+    std::vector<CompressedMip> bc1;
+    for (const auto& s : sizes) {
+        bc1_data.emplace_back(static_cast<usize>((s[0] + 3) / 4) * ((s[1] + 3) / 4) * 8, 0x22);
+        bc1.push_back({bc1_data.back().data(), s[0], s[1], bc1_data.back().size()});
+    }
+    AETHER_CHECK(device->CreateCompressedTexture(CompressedTextureFormat::BC1, 20, 12, bc1).IsValid());
+    // A level of the wrong size, a missing level list and a zero size are refused.
+    std::vector<CompressedMip> wrong = mips;
+    wrong[1].size_bytes -= 1;
+    bool threw = false;
+    try {
+        device->CreateCompressedTexture(CompressedTextureFormat::BC7, 20, 12, wrong);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    AETHER_CHECK(threw);
+    threw = false;
+    try {
+        device->CreateCompressedTexture(CompressedTextureFormat::BC7, 20, 12, std::span<const CompressedMip>());
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    AETHER_CHECK(threw);
+}
+
+AETHER_TEST(RHI_VulkanCreatesAstcTexturesWhereTheGpuHasThem) {
+    if (!IsBackendAvailable(Backend::Vulkan)) return;
+    auto device = CreateDevice(Backend::Vulkan, /*enable_debug_layer=*/false);
+    if (!device) return;
+    for (const CompressedTextureFormat format : {CompressedTextureFormat::ASTC_4x4, CompressedTextureFormat::ASTC_6x6, CompressedTextureFormat::ASTC_8x8}) {
+        // 30 x 18: 30x18, 15x9, 7x4, 3x2, 1x1; each level a whole number of blocks.
+        const u32 sizes[5][2] = {{30, 18}, {15, 9}, {7, 4}, {3, 2}, {1, 1}};
+        std::vector<std::vector<u8>> data;
+        std::vector<CompressedMip> mips;
+        for (const auto& s : sizes) {
+            data.emplace_back(static_cast<usize>(CompressedLevelBytes(format, s[0], s[1])), 0);
+            mips.push_back({data.back().data(), s[0], s[1], data.back().size()});
+        }
+        if (!device->SupportsCompressedTexture(format)) {
+            AETHER_CHECK(!device->CreateCompressedTexture(format, 30, 18, mips).IsValid()); // unsupported is an answer, not an error
+            continue;
+        }
+        AETHER_CHECK(device->CreateCompressedTexture(format, 30, 18, mips).IsValid());
+    }
+}
+
+AETHER_TEST(RHI_VulkanDestroyTextureFreesTheSlotForReuse) {
+    if (!IsBackendAvailable(Backend::Vulkan)) return;
+    auto device = CreateDevice(Backend::Vulkan, /*enable_debug_layer=*/false);
+    if (!device) return;
+    const u8 px[4] = {255, 0, 0, 255};
+    const SampledTextureHandle a = device->CreateTexture(1, 1, px);
+    const SampledTextureHandle b = device->CreateTexture(1, 1, px);
+    AETHER_CHECK(a.IsValid() && b.IsValid() && a.index != b.index);
+    AETHER_CHECK(device->DestroyTexture(a));
+    AETHER_CHECK(!device->DestroyTexture(a));
+    AETHER_CHECK(!device->DestroyTexture(SampledTextureHandle{}));
+    AETHER_CHECK(device->CreateTexture(1, 1, px).index == a.index);
+    for (u32 i = 0; i < kMaxUserBindlessTextures * 2; ++i) {
+        const SampledTextureHandle t = device->CreateTexture(1, 1, px);
+        AETHER_CHECK(t.IsValid());
+        AETHER_CHECK(device->DestroyTexture(t));
+    }
+}

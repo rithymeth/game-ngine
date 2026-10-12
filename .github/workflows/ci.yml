@@ -548,7 +548,7 @@ jobs:
           -DAETHER_BUILD_PHYSICS=OFF -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_SANDBOX=OFF
       - name: Tidy the changed files
         run: |
-          files=$(git diff --name-only --diff-filter=d origin/${{ github.base_ref }}...HEAD -- '*.cpp' | grep -E '^(engine|gameplay|inventory|interaction|quests|save|loc)/' || true)
+          files=$(git diff --name-only --diff-filter=d origin/${{ github.base_ref }}...HEAD -- '*.cpp' | grep -E '^(engine|gameplay|inventory|interaction|quests|save|loc)/' | grep -vE '/d3d12/|^engine/src/gfx/[^/]+\.cpp$|^engine/src/platform/window\.cpp$' || true) # the D3D12 backend, the gfx/ files on top of it and the Win32 window need Windows.h: they can't be tidied on Linux
           if [ -z "$files" ]; then echo "no engine or kit sources changed"; exit 0; fi
           clang-tidy -p build $files
 
