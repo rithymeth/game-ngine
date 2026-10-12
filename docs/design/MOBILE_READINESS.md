@@ -332,3 +332,10 @@ compressed on a phone's GPU.
 `rhi::CompressedTextureFormat` gained `ASTC_4x4`, `ASTC_6x6` and `ASTC_8x8`, with `CompressedBlockWidth` and `CompressedLevelBytes` replacing the hard-coded 4x4 block maths. D3D12 reports ASTC unsupported (empty handle). Vulkan enables `textureCompressionASTC_LDR` when the GPU has it, maps the formats to `VK_FORMAT_ASTC_*_UNORM_BLOCK` and checks support per format. The player uploads ASTC-cooked colour textures compressed for stripped packages where the device supports them; otherwise it decodes to RGBA8 as before.
 
 Verified: 1023/1023 tests locally; the Vulkan code is syntax-checked only (Vulkan is not built on the dev machine), so CI's MoltenVK job is its first real run. Still open: a platform backend that produces touch events, memory-pressure texture release, a cursor mode, and Android packaging.
+
+## Status: texture release, touch, cursor, quality presets (built)
+
+- `IDevice::DestroyTexture` frees a GPU texture and its bindless slot (D3D12 and Vulkan; waits for the GPU). A Critical memory-pressure event makes the renderer free its textures: models draw untextured afterwards, UI images reload on demand.
+- Windows `WM_TOUCH` becomes `Touch` / `TouchMove` events (the mouse messages Windows synthesizes from a finger are dropped). `Window::SetCursorMode` adds Hidden and Locked on Win32 and GLFW.
+- Quality presets now do two things: **resolution scale** (the swap chain is created smaller than the window and D3D12's flip model stretches it; UI pointers are scaled to match; Vulkan keeps full size because its surface must match the window) and **view distance** (the camera's far plane is pulled in). A preset change made while playing is applied on the next frame. Shadows, MSAA and bloom are in the presets but the renderer has none of them, so they do nothing.
+- Still open, needing a device or the NDK: Android packaging and a touch backend, a native-window buffer size for resolution scale on Vulkan/Android, and real profiling to tune the presets.

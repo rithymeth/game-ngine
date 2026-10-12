@@ -84,3 +84,14 @@ AETHER_TEST(PlayerLights_PointAndSpotLightsAreTheNearestOnesAndSpotsPointAlongFo
     AETHER_CHECK(Near(d.spot_direction_outer[0][2], -1.0f) && Near(d.spot_direction_outer[0][3], std::cos(30.0f * 3.14159265f / 180.0f), 1e-3f));
     AETHER_CHECK(Near(d.spot_color_inner[0][3], std::cos(10.0f * 3.14159265f / 180.0f), 1e-3f) && Near(d.spot_color_inner[0][0], 4.0f));
 }
+
+AETHER_TEST(PlayerLights_ViewDistancePullsInTheFarPlaneOnly) {
+    Camera camera;
+    camera.near_plane = 0.1f, camera.far_plane = 1000.0f;
+    AETHER_CHECK(Near(LimitViewDistance(camera, 300.0f).far_plane, 300.0f));
+    AETHER_CHECK(Near(LimitViewDistance(camera, 5000.0f).far_plane, 1000.0f)); // never pushed out
+    AETHER_CHECK(Near(LimitViewDistance(camera, 0.0f).far_plane, 1000.0f));    // 0: as authored
+    AETHER_CHECK(LimitViewDistance(camera, 0.01f).far_plane > camera.near_plane); // kept clear of the near plane
+    camera.projection = Projection::Orthographic;
+    AETHER_CHECK(Near(LimitViewDistance(camera, 300.0f).far_plane, 1000.0f));
+}

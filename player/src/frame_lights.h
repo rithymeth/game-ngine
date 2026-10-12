@@ -3,6 +3,7 @@
 #include "aether/ecs/world.h"
 #include "aether/math/math.h"
 #include "aether/scene/entity_guid.h"
+#include "aether/scene/gameplay.h"
 
 // What the scene shader reads once a frame: the camera, the sun, the sky's ambient light and the nearest point and spot lights, gathered from the
 // world's DirectionalLight, SkyLight, PointLight and SpotLight components (renderer/components.h). The layout is the HLSL struct `FrameData` in
@@ -27,6 +28,10 @@ struct FrameData {
     f32 spot_color_inner[kMaxSpotLights][4]{};      // rgb colour times intensity; w: cosine of the inner cone angle
 };
 static_assert(sizeof(FrameData) % 16 == 0 && sizeof(FrameData) == 528);
+
+// The camera as a quality preset's view distance (metres) draws it: the far plane pulled in to that distance, kept clear of the near plane. An
+// orthographic camera and a distance of 0 or less are left alone, as is a far plane already nearer.
+Camera LimitViewDistance(const Camera& camera, f32 view_distance);
 
 // The first DirectionalLight and SkyLight in the world (an entity with no Transform keeps the default direction), and the PointLights and SpotLights
 // nearest to `camera_position`, up to the limits above. Positions and directions are world space (parents included).

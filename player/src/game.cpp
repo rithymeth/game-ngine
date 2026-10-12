@@ -117,6 +117,12 @@ bool ParseGameManifest(std::string_view text, GameManifest& out, std::string* er
     return true;
 }
 
+RenderSize ScaledRenderSize(u32 window_width, u32 window_height, f32 resolution_scale) {
+    const f32 scale = std::clamp(resolution_scale > 0.0f ? resolution_scale : 1.0f, 0.25f, 1.0f);
+    const auto side = [&](u32 n) { return std::max(1u, static_cast<u32>(std::lround(static_cast<f64>(n) * scale))); };
+    return {side(window_width), side(window_height)};
+}
+
 const QualityPreset* ChooseQuality(const GameManifest& manifest, const std::string& requested) {
     for (const std::string& name : {requested, manifest.default_quality}) {
         for (const QualityPreset& p : manifest.quality_presets) {
@@ -1007,7 +1013,7 @@ void Game::UpdateUiPointers(f32 dt) {
     for (usize i = 0; i < input::InputState::kMaxPointers; ++i) {
         const input::InputState::Pointer now = input_state_.GetPointer(i);
         const input::InputState::Pointer before = ui_pointers_[i];
-        const ui::Vec2 at{now.x, now.y};
+        const ui::Vec2 at{now.x * ui_pointer_scale_x_, now.y * ui_pointer_scale_y_};
         const u32 id = static_cast<u32>(i);
         if (now.active && (!before.active || now.x != before.x || now.y != before.y)) router.PointerMove(at, id);
         if (now.active && now.down && !before.down) ui_pointer_used_[i] = router.PointerDown(at, 0, id);

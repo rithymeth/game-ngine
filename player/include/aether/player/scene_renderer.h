@@ -18,6 +18,8 @@ public:
     SceneRenderer& operator=(const SceneRenderer&) = delete;
 
     // frame_index selects the fence-protected per-frame buffers for animated meshes.
+    // A quality preset's view distance in metres: the camera's far plane is pulled in to it (0, the default, leaves cameras as authored).
+    void SetViewDistance(f32 metres);
     void Draw(Game& game, gfx::rhi::ICommandList& commands, u32 frame_index);
 
 private:
