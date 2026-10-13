@@ -1,0 +1,1795 @@
+{
+  "$type": "Scene",
+  "$version": 1,
+  "entities": [
+    {
+      "components": {
+        "CharacterMovement": {
+          "$v": 1,
+          "acceleration": 20.0,
+          "air_acceleration": 5.0,
+          "air_control": 0.3,
+          "braking": 25.0,
+          "coyote_time": 0.1,
+          "flying": false,
+          "gravity_scale": 1.0,
+          "height": 1.8,
+          "jump_buffer": 0.1,
+          "jump_velocity": 5.0,
+          "mass": 70.0,
+          "max_slope_degrees": 45.0,
+          "radius": 0.35,
+          "run_speed": 7.0,
+          "step_height": 0.35,
+          "walk_speed": 4.0
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "properties": [],
+          "script": "9958a788-7c77-4b06-a2ae-3db9391eb681"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Player"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "0900acbe-00cf-4580-aec3-4d84467359f4",
+          "asset_path": "models/aether_greybox_player.gltf"
+        }
+      },
+      "guid": "88f690e4-8827-4383-bfb5-520bc345bff0"
+    },
+    {
+      "components": {
+        "Camera": {
+          "$v": 1,
+          "far_plane": 1000.0,
+          "fov_degrees": 60.0,
+          "near_plane": 0.1,
+          "ortho_height": 10.0,
+          "priority": 0,
+          "projection": "Perspective"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "MainCamera"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            3.0,
+            6.0
+          ],
+          "rotation": [
+            -0.14943814,
+            -0.0,
+            -0.0,
+            0.9887711
+          ]
+        },
+        "AudioListener": {
+          "$v": 1,
+          "active": true
+        }
+      },
+      "guid": "11c7363b-8f51-486e-b4bb-2a57fd73e7ca"
+    },
+    {
+      "components": {
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.5,
+          "half_extents": [
+            5.5,
+            0.5,
+            8.5
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            -0.5,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
+      },
+      "guid": "effed8f0-776a-4c9e-9ed0-4dde23457549"
+    },
+    {
+      "guid": "90487a53-0d19-42fb-99c1-c69d3b379b1d",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            -0.5,
+            0.0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "93ab7966-5d92-4dfd-af7f-374a09694815",
+          "asset_path": "models/aether_greybox_floor.gltf"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Environment",
+            "Greybox",
+            "CryoBayFloor"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "67d91465-836a-4f8f-aeb2-a4e60d350597",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -5.5,
+            2.0,
+            0.0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "3a5d7596-9fad-4d17-b6fc-adedb23266b0",
+          "asset_path": "models/aether_greybox_wall_side.gltf"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Environment",
+            "Greybox",
+            "CryoBayWall"
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "half_extents": [
+            0.5,
+            2.0,
+            8.5
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        }
+      }
+    },
+    {
+      "guid": "15128132-e0b4-41a2-9d73-97998174b471",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            5.5,
+            2.0,
+            0.0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "3a5d7596-9fad-4d17-b6fc-adedb23266b0",
+          "asset_path": "models/aether_greybox_wall_side.gltf"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Environment",
+            "Greybox",
+            "CryoBayWall"
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "half_extents": [
+            0.5,
+            2.0,
+            8.5
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        }
+      }
+    },
+    {
+      "guid": "939ca595-8327-4ac2-89ef-cbc1436d49e4",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -3.5,
+            2.0,
+            -8.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "cebc2388-f15d-46e9-97fc-1accf74fd274",
+          "asset_path": "models/aether_greybox_wall_panel.gltf"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Environment",
+            "Greybox",
+            "ServiceDoorWall"
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "half_extents": [
+            2.5,
+            2.0,
+            0.5
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        }
+      }
+    },
+    {
+      "guid": "69d9ddde-0f1a-4d20-89fd-0aea98af296f",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            3.5,
+            2.0,
+            -8.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "cebc2388-f15d-46e9-97fc-1accf74fd274",
+          "asset_path": "models/aether_greybox_wall_panel.gltf"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Environment",
+            "Greybox",
+            "ServiceDoorWall"
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "half_extents": [
+            2.5,
+            2.0,
+            0.5
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        }
+      }
+    },
+    {
+      "guid": "654939f5-6db2-4244-bfc7-6bbd6b353bbf",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            3.5,
+            -8.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "ce8bb52d-a47b-40e8-b78e-165ce79df69e",
+          "asset_path": "models/aether_greybox_wall_lintel.gltf"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Environment",
+            "Greybox",
+            "ServiceDoorLintel"
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "half_extents": [
+            1.0,
+            0.5,
+            0.5
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        }
+      }
+    },
+    {
+      "guid": "933e7683-fece-40aa-a17a-d72e98734f60",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -3.5,
+            2.0,
+            8.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "cebc2388-f15d-46e9-97fc-1accf74fd274",
+          "asset_path": "models/aether_greybox_wall_panel.gltf"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Environment",
+            "Greybox",
+            "ServiceDoorWall"
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "half_extents": [
+            2.5,
+            2.0,
+            0.5
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        }
+      }
+    },
+    {
+      "guid": "7fdc2fbf-7326-4f41-85a2-ae30c5570e54",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            3.5,
+            2.0,
+            8.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "cebc2388-f15d-46e9-97fc-1accf74fd274",
+          "asset_path": "models/aether_greybox_wall_panel.gltf"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Environment",
+            "Greybox",
+            "ServiceDoorWall"
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "half_extents": [
+            2.5,
+            2.0,
+            0.5
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        }
+      }
+    },
+    {
+      "guid": "b5f023f3-3905-4d55-97c0-baef84461b22",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            3.5,
+            8.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "ce8bb52d-a47b-40e8-b78e-165ce79df69e",
+          "asset_path": "models/aether_greybox_wall_lintel.gltf"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Environment",
+            "Greybox",
+            "ServiceDoorLintel"
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "half_extents": [
+            1.0,
+            0.5,
+            0.5
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        }
+      }
+    },
+    {
+      "guid": "9dd1dc49-0aa0-4ca1-894d-1415ed394f0a",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -3.0,
+            1.5,
+            -4.0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "995655d9-f89e-45d1-8ae3-82c3ef6ac8ec",
+          "asset_path": "models/aether_greybox_cryo_pod.gltf"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Environment",
+            "Greybox",
+            "CryoPod"
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "half_extents": [
+            0.5,
+            1.5,
+            0.5
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        }
+      }
+    },
+    {
+      "guid": "3391c96e-46e6-433b-ba2d-c12969d8f3d8",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            3.0,
+            1.5,
+            -4.0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "995655d9-f89e-45d1-8ae3-82c3ef6ac8ec",
+          "asset_path": "models/aether_greybox_cryo_pod.gltf"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Environment",
+            "Greybox",
+            "CryoPod"
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "half_extents": [
+            0.5,
+            1.5,
+            0.5
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        }
+      }
+    },
+    {
+      "guid": "f511c5f8-a624-4f98-9ec8-ff8d4a3071e7",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            0.9,
+            -7.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "6b37a071-59f6-4c19-a9db-641ac2bc7449",
+          "asset_path": "models/aether_greybox_scout.gltf"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Enemy",
+            "Scout",
+            "Greybox"
+          ]
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "4d4d4be7-9a12-477a-9521-abdfcc46f3ed",
+          "properties": []
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "half_extents": [
+            0.4,
+            0.9,
+            0.4
+          ],
+          "friction": 0.5,
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "RigidBody": {
+          "$v": 1,
+          "motion": "Kinematic",
+          "mass": 1
+        }
+      }
+    },
+    {
+      "guid": "457e5c6e-e805-4dbf-91cb-384beba02d27",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "RiflePickup",
+            "Greybox"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            1.1,
+            0.6,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "00e53732-153d-427a-a91e-aa62f63f3e68",
+          "asset_path": "models/aether_greybox_rifle.gltf"
+        }
+      }
+    },
+    {
+      "guid": "e25f6f26-5b8e-4ddb-8957-42c6fd687de3",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "ServiceGate",
+            "Greybox"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0,
+            2,
+            -8.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "d7d7a122-2f6a-4bad-89c7-759a92c55357",
+          "asset_path": "models/aether_greybox_gate.gltf"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "half_extents": [
+            1,
+            2,
+            0.4
+          ],
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "is_trigger": false
+        },
+        "RigidBody": {
+          "$v": 1,
+          "motion": "Kinematic",
+          "mass": 1
+        }
+      }
+    },
+    {
+      "guid": "83e7f4ed-96a5-4f47-9898-4d6433009956",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "ServiceRouteFloor",
+            "Greybox"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0,
+            -0.5,
+            -17
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "93ab7966-5d92-4dfd-af7f-374a09694815",
+          "asset_path": "models/aether_greybox_floor.gltf"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "half_extents": [
+            5.5,
+            0.5,
+            8.5
+          ],
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "is_trigger": false
+        }
+      }
+    },
+    {
+      "guid": "7d30c37f-b23c-4093-b7ed-cfee3f50506a",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "ServiceRouteWall",
+            "Greybox"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -5.5,
+            2,
+            -17
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "3a5d7596-9fad-4d17-b6fc-adedb23266b0",
+          "asset_path": "models/aether_greybox_wall_side.gltf"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "half_extents": [
+            0.5,
+            2,
+            8.5
+          ],
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "is_trigger": false
+        }
+      }
+    },
+    {
+      "guid": "1bb2def2-83ee-43ab-a13e-77a46ee92ad0",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "ServiceRouteWall",
+            "Greybox"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            5.5,
+            2,
+            -17
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "3a5d7596-9fad-4d17-b6fc-adedb23266b0",
+          "asset_path": "models/aether_greybox_wall_side.gltf"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "half_extents": [
+            0.5,
+            2,
+            8.5
+          ],
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "is_trigger": false
+        }
+      }
+    },
+    {
+      "guid": "db5b6af3-7851-4d01-927c-8d8d13738920",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "ServiceRouteFloor",
+            "Greybox"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0,
+            -0.5,
+            -34
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "93ab7966-5d92-4dfd-af7f-374a09694815",
+          "asset_path": "models/aether_greybox_floor.gltf"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "half_extents": [
+            5.5,
+            0.5,
+            8.5
+          ],
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "is_trigger": false
+        }
+      }
+    },
+    {
+      "guid": "6d4c0a88-dadb-4137-90d2-c2ad28cf6b32",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "ServiceRouteWall",
+            "Greybox"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -5.5,
+            2,
+            -34
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "3a5d7596-9fad-4d17-b6fc-adedb23266b0",
+          "asset_path": "models/aether_greybox_wall_side.gltf"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "half_extents": [
+            0.5,
+            2,
+            8.5
+          ],
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "is_trigger": false
+        }
+      }
+    },
+    {
+      "guid": "5684c190-b79e-4147-a6ea-69479cf9d4d7",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "ServiceRouteWall",
+            "Greybox"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            5.5,
+            2,
+            -34
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "3a5d7596-9fad-4d17-b6fc-adedb23266b0",
+          "asset_path": "models/aether_greybox_wall_side.gltf"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "half_extents": [
+            0.5,
+            2,
+            8.5
+          ],
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "is_trigger": false
+        }
+      }
+    },
+    {
+      "guid": "d888f71c-b034-47f6-841f-9636e13c4cbb",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "ArenaEndWall",
+            "Greybox"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0,
+            2,
+            -42.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "e9b682b8-0f58-4529-8988-0adf381bf41e",
+          "asset_path": "models/aether_greybox_end_wall.gltf"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "half_extents": [
+            5.5,
+            2,
+            0.5
+          ],
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "is_trigger": false
+        }
+      }
+    },
+    {
+      "guid": "fe6b58a5-f76c-41d7-991f-4a1cacf2f017",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Enemy",
+            "Warden",
+            "Greybox"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0,
+            2,
+            -35
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "376f8de7-f08e-4e8b-87a0-aa85c2da066c",
+          "asset_path": "models/aether_greybox_warden.gltf"
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "d4f19320-e0fa-45c8-807f-c354aee2e41a",
+          "properties": []
+        },
+        "RigidBody": {
+          "$v": 1,
+          "motion": "Kinematic",
+          "mass": 1
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "half_extents": [
+            1.4,
+            2,
+            1.4
+          ],
+          "is_trigger": false
+        }
+      }
+    },
+    {
+      "guid": "3dc57ce2-373b-449c-b6cc-51c32dfbaf5a",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "WardenArmor",
+            "Greybox"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0,
+            2,
+            -35
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "10974d30-709d-44fe-95d3-3b7c95b04573",
+          "asset_path": "models/aether_greybox_armor.gltf"
+        }
+      }
+    },
+    {
+      "guid": "7fa73751-8df4-403e-95df-555a4d7519a7",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "WardenCore",
+            "Greybox"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0,
+            -100,
+            -35
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "357e2f58-fe46-4aaf-b2fb-4253e498ee34",
+          "asset_path": "models/aether_greybox_core.gltf"
+        }
+      }
+    },
+    {
+      "guid": "f0f27c6f-cd12-4d94-9561-4051e4ebdadf",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "WardenMarker",
+            "Greybox"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0,
+            -100,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "a9eb4fef-7930-4156-aa83-81e44395b57e",
+          "asset_path": "models/aether_greybox_marker_1.gltf"
+        },
+        "AttributeSet": {
+          "$v": 1,
+          "attributes": [
+            {
+              "$v": 1,
+              "name": "MarkerPhase",
+              "base": 1,
+              "current": 1,
+              "min": 1,
+              "max": 4
+            }
+          ]
+        }
+      }
+    },
+    {
+      "guid": "31d97683-fd05-4b22-b8a4-59eb2ae2a8bd",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "WardenMarker",
+            "Greybox"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0,
+            -100,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "002d67e6-871a-4d79-ae68-d0975b155708",
+          "asset_path": "models/aether_greybox_marker_2.gltf"
+        },
+        "AttributeSet": {
+          "$v": 1,
+          "attributes": [
+            {
+              "$v": 1,
+              "name": "MarkerPhase",
+              "base": 2,
+              "current": 2,
+              "min": 1,
+              "max": 4
+            }
+          ]
+        }
+      }
+    },
+    {
+      "guid": "67fc60f2-736b-4072-8802-20e8ab28fe0c",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "WardenMarker",
+            "Greybox"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0,
+            -100,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "9ee52305-8075-4e73-a891-5cfec64f9137",
+          "asset_path": "models/aether_greybox_marker_4.gltf"
+        },
+        "AttributeSet": {
+          "$v": 1,
+          "attributes": [
+            {
+              "$v": 1,
+              "name": "MarkerPhase",
+              "base": 4,
+              "current": 4,
+              "min": 1,
+              "max": 4
+            }
+          ]
+        }
+      }
+    },
+    {
+      "guid": "a80a8e2b-ee8d-42c1-af68-d43f4a039d44",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "ArchiveTerminal",
+            "Greybox"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0,
+            1,
+            -40
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "46ee7724-2e5d-4ab9-8428-0661f14247b6",
+          "asset_path": "models/aether_greybox_terminal.gltf"
+        },
+        "AudioSource": {
+          "$v": 1,
+          "cue": "Audio/archive.acue",
+          "auto_play": false,
+          "volume_db": 0,
+          "pitch": 1
+        },
+        "SequenceComponent": {
+          "$v": 1,
+          "sequence": "Sequences/Archive.asequence",
+          "auto_play": false,
+          "loop": false,
+          "rate": 1,
+          "destroy_when_finished": false
+        }
+      }
+    },
+    {
+      "guid": "3a0b074e-1878-48de-90fc-d70ea98759df",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Enemy",
+            "Sentinel",
+            "Greybox"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0,
+            1,
+            -16
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "e4787100-fe43-4ac3-8210-b829fa796595",
+          "asset_path": "models/aether_greybox_sentinel.gltf"
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "ca683da8-d13c-41f0-a529-795d7224f5f4",
+          "properties": []
+        },
+        "RigidBody": {
+          "$v": 1,
+          "motion": "Kinematic",
+          "mass": 1
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "half_extents": [
+            0.7,
+            1,
+            0.7
+          ],
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "is_trigger": false
+        }
+      }
+    },
+    {
+      "guid": "5fdd952e-8a87-4be0-9f35-e9db42390927",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Enemy",
+            "Hunter",
+            "Greybox"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            3,
+            0.9,
+            -20
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "b9a9b745-7cc6-4c21-b2e0-b114fec01583",
+          "asset_path": "models/aether_greybox_hunter.gltf"
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "ca683da8-d13c-41f0-a529-795d7224f5f4",
+          "properties": []
+        },
+        "RigidBody": {
+          "$v": 1,
+          "motion": "Kinematic",
+          "mass": 1
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "half_extents": [
+            0.5,
+            0.9,
+            0.5
+          ],
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "is_trigger": false
+        }
+      }
+    },
+    {
+      "guid": "af9c4fbe-e9d1-4aea-9e85-886a8f2bedd5",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "SentinelShield",
+            "Greybox"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0,
+            1,
+            -16
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "5a6baaa2-ce89-4ff4-8e91-8db0c33d1244",
+          "asset_path": "models/aether_greybox_shield.gltf"
+        }
+      }
+    },
+    {
+      "guid": "5ceda6e4-52da-417f-bd0f-418c3a44ed63",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "SentinelAim",
+            "Greybox"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0,
+            -100,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "f98def8d-d9f8-4416-baf9-bfa76e8dc460",
+          "asset_path": "models/aether_greybox_sentinel_aim.gltf"
+        }
+      }
+    },
+    {
+      "guid": "240de704-055c-49f4-9b7d-910e47525454",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "HunterTell",
+            "Greybox"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0,
+            -100,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "80860fec-706f-4187-b0d3-33911237be73",
+          "asset_path": "models/aether_greybox_hunter_tell.gltf"
+        }
+      }
+    },
+    {
+      "guid": "8dde4314-9d61-4d4e-b800-9cf007c20c5a",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "ArenaGate",
+            "Greybox"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0,
+            2,
+            -22
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "e9b682b8-0f58-4529-8988-0adf381bf41e",
+          "asset_path": "models/aether_greybox_end_wall.gltf"
+        },
+        "RigidBody": {
+          "$v": 1,
+          "motion": "Kinematic",
+          "mass": 1
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "half_extents": [
+            5.5,
+            2,
+            0.5
+          ],
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "is_trigger": false
+        }
+      }
+    },
+    {
+      "guid": "04f7e36b-22fc-55b4-b566-0b64eca64bbd",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "WeaponAudio"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "AudioSource": {
+          "$v": 1,
+          "cue": "Audio/rifle.acue",
+          "auto_play": false,
+          "volume_db": 0,
+          "pitch": 1
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "e53d5c92-af49-5867-b6a6-60e3f25dae48",
+          "properties": []
+        }
+      }
+    },
+    {
+      "guid": "d2db86be-831a-5500-a90c-788d4aec5641",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "DamageAudio"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "AudioSource": {
+          "$v": 1,
+          "cue": "Audio/hurt.acue",
+          "auto_play": false,
+          "volume_db": 0,
+          "pitch": 1
+        }
+      }
+    },
+    {
+      "guid": "770ec9c9-fade-5441-9bad-40f3f8a62656",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "WarningAudio"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "AudioSource": {
+          "$v": 1,
+          "cue": "Audio/warning.acue",
+          "auto_play": false,
+          "volume_db": 0,
+          "pitch": 1
+        }
+      }
+    },
+    {
+      "guid": "3fcc2756-b720-54ed-9acd-88c0b3ba2560",
+      "components": {
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "AmbientAudio"
+          ]
+        },
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "AudioSource": {
+          "$v": 1,
+          "cue": "Audio/ambient.acue",
+          "auto_play": true,
+          "volume_db": 0,
+          "pitch": 1
+        }
+      }
+    }
+  ]
+}

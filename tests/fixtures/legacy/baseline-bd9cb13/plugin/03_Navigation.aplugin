@@ -1,0 +1,22 @@
+{
+  "$type": "Plugin",
+  "$v": 1,
+  "name": "Navigation",
+  "friendly_name": "Navigation",
+  "version": "1.0.0",
+  "description": "Navmesh baking, path queries, obstacles, areas, links and NavAgents.",
+  "category": "AI",
+  "created_by": "Aether",
+  "engine_version": "",
+  "enabled_by_default": true,
+  "has_content": false,
+  "dependencies": [],
+  "modules": [
+    {
+      "$v": 1,
+      "name": "Navigation",
+      "type": "Runtime",
+      "phase": "PreDefault"
+    }
+  ]
+}
