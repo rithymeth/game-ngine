@@ -1,16 +1,16 @@
 {
   "version": 1,
   "gates": [
-    {"name": "linux_build_and_tests", "status": "n/a yet", "evidence": "CI Linux GCC and Clang jobs"},
-    {"name": "sanitizers", "status": "n/a yet", "evidence": "ASan/UBSan and TSan CI jobs"},
-    {"name": "module_boundaries", "status": "n/a yet", "evidence": "check_module_graph"},
-    {"name": "fuzz_corpora", "status": "n/a yet", "evidence": "tools/fuzz replay corpus"},
-    {"name": "benchmark_regressions", "status": "n/a yet", "evidence": "bench baseline comparison"},
-    {"name": "serialization_migrations", "status": "n/a yet", "evidence": "format-version audit and legacy fixtures"},
-    {"name": "multiplayer_soak", "status": "n/a yet", "evidence": "loopback 64-player soak"},
-    {"name": "platform_builds", "status": "n/a yet", "evidence": "Windows, macOS, Android and iOS jobs"},
-    {"name": "sample_games", "status": "n/a yet", "evidence": "three sample games build and run"},
-    {"name": "release_artifacts", "status": "n/a yet", "evidence": "checksums, signing and release notes"},
+    {"name": "linux_build_and_tests", "status": "pass", "evidence": "CI Linux GCC, Clang and Physics jobs build and run the full unit tests and ctest suite; green on PRs 207-211 (Actions run 38331503811 for 208)"},
+    {"name": "sanitizers", "status": "pass", "evidence": "CI Linux ASan+UBSan job runs the suite and is required; the TSan job is advisory and has been green on the same runs"},
+    {"name": "module_boundaries", "status": "pass", "evidence": "tools/check_module_graph.py runs in the Linux and Windows jobs (no cycles, layer rule holds); tests/fixtures/module_graph_cycle.dot proves it catches a cycle"},
+    {"name": "fuzz_corpora", "status": "pass", "evidence": "every job runs the fuzz_replay_* ctests over the checked-in corpora (pak, scene, Blueprint, save, input, UI, sprite2d, plugin, files, AI and more); the Clang fuzz job is advisory"},
+    {"name": "benchmark_regressions", "status": "pass", "evidence": "the Linux job runs aether_bench against bench/baseline.json at tolerance 3.0 (normalised by a calibration loop). The tolerance is loose and the baseline is Debug-ish; tighten it with Release numbers before relying on it for performance claims"},
+    {"name": "serialization_migrations", "status": "n/a yet", "evidence": "docs/design/format_versions.txt and tests/test_format_versions.cpp check every JSON loader refuses a newer file; still missing: legacy-version fixtures that load and migrate (binary scene v1 is covered, the other formats have no old files yet)"},
+    {"name": "multiplayer_soak", "status": "pass", "evidence": "tests/test_net_replication.cpp Replication_SixtyFourPlayersConvergeThroughLoss: 64 clients, 5% loss, latency and jitter, a shared 64 kB/s cap, 10 simulated seconds of movement; every client converges to the server world. tools/soak also gates heap growth. Real networks are not covered"},
+    {"name": "platform_builds", "status": "n/a yet", "evidence": "Windows (MSVC, D3D12, Qt editor) and macOS (MoltenVK) jobs pass; Android and iOS have no jobs yet (docs/design/MOBILE_READINESS.md)"},
+    {"name": "sample_games", "status": "n/a yet", "evidence": "Coin Run, Gem Hop, Stardust Hop and the frozen-API Lantern Run build and run; still missing: a packaged playthrough of each on a release build"},
+    {"name": "release_artifacts", "status": "n/a yet", "evidence": "docs/releases/NEXT.md and the upgrade guide are drafts; no checksums, signing or support policy yet (docs/manual/support_policy.md is a proposal)"},
     {"name": "m8_product_validation", "status": "n/a yet", "evidence": "M8.1-M8.12 evidence table, AETHER-01 packaged playthrough, and external developer task study"}
   ]
 }

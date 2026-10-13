@@ -89,6 +89,40 @@ def read_removed(path):
     return removed
 
 
+INCLUDE = re.compile(r'^\s*#\s*include\s+"(aether/[^"]+)"', re.M)
+
+
+def header_level(path, module_levels):
+    """The level of one header: its `@stability` tag, else its module's."""
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            t = TAG.match(line)
+            if t and t.group(1) in LEVELS:
+                return t.group(1)
+    rel = os.path.relpath(path, ROOT).replace(os.sep, "/")
+    return module_levels.get(rel.split("/")[0], "experimental")
+
+
+def find_header(name):
+    """The file an `#include "aether/..."` names, in any module's include folder."""
+    for m in sorted(os.listdir(ROOT)):
+        p = os.path.join(ROOT, m, "include", name)
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def closure(path, seen):
+    for name in INCLUDE.findall(open(path, encoding="utf-8", errors="replace").read()):
+        if name in seen:
+            continue
+        seen.add(name)
+        dep = find_header(name)
+        if dep:
+            closure(dep, seen)
+    return seen
+
+
 def modules_with_headers():
     out = []
     for d in sorted(os.listdir(ROOT)):
@@ -116,6 +150,8 @@ def main():
     ap.add_argument("--table", action="store_true")
     ap.add_argument("--frozen", default=os.path.join(ROOT, "docs", "design", "api_frozen.txt"))
     ap.add_argument("--removed", default=os.path.join(ROOT, "docs", "design", "api_removed.txt"))
+    ap.add_argument("--consumer", action="append", default=[], metavar="DIR",
+                    help="check that the sources in DIR include only stable headers (and what those include is stable or internal)")
     ap.add_argument("--update-frozen", action="store_true", help="add the names of stable headers to the baseline")
     args = ap.parse_args()
     levels = read_levels(args.levels)
@@ -153,6 +189,25 @@ def main():
                     with open(path, encoding="utf-8", errors="replace") as f:
                         stable_headers[os.path.relpath(path, ROOT).replace(os.sep, "/")] = set(public_names(f.read()))
         table[m] = counts
+    # A stable header may include only stable or internal ones: anything else would put an unfrozen layout in the frozen API.
+    for header in sorted(stable_headers):
+        for name in sorted(closure(os.path.join(ROOT, header), set())):
+            dep = find_header(name)
+            if dep and header_level(dep, levels) == "experimental":
+                problems.append(f"{header} includes {name}, which is experimental (make it stable or internal)")
+    # A consumer (a game built on the frozen API) may name only stable headers.
+    for folder in args.consumer:
+        for base, _, files in os.walk(os.path.join(ROOT, folder) if not os.path.isabs(folder) else folder):
+            for fn in sorted(files):
+                if not fn.endswith((".h", ".hpp", ".cpp")):
+                    continue
+                path = os.path.join(base, fn)
+                for name in INCLUDE.findall(open(path, encoding="utf-8", errors="replace").read()):
+                    dep = find_header(name)
+                    if dep is None:
+                        problems.append(f"{os.path.relpath(path, ROOT)}: includes {name}, which does not exist")
+                    elif header_level(dep, levels) != "stable":
+                        problems.append(f"{os.path.relpath(path, ROOT)}: includes {name}, which is {header_level(dep, levels)}, not stable")
     frozen = read_frozen(args.frozen)
     removed = read_removed(args.removed)
     if args.update_frozen:
