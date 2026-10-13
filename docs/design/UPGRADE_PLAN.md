@@ -118,7 +118,7 @@ when advisory gates become required.
 | **41.4** | Session and matchmaking interface with a local backend. `||` | - |
 | **41.5** | Server-authority and input-validation audit. **Done**: ownership, kind and argument checks were already enforced and are now tested with hostile input; added a per-client RPC token bucket (`RpcConfig::calls_per_second`, `RpcRouter::Tick`); movement floods were already capped. `||` | - |
 | **41.6** | Ability prediction and rollback (`gameplay/`). | 41.3, 37.4 |
-| **41.7** | 64-player soak sample on the harness. Loopback only here; real networks and platform services are not testable in this container. | 41.1-41.3 |
+| **41.7** | *(done on loopback: `Replication_SixtyFourPlayersConvergeThroughLoss`; it found a real bug, fixed: with a tight per-client budget an entity bigger than the budget was never sent, so the snapshot budget is now soft by one entity)* 64-player soak sample on the harness. Loopback only here; real networks and platform services are not testable in this container. | 41.1-41.3 |
 
 ## Phase 42: World Streaming 2.0
 
