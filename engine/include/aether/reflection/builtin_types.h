@@ -1,5 +1,7 @@
 #pragma once
 
+// @stability: stable
+
 #include "aether/ecs/entity.h"
 #include "aether/math/math.h"
 #include "aether/reflection/reflect_macros.h"

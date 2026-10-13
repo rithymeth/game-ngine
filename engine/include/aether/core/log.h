@@ -1,5 +1,7 @@
 #pragma once
 
+// @stability: stable
+
 #include <atomic>
 #include <cstdio>
 #include <deque>

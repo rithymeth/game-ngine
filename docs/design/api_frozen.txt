@@ -1,0 +1,29 @@
+# Public names of stable headers (Phase 48 step 3). A name may not disappear unless it is in api_removed.txt.
+# Written by: tools/check_api_stability.py --update-frozen
+engine/include/aether/core/api.h: AETHER_DEPRECATED AETHER_EXPERIMENTAL AETHER_INTERNAL AETHER_STABLE deprecated
+engine/include/aether/core/base.h: AETHER_ALIGN AETHER_ASSERT AETHER_DEBUGBREAK AETHER_FORCEINLINE AETHER_NOINLINE AlignUp aether alignas f32 f64 i16 i32 i64 i8 u16 u32 u64 u8 usize
+engine/include/aether/core/json_util.h: F GuardJsonLoader JsonString JsonVersion aether string
+engine/include/aether/core/log.h: AETHER_LOG_ERROR AETHER_LOG_FATAL AETHER_LOG_INFO AETHER_LOG_TRACE AETHER_LOG_WARN AddSink ClearRecent Instance Log LogFormatted LogLevel LogLevelName LogLine Logger MinLevel Recent RecentCapacity RemoveSink SetMinLevel SetStdout Sink aether
+engine/include/aether/core/version.h: aether
+engine/include/aether/ecs/component.h: AppendComponentField ComponentEncoding ComponentId ComponentIdCounter ComponentInfo ComponentMask ComponentMaskOf ComponentNameRegistry ComponentRegistry FindComponentIdByName GetComponentId GetComponentInfo ReadComponentField RegisterComponentAlias RegisteredComponentCount SetComponentSerializer SetLegacyRawLoader aether detail
+engine/include/aether/ecs/entity.h: Entity IsNull aether std
+engine/include/aether/ecs/world.h: AddComponent AddComponentRaw AllocateEntityId ArchetypeCount ConstructInPlace CreateEntity CreateEntityRaw DestroyEntity EntityCount EntityRecord ForEach ForEachArchetype ForEachChunk FreeEntityId GetComponent GetComponentRaw GetOrCreateArchetype GetRecord HasComponent HasComponentRaw IsAlive MigrateEntity RemoveComponent RemoveComponentRaw SetLocation World aether
+engine/include/aether/math/mat4.h: AETHER_ALIGN Identity LookAtRH Mat4 PerspectiveRH Scale Translation TryInverse aether
+engine/include/aether/math/math.h: Degrees Radians aether
+engine/include/aether/math/quaternion.h: AETHER_ALIGN FromAxisAngle Identity Length LengthSq Normalized Quaternion ToMat4 aether simd
+engine/include/aether/math/vec.h: AETHER_ALIGN Cross Dot Length LengthSq Normalized Vec3 Vec4 aether simd x y z
+engine/include/aether/memory/frame_allocator.h: Allocate AllocateObject Current FrameAllocator Init Swap aether
+engine/include/aether/memory/linear_allocator.h: Allocate AllocateObject Base Capacity Init LinearAllocator Remaining Reset SetMemoryCategory Used aether
+engine/include/aether/memory/pool_allocator.h: Allocate BlockCount BlockSize Free FreeCount FreeNode Init PoolAllocator SetMemoryCategory aether
+engine/include/aether/pak/pak.h: Add AddDirectory AddFile Build ChaCha20Xor Compression CompressionName CompressionPolicy Contains Crc32 Entries EntryCount File Find FromHex Generate Id IsEncrypted IsOpen MakePatch NormalizePath Open OpenMemory OriginalBytes PakEntry PakKey PakReader PakWriter Parse PatchReport Pending Read ReadStored ReadText SetEncryption ToHex Verify Write aether policy_ zstd_level_
+engine/include/aether/pak/vfs.h: AddKey Exists Inner List LoadRemoved Locate Mount MountCount MountEntry MountPak Read ReadText Resolve Sort Unmount UnmountAll VirtualFileSystem aether
+engine/include/aether/reflection/any.h: Allocate Any Arg Bare Class CopyOf Data DefaultOf FitsInline FunctionTraits Get HasValue InvokeWithArgs IsHeapAllocated MakeMethod R Reset Return TryGet Type aether alignas detail
+engine/include/aether/reflection/builtin_types.h: AETHER_FIELD AETHER_REFLECT AETHER_REFLECT_PRIMITIVE Get aether
+engine/include/aether/reflection/bytes.h: AppendBinary ReadBinary aether
+engine/include/aether/reflection/converters.h: FromJsonConverter RegisterJsonConverter ToJsonConverter aether json
+engine/include/aether/reflection/reflect_macros.h: AETHER_ENUM AETHER_ENUM_VALUE AETHER_FIELD AETHER_METHOD AETHER_REFLECT AddMembers Get MemberDecl aether field function is_function move offsetof
+engine/include/aether/reflection/reflection.h: 
+engine/include/aether/reflection/registry.h: AllTypes Find Register TypeRegistry aether
+engine/include/aether/reflection/serialize.h: FromJson Json LoadBinary LoadJsonText LoadReport MigrateJson MigrationFn RegisterMigration SaveBinary SaveJsonText ToJson aether
+engine/include/aether/reflection/type_id.h: HashTypeName StripNamespace TypeId aether
+engine/include/aether/reflection/type_info.h: Any ArrayElement As EnumName EnumValue EnumValueOf FieldFlags FieldInfo FindField FindFunction FunctionFlags FunctionInfo Get HasFlag HasRange Invoke IsRemote MakeField MakeTypeInfo Meta ParamInfo Ptr Reflect Reflector Set TypeIdOf TypeInfo TypeKind aether detail usize
