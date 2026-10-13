@@ -1,0 +1,8 @@
+{
+  "$type": "InputAction",
+  "data": {
+    "$v": 1,
+    "name": "Weapon1",
+    "value_type": "Bool"
+  }
+}

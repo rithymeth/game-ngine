@@ -23,3 +23,6 @@ mesh (cooked)        engine/src/cook/mesh_cook.cpp           1        n/a (first
 #
 # "n/a (first)": no older version exists yet. The day a format bumps, keep a file of the old version in the
 # tests and add a migration test next to it; a loader that only knows the latest must say so in this table.
+#
+# Files from earlier tools: tests/fixtures/legacy/<baseline>/ holds real scenes, Blueprints, sequences, input assets, layouts,
+# plugin descriptors, projects and asset metadata, and tests/test_legacy_files.cpp loads every one with the current loaders.

@@ -1,0 +1,22 @@
+{
+  "$type": "Plugin",
+  "$v": 1,
+  "name": "Audio",
+  "friendly_name": "Audio",
+  "version": "1.0.0",
+  "description": "The mixer, 3D sound, streaming, sound cues and audio components.",
+  "category": "Audio",
+  "created_by": "Aether",
+  "engine_version": "",
+  "enabled_by_default": true,
+  "has_content": false,
+  "dependencies": [],
+  "modules": [
+    {
+      "$v": 1,
+      "name": "Audio",
+      "type": "Runtime",
+      "phase": "PreDefault"
+    }
+  ]
+}
