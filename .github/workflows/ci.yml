@@ -541,7 +541,7 @@ jobs:
         run: >
           cmake -S . -B build-android -G Ninja -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake"
-          -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-26
+          -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-28
           -DAETHER_BUILD_TESTS=OFF -DAETHER_BUILD_MCP=OFF -DAETHER_BUILD_SANDBOX=OFF -DAETHER_BUILD_PHYSICS=OFF
           -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_EDITOR_UI=OFF -DAETHER_BUILD_VULKAN=OFF
           -DAETHER_BUILD_SCRIPTING=OFF -DAETHER_BUILD_WINDOWING=OFF -DAETHER_BUILD_BENCH=OFF
@@ -549,7 +549,7 @@ jobs:
         run: >
           cmake --build build-android --parallel
           --target aether_engine aether_net aether_nav aether_ai aether_streaming aether_gameplay aether_sprite2d
-          aether_animation aether_save aether_ui aether_audio
+          aether_animation aether_save aether_ui aether_audio -- -k 0
 
   clang-tidy:
     name: clang-tidy (changed files, advisory)
