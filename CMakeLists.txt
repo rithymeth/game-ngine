@@ -491,6 +491,7 @@ endif()
 
 add_subdirectory(samples/coin_run)
 add_subdirectory(samples/gem_hop)
+add_subdirectory(samples/frozen_api_game)
 
 # Phase 24 step 5: the portable editor shell - the editor's panels in a
 # GLFW (or Win32) window, or offscreen, drawn through the Vulkan RHI.
