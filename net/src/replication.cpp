@@ -432,7 +432,11 @@ void ReplicationServer::SendTo(PeerId id, Peer& peer, const ReplicatedState& cur
     u16 updates = 0;
     u32 deferred = 0;
     for (Candidate& c : candidates) {
-        if (msg.size() + c.bytes.size() > budget) {
+        // The budget is soft by one entity: a snapshot that would otherwise send nothing sends the best-scored
+        // candidate anyway (up to the fragment limit), or an entity bigger than a tight budget could never arrive.
+        const bool fits = msg.size() + c.bytes.size() <= budget;
+        const bool must_progress = updates == 0 && msg.size() + c.bytes.size() <= Connection::kMaxFragment;
+        if (!fits && !must_progress) {
             ++deferred;
             continue;
         }
