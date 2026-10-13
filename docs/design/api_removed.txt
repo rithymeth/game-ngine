@@ -1,0 +1,2 @@
+# Names removed from stable headers after a deprecation release (Phase 48 step 3): "<header> <name>".
+# tools/check_api_stability.py accepts a missing name only if it is listed here.

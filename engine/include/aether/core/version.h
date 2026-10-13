@@ -1,5 +1,7 @@
 #pragma once
 
+// @stability: stable
+
 namespace aether {
 
 // Engine version, written into project files so a project knows which engine

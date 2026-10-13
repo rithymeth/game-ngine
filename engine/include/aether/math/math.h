@@ -1,5 +1,7 @@
 #pragma once
 
+// @stability: stable
+
 #include "aether/math/mat4.h"
 #include "aether/math/quaternion.h"
 #include "aether/math/vec.h"

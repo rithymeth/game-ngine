@@ -17,6 +17,10 @@ header can differ from its module with a comment line near the top:
 
 `tools/check_api_stability.py` (also a test in the suite) checks that every module with public headers has a
 level, and that every override names a real one. `--table` prints how many headers each module has at each level.
+Stable headers are frozen: [`docs/design/api_frozen.txt`](../design/api_frozen.txt) records the names each one
+declares, and the same check fails when one disappears. To retire a name, deprecate it for a release, then
+remove it and list it in [`docs/design/api_removed.txt`](../design/api_removed.txt) (`<header> <name>`). New names
+need nothing; `python3 tools/check_api_stability.py --update-frozen` adds them to the baseline.
 The [Core API inventory](core_api_inventory.md) records current ownership,
 threading and failure behavior for the engine's central public headers.
 

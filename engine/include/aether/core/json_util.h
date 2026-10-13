@@ -1,5 +1,7 @@
 #pragma once
 
+// @stability: stable
+
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
