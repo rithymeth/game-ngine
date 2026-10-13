@@ -42,8 +42,18 @@ uses so a slow or noisy runner does not fail the gate.
   (0.57 ms against 0.21 ms for 20 queries), not the 8x seen in Debug. It is still not a win on this mesh.
 - **Texture cooking** is the slowest thing measured (BC7 256x256 takes 226 ms), which matters for import times.
 
-## A regression the baseline reports
+## The "regression" was the baseline, not the engine
 
-The same run reports `bp/loop_arith_10k` at 3.61x its checked-in baseline (limit 3.00x). The step is advisory
-(`continue-on-error`), so CI stays green. It is either a real slowdown of the Blueprint VM or a baseline taken on a
-different machine; it should be bisected before the baseline is regenerated and the step made required.
+The same run reported `bp/loop_arith_10k` at 3.61x its checked-in baseline (limit 3.00x), with the step advisory
+(`continue-on-error`) so CI stayed green. The old baseline came from a developer machine and a slower build: its
+calibration loop took 10.37 ms against 1.72 ms on the runner, a 6x difference, yet `ecs/iterate_100k` was 30x
+faster on the runner and `bp/loop_arith_10k` only 1.6x faster (0.477 ms before, 0.297 ms now). The calibration loop
+does not scale the same way as the benchmarks across builds, so the normalised comparison flagged a benchmark that
+had in fact got faster. Absolute time fell for every benchmark the two files share.
+
+`bench/baseline.json` is therefore regenerated from the table above (the optimised CI build on the runner that
+will compare against it), with all 20 benchmarks. To refresh it again: run the `Linux (GCC)` job, copy the table
+from its Benchmarks step, and keep `calibration_ms` as the line printed above it.
+
+The step stays advisory for now. Making it required needs a few runs to show how much the shared runner moves
+between runs; the 3.0 tolerance is wide on purpose until then.
