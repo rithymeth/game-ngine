@@ -1,5 +1,7 @@
 #pragma once
 
+// @stability: stable
+
 #include "aether/reflection/type_info.h"
 
 #include <string_view>

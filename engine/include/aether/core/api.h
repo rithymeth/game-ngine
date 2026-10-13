@@ -1,5 +1,7 @@
 #pragma once
 
+// @stability: stable
+
 // API stability annotations (Phase 37 step 3, docs/design/UPGRADE_PLAN.md, docs/manual/api_stability.md).
 //
 // Every public module has a stability level in docs/design/api_stability.txt, and a header can

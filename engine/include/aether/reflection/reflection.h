@@ -1,5 +1,7 @@
 #pragma once
 
+// @stability: stable
+
 // Umbrella header for the Phase 6 reflection system: TypeInfo/FieldInfo,
 // TypeRegistry, the AETHER_REFLECT/AETHER_FIELD/AETHER_ENUM macros, and the
 // builtin types. See docs/ROADMAP_DETAILS.md §B for the design.
