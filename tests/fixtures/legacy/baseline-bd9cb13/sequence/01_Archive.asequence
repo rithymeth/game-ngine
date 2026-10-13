@@ -1,0 +1,96 @@
+{
+  "$type": "LevelSequence",
+  "$version": 1,
+  "name": "HELIOS-7 Archive Reveal",
+  "fps": 60,
+  "duration": 8,
+  "tracks": [
+    {
+      "id": "archive-audio",
+      "name": "Archive signal",
+      "type": "audio",
+      "binding": "a80a8e2b-ee8d-42c1-af68-d43f4a039d44",
+      "audio": [
+        {
+          "time": 0.1,
+          "cue": "Audio/archive.acue",
+          "action": "fade_in",
+          "fade": 0.15,
+          "volume_db": 0
+        },
+        {
+          "time": 4,
+          "cue": "Audio/archive.acue",
+          "action": "play",
+          "fade": 0,
+          "volume_db": 0
+        }
+      ]
+    },
+    {
+      "id": "archive-camera",
+      "name": "Terminal camera move",
+      "type": "transform",
+      "binding": "11c7363b-8f51-486e-b4bb-2a57fd73e7ca",
+      "channels": [
+        {
+          "name": "x",
+          "keys": [
+            {
+              "time": 0,
+              "value": 0,
+              "interp": "linear"
+            },
+            {
+              "time": 8,
+              "value": 0,
+              "interp": "linear"
+            }
+          ]
+        },
+        {
+          "name": "y",
+          "keys": [
+            {
+              "time": 0,
+              "value": 3,
+              "interp": "linear"
+            },
+            {
+              "time": 8,
+              "value": 4,
+              "interp": "linear"
+            }
+          ]
+        },
+        {
+          "name": "z",
+          "keys": [
+            {
+              "time": 0,
+              "value": -32,
+              "interp": "linear"
+            },
+            {
+              "time": 8,
+              "value": -34,
+              "interp": "linear"
+            }
+          ]
+        }
+      ],
+      "rotation": [
+        {
+          "time": 0,
+          "value": [
+            -0.14943813247359922,
+            0,
+            0,
+            0.9887710779360422
+          ],
+          "interp": "linear"
+        }
+      ]
+    }
+  ]
+}

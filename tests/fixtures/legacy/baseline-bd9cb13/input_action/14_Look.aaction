@@ -1,0 +1,8 @@
+{
+  "$type": "InputAction",
+  "data": {
+    "$v": 1,
+    "name": "Look",
+    "value_type": "Axis2D"
+  }
+}
