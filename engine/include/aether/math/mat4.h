@@ -1,5 +1,7 @@
 #pragma once
 
+// @stability: stable
+
 #include "aether/math/vec.h"
 
 namespace aether {
