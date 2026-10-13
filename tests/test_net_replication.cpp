@@ -49,9 +49,11 @@ struct ReplSim {
     };
     std::vector<std::unique_ptr<Client>> clients;
 
-    explicit ReplSim(ReplicationConfig config = {}, u64 seed = 1) : net(seed) {
+    explicit ReplSim(ReplicationConfig config = {}, u64 seed = 1, u32 max_peers = 32) : net(seed) {
         server_socket = net.Open(7777);
-        server = std::make_unique<NetHost>(*server_socket);
+        HostConfig host_config;
+        host_config.max_peers = max_peers;
+        server = std::make_unique<NetHost>(*server_socket, host_config);
         server->Listen();
         rs = std::make_unique<ReplicationServer>(server_world, *server, config);
         cfg = config;
@@ -309,18 +311,20 @@ AETHER_TEST(Replication_CustomRelevancyHidesEntities) {
 
 AETHER_TEST(Replication_BandwidthCapIsSharedAndHonoured) {
     ReplicationConfig cfg;
-    cfg.bytes_per_second = 4000; // 200 bytes per snapshot for one client, 100 for two
+    cfg.bytes_per_second = 12000; // 600 bytes per snapshot for one client, 300 for two
     ReplSim sim(cfg);
     sim.AddClient();
     sim.AddClient();
     for (int i = 0; i < 40; ++i) sim.Spawn({static_cast<f32>(i), 0, 0});
     sim.Step(10);
     CHECK(sim.server_peers.size() == 2);
-    CHECK(sim.rs->SnapshotBudget() == 100);
+    CHECK(sim.rs->SnapshotBudget() == 300);
     for (int i = 0; i < 60; ++i) {
         sim.Step();
-        for (PeerId p : sim.server_peers) CHECK(sim.rs->Stats(p).last_bytes <= 100);
+        for (PeerId p : sim.server_peers) CHECK(sim.rs->Stats(p).last_bytes <= 300);
     }
+    sim.Step(240);
+    for (auto& c : sim.clients) CHECK(c->rc->EntityCount() == 40); // the cap slows delivery, it does not stop it
 }
 
 AETHER_TEST(Replication_StarvedEntitiesEventuallyArrive) {
@@ -364,4 +368,43 @@ AETHER_TEST(Replication_ProfileTableStaysBounded) {
     }
     CHECK(sim.rs->Profile().entities.size() <= 16 + 12);
     CHECK(sim.rs->Profile().retired_entities > 0 && sim.rs->Profile().retired_bytes > 0);
+}
+
+AETHER_TEST(Replication_SixtyFourPlayersConvergeThroughLoss) {
+    ReplicationConfig cfg;
+    cfg.bytes_per_second = 64000; // shared by 64 clients: 50 bytes each per snapshot, so entities must take turns
+    ReplSim sim(cfg, 77, 64);
+    sim.net.conditions.latency = 0.03;
+    sim.net.conditions.jitter = 0.01;
+    sim.net.conditions.loss = 0.05f;
+    constexpr int kPlayers = 64, kEntities = 40;
+    for (int i = 0; i < kPlayers; ++i) sim.AddClient();
+    std::vector<Entity> units;
+    for (int i = 0; i < kEntities; ++i) units.push_back(sim.Spawn(Vec3(static_cast<f32>(i), 0, 0)));
+    // Ten simulated seconds of everything moving.
+    usize worst_snapshot = 0;
+    for (int frame = 0; frame < 600; ++frame) {
+        const f32 t = static_cast<f32>(frame) * 0.05f;
+        for (usize i = 0; i < units.size(); ++i)
+            sim.server_world.GetComponent<Transform>(units[i])->position = Vec3(std::sin(t + static_cast<f32>(i)) * 10.0f, t, static_cast<f32>(i));
+        sim.Step();
+        for (PeerId p : sim.server_peers) worst_snapshot = std::max(worst_snapshot, sim.rs->Stats(p).last_bytes);
+    }
+    CHECK(sim.server_peers.size() == static_cast<usize>(kPlayers));
+    CHECK(sim.net.Dropped() > 0);
+    // The cap is soft by one entity (a snapshot that would send nothing sends the best one anyway): header + one entity.
+    CHECK(worst_snapshot <= 17 + 120);
+    CHECK(sim.rs->SnapshotBudget() == ReplicationConfig::kMinSnapshotBytes);
+    // Stop moving: every client must end with the server's world.
+    sim.Step(1200);
+    int converged = 0;
+    for (auto& c : sim.clients) {
+        bool same = c->rc->EntityCount() == static_cast<usize>(kEntities);
+        for (Entity u : units) {
+            const Entity e = c->rc->FindEntity(sim.NetId(u));
+            same = same && !e.IsNull() && Near(c->world.GetComponent<Transform>(e)->position, sim.server_world.GetComponent<Transform>(u)->position);
+        }
+        converged += same ? 1 : 0;
+    }
+    CHECK(converged == kPlayers);
 }
