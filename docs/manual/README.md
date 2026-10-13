@@ -16,6 +16,7 @@ it works inside.
 10. [Inventory and items](10-inventory.md): the inventory genre kit.
 11. [Interaction](11-interaction.md): the interaction genre kit.
 12. [Quests](12-quests.md): the quests genre kit.
+13. [Upgrading](13-upgrading.md): what to check when moving to a newer engine.
 
 Also: [API stability](api_stability.md), what "stable", "experimental" and "internal" mean and how to deprecate.
 The [Core API inventory](core_api_inventory.md) records current ownership and threading contracts.
