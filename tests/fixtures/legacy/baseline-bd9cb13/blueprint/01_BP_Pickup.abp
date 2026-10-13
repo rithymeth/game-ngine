@@ -1,0 +1,193 @@
+{
+  "$type": "Blueprint",
+  "$version": 1,
+  "graphs": [
+    {
+      "kind": "EventGraph",
+      "links": [
+        {
+          "from": [
+            1,
+            "delta_seconds"
+          ],
+          "to": [
+            3,
+            "a"
+          ]
+        },
+        {
+          "from": [
+            2,
+            "value"
+          ],
+          "to": [
+            3,
+            "b"
+          ]
+        },
+        {
+          "from": [
+            4,
+            "value"
+          ],
+          "to": [
+            5,
+            "a"
+          ]
+        },
+        {
+          "from": [
+            3,
+            "result"
+          ],
+          "to": [
+            5,
+            "b"
+          ]
+        },
+        {
+          "from": [
+            1,
+            "then"
+          ],
+          "to": [
+            6,
+            "exec"
+          ]
+        },
+        {
+          "from": [
+            5,
+            "result"
+          ],
+          "to": [
+            6,
+            "value"
+          ]
+        },
+        {
+          "from": [
+            6,
+            "value"
+          ],
+          "to": [
+            7,
+            "degrees"
+          ]
+        },
+        {
+          "from": [
+            6,
+            "then"
+          ],
+          "to": [
+            8,
+            "exec"
+          ]
+        },
+        {
+          "from": [
+            7,
+            "result"
+          ],
+          "to": [
+            8,
+            "rotation"
+          ]
+        }
+      ],
+      "name": "EventGraph",
+      "nodes": [
+        {
+          "id": 1,
+          "pos": [
+            0.0,
+            0.0
+          ],
+          "type": "Event.Tick"
+        },
+        {
+          "id": 2,
+          "pos": [
+            0.0,
+            160.0
+          ],
+          "type": "Var.Get:SpinSpeed"
+        },
+        {
+          "id": 3,
+          "pos": [
+            260.0,
+            120.0
+          ],
+          "type": "Math.Multiply:float"
+        },
+        {
+          "id": 4,
+          "pos": [
+            260.0,
+            260.0
+          ],
+          "type": "Var.Get:Angle"
+        },
+        {
+          "id": 5,
+          "pos": [
+            500.0,
+            160.0
+          ],
+          "type": "Math.Add:float"
+        },
+        {
+          "id": 6,
+          "pos": [
+            740.0,
+            0.0
+          ],
+          "type": "Var.Set:Angle"
+        },
+        {
+          "defaults": {
+            "axis": [
+              0,
+              1,
+              0
+            ]
+          },
+          "id": 7,
+          "pos": [
+            1000.0,
+            200.0
+          ],
+          "type": "Quat.FromAxisAngle"
+        },
+        {
+          "id": 8,
+          "pos": [
+            1260.0,
+            0.0
+          ],
+          "type": "Entity.SetRotation"
+        }
+      ]
+    }
+  ],
+  "parent": "native:Entity",
+  "variables": [
+    {
+      "default": 0.0,
+      "name": "Angle",
+      "tooltip": "The current turn, degrees",
+      "type": "float"
+    },
+    {
+      "default": 90.0,
+      "flags": [
+        "InstanceEditable"
+      ],
+      "name": "SpinSpeed",
+      "tooltip": "Degrees per second",
+      "type": "float"
+    }
+  ]
+}

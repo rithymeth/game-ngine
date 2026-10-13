@@ -1,0 +1,12 @@
+{
+  "$type": "AssetMeta",
+  "$v": 1,
+  "guid": "484c8e18-dfd5-5a82-9e99-21836d5bb115",
+  "importer": "Sound",
+  "importer_version": 1,
+  "settings": {},
+  "labels": [
+    "Prototype"
+  ],
+  "source_hash": ""
+}

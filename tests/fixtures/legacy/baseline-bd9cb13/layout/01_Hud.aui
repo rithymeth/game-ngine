@@ -1,0 +1,186 @@
+{
+ "$type": "Layout",
+ "version": 1,
+ "root": {
+  "type": "Canvas",
+  "name": "Hud",
+  "children": [
+   {
+    "type": "Border",
+    "name": "CoinPanel",
+    "background": {
+     "kind": "Color",
+     "tint": [
+      0.02,
+      0.04,
+      0.09,
+      0.72
+     ]
+    },
+    "padding": [
+     22,
+     14,
+     22,
+     16
+    ],
+    "slot": {
+     "anchors": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "position": [
+      28,
+      28
+     ],
+     "size": [
+      420,
+      140
+     ]
+    },
+    "children": [
+     {
+      "type": "VerticalBox",
+      "children": [
+       {
+        "type": "HorizontalBox",
+        "children": [
+         {
+          "type": "Image",
+          "name": "CoinIcon",
+          "brush": {
+           "kind": "Image",
+           "image": "UI/coin.png",
+           "tint": [
+            1,
+            1,
+            1,
+            1
+           ]
+          },
+          "desired_size": [
+           44,
+           44
+          ]
+         },
+         {
+          "type": "Spacer",
+          "size": [
+           12,
+           12
+          ]
+         },
+         {
+          "type": "Text",
+          "name": "CoinText",
+          "text": "COINS  0 / 15",
+          "size": 38,
+          "color": [
+           1.0,
+           0.82,
+           0.25,
+           1.0
+          ]
+         }
+        ]
+       },
+       {
+        "type": "Spacer",
+        "size": [
+         10,
+         12
+        ]
+       },
+       {
+        "type": "ProgressBar",
+        "name": "CoinBar",
+        "percent": 0.0,
+        "background": {
+         "kind": "Color",
+         "tint": [
+          0.13,
+          0.15,
+          0.2,
+          1.0
+         ]
+        },
+        "bar": {
+         "kind": "Color",
+         "tint": [
+          1.0,
+          0.82,
+          0.25,
+          1.0
+         ]
+        },
+        "slot": {
+         "size": [
+          376,
+          16
+         ]
+        }
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "type": "Text",
+    "name": "Message",
+    "text": "",
+    "size": 64,
+    "color": [
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "justify": "Center",
+    "slot": {
+     "anchors": [
+      0.5,
+      0.2,
+      0.5,
+      0.2
+     ],
+     "alignment": [
+      0.5,
+      0.5
+     ],
+     "auto_size": true
+    }
+   },
+   {
+    "type": "Text",
+    "name": "Hint",
+    "text": "WASD  RUN     SPACE  JUMP     MOUSE  LOOK     R  RESTART",
+    "size": 26,
+    "color": [
+     0.85,
+     0.9,
+     1.0,
+     0.8
+    ],
+    "justify": "Center",
+    "slot": {
+     "anchors": [
+      0.5,
+      1,
+      0.5,
+      1
+     ],
+     "alignment": [
+      0.5,
+      1
+     ],
+     "position": [
+      0,
+      -26
+     ],
+     "auto_size": true
+    }
+   }
+  ]
+ }
+}
