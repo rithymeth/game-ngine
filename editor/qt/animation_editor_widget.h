@@ -20,6 +20,12 @@ class QTimer;
 
 namespace aether::editor::qt {
 
+struct ClipNotify {
+    std::string name;
+    float time = 0.0f;
+    float duration = 0.0f;
+};
+
 class AnimationEditorWidget final : public QWidget {
 public:
     explicit AnimationEditorWidget(std::function<void(const QString&)> status, QWidget* parent = nullptr);
@@ -28,6 +34,9 @@ public:
 private:
     struct PreviewWidget;
     struct TimelineWidget;
+    struct NotifyTrackWidget;
+    struct CurveWidget;
+    struct ClipSnapshot { aether::assets::GltfAnimation animation; std::vector<ClipNotify> notifies; };
 
     void BuildUi();
     bool OpenModel(const std::filesystem::path& path, bool confirm = true);
@@ -41,6 +50,7 @@ private:
     void SelectNode(int node);
     void RefreshPlayhead(bool update_controls = true);
     void RefreshTimeline();
+    void RefreshCurve();
     void RefreshPreview();
     void RefreshControls();
     void SetPlayhead(float time, bool snap_to_frame = false);
@@ -53,6 +63,10 @@ private:
     void RecordUndo();
     bool Undo();
     bool Redo();
+    void SelectNotify(int index);
+    void CommitNotify();
+    void AddNotify();
+    void RemoveNotify();
     aether::assets::GltfAnimation* ActiveAnimation();
     const aether::assets::GltfAnimation* ActiveAnimation() const;
     int FindChannel(int node, aether::assets::GltfAnimationPath path) const;
@@ -62,8 +76,9 @@ private:
     aether::assets::GltfScene scene_;
     std::filesystem::path source_model_path_;
     std::filesystem::path clip_file_path_;
-    std::vector<aether::assets::GltfAnimation> undo_;
-    std::vector<aether::assets::GltfAnimation> redo_;
+    std::vector<ClipSnapshot> undo_;
+    std::vector<ClipSnapshot> redo_;
+    std::vector<ClipNotify> notifies_;
     std::function<void(const QString&)> status_;
 
     QTreeWidget* rig_tree_ = nullptr;
@@ -74,6 +89,10 @@ private:
     QDoubleSpinBox* time_spin_ = nullptr;
     QComboBox* view_combo_ = nullptr;
     QComboBox* interpolation_combo_ = nullptr;
+    QLineEdit* notify_name_ = nullptr;
+    QDoubleSpinBox* notify_time_ = nullptr;
+    QDoubleSpinBox* notify_duration_ = nullptr;
+    QPushButton* remove_notify_button_ = nullptr;
     QDoubleSpinBox* transform_fields_[9]{};
     QPushButton* play_button_ = nullptr;
     QPushButton* loop_button_ = nullptr;
@@ -87,12 +106,15 @@ private:
     QLabel* clip_status_ = nullptr;
     PreviewWidget* preview_ = nullptr;
     TimelineWidget* timeline_ = nullptr;
+    NotifyTrackWidget* notify_track_ = nullptr;
+    CurveWidget* curve_ = nullptr;
     QTimer* timer_ = nullptr;
 
     int animation_index_ = -1;
     int selected_node_ = -1;
     int selected_path_ = 0;
     int selected_key_ = -1;
+    int selected_notify_ = -1;
     float playhead_ = 0.0f;
     bool playing_ = false;
     bool looping_ = true;
