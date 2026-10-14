@@ -2,6 +2,7 @@
 
 #include "aether/gfx/d3d12_common.h"
 
+#include <mutex>
 #include <vector>
 
 namespace aether::gfx {
@@ -24,7 +25,7 @@ public:
 
     u32 Allocate();
     void Free(u32 index);
-    bool CanAllocate() const { return !free_list_.empty() || next_free_ < capacity_; }
+    bool CanAllocate() const;
 
     D3D12_CPU_DESCRIPTOR_HANDLE CPUHandle(u32 index) const;
     D3D12_GPU_DESCRIPTOR_HANDLE GPUHandle(u32 index) const;
@@ -38,6 +39,8 @@ private:
     u32 capacity_ = 0;
     u32 next_free_ = 0;
     std::vector<u32> free_list_;
+    std::vector<u8> allocated_;
+    mutable std::mutex allocation_mutex_;
     bool shader_visible_ = false;
 };
 

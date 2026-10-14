@@ -103,6 +103,8 @@ public:
     bool BusMuted(BusId bus) const;
     // Once threaded, change the returned effect's settings only through Post.
     AudioEffect* AddEffect(BusId bus, std::unique_ptr<AudioEffect> effect);
+    bool RemoveEffect(BusId bus, usize index);
+    bool MoveEffect(BusId bus, usize from, usize to);
     BusMeter Meter(BusId bus) const;
     // A bus's effects, in order (for the mixer panel). Threaded, read or
     // change their settings only through Post.

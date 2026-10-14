@@ -310,6 +310,19 @@ bool BehaviorTreeDocument::RemoveService(const BtPath& path, usize index) {
     return true;
 }
 
+bool BehaviorTreeDocument::MoveService(const BtPath& path, usize from, usize to) {
+    const BtNode* n = Node(path);
+    if (n == nullptr || from >= n->services.size() || to >= n->services.size()) return false;
+    if (from == to) return true;
+    Edit("Move service", [&](BehaviorTreeAsset& t) {
+        auto& services = Mutable(t, path)->services;
+        BtService moving = std::move(services[from]);
+        services.erase(services.begin() + static_cast<std::ptrdiff_t>(from));
+        services.insert(services.begin() + static_cast<std::ptrdiff_t>(to), std::move(moving));
+    });
+    return true;
+}
+
 json BehaviorTreeDocument::ServiceJson(const BtPath& path, usize index) const {
     const json n = NodeJson(path);
     return n.contains("services") && index < n["services"].size() ? n["services"][index] : json();

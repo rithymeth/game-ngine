@@ -12,6 +12,20 @@ add_library(Aether::Bench ALIAS aether_bench_lib)
 # self-registering objects). Blueprint and Luau benchmarks are there when those modules are built.
 add_executable(aether_bench src/main.cpp src/bench_engine.cpp)
 target_link_libraries(aether_bench PRIVATE Aether::Bench)
+if(CMAKE_CONFIGURATION_TYPES)
+    set(_aether_bench_build_config "$<CONFIG>")
+elseif(CMAKE_BUILD_TYPE)
+    set(_aether_bench_build_config "${CMAKE_BUILD_TYPE}")
+else()
+    set(_aether_bench_build_config "unspecified")
+endif()
+target_compile_definitions(aether_bench PRIVATE
+    "AETHER_BENCH_COMPILER_ID=\"${CMAKE_CXX_COMPILER_ID}\""
+    "AETHER_BENCH_COMPILER_VERSION=\"${CMAKE_CXX_COMPILER_VERSION}\""
+    "AETHER_BENCH_BUILD_CONFIG=\"${_aether_bench_build_config}\""
+    "AETHER_BENCH_PLATFORM=\"${CMAKE_SYSTEM_NAME}\""
+    "AETHER_BENCH_ARCH=\"${CMAKE_SYSTEM_PROCESSOR}\""
+)
 if(TARGET aether_blueprint)
     target_sources(aether_bench PRIVATE src/bench_blueprint.cpp)
     target_link_libraries(aether_bench PRIVATE Aether::Blueprint)

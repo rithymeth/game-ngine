@@ -388,15 +388,28 @@ void SequencePlayer::ApplyVisibility(const Track& track, Target& target) {
 
 void SequencePlayer::FireEvents(f32 from, f32 to, bool include_from) {
     const auto crossed = [&](f32 time) { return time > from || (include_from && time >= from); };
+    struct PendingEvent { const Track* track; const EventKey* key; usize track_index; usize key_index; };
+    std::vector<PendingEvent> pending_events;
+    for (usize i = 0; i < sequence_.tracks.size(); ++i) {
+        const Track& track = sequence_.tracks[i];
+        if (track.mute || track.type != TrackType::Event) continue;
+        for (usize k = 0; k < track.events.size(); ++k) {
+            const EventKey& event = track.events[k];
+            if (event.time > to) break;
+            if (crossed(event.time)) pending_events.push_back({&track, &event, i, k});
+        }
+    }
+    std::stable_sort(pending_events.begin(), pending_events.end(), [](const PendingEvent& a, const PendingEvent& b) {
+        if (a.key->time != b.key->time) return a.key->time < b.key->time;
+        if (a.track_index != b.track_index) return a.track_index < b.track_index;
+        return a.key_index < b.key_index;
+    });
+    if (on_event) for (const PendingEvent& event : pending_events) on_event(*event.track, *event.key);
+
     for (usize i = 0; i < sequence_.tracks.size(); ++i) {
         const Track& track = sequence_.tracks[i];
         if (track.mute) continue;
-        if (track.type == TrackType::Event && on_event) {
-            for (const EventKey& e : track.events) {
-                if (e.time > to) break;
-                if (crossed(e.time)) on_event(track, e);
-            }
-        } else if (track.type == TrackType::Audio && on_audio) {
+        if (track.type == TrackType::Audio && on_audio) {
             const Entity entity = track.binding.IsNull() ? kNullEntity : guids_.Find(world_, track.binding);
             for (const AudioKey& k : track.audio) {
                 if (k.time > to) break;

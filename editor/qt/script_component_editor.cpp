@@ -87,8 +87,11 @@ void ClearLayout(QLayout* layout) {
 
 } // namespace
 
-ScriptComponentEditor::ScriptComponentEditor(SceneDocument& document, std::function<void()> changed, QWidget* parent)
+ScriptComponentEditor::ScriptComponentEditor(SceneDocument& document, std::function<void()> changed,
+                                             std::function<void(const std::filesystem::path&)> open_script,
+                                             QWidget* parent)
     : QGroupBox("Custom Script", parent), document_(document), changed_(std::move(changed)),
+      open_script_(std::move(open_script)),
       host_(std::make_unique<script::LuauHost>()) {
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(10, 8, 10, 10);
@@ -366,6 +369,10 @@ void ScriptComponentEditor::EditScript() {
     const assets::AssetRecord* record = database_->Find(component->script.guid);
     if (!record || record->missing) return;
     const std::filesystem::path path = database_->SourcePath(record->guid);
+    if (open_script_) {
+        open_script_(path);
+        return;
+    }
     const std::string original = ReadText(path);
     QDialog dialog(this);
     dialog.setWindowTitle("Edit " + ToQString(record->path));
