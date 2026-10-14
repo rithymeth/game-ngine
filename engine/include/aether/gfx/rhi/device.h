@@ -88,6 +88,22 @@ struct PipelineDesc {
     u32 frame_constants_size_bytes = 0;
 };
 
+// Compute shader pipeline with fixed storage-buffer bindings at u0..u(N-1),
+// sampled textures at t0..t(N-1) in register space2, and constant buffers at
+// b0..b(N-1) in register space1. Storage buffers with a non-zero element
+// stride are structured UAVs; stride zero is a raw ByteAddressBuffer.
+// Compute sampled-texture bindings support texture loads; sampler bindings
+// are not part of this interface yet.
+struct ComputePipelineDesc {
+    std::string hlsl_source;
+    std::string entry = "CSMain";
+    // HLSL RWStructuredBuffer or RWByteAddressBuffer resources at u0..u(N-1).
+    u32 storage_buffer_count = 0;
+    u32 sampled_texture_count = 0;
+    // HLSL constant buffers at b0..b(N-1), space1.
+    u32 constant_buffer_count = 0;
+};
+
 // Backend-agnostic device/queue/submission layer, extended with a genuinely
 // unified pipeline-creation + draw-call path (see PipelineDesc and
 // ICommandList's BeginRenderPass/BindPipeline/SetPushConstants/Draw) for the
@@ -156,6 +172,16 @@ public:
     // returned handle isn't tied to that particular swap chain instance
     // beyond that.
     virtual PipelineHandle CreatePipeline(const PipelineDesc& desc, ISwapChain& swap_chain) = 0;
+    virtual ComputePipelineHandle CreateComputePipeline(const ComputePipelineDesc& desc) = 0;
+
+    // GPU-writable structured storage. Initial data is optional; null creates
+    // zero-initialized storage. Buffer updates are host-side and must not race
+    // with GPU use of the same range.
+    virtual BufferHandle CreateStorageBuffer(u64 size_bytes, u32 element_stride_bytes = 0,
+                                             const void* initial_data = nullptr) = 0;
+    virtual void UpdateStorageBuffer(BufferHandle buffer, const void* data, u64 size_bytes, u64 offset = 0) = 0;
+    virtual BufferHandle CreateConstantBuffer(u64 size_bytes, const void* initial_data = nullptr) = 0;
+    virtual void UpdateConstantBuffer(BufferHandle buffer, const void* data, u64 size_bytes, u64 offset = 0) = 0;
 
     // Real GPU vertex/index buffers (the "Unified Cross-API Renderer" follow-
     // up) — uploaded once from `data`, which must be non-null and paired with
@@ -177,14 +203,14 @@ public:
 
     // Frame constants (see PipelineDesc::frame_constants_size_bytes). Devices that
     // support them (D3D12 today) return true; the others leave the three calls
-    // inert (CreateConstantBuffer returns an invalid handle), so a renderer can
+    // inert (CreateFrameConstantBuffer returns an invalid handle), so a renderer can
     // fall back to constants of its own. A constant buffer is host-visible,
     // zero-filled when made, and updated in place; keep one per frame in flight
     // (the GPU may still be reading the last frame's) and update it only after
     // that frame's fence has passed.
     virtual bool SupportsFrameConstants() const { return false; }
-    virtual BufferHandle CreateConstantBuffer(u64 /*size_bytes*/) { return {}; }
-    virtual void UpdateConstantBuffer(BufferHandle /*buffer*/, const void* /*data*/, u64 /*size_bytes*/) {}
+    virtual BufferHandle CreateFrameConstantBuffer(u64 /*size_bytes*/) { return {}; }
+    virtual void UpdateFrameConstantBuffer(BufferHandle /*buffer*/, const void* /*data*/, u64 /*size_bytes*/) {}
 
     // Block-compressed textures (BC1, BC3, BC7: see CompressedTextureFormat), kept compressed on the GPU with their whole mip chain: a quarter
     // of the memory of RGBA8, and mips for the sampler. The handle indexes the same bindless table as CreateTexture. Devices that cannot (Vulkan
@@ -215,6 +241,11 @@ public:
     // on its fence, so the caller doesn't need an already-open command list
     // (unlike gfx::Texture, which this wraps on the D3D12 side).
     virtual SampledTextureHandle CreateTexture(u32 width, u32 height, const u8* rgba8_pixels) = 0;
+    // Single-channel 32-bit float texture for depth or scalar fields. The
+    // values are tightly packed, width * height, and sampled as
+    // Texture2D<float>. The returned handle can be bound to compute pipelines
+    // that declare a sampled texture at the corresponding slot.
+    virtual SampledTextureHandle CreateR32FloatTexture(u32 width, u32 height, const f32* values) = 0;
 
     virtual Backend GetBackend() const = 0;
 

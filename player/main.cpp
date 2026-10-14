@@ -31,6 +31,8 @@
 #include "aether/player/scene_renderer.h"
 
 #include "aether/core/log.h"
+#include "aether/core/version.h"
+#include "aether/debug/crash.h"
 #include "aether/gameplay/attribute_set.h"
 #include "aether/gfx/rhi/device.h"
 #include "aether/platform/window.h"
@@ -235,6 +237,17 @@ int main(int argc, char** argv) {
     Game game(package);
     const UserPaths user_paths = ResolveUserPaths(manifest.project, options.user_dir);
     game.SetUserPaths(user_paths);
+    CrashConfig crash_config;
+    crash_config.directory = (user_paths.root / "Crashes").string();
+    crash_config.app_name = manifest.project;
+    crash_config.build = kEngineVersion;
+    if (!CrashHandler::Install(crash_config, &error))
+        AETHER_LOG_WARN("Crash", "Crash reports are unavailable: %s", error.c_str());
+    else {
+        CrashHandler::SetContext("project", manifest.project);
+        CrashHandler::SetContext("configuration", cook::ConfigurationName(config));
+        CrashHandler::SetContext("scene", options.scene.empty() ? "startup" : std::filesystem::path(options.scene).filename().string());
+    }
     // The window can't change after it opens, so the settings' window values
     // are only recorded here, then used when it is created below.
     struct Chosen {
@@ -493,7 +506,10 @@ int main(int argc, char** argv) {
         if (s.script_errors + s.blueprint_errors > 0) return 3; // the game ran with errors
     } catch (const std::exception& e) {
         std::fprintf(stderr, "aether_player: %s\n", e.what());
+        if (CrashHandler::Installed())
+            CrashHandler::WriteReport(std::string("handled runtime exception: ") + e.what());
         return 1;
     }
+    CrashHandler::Uninstall();
     return 0;
 }

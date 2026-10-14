@@ -11,12 +11,14 @@ add_library(aether_editor_ui STATIC
     code_editor.cpp
     ../graph/graph_view.cpp
     ../graph/blueprint_graph.cpp
+    ../graph/blueprint_graph_ops.cpp
     ../graph/blueprint_document.cpp
     ../graph/blueprint_editor.cpp
     ../graph/material_document.cpp
     ../graph/material_graph.cpp
     ../graph/material_editor.cpp
     ../anim/anim_document.cpp
+    ../anim/blend_space_document.cpp
     ../anim/anim_graph_editor.cpp
     ../anim/blend_space_editor.cpp
     ../anim/anim_viewer.cpp

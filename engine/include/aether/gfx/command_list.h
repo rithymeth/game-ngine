@@ -2,6 +2,8 @@
 
 #include "aether/gfx/d3d12_common.h"
 
+#include <utility>
+
 namespace aether::gfx {
 
 class Device;
@@ -19,6 +21,8 @@ public:
 
     void Reset(ID3D12PipelineState* initial_state = nullptr);
     void Close();
+
+    ComPtr<ID3D12CommandAllocator> ReleaseAllocator() { return std::move(allocator_); }
 
     ID3D12GraphicsCommandList* Get() const { return list_.Get(); }
     ID3D12GraphicsCommandList* operator->() const { return list_.Get(); }
