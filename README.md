@@ -9,6 +9,19 @@ Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
 [`docs/ROADMAP.md`](docs/ROADMAP.md); all planning and design docs are listed in
 [`docs/README.md`](docs/README.md).
 
+## Start here
+
+New to Aether? Follow the [first playable build](docs/manual/01-getting-started.md)
+to build and play **Coin Run** from a clean Windows checkout. It covers the
+prerequisites, exact build commands, controls, and a first code change. The
+sample uses software rendering, so you do not need a graphics card.
+
+- [Aether manual](docs/manual/README.md) — projects, assets, scripting, input,
+  and packaging.
+- [Current platform priorities](docs/design/PLATFORM_SUPPORT_POLICY.md) — what
+  is a release target and what is only validated in CI.
+- [Qt editor status](editor/qt/README.md) — current workflow and limitations.
+
 ## Status: Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and scheduling; Luau scripting with debugger and code editor; Blueprints with compiler, VM, debugger and editor; colliders, layers, contact events, queries and character movement), Phase 10 up to its platform backends; editor window hookups and Win32/XInput input pending a Windows build. Phases 14–16 (the unified renderer; materials; animation with graphs, IK and editors) up to their GPU parts. Phase 17 done (audio: mixing, 3D, streaming, sound cues, components, device output and editors). Phase 18 done on the engine and portable-editor side (runtime game UI: widgets, controls, themes, layouts, binding, Widget Blueprints, animations, SDF text, world-space UI and the UI Designer). Phase 19 done on the engine and portable-editor side (VFX: emitters, rendering data, events and sub-emitters, components and Blueprint nodes, GPU compute codegen and the particle editor). Phase 20 done on the engine and portable-editor side (AI and navigation: navmesh baking and path queries; runtime obstacles, area volumes, off-mesh links and scene components; NavAgents on a Detour crowd with Blueprint and Luau nodes; Blackboards and Behavior Trees; AI perception; debug drawing, the Behavior Tree editor and debugger, and the Navigation panel). Phase 21 done on the engine and portable-editor side (world building: heightmap terrain, splatmaps and brushes, terrain rendering data, foliage, splines, world partition with cell streaming and a floating origin, and the terrain, foliage, spline and partition editors). Phase 22 done on the engine and portable-editor side (networking: a UDP transport with reliable, unreliable and sequenced channels; delta-snapshot replication with relevancy and a bandwidth budget; RPCs from C++, Blueprints and Luau; client-side prediction and snapshot interpolation; sessions with LAN discovery and lobbies; networked Play-in-Editor and a network profiler). Phase 23 done on the engine and portable-editor side (developer tools: console variables and the console; the profiler with Tracy forwarding and its panel; debug drawing and stat overlays; crash reports and the crash reporter; headless functional tests with JUnit reports). Phase 24 done (cross-platform: CI on Linux, macOS and Windows; a packaged Windows editor; a portable GLFW window and input layer; the Vulkan backend on Linux and macOS (MoltenVK) with headless rendering tests; the editor shell on Vulkan; ARM via sse2neon; platform plugins for Android and consoles). Phase 25 done (build, cook and package: .apak archives with LZ4/zstd and a virtual file system; the cooker; block-compressed textures; the player; packaging from the editor; patches, DLCs and encryption; ASTC, precompiled shaders and Blueprint bytecode, and the player drawing the scene, still to come). Phase 26 in progress (plugins; project templates; the player runs scripts, Blueprints and input; the editor extensibility API; the manual and a generated API reference; version control badges in the Content Browser; the 2D toolkit's sprites, tilemaps and pixel-perfect camera). Phase 27 in progress (the sequencer: level sequences, the sequence player, event, visibility, spawn, camera cut, audio and animation tracks, the sequence component, the player running sequences, the sequencer editor, the CineCamera, the movie-render loop, and Fade and Subsequence tracks). Phase 28 done on the engine, player and portable-editor side (save slots, world state, settings, the Blueprint and Luau save library, the Save Inspector, and the player's user folders, settings and key-binding migration; cloud saves, volumes and fullscreen from settings still to come). Phase 29 done except optional shaping (localization: `LocText`, string tables with CSV, language fallback and plural-aware messages, the gather tool and `.po` files, the editor dashboard and pseudo-localization, font fallback, localized assets, right-to-left layout). Phase 30 in progress (gameplay tags, attributes, gameplay effects, abilities, the Luau face, a manual chapter the editor's Gameplay Debugger, and genre kits: inventory and items, interaction, quests)
 
 ### Phase 1 — Foundation
@@ -383,6 +396,25 @@ side**, not by inspection:
   between backends all along, just never caught because nothing had
   compared its two backends' pixels directly before this round's screenshot
   tooling existed.
+
+### Follow-up: shared compute pipelines and storage buffers
+
+The shared RHI can create a compute pipeline from one HLSL entry point, create
+and update GPU-writable storage buffers, bind them, dispatch workgroups, and
+record compute-write barriers on D3D12 and Vulkan. It reuses the existing
+graphics/compute queue submission and fence APIs. The shared binding contract
+supports raw `RWByteAddressBuffer` and structured UAV buffers at `u0..uN`,
+with per-buffer stride metadata for structured elements. Constant buffers at
+`b0..bN` in register space 1 and sampled textures at `t0..tN` in register
+space 2 are supported for compute texture loads; sampler bindings are not part
+of the interface yet. The VFX RHI runtime creates its structured
+particle/liveness buffers and generated reset, emit and update pipelines, then
+records the passes with explicit barriers. GPU scene-depth collision accepts
+an externally rendered, single-channel R32-float depth texture; callers supply
+the matching dimensions and view-projection matrices in the frame constants.
+Particle GPU readback and rendering remain open. The application owns command
+submission and must fence before reusing the runtime's per-emitter constant
+buffers.
 
 ### Follow-up: Unified renderer — real vertex buffers + textures
 
@@ -5063,8 +5095,12 @@ shader later). Spec: [PHASE_SPECS.md, Phase 19](docs/design/PHASE_SPECS.md).
 - **Constants packed on the CPU** each frame, so parameters work without
   recompiling. Curves and gradients become lookup tables.
 - **A CPU-side driver** keeps the clock and spawn modules and hands the
-  GPU its spawn counts and frame constants. Dispatch comes with the
-  Windows renderer.
+  GPU its spawn counts and frame constants.
+- **An RHI runtime** creates the particle/dead/alive buffers and three
+  generated pipelines, and records initialization plus per-frame emit/update
+  work with barriers. Depth-collision emitters report that sampled-texture
+  bindings are not available in the shared compute RHI yet. Rendering and
+  readback remain separate work.
 
 **Verified**: 3 new tests.
 

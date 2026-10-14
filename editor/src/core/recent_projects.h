@@ -16,6 +16,7 @@ public:
     // Per-user config folder: %APPDATA%/Aether on Windows,
     // $XDG_CONFIG_HOME/aether or ~/.config/aether elsewhere.
     static std::filesystem::path DefaultConfigDir();
+    static std::filesystem::path DefaultCrashReportDir();
 
     // A missing or unreadable file just means an empty list.
     void Load(const std::filesystem::path& file);

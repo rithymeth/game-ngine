@@ -31,6 +31,10 @@ stdfs::path RecentProjects::DefaultConfigDir() {
     return stdfs::temp_directory_path() / "aether";
 }
 
+stdfs::path RecentProjects::DefaultCrashReportDir() {
+    return DefaultConfigDir() / "crashes";
+}
+
 void RecentProjects::Load(const stdfs::path& file) {
     entries_.clear();
     std::vector<u8> bytes;

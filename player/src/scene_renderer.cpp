@@ -520,7 +520,7 @@ struct SceneRenderer::Impl {
         if (device.SupportsFrameConstants()) {
             desc.hlsl_source = std::string("#define AETHER_FRAME_DATA 1\n") + kSceneShader;
             desc.frame_constants_size_bytes = sizeof(FrameData);
-            for (usize i = 0; i < kFrameBuffers; ++i) frame_buffers.push_back(device.CreateConstantBuffer(sizeof(FrameData)));
+            for (usize i = 0; i < kFrameBuffers; ++i) frame_buffers.push_back(device.CreateFrameConstantBuffer(sizeof(FrameData)));
         }
         desc.push_constant_size_bytes = sizeof(DrawConstants);
         desc.use_vertex_buffer = true;
@@ -1244,7 +1244,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
             // The sun, sky and nearby point and spot lights of this scene (the previous use of this slot's frame has finished).
             frame_buffer = renderer.frame_buffers[frame_index % renderer.frame_buffers.size()];
             const FrameData frame_data = BuildFrameData(world, guids, camera_position);
-            renderer.device.UpdateConstantBuffer(frame_buffer, &frame_data, sizeof(frame_data));
+            renderer.device.UpdateFrameConstantBuffer(frame_buffer, &frame_data, sizeof(frame_data));
         }
         commands.BindPipeline(renderer.pipeline);
         if (frame_buffer.IsValid()) commands.BindFrameConstants(frame_buffer);

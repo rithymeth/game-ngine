@@ -1,6 +1,7 @@
 #pragma once
 
 #include "aether/vfx/simulation.h"
+#include "aether/gfx/rhi/device.h"
 
 #include <memory>
 #include <string>
@@ -107,6 +108,56 @@ private:
     u64 total_ = 0;
     u32 frame_ = 0;
     u64 seed_;
+};
+
+// Owns the RHI resources for one generated GPU emitter. The caller owns the
+// compute command list and submission/fence policy so it can schedule several
+// emitters together. RecordInitialize must be recorded once before the first
+// RecordFrame. RecordFrame updates this instance's mapped constant buffers;
+// the caller must ensure the previous GPU use of this instance has completed.
+class GpuEmitterRuntime {
+public:
+    GpuEmitterRuntime() = default;
+    GpuEmitterRuntime(const GpuEmitterRuntime&) = delete;
+    GpuEmitterRuntime& operator=(const GpuEmitterRuntime&) = delete;
+
+    bool Initialize(gfx::rhi::IDevice& device, const Emitter& emitter, u64 seed = 1,
+                    std::string* error = nullptr);
+    void RecordInitialize(gfx::rhi::ICommandList& command_list);
+    void SetPose(const EmitterPose& pose) { driver_.SetPose(pose); }
+    void Teleport(const EmitterPose& pose) { driver_.Teleport(pose); }
+    void SetSceneDepthTexture(gfx::rhi::SampledTextureHandle texture, u32 width, u32 height) {
+        scene_depth_ = texture;
+        depth_width_ = width;
+        depth_height_ = height;
+    }
+    void ClearSceneDepthTexture() { scene_depth_ = {}; depth_width_ = depth_height_ = 0; }
+    GpuFrameConstants Update(f32 dt) { return driver_.Update(dt); }
+    bool RecordFrame(gfx::rhi::ICommandList& command_list, const GpuFrameConstants& frame);
+    bool SetField(const std::string& field, const ParameterValue& value, std::string* error = nullptr) {
+        return driver_.SetField(field, value, error);
+    }
+    void Stop() { driver_.Stop(); }
+    void Restart() { driver_.Restart(); }
+
+    const GeneratedParticleShader& Shader() const { return shader_; }
+    gfx::rhi::BufferHandle ParticleBuffer() const { return particles_; }
+    gfx::rhi::BufferHandle AliveListBuffer() const { return alive_list_; }
+    u32 MaxParticles() const { return max_particles_; }
+    bool IsInitialized() const { return initialized_; }
+
+private:
+    gfx::rhi::IDevice* device_ = nullptr;
+    GpuEmitterDriver driver_{Emitter{}};
+    GeneratedParticleShader shader_;
+    gfx::rhi::BufferHandle particles_, dead_list_, alive_list_;
+    gfx::rhi::BufferHandle frame_constants_, module_constants_;
+    gfx::rhi::SampledTextureHandle scene_depth_;
+    gfx::rhi::ComputePipelineHandle reset_pipeline_, emit_pipeline_, update_pipeline_;
+    u32 max_particles_ = 0;
+    u32 depth_width_ = 0, depth_height_ = 0;
+    bool initialized_ = false;
+    bool reset_recorded_ = false;
 };
 
 } // namespace aether::vfx

@@ -12,6 +12,7 @@
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPushButton>
 #include <QSaveFile>
 #include <QSignalBlocker>
@@ -300,6 +301,59 @@ private:
     float fps_ = 30.0f;
     bool snap_ = true;
     bool dragging_key_ = false;
+};
+
+struct AnimationEditorWidget::NotifyTrackWidget final : QWidget {
+    explicit NotifyTrackWidget(AnimationEditorWidget* owner) : QWidget(owner), owner_(owner) {
+        setMinimumHeight(74); setAccessibleName("Animation notify track");
+        setToolTip("Click to scrub, drag a notify to retime it, or right-click to add a notify");
+    }
+    void SetData(std::vector<ClipNotify>* notifies, float duration, float time, int selected) {
+        notifies_ = notifies; duration_ = std::max(duration, 0.05f); time_ = time; selected_ = selected; update();
+    }
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this); p.setRenderHint(QPainter::Antialiasing); p.fillRect(rect(), QColor("#111820"));
+        constexpr int left = 58; const int w = std::max(width()-left-12,1); auto x=[&](float t){return left+std::clamp(t/duration_,0.0f,1.0f)*w;};
+        p.setPen(QColor("#8493a1"));p.drawText(QRect(8,4,left-12,18),Qt::AlignLeft|Qt::AlignVCenter,"NOTIFY");
+        p.fillRect(QRect(left,24,w,34),QColor("#202b36"));p.setPen(QPen(QColor("#465767"),1));p.drawLine(left,41,left+w,41);
+        if(notifies_)for(int i=0;i<int(notifies_->size());++i){const auto& n=(*notifies_)[size_t(i)];const int nx=x(n.time);const QColor color=i==selected_?QColor("#ffc95e"):QColor("#72b8ff");
+            if(n.duration>0){p.fillRect(QRect(nx,28,std::max(2,int(n.duration/duration_*w)),26),QColor(color.red(),color.green(),color.blue(),55));}
+            QPolygonF marker;marker<<QPointF(nx,30)<<QPointF(nx+7,41)<<QPointF(nx,52)<<QPointF(nx-7,41);p.setBrush(color);p.setPen(QPen(QColor("#101720"),1));p.drawPolygon(marker);
+            p.setPen(QColor("#e0e8f1"));p.drawText(QPointF(nx+9,20),QString::fromStdString(n.name));}
+        p.setPen(QPen(QColor("#ff636f"),2));p.drawLine(x(time_),24,x(time_),58);
+        p.setPen(QColor("#71808f"));p.drawText(QRect(left,height()-15,w,14),Qt::AlignLeft,"Right-click to add · drag a marker to retime");
+    }
+    void mousePressEvent(QMouseEvent* e) override {
+        if(!notifies_)return; const float t=TimeAt(e->position().x());
+        if(e->button()==Qt::RightButton){owner_->ScrubTo(t);owner_->AddNotify();e->accept();return;}
+        if(e->button()!=Qt::LeftButton)return;
+        selected_=-1;float closest=12.0f;for(int i=0;i<int(notifies_->size());++i){const float d=std::abs(X((*notifies_)[size_t(i)].time)-float(e->position().x()));if(d<closest){closest=d;selected_=i;}}
+        if(selected_>=0){owner_->SelectNotify(selected_);dragging_=true;drag_undo_recorded_=false;}
+        else owner_->ScrubTo(t);
+        e->accept();update();
+    }
+    void mouseMoveEvent(QMouseEvent* e) override {
+        if(!dragging_||!(e->buttons()&Qt::LeftButton)||!notifies_||selected_<0||size_t(selected_)>=notifies_->size())return;
+        if(!drag_undo_recorded_){owner_->RecordUndo();drag_undo_recorded_=true;}
+        (*notifies_)[size_t(selected_)].time=TimeAt(e->position().x());owner_->dirty_=true;owner_->playhead_=(*notifies_)[size_t(selected_)].time;owner_->RefreshPlayhead();e->accept();
+    }
+    void mouseReleaseEvent(QMouseEvent*) override {dragging_=false;drag_undo_recorded_=false;}
+private:
+    float X(float t)const{return 58+std::clamp(t/duration_,0.0f,1.0f)*float(std::max(width()-70,1));}
+    float TimeAt(qreal px)const{return std::clamp((float(px)-58)/float(std::max(width()-70,1))*duration_,0.0f,duration_);}
+    AnimationEditorWidget* owner_;std::vector<ClipNotify>*notifies_=nullptr;float duration_=1,time_=0;int selected_=-1;bool dragging_=false,drag_undo_recorded_=false;
+};
+
+struct AnimationEditorWidget::CurveWidget final : QWidget {
+    explicit CurveWidget(QWidget* parent=nullptr):QWidget(parent){setMinimumHeight(100);setAccessibleName("Selected bone translation curves");}
+    void SetCurves(const std::array<std::vector<float>,3>& curves,const QString& label){curves_=curves;label_=label;update();}
+protected:
+    void paintEvent(QPaintEvent*)override{QPainter p(this);p.fillRect(rect(),QColor("#111820"));p.setRenderHint(QPainter::Antialiasing);p.setPen(QColor("#9aa7b3"));p.drawText(QRect(8,3,width()-16,17),Qt::AlignLeft,label_.isEmpty()?"Select a bone to inspect translation curves":label_+" · translation");
+      QRectF area(28,24,std::max(width()-40,1),std::max(height()-35,1));p.setPen(QPen(QColor("#33404c"),1));p.drawRect(area);for(int i=1;i<4;++i)p.drawLine(QPointF(area.left(),area.top()+area.height()*i/4),QPointF(area.right(),area.top()+area.height()*i/4));
+      float lo=0,hi=0;for(const auto& c:curves_)for(float v:c){lo=std::min(lo,v);hi=std::max(hi,v);}if(hi-lo<1e-4f){lo-=0.5f;hi+=0.5f;}
+      const std::array<QColor,3> colors{QColor("#53c99c"),QColor("#69a8ff"),QColor("#f6b953")};for(size_t c=0;c<3;++c){if(curves_[c].size()<2)continue;QPainterPath path;for(size_t i=0;i<curves_[c].size();++i){const float px=float(i)/(curves_[c].size()-1);const float py=(curves_[c][i]-lo)/(hi-lo);QPointF pt(area.left()+px*area.width(),area.bottom()-py*area.height());if(i==0)path.moveTo(pt);else path.lineTo(pt);}p.setPen(QPen(colors[c],1.8));p.drawPath(path);p.drawText(QPointF(4,40+int(c)*15),QString("%1").arg(QString("XYZ")[int(c)]));}}
+private:std::array<std::vector<float>,3>curves_;QString label_;
 };
 
 struct AnimationEditorWidget::PreviewWidget final : QWidget {
@@ -733,6 +787,8 @@ void AnimationEditorWidget::BuildUi() {
 
     timeline_ = new TimelineWidget(center);
     center_layout->addWidget(timeline_, 2);
+    notify_track_ = new NotifyTrackWidget(this);
+    center_layout->addWidget(notify_track_);
 
     auto* right = new QWidget(splitter);
     auto* right_layout = new QVBoxLayout(right);
@@ -769,6 +825,16 @@ void AnimationEditorWidget::BuildUi() {
     interpolation_combo_->setToolTip("Choose how this bone channel interpolates between keys");
     right_layout->addWidget(new QLabel("INTERPOLATION", right));
     right_layout->addWidget(interpolation_combo_);
+    right_layout->addWidget(new QLabel("NOTIFY EVENT", right));
+    notify_name_ = new QLineEdit(right); notify_name_->setPlaceholderText("Event name");
+    notify_time_ = MakeFloatBox(right, 0.0, 3600.0, 3); notify_time_->setSuffix(" s");
+    notify_duration_ = MakeFloatBox(right, 0.0, 3600.0, 3); notify_duration_->setSuffix(" s");
+    right_layout->addWidget(notify_name_);
+    auto* notify_form = new QFormLayout; notify_form->addRow("Time", notify_time_); notify_form->addRow("Window", notify_duration_); right_layout->addLayout(notify_form);
+    auto* notify_buttons = new QHBoxLayout; auto* add_notify = new QPushButton("Add at Playhead", right); remove_notify_button_ = new QPushButton("Remove", right);
+    notify_buttons->addWidget(add_notify); notify_buttons->addWidget(remove_notify_button_); right_layout->addLayout(notify_buttons);
+    remove_notify_button_->setEnabled(false); notify_name_->setEnabled(false); notify_time_->setEnabled(false); notify_duration_->setEnabled(false);
+    curve_ = new CurveWidget(right); right_layout->addWidget(curve_);
     add_key_button_ = new QPushButton("◆  Add / Update Key", right);
     add_key_button_->setToolTip("Record this bone's transform at the playhead");
     delete_key_button_ = new QPushButton("Delete Selected Key", right);
@@ -868,6 +934,12 @@ void AnimationEditorWidget::BuildUi() {
     };
     timeline_->move_key = [this](int path, int key, float time) { MoveSelectedKey(path, key, time); };
     timeline_->end_key_drag = [this] { recording_key_drag_ = false; };
+    notify_track_->SetData(&notifies_, 1.0f, playhead_, selected_notify_);
+    QObject::connect(add_notify, &QPushButton::clicked, this, [this] { AddNotify(); });
+    QObject::connect(remove_notify_button_, &QPushButton::clicked, this, [this] { RemoveNotify(); });
+    QObject::connect(notify_name_, &QLineEdit::editingFinished, this, [this] { CommitNotify(); });
+    QObject::connect(notify_time_, &QDoubleSpinBox::editingFinished, this, [this] { CommitNotify(); });
+    QObject::connect(notify_duration_, &QDoubleSpinBox::editingFinished, this, [this] { CommitNotify(); });
     QObject::connect(play_button_, &QPushButton::clicked, this, [this] {
         playing_ = !playing_;
         play_button_->setText(playing_ ? "Ⅱ Pause" : "▶ Play");
@@ -918,6 +990,7 @@ bool AnimationEditorWidget::OpenModel(const std::filesystem::path& path, bool co
     clip_file_path_.clear();
     undo_.clear();
     redo_.clear();
+    notifies_.clear(); selected_notify_ = -1;
     dirty_ = false;
     animation_index_ = scene_.animations.empty() ? -1 : 0;
     selected_node_ = -1;
@@ -949,6 +1022,7 @@ void AnimationEditorWidget::SelectAnimation(int index) {
     }
     animation_index_ = index;
     clip_file_path_.clear();
+    notifies_.clear(); selected_notify_ = -1;
     dirty_ = false;
     undo_.clear();
     redo_.clear();
@@ -969,6 +1043,7 @@ void AnimationEditorWidget::CreateAnimation() {
     scene_.animations.push_back(std::move(animation));
     animation_index_ = static_cast<int>(scene_.animations.size()) - 1;
     clip_file_path_.clear();
+    notifies_.clear(); selected_notify_ = -1;
     dirty_ = true;
     undo_.clear();
     redo_.clear();
@@ -1055,9 +1130,55 @@ void AnimationEditorWidget::RefreshPlayhead(bool update_controls) {
 void AnimationEditorWidget::RefreshTimeline() {
     timeline_->SetData(ActiveAnimation(), selected_node_, selected_path_, selected_key_, playhead_,
                        static_cast<float>(fps_spin_->value()), snapping_);
+    const GltfAnimation* clip = ActiveAnimation();
+    notify_track_->SetData(&notifies_, clip ? clip->duration : 1.0f, playhead_, selected_notify_);
     delete_key_button_->setEnabled(ActiveAnimation() && selected_node_ >= 0 && selected_key_ >= 0);
+    remove_notify_button_->setEnabled(clip && selected_notify_ >= 0 && static_cast<usize>(selected_notify_) < notifies_.size());
+    notify_name_->setEnabled(clip && selected_notify_ >= 0 && static_cast<usize>(selected_notify_) < notifies_.size());
+    notify_time_->setEnabled(clip && selected_notify_ >= 0 && static_cast<usize>(selected_notify_) < notifies_.size());
+    notify_duration_->setEnabled(clip && selected_notify_ >= 0 && static_cast<usize>(selected_notify_) < notifies_.size());
     undo_button_->setEnabled(!undo_.empty());
     redo_button_->setEnabled(!redo_.empty());
+    RefreshCurve();
+}
+
+void AnimationEditorWidget::RefreshCurve() {
+    std::array<std::vector<float>,3> curves;
+    const GltfAnimation* clip=ActiveAnimation();
+    if(clip&&selected_node_>=0&&static_cast<usize>(selected_node_)<scene_.nodes.size()){
+      constexpr int samples=64;for(auto& c:curves)c.reserve(samples);
+      for(int i=0;i<samples;++i){aether::assets::GltfAnimationPose pose;const float time=clip->duration*float(i)/float(samples-1);aether::assets::EvaluateAnimationPose(scene_,*clip,time,pose);const auto& t=pose.animated_nodes[static_cast<usize>(selected_node_)].translation;curves[0].push_back(t.x);curves[1].push_back(t.y);curves[2].push_back(t.z);}
+    }
+    curve_->SetCurves(curves,selected_node_>=0?QString::fromStdString(NodeName(scene_,selected_node_)):QString());
+}
+
+void AnimationEditorWidget::SelectNotify(int index) {
+    selected_notify_ = index;
+    if(index>=0&&static_cast<usize>(index)<notifies_.size()){
+        const auto& n=notifies_[static_cast<usize>(index)];const QSignalBlocker b1(notify_name_),b2(notify_time_),b3(notify_duration_);
+        notify_name_->setText(QString::fromStdString(n.name));notify_time_->setValue(n.time);notify_duration_->setValue(n.duration);
+    }
+    RefreshTimeline();
+}
+
+void AnimationEditorWidget::AddNotify() {
+    GltfAnimation* clip=ActiveAnimation();if(!clip)return;
+    RecordUndo();const float duration=clip->duration;
+    notifies_.push_back({"Notify",std::clamp(playhead_,0.0f,duration),0.0f});
+    SelectNotify(static_cast<int>(notifies_.size())-1);dirty_=true;clip_status_->setText("Notify added · clip has unsaved changes.");
+}
+
+void AnimationEditorWidget::CommitNotify() {
+    if(selected_notify_<0||static_cast<usize>(selected_notify_)>=notifies_.size())return;
+    auto& n=notifies_[static_cast<usize>(selected_notify_)];const std::string name=notify_name_->text().trimmed().toStdString();
+    const float time=static_cast<float>(notify_time_->value()),duration=static_cast<float>(notify_duration_->value());
+    if(name.empty()||(name==n.name&&std::abs(time-n.time)<0.0005f&&std::abs(duration-n.duration)<0.0005f))return;
+    RecordUndo();n.name=name;n.time=time;n.duration=duration;dirty_=true;RefreshTimeline();clip_status_->setText("Notify updated · clip has unsaved changes.");
+}
+
+void AnimationEditorWidget::RemoveNotify() {
+    if(selected_notify_<0||static_cast<usize>(selected_notify_)>=notifies_.size())return;
+    RecordUndo();notifies_.erase(notifies_.begin()+selected_notify_);selected_notify_=-1;dirty_=true;RefreshTimeline();clip_status_->setText("Notify removed · clip has unsaved changes.");
 }
 
 void AnimationEditorWidget::RefreshPreview() {
@@ -1258,6 +1379,10 @@ void AnimationEditorWidget::SetClipDuration() {
     }
     RecordUndo();
     clip->duration = safe_duration;
+    for (auto& notify : notifies_) {
+        notify.time = std::clamp(notify.time, 0.0f, safe_duration);
+        notify.duration = std::clamp(notify.duration, 0.0f, safe_duration - notify.time);
+    }
     dirty_ = true;
     RefreshPlayhead();
 }
@@ -1265,7 +1390,7 @@ void AnimationEditorWidget::SetClipDuration() {
 void AnimationEditorWidget::RecordUndo() {
     const GltfAnimation* clip = ActiveAnimation();
     if (!clip) return;
-    undo_.push_back(*clip);
+    undo_.push_back({*clip, notifies_});
     if (undo_.size() > 100) undo_.erase(undo_.begin());
     redo_.clear();
     RefreshTimeline();
@@ -1274,8 +1399,9 @@ void AnimationEditorWidget::RecordUndo() {
 bool AnimationEditorWidget::Undo() {
     GltfAnimation* clip = ActiveAnimation();
     if (!clip || undo_.empty()) return false;
-    redo_.push_back(*clip);
-    *clip = std::move(undo_.back());
+    redo_.push_back({*clip, notifies_});
+    *clip = std::move(undo_.back().animation);
+    notifies_ = std::move(undo_.back().notifies);
     undo_.pop_back();
     dirty_ = true;
     selected_key_ = -1;
@@ -1286,8 +1412,9 @@ bool AnimationEditorWidget::Undo() {
 bool AnimationEditorWidget::Redo() {
     GltfAnimation* clip = ActiveAnimation();
     if (!clip || redo_.empty()) return false;
-    undo_.push_back(*clip);
-    *clip = std::move(redo_.back());
+    undo_.push_back({*clip, notifies_});
+    *clip = std::move(redo_.back().animation);
+    notifies_ = std::move(redo_.back().notifies);
     redo_.pop_back();
     dirty_ = true;
     selected_key_ = -1;
@@ -1359,6 +1486,15 @@ bool AnimationEditorWidget::OpenClipFile(const std::filesystem::path& path, bool
             clip.duration = std::max(clip.duration, channel.times.empty() ? 0.0f : channel.times.back());
             clip.channels.push_back(std::move(channel));
         }
+        if (document.contains("notifies") && document["notifies"].is_array()) {
+            for (const json& item : document["notifies"]) {
+                ClipNotify notify;
+                notify.name = item.value("name", std::string("Notify"));
+                notify.time = std::clamp(item.value("time", 0.0f), 0.0f, clip.duration);
+                notify.duration = std::clamp(item.value("duration", 0.0f), 0.0f, clip.duration - notify.time);
+                notifies_.push_back(std::move(notify));
+            }
+        }
         const int source_index = document.value("source_animation", -1);
         if (source_index >= 0 && static_cast<usize>(source_index) < scene_.animations.size()) {
             scene_.animations[static_cast<usize>(source_index)] = std::move(clip);
@@ -1411,12 +1547,16 @@ bool AnimationEditorWidget::SaveClip(bool save_as) {
                 {"interpolation", channel.interpolation == GltfAnimationInterpolation::Step ? "STEP" : "LINEAR"},
                 {"times", channel.times}, {"values", channel.values}});
         }
+        json notifies = json::array();
+        for (const ClipNotify& notify : notifies_)
+            notifies.push_back({{"name", notify.name}, {"time", notify.time}, {"duration", notify.duration}});
         json document = {
             {"format", "AetherAnimationClip"}, {"version", 1},
             {"source_model", relative_model.generic_string()},
             {"source_animation", animation_index_ < static_cast<int>(scene_.animations.size())
                 ? animation_index_ : -1},
-            {"animation", {{"name", clip->name}, {"duration", clip->duration}, {"channels", channels}}}
+            {"animation", {{"name", clip->name}, {"duration", clip->duration}, {"channels", channels}}},
+            {"notifies", notifies}
         };
         QSaveFile file(QString::fromStdWString(path.wstring()));
         if (!file.open(QIODevice::WriteOnly)) throw std::runtime_error(file.errorString().toStdString());

@@ -193,16 +193,6 @@ bool Disconnect(bp::Graph& graph, const bp::Link& link) {
     return graph.links.size() != before;
 }
 
-void DeleteNodes(bp::Graph& graph, const std::vector<NodeId>& nodes) {
-    const std::set<NodeId> doomed(nodes.begin(), nodes.end());
-    graph.nodes.erase(std::remove_if(graph.nodes.begin(), graph.nodes.end(),
-                                     [&](const bp::Node& n) { return doomed.count(n.id) != 0; }),
-                      graph.nodes.end());
-    graph.links.erase(std::remove_if(graph.links.begin(), graph.links.end(),
-                                     [&](const bp::Link& l) { return doomed.count(l.from.node) || doomed.count(l.to.node); }),
-                      graph.links.end());
-}
-
 std::vector<std::string> ApplyGraphEdits(const bp::Blueprint& blueprint, bp::Graph& graph, const GraphViewResult& edits) {
     std::vector<std::string> errors;
     for (const auto& [id, pos] : edits.moved) {

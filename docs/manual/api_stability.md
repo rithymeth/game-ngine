@@ -15,6 +15,15 @@ header can differ from its module with a comment line near the top:
 // @stability: stable
 ```
 
+## Current compatibility status
+
+At engine version 0.27.6, all public modules are marked **experimental**; no
+public C++ API currently carries a stability guarantee. The annotation checker
+confirms that public modules and header overrides have valid labels. It does
+not compare C++ declarations or binary ABI against a previous release. Those
+compatibility checks and the decision to promote selected APIs belong to the
+Core API 1.0 freeze; do not treat the labels alone as proof of compatibility.
+
 `tools/check_api_stability.py` (also a test in the suite) checks that every module with public headers has a
 level, and that every override names a real one. `--table` prints how many headers each module has at each level.
 Stable headers are frozen: [`docs/design/api_frozen.txt`](../design/api_frozen.txt) records the names each one
