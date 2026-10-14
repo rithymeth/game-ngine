@@ -203,7 +203,7 @@ when advisory gates become required.
 | **48.3** | *(first freeze done: 27 headers of `engine/` math, core, memory, ecs (entity, world, component), reflection and pak are `stable`; `tools/check_api_stability.py` fails when a name disappears from one, baseline in `docs/design/api_frozen.txt`, accepted removals in `docs/design/api_removed.txt`. The name scan is coarse, it sees removals and renames but not changed signatures; later freezes are per-module decisions. `samples/frozen_api_game` is a headless game written only against stable headers, `--consumer` fails CI if a game names an unfrozen header, a stable header may not include an experimental one (`ecs/archetype.h` became `internal` for this), and `tests/check_api_freeze.py` proves each check fails for the right reason.)* API freeze: promote the stable annotations and block removals in CI. | 37.3 |
 | **48.4** | Three sample games (the existing coin run and gem hop, plus one new). | - |
 | **48.5** | Release builds with checksums and signing (extends the release job). *Signing needs certificates: the user's decision.* | - |
-| **48.6** | Release notes, an upgrade guide and the long-term-support policy. | - |
+| **48.6** | *(started: `docs/releases/NEXT.md` drafts the notes since v0.27.6, `docs/manual/13-upgrading.md` is the upgrade guide, and `docs/manual/support_policy.md` is a proposal for the support policy, waiting on the maintainer's decisions)* Release notes, an upgrade guide and the long-term-support policy. | - |
 | **48.7** | Tag a release candidate and run the gate. | all |
 
 ## What this container can and can't do
