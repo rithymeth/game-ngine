@@ -1,6 +1,9 @@
 #include "kit_tools.h"
 
 #include "project_host.h"
+#include "editor_tools.h"
+#include "core/commands.h"
+#include "aether/platform/filesystem.h"
 
 #include "aether/audio/cue.h"
 #include "aether/blueprint/graph.h"
@@ -35,6 +38,111 @@ namespace aether::mcp {
 namespace {
 
 using namespace detail;
+
+struct FileState {
+    bool exists = false;
+    std::vector<u8> bytes;
+};
+
+FileState CaptureFile(const fs::path& path) {
+    FileState state;
+    std::error_code ec;
+    state.exists = fs::is_regular_file(path, ec);
+    if (ec) throw ToolError("Could not inspect " + path.string() + ": " + ec.message());
+    if (state.exists && !aether::fs::ReadFileBytes(path.string(), state.bytes)) {
+        throw ToolError("Could not read " + path.string());
+    }
+    return state;
+}
+
+void RestoreFile(const fs::path& path, const FileState& state) {
+    if (state.exists) {
+        const void* data = state.bytes.empty() ? "" : state.bytes.data();
+        if (!aether::fs::WriteFileAtomic(path.string(), data, state.bytes.size())) {
+            throw ToolError("Could not restore " + path.string());
+        }
+        return;
+    }
+    std::error_code ec;
+    fs::remove(path, ec);
+    if (ec) throw ToolError("Could not remove " + path.string() + ": " + ec.message());
+}
+
+class PutKitCommand final : public editor::ICommand {
+public:
+    PutKitCommand(std::shared_ptr<AssetHost> host, fs::path project_file, fs::path file,
+                  FileState before_source, FileState before_meta, std::string after_text)
+        : host_(std::move(host)), project_file_(std::move(project_file)), file_(std::move(file)),
+          before_source_(std::move(before_source)), before_meta_(std::move(before_meta)), after_text_(std::move(after_text)) {
+        after_source_.exists = true;
+        after_source_.bytes.assign(after_text_.begin(), after_text_.end());
+    }
+
+    void Do(editor::CommandContext&) override {
+        RequireSameProject();
+        if (!executed_) {
+            try {
+                WriteSource();
+                host_->project->database->Scan();
+                after_meta_ = CaptureFile(MetaFile());
+                if (!after_meta_.exists) throw ToolError("Asset scan did not create metadata for " + file_.string());
+                executed_ = true;
+            } catch (...) {
+                RestoreFile(file_, before_source_);
+                RestoreFile(MetaFile(), before_meta_);
+                host_->project->database->Scan();
+                throw;
+            }
+            return;
+        }
+        Apply(after_source_, after_meta_, before_source_, before_meta_);
+    }
+
+    void Undo(editor::CommandContext&) override {
+        RequireSameProject();
+        Apply(before_source_, before_meta_, after_source_, after_meta_);
+    }
+
+    std::string Label() const override { return "Write Kit Definition"; }
+    usize MemoryBytes() const override {
+        return sizeof(*this) + before_source_.bytes.size() + before_meta_.bytes.size() + after_text_.size() + after_meta_.bytes.size();
+    }
+
+private:
+    fs::path MetaFile() const { return fs::path(file_.string() + assets::AssetMeta::kExtension); }
+    void RequireSameProject() const {
+        if (!host_->project || host_->project->paths.file.lexically_normal() != project_file_.lexically_normal()) {
+            throw ToolError("Open the project that owns this kit definition before undoing or redoing this action");
+        }
+    }
+    void WriteSource() const {
+        if (!aether::fs::WriteFileAtomic(file_.string(), after_text_.data(), after_text_.size())) {
+            throw ToolError("Could not write " + file_.string());
+        }
+    }
+    void Apply(const FileState& source, const FileState& meta, const FileState& rollback_source, const FileState& rollback_meta) {
+        try {
+            RestoreFile(file_, source);
+            RestoreFile(MetaFile(), meta);
+            host_->project->database->Scan();
+        } catch (...) {
+            RestoreFile(file_, rollback_source);
+            RestoreFile(MetaFile(), rollback_meta);
+            host_->project->database->Scan();
+            throw;
+        }
+    }
+
+    std::shared_ptr<AssetHost> host_;
+    fs::path project_file_;
+    fs::path file_;
+    FileState before_source_;
+    FileState before_meta_;
+    std::string after_text_;
+    FileState after_source_;
+    FileState after_meta_;
+    bool executed_ = false;
+};
 
 // One kind of kit definition: its file type, a blank one to learn the shape from, and the kit's own
 // parser and validator (the ones the game loads it with).
@@ -482,7 +590,7 @@ std::vector<SceneComponent> CollectSceneComponents(OpenProject& p, const std::st
 
 } // namespace
 
-void RegisterKitTools(McpServer& server, std::shared_ptr<detail::AssetHost> host) {
+void RegisterKitTools(McpServer& server, std::shared_ptr<detail::AssetHost> host, EditorSession& session) {
     server.AddTool({"kit_types",
                     "The gameplay-kit definition types: file extension, what each is, and how many the open project has. Use kit_schema for the "
                     "shape of one.",
@@ -577,8 +685,9 @@ void RegisterKitTools(McpServer& server, std::shared_ptr<detail::AssetHost> host
                  {"definition", {{"description", "The definition: a JSON object, or its text"}}},
                  {"overwrite", {{"type", "boolean"}, {"description", "Replace an existing file (default false)"}}}},
                 {"type", "path", "definition"}),
-         [host](const Json& args) -> Json {
+         [host, &session](const Json& args) -> Json {
              OpenProject& p = host->Require();
+             if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before writing a kit definition");
              const KitType& t = RequireType(RequireString(args, "type"));
              std::string rel = CleanRelative(RequireString(args, "path"));
              if (rel.empty()) throw ToolError("\"path\" must name a file under Content/");
@@ -589,15 +698,14 @@ void RegisterKitTools(McpServer& server, std::shared_ptr<detail::AssetHost> host
 
              const fs::path file = p.paths.content / rel;
              std::error_code ec;
-             if (fs::exists(file, ec) && !OptBool(args, "overwrite", false)) throw ToolError(rel + " already exists (pass overwrite)");
-             fs::create_directories(file.parent_path(), ec);
-             {
-                 std::ofstream out(file, std::ios::binary | std::ios::trunc);
-                 const std::string text = canonical.dump(2) + "\n";
-                 out.write(text.data(), static_cast<std::streamsize>(text.size()));
-                 if (!out) throw ToolError("Could not write " + rel);
-             }
-             p.database->Scan();
+             const FileState before_source = CaptureFile(file);
+             if (before_source.exists && !OptBool(args, "overwrite", false)) throw ToolError(rel + " already exists (pass overwrite)");
+             const FileState before_meta = CaptureFile(fs::path(file.string() + assets::AssetMeta::kExtension));
+             const std::string text = canonical.dump(2) + "\n";
+             auto command = std::make_unique<PutKitCommand>(host, p.paths.file, file, before_source, before_meta, text);
+             command->SetAttribution("agent");
+             editor::CommandContext context = session.Context();
+             session.stack.Execute(context, std::move(command));
              Json out = {{"type", t.name}, {"path", rel}, {"name", NameOf(canonical)}};
              if (const AssetRecord* r = p.database->FindByPath(rel)) out["guid"] = assets::ToString(r->guid);
              return out;
