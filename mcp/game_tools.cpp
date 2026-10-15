@@ -147,7 +147,8 @@ ComponentId RequireComponent(const std::string& name) {
     return id;
 }
 
-Json EntityJson(const World& world, Entity e) {
+Json EntityJson(Game& game, Entity e) {
+    World& world = game.GetWorld();
     Json components = Json::object();
     for (ComponentId id = 0; id < RegisteredComponentCount(); ++id) {
         if (!world.HasComponentRaw(e, id)) continue;
@@ -155,7 +156,26 @@ Json EntityJson(const World& world, Entity e) {
         components[ComponentName(id)] = info.reflected != nullptr ? reflect::ToJson(*info.reflected, world.GetComponentRaw(e, id))
                                                                   : Json("<unreflected component>");
     }
-    return {{"entity", EntityKey(world, e)}, {"components", components}};
+    Json tags = Json::array();
+    if (const Tags* entity_tags = world.GetComponent<Tags>(e)) {
+        for (const std::string& tag : entity_tags->names) tags.push_back(tag);
+    }
+    const EntityName* entity_name = world.GetComponent<EntityName>(e);
+    const Parent* parent_component = world.GetComponent<Parent>(e);
+    const bool has_parent = parent_component != nullptr && !parent_component->parent.IsNull();
+    const Active* active_component = world.GetComponent<Active>(e);
+    const Vec3 world_position = WorldPosition(world, game.Guids(), e);
+    const Json position = world.HasComponent<Transform>(e) && std::isfinite(world_position.x) && std::isfinite(world_position.y) &&
+                                  std::isfinite(world_position.z)
+                              ? Json::array({world_position.x, world_position.y, world_position.z})
+                              : Json(nullptr);
+    Json result = {{"entity", EntityKey(world, e)}, {"entity_index", e.index}, {"entity_generation", e.generation},
+                   {"components", components}, {"tags", tags}, {"world_position", position},
+                   {"active", active_component == nullptr || active_component->active},
+                   {"active_in_hierarchy", IsActiveInHierarchy(world, game.Guids(), e)},
+                   {"parent", has_parent ? Json(ToString(parent_component->parent)) : Json(nullptr)}};
+    if (entity_name != nullptr) result["name"] = entity_name->value;
+    return result;
 }
 
 std::string Base64(const std::vector<u8>& bytes) {
@@ -361,7 +381,7 @@ void RegisterGameTools(McpServer& server) {
                  game.GetLifecycle().Destroy(e); // a half-made entity is not left behind
                  throw;
              }
-             Json out = EntityJson(world, e);
+             Json out = EntityJson(game, e);
              if (!warnings.empty()) out["warnings"] = warnings;
              return out;
          }});
@@ -382,7 +402,7 @@ void RegisterGameTools(McpServer& server) {
              if (!had) world.AddComponentRaw(e, id);
              std::vector<std::string> warnings;
              if (args.contains("values")) warnings = ApplyComponentValues(world, e, id, args["values"]);
-             Json out = EntityJson(world, e);
+             Json out = EntityJson(game, e);
              out["added"] = !had;
              if (!warnings.empty()) out["warnings"] = warnings;
              return out;
@@ -399,7 +419,7 @@ void RegisterGameTools(McpServer& server) {
              if (!world.HasComponentRaw(e, id)) throw ToolError("Entity has no " + ComponentName(id));
              if (id == GetComponentId<Transform>() || id == GetComponentId<IdComponent>()) throw ToolError(ComponentName(id) + " cannot be removed from a running entity");
              world.RemoveComponentRaw(e, id);
-             return EntityJson(world, e);
+             return EntityJson(game, e);
          }});
 
     server.AddTool(
@@ -1090,7 +1110,7 @@ void RegisterGameTools(McpServer& server) {
                     Schema({{"entity", {{"type", "string"}, {"description", "GUID or #index[:generation] from game_list_entities"}}}}, {"entity"}),
                     [host](const Json& args) -> Json {
                         Game& game = host->Require();
-                        return EntityJson(game.GetWorld(), RequireEntity(game, args));
+                        return EntityJson(game, RequireEntity(game, args));
                     }});
 
     server.AddTool(
@@ -1114,7 +1134,7 @@ void RegisterGameTools(McpServer& server) {
              if (!reflect::FromJson(*info.reflected, data, merged, &report)) {
                  throw ToolError("Value does not match the shape of " + ComponentName(id));
              }
-             Json out = EntityJson(world, e);
+             Json out = EntityJson(game, e);
              if (!report.warnings.empty()) out["warnings"] = report.warnings;
              return out;
          }});
