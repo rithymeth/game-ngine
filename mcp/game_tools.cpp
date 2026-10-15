@@ -3002,6 +3002,84 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_set_physics2d_bodies_many",
+         "Apply partial Rigidbody2D settings to up to 64 unique entities. Supports body type, mass, gravity scale and linear damping; validates every body before applying any change and preserves unspecified fields.",
+         Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", {{"type", "string"}}},
+                                                        {"type", {{"type", "string"}, {"enum", Json::array({"static", "kinematic", "dynamic"})}}},
+                                                        {"mass", {{"type", "number"}, {"minimum", 0.001}, {"maximum", 100000}}},
+                                                        {"gravity_scale", {{"type", "number"}}},
+                                                        {"linear_damping", {{"type", "number"}, {"minimum", 0}, {"maximum", 100}}}}},
+                                        {"required", Json::array({"entity"})}}}}}},
+                {"edits"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             if (game.Physics2D() == nullptr) throw ToolError("The loaded game has no 2D physics scene");
+             if (!args.contains("edits") || !args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be an array of 1 to 64 rigidbody edits");
+             }
+             World& world = game.GetWorld();
+             static const std::unordered_set<std::string> supported = {"entity", "type", "mass", "gravity_scale", "linear_damping"};
+             struct BodyEdit { Entity entity; sprite2d::Rigidbody2D body; };
+             std::vector<BodyEdit> edits;
+             edits.reserve(args["edits"].size());
+             for (const Json& raw : args["edits"]) {
+                 if (!raw.is_object() || !raw.contains("entity") || !raw["entity"].is_string() || raw["entity"].get<std::string>().empty()) {
+                     throw ToolError("Every rigidbody edit requires a non-empty entity handle");
+                 }
+                 for (auto it = raw.begin(); it != raw.end(); ++it) {
+                     if (!supported.contains(it.key())) throw ToolError("Unsupported Rigidbody2D field: " + it.key());
+                 }
+                 if (raw.size() == 1) throw ToolError("Provide at least one Rigidbody2D setting to update");
+                 const Entity entity = FindEntity(game, raw["entity"].get<std::string>());
+                 if (std::find_if(edits.begin(), edits.end(), [entity](const BodyEdit& edit) { return edit.entity == entity; }) != edits.end()) {
+                     throw ToolError("\"edits\" must not repeat an entity");
+                 }
+                 const sprite2d::Rigidbody2D* current = world.GetComponent<sprite2d::Rigidbody2D>(entity);
+                 if (current == nullptr) throw ToolError("Every entity must have a Rigidbody2D component");
+                 sprite2d::Rigidbody2D updated = *current;
+                 if (raw.contains("type")) {
+                     if (!raw["type"].is_string()) throw ToolError("\"type\" must be static, kinematic or dynamic");
+                     const std::string type = raw["type"].get<std::string>();
+                     if (type == "static") updated.type = sprite2d::BodyType2D::Static;
+                     else if (type == "kinematic") updated.type = sprite2d::BodyType2D::Kinematic;
+                     else if (type == "dynamic") updated.type = sprite2d::BodyType2D::Dynamic;
+                     else throw ToolError("\"type\" must be static, kinematic or dynamic");
+                 }
+                 if (raw.contains("mass")) {
+                     if (!raw["mass"].is_number()) throw ToolError("\"mass\" must be finite and between 0.001 and 100000");
+                     updated.mass = raw["mass"].get<f32>();
+                 }
+                 if (raw.contains("gravity_scale")) {
+                     if (!raw["gravity_scale"].is_number()) throw ToolError("\"gravity_scale\" must be finite");
+                     updated.gravity_scale = raw["gravity_scale"].get<f32>();
+                 }
+                 if (raw.contains("linear_damping")) {
+                     if (!raw["linear_damping"].is_number()) throw ToolError("\"linear_damping\" must be finite and between 0 and 100");
+                     updated.linear_damping = raw["linear_damping"].get<f32>();
+                 }
+                 if (!std::isfinite(updated.mass) || updated.mass < 0.001f || updated.mass > 100000.0f ||
+                     !std::isfinite(updated.gravity_scale) || !std::isfinite(updated.linear_damping) ||
+                     updated.linear_damping < 0.0f || updated.linear_damping > 100.0f ||
+                     (updated.type != sprite2d::BodyType2D::Static && updated.type != sprite2d::BodyType2D::Kinematic && updated.type != sprite2d::BodyType2D::Dynamic)) {
+                     throw ToolError("The resulting Rigidbody2D settings are invalid");
+                 }
+                 edits.push_back({entity, updated});
+             }
+             Json results = Json::array();
+             for (const BodyEdit& edit : edits) {
+                 *world.GetComponent<sprite2d::Rigidbody2D>(edit.entity) = edit.body;
+                 const char* type = edit.body.type == sprite2d::BodyType2D::Static ? "static" :
+                                    edit.body.type == sprite2d::BodyType2D::Kinematic ? "kinematic" : "dynamic";
+                 results.push_back({{"entity", EntityKey(world, edit.entity)}, {"type", type}, {"mass", edit.body.mass},
+                                    {"gravity_scale", edit.body.gravity_scale}, {"linear_damping", edit.body.linear_damping},
+                                    {"velocity", Json::array({edit.body.velocity.x, edit.body.velocity.y})}});
+             }
+             return {{"count", results.size()}, {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
         {"game_physics2d_settings",
          "Read gravity and solver settings for the loaded game's 2D physics scene.",
          Schema(Json::object()),
