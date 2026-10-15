@@ -423,6 +423,7 @@ saves and localization. The game has its own world, separate from the editor's.
 | `game_copy_component_many` | Copy all reflected values of one component from a source entity to up to 64 unique targets that already have it; protects game-managed IdComponent |
 | `game_reset_components_many` | Reset reflected fields of one component to defaults on up to 64 unique live entities, keeping the component attached and protecting game-managed IdComponent |
 | `game_set_component` / `game_destroy_entity` | Change the live world (not undoable; gone on reload) |
+| `game_destroy_entities_many` | Destroy up to 64 unique live roots through the lifecycle; reports roots and descendants destroyed, validates the whole selection first, and rejects ancestor/descendant overlap |
 | `game_unload` | Stop and unload |
 
 The plugin modules Audio, Navigation, Networking and Physics are linked into the server so manifests
