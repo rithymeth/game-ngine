@@ -2647,6 +2647,48 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_physics2d_state_many",
+         "Read platformer movement state for up to 64 live entities: whether each is grounded or touching a wall, its wall side, and its 2D rigidbody velocity when present.",
+         Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}}}, {"entities"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             sprite2d::Physics2D* physics = game.Physics2D();
+             if (physics == nullptr) throw ToolError("The loaded game has no 2D physics scene");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be an array of 1 to 64 entity handles");
+             }
+
+             World& world = game.GetWorld();
+             std::vector<Entity> requested;
+             requested.reserve(args["entities"].size());
+             Json results = Json::array();
+             for (const Json& handle : args["entities"]) {
+                 if (!handle.is_string() || handle.get<std::string>().empty()) {
+                     throw ToolError("Every \"entities\" entry must be a non-empty entity handle");
+                 }
+                 const Entity entity = FindEntity(game, handle.get<std::string>());
+                 if (std::find(requested.begin(), requested.end(), entity) != requested.end()) {
+                     throw ToolError("\"entities\" must not repeat an entity");
+                 }
+                 requested.push_back(entity);
+
+                 const sprite2d::Rigidbody2D* body = world.GetComponent<sprite2d::Rigidbody2D>(entity);
+                 const bool has_collider = world.GetComponent<sprite2d::Collider2D>(entity) != nullptr;
+                 const int wall_side = physics->WallSide(entity);
+                 Json result = {{"entity", EntityKey(world, entity)},
+                                {"has_rigidbody", body != nullptr},
+                                {"has_collider", has_collider},
+                                {"grounded", physics->IsGrounded(entity)},
+                                {"wall_side", wall_side},
+                                {"touching_wall", wall_side != 0}};
+                 if (body != nullptr) result["velocity"] = Json::array({body->velocity.x, body->velocity.y});
+                 else result["velocity"] = nullptr;
+                 results.push_back(std::move(result));
+             }
+             return {{"count", results.size()}, {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
         {"game_reparent_entities_many",
          "Set or clear the parent of up to 64 unique live entities as one batch. By default parent changes retain local transforms; set preserve_world=true to retain world poses by updating local transforms. The batch validates stable parent GUIDs and the complete resulting hierarchy, and rejects cycles, excessive depth, singular transforms, or unrepresentable shear before applying.",
          Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
