@@ -364,6 +364,39 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                     [&s](const Json& args) -> Json { return EntityJson(s, RequireEntity(s, args)); }});
 
     server.AddTool(
+        {"get_entities_many",
+         "Get every reflected component value for 1–64 unique scene entities in one response. The complete GUID selection is validated before any entity data is returned.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique scene entity GUIDs, returned in this order"}}}},
+                {"entities"}),
+         [&s](const Json& args) -> Json {
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             std::vector<std::pair<EntityGuid, Entity>> entities;
+             entities.reserve(args["entities"].size());
+             std::set<EntityGuid> seen;
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 const std::string guid_text = value.get<std::string>();
+                 EntityGuid guid;
+                 if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid entity GUID: " + guid_text);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 entities.emplace_back(guid, entity);
+             }
+
+             Json results = Json::array();
+             for (const auto& [guid, entity] : entities) {
+                 Json result = EntityJson(s, entity);
+                 result["entity"] = ToString(guid);
+                 results.push_back(std::move(result));
+             }
+             return {{"count", results.size()}, {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
         {"create_entity",
          "Create an entity. `components` maps component names to (partial) field values, e.g. "
          "{\"Transform\": {\"position\": [1, 2, 3]}}. Optionally parent it to another entity. Undoable.",
