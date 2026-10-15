@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <exception>
 #include <functional>
+#include <limits>
 #include <map>
 #include <new>
 #include <optional>
@@ -332,7 +333,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                     }});
 
     server.AddTool({"list_entities",
-                    "List a page of scene entities (GUID, component names, parent GUID, effective collision layer index, and local active state). Optionally filter by component, exact entity name, direct parent or roots, layer index, local active value, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND. Results are ordered by entity index and include total match count and has_more.",
+                    "List a page of scene entities (GUID, entity index, component names, parent GUID, effective collision layer index, and local active state). Optionally filter by component, exact entity name, direct parent or roots, layer index, local active value, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND. Results are ordered by entity index and include total match count, has_more, and a continuation cursor. The cursor is not a scene snapshot; entities created in a reused index at or before it are skipped.",
                     Schema({{"component", {{"type", "string"}, {"description", "Only entities having this component"}}},
                             {"name", {{"type", "string"}, {"description", "Only entities whose name exactly matches"}}},
                             {"parent", kGuidProp},
@@ -343,6 +344,8 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                                          {"description", "Filter by the entity's local active value; missing Active defaults to true, and parent state is not composed"}}},
                             {"offset", {{"type", "integer"}, {"minimum", 0}, {"maximum", 1000000000},
                                          {"description", "Number of matching entities to skip (default 0)"}}},
+                            {"after_entity_index", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4294967295LL},
+                                                     {"description", "Return only entities with a greater entity index; pass the prior page's next_entity_index to continue"}}},
                             {"limit", {{"type", "integer"}, {"minimum", 1}, {"maximum", 1000},
                                         {"description", "Maximum entities to return (default 200)"}}},
                             {"tag", {{"type", "string"}, {"description", "Only entities with this exact case-sensitive tag (legacy single-tag filter)"}}},
@@ -413,6 +416,22 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                                 limit = static_cast<usize>(raw_limit);
                             }
                         }
+                        std::optional<u32> after_entity_index;
+                        if (args.contains("after_entity_index")) {
+                            if (!args["after_entity_index"].is_number_integer()) throw ToolError("\"after_entity_index\" must be an integer from 0 to 4294967295");
+                            if (args["after_entity_index"].is_number_unsigned()) {
+                                const u64 raw_index = args["after_entity_index"].get<u64>();
+                                if (raw_index > std::numeric_limits<u32>::max()) throw ToolError("\"after_entity_index\" must be an integer from 0 to 4294967295");
+                                after_entity_index = static_cast<u32>(raw_index);
+                            } else {
+                                const i64 raw_index = args["after_entity_index"].get<i64>();
+                                if (raw_index < 0 || static_cast<u64>(raw_index) > std::numeric_limits<u32>::max()) throw ToolError("\"after_entity_index\" must be an integer from 0 to 4294967295");
+                                after_entity_index = static_cast<u32>(raw_index);
+                            }
+                        }
+                        if (after_entity_index.has_value() && offset != 0) {
+                            throw ToolError("\"offset\" must be 0 when using \"after_entity_index\"");
+                        }
                         const std::string name_filter = args.contains("name") ? RequireString(args, "name") : std::string{};
                         const std::string tag_filter = args.contains("tag") ? RequireString(args, "tag") : std::string{};
                         auto ReadTagFilter = [&](const char* key) {
@@ -439,6 +458,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         Json out = Json::array();
                         usize total_matches = 0;
                         for (Entity e : AllEntities(s)) {
+                            if (after_entity_index.has_value() && e.index <= *after_entity_index) continue;
                             const Parent* parent = s.world.GetComponent<Parent>(e);
                             if (args.contains("parent") && (parent == nullptr || parent->parent != parent_filter)) continue;
                             if (roots_only && parent != nullptr && !parent->parent.IsNull()) continue;
@@ -470,13 +490,16 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                             if (match_index < offset || out.size() >= limit) continue;
                             const IdComponent* id = s.world.GetComponent<IdComponent>(e);
                             Json row = {{"entity", id ? ToString(id->guid) : ""}, {"components", ComponentNamesOf(s, e)},
+                                        {"entity_index", e.index},
                                         {"layer_index", entity_layer}, {"active", entity_active},
                                         {"has_active_override", active != nullptr}};
                             if (parent != nullptr && !parent->parent.IsNull()) row["parent"] = ToString(parent->parent);
                             out.push_back(std::move(row));
                         }
+                        const Json next_entity_index = out.empty() ? Json(nullptr) : out.back()["entity_index"];
                         return {{"count", out.size()}, {"total_matches", total_matches}, {"offset", offset},
-                                {"limit", limit}, {"has_more", total_matches > offset + out.size()}, {"entities", out}};
+                                {"limit", limit}, {"has_more", total_matches > offset + out.size()},
+                                {"next_entity_index", next_entity_index}, {"entities", out}};
                     }});
 
     server.AddTool({"get_entity", "Every component of one entity, as JSON.", Schema({{"entity", kGuidProp}}, {"entity"}),
