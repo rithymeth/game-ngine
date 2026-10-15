@@ -2385,6 +2385,71 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_reparent_entities_many",
+         "Set or clear the parent of up to 64 unique live entities as one batch. Parent changes retain local transforms (world poses may move), validate stable parent GUIDs and the complete resulting hierarchy, and reject cycles or excessive depth before applying.",
+         Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                              {"items", {{"type", "object"},
+                                          {"properties", {{"entity", {{"type", "string"}}}, {"parent", {{"type", "string"}}}}},
+                                          {"required", Json::array({"entity", "parent"})}}}}}},
+                {"edits"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be an array of 1 to 64 reparent edits");
+             }
+             struct ParentEdit { Entity entity; Entity parent; EntityGuid parent_guid; };
+             std::vector<ParentEdit> edits;
+             edits.reserve(args["edits"].size());
+             for (const Json& item : args["edits"]) {
+                 if (!item.is_object() || !item.contains("entity") || !item["entity"].is_string() || item["entity"].get<std::string>().empty()) {
+                     throw ToolError("Every \"edits\" entry must contain a non-empty string \"entity\"");
+                 }
+                 if (!item.contains("parent") || !item["parent"].is_string()) throw ToolError("Every \"parent\" must be a GUID string or an empty string for a root");
+                 const Entity entity = FindEntity(game, item["entity"].get<std::string>());
+                 if (std::find_if(edits.begin(), edits.end(), [entity](const ParentEdit& edit) { return edit.entity == entity; }) != edits.end()) {
+                     throw ToolError("\"edits\" must not repeat an entity");
+                 }
+                 Entity parent = kNullEntity;
+                 EntityGuid parent_guid{};
+                 const std::string parent_key = item["parent"].get<std::string>();
+                 if (!parent_key.empty()) {
+                     parent = FindEntity(game, parent_key);
+                     const IdComponent* id = world.GetComponent<IdComponent>(parent);
+                     if (id == nullptr || id->guid.IsNull() || game.Guids().Find(world, id->guid) != parent) {
+                         throw ToolError("New parent " + parent_key + " must have an indexed stable GUID");
+                     }
+                     parent_guid = id->guid;
+                 }
+                 edits.push_back({entity, parent, parent_guid});
+             }
+             for (const ParentEdit& edit : edits) {
+                 std::vector<Entity> visited{edit.entity};
+                 Entity current = edit.parent;
+                 for (int depth = 0; !current.IsNull(); ++depth) {
+                     if (depth >= kMaxHierarchyDepth) throw ToolError("Resulting hierarchy exceeds the supported depth");
+                     if (std::find(visited.begin(), visited.end(), current) != visited.end()) throw ToolError("Reparenting would create a hierarchy cycle");
+                     visited.push_back(current);
+                     const auto changed = std::find_if(edits.begin(), edits.end(), [current](const ParentEdit& candidate) { return candidate.entity == current; });
+                     current = changed != edits.end() ? changed->parent : GetParent(world, game.Guids(), current);
+                 }
+             }
+             Json results = Json::array();
+             for (const ParentEdit& edit : edits) {
+                 if (edit.parent.IsNull()) {
+                     if (world.GetComponent<Parent>(edit.entity) != nullptr) world.RemoveComponent<Parent>(edit.entity);
+                 } else if (Parent* component = world.GetComponent<Parent>(edit.entity)) {
+                     component->parent = edit.parent_guid;
+                 } else {
+                     world.AddComponent<Parent>(edit.entity, Parent{edit.parent_guid});
+                 }
+                 results.push_back({{"entity", EntityKey(world, edit.entity)},
+                                    {"parent", edit.parent.IsNull() ? Json(nullptr) : Json(EntityKey(world, edit.parent))}});
+             }
+             return {{"updated_count", results.size()}, {"results", results}};
+         }});
+
+    server.AddTool(
         {"game_set_component",
          "Change fields of a component on a running entity (partial update: only the fields named change). Not undoable; "
          "gone when the game is reloaded.",
