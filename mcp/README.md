@@ -410,7 +410,7 @@ saves and localization. The game has its own world, separate from the editor's.
 | `game_set_paused` | Freeze or resume the simulation |
 | `game_load_scene` | Switch to another cooked scene |
 | `game_systems` | The game's systems in execution order by phase (filled after the first step) |
-| `game_list_entities` / `game_get_entity` | Inspect the running world (filter by component or exact tag); each `game_list_entities` row returns GUID/index handle, optional name, local `active` state (true if absent), `active_in_hierarchy` (false when the entity or any ancestor is inactive), direct parent GUID or null, tags (empty array if none), and component names, with paging via `limit` (1-1000, default 200), `offset`, total count and `has_more` |
+| `game_list_entities` / `game_get_entity` | Inspect the running world (`game_list_entities` filters by component, exact tag, local `active` state, or effective `active_in_hierarchy` state); each row returns GUID/index handle, optional name, local `active` state (true if absent), `active_in_hierarchy` (false when the entity or any ancestor is inactive), direct parent GUID or null, tags (empty array if none), and component names, with paging via `limit` (1-1000, default 200), `offset`, total count and `has_more` |
 | `game_set_component` / `game_destroy_entity` | Change the live world (not undoable; gone on reload) |
 | `game_unload` | Stop and unload |
 
