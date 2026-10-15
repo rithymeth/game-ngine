@@ -2960,6 +2960,74 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_physics2d_bodies",
+         "Inspect the 2D physics bodies and colliders currently present in the loaded game, including their entity, local position, body settings and collider configuration. Results are stable-sorted by entity index and can be paged.",
+         Schema({{"limit", {{"type", "integer"}, {"minimum", 1}, {"maximum", 1000}, {"default", 200}}},
+                 {"offset", {{"type", "integer"}, {"minimum", 0}, {"default", 0}}}},
+                {}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             sprite2d::Physics2D* physics = game.Physics2D();
+             if (physics == nullptr) throw ToolError("The loaded game has no 2D physics scene");
+             auto read_size = [](const Json& value, const char* field, u64 fallback, u64 minimum, u64 maximum) {
+                 if (value.is_null()) return fallback;
+                 if (!value.is_number_integer()) throw ToolError(std::string("\"") + field + "\" must be a non-negative integer");
+                 u64 parsed = 0;
+                 if (value.is_number_unsigned()) parsed = value.get<u64>();
+                 else {
+                     const i64 signed_value = value.get<i64>();
+                     if (signed_value < 0) throw ToolError(std::string("\"") + field + "\" must be a non-negative integer");
+                     parsed = static_cast<u64>(signed_value);
+                 }
+                 if (parsed < minimum || parsed > maximum) throw ToolError(std::string("\"") + field + "\" is outside the supported range");
+                 return parsed;
+             };
+             const u64 limit = args.contains("limit") ? read_size(args["limit"], "limit", 200, 1, 1000) : 200;
+             const u64 offset = args.contains("offset") ? read_size(args["offset"], "offset", 0, 0, std::numeric_limits<u64>::max()) : 0;
+             World& world = game.GetWorld();
+             std::vector<Entity> entities;
+             for (Entity entity : AllEntities(world)) {
+                 if (world.GetComponent<sprite2d::Rigidbody2D>(entity) != nullptr || world.GetComponent<sprite2d::Collider2D>(entity) != nullptr) {
+                     entities.push_back(entity);
+                 }
+             }
+             const u64 total = static_cast<u64>(entities.size());
+             const usize start = static_cast<usize>(std::min(offset, total));
+             const usize count = static_cast<usize>(std::min<u64>(limit, total - start));
+             const usize end = start + count;
+             Json results = Json::array();
+             for (usize i = start; i < end; ++i) {
+                 const Entity entity = entities[i];
+                 Json position = nullptr;
+                 if (const Transform* transform = world.GetComponent<Transform>(entity)) {
+                     if (std::isfinite(transform->position.x) && std::isfinite(transform->position.y)) {
+                         position = Json::array({transform->position.x, transform->position.y});
+                     }
+                 }
+                 Json body = nullptr;
+                 if (const sprite2d::Rigidbody2D* rigidbody = world.GetComponent<sprite2d::Rigidbody2D>(entity)) {
+                     const char* type = rigidbody->type == sprite2d::BodyType2D::Static ? "static" :
+                                        rigidbody->type == sprite2d::BodyType2D::Kinematic ? "kinematic" : "dynamic";
+                     body = Json{{"type", type}, {"mass", rigidbody->mass}, {"gravity_scale", rigidbody->gravity_scale},
+                                 {"linear_damping", rigidbody->linear_damping},
+                                 {"velocity", Json::array({rigidbody->velocity.x, rigidbody->velocity.y})}};
+                 }
+                 Json collider = nullptr;
+                 if (const sprite2d::Collider2D* value = world.GetComponent<sprite2d::Collider2D>(entity)) {
+                     collider = Json{{"shape", value->shape == sprite2d::Shape2D::Box ? "box" : "circle"},
+                                     {"half_extents", Json::array({value->half_extents.x, value->half_extents.y})},
+                                     {"radius", value->radius}, {"offset", Json::array({value->offset.x, value->offset.y})},
+                                     {"friction", value->friction}, {"restitution", value->restitution}, {"trigger", value->trigger},
+                                     {"layer", value->layer}, {"mask", value->mask}};
+                 }
+                 results.push_back({{"entity", EntityKey(world, entity)}, {"entity_index", entity.index},
+                                    {"position", std::move(position)}, {"rigidbody", std::move(body)}, {"collider", std::move(collider)}});
+             }
+             return {{"body_count", physics->BodyCount()}, {"total", total}, {"offset", start}, {"count", results.size()},
+                     {"next_offset", end < entities.size() ? Json(end) : Json(nullptr)}, {"bodies", std::move(results)}};
+         }});
+
+    server.AddTool(
         {"game_physics2d_state_many",
          "Read platformer movement state for up to 64 live entities: whether each is grounded or touching a wall, its wall side, and its 2D rigidbody velocity when present.",
          Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}}}, {"entities"}),
