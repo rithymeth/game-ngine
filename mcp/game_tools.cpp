@@ -3046,6 +3046,42 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_set_physics2d_velocity_shared_many",
+         "Set one shared 2D velocity on up to 64 unique live Rigidbody2D entities. Validates every entity and component before applying; preserves all other body settings.",
+         Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}},
+                 {"velocity", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}}},
+                {"entities", "velocity"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             if (game.Physics2D() == nullptr) throw ToolError("The loaded game has no 2D physics scene");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be an array of 1 to 64 entity handles");
+             }
+             if (!args["velocity"].is_array() || args["velocity"].size() != 2 ||
+                 !args["velocity"][0].is_number() || !args["velocity"][1].is_number()) {
+                 throw ToolError("\"velocity\" must be [x, y]");
+             }
+             const sprite2d::Vec2 velocity{args["velocity"][0].get<f32>(), args["velocity"][1].get<f32>()};
+             if (!std::isfinite(velocity.x) || !std::isfinite(velocity.y)) throw ToolError("Velocity components must be finite");
+             World& world = game.GetWorld();
+             std::vector<Entity> entities;
+             entities.reserve(args["entities"].size());
+             for (const Json& handle : args["entities"]) {
+                 if (!handle.is_string() || handle.get<std::string>().empty()) throw ToolError("Every \"entities\" entry must be a non-empty entity handle");
+                 const Entity entity = FindEntity(game, handle.get<std::string>());
+                 if (std::find(entities.begin(), entities.end(), entity) != entities.end()) throw ToolError("\"entities\" must not repeat an entity");
+                 if (world.GetComponent<sprite2d::Rigidbody2D>(entity) == nullptr) throw ToolError("Every entity must have a Rigidbody2D component");
+                 entities.push_back(entity);
+             }
+             Json results = Json::array();
+             for (Entity entity : entities) {
+                 world.GetComponent<sprite2d::Rigidbody2D>(entity)->velocity = velocity;
+                 results.push_back({{"entity", EntityKey(world, entity)}, {"velocity", Json::array({velocity.x, velocity.y})}});
+             }
+             return {{"count", results.size()}, {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
         {"game_reparent_entities_many",
          "Set or clear the parent of up to 64 unique live entities as one batch. By default parent changes retain local transforms; set preserve_world=true to retain world poses by updating local transforms. The batch validates stable parent GUIDs and the complete resulting hierarchy, and rejects cycles, excessive depth, singular transforms, or unrepresentable shear before applying.",
          Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
