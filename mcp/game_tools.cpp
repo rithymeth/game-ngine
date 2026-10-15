@@ -3607,6 +3607,143 @@ void RegisterGameTools(McpServer& server) {
          }});
 #endif
 
+#if AETHER_MCP_PHYSICS
+    server.AddTool(
+        {"game_set_physics3d_colliders_many",
+         "Apply individual partial settings to selected 3D collider components. Each edit targets one shape on one entity; validates every edit before applying any changes.",
+         Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", {{"type", "string"}}},
+                                                        {"shape", {{"type", "string"}, {"enum", Json::array({"box", "sphere", "capsule", "convex", "mesh"})}},
+                                                        {"center", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
+                                                        {"half_extents", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
+                                                        {"radius", {{"type", "number"}, {"minimum", 0.01}, {"maximum", 100}}},
+                                                        {"height", {{"type", "number"}, {"minimum", 0.02}, {"maximum", 200}}},
+                                                        {"trigger", {{"type", "boolean"}}},
+                                                        {"friction", {{"type", "number"}, {"minimum", 0}, {"maximum", 2}}},
+                                                        {"restitution", {{"type", "number"}, {"minimum", 0}, {"maximum", 1}}},
+                                                        {"report_stay", {{"type", "boolean"}}}}},
+                                        {"required", Json::array({"entity", "shape"})}}}}}},
+                {"edits"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             if (game.PhysicsQueries() == nullptr) throw ToolError("The loaded game has no 3D physics scene");
+             if (!args.contains("edits") || !args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be an array of 1 to 64 3D collider edits");
+             }
+             struct ColliderEdit { Entity entity; std::string shape; BoxCollider box; SphereCollider sphere; CapsuleCollider capsule; ConvexCollider convex; MeshCollider mesh; };
+             std::vector<ColliderEdit> edits;
+             edits.reserve(args["edits"].size());
+             World& world = game.GetWorld();
+             auto read_center = [](const Json& value) {
+                 if (!value.is_array() || value.size() != 3 || !value[0].is_number() || !value[1].is_number() || !value[2].is_number()) {
+                     throw ToolError("\"center\" must be [x, y, z]");
+                 }
+                 const Vec3 center(value[0].get<f32>(), value[1].get<f32>(), value[2].get<f32>());
+                 if (!std::isfinite(center.x) || !std::isfinite(center.y) || !std::isfinite(center.z)) throw ToolError("Center components must be finite");
+                 return center;
+             };
+             auto read_number = [](const Json& value, const char* field, f32 minimum, f32 maximum) {
+                 if (!value.is_number()) throw ToolError(std::string("\"") + field + "\" must be a finite number in range");
+                 const f32 result = value.get<f32>();
+                 if (!std::isfinite(result) || result < minimum || result > maximum) {
+                     throw ToolError(std::string("\"") + field + "\" must be a finite number in range");
+                 }
+                 return result;
+             };
+             const std::unordered_set<std::string> supported = {"entity", "shape", "center", "half_extents", "radius", "height",
+                                                                 "trigger", "friction", "restitution", "report_stay"};
+             for (const Json& raw : args["edits"]) {
+                 if (!raw.is_object() || !raw.contains("entity") || !raw["entity"].is_string() || raw["entity"].get<std::string>().empty() ||
+                     !raw.contains("shape") || !raw["shape"].is_string()) {
+                     throw ToolError("Every edit requires a non-empty entity handle and a shape");
+                 }
+                 for (auto it = raw.begin(); it != raw.end(); ++it) {
+                     if (!supported.contains(it.key())) throw ToolError("Unsupported 3D collider edit field: " + it.key());
+                 }
+                 const std::string shape = raw["shape"].get<std::string>();
+                 if (shape != "box" && shape != "sphere" && shape != "capsule" && shape != "convex" && shape != "mesh") {
+                     throw ToolError("\"shape\" must be box, sphere, capsule, convex or mesh");
+                 }
+                 if (raw.size() < 3) throw ToolError("Provide at least one collider field to update");
+                 if (shape != "box" && raw.contains("half_extents")) throw ToolError("half_extents can only be set on a box collider");
+                 if (shape != "sphere" && shape != "capsule" && raw.contains("radius")) throw ToolError("radius can only be set on sphere or capsule colliders");
+                 if (shape != "capsule" && raw.contains("height")) throw ToolError("height can only be set on a capsule collider");
+                 const Entity entity = FindEntity(game, raw["entity"].get<std::string>());
+                 if (std::find_if(edits.begin(), edits.end(), [&](const ColliderEdit& edit) { return edit.entity == entity && edit.shape == shape; }) != edits.end()) {
+                     throw ToolError("Each entity/shape pair may appear only once");
+                 }
+                 ColliderEdit edit{};
+                 edit.entity = entity;
+                 edit.shape = shape;
+                 auto apply_common = [&](auto& collider) {
+                     if (raw.contains("center")) collider.center = read_center(raw["center"]);
+                     if (raw.contains("trigger")) {
+                         if (!raw["trigger"].is_boolean()) throw ToolError("\"trigger\" must be boolean");
+                         collider.is_trigger = raw["trigger"].get<bool>();
+                     }
+                     if (raw.contains("friction")) collider.friction = read_number(raw["friction"], "friction", 0.0f, 2.0f);
+                     if (raw.contains("restitution")) collider.restitution = read_number(raw["restitution"], "restitution", 0.0f, 1.0f);
+                     if (raw.contains("report_stay")) {
+                         if (!raw["report_stay"].is_boolean()) throw ToolError("\"report_stay\" must be boolean");
+                         collider.report_stay = raw["report_stay"].get<bool>();
+                     }
+                 };
+                 if (shape == "box") {
+                     const BoxCollider* current = world.GetComponent<BoxCollider>(entity);
+                     if (!current) throw ToolError("Entity does not have a BoxCollider");
+                     edit.box = *current;
+                     apply_common(edit.box);
+                     if (raw.contains("half_extents")) {
+                         const Json& value = raw["half_extents"];
+                         if (!value.is_array() || value.size() != 3 || !value[0].is_number() || !value[1].is_number() || !value[2].is_number()) {
+                             throw ToolError("\"half_extents\" must be [x, y, z]");
+                         }
+                         edit.box.half_extents = Vec3(value[0].get<f32>(), value[1].get<f32>(), value[2].get<f32>());
+                         if (!std::isfinite(edit.box.half_extents.x) || !std::isfinite(edit.box.half_extents.y) ||
+                             !std::isfinite(edit.box.half_extents.z) || edit.box.half_extents.x <= 0.0f || edit.box.half_extents.y <= 0.0f ||
+                             edit.box.half_extents.z <= 0.0f || edit.box.half_extents.x > 100.0f || edit.box.half_extents.y > 100.0f ||
+                             edit.box.half_extents.z > 100.0f) throw ToolError("\"half_extents\" components must be finite, positive and at most 100");
+                     }
+                 } else if (shape == "sphere") {
+                     const SphereCollider* current = world.GetComponent<SphereCollider>(entity);
+                     if (!current) throw ToolError("Entity does not have a SphereCollider");
+                     edit.sphere = *current;
+                     apply_common(edit.sphere);
+                     if (raw.contains("radius")) edit.sphere.radius = read_number(raw["radius"], "radius", 0.01f, 100.0f);
+                 } else if (shape == "capsule") {
+                     const CapsuleCollider* current = world.GetComponent<CapsuleCollider>(entity);
+                     if (!current) throw ToolError("Entity does not have a CapsuleCollider");
+                     edit.capsule = *current;
+                     apply_common(edit.capsule);
+                     if (raw.contains("radius")) edit.capsule.radius = read_number(raw["radius"], "radius", 0.01f, 100.0f);
+                     if (raw.contains("height")) edit.capsule.height = read_number(raw["height"], "height", 0.02f, 200.0f);
+                 } else if (shape == "convex") {
+                     const ConvexCollider* current = world.GetComponent<ConvexCollider>(entity);
+                     if (!current) throw ToolError("Entity does not have a ConvexCollider");
+                     edit.convex = *current;
+                     apply_common(edit.convex);
+                 } else {
+                     const MeshCollider* current = world.GetComponent<MeshCollider>(entity);
+                     if (!current) throw ToolError("Entity does not have a MeshCollider");
+                     edit.mesh = *current;
+                     apply_common(edit.mesh);
+                 }
+                 edits.push_back(std::move(edit));
+             }
+             Json results = Json::array();
+             for (const ColliderEdit& edit : edits) {
+                 if (edit.shape == "box") *world.GetComponent<BoxCollider>(edit.entity) = edit.box;
+                 else if (edit.shape == "sphere") *world.GetComponent<SphereCollider>(edit.entity) = edit.sphere;
+                 else if (edit.shape == "capsule") *world.GetComponent<CapsuleCollider>(edit.entity) = edit.capsule;
+                 else if (edit.shape == "convex") *world.GetComponent<ConvexCollider>(edit.entity) = edit.convex;
+                 else *world.GetComponent<MeshCollider>(edit.entity) = edit.mesh;
+                 results.push_back({{"entity", EntityKey(world, edit.entity)}, {"shape", edit.shape}});
+             }
+             return {{"count", results.size()}, {"edits", std::move(results)}};
+         }});
+#endif
+
     server.AddTool(
         {"game_set_physics2d_bodies_many",
          "Apply partial Rigidbody2D settings to up to 64 unique entities. Supports body type, mass, gravity scale and linear damping; validates every body before applying any change and preserves unspecified fields.",
