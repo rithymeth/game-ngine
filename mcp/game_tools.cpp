@@ -2551,8 +2551,8 @@ void RegisterGameTools(McpServer& server) {
 #if AETHER_MCP_PHYSICS
     server.AddTool(
         {"game_physics_query",
-         "Query the loaded game's 3D physics scene with a raycast, sphere cast, upright or oriented capsule cast, sphere overlap, axis-aligned or oriented box overlap, or upright capsule overlap. Oriented shapes use a [x, y, z, w] quaternion. Capsule height includes both caps; if height is below its diameter, the shape uses a sphere. Supports a 32-bit collision layer mask, an ignored entity and optional trigger inclusion.",
-         Schema({{"kind", {{"type", "string"}, {"enum", Json::array({"raycast", "spherecast", "capsulecast", "oriented_capsulecast", "overlap_sphere", "overlap_box", "overlap_oriented_box", "overlap_capsule"})}}},
+         "Query the loaded game's 3D physics scene with a raycast, sphere cast, upright or oriented capsule cast, sphere overlap, axis-aligned or oriented box overlap, or upright or oriented capsule overlap. Oriented shapes use a [x, y, z, w] quaternion. Capsule height includes both caps; if height is below its diameter, the shape uses a sphere. Supports a 32-bit collision layer mask, an ignored entity and optional trigger inclusion.",
+         Schema({{"kind", {{"type", "string"}, {"enum", Json::array({"raycast", "spherecast", "capsulecast", "oriented_capsulecast", "overlap_sphere", "overlap_box", "overlap_oriented_box", "overlap_capsule", "overlap_oriented_capsule"})}}},
                  {"from", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
                  {"to", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
                  {"center", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
@@ -2670,7 +2670,7 @@ void RegisterGameTools(McpServer& server) {
                  }
                  return {{"kind", kind}, {"count", entities.size()}, {"entities", std::move(entities)}};
              }
-             if (kind == "overlap_capsule") {
+             if (kind == "overlap_capsule" || kind == "overlap_oriented_capsule") {
                  const Vec3 center = read_vec3("center");
                  if (!args.contains("radius") || !args["radius"].is_number()) throw ToolError("\"radius\" must be a finite positive number for overlap_capsule");
                  const f32 radius = args["radius"].get<f32>();
@@ -2678,21 +2678,28 @@ void RegisterGameTools(McpServer& server) {
                  if (!args.contains("height") || !args["height"].is_number()) throw ToolError("\"height\" must be a finite positive number for overlap_capsule");
                  const f32 height = args["height"].get<f32>();
                  if (!std::isfinite(height) || height <= 0.0f) throw ToolError("\"height\" must be a finite positive number for overlap_capsule");
+                 Quaternion rotation = Quaternion::Identity();
+                 if (kind == "overlap_oriented_capsule") {
+                     if (!args.contains("rotation")) throw ToolError("\"rotation\" is required for overlap_oriented_capsule");
+                     rotation = read_rotation(args["rotation"]);
+                 }
                  Json entities = Json::array();
-                 for (Entity entity : scene->OverlapCapsule(center, radius, height, layers, ignore, include_triggers)) {
+                 const auto found = kind == "overlap_capsule" ? scene->OverlapCapsule(center, radius, height, layers, ignore, include_triggers)
+                                                                : scene->OverlapOrientedCapsule(center, radius, height, rotation, layers, ignore, include_triggers);
+                 for (Entity entity : found) {
                      entities.push_back(entity.IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), entity)));
                  }
                  return {{"kind", kind}, {"count", entities.size()}, {"entities", std::move(entities)}};
              }
-             throw ToolError("\"kind\" must be raycast, spherecast, capsulecast, overlap_sphere, overlap_box, overlap_oriented_box or overlap_capsule");
+             throw ToolError("\"kind\" must be raycast, spherecast, capsulecast, oriented_capsulecast, overlap_sphere, overlap_box, overlap_oriented_box, overlap_capsule or overlap_oriented_capsule");
          }});
 
     server.AddTool(
         {"game_physics_queries_many",
-         "Run 1 to 64 3D raycast, spherecast, upright or oriented capsulecast, sphere-overlap, axis-aligned or oriented box-overlap, or upright capsule-overlap queries in one request. Oriented shapes use a required quaternion rotation [x, y, z, w]. Capsule height includes both caps; if height is below its diameter, the shape uses a sphere. Each query can set its own layer mask, ignored entity, and trigger policy. Validates every query before running any of them.",
+         "Run 1 to 64 3D raycast, spherecast, upright or oriented capsulecast, sphere-overlap, axis-aligned or oriented box-overlap, or upright or oriented capsule-overlap queries in one request. Oriented shapes use a required quaternion rotation [x, y, z, w]. Capsule height includes both caps; if height is below its diameter, the shape uses a sphere. Each query can set its own layer mask, ignored entity, and trigger policy. Validates every query before running any of them.",
          Schema({{"queries", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
                                {"items", {{"type", "object"},
-                                          {"properties", {{"kind", {{"type", "string"}, {"enum", Json::array({"raycast", "spherecast", "capsulecast", "oriented_capsulecast", "overlap_sphere", "overlap_box", "overlap_oriented_box", "overlap_capsule"})}},
+                                          {"properties", {{"kind", {{"type", "string"}, {"enum", Json::array({"raycast", "spherecast", "capsulecast", "oriented_capsulecast", "overlap_sphere", "overlap_box", "overlap_oriented_box", "overlap_capsule", "overlap_oriented_capsule"})}},
                                                           {"from", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
                                                           {"to", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
                                                           {"center", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
@@ -2742,8 +2749,8 @@ void RegisterGameTools(McpServer& server) {
                  PhysicsQuery query;
                  query.kind = raw["kind"].get<std::string>();
                  if (query.kind != "raycast" && query.kind != "spherecast" && query.kind != "capsulecast" && query.kind != "oriented_capsulecast" &&
-                     query.kind != "overlap_sphere" && query.kind != "overlap_box" && query.kind != "overlap_oriented_box" && query.kind != "overlap_capsule") {
-                     throw ToolError("Query kind must be raycast, spherecast, capsulecast, oriented_capsulecast, overlap_sphere, overlap_box, overlap_oriented_box or overlap_capsule");
+                     query.kind != "overlap_sphere" && query.kind != "overlap_box" && query.kind != "overlap_oriented_box" && query.kind != "overlap_capsule" && query.kind != "overlap_oriented_capsule") {
+                     throw ToolError("Query kind must be raycast, spherecast, capsulecast, oriented_capsulecast, overlap_sphere, overlap_box, overlap_oriented_box, overlap_capsule or overlap_oriented_capsule");
                  }
                  if (query.kind == "raycast" || query.kind == "spherecast" || query.kind == "capsulecast" || query.kind == "oriented_capsulecast") {
                      query.from = read_vec3(raw, "from");
@@ -2770,8 +2777,8 @@ void RegisterGameTools(McpServer& server) {
                      }
                      query.rotation = query.rotation.Normalized();
                  }
-                 if (query.kind == "oriented_capsulecast") {
-                     if (!raw.contains("rotation")) throw ToolError("Oriented capsule casts require \"rotation\"");
+                 if (query.kind == "oriented_capsulecast" || query.kind == "overlap_oriented_box" || query.kind == "overlap_oriented_capsule") {
+                     if (!raw.contains("rotation")) throw ToolError("Oriented queries require \"rotation\"");
                      const Json& value = raw["rotation"];
                      if (!value.is_array() || value.size() != 4 || !value[0].is_number() || !value[1].is_number() ||
                          !value[2].is_number() || !value[3].is_number()) throw ToolError("\"rotation\" must be [x, y, z, w]");
@@ -2783,12 +2790,12 @@ void RegisterGameTools(McpServer& server) {
                      }
                      query.rotation = query.rotation.Normalized();
                  }
-                 if (query.kind == "spherecast" || query.kind == "capsulecast" || query.kind == "oriented_capsulecast" || query.kind == "overlap_sphere" || query.kind == "overlap_capsule") {
+                 if (query.kind == "spherecast" || query.kind == "capsulecast" || query.kind == "oriented_capsulecast" || query.kind == "overlap_sphere" || query.kind == "overlap_capsule" || query.kind == "overlap_oriented_capsule") {
                      if (!raw.contains("radius") || !raw["radius"].is_number()) throw ToolError("Sphere and capsule queries require a finite positive \"radius\"");
                      query.radius = raw["radius"].get<f32>();
                      if (!std::isfinite(query.radius) || query.radius <= 0.0f) throw ToolError("Sphere and capsule queries require a finite positive \"radius\"");
                  }
-                 if (query.kind == "capsulecast" || query.kind == "oriented_capsulecast" || query.kind == "overlap_capsule") {
+                 if (query.kind == "capsulecast" || query.kind == "oriented_capsulecast" || query.kind == "overlap_capsule" || query.kind == "overlap_oriented_capsule") {
                      if (!raw.contains("height") || !raw["height"].is_number()) throw ToolError("Capsule queries require a finite positive \"height\"");
                      query.height = raw["height"].get<f32>();
                      if (!std::isfinite(query.height) || query.height <= 0.0f) throw ToolError("Capsule queries require a finite positive \"height\"");
@@ -2845,9 +2852,15 @@ void RegisterGameTools(McpServer& server) {
                          entities.push_back(entity.IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), entity)));
                      }
                      results.push_back({{"index", i}, {"kind", query.kind}, {"count", entities.size()}, {"entities", std::move(entities)}});
-                 } else {
+                 } else if (query.kind == "overlap_capsule") {
                      Json entities = Json::array();
                      for (Entity entity : scene->OverlapCapsule(query.center, query.radius, query.height, query.layers, query.ignore, query.include_triggers)) {
+                         entities.push_back(entity.IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), entity)));
+                     }
+                     results.push_back({{"index", i}, {"kind", query.kind}, {"count", entities.size()}, {"entities", std::move(entities)}});
+                 } else {
+                     Json entities = Json::array();
+                     for (Entity entity : scene->OverlapOrientedCapsule(query.center, query.radius, query.height, query.rotation, query.layers, query.ignore, query.include_triggers)) {
                          entities.push_back(entity.IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), entity)));
                      }
                      results.push_back({{"index", i}, {"kind", query.kind}, {"count", entities.size()}, {"entities", std::move(entities)}});
