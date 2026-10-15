@@ -15,6 +15,9 @@
 #include "aether/interaction/interaction_system.h"
 #endif
 #include "aether/player/game.h"
+#if AETHER_MCP_PHYSICS
+#include "aether/physics/physics_scene.h"
+#endif
 #include "aether/player/user_paths.h"
 #include "aether/reflection/serialize.h"
 #include "aether/scene/entity_guid.h"
@@ -2436,6 +2439,87 @@ void RegisterGameTools(McpServer& server) {
              }
              return {{"count", results.size()}, {"entities", std::move(results)}};
          }});
+
+#if AETHER_MCP_PHYSICS
+    server.AddTool(
+        {"game_physics_query",
+         "Query the loaded game's 3D physics scene with a raycast, sphere cast, or sphere overlap. Supports a 32-bit collision layer mask, an ignored entity and optional trigger inclusion.",
+         Schema({{"kind", {{"type", "string"}, {"enum", Json::array({"raycast", "spherecast", "overlap_sphere"})}}},
+                 {"from", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
+                 {"to", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
+                 {"center", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
+                 {"radius", {{"type", "number"}, {"exclusiveMinimum", 0}}},
+                 {"layer_mask", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4294967295.0}}},
+                 {"ignore_entity", {{"type", "string"}}},
+                 {"include_triggers", {{"type", "boolean"}}}},
+                {"kind"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             PhysicsScene* scene = game.PhysicsQueries();
+             if (scene == nullptr) throw ToolError("The loaded game has no 3D physics scene");
+             const std::string kind = RequireString(args, "kind");
+             auto read_vec3 = [&](const char* field) {
+                 if (!args.contains(field) || !args[field].is_array() || args[field].size() != 3 ||
+                     !args[field][0].is_number() || !args[field][1].is_number() || !args[field][2].is_number()) {
+                     throw ToolError(std::string("\"") + field + "\" must be [x, y, z]");
+                 }
+                 const Vec3 value(args[field][0].get<f32>(), args[field][1].get<f32>(), args[field][2].get<f32>());
+                 if (!std::isfinite(value.x) || !std::isfinite(value.y) || !std::isfinite(value.z)) {
+                     throw ToolError(std::string("\"") + field + "\" values must be finite");
+                 }
+                 return value;
+             };
+             LayerMask layers = kAllLayers;
+             if (args.contains("layer_mask")) {
+                 if (!args["layer_mask"].is_number_integer()) throw ToolError("\"layer_mask\" must be an integer from 0 through 4294967295");
+                 const i64 value = args["layer_mask"].get<i64>();
+                 if (value < 0 || static_cast<u64>(value) > std::numeric_limits<u32>::max()) throw ToolError("\"layer_mask\" must be an integer from 0 through 4294967295");
+                 layers = static_cast<LayerMask>(value);
+             }
+             Entity ignore = kNullEntity;
+             if (args.contains("ignore_entity")) {
+                 if (!args["ignore_entity"].is_string() || args["ignore_entity"].get<std::string>().empty()) throw ToolError("\"ignore_entity\" must be a non-empty entity handle");
+                 ignore = FindEntity(game, args["ignore_entity"].get<std::string>());
+             }
+             bool include_triggers = false;
+             if (args.contains("include_triggers")) {
+                 if (!args["include_triggers"].is_boolean()) throw ToolError("\"include_triggers\" must be a boolean");
+                 include_triggers = args["include_triggers"].get<bool>();
+             }
+             if (kind == "raycast" || kind == "spherecast") {
+                 const Vec3 from = read_vec3("from");
+                 const Vec3 to = read_vec3("to");
+                 f32 radius = 0.0f;
+                 if (kind == "spherecast") {
+                     if (!args.contains("radius") || !args["radius"].is_number()) throw ToolError("\"radius\" must be a finite positive number for spherecast");
+                     radius = args["radius"].get<f32>();
+                     if (!std::isfinite(radius) || radius <= 0.0f) throw ToolError("\"radius\" must be a finite positive number for spherecast");
+                 }
+                 const SceneHit hit = kind == "raycast" ? scene->RayCast(from, to, layers, ignore, include_triggers)
+                                                         : scene->SphereCast(radius, from, to, layers, ignore, include_triggers);
+                 Json result = {{"kind", kind}, {"hit", hit.hit}};
+                 if (hit.hit) {
+                     result["entity"] = hit.entity.IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), hit.entity));
+                     result["point"] = Json::array({hit.point.x, hit.point.y, hit.point.z});
+                     result["normal"] = Json::array({hit.normal.x, hit.normal.y, hit.normal.z});
+                     result["distance"] = hit.distance;
+                 }
+                 return result;
+             }
+             if (kind == "overlap_sphere") {
+                 const Vec3 center = read_vec3("center");
+                 if (!args.contains("radius") || !args["radius"].is_number()) throw ToolError("\"radius\" must be a finite positive number for overlap_sphere");
+                 const f32 radius = args["radius"].get<f32>();
+                 if (!std::isfinite(radius) || radius <= 0.0f) throw ToolError("\"radius\" must be a finite positive number for overlap_sphere");
+                 Json entities = Json::array();
+                 for (Entity entity : scene->OverlapSphere(center, radius, layers, ignore, include_triggers)) {
+                     entities.push_back(entity.IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), entity)));
+                 }
+                 return {{"kind", kind}, {"count", entities.size()}, {"entities", std::move(entities)}};
+             }
+             throw ToolError("\"kind\" must be raycast, spherecast or overlap_sphere");
+         }});
+#endif
 
     server.AddTool(
         {"game_reparent_entities_many",
