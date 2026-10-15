@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <set>
 #include <sstream>
 
 namespace aether::mcp {
@@ -502,6 +503,301 @@ private:
     bool preserve_backup_ = false;
 };
 
+class AddFilesCommand final : public editor::ICommand {
+public:
+    struct File {
+        fs::path input;
+        fs::path destination;
+        fs::path meta;
+        fs::path staged_source;
+        fs::path before_source;
+        fs::path before_meta;
+        fs::path after_meta;
+        bool had_before_source = false;
+        bool had_before_meta = false;
+        bool has_after_meta = false;
+    };
+
+    AddFilesCommand(std::shared_ptr<AssetHost> host, fs::path project_file, fs::path backup_root,
+                    std::vector<File> files, bool import_now)
+        : host_(std::move(host)), project_file_(std::move(project_file)), backup_root_(std::move(backup_root)),
+          files_(std::move(files)), import_now_(import_now) {}
+
+    ~AddFilesCommand() override {
+        if (!backup_dir_.empty() && !preserve_backup_) {
+            std::error_code ec;
+            fs::remove_all(backup_dir_, ec);
+        }
+    }
+
+    void Do(editor::CommandContext&) override {
+        RequireSameProject();
+        if (!prepared_) Prepare();
+        if (applied_) {
+            VerifyBeforeState();
+            EnsureCreatedDirectories();
+            CopyNewFiles();
+            RestoreAfterMetadata();
+            scan_ = host_->project->database->Scan();
+            return;
+        }
+        try {
+            VerifyBeforeState();
+            CaptureCreatedDirectories();
+            EnsureCreatedDirectories();
+            CopyNewFiles();
+            scan_ = host_->project->database->Scan();
+            ImportAddedAssets();
+            CaptureAfterMetadata();
+            applied_ = true;
+        } catch (...) {
+            try {
+                RestoreBeforeState();
+            } catch (...) {
+                preserve_backup_ = true;
+            }
+            host_->project->database->Scan();
+            throw;
+        }
+    }
+
+    void Undo(editor::CommandContext&) override {
+        RequireSameProject();
+        VerifyAfterState();
+        RestoreBeforeState();
+        RemoveCreatedDirectories();
+        scan_ = host_->project->database->Scan();
+    }
+
+    std::string Label() const override { return "Add Content Files"; }
+    usize MemoryBytes() const override {
+        usize bytes = sizeof(*this) + project_file_.string().size() + backup_dir_.string().size();
+        for (const File& file : files_) bytes += file.destination.string().size() + file.meta.string().size();
+        for (const std::string& error : imports_.errors) bytes += error.size();
+        return bytes;
+    }
+    const std::vector<File>& Files() const { return files_; }
+    const assets::ScanResult& Scan() const { return scan_; }
+    const assets::ImportAllResult& Imports() const { return imports_; }
+    bool Imported() const { return import_now_; }
+
+private:
+    void RequireSameProject() const {
+        if (!host_->project || host_->project->paths.file.lexically_normal() != project_file_.lexically_normal()) {
+            throw ToolError("Open the project that owns these files before undoing or redoing this action");
+        }
+    }
+
+    static bool Exists(const fs::path& path) {
+        std::error_code ec;
+        const fs::file_status status = fs::symlink_status(path, ec);
+        if (ec == std::errc::no_such_file_or_directory) return false;
+        if (ec) throw ToolError("Could not inspect " + path.string() + ": " + ec.message());
+        return fs::exists(status);
+    }
+
+    static bool CopySnapshot(const fs::path& source, const fs::path& snapshot) {
+        std::error_code ec;
+        const fs::file_status status = fs::symlink_status(source, ec);
+        if (ec == std::errc::no_such_file_or_directory) return false;
+        if (ec) throw ToolError("Could not inspect " + source.string() + ": " + ec.message());
+        if (!fs::exists(status)) return false;
+        if (!fs::is_regular_file(status)) throw ToolError("Cannot undo a non-file asset path: " + source.string());
+        fs::copy_file(source, snapshot, ec);
+        if (ec) throw ToolError("Could not back up " + source.string() + ": " + ec.message());
+        return true;
+    }
+
+    static bool MatchesSnapshot(const fs::path& path, bool should_exist, const fs::path& snapshot) {
+        const bool exists = Exists(path);
+        if (!should_exist) return !exists;
+        if (!exists) return false;
+        std::error_code ec;
+        const std::uintmax_t actual_size = fs::file_size(path, ec);
+        if (ec) return false;
+        const std::uintmax_t snapshot_size = fs::file_size(snapshot, ec);
+        if (ec || actual_size != snapshot_size) return false;
+        std::ifstream actual(path, std::ios::binary), expected(snapshot, std::ios::binary);
+        if (!actual || !expected) return false;
+        char a[64 * 1024], b[64 * 1024];
+        while (actual && expected) {
+            actual.read(a, sizeof(a));
+            expected.read(b, sizeof(b));
+            if (actual.gcount() != expected.gcount() || !std::equal(a, a + actual.gcount(), b)) return false;
+        }
+        return actual.eof() && expected.eof();
+    }
+
+    void Prepare() {
+        std::error_code ec;
+        fs::create_directories(backup_root_, ec);
+        if (ec) throw ToolError("Could not create add-files undo backup folder: " + ec.message());
+        backup_dir_ = backup_root_ / ("add-files-" + std::to_string(++next_backup_id_));
+        if (!fs::create_directory(backup_dir_, ec) || ec) throw ToolError("Could not create add-files undo backup folder: " + ec.message());
+        for (usize i = 0; i < files_.size(); ++i) {
+            File& file = files_[i];
+            const fs::path index = std::to_string(i);
+            file.staged_source = backup_dir_ / (index.string() + ".source");
+            file.before_source = backup_dir_ / (index.string() + ".before");
+            file.before_meta = backup_dir_ / (index.string() + ".before-meta");
+            file.after_meta = backup_dir_ / (index.string() + ".after-meta");
+            file.had_before_source = CopySnapshot(file.destination, file.before_source);
+            file.had_before_meta = CopySnapshot(file.meta, file.before_meta);
+            if (!CopySnapshot(file.input, file.staged_source)) throw ToolError("Not a file: " + file.input.string());
+        }
+        prepared_ = true;
+    }
+
+    void VerifyBeforeState() const {
+        for (const File& file : files_) {
+            if (!MatchesSnapshot(file.destination, file.had_before_source, file.before_source) ||
+                !MatchesSnapshot(file.meta, file.had_before_meta, file.before_meta)) {
+                throw ToolError("Cannot apply add-files action because a destination changed: " + file.destination.string());
+            }
+        }
+    }
+
+    void VerifyAfterState() const {
+        for (const File& file : files_) {
+            if (!MatchesSnapshot(file.destination, true, file.staged_source) ||
+                !MatchesSnapshot(file.meta, file.has_after_meta, file.after_meta)) {
+                throw ToolError("Cannot undo add-files action because a destination changed: " + file.destination.string());
+            }
+        }
+    }
+
+    void CopyNewFiles() {
+        for (const File& file : files_) {
+            std::error_code ec;
+            fs::create_directories(file.destination.parent_path(), ec);
+            if (ec) throw ToolError("Could not create " + file.destination.parent_path().string() + ": " + ec.message());
+            fs::copy_file(file.staged_source, file.destination, fs::copy_options::overwrite_existing, ec);
+            if (ec) throw ToolError("Could not copy staged asset to " + file.destination.string() + ": " + ec.message());
+        }
+    }
+
+    void RestoreAfterMetadata() {
+        for (const File& file : files_) {
+            std::error_code ec;
+            if (file.has_after_meta) {
+                fs::copy_file(file.after_meta, file.meta, fs::copy_options::overwrite_existing, ec);
+                if (ec) throw ToolError("Could not restore " + file.meta.string() + ": " + ec.message());
+            } else {
+                fs::remove(file.meta, ec);
+                if (ec == std::errc::no_such_file_or_directory) ec.clear();
+                if (ec) throw ToolError("Could not remove " + file.meta.string() + ": " + ec.message());
+            }
+        }
+    }
+
+    void RestoreBeforeState() {
+        for (const File& file : files_) {
+            RestoreOne(file.destination, file.before_source, file.had_before_source);
+            RestoreOne(file.meta, file.before_meta, file.had_before_meta);
+        }
+    }
+
+    void CaptureCreatedDirectories() {
+        const fs::path content = host_->project->paths.content.lexically_normal();
+        std::set<fs::path> missing;
+        for (const File& file : files_) {
+            fs::path dir = file.destination.parent_path().lexically_normal();
+            while (dir != content) {
+                const fs::path relative = dir.lexically_relative(content);
+                if (relative.empty() || relative.is_absolute() || *relative.begin() == "..") {
+                    throw ToolError("Destination is outside Content/: " + dir.string());
+                }
+                std::error_code ec;
+                const fs::file_status status = fs::symlink_status(dir, ec);
+                if (!ec && fs::exists(status)) {
+                    if (fs::is_symlink(status) || !fs::is_directory(status)) throw ToolError("Destination parent is not a regular folder: " + dir.string());
+                    break;
+                }
+                if (ec == std::errc::no_such_file_or_directory) ec.clear();
+                if (ec) throw ToolError("Could not inspect " + dir.string() + ": " + ec.message());
+                missing.insert(dir);
+                dir = dir.parent_path();
+            }
+        }
+        created_directories_.assign(missing.begin(), missing.end());
+        std::sort(created_directories_.begin(), created_directories_.end(), [](const fs::path& a, const fs::path& b) {
+            return std::distance(a.begin(), a.end()) > std::distance(b.begin(), b.end());
+        });
+    }
+
+    void EnsureCreatedDirectories() {
+        for (const fs::path& dir : created_directories_) {
+            std::error_code ec;
+            fs::create_directories(dir, ec);
+            if (ec) throw ToolError("Could not create " + dir.string() + ": " + ec.message());
+        }
+    }
+
+    void RemoveCreatedDirectories() {
+        for (const fs::path& dir : created_directories_) {
+            std::error_code ec;
+            fs::remove(dir, ec); // Keep any directory that now contains unrelated files.
+        }
+    }
+
+    static void RestoreOne(const fs::path& destination, const fs::path& snapshot, bool existed) {
+        std::error_code ec;
+        if (existed) {
+            fs::copy_file(snapshot, destination, fs::copy_options::overwrite_existing, ec);
+            if (ec) throw ToolError("Could not restore " + destination.string() + ": " + ec.message());
+        } else {
+            fs::remove(destination, ec);
+            if (ec == std::errc::no_such_file_or_directory) ec.clear();
+            if (ec) throw ToolError("Could not remove " + destination.string() + ": " + ec.message());
+        }
+    }
+
+    void ImportAddedAssets() {
+        if (!import_now_) return;
+        imports_ = {};
+        for (const File& file : files_) {
+            const std::string path = fs::relative(file.destination, host_->project->paths.content).generic_string();
+            const AssetRecord* record = host_->project->database->FindByPath(path);
+            if (record == nullptr) {
+                ++imports_.skipped;
+                continue;
+            }
+            if (host_->project->importers.Find(record->importer) == nullptr) {
+                ++imports_.skipped;
+                continue;
+            }
+            const assets::ImportOutput result = assets::ImportAsset(*host_->project->database, record->guid,
+                                                                    host_->project->importers, *host_->project->cache);
+            if (!result.ok) {
+                ++imports_.failed;
+                imports_.errors.push_back(path + ": " + result.error);
+            } else if (result.from_cache) {
+                ++imports_.from_cache;
+            } else {
+                ++imports_.imported;
+            }
+        }
+    }
+
+    void CaptureAfterMetadata() {
+        for (File& file : files_) file.has_after_meta = CopySnapshot(file.meta, file.after_meta);
+    }
+
+    inline static std::atomic<std::uint64_t> next_backup_id_{0};
+    std::shared_ptr<AssetHost> host_;
+    fs::path project_file_;
+    fs::path backup_root_;
+    fs::path backup_dir_;
+    std::vector<File> files_;
+    std::vector<fs::path> created_directories_;
+    bool import_now_ = true;
+    bool prepared_ = false;
+    bool applied_ = false;
+    bool preserve_backup_ = false;
+    assets::ScanResult scan_;
+    assets::ImportAllResult imports_;
+};
+
 Json ProjectJson(OpenProject& p) {
     usize sources = 0;
     for (const AssetRecord* r : p.database->All()) {
@@ -703,39 +999,56 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
 
     server.AddTool(
         {"asset_add_files",
-         "Copy source files (textures, models, audio...) into Content/<folder>, then scan and import them. Files keep their names "
-         "(a glTF's .bin and textures should be added together, in the same folder). Existing files are not overwritten unless "
-         "`overwrite`.",
+         "Copy source files (textures, models, audio...) into Content/<folder> as one agent-attributed undoable action, then scan "
+         "and import only those files. Undo restores overwritten source files and .ameta sidecars. Files keep their names (a glTF's "
+         ".bin and textures should be added together, in the same folder). Existing files are not overwritten unless `overwrite`.",
          Schema({{"sources", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "Absolute paths of files to copy in"}}},
                  {"folder", {{"type", "string"}, {"description", "Destination folder under Content/ (created if needed)"}}},
                  {"overwrite", {{"type", "boolean"}}},
                  {"import", {{"type", "boolean"}, {"description", "Import them now (default true)"}}}},
                 {"sources"}),
-         [host](const Json& args) -> Json {
+         [host, &session](const Json& args) -> Json {
              OpenProject& p = host->Require();
+             if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before adding content files");
              const std::vector<std::string> sources = OptStrings(args, "sources");
              if (sources.empty()) throw ToolError("\"sources\" must be a non-empty array of file paths");
              const std::string folder = CleanRelative(OptString(args, "folder"));
+             for (const fs::path& part : fs::path(folder)) {
+                 std::string why;
+                 if (!assets::IsValidAssetName(part.string(), &why)) throw ToolError("Bad destination folder name \"" + part.string() + "\": " + why);
+             }
              const bool overwrite = OptBool(args, "overwrite", false);
              const fs::path dest_dir = folder.empty() ? p.paths.content : p.paths.content / folder;
-             std::error_code ec;
-             fs::create_directories(dest_dir, ec);
-             Json copied = Json::array();
+             std::vector<AddFilesCommand::File> files;
+             std::set<std::string> destinations;
              for (const std::string& src : sources) {
                  const fs::path from = src;
-                 if (!fs::is_regular_file(from, ec)) throw ToolError("Not a file: " + src);
+                 std::error_code ec;
+                 const fs::file_status status = fs::symlink_status(from, ec);
+                 if (ec || !fs::is_regular_file(status)) throw ToolError("Not a file: " + src);
                  std::string why;
                  if (!assets::IsValidAssetName(from.filename().string(), &why)) throw ToolError("Bad file name \"" + from.filename().string() + "\": " + why);
                  const fs::path to = dest_dir / from.filename();
+                 const std::string rel = (folder.empty() ? "" : folder + "/") + from.filename().generic_string();
+                 if (!destinations.insert(rel).second) throw ToolError("Duplicate destination file: " + rel);
                  if (fs::exists(to, ec) && !overwrite) throw ToolError(to.filename().string() + " already exists in " + (folder.empty() ? "Content/" : folder) + " (pass overwrite)");
-                 fs::copy_file(from, to, fs::copy_options::overwrite_existing, ec);
-                 if (ec) throw ToolError("Could not copy " + src + ": " + ec.message());
-                 copied.push_back((folder.empty() ? "" : folder + "/") + from.filename().generic_string());
+                 if (ec) throw ToolError("Could not inspect " + to.string() + ": " + ec.message());
+                 AddFilesCommand::File file;
+                 file.input = from;
+                 file.destination = to;
+                 file.meta = fs::path(to.string() + assets::AssetMeta::kExtension);
+                 files.push_back(std::move(file));
              }
-             const assets::ScanResult scan = p.database->Scan();
-             Json out = {{"copied", copied}, {"scan", ScanJson(scan)}};
-             if (OptBool(args, "import", true)) {
-                 const assets::ImportAllResult r = assets::ImportAll(*p.database, p.importers, *p.cache);
+             auto command = std::make_unique<AddFilesCommand>(host, p.paths.file, p.paths.saved / ".AgentUndo", std::move(files), OptBool(args, "import", true));
+             command->SetAttribution("agent");
+             AddFilesCommand* command_result = command.get();
+             editor::CommandContext context = session.Context();
+             session.stack.Execute(context, std::move(command));
+             Json copied = Json::array();
+             for (const auto& file : command_result->Files()) copied.push_back(fs::relative(file.destination, p.paths.content).generic_string());
+             Json out = {{"copied", copied}, {"scan", ScanJson(command_result->Scan())}};
+             if (command_result->Imported()) {
+                 const assets::ImportAllResult& r = command_result->Imports();
                  out["import"] = {{"imported", r.imported}, {"from_cache", r.from_cache}, {"failed", r.failed}, {"skipped", r.skipped}, {"errors", r.errors}};
              }
              Json records = Json::array();
