@@ -1920,6 +1920,76 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_copy_entity_components_many",
+         "Copy reflected component values using a different source and target for each of up to 64 edits. Every source, target, component and value is validated before any target changes; IdComponent is protected.",
+         Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                             {"items", {{"type", "object"},
+                                         {"properties", {{"source", {{"type", "string"}}}, {"target", {{"type", "string"}}},
+                                                          {"component", {{"type", "string"}}}}},
+                                         {"required", Json::array({"source", "target", "component"})}}}}}},
+                {"edits"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be an array of 1 to 64 source/target/component copies");
+             }
+             struct PreparedCopy {
+                 Entity source;
+                 Entity target;
+                 ComponentId id;
+                 Json values;
+             };
+             std::vector<PreparedCopy> copies;
+             copies.reserve(args["edits"].size());
+             for (const Json& item : args["edits"]) {
+                 if (!item.is_object()) throw ToolError("Every \"edits\" entry must be an object");
+                 for (const char* field : {"source", "target"}) {
+                     if (!item.contains(field) || !item[field].is_string() || item[field].get<std::string>().empty()) {
+                         throw ToolError(std::string("Every \"edits\" entry must contain a non-empty string \"") + field + "\"");
+                     }
+                 }
+                 if (!item.contains("component") || !item["component"].is_string()) throw ToolError("Every \"edits\" entry must contain a string \"component\"");
+                 const Entity source = FindEntity(game, item["source"].get<std::string>());
+                 const Entity target = FindEntity(game, item["target"].get<std::string>());
+                 const ComponentId id = RequireComponent(item["component"].get<std::string>());
+                 if (id == GetComponentId<IdComponent>()) throw ToolError("IdComponent is managed by the running game and cannot be copied directly");
+                 if (std::find_if(copies.begin(), copies.end(), [target, id](const PreparedCopy& copy) {
+                         return copy.target == target && copy.id == id;
+                     }) != copies.end()) {
+                     throw ToolError("\"edits\" must not copy to the same target/component pair more than once");
+                 }
+                 const void* source_data = world.GetComponentRaw(source, id);
+                 if (source_data == nullptr) throw ToolError("Source " + EntityKey(world, source) + " has no " + ComponentName(id));
+                 const void* target_data = world.GetComponentRaw(target, id);
+                 if (target_data == nullptr) throw ToolError("Target " + EntityKey(world, target) + " has no " + ComponentName(id));
+                 const ComponentInfo& info = GetComponentInfo(id);
+                 Json values = reflect::ToJson(*info.reflected, source_data);
+                 reflect::Any candidate = reflect::Any::DefaultOf(*info.reflected);
+                 if (!candidate.HasValue()) throw ToolError("Cannot validate values for " + ComponentName(id));
+                 reflect::LoadReport report;
+                 if (!reflect::FromJson(*info.reflected, candidate.Data(), values, &report)) {
+                     throw ToolError("Source " + ComponentName(id) + " values cannot be copied");
+                 }
+                 copies.push_back({source, target, id, std::move(values)});
+             }
+             Json results = Json::array();
+             for (const PreparedCopy& copy : copies) {
+                 const ComponentInfo& info = GetComponentInfo(copy.id);
+                 void* data = world.GetComponentRaw(copy.target, copy.id);
+                 reflect::LoadReport report;
+                 if (!reflect::FromJson(*info.reflected, data, copy.values, &report)) {
+                     throw ToolError("Validated component values could not be copied to " + EntityKey(world, copy.target));
+                 }
+                 Json result = {{"source", EntityKey(world, copy.source)}, {"target", EntityKey(world, copy.target)},
+                                {"component", ComponentName(copy.id)}, {"values", reflect::ToJson(*info.reflected, data)}};
+                 if (!report.warnings.empty()) result["warnings"] = report.warnings;
+                 results.push_back(std::move(result));
+             }
+             return {{"copied_count", results.size()}, {"results", results}};
+         }});
+
+    server.AddTool(
         {"game_copy_component_many",
          "Copy all reflected values of one component from a live source entity to up to 64 unique target entities. Every target must already have the component; IdComponent is protected.",
          Schema({{"source", {{"type", "string"}, {"description", "Source GUID or #index[:generation]"}}},
