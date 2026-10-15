@@ -647,6 +647,112 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         return {{"entity", ToString(guid)}, {"parent", parent.IsNull() ? Json(nullptr) : Json(ToString(parent))}};
                     }});
 
+    server.AddTool(
+        {"reparent_many",
+         "Reparent or detach 1–64 unique entities as one undoable action. Each move has an `entity` GUID and optional `parent` GUID (omit or null to detach); the final hierarchy is checked for cycles before changes are applied.",
+         Schema({{"moves", {{"type", "array"},
+                            {"items", {{"type", "object"},
+                                       {"properties", {{"entity", kGuidProp}, {"parent", {{"type", Json::array({"string", "null"})}}}}},
+                                       {"required", Json::array({"entity"})}}},
+                            {"description", "1–64 moves; omitted or null parent detaches the entity"}}}},
+                {"moves"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before reparenting entities");
+             if (!args["moves"].is_array() || args["moves"].empty() || args["moves"].size() > 64) {
+                 throw ToolError("\"moves\" must be a non-empty array of at most 64 entity/parent pairs");
+             }
+
+             struct Move {
+                 EntityGuid entity;
+                 EntityGuid old_parent;
+                 EntityGuid parent;
+             };
+             std::vector<Move> moves;
+             moves.reserve(args["moves"].size());
+             std::set<EntityGuid> seen;
+             for (const Json& entry : args["moves"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"moves\" must be an object");
+                 const EntityGuid entity_guid = RequireGuid(entry, "entity");
+                 const Entity entity = RequireEntity(s, entry, "entity");
+                 if (!seen.insert(entity_guid).second) throw ToolError("Duplicate entity in \"moves\": " + ToString(entity_guid));
+                 EntityGuid parent_guid;
+                 if (entry.contains("parent") && !entry["parent"].is_null()) {
+                     parent_guid = RequireGuid(entry, "parent");
+                     RequireEntity(s, entry, "parent");
+                 }
+                 const Parent* current = s.world.GetComponent<Parent>(entity);
+                 const EntityGuid old_parent = current == nullptr ? EntityGuid{} : current->parent;
+                 moves.push_back({entity_guid, old_parent, parent_guid});
+             }
+
+             auto DesiredParent = [&](const EntityGuid& guid) -> EntityGuid {
+                 for (const Move& move : moves) if (move.entity == guid) return move.parent;
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 const Parent* parent = entity.IsNull() ? nullptr : s.world.GetComponent<Parent>(entity);
+                 return parent == nullptr ? EntityGuid{} : parent->parent;
+             };
+             for (const Move& move : moves) {
+                 std::set<EntityGuid> visited;
+                 EntityGuid cursor = move.entity;
+                 while (!cursor.IsNull()) {
+                     if (!visited.insert(cursor).second) throw ToolError("The requested moves would create a hierarchy cycle");
+                     cursor = DesiredParent(cursor);
+                 }
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Reparent Entities " + std::to_string(++next_batch_id);
+             const usize undo_count_before = s.stack.UndoCount();
+             editor::CommandContext ctx = s.Context();
+             s.stack.BeginTransaction(transaction_label);
+             try {
+                 // Detach changed entities first. This permits valid batch rotations without
+                 // transient cycles, then attach children after their moved parents.
+                 for (const Move& move : moves) {
+                     if (move.old_parent.IsNull() || move.old_parent == move.parent) continue;
+                     auto command = std::make_unique<editor::ReparentCommand>(move.entity, EntityGuid{});
+                     command->SetAttribution("agent");
+                     s.stack.Execute(ctx, std::move(command));
+                 }
+
+                 std::set<EntityGuid> attached;
+                 for (const Move& move : moves) {
+                     if (move.parent.IsNull() || move.parent == move.old_parent) attached.insert(move.entity);
+                 }
+                 std::size_t remaining = 0;
+                 for (const Move& move : moves) {
+                     if (!move.parent.IsNull() && move.parent != move.old_parent) ++remaining;
+                 }
+                 while (remaining > 0) {
+                     bool progressed = false;
+                     for (const Move& move : moves) {
+                         if (move.parent.IsNull() || move.parent == move.old_parent || attached.count(move.entity)) continue;
+                         const bool parent_is_moved = seen.count(move.parent) != 0;
+                         if (parent_is_moved && !attached.count(move.parent)) continue;
+                         auto command = std::make_unique<editor::ReparentCommand>(move.entity, move.parent);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                         attached.insert(move.entity);
+                         --remaining;
+                         progressed = true;
+                     }
+                     if (!progressed) throw ToolError("Could not order the requested hierarchy changes");
+                 }
+                 s.stack.EndTransaction();
+             } catch (...) {
+                 s.stack.EndTransaction();
+                 if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                 throw;
+             }
+
+             Json results = Json::array();
+             for (const Move& move : moves) {
+                 results.push_back({{"entity", ToString(move.entity)},
+                                    {"parent", move.parent.IsNull() ? Json(nullptr) : Json(ToString(move.parent))}});
+             }
+             return {{"reparented", moves.size()}, {"results", std::move(results)}};
+         }});
+
     server.AddTool({"undo", "Undo the last editor action.", Schema(Json::object()), [&s](const Json&) -> Json {
                         std::string label = s.stack.UndoLabel();
                         std::string attribution = s.stack.UndoAttribution();
