@@ -333,9 +333,10 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                     }});
 
     server.AddTool({"list_entities",
-                    "List a page of scene entities (GUID, entity index, component names, parent GUID, effective collision layer index, and local active state). Optionally filter by component, exact entity name, direct parent or roots, layer index, local active value, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND. Results are ordered by entity index and include total match count, has_more, and a continuation cursor. The cursor is not a scene snapshot; entities created in a reused index at or before it are skipped.",
+                    "List a page of scene entities (GUID, entity index, component names, parent GUID, effective collision layer index, and local active state). Optionally filter by component, exact entity name, case-insensitive ASCII name substring, direct parent or roots, layer index, local active value, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND. Results are ordered by entity index and include total match count, has_more, and a continuation cursor. The cursor is not a scene snapshot; entities created in a reused index at or before it are skipped.",
                     Schema({{"component", {{"type", "string"}, {"description", "Only entities having this component"}}},
                             {"name", {{"type", "string"}, {"description", "Only entities whose name exactly matches"}}},
+                            {"name_contains", {{"type", "string"}, {"description", "Only entities whose name contains this case-insensitive ASCII substring; must not be empty"}}},
                             {"parent", kGuidProp},
                             {"roots_only", {{"type", "boolean"}, {"description", "Only entities without a parent; cannot be combined with parent"}}},
                             {"layer_index", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxLayers - 1},
@@ -433,6 +434,10 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                             throw ToolError("\"offset\" must be 0 when using \"after_entity_index\"");
                         }
                         const std::string name_filter = args.contains("name") ? RequireString(args, "name") : std::string{};
+                        const std::string name_contains_filter = args.contains("name_contains") ? RequireString(args, "name_contains") : std::string{};
+                        if (args.contains("name_contains") && name_contains_filter.empty()) {
+                            throw ToolError("\"name_contains\" must be a non-empty string");
+                        }
                         const std::string tag_filter = args.contains("tag") ? RequireString(args, "tag") : std::string{};
                         auto ReadTagFilter = [&](const char* key) {
                             std::vector<std::string> tags;
@@ -473,6 +478,18 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                             if (args.contains("name")) {
                                 const EntityName* name = s.world.GetComponent<EntityName>(e);
                                 if (name == nullptr || name->value != name_filter) continue;
+                            }
+                            if (args.contains("name_contains")) {
+                                const EntityName* name = s.world.GetComponent<EntityName>(e);
+                                if (name == nullptr || std::search(name->value.begin(), name->value.end(),
+                                        name_contains_filter.begin(), name_contains_filter.end(),
+                                        [](unsigned char lhs, unsigned char rhs) {
+                                            const unsigned char folded_lhs = lhs >= 'A' && lhs <= 'Z' ? static_cast<unsigned char>(lhs + ('a' - 'A')) : lhs;
+                                            const unsigned char folded_rhs = rhs >= 'A' && rhs <= 'Z' ? static_cast<unsigned char>(rhs + ('a' - 'A')) : rhs;
+                                            return folded_lhs == folded_rhs;
+                                        }) == name->value.end()) {
+                                    continue;
+                                }
                             }
                             if (args.contains("tag") && !HasTag(s.world, e, tag_filter)) continue;
                             bool has_all_tags = true;
