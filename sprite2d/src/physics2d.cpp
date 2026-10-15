@@ -558,6 +558,36 @@ std::vector<Entity> Physics2D::OverlapCircle(Vec2 center, f32 radius, u32 mask) 
     return result;
 }
 
+std::vector<Entity> Physics2D::OverlapOrientedBox(Vec2 center, Vec2 half, f32 radians, u32 mask) const {
+    std::vector<Entity> result;
+    const f32 c = std::cos(radians), s = std::sin(radians);
+    const Vec2 axis_x{c, s}, axis_y{-s, c};
+    EachEntity(world_, [&](Entity e) {
+        const Transform* t = world_.GetComponent<Transform>(e);
+        const Collider2D* collider = world_.GetComponent<Collider2D>(e);
+        if (!t || !collider || (collider->layer & mask) == 0) return;
+        const Vec2 p{t->position.x + collider->offset.x, t->position.y + collider->offset.y};
+        const Vec2 delta = p - center;
+        if (collider->shape == Shape2D::Circle) {
+            const f32 local_x = delta.Dot(axis_x);
+            const f32 local_y = delta.Dot(axis_y);
+            const f32 closest_x = std::clamp(local_x, -half.x, half.x);
+            const f32 closest_y = std::clamp(local_y, -half.y, half.y);
+            const f32 dx = local_x - closest_x, dy = local_y - closest_y;
+            if (dx * dx + dy * dy <= collider->radius * collider->radius) result.push_back(e);
+            return;
+        }
+
+        const Vec2 box_half = collider->half_extents;
+        if (std::fabs(delta.x) > half.x * std::fabs(axis_x.x) + half.y * std::fabs(axis_y.x) + box_half.x ||
+            std::fabs(delta.y) > half.x * std::fabs(axis_x.y) + half.y * std::fabs(axis_y.y) + box_half.y ||
+            std::fabs(delta.Dot(axis_x)) > half.x + box_half.x * std::fabs(axis_x.x) + box_half.y * std::fabs(axis_x.y) ||
+            std::fabs(delta.Dot(axis_y)) > half.y + box_half.x * std::fabs(axis_y.x) + box_half.y * std::fabs(axis_y.y)) return;
+        result.push_back(e);
+    });
+    return result;
+}
+
 void RegisterPhysics2DComponents() {
     (void)GetComponentId<Rigidbody2D>();
     (void)GetComponentId<Collider2D>();
