@@ -4360,6 +4360,162 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_set_world_transforms_shared_many",
+         "Set the same combination of world position, rotation and scale on up to 64 unique live entities. Converts through parent transforms, preserves unspecified local fields, and validates all entities, hierarchies and conversions before applying.",
+         Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}},
+                 {"position", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
+                 {"rotation", {{"type", "array"}, {"minItems", 4}, {"maxItems", 4}, {"items", {{"type", "number"}}}}},
+                 {"scale", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}}},
+                {"entities"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be an array of 1 to 64 entity handles");
+             }
+             if (!args.contains("position") && !args.contains("rotation") && !args.contains("scale")) {
+                 throw ToolError("Specify at least one of \"position\", \"rotation\" or \"scale\"");
+             }
+             auto read_vec3 = [](const Json& value, const char* name) {
+                 if (!value.is_array() || value.size() != 3 || !value[0].is_number() || !value[1].is_number() || !value[2].is_number()) {
+                     throw ToolError(std::string("\"") + name + "\" must be [x, y, z]");
+                 }
+                 const Vec3 result(value[0].get<f32>(), value[1].get<f32>(), value[2].get<f32>());
+                 if (!std::isfinite(result.x) || !std::isfinite(result.y) || !std::isfinite(result.z)) throw ToolError(std::string("\"") + name + "\" values must be finite");
+                 return result;
+             };
+             std::optional<Vec3> world_position;
+             std::optional<Quaternion> world_rotation;
+             std::optional<Vec3> world_scale;
+             if (args.contains("position")) world_position = read_vec3(args["position"], "position");
+             if (args.contains("scale")) {
+                 world_scale = read_vec3(args["scale"], "scale");
+                 if (world_scale->x < 0.0f || world_scale->y < 0.0f || world_scale->z < 0.0f) throw ToolError("\"scale\" must contain non-negative world magnitudes");
+             }
+             if (args.contains("rotation")) {
+                 const Json& value = args["rotation"];
+                 if (!value.is_array() || value.size() != 4 || !value[0].is_number() || !value[1].is_number() || !value[2].is_number() || !value[3].is_number()) {
+                     throw ToolError("\"rotation\" must be [x, y, z, w]");
+                 }
+                 Quaternion rotation(value[0].get<f32>(), value[1].get<f32>(), value[2].get<f32>(), value[3].get<f32>());
+                 if (!std::isfinite(rotation.x) || !std::isfinite(rotation.y) || !std::isfinite(rotation.z) || !std::isfinite(rotation.w) ||
+                     !std::isfinite(rotation.LengthSq()) || rotation.LengthSq() <= 1.0e-12f) throw ToolError("\"rotation\" must be a finite non-zero quaternion");
+                 world_rotation = rotation.Normalized();
+             }
+             struct WorldTransformEdit { Entity entity; Vec3 local_position; Quaternion local_rotation; Vec3 local_scale; };
+             std::vector<WorldTransformEdit> edits;
+             edits.reserve(args["entities"].size());
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string() || value.get<std::string>().empty()) throw ToolError("Every \"entities\" entry must be a non-empty string");
+                 const Entity entity = FindEntity(game, value.get<std::string>());
+                 if (std::find_if(edits.begin(), edits.end(), [entity](const WorldTransformEdit& edit) { return edit.entity == entity; }) != edits.end()) {
+                     throw ToolError("\"entities\" must not repeat an entity");
+                 }
+                 const Transform* transform = world.GetComponent<Transform>(entity);
+                 if (transform == nullptr) throw ToolError("Entity " + EntityKey(world, entity) + " has no Transform");
+                 edits.push_back({entity, transform->position, transform->rotation, transform->scale});
+             }
+             for (const WorldTransformEdit& edit : edits) {
+                 Entity ancestor = GetParent(world, game.Guids(), edit.entity);
+                 std::vector<Entity> seen;
+                 for (int depth = 0; !ancestor.IsNull(); ++depth) {
+                     if (depth >= kMaxHierarchyDepth) throw ToolError("Entity hierarchy exceeds the supported depth");
+                     if (ancestor == edit.entity || std::find(seen.begin(), seen.end(), ancestor) != seen.end()) throw ToolError("Entity hierarchy contains a cycle");
+                     if (std::find_if(edits.begin(), edits.end(), [ancestor](const WorldTransformEdit& other) { return other.entity == ancestor; }) != edits.end()) {
+                         throw ToolError("\"entities\" must not include both an entity and one of its ancestors");
+                     }
+                     seen.push_back(ancestor);
+                     ancestor = GetParent(world, game.Guids(), ancestor);
+                 }
+             }
+             for (WorldTransformEdit& edit : edits) {
+                 const Transform* transform = world.GetComponent<Transform>(edit.entity);
+                 const auto finite_vec = [](const Vec3& value) { return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z); };
+                 if (!finite_vec(transform->position) || !finite_vec(transform->scale) || !std::isfinite(transform->rotation.x) ||
+                     !std::isfinite(transform->rotation.y) || !std::isfinite(transform->rotation.z) || !std::isfinite(transform->rotation.w) ||
+                     !std::isfinite(transform->rotation.LengthSq()) || transform->rotation.LengthSq() <= 1.0e-12f) {
+                     throw ToolError("Entity " + EntityKey(world, edit.entity) + " has an invalid local transform");
+                 }
+                 const Entity parent = GetParent(world, game.Guids(), edit.entity);
+                 Mat4 parent_world = Mat4::Identity();
+                 if (!parent.IsNull() && world.GetComponent<Transform>(parent) != nullptr) parent_world = ComputeWorldTransform(world, game.Guids(), parent);
+                 for (const Vec4& column : parent_world.cols) {
+                     if (!std::isfinite(column.x) || !std::isfinite(column.y) || !std::isfinite(column.z) || !std::isfinite(column.w)) throw ToolError("Parent has a non-finite world transform");
+                 }
+                 if (world_position) {
+                     Mat4 inverse_parent = Mat4::Identity();
+                     if (!parent_world.TryInverse(inverse_parent)) throw ToolError("Cannot set world position through a singular parent transform");
+                     const Vec4 local = inverse_parent * Vec4(world_position->x, world_position->y, world_position->z, 1.0f);
+                     if (!std::isfinite(local.x) || !std::isfinite(local.y) || !std::isfinite(local.z) || !std::isfinite(local.w) || std::abs(local.w) <= 1.0e-12f) {
+                         throw ToolError("Cannot calculate a finite local position for " + EntityKey(world, edit.entity));
+                     }
+                     edit.local_position = Vec3(local.x / local.w, local.y / local.w, local.z / local.w);
+                     if (!finite_vec(edit.local_position)) throw ToolError("Cannot calculate a finite local position for " + EntityKey(world, edit.entity));
+                 }
+                 if (world_rotation || world_scale) {
+                     std::vector<Quaternion> parent_locals;
+                     Entity current = parent;
+                     std::vector<Entity> seen;
+                     for (int depth = 0; !current.IsNull(); ++depth) {
+                         if (depth >= kMaxHierarchyDepth) throw ToolError("Entity hierarchy exceeds the supported depth");
+                         if (current == edit.entity || std::find(seen.begin(), seen.end(), current) != seen.end()) throw ToolError("Entity hierarchy contains a cycle");
+                         seen.push_back(current);
+                         const Transform* parent_transform = world.GetComponent<Transform>(current);
+                         if (parent_transform == nullptr) break;
+                         const Quaternion& local = parent_transform->rotation;
+                         if (!std::isfinite(local.x) || !std::isfinite(local.y) || !std::isfinite(local.z) || !std::isfinite(local.w) ||
+                             !std::isfinite(local.LengthSq()) || local.LengthSq() <= 1.0e-12f) throw ToolError("An ancestor has an invalid rotation");
+                         parent_locals.push_back(local.Normalized());
+                         current = GetParent(world, game.Guids(), current);
+                     }
+                     Quaternion parent_world_rotation = Quaternion::Identity();
+                     for (auto it = parent_locals.rbegin(); it != parent_locals.rend(); ++it) parent_world_rotation = (parent_world_rotation * *it).Normalized();
+                     if (world_rotation) {
+                         const Quaternion inverse_parent{-parent_world_rotation.x, -parent_world_rotation.y, -parent_world_rotation.z, parent_world_rotation.w};
+                         edit.local_rotation = (inverse_parent * *world_rotation).Normalized();
+                     }
+                     if (world_scale) {
+                         Transform unit_transform = *transform;
+                         unit_transform.rotation = world_rotation ? edit.local_rotation : transform->rotation.Normalized();
+                         unit_transform.scale = Vec3(1.0f, 1.0f, 1.0f);
+                         const Mat4 unit_world = parent_world * LocalTransformMatrix(unit_transform);
+                         const f32 axis_lengths[3] = {
+                             Vec3(unit_world.cols[0].x, unit_world.cols[0].y, unit_world.cols[0].z).Length(),
+                             Vec3(unit_world.cols[1].x, unit_world.cols[1].y, unit_world.cols[1].z).Length(),
+                             Vec3(unit_world.cols[2].x, unit_world.cols[2].y, unit_world.cols[2].z).Length()};
+                         const f32 requested[3] = {world_scale->x, world_scale->y, world_scale->z};
+                         const f32 signs[3] = {transform->scale.x < 0.0f ? -1.0f : 1.0f, transform->scale.y < 0.0f ? -1.0f : 1.0f,
+                                               transform->scale.z < 0.0f ? -1.0f : 1.0f};
+                         f32 local[3]{};
+                         for (int axis = 0; axis < 3; ++axis) {
+                             if (!std::isfinite(axis_lengths[axis])) throw ToolError("Parent transform has a non-finite world basis");
+                             if (axis_lengths[axis] <= 1.0e-12f) {
+                                 if (requested[axis] > 0.0f) throw ToolError("Cannot set non-zero world scale on an axis collapsed by the parent transform");
+                                 local[axis] = 0.0f;
+                             } else {
+                                 local[axis] = signs[axis] * requested[axis] / axis_lengths[axis];
+                                 if (!std::isfinite(local[axis]) || (requested[axis] > 0.0f && local[axis] == 0.0f)) throw ToolError("World scale would produce an invalid local scale");
+                             }
+                         }
+                         edit.local_scale = Vec3(local[0], local[1], local[2]);
+                     }
+                 }
+             }
+             Json results = Json::array();
+             for (const WorldTransformEdit& edit : edits) {
+                 Transform* transform = world.GetComponent<Transform>(edit.entity);
+                 transform->position = edit.local_position;
+                 transform->rotation = edit.local_rotation;
+                 transform->scale = edit.local_scale;
+                 results.push_back({{"entity", EntityKey(world, edit.entity)},
+                                    {"local_position", Json::array({edit.local_position.x, edit.local_position.y, edit.local_position.z})},
+                                    {"local_rotation", Json::array({edit.local_rotation.x, edit.local_rotation.y, edit.local_rotation.z, edit.local_rotation.w})},
+                                    {"local_scale", Json::array({edit.local_scale.x, edit.local_scale.y, edit.local_scale.z})}});
+             }
+             return {{"updated_count", results.size()}, {"results", results}};
+         }});
+
+    server.AddTool(
         {"game_set_world_positions_many",
          "Set world positions for up to 64 unique live entities while preserving local rotation and scale. Converts through parent transforms; rejects ancestor overlap, cycles, excessive depth and singular parent transforms.",
          Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
