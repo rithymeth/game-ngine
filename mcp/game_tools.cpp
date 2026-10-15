@@ -11,6 +11,8 @@
 #include "aether/gameplay/attribute_system.h"
 #include "aether/gameplay/attribute_set.h"
 #include "aether/gameplay/ability_system.h"
+#include "aether/gameplay/effect_system.h"
+#include "aether/gameplay/gameplay_tag.h"
 #if AETHER_MCP_INVENTORY
 #include "aether/inventory/inventory_system.h"
 #endif
@@ -3186,6 +3188,78 @@ void RegisterGameTools(McpServer& server) {
                          {"activated", result.handle != 0}, {"handle", result.handle}, {"reason", gas::FailReasonName(result.reason)}};
              }
              throw ToolError("Unsupported ability action");
+         }});
+
+    server.AddTool(
+        {"game_effect",
+         "Inspect active gameplay effects, apply an effect to an entity, remove one by runtime handle, or remove effects by granted tag. Effect callbacks are processed on the next game step.",
+         Schema({{"action", {{"type", "string"}, {"enum", Json::array({"state", "apply", "remove", "remove_by_tag"})}},
+                 {"entity", {{"type", "string"}}},
+                 {"source", {{"type", "string"}}},
+                 {"effect", {{"type", "string"}}},
+                 {"handle", {{"type", "integer"}, {"minimum", 1}, {"maximum", std::numeric_limits<u32>::max()}}},
+                 {"tag", {{"type", "string"}}}},
+                {"action"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             gas::EffectSystem* system = gas::EffectSystem::Active();
+             if (system == nullptr) throw ToolError("This game has no effect system (load a scene first)");
+             const std::string action = RequireString(args, "action");
+             if (action != "state" && action != "apply" && action != "remove" && action != "remove_by_tag") {
+                 throw ToolError("\"action\" must be state, apply, remove or remove_by_tag");
+             }
+             World& world = game.GetWorld();
+             auto entity_json = [&](Entity entity) -> Json {
+                 if (entity.IsNull()) return nullptr;
+                 if (world.IsAlive(entity)) return EntityKey(world, entity);
+                 return "#" + std::to_string(entity.index) + ":" + std::to_string(entity.generation);
+             };
+             if (action == "state") {
+                 const Entity entity = FindEntity(game, RequireString(args, "entity"));
+                 if (args.contains("effect") && !args["effect"].is_string()) throw ToolError("\"effect\" must be a string");
+                 const gas::EffectContainer* container = world.GetComponent<gas::EffectContainer>(entity);
+                 Json effects = Json::array();
+                 if (container != nullptr) {
+                     for (const gas::ActiveEffect& active : container->active) {
+                         if (args.contains("effect") && args["effect"].get<std::string>() != active.effect) continue;
+                         effects.push_back({{"effect", active.effect}, {"handle", active.handle}, {"source", entity_json(active.source)},
+                                            {"remaining", active.remaining}, {"stacks", active.stacks}, {"period_timer", active.period_timer}});
+                     }
+                 }
+                 return {{"entity", EntityKey(world, entity)}, {"count", effects.size()}, {"effects", std::move(effects)}};
+             }
+             if (action == "apply") {
+                 const Entity target = FindEntity(game, Json{{"entity", RequireString(args, "entity")}});
+                 Entity source{};
+                 if (args.contains("source")) source = FindEntity(game, Json{{"entity", RequireString(args, "source")}});
+                 const std::string effect = RequireString(args, "effect");
+                 const gas::EffectSystem::ApplyResult result = system->Apply(target, effect, source);
+                 const char* status = result.status == gas::EffectSystem::Status::Applied ? "applied" :
+                                      result.status == gas::EffectSystem::Status::Instant ? "instant" : "rejected";
+                 return {{"entity", EntityKey(world, target)}, {"source", entity_json(source)}, {"effect", effect},
+                         {"status", status}, {"handle", result.handle}};
+             }
+             if (action == "remove") {
+                 if (!args.contains("handle") || (!args["handle"].is_number_unsigned() && !args["handle"].is_number_integer())) {
+                     throw ToolError("remove requires a positive integer \"handle\"");
+                 }
+                 u64 raw = 0;
+                 if (args["handle"].is_number_unsigned()) raw = args["handle"].get<u64>();
+                 else {
+                     const i64 signed_raw = args["handle"].get<i64>();
+                     if (signed_raw <= 0) throw ToolError("\"handle\" must be between 1 and 4294967295");
+                     raw = static_cast<u64>(signed_raw);
+                 }
+                 if (raw == 0 || raw > std::numeric_limits<u32>::max()) throw ToolError("\"handle\" must be between 1 and 4294967295");
+                 const gas::EffectHandle handle = static_cast<gas::EffectHandle>(raw);
+                 return {{"handle", handle}, {"removed", system->Remove(handle)}};
+             }
+             const Entity target = FindEntity(game, Json{{"entity", RequireString(args, "entity")}});
+             const std::string tag_name = RequireString(args, "tag");
+             const gas::GameplayTag tag = gas::GameplayTag::Make(tag_name);
+             if (!tag.IsValid()) throw ToolError("\"tag\" must be a valid dotted gameplay tag");
+             const i32 removed = system->RemoveByTag(target, tag);
+             return {{"entity", EntityKey(world, target)}, {"tag", tag_name}, {"removed_count", removed}};
          }});
 
 #if AETHER_MCP_INVENTORY
