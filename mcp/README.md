@@ -403,6 +403,7 @@ saves and localization. The game has its own world, separate from the editor's.
 | `game_upsert_entity_components_many` | Add or merge different component values across up to 64 entity/component pairs after validating the complete request; protects IdComponent |
 | `game_set_components_many` | Merge the same field patch onto one component across up to 64 unique live entities; validates all merged values before applying any update |
 | `game_set_entity_components_many` | Apply different component patches to up to 64 entity/component pairs after validating the complete request |
+| `game_set_attributes_many` | Set, adjust or define attributes across up to 64 entity/attribute pairs through gameplay rules and change events |
 | `game_reset_entity_components_many` | Reset different components on up to 64 entity/component pairs to reflected defaults, keeping them attached and reporting old/new values |
 | `game_copy_entity_components_many` | Copy components across up to 64 explicit source/target/component edits after validating the complete request |
 | `game_remove_component` | Remove a component from a running entity |
