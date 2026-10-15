@@ -21,6 +21,7 @@ struct Result {
     std::string name;
     u32 samples = 0;
     u32 iterations = 0;
+    std::vector<double> sample_ms;        // Per-call durations in collection order.
     double min_ms = 0.0, median_ms = 0.0, p95_ms = 0.0, max_ms = 0.0; // per body call
     double normalized = 0.0;           // median_ms divided by the calibration loop's: comparable across machines
 };
@@ -35,7 +36,7 @@ struct Registrar {
 double CalibrationMs();
 
 // Runs the benchmarks whose name contains `filter` (all if empty): `samples` samples each, after one warm-up.
-std::vector<Result> Run(const std::string& filter, u32 samples);
+std::vector<Result> Run(const std::string& filter, u32 samples, double* calibration_ms = nullptr);
 
 // The report as JSON text: {"calibration_ms": ..., "results": [{"name":..., "median_ms":..., ...}]}.
 std::string ToJson(const std::vector<Result>& results, double calibration_ms);

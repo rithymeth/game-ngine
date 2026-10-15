@@ -1,11 +1,19 @@
-add_executable(aether_editor_qt WIN32 main.cpp editor_play_runtime.cpp physics_component_panel.cpp
-    animation_editor_widget.cpp)
+add_executable(aether_editor_qt WIN32 main.cpp editor_play_runtime.cpp physics_component_panel.cpp behavior_tree_editor_widget.cpp navigation_editor_widget.cpp
+    animation_editor_widget.cpp anim_graph_editor_widget.cpp blend_space_editor_widget.cpp montage_editor_widget.cpp sound_cue_editor_widget.cpp blueprint_editor_widget.cpp material_editor_widget.cpp vfx_editor_widget.cpp
+    ../src/graph/blueprint_graph_ops.cpp ../src/graph/blueprint_document.cpp
+    ../src/graph/material_document.cpp ../src/audio/cue_document.cpp ../src/vfx/vfx_document.cpp ../src/vfx/vfx_preview.cpp ../src/ai/bt_document.cpp
+    ../src/anim/anim_document.cpp ../src/anim/blend_space_document.cpp)
 target_link_libraries(aether_editor_qt PRIVATE
     Aether::Engine
+    Aether::Renderer
     Aether::Audio
+    Aether::Animation
     Aether::Gameplay
     Aether::Physics
+    Aether::AI
     Aether::Sequencer
+    Aether::Blueprint
+    Aether::VFX
     aether_editor_core
     Qt6::Widgets
 )
@@ -60,7 +68,7 @@ if(WIN32)
 endif()
 
 if(AETHER_BUILD_SCRIPTING)
-    target_sources(aether_editor_qt PRIVATE script_component_editor.cpp)
+    target_sources(aether_editor_qt PRIVATE script_component_editor.cpp script_editor_widget.cpp)
     target_link_libraries(aether_editor_qt PRIVATE Aether::Scripting)
     target_compile_definitions(aether_editor_qt PRIVATE AETHER_QT_EDITOR_SCRIPTING=1)
 endif()

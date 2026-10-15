@@ -14,6 +14,7 @@ adds no engine subsystem and makes no Aether 1.0 readiness claim.
 | Name a cooked archive | A path separator in the archive name could write outside the selected output or staging folder | Require a single filename stem before scanning/cooking | `Package_InvalidArchiveNameCannotEscapeStaging` |
 | Recover from an install failure | Staging failure had a test, but failure after replacing `Paks` did not | Exercise a locked Windows executable after content installation and compare restored files byte for byte | `Package_LockedPlayerRollsBackInstalledContent` |
 | Bundle release notes | Both ZIP paths copied notes for a fixed old release | Select notes from the checked-in engine version and fail if that document is absent | Windows package workflow and standalone package script |
+| Validate the packaged editor without the build checkout | The Qt editor self-test ran from the build tree; the ZIP was only used for the legacy screenshot in that job | Download the editor ZIP in a separate clean Windows job, extract it outside the workspace, restrict `PATH` to Windows system folders, and run the packaged Qt self-test from an empty working directory | `windows-package-validation` CI job; required by the release job |
 
 ## Verification contract
 
@@ -76,3 +77,10 @@ rendered replay reach MissionStage 5, Health 2 and ArchiveTime 8; an ending
 capture passes the pixel check. A fresh process restores MissionStage 5 and
 Health 3. Canonical release archive hashes must be taken from the CI/released
 artifacts: local working-tree line endings can differ from tagged source.
+
+The Windows workflow now has a separate `windows-package-validation` job that
+receives only the editor ZIP artifact, extracts it under the runner temp folder,
+and runs `AetherEditor.exe --self-test` from an empty working directory with a
+system-only `PATH`. The release job depends on this check. This provides a
+fresh-runner package check without the source checkout or build directory; the
+first successful CI run is still pending.

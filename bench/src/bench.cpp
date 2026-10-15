@@ -57,9 +57,10 @@ double CalibrationMs() {
     return t[t.size() / 2];
 }
 
-std::vector<Result> Run(const std::string& filter, u32 samples) {
+std::vector<Result> Run(const std::string& filter, u32 samples, double* calibration_ms) {
     std::vector<Result> out;
     const double calibration = CalibrationMs();
+    if (calibration_ms) *calibration_ms = calibration;
     samples = std::max<u32>(samples, 1);
     for (Benchmark& b : Registry()) {
         if (!filter.empty() && b.name.find(filter) == std::string::npos) continue;
@@ -71,11 +72,13 @@ std::vector<Result> Run(const std::string& filter, u32 samples) {
             for (u32 i = 0; i < std::max<u32>(b.iterations, 1); ++i) b.body();
             t.push_back(Ms(start) / static_cast<double>(std::max<u32>(b.iterations, 1)));
         }
+        const std::vector<double> sample_ms = t;
         std::sort(t.begin(), t.end());
         Result r;
         r.name = b.name;
         r.samples = samples;
         r.iterations = std::max<u32>(b.iterations, 1);
+        r.sample_ms = sample_ms;
         r.min_ms = t.front();
         r.median_ms = Percentile(t, 0.5);
         r.p95_ms = Percentile(t, 0.95);
@@ -89,7 +92,8 @@ std::vector<Result> Run(const std::string& filter, u32 samples) {
 std::string ToJson(const std::vector<Result>& results, double calibration_ms) {
     nlohmann::json j = {{"calibration_ms", calibration_ms}, {"results", nlohmann::json::array()}};
     for (const Result& r : results) {
-        j["results"].push_back({{"name", r.name}, {"samples", r.samples}, {"iterations", r.iterations}, {"min_ms", r.min_ms}, {"median_ms", r.median_ms},
+        j["results"].push_back({{"name", r.name}, {"samples", r.samples}, {"iterations", r.iterations}, {"sample_ms", r.sample_ms},
+                                {"min_ms", r.min_ms}, {"median_ms", r.median_ms},
                                 {"p95_ms", r.p95_ms}, {"max_ms", r.max_ms}, {"normalized", r.normalized}});
     }
     return j.dump(2);

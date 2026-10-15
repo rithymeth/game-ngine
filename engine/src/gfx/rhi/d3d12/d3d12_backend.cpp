@@ -1,6 +1,7 @@
 #include "aether/gfx/rhi/d3d12/d3d12_backend.h"
 
 #include <limits>
+#include <cmath>
 
 #include "aether/core/log.h"
 #include "aether/gfx/shader_compiler.h"
@@ -8,6 +9,34 @@
 #include <stdexcept>
 
 namespace aether::gfx::rhi::d3d12_backend {
+
+namespace {
+
+bool IsFiniteClearColor(const ClearColor& color) {
+    return std::isfinite(color.r) && std::isfinite(color.g) && std::isfinite(color.b) && std::isfinite(color.a);
+}
+
+bool IsValidResourceState(ResourceState state) {
+    switch (state) {
+        case ResourceState::Undefined:
+        case ResourceState::RenderTarget:
+        case ResourceState::Present:
+        case ResourceState::CopyDest:
+        case ResourceState::CopySource: return true;
+        default: return false;
+    }
+}
+
+bool IsValidVertexLayout(VertexLayout layout) {
+    switch (layout) {
+        case VertexLayout::PositionUv:
+        case VertexLayout::PositionNormalUv:
+        case VertexLayout::PositionNormalUvTangent: return true;
+        default: return false;
+    }
+}
+
+} // namespace
 
 D3D12_RESOURCE_STATES ToD3D12(ResourceState state) {
     switch (state) {
@@ -20,8 +49,14 @@ D3D12_RESOURCE_STATES ToD3D12(ResourceState state) {
 }
 
 D3D12Device::D3D12Device(bool enable_debug_layer) : device_(enable_debug_layer) {
+    deferred_command_allocators_.reserve(64);
     bindless_texture_heap_ = std::make_unique<DescriptorHeap>(device_, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
                                                                kMaxBindlessTextures, /*shader_visible=*/true);
+    compute_storage_heap_ = std::make_unique<DescriptorHeap>(device_, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
+                                                              8192, /*shader_visible=*/true);
+    sampled_descriptor_indices_.resize(kMaxUserBindlessTextures, DescriptorHeap::kInvalidIndex);
+    sampled_float_textures_.resize(kMaxUserBindlessTextures);
+    sampled_textures_.reserve(kMaxUserBindlessTextures);
 
     // A 1x1 white dummy texture, uploaded once and duplicated (by
     // CreateShaderResourceView pointing at the same resource, not by
@@ -50,6 +85,36 @@ D3D12Device::D3D12Device(bool enable_debug_layer) : device_(enable_debug_layer) 
     }
 }
 
+D3D12Device::~D3D12Device() {
+    try {
+        device_.WaitForFence(device_.Submit(nullptr, 0));
+    } catch (const std::exception& error) {
+        AETHER_LOG_WARN("D3D12", "Could not drain graphics queue before resource teardown: %s", error.what());
+    } catch (...) {
+        AETHER_LOG_WARN("D3D12", "Could not drain graphics queue before resource teardown");
+    }
+    try {
+        device_.WaitForComputeFence(device_.SubmitCompute(nullptr, 0));
+    } catch (const std::exception& error) {
+        AETHER_LOG_WARN("D3D12", "Could not drain compute queue before resource teardown: %s", error.what());
+    } catch (...) {
+        AETHER_LOG_WARN("D3D12", "Could not drain compute queue before resource teardown");
+    }
+}
+
+void D3D12Device::DeferCommandAllocator(ComPtr<ID3D12CommandAllocator> allocator) noexcept {
+    if (!allocator) return;
+    try {
+        std::lock_guard<std::mutex> lock(deferred_allocator_mutex_);
+        deferred_command_allocators_.push_back(std::move(allocator));
+    } catch (...) {
+        // If even deferred bookkeeping cannot grow, leaking the COM reference
+        // is safer than releasing an allocator that the GPU may still use.
+        (void)allocator.Detach();
+        AETHER_LOG_ERROR("D3D12", "Could not retain an in-flight command allocator; keeping its COM reference alive");
+    }
+}
+
 std::unique_ptr<ISwapChain> D3D12Device::CreateSwapChain(void* native_window_handle, u32 width, u32 height,
                                                           u32 buffer_count) {
     return std::make_unique<D3D12SwapChain>(*this, native_window_handle, width, height, buffer_count);
@@ -61,9 +126,21 @@ std::unique_ptr<ICommandList> D3D12Device::CreateCommandList() {
 
 u64 D3D12Device::Submit(ICommandList& cmd, ISwapChain* wait_on_swap_chain) {
     (void)wait_on_swap_chain; // D3D12's flip-model swap chain needs no acquire/present semaphores
-    auto* native = static_cast<ID3D12GraphicsCommandList*>(cmd.NativeHandle());
+    auto* rhi_cmd = dynamic_cast<D3D12CommandList*>(&cmd);
+    if (!rhi_cmd || !rhi_cmd->BelongsTo(*this) || rhi_cmd->IsComputeList() || !rhi_cmd->NativeHandle()) {
+        AETHER_LOG_ERROR("D3D12", "Submit requires a closed graphics command list created by this device");
+        return 0;
+    }
+    std::lock_guard<std::mutex> command_lock(rhi_cmd->SubmissionMutex());
+    if (!rhi_cmd->IsReadyForSubmit() || rhi_cmd->IsSubmissionInFlight()) {
+        AETHER_LOG_ERROR("D3D12", "Submit requires a closed graphics command list that is not already in flight");
+        return 0;
+    }
+    auto* native = static_cast<ID3D12GraphicsCommandList*>(rhi_cmd->NativeHandle());
     ID3D12CommandList* lists[] = {native};
-    return device_.Submit(lists, 1);
+    const u64 fence_value = device_.Submit(lists, 1);
+    if (fence_value != 0) rhi_cmd->MarkSubmitted(fence_value);
+    return fence_value;
 }
 
 void D3D12Device::WaitForFence(u64 fence_value) {
@@ -75,24 +152,63 @@ std::unique_ptr<ICommandList> D3D12Device::CreateComputeCommandList() {
 }
 
 u64 D3D12Device::SubmitCompute(ICommandList& cmd) {
-    auto* native = static_cast<ID3D12GraphicsCommandList*>(cmd.NativeHandle());
+    auto* rhi_cmd = dynamic_cast<D3D12CommandList*>(&cmd);
+    if (!rhi_cmd || !rhi_cmd->BelongsTo(*this) || !rhi_cmd->IsComputeList() || !rhi_cmd->NativeHandle()) {
+        AETHER_LOG_ERROR("D3D12", "SubmitCompute requires a closed compute command list created by this device");
+        return 0;
+    }
+    std::lock_guard<std::mutex> command_lock(rhi_cmd->SubmissionMutex());
+    if (!rhi_cmd->IsReadyForSubmit() || rhi_cmd->IsSubmissionInFlight()) {
+        AETHER_LOG_ERROR("D3D12", "SubmitCompute requires a closed compute command list that is not already in flight");
+        return 0;
+    }
+    auto* native = static_cast<ID3D12GraphicsCommandList*>(rhi_cmd->NativeHandle());
     ID3D12CommandList* lists[] = {native};
-    return device_.SubmitCompute(lists, 1);
+    const u64 fence_value = device_.SubmitCompute(lists, 1);
+    if (fence_value != 0) rhi_cmd->MarkSubmitted(fence_value);
+    return fence_value;
 }
 
 TextureHandle D3D12Device::RegisterTexture(ID3D12Resource* resource, D3D12_CPU_DESCRIPTOR_HANDLE rtv) {
+    if (!resource || rtv.ptr == 0) {
+        AETHER_LOG_ERROR("D3D12", "RegisterTexture requires a resource and render-target descriptor");
+        return {};
+    }
+    if (textures_.size() >= static_cast<usize>(static_cast<u32>(-1))) {
+        AETHER_LOG_ERROR("D3D12", "Texture registry exhausted its 32-bit handle space");
+        return {};
+    }
     TextureHandle handle{static_cast<u32>(textures_.size())};
     textures_.push_back({resource, rtv});
     return handle;
 }
 
 void D3D12Device::UpdateTexture(TextureHandle handle, ID3D12Resource* resource, D3D12_CPU_DESCRIPTOR_HANDLE rtv) {
+    if (!IsTextureValid(handle) || !resource || rtv.ptr == 0) {
+        AETHER_LOG_ERROR("D3D12", "UpdateTexture received an invalid handle, resource, or render-target descriptor");
+        return;
+    }
     textures_[handle.index] = {resource, rtv};
 }
 
 PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain& swap_chain) {
-    auto& d3d_swap = static_cast<D3D12SwapChain&>(swap_chain);
+    auto* d3d_swap_ptr = dynamic_cast<D3D12SwapChain*>(&swap_chain);
+    if (!d3d_swap_ptr || !d3d_swap_ptr->BelongsTo(*this)) {
+        AETHER_LOG_ERROR("D3D12", "CreatePipeline requires a D3D12 swap chain created by this device");
+        return {};
+    }
+    if (!IsValidVertexLayout(desc.vertex_layout)) {
+        AETHER_LOG_ERROR("D3D12", "CreatePipeline received an unsupported vertex layout");
+        return {};
+    }
+    auto& d3d_swap = *d3d_swap_ptr;
     DXGI_FORMAT rtv_format = d3d_swap.Native().Format();
+
+    const u32 max_root_constants = desc.enable_bindless_textures ? 63u : 64u;
+    if (desc.push_constant_size_bytes % 4 != 0 || desc.push_constant_size_bytes / 4 > max_root_constants) {
+        AETHER_LOG_ERROR("D3D12", "Graphics push-constant size must be four-byte aligned and fit the root signature");
+        throw std::invalid_argument("Graphics push-constant size exceeds D3D12 root-signature limits");
+    }
 
     if (desc.enable_bindless_textures) {
         AETHER_ASSERT(desc.push_constant_size_bytes > 0);
@@ -168,6 +284,12 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
 
     PipelineRecord record;
     record.frame_constants_root_index = frame_constants_root_index;
+    record.push_constant_size_bytes = desc.push_constant_size_bytes;
+    record.enable_bindless_textures = desc.enable_bindless_textures;
+    record.use_vertex_buffer = desc.use_vertex_buffer;
+    record.vertex_stride_bytes = desc.vertex_layout == VertexLayout::PositionNormalUvTangent
+                                     ? 48u
+                                     : desc.vertex_layout == VertexLayout::PositionNormalUv ? 32u : 20u;
     AETHER_D3D_CHECK(device_.Handle()->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(),
                                                             IID_PPV_ARGS(&record.root_signature)));
 
@@ -252,29 +374,267 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
     return PipelineHandle{static_cast<u32>(pipelines_.size() - 1)};
 }
 
-BufferHandle D3D12Device::CreateBufferInternal(const void* data, u64 size_bytes) {
+ComputePipelineHandle D3D12Device::CreateComputePipeline(const ComputePipelineDesc& desc) {
+    if (desc.hlsl_source.empty() || desc.entry.empty()) {
+        throw std::invalid_argument("ComputePipelineDesc requires HLSL source and an entry point");
+    }
+    if (desc.storage_buffer_count > 32) {
+        throw std::invalid_argument("ComputePipelineDesc supports at most 32 storage buffers");
+    }
+    if (desc.sampled_texture_count > 32) {
+        throw std::invalid_argument("ComputePipelineDesc supports at most 32 sampled textures");
+    }
+    if (desc.constant_buffer_count > 14 || desc.storage_buffer_count + desc.sampled_texture_count + desc.constant_buffer_count > 64) {
+        throw std::invalid_argument("ComputePipelineDesc exceeds supported root buffer bindings");
+    }
+    ComputePipelineRecord record;
+    record.storage_buffer_count = desc.storage_buffer_count;
+    record.sampled_texture_count = desc.sampled_texture_count;
+    record.constant_buffer_count = desc.constant_buffer_count;
+    if (desc.storage_buffer_count + desc.sampled_texture_count + desc.constant_buffer_count * 2 > 64) {
+        throw std::invalid_argument("ComputePipelineDesc exceeds the D3D12 root signature DWORD limit");
+    }
+    std::vector<D3D12_ROOT_PARAMETER> params(desc.storage_buffer_count + desc.sampled_texture_count + desc.constant_buffer_count);
+    std::vector<D3D12_DESCRIPTOR_RANGE> storage_ranges(desc.storage_buffer_count);
+    for (u32 i = 0; i < desc.storage_buffer_count; ++i) {
+        storage_ranges[i].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+        storage_ranges[i].NumDescriptors = 1;
+        storage_ranges[i].BaseShaderRegister = i;
+        storage_ranges[i].RegisterSpace = 0;
+        storage_ranges[i].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+        params[i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        params[i].DescriptorTable.NumDescriptorRanges = 1;
+        params[i].DescriptorTable.pDescriptorRanges = &storage_ranges[i];
+        params[i].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    }
+    std::vector<D3D12_DESCRIPTOR_RANGE> sampled_ranges(desc.sampled_texture_count);
+    for (u32 i = 0; i < desc.sampled_texture_count; ++i) {
+        sampled_ranges[i].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+        sampled_ranges[i].NumDescriptors = 1;
+        sampled_ranges[i].BaseShaderRegister = i;
+        sampled_ranges[i].RegisterSpace = 2; // shared compute sampled-texture bindings
+        sampled_ranges[i].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+        D3D12_ROOT_PARAMETER& param = params[desc.storage_buffer_count + i];
+        param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        param.DescriptorTable.NumDescriptorRanges = 1;
+        param.DescriptorTable.pDescriptorRanges = &sampled_ranges[i];
+        param.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    }
+    for (u32 i = 0; i < desc.constant_buffer_count; ++i) {
+        D3D12_ROOT_PARAMETER& param = params[desc.storage_buffer_count + desc.sampled_texture_count + i];
+        param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+        param.Descriptor = {i, 1}; // HLSL register(bN, space1)
+        param.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    }
+    D3D12_ROOT_SIGNATURE_DESC root_desc{};
+    root_desc.NumParameters = static_cast<UINT>(params.size());
+    root_desc.pParameters = params.empty() ? nullptr : params.data();
+    root_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
+    ComPtr<ID3DBlob> signature;
+    ComPtr<ID3DBlob> error;
+    const HRESULT serialize_hr = D3D12SerializeRootSignature(&root_desc, D3D_ROOT_SIGNATURE_VERSION_1,
+                                                             &signature, &error);
+    if (FAILED(serialize_hr)) {
+        const char* message = error ? static_cast<const char*>(error->GetBufferPointer()) : "(no error blob)";
+        AETHER_LOG_FATAL("RHI", "CreateComputePipeline: root signature serialization failed: %s", message);
+        throw std::runtime_error("compute root signature serialization failed");
+    }
+    AETHER_D3D_CHECK(device_.Handle()->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(),
+                                                            IID_PPV_ARGS(&record.root_signature)));
+    const gfx::ShaderBytecode shader = gfx::CompileHLSL(desc.hlsl_source, desc.entry.c_str(), "cs_5_1",
+                                                        "rhi_compute_pipeline");
+    D3D12_COMPUTE_PIPELINE_STATE_DESC pso_desc{};
+    pso_desc.pRootSignature = record.root_signature.Get();
+    pso_desc.CS = {shader.Data(), shader.Size()};
+    AETHER_D3D_CHECK(device_.Handle()->CreateComputePipelineState(&pso_desc, IID_PPV_ARGS(&record.pso)));
+    compute_pipelines_.push_back(std::move(record));
+    return ComputePipelineHandle{static_cast<u32>(compute_pipelines_.size() - 1)};
+}
+
+BufferHandle D3D12Device::CreateStorageBuffer(u64 size_bytes, u32 element_stride_bytes, const void* initial_data) {
+    if (size_bytes == 0 || size_bytes > std::numeric_limits<UINT>::max()) {
+        throw std::invalid_argument("Storage buffer size must be non-zero and fit the D3D12 buffer view limits");
+    }
+    if ((element_stride_bytes != 0 && (size_bytes % element_stride_bytes != 0 || element_stride_bytes > 2048)) ||
+        (element_stride_bytes == 0 && size_bytes % 4 != 0)) {
+        throw std::invalid_argument("Storage buffer size must be divisible by its valid element stride");
+    }
+    ReserveBufferRegistryEntry();
+    if (!compute_storage_heap_->CanAllocate()) {
+        throw std::runtime_error("D3D12 compute storage descriptor heap is full");
+    }
+    std::vector<u8> zeroes;
+    if (!initial_data) {
+        zeroes.resize(static_cast<usize>(size_bytes), 0);
+        initial_data = zeroes.data();
+    }
+    auto buffer = std::make_unique<gfx::Buffer>(device_, size_bytes, gfx::BufferKind::Default, true);
+    gfx::Buffer staging(device_, size_bytes, gfx::BufferKind::Upload);
+    staging.Update(initial_data, size_bytes);
+    gfx::CommandList copy(device_);
+    copy.Reset();
+    D3D12_RESOURCE_BARRIER to_copy = TransitionBarrier(buffer->Handle(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                                       D3D12_RESOURCE_STATE_COPY_DEST);
+    copy->ResourceBarrier(1, &to_copy);
+    copy->CopyBufferRegion(buffer->Handle(), 0, staging.Handle(), 0, size_bytes);
+    D3D12_RESOURCE_BARRIER to_uav = TransitionBarrier(buffer->Handle(), D3D12_RESOURCE_STATE_COPY_DEST,
+                                                       D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    copy->ResourceBarrier(1, &to_uav);
+    copy.Close();
+    ID3D12CommandList* lists[] = {copy.Get()};
+    device_.WaitForFence(device_.Submit(lists, 1));
+    const u32 descriptor_index = compute_storage_heap_->Allocate();
+    if (descriptor_index == DescriptorHeap::kInvalidIndex) {
+        throw std::length_error("D3D12 compute storage descriptor allocation failed");
+    }
+    D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
+    uav.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+    if (element_stride_bytes == 0) {
+        uav.Format = DXGI_FORMAT_R32_TYPELESS;
+        uav.Buffer.NumElements = static_cast<UINT>(size_bytes / 4);
+        uav.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
+    } else {
+        uav.Format = DXGI_FORMAT_UNKNOWN;
+        uav.Buffer.NumElements = static_cast<UINT>(size_bytes / element_stride_bytes);
+        uav.Buffer.StructureByteStride = element_stride_bytes;
+    }
+    device_.Handle()->CreateUnorderedAccessView(buffer->Handle(), nullptr, &uav,
+                                                 compute_storage_heap_->CPUHandle(descriptor_index));
+    buffers_.push_back(std::move(buffer));
+    storage_descriptor_indices_.push_back(descriptor_index);
+    constant_buffer_flags_.push_back(false);
+    buffer_vertex_flags_.push_back(false);
+    index_buffer_formats_.push_back(std::nullopt);
+    return BufferHandle{static_cast<u32>(buffers_.size() - 1)};
+}
+
+void D3D12Device::UpdateStorageBuffer(BufferHandle buffer, const void* data, u64 size_bytes, u64 offset) {
+    if (!buffer.IsValid() || buffer.index >= buffers_.size() || buffer.index >= storage_descriptor_indices_.size() ||
+        storage_descriptor_indices_[buffer.index] == DescriptorHeap::kInvalidIndex || !data || size_bytes == 0 ||
+        offset > buffers_[buffer.index]->Size() || size_bytes > buffers_[buffer.index]->Size() - offset) {
+        AETHER_LOG_ERROR("D3D12", "UpdateStorageBuffer received an invalid handle, source, or range");
+        return;
+    }
+    device_.WithComputeQueueIdle([&] {
+        gfx::Buffer staging(device_, size_bytes, gfx::BufferKind::Upload);
+        staging.Update(data, size_bytes);
+        gfx::CommandList copy(device_);
+        copy.Reset();
+        ID3D12Resource* resource = buffers_[buffer.index]->Handle();
+        D3D12_RESOURCE_BARRIER to_copy = TransitionBarrier(resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                                           D3D12_RESOURCE_STATE_COPY_DEST);
+        copy->ResourceBarrier(1, &to_copy);
+        copy->CopyBufferRegion(resource, offset, staging.Handle(), 0, size_bytes);
+        D3D12_RESOURCE_BARRIER to_uav = TransitionBarrier(resource, D3D12_RESOURCE_STATE_COPY_DEST,
+                                                           D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        copy->ResourceBarrier(1, &to_uav);
+        copy.Close();
+        ID3D12CommandList* lists[] = {copy.Get()};
+        device_.WaitForFence(device_.Submit(lists, 1));
+    });
+}
+
+BufferHandle D3D12Device::CreateConstantBuffer(u64 size_bytes, const void* initial_data) {
+    if (size_bytes == 0 || size_bytes > std::numeric_limits<UINT>::max() - 255) {
+        throw std::invalid_argument("Constant buffer size must be non-zero and fit D3D12 limits");
+    }
+    ReserveBufferRegistryEntry();
+    const u64 aligned_size = (size_bytes + 255u) & ~u64(255u);
+    auto buffer = std::make_unique<gfx::Buffer>(device_, aligned_size, gfx::BufferKind::Upload);
+    if (initial_data) {
+        buffer->Update(initial_data, size_bytes);
+    } else {
+        std::vector<u8> zeroes(static_cast<usize>(aligned_size), 0);
+        buffer->Update(zeroes.data(), aligned_size);
+    }
+    buffers_.push_back(std::move(buffer));
+    storage_descriptor_indices_.push_back(DescriptorHeap::kInvalidIndex);
+    constant_buffer_flags_.push_back(true);
+    buffer_vertex_flags_.push_back(false);
+    index_buffer_formats_.push_back(std::nullopt);
+    return BufferHandle{static_cast<u32>(buffers_.size() - 1)};
+}
+
+void D3D12Device::UpdateConstantBuffer(BufferHandle buffer, const void* data, u64 size_bytes, u64 offset) {
+    if (!IsConstantBuffer(buffer) || !data || size_bytes == 0 ||
+        offset > buffers_[buffer.index]->Size() || size_bytes > buffers_[buffer.index]->Size() - offset) {
+        AETHER_LOG_ERROR("D3D12", "UpdateConstantBuffer received an invalid handle, source, or range");
+        return;
+    }
+    device_.WithQueuesIdle([&] { buffers_[buffer.index]->Update(data, size_bytes, offset); });
+}
+
+BufferHandle D3D12Device::CreateVertexBuffer(const void* data, u64 size_bytes) {
+    return CreateBufferInternal(data, size_bytes, true);
+}
+
+BufferHandle D3D12Device::CreateIndexBuffer(const void* data, u64 size_bytes, IndexFormat format) {
+    const u32 index_size = format == IndexFormat::UInt16 ? 2u : format == IndexFormat::UInt32 ? 4u : 0u;
+    if (index_size == 0 || size_bytes == 0 || size_bytes % index_size != 0) {
+        throw std::invalid_argument("Index buffer size must be non-zero, aligned, and use a supported index format");
+    }
+    return CreateBufferInternal(data, size_bytes, false, format);
+}
+
+BufferHandle D3D12Device::CreateBufferInternal(const void* data, u64 size_bytes, bool is_vertex,
+                                               std::optional<IndexFormat> index_format) {
     if (!data || size_bytes == 0) {
         AETHER_LOG_ERROR("D3D12", "RHI buffers require non-null initial data and a non-zero size");
         throw std::invalid_argument("RHI buffers require non-null initial data and a non-zero size");
     }
+    if (size_bytes > std::numeric_limits<UINT>::max()) {
+        AETHER_LOG_ERROR("D3D12", "Vertex/index buffer size exceeds the native view size limit");
+        throw std::invalid_argument("Vertex/index buffer size exceeds the D3D12 view size limit");
+    }
+    ReserveBufferRegistryEntry();
     auto buffer = std::make_unique<gfx::Buffer>(device_, size_bytes, gfx::BufferKind::Upload);
     buffer->Update(data, size_bytes);
     buffers_.push_back(std::move(buffer));
+    storage_descriptor_indices_.push_back(DescriptorHeap::kInvalidIndex);
+    constant_buffer_flags_.push_back(false);
+    buffer_vertex_flags_.push_back(is_vertex);
+    index_buffer_formats_.push_back(index_format);
     return BufferHandle{static_cast<u32>(buffers_.size() - 1)};
 }
 
-BufferHandle D3D12Device::CreateConstantBuffer(u64 size_bytes) {
+BufferHandle D3D12Device::CreateFrameConstantBuffer(u64 size_bytes) {
     if (size_bytes == 0) {
         AETHER_LOG_ERROR("D3D12", "CreateConstantBuffer requires a non-zero size");
         throw std::invalid_argument("CreateConstantBuffer requires a non-zero size");
     }
     const u64 padded = (size_bytes + 255) / 256 * 256; // constant data is read in 256-byte units
-    const std::vector<u8> zeros(static_cast<usize>(padded), 0);
-    return CreateBufferInternal(zeros.data(), padded);
+    return CreateConstantBuffer(padded, nullptr);
+}
+
+void D3D12Device::ReserveBufferRegistryEntry() {
+    const usize next_size = buffers_.size() + 1;
+    if (next_size <= buffers_.size() || next_size > buffers_.max_size() ||
+        next_size > storage_descriptor_indices_.max_size() || next_size > constant_buffer_flags_.max_size()) {
+        throw std::length_error("D3D12 buffer registry capacity is exhausted");
+    }
+    buffers_.reserve(next_size);
+    storage_descriptor_indices_.reserve(next_size);
+    constant_buffer_flags_.reserve(next_size);
+    buffer_vertex_flags_.reserve(next_size);
+    index_buffer_formats_.reserve(next_size);
+}
+
+D3D12_GPU_DESCRIPTOR_HANDLE D3D12Device::ComputeStorageDescriptor(BufferHandle handle) const {
+    if (!handle.IsValid() || handle.index >= storage_descriptor_indices_.size() ||
+        storage_descriptor_indices_[handle.index] == DescriptorHeap::kInvalidIndex) return {};
+    return compute_storage_heap_->GPUHandle(storage_descriptor_indices_[handle.index]);
+}
+
+D3D12_GPU_DESCRIPTOR_HANDLE D3D12Device::ComputeSampledDescriptor(SampledTextureHandle handle) const {
+    if (!handle.IsValid() || handle.index < kFirstUserBindlessTextureIndex) return {};
+    const u32 index = handle.index - kFirstUserBindlessTextureIndex;
+    if (index >= sampled_texture_count_ || index >= sampled_descriptor_indices_.size() ||
+        sampled_descriptor_indices_[index] == DescriptorHeap::kInvalidIndex) return {};
+    return compute_storage_heap_->GPUHandle(sampled_descriptor_indices_[index]);
 }
 
 void D3D12Device::UpdateVertexBuffer(BufferHandle buffer, const void* data, u64 size_bytes) {
-    if (!buffer.IsValid() || buffer.index >= buffers_.size()) {
+    if (!IsVertexBuffer(buffer) || buffer.index >= buffers_.size()) {
         AETHER_LOG_ERROR("D3D12", "UpdateVertexBuffer received an invalid buffer handle (%u)", buffer.index);
         return;
     }
@@ -283,18 +643,19 @@ void D3D12Device::UpdateVertexBuffer(BufferHandle buffer, const void* data, u64 
                          static_cast<unsigned long long>(size_bytes));
         return;
     }
-    buffers_[buffer.index]->Update(data, size_bytes);
+    device_.WithGraphicsQueueIdle([&] { buffers_[buffer.index]->Update(data, size_bytes); });
 }
 
 SampledTextureHandle D3D12Device::CreateTexture(u32 width, u32 height, const u8* rgba8_pixels) {
     if (width == 0 || height == 0 || !rgba8_pixels ||
+        width > D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION || height > D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION ||
         static_cast<u64>(width) > std::numeric_limits<u64>::max() / 4 / height) {
-        AETHER_LOG_ERROR("D3D12", "CreateTexture requires non-zero dimensions and non-null RGBA8 pixel data");
-        throw std::invalid_argument("CreateTexture requires non-zero dimensions and non-null RGBA8 pixel data");
+        AETHER_LOG_ERROR("D3D12", "CreateTexture requires a supported extent and non-null RGBA8 pixel data");
+        throw std::invalid_argument("CreateTexture requires a supported extent and non-null RGBA8 pixel data");
     }
-    if (sampled_textures_.size() >= kMaxUserBindlessTextures) {
-        AETHER_LOG_ERROR("D3D12", "CreateTexture exhausted the bindless texture table (capacity=%u real textures)",
-                         kMaxUserBindlessTextures);
+    if (sampled_texture_count_ >= kMaxUserBindlessTextures || !bindless_texture_heap_->CanAllocate() ||
+        !compute_storage_heap_->CanAllocate()) {
+        AETHER_LOG_ERROR("D3D12", "CreateTexture exhausted sampled-texture or compute descriptors");
         return {};
     }
 
@@ -308,9 +669,32 @@ SampledTextureHandle D3D12Device::CreateTexture(u32 width, u32 height, const u8*
     texture->ReleaseUploadStaging();
 
     u32 index = texture->BindlessIndex();
+    u32 compute_index = DescriptorHeap::kInvalidIndex;
+    device_.WithQueuesIdle([&] {
+        compute_index = compute_storage_heap_->Allocate();
+        if (compute_index == DescriptorHeap::kInvalidIndex) {
+            // gfx::Texture already wrote its SRV into this slot. Restore the
+            // initialized fallback before its resource owner is released.
+            D3D12_SHADER_RESOURCE_VIEW_DESC fallback_srv{};
+            fallback_srv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            fallback_srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+            fallback_srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            fallback_srv.Texture2D.MipLevels = 1;
+            device_.Handle()->CreateShaderResourceView(dummy_texture_->Handle(), &fallback_srv,
+                                                        bindless_texture_heap_->CPUHandle(index));
+            bindless_texture_heap_->Free(index);
+            throw std::length_error("Cannot create texture: compute descriptor allocation failed");
+        }
+        device_.Handle()->CopyDescriptorsSimple(1, compute_storage_heap_->CPUHandle(compute_index),
+                                                 bindless_texture_heap_->CPUHandle(index),
+                                                 D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    });
+    const usize descriptor_slot = index - kFirstUserBindlessTextureIndex;
+    sampled_descriptor_indices_[descriptor_slot] = compute_index;
     // Kept alive for bindless_texture_heap_'s lifetime — the descriptor at
     // `index` points at texture->Handle(), which must stay valid.
     sampled_textures_.push_back(std::move(texture));
+    ++sampled_texture_count_;
     return SampledTextureHandle{index};
 }
 
@@ -334,7 +718,7 @@ SampledTextureHandle D3D12Device::CreateCompressedTexture(CompressedTextureForma
         h = std::max(1u, h / 2);
     }
     if (!SupportsCompressedTexture(format)) return {}; // ASTC: D3D12 has none
-    if (sampled_textures_.size() >= kMaxUserBindlessTextures) {
+    if (sampled_texture_count_ >= kMaxUserBindlessTextures || !bindless_texture_heap_->CanAllocate()) {
         AETHER_LOG_ERROR("D3D12", "CreateCompressedTexture exhausted the bindless texture table (capacity=%u real textures)", kMaxUserBindlessTextures);
         return {};
     }
@@ -351,17 +735,133 @@ SampledTextureHandle D3D12Device::CreateCompressedTexture(CompressedTextureForma
     texture->ReleaseUploadStaging();
     const u32 index = texture->BindlessIndex();
     sampled_textures_.push_back(std::move(texture));
+    ++sampled_texture_count_;
     return SampledTextureHandle{index};
 }
 
 bool D3D12Device::DestroyTexture(SampledTextureHandle texture) {
+    if (!texture.IsValid() || texture.index < kFirstUserBindlessTextureIndex) return false;
+    const usize descriptor_slot = texture.index - kFirstUserBindlessTextureIndex;
+    if (descriptor_slot >= sampled_descriptor_indices_.size()) return false;
     const auto it = std::find_if(sampled_textures_.begin(), sampled_textures_.end(),
                                  [&](const std::unique_ptr<gfx::Texture>& t) { return t->BindlessIndex() == texture.index; });
-    if (!texture.IsValid() || it == sampled_textures_.end()) return false;
-    device_.WaitForFence(device_.Submit(nullptr, 0)); // everything submitted so far has finished, so nothing still reads it
-    bindless_texture_heap_->Free(texture.index);
-    sampled_textures_.erase(it);
+    const bool owns_regular_texture = it != sampled_textures_.end();
+    const bool owns_float_texture = sampled_float_textures_[descriptor_slot] != nullptr;
+    if (!owns_regular_texture && !owns_float_texture) return false;
+
+    device_.WithQueuesIdle([&] {
+        // Keep the bindless table fully initialized and make stale handles
+        // resolve to the white fallback before releasing the resource.
+        D3D12_SHADER_RESOURCE_VIEW_DESC fallback_srv{};
+        fallback_srv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        fallback_srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        fallback_srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        fallback_srv.Texture2D.MipLevels = 1;
+        device_.Handle()->CreateShaderResourceView(dummy_texture_->Handle(), &fallback_srv,
+                                                    bindless_texture_heap_->CPUHandle(texture.index));
+        const u32 compute_index = sampled_descriptor_indices_[descriptor_slot];
+        if (compute_index != DescriptorHeap::kInvalidIndex) {
+            compute_storage_heap_->Free(compute_index);
+            sampled_descriptor_indices_[descriptor_slot] = DescriptorHeap::kInvalidIndex;
+        }
+        sampled_float_textures_[descriptor_slot].Reset();
+        bindless_texture_heap_->Free(texture.index);
+        if (owns_regular_texture) sampled_textures_.erase(it);
+        if (sampled_texture_count_ > 0) --sampled_texture_count_;
+    });
     return true;
+}
+SampledTextureHandle D3D12Device::CreateR32FloatTexture(u32 width, u32 height, const f32* values) {
+    if (width == 0 || height == 0 || !values ||
+        width > D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION || height > D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION ||
+        static_cast<u64>(width) > std::numeric_limits<u64>::max() / sizeof(f32) / height) {
+        throw std::invalid_argument("CreateR32FloatTexture requires a supported extent and float data");
+    }
+    if (sampled_texture_count_ >= kMaxUserBindlessTextures || !bindless_texture_heap_->CanAllocate() ||
+        !compute_storage_heap_->CanAllocate()) {
+        AETHER_LOG_ERROR("D3D12", "CreateR32FloatTexture exhausted sampled-texture descriptors");
+        return {};
+    }
+
+    const u64 row_bytes = static_cast<u64>(width) * sizeof(f32);
+    D3D12_RESOURCE_DESC desc{};
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    desc.Width = width;
+    desc.Height = height;
+    desc.DepthOrArraySize = 1;
+    desc.MipLevels = 1;
+    desc.Format = DXGI_FORMAT_R32_FLOAT;
+    desc.SampleDesc.Count = 1;
+    desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    D3D12_HEAP_PROPERTIES default_heap{};
+    default_heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+    ComPtr<ID3D12Resource> texture;
+    AETHER_D3D_CHECK(device_.Handle()->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                                D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                                                IID_PPV_ARGS(&texture)));
+
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
+    UINT rows = 0;
+    UINT64 row_size = 0, upload_size = 0;
+    device_.Handle()->GetCopyableFootprints(&desc, 0, 1, 0, &footprint, &rows, &row_size, &upload_size);
+    std::vector<u8> upload(static_cast<usize>(upload_size), 0);
+    for (u32 y = 0; y < height; ++y) {
+        std::memcpy(upload.data() + footprint.Offset + static_cast<usize>(y) * footprint.Footprint.RowPitch,
+                    reinterpret_cast<const u8*>(values) + static_cast<usize>(y) * row_bytes,
+                    static_cast<usize>(row_size));
+    }
+    gfx::Buffer staging(device_, upload_size, gfx::BufferKind::Upload);
+    staging.Update(upload.data(), upload_size);
+    gfx::CommandList copy(device_);
+    copy.Reset();
+    D3D12_TEXTURE_COPY_LOCATION dst{};
+    dst.pResource = texture.Get();
+    dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    dst.SubresourceIndex = 0;
+    D3D12_TEXTURE_COPY_LOCATION src{};
+    src.pResource = staging.Handle();
+    src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    src.PlacedFootprint = footprint;
+    copy->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    D3D12_RESOURCE_BARRIER to_read{};
+    to_read.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    to_read.Transition.pResource = texture.Get();
+    to_read.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    to_read.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+    to_read.Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    copy->ResourceBarrier(1, &to_read);
+    copy.Close();
+    ID3D12CommandList* lists[] = {copy.Get()};
+    device_.WaitForFence(device_.Submit(lists, 1));
+
+    const u32 bindless_index = bindless_texture_heap_->Allocate();
+    if (bindless_index == DescriptorHeap::kInvalidIndex) {
+        throw std::length_error("D3D12 bindless texture descriptor allocation failed");
+    }
+    D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+    srv.Format = DXGI_FORMAT_R32_FLOAT;
+    srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srv.Texture2D.MipLevels = 1;
+    u32 compute_index = DescriptorHeap::kInvalidIndex;
+    device_.WithQueuesIdle([&] {
+        compute_index = compute_storage_heap_->Allocate();
+        if (compute_index == DescriptorHeap::kInvalidIndex) {
+            // The bindless slot still contains its initialized fallback view.
+            // Return the slot before the temporary resource owner is released.
+            bindless_texture_heap_->Free(bindless_index);
+            throw std::length_error("Cannot create R32F texture: compute descriptor allocation failed");
+        }
+        device_.Handle()->CreateShaderResourceView(texture.Get(), &srv, bindless_texture_heap_->CPUHandle(bindless_index));
+        device_.Handle()->CopyDescriptorsSimple(1, compute_storage_heap_->CPUHandle(compute_index),
+                                                 bindless_texture_heap_->CPUHandle(bindless_index),
+                                                 D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    });
+    const usize descriptor_slot = bindless_index - kFirstUserBindlessTextureIndex;
+    sampled_descriptor_indices_[descriptor_slot] = compute_index;
+    sampled_float_textures_[descriptor_slot] = std::move(texture);
+    ++sampled_texture_count_;
+    return SampledTextureHandle{bindless_index};
 }
 
 D3D12SwapChain::D3D12SwapChain(D3D12Device& device, void* hwnd, u32 width, u32 height, u32 buffer_count)
@@ -412,6 +912,9 @@ void D3D12SwapChain::CreateDepthBuffer(u32 width, u32 height) {
 }
 
 void D3D12SwapChain::Resize(u32 width, u32 height) {
+    if (width == 0 || height == 0 || (width == Width() && height == Height())) {
+        return;
+    }
     swap_chain_.Resize(width, height);
     for (u32 i = 0; i < swap_chain_.BufferCount(); ++i) {
         device_.UpdateTexture(handles_[i], swap_chain_.BackBuffer(i), swap_chain_.BackBufferRTV(i));
@@ -421,7 +924,8 @@ void D3D12SwapChain::Resize(u32 width, u32 height) {
 }
 
 bool D3D12SwapChain::ReadBack(std::vector<u8>& rgba8) {
-    if (swap_chain_.Format() != DXGI_FORMAT_R8G8B8A8_UNORM || Width() == 0 || Height() == 0) {
+    if (swap_chain_.Format() != DXGI_FORMAT_R8G8B8A8_UNORM || Width() == 0 || Height() == 0 ||
+        swap_chain_.BufferCount() == 0) {
         return false;
     }
 
@@ -480,21 +984,112 @@ bool D3D12SwapChain::ReadBack(std::vector<u8>& rgba8) {
 }
 
 D3D12CommandList::D3D12CommandList(D3D12Device& device, D3D12_COMMAND_LIST_TYPE type)
-    : device_(device), cmd_(device.Native(), type) {}
+    : device_(device), type_(type), cmd_(device.Native(), type) {}
+
+D3D12CommandList::~D3D12CommandList() {
+    if (IsSubmissionInFlight()) {
+        try {
+            if (IsComputeList()) {
+                device_.WaitForComputeFence(last_submitted_fence_);
+            } else {
+                device_.WaitForFence(last_submitted_fence_);
+            }
+        } catch (...) {
+            AETHER_LOG_ERROR("D3D12", "Could not wait for command-list submission; deferring its allocator to device teardown");
+            device_.DeferCommandAllocator(cmd_.ReleaseAllocator());
+        }
+    }
+}
+
+void D3D12CommandList::Reset() {
+    std::lock_guard<std::mutex> submission_lock(submission_mutex_);
+    if (IsSubmissionInFlight()) {
+        AETHER_LOG_ERROR("D3D12", "Reset requires the command list's last submission fence to complete");
+        return;
+    }
+    cmd_.Reset();
+    last_submitted_fence_ = 0;
+    recording_ = true;
+    has_closed_recording_ = false;
+    render_pass_active_ = false;
+    active_backbuffer_ = nullptr;
+    graphics_pipeline_bound_ = false;
+    graphics_bindless_enabled_ = false;
+    graphics_bindless_bound_ = false;
+    graphics_uses_vertex_buffer_ = false;
+    graphics_vertex_stride_bytes_ = 0;
+    vertex_buffer_bound_ = false;
+    bound_vertex_count_ = 0;
+    index_buffer_bound_ = false;
+    bound_index_count_ = 0;
+    graphics_push_constant_size_bytes_ = 0;
+    compute_pipeline_bound_ = false;
+    compute_storage_buffer_count_ = 0;
+    compute_sampled_texture_count_ = 0;
+    compute_constant_buffer_count_ = 0;
+    compute_storage_bound_.clear();
+    compute_sampled_texture_bound_.clear();
+    compute_constant_buffer_bound_.clear();
+}
+
+void D3D12CommandList::Close() {
+    std::lock_guard<std::mutex> submission_lock(submission_mutex_);
+    if (!recording_) {
+        AETHER_LOG_ERROR("D3D12", "Close received a command list that is not recording");
+        return;
+    }
+    if (render_pass_active_) {
+        AETHER_LOG_ERROR("D3D12", "Close requires EndRenderPass before closing the command list");
+        return;
+    }
+    cmd_.Close();
+    recording_ = false;
+    has_closed_recording_ = true;
+}
 
 void D3D12CommandList::TransitionTexture(TextureHandle texture, ResourceState before, ResourceState after) {
+    if (!recording_) {
+        AETHER_LOG_ERROR("D3D12", "TransitionTexture requires a recording command list");
+        return;
+    }
+    if (IsComputeList() || !device_.IsTextureValid(texture) || !IsValidResourceState(before) ||
+        !IsValidResourceState(after)) {
+        AETHER_LOG_ERROR("D3D12", "TransitionTexture requires a graphics list and valid texture/resource states");
+        return;
+    }
     const TextureRecord& record = device_.GetTexture(texture);
     D3D12_RESOURCE_BARRIER barrier = TransitionBarrier(record.resource, ToD3D12(before), ToD3D12(after));
     cmd_.Get()->ResourceBarrier(1, &barrier);
 }
 
 void D3D12CommandList::ClearRenderTarget(TextureHandle texture, const ClearColor& color) {
+    if (!recording_) {
+        AETHER_LOG_ERROR("D3D12", "ClearRenderTarget requires a recording command list");
+        return;
+    }
+    if (IsComputeList() || !IsFiniteClearColor(color) || !device_.IsTextureValid(texture) ||
+        device_.GetTexture(texture).rtv.ptr == 0) {
+        AETHER_LOG_ERROR("D3D12", "ClearRenderTarget requires a graphics list and valid texture/color");
+        return;
+    }
     const TextureRecord& record = device_.GetTexture(texture);
     const f32 c[4] = {color.r, color.g, color.b, color.a};
     cmd_.Get()->ClearRenderTargetView(record.rtv, c, 0, nullptr);
 }
 
 void D3D12CommandList::SetViewportAndScissor(const Viewport& viewport, const Rect& scissor) {
+    if (!recording_) {
+        AETHER_LOG_ERROR("D3D12", "SetViewportAndScissor requires a recording command list");
+        return;
+    }
+    if (!render_pass_active_ || !std::isfinite(viewport.x) || !std::isfinite(viewport.y) ||
+        !std::isfinite(viewport.width) || !std::isfinite(viewport.height) ||
+        !std::isfinite(viewport.min_depth) || !std::isfinite(viewport.max_depth) || viewport.width <= 0.0f ||
+        viewport.height <= 0.0f || viewport.min_depth < 0.0f || viewport.max_depth > 1.0f ||
+        viewport.min_depth > viewport.max_depth || scissor.right <= scissor.left || scissor.bottom <= scissor.top) {
+        AETHER_LOG_ERROR("D3D12", "SetViewportAndScissor requires an active pass and valid viewport/scissor bounds");
+        return;
+    }
     D3D12_VIEWPORT vp{viewport.x,    viewport.y,        viewport.width,
                        viewport.height, viewport.min_depth, viewport.max_depth};
     D3D12_RECT rect{scissor.left, scissor.top, scissor.right, scissor.bottom};
@@ -503,7 +1098,20 @@ void D3D12CommandList::SetViewportAndScissor(const Viewport& viewport, const Rec
 }
 
 void D3D12CommandList::BeginRenderPass(ISwapChain& swap_chain, const ClearColor& clear_color) {
-    auto& d3d_swap = static_cast<D3D12SwapChain&>(swap_chain);
+    if (!recording_) {
+        AETHER_LOG_ERROR("D3D12", "BeginRenderPass requires a recording command list");
+        return;
+    }
+    if (!IsFiniteClearColor(clear_color)) {
+        AETHER_LOG_ERROR("D3D12", "BeginRenderPass requires a finite clear color");
+        return;
+    }
+    auto* d3d_swap_ptr = dynamic_cast<D3D12SwapChain*>(&swap_chain);
+    if (IsComputeList() || render_pass_active_ || !d3d_swap_ptr || !d3d_swap_ptr->BelongsTo(device_)) {
+        AETHER_LOG_ERROR("D3D12", "BeginRenderPass requires a non-nested D3D12 swap chain from this device");
+        return;
+    }
+    auto& d3d_swap = *d3d_swap_ptr;
     u32 index = d3d_swap.CurrentIndex();
     ID3D12Resource* backbuffer = d3d_swap.Native().BackBuffer(index);
     D3D12_CPU_DESCRIPTOR_HANDLE rtv = d3d_swap.Native().BackBufferRTV(index);
@@ -532,50 +1140,161 @@ void D3D12CommandList::BeginRenderPass(ISwapChain& swap_chain, const ClearColor&
     cmd_.Get()->RSSetScissorRects(1, &scissor);
 
     active_backbuffer_ = backbuffer;
+    render_pass_active_ = true;
 }
 
 void D3D12CommandList::EndRenderPass() {
+    if (!recording_) {
+        AETHER_LOG_ERROR("D3D12", "EndRenderPass requires a recording command list");
+        return;
+    }
+    if (!render_pass_active_ || !active_backbuffer_) {
+        AETHER_LOG_ERROR("D3D12", "EndRenderPass requires an active render pass");
+        return;
+    }
     D3D12_RESOURCE_BARRIER to_present =
         TransitionBarrier(active_backbuffer_, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
     cmd_.Get()->ResourceBarrier(1, &to_present);
     active_backbuffer_ = nullptr;
+    render_pass_active_ = false;
+    graphics_pipeline_bound_ = false;
+    graphics_bindless_enabled_ = false;
+    graphics_bindless_bound_ = false;
+    graphics_uses_vertex_buffer_ = false;
+    vertex_buffer_bound_ = false;
+    index_buffer_bound_ = false;
+    graphics_push_constant_size_bytes_ = 0;
 }
 
 void D3D12CommandList::BindPipeline(PipelineHandle pipeline) {
+    if (!recording_) {
+        AETHER_LOG_ERROR("D3D12", "BindPipeline requires a recording command list");
+        return;
+    }
+    if (!render_pass_active_) {
+        AETHER_LOG_ERROR("D3D12", "BindPipeline requires an active render pass");
+        graphics_pipeline_bound_ = false;
+        graphics_bindless_enabled_ = false;
+        graphics_bindless_bound_ = false;
+        graphics_uses_vertex_buffer_ = false;
+        vertex_buffer_bound_ = false;
+        index_buffer_bound_ = false;
+        graphics_push_constant_size_bytes_ = 0;
+        return;
+    }
+    if (!pipeline.IsValid() || pipeline.index >= device_.PipelineCount()) {
+        AETHER_LOG_ERROR("D3D12", "BindPipeline received an invalid graphics-pipeline handle");
+        graphics_pipeline_bound_ = false;
+        graphics_bindless_enabled_ = false;
+        graphics_bindless_bound_ = false;
+        graphics_uses_vertex_buffer_ = false;
+        vertex_buffer_bound_ = false;
+        index_buffer_bound_ = false;
+        graphics_push_constant_size_bytes_ = 0;
+        return;
+    }
     const PipelineRecord& record = device_.GetPipeline(pipeline);
     cmd_.Get()->SetGraphicsRootSignature(record.root_signature.Get());
     cmd_.Get()->SetPipelineState(record.pso.Get());
     cmd_.Get()->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     frame_constants_root_index_ = record.frame_constants_root_index;
+    graphics_pipeline_bound_ = true;
+    graphics_push_constant_size_bytes_ = record.push_constant_size_bytes;
+    graphics_bindless_enabled_ = record.enable_bindless_textures;
+    graphics_bindless_bound_ = false;
+    graphics_uses_vertex_buffer_ = record.use_vertex_buffer;
+    graphics_vertex_stride_bytes_ = record.vertex_stride_bytes;
+    vertex_buffer_bound_ = false;
+    index_buffer_bound_ = false;
 }
 
 void D3D12CommandList::SetPushConstants(const void* data, u32 size_bytes) {
+    if (!recording_) {
+        AETHER_LOG_ERROR("D3D12", "SetPushConstants requires a recording command list");
+        return;
+    }
+    if (!render_pass_active_ || !graphics_pipeline_bound_ || !data || size_bytes == 0 || size_bytes % 4 != 0 ||
+        size_bytes > graphics_push_constant_size_bytes_) {
+        AETHER_LOG_ERROR("D3D12", "SetPushConstants requires a valid pipeline and data within its aligned push-constant range");
+        return;
+    }
     cmd_.Get()->SetGraphicsRoot32BitConstants(0, (size_bytes + 3) / 4, data, 0);
 }
 
 void D3D12CommandList::Draw(u32 vertex_count) {
+    if (!recording_) {
+        AETHER_LOG_ERROR("D3D12", "Draw requires a recording command list");
+        return;
+    }
+    if (!render_pass_active_ || !graphics_pipeline_bound_ ||
+        (graphics_uses_vertex_buffer_ && (!vertex_buffer_bound_ || vertex_count > bound_vertex_count_)) ||
+        (graphics_bindless_enabled_ && !graphics_bindless_bound_)) {
+        AETHER_LOG_ERROR("D3D12", "Draw requires a valid bound graphics pipeline");
+        return;
+    }
     cmd_.Get()->DrawInstanced(vertex_count, 1, 0, 0);
 }
 
 void D3D12CommandList::BindVertexBuffer(BufferHandle buffer, u32 stride_bytes) {
+    if (!recording_) {
+        AETHER_LOG_ERROR("D3D12", "BindVertexBuffer requires a recording command list");
+        return;
+    }
+    if (!render_pass_active_ || !graphics_pipeline_bound_ || !graphics_uses_vertex_buffer_ ||
+        !buffer.IsValid() || buffer.index >= device_.BufferCount() || device_.IsStorageBuffer(buffer) ||
+        device_.IsConstantBuffer(buffer) || !device_.IsVertexBuffer(buffer) ||
+        stride_bytes != graphics_vertex_stride_bytes_) {
+        AETHER_LOG_ERROR("D3D12", "BindVertexBuffer received an invalid handle or a stride that does not match the pipeline");
+        return;
+    }
     const gfx::Buffer& buf = device_.GetBuffer(buffer);
+    if (buf.Size() % stride_bytes != 0) {
+        AETHER_LOG_ERROR("D3D12", "BindVertexBuffer size must contain whole vertices for the pipeline stride");
+        return;
+    }
     D3D12_VERTEX_BUFFER_VIEW vbv{};
     vbv.BufferLocation = buf.GPUAddress();
     vbv.SizeInBytes = static_cast<UINT>(buf.Size());
     vbv.StrideInBytes = stride_bytes;
     cmd_.Get()->IASetVertexBuffers(0, 1, &vbv);
+    vertex_buffer_bound_ = true;
+    bound_vertex_count_ = buf.Size() / stride_bytes;
 }
 
 void D3D12CommandList::BindIndexBuffer(BufferHandle buffer, IndexFormat format) {
+    if (!recording_) {
+        AETHER_LOG_ERROR("D3D12", "BindIndexBuffer requires a recording command list");
+        return;
+    }
+    if (!render_pass_active_ || !graphics_pipeline_bound_ || !graphics_uses_vertex_buffer_ ||
+        (format != IndexFormat::UInt16 && format != IndexFormat::UInt32) ||
+        !buffer.IsValid() || buffer.index >= device_.BufferCount() || device_.IsStorageBuffer(buffer) ||
+        device_.IsConstantBuffer(buffer) || !device_.IsIndexBuffer(buffer, format)) {
+        AETHER_LOG_ERROR("D3D12", "BindIndexBuffer received an invalid format, state, or buffer handle");
+        return;
+    }
     const gfx::Buffer& buf = device_.GetBuffer(buffer);
+    const u32 index_size_bytes = format == IndexFormat::UInt16 ? 2u : 4u;
     D3D12_INDEX_BUFFER_VIEW ibv{};
     ibv.BufferLocation = buf.GPUAddress();
     ibv.SizeInBytes = static_cast<UINT>(buf.Size());
     ibv.Format = format == IndexFormat::UInt16 ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT;
     cmd_.Get()->IASetIndexBuffer(&ibv);
+    index_buffer_bound_ = true;
+    bound_index_count_ = buf.Size() / index_size_bytes;
 }
 
 void D3D12CommandList::DrawIndexed(u32 index_count) {
+    if (!recording_) {
+        AETHER_LOG_ERROR("D3D12", "DrawIndexed requires a recording command list");
+        return;
+    }
+    if (!render_pass_active_ || !graphics_pipeline_bound_ || !graphics_uses_vertex_buffer_ ||
+        !vertex_buffer_bound_ || !index_buffer_bound_ || index_count > bound_index_count_ ||
+        (graphics_bindless_enabled_ && !graphics_bindless_bound_)) {
+        AETHER_LOG_ERROR("D3D12", "DrawIndexed requires a valid bound graphics pipeline");
+        return;
+    }
     cmd_.Get()->DrawIndexedInstanced(index_count, 1, 0, 0, 0);
 }
 
@@ -586,11 +1305,154 @@ void D3D12CommandList::BindFrameConstants(BufferHandle buffer) {
     }
     cmd_.Get()->SetGraphicsRootConstantBufferView(frame_constants_root_index_, device_.GetBuffer(buffer).GPUAddress());
 }
+void D3D12CommandList::BindComputePipeline(ComputePipelineHandle pipeline) {
+    if (!recording_) {
+        AETHER_LOG_ERROR("D3D12", "BindComputePipeline requires a recording command list");
+        return;
+    }
+    if (!IsComputeList() || !pipeline.IsValid() || pipeline.index >= device_.ComputePipelineCount()) {
+        AETHER_LOG_ERROR("D3D12", "BindComputePipeline requires a compute command list and valid pipeline handle");
+        compute_pipeline_bound_ = false;
+        compute_storage_buffer_count_ = compute_sampled_texture_count_ = compute_constant_buffer_count_ = 0;
+        compute_storage_bound_.clear();
+        compute_sampled_texture_bound_.clear();
+        compute_constant_buffer_bound_.clear();
+        return;
+    }
+    const ComputePipelineRecord& record = device_.GetComputePipeline(pipeline);
+    cmd_.Get()->SetComputeRootSignature(record.root_signature.Get());
+    cmd_.Get()->SetPipelineState(record.pso.Get());
+    compute_storage_buffer_count_ = record.storage_buffer_count;
+    compute_sampled_texture_count_ = record.sampled_texture_count;
+    compute_constant_buffer_count_ = record.constant_buffer_count;
+    compute_pipeline_bound_ = true;
+    compute_storage_bound_.assign(record.storage_buffer_count, false);
+    compute_sampled_texture_bound_.assign(record.sampled_texture_count, false);
+    compute_constant_buffer_bound_.assign(record.constant_buffer_count, false);
+}
+
+void D3D12CommandList::BindComputeConstantBuffer(u32 slot, BufferHandle buffer) {
+    if (!recording_) {
+        AETHER_LOG_ERROR("D3D12", "BindComputeConstantBuffer requires a recording command list");
+        return;
+    }
+    if (!IsComputeList() || !compute_pipeline_bound_ || slot >= compute_constant_buffer_count_ || !buffer.IsValid() ||
+        buffer.index >= device_.BufferCount() || !device_.IsConstantBuffer(buffer)) {
+        AETHER_LOG_ERROR("D3D12", "Compute constant-buffer slot or handle is invalid");
+        return;
+    }
+    const gfx::Buffer& resource = device_.GetBuffer(buffer);
+    cmd_.Get()->SetComputeRootConstantBufferView(compute_storage_buffer_count_ + compute_sampled_texture_count_ + slot, resource.GPUAddress());
+    compute_constant_buffer_bound_[slot] = true;
+}
+
+void D3D12CommandList::BindComputeStorageBuffer(u32 slot, BufferHandle buffer) {
+    if (!recording_) {
+        AETHER_LOG_ERROR("D3D12", "BindComputeStorageBuffer requires a recording command list");
+        return;
+    }
+    if (!IsComputeList() || !compute_pipeline_bound_ || slot >= compute_storage_buffer_count_ || !buffer.IsValid() ||
+        buffer.index >= device_.BufferCount()) {
+        AETHER_LOG_ERROR("D3D12", "Compute storage-buffer slot or handle is invalid");
+        return;
+    }
+    const D3D12_GPU_DESCRIPTOR_HANDLE descriptor = device_.ComputeStorageDescriptor(buffer);
+    if (descriptor.ptr == 0) {
+        AETHER_LOG_ERROR("D3D12", "Compute storage-buffer handle is not a storage buffer");
+        return;
+    }
+    ID3D12DescriptorHeap* heaps[] = {device_.ComputeStorageHeap()};
+    cmd_.Get()->SetDescriptorHeaps(1, heaps);
+    cmd_.Get()->SetComputeRootDescriptorTable(slot, descriptor);
+    compute_storage_bound_[slot] = true;
+}
+
+void D3D12CommandList::BindComputeSampledTexture(u32 slot, SampledTextureHandle texture) {
+    if (!recording_) {
+        AETHER_LOG_ERROR("D3D12", "BindComputeSampledTexture requires a recording command list");
+        return;
+    }
+    if (!IsComputeList() || !compute_pipeline_bound_ || slot >= compute_sampled_texture_count_ || !texture.IsValid()) {
+        AETHER_LOG_ERROR("D3D12", "Compute sampled-texture slot or handle is invalid");
+        return;
+    }
+    const D3D12_GPU_DESCRIPTOR_HANDLE descriptor = device_.ComputeSampledDescriptor(texture);
+    if (descriptor.ptr == 0) {
+        AETHER_LOG_ERROR("D3D12", "Compute sampled-texture handle is invalid");
+        return;
+    }
+    ID3D12DescriptorHeap* heaps[] = {device_.ComputeStorageHeap()};
+    cmd_.Get()->SetDescriptorHeaps(1, heaps);
+    cmd_.Get()->SetComputeRootDescriptorTable(compute_storage_buffer_count_ + slot, descriptor);
+    compute_sampled_texture_bound_[slot] = true;
+}
+
+void D3D12CommandList::ComputeBufferBarrier(BufferHandle buffer) {
+    if (!recording_) {
+        AETHER_LOG_ERROR("D3D12", "ComputeBufferBarrier requires a recording command list");
+        return;
+    }
+    if (!IsComputeList() || !buffer.IsValid() || buffer.index >= device_.BufferCount() ||
+        !device_.IsStorageBuffer(buffer)) {
+        AETHER_LOG_ERROR("D3D12", "ComputeBufferBarrier requires a compute command list and storage buffer");
+        return;
+    }
+    const gfx::Buffer& resource = device_.GetBuffer(buffer);
+    D3D12_RESOURCE_BARRIER barrier{};
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+    barrier.UAV.pResource = resource.Handle();
+    cmd_.Get()->ResourceBarrier(1, &barrier);
+}
+
+void D3D12CommandList::Dispatch(u32 groups_x, u32 groups_y, u32 groups_z) {
+    if (!recording_) {
+        AETHER_LOG_ERROR("D3D12", "Dispatch requires a recording command list");
+        return;
+    }
+    constexpr u32 kMaxDispatchGroupsPerDimension = 65535;
+    if (groups_x == 0 || groups_y == 0 || groups_z == 0 || groups_x > kMaxDispatchGroupsPerDimension ||
+        groups_y > kMaxDispatchGroupsPerDimension || groups_z > kMaxDispatchGroupsPerDimension) {
+        AETHER_LOG_ERROR("D3D12", "Compute dispatch group counts are zero or exceed the D3D12 per-dimension limit");
+        return;
+    }
+    if (!IsComputeList() || !compute_pipeline_bound_) {
+        AETHER_LOG_ERROR("D3D12", "Dispatch requires a bound compute pipeline");
+        return;
+    }
+    for (bool bound : compute_storage_bound_) {
+        if (!bound) {
+            AETHER_LOG_ERROR("D3D12", "Dispatch requires every compute storage buffer to be bound");
+            return;
+        }
+    }
+    for (bool bound : compute_sampled_texture_bound_) {
+        if (!bound) {
+            AETHER_LOG_ERROR("D3D12", "Dispatch requires every compute sampled texture to be bound");
+            return;
+        }
+    }
+    for (bool bound : compute_constant_buffer_bound_) {
+        if (!bound) {
+            AETHER_LOG_ERROR("D3D12", "Dispatch requires every compute constant buffer to be bound");
+            return;
+        }
+    }
+    cmd_.Get()->Dispatch(groups_x, groups_y, groups_z);
+}
 
 void D3D12CommandList::BindBindlessTextures() {
+    if (!recording_) {
+        AETHER_LOG_ERROR("D3D12", "BindBindlessTextures requires a recording command list");
+        return;
+    }
+    if (!render_pass_active_ || !graphics_pipeline_bound_ || !graphics_bindless_enabled_) {
+        AETHER_LOG_ERROR("D3D12", "BindBindlessTextures requires an active pass and a bindless graphics pipeline");
+        return;
+    }
     ID3D12DescriptorHeap* heaps[] = {device_.BindlessTextureHeap().Heap()};
     cmd_.Get()->SetDescriptorHeaps(1, heaps);
     cmd_.Get()->SetGraphicsRootDescriptorTable(1, device_.BindlessTextureHeap().GPUHandle(0));
+    graphics_bindless_bound_ = true;
 }
 
 } // namespace aether::gfx::rhi::d3d12_backend

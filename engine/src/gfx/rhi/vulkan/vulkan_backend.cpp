@@ -4,12 +4,12 @@
 #include "aether/gfx/shader_compiler.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
-
 #if !defined(_WIN32) && defined(AETHER_HAS_GLFW)
 #define GLFW_INCLUDE_NONE
 #define GLFW_INCLUDE_VULKAN
@@ -19,6 +19,59 @@
 namespace aether::gfx::rhi::vulkan_backend {
 
 namespace {
+
+bool IsFiniteClearColor(const ClearColor& color) {
+    return std::isfinite(color.r) && std::isfinite(color.g) && std::isfinite(color.b) && std::isfinite(color.a);
+}
+
+bool IsValidResourceState(ResourceState state) {
+    switch (state) {
+        case ResourceState::Undefined:
+        case ResourceState::RenderTarget:
+        case ResourceState::Present:
+        case ResourceState::CopyDest:
+        case ResourceState::CopySource: return true;
+        default: return false;
+    }
+}
+
+bool IsValidVertexLayout(VertexLayout layout) {
+    switch (layout) {
+        case VertexLayout::PositionUv:
+        case VertexLayout::PositionNormalUv:
+        case VertexLayout::PositionNormalUvTangent: return true;
+        default: return false;
+    }
+}
+
+bool SupportsSampledTextureUpload(VkPhysicalDevice physical_device, VkFormat format) {
+    VkFormatProperties properties{};
+    vkGetPhysicalDeviceFormatProperties(physical_device, format, &properties);
+    constexpr VkFormatFeatureFlags required =
+        VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+    return (properties.optimalTilingFeatures & required) == required;
+}
+
+VkFormat SelectDepthAttachmentFormat(VkPhysicalDevice physical_device) {
+    constexpr VkFormat candidates[] = {VK_FORMAT_D32_SFLOAT, VK_FORMAT_D16_UNORM, VK_FORMAT_D24_UNORM_S8_UINT,
+                                       VK_FORMAT_D32_SFLOAT_S8_UINT};
+    for (VkFormat candidate : candidates) {
+        VkFormatProperties properties{};
+        vkGetPhysicalDeviceFormatProperties(physical_device, candidate, &properties);
+        if ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) != 0) {
+            return candidate;
+        }
+    }
+    return VK_FORMAT_UNDEFINED;
+}
+
+VkImageAspectFlags DepthAttachmentAspect(VkFormat format) {
+    VkImageAspectFlags aspect = VK_IMAGE_ASPECT_DEPTH_BIT;
+    if (format == VK_FORMAT_D24_UNORM_S8_UINT || format == VK_FORMAT_D32_SFLOAT_S8_UINT) {
+        aspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
+    }
+    return aspect;
+}
 
 void Check(VkResult result, const char* expr) {
     if (result != VK_SUCCESS) {
@@ -72,7 +125,6 @@ VkInstance CreateInstance(bool /*enable_debug_layer*/) {
     app_info.pEngineName = "Aether";
     app_info.engineVersion = VK_MAKE_VERSION(1, 0, 0);
     app_info.apiVersion = VK_API_VERSION_1_2; // timeline semaphores are core here
-
 #if defined(_WIN32)
     std::vector<const char*> extensions = {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_EXTENSION_NAME};
 #else
@@ -148,6 +200,18 @@ PhysicalDeviceChoice PickPhysicalDevice(VkInstance instance) {
     bool found_discrete = false;
 
     for (VkPhysicalDevice device : devices) {
+        VkPhysicalDeviceFeatures supported_features{};
+        vkGetPhysicalDeviceFeatures(device, &supported_features);
+        VkPhysicalDeviceProperties props{};
+        vkGetPhysicalDeviceProperties(device, &props);
+        if (supported_features.shaderSampledImageArrayDynamicIndexing != VK_TRUE ||
+            props.limits.maxPerStageDescriptorSampledImages < kMaxBindlessTextures ||
+            props.limits.maxDescriptorSetSampledImages < kMaxBindlessTextures) {
+            AETHER_LOG_INFO("Vulkan", "Skipping adapter %s: dynamic sampled-image indexing or 32-image limits missing",
+                            props.deviceName);
+            continue;
+        }
+
         u32 queue_family_count = 0;
         vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_family_count, nullptr);
         std::vector<VkQueueFamilyProperties> families(queue_family_count);
@@ -166,8 +230,6 @@ PhysicalDeviceChoice PickPhysicalDevice(VkInstance instance) {
                 continue;
             }
 
-            VkPhysicalDeviceProperties props{};
-            vkGetPhysicalDeviceProperties(device, &props);
             bool discrete = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
 
             if (!found || (discrete && !found_discrete)) {
@@ -251,7 +313,6 @@ VkDevice CreateLogicalDevice(VkPhysicalDevice physical_device, const PhysicalDev
 
     VkPhysicalDeviceVulkan12Features features_12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
     features_12.timelineSemaphore = VK_TRUE;
-
     std::vector<const char*> extensions = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
     // A portability implementation (MoltenVK) must have its subset enabled.
     u32 ext_count = 0;
@@ -268,6 +329,7 @@ VkDevice CreateLogicalDevice(VkPhysicalDevice physical_device, const PhysicalDev
     VkPhysicalDeviceFeatures supported_features{};
     vkGetPhysicalDeviceFeatures(physical_device, &supported_features);
     VkPhysicalDeviceFeatures enabled_features{};
+    enabled_features.shaderSampledImageArrayDynamicIndexing = VK_TRUE;
     enabled_features.textureCompressionBC = supported_features.textureCompressionBC;
     enabled_features.textureCompressionASTC_LDR = supported_features.textureCompressionASTC_LDR; // what phones have instead
 
@@ -287,39 +349,98 @@ VkDevice CreateLogicalDevice(VkPhysicalDevice physical_device, const PhysicalDev
 } // namespace
 
 VulkanDevice::VulkanDevice(bool enable_debug_layer) {
-    instance_ = CreateInstance(enable_debug_layer);
+    // Texture registration follows a GPU upload and a global descriptor write.
+    // Reserve the fixed table before creating Vulkan objects so registry growth
+    // cannot fail after a descriptor starts referencing the new image.
+    sampled_textures_.reserve(kMaxUserBindlessTextures);
+    try {
+        instance_ = CreateInstance(enable_debug_layer);
 
-    PhysicalDeviceChoice choice = PickPhysicalDevice(instance_);
-    physical_device_ = choice.device;
-    queue_family_index_ = choice.graphics_family;
-    compute_queue_family_index_ = choice.compute_family;
+        PhysicalDeviceChoice choice = PickPhysicalDevice(instance_);
+        physical_device_ = choice.device;
+        VkPhysicalDeviceProperties physical_device_properties{};
+        vkGetPhysicalDeviceProperties(physical_device_, &physical_device_properties);
+        std::copy(std::begin(physical_device_properties.limits.maxComputeWorkGroupCount),
+                  std::end(physical_device_properties.limits.maxComputeWorkGroupCount),
+                  max_compute_work_group_count_.begin());
+        max_uniform_buffer_range_ = physical_device_properties.limits.maxUniformBufferRange;
+        max_storage_buffer_range_ = physical_device_properties.limits.maxStorageBufferRange;
+        max_compute_storage_buffers_ = physical_device_properties.limits.maxPerStageDescriptorStorageBuffers;
+        max_compute_uniform_buffers_ = physical_device_properties.limits.maxPerStageDescriptorUniformBuffers;
+        max_compute_sampled_images_ = physical_device_properties.limits.maxPerStageDescriptorSampledImages;
+        max_compute_resources_ = physical_device_properties.limits.maxPerStageResources;
+        max_descriptor_set_storage_buffers_ = physical_device_properties.limits.maxDescriptorSetStorageBuffers;
+        max_descriptor_set_uniform_buffers_ = physical_device_properties.limits.maxDescriptorSetUniformBuffers;
+        max_descriptor_set_sampled_images_ = physical_device_properties.limits.maxDescriptorSetSampledImages;
+        queue_family_index_ = choice.graphics_family;
+        compute_queue_family_index_ = choice.compute_family;
 
-    device_ = CreateLogicalDevice(physical_device_, choice);
-    vkGetDeviceQueue(device_, queue_family_index_, 0, &queue_);
-    if (choice.compute_is_separate_queue) {
-        vkGetDeviceQueue(device_, compute_queue_family_index_, choice.compute_queue_index, &compute_queue_);
-    } else {
-        compute_queue_ = queue_; // serialized fallback — see PickPhysicalDevice's warning
+        device_ = CreateLogicalDevice(physical_device_, choice);
+        vkGetDeviceQueue(device_, queue_family_index_, 0, &queue_);
+        if (choice.compute_is_separate_queue) {
+            vkGetDeviceQueue(device_, compute_queue_family_index_, choice.compute_queue_index, &compute_queue_);
+        } else {
+            compute_queue_ = queue_; // serialized fallback — see PickPhysicalDevice's warning
+        }
+
+        VkSemaphoreTypeCreateInfo timeline_type{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
+        timeline_type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+        timeline_type.initialValue = 0;
+
+        VkSemaphoreCreateInfo semaphore_info{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+        semaphore_info.pNext = &timeline_type;
+        AETHER_VK_CHECK(vkCreateSemaphore(device_, &semaphore_info, nullptr, &timeline_semaphore_));
+        AETHER_VK_CHECK(vkCreateSemaphore(device_, &semaphore_info, nullptr, &compute_timeline_semaphore_));
+
+        AETHER_LOG_INFO("Vulkan", "Device initialized (graphics queue family %u, compute queue family %u)",
+                         queue_family_index_, compute_queue_family_index_);
+
+        CreateBindlessTextureInfrastructure();
+    } catch (...) {
+        Destroy();
+        throw;
     }
-
-    VkSemaphoreTypeCreateInfo timeline_type{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
-    timeline_type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
-    timeline_type.initialValue = 0;
-
-    VkSemaphoreCreateInfo semaphore_info{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
-    semaphore_info.pNext = &timeline_type;
-    AETHER_VK_CHECK(vkCreateSemaphore(device_, &semaphore_info, nullptr, &timeline_semaphore_));
-    AETHER_VK_CHECK(vkCreateSemaphore(device_, &semaphore_info, nullptr, &compute_timeline_semaphore_));
-
-    AETHER_LOG_INFO("Vulkan", "Device initialized (graphics queue family %u, compute queue family %u)",
-                     queue_family_index_, compute_queue_family_index_);
-
-    CreateBindlessTextureInfrastructure();
 }
 
 VulkanDevice::~VulkanDevice() {
+    Destroy();
+}
+
+void VulkanDevice::DeferCommandListResources(VkCommandPool command_pool,
+                                             std::vector<VkDescriptorPool> descriptor_pools) noexcept {
+    try {
+        std::lock_guard<std::mutex> lock(deferred_command_list_resources_mutex_);
+        deferred_command_list_resources_.push_back({command_pool, std::move(descriptor_pools)});
+    } catch (...) {
+        // The Vulkan handles remain owned by the device and will be reclaimed
+        // when it is destroyed; never destroy them early after a failed fence wait.
+        AETHER_LOG_ERROR("Vulkan", "Could not record command-list pools for deferred teardown");
+    }
+}
+
+VkResult VulkanDevice::WaitForDeviceIdle() {
+    std::unique_lock<std::mutex> graphics_lock(graphics_queue_mutex_);
+    if (compute_queue_ != queue_) {
+        std::unique_lock<std::mutex> compute_lock(compute_queue_mutex_);
+        return vkDeviceWaitIdle(device_);
+    }
+    return vkDeviceWaitIdle(device_);
+}
+
+void VulkanDevice::Destroy() noexcept {
     if (device_ != VK_NULL_HANDLE) {
-        vkDeviceWaitIdle(device_);
+        const VkResult wait_result = WaitForDeviceIdle();
+        if (wait_result != VK_SUCCESS) {
+            AETHER_LOG_WARN("Vulkan", "Could not drain device queues before teardown (VkResult=%d)",
+                            static_cast<int>(wait_result));
+        }
+        for (const DeferredCommandListResources& resources : deferred_command_list_resources_) {
+            for (VkDescriptorPool pool : resources.descriptor_pools) {
+                if (pool != VK_NULL_HANDLE) vkDestroyDescriptorPool(device_, pool, nullptr);
+            }
+            if (resources.command_pool != VK_NULL_HANDLE) vkDestroyCommandPool(device_, resources.command_pool, nullptr);
+        }
+        deferred_command_list_resources_.clear();
         for (const PipelineRecord& record : pipelines_) {
             if (record.pipeline != VK_NULL_HANDLE) {
                 vkDestroyPipeline(device_, record.pipeline, nullptr);
@@ -327,6 +448,13 @@ VulkanDevice::~VulkanDevice() {
             if (record.layout != VK_NULL_HANDLE) {
                 vkDestroyPipelineLayout(device_, record.layout, nullptr);
             }
+        }
+        for (const ComputePipelineRecord& record : compute_pipelines_) {
+            if (record.pipeline != VK_NULL_HANDLE) vkDestroyPipeline(device_, record.pipeline, nullptr);
+            if (record.layout != VK_NULL_HANDLE) vkDestroyPipelineLayout(device_, record.layout, nullptr);
+            if (record.storage_layout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device_, record.storage_layout, nullptr);
+            if (record.constant_layout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device_, record.constant_layout, nullptr);
+            if (record.sampled_layout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device_, record.sampled_layout, nullptr);
         }
         if (timeline_semaphore_ != VK_NULL_HANDLE) {
             vkDestroySemaphore(device_, timeline_semaphore_, nullptr);
@@ -336,13 +464,13 @@ VulkanDevice::~VulkanDevice() {
         }
         for (const BufferRecord& buffer : buffers_) {
             if (buffer.mapped) vkUnmapMemory(device_, buffer.memory);
-            vkDestroyBuffer(device_, buffer.buffer, nullptr);
-            vkFreeMemory(device_, buffer.memory, nullptr);
+            if (buffer.buffer != VK_NULL_HANDLE) vkDestroyBuffer(device_, buffer.buffer, nullptr);
+            if (buffer.memory != VK_NULL_HANDLE) vkFreeMemory(device_, buffer.memory, nullptr);
         }
         auto destroy_texture_record = [this](const SampledTextureRecord& record) {
-            vkDestroyImageView(device_, record.view, nullptr);
-            vkDestroyImage(device_, record.image, nullptr);
-            vkFreeMemory(device_, record.memory, nullptr);
+            if (record.view != VK_NULL_HANDLE) vkDestroyImageView(device_, record.view, nullptr);
+            if (record.image != VK_NULL_HANDLE) vkDestroyImage(device_, record.image, nullptr);
+            if (record.memory != VK_NULL_HANDLE) vkFreeMemory(device_, record.memory, nullptr);
         };
         for (const SampledTextureRecord& texture : sampled_textures_) {
             if (texture.image != VK_NULL_HANDLE) destroy_texture_record(texture);
@@ -367,9 +495,11 @@ VulkanDevice::~VulkanDevice() {
             vkDestroySampler(device_, bindless_sampler_, nullptr);
         }
         vkDestroyDevice(device_, nullptr);
+        device_ = VK_NULL_HANDLE;
     }
     if (instance_ != VK_NULL_HANDLE) {
         vkDestroyInstance(instance_, nullptr);
+        instance_ = VK_NULL_HANDLE;
     }
 }
 
@@ -383,11 +513,25 @@ std::unique_ptr<ICommandList> VulkanDevice::CreateCommandList() {
 }
 
 std::unique_ptr<ICommandList> VulkanDevice::CreateComputeCommandList() {
-    return std::make_unique<VulkanCommandList>(*this, compute_queue_family_index_);
+    return std::make_unique<VulkanCommandList>(*this, compute_queue_family_index_, true);
 }
 
 u64 VulkanDevice::SubmitCompute(ICommandList& cmd) {
-    auto native_cmd = static_cast<VkCommandBuffer>(cmd.NativeHandle());
+    auto* rhi_cmd = dynamic_cast<VulkanCommandList*>(&cmd);
+    if (!rhi_cmd || !rhi_cmd->BelongsTo(*this) || !rhi_cmd->IsComputeList() || !rhi_cmd->NativeHandle()) {
+        AETHER_LOG_ERROR("Vulkan", "SubmitCompute requires a closed compute command list created by this device");
+        return 0;
+    }
+    std::lock_guard<std::mutex> queue_lock(ComputeQueueMutex());
+    if (!rhi_cmd->IsReadyForSubmit() || rhi_cmd->IsSubmissionInFlight()) {
+        AETHER_LOG_ERROR("Vulkan", "SubmitCompute requires a closed compute command list that is not already in flight");
+        return 0;
+    }
+    if (next_compute_fence_value_ == ~u64{0}) {
+        AETHER_LOG_FATAL("Vulkan", "Compute timeline value space is exhausted; refusing queue submission");
+        throw std::overflow_error("Vulkan compute timeline value space is exhausted");
+    }
+    auto native_cmd = static_cast<VkCommandBuffer>(rhi_cmd->NativeHandle());
 
     std::vector<VkSemaphore> wait_semaphores;
     std::vector<VkPipelineStageFlags> wait_stages;
@@ -397,10 +541,9 @@ u64 VulkanDevice::SubmitCompute(ICommandList& cmd) {
         wait_semaphores.push_back(pending_compute_wait_.semaphore);
         wait_stages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
         wait_values.push_back(pending_compute_wait_.value);
-        pending_compute_wait_ = {};
     }
 
-    u64 fence_value = next_compute_fence_value_++;
+    const u64 fence_value = next_compute_fence_value_;
     VkSemaphore signal_semaphores[] = {compute_timeline_semaphore_};
     u64 signal_values[] = {fence_value};
 
@@ -421,6 +564,9 @@ u64 VulkanDevice::SubmitCompute(ICommandList& cmd) {
     submit_info.pSignalSemaphores = signal_semaphores;
 
     AETHER_VK_CHECK(vkQueueSubmit(compute_queue_, 1, &submit_info, VK_NULL_HANDLE));
+    ++next_compute_fence_value_;
+    rhi_cmd->MarkSubmitted(fence_value);
+    if (!wait_semaphores.empty() && pending_compute_wait_.valid) pending_compute_wait_ = {};
     return fence_value;
 }
 
@@ -429,9 +575,9 @@ void VulkanDevice::WaitForComputeFence(u64 fence_value) {
         return;
     }
     if (fence_value >= next_compute_fence_value_) {
-        AETHER_LOG_ERROR("Vulkan", "Cannot wait for unsubmitted compute fence %llu",
+        AETHER_LOG_FATAL("Vulkan", "Cannot wait for unsubmitted compute fence %llu",
                          static_cast<unsigned long long>(fence_value));
-        return;
+        throw std::invalid_argument("Vulkan compute fence value was not submitted");
     }
     if (IsComputeFenceComplete(fence_value)) return;
     VkSemaphoreWaitInfo wait_info{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
@@ -441,32 +587,73 @@ void VulkanDevice::WaitForComputeFence(u64 fence_value) {
     AETHER_VK_CHECK(vkWaitSemaphores(device_, &wait_info, UINT64_MAX));
 }
 
+void VulkanDevice::WithQueuesIdle(const std::function<void()>& operation) {
+    if (!operation) {
+        throw std::invalid_argument("Vulkan idle-queue operation must not be empty");
+    }
+
+    std::unique_lock<std::mutex> graphics_lock(graphics_queue_mutex_, std::defer_lock);
+    std::unique_lock<std::mutex> compute_lock(compute_queue_mutex_, std::defer_lock);
+    if (compute_queue_ == queue_) {
+        graphics_lock.lock();
+    } else {
+        std::lock(graphics_lock, compute_lock);
+    }
+
+    const u64 latest_graphics_fence = next_fence_value_.load(std::memory_order_acquire) - 1;
+    const u64 latest_compute_fence = next_compute_fence_value_.load(std::memory_order_acquire) - 1;
+    if (latest_graphics_fence != 0) WaitForFence(latest_graphics_fence);
+    if (latest_compute_fence != 0) WaitForComputeFence(latest_compute_fence);
+    operation();
+}
+
+void VulkanDevice::WithGraphicsQueueIdle(const std::function<void()>& operation) {
+    if (!operation) {
+        throw std::invalid_argument("Vulkan idle-graphics operation must not be empty");
+    }
+
+    std::lock_guard<std::mutex> graphics_lock(graphics_queue_mutex_);
+    const u64 latest_graphics_fence = next_fence_value_.load(std::memory_order_acquire) - 1;
+    if (latest_graphics_fence != 0) WaitForFence(latest_graphics_fence);
+    operation();
+}
+
 bool VulkanDevice::IsComputeFenceComplete(u64 fence_value) const {
     if (fence_value == 0) return true;
     if (fence_value >= next_compute_fence_value_) return false;
     u64 current_value = 0;
-    vkGetSemaphoreCounterValue(device_, compute_timeline_semaphore_, &current_value);
+    const VkResult result = vkGetSemaphoreCounterValue(device_, compute_timeline_semaphore_, &current_value);
+    if (result != VK_SUCCESS) {
+        AETHER_LOG_ERROR("Vulkan", "Compute fence status query failed (VkResult=%d)", static_cast<int>(result));
+        return false;
+    }
     return current_value >= fence_value;
 }
 
 void VulkanDevice::ComputeQueueWaitOnGraphics(u64 graphics_fence_value) {
-    pending_compute_wait_ = {};
-    if (graphics_fence_value == 0) return;
-    if (graphics_fence_value >= next_fence_value_) {
-        AETHER_LOG_ERROR("Vulkan", "Cannot queue compute wait for unsubmitted graphics fence %llu",
-                         static_cast<unsigned long long>(graphics_fence_value));
+    std::lock_guard<std::mutex> queue_lock(ComputeQueueMutex());
+    if (graphics_fence_value == 0) {
+        pending_compute_wait_ = {};
         return;
+    }
+    if (graphics_fence_value >= next_fence_value_) {
+        AETHER_LOG_FATAL("Vulkan", "Cannot queue compute wait for unsubmitted graphics fence %llu",
+                         static_cast<unsigned long long>(graphics_fence_value));
+        throw std::invalid_argument("Vulkan compute queue dependency references an unsubmitted graphics fence");
     }
     pending_compute_wait_ = {true, timeline_semaphore_, graphics_fence_value};
 }
 
 void VulkanDevice::GraphicsQueueWaitOnCompute(u64 compute_fence_value) {
-    pending_graphics_wait_ = {};
-    if (compute_fence_value == 0) return;
-    if (compute_fence_value >= next_compute_fence_value_) {
-        AETHER_LOG_ERROR("Vulkan", "Cannot queue graphics wait for unsubmitted compute fence %llu",
-                         static_cast<unsigned long long>(compute_fence_value));
+    std::lock_guard<std::mutex> queue_lock(GraphicsQueueMutex());
+    if (compute_fence_value == 0) {
+        pending_graphics_wait_ = {};
         return;
+    }
+    if (compute_fence_value >= next_compute_fence_value_) {
+        AETHER_LOG_FATAL("Vulkan", "Cannot queue graphics wait for unsubmitted compute fence %llu",
+                         static_cast<unsigned long long>(compute_fence_value));
+        throw std::invalid_argument("Vulkan graphics queue dependency references an unsubmitted compute fence");
     }
     pending_graphics_wait_ = {true, compute_timeline_semaphore_, compute_fence_value};
 }
@@ -610,15 +797,41 @@ private:
     PipelineRecord record_{};
 };
 
+class ScopedComputePipelineRecord final {
+public:
+    explicit ScopedComputePipelineRecord(VkDevice device) : device_(device) {}
+    ~ScopedComputePipelineRecord() { Reset(); }
+    ScopedComputePipelineRecord(const ScopedComputePipelineRecord&) = delete;
+    ScopedComputePipelineRecord& operator=(const ScopedComputePipelineRecord&) = delete;
+
+    ComputePipelineRecord& Get() { return record_; }
+    void Release() { record_ = {}; }
+
+    void Reset() {
+        if (record_.pipeline != VK_NULL_HANDLE) vkDestroyPipeline(device_, record_.pipeline, nullptr);
+        if (record_.layout != VK_NULL_HANDLE) vkDestroyPipelineLayout(device_, record_.layout, nullptr);
+        if (record_.storage_layout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device_, record_.storage_layout, nullptr);
+        if (record_.constant_layout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device_, record_.constant_layout, nullptr);
+        if (record_.sampled_layout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device_, record_.sampled_layout, nullptr);
+        record_ = {};
+    }
+
+private:
+    VkDevice device_ = VK_NULL_HANDLE;
+    ComputePipelineRecord record_{};
+};
+
 // Host-visible + host-coherent — see BufferRecord's comment for why this is
 // the right trade-off for vertex/index data at this RHI's demo scale (and
 // also reused for CreateTexture's staging buffer, which is genuinely
 // short-lived regardless).
 BufferRecord CreateHostVisibleBuffer(VkDevice device, VkPhysicalDevice physical_device, VkDeviceSize size,
-                                      VkBufferUsageFlags usage, const void* data, bool keep_mapped = false) {
-    if (!data || size == 0) {
-        AETHER_LOG_ERROR("Vulkan", "Host-visible buffers require non-null initial data and a non-zero size");
-        throw std::invalid_argument("Host-visible buffers require non-null initial data and a non-zero size");
+                                      VkBufferUsageFlags usage, const void* data, bool keep_mapped = false,
+                                      u32 family_a = VK_QUEUE_FAMILY_IGNORED,
+                                      u32 family_b = VK_QUEUE_FAMILY_IGNORED) {
+    if (size == 0 || size > std::numeric_limits<usize>::max()) {
+        AETHER_LOG_ERROR("Vulkan", "Host-visible buffer size must be non-zero and fit the host address space");
+        throw std::invalid_argument("Host-visible buffer size must fit the host address space");
     }
     ScopedBufferRecord owned_result(device);
     BufferRecord& result = owned_result.Get();
@@ -626,7 +839,14 @@ BufferRecord CreateHostVisibleBuffer(VkDevice device, VkPhysicalDevice physical_
     VkBufferCreateInfo buffer_info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
     buffer_info.size = size;
     buffer_info.usage = usage;
-    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    u32 queue_families[2] = {family_a, family_b};
+    if (family_a != VK_QUEUE_FAMILY_IGNORED && family_b != VK_QUEUE_FAMILY_IGNORED && family_a != family_b) {
+        buffer_info.sharingMode = VK_SHARING_MODE_CONCURRENT;
+        buffer_info.queueFamilyIndexCount = 2;
+        buffer_info.pQueueFamilyIndices = queue_families;
+    } else {
+        buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    }
     AETHER_VK_CHECK(vkCreateBuffer(device, &buffer_info, nullptr, &result.buffer));
 
     VkMemoryRequirements mem_reqs{};
@@ -641,7 +861,8 @@ BufferRecord CreateHostVisibleBuffer(VkDevice device, VkPhysicalDevice physical_
     void* mapped = nullptr;
     AETHER_VK_CHECK(vkMapMemory(device, result.memory, 0, size, 0, &mapped));
     result.mapped = mapped;
-    std::memcpy(mapped, data, static_cast<usize>(size));
+    if (data) std::memcpy(mapped, data, static_cast<usize>(size));
+    else std::memset(mapped, 0, static_cast<usize>(size));
     if (!keep_mapped) {
         vkUnmapMemory(device, result.memory);
         result.mapped = nullptr;
@@ -665,15 +886,85 @@ BufferHandle VulkanDevice::CreateBufferInternal(const void* data, u64 size_bytes
 }
 
 BufferHandle VulkanDevice::CreateVertexBuffer(const void* data, u64 size_bytes) {
-    return CreateBufferInternal(data, size_bytes);
+    const BufferHandle handle = CreateBufferInternal(data, size_bytes);
+    buffers_[handle.index].is_vertex = true;
+    return handle;
 }
 
-BufferHandle VulkanDevice::CreateIndexBuffer(const void* data, u64 size_bytes, IndexFormat) {
-    return CreateBufferInternal(data, size_bytes);
+BufferHandle VulkanDevice::CreateIndexBuffer(const void* data, u64 size_bytes, IndexFormat format) {
+    const u32 index_size = format == IndexFormat::UInt16 ? 2u : format == IndexFormat::UInt32 ? 4u : 0u;
+    if (index_size == 0 || size_bytes == 0 || size_bytes % index_size != 0) {
+        throw std::invalid_argument("Index buffer size must be non-zero, aligned, and use a supported index format");
+    }
+    const BufferHandle handle = CreateBufferInternal(data, size_bytes);
+    buffers_[handle.index].is_index = true;
+    buffers_[handle.index].index_format = format;
+    return handle;
+}
+
+BufferHandle VulkanDevice::CreateStorageBuffer(u64 size_bytes, u32 element_stride_bytes, const void* initial_data) {
+    if (size_bytes == 0 || size_bytes > std::numeric_limits<VkDeviceSize>::max() ||
+        size_bytes > max_storage_buffer_range_) {
+        throw std::invalid_argument("Storage buffer size must be non-zero and within maxStorageBufferRange");
+    }
+    if (element_stride_bytes != 0 && (size_bytes % element_stride_bytes != 0 || element_stride_bytes > 2048)) {
+        throw std::invalid_argument("Storage buffer size must be divisible by its valid element stride");
+    }
+    if (element_stride_bytes == 0 && size_bytes % 4 != 0) {
+        throw std::invalid_argument("Raw storage buffer size must be divisible by four bytes");
+    }
+    ScopedBufferRecord owned_record(device_);
+    owned_record.Get() = CreateHostVisibleBuffer(device_, physical_device_, size_bytes,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        initial_data, true, queue_family_index_, compute_queue_family_index_);
+    owned_record.Get().is_storage = true;
+    buffers_.push_back(owned_record.Get());
+    owned_record.Release();
+    return BufferHandle{static_cast<u32>(buffers_.size() - 1)};
+}
+
+BufferHandle VulkanDevice::CreateConstantBuffer(u64 size_bytes, const void* initial_data) {
+    if (size_bytes == 0 || size_bytes > std::numeric_limits<VkDeviceSize>::max() ||
+        size_bytes > max_uniform_buffer_range_) {
+        throw std::invalid_argument("Constant buffer size must be non-zero and within maxUniformBufferRange");
+    }
+    ScopedBufferRecord owned_record(device_);
+    owned_record.Get() = CreateHostVisibleBuffer(device_, physical_device_, size_bytes,
+        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, initial_data, true, queue_family_index_, compute_queue_family_index_);
+    owned_record.Get().is_constant = true;
+    buffers_.push_back(owned_record.Get());
+    owned_record.Release();
+    return BufferHandle{static_cast<u32>(buffers_.size() - 1)};
+}
+
+void VulkanDevice::UpdateConstantBuffer(BufferHandle buffer, const void* data, u64 size_bytes, u64 offset) {
+    if (!buffer.IsValid() || buffer.index >= buffers_.size() || !data || size_bytes == 0) {
+        AETHER_LOG_ERROR("Vulkan", "UpdateConstantBuffer received an invalid handle, source, or size");
+        return;
+    }
+    BufferRecord& record = buffers_[buffer.index];
+    if (!record.is_constant || !record.mapped || offset > record.size_bytes || size_bytes > record.size_bytes - offset) {
+        AETHER_LOG_ERROR("Vulkan", "UpdateConstantBuffer range exceeds constant buffer capacity");
+        return;
+    }
+    WithQueuesIdle([&] { std::memcpy(static_cast<u8*>(record.mapped) + offset, data, static_cast<usize>(size_bytes)); });
+}
+
+void VulkanDevice::UpdateStorageBuffer(BufferHandle buffer, const void* data, u64 size_bytes, u64 offset) {
+    if (!buffer.IsValid() || buffer.index >= buffers_.size() || !data || size_bytes == 0) {
+        AETHER_LOG_ERROR("Vulkan", "UpdateStorageBuffer received an invalid handle, source, or size");
+        return;
+    }
+    BufferRecord& record = buffers_[buffer.index];
+    if (!record.is_storage || !record.mapped || offset > record.size_bytes || size_bytes > record.size_bytes - offset) {
+        AETHER_LOG_ERROR("Vulkan", "UpdateStorageBuffer range exceeds storage buffer capacity");
+        return;
+    }
+    WithQueuesIdle([&] { std::memcpy(static_cast<u8*>(record.mapped) + offset, data, static_cast<usize>(size_bytes)); });
 }
 
 void VulkanDevice::UpdateVertexBuffer(BufferHandle buffer, const void* data, u64 size_bytes) {
-    if (!buffer.IsValid() || buffer.index >= buffers_.size()) {
+    if (!IsVertexBuffer(buffer) || buffer.index >= buffers_.size()) {
         AETHER_LOG_ERROR("Vulkan", "UpdateVertexBuffer received an invalid buffer handle (%u)", buffer.index);
         return;
     }
@@ -685,16 +976,17 @@ void VulkanDevice::UpdateVertexBuffer(BufferHandle buffer, const void* data, u64
                          static_cast<unsigned long long>(record.size_bytes));
         return;
     }
-    std::memcpy(record.mapped, data, static_cast<usize>(size_bytes));
+    WithGraphicsQueueIdle([&] { std::memcpy(record.mapped, data, static_cast<usize>(size_bytes)); });
 }
 
 SampledTextureRecord VulkanDevice::UploadTextureRecord(u32 width, u32 height, const u8* rgba8_pixels) {
     if (width == 0 || height == 0 || !rgba8_pixels ||
         static_cast<VkDeviceSize>(width) > std::numeric_limits<VkDeviceSize>::max() / 4 / height) {
-        AETHER_LOG_ERROR("Vulkan", "CreateTexture requires non-zero dimensions and non-null RGBA8 pixel data");
-        throw std::invalid_argument("CreateTexture requires non-zero dimensions and non-null RGBA8 pixel data");
+        AETHER_LOG_ERROR("Vulkan", "Sampled texture upload requires valid dimensions and pixel data");
+        throw std::invalid_argument("Sampled texture upload requires valid dimensions and pixel data");
     }
-    return UploadImageRecord(VK_FORMAT_R8G8B8A8_UNORM, width, height, {{rgba8_pixels, static_cast<u64>(width) * height * 4, width, height}});
+    return UploadImageRecord(VK_FORMAT_R8G8B8A8_UNORM, width, height,
+                             {{rgba8_pixels, static_cast<u64>(width) * height * 4, width, height}});
 }
 
 SampledTextureRecord VulkanDevice::UploadImageRecord(VkFormat format, u32 width, u32 height, const std::vector<ImageLevel>& levels) {
@@ -724,7 +1016,14 @@ SampledTextureRecord VulkanDevice::UploadImageRecord(VkFormat format, u32 width,
     image_info.samples = VK_SAMPLE_COUNT_1_BIT;
     image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
     image_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    const std::array<u32, 2> sampled_texture_queue_families = {queue_family_index_, compute_queue_family_index_};
+    if (queue_family_index_ != compute_queue_family_index_) {
+        image_info.sharingMode = VK_SHARING_MODE_CONCURRENT;
+        image_info.queueFamilyIndexCount = static_cast<u32>(sampled_texture_queue_families.size());
+        image_info.pQueueFamilyIndices = sampled_texture_queue_families.data();
+    } else {
+        image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    }
     image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     AETHER_VK_CHECK(vkCreateImage(device_, &image_info, nullptr, &record.image));
 
@@ -771,11 +1070,22 @@ SampledTextureRecord VulkanDevice::UploadImageRecord(VkFormat format, u32 width,
     to_shader_read.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, level_count, 0, 1};
     to_shader_read.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     to_shader_read.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    vkCmdPipelineBarrier(native_cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
+    vkCmdPipelineBarrier(native_cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                          VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
                           nullptr, 0, nullptr, 1, &to_shader_read);
 
     cmd->Close();
     const u64 upload_fence = Submit(*cmd, nullptr);
+    if (upload_fence == 0) {
+        throw std::runtime_error("Vulkan sampled texture upload submission failed");
+    }
+    if (compute_queue_ != queue_) {
+        std::lock_guard<std::mutex> queue_lock(ComputeQueueMutex());
+        if (!pending_compute_wait_.valid || pending_compute_wait_.semaphore != timeline_semaphore_ ||
+            pending_compute_wait_.value < upload_fence) {
+            pending_compute_wait_ = {true, timeline_semaphore_, upload_fence};
+        }
+    }
     try {
         WaitForFence(upload_fence);
     } catch (...) {
@@ -783,7 +1093,7 @@ SampledTextureRecord VulkanDevice::UploadImageRecord(VkFormat format, u32 width,
         // image or staging memory while queued commands may still reference
         // them. Device-idle is only a failure-path recovery attempt; normal
         // uploads continue to wait on their exact fence above.
-        const VkResult idle_result = vkDeviceWaitIdle(device_);
+        const VkResult idle_result = WaitForDeviceIdle();
         if (idle_result != VK_SUCCESS) {
             AETHER_LOG_ERROR("Vulkan", "Device idle failed after texture upload wait failure (VkResult=%d); "
                                       "leaving upload resources for device teardown",
@@ -904,6 +1214,40 @@ SampledTextureHandle VulkanDevice::CreateCompressedTexture(CompressedTextureForm
     return SampledTextureHandle{index};
 }
 
+SampledTextureHandle VulkanDevice::CreateR32FloatTexture(u32 width, u32 height, const f32* values) {
+    if (width == 0 || height == 0 || !values ||
+        static_cast<VkDeviceSize>(width) > std::numeric_limits<VkDeviceSize>::max() / sizeof(f32) / height) {
+        throw std::invalid_argument("CreateR32FloatTexture requires non-zero dimensions and float data");
+    }
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(physical_device_, &properties);
+    if (width > properties.limits.maxImageDimension2D || height > properties.limits.maxImageDimension2D) {
+        throw std::invalid_argument("CreateR32FloatTexture extent exceeds the Vulkan 2D image limit");
+    }
+    VkFormatProperties format_properties{};
+    vkGetPhysicalDeviceFormatProperties(physical_device_, VK_FORMAT_R32_SFLOAT, &format_properties);
+    const VkFormatFeatureFlags required = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+    if ((format_properties.optimalTilingFeatures & required) != required) {
+        AETHER_LOG_ERROR("Vulkan", "R32_SFLOAT images do not support sampling and transfer-destination usage");
+        return {};
+    }
+    if (TextureTableFull()) {
+        AETHER_LOG_ERROR("Vulkan", "CreateR32FloatTexture exhausted the bindless texture table (capacity=%u real textures)",
+                         kMaxUserBindlessTextures);
+        return {};
+    }
+
+    ScopedSampledTextureRecord owned_record(device_);
+    const u64 size_bytes = static_cast<u64>(width) * height * sizeof(f32);
+    const std::vector<ImageLevel> levels = {{reinterpret_cast<const u8*>(values), size_bytes, width, height}};
+    owned_record.Get() = UploadImageRecord(VK_FORMAT_R32_SFLOAT, width, height, levels);
+    const SampledTextureRecord record = owned_record.Get();
+    const u32 index = StoreTextureRecord(record);
+    owned_record.Release();
+    WriteBindlessTexture(index, record);
+    return SampledTextureHandle{index};
+}
+
 u32 VulkanDevice::StoreTextureRecord(const SampledTextureRecord& record) {
     if (!free_texture_slots_.empty()) {
         const u32 position = free_texture_slots_.back();
@@ -930,7 +1274,7 @@ bool VulkanDevice::DestroyTexture(SampledTextureHandle texture) {
     return true;
 }
 
-BufferHandle VulkanDevice::CreateConstantBuffer(u64 size_bytes) {
+BufferHandle VulkanDevice::CreateFrameConstantBuffer(u64 size_bytes) {
     if (size_bytes == 0) {
         AETHER_LOG_ERROR("Vulkan", "CreateConstantBuffer requires a non-zero size");
         throw std::invalid_argument("CreateConstantBuffer requires a non-zero size");
@@ -1066,11 +1410,123 @@ void VulkanDevice::CreateBindlessTextureInfrastructure() {
     AETHER_VK_CHECK(vkCreateDescriptorPool(device_, &constants_pool_info, nullptr, &frame_constants_pool_));
 }
 
+ComputePipelineHandle VulkanDevice::CreateComputePipeline(const ComputePipelineDesc& desc) {
+    if (desc.hlsl_source.empty() || desc.entry.empty()) {
+        throw std::invalid_argument("ComputePipelineDesc requires HLSL source and an entry point");
+    }
+    if (desc.storage_buffer_count > 32 ||
+        desc.storage_buffer_count > max_compute_storage_buffers_ ||
+        desc.storage_buffer_count > max_descriptor_set_storage_buffers_) {
+        throw std::invalid_argument("Compute pipeline storage-buffer count exceeds the supported or selected-device limit");
+    }
+    if (desc.sampled_texture_count > 32 ||
+        desc.sampled_texture_count > max_compute_sampled_images_ ||
+        desc.sampled_texture_count > max_descriptor_set_sampled_images_) {
+        throw std::invalid_argument("Compute pipeline sampled-texture count exceeds the supported or selected-device limit");
+    }
+    if (desc.constant_buffer_count > 14 ||
+        desc.constant_buffer_count > max_compute_uniform_buffers_ ||
+        desc.constant_buffer_count > max_descriptor_set_uniform_buffers_) {
+        throw std::invalid_argument("Compute pipeline constant-buffer count exceeds the supported or selected-device limit");
+    }
+    const u64 total_descriptors = static_cast<u64>(desc.storage_buffer_count) +
+                                  desc.sampled_texture_count + desc.constant_buffer_count;
+    if (total_descriptors > 64 || total_descriptors > max_compute_resources_) {
+        throw std::invalid_argument("Compute pipeline descriptor count exceeds the supported or selected-device per-stage limit");
+    }
+    ScopedComputePipelineRecord owned_record(device_);
+    ComputePipelineRecord& record = owned_record.Get();
+    record.storage_buffer_count = desc.storage_buffer_count;
+    record.sampled_texture_count = desc.sampled_texture_count;
+    record.constant_buffer_count = desc.constant_buffer_count;
+    {
+        std::vector<VkDescriptorSetLayoutBinding> bindings(record.storage_buffer_count);
+        for (u32 i = 0; i < record.storage_buffer_count; ++i) {
+            bindings[i].binding = i;
+            bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            bindings[i].descriptorCount = 1;
+            bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+        }
+        VkDescriptorSetLayoutCreateInfo set_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        set_info.bindingCount = static_cast<u32>(bindings.size());
+        set_info.pBindings = bindings.data();
+        AETHER_VK_CHECK(vkCreateDescriptorSetLayout(device_, &set_info, nullptr, &record.storage_layout));
+    }
+    {
+        std::vector<VkDescriptorSetLayoutBinding> bindings(record.constant_buffer_count);
+        for (u32 i = 0; i < record.constant_buffer_count; ++i) {
+            bindings[i].binding = i;
+            bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            bindings[i].descriptorCount = 1;
+            bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+        }
+        VkDescriptorSetLayoutCreateInfo set_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        set_info.bindingCount = static_cast<u32>(bindings.size());
+        set_info.pBindings = bindings.data();
+        AETHER_VK_CHECK(vkCreateDescriptorSetLayout(device_, &set_info, nullptr, &record.constant_layout));
+    }
+    {
+        std::vector<VkDescriptorSetLayoutBinding> bindings(record.sampled_texture_count);
+        for (u32 i = 0; i < record.sampled_texture_count; ++i) {
+            bindings[i].binding = i;
+            bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            bindings[i].descriptorCount = 1;
+            bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+        }
+        VkDescriptorSetLayoutCreateInfo set_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        set_info.bindingCount = static_cast<u32>(bindings.size());
+        set_info.pBindings = bindings.data();
+        AETHER_VK_CHECK(vkCreateDescriptorSetLayout(device_, &set_info, nullptr, &record.sampled_layout));
+    }
+    VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    VkDescriptorSetLayout set_layouts[3] = {record.storage_layout, record.constant_layout, record.sampled_layout};
+    layout_info.setLayoutCount = 3;
+    layout_info.pSetLayouts = set_layouts;
+    AETHER_VK_CHECK(vkCreatePipelineLayout(device_, &layout_info, nullptr, &record.layout));
+    const gfx::ShaderBytecode spirv = gfx::CompileHLSLToSPIRV(desc.hlsl_source, desc.entry.c_str(), "cs_6_0",
+                                                              "rhi_compute_pipeline");
+    ScopedShaderModule module(device_, spirv);
+    VkPipelineShaderStageCreateInfo stage{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+    stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    stage.module = module.Get();
+    stage.pName = desc.entry.c_str();
+    VkComputePipelineCreateInfo pipeline_info{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+    pipeline_info.stage = stage;
+    pipeline_info.layout = record.layout;
+    AETHER_VK_CHECK(vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &record.pipeline));
+    compute_pipelines_.push_back(record);
+    owned_record.Release();
+    return ComputePipelineHandle{static_cast<u32>(compute_pipelines_.size() - 1)};
+}
+
 PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain& swap_chain) {
-    auto& vk_swap = static_cast<VulkanSwapChain&>(swap_chain);
+    auto* vk_swap_ptr = dynamic_cast<VulkanSwapChain*>(&swap_chain);
+    if (!vk_swap_ptr || !vk_swap_ptr->BelongsTo(*this)) {
+        AETHER_LOG_ERROR("Vulkan", "CreatePipeline requires a Vulkan swap chain created by this device");
+        return {};
+    }
+    if (!IsValidVertexLayout(desc.vertex_layout)) {
+        AETHER_LOG_ERROR("Vulkan", "CreatePipeline received an unsupported vertex layout");
+        return {};
+    }
+    auto& vk_swap = *vk_swap_ptr;
+
+    VkPhysicalDeviceProperties device_properties{};
+    vkGetPhysicalDeviceProperties(physical_device_, &device_properties);
+    if (desc.push_constant_size_bytes % 4 != 0 ||
+        desc.push_constant_size_bytes > device_properties.limits.maxPushConstantsSize) {
+        AETHER_LOG_ERROR("Vulkan", "Graphics push-constant size must be four-byte aligned and within the device limit");
+        throw std::invalid_argument("Graphics push-constant size exceeds Vulkan device limits");
+    }
 
     ScopedPipelineRecord owned_record(device_);
     PipelineRecord& record = owned_record.Get();
+    record.push_constant_size_bytes = desc.push_constant_size_bytes;
+    record.enable_bindless_textures = desc.enable_bindless_textures;
+    record.use_vertex_buffer = desc.use_vertex_buffer;
+    record.vertex_stride_bytes = desc.vertex_layout == VertexLayout::PositionNormalUvTangent
+                                     ? 48u
+                                     : desc.vertex_layout == VertexLayout::PositionNormalUv ? 32u : 20u;
 
     if (desc.enable_bindless_textures) {
         AETHER_ASSERT(desc.push_constant_size_bytes > 0);
@@ -1211,15 +1667,29 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
 }
 
 u64 VulkanDevice::Submit(ICommandList& cmd, ISwapChain* wait_on_swap_chain) {
+    auto* rhi_cmd = dynamic_cast<VulkanCommandList*>(&cmd);
+    auto* vk_swap_chain = wait_on_swap_chain ? dynamic_cast<VulkanSwapChain*>(wait_on_swap_chain) : nullptr;
+    if (!rhi_cmd || !rhi_cmd->BelongsTo(*this) || rhi_cmd->IsComputeList() || !rhi_cmd->NativeHandle() ||
+        (wait_on_swap_chain && (!vk_swap_chain || !vk_swap_chain->BelongsTo(*this)))) {
+        AETHER_LOG_ERROR("Vulkan", "Submit requires a closed graphics command list and swap chain created by this device");
+        return 0;
+    }
+    std::lock_guard<std::mutex> queue_lock(GraphicsQueueMutex());
+    if (!rhi_cmd->IsReadyForSubmit() || rhi_cmd->IsSubmissionInFlight()) {
+        AETHER_LOG_ERROR("Vulkan", "Submit requires a closed graphics command list that is not already in flight");
+        return 0;
+    }
+    if (next_fence_value_ == ~u64{0}) {
+        AETHER_LOG_FATAL("Vulkan", "Graphics timeline value space is exhausted; refusing queue submission");
+        throw std::overflow_error("Vulkan graphics timeline value space is exhausted");
+    }
     std::vector<VkSemaphore> wait_semaphores;
     std::vector<VkPipelineStageFlags> wait_stages;
     std::vector<u64> wait_values;
     std::vector<VkSemaphore> signal_semaphores;
     std::vector<u64> signal_values;
 
-    if (wait_on_swap_chain &&
-        !static_cast<VulkanSwapChain*>(wait_on_swap_chain->NativeHandle())->IsOffscreen()) {
-        auto* vk_swap_chain = static_cast<VulkanSwapChain*>(wait_on_swap_chain->NativeHandle());
+    if (vk_swap_chain && !vk_swap_chain->IsOffscreen()) {
         wait_semaphores.push_back(vk_swap_chain->CurrentImageAvailableSemaphore());
         wait_stages.push_back(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
         wait_values.push_back(0); // ignored by the driver for a binary semaphore entry
@@ -1232,10 +1702,9 @@ u64 VulkanDevice::Submit(ICommandList& cmd, ISwapChain* wait_on_swap_chain) {
         wait_semaphores.push_back(pending_graphics_wait_.semaphore);
         wait_stages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
         wait_values.push_back(pending_graphics_wait_.value);
-        pending_graphics_wait_ = {};
     }
 
-    u64 fence_value = next_fence_value_++;
+    const u64 fence_value = next_fence_value_;
     signal_semaphores.push_back(timeline_semaphore_);
     signal_values.push_back(fence_value);
 
@@ -1245,7 +1714,7 @@ u64 VulkanDevice::Submit(ICommandList& cmd, ISwapChain* wait_on_swap_chain) {
     timeline_info.signalSemaphoreValueCount = static_cast<u32>(signal_values.size());
     timeline_info.pSignalSemaphoreValues = signal_values.data();
 
-    auto native_cmd = static_cast<VkCommandBuffer>(cmd.NativeHandle());
+    auto native_cmd = static_cast<VkCommandBuffer>(rhi_cmd->NativeHandle());
 
     VkSubmitInfo submit_info{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     submit_info.pNext = &timeline_info;
@@ -1258,6 +1727,9 @@ u64 VulkanDevice::Submit(ICommandList& cmd, ISwapChain* wait_on_swap_chain) {
     submit_info.pSignalSemaphores = signal_semaphores.data();
 
     AETHER_VK_CHECK(vkQueueSubmit(queue_, 1, &submit_info, VK_NULL_HANDLE));
+    ++next_fence_value_;
+    rhi_cmd->MarkSubmitted(fence_value);
+    if (pending_graphics_wait_.valid) pending_graphics_wait_ = {};
     return fence_value;
 }
 
@@ -1266,9 +1738,9 @@ void VulkanDevice::WaitForFence(u64 fence_value) {
         return;
     }
     if (fence_value >= next_fence_value_) {
-        AETHER_LOG_ERROR("Vulkan", "Cannot wait for unsubmitted graphics fence %llu",
+        AETHER_LOG_FATAL("Vulkan", "Cannot wait for unsubmitted graphics fence %llu",
                          static_cast<unsigned long long>(fence_value));
-        return;
+        throw std::invalid_argument("Vulkan graphics fence value was not submitted");
     }
     if (IsFenceComplete(fence_value)) return;
     VkSemaphoreWaitInfo wait_info{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
@@ -1282,7 +1754,11 @@ bool VulkanDevice::IsFenceComplete(u64 fence_value) const {
     if (fence_value == 0) return true;
     if (fence_value >= next_fence_value_) return false;
     u64 current_value = 0;
-    vkGetSemaphoreCounterValue(device_, timeline_semaphore_, &current_value);
+    const VkResult result = vkGetSemaphoreCounterValue(device_, timeline_semaphore_, &current_value);
+    if (result != VK_SUCCESS) {
+        AETHER_LOG_ERROR("Vulkan", "Graphics fence status query failed (VkResult=%d)", static_cast<int>(result));
+        return false;
+    }
     return current_value >= fence_value;
 }
 
@@ -1297,6 +1773,10 @@ TextureHandle VulkanDevice::RegisterTexture(VkImage image) {
             textures_[index].image = image;
             return TextureHandle{index};
         }
+    }
+    if (textures_.size() >= static_cast<usize>(static_cast<u32>(-1))) {
+        AETHER_LOG_ERROR("Vulkan", "Texture registry exhausted its 32-bit handle space");
+        return {};
     }
     TextureHandle handle{static_cast<u32>(textures_.size())};
     textures_.push_back({image});
@@ -1336,33 +1816,120 @@ VulkanSwapChain::VulkanSwapChain(VulkanDevice& device, void* native_window_handl
                                   u32 buffer_count)
     : device_(device), window_(native_window_handle), requested_buffer_count_(buffer_count) {
     offscreen_ = window_ == nullptr;
-    if (!offscreen_) {
+    try {
+        depth_format_ = SelectDepthAttachmentFormat(device_.PhysicalDevice());
+        if (depth_format_ == VK_FORMAT_UNDEFINED) {
+            AETHER_LOG_ERROR("Vulkan", "Physical device exposes no supported depth attachment format");
+            throw std::runtime_error("Vulkan device has no supported depth attachment format");
+        }
+        if (!offscreen_) {
 #if defined(_WIN32)
-        VkWin32SurfaceCreateInfoKHR surface_info{VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR};
-        surface_info.hinstance = GetModuleHandleW(nullptr);
-        surface_info.hwnd = static_cast<HWND>(window_);
-        AETHER_VK_CHECK(vkCreateWin32SurfaceKHR(device_.Instance(), &surface_info, nullptr, &surface_));
+            VkWin32SurfaceCreateInfoKHR surface_info{VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR};
+            surface_info.hinstance = GetModuleHandleW(nullptr);
+            surface_info.hwnd = static_cast<HWND>(window_);
+            AETHER_VK_CHECK(vkCreateWin32SurfaceKHR(device_.Instance(), &surface_info, nullptr, &surface_));
 #elif defined(AETHER_HAS_GLFW)
-        AETHER_VK_CHECK(
-            glfwCreateWindowSurface(device_.Instance(), static_cast<GLFWwindow*>(window_), nullptr, &surface_));
+            AETHER_VK_CHECK(
+                glfwCreateWindowSurface(device_.Instance(), static_cast<GLFWwindow*>(window_), nullptr, &surface_));
 #else
-        AETHER_LOG_FATAL("Vulkan", "Window swap chains need the GLFW window backend (AETHER_BUILD_WINDOWING)");
-        throw std::runtime_error("no window surface support");
+            AETHER_LOG_FATAL("Vulkan", "Window swap chains need the GLFW window backend (AETHER_BUILD_WINDOWING)");
+            throw std::runtime_error("no window surface support");
 #endif
 
-        VkBool32 present_supported = VK_FALSE;
-        vkGetPhysicalDeviceSurfaceSupportKHR(device_.PhysicalDevice(), device_.QueueFamilyIndex(), surface_,
-                                              &present_supported);
-        AETHER_ASSERT(present_supported == VK_TRUE);
-    }
+            VkBool32 present_supported = VK_FALSE;
+            AETHER_VK_CHECK(vkGetPhysicalDeviceSurfaceSupportKHR(device_.PhysicalDevice(), device_.QueueFamilyIndex(),
+                                                                  surface_, &present_supported));
+            if (present_supported != VK_TRUE) {
+                AETHER_LOG_ERROR("Vulkan", "Graphics queue family %u cannot present to the requested surface",
+                                 device_.QueueFamilyIndex());
+                throw std::runtime_error("Vulkan graphics queue family does not support presentation");
+            }
 
-    CreateDefaultRenderPass();
-    CreateSwapchainAndImages(width, height);
-    CreateSyncObjects();
+            std::vector<VkSurfaceFormatKHR> surface_formats;
+            bool enumerated_formats = false;
+            for (u32 attempt = 0; attempt < 3 && !enumerated_formats; ++attempt) {
+                u32 format_count = 0;
+                AETHER_VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(device_.PhysicalDevice(), surface_, &format_count,
+                                                                      nullptr));
+                if (format_count == 0) {
+                    AETHER_LOG_ERROR("Vulkan", "Surface returned no swap-chain formats");
+                    throw std::runtime_error("Vulkan surface returned no swap-chain formats");
+                }
+                surface_formats.resize(format_count);
+                const VkResult format_result = vkGetPhysicalDeviceSurfaceFormatsKHR(
+                    device_.PhysicalDevice(), surface_, &format_count, surface_formats.data());
+                if (format_result == VK_SUCCESS) {
+                    surface_formats.resize(format_count);
+                    enumerated_formats = true;
+                } else if (format_result == VK_INCOMPLETE) {
+                    surface_formats.clear();
+                } else {
+                    AETHER_VK_CHECK(format_result);
+                }
+            }
+            if (!enumerated_formats) {
+                AETHER_LOG_ERROR("Vulkan", "Surface format enumeration remained incomplete after retries");
+                throw std::runtime_error("Vulkan surface format enumeration did not stabilize");
+            }
+
+            constexpr VkFormat preferred_formats[] = {VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_R8G8B8A8_UNORM,
+                                                      VK_FORMAT_B8G8R8A8_SRGB, VK_FORMAT_R8G8B8A8_SRGB};
+            const VkSurfaceFormatKHR& first_format = surface_formats.front();
+            if (surface_formats.size() == 1 && first_format.format == VK_FORMAT_UNDEFINED) {
+                format_ = preferred_formats[0];
+                color_space_ = first_format.colorSpace;
+            } else {
+                bool selected_format = false;
+                for (VkFormat preferred : preferred_formats) {
+                    for (const VkSurfaceFormatKHR& candidate : surface_formats) {
+                        if (candidate.format == preferred && candidate.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+                            format_ = candidate.format;
+                            color_space_ = candidate.colorSpace;
+                            selected_format = true;
+                            break;
+                        }
+                    }
+                    if (selected_format) break;
+                }
+                if (!selected_format) {
+                    AETHER_LOG_ERROR("Vulkan", "Surface exposes no supported 8-bit RGBA/BGRA format in sRGB color space");
+                    throw std::runtime_error("Vulkan surface has no supported color format");
+                }
+            }
+        }
+
+        CreateDefaultRenderPass();
+        CreateSwapchainAndImages(width, height);
+        CreateSyncObjects();
+    } catch (...) {
+        DestroySyncObjects();
+        DestroySwapchainAndImages();
+        if (default_render_pass_ != VK_NULL_HANDLE) {
+            vkDestroyRenderPass(device_.Handle(), default_render_pass_, nullptr);
+            default_render_pass_ = VK_NULL_HANDLE;
+        }
+        for (TextureHandle handle : handles_) {
+            device_.UnregisterTexture(handle);
+        }
+        handles_.clear();
+        if (surface_ != VK_NULL_HANDLE) {
+            vkDestroySurfaceKHR(device_.Instance(), surface_, nullptr);
+            surface_ = VK_NULL_HANDLE;
+        }
+        throw;
+    }
 }
 
 VulkanSwapChain::~VulkanSwapChain() {
-    vkDeviceWaitIdle(device_.Handle());
+    VkResult wait_result;
+    {
+        std::lock_guard<std::mutex> queue_lock(device_.GraphicsQueueMutex());
+        wait_result = vkQueueWaitIdle(device_.Queue());
+    }
+    if (wait_result != VK_SUCCESS) {
+        AETHER_LOG_WARN("Vulkan", "Could not drain graphics/present queue before swap-chain teardown (VkResult=%d)",
+                        static_cast<int>(wait_result));
+    }
     DestroySyncObjects();
     DestroySwapchainAndImages();
     if (default_render_pass_ != VK_NULL_HANDLE) {
@@ -1401,7 +1968,7 @@ void VulkanSwapChain::CreateDefaultRenderPass() {
     // current draw actually depth-tests is harmless (same "always clear,
     // discard prior contents" convention the color attachment already uses).
     VkAttachmentDescription depth_attachment{};
-    depth_attachment.format = kDepthFormat;
+    depth_attachment.format = depth_format_;
     depth_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
     depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
@@ -1447,7 +2014,7 @@ void VulkanSwapChain::CreateDefaultRenderPass() {
 void VulkanSwapChain::CreateDepthResources() {
     VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     image_info.imageType = VK_IMAGE_TYPE_2D;
-    image_info.format = kDepthFormat;
+    image_info.format = depth_format_;
     image_info.extent = {extent_.width, extent_.height, 1};
     image_info.mipLevels = 1;
     image_info.arrayLayers = 1;
@@ -1474,21 +2041,21 @@ void VulkanSwapChain::CreateDepthResources() {
         VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         view_info.image = depth_images_[i];
         view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        view_info.format = kDepthFormat;
-        view_info.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+        view_info.format = depth_format_;
+        view_info.subresourceRange = {DepthAttachmentAspect(depth_format_), 0, 1, 0, 1};
         AETHER_VK_CHECK(vkCreateImageView(device_.Handle(), &view_info, nullptr, &depth_image_views_[i]));
     }
 }
 
 void VulkanSwapChain::DestroyDepthResources() {
     for (usize i = 0; i < depth_images_.size(); ++i) {
-        if (depth_image_views_[i] != VK_NULL_HANDLE) {
+        if (i < depth_image_views_.size() && depth_image_views_[i] != VK_NULL_HANDLE) {
             vkDestroyImageView(device_.Handle(), depth_image_views_[i], nullptr);
         }
         if (depth_images_[i] != VK_NULL_HANDLE) {
             vkDestroyImage(device_.Handle(), depth_images_[i], nullptr);
         }
-        if (depth_memories_[i] != VK_NULL_HANDLE) {
+        if (i < depth_memories_.size() && depth_memories_[i] != VK_NULL_HANDLE) {
             vkFreeMemory(device_.Handle(), depth_memories_[i], nullptr);
         }
     }
@@ -1514,7 +2081,7 @@ void VulkanSwapChain::CreateFramebuffers() {
 
 void VulkanSwapChain::DestroyFramebuffers() {
     for (VkFramebuffer fb : framebuffers_) {
-        vkDestroyFramebuffer(device_.Handle(), fb, nullptr);
+        if (fb != VK_NULL_HANDLE) vkDestroyFramebuffer(device_.Handle(), fb, nullptr);
     }
     framebuffers_.clear();
 }
@@ -1522,9 +2089,10 @@ void VulkanSwapChain::DestroyFramebuffers() {
 std::vector<VkImage> VulkanSwapChain::CreateOffscreenImages(u32 width, u32 height) {
     extent_ = {std::max(width, 1u), std::max(height, 1u)};
     can_read_back_ = true;
-    std::vector<VkImage> images(std::max(requested_buffer_count_, 1u));
-    offscreen_memory_.resize(images.size());
-    for (usize i = 0; i < images.size(); ++i) {
+    const usize image_count = std::max(requested_buffer_count_, 1u);
+    offscreen_images_.assign(image_count, VK_NULL_HANDLE);
+    offscreen_memory_.assign(image_count, VK_NULL_HANDLE);
+    for (usize i = 0; i < offscreen_images_.size(); ++i) {
         VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
         image_info.imageType = VK_IMAGE_TYPE_2D;
         image_info.format = format_;
@@ -1537,19 +2105,18 @@ std::vector<VkImage> VulkanSwapChain::CreateOffscreenImages(u32 width, u32 heigh
                            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
         image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        AETHER_VK_CHECK(vkCreateImage(device_.Handle(), &image_info, nullptr, &images[i]));
+        AETHER_VK_CHECK(vkCreateImage(device_.Handle(), &image_info, nullptr, &offscreen_images_[i]));
 
         VkMemoryRequirements mem_reqs{};
-        vkGetImageMemoryRequirements(device_.Handle(), images[i], &mem_reqs);
+        vkGetImageMemoryRequirements(device_.Handle(), offscreen_images_[i], &mem_reqs);
         VkMemoryAllocateInfo alloc_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
         alloc_info.allocationSize = mem_reqs.size;
         alloc_info.memoryTypeIndex =
             FindMemoryType(device_.PhysicalDevice(), mem_reqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         AETHER_VK_CHECK(vkAllocateMemory(device_.Handle(), &alloc_info, nullptr, &offscreen_memory_[i]));
-        AETHER_VK_CHECK(vkBindImageMemory(device_.Handle(), images[i], offscreen_memory_[i], 0));
+        AETHER_VK_CHECK(vkBindImageMemory(device_.Handle(), offscreen_images_[i], offscreen_memory_[i], 0));
     }
-    offscreen_images_ = images;
-    return images;
+    return offscreen_images_;
 }
 
 void VulkanSwapChain::CreateSwapchainAndImages(u32 width, u32 height) {
@@ -1580,7 +2147,14 @@ void VulkanSwapChain::CreateSwapchainAndImages(u32 width, u32 height) {
     }
 
     VkSurfaceCapabilitiesKHR capabilities{};
-    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device_.PhysicalDevice(), surface_, &capabilities);
+    AETHER_VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device_.PhysicalDevice(), surface_, &capabilities));
+
+    constexpr VkImageUsageFlags required_usage =
+        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    if ((capabilities.supportedUsageFlags & required_usage) != required_usage) {
+        AETHER_LOG_ERROR("Vulkan", "Surface does not support transfer-destination and color-attachment swap-chain images");
+        throw std::runtime_error("Vulkan surface lacks required swap-chain image usage flags");
+    }
 
     extent_.width = std::max(capabilities.minImageExtent.width, std::min(capabilities.maxImageExtent.width, width));
     extent_.height =
@@ -1595,7 +2169,7 @@ void VulkanSwapChain::CreateSwapchainAndImages(u32 width, u32 height) {
     swapchain_info.surface = surface_;
     swapchain_info.minImageCount = image_count;
     swapchain_info.imageFormat = format_;
-    swapchain_info.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+    swapchain_info.imageColorSpace = color_space_;
     swapchain_info.imageExtent = extent_;
     swapchain_info.imageArrayLayers = 1;
     // TRANSFER_DST covers the abstract ICommandList::ClearRenderTarget path
@@ -1603,7 +2177,7 @@ void VulkanSwapChain::CreateSwapchainAndImages(u32 width, u32 height) {
     // based draw (rhi_demo's triangle mode) — both are near-universally
     // supported for swapchain images, so requesting both up front avoids
     // needing two different swapchains depending on how the demo is run.
-    swapchain_info.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    swapchain_info.imageUsage = required_usage;
     // TRANSFER_SRC, where the surface allows it, lets ReadBack copy the
     // back buffer out (editor screenshots).
     can_read_back_ = (capabilities.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
@@ -1612,16 +2186,53 @@ void VulkanSwapChain::CreateSwapchainAndImages(u32 width, u32 height) {
     }
     swapchain_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     swapchain_info.preTransform = capabilities.currentTransform;
-    swapchain_info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    constexpr VkCompositeAlphaFlagBitsKHR composite_alpha_preferences[] = {
+        VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+        VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
+        VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR,
+        VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
+    };
+    bool has_composite_alpha = false;
+    for (VkCompositeAlphaFlagBitsKHR candidate : composite_alpha_preferences) {
+        if ((capabilities.supportedCompositeAlpha & candidate) != 0) {
+            swapchain_info.compositeAlpha = candidate;
+            has_composite_alpha = true;
+            break;
+        }
+    }
+    if (!has_composite_alpha) {
+        AETHER_LOG_ERROR("Vulkan", "Surface reports no supported composite-alpha mode");
+        throw std::runtime_error("Vulkan surface has no supported composite-alpha mode");
+    }
     swapchain_info.presentMode = VK_PRESENT_MODE_FIFO_KHR; // always supported; vsync-equivalent
     swapchain_info.clipped = VK_TRUE;
 
     AETHER_VK_CHECK(vkCreateSwapchainKHR(device_.Handle(), &swapchain_info, nullptr, &swapchain_));
 
-    u32 actual_image_count = 0;
-    vkGetSwapchainImagesKHR(device_.Handle(), swapchain_, &actual_image_count, nullptr);
-    std::vector<VkImage> images(actual_image_count);
-    vkGetSwapchainImagesKHR(device_.Handle(), swapchain_, &actual_image_count, images.data());
+    std::vector<VkImage> images;
+    bool enumerated_images = false;
+    for (u32 attempt = 0; attempt < 3 && !enumerated_images; ++attempt) {
+        u32 actual_image_count = 0;
+        AETHER_VK_CHECK(vkGetSwapchainImagesKHR(device_.Handle(), swapchain_, &actual_image_count, nullptr));
+        if (actual_image_count == 0) {
+            AETHER_LOG_ERROR("Vulkan", "Swap-chain returned no images");
+            throw std::runtime_error("Vulkan swap-chain returned no images");
+        }
+        images.resize(actual_image_count);
+        VkResult image_result = vkGetSwapchainImagesKHR(device_.Handle(), swapchain_, &actual_image_count, images.data());
+        if (image_result == VK_SUCCESS) {
+            images.resize(actual_image_count);
+            enumerated_images = true;
+        } else if (image_result == VK_INCOMPLETE) {
+            images.clear();
+        } else {
+            AETHER_VK_CHECK(image_result);
+        }
+    }
+    if (!enumerated_images) {
+        AETHER_LOG_ERROR("Vulkan", "Swap-chain image enumeration remained incomplete after retries");
+        throw std::runtime_error("Vulkan swap-chain image enumeration did not stabilize");
+    }
 
     image_views_.clear();
     for (usize i = 0; i < images.size(); ++i) {
@@ -1693,39 +2304,85 @@ void VulkanSwapChain::CreateSyncObjects() {
 
 void VulkanSwapChain::DestroySyncObjects() {
     for (VkSemaphore s : image_available_semaphores_) {
-        vkDestroySemaphore(device_.Handle(), s, nullptr);
+        if (s != VK_NULL_HANDLE) vkDestroySemaphore(device_.Handle(), s, nullptr);
     }
     for (VkSemaphore s : render_finished_semaphores_) {
-        vkDestroySemaphore(device_.Handle(), s, nullptr);
+        if (s != VK_NULL_HANDLE) vkDestroySemaphore(device_.Handle(), s, nullptr);
     }
     image_available_semaphores_.clear();
     render_finished_semaphores_.clear();
 }
 
 void VulkanSwapChain::Resize(u32 width, u32 height) {
-    vkDeviceWaitIdle(device_.Handle());
+    if (offscreen_ && std::max(width, 1u) == extent_.width && std::max(height, 1u) == extent_.height) {
+        return;
+    }
+    VkResult wait_result;
+    {
+        std::lock_guard<std::mutex> queue_lock(device_.GraphicsQueueMutex());
+        wait_result = vkQueueWaitIdle(device_.Queue());
+    }
+    if (wait_result != VK_SUCCESS) {
+        AETHER_LOG_ERROR("Vulkan", "Could not drain graphics/present queue before swap-chain resize (VkResult=%d)",
+                         static_cast<int>(wait_result));
+        return;
+    }
     DestroySyncObjects();
     DestroySwapchainAndImages();
-    CreateSwapchainAndImages(width, height);
-    CreateSyncObjects();
+    try {
+        CreateSwapchainAndImages(width, height);
+        CreateSyncObjects();
+    } catch (...) {
+        DestroySyncObjects();
+        DestroySwapchainAndImages();
+        for (TextureHandle handle : handles_) {
+            device_.UnregisterTexture(handle);
+        }
+        handles_.clear();
+        throw;
+    }
     frame_index_ = 0;
     current_image_index_ = 0;
 }
 
 void VulkanSwapChain::AcquireNextImage() {
+    if (image_available_semaphores_.empty()) {
+        if (offscreen_ && !handles_.empty()) {
+            current_image_index_ = (current_image_index_ + 1) % static_cast<u32>(handles_.size());
+            return;
+        }
+        AETHER_LOG_ERROR("Vulkan", "Cannot acquire an image without swap-chain synchronization slots");
+        throw std::runtime_error("Vulkan swap-chain has no acquire slots");
+    }
     frame_index_ = (frame_index_ + 1) % static_cast<u32>(image_available_semaphores_.size());
     if (offscreen_) {
+        if (handles_.empty()) {
+            AETHER_LOG_ERROR("Vulkan", "Cannot acquire an image from an empty offscreen swap chain");
+            throw std::runtime_error("Vulkan offscreen swap-chain has no images");
+        }
         current_image_index_ = (current_image_index_ + 1) % static_cast<u32>(handles_.size());
         return;
     }
     VkResult result = vkAcquireNextImageKHR(device_.Handle(), swapchain_, UINT64_MAX,
                                              image_available_semaphores_[frame_index_], VK_NULL_HANDLE,
                                              &current_image_index_);
-    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
+    if (result == VK_ERROR_OUT_OF_DATE_KHR) {
         Resize(extent_.width, extent_.height);
-        AETHER_VK_CHECK(vkAcquireNextImageKHR(device_.Handle(), swapchain_, UINT64_MAX,
-                                               image_available_semaphores_[frame_index_], VK_NULL_HANDLE,
-                                               &current_image_index_));
+        if (image_available_semaphores_.empty()) {
+            throw std::runtime_error("Vulkan swap-chain recreation produced no acquire slots");
+        }
+        result = vkAcquireNextImageKHR(device_.Handle(), swapchain_, UINT64_MAX,
+                                       image_available_semaphores_[frame_index_], VK_NULL_HANDLE,
+                                       &current_image_index_);
+        if (result == VK_SUBOPTIMAL_KHR) {
+            recreate_after_present_ = true;
+            return;
+        }
+        AETHER_VK_CHECK(result);
+    } else if (result == VK_SUBOPTIMAL_KHR) {
+        // The image was acquired and its semaphore may be signaled asynchronously.
+        // Render and present this image before recreating the swap chain or its semaphores.
+        recreate_after_present_ = true;
     } else {
         AETHER_VK_CHECK(result);
     }
@@ -1745,24 +2402,41 @@ void VulkanSwapChain::Present(bool vsync) {
     present_info.pSwapchains = &swapchain_;
     present_info.pImageIndices = &current_image_index_;
 
-    VkResult result = vkQueuePresentKHR(device_.Queue(), &present_info);
+    VkResult result;
+    {
+        std::lock_guard<std::mutex> queue_lock(device_.GraphicsQueueMutex());
+        result = vkQueuePresentKHR(device_.Queue(), &present_info);
+    }
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
-        Resize(extent_.width, extent_.height);
+        recreate_after_present_ = true;
     } else {
         AETHER_VK_CHECK(result);
+    }
+    if (recreate_after_present_) {
+        recreate_after_present_ = false;
+        Resize(extent_.width, extent_.height);
     }
 }
 
 bool VulkanSwapChain::ReadBack(std::vector<u8>& rgba8) {
-    if (!can_read_back_ || handles_.empty() || current_image_index_ >= handles_.size()) {
+    if (!can_read_back_ || extent_.width == 0 || extent_.height == 0 || handles_.empty() ||
+        current_image_index_ >= handles_.size() ||
+        static_cast<VkDeviceSize>(extent_.width) >
+            std::numeric_limits<VkDeviceSize>::max() / 4 / extent_.height) {
         return false;
     }
     VkDevice device = device_.Handle();
     VkImage image = device_.GetTexture(handles_[current_image_index_]);
     if (image == VK_NULL_HANDLE) return false;
-    AETHER_VK_CHECK(vkQueueWaitIdle(device_.Queue()));
+    {
+        std::lock_guard<std::mutex> queue_lock(device_.GraphicsQueueMutex());
+        AETHER_VK_CHECK(vkQueueWaitIdle(device_.Queue()));
+    }
 
     const VkDeviceSize size = static_cast<VkDeviceSize>(extent_.width) * extent_.height * 4;
+    if (size > static_cast<VkDeviceSize>(std::numeric_limits<usize>::max())) {
+        return false;
+    }
     ScopedBufferRecord owned_readback(device);
     BufferRecord& readback = owned_readback.Get();
     readback.size_bytes = size;
@@ -1826,12 +2500,15 @@ bool VulkanSwapChain::ReadBack(std::vector<u8>& rgba8) {
     submit.pCommandBuffers = &cmd;
     bool submitted = false;
     try {
-        AETHER_VK_CHECK(vkQueueSubmit(device_.Queue(), 1, &submit, VK_NULL_HANDLE));
-        submitted = true;
-        AETHER_VK_CHECK(vkQueueWaitIdle(device_.Queue()));
+        {
+            std::lock_guard<std::mutex> queue_lock(device_.GraphicsQueueMutex());
+            AETHER_VK_CHECK(vkQueueSubmit(device_.Queue(), 1, &submit, VK_NULL_HANDLE));
+            submitted = true;
+            AETHER_VK_CHECK(vkQueueWaitIdle(device_.Queue()));
+        }
     } catch (...) {
         if (submitted) {
-            const VkResult idle_result = vkDeviceWaitIdle(device);
+            const VkResult idle_result = device_.WaitForDeviceIdle();
             if (idle_result != VK_SUCCESS) {
                 AETHER_LOG_ERROR("Vulkan", "Device idle failed after readback wait failure (VkResult=%d); "
                                           "leaving readback resources for device teardown",
@@ -1862,7 +2539,8 @@ bool VulkanSwapChain::ReadBack(std::vector<u8>& rgba8) {
 
 // --------------------------------------------------------------------------
 
-VulkanCommandList::VulkanCommandList(VulkanDevice& device, u32 queue_family_index) : device_(device) {
+VulkanCommandList::VulkanCommandList(VulkanDevice& device, u32 queue_family_index, bool compute_queue)
+    : device_(device), compute_queue_(compute_queue) {
     ScopedCommandPool owned_pool(device_.Handle());
     VkCommandPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
     pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -1874,26 +2552,120 @@ VulkanCommandList::VulkanCommandList(VulkanDevice& device, u32 queue_family_inde
     alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     alloc_info.commandBufferCount = 1;
     AETHER_VK_CHECK(vkAllocateCommandBuffers(device_.Handle(), &alloc_info, &command_buffer_));
+    const VkDescriptorPool initial_pool = CreateComputeDescriptorPool();
+    try {
+        compute_descriptor_pools_.push_back(initial_pool);
+    } catch (...) {
+        vkDestroyDescriptorPool(device_.Handle(), initial_pool, nullptr);
+        throw;
+    }
     command_pool_ = owned_pool.Release();
 }
 
+VkDescriptorPool VulkanCommandList::CreateComputeDescriptorPool() {
+    VkDescriptorPoolSize pool_sizes[3] = {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4096},
+                                          {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4096},
+                                          {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 4096}};
+    VkDescriptorPoolCreateInfo descriptor_pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    descriptor_pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    descriptor_pool_info.maxSets = 256;
+    descriptor_pool_info.poolSizeCount = 3;
+    descriptor_pool_info.pPoolSizes = pool_sizes;
+    VkDescriptorPool pool = VK_NULL_HANDLE;
+    AETHER_VK_CHECK(vkCreateDescriptorPool(device_.Handle(), &descriptor_pool_info, nullptr, &pool));
+    return pool;
+}
+
 VulkanCommandList::~VulkanCommandList() {
-    if (command_pool_ != VK_NULL_HANDLE) {
+    bool defer_resources = false;
+    if (IsSubmissionInFlight()) {
+        try {
+            if (compute_queue_) {
+                device_.WaitForComputeFence(last_submitted_fence_);
+            } else {
+                device_.WaitForFence(last_submitted_fence_);
+            }
+        } catch (...) {
+            AETHER_LOG_ERROR("Vulkan", "Could not wait for command-list submission; deferring its pools to device teardown");
+            device_.DeferCommandListResources(command_pool_, std::move(compute_descriptor_pools_));
+            command_pool_ = VK_NULL_HANDLE;
+            defer_resources = true;
+        }
+    }
+    if (!defer_resources) {
+        for (VkDescriptorPool pool : compute_descriptor_pools_) {
+            if (pool != VK_NULL_HANDLE) vkDestroyDescriptorPool(device_.Handle(), pool, nullptr);
+        }
+    }
+    if (!defer_resources && command_pool_ != VK_NULL_HANDLE) {
         vkDestroyCommandPool(device_.Handle(), command_pool_, nullptr);
     }
 }
 
 void VulkanCommandList::Reset() {
+    std::lock_guard<std::mutex> queue_lock(compute_queue_ ? device_.ComputeQueueMutex() : device_.GraphicsQueueMutex());
+    if (recording_) {
+        AETHER_LOG_ERROR("Vulkan", "Reset received a command buffer that is still recording");
+        return;
+    }
+    if (IsSubmissionInFlight()) {
+        AETHER_LOG_ERROR("Vulkan", "Reset requires the command list's last submission fence to complete");
+        return;
+    }
+    for (VkDescriptorPool pool : compute_descriptor_pools_) {
+        AETHER_VK_CHECK(vkResetDescriptorPool(device_.Handle(), pool, 0));
+    }
     AETHER_VK_CHECK(vkResetCommandBuffer(command_buffer_, 0));
+    last_submitted_fence_ = 0;
+    render_pass_active_ = false;
+    graphics_pipeline_bound_ = false;
+    graphics_bindless_enabled_ = false;
+    graphics_bindless_bound_ = false;
+    graphics_uses_vertex_buffer_ = false;
+    graphics_vertex_stride_bytes_ = 0;
+    vertex_buffer_bound_ = false;
+    bound_vertex_count_ = 0;
+    index_buffer_bound_ = false;
+    bound_index_count_ = 0;
+    graphics_push_constant_size_bytes_ = 0;
+    bound_pipeline_layout_ = VK_NULL_HANDLE;
+    bound_compute_descriptor_set_ = VK_NULL_HANDLE;
+    bound_compute_sampled_set_ = VK_NULL_HANDLE;
+    bound_compute_constant_set_ = VK_NULL_HANDLE;
+    bound_compute_pipeline_ = {};
+    compute_storage_bound_.clear();
+    compute_sampled_texture_bound_.clear();
+    compute_constant_buffer_bound_.clear();
     VkCommandBufferBeginInfo begin_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     AETHER_VK_CHECK(vkBeginCommandBuffer(command_buffer_, &begin_info));
+    recording_ = true;
+    has_closed_recording_ = false;
 }
 
 void VulkanCommandList::Close() {
+    std::lock_guard<std::mutex> queue_lock(compute_queue_ ? device_.ComputeQueueMutex() : device_.GraphicsQueueMutex());
+    if (!recording_) {
+        AETHER_LOG_ERROR("Vulkan", "Close received a command buffer that is not recording");
+        return;
+    }
+    if (render_pass_active_) {
+        AETHER_LOG_ERROR("Vulkan", "Close requires EndRenderPass before closing the command buffer");
+        return;
+    }
     AETHER_VK_CHECK(vkEndCommandBuffer(command_buffer_));
+    recording_ = false;
+    has_closed_recording_ = true;
 }
 
 void VulkanCommandList::TransitionTexture(TextureHandle texture, ResourceState before, ResourceState after) {
+    if (!recording_) {
+        AETHER_LOG_ERROR("Vulkan", "TransitionTexture requires a recording command list");
+        return;
+    }
+    if (compute_queue_ || !IsValidResourceState(before) || !IsValidResourceState(after)) {
+        AETHER_LOG_ERROR("Vulkan", "TransitionTexture requires a graphics list and valid resource states");
+        return;
+    }
     const VkImage image = device_.GetTexture(texture);
     if (image == VK_NULL_HANDLE) return;
 
@@ -1917,6 +2689,14 @@ void VulkanCommandList::TransitionTexture(TextureHandle texture, ResourceState b
 }
 
 void VulkanCommandList::ClearRenderTarget(TextureHandle texture, const ClearColor& color) {
+    if (!recording_) {
+        AETHER_LOG_ERROR("Vulkan", "ClearRenderTarget requires a recording command list");
+        return;
+    }
+    if (compute_queue_ || !IsFiniteClearColor(color)) {
+        AETHER_LOG_ERROR("Vulkan", "ClearRenderTarget requires a graphics list and finite clear color");
+        return;
+    }
     const VkImage image = device_.GetTexture(texture);
     if (image == VK_NULL_HANDLE) return;
 
@@ -1934,15 +2714,43 @@ void VulkanCommandList::ClearRenderTarget(TextureHandle texture, const ClearColo
 }
 
 void VulkanCommandList::SetViewportAndScissor(const Viewport& viewport, const Rect& scissor) {
+    if (!recording_) {
+        AETHER_LOG_ERROR("Vulkan", "SetViewportAndScissor requires a recording command list");
+        return;
+    }
+    const std::int64_t scissor_width = static_cast<std::int64_t>(scissor.right) - scissor.left;
+    const std::int64_t scissor_height = static_cast<std::int64_t>(scissor.bottom) - scissor.top;
+    if (!render_pass_active_ || !std::isfinite(viewport.x) || !std::isfinite(viewport.y) ||
+        !std::isfinite(viewport.width) || !std::isfinite(viewport.height) ||
+        !std::isfinite(viewport.min_depth) || !std::isfinite(viewport.max_depth) || viewport.width <= 0.0f ||
+        viewport.height <= 0.0f || viewport.min_depth < 0.0f || viewport.max_depth > 1.0f ||
+        viewport.min_depth > viewport.max_depth || scissor_width <= 0 || scissor_height <= 0 ||
+        scissor_width > std::numeric_limits<u32>::max() || scissor_height > std::numeric_limits<u32>::max()) {
+        AETHER_LOG_ERROR("Vulkan", "SetViewportAndScissor requires an active pass and valid viewport/scissor bounds");
+        return;
+    }
     VkViewport vp{viewport.x, viewport.y, viewport.width, viewport.height, viewport.min_depth, viewport.max_depth};
     VkRect2D rect{{scissor.left, scissor.top},
-                  {static_cast<u32>(scissor.right - scissor.left), static_cast<u32>(scissor.bottom - scissor.top)}};
+                  {static_cast<u32>(scissor_width), static_cast<u32>(scissor_height)}};
     vkCmdSetViewport(command_buffer_, 0, 1, &vp);
     vkCmdSetScissor(command_buffer_, 0, 1, &rect);
 }
 
 void VulkanCommandList::BeginRenderPass(ISwapChain& swap_chain, const ClearColor& clear_color) {
-    auto& vk_swap = static_cast<VulkanSwapChain&>(swap_chain);
+    if (!recording_) {
+        AETHER_LOG_ERROR("Vulkan", "BeginRenderPass requires a recording command list");
+        return;
+    }
+    if (!IsFiniteClearColor(clear_color)) {
+        AETHER_LOG_ERROR("Vulkan", "BeginRenderPass requires a finite clear color");
+        return;
+    }
+    auto* vk_swap_ptr = dynamic_cast<VulkanSwapChain*>(&swap_chain);
+    if (compute_queue_ || render_pass_active_ || !vk_swap_ptr || !vk_swap_ptr->BelongsTo(device_)) {
+        AETHER_LOG_ERROR("Vulkan", "BeginRenderPass requires a non-nested Vulkan swap chain from this device");
+        return;
+    }
+    auto& vk_swap = *vk_swap_ptr;
 
     // Index 0 = color attachment, index 1 = depth (see
     // VulkanSwapChain::CreateDefaultRenderPass) — both attachments use
@@ -1964,6 +2772,7 @@ void VulkanCommandList::BeginRenderPass(ISwapChain& swap_chain, const ClearColor
     rp_begin.clearValueCount = 2;
     rp_begin.pClearValues = clear_values;
     vkCmdBeginRenderPass(command_buffer_, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
+    render_pass_active_ = true;
 
     // Negative-height viewport (y = height, height = -height): the standard
     // trick to make Vulkan's NDC +Y point up like D3D12's, entirely on the
@@ -1981,38 +2790,147 @@ void VulkanCommandList::BeginRenderPass(ISwapChain& swap_chain, const ClearColor
 }
 
 void VulkanCommandList::EndRenderPass() {
+    if (!recording_) {
+        AETHER_LOG_ERROR("Vulkan", "EndRenderPass requires a recording command list");
+        return;
+    }
+    if (!render_pass_active_) {
+        AETHER_LOG_ERROR("Vulkan", "EndRenderPass requires an active render pass");
+        return;
+    }
     vkCmdEndRenderPass(command_buffer_);
+    render_pass_active_ = false;
+    graphics_pipeline_bound_ = false;
+    graphics_bindless_enabled_ = false;
+    graphics_bindless_bound_ = false;
+    graphics_uses_vertex_buffer_ = false;
+    vertex_buffer_bound_ = false;
+    index_buffer_bound_ = false;
+    graphics_push_constant_size_bytes_ = 0;
+    bound_pipeline_layout_ = VK_NULL_HANDLE;
 }
 
 void VulkanCommandList::BindPipeline(PipelineHandle pipeline) {
+    if (!recording_) {
+        AETHER_LOG_ERROR("Vulkan", "BindPipeline requires a recording command list");
+        return;
+    }
+    if (!render_pass_active_) {
+        AETHER_LOG_ERROR("Vulkan", "BindPipeline requires an active render pass");
+        graphics_pipeline_bound_ = false;
+        graphics_bindless_enabled_ = false;
+        graphics_bindless_bound_ = false;
+        graphics_uses_vertex_buffer_ = false;
+        vertex_buffer_bound_ = false;
+        index_buffer_bound_ = false;
+        graphics_push_constant_size_bytes_ = 0;
+        bound_pipeline_layout_ = VK_NULL_HANDLE;
+        return;
+    }
+    if (!pipeline.IsValid() || pipeline.index >= device_.PipelineCount()) {
+        AETHER_LOG_ERROR("Vulkan", "BindPipeline received an invalid graphics-pipeline handle");
+        graphics_pipeline_bound_ = false;
+        graphics_bindless_enabled_ = false;
+        graphics_bindless_bound_ = false;
+        graphics_uses_vertex_buffer_ = false;
+        vertex_buffer_bound_ = false;
+        index_buffer_bound_ = false;
+        graphics_push_constant_size_bytes_ = 0;
+        bound_pipeline_layout_ = VK_NULL_HANDLE;
+        return;
+    }
     const PipelineRecord& record = device_.GetPipeline(pipeline);
     vkCmdBindPipeline(command_buffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline);
     bound_pipeline_layout_ = record.layout;
+    graphics_pipeline_bound_ = true;
+    graphics_push_constant_size_bytes_ = record.push_constant_size_bytes;
+    graphics_bindless_enabled_ = record.enable_bindless_textures;
+    graphics_bindless_bound_ = false;
+    graphics_uses_vertex_buffer_ = record.use_vertex_buffer;
+    graphics_vertex_stride_bytes_ = record.vertex_stride_bytes;
+    vertex_buffer_bound_ = false;
+    index_buffer_bound_ = false;
 }
 
 void VulkanCommandList::SetPushConstants(const void* data, u32 size_bytes) {
+    if (!recording_) {
+        AETHER_LOG_ERROR("Vulkan", "SetPushConstants requires a recording command list");
+        return;
+    }
+    if (!render_pass_active_ || !graphics_pipeline_bound_ || !data || size_bytes == 0 || size_bytes % 4 != 0 ||
+        size_bytes > graphics_push_constant_size_bytes_) {
+        AETHER_LOG_ERROR("Vulkan", "SetPushConstants requires a valid pipeline and data within its aligned push-constant range");
+        return;
+    }
     vkCmdPushConstants(command_buffer_, bound_pipeline_layout_,
                         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, size_bytes, data);
 }
 
 void VulkanCommandList::Draw(u32 vertex_count) {
+    if (!recording_) {
+        AETHER_LOG_ERROR("Vulkan", "Draw requires a recording command list");
+        return;
+    }
+    if (!render_pass_active_ || !graphics_pipeline_bound_ ||
+        (graphics_uses_vertex_buffer_ && (!vertex_buffer_bound_ || vertex_count > bound_vertex_count_)) ||
+        (graphics_bindless_enabled_ && !graphics_bindless_bound_)) {
+        AETHER_LOG_ERROR("Vulkan", "Draw requires a valid bound graphics pipeline");
+        return;
+    }
     vkCmdDraw(command_buffer_, vertex_count, 1, 0, 0);
 }
 
 void VulkanCommandList::BindVertexBuffer(BufferHandle buffer, u32 stride_bytes) {
-    (void)stride_bytes; // the stride is baked into the pipeline's VkVertexInputBindingDescription, not per-bind state
+    if (!recording_) {
+        AETHER_LOG_ERROR("Vulkan", "BindVertexBuffer requires a recording command list");
+        return;
+    }
+    if (!render_pass_active_ || !graphics_pipeline_bound_ || !graphics_uses_vertex_buffer_ ||
+        stride_bytes != graphics_vertex_stride_bytes_ || !device_.IsVertexBuffer(buffer)) {
+        AETHER_LOG_ERROR("Vulkan", "BindVertexBuffer received an invalid handle or a stride that does not match the pipeline");
+        return;
+    }
     const BufferRecord& record = device_.GetBuffer(buffer);
+    if (record.size_bytes % stride_bytes != 0) {
+        AETHER_LOG_ERROR("Vulkan", "BindVertexBuffer size must contain whole vertices for the pipeline stride");
+        return;
+    }
     VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(command_buffer_, 0, 1, &record.buffer, &offset);
+    vertex_buffer_bound_ = true;
+    bound_vertex_count_ = record.size_bytes / stride_bytes;
 }
 
 void VulkanCommandList::BindIndexBuffer(BufferHandle buffer, IndexFormat format) {
+    if (!recording_) {
+        AETHER_LOG_ERROR("Vulkan", "BindIndexBuffer requires a recording command list");
+        return;
+    }
+    if (!render_pass_active_ || !graphics_pipeline_bound_ || !graphics_uses_vertex_buffer_ ||
+        (format != IndexFormat::UInt16 && format != IndexFormat::UInt32) ||
+        !device_.IsIndexBuffer(buffer, format)) {
+        AETHER_LOG_ERROR("Vulkan", "BindIndexBuffer received an invalid format, state, or buffer handle");
+        return;
+    }
     const BufferRecord& record = device_.GetBuffer(buffer);
+    const u32 index_size_bytes = format == IndexFormat::UInt16 ? 2u : 4u;
     VkIndexType index_type = format == IndexFormat::UInt16 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32;
     vkCmdBindIndexBuffer(command_buffer_, record.buffer, 0, index_type);
+    index_buffer_bound_ = true;
+    bound_index_count_ = record.size_bytes / index_size_bytes;
 }
 
 void VulkanCommandList::DrawIndexed(u32 index_count) {
+    if (!recording_) {
+        AETHER_LOG_ERROR("Vulkan", "DrawIndexed requires a recording command list");
+        return;
+    }
+    if (!render_pass_active_ || !graphics_pipeline_bound_ || !graphics_uses_vertex_buffer_ ||
+        !vertex_buffer_bound_ || !index_buffer_bound_ || index_count > bound_index_count_ ||
+        (graphics_bindless_enabled_ && !graphics_bindless_bound_)) {
+        AETHER_LOG_ERROR("Vulkan", "DrawIndexed requires a valid bound graphics pipeline");
+        return;
+    }
     vkCmdDrawIndexed(command_buffer_, index_count, 1, 0, 0, 0);
 }
 
@@ -2024,11 +2942,212 @@ void VulkanCommandList::BindFrameConstants(BufferHandle buffer) {
     const VkDescriptorSet set = device_.GetBuffer(buffer).constants_set;
     vkCmdBindDescriptorSets(command_buffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, bound_pipeline_layout_, 2, 1, &set, 0, nullptr);
 }
+void VulkanCommandList::BindComputePipeline(ComputePipelineHandle pipeline) {
+    if (!recording_) {
+        AETHER_LOG_ERROR("Vulkan", "BindComputePipeline requires a recording command list");
+        return;
+    }
+    if (!compute_queue_ || !pipeline.IsValid() || pipeline.index >= device_.ComputePipelineCount()) {
+        AETHER_LOG_ERROR("Vulkan", "BindComputePipeline requires a compute command list and valid pipeline handle");
+        bound_compute_pipeline_ = {};
+        compute_storage_bound_.clear();
+        compute_sampled_texture_bound_.clear();
+        compute_constant_buffer_bound_.clear();
+        bound_compute_descriptor_set_ = VK_NULL_HANDLE;
+        bound_compute_sampled_set_ = VK_NULL_HANDLE;
+        bound_compute_constant_set_ = VK_NULL_HANDLE;
+        return;
+    }
+    const ComputePipelineRecord& record = device_.GetComputePipeline(pipeline);
+    bound_compute_pipeline_ = pipeline;
+    compute_storage_bound_.assign(record.storage_buffer_count, false);
+    compute_sampled_texture_bound_.assign(record.sampled_texture_count, false);
+    compute_constant_buffer_bound_.assign(record.constant_buffer_count, false);
+    bound_compute_descriptor_set_ = VK_NULL_HANDLE;
+    bound_compute_sampled_set_ = VK_NULL_HANDLE;
+    bound_compute_constant_set_ = VK_NULL_HANDLE;
+    VkDescriptorSetAllocateInfo alloc_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    VkDescriptorSetLayout set_layouts[3] = {record.storage_layout, record.constant_layout, record.sampled_layout};
+    VkDescriptorSet sets[3]{};
+    alloc_info.descriptorSetCount = 3;
+    alloc_info.pSetLayouts = set_layouts;
+    alloc_info.descriptorPool = compute_descriptor_pools_.back();
+    VkResult allocation = vkAllocateDescriptorSets(device_.Handle(), &alloc_info, sets);
+    if (allocation == VK_ERROR_OUT_OF_POOL_MEMORY || allocation == VK_ERROR_FRAGMENTED_POOL) {
+        const VkDescriptorPool next_pool = CreateComputeDescriptorPool();
+        try {
+            compute_descriptor_pools_.push_back(next_pool);
+        } catch (...) {
+            vkDestroyDescriptorPool(device_.Handle(), next_pool, nullptr);
+            throw;
+        }
+        alloc_info.descriptorPool = next_pool;
+        allocation = vkAllocateDescriptorSets(device_.Handle(), &alloc_info, sets);
+    }
+    AETHER_VK_CHECK(allocation);
+    bound_compute_descriptor_set_ = sets[0];
+    bound_compute_constant_set_ = sets[1];
+    bound_compute_sampled_set_ = sets[2];
+    vkCmdBindPipeline(command_buffer_, VK_PIPELINE_BIND_POINT_COMPUTE, record.pipeline);
+    vkCmdBindDescriptorSets(command_buffer_, VK_PIPELINE_BIND_POINT_COMPUTE, record.layout, 0, 3,
+                            sets, 0, nullptr);
+}
+
+void VulkanCommandList::BindComputeConstantBuffer(u32 slot, BufferHandle buffer) {
+    if (!recording_) {
+        AETHER_LOG_ERROR("Vulkan", "BindComputeConstantBuffer requires a recording command list");
+        return;
+    }
+    if (!compute_queue_ || !bound_compute_pipeline_.IsValid()) {
+        AETHER_LOG_ERROR("Vulkan", "BindComputeConstantBuffer requires a bound compute pipeline");
+        return;
+    }
+    const ComputePipelineRecord& pipeline = device_.GetComputePipeline(bound_compute_pipeline_);
+    if (slot >= pipeline.constant_buffer_count || !buffer.IsValid() || buffer.index >= device_.BufferCount() ||
+        !device_.GetBuffer(buffer).is_constant) {
+        AETHER_LOG_ERROR("Vulkan", "BindComputeConstantBuffer received an invalid slot or buffer handle");
+        return;
+    }
+    const BufferRecord& record = device_.GetBuffer(buffer);
+    VkDescriptorBufferInfo buffer_info{record.buffer, 0, record.size_bytes};
+    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    write.dstSet = bound_compute_constant_set_;
+    write.dstBinding = slot;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    write.pBufferInfo = &buffer_info;
+    vkUpdateDescriptorSets(device_.Handle(), 1, &write, 0, nullptr);
+    compute_constant_buffer_bound_[slot] = true;
+}
+
+void VulkanCommandList::BindComputeStorageBuffer(u32 slot, BufferHandle buffer) {
+    if (!recording_) {
+        AETHER_LOG_ERROR("Vulkan", "BindComputeStorageBuffer requires a recording command list");
+        return;
+    }
+    if (!compute_queue_ || !bound_compute_pipeline_.IsValid()) {
+        AETHER_LOG_ERROR("Vulkan", "BindComputeStorageBuffer requires a bound compute pipeline");
+        return;
+    }
+    const ComputePipelineRecord& pipeline = device_.GetComputePipeline(bound_compute_pipeline_);
+    if (slot >= pipeline.storage_buffer_count || !buffer.IsValid() || buffer.index >= device_.BufferCount() ||
+        !device_.GetBuffer(buffer).is_storage) {
+        AETHER_LOG_ERROR("Vulkan", "BindComputeStorageBuffer received an invalid slot or buffer handle");
+        return;
+    }
+    const BufferRecord& record = device_.GetBuffer(buffer);
+    VkDescriptorBufferInfo buffer_info{record.buffer, 0, record.size_bytes};
+    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    write.dstSet = bound_compute_descriptor_set_;
+    write.dstBinding = slot;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    write.pBufferInfo = &buffer_info;
+    vkUpdateDescriptorSets(device_.Handle(), 1, &write, 0, nullptr);
+    compute_storage_bound_[slot] = true;
+}
+
+void VulkanCommandList::BindComputeSampledTexture(u32 slot, SampledTextureHandle texture) {
+    if (!recording_) {
+        AETHER_LOG_ERROR("Vulkan", "BindComputeSampledTexture requires a recording command list");
+        return;
+    }
+    if (!compute_queue_ || !bound_compute_pipeline_.IsValid()) {
+        AETHER_LOG_ERROR("Vulkan", "BindComputeSampledTexture requires a bound compute pipeline");
+        return;
+    }
+    const ComputePipelineRecord& pipeline = device_.GetComputePipeline(bound_compute_pipeline_);
+    if (slot >= pipeline.sampled_texture_count || !texture.IsValid() ||
+        texture.index < kFirstUserBindlessTextureIndex ||
+        texture.index - kFirstUserBindlessTextureIndex >= device_.SampledTextureCount()) {
+        AETHER_LOG_ERROR("Vulkan", "BindComputeSampledTexture received an invalid slot or texture handle");
+        return;
+    }
+    const SampledTextureRecord& record = device_.GetSampledTexture(texture);
+    VkDescriptorImageInfo image_info{};
+    image_info.imageView = record.view;
+    image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    write.dstSet = bound_compute_sampled_set_;
+    write.dstBinding = slot;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    write.pImageInfo = &image_info;
+    vkUpdateDescriptorSets(device_.Handle(), 1, &write, 0, nullptr);
+    compute_sampled_texture_bound_[slot] = true;
+}
+
+void VulkanCommandList::ComputeBufferBarrier(BufferHandle buffer) {
+    if (!recording_) {
+        AETHER_LOG_ERROR("Vulkan", "ComputeBufferBarrier requires a recording command list");
+        return;
+    }
+    if (!compute_queue_ || !buffer.IsValid() || buffer.index >= device_.BufferCount() ||
+        !device_.GetBuffer(buffer).is_storage) {
+        AETHER_LOG_ERROR("Vulkan", "ComputeBufferBarrier requires a compute command list and storage buffer");
+        return;
+    }
+    const BufferRecord& record = device_.GetBuffer(buffer);
+    VkBufferMemoryBarrier barrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
+    barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.buffer = record.buffer;
+    barrier.offset = 0;
+    barrier.size = record.size_bytes;
+    vkCmdPipelineBarrier(command_buffer_, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                         0, 0, nullptr, 1, &barrier, 0, nullptr);
+}
+
+void VulkanCommandList::Dispatch(u32 groups_x, u32 groups_y, u32 groups_z) {
+    if (!recording_) {
+        AETHER_LOG_ERROR("Vulkan", "Dispatch requires a recording command list");
+        return;
+    }
+    if (groups_x == 0 || groups_y == 0 || groups_z == 0 ||
+        !device_.IsComputeDispatchWithinLimits(groups_x, groups_y, groups_z)) {
+        AETHER_LOG_ERROR("Vulkan", "Compute dispatch group counts are zero or exceed device limits");
+        return;
+    }
+    if (!compute_queue_ || !bound_compute_pipeline_.IsValid()) {
+        AETHER_LOG_ERROR("Vulkan", "Dispatch requires a bound compute pipeline");
+        return;
+    }
+    for (bool bound : compute_storage_bound_) {
+        if (!bound) {
+            AETHER_LOG_ERROR("Vulkan", "Dispatch requires every compute storage buffer to be bound");
+            return;
+        }
+    }
+    for (bool bound : compute_sampled_texture_bound_) {
+        if (!bound) {
+            AETHER_LOG_ERROR("Vulkan", "Dispatch requires every compute sampled texture to be bound");
+            return;
+        }
+    }
+    for (bool bound : compute_constant_buffer_bound_) {
+        if (!bound) {
+            AETHER_LOG_ERROR("Vulkan", "Dispatch requires every compute constant buffer to be bound");
+            return;
+        }
+    }
+    vkCmdDispatch(command_buffer_, groups_x, groups_y, groups_z);
+}
 
 void VulkanCommandList::BindBindlessTextures() {
+    if (!recording_) {
+        AETHER_LOG_ERROR("Vulkan", "BindBindlessTextures requires a recording command list");
+        return;
+    }
+    if (!render_pass_active_ || !graphics_pipeline_bound_ || !graphics_bindless_enabled_) {
+        AETHER_LOG_ERROR("Vulkan", "BindBindlessTextures requires an active pass and a bindless graphics pipeline");
+        return;
+    }
     VkDescriptorSet sets[2] = {device_.BindlessTextureSet(), device_.BindlessSamplerSet()};
     vkCmdBindDescriptorSets(command_buffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, bound_pipeline_layout_, 0, 2, sets, 0,
                              nullptr);
+    graphics_bindless_bound_ = true;
 }
 
 } // namespace aether::gfx::rhi::vulkan_backend

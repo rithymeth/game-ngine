@@ -3,7 +3,12 @@
 #include "aether/assets/image.h"
 #include "aether/audio/audio_system.h"
 #include "aether/cook/mesh_summary.h"
+#include "aether/ai/bt_world.h"
+#include "aether/nav/debug_draw.h"
+#include "aether/blueprint/system.h"
 #include "aether/core/log.h"
+#include "aether/core/version.h"
+#include "aether/debug/crash.h"
 #include "aether/ecs/archetype.h"
 #include "aether/gameplay/attribute_system.h"
 #include "aether/input/keys.h"
@@ -23,8 +28,18 @@
 #include "sequencer/sequence_document.h"
 #include "physics_component_panel.h"
 #include "animation_editor_widget.h"
+#include "material_editor_widget.h"
+#include "blueprint_editor_widget.h"
+#include "vfx_editor_widget.h"
+#include "behavior_tree_editor_widget.h"
+#include "navigation_editor_widget.h"
+#include "anim_graph_editor_widget.h"
+#include "blend_space_editor_widget.h"
+#include "montage_editor_widget.h"
+#include "sound_cue_editor_widget.h"
 #if defined(AETHER_QT_EDITOR_SCRIPTING)
 #include "script_component_editor.h"
+#include "script_editor_widget.h"
 #endif
 
 #include <QApplication>
@@ -40,6 +55,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QDoubleSpinBox>
+#include <QDesktopServices>
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -88,6 +104,7 @@
 #include <QToolBar>
 #include <QToolButton>
 #include <QTimer>
+#include <QUrl>
 #include <QTreeView>
 #include <QTreeWidget>
 #include <QTableWidget>
@@ -171,7 +188,9 @@ aether::input::Key InputMouseKeyFromQt(Qt::MouseButton button) {
 }
 
 void RegisterEditorComponentSchemas() {
+    aether::RegisterBehaviorTreeComponents();
     aether::RegisterAudioComponents();
+    aether::bp::RegisterBlueprintComponents();
     aether::gas::RegisterGameplayComponents();
     aether::RegisterSequenceComponents();
     aether::RegisterPhysicsComponentSerializers();
@@ -499,6 +518,9 @@ public:
         if (!active && input_clear_) input_clear_();
         if (active) setFocus(Qt::OtherFocusReason);
         NotifyPlayInputFocus();
+    }
+    void SetNavigationDebugSource(std::function<aether::nav::NavDebugDraw()> source) {
+        navigation_debug_source_ = std::move(source);
     }
 
 protected:
@@ -988,6 +1010,15 @@ private:
         float color[4];
     };
 
+    struct NavTrianglePushConstants {
+        aether::Mat4 view_projection;
+        float a[4];
+        float b[4];
+        float c[4];
+        float color[4];
+    };
+    static_assert(sizeof(NavTrianglePushConstants) == 128);
+
     struct ModelVertex {
         float position[3];
         float uv[2];
@@ -1297,6 +1328,50 @@ private:
         command_list_->Draw(36);
     }
 
+    void DrawNavigationOverlay() {
+        if (!navigation_debug_source_ || !nav_triangle_pipeline_.IsValid()) return;
+        const aether::nav::NavDebugDraw draw = navigation_debug_source_();
+        command_list_->BindPipeline(nav_triangle_pipeline_);
+        for (const auto& triangle : draw.triangles) {
+            NavTrianglePushConstants constants{};
+            constants.view_projection = ViewProjection();
+            const aether::Vec3 points[] = {triangle.a, triangle.b, triangle.c};
+            float* output[] = {constants.a, constants.b, constants.c};
+            for (int i = 0; i < 3; ++i) {
+                output[i][0] = points[i].x; output[i][1] = points[i].y; output[i][2] = points[i].z; output[i][3] = 1.0f;
+            }
+            const aether::u32 color = triangle.color;
+            constants.color[0] = static_cast<float>((color >> 0) & 0xff) / 255.0f;
+            constants.color[1] = static_cast<float>((color >> 8) & 0xff) / 255.0f;
+            constants.color[2] = static_cast<float>((color >> 16) & 0xff) / 255.0f;
+            constants.color[3] = static_cast<float>((color >> 24) & 0xff) / 255.0f;
+            command_list_->SetPushConstants(&constants, sizeof(constants));
+            command_list_->Draw(3);
+        }
+        command_list_->BindPipeline(scene_pipeline_);
+        for (const auto& line : draw.lines) {
+            const aether::Vec3 delta = line.b - line.a;
+            const float length = delta.Length();
+            if (length < 0.0001f) continue;
+            const aether::Vec3 direction = delta * (1.0f / length);
+            const aether::Vec3 up(0, 1, 0);
+            const aether::Vec3 cross(up.y * direction.z - up.z * direction.y,
+                                     up.z * direction.x - up.x * direction.z,
+                                     up.x * direction.y - up.y * direction.x);
+            const float dot = std::clamp(up.x * direction.x + up.y * direction.y + up.z * direction.z, -1.0f, 1.0f);
+            aether::Quaternion rotation = dot < -0.9999f
+                ? aether::Quaternion::FromAxisAngle({1, 0, 0}, aether::kPi)
+                : aether::Quaternion(cross.x, cross.y, cross.z, 1.0f + dot).Normalized();
+            const aether::Vec3 center = (line.a + line.b) * 0.5f;
+            const aether::u32 color = line.color;
+            DrawCube(aether::Mat4::Translation(center) * rotation.ToMat4() * aether::Mat4::Scale({0.012f, length * 0.5f, 0.012f}),
+                     static_cast<float>((color >> 0) & 0xff) / 255.0f,
+                     static_cast<float>((color >> 8) & 0xff) / 255.0f,
+                     static_cast<float>((color >> 16) & 0xff) / 255.0f,
+                     static_cast<float>((color >> 24) & 0xff) / 255.0f);
+        }
+    }
+
     void DrawRotationRing(const aether::Entity& entity) {
         const aether::Mat4 entity_world = aether::ComputeWorldTransform(document_.GetWorld(), document_.Guids(), entity);
         const float radius = std::clamp(camera_distance_ * 0.07f, 0.8f, 2.0f);
@@ -1352,6 +1427,21 @@ float4 PSMain(VertexOut input) : SV_TARGET { return input.color; }
             scene.cull_back_face = false;
             scene.depth_test = true;
             scene_pipeline_ = device_->CreatePipeline(scene, *swap_chain_);
+
+            rhi::PipelineDesc nav_triangle;
+            nav_triangle.push_constant_size_bytes = sizeof(NavTrianglePushConstants);
+            nav_triangle.depth_test = true;
+            nav_triangle.depth_write = false;
+            nav_triangle.enable_blending = true;
+            nav_triangle.hlsl_source = R"(
+cbuffer NavData : register(b0) { float4x4 viewProjection; float4 a; float4 b; float4 c; float4 color; };
+float4 VSMain(uint id : SV_VertexID) : SV_POSITION {
+    float4 points[3] = {a, b, c};
+    return mul(viewProjection, points[id]);
+}
+float4 PSMain() : SV_TARGET { return color; }
+)";
+            nav_triangle_pipeline_ = device_->CreatePipeline(nav_triangle, *swap_chain_);
 
             rhi::PipelineDesc model;
             model.push_constant_size_bytes = sizeof(ModelPushConstants);
@@ -1491,6 +1581,8 @@ float4 PSMain(VertexOut input) : SV_TARGET {
                 command_list_->BindPipeline(scene_pipeline_);
             }
 
+            DrawNavigationOverlay();
+
             const aether::Entity selected = document_.Guids().Find(document_.GetWorld(), selected_guid_);
             if (!selected.IsNull()) {
                 const aether::Vec3 position = aether::WorldPosition(document_.GetWorld(), document_.Guids(), selected);
@@ -1533,6 +1625,7 @@ float4 PSMain(VertexOut input) : SV_TARGET {
     std::unique_ptr<rhi::ISwapChain> swap_chain_;
     std::unique_ptr<rhi::ICommandList> command_list_;
     rhi::PipelineHandle scene_pipeline_;
+    rhi::PipelineHandle nav_triangle_pipeline_;
     rhi::PipelineHandle model_pipeline_;
     rhi::SampledTextureHandle white_texture_;
     std::filesystem::path content_root_;
@@ -1547,6 +1640,7 @@ float4 PSMain(VertexOut input) : SV_TARGET {
     std::function<void(float, float)> input_mouse_delta_;
     std::function<void(float)> input_mouse_wheel_;
     std::function<void()> input_clear_;
+    std::function<aether::nav::NavDebugDraw()> navigation_debug_source_;
     std::function<void(bool)> play_input_focus_changed_;
     QSet<int> navigation_keys_;
     bool play_input_active_ = false;
@@ -2037,6 +2131,8 @@ public:
                 badge = "SCN"; accent = QColor("#b9a0ff");
             } else if (extension == "asequence" || extension == "anim") {
                 badge = "ANIM"; accent = QColor("#8bbcff");
+            } else if (extension == "amontage") {
+                badge = "MONT"; accent = QColor("#d7a2ff");
             } else if (extension == "png" || extension == "jpg" || extension == "jpeg" ||
                        extension == "tga" || extension == "hdr" || extension == "exr") {
                 badge = "IMG"; accent = QColor("#f4bd72");
@@ -2130,6 +2226,7 @@ QWidget* MakeContentBrowser(QComboBox*& breadcrumb, QFileSystemModel*& asset_mod
     asset_type_filter->addItem("Models", QStringList{"gltf", "glb"});
     asset_type_filter->addItem("Scenes", QStringList{"ascene", "aesc"});
     asset_type_filter->addItem("Sequences", QStringList{"asequence"});
+    asset_type_filter->addItem("Montages", QStringList{"amontage"});
     asset_type_filter->addItem("Projects", QStringList{"aproject"});
     breadcrumb = new QComboBox;
     breadcrumb->setObjectName("contentBreadcrumb");
@@ -2252,10 +2349,19 @@ public:
         }, inspector_body);
         inspector_layout->insertWidget(inspector_layout->count() - 1, physics_component_panel_);
 #if defined(AETHER_QT_EDITOR_SCRIPTING)
-        script_component_editor_ = new aether::editor::qt::ScriptComponentEditor(scene_document_, [this] {
-            RefreshHierarchy(true);
-            UpdateSceneStatus();
-        }, inspector_body);
+        script_component_editor_ = new aether::editor::qt::ScriptComponentEditor(
+            scene_document_,
+            [this] {
+                RefreshHierarchy(true);
+                UpdateSceneStatus();
+            },
+            [this](const std::filesystem::path& path) {
+                if (script_editor_widget_->OpenFile(path)) {
+                    script_editor_dock_->show();
+                    script_editor_dock_->raise();
+                }
+            },
+            inspector_body);
         inspector_layout->insertWidget(inspector_layout->count() - 1, script_component_editor_);
 #endif
         inspector_dock_ = MakeDock("INSPECTOR", inspector_content, *this,
@@ -2279,9 +2385,66 @@ public:
             [this](const QString& message) { statusBar()->showMessage(message, 5000); });
         animation_editor_dock_ = MakeDock("ANIMATION · CLIP EDITOR", animation_editor_widget_, *this,
                                            Qt::BottomDockWidgetArea, "animationEditorDock");
+        blueprint_editor_widget_ = new aether::editor::qt::BlueprintEditorWidget;
+        blueprint_editor_widget_->SetBreakpointHandler([this](const std::filesystem::path& asset,
+                const std::string& graph, aether::bp::NodeId node, bool enabled) {
+            if (play_runtime_ && !play_runtime_->SetBreakpoint(asset, graph, node, enabled))
+                statusBar()->showMessage("Couldn't apply that breakpoint to the active Play session", 5000);
+        });
+        blueprint_editor_dock_ = MakeDock("BLUEPRINT · GRAPH EDITOR", blueprint_editor_widget_, *this,
+                                            Qt::BottomDockWidgetArea, "blueprintEditorDock");
+        material_editor_widget_ = new aether::editor::qt::MaterialEditorWidget;
+        material_editor_dock_ = MakeDock("MATERIAL · GRAPH EDITOR", material_editor_widget_, *this,
+                                           Qt::BottomDockWidgetArea, "materialEditorDock");
+        vfx_editor_widget_ = new aether::editor::qt::VfxEditorWidget;
+        vfx_editor_dock_ = MakeDock("VFX · PARTICLE EDITOR", vfx_editor_widget_, *this,
+                                     Qt::BottomDockWidgetArea, "vfxEditorDock");
+        behavior_tree_editor_widget_ = new aether::editor::qt::BehaviorTreeEditorWidget;
+        behavior_tree_editor_widget_->SetDebugCommandHandler([this](aether::Entity entity, const QString& command) {
+            if (play_runtime_ && !play_runtime_->ControlBehaviorTree(entity, command.toStdString()))
+                statusBar()->showMessage("The selected entity has no BehaviorTreeComponent", 4000);
+        });
+        behavior_tree_editor_dock_ = MakeDock("AI · BEHAVIOR TREE", behavior_tree_editor_widget_, *this,
+                                                Qt::BottomDockWidgetArea, "behaviorTreeEditorDock");
+        navigation_editor_widget_ = new aether::editor::qt::NavigationEditorWidget(scene_document_);
+        viewport_->SetNavigationDebugSource([this] {
+            return navigation_editor_widget_->DebugDraw(play_runtime_ ? play_runtime_->NavigationCrowd() : nullptr);
+        });
+        navigation_editor_widget_->SetOverlayChangedCallback([this] { if (viewport_) viewport_->update(); });
+        navigation_editor_dock_ = MakeDock("AI · NAVIGATION", navigation_editor_widget_, *this,
+                                             Qt::RightDockWidgetArea, "navigationEditorDock");
+        anim_graph_editor_widget_ = new aether::editor::qt::AnimGraphEditorWidget;
+        anim_graph_editor_dock_ = MakeDock("ANIMATION · GRAPH EDITOR", anim_graph_editor_widget_, *this,
+                                             Qt::BottomDockWidgetArea, "animGraphEditorDock");
+        blend_space_editor_widget_ = new aether::editor::qt::BlendSpaceEditorWidget;
+        blend_space_editor_dock_ = MakeDock("ANIMATION · BLEND SPACE", blend_space_editor_widget_, *this,
+                                              Qt::BottomDockWidgetArea, "blendSpaceEditorDock");
+        montage_editor_widget_ = new aether::editor::qt::MontageEditorWidget;
+        montage_editor_dock_ = MakeDock("ANIMATION · MONTAGE", montage_editor_widget_, *this,
+                                         Qt::BottomDockWidgetArea, "montageEditorDock");
+        sound_cue_editor_widget_ = new aether::editor::qt::SoundCueEditorWidget;
+        sound_cue_editor_dock_ = MakeDock("AUDIO · SOUND CUE", sound_cue_editor_widget_, *this,
+                                           Qt::BottomDockWidgetArea, "soundCueEditorDock");
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+        script_editor_widget_ = new aether::editor::qt::ScriptEditorWidget;
+        script_editor_dock_ = MakeDock("SCRIPT · LUAU", script_editor_widget_, *this,
+                                       Qt::BottomDockWidgetArea, "scriptEditorDock");
+#endif
         tabifyDockWidget(content_dock_, output_dock_);
         tabifyDockWidget(content_dock_, sequence_dock_);
         tabifyDockWidget(content_dock_, animation_editor_dock_);
+        tabifyDockWidget(content_dock_, blueprint_editor_dock_);
+        tabifyDockWidget(content_dock_, material_editor_dock_);
+        tabifyDockWidget(content_dock_, vfx_editor_dock_);
+        tabifyDockWidget(content_dock_, behavior_tree_editor_dock_);
+        tabifyDockWidget(inspector_dock_, navigation_editor_dock_);
+        tabifyDockWidget(content_dock_, anim_graph_editor_dock_);
+        tabifyDockWidget(content_dock_, blend_space_editor_dock_);
+        tabifyDockWidget(content_dock_, montage_editor_dock_);
+        tabifyDockWidget(content_dock_, sound_cue_editor_dock_);
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+        tabifyDockWidget(content_dock_, script_editor_dock_);
+#endif
         content_dock_->raise();
         resizeDocks({content_dock_}, {230}, Qt::Vertical);
         window_menu_->addAction(hierarchy_dock_->toggleViewAction());
@@ -2290,6 +2453,18 @@ public:
         window_menu_->addAction(output_dock_->toggleViewAction());
         window_menu_->addAction(sequence_dock_->toggleViewAction());
         window_menu_->addAction(animation_editor_dock_->toggleViewAction());
+        window_menu_->addAction(blueprint_editor_dock_->toggleViewAction());
+        window_menu_->addAction(material_editor_dock_->toggleViewAction());
+        window_menu_->addAction(vfx_editor_dock_->toggleViewAction());
+        window_menu_->addAction(behavior_tree_editor_dock_->toggleViewAction());
+        window_menu_->addAction(navigation_editor_dock_->toggleViewAction());
+        window_menu_->addAction(anim_graph_editor_dock_->toggleViewAction());
+        window_menu_->addAction(blend_space_editor_dock_->toggleViewAction());
+        window_menu_->addAction(montage_editor_dock_->toggleViewAction());
+        window_menu_->addAction(sound_cue_editor_dock_->toggleViewAction());
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+        window_menu_->addAction(script_editor_dock_->toggleViewAction());
+#endif
         window_menu_->addSeparator();
         QAction* reset_layout_action = window_menu_->addAction("Reset Workspace Layout");
         reset_layout_action->setToolTip("Restore Hierarchy, Inspector, and Content Browser to their default positions");
@@ -2878,7 +3053,14 @@ public:
                               reloaded_sequence.Sequence().tracks.size() == 1,
                               "saved Qt animation sequence should round-trip from disk");
 
-            const std::filesystem::path source_model(AETHER_QT_TEST_MODEL_PATH);
+            std::filesystem::path source_model(AETHER_QT_TEST_MODEL_PATH);
+            // Release-package self-tests run on a clean machine without the
+            // source checkout. Prefer the build-tree fixture when available,
+            // then fall back to the copy shipped with the editor package.
+            if (!std::filesystem::exists(source_model)) {
+                source_model = std::filesystem::path(QCoreApplication::applicationDirPath().toStdWString()) /
+                               "assets" / "models" / "test_textured_cube.gltf";
+            }
             const auto content_model = self_test_paths.content / source_model.filename();
             std::error_code copy_error;
             passed &= require(std::filesystem::copy_file(source_model, content_model,
@@ -2969,15 +3151,20 @@ private:
         track_actions->setSpacing(6);
         auto* tracks_title = new QLabel("TRACKS", tracks_panel);
         tracks_title->setObjectName("section");
-        sequence_add_track_button_ = new QPushButton("+ Transform Track", body);
+        sequence_track_type_ = new QComboBox(body);
+        sequence_track_type_->addItem("Transform", static_cast<int>(aether::seq::TrackType::Transform));
+        sequence_track_type_->addItem("Event", static_cast<int>(aether::seq::TrackType::Event));
+        sequence_track_type_->setAccessibleName("New sequence track type");
+        sequence_add_track_button_ = new QPushButton("+ Add Track", body);
         sequence_remove_track_button_ = new QPushButton("Remove", body);
-        sequence_add_track_button_->setToolTip("Add a position track for the selected entity");
+        sequence_add_track_button_->setToolTip("Add a Transform track for the selected entity or an unbound Event track");
         sequence_remove_track_button_->setToolTip("Remove the selected sequence track");
-        sequence_add_track_button_->setAccessibleName("Add transform track");
+        sequence_add_track_button_->setAccessibleName("Add sequence track");
         sequence_add_track_button_->setEnabled(false);
         sequence_remove_track_button_->setEnabled(false);
         track_actions->addWidget(tracks_title);
         track_actions->addStretch();
+        track_actions->addWidget(sequence_track_type_);
         track_actions->addWidget(sequence_add_track_button_);
         track_actions->addWidget(sequence_remove_track_button_);
         tracks_layout->addLayout(track_actions);
@@ -2998,6 +3185,14 @@ private:
         key_actions->setSpacing(6);
         auto* keys_title = new QLabel("POSITION KEYS", keys_panel);
         keys_title->setObjectName("section");
+        sequence_event_name_ = new QLineEdit(keys_panel);
+        sequence_event_name_->setPlaceholderText("Event name");
+        sequence_event_name_->setAccessibleName("Sequence event name");
+        sequence_event_name_->setVisible(false);
+        sequence_event_payload_ = new QLineEdit(keys_panel);
+        sequence_event_payload_->setPlaceholderText("Payload (optional)");
+        sequence_event_payload_->setAccessibleName("Sequence event payload");
+        sequence_event_payload_->setVisible(false);
         sequence_set_key_button_ = new QPushButton("Set / Update", body);
         sequence_remove_key_button_ = new QPushButton("Clear", body);
         sequence_set_key_button_->setToolTip("Create or update a position key at the current time");
@@ -3009,6 +3204,8 @@ private:
         key_actions->addWidget(sequence_set_key_button_);
         key_actions->addWidget(sequence_remove_key_button_);
         keys_layout->addLayout(key_actions);
+        keys_layout->addWidget(sequence_event_name_);
+        keys_layout->addWidget(sequence_event_payload_);
         sequence_key_list_ = new QListWidget(body);
         sequence_key_list_->setObjectName("sequenceKeys");
         sequence_key_list_->setAccessibleName("Position keys");
@@ -3087,14 +3284,28 @@ private:
             ScrubSequence(std::min(static_cast<aether::f32>(sequence_time_->value()),
                                    sequence_document_.Sequence().EffectiveDuration()));
         });
-        QObject::connect(sequence_add_track_button_, &QPushButton::clicked, this, [this] { AddSelectedTransformTrack(); });
+        QObject::connect(sequence_add_track_button_, &QPushButton::clicked, this, [this] { AddSelectedSequenceTrack(); });
+        QObject::connect(sequence_track_type_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this] { RefreshSequenceTarget(); RefreshSequenceKeys(); });
         QObject::connect(sequence_remove_track_button_, &QPushButton::clicked, this, [this] { RemoveSelectedSequenceTrack(); });
         QObject::connect(sequence_set_key_button_, &QPushButton::clicked, this, [this] { SetPositionKey(); });
         QObject::connect(sequence_remove_key_button_, &QPushButton::clicked, this, [this] { RemoveSelectedPositionKey(); });
         QObject::connect(sequence_track_list_, &QListWidget::currentRowChanged, this, [this](int) { RefreshSequenceKeys(); });
         QObject::connect(sequence_key_list_, &QListWidget::currentItemChanged, this,
                          [this](QListWidgetItem* item, QListWidgetItem*) {
-            sequence_remove_key_button_->setEnabled(item != nullptr);
+            const int track_row = sequence_track_list_->currentRow();
+            const bool has_track = track_row >= 0 && static_cast<std::size_t>(track_row) < sequence_document_.Sequence().tracks.size();
+            const bool is_event = has_track && sequence_document_.Sequence().tracks[static_cast<std::size_t>(track_row)].type == aether::seq::TrackType::Event;
+            sequence_remove_key_button_->setEnabled(item != nullptr && has_track && !sequence_document_.Sequence().tracks[static_cast<std::size_t>(track_row)].locked);
+            if (is_event) {
+                sequence_set_key_button_->setText(item ? "Update Event" : "Add Event");
+                const QSignalBlocker name_blocker(sequence_event_name_);
+                const QSignalBlocker payload_blocker(sequence_event_payload_);
+                if (item) {
+                    const auto& keys = sequence_document_.Sequence().tracks[static_cast<std::size_t>(track_row)].events;
+                    const auto key_index = item->data(Qt::UserRole + 1).toULongLong();
+                    if (key_index < keys.size()) { sequence_event_name_->setText(QString::fromStdString(keys[key_index].name)); sequence_event_payload_->setText(QString::fromStdString(keys[key_index].payload)); }
+                } else { sequence_event_name_->clear(); sequence_event_payload_->clear(); }
+            }
             if (item) ScrubSequence(static_cast<aether::f32>(item->data(Qt::UserRole).toDouble()));
         });
         QObject::connect(sequence_time_slider_, &QSlider::valueChanged, this, [this](int milliseconds) {
@@ -3210,6 +3421,7 @@ private:
             for (const auto& track : sequence.tracks) {
                 std::size_t key_count = track.rotation.size();
                 for (const auto& channel : track.channels) key_count += channel.keys.size();
+                key_count += track.events.size();
                 QString type = "Other";
                 if (track.type == aether::seq::TrackType::Transform) type = "Transform";
                 else if (track.type == aether::seq::TrackType::Animation) type = "Animation";
@@ -3240,10 +3452,13 @@ private:
         if (!sequence_target_) return;
         const bool valid = !selected_entity_.IsNull() &&
             scene_document_.GetWorld().IsAlive(selected_entity_);
-        sequence_target_->setText(valid
-            ? "Target: " + QString::fromStdString(scene_document_.Name(selected_entity_))
-            : "Target: select an entity in the Hierarchy");
-        sequence_add_track_button_->setEnabled(valid &&
+        const bool adding_event = sequence_track_type_ &&
+            sequence_track_type_->currentData().toInt() == static_cast<int>(aether::seq::TrackType::Event);
+        sequence_target_->setText(adding_event ? "Event tracks are global and can be stacked at the same time"
+            : valid ? "Target: " + QString::fromStdString(scene_document_.Name(selected_entity_))
+                    : "Target: select an entity in the Hierarchy");
+        sequence_add_track_button_->setEnabled(
+            (sequence_track_type_->currentData().toInt() == static_cast<int>(aether::seq::TrackType::Event) || valid) &&
             scene_document_.PlayState() == aether::editor::PlaySession::State::Editing);
         duplicate_entity_button_->setEnabled(valid);
     }
@@ -3256,7 +3471,26 @@ private:
         sequence_remove_key_button_->setEnabled(false);
         if (row < 0 || static_cast<std::size_t>(row) >= sequence_document_.Sequence().tracks.size()) return;
         const auto& track = sequence_document_.Sequence().tracks[static_cast<std::size_t>(row)];
-        sequence_set_key_button_->setEnabled(track.type == aether::seq::TrackType::Transform && !track.locked);
+        const bool event_track = track.type == aether::seq::TrackType::Event;
+        sequence_set_key_button_->setEnabled((track.type == aether::seq::TrackType::Transform || event_track) && !track.locked);
+        sequence_event_name_->setVisible(event_track);
+        sequence_event_payload_->setVisible(event_track);
+        sequence_set_key_button_->setText(event_track ? (sequence_key_list_->currentItem() ? "Update Event" : "Add Event") : "Set / Update");
+        sequence_remove_key_button_->setText(event_track ? "Remove Event" : "Clear");
+        sequence_remove_key_button_->setToolTip(event_track ? "Remove the selected event key" : "Remove the selected position key");
+        if (event_track) {
+            sequence_event_name_->clear(); sequence_event_payload_->clear();
+            for (std::size_t i = 0; i < track.events.size(); ++i) {
+                const auto& event = track.events[i];
+                auto* item = new QListWidgetItem(QString("%1 s  ·  %2%3").arg(event.time, 0, 'f', 3)
+                    .arg(QString::fromStdString(event.name), event.payload.empty() ? QString{} : "  ·  " + QString::fromStdString(event.payload)), sequence_key_list_);
+                item->setData(Qt::UserRole, static_cast<double>(event.time));
+                item->setData(Qt::UserRole + 1, static_cast<qulonglong>(i));
+            }
+            return;
+        }
+        sequence_set_key_button_->setText("Set / Update");
+        sequence_remove_key_button_->setText("Clear");
         if (track.type != aether::seq::TrackType::Transform) return;
         std::set<aether::f32> times;
         for (const auto& channel : track.channels)
@@ -3267,12 +3501,21 @@ private:
         }
     }
 
-    void AddSelectedTransformTrack() {
-        if (selected_entity_.IsNull()) return;
-        const auto* id = scene_document_.GetWorld().GetComponent<aether::IdComponent>(selected_entity_);
-        if (!id) return;
-        const std::string label = scene_document_.Name(selected_entity_) + " Transform";
-        const auto row = sequence_document_.AddTrack(aether::seq::TrackType::Transform, label, id->guid);
+    void AddSelectedSequenceTrack() {
+        const auto type = static_cast<aether::seq::TrackType>(sequence_track_type_->currentData().toInt());
+        aether::usize row = 0;
+        if (type == aether::seq::TrackType::Event) {
+            std::size_t event_track_number = 1;
+            for (const auto& track : sequence_document_.Sequence().tracks)
+                if (track.type == aether::seq::TrackType::Event) ++event_track_number;
+            row = sequence_document_.AddTrack(type, "Event Track " + std::to_string(event_track_number));
+        } else {
+            if (selected_entity_.IsNull()) return;
+            const auto* id = scene_document_.GetWorld().GetComponent<aether::IdComponent>(selected_entity_);
+            if (!id) return;
+            const std::string label = scene_document_.Name(selected_entity_) + " Transform";
+            row = sequence_document_.AddTrack(type, label, id->guid);
+        }
         RefreshSequenceEditor();
         sequence_track_list_->setCurrentRow(static_cast<int>(row));
     }
@@ -3287,6 +3530,29 @@ private:
         const int row = sequence_track_list_->currentRow();
         if (row < 0 || static_cast<std::size_t>(row) >= sequence_document_.Sequence().tracks.size()) return;
         const auto& track = sequence_document_.Sequence().tracks[static_cast<std::size_t>(row)];
+        if (track.type == aether::seq::TrackType::Event) {
+            const std::string name = sequence_event_name_->text().trimmed().toStdString();
+            if (name.empty()) {
+                QMessageBox::warning(this, "Event name required", "Give the event a name before adding it to the sequence.");
+                return;
+            }
+            const std::string payload = sequence_event_payload_->text().toStdString();
+            const auto time = static_cast<aether::f32>(sequence_time_->value());
+            const auto* selected = sequence_key_list_->currentItem();
+            sequence_document_.BeginEdit();
+            if (selected) {
+                const auto index = selected->data(Qt::UserRole + 1).toULongLong();
+                sequence_document_.SetEvent({static_cast<std::size_t>(row), aether::editor::KeyRef::Lane::Event, 0, static_cast<std::size_t>(index)}, name, payload);
+                const aether::editor::KeyRef key{static_cast<std::size_t>(row), aether::editor::KeyRef::Lane::Event, 0, static_cast<std::size_t>(index)};
+                sequence_document_.MoveKey(key, time);
+            } else {
+                sequence_document_.AddEvent(static_cast<std::size_t>(row), time, name, payload);
+            }
+            sequence_document_.EndEdit();
+            RefreshSequenceEditor();
+            ScrubSequence(time);
+            return;
+        }
         if (track.type != aether::seq::TrackType::Transform) return;
         const aether::Entity entity = scene_document_.Guids().Find(scene_document_.GetWorld(), track.binding);
         const auto* transform = scene_document_.GetWorld().GetComponent<aether::Transform>(entity);
@@ -3308,6 +3574,12 @@ private:
         const aether::f32 time = static_cast<aether::f32>(selected->data(Qt::UserRole).toDouble());
         const auto& sequence = sequence_document_.Sequence();
         if (static_cast<std::size_t>(track_row) >= sequence.tracks.size()) return;
+        if (sequence.tracks[static_cast<std::size_t>(track_row)].type == aether::seq::TrackType::Event) {
+            const auto index = selected->data(Qt::UserRole + 1).toULongLong();
+            sequence_document_.RemoveKey({static_cast<std::size_t>(track_row), aether::editor::KeyRef::Lane::Event, 0, static_cast<std::size_t>(index)});
+            RefreshSequenceEditor();
+            return;
+        }
         sequence_document_.BeginEdit();
         for (std::size_t channel = 0; channel < sequence.tracks[static_cast<std::size_t>(track_row)].channels.size(); ++channel) {
             const auto& keys = sequence_document_.Sequence().tracks[static_cast<std::size_t>(track_row)].channels[channel].keys;
@@ -3339,6 +3611,12 @@ private:
                                                   : static_cast<aether::f32>(sequence_time_->value());
         sequence_player_ = std::make_unique<aether::seq::SequencePlayer>(
             sequence_document_.Sequence(), scene_document_.GetWorld(), scene_document_.Guids());
+        sequence_player_->on_event = [this](const aether::seq::Track& track, const aether::seq::EventKey& event) {
+            QString message = QString("Sequence event · %1 · %2")
+                .arg(QString::fromStdString(track.name), QString::fromStdString(event.name));
+            if (!event.payload.empty()) message += " · " + QString::fromStdString(event.payload);
+            statusBar()->showMessage(message, 3000);
+        };
         sequence_player_->Bind();
         sequence_player_->loop = sequence_loop_->isChecked();
         sequence_player_->SetTime(time);
@@ -3784,14 +4062,15 @@ private:
         play_button_->setEnabled(!playing);
         pause_button_->setEnabled(playing);
         stop_button_->setEnabled(!editing);
-        sequence_add_track_button_->setEnabled(editing && has_selection);
+        sequence_add_track_button_->setEnabled(editing &&
+            (sequence_track_type_->currentData().toInt() == static_cast<int>(aether::seq::TrackType::Event) || has_selection));
         sequence_remove_track_button_->setEnabled(editing && sequence_track_list_->currentRow() >= 0);
         const int sequence_track_row = sequence_track_list_->currentRow();
         const bool has_sequence_track = sequence_track_row >= 0 &&
             static_cast<std::size_t>(sequence_track_row) < sequence_document_.Sequence().tracks.size();
         sequence_set_key_button_->setEnabled(editing && has_sequence_track &&
-            sequence_document_.Sequence().tracks[static_cast<std::size_t>(sequence_track_row)].type ==
-                aether::seq::TrackType::Transform &&
+            (sequence_document_.Sequence().tracks[static_cast<std::size_t>(sequence_track_row)].type == aether::seq::TrackType::Transform ||
+             sequence_document_.Sequence().tracks[static_cast<std::size_t>(sequence_track_row)].type == aether::seq::TrackType::Event) &&
             !sequence_document_.Sequence().tracks[static_cast<std::size_t>(sequence_track_row)].locked);
         sequence_play_button_->setEnabled(editing && !sequence_timer_.isActive());
         sequence_pause_button_->setEnabled(editing && sequence_timer_.isActive());
@@ -3833,6 +4112,36 @@ private:
         }
     }
 
+    aether::bp::BpAction HandleBlueprintStop(const aether::bp::BpStop& stop) {
+        play_simulation_timer_.stop();
+        QMessageBox dialog(this);
+        dialog.setWindowTitle("Blueprint Breakpoint");
+        dialog.setIcon(QMessageBox::Information);
+        dialog.setText(QString("Paused at %1 · node %2")
+            .arg(QString::fromStdString(stop.graph)).arg(stop.node));
+        QStringList frames;
+        for (const auto& frame : stop.frames) {
+            QString line = QString("%1 · node %2").arg(QString::fromStdString(frame.function)).arg(frame.node);
+            for (const auto& value : frame.values)
+                line += QString("\n    %1 = %2").arg(QString::fromStdString(value.pin), QString::fromStdString(value.value));
+            frames.push_back(line);
+        }
+        dialog.setInformativeText(frames.isEmpty() ? "Blueprint execution stopped." : frames.join("\n\n"));
+        auto* continue_button = dialog.addButton("Continue", QMessageBox::AcceptRole);
+        auto* into_button = dialog.addButton("Step Into", QMessageBox::ActionRole);
+        auto* over_button = dialog.addButton("Step Over", QMessageBox::ActionRole);
+        auto* out_button = dialog.addButton("Step Out", QMessageBox::ActionRole);
+        dialog.exec();
+        play_clock_.restart();
+        if (scene_document_.PlayState() == aether::editor::PlaySession::State::Playing)
+            play_simulation_timer_.start();
+        if (dialog.clickedButton() == into_button) return aether::bp::BpAction::StepInto;
+        if (dialog.clickedButton() == over_button) return aether::bp::BpAction::StepOver;
+        if (dialog.clickedButton() == out_button) return aether::bp::BpAction::StepOut;
+        (void)continue_button;
+        return aether::bp::BpAction::Continue;
+    }
+
     void StartOrResumePlay() {
         StopSequencePreview();
         const bool starting = scene_document_.PlayState() == aether::editor::PlaySession::State::Editing;
@@ -3841,8 +4150,15 @@ private:
             try {
                 const std::filesystem::path content_root = project_file_.empty()
                     ? std::filesystem::path{} : aether::ProjectPaths::ForFile(project_file_).content;
+                std::vector<aether::editor::qt::BlueprintBreakpoint> breakpoints;
+                if (blueprint_editor_widget_) {
+                    for (const auto& breakpoint : blueprint_editor_widget_->Breakpoints())
+                        breakpoints.push_back({breakpoint.blueprint, breakpoint.graph, breakpoint.node});
+                }
                 play_runtime_ = std::make_unique<aether::editor::qt::EditorPlayRuntime>(
-                    scene_document_.GetWorld(), scene_document_.Guids(), content_root, project_settings_);
+                    scene_document_.GetWorld(), scene_document_.Guids(), content_root, project_settings_, breakpoints,
+                    [this](const aether::bp::BpStop& stop) { return HandleBlueprintStop(stop); },
+                    navigation_editor_widget_->RuntimeNavWorld());
             } catch (const std::exception& exception) {
                 play_runtime_.reset();
                 scene_document_.Stop();
@@ -3870,6 +4186,8 @@ private:
         viewport_->SetPlayInputActive(false);
         if (play_runtime_) play_runtime_->Stop();
         play_runtime_.reset();
+        if (behavior_tree_editor_widget_) behavior_tree_editor_widget_->SetLiveDebugSnapshots({});
+        if (blueprint_editor_widget_) blueprint_editor_widget_->ClearLiveTrace();
         scene_document_.Stop();
         selected_entity_ = scene_document_.Guids().Find(scene_document_.GetWorld(), selected_guid_);
         if (selected_entity_.IsNull()) selected_guid_ = {};
@@ -3881,6 +4199,10 @@ private:
         if (!play_runtime_ || scene_document_.PlayState() != aether::editor::PlaySession::State::Playing) return;
         const aether::f32 dt = static_cast<aether::f32>(play_clock_.restart()) / 1000.0f;
         play_runtime_->Tick(dt);
+        if (blueprint_editor_widget_)
+            blueprint_editor_widget_->SetLiveTraceEvents(play_runtime_->TakeBlueprintTrace());
+        if (behavior_tree_editor_widget_)
+            behavior_tree_editor_widget_->SetLiveDebugSnapshots(play_runtime_->BehaviorTreeDebugSnapshots());
         if (!selected_entity_.IsNull() && scene_document_.GetWorld().IsAlive(selected_entity_)) {
             SyncInspectorPosition();
             viewport_->update();
@@ -3891,6 +4213,7 @@ private:
         if (!ConfirmDiscardSceneChanges()) return;
         StopSequencePreview();
         scene_document_.NewScene();
+        navigation_editor_widget_->ResetForScene();
         selected_guid_ = {};
         selected_entity_ = aether::kNullEntity;
         RefreshHierarchy();
@@ -3912,6 +4235,7 @@ private:
             QMessageBox::critical(this, "Couldn't open scene", QString::fromStdString(error));
             return false;
         }
+        navigation_editor_widget_->ResetForScene();
         selected_guid_ = {};
         selected_entity_ = aether::kNullEntity;
         RefreshHierarchy();
@@ -4057,6 +4381,89 @@ private:
         UpdateSceneStatus();
     }
 
+    bool BlueprintEditorHasFocus() const {
+        QWidget* focus = QApplication::focusWidget();
+        return blueprint_editor_widget_ && focus &&
+               (focus == blueprint_editor_widget_ || blueprint_editor_widget_->isAncestorOf(focus));
+    }
+
+    bool MaterialEditorHasFocus() const {
+        QWidget* focus = QApplication::focusWidget();
+        return material_editor_widget_ && focus &&
+               (focus == material_editor_widget_ || material_editor_widget_->isAncestorOf(focus));
+    }
+
+    bool VfxEditorHasFocus() const {
+        QWidget* focus = QApplication::focusWidget();
+        return vfx_editor_widget_ && focus &&
+               (focus == vfx_editor_widget_ || vfx_editor_widget_->isAncestorOf(focus));
+    }
+
+    bool AnimGraphEditorHasFocus() const {
+        QWidget* focus = QApplication::focusWidget();
+        return anim_graph_editor_widget_ && focus &&
+               (focus == anim_graph_editor_widget_ || anim_graph_editor_widget_->isAncestorOf(focus));
+    }
+
+    bool BlendSpaceEditorHasFocus() const {
+        QWidget* focus = QApplication::focusWidget();
+        return blend_space_editor_widget_ && focus &&
+               (focus == blend_space_editor_widget_ || blend_space_editor_widget_->isAncestorOf(focus));
+    }
+
+    bool MontageEditorHasFocus() const {
+        QWidget* focus = QApplication::focusWidget();
+        return montage_editor_widget_ && focus &&
+               (focus == montage_editor_widget_ || montage_editor_widget_->isAncestorOf(focus));
+    }
+
+    bool SoundCueEditorHasFocus() const {
+        QWidget* focus = QApplication::focusWidget();
+        return sound_cue_editor_widget_ && focus &&
+               (focus == sound_cue_editor_widget_ || sound_cue_editor_widget_->isAncestorOf(focus));
+    }
+
+    bool SequenceEditorHasFocus() const {
+        QWidget* focus = QApplication::focusWidget();
+        return sequence_dock_ && focus && (focus == sequence_dock_ || sequence_dock_->isAncestorOf(focus));
+    }
+
+    void SaveActiveDocument() {
+        if (SequenceEditorHasFocus()) SaveSequence();
+        else if (MontageEditorHasFocus()) montage_editor_widget_->SaveCurrent();
+        else if (SoundCueEditorHasFocus()) sound_cue_editor_widget_->SaveCurrent();
+        else if (BlendSpaceEditorHasFocus()) blend_space_editor_widget_->SaveCurrent();
+        else if (AnimGraphEditorHasFocus()) anim_graph_editor_widget_->SaveCurrent();
+        else if (VfxEditorHasFocus()) vfx_editor_widget_->SaveCurrent();
+        else if (MaterialEditorHasFocus()) material_editor_widget_->SaveCurrent();
+        else if (BlueprintEditorHasFocus()) blueprint_editor_widget_->SaveCurrent();
+        else SaveScene();
+    }
+
+    void UndoActiveDocument() {
+        if (SequenceEditorHasFocus()) { if (sequence_document_.Undo()) RefreshSequenceEditor(); }
+        else if (MontageEditorHasFocus()) montage_editor_widget_->UndoCurrent();
+        else if (SoundCueEditorHasFocus()) sound_cue_editor_widget_->UndoCurrent();
+        else if (BlendSpaceEditorHasFocus()) blend_space_editor_widget_->UndoCurrent();
+        else if (AnimGraphEditorHasFocus()) anim_graph_editor_widget_->UndoCurrent();
+        else if (VfxEditorHasFocus()) vfx_editor_widget_->UndoCurrent();
+        else if (MaterialEditorHasFocus()) material_editor_widget_->UndoCurrent();
+        else if (BlueprintEditorHasFocus()) blueprint_editor_widget_->UndoCurrent();
+        else Undo();
+    }
+
+    void RedoActiveDocument() {
+        if (SequenceEditorHasFocus()) { if (sequence_document_.Redo()) RefreshSequenceEditor(); }
+        else if (MontageEditorHasFocus()) montage_editor_widget_->RedoCurrent();
+        else if (SoundCueEditorHasFocus()) sound_cue_editor_widget_->RedoCurrent();
+        else if (BlendSpaceEditorHasFocus()) montage_editor_widget_->RedoCurrent();
+        else if (AnimGraphEditorHasFocus()) anim_graph_editor_widget_->RedoCurrent();
+        else if (VfxEditorHasFocus()) vfx_editor_widget_->RedoCurrent();
+        else if (MaterialEditorHasFocus()) material_editor_widget_->RedoCurrent();
+        else if (BlueprintEditorHasFocus()) material_editor_widget_->RedoCurrent();
+        else Redo();
+    }
+
     void CreateProjectDialog() {
         QDialog dialog(this);
         dialog.setWindowTitle("Create Aether Project");
@@ -4083,6 +4490,16 @@ private:
         QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
         if (dialog.exec() != QDialog::Accepted) return;
         if (!ConfirmDiscardSceneChanges()) return;
+        if (!blueprint_editor_widget_->ConfirmDiscardChanges(this)) return;
+        if (!material_editor_widget_->ConfirmDiscardChanges(this)) return;
+        if (!vfx_editor_widget_->ConfirmDiscardChanges(this)) return;
+        if (!anim_graph_editor_widget_->ConfirmDiscardChanges(this)) return;
+        if (!blend_space_editor_widget_->ConfirmDiscardChanges(this)) return;
+        if (!montage_editor_widget_->ConfirmDiscardChanges(this)) return;
+        if (!sound_cue_editor_widget_->ConfirmDiscardChanges(this)) return;
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+        if (!script_editor_widget_->ConfirmDiscardChanges(this)) return;
+#endif
 
         aether::ProjectPaths paths;
         std::string error;
@@ -4102,6 +4519,16 @@ private:
 
     void OpenProject(const std::filesystem::path& file, bool confirm_changes = true) {
         if (confirm_changes && (!ConfirmDiscardSequenceChanges() || !ConfirmDiscardSceneChanges())) return;
+        if (confirm_changes && !blueprint_editor_widget_->ConfirmDiscardChanges(this)) return;
+        if (confirm_changes && !material_editor_widget_->ConfirmDiscardChanges(this)) return;
+        if (confirm_changes && !vfx_editor_widget_->ConfirmDiscardChanges(this)) return;
+        if (confirm_changes && !anim_graph_editor_widget_->ConfirmDiscardChanges(this)) return;
+        if (confirm_changes && !blend_space_editor_widget_->ConfirmDiscardChanges(this)) return;
+        if (confirm_changes && !montage_editor_widget_->ConfirmDiscardChanges(this)) return;
+        if (confirm_changes && !sound_cue_editor_widget_->ConfirmDiscardChanges(this)) return;
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+        if (confirm_changes && !script_editor_widget_->ConfirmDiscardChanges(this)) return;
+#endif
         StopSequencePreview();
         aether::ProjectSettings settings;
         std::string error;
@@ -4150,14 +4577,28 @@ private:
         } else {
             scene_document_.NewScene();
         }
+        navigation_editor_widget_->ResetForScene();
         plugin_manager_ = std::move(candidate_plugins);
         project_file_ = file;
         project_settings_ = std::move(settings);
+        blueprint_editor_widget_->ClearDocument();
+        material_editor_widget_->ClearDocument();
+        vfx_editor_widget_->ClearDocument();
+        anim_graph_editor_widget_->ClearDocument();
+        blend_space_editor_widget_->ClearDocument();
+        montage_editor_widget_->ClearDocument();
+        sound_cue_editor_widget_->ClearDocument();
+        montage_editor_widget_->ClearDocument();
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+        script_editor_widget_->ClearDocument();
+#endif
         physics_component_panel_->SetLayerNames(project_settings_.layers);
         RememberRecentProject(file);
         viewport_->SetContentRoot(paths.content);
         mesh_content_root_ = paths.content;
         mesh_summaries_.clear();
+        navigation_editor_widget_->SetContentRoot(paths.content);
+        sound_cue_editor_widget_->SetContentRoot(paths.content);
 #if defined(AETHER_QT_EDITOR_SCRIPTING)
         script_component_editor_->SetContentRoot(paths.content);
 #endif
@@ -4246,6 +4687,72 @@ private:
             OpenSequence(std::filesystem::path(path.toStdWString()));
             return;
         }
+        if (suffix == "abp") {
+            if (blueprint_editor_widget_->OpenFile(std::filesystem::path(path.toStdWString()))) {
+                blueprint_editor_dock_->show();
+                blueprint_editor_dock_->raise();
+                statusBar()->showMessage("Opened Blueprint · compile and save from the graph editor", 4000);
+            }
+            return;
+        }
+        if (suffix == "amat") {
+            if (material_editor_widget_->OpenFile(std::filesystem::path(path.toStdWString()))) {
+                material_editor_dock_->show();
+                material_editor_dock_->raise();
+                statusBar()->showMessage("Opened Material · edit the graph, validate, and save", 4000);
+            }
+            return;
+        }
+        if (suffix == "avfx") {
+            if (vfx_editor_widget_->OpenFile(std::filesystem::path(path.toStdWString()))) {
+                vfx_editor_dock_->show();
+                vfx_editor_dock_->raise();
+                statusBar()->showMessage("Opened Particle System · edit emitters and preview, then save", 4000);
+            }
+            return;
+        }
+        if (suffix == "aanim") {
+            if (anim_graph_editor_widget_->OpenFile(std::filesystem::path(path.toStdWString()))) {
+                anim_graph_editor_dock_->show();
+                anim_graph_editor_dock_->raise();
+                statusBar()->showMessage("Opened Animation Graph · connect a pose chain and set its output", 4000);
+            }
+            return;
+        }
+        if (suffix == "ablend") {
+            if (blend_space_editor_widget_->OpenFile(std::filesystem::path(path.toStdWString()))) {
+                blend_space_editor_dock_->show();
+                blend_space_editor_dock_->raise();
+                statusBar()->showMessage("Opened Blend Space · place animation clips on parameter axes", 4000);
+            }
+            return;
+        }
+        if (suffix == "amontage") {
+            if (montage_editor_widget_->OpenFile(std::filesystem::path(path.toStdWString()))) {
+                montage_editor_dock_->show();
+                montage_editor_dock_->raise();
+                statusBar()->showMessage("Opened Montage · edit clip sections and transitions", 4000);
+            }
+            return;
+        }
+        if (suffix == "acue") {
+            if (sound_cue_editor_widget_->OpenFile(std::filesystem::path(path.toStdWString()))) {
+                sound_cue_editor_dock_->show();
+                sound_cue_editor_dock_->raise();
+                statusBar()->showMessage("Opened Sound Cue · author nodes and connections, then save", 4000);
+            }
+            return;
+        }
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+        if (suffix == "luau") {
+            if (script_editor_widget_->OpenFile(std::filesystem::path(path.toStdWString()))) {
+                script_editor_dock_->show();
+                script_editor_dock_->raise();
+                statusBar()->showMessage("Opened Luau source · validate before saving", 4000);
+            }
+            return;
+        }
+#endif
         if (suffix == "gltf" || suffix == "glb") {
             PlaceModel(std::filesystem::path(path.toStdWString()));
             return;
@@ -4579,7 +5086,14 @@ private:
         if (pause_action_->isEnabled()) commands << "Pause";
         if (stop_action_->isEnabled()) commands << "Stop";
         commands << "Show Hierarchy" << "Show Inspector" << "Open Content Browser" << "Open Output"
-                 << "Open Animation Sequencer" << "Open Animation Editor" << "Reset Workspace Layout";
+                 << "Open Animation Sequencer" << "Open Animation Editor" << "Open Blueprint Editor"
+                 << "Open Material Editor" << "Open VFX Editor" << "Open Behavior Tree Editor" << "Open Animation Graph Editor"
+                 << "Open Navigation Editor"
+                 << "Open Blend Space Editor" << "Open Montage Editor" << "Open Sound Cue Editor"
+                 << "Reset Workspace Layout";
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+        commands << "Open Script Editor";
+#endif
         for (const auto& command : commands) results->addItem(command);
         layout->addWidget(query);
         layout->addWidget(results, 1);
@@ -4610,9 +5124,9 @@ private:
             if (name == "Project Settings…") { dialog.accept(); ShowProjectSettingsDialog(); return; }
             if (name == "New Scene") { dialog.accept(); NewScene(); return; }
             if (name == "Open Scene…") { dialog.accept(); OpenSceneDialog(); return; }
-            if (name == "Save Scene") { dialog.accept(); SaveScene(); return; }
-            if (name == "Undo") { dialog.accept(); Undo(); return; }
-            if (name == "Redo") { dialog.accept(); Redo(); return; }
+            if (name == "Save Scene") { dialog.accept(); SaveActiveDocument(); return; }
+            if (name == "Undo") { dialog.accept(); UndoActiveDocument(); return; }
+            if (name == "Redo") { dialog.accept(); RedoActiveDocument(); return; }
             if (name == "Create Entity") { dialog.accept(); CreateEntityDialog(); return; }
             if (name == "Create Camera") { dialog.accept(); CreateCameraDialog(); return; }
             if (name == "Place Model Asset…") { dialog.accept(); PlaceModelDialog(); return; }
@@ -4621,15 +5135,42 @@ private:
             if (name == "Play" || name == "Resume") { dialog.accept(); StartOrResumePlay(); return; }
             if (name == "Pause") { dialog.accept(); PausePlay(); return; }
             if (name == "Stop") { dialog.accept(); StopPlay(); return; }
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+            if (name == "Open Script Editor") {
+                script_editor_dock_->show();
+                script_editor_dock_->raise();
+                dialog.accept();
+                return;
+            }
+#endif
+            if (name == "Open Blueprint Editor") {
+                blueprint_editor_dock_->show();
+                blueprint_editor_dock_->raise();
+                dialog.accept();
+                return;
+            }
+            if (name == "Open Material Editor" || name == "Open VFX Editor" || name == "Open Behavior Tree Editor" || name == "Open Navigation Editor" || name == "Open Animation Graph Editor" || name == "Open Blend Space Editor" || name == "Open Montage Editor" || name == "Open Sound Cue Editor") {
+                auto* dock = name == "Open VFX Editor" ? vfx_editor_dock_ : name == "Open Material Editor" ? material_editor_dock_ : name == "Open Behavior Tree Editor" ? behavior_tree_editor_dock_ : name == "Open Navigation Editor" ? navigation_editor_dock_ : name == "Open Animation Graph Editor" ? anim_graph_editor_dock_ : name == "Open Blend Space Editor" ? blend_space_editor_dock_ : name == "Open Montage Editor" ? montage_editor_dock_ : sound_cue_editor_dock_;
+                dock->show(); dock->raise(); dialog.accept(); return;
+            }
             if (name == "Reset Workspace Layout") { dialog.accept(); ResetWorkspaceLayout(); return; }
             if (name == "Show Hierarchy" || name == "Show Inspector" ||
                 name == "Open Content Browser" || name == "Open Output" || name == "Open Animation Sequencer" ||
-                name == "Open Animation Editor") {
+                name == "Open Animation Editor" || name == "Open Blueprint Editor" ||
+                name == "Open Material Editor" || name == "Open VFX Editor" || name == "Open Behavior Tree Editor" || name == "Open Navigation Editor" || name == "Open Animation Graph Editor" || name == "Open Blend Space Editor" || name == "Open Montage Editor" || name == "Open Sound Cue Editor") {
             const QString dock_name = name == "Show Hierarchy" ? "hierarchyDock" :
                 name == "Show Inspector" ? "inspectorDock" :
                 name == "Open Content Browser" ? "contentDock" :
                 name == "Open Output" ? "outputDock" :
-                name == "Open Animation Editor" ? "animationEditorDock" : "sequenceDock";
+                name == "Open Animation Editor" ? "animationEditorDock" :
+                name == "Open Blueprint Editor" ? "blueprintEditorDock" :
+                name == "Open Material Editor" ? "materialEditorDock" :
+                name == "Open VFX Editor" ? "vfxEditorDock" :
+                name == "Open Behavior Tree Editor" ? "behaviorTreeEditorDock" :
+                name == "Open Navigation Editor" ? "navigationEditorDock" :
+                name == "Open Animation Graph Editor" ? "animGraphEditorDock" :
+                name == "Open Blend Space Editor" ? "blendSpaceEditorDock" :
+                name == "Open Montage Editor" ? "montageEditorDock" : name == "Open Sound Cue Editor" ? "soundCueEditorDock" : "sequenceDock";
             if (auto* dock = findChild<QDockWidget*>(dock_name)) dock->show(), dock->raise();
             dialog.accept();
             }
@@ -4643,10 +5184,42 @@ private:
         if (scene_document_.PlayState() != aether::editor::PlaySession::State::Editing) StopPlay();
         StopSequencePreview();
         if (!animation_editor_widget_->ConfirmDiscardChanges(this) ||
+            !montage_editor_widget_->ConfirmDiscardChanges(this) ||
+            !sound_cue_editor_widget_->ConfirmDiscardChanges(this) ||
             !ConfirmDiscardSequenceChanges() || !ConfirmDiscardSceneChanges()) {
             event->ignore();
             return;
         }
+        if (!blueprint_editor_widget_->ConfirmDiscardChanges(this)) {
+            event->ignore();
+            return;
+        }
+        if (!material_editor_widget_->ConfirmDiscardChanges(this)) {
+            event->ignore();
+            return;
+        }
+        if (!behavior_tree_editor_widget_->ConfirmDiscardChanges(this)) {
+            event->ignore();
+            return;
+        }
+        if (!vfx_editor_widget_->ConfirmDiscardChanges(this)) {
+            event->ignore();
+            return;
+        }
+        if (!anim_graph_editor_widget_->ConfirmDiscardChanges(this)) {
+            event->ignore();
+            return;
+        }
+        if (!blend_space_editor_widget_->ConfirmDiscardChanges(this)) {
+            event->ignore();
+            return;
+        }
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+        if (!script_editor_widget_->ConfirmDiscardChanges(this)) {
+            event->ignore();
+            return;
+        }
+#endif
         QSettings settings("Aether", "EditorQt");
         settings.setValue("window/geometry", saveGeometry());
         settings.setValue("window/state", saveState(1));
@@ -4674,7 +5247,7 @@ private:
         QObject::connect(save_project_action_, &QAction::triggered, this, [this] { ShowProjectSettingsDialog(); });
         QObject::connect(new_scene_action_, &QAction::triggered, this, [this] { NewScene(); });
         QObject::connect(open_scene_action_, &QAction::triggered, this, [this] { OpenSceneDialog(); });
-        QObject::connect(save_scene_action_, &QAction::triggered, this, [this] { SaveScene(); });
+        QObject::connect(save_scene_action_, &QAction::triggered, this, [this] { SaveActiveDocument(); });
 
         auto* edit = menuBar()->addMenu("Edit");
         undo_action_ = edit->addAction("Undo"); undo_action_->setShortcut(QKeySequence::Undo);
@@ -4687,8 +5260,8 @@ private:
         place_model_action_ = edit->addAction("Place Model Asset…");
         duplicate_entity_action_ = edit->addAction("Duplicate Selected Entity", QKeySequence("Ctrl+D"));
         delete_entity_action_ = edit->addAction("Delete Selected Entity"); delete_entity_action_->setShortcut(QKeySequence::Delete);
-        QObject::connect(undo_action_, &QAction::triggered, this, [this] { Undo(); });
-        QObject::connect(redo_action_, &QAction::triggered, this, [this] { Redo(); });
+        QObject::connect(undo_action_, &QAction::triggered, this, [this] { UndoActiveDocument(); });
+        QObject::connect(redo_action_, &QAction::triggered, this, [this] { RedoActiveDocument(); });
         QObject::connect(create_entity_action_, &QAction::triggered, this, [this] { CreateEntityDialog(); });
         QObject::connect(create_camera_action_, &QAction::triggered, this, [this] { CreateCameraDialog(); });
         QObject::connect(place_model_action_, &QAction::triggered, this, [this] { PlaceModelDialog(); });
@@ -4848,15 +5421,35 @@ private:
         addDockWidget(Qt::BottomDockWidgetArea, output_dock_);
         addDockWidget(Qt::BottomDockWidgetArea, sequence_dock_);
         addDockWidget(Qt::BottomDockWidgetArea, animation_editor_dock_);
+        addDockWidget(Qt::BottomDockWidgetArea, blend_space_editor_dock_);
+        addDockWidget(Qt::BottomDockWidgetArea, montage_editor_dock_);
+        addDockWidget(Qt::BottomDockWidgetArea, sound_cue_editor_dock_);
+        addDockWidget(Qt::BottomDockWidgetArea, blueprint_editor_dock_);
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+        addDockWidget(Qt::BottomDockWidgetArea, script_editor_dock_);
+#endif
         tabifyDockWidget(content_dock_, output_dock_);
         tabifyDockWidget(content_dock_, sequence_dock_);
         tabifyDockWidget(content_dock_, animation_editor_dock_);
+        tabifyDockWidget(content_dock_, blend_space_editor_dock_);
+        tabifyDockWidget(content_dock_, montage_editor_dock_);
+        tabifyDockWidget(content_dock_, sound_cue_editor_dock_);
+        tabifyDockWidget(content_dock_, blueprint_editor_dock_);
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+        tabifyDockWidget(content_dock_, script_editor_dock_);
+#endif
         hierarchy_dock_->show();
         inspector_dock_->show();
         content_dock_->show();
         output_dock_->show();
         sequence_dock_->show();
         animation_editor_dock_->show();
+        blueprint_editor_dock_->show();
+        blend_space_editor_dock_->show();
+        montage_editor_dock_->show();
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+        script_editor_dock_->show();
+#endif
         resizeDocks({hierarchy_dock_, inspector_dock_}, {270, 330}, Qt::Horizontal);
         resizeDocks({content_dock_}, {280}, Qt::Vertical);
         content_dock_->raise();
@@ -4875,6 +5468,28 @@ private:
     QDockWidget* sequence_dock_ = nullptr;
     QDockWidget* animation_editor_dock_ = nullptr;
     aether::editor::qt::AnimationEditorWidget* animation_editor_widget_ = nullptr;
+    QDockWidget* blueprint_editor_dock_ = nullptr;
+    aether::editor::qt::BlueprintEditorWidget* blueprint_editor_widget_ = nullptr;
+    QDockWidget* material_editor_dock_ = nullptr;
+    aether::editor::qt::MaterialEditorWidget* material_editor_widget_ = nullptr;
+    QDockWidget* vfx_editor_dock_ = nullptr;
+    aether::editor::qt::VfxEditorWidget* vfx_editor_widget_ = nullptr;
+    QDockWidget* behavior_tree_editor_dock_ = nullptr;
+    aether::editor::qt::BehaviorTreeEditorWidget* behavior_tree_editor_widget_ = nullptr;
+    aether::editor::qt::NavigationEditorWidget* navigation_editor_widget_ = nullptr;
+    QDockWidget* navigation_editor_dock_ = nullptr;
+    QDockWidget* anim_graph_editor_dock_ = nullptr;
+    aether::editor::qt::AnimGraphEditorWidget* anim_graph_editor_widget_ = nullptr;
+    QDockWidget* blend_space_editor_dock_ = nullptr;
+    aether::editor::qt::BlendSpaceEditorWidget* blend_space_editor_widget_ = nullptr;
+    QDockWidget* montage_editor_dock_ = nullptr;
+    aether::editor::qt::MontageEditorWidget* montage_editor_widget_ = nullptr;
+    QDockWidget* sound_cue_editor_dock_ = nullptr;
+    aether::editor::qt::SoundCueEditorWidget* sound_cue_editor_widget_ = nullptr;
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+    QDockWidget* script_editor_dock_ = nullptr;
+    aether::editor::qt::ScriptEditorWidget* script_editor_widget_ = nullptr;
+#endif
     QPushButton* search_button_ = nullptr;
     QPushButton* play_button_ = nullptr;
     QPushButton* pause_button_ = nullptr;
@@ -4960,8 +5575,11 @@ private:
     QDoubleSpinBox* sequence_fps_ = nullptr;
     QDoubleSpinBox* sequence_duration_ = nullptr;
     QLabel* sequence_target_ = nullptr;
+    QComboBox* sequence_track_type_ = nullptr;
     QListWidget* sequence_track_list_ = nullptr;
     QListWidget* sequence_key_list_ = nullptr;
+    QLineEdit* sequence_event_name_ = nullptr;
+    QLineEdit* sequence_event_payload_ = nullptr;
     QSlider* sequence_time_slider_ = nullptr;
     QDoubleSpinBox* sequence_time_ = nullptr;
     QLabel* sequence_diagnostics_ = nullptr;
@@ -4984,8 +5602,19 @@ int main(int argc, char** argv) {
     QApplication app(argc, argv);
     QApplication::setStyle("Fusion");
     app.setStyleSheet(QString::fromUtf8(kStyle));
+    aether::CrashConfig crash_config;
+    crash_config.directory = aether::editor::RecentProjects::DefaultCrashReportDir().string();
+    crash_config.app_name = "AetherEditor";
+    crash_config.build = aether::kEngineVersion;
+    std::string crash_error;
+    if (!aether::CrashHandler::Install(crash_config, &crash_error))
+        qWarning() << "Crash reports are unavailable:" << QString::fromStdString(crash_error);
     EditorWindow window;
-    if (app.arguments().contains("--self-test")) return window.RunSelfTest() ? 0 : 1;
+    if (app.arguments().contains("--self-test")) {
+        const bool passed = window.RunSelfTest();
+        aether::CrashHandler::Uninstall();
+        return passed ? 0 : 1;
+    }
     const QStringList arguments = app.arguments();
     const int project_option = arguments.indexOf("--project");
     if (project_option >= 0 && project_option + 1 < arguments.size())
@@ -4993,5 +5622,23 @@ int main(int argc, char** argv) {
     else if (arguments.size() > 1 && arguments[1].endsWith(".aproject", Qt::CaseInsensitive))
         window.OpenProjectFile(std::filesystem::path(arguments[1].toStdWString()));
     window.show();
-    return app.exec();
+    const auto crash_reports = aether::ListCrashReports(crash_config.directory);
+    if (!crash_reports.empty()) {
+        QMessageBox prompt(QMessageBox::Warning, "Previous editor crash",
+            QString("Aether Editor has %1 crash report(s) from earlier runs.").arg(crash_reports.size()),
+            QMessageBox::NoButton, &window);
+        auto* open_folder = prompt.addButton("Open Reports Folder", QMessageBox::ActionRole);
+        auto* dismiss = prompt.addButton("Dismiss Reports", QMessageBox::DestructiveRole);
+        prompt.addButton("Later", QMessageBox::RejectRole);
+        prompt.exec();
+        if (prompt.clickedButton() == open_folder) {
+            QDesktopServices::openUrl(QUrl::fromLocalFile(QString::fromStdWString(
+                aether::editor::RecentProjects::DefaultCrashReportDir().wstring())));
+        } else if (prompt.clickedButton() == dismiss) {
+            for (const auto& report : crash_reports) aether::MarkCrashReportSeen(report);
+        }
+    }
+    const int result = app.exec();
+    aether::CrashHandler::Uninstall();
+    return result;
 }

@@ -1,4 +1,5 @@
 #include "workspace/editor_workspace.h"
+#include "core/recent_projects.h"
 
 #include "ai/bt_editor.h"
 #include "ai/nav_panel.h"
@@ -31,6 +32,7 @@
 
 #include "aether/blueprint/nodes.h"
 #include "aether/core/console.h"
+#include "aether/core/version.h"
 #include "aether/gameplay/gameplay_kit.h"
 #include "aether/kit/kit.h"
 #include "aether/nav/components.h"
@@ -252,6 +254,15 @@ struct EditorWorkspace::Impl {
     plugin::PluginManager plugins; // the project's, with their modules started
 
     explicit Impl(std::filesystem::path project) : project_file(std::move(project)) {
+        CrashConfig crash_config;
+        crash_config.directory = RecentProjects::DefaultCrashReportDir().string();
+        crash_config.app_name = "AetherEditor";
+        crash_config.build = kEngineVersion;
+        std::string crash_error;
+        if (!CrashHandler::Install(crash_config, &crash_error))
+            AETHER_LOG_WARN("Crash", "Crash reports are unavailable: %s", crash_error.c_str());
+        else if (!project_file.empty())
+            CrashHandler::SetContext("project", project_file.stem().string());
         extensions.MakeActive();
         BuildBlueprint();
         BuildScript();
@@ -795,7 +806,8 @@ struct EditorWorkspace::Impl {
         console.CaptureLog(true);
         console_panel = std::make_unique<ConsolePanel>(console);
         profiler_panel = std::make_unique<ProfilerPanel>();
-        crash_dialog = std::make_unique<CrashReporterDialog>(CrashConfig{}.directory);
+        crash_dialog = std::make_unique<CrashReporterDialog>(RecentProjects::DefaultCrashReportDir().string());
+        crash_dialog->Refresh();
     }
 
     // A project made from a template becomes the one the Project tools work on.
@@ -816,6 +828,7 @@ struct EditorWorkspace::Impl {
     }
 
     void LoadProjectTools() {
+        CrashHandler::SetContext("project", project_file.stem().string());
         std::string error;
         project_settings = std::make_unique<ProjectSettingsPanel>(project_file);
         build_window = std::make_unique<BuildPackageWindow>(project_file);
@@ -869,7 +882,8 @@ struct EditorWorkspace::Impl {
     }
 
     void DrawCrashReports() {
-        ImGui::TextWrapped("Crash reports from earlier runs are kept in \"%s\".", CrashConfig{}.directory.c_str());
+        const std::string crash_dir = RecentProjects::DefaultCrashReportDir().string();
+        ImGui::TextWrapped("Crash reports from earlier runs are kept in \"%s\".", crash_dir.c_str());
         if (ImGui::Button("Check for crash reports")) {
             crash_dialog->Refresh();
             crash_dialog->open = !crash_dialog->Reports().empty();

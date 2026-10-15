@@ -105,6 +105,48 @@ AudioEffect* Mixer::AddEffect(BusId bus, std::unique_ptr<AudioEffect> effect) {
     return raw;
 }
 
+bool Mixer::RemoveEffect(BusId bus, usize index) {
+    if (bus >= game_buses_.size() || index >= game_buses_[bus].effects.size()) return false;
+    AudioEffect* effect = game_buses_[bus].effects[index];
+    game_buses_[bus].effects.erase(game_buses_[bus].effects.begin() + static_cast<std::ptrdiff_t>(index));
+    if (!threaded_) {
+        auto& effects = buses_[bus].effects;
+        const auto it = std::find_if(effects.begin(), effects.end(), [effect](const auto& item) { return item.get() == effect; });
+        if (it != effects.end()) effects.erase(it);
+    } else {
+        Submit([bus, effect](Mixer& mixer) {
+            auto& effects = mixer.buses_[bus].effects;
+            const auto it = std::find_if(effects.begin(), effects.end(), [effect](const auto& item) { return item.get() == effect; });
+            if (it != effects.end()) effects.erase(it);
+        });
+    }
+    return true;
+}
+
+bool Mixer::MoveEffect(BusId bus, usize from, usize to) {
+    if (bus >= game_buses_.size() || from >= game_buses_[bus].effects.size() || to >= game_buses_[bus].effects.size()) return false;
+    if (from == to) return true;
+    auto& view = game_buses_[bus].effects;
+    AudioEffect* effect = view[from];
+    view.erase(view.begin() + static_cast<std::ptrdiff_t>(from));
+    view.insert(view.begin() + static_cast<std::ptrdiff_t>(to), effect);
+    if (!threaded_) {
+        auto& effects = buses_[bus].effects;
+        auto moved = std::move(effects[from]);
+        effects.erase(effects.begin() + static_cast<std::ptrdiff_t>(from));
+        effects.insert(effects.begin() + static_cast<std::ptrdiff_t>(to), std::move(moved));
+    } else {
+        Submit([bus, from, to](Mixer& mixer) {
+            auto& effects = mixer.buses_[bus].effects;
+            if (from >= effects.size() || to >= effects.size()) return;
+            auto moved = std::move(effects[from]);
+            effects.erase(effects.begin() + static_cast<std::ptrdiff_t>(from));
+            effects.insert(effects.begin() + static_cast<std::ptrdiff_t>(to), std::move(moved));
+        });
+    }
+    return true;
+}
+
 BusMeter Mixer::Meter(BusId bus) const {
     if (!threaded_) return bus < buses_.size() ? buses_[bus].meter : BusMeter{};
     const Snapshot& s = View();

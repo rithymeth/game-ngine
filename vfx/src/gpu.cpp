@@ -204,7 +204,7 @@ struct Particle {
     uint seed; uint alive; uint2 pad;
 };
 
-cbuffer Frame : register(b0) {
+cbuffer Frame : register(b0, space1) {
     float DeltaTime; float Time; uint SpawnCount; uint FrameSeed;
     float3 EmitterPosition; uint MaxParticles;
     float4 EmitterRotation;
@@ -217,7 +217,7 @@ cbuffer Frame : register(b0) {
 
 RWStructuredBuffer<Particle> Particles : register(u0);
 RWStructuredBuffer<uint> DeadList : register(u1);  // [0]: how many; then free slots
-RWStructuredBuffer<uint> AliveList : register(u2); // [0]: how many; then living slots (cleared by the CPU each frame)
+RWStructuredBuffer<uint> AliveList : register(u2); // [0]: how many; then living slots (cleared by EmitMain)
 
 uint PcgHash(uint v) {
     uint state = v * 747796405u + 2891336453u;
@@ -292,7 +292,7 @@ float3 CurlNoise(float3 p) {
 }
 )";
 
-constexpr const char* kDepth = R"(Texture2D<float> SceneDepth : register(t0);
+constexpr const char* kDepth = R"(Texture2D<float> SceneDepth : register(t0, space2);
 bool SurfaceAt(int2 px, out float3 surface) {
     surface = 0;
     if (px.x < 0 || px.y < 0 || px.x >= (int)DepthWidth || px.y >= (int)DepthHeight) return false;
@@ -390,7 +390,7 @@ GeneratedParticleShader GenerateParticleShader(const Emitter& e) {
     const bool local = e.settings.space == SimSpace::Local;
     const u32 count = std::max<u32>(static_cast<u32>(b.values.size() / 4), 1u);
     std::string h = kPrelude;
-    h += "cbuffer Modules : register(b1) { float4 M[" + std::to_string(count) + "]; };\n\n";
+    h += "cbuffer Modules : register(b1, space1) { float4 M[" + std::to_string(count) + "]; };\n\n";
     h += kTables;
     if (b.uses_noise) h += kNoise;
     if (b.uses_depth) h += kDepth;
@@ -401,6 +401,7 @@ GeneratedParticleShader GenerateParticleShader(const Emitter& e) {
          "    Particles[id.x].alive = 0;\n"
          "}\n\n";
     h += "[numthreads(64, 1, 1)]\nvoid EmitMain(uint3 id : SV_DispatchThreadID) {\n"
+         "    if (id.x == 0u) AliveList[0] = 0u; // precedes UpdateMain in the same command stream\n"
          "    if (id.x >= SpawnCount) return;\n"
          "    uint left;\n"
          "    InterlockedAdd(DeadList[0], 0xFFFFFFFFu, left); // take one\n"

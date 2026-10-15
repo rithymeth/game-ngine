@@ -43,6 +43,12 @@ struct PipelineHandle {
     bool IsValid() const { return index != static_cast<u32>(-1); }
 };
 
+// Opaque handle into the device's compute-pipeline table.
+struct ComputePipelineHandle {
+    u32 index = static_cast<u32>(-1);
+    bool IsValid() const { return index != static_cast<u32>(-1); }
+};
+
 // Opaque handle into a backend device's internal vertex/index buffer table —
 // see IDevice::CreateVertexBuffer/CreateIndexBuffer. Never dereferenced by
 // calling code.
