@@ -11,6 +11,17 @@
 #include "aether/debug/crash.h"
 #include "aether/ecs/archetype.h"
 #include "aether/gameplay/attribute_system.h"
+#include "aether/gameplay/gameplay_kit.h"
+#include "aether/kit/kit.h"
+#if AETHER_QT_KIT_INVENTORY
+#include "aether/inventory/inventory_kit.h"
+#endif
+#if AETHER_QT_KIT_INTERACTION
+#include "aether/interaction/interaction_kit.h"
+#endif
+#if AETHER_QT_KIT_QUESTS
+#include "aether/quests/quests_kit.h"
+#endif
 #include "aether/input/keys.h"
 #include "aether/physics/character.h"
 #include "aether/physics/components.h"
@@ -191,8 +202,26 @@ void RegisterEditorComponentSchemas() {
     aether::RegisterBehaviorTreeComponents();
     aether::RegisterAudioComponents();
     aether::bp::RegisterBlueprintComponents();
-    aether::gas::RegisterGameplayComponents();
     aether::RegisterSequenceComponents();
+
+    aether::kit::KitRegistry kits;
+    kits.Add(aether::gas::MakeGameplayKit());
+#if AETHER_QT_KIT_INVENTORY
+    kits.Add(aether::inv::MakeInventoryKit());
+#endif
+#if AETHER_QT_KIT_INTERACTION
+    kits.Add(aether::interact::MakeInteractionKit());
+#endif
+#if AETHER_QT_KIT_QUESTS
+    kits.Add(aether::quest::MakeQuestsKit());
+#endif
+    if (!kits.Resolve()) {
+        for (const std::string& error : kits.Errors())
+            AETHER_LOG_ERROR("QtEditor", "Couldn't resolve editor gameplay kits: %s", error.c_str());
+        return;
+    }
+    kits.RegisterComponents();
+
     aether::RegisterPhysicsComponentSerializers();
     (void)aether::GetComponentId<aether::RigidBody>();
     (void)aether::GetComponentId<aether::BoxCollider>();
