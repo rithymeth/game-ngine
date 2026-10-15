@@ -2944,6 +2944,155 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                      {"entities", std::move(results)}};
          }});
     server.AddTool(
+        {"set_entities_world_scale_many",
+         "Set 1–64 unique scene entities to one shared world scale magnitude [x, y, z] as one undoable action. World scale is measured as the lengths of the three world-transform basis columns; values must be finite and non-negative. Local scale signs are preserved. Parent transforms, including selected ancestors with final scales, are accounted for. Rejects hierarchy cycles/excessive depth and non-zero requested axes collapsed by the parent transform. Position and rotation are preserved.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique entity GUIDs"}}},
+                 {"scale", {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 3}, {"maxItems", 3},
+                             {"description", "Shared world-scale magnitudes [x, y, z]"}}}},
+                {"entities", "scale"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             if (!args["scale"].is_array() || args["scale"].size() != 3) throw ToolError("\"scale\" must be [x, y, z]");
+             for (const Json& value : args["scale"]) {
+                 if (!value.is_number() || !std::isfinite(value.get<double>())) throw ToolError("World-scale values must be finite numbers");
+             }
+             const Vec3 world_scale{args["scale"][0].get<f32>(), args["scale"][1].get<f32>(), args["scale"][2].get<f32>()};
+             if (!std::isfinite(world_scale.x) || !std::isfinite(world_scale.y) || !std::isfinite(world_scale.z)) {
+                 throw ToolError("World-scale values must fit finite engine coordinates");
+             }
+             if (world_scale.x < 0.0f || world_scale.y < 0.0f || world_scale.z < 0.0f) {
+                 throw ToolError("World-scale magnitudes must be non-negative");
+             }
+
+             struct ScaleEdit {
+                 EntityGuid guid;
+                 Entity entity;
+                 Vec3 local_scale;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<ScaleEdit> edits;
+             edits.reserve(args["entities"].size());
+             std::map<EntityGuid, usize> edit_indices;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 const std::string text = value.get<std::string>();
+                 EntityGuid guid;
+                 if (!ParseEntityGuid(text, guid)) throw ToolError("Not a valid entity GUID: " + text);
+                 if (edit_indices.contains(guid)) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 if (s.world.GetComponent<Transform>(entity) == nullptr) {
+                     throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 }
+                 edit_indices.emplace(guid, edits.size());
+                 ScaleEdit edit;
+                 edit.guid = guid;
+                 edit.entity = entity;
+                 edits.push_back(std::move(edit));
+             }
+
+             std::function<Mat4(Entity, int)> compute_final_world = [&](Entity entity, int depth) -> Mat4 {
+                 if (entity.IsNull()) return Mat4::Identity();
+                 if (depth >= kMaxHierarchyDepth) throw ToolError("World-scale batch encountered a hierarchy cycle or excessive depth");
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) return Mat4::Identity();
+                 Mat4 parent_world = Mat4::Identity();
+                 const Entity parent = GetParent(s.world, s.guids, entity);
+                 if (!parent.IsNull()) parent_world = compute_final_world(parent, depth + 1);
+                 Transform updated = *current;
+                 const IdComponent* id = s.world.GetComponent<IdComponent>(entity);
+                 if (id != nullptr) {
+                     const auto selected = edit_indices.find(id->guid);
+                     if (selected != edit_indices.end()) {
+                         if (!std::isfinite(current->scale.x) || !std::isfinite(current->scale.y) || !std::isfinite(current->scale.z)) {
+                             throw ToolError("Entity " + ToString(id->guid) + " has a non-finite local scale");
+                         }
+                         Transform unit_scale = *current;
+                         unit_scale.scale = Vec3(1.0f, 1.0f, 1.0f);
+                         const Mat4 unit_world = parent_world * LocalTransformMatrix(unit_scale);
+                         const f32 axis_lengths[3] = {
+                             Vec3(unit_world.cols[0].x, unit_world.cols[0].y, unit_world.cols[0].z).Length(),
+                             Vec3(unit_world.cols[1].x, unit_world.cols[1].y, unit_world.cols[1].z).Length(),
+                             Vec3(unit_world.cols[2].x, unit_world.cols[2].y, unit_world.cols[2].z).Length()};
+                         const f32 requested[3] = {world_scale.x, world_scale.y, world_scale.z};
+                         const f32 signs[3] = {current->scale.x < 0.0f ? -1.0f : 1.0f,
+                                               current->scale.y < 0.0f ? -1.0f : 1.0f,
+                                               current->scale.z < 0.0f ? -1.0f : 1.0f};
+                         f32 local_values[3]{};
+                         for (int axis = 0; axis < 3; ++axis) {
+                             if (!std::isfinite(axis_lengths[axis])) {
+                                 throw ToolError("Final parent transform has a non-finite world basis for entity " + ToString(id->guid));
+                             }
+                             if (axis_lengths[axis] <= 1.0e-12f) {
+                                 if (requested[axis] > 0.0f) {
+                                     throw ToolError("Cannot assign non-zero world scale on a basis collapsed by the parent transform for entity " + ToString(id->guid));
+                                 }
+                                 local_values[axis] = 0.0f;
+                             } else {
+                                 local_values[axis] = signs[axis] * requested[axis] / axis_lengths[axis];
+                                 if (!std::isfinite(local_values[axis]) || (requested[axis] > 0.0f && local_values[axis] == 0.0f)) {
+                                     throw ToolError("World scale would produce an invalid local scale for entity " + ToString(id->guid));
+                                 }
+                             }
+                         }
+                         edits[selected->second].local_scale = Vec3(local_values[0], local_values[1], local_values[2]);
+                         updated.scale = edits[selected->second].local_scale;
+                     }
+                 }
+                 return parent_world * LocalTransformMatrix(updated);
+             };
+             for (const ScaleEdit& edit : edits) (void)compute_final_world(edit.entity, 0);
+
+             for (ScaleEdit& edit : edits) {
+                 const Transform* current = s.world.GetComponent<Transform>(edit.entity);
+                 Transform updated = *current;
+                 updated.scale = edit.local_scale;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+             }
+
+             const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const ScaleEdit& edit) { return edit.changed; });
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Set Entity World Scale " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const ScaleEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const ScaleEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)},
+                                    {"world_scale", {world_scale.x, world_scale.y, world_scale.z}},
+                                    {"local_scale", {edit.local_scale.x, edit.local_scale.y, edit.local_scale.z}},
+                                    {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const ScaleEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+    server.AddTool(
         {"set_entities_world_scales_many",
          "Set per-entity world scale magnitudes for 1–64 unique scene entities as one undoable action. World scale is measured as the lengths of the three world-transform basis columns; requested values must be finite and non-negative. Local scale signs are preserved. Parent transforms, including selected ancestors with final scales, are accounted for. Rejects hierarchy cycles/excessive depth and non-zero requested axes collapsed by the parent transform. Position and rotation are preserved.",
          Schema({{"edits", {{"type", "array"},
