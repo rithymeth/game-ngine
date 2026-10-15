@@ -29,7 +29,7 @@ and errors go to stderr.
 | `list_entities` | GUIDs, component names and parent GUIDs; optional exact name/tag and component filters (combined with AND) |
 | `get_entity` | Every component of one entity, as JSON |
 | `create_entity` | New entity with optional components and parent (all-or-nothing) |
-| `duplicate_entity` | Copy one entity's reflected component values; keeps its parent unless overridden, leaves children as they are, and is undoable |
+| `duplicate_entity` / `duplicate_entities` | Copy reflected component values for one entity or up to 64 unique entities as one undo action; keep source parents, leave children as they are |
 | `destroy_entity` | Delete an entity |
 | `add_component` / `remove_component` | Add (with optional initial values) or remove a component |
 | `set_component` | Partial update: only the fields named change |
