@@ -2585,6 +2585,68 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_physics_events",
+         "Read the most recent 2D and 3D collision and trigger events from the loaded game. Events represent transitions from its latest physics step and include entity handles and contact details where available.",
+         Schema({{"dimension", {{"type", "string"}, {"enum", Json::array({"all", "2d", "3d"})}, {"default", "all"}}}),
+                {}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             const std::string dimension = args.contains("dimension")
+                 ? (args["dimension"].is_string() ? args["dimension"].get<std::string>() : throw ToolError("\"dimension\" must be all, 2d or 3d"))
+                 : "all";
+             if (dimension != "all" && dimension != "2d" && dimension != "3d") {
+                 throw ToolError("\"dimension\" must be all, 2d or 3d");
+             }
+
+             Json events = Json::array();
+             bool has_2d = false;
+             bool has_3d = false;
+             if (dimension != "3d") {
+                 if (sprite2d::Physics2D* physics = game.Physics2D()) {
+                     has_2d = true;
+                     for (const sprite2d::Event2D& event : physics->Events()) {
+                         const char* type = "begin";
+                         switch (event.kind) {
+                         case sprite2d::Event2D::Kind::Begin: type = "begin"; break;
+                         case sprite2d::Event2D::Kind::End: type = "end"; break;
+                         case sprite2d::Event2D::Kind::TriggerEnter: type = "trigger_enter"; break;
+                         case sprite2d::Event2D::Kind::TriggerExit: type = "trigger_exit"; break;
+                         }
+                         events.push_back({{"dimension", "2d"}, {"type", type},
+                                           {"entity_a", event.a.IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), event.a))},
+                                           {"entity_b", event.b.IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), event.b))},
+                                           {"normal", Json::array({event.normal.x, event.normal.y})}});
+                     }
+                 }
+             }
+#if AETHER_MCP_PHYSICS
+             if (dimension != "2d") {
+                 if (PhysicsScene* scene = game.PhysicsQueries()) {
+                     has_3d = true;
+                     for (const ContactEvent& event : scene->Physics().Contacts()) {
+                         const char* type = "begin";
+                         switch (event.type) {
+                         case ContactType::Begin: type = "begin"; break;
+                         case ContactType::Stay: type = "stay"; break;
+                         case ContactType::End: type = "end"; break;
+                         }
+                         const Entity entity_a = scene->EntityOf(event.body1);
+                         const Entity entity_b = scene->EntityOf(event.body2);
+                         events.push_back({{"dimension", "3d"}, {"type", type}, {"trigger", event.trigger},
+                                           {"entity_a", entity_a.IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), entity_a))},
+                                           {"entity_b", entity_b.IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), entity_b))},
+                                           {"point", Json::array({event.point.x, event.point.y, event.point.z})},
+                                           {"normal", Json::array({event.normal.x, event.normal.y, event.normal.z})},
+                                           {"approach_speed", event.approach_speed}});
+                     }
+                 }
+             }
+#endif
+             return {{"dimension", dimension}, {"count", events.size()}, {"events", std::move(events)},
+                     {"available", {{"2d", has_2d}, {"3d", has_3d}}}};
+         }});
+
+    server.AddTool(
         {"game_reparent_entities_many",
          "Set or clear the parent of up to 64 unique live entities as one batch. By default parent changes retain local transforms; set preserve_world=true to retain world poses by updating local transforms. The batch validates stable parent GUIDs and the complete resulting hierarchy, and rejects cycles, excessive depth, singular transforms, or unrepresentable shear before applying.",
          Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
