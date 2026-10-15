@@ -68,6 +68,7 @@ and errors go to stderr.
 | `rotate_entities_world_many` | Apply per-entity world quaternion deltas on up to 64 unique entities in one undo action; resolves selected ancestor orientations |
 | `rotate_entities_world_shared_many` | Apply one world quaternion delta to up to 64 unique entities in one undo action; resolves selected ancestor orientations |
 | `set_entities_local_rotation_many` | Set one shared absolute local quaternion on up to 64 unique entities in one undo action; preserves position and scale |
+| `set_entities_local_scale_many` | Set one shared local scale vector on up to 64 unique entities in one undo action; preserves position and rotation |
 | `set_entities_local_scales_many` | Set individual local scales on up to 64 unique entities in one undo action; preserves position and rotation |
 | `set_entities_local_rotations_many` | Set individual local quaternions on up to 64 unique entities in one undo action; preserves position and scale |
 | `rotate_entities_local_many` | Apply per-entity local quaternion deltas to up to 64 unique entities in one undo action |
