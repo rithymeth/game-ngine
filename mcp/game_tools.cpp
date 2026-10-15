@@ -1239,6 +1239,67 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_set_components_many",
+         "Apply the same partial field update to one component on up to 64 unique running entities. The complete selection and every merged value are validated before any component changes.",
+         Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}},
+                 {"component", {{"type", "string"}, {"description", "Component name from list_component_types"}}},
+                 {"values", {{"type", "object"}, {"description", "Fields to merge onto the component on each entity"}}}},
+                {"entities", "component", "values"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be an array of 1 to 64 entity handles");
+             }
+             if (!args["values"].is_object()) throw ToolError("\"values\" must be an object of component fields");
+             const ComponentId id = RequireComponent(RequireString(args, "component"));
+             const ComponentInfo& info = GetComponentInfo(id);
+             struct PreparedUpdate {
+                 Entity entity;
+                 Json merged;
+                 std::vector<std::string> warnings;
+             };
+             std::vector<Entity> seen;
+             std::vector<PreparedUpdate> updates;
+             seen.reserve(args["entities"].size());
+             updates.reserve(args["entities"].size());
+             for (const Json& handle : args["entities"]) {
+                 if (!handle.is_string() || handle.get<std::string>().empty()) {
+                     throw ToolError("Every \"entities\" entry must be a non-empty entity handle");
+                 }
+                 const Entity entity = FindEntity(game, handle.get<std::string>());
+                 if (std::find(seen.begin(), seen.end(), entity) != seen.end()) {
+                     throw ToolError("\"entities\" must not contain the same entity more than once");
+                 }
+                 seen.push_back(entity);
+                 const void* data = world.GetComponentRaw(entity, id);
+                 if (data == nullptr) throw ToolError("Entity " + EntityKey(world, entity) + " has no " + ComponentName(id));
+                 Json merged = reflect::ToJson(*info.reflected, data);
+                 merged.merge_patch(args["values"]);
+                 reflect::Any candidate = reflect::Any::DefaultOf(*info.reflected);
+                 if (!candidate.HasValue()) throw ToolError("Cannot validate default values for " + ComponentName(id));
+                 reflect::LoadReport report;
+                 if (!reflect::FromJson(*info.reflected, candidate.Data(), merged, &report)) {
+                     throw ToolError("Value does not match the shape of " + ComponentName(id) + " on entity " + EntityKey(world, entity));
+                 }
+                 updates.push_back({entity, std::move(merged), std::move(report.warnings)});
+             }
+             Json results = Json::array();
+             for (PreparedUpdate& update : updates) {
+                 void* data = world.GetComponentRaw(update.entity, id);
+                 reflect::LoadReport report;
+                 if (!reflect::FromJson(*info.reflected, data, update.merged, &report)) {
+                     throw ToolError("Validated component update could not be applied to entity " + EntityKey(world, update.entity));
+                 }
+                 Json result = {{"entity", EntityKey(world, update.entity)},
+                                {"values", reflect::ToJson(*info.reflected, data)}};
+                 if (!update.warnings.empty()) result["warnings"] = update.warnings;
+                 results.push_back(std::move(result));
+             }
+             return {{"component", ComponentName(id)}, {"updated_count", results.size()}, {"results", results}};
+         }});
+
+    server.AddTool(
         {"game_get_hierarchy",
          "Return an entity's live descendant tree in stable entity-index order. The root is included; depth and node caps bound the response.",
          Schema({{"entity", {{"type", "string"}, {"description", "GUID or #index[:generation]"}}},
