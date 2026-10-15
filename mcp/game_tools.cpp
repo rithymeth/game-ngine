@@ -1815,6 +1815,66 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_reset_entity_components_many",
+         "Reset different reflected components on up to 64 live entity/component pairs. Validates every target and default first, keeps components attached, and protects game-managed IdComponent.",
+         Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                             {"items", {{"type", "object"},
+                                         {"properties", {{"entity", {{"type", "string"}}}, {"component", {{"type", "string"}}}}},
+                                         {"required", Json::array({"entity", "component"})}}}}}},
+                {"edits"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be an array of 1 to 64 entity/component resets");
+             }
+             struct PreparedReset {
+                 Entity entity;
+                 ComponentId id;
+                 Json before;
+                 Json defaults;
+             };
+             std::vector<PreparedReset> resets;
+             resets.reserve(args["edits"].size());
+             for (const Json& item : args["edits"]) {
+                 if (!item.is_object() || !item.contains("entity") || !item["entity"].is_string() || item["entity"].get<std::string>().empty()) {
+                     throw ToolError("Every \"edits\" entry must contain a non-empty string \"entity\"");
+                 }
+                 if (!item.contains("component") || !item["component"].is_string()) throw ToolError("Every \"edits\" entry must contain a string \"component\"");
+                 const Entity entity = FindEntity(game, item["entity"].get<std::string>());
+                 const ComponentId id = RequireComponent(item["component"].get<std::string>());
+                 if (id == GetComponentId<IdComponent>()) throw ToolError("IdComponent is managed by the running game and cannot be reset directly");
+                 if (std::find_if(resets.begin(), resets.end(), [entity, id](const PreparedReset& reset) {
+                         return reset.entity == entity && reset.id == id;
+                     }) != resets.end()) {
+                     throw ToolError("\"edits\" must not repeat the same entity/component pair");
+                 }
+                 const void* data = world.GetComponentRaw(entity, id);
+                 if (data == nullptr) throw ToolError("Entity " + EntityKey(world, entity) + " has no " + ComponentName(id));
+                 const ComponentInfo& info = GetComponentInfo(id);
+                 reflect::Any defaults = reflect::Any::DefaultOf(*info.reflected);
+                 if (!defaults.HasValue()) throw ToolError("Cannot construct reflected defaults for " + ComponentName(id));
+                 const Json default_values = reflect::ToJson(*info.reflected, defaults.Data());
+                 resets.push_back({entity, id, reflect::ToJson(*info.reflected, data), default_values});
+             }
+             Json results = Json::array();
+             usize changed_count = 0;
+             for (const PreparedReset& reset : resets) {
+                 const ComponentInfo& info = GetComponentInfo(reset.id);
+                 void* data = world.GetComponentRaw(reset.entity, reset.id);
+                 reflect::LoadReport report;
+                 if (!reflect::FromJson(*info.reflected, data, reset.defaults, &report)) {
+                     throw ToolError("Default component values could not be applied to entity " + EntityKey(world, reset.entity));
+                 }
+                 const bool changed = reset.before != reset.defaults;
+                 results.push_back({{"entity", EntityKey(world, reset.entity)}, {"component", ComponentName(reset.id)},
+                                    {"changed", changed}, {"old_values", reset.before}, {"values", reflect::ToJson(*info.reflected, data)}});
+                 if (changed) ++changed_count;
+             }
+             return {{"reset_count", results.size()}, {"changed_count", changed_count}, {"results", results}};
+         }});
+
+    server.AddTool(
         {"game_reset_components_many",
          "Reset reflected fields of one component to its defaults on up to 64 unique running entities. The component stays attached; the whole selection is validated before any reset.",
          Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}},
