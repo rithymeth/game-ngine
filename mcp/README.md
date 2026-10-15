@@ -458,7 +458,7 @@ saves and localization. The game has its own world, separate from the editor's.
 | `game_set_physics3d_velocities_many` | Partially set linear and/or angular velocity for up to 64 unique live 3D physics bodies as a validated batch |
 | `game_set_physics3d_poses_many` | Teleport position and/or rotation for up to 64 unique 3D physics entities, updating transforms and live bodies together |
 | `game_set_physics3d_bodies_many` | Partially update motion type, mass, damping, gravity, CCD and rotation locks on up to 64 3D rigidbodies as a validated batch |
-| `game_set_physics3d_colliders_shared_many` | Apply shared center, trigger, friction, restitution and report-stay settings to all 3D colliders on up to 64 entities |
+| `game_set_physics3d_colliders_shared_many` | Apply shared center, material, trigger, report-stay and optional box/sphere/capsule geometry settings across up to 64 selected 3D collider entities |
 | `game_physics2d_state_many` | Read grounded and wall-contact state plus current velocity for up to 64 selected 2D entities |
 | `game_set_physics2d_bodies_many` | Partially update body type, mass, gravity scale and damping for up to 64 unique 2D rigidbodies; validates the full batch and preserves unspecified fields |
 | `game_set_physics2d_bodies_shared_many` | Apply one partial body-settings patch to up to 64 unique 2D rigidbodies; preserves unspecified per-entity values and validates every result first |
