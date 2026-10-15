@@ -31,6 +31,18 @@ public:
         // Runs with the frame's Update, after effects have run, like the other gameplay kit systems.
         return {{"Player.Quests", {"Player.Update", "Player.Sequencer", "Player.Effects"}}};
     }
+    std::unique_ptr<kit::IKitRuntime> CreateRuntime(const kit::KitRuntimeContext& context) override {
+        auto* quests = context.find_service ? static_cast<QuestLibrary*>(context.find_service("quests.library")) : nullptr;
+        auto* effects = context.find_service ? static_cast<gas::EffectSystem*>(context.find_service("game.effects")) : nullptr;
+        if (!context.world || !quests) return {};
+        class Runtime final : public kit::IKitRuntime {
+        public:
+            Runtime(World& world, gas::EffectSystem* effects, const QuestLibrary& quests) : system(world, effects, quests) {}
+            void* Find(const char* name) override { return std::string(name) == "QuestSystem" ? &system : nullptr; }
+            QuestSystem system;
+        };
+        return std::make_unique<Runtime>(*context.world, effects, *quests);
+    }
 private:
     QuestLibrary* quests_;
     const gas::EffectLibrary* effects_;
