@@ -39,6 +39,7 @@ and errors go to stderr.
 | `destroy_entity` / `destroy_entities` | Delete one entity or up to 64 unique entities as one undoable action; the batch can optionally include all descendants with `include_children: true`, deletes child-first, and restores original GUIDs on undo |
 | `add_component` / `add_components_many` / `remove_component` / `remove_components_many` | Add one component or components across up to 64 unique entities as one undo action after validating all additions; remove one component or up to 64 selected entity/component pairs as one confirmed undo action |
 | `reset_components_many` | Reset up to 64 unique entity/component pairs to reflected defaults in one undo action; validates the whole selection and keeps components attached |
+| `copy_components_many` | Copy selected reflected components from one source entity to up to 64 target entities, with a 64-pair selection cap and one undo action |
 | `set_component` / `set_components_many` | Partial component update; batch applies patches to up to 64 unique entities as one undo action after validating every patch |
 | `reparent` / `reparent_many` | Parent or detach entities; `reparent_many` supports up to 64 unique per-entity moves or a selected entity list with one shared parent, in one undo action after validating the final hierarchy for cycles |
 | `undo` / `redo` | Walk the editor history and return the source (`agent`) recorded with that action |

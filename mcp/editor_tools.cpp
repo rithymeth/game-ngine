@@ -1813,6 +1813,111 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
          }});
 
     server.AddTool(
+        {"copy_components_many",
+         "Copy selected reflected component values from one source entity to 1–64 target entities as one undoable action. Source and target components must already exist; validates every selected pair before applying any changes.",
+         Schema({{"source", kGuidProp},
+                 {"targets", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                              {"description", "Unique target entity GUIDs"}}},
+                 {"components", {{"type", "array"}, {"items", {{"type", "string"}}}, {"minItems", 1}, {"maxItems", 64},
+                                 {"description", "Unique reflected component names to copy from the source"}}}},
+                {"source", "targets", "components"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before copying components");
+             const Entity source = RequireEntity(s, args, "source");
+             if (!args["targets"].is_array() || args["targets"].empty() || args["targets"].size() > 64) {
+                 throw ToolError("\"targets\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             if (!args["components"].is_array() || args["components"].empty() || args["components"].size() > 64) {
+                 throw ToolError("\"components\" must be a non-empty array of at most 64 component names");
+             }
+             if (args["targets"].size() * args["components"].size() > 64) {
+                 throw ToolError("The target/component selection may contain at most 64 pairs");
+             }
+
+             struct Copy {
+                 EntityGuid target;
+                 ComponentId component;
+                 std::string component_name;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<Copy> copies;
+             copies.reserve(args["targets"].size() * args["components"].size());
+             std::vector<std::pair<EntityGuid, Entity>> targets;
+             targets.reserve(args["targets"].size());
+             std::set<EntityGuid> seen_targets;
+             for (const Json& value : args["targets"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"targets\" must be an entity GUID string");
+                 EntityGuid guid;
+                 const std::string text = value.get<std::string>();
+                 if (!ParseEntityGuid(text, guid)) throw ToolError("Not a valid entity GUID: " + text);
+                 if (!seen_targets.insert(guid).second) throw ToolError("Duplicate target entity: " + ToString(guid));
+                 targets.emplace_back(guid, RequireEntity(s, Json{{"entity", ToString(guid)}}));
+             }
+
+             std::vector<std::pair<ComponentId, std::string>> components;
+             components.reserve(args["components"].size());
+             std::set<ComponentId> seen_components;
+             const ComponentId id_component = GetComponentId<IdComponent>();
+             for (const Json& value : args["components"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"components\" must be a component name");
+                 const ComponentId id = RequireComponent(value.get<std::string>());
+                 if (id == id_component) throw ToolError("An entity's identity cannot be copied");
+                 if (!seen_components.insert(id).second) throw ToolError("Duplicate component in \"components\": " + ComponentName(id));
+                 if (!s.world.HasComponentRaw(source, id)) throw ToolError("Source entity doesn't have " + ComponentName(id));
+                 components.emplace_back(id, ComponentName(id));
+             }
+
+             for (const auto& [target_guid, target] : targets) {
+                 for (const auto& [id, name] : components) {
+                     if (!s.world.HasComponentRaw(target, id)) {
+                         throw ToolError("Target entity " + ToString(target_guid) + " doesn't have " + name + "; use add_components_many first");
+                     }
+                     const ComponentInfo& info = GetComponentInfo(id);
+                     Copy copy;
+                     copy.target = target_guid;
+                     copy.component = id;
+                     copy.component_name = name;
+                     info.serialize(s.world.GetComponentRaw(target, id), copy.before);
+                     info.serialize(s.world.GetComponentRaw(source, id), copy.after);
+                     copy.changed = copy.before != copy.after;
+                     copies.push_back(std::move(copy));
+                 }
+             }
+
+             bool any_changed = false;
+             for (const Copy& copy : copies) any_changed = any_changed || copy.changed;
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Copy Components " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const Copy& copy : copies) {
+                         if (!copy.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(copy.target, copy.component, copy.before, copy.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const Copy& copy : copies) {
+                 results.push_back({{"entity", ToString(copy.target)}, {"component", copy.component_name}, {"changed", copy.changed}});
+             }
+             return {{"copied", std::count_if(copies.begin(), copies.end(), [](const Copy& copy) { return copy.changed; })},
+                     {"components", std::move(results)}};
+         }});
+
+    server.AddTool(
         {"set_components_many",
          "Update components on 1–64 unique entities as one undoable action. Each edit maps component names to partial field objects; the complete selection and every component patch are validated before any changes are applied.",
          Schema({{"edits", {{"type", "array"},
