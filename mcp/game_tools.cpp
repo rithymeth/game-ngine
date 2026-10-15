@@ -2800,6 +2800,72 @@ void RegisterGameTools(McpServer& server) {
              return {{"action", action}, {"cue", source->cue}, {"playing", source->playing}, {"volume_db", source->volume_db}, {"queued_commands", source->commands.size()}};
          }});
 
+    server.AddTool(
+        {"game_audio_sources_many",
+         "Queue different play, stop, fade, volume or cue commands on up to 64 unique live AudioSources. Validates every target and command before queuing; step the game to apply them.",
+         Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                             {"items", {{"type", "object"},
+                                         {"properties", {{"entity", {{"type", "string"}}},
+                                                          {"action", {{"type", "string"}, {"description", "play | stop | fade_in | fade_out | set_volume | set_cue"}}},
+                                                          {"value", {{"type", "number"}}}, {"text", {{"type", "string"}}}}},
+                                         {"required", Json::array({"entity", "action"})}}}}}},
+                {"edits"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be an array of 1 to 64 AudioSource commands");
+             }
+             struct AudioEdit {
+                 Entity entity;
+                 std::string action;
+                 f32 value = 0.0f;
+                 std::string text;
+             };
+             std::vector<AudioEdit> edits;
+             edits.reserve(args["edits"].size());
+             for (const Json& item : args["edits"]) {
+                 if (!item.is_object() || !item.contains("entity") || !item["entity"].is_string() || item["entity"].get<std::string>().empty()) {
+                     throw ToolError("Every \"edits\" entry must contain a non-empty string \"entity\"");
+                 }
+                 if (!item.contains("action") || !item["action"].is_string()) throw ToolError("Every \"edits\" entry must contain a string \"action\"");
+                 const std::string action = item["action"].get<std::string>();
+                 if (action != "play" && action != "stop" && action != "fade_in" && action != "fade_out" && action != "set_volume" && action != "set_cue") {
+                     throw ToolError("\"action\" must be play, stop, fade_in, fade_out, set_volume or set_cue");
+                 }
+                 f32 value = 0.0f;
+                 if (item.contains("value")) {
+                     if (!item["value"].is_number()) throw ToolError("\"value\" must be a number");
+                     value = item["value"].get<f32>();
+                     if (!std::isfinite(value)) throw ToolError("\"value\" must be finite");
+                 }
+                 std::string text;
+                 if (action == "set_cue") {
+                     if (!item.contains("text") || !item["text"].is_string()) throw ToolError("A set_cue edit must contain string \"text\"");
+                     text = item["text"].get<std::string>();
+                 }
+                 const Entity entity = FindEntity(game, item["entity"].get<std::string>());
+                 if (std::find_if(edits.begin(), edits.end(), [entity](const AudioEdit& edit) { return edit.entity == entity; }) != edits.end()) {
+                     throw ToolError("\"edits\" must not repeat the same entity");
+                 }
+                 if (world.GetComponent<AudioSource>(entity) == nullptr) throw ToolError("Entity " + EntityKey(world, entity) + " has no AudioSource");
+                 edits.push_back({entity, action, value, std::move(text)});
+             }
+             Json results = Json::array();
+             for (const AudioEdit& edit : edits) {
+                 AudioSource* source = world.GetComponent<AudioSource>(edit.entity);
+                 if (edit.action == "play") source->Play();
+                 else if (edit.action == "stop") source->Stop();
+                 else if (edit.action == "fade_in") source->FadeIn(edit.value);
+                 else if (edit.action == "fade_out") source->FadeOut(edit.value);
+                 else if (edit.action == "set_volume") source->SetVolume(edit.value);
+                 else source->SetCue(edit.text);
+                 results.push_back({{"entity", EntityKey(world, edit.entity)}, {"action", edit.action}, {"cue", source->cue},
+                                    {"playing", source->playing}, {"volume_db", source->volume_db}, {"queued_commands", source->commands.size()}});
+             }
+             return {{"queued_count", results.size()}, {"results", results}};
+         }});
+
     // -- Sequences (the game's SequenceSystem and SequenceComponent) ----------------------------------------------
     server.AddTool(
         {"game_sequences",
