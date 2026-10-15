@@ -333,7 +333,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                     }});
 
     server.AddTool({"list_entities",
-                    "List a page of scene entities (GUID, name when present, entity index, component names, parent GUID, effective collision layer index, local active state, and active-override presence). Optionally filter by component, component groups that must all/any match or must not match, exact entity name, case-insensitive ASCII name substring, direct parent or roots, layer index, local active value or override presence, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND. Results are ordered by entity index and include total match count, has_more, and a continuation cursor. The cursor is not a scene snapshot; entities created in a reused index at or before it are skipped.",
+                    "List a page of scene entities (GUID, name when present, entity index, component names, parent GUID, effective collision layer index, local active state, and active/layer override presence). Optionally filter by component, component groups that must all/any match or must not match, exact entity name, case-insensitive ASCII name substring, direct parent or roots, layer index, local active value, active/layer override presence, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND. Results are ordered by entity index and include total match count, has_more, and a continuation cursor. The cursor is not a scene snapshot; entities created in a reused index at or before it are skipped.",
                     Schema({{"component", {{"type", "string"}, {"description", "Only entities having this component"}}},
                             {"components_all", {{"type", "array"}, {"items", {{"type", "string"}}}, {"maxItems", 32},
                                                  {"description", "Only entities that have every listed component"}}},
@@ -347,6 +347,8 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                             {"roots_only", {{"type", "boolean"}, {"description", "Only entities without a parent; cannot be combined with parent"}}},
                             {"layer_index", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxLayers - 1},
                                              {"description", "Only entities on this collision layer; entities without Layer use index 0"}}},
+                            {"layer_override", {{"type", "boolean"},
+                                                  {"description", "Filter by whether the entity has an explicit Layer component"}}},
                             {"active", {{"type", "boolean"},
                                          {"description", "Filter by the entity's local active value; missing Active defaults to true, and parent state is not composed"}}},
                             {"active_override", {{"type", "boolean"},
@@ -403,6 +405,11 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         if (args.contains("active_override")) {
                             if (!args["active_override"].is_boolean()) throw ToolError("\"active_override\" must be a boolean");
                             active_override_filter = args["active_override"].get<bool>();
+                        }
+                        std::optional<bool> layer_override_filter;
+                        if (args.contains("layer_override")) {
+                            if (!args["layer_override"].is_boolean()) throw ToolError("\"layer_override\" must be a boolean");
+                            layer_override_filter = args["layer_override"].get<bool>();
                         }
                         usize offset = 0;
                         if (args.contains("offset")) {
@@ -502,6 +509,8 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                             const Parent* parent = s.world.GetComponent<Parent>(e);
                             if (args.contains("parent") && (parent == nullptr || parent->parent != parent_filter)) continue;
                             if (roots_only && parent != nullptr && !parent->parent.IsNull()) continue;
+                            const Layer* layer_override = s.world.GetComponent<Layer>(e);
+                            if (layer_override_filter.has_value() && (layer_override != nullptr) != *layer_override_filter) continue;
                             const u8 entity_layer = LayerOf(s.world, e);
                             if (layer_filter >= 0 && entity_layer != static_cast<u8>(layer_filter)) continue;
                             const Active* active = s.world.GetComponent<Active>(e);
@@ -565,7 +574,8 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                                         {"components", ComponentNamesOf(s, e)},
                                         {"entity_index", e.index},
                                         {"layer_index", entity_layer}, {"active", entity_active},
-                                        {"has_active_override", active != nullptr}};
+                                        {"has_active_override", active != nullptr},
+                                        {"has_layer_override", layer_override != nullptr}};
                             if (parent != nullptr && !parent->parent.IsNull()) row["parent"] = ToString(parent->parent);
                             out.push_back(std::move(row));
                         }
