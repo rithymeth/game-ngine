@@ -3697,6 +3697,90 @@ void RegisterGameTools(McpServer& server) {
 
 #if AETHER_MCP_PHYSICS
     server.AddTool(
+        {"game_set_physics3d_poses_shared_many",
+         "Teleport up to 64 unique live 3D physics entities to one shared position and/or rotation. Validates every entity first, updates Transforms and bodies together, and preserves unspecified pose channels.",
+         Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}},
+                 {"position", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
+                 {"rotation", {{"type", "array"}, {"minItems", 4}, {"maxItems", 4}, {"items", {{"type", "number"}}}}}},
+                {"entities"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             PhysicsScene* scene = game.PhysicsQueries();
+             if (scene == nullptr) throw ToolError("The loaded game has no 3D physics scene");
+             if (!args.contains("entities") || !args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be an array of 1 to 64 entity handles");
+             }
+             static const std::unordered_set<std::string> supported = {"entities", "position", "rotation"};
+             for (auto it = args.begin(); it != args.end(); ++it) {
+                 if (!supported.contains(it.key())) throw ToolError("Unsupported shared 3D pose field: " + it.key());
+             }
+             const bool set_position = args.contains("position");
+             const bool set_rotation = args.contains("rotation");
+             if (!set_position && !set_rotation) throw ToolError("Provide position, rotation or both");
+             Vec3 position{};
+             if (set_position) {
+                 const Json& value = args["position"];
+                 if (!value.is_array() || value.size() != 3 || !value[0].is_number() || !value[1].is_number() || !value[2].is_number()) {
+                     throw ToolError("\"position\" must be [x, y, z]");
+                 }
+                 position = Vec3(value[0].get<f32>(), value[1].get<f32>(), value[2].get<f32>());
+                 if (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z)) {
+                     throw ToolError("Position components must be finite");
+                 }
+             }
+             Quaternion rotation = Quaternion::Identity();
+             if (set_rotation) {
+                 const Json& value = args["rotation"];
+                 if (!value.is_array() || value.size() != 4 || !value[0].is_number() || !value[1].is_number() ||
+                     !value[2].is_number() || !value[3].is_number()) {
+                     throw ToolError("\"rotation\" must be [x, y, z, w]");
+                 }
+                 rotation = Quaternion{value[0].get<f32>(), value[1].get<f32>(), value[2].get<f32>(), value[3].get<f32>()};
+                 if (!std::isfinite(rotation.x) || !std::isfinite(rotation.y) || !std::isfinite(rotation.z) || !std::isfinite(rotation.w) ||
+                     rotation.x * rotation.x + rotation.y * rotation.y + rotation.z * rotation.z + rotation.w * rotation.w < 1.0e-12f) {
+                     throw ToolError("\"rotation\" must be finite and non-zero");
+                 }
+                 rotation = rotation.Normalized();
+             }
+             struct PoseTarget { Entity entity; JPH::BodyID body; Vec3 position; Quaternion rotation; };
+             std::vector<PoseTarget> targets;
+             targets.reserve(args["entities"].size());
+             World& world = game.GetWorld();
+             for (const Json& handle : args["entities"]) {
+                 if (!handle.is_string() || handle.get<std::string>().empty()) throw ToolError("Every \"entities\" entry must be a non-empty entity handle");
+                 const Entity entity = FindEntity(game, handle.get<std::string>());
+                 if (std::find_if(targets.begin(), targets.end(), [entity](const PoseTarget& target) { return target.entity == entity; }) != targets.end()) {
+                     throw ToolError("\"entities\" must not repeat an entity");
+                 }
+                 const JPH::BodyID body = scene->BodyOf(entity);
+                 if (body.IsInvalid()) throw ToolError("Every entity must have a live 3D physics body");
+                 const Transform* transform = world.GetComponent<Transform>(entity);
+                 if (transform == nullptr) throw ToolError("Every entity must have a Transform component");
+                 const Vec3 target_position = set_position ? position : transform->position;
+                 const Quaternion target_rotation = set_rotation ? rotation : transform->rotation;
+                 if (!std::isfinite(target_position.x) || !std::isfinite(target_position.y) || !std::isfinite(target_position.z) ||
+                     !std::isfinite(target_rotation.x) || !std::isfinite(target_rotation.y) || !std::isfinite(target_rotation.z) ||
+                     !std::isfinite(target_rotation.w)) throw ToolError("Existing transform values must be finite");
+                 targets.push_back({entity, body, target_position, target_rotation});
+             }
+             JPH::BodyInterface& interface = scene->Physics().BodyInterface();
+             Json results = Json::array();
+             for (const PoseTarget& target : targets) {
+                 world.GetComponent<Transform>(target.entity)->position = target.position;
+                 world.GetComponent<Transform>(target.entity)->rotation = target.rotation;
+                 interface.SetPositionAndRotation(target.body, JPH::RVec3(target.position.x, target.position.y, target.position.z),
+                                                  JPH::Quat(target.rotation.x, target.rotation.y, target.rotation.z, target.rotation.w),
+                                                  JPH::EActivation::Activate);
+                 results.push_back({{"entity", EntityKey(world, target.entity)},
+                                    {"position", Json::array({target.position.x, target.position.y, target.position.z})},
+                                    {"rotation", Json::array({target.rotation.x, target.rotation.y, target.rotation.z, target.rotation.w})}});
+             }
+             return {{"count", results.size()}, {"entities", std::move(results)}};
+         }});
+#endif
+
+#if AETHER_MCP_PHYSICS
+    server.AddTool(
         {"game_set_physics3d_bodies_many",
          "Partially update motion and simulation settings for up to 64 unique 3D rigidbodies. Validates every resulting body before applying any edit; unspecified settings are preserved.",
          Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
