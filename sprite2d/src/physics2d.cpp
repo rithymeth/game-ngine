@@ -588,6 +588,64 @@ std::vector<Entity> Physics2D::OverlapOrientedBox(Vec2 center, Vec2 half, f32 ra
     return result;
 }
 
+std::vector<Entity> Physics2D::OverlapCapsule(Vec2 point_a, Vec2 point_b, f32 radius, u32 mask) const {
+    std::vector<Entity> result;
+    const Vec2 segment = point_b - point_a;
+    const f32 segment_length_sq = segment.Dot(segment);
+    auto distance_sq_to_segment = [&](Vec2 point) {
+        const f32 t = segment_length_sq > 0.0f
+                          ? std::clamp((point - point_a).Dot(segment) / segment_length_sq, 0.0f, 1.0f)
+                          : 0.0f;
+        const Vec2 delta = point - (point_a + segment * t);
+        return delta.Dot(delta);
+    };
+    auto point_box_distance_sq = [](Vec2 point, Vec2 box_center, Vec2 half) {
+        const f32 dx = std::max(std::fabs(point.x - box_center.x) - half.x, 0.0f);
+        const f32 dy = std::max(std::fabs(point.y - box_center.y) - half.y, 0.0f);
+        return dx * dx + dy * dy;
+    };
+    const f32 radius_sq = radius * radius;
+    EachEntity(world_, [&](Entity e) {
+        const Transform* transform = world_.GetComponent<Transform>(e);
+        const Collider2D* collider = world_.GetComponent<Collider2D>(e);
+        if (!transform || !collider || (collider->layer & mask) == 0) return;
+        const Vec2 center{transform->position.x + collider->offset.x,
+                          transform->position.y + collider->offset.y};
+        if (collider->shape == Shape2D::Circle) {
+            const f32 combined_radius = radius + collider->radius;
+            if (distance_sq_to_segment(center) <= combined_radius * combined_radius) result.push_back(e);
+            return;
+        }
+
+        const Vec2 half = collider->half_extents;
+        const Vec2 lo{center.x - half.x, center.y - half.y};
+        const Vec2 hi{center.x + half.x, center.y + half.y};
+        const f32 min_x = std::min(point_a.x, point_b.x), max_x = std::max(point_a.x, point_b.x);
+        const f32 min_y = std::min(point_a.y, point_b.y), max_y = std::max(point_a.y, point_b.y);
+        bool intersects_box = max_x >= lo.x && min_x <= hi.x && max_y >= lo.y && min_y <= hi.y;
+        if (intersects_box) {
+            f32 t_min = 0.0f, t_max = 1.0f;
+            auto clip_axis = [&](f32 start, f32 delta, f32 min_value, f32 max_value) {
+                if (std::fabs(delta) < 1e-9f) return start >= min_value && start <= max_value;
+                f32 t0 = (min_value - start) / delta, t1 = (max_value - start) / delta;
+                if (t0 > t1) std::swap(t0, t1);
+                t_min = std::max(t_min, t0);
+                t_max = std::min(t_max, t1);
+                return t_min <= t_max;
+            };
+            intersects_box = clip_axis(point_a.x, segment.x, lo.x, hi.x) &&
+                             clip_axis(point_a.y, segment.y, lo.y, hi.y);
+        }
+        if (intersects_box || point_box_distance_sq(point_a, center, half) <= radius_sq ||
+            point_box_distance_sq(point_b, center, half) <= radius_sq ||
+            distance_sq_to_segment(lo) <= radius_sq || distance_sq_to_segment({lo.x, hi.y}) <= radius_sq ||
+            distance_sq_to_segment({hi.x, lo.y}) <= radius_sq || distance_sq_to_segment(hi) <= radius_sq) {
+            result.push_back(e);
+        }
+    });
+    return result;
+}
+
 void RegisterPhysics2DComponents() {
     (void)GetComponentId<Rigidbody2D>();
     (void)GetComponentId<Collider2D>();
