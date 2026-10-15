@@ -333,7 +333,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                     }});
 
     server.AddTool({"list_entities",
-                    "List a page of scene entities (GUID, name when present, entity index, hierarchy depth, component names, parent GUID, effective collision layer index, local active state, and active/layer/parent override presence). Optionally filter by component, component groups that must all/any match or must not match, exact entity name, case-insensitive ASCII name substring, one parent, any of several parents, exclusion of several parents, descendants of one or several entities with exact or ranged relative-depth bounds (depth 0 includes a listed entity), entities beneath all of several ancestors with optional relative-depth bounds (depth 0 includes the entity itself), exclusion of descendants of several entities with optional relative-depth bounds (depth 0 can exclude a listed entity), relative depth below descendant_of (depth 0 includes the selected entity), root status or hierarchy depth, layer index, local active value, active/layer/parent override presence, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND. Results are ordered by entity index and include total match count, has_more, and a continuation cursor. The cursor is not a scene snapshot; entities created in a reused index at or before it are skipped.",
+                    "List a page of scene entities (GUID, name when present, entity index, hierarchy depth, component names, parent GUID, effective collision layer index, local active state, and active/layer/parent override presence). Optionally filter by component, component groups that must all/any match or must not match, exact entity name, case-insensitive ASCII name substring, one parent, any of several parents, exclusion of several parents, descendants of one or several entities with exact or ranged relative-depth bounds (depth 0 includes a listed entity), entities beneath all of several ancestors with exact or ranged relative-depth bounds (depth 0 includes the entity itself), exclusion of descendants of several entities with optional relative-depth bounds (depth 0 can exclude a listed entity), relative depth below descendant_of (depth 0 includes the selected entity), root status or hierarchy depth, layer index, local active value, active/layer/parent override presence, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND. Results are ordered by entity index and include total match count, has_more, and a continuation cursor. The cursor is not a scene snapshot; entities created in a reused index at or before it are skipped.",
                     Schema({{"component", {{"type", "string"}, {"description", "Only entities having this component"}}},
                             {"components_all", {{"type", "array"}, {"items", {{"type", "string"}}}, {"maxItems", 32},
                                                  {"description", "Only entities that have every listed component"}}},
@@ -365,6 +365,8 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                                                             {"description", "With descendant_any, require a matching ancestor at this or shallower relative depth; 0 includes only listed entities"}}},
                             {"descendant_all", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 32},
                                                  {"description", "Only entities whose ancestor chain contains every listed existing entity; depth bounds can include the entity itself at depth 0"}}},
+                            {"descendant_all_depth", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxHierarchyDepth},
+                                                        {"description", "With descendant_all, require every listed ancestor at this exact relative depth; 0 includes the entity itself"}}},
                             {"descendant_all_depth_min", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxHierarchyDepth},
                                                             {"description", "With descendant_all, require every listed ancestor at this or greater relative depth; 0 includes the entity itself"}}},
                             {"descendant_all_depth_max", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxHierarchyDepth},
@@ -563,10 +565,11 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                             *descendant_any_depth_min_filter > *descendant_any_depth_max_filter) {
                             throw ToolError("\"descendant_any_depth_min\" cannot be greater than \"descendant_any_depth_max\"");
                         }
+                        const std::optional<usize> descendant_all_depth_filter = ReadParentDepth("descendant_all_depth");
                         const std::optional<usize> descendant_all_depth_min_filter = ReadParentDepth("descendant_all_depth_min");
                         const std::optional<usize> descendant_all_depth_max_filter = ReadParentDepth("descendant_all_depth_max");
-                        if ((descendant_all_depth_min_filter.has_value() || descendant_all_depth_max_filter.has_value()) && descendant_all_filter.empty()) {
-                            throw ToolError("\"descendant_all_depth_min\" and \"descendant_all_depth_max\" require \"descendant_all\"");
+                        if ((descendant_all_depth_filter.has_value() || descendant_all_depth_min_filter.has_value() || descendant_all_depth_max_filter.has_value()) && descendant_all_filter.empty()) {
+                            throw ToolError("\"descendant_all_depth\", \"descendant_all_depth_min\" and \"descendant_all_depth_max\" require \"descendant_all\"");
                         }
                         if (descendant_all_depth_min_filter.has_value() && descendant_all_depth_max_filter.has_value() &&
                             *descendant_all_depth_min_filter > *descendant_all_depth_max_filter) {
@@ -756,9 +759,10 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                                 if (!descendant_all_filter.empty()) {
                                     const IdComponent* entity_id = s.world.GetComponent<IdComponent>(e);
                                     if (entity_id != nullptr && std::find(descendant_all_filter.begin(), descendant_all_filter.end(), entity_id->guid) != descendant_all_filter.end()) {
-                                        const bool has_relative_depth_filter = descendant_all_depth_min_filter.has_value() || descendant_all_depth_max_filter.has_value();
+                                        const bool has_relative_depth_filter = descendant_all_depth_filter.has_value() || descendant_all_depth_min_filter.has_value() || descendant_all_depth_max_filter.has_value();
+                                        const bool exact_matches = !descendant_all_depth_filter.has_value() || *descendant_all_depth_filter == 0;
                                         const bool minimum_matches = !descendant_all_depth_min_filter.has_value() || *descendant_all_depth_min_filter == 0;
-                                        if (has_relative_depth_filter && minimum_matches) matched_descendant_all.insert(entity_id->guid);
+                                        if (has_relative_depth_filter && exact_matches && minimum_matches) matched_descendant_all.insert(entity_id->guid);
                                     }
                                 }
                                 while (true) {
@@ -780,9 +784,10 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                                     }
                                     if (!descendant_all_filter.empty() && std::find(descendant_all_filter.begin(), descendant_all_filter.end(), current_parent->parent) != descendant_all_filter.end()) {
                                         const usize relative_depth = depth + 1;
+                                        const bool meets_exact = !descendant_all_depth_filter.has_value() || relative_depth == *descendant_all_depth_filter;
                                         const bool meets_min = !descendant_all_depth_min_filter.has_value() || relative_depth >= *descendant_all_depth_min_filter;
                                         const bool meets_max = !descendant_all_depth_max_filter.has_value() || relative_depth <= *descendant_all_depth_max_filter;
-                                        if (meets_min && meets_max) matched_descendant_all.insert(current_parent->parent);
+                                        if (meets_exact && meets_min && meets_max) matched_descendant_all.insert(current_parent->parent);
                                     }
                                     if (!descendant_none_filter.empty() && std::find(descendant_none_filter.begin(), descendant_none_filter.end(), current_parent->parent) != descendant_none_filter.end()) {
                                         const usize relative_depth = depth + 1;
