@@ -16,6 +16,10 @@ namespace {
 
 using namespace detail;
 
+struct PrefabLookupCache {
+    std::unique_ptr<PrefabLibrary> library;
+};
+
 const AssetRecord& RequirePrefab(OpenProject& p, const std::string& key) {
     const AssetRecord& r = FindAsset(p, key);
     if (r.importer != "Prefab") throw ToolError(r.path + " is not a prefab (it is a " + r.importer + ")");
@@ -75,6 +79,15 @@ PrefabLocalId OptLocalId(const Json& args) {
 } // namespace
 
 void RegisterPrefabTools(McpServer& server, std::shared_ptr<AssetHost> host, EditorSession& session) {
+    auto lookup_cache = std::make_shared<PrefabLookupCache>();
+    session.prefab_lookup = [host, lookup_cache](const assets::AssetGuid& guid) -> const PrefabData* {
+        OpenProject& project = host->Require();
+        // Rebuild the lightweight cache for each lookup so undo/redo resolves
+        // against the current on-disk prefab, including nested dependencies.
+        lookup_cache->library = std::make_unique<PrefabLibrary>(*project.database);
+        return lookup_cache->library->Flattened(guid);
+    };
+
     server.AddTool(
         {"prefab_info",
          "Look inside a prefab asset: its entities (local id, parent, component names), the prefabs it nests and the base it is a variant of, what it flattens to (entity count, or "
@@ -201,17 +214,33 @@ void RegisterPrefabTools(McpServer& server, std::shared_ptr<AssetHost> host, Edi
     server.AddTool(
         {"prefab_revert",
          "Remove an instance's overrides and re-resolve it so the entities return to the prefab's values. Narrow with `local_id` (a prefab entity; 0 or omitted = every entity), "
-         "`component` and `field_path` (a path inside the component, e.g. \"position[1]\"; omitted = the whole component). Not undoable. Returns how many were removed.",
+         "`component` and `field_path` (a path inside the component, e.g. \"position[1]\"; omitted = the whole component). Undoable through the editor history. Returns how many were removed.",
          Schema({{"entity", {{"type", "string"}}}, {"local_id", {{"type", "integer"}}}, {"component", {{"type", "string"}}}, {"field_path", {{"type", "string"}}}}, {"entity"}),
          [host, &session](const Json& args) -> Json {
              OpenProject& p = host->Require();
              const InstanceRef ref = RequireInstance(session, RequireEntity(session, args));
-             const usize removed = RevertOverrides(*ref.instance, OptLocalId(args), OptString(args, "component"), OptString(args, "field_path"));
-             PrefabLibrary lib(*p.database);
-             const PrefabData* flat = lib.Flattened(ref.instance->source.guid);
-             if (flat == nullptr) throw ToolError("Can't resolve the prefab: " + lib.LastError(ref.instance->source.guid));
-             const ResolveReport report = ResolvePrefabInstance(session.world, session.guids, ref.root, *flat);
-             return {{"removed", removed}, {"remaining", ref.instance->overrides.size()}, {"report", ResolveReportJson(report)}};
+             PrefabLibrary validation_library(*p.database);
+             const PrefabData* flat = validation_library.Flattened(ref.instance->source.guid);
+             if (flat == nullptr) throw ToolError("Can't resolve the prefab: " + validation_library.LastError(ref.instance->source.guid));
+             const PrefabLocalId local_id = OptLocalId(args);
+             const std::string component_name = OptString(args, "component");
+             const ComponentId component = component_name.empty() ? kInvalidComponentId : RequireComponent(component_name);
+             const std::string field_path = OptString(args, "field_path");
+             if (!field_path.empty() && component == kInvalidComponentId) {
+                 throw ToolError("A field_path requires a component");
+             }
+             const EntityGuid root_guid = session.world.GetComponent<IdComponent>(ref.root)->guid;
+             const usize before = ref.instance->overrides.size();
+             editor::CommandContext context = session.Context();
+             const EntityGuid entity_guid = RequireGuid(args, "entity");
+             auto command = std::make_unique<editor::RevertPrefabOverrideCommand>(entity_guid, local_id, component, field_path);
+             editor::RevertPrefabOverrideCommand* command_result = command.get();
+             session.stack.Execute(context, std::move(command));
+             const Entity root_after = session.guids.Find(session.world, root_guid);
+             const PrefabInstance* instance_after = root_after.IsNull() ? nullptr : session.world.GetComponent<PrefabInstance>(root_after);
+             const usize remaining = instance_after == nullptr ? 0 : instance_after->overrides.size();
+             const usize removed = before >= remaining ? before - remaining : 0;
+             return {{"removed", removed}, {"remaining", remaining}, {"report", ResolveReportJson(command_result->LastReport())}};
          }});
 
     server.AddTool(

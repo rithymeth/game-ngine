@@ -6,7 +6,8 @@
 // editor scene, list an instance's overrides, and revert them or apply them back to the prefab (re-resolving every instance of it).
 //
 // Prefabs are project assets, so these need a project open (project_open). They act on the editor scene's world directly: the entities they
-// create or change are not on the undo stack.
+// create or change are undoable where they affect the editor scene; prefab
+// asset writes remain project-level operations.
 
 #include "asset_tools.h"
 #include "editor_tools.h"
