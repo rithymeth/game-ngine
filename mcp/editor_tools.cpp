@@ -792,6 +792,96 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
          }});
 
     server.AddTool(
+        {"validate_scene_hierarchy",
+         "Audit the complete scene hierarchy without modifying it. Reports entities without GUIDs, duplicate GUIDs, missing or ambiguous parent targets, hierarchy cycles, and parent chains beyond the supported depth. Returns at most 128 detailed issues with total issue count and a truncation flag.",
+         Schema(Json::object()),
+         [&s](const Json&) -> Json {
+             std::map<EntityGuid, std::vector<Entity>> entities_by_guid;
+             Json issues = Json::array();
+             usize issue_count = 0;
+             bool truncated = false;
+             auto add_issue = [&](Json issue) {
+                 ++issue_count;
+                 if (issues.size() < 128) issues.push_back(std::move(issue));
+                 else truncated = true;
+             };
+             const std::vector<Entity> all_entities = AllEntities(s);
+             for (const Entity entity : all_entities) {
+                 const IdComponent* id = s.world.GetComponent<IdComponent>(entity);
+                 if (id == nullptr || id->guid.IsNull()) {
+                     add_issue({{"kind", "missing_guid"}, {"entity_index", entity.index}});
+                     continue;
+                 }
+                 entities_by_guid[id->guid].push_back(entity);
+             }
+
+             for (const auto& [guid, entities] : entities_by_guid) {
+                 if (entities.size() > 1) {
+                     Json indices = Json::array();
+                     for (const Entity entity : entities) indices.push_back(entity.index);
+                     add_issue({{"kind", "duplicate_guid"}, {"entity", ToString(guid)},
+                                {"entity_indices", std::move(indices)}});
+                 }
+             }
+
+             for (const Entity entity : all_entities) {
+                 const Parent* parent = s.world.GetComponent<Parent>(entity);
+                 if (parent == nullptr || parent->parent.IsNull()) continue;
+                 const IdComponent* id = s.world.GetComponent<IdComponent>(entity);
+                 Json child = id != nullptr && !id->guid.IsNull() ? Json(ToString(id->guid)) : Json(entity.index);
+                 const auto target = entities_by_guid.find(parent->parent);
+                 if (target == entities_by_guid.end()) {
+                     add_issue({{"kind", "missing_parent"}, {"entity", std::move(child)},
+                                {"parent", ToString(parent->parent)}});
+                 } else if (target->second.size() > 1) {
+                     add_issue({{"kind", "ambiguous_parent"}, {"entity", std::move(child)},
+                                {"parent", ToString(parent->parent)}});
+                 }
+             }
+
+             std::set<std::vector<EntityGuid>> reported_cycles;
+             std::set<EntityGuid> excessive_depth_roots;
+             for (const auto& [start_guid, start_entities] : entities_by_guid) {
+                 if (start_entities.size() != 1) continue;
+                 std::vector<EntityGuid> path;
+                 std::map<EntityGuid, usize> path_positions;
+                 EntityGuid current_guid = start_guid;
+                 for (int depth = 0; depth <= kMaxHierarchyDepth; ++depth) {
+                     const auto cycle_start = path_positions.find(current_guid);
+                     if (cycle_start != path_positions.end()) {
+                         std::vector<EntityGuid> cycle(path.begin() + cycle_start->second, path.end());
+                         std::sort(cycle.begin(), cycle.end());
+                         if (reported_cycles.insert(cycle).second) {
+                             Json cycle_entities = Json::array();
+                             for (const EntityGuid guid : cycle) cycle_entities.push_back(ToString(guid));
+                             add_issue({{"kind", "cycle"}, {"entities", std::move(cycle_entities)}});
+                         }
+                         break;
+                     }
+                     path_positions.emplace(current_guid, path.size());
+                     path.push_back(current_guid);
+                     const auto current = entities_by_guid.find(current_guid);
+                     if (current == entities_by_guid.end() || current->second.size() != 1) break;
+                     const Parent* relation = s.world.GetComponent<Parent>(current->second.front());
+                     if (relation == nullptr || relation->parent.IsNull()) break;
+                     if (depth >= kMaxHierarchyDepth) {
+                         if (excessive_depth_roots.insert(start_guid).second) {
+                             add_issue({{"kind", "excessive_depth"}, {"entity", ToString(start_guid)},
+                                        {"max_depth", kMaxHierarchyDepth}});
+                         }
+                         break;
+                     }
+                     const auto parent = entities_by_guid.find(relation->parent);
+                     if (parent == entities_by_guid.end() || parent->second.size() != 1) break;
+                     current_guid = relation->parent;
+                 }
+             }
+
+             return {{"valid", issue_count == 0}, {"entity_count", all_entities.size()},
+                     {"issue_count", issue_count}, {"issues", std::move(issues)}, {"truncated", truncated}};
+         }});
+
+    server.AddTool(
         {"get_entities_world_transforms_many",
          "Get derived world transforms for 1–64 unique scene entities in request order. Returns each world matrix as four column vectors plus world position and world-scale magnitudes (the lengths of the three basis columns). Parent transforms are composed through the hierarchy. Rejects missing Transform components, non-finite results, hierarchy cycles and excessive depth.",
          Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
