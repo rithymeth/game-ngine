@@ -2551,8 +2551,8 @@ void RegisterGameTools(McpServer& server) {
 #if AETHER_MCP_PHYSICS
     server.AddTool(
         {"game_physics_query",
-         "Query the loaded game's 3D physics scene with a raycast, sphere cast, upright capsule cast, sphere overlap, or axis-aligned box overlap. Capsule height includes both caps; if height is below its diameter, the cast uses a sphere. Supports a 32-bit collision layer mask, an ignored entity and optional trigger inclusion.",
-         Schema({{"kind", {{"type", "string"}, {"enum", Json::array({"raycast", "spherecast", "capsulecast", "overlap_sphere", "overlap_box"})}}},
+         "Query the loaded game's 3D physics scene with a raycast, sphere cast, upright capsule cast, sphere overlap, axis-aligned box overlap, or upright capsule overlap. Capsule height includes both caps; if height is below its diameter, the shape uses a sphere. Supports a 32-bit collision layer mask, an ignored entity and optional trigger inclusion.",
+         Schema({{"kind", {{"type", "string"}, {"enum", Json::array({"raycast", "spherecast", "capsulecast", "overlap_sphere", "overlap_box", "overlap_capsule"})}}},
                  {"from", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
                  {"to", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
                  {"center", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
@@ -2646,15 +2646,29 @@ void RegisterGameTools(McpServer& server) {
                  }
                  return {{"kind", kind}, {"count", entities.size()}, {"entities", std::move(entities)}};
              }
-             throw ToolError("\"kind\" must be raycast, spherecast, capsulecast, overlap_sphere or overlap_box");
+             if (kind == "overlap_capsule") {
+                 const Vec3 center = read_vec3("center");
+                 if (!args.contains("radius") || !args["radius"].is_number()) throw ToolError("\"radius\" must be a finite positive number for overlap_capsule");
+                 const f32 radius = args["radius"].get<f32>();
+                 if (!std::isfinite(radius) || radius <= 0.0f) throw ToolError("\"radius\" must be a finite positive number for overlap_capsule");
+                 if (!args.contains("height") || !args["height"].is_number()) throw ToolError("\"height\" must be a finite positive number for overlap_capsule");
+                 const f32 height = args["height"].get<f32>();
+                 if (!std::isfinite(height) || height <= 0.0f) throw ToolError("\"height\" must be a finite positive number for overlap_capsule");
+                 Json entities = Json::array();
+                 for (Entity entity : scene->OverlapCapsule(center, radius, height, layers, ignore, include_triggers)) {
+                     entities.push_back(entity.IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), entity)));
+                 }
+                 return {{"kind", kind}, {"count", entities.size()}, {"entities", std::move(entities)}};
+             }
+             throw ToolError("\"kind\" must be raycast, spherecast, capsulecast, overlap_sphere, overlap_box or overlap_capsule");
          }});
 
     server.AddTool(
         {"game_physics_queries_many",
-         "Run 1 to 64 3D raycast, spherecast, upright capsulecast, sphere-overlap, or axis-aligned box-overlap queries in one request. Capsule height includes both caps; if height is below its diameter, the cast uses a sphere. Each query can set its own layer mask, ignored entity, and trigger policy. Validates every query before running any of them.",
+         "Run 1 to 64 3D raycast, spherecast, upright capsulecast, sphere-overlap, axis-aligned box-overlap, or upright capsule-overlap queries in one request. Capsule height includes both caps; if height is below its diameter, the shape uses a sphere. Each query can set its own layer mask, ignored entity, and trigger policy. Validates every query before running any of them.",
          Schema({{"queries", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
                                {"items", {{"type", "object"},
-                                          {"properties", {{"kind", {{"type", "string"}, {"enum", Json::array({"raycast", "spherecast", "capsulecast", "overlap_sphere", "overlap_box"})}},
+                                          {"properties", {{"kind", {{"type", "string"}, {"enum", Json::array({"raycast", "spherecast", "capsulecast", "overlap_sphere", "overlap_box", "overlap_capsule"})}},
                                                           {"from", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
                                                           {"to", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
                                                           {"center", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
@@ -2702,8 +2716,8 @@ void RegisterGameTools(McpServer& server) {
                  PhysicsQuery query;
                  query.kind = raw["kind"].get<std::string>();
                  if (query.kind != "raycast" && query.kind != "spherecast" && query.kind != "capsulecast" &&
-                     query.kind != "overlap_sphere" && query.kind != "overlap_box") {
-                     throw ToolError("Query kind must be raycast, spherecast, capsulecast, overlap_sphere or overlap_box");
+                     query.kind != "overlap_sphere" && query.kind != "overlap_box" && query.kind != "overlap_capsule") {
+                     throw ToolError("Query kind must be raycast, spherecast, capsulecast, overlap_sphere, overlap_box or overlap_capsule");
                  }
                  if (query.kind == "raycast" || query.kind == "spherecast" || query.kind == "capsulecast") {
                      query.from = read_vec3(raw, "from");
@@ -2717,15 +2731,15 @@ void RegisterGameTools(McpServer& server) {
                          throw ToolError("Box overlap half_extents components must be positive");
                      }
                  }
-                 if (query.kind == "spherecast" || query.kind == "capsulecast" || query.kind == "overlap_sphere") {
-                     if (!raw.contains("radius") || !raw["radius"].is_number()) throw ToolError("Sphere queries require a finite positive \"radius\"");
+                 if (query.kind == "spherecast" || query.kind == "capsulecast" || query.kind == "overlap_sphere" || query.kind == "overlap_capsule") {
+                     if (!raw.contains("radius") || !raw["radius"].is_number()) throw ToolError("Sphere and capsule queries require a finite positive \"radius\"");
                      query.radius = raw["radius"].get<f32>();
-                     if (!std::isfinite(query.radius) || query.radius <= 0.0f) throw ToolError("Sphere queries require a finite positive \"radius\"");
+                     if (!std::isfinite(query.radius) || query.radius <= 0.0f) throw ToolError("Sphere and capsule queries require a finite positive \"radius\"");
                  }
-                 if (query.kind == "capsulecast") {
-                     if (!raw.contains("height") || !raw["height"].is_number()) throw ToolError("Capsule casts require a finite positive \"height\"");
+                 if (query.kind == "capsulecast" || query.kind == "overlap_capsule") {
+                     if (!raw.contains("height") || !raw["height"].is_number()) throw ToolError("Capsule queries require a finite positive \"height\"");
                      query.height = raw["height"].get<f32>();
-                     if (!std::isfinite(query.height) || query.height <= 0.0f) throw ToolError("Capsule casts require a finite positive \"height\"");
+                     if (!std::isfinite(query.height) || query.height <= 0.0f) throw ToolError("Capsule queries require a finite positive \"height\"");
                  }
                  if (raw.contains("layer_mask")) {
                      if (!raw["layer_mask"].is_number_integer()) throw ToolError("\"layer_mask\" must be an integer from 0 through 4294967295");
@@ -2770,9 +2784,15 @@ void RegisterGameTools(McpServer& server) {
                          entities.push_back(entity.IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), entity)));
                      }
                      results.push_back({{"index", i}, {"kind", query.kind}, {"count", entities.size()}, {"entities", std::move(entities)}});
-                 } else {
+                 } else if (query.kind == "overlap_box") {
                      Json entities = Json::array();
                      for (Entity entity : scene->OverlapBox(query.center, query.half_extents, query.layers, query.ignore, query.include_triggers)) {
+                         entities.push_back(entity.IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), entity)));
+                     }
+                     results.push_back({{"index", i}, {"kind", query.kind}, {"count", entities.size()}, {"entities", std::move(entities)}});
+                 } else {
+                     Json entities = Json::array();
+                     for (Entity entity : scene->OverlapCapsule(query.center, query.radius, query.height, query.layers, query.ignore, query.include_triggers)) {
                          entities.push_back(entity.IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), entity)));
                      }
                      results.push_back({{"index", i}, {"kind", query.kind}, {"count", entities.size()}, {"entities", std::move(entities)}});
