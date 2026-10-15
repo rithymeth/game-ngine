@@ -26,7 +26,7 @@ and errors go to stderr.
 | --- | --- |
 | `editor_state` | Entity count, undo/redo labels and attribution, unsaved changes, play state |
 | `list_component_types` | Component names and their fields |
-| `list_entities` | GUIDs and component names; optional component filter |
+| `list_entities` | GUIDs, component names and parent GUIDs; optional exact name/tag and component filters (combined with AND) |
 | `get_entity` | Every component of one entity, as JSON |
 | `create_entity` | New entity with optional components and parent (all-or-nothing) |
 | `destroy_entity` | Delete an entity |
