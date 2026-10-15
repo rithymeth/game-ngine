@@ -3544,6 +3544,71 @@ void RegisterGameTools(McpServer& server) {
 
 #if AETHER_MCP_PHYSICS
     server.AddTool(
+        {"game_apply_physics3d_force_shared_many",
+         "Apply one force, impulse, torque or angular impulse to up to 64 unique live dynamic 3D bodies. Validates the entire target selection before applying.",
+         Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}},
+                 {"mode", {{"type", "string"}, {"enum", Json::array({"force", "impulse", "torque", "angular_impulse"})}}},
+                 {"value", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}}},
+                {"entities", "mode", "value"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             PhysicsScene* scene = game.PhysicsQueries();
+             if (scene == nullptr) throw ToolError("The loaded game has no 3D physics scene");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be an array of 1 to 64 entity handles");
+             }
+             static const std::unordered_set<std::string> supported = {"entities", "mode", "value"};
+             for (auto it = args.begin(); it != args.end(); ++it) {
+                 if (!supported.contains(it.key())) throw ToolError("Unsupported shared 3D force field: " + it.key());
+             }
+             const std::string mode = RequireString(args, "mode");
+             if (mode != "force" && mode != "impulse" && mode != "torque" && mode != "angular_impulse") {
+                 throw ToolError("\"mode\" must be force, impulse, torque or angular_impulse");
+             }
+             const Json& raw_value = args["value"];
+             if (!raw_value.is_array() || raw_value.size() != 3 || !raw_value[0].is_number() || !raw_value[1].is_number() || !raw_value[2].is_number()) {
+                 throw ToolError("\"value\" must be [x, y, z]");
+             }
+             const Vec3 value(raw_value[0].get<f32>(), raw_value[1].get<f32>(), raw_value[2].get<f32>());
+             if (!std::isfinite(value.x) || !std::isfinite(value.y) || !std::isfinite(value.z)) {
+                 throw ToolError("Force or impulse components must be finite");
+             }
+             struct ForceTarget { Entity entity; JPH::BodyID body; };
+             std::vector<ForceTarget> targets;
+             targets.reserve(args["entities"].size());
+             World& world = game.GetWorld();
+             JPH::BodyInterface& interface = scene->Physics().BodyInterface();
+             for (const Json& handle : args["entities"]) {
+                 if (!handle.is_string() || handle.get<std::string>().empty()) throw ToolError("Every \"entities\" entry must be a non-empty entity handle");
+                 const Entity entity = FindEntity(game, handle.get<std::string>());
+                 if (std::find_if(targets.begin(), targets.end(), [entity](const ForceTarget& target) { return target.entity == entity; }) != targets.end()) {
+                     throw ToolError("\"entities\" must not repeat an entity");
+                 }
+                 const JPH::BodyID body = scene->BodyOf(entity);
+                 if (body.IsInvalid()) throw ToolError("Every entity must have a live 3D physics body");
+                 if (interface.GetMotionType(body) != JPH::EMotionType::Dynamic) throw ToolError("Force and impulse operations require dynamic bodies");
+                 targets.push_back({entity, body});
+             }
+             const JPH::Vec3 vector(value.x, value.y, value.z);
+             Json results = Json::array();
+             for (const ForceTarget& target : targets) {
+                 if (mode == "force") interface.AddForce(target.body, vector);
+                 else if (mode == "impulse") interface.AddImpulse(target.body, vector);
+                 else if (mode == "torque") interface.AddTorque(target.body, vector);
+                 else interface.AddAngularImpulse(target.body, vector);
+                 const JPH::Vec3 linear = interface.GetLinearVelocity(target.body);
+                 const JPH::Vec3 angular = interface.GetAngularVelocity(target.body);
+                 Json result = {{"entity", EntityKey(world, target.entity)}, {"mode", mode}};
+                 if (mode == "force" || mode == "impulse") result["linear_velocity"] = Json::array({linear.GetX(), linear.GetY(), linear.GetZ()});
+                 else result["angular_velocity"] = Json::array({angular.GetX(), angular.GetY(), angular.GetZ()});
+                 results.push_back(std::move(result));
+             }
+             return {{"count", results.size()}, {"entities", std::move(results)}};
+         }});
+#endif
+
+#if AETHER_MCP_PHYSICS
+    server.AddTool(
         {"game_set_physics3d_poses_many",
          "Teleport the position and/or rotation of up to 64 unique live 3D physics entities. Updates the Transform and live body together; rotations are normalized.",
          Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
