@@ -3439,6 +3439,69 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_set_transforms_shared_many",
+         "Set the same subset of local position, rotation and scale on up to 64 unique live entities. Preserves unspecified fields, normalizes rotation and validates every entity before applying the batch.",
+         Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}},
+                 {"position", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
+                 {"rotation", {{"type", "array"}, {"minItems", 4}, {"maxItems", 4}, {"items", {{"type", "number"}}}}},
+                 {"scale", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}}},
+                {"entities"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be an array of 1 to 64 entity handles");
+             }
+             if (!args.contains("position") && !args.contains("rotation") && !args.contains("scale")) {
+                 throw ToolError("Specify at least one of \"position\", \"rotation\" or \"scale\"");
+             }
+             std::optional<Vec3> position;
+             std::optional<Quaternion> rotation;
+             std::optional<Vec3> scale;
+             auto read_vec3 = [](const Json& value, const char* field) {
+                 if (!value.is_array() || value.size() != 3 || !value[0].is_number() || !value[1].is_number() || !value[2].is_number()) {
+                     throw ToolError(std::string("\"") + field + "\" must be [x, y, z]");
+                 }
+                 const Vec3 result(value[0].get<f32>(), value[1].get<f32>(), value[2].get<f32>());
+                 if (!std::isfinite(result.x) || !std::isfinite(result.y) || !std::isfinite(result.z)) throw ToolError(std::string("\"") + field + "\" values must be finite");
+                 return result;
+             };
+             if (args.contains("position")) position = read_vec3(args["position"], "position");
+             if (args.contains("scale")) scale = read_vec3(args["scale"], "scale");
+             if (args.contains("rotation")) {
+                 const Json& value = args["rotation"];
+                 if (!value.is_array() || value.size() != 4 || !value[0].is_number() || !value[1].is_number() || !value[2].is_number() || !value[3].is_number()) {
+                     throw ToolError("\"rotation\" must be [x, y, z, w]");
+                 }
+                 Quaternion parsed(value[0].get<f32>(), value[1].get<f32>(), value[2].get<f32>(), value[3].get<f32>());
+                 if (!std::isfinite(parsed.x) || !std::isfinite(parsed.y) || !std::isfinite(parsed.z) || !std::isfinite(parsed.w) ||
+                     !std::isfinite(parsed.LengthSq()) || parsed.LengthSq() <= 1.0e-12f) throw ToolError("\"rotation\" must be a finite non-zero quaternion");
+                 rotation = parsed.Normalized();
+             }
+             std::vector<Entity> entities;
+             entities.reserve(args["entities"].size());
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string() || value.get<std::string>().empty()) throw ToolError("Every \"entities\" entry must be a non-empty string");
+                 const Entity entity = FindEntity(game, value.get<std::string>());
+                 if (std::find(entities.begin(), entities.end(), entity) != entities.end()) throw ToolError("\"entities\" must not repeat an entity");
+                 if (world.GetComponent<Transform>(entity) == nullptr) throw ToolError("Entity " + EntityKey(world, entity) + " has no Transform");
+                 entities.push_back(entity);
+             }
+             Json results = Json::array();
+             for (const Entity entity : entities) {
+                 Transform* transform = world.GetComponent<Transform>(entity);
+                 if (position) transform->position = *position;
+                 if (rotation) transform->rotation = *rotation;
+                 if (scale) transform->scale = *scale;
+                 results.push_back({{"entity", EntityKey(world, entity)},
+                                    {"position", Json::array({transform->position.x, transform->position.y, transform->position.z})},
+                                    {"rotation", Json::array({transform->rotation.x, transform->rotation.y, transform->rotation.z, transform->rotation.w})},
+                                    {"scale", Json::array({transform->scale.x, transform->scale.y, transform->scale.z})}});
+             }
+             return {{"updated_count", results.size()}, {"results", results}};
+         }});
+
+    server.AddTool(
         {"game_offset_entities_local_many",
          "Add individual local-position offsets to up to 64 unique live entities. Preserves rotation and scale; validates every offset and resulting position before applying the batch.",
          Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
