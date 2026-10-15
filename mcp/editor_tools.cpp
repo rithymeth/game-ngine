@@ -333,7 +333,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                     }});
 
     server.AddTool({"list_entities",
-                    "List a page of scene entities (GUID, name when present, entity index, component names, parent GUID, effective collision layer index, local active state, and active/layer/parent override presence). Optionally filter by component, component groups that must all/any match or must not match, exact entity name, case-insensitive ASCII name substring, one parent, any of several parents, exclusion of several parents, root status or hierarchy depth, layer index, local active value, active/layer/parent override presence, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND. Results are ordered by entity index and include total match count, has_more, and a continuation cursor. The cursor is not a scene snapshot; entities created in a reused index at or before it are skipped.",
+                    "List a page of scene entities (GUID, name when present, entity index, hierarchy depth, component names, parent GUID, effective collision layer index, local active state, and active/layer/parent override presence). Optionally filter by component, component groups that must all/any match or must not match, exact entity name, case-insensitive ASCII name substring, one parent, any of several parents, exclusion of several parents, root status or hierarchy depth, layer index, local active value, active/layer/parent override presence, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND. Results are ordered by entity index and include total match count, has_more, and a continuation cursor. The cursor is not a scene snapshot; entities created in a reused index at or before it are skipped.",
                     Schema({{"component", {{"type", "string"}, {"description", "Only entities having this component"}}},
                             {"components_all", {{"type", "array"}, {"items", {{"type", "string"}}}, {"maxItems", 32},
                                                  {"description", "Only entities that have every listed component"}}},
@@ -664,6 +664,21 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                             if (has_excluded_tag) continue;
                             const usize match_index = total_matches++;
                             if (match_index < offset || out.size() >= limit) continue;
+                            if (!entity_depth.has_value()) {
+                                usize depth = 0;
+                                Entity current = e;
+                                std::set<u32> visited;
+                                while (true) {
+                                    if (!visited.insert(current.index).second) throw ToolError("Cannot report parent depth: hierarchy contains a cycle");
+                                    const Parent* current_parent = s.world.GetComponent<Parent>(current);
+                                    if (current_parent == nullptr || current_parent->parent.IsNull()) break;
+                                    if (depth >= kMaxHierarchyDepth) throw ToolError("Cannot report parent depth: hierarchy exceeds the maximum depth");
+                                    current = s.guids.Find(s.world, current_parent->parent);
+                                    if (current.IsNull()) throw ToolError("Cannot report parent depth: hierarchy references a missing parent");
+                                    ++depth;
+                                }
+                                entity_depth = depth;
+                            }
                             const IdComponent* id = s.world.GetComponent<IdComponent>(e);
                             const EntityName* name = s.world.GetComponent<EntityName>(e);
                             Json row = {{"entity", id ? ToString(id->guid) : ""},
@@ -674,7 +689,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                                         {"has_active_override", active != nullptr},
                                         {"has_layer_override", layer_override != nullptr},
                                         {"has_parent_override", parent != nullptr}};
-                            if (entity_depth.has_value()) row["parent_depth"] = *entity_depth;
+                            row["parent_depth"] = *entity_depth;
                             if (parent != nullptr && !parent->parent.IsNull()) row["parent"] = ToString(parent->parent);
                             out.push_back(std::move(row));
                         }
