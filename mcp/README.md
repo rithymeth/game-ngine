@@ -48,7 +48,7 @@ These use the engine's own asset database, importers and cooker, in process, on 
 
 | Tool | What it does |
 | --- | --- |
-| `project_open` / `project_info` / `project_set` | Open an `.aproject` (scans `Content/`, giving new files GUIDs); read or change startup scene, `always_cook`, plugins |
+| `project_open` / `project_info` / `project_set` | Open an `.aproject` (scans `Content/`, giving new files GUIDs); read or change startup scene, `always_cook`, plugins; setting changes are agent-attributed and undoable |
 | `project_templates` | The project templates `project_create` can start from, with what each contains. |
 | `project_create` | Makes a new project in `<parent_dir>/<name>/` (optionally from a template: a startup scene, controller script, input bindings and a Blueprint) and opens it. |
 | `asset_list` / `asset_info` / `asset_references` | Browse and search content by folder/name/type; one asset's settings, dependencies and referencers; the reference graph |

@@ -272,6 +272,45 @@ private:
     std::string name_;
 };
 
+class ProjectSettingsCommand final : public editor::ICommand {
+public:
+    ProjectSettingsCommand(std::shared_ptr<AssetHost> host, fs::path project_file, ProjectSettings before, ProjectSettings after)
+        : host_(std::move(host)), project_file_(std::move(project_file)), before_(std::move(before)), after_(std::move(after)) {}
+
+    void Do(editor::CommandContext&) override { Apply(after_); }
+    void Undo(editor::CommandContext&) override { Apply(before_); }
+    std::string Label() const override { return "Change Project Settings"; }
+    usize MemoryBytes() const override { return sizeof(*this) + SettingsBytes(before_) + SettingsBytes(after_); }
+
+private:
+    static usize ListBytes(const std::vector<std::string>& values) {
+        usize bytes = 0;
+        for (const std::string& value : values) bytes += value.size();
+        return bytes;
+    }
+    static usize SettingsBytes(const ProjectSettings& settings) {
+        usize bytes = settings.name.size() + settings.engine_version.size() + settings.startup_scene.size() + settings.window_title.size() +
+                      settings.default_quality.size() + ListBytes(settings.always_cook) + ListBytes(settings.plugins) + ListBytes(settings.layers);
+        bytes += settings.collision_matrix.size() * sizeof(u32);
+        for (const QualityPreset& preset : settings.quality_presets) bytes += preset.name.size();
+        return bytes;
+    }
+    void Apply(const ProjectSettings& settings) {
+        if (!host_->project || host_->project->paths.file.lexically_normal() != project_file_.lexically_normal()) {
+            throw ToolError("Open the project that owns these settings before undoing or redoing this action");
+        }
+        std::string error;
+        if (!SaveProject(project_file_, settings, &error)) throw ToolError(error);
+        host_->project->settings = settings;
+        host_->project->settings.engine_version = kEngineVersion;
+    }
+
+    std::shared_ptr<AssetHost> host_;
+    fs::path project_file_;
+    ProjectSettings before_;
+    ProjectSettings after_;
+};
+
 Json ProjectJson(OpenProject& p) {
     usize sources = 0;
     for (const AssetRecord* r : p.database->All()) {
@@ -386,19 +425,22 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
 
     server.AddTool(
         {"project_set",
-         "Change project settings and save the .aproject: startup_scene, always_cook (asset paths or folders ending in '/'), plugins.",
+         "Change project settings and save the .aproject as one agent-attributed undoable action: startup_scene, always_cook (asset paths or folders ending in '/'), plugins.",
          Schema({{"startup_scene", {{"type", "string"}}},
                  {"always_cook", {{"type", "array"}, {"items", {{"type", "string"}}}}},
                  {"plugins", {{"type", "array"}, {"items", {{"type", "string"}}}}}}),
-         [host](const Json& args) -> Json {
+         [host, &session](const Json& args) -> Json {
              OpenProject& p = host->Require();
+             if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing project settings");
+             const ProjectSettings before = p.settings;
              ProjectSettings next = p.settings;
              if (args.contains("startup_scene")) next.startup_scene = OptString(args, "startup_scene");
              if (args.contains("always_cook")) next.always_cook = OptStrings(args, "always_cook");
              if (args.contains("plugins")) next.plugins = OptStrings(args, "plugins");
-             std::string error;
-             if (!SaveProject(p.paths.file, next, &error)) throw ToolError(error);
-             p.settings = std::move(next);
+             auto command = std::make_unique<ProjectSettingsCommand>(host, p.paths.file, before, std::move(next));
+             command->SetAttribution("agent");
+             editor::CommandContext context = session.Context();
+             session.stack.Execute(context, std::move(command));
              return ProjectJson(p);
          }});
 
