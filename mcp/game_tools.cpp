@@ -3771,6 +3771,116 @@ void RegisterGameTools(McpServer& server) {
              return {{"entity", EntityKey(world, entity)}, {"quest", quest_name}, {"action", action},
                      {"result", quest::ResultName(result)}, {"state", status_name(system->State(entity, quest_name))}};
          }});
+
+    server.AddTool(
+        {"game_quests_many",
+         "Apply 1 to 64 ordered quest operations across entities: start, abandon, fail, progress an objective, or notify matching objectives. Validates every entity and argument before applying; returns each operation's result. Quest callbacks and rewards are processed on the next game step.",
+         Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", {{"type", "string"}}},
+                                                        {"action", {{"type", "string"}, {"enum", Json::array({"start", "abandon", "fail", "progress", "notify"})}},
+                                                        {"quest", {{"type", "string"}}}, {"objective", {{"type", "string"}}},
+                                                        {"kind", {{"type", "string"}, {"enum", Json::array({"count", "tag", "flag"})}},
+                                                        {"target", {{"type", "string"}}}, {"amount", {{"type", "integer"}}}},
+                                        {"required", Json::array({"entity", "action"})}}}}}},
+                {"edits"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             quest::QuestSystem* system = quest::QuestSystem::Active();
+             if (system == nullptr) throw ToolError("This game has no quest system (load a scene with the Quests kit)");
+             if (!args.contains("edits") || !args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be an array of 1 to 64 quest operations");
+             }
+             struct QuestEdit {
+                 Entity entity;
+                 std::string entity_key;
+                 std::string action;
+                 std::string quest_name;
+                 std::string objective;
+                 std::string kind;
+                 std::string target;
+                 i32 amount = 1;
+             };
+             const World& world = game.GetWorld();
+             auto string_field = [](const Json& edit, const char* key, bool required) -> std::string {
+                 if (!edit.contains(key)) {
+                     if (required) throw ToolError(std::string("Missing string argument \"") + key + "\"");
+                     return {};
+                 }
+                 if (!edit[key].is_string()) throw ToolError(std::string("\"") + key + "\" must be a string");
+                 return edit[key].get<std::string>();
+             };
+             auto amount_field = [](const Json& edit) -> i32 {
+                 if (!edit.contains("amount")) return 1;
+                 if (!edit["amount"].is_number_integer()) throw ToolError("\"amount\" must be an integer");
+                 if (edit["amount"].is_number_unsigned()) {
+                     const u64 amount = edit["amount"].get<u64>();
+                     if (amount > static_cast<u64>(std::numeric_limits<i32>::max())) throw ToolError("\"amount\" is out of range");
+                     return static_cast<i32>(amount);
+                 }
+                 const i64 amount = edit["amount"].get<i64>();
+                 if (amount < std::numeric_limits<i32>::min() || amount > std::numeric_limits<i32>::max()) throw ToolError("\"amount\" is out of range");
+                 return static_cast<i32>(amount);
+             };
+             std::vector<QuestEdit> parsed;
+             parsed.reserve(args["edits"].size());
+             for (const Json& raw : args["edits"]) {
+                 if (!raw.is_object()) throw ToolError("Every quest edit must be an object");
+                 QuestEdit edit;
+                 edit.entity_key = string_field(raw, "entity", true);
+                 edit.entity = FindEntity(game, edit.entity_key);
+                 edit.entity_key = EntityKey(world, edit.entity);
+                 edit.action = string_field(raw, "action", true);
+                 if (edit.action != "start" && edit.action != "abandon" && edit.action != "fail" && edit.action != "progress" && edit.action != "notify") {
+                     throw ToolError("Quest action must be start, abandon, fail, progress or notify");
+                 }
+                 if (edit.action == "notify") {
+                     edit.kind = string_field(raw, "kind", true);
+                     if (edit.kind != "count" && edit.kind != "tag" && edit.kind != "flag") throw ToolError("\"kind\" must be count, tag or flag");
+                     edit.target = string_field(raw, "target", true);
+                     edit.amount = amount_field(raw);
+                 } else {
+                     edit.quest_name = string_field(raw, "quest", true);
+                     if (edit.action == "progress") {
+                         edit.objective = string_field(raw, "objective", true);
+                         edit.amount = amount_field(raw);
+                     }
+                 }
+                 parsed.push_back(std::move(edit));
+             }
+
+             auto status_name = [](i32 state) {
+                 switch (state) {
+                 case quest::kActive: return "active";
+                 case quest::kCompleted: return "completed";
+                 case quest::kFailed: return "failed";
+                 default: return "inactive";
+                 }
+             };
+             Json results = Json::array();
+             for (const QuestEdit& edit : parsed) {
+                 if (edit.action == "notify") {
+                     const quest::Objective::Kind kind = edit.kind == "count" ? quest::Objective::Kind::Count :
+                                                         edit.kind == "tag" ? quest::Objective::Kind::Tag : quest::Objective::Kind::Flag;
+                     results.push_back({{"entity", edit.entity_key}, {"action", edit.action}, {"kind", edit.kind},
+                                        {"target", edit.target}, {"advanced", system->Notify(edit.entity, kind, edit.target, edit.amount)}});
+                 } else if (edit.action == "progress") {
+                     const quest::Result result = system->Progress(edit.entity, edit.quest_name, edit.objective, edit.amount);
+                     results.push_back({{"entity", edit.entity_key}, {"action", edit.action}, {"quest", edit.quest_name},
+                                        {"objective", edit.objective}, {"result", quest::ResultName(result)},
+                                        {"progress", system->GetProgress(edit.entity, edit.quest_name, edit.objective)},
+                                        {"state", status_name(system->State(edit.entity, edit.quest_name))}});
+                 } else {
+                     quest::Result result = quest::Result::Ok;
+                     if (edit.action == "start") result = system->Start(edit.entity, edit.quest_name);
+                     else if (edit.action == "abandon") result = system->Abandon(edit.entity, edit.quest_name);
+                     else result = system->Fail(edit.entity, edit.quest_name);
+                     results.push_back({{"entity", edit.entity_key}, {"action", edit.action}, {"quest", edit.quest_name},
+                                        {"result", quest::ResultName(result)}, {"state", status_name(system->State(edit.entity, edit.quest_name))}});
+                 }
+             }
+             return {{"count", results.size()}, {"results", std::move(results)}};
+         }});
 #endif
 
 #if AETHER_MCP_INTERACTION
