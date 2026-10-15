@@ -6312,6 +6312,90 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
          }});
 
     server.AddTool(
+        {"toggle_entities_active_many",
+         "Toggle the local active state of 1–64 unique scene entities as one undoable action. Missing Active components mean active, so those entities become inactive and receive Active{false}. Validate the complete selection before applying changes.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique entity GUIDs"}}}}, {"entities"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity activity");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             struct ActiveEdit {
+                 EntityGuid guid;
+                 bool active = false;
+                 bool add_component = false;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+             };
+             std::vector<ActiveEdit> edits;
+             edits.reserve(args["entities"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId active_component = GetComponentId<Active>();
+             const ComponentInfo& info = GetComponentInfo(active_component);
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 EntityGuid guid;
+                 const std::string guid_text = value.get<std::string>();
+                 if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid entity GUID: " + guid_text);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 ActiveEdit edit;
+                 edit.guid = guid;
+                 const Active* current = s.world.GetComponent<Active>(entity);
+                 edit.active = current == nullptr || !current->active;
+                 if (current != nullptr) {
+                     Json warnings = Json::array();
+                     edit.after = PatchedBytes(s, entity, active_component, Json{{"active", edit.active}}, edit.before, warnings);
+                     if (!warnings.empty()) throw ToolError("Invalid Active value for entity " + ToString(guid));
+                 } else {
+                     reflect::Any sample = reflect::Any::DefaultOf(*info.reflected);
+                     if (!sample.HasValue()) throw ToolError("Cannot default-construct Active");
+                     reflect::LoadReport report;
+                     if (!reflect::FromJson(*info.reflected, sample.Data(), Json{{"active", false}}, &report)) {
+                         throw ToolError("Invalid active state");
+                     }
+                     info.serialize(sample.Data(), edit.after);
+                     reflect::Any defaults = reflect::Any::DefaultOf(*info.reflected);
+                     if (!defaults.HasValue()) throw ToolError("Cannot default-construct Active");
+                     info.serialize(defaults.Data(), edit.before);
+                     edit.add_component = true;
+                 }
+                 edits.push_back(std::move(edit));
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Toggle Entity Activity " + std::to_string(++next_batch_id);
+             const usize undo_count_before = s.stack.UndoCount();
+             editor::CommandContext ctx = s.Context();
+             s.stack.BeginTransaction(transaction_label);
+             try {
+                 for (const ActiveEdit& edit : edits) {
+                     if (edit.add_component) {
+                         auto add = std::make_unique<editor::AddComponentCommand>(edit.guid, active_component);
+                         add->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(add));
+                     }
+                     auto set = std::make_unique<SetComponentCommand>(edit.guid, active_component, edit.before, edit.after);
+                     set->SetAttribution("agent");
+                     s.stack.Execute(ctx, std::move(set));
+                 }
+                 s.stack.EndTransaction();
+             } catch (...) {
+                 s.stack.EndTransaction();
+                 if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                 throw;
+             }
+
+             Json results = Json::array();
+             for (const ActiveEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)}, {"active", edit.active}});
+             }
+             return {{"toggled", edits.size()}, {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
         {"set_entities_active_shared_many",
          "Set the same active state on 1–64 unique scene entities as one undoable action. Missing Active components mean active; disabling an entity adds Active{false}. Validate the complete selection before applying changes.",
          Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
