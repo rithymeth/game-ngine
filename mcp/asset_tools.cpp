@@ -24,6 +24,7 @@
 #include <optional>
 #include <set>
 #include <sstream>
+#include <utility>
 
 namespace aether::mcp {
 
@@ -1199,13 +1200,66 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
 
     server.AddTool(
         {"asset_import",
-         "Run the importers. With `asset`, (re)import that one (even if unchanged); without, import everything flagged needs_import. "
-         "Import status and sub-asset metadata are one agent-attributed undoable action. Results come from the derived-data cache "
-         "when the input is unchanged.",
-         Schema({{"asset", {{"type", "string"}, {"description", "Content path or GUID; omit to import all pending"}}}}),
+         "Run the importers. With `asset`, (re)import one asset; with `assets`, import a selected array of up to 128 assets as one undoable group; "
+         "without either, import everything flagged needs_import. An asset or assets cannot be combined. Import status and sub-asset metadata "
+         "are undoable. Results come from the derived-data cache when the input is unchanged.",
+         Schema({{"asset", {{"type", "string"}, {"description", "Content path or GUID; omit to import all pending"}}},
+                 {"assets", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "Selected content paths or GUIDs to import as one undoable group (1-128)"}}}}),
          [host, &session](const Json& args) -> Json {
              OpenProject& p = host->Require();
              if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before importing assets");
+             if (args.contains("asset") && args.contains("assets")) throw ToolError("Pass either \"asset\" or \"assets\", not both");
+             if (args.contains("assets")) {
+                 if (!args["assets"].is_array() || args["assets"].empty() || args["assets"].size() > 128) {
+                     throw ToolError("\"assets\" must be a non-empty array of at most 128 asset paths or GUIDs");
+                 }
+                 std::vector<std::pair<AssetGuid, std::string>> selected;
+                 std::set<AssetGuid> seen;
+                 for (const Json& value : args["assets"]) {
+                     if (!value.is_string()) throw ToolError("Each entry in \"assets\" must be a path or GUID string");
+                     const AssetRecord* record = &FindAsset(p, value.get<std::string>());
+                     if (record->IsSubAsset()) record = p.database->Find(record->parent);
+                     if (record == nullptr || record->IsSubAsset()) throw ToolError("Could not resolve the source asset for " + value.get<std::string>());
+                     if (!seen.insert(record->guid).second) throw ToolError("Duplicate asset in \"assets\": " + record->path);
+                     selected.emplace_back(record->guid, record->path);
+                 }
+
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Import Assets " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = session.stack.UndoCount();
+                 Json results = Json::array();
+                 usize imported = 0, from_cache = 0, failed = 0;
+                 editor::CommandContext context = session.Context();
+                 session.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const auto& [guid, path] : selected) {
+                         auto command = std::make_unique<AssetImportCommand>(host, p.paths.file, guid);
+                         command->SetAttribution("agent");
+                         AssetImportCommand* command_result = command.get();
+                         session.stack.Execute(context, std::move(command));
+                         const AssetImportCommand::SingleResult& out = command_result->Single();
+                         Json row = {{"ok", out.ok}, {"asset", path}, {"from_cache", out.from_cache}, {"bytes", out.bytes}, {"warnings", out.warnings}};
+                         Json subs = Json::array();
+                         for (const AssetImportCommand::SubAsset& sub : out.sub_assets) {
+                             subs.push_back({{"key", sub.key}, {"importer", sub.importer}, {"guid", assets::ToString(sub.guid)}});
+                         }
+                         if (!subs.empty()) row["sub_assets"] = std::move(subs);
+                         if (!out.ok) row["error"] = out.error;
+                         results.push_back(std::move(row));
+                         if (out.ok) ++imported;
+                         else ++failed;
+                         if (out.from_cache) ++from_cache;
+                     }
+                     session.stack.EndTransaction();
+                 } catch (...) {
+                     session.stack.EndTransaction();
+                     if (session.stack.UndoCount() != undo_count_before || session.stack.UndoLabel() == transaction_label) {
+                         session.stack.Undo(context);
+                     }
+                     throw;
+                 }
+                 return {{"imported", imported}, {"from_cache", from_cache}, {"failed", failed}, {"skipped", 0}, {"results", results}};
+             }
              std::optional<AssetGuid> guid;
              std::string path;
              if (args.contains("asset")) {
