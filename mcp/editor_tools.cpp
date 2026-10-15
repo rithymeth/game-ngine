@@ -333,7 +333,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                     }});
 
     server.AddTool({"list_entities",
-                    "List a page of scene entities (GUID, name when present, entity index, hierarchy depth, component names, parent GUID, effective collision layer index, local active state, and active/layer/parent override presence). Optionally filter by component, component groups that must all/any match or must not match, exact entity name, case-insensitive ASCII name substring, one parent, any of several parents, exclusion of several parents, descendants of one or several entities, exclusion of descendants of several entities, root status or hierarchy depth, layer index, local active value, active/layer/parent override presence, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND. Results are ordered by entity index and include total match count, has_more, and a continuation cursor. The cursor is not a scene snapshot; entities created in a reused index at or before it are skipped.",
+                    "List a page of scene entities (GUID, name when present, entity index, hierarchy depth, component names, parent GUID, effective collision layer index, local active state, and active/layer/parent override presence). Optionally filter by component, component groups that must all/any match or must not match, exact entity name, case-insensitive ASCII name substring, one parent, any of several parents, exclusion of several parents, descendants of one or several entities, entities beneath all of several ancestors, exclusion of descendants of several entities, root status or hierarchy depth, layer index, local active value, active/layer/parent override presence, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND. Results are ordered by entity index and include total match count, has_more, and a continuation cursor. The cursor is not a scene snapshot; entities created in a reused index at or before it are skipped.",
                     Schema({{"component", {{"type", "string"}, {"description", "Only entities having this component"}}},
                             {"components_all", {{"type", "array"}, {"items", {{"type", "string"}}}, {"maxItems", 32},
                                                  {"description", "Only entities that have every listed component"}}},
@@ -351,9 +351,11 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                             {"descendant_of", {{"type", "string"}, {"description", "Only descendants of this existing entity; the entity itself is excluded"}}},
                             {"descendant_any", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 32},
                                                  {"description", "Only descendants of any listed existing entities; listed ancestors themselves are excluded"}}},
+                            {"descendant_all", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 32},
+                                                 {"description", "Only entities whose ancestor chain contains every listed existing entity"}}},
                             {"descendant_none", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 32},
                                                   {"description", "Exclude descendants of any listed existing entities; listed entities themselves are not excluded"}}},
-                            {"roots_only", {{"type", "boolean"}, {"description", "Only entities without a parent; cannot be combined with parent, parent_any, descendant_of, or descendant_any"}}},
+                            {"roots_only", {{"type", "boolean"}, {"description", "Only entities without a parent; cannot be combined with parent, parent_any, descendant_of, descendant_any, or descendant_all"}}},
                             {"parent_override", {{"type", "boolean"},
                                                    {"description", "Filter by whether the entity has an explicit Parent component"}}},
                             {"parent_depth", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxHierarchyDepth},
@@ -417,6 +419,22 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                                 descendant_any_filter.push_back(guid);
                             }
                         }
+                        std::vector<EntityGuid> descendant_all_filter;
+                        if (args.contains("descendant_all")) {
+                            if (!args["descendant_all"].is_array() || args["descendant_all"].empty() || args["descendant_all"].size() > 32) {
+                                throw ToolError("\"descendant_all\" must be an array of 1 to 32 entity GUIDs");
+                            }
+                            std::set<std::string> unique_ancestors;
+                            for (const Json& value : args["descendant_all"]) {
+                                if (!value.is_string()) throw ToolError("Every \"descendant_all\" entry must be an entity GUID string");
+                                EntityGuid guid;
+                                const std::string guid_text = value.get<std::string>();
+                                if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid ancestor entity GUID: " + guid_text);
+                                if (!unique_ancestors.insert(ToString(guid)).second) throw ToolError("Duplicate ancestor in \"descendant_all\": " + ToString(guid));
+                                if (s.guids.Find(s.world, guid).IsNull()) throw ToolError("No entity with ancestor GUID " + ToString(guid));
+                                descendant_all_filter.push_back(guid);
+                            }
+                        }
                         std::vector<EntityGuid> descendant_none_filter;
                         if (args.contains("descendant_none")) {
                             if (!args["descendant_none"].is_array() || args["descendant_none"].empty() || args["descendant_none"].size() > 32) {
@@ -441,6 +459,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         if (args.contains("parent") && roots_only) throw ToolError("\"parent\" and \"roots_only\" cannot be combined");
                         if (args.contains("descendant_of") && roots_only) throw ToolError("\"descendant_of\" and \"roots_only\" cannot be combined");
                         if (!descendant_any_filter.empty() && roots_only) throw ToolError("\"descendant_any\" and \"roots_only\" cannot be combined");
+                        if (!descendant_all_filter.empty() && roots_only) throw ToolError("\"descendant_all\" and \"roots_only\" cannot be combined");
                         if (args.contains("parent_any") && (args.contains("parent") || roots_only)) {
                             throw ToolError("\"parent_any\" cannot be combined with \"parent\" or \"roots_only\"");
                         }
@@ -633,13 +652,14 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                             if (parent_override_filter.has_value() && (parent != nullptr) != *parent_override_filter) continue;
                             if (roots_only && parent != nullptr && !parent->parent.IsNull()) continue;
                             std::optional<usize> entity_depth;
-                            if (args.contains("descendant_of") || !descendant_any_filter.empty() || !descendant_none_filter.empty() || parent_depth_filter.has_value() || parent_depth_min_filter.has_value() || parent_depth_max_filter.has_value()) {
+                            if (args.contains("descendant_of") || !descendant_any_filter.empty() || !descendant_all_filter.empty() || !descendant_none_filter.empty() || parent_depth_filter.has_value() || parent_depth_min_filter.has_value() || parent_depth_max_filter.has_value()) {
                                 usize depth = 0;
                                 Entity current = e;
                                 std::set<u32> visited;
                                 bool matches_descendant_of = false;
                                 bool matches_descendant_any = false;
                                 bool excluded_descendant = false;
+                                std::set<EntityGuid> matched_descendant_all;
                                 while (true) {
                                     if (!visited.insert(current.index).second) throw ToolError("Cannot filter by ancestry or parent depth: hierarchy contains a cycle");
                                     const Parent* current_parent = s.world.GetComponent<Parent>(current);
@@ -647,6 +667,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                                     if (depth >= kMaxHierarchyDepth) throw ToolError("Cannot filter by ancestry or parent depth: hierarchy exceeds the maximum depth");
                                     if (args.contains("descendant_of") && current_parent->parent == descendant_of_filter) matches_descendant_of = true;
                                     if (!descendant_any_filter.empty() && std::find(descendant_any_filter.begin(), descendant_any_filter.end(), current_parent->parent) != descendant_any_filter.end()) matches_descendant_any = true;
+                                    if (!descendant_all_filter.empty() && std::find(descendant_all_filter.begin(), descendant_all_filter.end(), current_parent->parent) != descendant_all_filter.end()) matched_descendant_all.insert(current_parent->parent);
                                     if (!descendant_none_filter.empty() && std::find(descendant_none_filter.begin(), descendant_none_filter.end(), current_parent->parent) != descendant_none_filter.end()) excluded_descendant = true;
                                     current = s.guids.Find(s.world, current_parent->parent);
                                     if (current.IsNull()) throw ToolError("Cannot filter by ancestry or parent depth: hierarchy references a missing parent");
@@ -655,6 +676,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                                 entity_depth = depth;
                                 if (args.contains("descendant_of") && !matches_descendant_of) continue;
                                 if (!descendant_any_filter.empty() && !matches_descendant_any) continue;
+                                if (!descendant_all_filter.empty() && matched_descendant_all.size() != descendant_all_filter.size()) continue;
                                 if (excluded_descendant) continue;
                                 if (parent_depth_filter.has_value() && depth != *parent_depth_filter) continue;
                                 if (parent_depth_min_filter.has_value() && depth < *parent_depth_min_filter) continue;
