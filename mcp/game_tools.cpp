@@ -1114,6 +1114,24 @@ void RegisterGameTools(McpServer& server) {
                     }});
 
     server.AddTool(
+        {"game_get_component",
+         "Read one reflected component from an entity in the running game, as JSON.",
+         Schema({{"entity", {{"type", "string"}, {"description", "GUID or #index[:generation]"}}},
+                 {"component", {{"type", "string"}, {"description", "Component name from list_component_types"}}}},
+                {"entity", "component"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             const Entity entity = RequireEntity(game, args);
+             const ComponentId id = RequireComponent(RequireString(args, "component"));
+             const void* data = world.GetComponentRaw(entity, id);
+             if (data == nullptr) throw ToolError("Entity has no " + ComponentName(id));
+             const ComponentInfo& info = GetComponentInfo(id);
+             return {{"entity", EntityKey(world, entity)}, {"component", ComponentName(id)},
+                     {"values", reflect::ToJson(*info.reflected, data)}};
+         }});
+
+    server.AddTool(
         {"game_get_hierarchy",
          "Return an entity's live descendant tree in stable entity-index order. The root is included; depth and node caps bound the response.",
          Schema({{"entity", {{"type", "string"}, {"description", "GUID or #index[:generation]"}}},
