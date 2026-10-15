@@ -81,6 +81,8 @@ public:
                                       bool include_triggers = false) const;
     std::vector<Entity> OverlapBox(const Vec3& center, const Vec3& half_extents, LayerMask layers = kAllLayers,
                                    Entity ignore = kNullEntity, bool include_triggers = false) const;
+    std::vector<Entity> OverlapCapsule(const Vec3& center, f32 radius, f32 height, LayerMask layers = kAllLayers,
+                                       Entity ignore = kNullEntity, bool include_triggers = false) const;
 
     // A body made elsewhere (a character's inner body) that events and
     // queries should name as `entity`. Release it before destroying it; its
