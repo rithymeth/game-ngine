@@ -635,6 +635,49 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         return {{"destroyed", ToString(guid)}};
                     }});
 
+    server.AddTool(
+        {"destroy_entities",
+         "Delete 1–64 unique scene entities as one undoable action. Children and entity GUID references are left unchanged; undo restores each entity with its original GUID.",
+         Schema({{"entities", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "1–64 unique entity GUIDs"}}}}, {"entities"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before deleting entities");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 GUIDs");
+             }
+
+             std::vector<EntityGuid> guids;
+             guids.reserve(args["entities"].size());
+             std::set<EntityGuid> seen;
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Each entry in \"entities\" must be an entity GUID string");
+                 const EntityGuid guid = RequireGuid(Json{{"entity", value}}, "entity");
+                 RequireEntity(s, Json{{"entity", value}});
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 guids.push_back(guid);
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Delete Entities " + std::to_string(++next_batch_id);
+             const usize undo_count_before = s.stack.UndoCount();
+             editor::CommandContext ctx = s.Context();
+             s.stack.BeginTransaction(transaction_label);
+             try {
+                 for (const EntityGuid guid : guids) {
+                     auto command = std::make_unique<editor::DestroyEntityCommand>(guid);
+                     command->SetAttribution("agent");
+                     s.stack.Execute(ctx, std::move(command));
+                 }
+                 s.stack.EndTransaction();
+             } catch (...) {
+                 s.stack.EndTransaction();
+                 if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                 throw;
+             }
+             Json deleted = Json::array();
+             for (const EntityGuid guid : guids) deleted.push_back(ToString(guid));
+             return {{"destroyed", deleted.size()}, {"entities", std::move(deleted)}};
+         }});
+
     server.AddTool({"add_component",
                     "Add a component to an entity (default values, or the given partial field values). Undoable.",
                     Schema({{"entity", kGuidProp},
@@ -1640,7 +1683,7 @@ void RegisterSequenceEditorTools(McpServer& server, EditorSession& s) {
                     }});
 
     // Work undo cannot bring back: the built-in permission rule asks the person before these run (permissions.h).
-    for (const char* name : {"destroy_entity", "remove_component", "save_scene", "load_scene"}) server.MarkDestructive(name);
+    for (const char* name : {"destroy_entity", "destroy_entities", "remove_component", "save_scene", "load_scene"}) server.MarkDestructive(name);
 }
 
 } // namespace aether::mcp

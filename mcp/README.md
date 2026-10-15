@@ -30,7 +30,7 @@ and errors go to stderr.
 | `get_entity` | Every component of one entity, as JSON |
 | `create_entity` / `create_entities` | Create an entity or up to 64 entities with optional component values and current-scene parents; batch validates all definitions before creating and is one undo action |
 | `duplicate_entity` / `duplicate_entities` | Copy reflected component values for one entity or up to 64 unique entities as one undo action; keep source parents, leave children as they are |
-| `destroy_entity` | Delete an entity |
+| `destroy_entity` / `destroy_entities` | Delete one entity or up to 64 unique entities as one undoable action; the batch leaves children and GUID references unchanged and restores original GUIDs on undo |
 | `add_component` / `remove_component` | Add (with optional initial values) or remove a component |
 | `set_component` | Partial update: only the fields named change |
 | `reparent` / `reparent_many` | Parent or detach entities; the batch variant applies up to 64 unique moves in one undo action after validating the final hierarchy for cycles |
