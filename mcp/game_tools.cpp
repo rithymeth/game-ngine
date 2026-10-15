@@ -11,6 +11,9 @@
 #include "aether/gameplay/attribute_system.h"
 #include "aether/gameplay/attribute_set.h"
 #include "aether/gameplay/ability_system.h"
+#if AETHER_MCP_INVENTORY
+#include "aether/inventory/inventory_system.h"
+#endif
 #include "aether/input/keys.h"
 #if AETHER_MCP_INTERACTION
 #include "aether/interaction/interaction_system.h"
@@ -3180,6 +3183,114 @@ void RegisterGameTools(McpServer& server) {
              }
              throw ToolError("Unsupported ability action");
          }});
+
+#if AETHER_MCP_INVENTORY
+    server.AddTool(
+        {"game_inventory",
+         "Inspect or manage a running entity's inventory: configure capacity, add/remove items, move/split stacks, equip/unequip, use items, or count an item. Slot indices are zero-based. Item events and quest notifications are processed on the next game step.",
+         Schema({{"entity", {{"type", "string"}}},
+                 {"action", {{"type", "string"}, {"enum", Json::array({"state", "count", "configure", "add", "remove", "move", "split", "equip", "unequip", "use"})}},
+                 {"item", {{"type", "string"}}},
+                 {"count", {{"type", "integer"}}},
+                 {"slot", {{"type", "integer"}}},
+                 {"to_slot", {{"type", "integer"}}},
+                 {"equipment_slot", {{"type", "string"}}},
+                 {"capacity", {{"type", "integer"}}},
+                 {"max_weight", {{"type", "number"}}}},
+                {"entity", "action"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             inv::InventorySystem* system = inv::InventorySystem::Active();
+             if (system == nullptr) throw ToolError("This game has no inventory system (load a scene with the Inventory kit)");
+             const std::string action = RequireString(args, "action");
+             if (action != "state" && action != "count" && action != "configure" && action != "add" && action != "remove" &&
+                 action != "move" && action != "split" && action != "equip" && action != "unequip" && action != "use") {
+                 throw ToolError("\"action\" must be state, count, configure, add, remove, move, split, equip, unequip or use");
+             }
+             const Entity entity = FindEntity(game, RequireString(args, "entity"));
+             const World& world = game.GetWorld();
+             auto integer = [&](const char* key, i32 fallback) -> i32 {
+                 if (!args.contains(key)) return fallback;
+                 if (!args[key].is_number_integer()) throw ToolError(std::string("\"") + key + "\" must be an integer");
+                 if (args[key].is_number_unsigned()) {
+                     const u64 value = args[key].get<u64>();
+                     if (value > static_cast<u64>(std::numeric_limits<i32>::max())) throw ToolError(std::string("\"") + key + "\" is out of range");
+                     return static_cast<i32>(value);
+                 }
+                 const i64 value = args[key].get<i64>();
+                 if (value < std::numeric_limits<i32>::min() || value > std::numeric_limits<i32>::max()) throw ToolError(std::string("\"") + key + "\" is out of range");
+                 return static_cast<i32>(value);
+             };
+             auto required_integer = [&](const char* key) -> i32 {
+                 if (!args.contains(key)) throw ToolError(std::string("Missing integer argument \"") + key + "\"");
+                 return integer(key, 0);
+             };
+             auto required_item = [&]() { return RequireString(args, "item"); };
+             if (action == "state") {
+                 const inv::Inventory* inventory = world.GetComponent<inv::Inventory>(entity);
+                 Json slots = Json::array();
+                 Json equipment = Json::array();
+                 i32 capacity = 0;
+                 f32 max_weight = 0.0f;
+                 if (inventory != nullptr) {
+                     capacity = inventory->capacity;
+                     max_weight = inventory->max_weight;
+                     for (usize i = 0; i < inventory->slots.size(); ++i) {
+                         const inv::ItemStack& stack = inventory->slots[i];
+                         slots.push_back({{"slot", i}, {"item", stack.count > 0 ? Json(stack.item) : Json(nullptr)}, {"count", stack.count}});
+                     }
+                     for (const inv::EquipSlot& slot : inventory->equipment) equipment.push_back({{"slot", slot.name}, {"item", slot.item}});
+                 }
+                 return {{"entity", EntityKey(world, entity)}, {"configured", inventory != nullptr}, {"capacity", capacity},
+                         {"max_weight", max_weight}, {"weight", system->TotalWeight(entity)}, {"slots", std::move(slots)}, {"equipment", std::move(equipment)}};
+             }
+             if (action == "count") {
+                 const std::string item = required_item();
+                 return {{"entity", EntityKey(world, entity)}, {"item", item}, {"count", system->Count(entity, item)}};
+             }
+             if (action == "configure") {
+                 if (!args.contains("capacity")) throw ToolError("configure requires integer \"capacity\"");
+                 f32 max_weight = 0.0f;
+                 if (args.contains("max_weight")) {
+                     if (!args["max_weight"].is_number()) throw ToolError("\"max_weight\" must be a number");
+                     max_weight = args["max_weight"].get<f32>();
+                     if (!std::isfinite(max_weight) || max_weight < 0.0f) throw ToolError("\"max_weight\" must be finite and non-negative");
+                 }
+                 const i32 capacity = required_integer("capacity");
+                 const bool ok = system->Configure(entity, capacity, max_weight);
+                 return {{"entity", EntityKey(world, entity)}, {"configured", ok}, {"capacity", capacity}, {"max_weight", max_weight}};
+             }
+             if (action == "add") {
+                 const std::string item = required_item();
+                 const i32 requested = integer("count", 1);
+                 const i32 added = system->Add(entity, item, requested);
+                 return {{"entity", EntityKey(world, entity)}, {"item", item}, {"requested", requested}, {"added", added}, {"count", system->Count(entity, item)}};
+             }
+             if (action == "remove") {
+                 const std::string item = required_item();
+                 const i32 count = integer("count", 1);
+                 const bool ok = system->Remove(entity, item, count);
+                 return {{"entity", EntityKey(world, entity)}, {"item", item}, {"requested", count}, {"removed", ok}, {"count", system->Count(entity, item)}};
+             }
+             if (action == "move" || action == "split") {
+                 const i32 slot = required_integer("slot");
+                 const i32 to_slot = required_integer("to_slot");
+                 const bool ok = action == "move" ? system->Move(entity, slot, to_slot) : system->Split(entity, slot, integer("count", 1), to_slot);
+                 return {{"entity", EntityKey(world, entity)}, {"action", action}, {"slot", slot}, {"to_slot", to_slot}, {"success", ok}};
+             }
+             if (action == "equip" || action == "use") {
+                 const i32 slot = required_integer("slot");
+                 const bool ok = action == "equip" ? system->Equip(entity, slot) : system->Use(entity, slot);
+                 return {{"entity", EntityKey(world, entity)}, {"action", action}, {"slot", slot}, {"success", ok}};
+             }
+             if (action == "unequip") {
+                 const std::string slot = RequireString(args, "equipment_slot");
+                 const bool ok = system->Unequip(entity, slot);
+                 return {{"entity", EntityKey(world, entity)}, {"equipment_slot", slot}, {"success", ok}};
+             }
+             throw ToolError("\"action\" must be state, count, configure, add, remove, move, split, equip, unequip or use");
+         }});
+#endif
 
 #if AETHER_MCP_INTERACTION
     // -- Interaction (the Interactable component and the game's InteractionSystem) ---------------------------------
