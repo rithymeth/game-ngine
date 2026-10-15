@@ -556,6 +556,52 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
          }});
 
     server.AddTool(
+        {"summarize_entity_components_many",
+         "Summarize reflected component usage across 1–64 unique scene entities. Returns deterministic per-component present and missing counts, plus the exact component types shared by every selected entity.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique scene entity GUIDs"}}}},
+                {"entities"}),
+         [&s](const Json& args) -> Json {
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             std::vector<Entity> entities;
+             entities.reserve(args["entities"].size());
+             std::set<EntityGuid> seen;
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 const std::string guid_text = value.get<std::string>();
+                 EntityGuid guid;
+                 if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid entity GUID: " + guid_text);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 entities.push_back(entity);
+             }
+
+             std::vector<std::pair<std::string, usize>> counts;
+             for (ComponentId id = 0; id < RegisteredComponentCount(); ++id) {
+                 if (GetComponentInfo(id).reflected == nullptr) continue;
+                 usize present = 0;
+                 for (const Entity entity : entities) present += s.world.HasComponentRaw(entity, id) ? 1 : 0;
+                 counts.emplace_back(ComponentName(id), present);
+             }
+             std::sort(counts.begin(), counts.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+
+             Json components = Json::array();
+             Json common = Json::array();
+             for (const auto& [name, present] : counts) {
+                 if (present == 0) continue;
+                 components.push_back({{"component", name}, {"present_count", present},
+                                       {"missing_count", entities.size() - present}});
+                 if (present == entities.size()) common.push_back(name);
+             }
+             const usize used_component_count = components.size();
+             return {{"entity_count", entities.size()}, {"used_component_count", used_component_count},
+                     {"components", std::move(components)}, {"common_components", std::move(common)}};
+         }});
+
+    server.AddTool(
         {"get_entities_descendants_many",
          "Get descendants for 1–64 unique scene entities. Each requested root returns its descendants in deterministic parent-first order with parent GUID and depth relative to that root. The complete root selection is validated first; the query is limited to 64 returned descendant entries total and rejects cycles, excessive depth, or descendants without GUIDs.",
          Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
