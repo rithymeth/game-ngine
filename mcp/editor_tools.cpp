@@ -436,6 +436,59 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
          }});
 
     server.AddTool(
+        {"get_components_many",
+         "Get selected reflected components from 1–64 entity/component pairs in one response. The full request is validated before returning values; absent components are reported with present=false.",
+         Schema({{"components", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                                 {"items", {{"type", "object"},
+                                            {"properties", {{"entity", kGuidProp},
+                                                             {"component", {{"type", "string"}}}}},
+                                            {"required", {"entity", "component"}}, {"additionalProperties", false}}},
+                                 {"description", "1–64 unique entity/component pairs"}}}},
+                {"components"}),
+         [&s](const Json& args) -> Json {
+             if (!args["components"].is_array() || args["components"].empty() || args["components"].size() > 64) {
+                 throw ToolError("\"components\" must be a non-empty array of at most 64 entity/component pairs");
+             }
+             struct ComponentRequest {
+                 EntityGuid guid;
+                 Entity entity;
+                 ComponentId component;
+             };
+             std::vector<ComponentRequest> requests;
+             requests.reserve(args["components"].size());
+             std::set<std::pair<EntityGuid, ComponentId>> seen;
+             for (const Json& value : args["components"]) {
+                 if (!value.is_object() || !value.contains("entity") || !value["entity"].is_string() ||
+                     !value.contains("component") || !value["component"].is_string()) {
+                     throw ToolError("Each entry in \"components\" must contain string entity and component fields");
+                 }
+                 EntityGuid guid;
+                 const std::string guid_text = value["entity"].get<std::string>();
+                 if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid entity GUID: " + guid_text);
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 const ComponentId component = RequireComponent(value["component"].get<std::string>());
+                 if (!seen.emplace(guid, component).second) {
+                     throw ToolError("Duplicate entity/component pair: " + ToString(guid) + " / " + ComponentName(component));
+                 }
+                 requests.push_back({guid, entity, component});
+             }
+
+             Json results = Json::array();
+             for (const ComponentRequest& request : requests) {
+                 Json result = {{"entity", ToString(request.guid)}, {"component", ComponentName(request.component)}};
+                 if (s.world.HasComponentRaw(request.entity, request.component)) {
+                     result["present"] = true;
+                     result["value"] = ComponentJson(s, request.entity, request.component);
+                 } else {
+                     result["present"] = false;
+                 }
+                 results.push_back(std::move(result));
+             }
+             return {{"count", results.size()}, {"components", std::move(results)}};
+         }});
+
+    server.AddTool(
         {"get_entities_descendants_many",
          "Get descendants for 1–64 unique scene entities. Each requested root returns its descendants in deterministic parent-first order with parent GUID and depth relative to that root. The complete root selection is validated first; the query is limited to 64 returned descendant entries total and rejects cycles, excessive depth, or descendants without GUIDs.",
          Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
