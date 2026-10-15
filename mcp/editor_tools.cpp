@@ -715,6 +715,119 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         return out;
                     }});
 
+    server.AddTool(
+        {"add_components_many",
+         "Add components to 1–64 unique entities as one undoable action. Each edit maps component names to optional initial field objects; all entities, component presence and field values are validated before any component is added.",
+         Schema({{"edits", {{"type", "array"},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", kGuidProp},
+                                                        {"components", {{"type", "object"},
+                                                                         {"description", "Component names mapped to optional initial field objects"}}}}},
+                                        {"required", Json::array({"entity", "components"})}}},
+                             {"description", "1–64 unique entities and the components to add"}}}},
+                {"edits"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before adding components");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be a non-empty array of at most 64 entity edits");
+             }
+
+             struct ComponentAddition {
+                 ComponentId id;
+                 std::vector<u8> defaults;
+                 std::vector<u8> initialized;
+                 Json warnings = Json::array();
+             };
+             struct EntityAddition {
+                 EntityGuid guid;
+                 std::vector<ComponentAddition> components;
+             };
+             std::vector<EntityAddition> additions;
+             additions.reserve(args["edits"].size());
+             std::set<EntityGuid> seen_entities;
+             const ComponentId id_component = GetComponentId<IdComponent>();
+             for (const Json& edit : args["edits"]) {
+                 if (!edit.is_object()) throw ToolError("Each entry in \"edits\" must be an object");
+                 const EntityGuid guid = RequireGuid(edit, "entity");
+                 const Entity entity = RequireEntity(s, edit);
+                 if (!seen_entities.insert(guid).second) throw ToolError("Duplicate entity in \"edits\": " + ToString(guid));
+                 if (!edit.contains("components") || !edit["components"].is_object() || edit["components"].empty()) {
+                     throw ToolError("Each edit must include a non-empty \"components\" object");
+                 }
+
+                 EntityAddition entity_addition;
+                 entity_addition.guid = guid;
+                 entity_addition.components.reserve(edit["components"].size());
+                 for (const auto& [name, value] : edit["components"].items()) {
+                     if (!value.is_object()) throw ToolError("Each component initializer must be a field object");
+                     const ComponentId id = RequireComponent(name);
+                     if (id == id_component) throw ToolError("An entity's identity cannot be added");
+                     if (s.world.HasComponentRaw(entity, id)) {
+                         throw ToolError("Entity " + ToString(guid) + " already has " + ComponentName(id));
+                     }
+                     const ComponentInfo& info = GetComponentInfo(id);
+                     reflect::Any sample = reflect::Any::DefaultOf(*info.reflected);
+                     if (!sample.HasValue()) throw ToolError("Cannot default-construct component " + ComponentName(id));
+                     reflect::LoadReport report;
+                     if (!reflect::FromJson(*info.reflected, sample.Data(), value, &report)) {
+                         throw ToolError("Value does not match the shape of " + ComponentName(id));
+                     }
+
+                     ComponentAddition component_addition;
+                     component_addition.id = id;
+                     info.serialize(sample.Data(), component_addition.initialized);
+                     reflect::Any defaults = reflect::Any::DefaultOf(*info.reflected);
+                     if (!defaults.HasValue()) throw ToolError("Cannot default-construct component " + ComponentName(id));
+                     info.serialize(defaults.Data(), component_addition.defaults);
+                     for (const std::string& warning : report.warnings) component_addition.warnings.push_back(warning);
+                     entity_addition.components.push_back(std::move(component_addition));
+                 }
+                 additions.push_back(std::move(entity_addition));
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Add Components " + std::to_string(++next_batch_id);
+             const usize undo_count_before = s.stack.UndoCount();
+             editor::CommandContext ctx = s.Context();
+             s.stack.BeginTransaction(transaction_label);
+             try {
+                 for (const EntityAddition& entity_addition : additions) {
+                     for (const ComponentAddition& component_addition : entity_addition.components) {
+                         auto add = std::make_unique<editor::AddComponentCommand>(entity_addition.guid, component_addition.id);
+                         add->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(add));
+                         if (!component_addition.initialized.empty() && component_addition.initialized != component_addition.defaults) {
+                             auto initialize = std::make_unique<SetComponentCommand>(entity_addition.guid, component_addition.id,
+                                                                                    component_addition.defaults, component_addition.initialized);
+                             initialize->SetAttribution("agent");
+                             s.stack.Execute(ctx, std::move(initialize));
+                         }
+                     }
+                 }
+                 s.stack.EndTransaction();
+             } catch (...) {
+                 s.stack.EndTransaction();
+                 if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                 throw;
+             }
+
+             Json results = Json::array();
+             for (const EntityAddition& entity_addition : additions) {
+                 Json components = Json::object();
+                 Json warnings = Json::object();
+                 const Entity entity = s.guids.Find(s.world, entity_addition.guid);
+                 for (const ComponentAddition& component_addition : entity_addition.components) {
+                     const std::string name = ComponentName(component_addition.id);
+                     components[name] = ComponentJson(s, entity, component_addition.id);
+                     if (!component_addition.warnings.empty()) warnings[name] = component_addition.warnings;
+                 }
+                 Json row = {{"entity", ToString(entity_addition.guid)}, {"components", std::move(components)}};
+                 if (!warnings.empty()) row["warnings"] = std::move(warnings);
+                 results.push_back(std::move(row));
+             }
+             return {{"added", additions.size()}, {"edits", std::move(results)}};
+         }});
+
     server.AddTool({"remove_component", "Remove a component from an entity. Undoable.",
                     Schema({{"entity", kGuidProp}, {"component", {{"type", "string"}}}}, {"entity", "component"}),
                     [&s](const Json& args) -> Json {
