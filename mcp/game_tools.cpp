@@ -1132,6 +1132,43 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_get_components_many",
+         "Read one reflected component across up to 64 unique running entities in one bounded response. Entities without the component are returned with present=false.",
+         Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}},
+                 {"component", {{"type", "string"}, {"description", "Component name from list_component_types"}}}},
+                {"entities", "component"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be an array of 1 to 64 entity handles");
+             }
+             const ComponentId id = RequireComponent(RequireString(args, "component"));
+             const ComponentInfo& info = GetComponentInfo(id);
+             std::vector<Entity> entities;
+             entities.reserve(args["entities"].size());
+             for (const Json& handle : args["entities"]) {
+                 if (!handle.is_string() || handle.get<std::string>().empty()) {
+                     throw ToolError("Every \"entities\" entry must be a non-empty entity handle");
+                 }
+                 const Entity entity = FindEntity(game, handle.get<std::string>());
+                 if (std::find(entities.begin(), entities.end(), entity) != entities.end()) {
+                     throw ToolError("\"entities\" must not contain the same entity more than once");
+                 }
+                 entities.push_back(entity);
+             }
+             Json results = Json::array();
+             for (Entity entity : entities) {
+                 const void* data = world.GetComponentRaw(entity, id);
+                 Json result = {{"entity", EntityKey(world, entity)}, {"entity_index", entity.index},
+                                {"entity_generation", entity.generation}, {"present", data != nullptr}};
+                 if (data != nullptr) result["values"] = reflect::ToJson(*info.reflected, data);
+                 results.push_back(std::move(result));
+             }
+             return {{"component", ComponentName(id)}, {"results", results}};
+         }});
+
+    server.AddTool(
         {"game_get_hierarchy",
          "Return an entity's live descendant tree in stable entity-index order. The root is included; depth and node caps bound the response.",
          Schema({{"entity", {{"type", "string"}, {"description", "GUID or #index[:generation]"}}},

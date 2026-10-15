@@ -414,6 +414,7 @@ saves and localization. The game has its own world, separate from the editor's.
 | `game_get_hierarchy` | Return an entity and its live descendants as a tree, with stable entity-index ordering, tags and activity metadata; `max_depth` (1-64, default 8) and `max_nodes` (1-1000 including root, default 200) bound the result, and truncated branches are marked |
 | `game_get_ancestors` | Return an entity's parent chain nearest-first with identity, name, tags and activity metadata; `max_depth` (1-64, default 16) bounds the chain and the response reports whether it reached the root, was truncated, or encountered a cycle |
 | `game_get_component` | Read one reflected component from a live entity by component name, without returning the entity's other component values |
+| `game_get_components_many` | Read the same reflected component across up to 64 unique live entities in one response; entries identify missing components with `present: false` |
 | `game_set_component` / `game_destroy_entity` | Change the live world (not undoable; gone on reload) |
 | `game_unload` | Stop and unload |
 
