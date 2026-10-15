@@ -3353,6 +3353,106 @@ void RegisterGameTools(McpServer& server) {
              return {{"entity", EntityKey(world, target)}, {"tag", tag_name}, {"removed_count", removed}};
          }});
 
+    server.AddTool(
+        {"game_effects_many",
+         "Apply, remove by handle, or remove by gameplay tag across up to 64 effect operations. Validates every target, handle and tag before applying any operation; callbacks run on the next game step.",
+         Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                              {"items", {{"type", "object"},
+                                          {"properties", {{"action", {{"type", "string"}, {"enum", Json::array({"apply", "remove", "remove_by_tag"})}},
+                                                           {"entity", {{"type", "string"}}}, {"source", {{"type", "string"}}},
+                                                           {"effect", {{"type", "string"}}},
+                                                           {"handle", {{"type", "integer"}, {"minimum", 1}, {"maximum", std::numeric_limits<u32>::max()}}},
+                                                           {"tag", {{"type", "string"}}}}},
+                                          {"required", Json::array({"action"})}}}}}}},
+                {"edits"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             gas::EffectSystem* system = gas::EffectSystem::Active();
+             if (system == nullptr) throw ToolError("This game has no effect system (load a scene first)");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must contain 1 to 64 effect operations");
+             }
+             struct EffectEdit {
+                 std::string action;
+                 Entity entity;
+                 Entity source;
+                 std::string effect;
+                 gas::EffectHandle handle = 0;
+                 std::string tag;
+             };
+             std::vector<EffectEdit> edits;
+             edits.reserve(args["edits"].size());
+             for (const Json& item : args["edits"]) {
+                 if (!item.is_object() || !item.contains("action") || !item["action"].is_string()) throw ToolError("Every edit needs a string \"action\"");
+                 EffectEdit edit;
+                 edit.action = item["action"].get<std::string>();
+                 if (edit.action != "apply" && edit.action != "remove" && edit.action != "remove_by_tag") throw ToolError("Unsupported effect action in \"edits\"");
+                 if (edit.action == "remove") {
+                     if (!item.contains("handle") || (!item["handle"].is_number_unsigned() && !item["handle"].is_number_integer())) {
+                         throw ToolError("remove edits need a positive integer \"handle\"");
+                     }
+                     u64 raw = 0;
+                     if (item["handle"].is_number_unsigned()) raw = item["handle"].get<u64>();
+                     else {
+                         const i64 value = item["handle"].get<i64>();
+                         if (value <= 0) throw ToolError("\"handle\" must be between 1 and 4294967295");
+                         raw = static_cast<u64>(value);
+                     }
+                     if (raw == 0 || raw > std::numeric_limits<u32>::max()) throw ToolError("\"handle\" must be between 1 and 4294967295");
+                     edit.handle = static_cast<gas::EffectHandle>(raw);
+                     if (std::find_if(edits.begin(), edits.end(), [&](const EffectEdit& previous) { return previous.handle == edit.handle && previous.handle != 0; }) != edits.end()) {
+                         throw ToolError("remove edits must not repeat a handle");
+                     }
+                 } else {
+                     if (!item.contains("entity") || !item["entity"].is_string() || item["entity"].get<std::string>().empty()) {
+                         throw ToolError("Effect edits need a non-empty string \"entity\"");
+                     }
+                     edit.entity = FindEntity(game, item["entity"].get<std::string>());
+                     if (edit.action == "apply") {
+                         if (!item.contains("effect") || !item["effect"].is_string() || item["effect"].get<std::string>().empty()) {
+                             throw ToolError("apply edits need a non-empty string \"effect\"");
+                         }
+                         edit.effect = item["effect"].get<std::string>();
+                         if (item.contains("source")) {
+                             if (!item["source"].is_string() || item["source"].get<std::string>().empty()) throw ToolError("\"source\" must be a non-empty entity handle");
+                             edit.source = FindEntity(game, item["source"].get<std::string>());
+                         }
+                     } else {
+                         if (!item.contains("tag") || !item["tag"].is_string()) throw ToolError("remove_by_tag edits need string \"tag\"");
+                         edit.tag = item["tag"].get<std::string>();
+                         if (!gas::GameplayTag::Make(edit.tag).IsValid()) throw ToolError("\"tag\" must be a valid dotted gameplay tag");
+                     }
+                     if (std::find_if(edits.begin(), edits.end(), [&](const EffectEdit& previous) {
+                             return previous.handle == 0 && previous.action == edit.action && previous.entity == edit.entity &&
+                                    previous.effect == edit.effect && previous.source == edit.source && previous.tag == edit.tag;
+                         }) != edits.end()) throw ToolError("\"edits\" must not repeat the same operation");
+                 }
+                 edits.push_back(std::move(edit));
+             }
+             World& world = game.GetWorld();
+             auto entity_json = [&](Entity entity) -> Json {
+                 if (entity.IsNull()) return nullptr;
+                 if (world.IsAlive(entity)) return EntityKey(world, entity);
+                 return "#" + std::to_string(entity.index) + ":" + std::to_string(entity.generation);
+             };
+             Json results = Json::array();
+             for (const EffectEdit& edit : edits) {
+                 if (edit.action == "apply") {
+                     const gas::EffectSystem::ApplyResult result = system->Apply(edit.entity, edit.effect, edit.source);
+                     const char* status = result.status == gas::EffectSystem::Status::Applied ? "applied" :
+                                          result.status == gas::EffectSystem::Status::Instant ? "instant" : "rejected";
+                     results.push_back({{"action", edit.action}, {"entity", EntityKey(world, edit.entity)}, {"source", entity_json(edit.source)},
+                                        {"effect", edit.effect}, {"status", status}, {"handle", result.handle}});
+                 } else if (edit.action == "remove") {
+                     results.push_back({{"action", edit.action}, {"handle", edit.handle}, {"removed", system->Remove(edit.handle)}});
+                 } else {
+                     const i32 removed = system->RemoveByTag(edit.entity, gas::GameplayTag::Make(edit.tag));
+                     results.push_back({{"action", edit.action}, {"entity", EntityKey(world, edit.entity)}, {"tag", edit.tag}, {"removed_count", removed}});
+                 }
+             }
+             return {{"count", results.size()}, {"results", std::move(results)}};
+         }});
+
 #if AETHER_MCP_INVENTORY
     server.AddTool(
         {"game_inventory",
