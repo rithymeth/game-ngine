@@ -1,6 +1,8 @@
 #include "asset_tools.h"
 
 #include "project_host.h"
+#include "editor_tools.h"
+#include "core/commands.h"
 
 #include "aether/assets/asset_database.h"
 #include "aether/assets/content_browser.h"
@@ -8,6 +10,7 @@
 #include "aether/assets/importer.h"
 #include "aether/cook/cooker.h"
 #include "aether/project/project.h"
+#include "aether/platform/filesystem.h"
 #if AETHER_MCP_TEMPLATES
 #include "aether/templates/templates.h"
 #endif
@@ -23,6 +26,106 @@ namespace aether::mcp {
 namespace {
 
 using namespace detail;
+
+class ImportSettingsCommand final : public editor::ICommand {
+public:
+    ImportSettingsCommand(std::shared_ptr<AssetHost> host, fs::path project_file, AssetGuid guid, fs::path meta_file,
+                          std::vector<u8> before, assets::AssetMeta after, bool import_now)
+        : host_(std::move(host)), project_file_(std::move(project_file)), guid_(guid), meta_file_(std::move(meta_file)),
+          before_(std::move(before)), after_(std::move(after)), import_now_(import_now) {}
+
+    void Do(editor::CommandContext&) override {
+        RequireSameProject();
+        if (!executed_) {
+            try {
+                SaveAfter();
+                host_->project->database->Scan();
+                ImportIfRequested();
+                after_bytes_ = ReadMeta();
+                executed_ = true;
+                after_ = assets::AssetMeta{};
+            } catch (...) {
+                Restore(before_);
+                host_->project->database->Scan();
+                throw;
+            }
+            return;
+        }
+        Apply(after_bytes_, before_);
+        after_bytes_ = ReadMeta();
+    }
+
+    void Undo(editor::CommandContext&) override {
+        RequireSameProject();
+        Apply(before_, after_bytes_);
+    }
+
+    std::string Label() const override { return "Change Import Settings"; }
+    usize MemoryBytes() const override {
+        usize bytes = sizeof(*this) + before_.size() + after_bytes_.size() + import_error_.size();
+        for (const std::string& warning : warnings_) bytes += warning.size();
+        return bytes;
+    }
+    bool Imported() const { return imported_; }
+    bool FromCache() const { return from_cache_; }
+    const std::vector<std::string>& Warnings() const { return warnings_; }
+    const std::string& ImportError() const { return import_error_; }
+
+private:
+    void RequireSameProject() const {
+        if (!host_->project || host_->project->paths.file.lexically_normal() != project_file_.lexically_normal()) {
+            throw ToolError("Open the project that owns this asset before undoing or redoing this action");
+        }
+    }
+    std::vector<u8> ReadMeta() const {
+        std::vector<u8> bytes;
+        if (!aether::fs::ReadFileBytes(meta_file_.string(), bytes)) throw ToolError("Could not read " + meta_file_.string());
+        return bytes;
+    }
+    void Restore(const std::vector<u8>& bytes) const {
+        const void* data = bytes.empty() ? "" : bytes.data();
+        if (!aether::fs::WriteFileAtomic(meta_file_.string(), data, bytes.size())) throw ToolError("Could not restore " + meta_file_.string());
+    }
+    void SaveAfter() const {
+        std::string error;
+        if (!assets::SaveAssetMeta(meta_file_, after_, &error)) throw ToolError(error);
+    }
+    void ImportIfRequested() {
+        if (!import_now_) return;
+        const assets::ImportOutput result = assets::ImportAsset(*host_->project->database, guid_, host_->project->importers, *host_->project->cache);
+        imported_ = result.ok;
+        from_cache_ = result.from_cache;
+        warnings_ = result.warnings;
+        import_error_ = result.error;
+    }
+    void Apply(const std::vector<u8>& target, const std::vector<u8>& rollback) {
+        try {
+            Restore(target);
+            host_->project->database->Scan();
+            ImportIfRequested();
+            if (import_now_ && !target.empty()) Restore(target);
+            host_->project->database->Scan();
+        } catch (...) {
+            Restore(rollback);
+            host_->project->database->Scan();
+            throw;
+        }
+    }
+
+    std::shared_ptr<AssetHost> host_;
+    fs::path project_file_;
+    AssetGuid guid_;
+    fs::path meta_file_;
+    std::vector<u8> before_;
+    assets::AssetMeta after_;
+    std::vector<u8> after_bytes_;
+    bool import_now_ = true;
+    bool executed_ = false;
+    bool imported_ = false;
+    bool from_cache_ = false;
+    std::vector<std::string> warnings_;
+    std::string import_error_;
+};
 
 Json ProjectJson(OpenProject& p) {
     usize sources = 0;
@@ -69,7 +172,7 @@ std::string KindOfCookFailure(const cook::CookReport& r) { return r.error.empty(
 
 } // namespace
 
-void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> host) {
+void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> host, EditorSession& session) {
 
     server.AddTool(
         {"project_open",
@@ -295,29 +398,36 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
                  {"labels", {{"type", "array"}, {"items", {{"type", "string"}}}}},
                  {"import", {{"type", "boolean"}}}},
                 {"asset"}),
-         [host](const Json& args) -> Json {
+         [host, &session](const Json& args) -> Json {
              OpenProject& p = host->Require();
+             if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing import settings");
              const AssetRecord& rec = FindAsset(p, RequireString(args, "asset"));
              if (rec.IsSubAsset()) throw ToolError("Sub-assets take their source's settings: change " + PathOf(p, rec.parent));
              const AssetGuid guid = rec.guid;
+             const fs::path meta_file = p.database->MetaPath(guid);
+             std::vector<u8> before;
+             if (!aether::fs::ReadFileBytes(meta_file.string(), before)) throw ToolError("Couldn't read " + meta_file.string());
              assets::AssetMeta meta;
              std::string error;
-             if (!assets::LoadAssetMeta(p.database->MetaPath(guid), meta, &error)) throw ToolError(error);
+             if (!assets::LoadAssetMetaFromMemory(before, meta, &error)) throw ToolError(error);
              if (args.contains("settings")) {
                  if (!args["settings"].is_object()) throw ToolError("\"settings\" must be an object");
                  meta.settings.merge_patch(args["settings"]);
              }
              if (args.contains("labels")) meta.labels = OptStrings(args, "labels");
              meta.source_hash.clear(); // never imported with these settings
-             if (!assets::SaveAssetMeta(p.database->MetaPath(guid), meta, &error)) throw ToolError(error);
-             p.database->Scan();
+             const bool import_now = OptBool(args, "import", true);
+             auto command = std::make_unique<ImportSettingsCommand>(host, p.paths.file, guid, meta_file, std::move(before), meta, import_now);
+             command->SetAttribution("agent");
+             ImportSettingsCommand* command_result = command.get();
+             editor::CommandContext context = session.Context();
+             session.stack.Execute(context, std::move(command));
              Json out = {{"settings", meta.settings}, {"labels", meta.labels}};
-             if (OptBool(args, "import", true)) {
-                 assets::ImportOutput r = assets::ImportAsset(*p.database, guid, p.importers, *p.cache);
-                 out["imported"] = r.ok;
-                 out["from_cache"] = r.from_cache;
-                 out["warnings"] = r.warnings;
-                 if (!r.ok) out["error"] = r.error;
+             if (import_now) {
+                 out["imported"] = command_result->Imported();
+                 out["from_cache"] = command_result->FromCache();
+                 out["warnings"] = command_result->Warnings();
+                 if (!command_result->Imported()) out["error"] = command_result->ImportError();
              }
              return out;
          }});

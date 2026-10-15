@@ -85,7 +85,7 @@ int main(int argc, char** argv) {
     mcp::RegisterEditorTools(server, session);
     mcp::RegisterGameTools(server);
     auto project = mcp::MakeAssetHost(); // the open project, shared by the asset and kit tools
-    mcp::RegisterAssetTools(server, project);
+    mcp::RegisterAssetTools(server, project, session);
     mcp::RegisterKitTools(server, project, session);
     mcp::RegisterAudioTools(server, project);
     mcp::RegisterVfxTools(server, project);
