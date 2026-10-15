@@ -459,6 +459,7 @@ saves and localization. The game has its own world, separate from the editor's.
 | `game_set_physics3d_velocities_many` | Partially set linear and/or angular velocity for up to 64 unique live 3D physics bodies as a validated batch |
 | `game_set_physics3d_velocities_shared_many` | Set shared linear and/or angular velocity on up to 64 unique live 3D physics bodies; validates the whole selection first and preserves unspecified velocity channels |
 | `game_apply_physics3d_forces_many` | Apply force, impulse, torque or angular impulse to up to 64 unique live dynamic 3D bodies after validating the whole batch |
+| `game_apply_physics3d_force_shared_many` | Apply one force, impulse, torque or angular impulse to up to 64 unique dynamic 3D bodies after validating the whole selection |
 | `game_set_physics3d_poses_many` | Teleport position and/or rotation for up to 64 unique 3D physics entities, updating transforms and live bodies together |
 | `game_set_physics3d_bodies_many` | Partially update motion type, mass, damping, gravity, CCD and rotation locks on up to 64 3D rigidbodies as a validated batch |
 | `game_set_physics3d_bodies_shared_many` | Apply one partial motion, mass, damping, gravity, CCD or rotation-lock patch to up to 64 unique 3D rigidbodies; validates every result before applying and preserves unspecified per-entity values |
