@@ -333,7 +333,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                     }});
 
     server.AddTool({"list_entities",
-                    "List a page of scene entities (GUID, entity index, component names, parent GUID, effective collision layer index, and local active state). Optionally filter by component, exact entity name, case-insensitive ASCII name substring, direct parent or roots, layer index, local active value, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND. Results are ordered by entity index and include total match count, has_more, and a continuation cursor. The cursor is not a scene snapshot; entities created in a reused index at or before it are skipped.",
+                    "List a page of scene entities (GUID, name when present, entity index, component names, parent GUID, effective collision layer index, and local active state). Optionally filter by component, exact entity name, case-insensitive ASCII name substring, direct parent or roots, layer index, local active value, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND. Results are ordered by entity index and include total match count, has_more, and a continuation cursor. The cursor is not a scene snapshot; entities created in a reused index at or before it are skipped.",
                     Schema({{"component", {{"type", "string"}, {"description", "Only entities having this component"}}},
                             {"name", {{"type", "string"}, {"description", "Only entities whose name exactly matches"}}},
                             {"name_contains", {{"type", "string"}, {"description", "Only entities whose name contains this case-insensitive ASCII substring; must not be empty"}}},
@@ -506,7 +506,10 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                             const usize match_index = total_matches++;
                             if (match_index < offset || out.size() >= limit) continue;
                             const IdComponent* id = s.world.GetComponent<IdComponent>(e);
-                            Json row = {{"entity", id ? ToString(id->guid) : ""}, {"components", ComponentNamesOf(s, e)},
+                            const EntityName* name = s.world.GetComponent<EntityName>(e);
+                            Json row = {{"entity", id ? ToString(id->guid) : ""},
+                                        {"name", name != nullptr ? Json(name->value) : Json(nullptr)},
+                                        {"components", ComponentNamesOf(s, e)},
                                         {"entity_index", e.index},
                                         {"layer_index", entity_layer}, {"active", entity_active},
                                         {"has_active_override", active != nullptr}};
