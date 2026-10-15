@@ -471,6 +471,29 @@ std::vector<Entity> PhysicsScene::OverlapCapsule(const Vec3& center, f32 radius,
     return out;
 }
 
+std::vector<Entity> PhysicsScene::OverlapOrientedCapsule(const Vec3& center, f32 radius, f32 height, const Quaternion& rotation,
+                                                         LayerMask layers, Entity ignore, bool include_triggers) const {
+    const QueryFilter filter = FilterFor(*this, layers, ignore, include_triggers);
+    const f32 half_cylinder = std::max(0.0f, 0.5f * height - radius);
+    std::vector<JPH::BodyID> bodies;
+    if (half_cylinder <= 0.0f) {
+        const JPH::SphereShape sphere(std::max(radius, 0.001f));
+        sphere.SetEmbedded();
+        bodies = physics_.Overlap(sphere, center, rotation, filter);
+    } else {
+        const JPH::CapsuleShape capsule(half_cylinder, radius);
+        capsule.SetEmbedded();
+        bodies = physics_.Overlap(capsule, center, rotation, filter);
+    }
+    std::vector<Entity> out;
+    out.reserve(bodies.size());
+    for (JPH::BodyID body : bodies) {
+        const Entity entity = EntityOf(body);
+        if (!entity.IsNull()) out.push_back(entity);
+    }
+    return out;
+}
+
 void PhysicsScene::AdoptBody(JPH::BodyID body, Entity entity) {
     if (!body.IsInvalid()) by_body_[body.GetIndexAndSequenceNumber()] = EntityKey(entity);
 }
