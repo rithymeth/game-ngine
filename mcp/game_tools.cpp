@@ -713,21 +713,26 @@ void RegisterGameTools(McpServer& server) {
          "\"memory_pressure\" with a `level` of \"moderate\" or \"critical\" (counted; the game has no cache to drop safely yet). Returns whether the game is "
          "suspended and how many memory-pressure events it has seen.",
          Schema({{"event", {{"type", "string"}, {"enum", Json::array({"suspend", "resume", "memory_pressure"})}}},
-                 {"level", {{"type", "string"}, {"enum", Json::array({"moderate", "critical"})}}}},
+                 {"level", {{"type", "string"}, {"enum", Json::array({"moderate", "critical"})}, {"description", "Only with memory_pressure (default: moderate)"}}}},
                 {"event"}),
          [host](const Json& args) -> Json {
              Game& game = host->Require();
              const std::string event = RequireString(args, "event");
+             if (event != "suspend" && event != "resume" && event != "memory_pressure") {
+                 throw ToolError("event is \"suspend\", \"resume\" or \"memory_pressure\"");
+             }
+             if (args.contains("level") && !args["level"].is_string()) throw ToolError("\"level\" must be a string");
+             if (event != "memory_pressure" && args.contains("level")) {
+                 throw ToolError("\"level\" is only valid with the \"memory_pressure\" event");
+             }
              platform::LifecycleMessage message;
              if (event == "suspend") message.event = platform::LifecycleEvent::Suspend;
              else if (event == "resume") message.event = platform::LifecycleEvent::Resume;
              else if (event == "memory_pressure") {
                  message.event = platform::LifecycleEvent::MemoryPressure;
-                 const std::string level = args.contains("level") && args["level"].is_string() ? args["level"].get<std::string>() : "moderate";
+                 const std::string level = args.contains("level") ? args["level"].get<std::string>() : "moderate";
                  if (level != "moderate" && level != "critical") throw ToolError("level is \"moderate\" or \"critical\"");
                  message.level = level == "critical" ? platform::MemoryLevel::Critical : platform::MemoryLevel::Moderate;
-             } else {
-                 throw ToolError("event is \"suspend\", \"resume\" or \"memory_pressure\"");
              }
              game.Platform().Dispatch(message);
              return {{"suspended", game.Suspended()}, {"memory_pressure_events", game.MemoryPressureEvents()}};
