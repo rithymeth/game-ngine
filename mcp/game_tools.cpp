@@ -800,6 +800,10 @@ void RegisterGameTools(McpServer& server) {
                  {"layer_name", {{"type", "string"}, {"description", "Exact, case-sensitive configured collision layer name"}}},
                  {"active", {{"type", "boolean"}, {"description", "Filter by local active state; entities without Active are active"}}},
                  {"active_in_hierarchy", {{"type", "boolean"}, {"description", "Filter by effective active state including ancestors"}}},
+                 {"min_world_position", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}},
+                                          {"description", "Inclusive minimum world position [x, y, z]; requires Transform"}}},
+                 {"max_world_position", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}},
+                                          {"description", "Inclusive maximum world position [x, y, z]; requires Transform"}}},
                  {"limit", {{"type", "integer"}, {"minimum", 1}, {"maximum", 1000}, {"description", "Page size, 1-1000 (default 200)"}}},
                  {"offset", {{"type", "integer"}, {"minimum", 0}, {"description", "Number of matching entities to skip; must be 0 with after_entity_index"}}},
                  {"after_entity_index", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4294967295},
@@ -887,6 +891,33 @@ void RegisterGameTools(McpServer& server) {
              if (args.contains("active") && !args["active"].is_boolean()) throw ToolError("\"active\" must be a boolean");
              if (args.contains("active_in_hierarchy") && !args["active_in_hierarchy"].is_boolean()) {
                  throw ToolError("\"active_in_hierarchy\" must be a boolean");
+             }
+             auto read_position_bound = [&](const char* key) -> std::optional<Vec3> {
+                 if (!args.contains(key)) return std::nullopt;
+                 const Json& value = args[key];
+                 if (!value.is_array() || value.size() != 3) {
+                     throw ToolError(std::string("\"") + key + "\" must be an array of three finite numbers [x, y, z]");
+                 }
+                 f32 coordinates[3]{};
+                 for (usize axis = 0; axis < 3; ++axis) {
+                     if (!value[axis].is_number()) {
+                         throw ToolError(std::string("\"") + key + "\" must be an array of three finite numbers [x, y, z]");
+                     }
+                     const f64 coordinate = value[axis].get<f64>();
+                     if (!std::isfinite(coordinate) || coordinate < -std::numeric_limits<f32>::max() ||
+                         coordinate > std::numeric_limits<f32>::max()) {
+                         throw ToolError(std::string("\"") + key + "\" values must be finite and representable as floats");
+                     }
+                     coordinates[axis] = static_cast<f32>(coordinate);
+                 }
+                 return Vec3(coordinates[0], coordinates[1], coordinates[2]);
+             };
+             const std::optional<Vec3> min_world_position = read_position_bound("min_world_position");
+             const std::optional<Vec3> max_world_position = read_position_bound("max_world_position");
+             if (min_world_position.has_value() && max_world_position.has_value() &&
+                 (min_world_position->x > max_world_position->x || min_world_position->y > max_world_position->y ||
+                  min_world_position->z > max_world_position->z)) {
+                 throw ToolError("Each min_world_position coordinate must be less than or equal to max_world_position");
              }
              usize limit = 200;
              if (args.contains("limit")) {
@@ -1003,6 +1034,26 @@ void RegisterGameTools(McpServer& server) {
                                                       ? IsActiveInHierarchy(world, game.Guids(), e)
                                                       : active;
                  if (args.contains("active_in_hierarchy") && active_in_hierarchy != args["active_in_hierarchy"].get<bool>()) continue;
+                 Vec3 world_position;
+                 bool world_position_computed = false;
+                 if (min_world_position.has_value() || max_world_position.has_value()) {
+                     world_position = WorldPosition(world, game.Guids(), e);
+                     world_position_computed = true;
+                     if (!world.HasComponent<Transform>(e) || !std::isfinite(world_position.x) || !std::isfinite(world_position.y) ||
+                         !std::isfinite(world_position.z)) {
+                         continue;
+                     }
+                     if (min_world_position.has_value() &&
+                         (world_position.x < min_world_position->x || world_position.y < min_world_position->y ||
+                          world_position.z < min_world_position->z)) {
+                         continue;
+                     }
+                     if (max_world_position.has_value() &&
+                         (world_position.x > max_world_position->x || world_position.y > max_world_position->y ||
+                          world_position.z > max_world_position->z)) {
+                         continue;
+                     }
+                 }
                  ++total;
                  if (total <= offset || list.size() >= limit) continue;
                  Json names = Json::array();
@@ -1021,7 +1072,7 @@ void RegisterGameTools(McpServer& server) {
                              {"active_in_hierarchy", args.contains("active_in_hierarchy") ? active_in_hierarchy
                                                                                             : IsActiveInHierarchy(world, game.Guids(), e)},
                              {"parent", parent}};
-                 const Vec3 world_position = WorldPosition(world, game.Guids(), e);
+                 if (!world_position_computed) world_position = WorldPosition(world, game.Guids(), e);
                  row["world_position"] = std::isfinite(world_position.x) && std::isfinite(world_position.y) && std::isfinite(world_position.z)
                                               ? Json::array({world_position.x, world_position.y, world_position.z})
                                               : Json(nullptr);
