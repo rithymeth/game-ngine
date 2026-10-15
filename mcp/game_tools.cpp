@@ -3439,6 +3439,87 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_set_world_positions_many",
+         "Set world positions for up to 64 unique live entities while preserving local rotation and scale. Converts through parent transforms; rejects ancestor overlap, cycles, excessive depth and singular parent transforms.",
+         Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                              {"items", {{"type", "object"},
+                                          {"properties", {{"entity", {{"type", "string"}}},
+                                                           {"position", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}}}},
+                                          {"required", Json::array({"entity", "position"})}}}}}},
+                {"edits"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be an array of 1 to 64 world-position edits");
+             }
+             struct PositionEdit { Entity entity; Vec3 world_position; Vec3 local_position; };
+             std::vector<PositionEdit> edits;
+             edits.reserve(args["edits"].size());
+             for (const Json& item : args["edits"]) {
+                 if (!item.is_object() || !item.contains("entity") || !item["entity"].is_string() || item["entity"].get<std::string>().empty()) {
+                     throw ToolError("Every \"edits\" entry must contain a non-empty string \"entity\"");
+                 }
+                 if (!item.contains("position") || !item["position"].is_array() || item["position"].size() != 3 ||
+                     !item["position"][0].is_number() || !item["position"][1].is_number() || !item["position"][2].is_number()) {
+                     throw ToolError("Every \"position\" must be [x, y, z]");
+                 }
+                 const Vec3 position(item["position"][0].get<f32>(), item["position"][1].get<f32>(), item["position"][2].get<f32>());
+                 if (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z)) throw ToolError("\"position\" values must be finite");
+                 const Entity entity = FindEntity(game, item["entity"].get<std::string>());
+                 if (std::find_if(edits.begin(), edits.end(), [entity](const PositionEdit& edit) { return edit.entity == entity; }) != edits.end()) {
+                     throw ToolError("\"edits\" must not repeat an entity");
+                 }
+                 if (world.GetComponent<Transform>(entity) == nullptr) throw ToolError("Entity " + EntityKey(world, entity) + " has no Transform");
+                 edits.push_back({entity, position, {}});
+             }
+             for (const PositionEdit& edit : edits) {
+                 Entity current = GetParent(world, game.Guids(), edit.entity);
+                 std::vector<Entity> ancestors;
+                 for (int depth = 0; !current.IsNull(); ++depth) {
+                     if (depth >= kMaxHierarchyDepth) throw ToolError("An edited entity has a parent chain deeper than the supported limit");
+                     if (current == edit.entity || std::find(ancestors.begin(), ancestors.end(), current) != ancestors.end()) {
+                         throw ToolError("An edited entity has a hierarchy cycle");
+                     }
+                     if (std::find_if(edits.begin(), edits.end(), [current](const PositionEdit& other) { return other.entity == current; }) != edits.end()) {
+                         throw ToolError("\"edits\" must not include both an entity and one of its ancestors");
+                     }
+                     ancestors.push_back(current);
+                     current = GetParent(world, game.Guids(), current);
+                 }
+             }
+             for (PositionEdit& edit : edits) {
+                 const Entity parent = GetParent(world, game.Guids(), edit.entity);
+                 Mat4 inverse_parent = Mat4::Identity();
+                 if (!parent.IsNull() && world.GetComponent<Transform>(parent) != nullptr) {
+                     const Mat4 parent_world = ComputeWorldTransform(world, game.Guids(), parent);
+                     for (const Vec4& column : parent_world.cols) {
+                         if (!std::isfinite(column.x) || !std::isfinite(column.y) || !std::isfinite(column.z) || !std::isfinite(column.w)) {
+                             throw ToolError("Cannot set world position through a non-finite parent transform");
+                         }
+                     }
+                     if (!parent_world.TryInverse(inverse_parent)) throw ToolError("Cannot set world position through a singular parent transform");
+                 }
+                 const Vec4 local = inverse_parent * Vec4(edit.world_position.x, edit.world_position.y, edit.world_position.z, 1.0f);
+                 if (!std::isfinite(local.x) || !std::isfinite(local.y) || !std::isfinite(local.z) || !std::isfinite(local.w) || std::abs(local.w) <= 1.0e-12f) {
+                     throw ToolError("Cannot calculate a finite local position for " + EntityKey(world, edit.entity));
+                 }
+                 edit.local_position = Vec3(local.x / local.w, local.y / local.w, local.z / local.w);
+                 if (!std::isfinite(edit.local_position.x) || !std::isfinite(edit.local_position.y) || !std::isfinite(edit.local_position.z)) {
+                     throw ToolError("Cannot calculate a finite local position for " + EntityKey(world, edit.entity));
+                 }
+             }
+             Json results = Json::array();
+             for (const PositionEdit& edit : edits) {
+                 world.GetComponent<Transform>(edit.entity)->position = edit.local_position;
+                 results.push_back({{"entity", EntityKey(world, edit.entity)},
+                                    {"world_position", Json::array({edit.world_position.x, edit.world_position.y, edit.world_position.z})},
+                                    {"local_position", Json::array({edit.local_position.x, edit.local_position.y, edit.local_position.z})}});
+             }
+             return {{"updated_count", results.size()}, {"results", results}};
+         }});
+
+    server.AddTool(
         {"game_destroy_entities_many",
          "Destroy up to 64 unique live entity roots through the lifecycle (OnDestroy runs for each root and descendant). The complete selection is validated first; overlapping ancestor/descendant roots are rejected.",
          Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}}},
