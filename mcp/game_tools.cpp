@@ -575,6 +575,68 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_ui_set_widget",
+         "Set a named game UI widget's text, numeric value, or checked state directly. Text inputs, sliders, and toggles invoke their change callbacks when their control API provides one.",
+         Schema({{"widget", {{"type", "string"}}},
+                 {"property", {{"type", "string"}, {"enum", Json::array({"text", "value", "checked"})}}},
+                 {"text", {{"type", "string"}}},
+                 {"value", {{"type", "number"}}},
+                 {"checked", {{"type", "boolean"}}}}, {"widget", "property"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             const std::string name = RequireString(args, "widget");
+             const std::string property = RequireString(args, "property");
+             ui::Viewport* viewport = game.Ui();
+             ui::Widget* widget = viewport != nullptr ? viewport->Find(name) : nullptr;
+             if (widget == nullptr) throw ToolError("No widget named \"" + name + "\" in the game's UI");
+
+             if (property == "text") {
+                 const std::string text = RequireString(args, "text");
+                 if (auto* label = dynamic_cast<ui::Text*>(widget)) {
+                     label->text = text;
+                     label->text_key.clear();
+                 } else if (auto* input = dynamic_cast<ui::TextInput*>(widget)) {
+                     input->SetText(text);
+                 } else {
+                     ui::Text* label = nullptr;
+                     for (usize i = 0; i < widget->ChildCount() && label == nullptr; ++i) {
+                         label = dynamic_cast<ui::Text*>(widget->Child(i));
+                     }
+                     if (label == nullptr) throw ToolError("Widget \"" + name + "\" does not contain editable text");
+                     label->text = text;
+                     label->text_key.clear();
+                 }
+             } else if (property == "value") {
+                 if (!args.contains("value") || !args["value"].is_number()) throw ToolError("\"value\" must be a finite number");
+                 const f64 requested = args["value"].get<f64>();
+                 if (!std::isfinite(requested) || std::abs(requested) > std::numeric_limits<f32>::max()) throw ToolError("\"value\" must be a finite number in range");
+                 const f32 value = static_cast<f32>(requested);
+                 if (auto* slider = dynamic_cast<ui::Slider*>(widget)) slider->SetValue(value);
+                 else if (auto* progress = dynamic_cast<ui::ProgressBar*>(widget)) {
+                     if (value < 0.0f || value > 1.0f) throw ToolError("A ProgressBar value must be from 0 through 1");
+                     progress->percent = value;
+                 } else if (auto* dropdown = dynamic_cast<ui::Dropdown*>(widget)) {
+                     if (std::trunc(requested) != requested || requested < -1.0 || requested >= static_cast<f64>(dropdown->options.size())) {
+                         throw ToolError("A Dropdown value must be -1 or an existing option index");
+                     }
+                     dropdown->Select(static_cast<i32>(requested));
+                 } else {
+                     throw ToolError("Widget \"" + name + "\" does not accept a numeric value");
+                 }
+             } else if (property == "checked") {
+                 if (!args.contains("checked") || !args["checked"].is_boolean()) throw ToolError("\"checked\" must be a boolean");
+                 auto* toggle = dynamic_cast<ui::Toggle*>(widget);
+                 if (toggle == nullptr) throw ToolError("Widget \"" + name + "\" is not a Toggle");
+                 toggle->SetChecked(args["checked"].get<bool>());
+             } else {
+                 throw ToolError("\"property\" must be text, value or checked");
+             }
+
+             usize budget = 2000;
+             return {{"widget", UiWidgetJson(*widget, budget)}};
+         }});
+
+    server.AddTool(
         {"log_recent",
          "The engine's recent log lines (the last 512), oldest first: engine and system messages, and what the game's scripts and Blueprints "
          "print() (categories \"Script\" and \"Blueprint\"). Filter by minimum level, category, text, or time (seconds since the logger started).",
