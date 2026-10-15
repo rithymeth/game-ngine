@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <exception>
@@ -1060,6 +1061,49 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
              return {{"valid", issue_count == 0}, {"entity_count", s.world.EntityCount()},
                      {"entities_with_tags", entities_with_tags}, {"tag_count", tag_count},
                      {"issue_count", issue_count}, {"issues", std::move(issues)}, {"truncated", truncated}};
+         }});
+
+    server.AddTool(
+        {"validate_scene_names",
+         "Audit EntityName components in the current scene without modifying it. Reports empty names, names containing only ASCII whitespace, and names with leading or trailing ASCII whitespace. Duplicate entity names are allowed. Returns at most 128 detailed issues with total issue count and a truncation flag.",
+         Schema(Json::object()),
+         [&s](const Json&) -> Json {
+             Json issues = Json::array();
+             usize issue_count = 0;
+             usize named_entity_count = 0;
+             bool truncated = false;
+             auto add_issue = [&](Json issue) {
+                 ++issue_count;
+                 if (issues.size() < 128) issues.push_back(std::move(issue));
+                 else truncated = true;
+             };
+             for (const Entity entity : AllEntities(s)) {
+                 const EntityName* name = s.world.GetComponent<EntityName>(entity);
+                 if (name == nullptr) continue;
+                 ++named_entity_count;
+                 const IdComponent* id = s.world.GetComponent<IdComponent>(entity);
+                 const Json entity_id = id != nullptr && !id->guid.IsNull() ? Json(ToString(id->guid)) : Json(entity.index);
+                 if (name->value.empty()) {
+                     add_issue({{"kind", "empty_name"}, {"entity", entity_id}});
+                     continue;
+                 }
+                 const bool whitespace_only = std::all_of(name->value.begin(), name->value.end(), [](unsigned char ch) {
+                     return std::isspace(ch) != 0;
+                 });
+                 if (whitespace_only) {
+                     add_issue({{"kind", "whitespace_only_name"}, {"entity", entity_id}});
+                     continue;
+                 }
+                 const bool leading = std::isspace(static_cast<unsigned char>(name->value.front())) != 0;
+                 const bool trailing = std::isspace(static_cast<unsigned char>(name->value.back())) != 0;
+                 if (leading || trailing) {
+                     add_issue({{"kind", "name_has_edge_whitespace"}, {"entity", entity_id},
+                                {"leading", leading}, {"trailing", trailing}});
+                 }
+             }
+             return {{"valid", issue_count == 0}, {"entity_count", s.world.EntityCount()},
+                     {"named_entity_count", named_entity_count}, {"issue_count", issue_count},
+                     {"issues", std::move(issues)}, {"truncated", truncated}};
          }});
 
     server.AddTool(
