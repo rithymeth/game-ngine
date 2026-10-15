@@ -81,6 +81,9 @@ public:
                                       bool include_triggers = false) const;
     std::vector<Entity> OverlapBox(const Vec3& center, const Vec3& half_extents, LayerMask layers = kAllLayers,
                                    Entity ignore = kNullEntity, bool include_triggers = false) const;
+    std::vector<Entity> OverlapOrientedBox(const Vec3& center, const Vec3& half_extents, const Quaternion& rotation,
+                                           LayerMask layers = kAllLayers, Entity ignore = kNullEntity,
+                                           bool include_triggers = false) const;
     std::vector<Entity> OverlapCapsule(const Vec3& center, f32 radius, f32 height, LayerMask layers = kAllLayers,
                                        Entity ignore = kNullEntity, bool include_triggers = false) const;
 
