@@ -448,6 +448,7 @@ saves and localization. The game has its own world, separate from the editor's.
 | `game_get_ancestors` | Return an entity's parent chain nearest-first with identity, name, tags and activity metadata; `max_depth` (1-64, default 16) bounds the chain and the response reports whether it reached the root, was truncated, or encountered a cycle |
 | `game_get_world_transforms_many` | Read world matrices, world positions and basis-length world scales for up to 64 unique entities; rejects missing transforms, cycles, excessive depth and non-finite results |
 | `game_physics_query` | Raycast, sphere-cast or sphere-overlap against the loaded 3D scene; supports collision-layer masks, ignored entities and trigger inclusion |
+| `game_physics_queries_many` | Run up to 64 validated 3D raycast, sphere-cast or sphere-overlap queries in one request, each with its own filters |
 | `game_physics2d_query` | Raycast or axis-aligned box overlap against the loaded 2D scene, including solid-tile hit details and a collision-layer mask |
 | `game_physics_events` | Read recent 2D and 3D collision or trigger transitions with entity handles and available contact details; choose `dimension` as `2d`, `3d` or `all` |
 | `game_physics2d_state_many` | Read grounded and wall-contact state plus current velocity for up to 64 selected 2D entities |
