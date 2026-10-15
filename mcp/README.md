@@ -26,7 +26,7 @@ and errors go to stderr.
 | --- | --- |
 | `editor_state` | Entity count, undo/redo labels and attribution, unsaved changes, play state |
 | `list_component_types` | Component names and their fields |
-| `list_entities` | GUIDs, component names, parent GUIDs, effective layer indices, and local active state; optional exact name/component/layer/active/tag filters plus `tags_all`, `tags_any`, and `tags_none` groups (supplied filters combine with AND) |
+| `list_entities` | GUIDs, component names, parent GUIDs, effective layer indices, and local active state; optional exact name/component/parent/root/layer/active/tag filters plus `tags_all`, `tags_any`, and `tags_none` groups (supplied filters combine with AND) |
 | `get_entity` | Every component of one entity, as JSON |
 | `get_entities_many` | Get full reflected component values for up to 64 unique entities in selection order; validates all GUIDs before returning data |
 | `get_entities_metadata_many` | Get names, active/layer overrides, layer indices, tags, and parent links for up to 64 selected entities |

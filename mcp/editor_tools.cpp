@@ -332,9 +332,11 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                     }});
 
     server.AddTool({"list_entities",
-                    "List entities in the scene (GUID, component names, parent GUID, effective collision layer index, and local active state). Optionally filter by component, exact entity name, layer index, local active value, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND.",
+                    "List entities in the scene (GUID, component names, parent GUID, effective collision layer index, and local active state). Optionally filter by component, exact entity name, direct parent or roots, layer index, local active value, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND.",
                     Schema({{"component", {{"type", "string"}, {"description", "Only entities having this component"}}},
                             {"name", {{"type", "string"}, {"description", "Only entities whose name exactly matches"}}},
+                            {"parent", kGuidProp},
+                            {"roots_only", {{"type", "boolean"}, {"description", "Only entities without a parent; cannot be combined with parent"}}},
                             {"layer_index", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxLayers - 1},
                                              {"description", "Only entities on this collision layer; entities without Layer use index 0"}}},
                             {"active", {{"type", "boolean"},
@@ -352,6 +354,18 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         if (args.contains("component")) {
                             filter = RequireComponent(args["component"].get<std::string>());
                         }
+                        EntityGuid parent_filter;
+                        if (args.contains("parent")) {
+                            const std::string parent_text = RequireString(args, "parent");
+                            if (!ParseEntityGuid(parent_text, parent_filter)) throw ToolError("Not a valid parent entity GUID: " + parent_text);
+                            if (s.guids.Find(s.world, parent_filter).IsNull()) throw ToolError("No entity with parent GUID " + ToString(parent_filter));
+                        }
+                        bool roots_only = false;
+                        if (args.contains("roots_only")) {
+                            if (!args["roots_only"].is_boolean()) throw ToolError("\"roots_only\" must be a boolean");
+                            roots_only = args["roots_only"].get<bool>();
+                        }
+                        if (args.contains("parent") && roots_only) throw ToolError("\"parent\" and \"roots_only\" cannot be combined");
                         i64 layer_filter = -1;
                         if (args.contains("layer_index")) {
                             if (!args["layer_index"].is_number_integer()) throw ToolError("\"layer_index\" must be an integer from 0 to 31");
@@ -394,6 +408,9 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         const std::vector<std::string> tags_none = ReadTagFilter("tags_none");
                         Json out = Json::array();
                         for (Entity e : AllEntities(s)) {
+                            const Parent* parent = s.world.GetComponent<Parent>(e);
+                            if (args.contains("parent") && (parent == nullptr || parent->parent != parent_filter)) continue;
+                            if (roots_only && parent != nullptr && !parent->parent.IsNull()) continue;
                             const u8 entity_layer = LayerOf(s.world, e);
                             if (layer_filter >= 0 && entity_layer != static_cast<u8>(layer_filter)) continue;
                             const Active* active = s.world.GetComponent<Active>(e);
@@ -419,7 +436,6 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                             for (const std::string& tag : tags_none) has_excluded_tag = has_excluded_tag || HasTag(s.world, e, tag);
                             if (has_excluded_tag) continue;
                             const IdComponent* id = s.world.GetComponent<IdComponent>(e);
-                            const Parent* parent = s.world.GetComponent<Parent>(e);
                             Json row = {{"entity", id ? ToString(id->guid) : ""}, {"components", ComponentNamesOf(s, e)},
                                         {"layer_index", entity_layer}, {"active", entity_active},
                                         {"has_active_override", active != nullptr}};
