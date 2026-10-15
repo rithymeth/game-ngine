@@ -3465,6 +3465,107 @@ void RegisterGameTools(McpServer& server) {
          }});
 #endif
 
+#if AETHER_MCP_PHYSICS
+    server.AddTool(
+        {"game_set_physics3d_colliders_shared_many",
+         "Apply one shared partial center, trigger, material or report-stay patch to all supported 3D colliders on up to 64 unique entities. Validates all entities before applying.",
+         Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}},
+                 {"center", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
+                 {"trigger", {{"type", "boolean"}}},
+                 {"friction", {{"type", "number"}, {"minimum", 0}, {"maximum", 2}}},
+                 {"restitution", {{"type", "number"}, {"minimum", 0}, {"maximum", 1}}},
+                 {"report_stay", {{"type", "boolean"}}}},
+                {"entities"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             if (game.PhysicsQueries() == nullptr) throw ToolError("The loaded game has no 3D physics scene");
+             if (!args.contains("entities") || !args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be an array of 1 to 64 entity handles");
+             }
+             static const std::unordered_set<std::string> supported = {"entities", "center", "trigger", "friction", "restitution", "report_stay"};
+             for (auto it = args.begin(); it != args.end(); ++it) {
+                 if (!supported.contains(it.key())) throw ToolError("Unsupported 3D collider field: " + it.key());
+             }
+             bool has_patch = false;
+             for (const char* field : {"center", "trigger", "friction", "restitution", "report_stay"}) has_patch = has_patch || args.contains(field);
+             if (!has_patch) throw ToolError("Provide at least one 3D collider field to update");
+             std::optional<Vec3> center;
+             std::optional<bool> trigger, report_stay;
+             std::optional<f32> friction, restitution;
+             if (args.contains("center")) {
+                 const Json& value = args["center"];
+                 if (!value.is_array() || value.size() != 3 || !value[0].is_number() || !value[1].is_number() || !value[2].is_number()) {
+                     throw ToolError("\"center\" must be [x, y, z]");
+                 }
+                 center = Vec3(value[0].get<f32>(), value[1].get<f32>(), value[2].get<f32>());
+                 if (!std::isfinite(center->x) || !std::isfinite(center->y) || !std::isfinite(center->z)) {
+                     throw ToolError("\"center\" components must be finite");
+                 }
+             }
+             if (args.contains("trigger")) {
+                 if (!args["trigger"].is_boolean()) throw ToolError("\"trigger\" must be boolean");
+                 trigger = args["trigger"].get<bool>();
+             }
+             if (args.contains("report_stay")) {
+                 if (!args["report_stay"].is_boolean()) throw ToolError("\"report_stay\" must be boolean");
+                 report_stay = args["report_stay"].get<bool>();
+             }
+             auto read_material = [](const Json& value, const char* field, f32 minimum, f32 maximum) {
+                 if (!value.is_number()) throw ToolError(std::string("\"") + field + "\" must be a finite number in range");
+                 const f32 result = value.get<f32>();
+                 if (!std::isfinite(result) || result < minimum || result > maximum) {
+                     throw ToolError(std::string("\"") + field + "\" must be a finite number in range");
+                 }
+                 return result;
+             };
+             if (args.contains("friction")) friction = read_material(args["friction"], "friction", 0.0f, 2.0f);
+             if (args.contains("restitution")) restitution = read_material(args["restitution"], "restitution", 0.0f, 1.0f);
+             struct ColliderPatchTarget { Entity entity; bool box; bool sphere; bool capsule; bool convex; bool mesh; };
+             std::vector<ColliderPatchTarget> targets;
+             targets.reserve(args["entities"].size());
+             World& world = game.GetWorld();
+             for (const Json& handle : args["entities"]) {
+                 if (!handle.is_string() || handle.get<std::string>().empty()) throw ToolError("Every entity handle must be a non-empty string");
+                 const Entity entity = FindEntity(game, handle.get<std::string>());
+                 if (std::find_if(targets.begin(), targets.end(), [entity](const ColliderPatchTarget& target) { return target.entity == entity; }) != targets.end()) {
+                     throw ToolError("\"entities\" must not repeat an entity");
+                 }
+                 ColliderPatchTarget target{entity, world.GetComponent<BoxCollider>(entity) != nullptr,
+                                            world.GetComponent<SphereCollider>(entity) != nullptr,
+                                            world.GetComponent<CapsuleCollider>(entity) != nullptr,
+                                            world.GetComponent<ConvexCollider>(entity) != nullptr,
+                                            world.GetComponent<MeshCollider>(entity) != nullptr};
+                 if (!(target.box || target.sphere || target.capsule || target.convex || target.mesh)) {
+                     throw ToolError("Every entity must have at least one 3D collider component");
+                 }
+                 targets.push_back(target);
+             }
+             Json results = Json::array();
+             for (const ColliderPatchTarget& target : targets) {
+                 Json shapes = Json::array();
+                 auto apply = [&](auto* collider, const char* shape) {
+                     if (collider == nullptr) return;
+                     if (center) collider->center = *center;
+                     if (trigger) collider->is_trigger = *trigger;
+                     if (friction) collider->friction = *friction;
+                     if (restitution) collider->restitution = *restitution;
+                     if (report_stay) collider->report_stay = *report_stay;
+                     shapes.push_back(shape);
+                 };
+                 if (target.box) apply(world.GetComponent<BoxCollider>(target.entity), "box");
+                 if (target.sphere) apply(world.GetComponent<SphereCollider>(target.entity), "sphere");
+                 if (target.capsule) apply(world.GetComponent<CapsuleCollider>(target.entity), "capsule");
+                 if (target.convex) apply(world.GetComponent<ConvexCollider>(target.entity), "convex");
+                 if (target.mesh) apply(world.GetComponent<MeshCollider>(target.entity), "mesh");
+                 results.push_back({{"entity", EntityKey(world, target.entity)}, {"shapes", std::move(shapes)}});
+             }
+             return {{"count", results.size()}, {"entities", std::move(results)},
+                     {"center", center ? Json::array({center->x, center->y, center->z}) : Json(nullptr)},
+                     {"trigger", trigger ? Json(*trigger) : Json(nullptr)}, {"friction", friction ? Json(*friction) : Json(nullptr)},
+                     {"restitution", restitution ? Json(*restitution) : Json(nullptr)}, {"report_stay", report_stay ? Json(*report_stay) : Json(nullptr)}};
+         }});
+#endif
+
     server.AddTool(
         {"game_set_physics2d_bodies_many",
          "Apply partial Rigidbody2D settings to up to 64 unique entities. Supports body type, mass, gravity scale and linear damping; validates every body before applying any change and preserves unspecified fields.",
