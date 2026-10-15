@@ -764,6 +764,102 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         return out;
                     }});
 
+    server.AddTool(
+        {"set_components_many",
+         "Update components on 1–64 unique entities as one undoable action. Each edit maps component names to partial field objects; the complete selection and every component patch are validated before any changes are applied.",
+         Schema({{"edits", {{"type", "array"},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", kGuidProp},
+                                                        {"components", {{"type", "object"},
+                                                                         {"description", "Component names mapped to partial field objects"}}}}},
+                                        {"required", Json::array({"entity", "components"})}}},
+                             {"description", "1–64 unique entities and their component patches"}}}},
+                {"edits"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before editing components");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be a non-empty array of at most 64 entity edits");
+             }
+
+             struct ComponentPatch {
+                 ComponentId id;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 Json warnings = Json::array();
+             };
+             struct EntityPatch {
+                 EntityGuid guid;
+                 std::vector<ComponentPatch> components;
+             };
+             std::vector<EntityPatch> patches;
+             patches.reserve(args["edits"].size());
+             std::set<EntityGuid> seen_entities;
+             const ComponentId id_component = GetComponentId<IdComponent>();
+             for (const Json& edit : args["edits"]) {
+                 if (!edit.is_object()) throw ToolError("Each entry in \"edits\" must be an object");
+                 const EntityGuid guid = RequireGuid(edit, "entity");
+                 const Entity entity = RequireEntity(s, edit);
+                 if (!seen_entities.insert(guid).second) throw ToolError("Duplicate entity in \"edits\": " + ToString(guid));
+                 if (!edit.contains("components") || !edit["components"].is_object() || edit["components"].empty()) {
+                     throw ToolError("Each edit must include a non-empty \"components\" object");
+                 }
+
+                 EntityPatch entity_patch;
+                 entity_patch.guid = guid;
+                 entity_patch.components.reserve(edit["components"].size());
+                 for (const auto& [name, value] : edit["components"].items()) {
+                     if (!value.is_object()) throw ToolError("Each component patch must be a field object");
+                     const ComponentId id = RequireComponent(name);
+                     if (id == id_component) throw ToolError("An entity's identity is read-only");
+                     if (!s.world.HasComponentRaw(entity, id)) {
+                         throw ToolError("Entity " + ToString(guid) + " doesn't have " + ComponentName(id) + "; use add_component");
+                     }
+                     ComponentPatch component_patch;
+                     component_patch.id = id;
+                     component_patch.after = PatchedBytes(s, entity, id, value, component_patch.before, component_patch.warnings);
+                     entity_patch.components.push_back(std::move(component_patch));
+                 }
+                 patches.push_back(std::move(entity_patch));
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Set Components " + std::to_string(++next_batch_id);
+             const usize undo_count_before = s.stack.UndoCount();
+             editor::CommandContext ctx = s.Context();
+             s.stack.BeginTransaction(transaction_label);
+             try {
+                 for (const EntityPatch& entity_patch : patches) {
+                     for (const ComponentPatch& component_patch : entity_patch.components) {
+                         auto command = std::make_unique<SetComponentCommand>(entity_patch.guid, component_patch.id,
+                                                                              component_patch.before, component_patch.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                 }
+                 s.stack.EndTransaction();
+             } catch (...) {
+                 s.stack.EndTransaction();
+                 if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                 throw;
+             }
+
+             Json results = Json::array();
+             for (const EntityPatch& entity_patch : patches) {
+                 Json components = Json::object();
+                 Json warnings = Json::object();
+                 const Entity entity = s.guids.Find(s.world, entity_patch.guid);
+                 for (const ComponentPatch& component_patch : entity_patch.components) {
+                     const std::string name = ComponentName(component_patch.id);
+                     components[name] = ComponentJson(s, entity, component_patch.id);
+                     if (!component_patch.warnings.empty()) warnings[name] = component_patch.warnings;
+                 }
+                 Json row = {{"entity", ToString(entity_patch.guid)}, {"components", std::move(components)}};
+                 if (!warnings.empty()) row["warnings"] = std::move(warnings);
+                 results.push_back(std::move(row));
+             }
+             return {{"updated", patches.size()}, {"edits", std::move(results)}};
+         }});
+
     server.AddTool({"reparent",
                     "Make an entity a child of another (its Transform is then relative to the parent), or detach it "
                     "by omitting `parent`. Undoable.",

@@ -32,7 +32,7 @@ and errors go to stderr.
 | `duplicate_entity` / `duplicate_entities` | Copy reflected component values for one entity or up to 64 unique entities as one undo action; keep source parents, leave children as they are |
 | `destroy_entity` / `destroy_entities` | Delete one entity or up to 64 unique entities as one undoable action; the batch leaves children and GUID references unchanged and restores original GUIDs on undo |
 | `add_component` / `remove_component` | Add (with optional initial values) or remove a component |
-| `set_component` | Partial update: only the fields named change |
+| `set_component` / `set_components_many` | Partial component update; batch applies patches to up to 64 unique entities as one undo action after validating every patch |
 | `reparent` / `reparent_many` | Parent or detach entities; the batch variant applies up to 64 unique moves in one undo action after validating the final hierarchy for cycles |
 | `undo` / `redo` | Walk the editor history and return the source (`agent`) recorded with that action |
 | `save_scene` / `load_scene` | `.json` (readable) or `.aesc` (binary); load can `replace` |. They stay inside the scene folder (the working folder, or `--scene-root`): relative paths resolve there, and absolute paths, `..` and symlinks that leave it are refused
