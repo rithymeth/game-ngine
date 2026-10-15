@@ -72,6 +72,9 @@ public:
     // `ignore` skips one entity's body (usually the caller's own).
     SceneHit RayCast(const Vec3& from, const Vec3& to, LayerMask layers = kAllLayers, Entity ignore = kNullEntity,
                      bool include_triggers = false) const;
+    std::vector<SceneHit> RayCastAll(const Vec3& from, const Vec3& to, LayerMask layers = kAllLayers,
+                                     Entity ignore = kNullEntity, bool include_triggers = false,
+                                     usize max_hits = 64) const;
     SceneHit SphereCast(f32 radius, const Vec3& from, const Vec3& to, LayerMask layers = kAllLayers, Entity ignore = kNullEntity,
                         bool include_triggers = false) const;
     SceneHit CapsuleCast(f32 radius, f32 height, const Vec3& from, const Vec3& to, LayerMask layers = kAllLayers,

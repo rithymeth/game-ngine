@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <unordered_set>
 #include <tuple>
 #include <cstring>
 #include <cstdarg>
@@ -354,6 +355,38 @@ QueryHit PhysicsWorld::RayCast(const Vec3& from, const Vec3& to, const QueryFilt
     out.distance = (to - from).Length() * result.mFraction;
     JPH::BodyLockRead lock(physics_system_->GetBodyLockInterface(), result.mBodyID);
     if (lock.Succeeded()) out.normal = ToAether(lock.GetBody().GetWorldSpaceSurfaceNormal(result.mSubShapeID2, point));
+    return out;
+}
+
+std::vector<QueryHit> PhysicsWorld::RayCastAll(const Vec3& from, const Vec3& to, const QueryFilter& filter, usize max_hits) const {
+    std::vector<QueryHit> out;
+    if (max_hits == 0) return out;
+    const JPH::RRayCast ray(ToR(from), ToJolt(to - from));
+    JPH::RayCastSettings settings;
+    JPH::AllHitCollisionCollector<JPH::CastRayCollector> collector;
+    const LayerMaskFilter layers(filter.layers);
+    const QueryBodyFilter bodies(filter);
+    physics_system_->GetNarrowPhaseQuery().CastRay(ray, settings, collector, {}, layers, bodies);
+    std::sort(collector.mHits.begin(), collector.mHits.end(), [](const JPH::RayCastResult& a, const JPH::RayCastResult& b) {
+        if (a.mFraction != b.mFraction) return a.mFraction < b.mFraction;
+        if (a.mBodyID != b.mBodyID) return a.mBodyID < b.mBodyID;
+        return a.mSubShapeID2.GetValue() < b.mSubShapeID2.GetValue();
+    });
+    const f32 ray_length = (to - from).Length();
+    std::unordered_set<u32> seen;
+    for (const JPH::RayCastResult& result : collector.mHits) {
+        if (!seen.insert(result.mBodyID.GetIndexAndSequenceNumber()).second) continue;
+        QueryHit hit;
+        hit.hit = true;
+        hit.body = result.mBodyID;
+        const JPH::RVec3 point = ray.GetPointOnRay(result.mFraction);
+        hit.point = FromR(point);
+        hit.distance = ray_length * result.mFraction;
+        JPH::BodyLockRead lock(physics_system_->GetBodyLockInterface(), result.mBodyID);
+        if (lock.Succeeded()) hit.normal = ToAether(lock.GetBody().GetWorldSpaceSurfaceNormal(result.mSubShapeID2, point));
+        out.push_back(hit);
+        if (out.size() >= max_hits) break;
+    }
     return out;
 }
 
