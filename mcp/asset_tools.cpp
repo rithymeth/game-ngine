@@ -1334,6 +1334,91 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
              return out;
          }});
 
+    server.AddTool(
+        {"asset_set_import_settings_many",
+         "Apply import settings and/or labels to 1-64 assets as one agent-attributed undoable action. Each change has an `asset` path or GUID and optional `settings` merge and `labels` replacement. Reimport is controlled by the shared `import` flag.",
+         Schema({{"changes", {{"type", "array"},
+                               {"items", {{"type", "object"},
+                                          {"properties", {{"asset", {{"type", "string"}}},
+                                                          {"settings", {{"type", "object"}}},
+                                                          {"labels", {{"type", "array"}, {"items", {{"type", "string"}}}}}}},
+                                          {"required", Json::array({"asset"})}}},
+                               {"description", "1-64 unique assets; each change must include settings, labels, or both"}}},
+                 {"import", {{"type", "boolean"}, {"description", "Reimport each asset immediately (default true)"}}}},
+                {"changes"}),
+         [host, &session](const Json& args) -> Json {
+             OpenProject& p = host->Require();
+             if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing import settings");
+             if (!args["changes"].is_array() || args["changes"].empty() || args["changes"].size() > 64) {
+                 throw ToolError("\"changes\" must be a non-empty array of at most 64 assets");
+             }
+
+             struct Change {
+                 assets::AssetGuid guid;
+                 std::string path;
+                 fs::path meta_file;
+                 std::vector<u8> before;
+                 assets::AssetMeta after;
+             };
+             std::vector<Change> changes;
+             std::set<std::string> selected_guids;
+             for (const Json& entry : args["changes"]) {
+                 if (!entry.is_object()) throw ToolError("Each change must be an object");
+                 const AssetRecord& record = FindAsset(p, RequireString(entry, "asset"));
+                 if (record.IsSubAsset()) throw ToolError("Sub-assets take their source's settings: change " + PathOf(p, record.parent));
+                 if (!entry.contains("settings") && !entry.contains("labels")) {
+                     throw ToolError("Each change must include \"settings\", \"labels\", or both");
+                 }
+                 if (entry.contains("settings") && !entry["settings"].is_object()) throw ToolError("\"settings\" must be an object");
+                 if (!selected_guids.insert(assets::ToString(record.guid)).second) throw ToolError("Duplicate asset in changes: " + record.path);
+
+                 Change change;
+                 change.guid = record.guid;
+                 change.path = record.path;
+                 change.meta_file = p.database->MetaPath(change.guid);
+                 if (!aether::fs::ReadFileBytes(change.meta_file.string(), change.before)) throw ToolError("Couldn't read " + change.meta_file.string());
+                 std::string error;
+                 if (!assets::LoadAssetMetaFromMemory(change.before, change.after, &error)) throw ToolError(error);
+                 if (entry.contains("settings")) change.after.settings.merge_patch(entry["settings"]);
+                 if (entry.contains("labels")) change.after.labels = OptStrings(entry, "labels");
+                 change.after.source_hash.clear(); // these changes require a reimport
+                 changes.push_back(std::move(change));
+             }
+
+             const bool import_now = OptBool(args, "import", true);
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Change Import Settings for Assets " + std::to_string(++next_batch_id);
+             const usize undo_count_before = session.stack.UndoCount();
+             editor::CommandContext context = session.Context();
+             Json results = Json::array();
+             session.stack.BeginTransaction(transaction_label);
+             try {
+                 for (const Change& change : changes) {
+                     auto command = std::make_unique<ImportSettingsCommand>(host, p.paths.file, change.guid, change.meta_file,
+                                                                             change.before, change.after, import_now);
+                     command->SetAttribution("agent");
+                     ImportSettingsCommand* command_result = command.get();
+                     session.stack.Execute(context, std::move(command));
+                     Json row = {{"asset", change.path}, {"settings", change.after.settings}, {"labels", change.after.labels}};
+                     if (import_now) {
+                         row["imported"] = command_result->Imported();
+                         row["from_cache"] = command_result->FromCache();
+                         row["warnings"] = command_result->Warnings();
+                         if (!command_result->Imported()) row["error"] = command_result->ImportError();
+                     }
+                     results.push_back(std::move(row));
+                 }
+                 session.stack.EndTransaction();
+             } catch (...) {
+                 session.stack.EndTransaction();
+                 if (session.stack.UndoCount() != undo_count_before || session.stack.UndoLabel() == transaction_label) {
+                     session.stack.Undo(context);
+                 }
+                 throw;
+             }
+             return {{"updated", changes.size()}, {"results", std::move(results)}};
+         }});
+
     server.AddTool({"asset_move",
                     "Move or rename an asset or a whole folder (both relative to Content/) as one agent-attributed undoable action. GUID references stay unchanged; glTF relative URIs are rewritten.",
                     Schema({{"from", {{"type", "string"}}}, {"to", {{"type", "string"}}}}, {"from", "to"}), [host, &session](const Json& args) -> Json {
