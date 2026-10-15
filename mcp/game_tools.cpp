@@ -2551,12 +2551,13 @@ void RegisterGameTools(McpServer& server) {
 #if AETHER_MCP_PHYSICS
     server.AddTool(
         {"game_physics_query",
-         "Query the loaded game's 3D physics scene with a raycast, sphere cast, upright capsule cast, sphere overlap, axis-aligned box overlap, or upright capsule overlap. Capsule height includes both caps; if height is below its diameter, the shape uses a sphere. Supports a 32-bit collision layer mask, an ignored entity and optional trigger inclusion.",
-         Schema({{"kind", {{"type", "string"}, {"enum", Json::array({"raycast", "spherecast", "capsulecast", "overlap_sphere", "overlap_box", "overlap_capsule"})}}},
+         "Query the loaded game's 3D physics scene with a raycast, sphere cast, upright capsule cast, sphere overlap, axis-aligned or oriented box overlap, or upright capsule overlap. Box half_extents are local to the query rotation. Capsule height includes both caps; if height is below its diameter, the shape uses a sphere. Supports a 32-bit collision layer mask, an ignored entity and optional trigger inclusion.",
+         Schema({{"kind", {{"type", "string"}, {"enum", Json::array({"raycast", "spherecast", "capsulecast", "overlap_sphere", "overlap_box", "overlap_oriented_box", "overlap_capsule"})}}},
                  {"from", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
                  {"to", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
                  {"center", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
                  {"half_extents", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}, {"exclusiveMinimum", 0}}}}},
+                 {"rotation", {{"type", "array"}, {"minItems", 4}, {"maxItems", 4}, {"items", {{"type", "number"}}}}},
                  {"radius", {{"type", "number"}, {"exclusiveMinimum", 0}}},
                  {"height", {{"type", "number"}, {"exclusiveMinimum", 0}}},
                  {"layer_mask", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4294967295.0}}},
@@ -2578,6 +2579,16 @@ void RegisterGameTools(McpServer& server) {
                      throw ToolError(std::string("\"") + field + "\" values must be finite");
                  }
                  return value;
+             };
+             auto read_rotation = [&](const Json& value) {
+                 if (!value.is_array() || value.size() != 4 || !value[0].is_number() || !value[1].is_number() ||
+                     !value[2].is_number() || !value[3].is_number()) throw ToolError("\"rotation\" must be [x, y, z, w]");
+                 Quaternion rotation{value[0].get<f32>(), value[1].get<f32>(), value[2].get<f32>(), value[3].get<f32>()};
+                 if (!std::isfinite(rotation.x) || !std::isfinite(rotation.y) || !std::isfinite(rotation.z) ||
+                     !std::isfinite(rotation.w) || rotation.x * rotation.x + rotation.y * rotation.y + rotation.z * rotation.z + rotation.w * rotation.w < 1.0e-12f) {
+                     throw ToolError("\"rotation\" must be finite and non-zero");
+                 }
+                 return rotation.Normalized();
              };
              LayerMask layers = kAllLayers;
              if (args.contains("layer_mask")) {
@@ -2634,14 +2645,21 @@ void RegisterGameTools(McpServer& server) {
                  }
                  return {{"kind", kind}, {"count", entities.size()}, {"entities", std::move(entities)}};
              }
-             if (kind == "overlap_box") {
+             if (kind == "overlap_box" || kind == "overlap_oriented_box") {
                  const Vec3 center = read_vec3("center");
                  const Vec3 half_extents = read_vec3("half_extents");
                  if (half_extents.x <= 0.0f || half_extents.y <= 0.0f || half_extents.z <= 0.0f) {
                      throw ToolError("\"half_extents\" components must be positive");
                  }
                  Json entities = Json::array();
-                 for (Entity entity : scene->OverlapBox(center, half_extents, layers, ignore, include_triggers)) {
+                 Quaternion rotation = Quaternion::Identity();
+                 if (kind == "overlap_oriented_box") {
+                     if (!args.contains("rotation")) throw ToolError("\"rotation\" is required for overlap_oriented_box");
+                     rotation = read_rotation(args["rotation"]);
+                 }
+                 const auto entities_found = kind == "overlap_box" ? scene->OverlapBox(center, half_extents, layers, ignore, include_triggers)
+                                                                     : scene->OverlapOrientedBox(center, half_extents, rotation, layers, ignore, include_triggers);
+                 for (Entity entity : entities_found) {
                      entities.push_back(entity.IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), entity)));
                  }
                  return {{"kind", kind}, {"count", entities.size()}, {"entities", std::move(entities)}};
@@ -2660,19 +2678,20 @@ void RegisterGameTools(McpServer& server) {
                  }
                  return {{"kind", kind}, {"count", entities.size()}, {"entities", std::move(entities)}};
              }
-             throw ToolError("\"kind\" must be raycast, spherecast, capsulecast, overlap_sphere, overlap_box or overlap_capsule");
+             throw ToolError("\"kind\" must be raycast, spherecast, capsulecast, overlap_sphere, overlap_box, overlap_oriented_box or overlap_capsule");
          }});
 
     server.AddTool(
         {"game_physics_queries_many",
-         "Run 1 to 64 3D raycast, spherecast, upright capsulecast, sphere-overlap, axis-aligned box-overlap, or upright capsule-overlap queries in one request. Capsule height includes both caps; if height is below its diameter, the shape uses a sphere. Each query can set its own layer mask, ignored entity, and trigger policy. Validates every query before running any of them.",
+         "Run 1 to 64 3D raycast, spherecast, upright capsulecast, sphere-overlap, axis-aligned or oriented box-overlap, or upright capsule-overlap queries in one request. Oriented box half_extents are local to its required quaternion rotation [x, y, z, w]. Capsule height includes both caps; if height is below its diameter, the shape uses a sphere. Each query can set its own layer mask, ignored entity, and trigger policy. Validates every query before running any of them.",
          Schema({{"queries", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
                                {"items", {{"type", "object"},
-                                          {"properties", {{"kind", {{"type", "string"}, {"enum", Json::array({"raycast", "spherecast", "capsulecast", "overlap_sphere", "overlap_box", "overlap_capsule"})}},
+                                          {"properties", {{"kind", {{"type", "string"}, {"enum", Json::array({"raycast", "spherecast", "capsulecast", "overlap_sphere", "overlap_box", "overlap_oriented_box", "overlap_capsule"})}},
                                                           {"from", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
                                                           {"to", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
                                                           {"center", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
                                                           {"half_extents", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}, {"exclusiveMinimum", 0}}}}},
+                                                          {"rotation", {{"type", "array"}, {"minItems", 4}, {"maxItems", 4}, {"items", {{"type", "number"}}}}},
                                                           {"radius", {{"type", "number"}, {"exclusiveMinimum", 0}}},
                                                           {"height", {{"type", "number"}, {"exclusiveMinimum", 0}}},
                                                           {"layer_mask", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4294967295.0}}},
@@ -2692,6 +2711,7 @@ void RegisterGameTools(McpServer& server) {
                  Vec3 to{};
                  Vec3 center{};
                  Vec3 half_extents{};
+                 Quaternion rotation = Quaternion::Identity();
                  f32 radius = 0.0f;
                  f32 height = 0.0f;
                  LayerMask layers = kAllLayers;
@@ -2716,8 +2736,8 @@ void RegisterGameTools(McpServer& server) {
                  PhysicsQuery query;
                  query.kind = raw["kind"].get<std::string>();
                  if (query.kind != "raycast" && query.kind != "spherecast" && query.kind != "capsulecast" &&
-                     query.kind != "overlap_sphere" && query.kind != "overlap_box" && query.kind != "overlap_capsule") {
-                     throw ToolError("Query kind must be raycast, spherecast, capsulecast, overlap_sphere, overlap_box or overlap_capsule");
+                     query.kind != "overlap_sphere" && query.kind != "overlap_box" && query.kind != "overlap_oriented_box" && query.kind != "overlap_capsule") {
+                     throw ToolError("Query kind must be raycast, spherecast, capsulecast, overlap_sphere, overlap_box, overlap_oriented_box or overlap_capsule");
                  }
                  if (query.kind == "raycast" || query.kind == "spherecast" || query.kind == "capsulecast") {
                      query.from = read_vec3(raw, "from");
@@ -2725,11 +2745,24 @@ void RegisterGameTools(McpServer& server) {
                  } else {
                      query.center = read_vec3(raw, "center");
                  }
-                 if (query.kind == "overlap_box") {
+                 if (query.kind == "overlap_box" || query.kind == "overlap_oriented_box") {
                      query.half_extents = read_vec3(raw, "half_extents");
                      if (query.half_extents.x <= 0.0f || query.half_extents.y <= 0.0f || query.half_extents.z <= 0.0f) {
                          throw ToolError("Box overlap half_extents components must be positive");
                      }
+                 }
+                 if (query.kind == "overlap_oriented_box") {
+                     if (!raw.contains("rotation")) throw ToolError("Oriented box overlaps require \"rotation\"");
+                     const Json& value = raw["rotation"];
+                     if (!value.is_array() || value.size() != 4 || !value[0].is_number() || !value[1].is_number() ||
+                         !value[2].is_number() || !value[3].is_number()) throw ToolError("\"rotation\" must be [x, y, z, w]");
+                     query.rotation = Quaternion{value[0].get<f32>(), value[1].get<f32>(), value[2].get<f32>(), value[3].get<f32>()};
+                     if (!std::isfinite(query.rotation.x) || !std::isfinite(query.rotation.y) || !std::isfinite(query.rotation.z) ||
+                         !std::isfinite(query.rotation.w) || query.rotation.x * query.rotation.x + query.rotation.y * query.rotation.y +
+                             query.rotation.z * query.rotation.z + query.rotation.w * query.rotation.w < 1.0e-12f) {
+                         throw ToolError("\"rotation\" must be finite and non-zero");
+                     }
+                     query.rotation = query.rotation.Normalized();
                  }
                  if (query.kind == "spherecast" || query.kind == "capsulecast" || query.kind == "overlap_sphere" || query.kind == "overlap_capsule") {
                      if (!raw.contains("radius") || !raw["radius"].is_number()) throw ToolError("Sphere and capsule queries require a finite positive \"radius\"");
@@ -2784,9 +2817,11 @@ void RegisterGameTools(McpServer& server) {
                          entities.push_back(entity.IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), entity)));
                      }
                      results.push_back({{"index", i}, {"kind", query.kind}, {"count", entities.size()}, {"entities", std::move(entities)}});
-                 } else if (query.kind == "overlap_box") {
+                 } else if (query.kind == "overlap_box" || query.kind == "overlap_oriented_box") {
                      Json entities = Json::array();
-                     for (Entity entity : scene->OverlapBox(query.center, query.half_extents, query.layers, query.ignore, query.include_triggers)) {
+                     const auto found = query.kind == "overlap_box" ? scene->OverlapBox(query.center, query.half_extents, query.layers, query.ignore, query.include_triggers)
+                                                                     : scene->OverlapOrientedBox(query.center, query.half_extents, query.rotation, query.layers, query.ignore, query.include_triggers);
+                     for (Entity entity : found) {
                          entities.push_back(entity.IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), entity)));
                      }
                      results.push_back({{"index", i}, {"kind", query.kind}, {"count", entities.size()}, {"entities", std::move(entities)}});
