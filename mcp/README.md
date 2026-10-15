@@ -396,6 +396,7 @@ saves and localization. The game has its own world, separate from the editor's.
 | `log_recent` | The engine's last 512 log lines, including what scripts and Blueprints `print()` (categories `Script`, `Blueprint`); filter by level, category, text, time |
 | `log_clear` | Forget the recent log lines |
 | `game_spawn_entity` | Create an entity in the running game from component name -> fields (a Transform is always added), with optional tags |
+| `game_spawn_entities_many` | Create 1-64 live entities in one validated request with per-entity components and optional tags; removes entities from the request if spawning fails partway |
 | `game_add_component` | Add a component to a running entity (or merge values onto an existing one) |
 | `game_add_components_many` | Add one default component to up to 64 unique live entities; validates the whole selection first, refuses if any target already has it, and protects game-managed IdComponent |
 | `game_set_components_many` | Merge the same field patch onto one component across up to 64 unique live entities; validates all merged values before applying any update |
