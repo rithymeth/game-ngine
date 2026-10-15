@@ -1779,6 +1779,50 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_add_entity_components_many",
+         "Add different default-constructed components to up to 64 live entity/component pairs. Validates every target first and protects game-managed IdComponent.",
+         Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                             {"items", {{"type", "object"},
+                                         {"properties", {{"entity", {{"type", "string"}}}, {"component", {{"type", "string"}}}}},
+                                         {"required", Json::array({"entity", "component"})}}}}}},
+                {"edits"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be an array of 1 to 64 entity/component additions");
+             }
+             struct Addition {
+                 Entity entity;
+                 ComponentId id;
+             };
+             std::vector<Addition> additions;
+             additions.reserve(args["edits"].size());
+             for (const Json& item : args["edits"]) {
+                 if (!item.is_object() || !item.contains("entity") || !item["entity"].is_string() || item["entity"].get<std::string>().empty()) {
+                     throw ToolError("Every \"edits\" entry must contain a non-empty string \"entity\"");
+                 }
+                 if (!item.contains("component") || !item["component"].is_string()) throw ToolError("Every \"edits\" entry must contain a string \"component\"");
+                 const Entity entity = FindEntity(game, item["entity"].get<std::string>());
+                 const ComponentId id = RequireComponent(item["component"].get<std::string>());
+                 if (id == GetComponentId<IdComponent>()) throw ToolError("IdComponent is managed by the running game and cannot be added directly");
+                 if (std::find_if(additions.begin(), additions.end(), [entity, id](const Addition& addition) {
+                         return addition.entity == entity && addition.id == id;
+                     }) != additions.end()) {
+                     throw ToolError("\"edits\" must not repeat the same entity/component pair");
+                 }
+                 if (world.HasComponentRaw(entity, id)) throw ToolError("Entity " + EntityKey(world, entity) + " already has " + ComponentName(id));
+                 additions.push_back({entity, id});
+             }
+             for (const Addition& addition : additions) world.AddComponentRaw(addition.entity, addition.id);
+             Json results = Json::array();
+             for (const Addition& addition : additions) {
+                 results.push_back({{"entity", EntityKey(world, addition.entity)}, {"component", ComponentName(addition.id)}, {"added", true}});
+             }
+             return {{"added_count", results.size()}, {"results", results}};
+         }});
+
+    server.AddTool(
         {"game_set_components_many",
          "Apply the same partial field update to one component on up to 64 unique running entities. The complete selection and every merged value are validated before any component changes.",
          Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}},
