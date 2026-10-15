@@ -2001,6 +2001,141 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
          }});
 
     server.AddTool(
+        {"set_entities_world_position_many",
+         "Set 1–64 unique scene entities to one shared world position as one undoable action. Each entity must have Transform; rotation and scale are preserved. Positions are converted through the final parent transforms, including parents changed in this batch. Singular parent transforms, cycles, and hierarchy chains deeper than the supported limit are rejected. Validate the complete selection before applying changes.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique entity GUIDs"}}},
+                 {"position", {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 3}, {"maxItems", 3},
+                               {"description", "Shared world position [x, y, z]"}}}},
+                {"entities", "position"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             if (!args["position"].is_array() || args["position"].size() != 3) throw ToolError("\"position\" must be [x, y, z]");
+             for (const Json& value : args["position"]) {
+                 if (!value.is_number() || !std::isfinite(value.get<double>())) {
+                     throw ToolError("World-position values must be finite numbers");
+                 }
+             }
+             const Vec3 world_position{args["position"][0].get<f32>(), args["position"][1].get<f32>(), args["position"][2].get<f32>()};
+             if (!std::isfinite(world_position.x) || !std::isfinite(world_position.y) || !std::isfinite(world_position.z)) {
+                 throw ToolError("World-position values must fit finite engine coordinates");
+             }
+
+             struct PositionEdit {
+                 EntityGuid guid;
+                 Entity entity;
+                 Vec3 local_position;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<PositionEdit> edits;
+             edits.reserve(args["entities"].size());
+             std::map<EntityGuid, usize> edit_indices;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 const std::string text = value.get<std::string>();
+                 EntityGuid guid;
+                 if (!ParseEntityGuid(text, guid)) throw ToolError("Not a valid entity GUID: " + text);
+                 if (edit_indices.contains(guid)) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 if (s.world.GetComponent<Transform>(entity) == nullptr) {
+                     throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 }
+                 edit_indices.emplace(guid, edits.size());
+                 PositionEdit edit;
+                 edit.guid = guid;
+                 edit.entity = entity;
+                 edits.push_back(std::move(edit));
+             }
+
+             std::function<Mat4(Entity, int)> compute_final_world = [&](Entity entity, int depth) -> Mat4 {
+                 if (entity.IsNull()) return Mat4::Identity();
+                 if (depth >= kMaxHierarchyDepth) throw ToolError("World-position batch encountered a hierarchy cycle or excessive depth");
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) return Mat4::Identity();
+                 Mat4 parent_world = Mat4::Identity();
+                 const Entity parent = GetParent(s.world, s.guids, entity);
+                 if (!parent.IsNull()) parent_world = compute_final_world(parent, depth + 1);
+
+                 Transform updated = *current;
+                 const IdComponent* id = s.world.GetComponent<IdComponent>(entity);
+                 if (id != nullptr) {
+                     const auto selected = edit_indices.find(id->guid);
+                     if (selected != edit_indices.end()) {
+                         Mat4 inverse_parent;
+                         if (!parent_world.TryInverse(inverse_parent)) {
+                             throw ToolError("Cannot set world position for entity " + ToString(id->guid) + " because its parent transform is singular");
+                         }
+                         const Vec4 local_homogeneous = inverse_parent * Vec4(world_position.x, world_position.y, world_position.z, 1.0f);
+                         if (!std::isfinite(local_homogeneous.x) || !std::isfinite(local_homogeneous.y) ||
+                             !std::isfinite(local_homogeneous.z) || !std::isfinite(local_homogeneous.w) ||
+                             std::abs(local_homogeneous.w) <= 1.0e-12f) {
+                             throw ToolError("Parent transform cannot produce a finite local position for entity " + ToString(id->guid));
+                         }
+                         const Vec3 local_position{local_homogeneous.x / local_homogeneous.w,
+                                                   local_homogeneous.y / local_homogeneous.w,
+                                                   local_homogeneous.z / local_homogeneous.w};
+                         if (!std::isfinite(local_position.x) || !std::isfinite(local_position.y) || !std::isfinite(local_position.z)) {
+                             throw ToolError("World position would produce a non-finite local position for entity " + ToString(id->guid));
+                         }
+                         edits[selected->second].local_position = local_position;
+                         updated.position = local_position;
+                     }
+                 }
+                 return parent_world * LocalTransformMatrix(updated);
+             };
+
+             for (const PositionEdit& edit : edits) (void)compute_final_world(edit.entity, 0);
+             for (PositionEdit& edit : edits) {
+                 const Transform* current = s.world.GetComponent<Transform>(edit.entity);
+                 Transform updated = *current;
+                 updated.position = edit.local_position;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+             }
+
+             const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const PositionEdit& edit) { return edit.changed; });
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Set Entity World Position " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const PositionEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const PositionEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)},
+                                    {"world_position", {world_position.x, world_position.y, world_position.z}},
+                                    {"local_position", {edit.local_position.x, edit.local_position.y, edit.local_position.z}},
+                                    {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const PositionEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
         {"set_entities_world_positions_many",
          "Set world positions individually for 1–64 unique scene entities as one undoable action. Each entity must have Transform; rotation and scale are preserved. Child targets are converted through the live parent world transform into local positions. A singular parent transform or selecting both an entity and one of its ancestors is rejected. Validate the complete selection before applying changes.",
          Schema({{"edits", {{"type", "array"},
