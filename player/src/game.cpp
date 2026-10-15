@@ -228,6 +228,14 @@ struct Game::Physics {};
 bool Game::HasPhysics() { return AETHER_GAME_PHYSICS != 0; }
 bool Game::HasScripting() { return AETHER_GAME_SCRIPTING != 0; }
 
+PhysicsScene* Game::PhysicsQueries() {
+#if AETHER_GAME_PHYSICS
+    return physics_ && physics_->scene ? physics_->scene.get() : nullptr;
+#else
+    return nullptr;
+#endif
+}
+
 Game::Game(GamePackage& package)
     : package_(package), world_(std::make_unique<World>()), settings_(std::make_unique<save::SettingsStore<save::GameSettings>>(std::filesystem::path())) {
     lifecycle_ = std::make_unique<Lifecycle>(*world_, guids_);
