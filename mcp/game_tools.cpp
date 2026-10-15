@@ -10,6 +10,7 @@
 #include "aether/gameplay/attribute_library.h"
 #include "aether/gameplay/attribute_system.h"
 #include "aether/gameplay/attribute_set.h"
+#include "aether/gameplay/ability_system.h"
 #include "aether/input/keys.h"
 #if AETHER_MCP_INTERACTION
 #include "aether/interaction/interaction_system.h"
@@ -3115,6 +3116,69 @@ void RegisterGameTools(McpServer& server) {
                                     {"max", gas::Attributes::GetAttributeMax(edit.entity, edit.name, 0.0f)}});
              }
              return {{"updated_count", results.size()}, {"results", results}};
+         }});
+
+    server.AddTool(
+        {"game_ability",
+         "Inspect or control a gameplay ability in the running game: check eligibility, grant or revoke it, activate it, or commit/end/cancel an active ability by handle.",
+         Schema({{"entity", {{"type", "string"}}},
+                 {"ability", {{"type", "string"}}},
+                 {"action", {{"type", "string"}, {"enum", Json::array({"state", "can_activate", "grant", "revoke", "activate", "commit", "end", "cancel"})}},
+                 {"handle", {{"type", "integer"}, {"minimum", 1}, {"maximum", std::numeric_limits<u32>::max()}}}},
+                {"action"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             gas::AbilitySystem* system = gas::AbilitySystem::Active();
+             if (system == nullptr) throw ToolError("This game has no ability system (load a scene first)");
+             const std::string action = RequireString(args, "action");
+             if (action != "state" && action != "can_activate" && action != "grant" && action != "revoke" && action != "activate" &&
+                 action != "commit" && action != "end" && action != "cancel") {
+                 throw ToolError("\"action\" must be state, can_activate, grant, revoke, activate, commit, end or cancel");
+             }
+             auto require_entity = [&]() { return FindEntity(game, RequireString(args, "entity")); };
+             auto require_ability = [&]() { return RequireString(args, "ability"); };
+             if (action == "commit" || action == "end" || action == "cancel") {
+                 if (!args.contains("handle") || (!args["handle"].is_number_unsigned() && !args["handle"].is_number_integer())) {
+                     throw ToolError("This action requires a positive integer \"handle\"");
+                 }
+                 u64 raw = 0;
+                 if (args["handle"].is_number_unsigned()) raw = args["handle"].get<u64>();
+                 else {
+                     const i64 signed_raw = args["handle"].get<i64>();
+                     if (signed_raw <= 0) throw ToolError("\"handle\" must be between 1 and 4294967295");
+                     raw = static_cast<u64>(signed_raw);
+                 }
+                 if (raw == 0 || raw > std::numeric_limits<u32>::max()) throw ToolError("\"handle\" must be between 1 and 4294967295");
+                 const gas::AbilityHandle handle = static_cast<gas::AbilityHandle>(raw);
+                 bool ok = false;
+                 if (action == "commit") ok = system->Commit(handle);
+                 else if (action == "end") ok = system->End(handle);
+                 else ok = system->Cancel(handle);
+                 return {{"action", action}, {"handle", handle}, {"ok", ok}};
+             }
+             const Entity entity = require_entity();
+             const std::string ability = require_ability();
+             if (action == "state") {
+                 return {{"entity", EntityKey(game.GetWorld(), entity)}, {"ability", ability},
+                         {"granted", system->IsGranted(entity, ability)}, {"active", system->IsActive(entity, ability)},
+                         {"active_count", system->ActiveCount(entity)}};
+             }
+             if (action == "can_activate") {
+                 const gas::FailReason reason = system->CanActivate(entity, ability);
+                 return {{"entity", EntityKey(game.GetWorld(), entity)}, {"ability", ability},
+                         {"can_activate", reason == gas::FailReason::None}, {"reason", gas::FailReasonName(reason)}};
+             }
+             if (action == "grant" || action == "revoke") {
+                 const bool changed = action == "grant" ? system->Grant(entity, ability) : system->Revoke(entity, ability);
+                 return {{"entity", EntityKey(game.GetWorld(), entity)}, {"ability", ability}, {"action", action}, {"changed", changed},
+                         {"granted", system->IsGranted(entity, ability)}, {"active", system->IsActive(entity, ability)}};
+             }
+             if (action == "activate") {
+                 const gas::AbilitySystem::ActivateResult result = system->TryActivate(entity, ability);
+                 return {{"entity", EntityKey(game.GetWorld(), entity)}, {"ability", ability},
+                         {"activated", result.handle != 0}, {"handle", result.handle}, {"reason", gas::FailReasonName(result.reason)}};
+             }
+             throw ToolError("Unsupported ability action");
          }});
 
 #if AETHER_MCP_INTERACTION
