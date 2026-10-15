@@ -1823,6 +1823,73 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_upsert_entity_components_many",
+         "Add or update different components on up to 64 live entity/component pairs. Missing components start with reflected defaults; IdComponent is protected and the full request is validated first.",
+         Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                             {"items", {{"type", "object"},
+                                         {"properties", {{"entity", {{"type", "string"}}}, {"component", {{"type", "string"}}},
+                                                          {"values", {{"type", "object"}}}}},
+                                         {"required", Json::array({"entity", "component", "values"})}}}}}},
+                {"edits"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be an array of 1 to 64 entity/component upserts");
+             }
+             struct PreparedUpsert {
+                 Entity entity;
+                 ComponentId id;
+                 bool added;
+                 Json values;
+                 std::vector<std::string> warnings;
+             };
+             std::vector<PreparedUpsert> upserts;
+             upserts.reserve(args["edits"].size());
+             for (const Json& item : args["edits"]) {
+                 if (!item.is_object() || !item.contains("entity") || !item["entity"].is_string() || item["entity"].get<std::string>().empty()) {
+                     throw ToolError("Every \"edits\" entry must contain a non-empty string \"entity\"");
+                 }
+                 if (!item.contains("component") || !item["component"].is_string()) throw ToolError("Every \"edits\" entry must contain a string \"component\"");
+                 if (!item.contains("values") || !item["values"].is_object()) throw ToolError("Every \"edits\" entry must contain object \"values\"");
+                 const Entity entity = FindEntity(game, item["entity"].get<std::string>());
+                 const ComponentId id = RequireComponent(item["component"].get<std::string>());
+                 if (id == GetComponentId<IdComponent>()) throw ToolError("IdComponent is managed by the running game and cannot be changed directly");
+                 if (std::find_if(upserts.begin(), upserts.end(), [entity, id](const PreparedUpsert& upsert) {
+                         return upsert.entity == entity && upsert.id == id;
+                     }) != upserts.end()) {
+                     throw ToolError("\"edits\" must not repeat the same entity/component pair");
+                 }
+                 const ComponentInfo& info = GetComponentInfo(id);
+                 const void* data = world.GetComponentRaw(entity, id);
+                 reflect::Any candidate = reflect::Any::DefaultOf(*info.reflected);
+                 if (!candidate.HasValue()) throw ToolError("Cannot construct reflected defaults for " + ComponentName(id));
+                 Json merged = data != nullptr ? reflect::ToJson(*info.reflected, data) : reflect::ToJson(*info.reflected, candidate.Data());
+                 merged.merge_patch(item["values"]);
+                 reflect::LoadReport report;
+                 if (!reflect::FromJson(*info.reflected, candidate.Data(), merged, &report)) {
+                     throw ToolError("Value does not match the shape of " + ComponentName(id) + " on entity " + EntityKey(world, entity));
+                 }
+                 upserts.push_back({entity, id, data == nullptr, std::move(merged), std::move(report.warnings)});
+             }
+             Json results = Json::array();
+             for (PreparedUpsert& upsert : upserts) {
+                 const ComponentInfo& info = GetComponentInfo(upsert.id);
+                 if (upsert.added) world.AddComponentRaw(upsert.entity, upsert.id);
+                 void* data = world.GetComponentRaw(upsert.entity, upsert.id);
+                 reflect::LoadReport report;
+                 if (!reflect::FromJson(*info.reflected, data, upsert.values, &report)) {
+                     throw ToolError("Validated component upsert could not be applied to entity " + EntityKey(world, upsert.entity));
+                 }
+                 Json result = {{"entity", EntityKey(world, upsert.entity)}, {"component", ComponentName(upsert.id)},
+                                {"added", upsert.added}, {"values", reflect::ToJson(*info.reflected, data)}};
+                 if (!upsert.warnings.empty()) result["warnings"] = upsert.warnings;
+                 results.push_back(std::move(result));
+             }
+             return {{"upserted_count", results.size()}, {"results", results}};
+         }});
+
+    server.AddTool(
         {"game_set_components_many",
          "Apply the same partial field update to one component on up to 64 unique running entities. The complete selection and every merged value are validated before any component changes.",
          Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}},
