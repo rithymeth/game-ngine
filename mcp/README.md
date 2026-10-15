@@ -33,7 +33,7 @@ and errors go to stderr.
 | `destroy_entity` | Delete an entity |
 | `add_component` / `remove_component` | Add (with optional initial values) or remove a component |
 | `set_component` | Partial update: only the fields named change |
-| `reparent` | Parent or detach an entity; rejects cycles |
+| `reparent` / `reparent_many` | Parent or detach entities; the batch variant applies up to 64 unique moves in one undo action after validating the final hierarchy for cycles |
 | `undo` / `redo` | Walk the editor history and return the source (`agent`) recorded with that action |
 | `save_scene` / `load_scene` | `.json` (readable) or `.aesc` (binary); load can `replace` |. They stay inside the scene folder (the working folder, or `--scene-root`): relative paths resolve there, and absolute paths, `..` and symlinks that leave it are refused
 | `play` / `pause` / `stop` | Play-in-Editor; stop restores the scene exactly. `play` starts the simulation systems |
