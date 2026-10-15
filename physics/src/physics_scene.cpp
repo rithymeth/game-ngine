@@ -392,6 +392,18 @@ std::vector<Entity> PhysicsScene::OverlapSphere(const Vec3& center, f32 radius, 
     return out;
 }
 
+std::vector<Entity> PhysicsScene::OverlapBox(const Vec3& center, const Vec3& half_extents, LayerMask layers, Entity ignore,
+                                             bool include_triggers) const {
+    const JPH::BoxShape box(ToJolt(half_extents), 0.0f);
+    box.SetEmbedded();
+    std::vector<Entity> out;
+    for (JPH::BodyID body : physics_.Overlap(box, center, Quaternion::Identity(), FilterFor(*this, layers, ignore, include_triggers))) {
+        const Entity entity = EntityOf(body);
+        if (!entity.IsNull()) out.push_back(entity);
+    }
+    return out;
+}
+
 void PhysicsScene::AdoptBody(JPH::BodyID body, Entity entity) {
     if (!body.IsInvalid()) by_body_[body.GetIndexAndSequenceNumber()] = EntityKey(entity);
 }

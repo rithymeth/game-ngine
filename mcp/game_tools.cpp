@@ -2551,11 +2551,12 @@ void RegisterGameTools(McpServer& server) {
 #if AETHER_MCP_PHYSICS
     server.AddTool(
         {"game_physics_query",
-         "Query the loaded game's 3D physics scene with a raycast, sphere cast, or sphere overlap. Supports a 32-bit collision layer mask, an ignored entity and optional trigger inclusion.",
-         Schema({{"kind", {{"type", "string"}, {"enum", Json::array({"raycast", "spherecast", "overlap_sphere"})}}},
+         "Query the loaded game's 3D physics scene with a raycast, sphere cast, sphere overlap, or axis-aligned box overlap. Supports a 32-bit collision layer mask, an ignored entity and optional trigger inclusion.",
+         Schema({{"kind", {{"type", "string"}, {"enum", Json::array({"raycast", "spherecast", "overlap_sphere", "overlap_box"})}}},
                  {"from", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
                  {"to", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
                  {"center", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
+                 {"half_extents", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}, {"exclusiveMinimum", 0}}}}},
                  {"radius", {{"type", "number"}, {"exclusiveMinimum", 0}}},
                  {"layer_mask", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4294967295.0}}},
                  {"ignore_entity", {{"type", "string"}}},
@@ -2625,18 +2626,31 @@ void RegisterGameTools(McpServer& server) {
                  }
                  return {{"kind", kind}, {"count", entities.size()}, {"entities", std::move(entities)}};
              }
-             throw ToolError("\"kind\" must be raycast, spherecast or overlap_sphere");
+             if (kind == "overlap_box") {
+                 const Vec3 center = read_vec3("center");
+                 const Vec3 half_extents = read_vec3("half_extents");
+                 if (half_extents.x <= 0.0f || half_extents.y <= 0.0f || half_extents.z <= 0.0f) {
+                     throw ToolError("\"half_extents\" components must be positive");
+                 }
+                 Json entities = Json::array();
+                 for (Entity entity : scene->OverlapBox(center, half_extents, layers, ignore, include_triggers)) {
+                     entities.push_back(entity.IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), entity)));
+                 }
+                 return {{"kind", kind}, {"count", entities.size()}, {"entities", std::move(entities)}};
+             }
+             throw ToolError("\"kind\" must be raycast, spherecast, overlap_sphere or overlap_box");
          }});
 
     server.AddTool(
         {"game_physics_queries_many",
-         "Run 1 to 64 3D raycast, spherecast, or sphere-overlap queries in one request. Each query can set its own layer mask, ignored entity, and trigger policy. Validates every query before running any of them.",
+         "Run 1 to 64 3D raycast, spherecast, sphere-overlap, or axis-aligned box-overlap queries in one request. Each query can set its own layer mask, ignored entity, and trigger policy. Validates every query before running any of them.",
          Schema({{"queries", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
                                {"items", {{"type", "object"},
-                                          {"properties", {{"kind", {{"type", "string"}, {"enum", Json::array({"raycast", "spherecast", "overlap_sphere"})}},
+                                          {"properties", {{"kind", {{"type", "string"}, {"enum", Json::array({"raycast", "spherecast", "overlap_sphere", "overlap_box"})}},
                                                           {"from", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
                                                           {"to", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
                                                           {"center", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
+                                                          {"half_extents", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}, {"exclusiveMinimum", 0}}}}},
                                                           {"radius", {{"type", "number"}, {"exclusiveMinimum", 0}}},
                                                           {"layer_mask", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4294967295.0}}},
                                                           {"ignore_entity", {{"type", "string"}}}, {"include_triggers", {{"type", "boolean"}}}},
@@ -2654,6 +2668,7 @@ void RegisterGameTools(McpServer& server) {
                  Vec3 from{};
                  Vec3 to{};
                  Vec3 center{};
+                 Vec3 half_extents{};
                  f32 radius = 0.0f;
                  LayerMask layers = kAllLayers;
                  Entity ignore = kNullEntity;
@@ -2676,14 +2691,20 @@ void RegisterGameTools(McpServer& server) {
                  if (!raw.is_object() || !raw.contains("kind") || !raw["kind"].is_string()) throw ToolError("Every query must contain a string \"kind\"");
                  PhysicsQuery query;
                  query.kind = raw["kind"].get<std::string>();
-                 if (query.kind != "raycast" && query.kind != "spherecast" && query.kind != "overlap_sphere") {
-                     throw ToolError("Query kind must be raycast, spherecast or overlap_sphere");
+                 if (query.kind != "raycast" && query.kind != "spherecast" && query.kind != "overlap_sphere" && query.kind != "overlap_box") {
+                     throw ToolError("Query kind must be raycast, spherecast, overlap_sphere or overlap_box");
                  }
                  if (query.kind == "raycast" || query.kind == "spherecast") {
                      query.from = read_vec3(raw, "from");
                      query.to = read_vec3(raw, "to");
                  } else {
                      query.center = read_vec3(raw, "center");
+                 }
+                 if (query.kind == "overlap_box") {
+                     query.half_extents = read_vec3(raw, "half_extents");
+                     if (query.half_extents.x <= 0.0f || query.half_extents.y <= 0.0f || query.half_extents.z <= 0.0f) {
+                         throw ToolError("Box overlap half_extents components must be positive");
+                     }
                  }
                  if (query.kind == "spherecast" || query.kind == "overlap_sphere") {
                      if (!raw.contains("radius") || !raw["radius"].is_number()) throw ToolError("Sphere queries require a finite positive \"radius\"");
@@ -2726,9 +2747,15 @@ void RegisterGameTools(McpServer& server) {
                          result["distance"] = hit.distance;
                      }
                      results.push_back(std::move(result));
-                 } else {
+                 } else if (query.kind == "overlap_sphere") {
                      Json entities = Json::array();
                      for (Entity entity : scene->OverlapSphere(query.center, query.radius, query.layers, query.ignore, query.include_triggers)) {
+                         entities.push_back(entity.IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), entity)));
+                     }
+                     results.push_back({{"index", i}, {"kind", query.kind}, {"count", entities.size()}, {"entities", std::move(entities)}});
+                 } else {
+                     Json entities = Json::array();
+                     for (Entity entity : scene->OverlapBox(query.center, query.half_extents, query.layers, query.ignore, query.include_triggers)) {
                          entities.push_back(entity.IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), entity)));
                      }
                      results.push_back({{"index", i}, {"kind", query.kind}, {"count", entities.size()}, {"entities", std::move(entities)}});
