@@ -2766,6 +2766,74 @@ void RegisterGameTools(McpServer& server) {
                         return {{"bus", bus}, {"volume_db", audio->GetMixer().BusVolume(id)}, {"muted", audio->GetMixer().BusMuted(id)}};
                     }});
 
+    server.AddTool(
+        {"game_set_buses_many",
+         "Change volume and/or mute state on up to 64 unique mixer buses. Validates every bus and value before applying any changes; volume changes can fade over seconds.",
+         Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                             {"items", {{"type", "object"},
+                                         {"properties", {{"bus", {{"type", "string"}}}, {"volume_db", {{"type", "number"}}},
+                                                          {"fade_seconds", {{"type", "number"}}}, {"muted", {{"type", "boolean"}}}}},
+                                         {"required", Json::array({"bus"})}}}}}},
+                {"edits"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             audio::AudioSystem* audio = game.AudioSystem();
+             if (audio == nullptr) throw ToolError("This game has no audio system (load a scene first)");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be an array of 1 to 64 mixer bus updates");
+             }
+             struct BusEdit {
+                 std::string name;
+                 audio::BusId id = audio::Mixer::kInvalidBus;
+                 bool has_volume = false;
+                 f32 volume = 0.0f;
+                 f32 fade = 0.0f;
+                 bool has_muted = false;
+                 bool muted = false;
+             };
+             std::vector<BusEdit> edits;
+             edits.reserve(args["edits"].size());
+             for (const Json& item : args["edits"]) {
+                 if (!item.is_object() || !item.contains("bus") || !item["bus"].is_string() || item["bus"].get<std::string>().empty()) {
+                     throw ToolError("Every \"edits\" entry must contain a non-empty string \"bus\"");
+                 }
+                 const std::string name = item["bus"].get<std::string>();
+                 if (!item.contains("volume_db") && !item.contains("muted")) throw ToolError("Every bus edit must include \"volume_db\" and/or \"muted\"");
+                 const audio::BusId id = audio->GetMixer().FindBus(name);
+                 if (id == audio::Mixer::kInvalidBus) throw ToolError("No bus \"" + name + "\"");
+                 if (std::find_if(edits.begin(), edits.end(), [&name](const BusEdit& edit) { return edit.name == name; }) != edits.end()) {
+                     throw ToolError("\"edits\" must not repeat the same bus");
+                 }
+                 BusEdit edit;
+                 edit.name = name;
+                 edit.id = id;
+                 edit.has_volume = item.contains("volume_db");
+                 if (edit.has_volume) {
+                     if (!item["volume_db"].is_number()) throw ToolError("\"volume_db\" must be a number");
+                     edit.volume = item["volume_db"].get<f32>();
+                     if (!std::isfinite(edit.volume)) throw ToolError("\"volume_db\" must be finite");
+                 }
+                 if (item.contains("fade_seconds")) {
+                     if (!edit.has_volume || !item["fade_seconds"].is_number()) throw ToolError("\"fade_seconds\" requires numeric \"volume_db\"");
+                     edit.fade = item["fade_seconds"].get<f32>();
+                     if (!std::isfinite(edit.fade) || edit.fade < 0.0f) throw ToolError("\"fade_seconds\" must be a finite non-negative number");
+                 }
+                 edit.has_muted = item.contains("muted");
+                 if (edit.has_muted) {
+                     if (!item["muted"].is_boolean()) throw ToolError("\"muted\" must be a boolean");
+                     edit.muted = item["muted"].get<bool>();
+                 }
+                 edits.push_back(std::move(edit));
+             }
+             Json results = Json::array();
+             for (const BusEdit& edit : edits) {
+                 if (edit.has_volume && !audio->SetBusVolume(edit.name, edit.volume, edit.fade)) throw ToolError("Could not change volume for bus \"" + edit.name + "\"");
+                 if (edit.has_muted) audio->GetMixer().SetBusMuted(edit.id, edit.muted);
+                 results.push_back({{"bus", edit.name}, {"volume_db", audio->GetMixer().BusVolume(edit.id)}, {"muted", audio->GetMixer().BusMuted(edit.id)}});
+             }
+             return {{"updated_count", results.size()}, {"results", results}};
+         }});
+
     server.AddTool({"game_stop_sounds", "Stop every sound playing in the running game.", Schema(Json::object()), [host](const Json&) -> Json {
                         Game& game = host->Require();
                         audio::AudioSystem* audio = game.AudioSystem();
