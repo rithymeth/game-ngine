@@ -1350,6 +1350,90 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
                         return out;
                     }});
 
+    server.AddTool(
+        {"asset_move_many",
+         "Move 1-64 independent assets or folders under Content/ as one agent-attributed undoable action. Each move has `from` and `to` paths. "
+         "Overlapping source/destination paths and duplicate paths are rejected before moving anything; glTF relative URIs are rewritten.",
+         Schema({{"moves", {{"type", "array"},
+                            {"items", {{"type", "object"},
+                                       {"properties", {{"from", {{"type", "string"}}}, {"to", {{"type", "string"}}}}},
+                                       {"required", Json::array({"from", "to"})}}},
+                            {"description", "1-64 independent moves, each relative to Content/"}}}},
+                {"moves"}),
+         [host, &session](const Json& args) -> Json {
+             OpenProject& p = host->Require();
+             if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before moving content");
+             if (!args["moves"].is_array() || args["moves"].empty() || args["moves"].size() > 64) {
+                 throw ToolError("\"moves\" must be a non-empty array of at most 64 moves");
+             }
+
+             struct Move { std::string from; std::string to; };
+             std::vector<Move> moves;
+             std::set<std::string> sources, destinations;
+             for (const Json& entry : args["moves"]) {
+                 if (!entry.is_object()) throw ToolError("Each move must be an object with \"from\" and \"to\" paths");
+                 Move move{CleanRelative(RequireString(entry, "from")), CleanRelative(RequireString(entry, "to"))};
+                 if (move.from.empty() || move.to.empty()) throw ToolError("Move paths must name files or folders under Content/");
+                 if (move.from == move.to) throw ToolError("A move's \"from\" and \"to\" paths must differ");
+                 if (!sources.insert(move.from).second) throw ToolError("Duplicate source path: " + move.from);
+                 if (!destinations.insert(move.to).second) throw ToolError("Duplicate destination path: " + move.to);
+                 moves.push_back(std::move(move));
+             }
+             const auto contains = [](const std::string& path, const std::string& parent) {
+                 const fs::path relative = fs::path(path).lexically_relative(fs::path(parent));
+                 if (relative.empty() || relative.is_absolute()) return false;
+                 const auto first = relative.begin();
+                 return first != relative.end() && *first != fs::path("..");
+             };
+             for (const Move& move : moves) {
+                 if (contains(move.to, move.from) || contains(move.from, move.to)) {
+                     throw ToolError("A move's source and destination cannot overlap: " + move.from + " -> " + move.to);
+                 }
+             }
+             for (usize i = 0; i < moves.size(); ++i) {
+                 for (usize j = i + 1; j < moves.size(); ++j) {
+                     const Move& a = moves[i];
+                     const Move& b = moves[j];
+                     if (contains(a.from, b.from) || contains(b.from, a.from)) {
+                         throw ToolError("Move sources overlap: " + a.from + " and " + b.from);
+                     }
+                     if (contains(a.to, b.to) || contains(b.to, a.to)) {
+                         throw ToolError("Move destinations overlap: " + a.to + " and " + b.to);
+                     }
+                     if (contains(a.to, b.from) || contains(b.from, a.to) || contains(b.to, a.from) || contains(a.from, b.to)) {
+                         throw ToolError("A move destination overlaps another move's source");
+                     }
+                 }
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Move Content Items " + std::to_string(++next_batch_id);
+             const usize undo_count_before = session.stack.UndoCount();
+             editor::CommandContext context = session.Context();
+             Json results = Json::array();
+             session.stack.BeginTransaction(transaction_label);
+             try {
+                 for (const Move& move : moves) {
+                     auto command = std::make_unique<MoveContentCommand>(host, p.paths.file, move.from, move.to);
+                     command->SetAttribution("agent");
+                     MoveContentCommand* command_result = command.get();
+                     session.stack.Execute(context, std::move(command));
+                     const assets::MoveResult& result = command_result->Result();
+                     Json row = {{"from", move.from}, {"to", move.to}, {"rewritten", result.rewritten}};
+                     if (!result.error.empty()) row["warning"] = result.error;
+                     results.push_back(std::move(row));
+                 }
+                 session.stack.EndTransaction();
+             } catch (...) {
+                 session.stack.EndTransaction();
+                 if (session.stack.UndoCount() != undo_count_before || session.stack.UndoLabel() == transaction_label) {
+                     session.stack.Undo(context);
+                 }
+                 throw;
+             }
+             return {{"moved", moves.size()}, {"results", results}};
+         }});
+
     server.AddTool({"asset_create_folder", "Create a folder under Content/ as one agent-attributed undoable action. Undo removes it only while it is empty.",
                     Schema({{"parent", {{"type", "string"}}}, {"name", {{"type", "string"}}}}, {"name"}), [host, &session](const Json& args) -> Json {
                         OpenProject& p = host->Require();
