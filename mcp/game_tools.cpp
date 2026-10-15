@@ -704,6 +704,62 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_set_tags_many",
+         "Replace the complete tag list on up to 64 unique live entities; an empty list clears all tags, and missing Tags components are created only when needed.",
+         Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}},
+                 {"tags", {{"type", "array"}, {"maxItems", 64}, {"items", {{"type", "string"}}}}}},
+                {"entities", "tags"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be an array of 1 to 64 entity handles");
+             }
+             if (!args["tags"].is_array() || args["tags"].size() > 64) throw ToolError("\"tags\" must be an array of at most 64 tags");
+             std::vector<std::string> requested_tags;
+             requested_tags.reserve(args["tags"].size());
+             for (const Json& value : args["tags"]) {
+                 if (!value.is_string() || value.get<std::string>().empty()) throw ToolError("Every \"tags\" entry must be a non-empty string");
+                 const std::string tag = value.get<std::string>();
+                 if (std::find(requested_tags.begin(), requested_tags.end(), tag) != requested_tags.end()) {
+                     throw ToolError("\"tags\" must not contain duplicate entries");
+                 }
+                 requested_tags.push_back(tag);
+             }
+             std::vector<Entity> entities;
+             entities.reserve(args["entities"].size());
+             for (const Json& handle : args["entities"]) {
+                 if (!handle.is_string() || handle.get<std::string>().empty()) {
+                     throw ToolError("Every \"entities\" entry must be a non-empty entity handle");
+                 }
+                 const Entity entity = FindEntity(game, handle.get<std::string>());
+                 if (std::find(entities.begin(), entities.end(), entity) != entities.end()) {
+                     throw ToolError("\"entities\" must not contain the same entity more than once");
+                 }
+                 entities.push_back(entity);
+             }
+             Json results = Json::array();
+             usize changed_count = 0;
+             for (Entity entity : entities) {
+                 Tags* current = world.GetComponent<Tags>(entity);
+                 const std::vector<std::string> old_tags = current == nullptr ? std::vector<std::string>{} : current->names;
+                 const bool changed = old_tags != requested_tags;
+                 if (changed && current == nullptr && !requested_tags.empty()) {
+                     world.AddComponent<Tags>(entity);
+                     current = world.GetComponent<Tags>(entity);
+                 }
+                 if (current != nullptr && changed) current->names = requested_tags;
+                 Json old_values = Json::array();
+                 Json new_values = Json::array();
+                 for (const std::string& tag : old_tags) old_values.push_back(tag);
+                 for (const std::string& tag : requested_tags) new_values.push_back(tag);
+                 results.push_back({{"entity", EntityKey(world, entity)}, {"changed", changed}, {"old_tags", old_values}, {"tags", new_values}});
+                 if (changed) ++changed_count;
+             }
+             return {{"changed_count", changed_count}, {"results", results}};
+         }});
+
+    server.AddTool(
         {"game_rename_entities_many",
          "Rename up to 64 unique live entities in one validated batch; creates EntityName components when needed.",
          Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
