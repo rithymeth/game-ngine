@@ -382,6 +382,22 @@ SceneHit PhysicsScene::SphereCast(f32 radius, const Vec3& from, const Vec3& to, 
     return {hit.hit, hit.hit ? EntityOf(hit.body) : kNullEntity, hit.point, hit.normal, hit.distance};
 }
 
+SceneHit PhysicsScene::CapsuleCast(f32 radius, f32 height, const Vec3& from, const Vec3& to, LayerMask layers, Entity ignore,
+                                   bool include_triggers) const {
+    const QueryFilter filter = FilterFor(*this, layers, ignore, include_triggers);
+    const f32 half_cylinder = std::max(0.0f, 0.5f * height - radius);
+    if (half_cylinder <= 0.0f) {
+        const JPH::SphereShape sphere(std::max(radius, 0.001f));
+        sphere.SetEmbedded();
+        const QueryHit hit = physics_.ShapeCast(sphere, from, to, Quaternion::Identity(), filter);
+        return {hit.hit, hit.hit ? EntityOf(hit.body) : kNullEntity, hit.point, hit.normal, hit.distance};
+    }
+    const JPH::CapsuleShape capsule(half_cylinder, radius);
+    capsule.SetEmbedded();
+    const QueryHit hit = physics_.ShapeCast(capsule, from, to, Quaternion::Identity(), filter);
+    return {hit.hit, hit.hit ? EntityOf(hit.body) : kNullEntity, hit.point, hit.normal, hit.distance};
+}
+
 std::vector<Entity> PhysicsScene::OverlapSphere(const Vec3& center, f32 radius, LayerMask layers, Entity ignore,
                                                 bool include_triggers) const {
     std::vector<Entity> out;
