@@ -436,6 +436,55 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
          }});
 
     server.AddTool(
+        {"get_entities_metadata_many",
+         "Get compact editor metadata for 1–64 unique scene entities in request order: optional name and parent, local active value (defaults to true), whether Active and Layer overrides exist, layer index, and tags. The full entity selection is validated before any results are returned.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique scene entity GUIDs, returned in this order"}}}},
+                {"entities"}),
+         [&s](const Json& args) -> Json {
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             std::vector<std::pair<EntityGuid, Entity>> entities;
+             entities.reserve(args["entities"].size());
+             std::set<EntityGuid> seen;
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 const std::string guid_text = value.get<std::string>();
+                 EntityGuid guid;
+                 if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid entity GUID: " + guid_text);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 entities.emplace_back(guid, entity);
+             }
+
+             Json results = Json::array();
+             for (const auto& [guid, entity] : entities) {
+                 const EntityName* name = s.world.GetComponent<EntityName>(entity);
+                 const Active* active = s.world.GetComponent<Active>(entity);
+                 const Layer* layer = s.world.GetComponent<Layer>(entity);
+                 const Tags* tags = s.world.GetComponent<Tags>(entity);
+                 const Parent* parent = s.world.GetComponent<Parent>(entity);
+                 Json tag_names = Json::array();
+                 if (tags != nullptr) {
+                     for (const std::string& tag : tags->names) tag_names.push_back(tag);
+                 }
+                 Json result = {{"entity", ToString(guid)},
+                                {"name", name != nullptr ? Json(name->value) : Json(nullptr)},
+                                {"active", active == nullptr || active->active},
+                                {"has_active_override", active != nullptr},
+                                {"layer", layer != nullptr ? layer->index : 0},
+                                {"has_layer_override", layer != nullptr},
+                                {"tags", std::move(tag_names)}};
+                 if (parent != nullptr && !parent->parent.IsNull()) result["parent"] = ToString(parent->parent);
+                 else result["parent"] = nullptr;
+                 results.push_back(std::move(result));
+             }
+             return {{"count", results.size()}, {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
         {"get_components_many",
          "Get selected reflected components from 1–64 entity/component pairs in one response. The full request is validated before returning values; absent components are reported with present=false.",
          Schema({{"components", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
