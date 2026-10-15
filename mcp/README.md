@@ -410,7 +410,7 @@ saves and localization. The game has its own world, separate from the editor's.
 | `game_set_paused` | Freeze or resume the simulation |
 | `game_load_scene` | Switch to another cooked scene |
 | `game_systems` | The game's systems in execution order by phase (filled after the first step) |
-| `game_list_entities` / `game_get_entity` | Inspect the running world (filter by component or tag) |
+| `game_list_entities` / `game_get_entity` | Inspect the running world (filter by component or tag); `game_list_entities` pages matching entities with `limit` (1-1000, default 200), `offset`, total count and `has_more` |
 | `game_set_component` / `game_destroy_entity` | Change the live world (not undoable; gone on reload) |
 | `game_unload` | Stop and unload |
 
