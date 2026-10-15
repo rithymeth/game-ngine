@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <map>
 #include <new>
 #include <optional>
 #include <set>
@@ -592,9 +593,10 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
 
     server.AddTool(
         {"duplicate_entities",
-         "Duplicate 1–64 unique entities as one undoable action. Each duplicate copies reflected components and keeps its source's parent; children are not copied. Set preserve_hierarchy to true to reconnect selected children to their duplicated parents. Entity GUID references in component values stay unchanged.",
+         "Duplicate up to 64 unique entities as one undoable action. Each duplicate copies reflected components and keeps its source's parent. Set include_children to true to expand each selection to its descendants; this also preserves parent links inside the duplicated group. Otherwise, set preserve_hierarchy to true to preserve links only among explicitly selected entities. Entity GUID references in component values stay unchanged.",
          Schema({{"entities", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "1–64 unique entity GUIDs"}}},
-                 {"preserve_hierarchy", {{"type", "boolean"}, {"description", "When true, preserve parent links whose parent is also in the selection; defaults to false"}}}},
+                 {"preserve_hierarchy", {{"type", "boolean"}, {"description", "When true, preserve parent links whose parent is also in the selection; defaults to false"}}},
+                 {"include_children", {{"type", "boolean"}, {"description", "When true, include all descendants of the selected entities; defaults to false and still enforces a 64-entity total limit"}}}},
                 {"entities"}),
          [&s](const Json& args) -> Json {
              if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before duplicating entities");
@@ -604,7 +606,11 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
              if (args.contains("preserve_hierarchy") && !args["preserve_hierarchy"].is_boolean()) {
                  throw ToolError("\"preserve_hierarchy\" must be true or false");
              }
-             const bool preserve_hierarchy = args.value("preserve_hierarchy", false);
+             if (args.contains("include_children") && !args["include_children"].is_boolean()) {
+                 throw ToolError("\"include_children\" must be true or false");
+             }
+             const bool include_children = args.value("include_children", false);
+             const bool preserve_hierarchy = args.value("preserve_hierarchy", false) || include_children;
 
              struct DuplicateSpec {
                  EntityGuid source_guid;
@@ -615,14 +621,54 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
              std::vector<DuplicateSpec> specs;
              specs.reserve(args["entities"].size());
              std::set<EntityGuid> seen;
-             const ComponentId id_component = GetComponentId<IdComponent>();
-             const ComponentId parent_component = GetComponentId<Parent>();
+             std::vector<EntityGuid> source_guids;
+             source_guids.reserve(args["entities"].size());
              for (const Json& value : args["entities"]) {
                  if (!value.is_string()) throw ToolError("Each entry in \"entities\" must be an entity GUID string");
                  const Entity source = RequireEntity(s, Json{{"entity", value}});
                  const IdComponent* source_id = s.world.GetComponent<IdComponent>(source);
                  if (source_id == nullptr || source_id->guid.IsNull()) throw ToolError("The source entity has no GUID");
                  if (!seen.insert(source_id->guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(source_id->guid));
+                 source_guids.push_back(source_id->guid);
+             }
+
+             if (include_children) {
+                 std::map<EntityGuid, std::vector<EntityGuid>> children_by_parent;
+                 std::set<EntityGuid> parents_with_unguided_children;
+                 for (const Entity entity : AllEntities(s)) {
+                     const Parent* parent = s.world.GetComponent<Parent>(entity);
+                     if (parent == nullptr || parent->parent.IsNull()) continue;
+                     const IdComponent* child_id = s.world.GetComponent<IdComponent>(entity);
+                     if (child_id == nullptr || child_id->guid.IsNull()) {
+                         parents_with_unguided_children.insert(parent->parent);
+                         continue;
+                     }
+                     children_by_parent[parent->parent].push_back(child_id->guid);
+                 }
+                 for (usize cursor = 0; cursor < source_guids.size(); ++cursor) {
+                     const EntityGuid parent_guid = source_guids[cursor];
+                     if (parents_with_unguided_children.contains(parent_guid)) {
+                         throw ToolError("Cannot include descendants because a child entity has no GUID");
+                     }
+                     const auto descendants = children_by_parent.find(parent_guid);
+                     if (descendants == children_by_parent.end()) continue;
+                     for (const EntityGuid child_guid : descendants->second) {
+                         if (!seen.insert(child_guid).second) continue;
+                         if (source_guids.size() >= 64) {
+                             throw ToolError("Including descendants would duplicate more than 64 entities");
+                         }
+                         source_guids.push_back(child_guid);
+                     }
+                 }
+             }
+
+             const ComponentId id_component = GetComponentId<IdComponent>();
+             const ComponentId parent_component = GetComponentId<Parent>();
+             for (const EntityGuid source_guid : source_guids) {
+                 const Entity source = s.guids.Find(s.world, source_guid);
+                 if (source.IsNull()) throw ToolError("The source entity no longer exists: " + ToString(source_guid));
+                 const IdComponent* source_id = s.world.GetComponent<IdComponent>(source);
+                 if (source_id == nullptr || source_id->guid.IsNull()) throw ToolError("The source entity has no GUID");
 
                  DuplicateSpec spec;
                  spec.source_guid = source_id->guid;
