@@ -510,8 +510,8 @@ jobs:
           $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
           Push-Location $emptyWorkingDirectory
           try {
-            & $editor --self-test
-            if ($LASTEXITCODE -ne 0) { throw "Packaged Qt editor self-test failed with exit code $LASTEXITCODE" }
+            $selfTest = Start-Process -FilePath $editor -ArgumentList '--self-test' -PassThru -Wait
+            if ($selfTest.ExitCode -ne 0) { throw "Packaged Qt editor self-test failed with exit code $($selfTest.ExitCode)" }
           } finally {
             Pop-Location
             $env:PATH = $originalPath
