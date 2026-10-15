@@ -18,6 +18,7 @@
 #include "aether/reflection/serialize.h"
 #include "aether/scene/entity_guid.h"
 #include "aether/scene/gameplay.h"
+#include "aether/scene/hierarchy.h"
 #include "aether/ui/basic.h"
 #include "aether/ui/controls.h"
 #include "aether/ui/viewport.h"
@@ -759,7 +760,7 @@ void RegisterGameTools(McpServer& server) {
 
     server.AddTool(
         {"game_list_entities",
-         "Entities in the running game: handle (GUID, or #index if it has none), name, local active state, tags and component names. "
+         "Entities in the running game: handle (GUID, or #index if it has none), name, local active state, direct parent GUID, tags and component names. "
          "Optionally only those with a component or tag. Results can be paged with a bounded limit and offset.",
          Schema({{"component", {{"type", "string"}}}, {"tag", {{"type", "string"}}},
                  {"limit", {{"type", "integer"}, {"minimum", 1}, {"maximum", 1000}, {"description", "Page size, 1-1000 (default 200)"}}},
@@ -807,8 +808,12 @@ void RegisterGameTools(McpServer& server) {
                      for (const std::string& tag : component_tags->names) tags.push_back(tag);
                  }
                  const Active* active_component = world.GetComponent<Active>(e);
+                 Json parent = nullptr;
+                 if (const Parent* parent_component = world.GetComponent<Parent>(e); parent_component != nullptr && !parent_component->parent.IsNull()) {
+                     parent = ToString(parent_component->parent);
+                 }
                  Json row = {{"entity", EntityKey(world, e)}, {"components", names}, {"tags", tags},
-                             {"active", active_component == nullptr || active_component->active}};
+                             {"active", active_component == nullptr || active_component->active}, {"parent", parent}};
                  if (const EntityName* n = world.GetComponent<EntityName>(e)) row["name"] = n->value;
                  list.push_back(row);
              }
