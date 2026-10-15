@@ -31,6 +31,7 @@ and errors go to stderr.
 | `get_entities_many` | Get full reflected component values for up to 64 unique entities in selection order; validates all GUIDs before returning data |
 | `get_components_many` | Read up to 64 entity/component pairs in request order; reports absent components explicitly and validates the whole request first |
 | `compare_entity_components_many` | Compare up to 64 entities across up to 32 component types; reports per-entity presence plus common, mixed, and absent types |
+| `summarize_entity_components_many` | Count each reflected component across up to 64 entities and list the types shared by all selected entities |
 | `get_entities_world_transforms_many` | Get parent-composed world position, basis-length scale magnitudes, and column-major matrices for up to 64 unique entities |
 | `get_entities_descendants_many` | List descendants for up to 64 roots in deterministic parent-first order with parent and relative-depth metadata; caps output at 64 entries |
 | `get_entities_ancestors_many` | List parent chains for up to 64 entities, nearest parent first, with distance metadata; validates parent links and caps output at 64 entries |
