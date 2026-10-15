@@ -13,6 +13,8 @@
 #include "core/commands.h"
 
 #include <algorithm>
+#include <atomic>
+#include <cstdint>
 #include <new>
 #include <set>
 
@@ -446,6 +448,89 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
              editor::CommandContext ctx = s.Context();
              s.stack.Record(editor::CreateEntityCommand::FromExisting(ctx, duplicate));
              return out;
+         }});
+
+    server.AddTool(
+        {"duplicate_entities",
+         "Duplicate 1–64 unique entities as one undoable action. Each duplicate copies reflected components and keeps its source's parent; children are not copied and entity GUID references in component values stay unchanged.",
+         Schema({{"entities", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "1–64 unique entity GUIDs"}}}}, {"entities"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before duplicating entities");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 GUIDs");
+             }
+
+             struct DuplicateSpec {
+                 EntityGuid source_guid;
+                 EntityGuid parent;
+                 std::vector<std::pair<ComponentId, Json>> components;
+             };
+             std::vector<DuplicateSpec> specs;
+             specs.reserve(args["entities"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId id_component = GetComponentId<IdComponent>();
+             const ComponentId parent_component = GetComponentId<Parent>();
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Each entry in \"entities\" must be an entity GUID string");
+                 const Entity source = RequireEntity(s, Json{{"entity", value}});
+                 const IdComponent* source_id = s.world.GetComponent<IdComponent>(source);
+                 if (source_id == nullptr || source_id->guid.IsNull()) throw ToolError("The source entity has no GUID");
+                 if (!seen.insert(source_id->guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(source_id->guid));
+
+                 DuplicateSpec spec;
+                 spec.source_guid = source_id->guid;
+                 if (const Parent* source_parent = s.world.GetComponent<Parent>(source)) spec.parent = source_parent->parent;
+                 for (ComponentId id = 0; id < RegisteredComponentCount(); ++id) {
+                     if (!s.world.HasComponentRaw(source, id) || id == id_component || id == parent_component) continue;
+                     const ComponentInfo& info = GetComponentInfo(id);
+                     if (info.reflected == nullptr) throw ToolError("Cannot duplicate an entity with unreflected component " + ComponentName(id));
+                     spec.components.emplace_back(id, reflect::ToJson(*info.reflected, s.world.GetComponentRaw(source, id)));
+                 }
+                 specs.push_back(std::move(spec));
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Duplicate Entities " + std::to_string(++next_batch_id);
+             const usize undo_count_before = s.stack.UndoCount();
+             editor::CommandContext ctx = s.Context();
+             Json results = Json::array();
+             s.stack.BeginTransaction(transaction_label);
+             try {
+                 for (const DuplicateSpec& spec : specs) {
+                     const EntityGuid guid = NewEntityGuid();
+                     Entity duplicate = s.world.CreateEntity(IdComponent{guid});
+                     s.guids.Add(guid, duplicate);
+                     try {
+                         Json warnings = Json::array();
+                         for (const auto& [id, value] : spec.components) {
+                             s.world.AddComponentRaw(duplicate, id);
+                             reflect::LoadReport report;
+                             const ComponentInfo& info = GetComponentInfo(id);
+                             if (!reflect::FromJson(*info.reflected, s.world.GetComponentRaw(duplicate, id), value, &report)) {
+                                 throw ToolError("Could not copy " + ComponentName(id));
+                             }
+                             for (const std::string& warning : report.warnings) warnings.push_back(warning);
+                         }
+                         if (!spec.parent.IsNull()) s.world.AddComponent(duplicate, Parent{spec.parent});
+                         Json row = {{"source", ToString(spec.source_guid)}, {"entity", EntityJson(s, duplicate)}};
+                         if (!warnings.empty()) row["warnings"] = std::move(warnings);
+                         results.push_back(std::move(row));
+                         auto command = editor::CreateEntityCommand::FromExisting(ctx, duplicate);
+                         command->SetAttribution("agent");
+                         s.stack.Record(std::move(command));
+                     } catch (...) {
+                         s.guids.Remove(guid);
+                         s.world.DestroyEntity(duplicate);
+                         throw;
+                     }
+                 }
+                 s.stack.EndTransaction();
+             } catch (...) {
+                 s.stack.EndTransaction();
+                 if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                 throw;
+             }
+             return {{"duplicated", results.size()}, {"results", std::move(results)}};
          }});
 
     server.AddTool({"destroy_entity", "Delete an entity. Undoable.", Schema({{"entity", kGuidProp}}, {"entity"}),
