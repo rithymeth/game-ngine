@@ -411,6 +411,7 @@ saves and localization. The game has its own world, separate from the editor's.
 | `game_remove_entity_components_many` | Remove different components across up to 64 entity/component pairs after validating all targets; protects Transform and IdComponent |
 | `game_ui` | The running game's UI: each layer's widget tree with type, name, rectangle, visibility, enabled, and the text, value or percent a widget shows; or one widget by name |
 | `game_ui_click` | Click a widget of the game's UI by name (hover, press, release over its middle, a frame between each) |
+| `game_ui_set_widget` | Set text, numeric value, or checked state on a named game UI widget; supported controls invoke their change callbacks |
 | `game_lifecycle` | Send suspend, resume or memory-pressure, as a phone's OS would: the game stands still, audio stops and saves are written; resume skips the time that passed. `level` is accepted only for memory-pressure and must be `moderate` or `critical` (default `moderate`). |
 | `game_input` | Hold keys/axes (`{"W": 1}`; values are limited to -1..1), mouse delta for one frame, or clear; `mouse` and `touches` move pointers for the game's on-screen UI (taps, drags on a virtual stick). Validates the complete request before applying any input; malformed `clear` and mouse-button values are rejected. |
 | `game_screenshot` | Render the current frame off screen (what the player draws: scene and HUD) and return it as a PNG image, also saved to `path`. Needs a graphics device (D3D12 or Vulkan); `width`, `height`, `backend`, `inline` |
