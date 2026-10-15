@@ -353,6 +353,10 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                                                    {"description", "Filter by whether the entity has an explicit Parent component"}}},
                             {"parent_depth", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxHierarchyDepth},
                                                 {"description", "Only entities at this hierarchy depth; roots are depth 0"}}},
+                            {"parent_depth_min", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxHierarchyDepth},
+                                                    {"description", "Only entities at this or greater hierarchy depth"}}},
+                            {"parent_depth_max", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxHierarchyDepth},
+                                                    {"description", "Only entities at this or shallower hierarchy depth"}}},
                             {"layer_index", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxLayers - 1},
                                              {"description", "Only entities on this collision layer; entities without Layer use index 0"}}},
                             {"layer_override", {{"type", "boolean"},
@@ -432,20 +436,28 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                             if (!args["parent_override"].is_boolean()) throw ToolError("\"parent_override\" must be a boolean");
                             parent_override_filter = args["parent_override"].get<bool>();
                         }
-                        std::optional<usize> parent_depth_filter;
-                        if (args.contains("parent_depth")) {
-                            if (!args["parent_depth"].is_number_integer() || args["parent_depth"].is_boolean()) {
-                                throw ToolError("\"parent_depth\" must be an integer from 0 to the maximum hierarchy depth");
+                        auto ReadParentDepth = [&](const char* key) -> std::optional<usize> {
+                            if (!args.contains(key)) return std::nullopt;
+                            if (!args[key].is_number_integer() || args[key].is_boolean()) {
+                                throw ToolError(std::string("\"") + key + "\" must be an integer from 0 to the maximum hierarchy depth");
                             }
-                            if (args["parent_depth"].is_number_unsigned()) {
-                                const u64 value = args["parent_depth"].get<u64>();
-                                if (value > kMaxHierarchyDepth) throw ToolError("\"parent_depth\" exceeds the maximum hierarchy depth");
-                                parent_depth_filter = static_cast<usize>(value);
-                            } else {
-                                const i64 value = args["parent_depth"].get<i64>();
-                                if (value < 0 || value > kMaxHierarchyDepth) throw ToolError("\"parent_depth\" must be from 0 to the maximum hierarchy depth");
-                                parent_depth_filter = static_cast<usize>(value);
+                            if (args[key].is_number_unsigned()) {
+                                const u64 value = args[key].get<u64>();
+                                if (value > kMaxHierarchyDepth) throw ToolError(std::string("\"") + key + "\" exceeds the maximum hierarchy depth");
+                                return static_cast<usize>(value);
                             }
+                            const i64 value = args[key].get<i64>();
+                            if (value < 0 || value > kMaxHierarchyDepth) {
+                                throw ToolError(std::string("\"") + key + "\" must be from 0 to the maximum hierarchy depth");
+                            }
+                            return static_cast<usize>(value);
+                        };
+                        const std::optional<usize> parent_depth_filter = ReadParentDepth("parent_depth");
+                        const std::optional<usize> parent_depth_min_filter = ReadParentDepth("parent_depth_min");
+                        const std::optional<usize> parent_depth_max_filter = ReadParentDepth("parent_depth_max");
+                        if (parent_depth_min_filter.has_value() && parent_depth_max_filter.has_value() &&
+                            *parent_depth_min_filter > *parent_depth_max_filter) {
+                            throw ToolError("\"parent_depth_min\" cannot be greater than \"parent_depth_max\"");
                         }
                         i64 layer_filter = -1;
                         if (args.contains("layer_index")) {
@@ -575,7 +587,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                             if (!parent_none_filter.empty() && parent != nullptr && std::find(parent_none_filter.begin(), parent_none_filter.end(), parent->parent) != parent_none_filter.end()) continue;
                             if (parent_override_filter.has_value() && (parent != nullptr) != *parent_override_filter) continue;
                             if (roots_only && parent != nullptr && !parent->parent.IsNull()) continue;
-                            if (parent_depth_filter.has_value()) {
+                            if (parent_depth_filter.has_value() || parent_depth_min_filter.has_value() || parent_depth_max_filter.has_value()) {
                                 usize entity_depth = 0;
                                 Entity current = e;
                                 std::set<u32> visited;
@@ -588,7 +600,9 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                                     if (current.IsNull()) throw ToolError("Cannot filter by parent depth: hierarchy references a missing parent");
                                     ++entity_depth;
                                 }
-                                if (entity_depth != *parent_depth_filter) continue;
+                                if (parent_depth_filter.has_value() && entity_depth != *parent_depth_filter) continue;
+                                if (parent_depth_min_filter.has_value() && entity_depth < *parent_depth_min_filter) continue;
+                                if (parent_depth_max_filter.has_value() && entity_depth > *parent_depth_max_filter) continue;
                             }
                             const Layer* layer_override = s.world.GetComponent<Layer>(e);
                             if (layer_override_filter.has_value() && (layer_override != nullptr) != *layer_override_filter) continue;
