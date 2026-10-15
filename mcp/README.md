@@ -457,6 +457,7 @@ saves and localization. The game has its own world, separate from the editor's.
 | `game_set_world_rotations_shared_many` | Set one world rotation on up to 64 unique live entities through parent orientations; preserves local position and scale, normalizes the quaternion, and rejects ancestor overlap or invalid hierarchies |
 | `game_set_world_scales_many` | Set individual world-scale magnitudes on up to 64 unique live entities through parent basis lengths; preserves local position, rotation, and mirror signs, and rejects invalid or collapsed axes |
 | `game_set_world_scale_many` | Set one shared world-scale magnitude on up to 64 unique live entities through parent basis lengths; preserves local position, rotation, and mirror signs, and rejects invalid or collapsed axes |
+| `game_scale_entities_world_shared_many` | Multiply world-scale magnitudes by one shared component factor on up to 64 unique live entities; preserves local position, rotation and mirror signs, resolving through parent transforms |
 | `game_destroy_entities_many` | Destroy up to 64 unique live roots through the lifecycle; reports roots and descendants destroyed, validates the whole selection first, and rejects ancestor/descendant overlap |
 | `game_unload` | Stop and unload |
 
