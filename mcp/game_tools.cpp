@@ -23,8 +23,10 @@
 #include "aether/ui/viewport.h"
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <memory>
 
 namespace aether::mcp {
@@ -588,11 +590,60 @@ void RegisterGameTools(McpServer& server) {
          "or \"up\" for fingers (up to 9 at once; the first finger also holds MouseLeft). The result lists the pointers that are active.",
          Schema({{"set", {{"type", "object"}, {"description", "{ \"W\": 1, \"Space\": 0 }"}}},
                  {"mouse_delta", {{"type", "array"}, {"items", {{"type", "number"}}}}},
-                 {"mouse", {{"type", "object"}, {"description", "{ \"x\": 100, \"y\": 80, \"down\": true }"}}},
+                 {"mouse", {{"type", "object"}, {"description", "{ \"x\": 100, \"y\": 80, \"down\": true } (down must be boolean when supplied)"}}},
                  {"touches", {{"type", "array"}, {"items", {{"type", "object"}}}, {"description", "[{ \"id\": 1, \"x\": 100, \"y\": 80, \"phase\": \"down\" }]"}}},
                  {"clear", {{"type", "boolean"}}}}),
          [host](const Json& args) -> Json {
              Game& game = host->Require();
+             // Validate the complete request before changing held keys, pointer state, or buttons.
+             if (args.contains("clear") && !args["clear"].is_boolean()) throw ToolError("\"clear\" must be a boolean");
+             if (args.contains("set")) {
+                 if (!args["set"].is_object()) throw ToolError("\"set\" must be an object of key names to values");
+                 for (const auto& [name, value] : args["set"].items()) {
+                     if (input::KeyFromName(name) == input::Key::None) throw ToolError("No key named \"" + name + "\"");
+                     if (!value.is_number() && !value.is_boolean()) throw ToolError("Value for \"" + name + "\" must be a number");
+                     const f64 v = value.is_boolean() ? (value.get<bool>() ? 1.0 : 0.0) : value.get<f64>();
+                     if (v < -1.0 || v > 1.0) throw ToolError("Value for \"" + name + "\" must be between -1 and 1");
+                 }
+             }
+             if (args.contains("mouse_delta")) {
+                 const Json& d = args["mouse_delta"];
+                 if (!d.is_array() || d.size() != 2 || !d[0].is_number() || !d[1].is_number()) {
+                     throw ToolError("\"mouse_delta\" must be [dx, dy]");
+                 }
+                 if (std::abs(d[0].get<f64>()) > std::numeric_limits<f32>::max() ||
+                     std::abs(d[1].get<f64>()) > std::numeric_limits<f32>::max()) {
+                     throw ToolError("\"mouse_delta\" values are too large");
+                 }
+             }
+             if (args.contains("mouse")) {
+                 const Json& m = args["mouse"];
+                 if (!m.is_object() || !m.contains("x") || !m.contains("y") || !m["x"].is_number() || !m["y"].is_number()) {
+                     throw ToolError("\"mouse\" must be { x, y, down? } with numbers");
+                 }
+                 if (m.contains("down") && !m["down"].is_boolean()) throw ToolError("\"mouse.down\" must be a boolean");
+                 if (std::abs(m["x"].get<f64>()) > std::numeric_limits<f32>::max() ||
+                     std::abs(m["y"].get<f64>()) > std::numeric_limits<f32>::max()) {
+                     throw ToolError("\"mouse\" coordinates are too large");
+                 }
+             }
+             if (args.contains("touches")) {
+                 if (!args["touches"].is_array()) throw ToolError("\"touches\" must be a list of { id, x, y, phase }");
+                 for (const Json& t : args["touches"]) {
+                     if (!t.is_object() || !t.contains("id") || !t["id"].is_number_integer() || !t.contains("x") || !t["x"].is_number() ||
+                         !t.contains("y") || !t["y"].is_number() || !t.contains("phase") || !t["phase"].is_string()) {
+                         throw ToolError("Each touch is { id, x, y, phase } with phase \"down\", \"move\" or \"up\"");
+                     }
+                     const f64 id = t["id"].get<f64>();
+                     if (id < 0.0 || id > std::numeric_limits<u32>::max()) throw ToolError("A touch id must be between 0 and 4294967295");
+                     const std::string phase = t["phase"].get<std::string>();
+                     if (phase != "down" && phase != "move" && phase != "up") throw ToolError("A touch's phase is \"down\", \"move\" or \"up\", not \"" + phase + "\"");
+                     if (std::abs(t["x"].get<f64>()) > std::numeric_limits<f32>::max() ||
+                         std::abs(t["y"].get<f64>()) > std::numeric_limits<f32>::max()) {
+                         throw ToolError("Touch coordinates are too large");
+                     }
+                 }
+             }
              if (args.contains("clear") && args["clear"].is_boolean() && args["clear"].get<bool>()) game.Input().Clear();
              Json applied = Json::object();
              if (args.contains("set")) {
