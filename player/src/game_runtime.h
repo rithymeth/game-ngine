@@ -54,15 +54,8 @@ struct Game::Runtime {
     std::unique_ptr<gas::AttributeSystem> attributes;
     std::unique_ptr<gas::EffectSystem> effects;
     std::unique_ptr<gas::AbilitySystem> abilities;
-#if AETHER_KIT_INVENTORY
-    std::unique_ptr<inv::InventorySystem> inventory;
-#endif
-#if AETHER_KIT_INTERACTION
-    std::unique_ptr<interact::InteractionSystem> interaction;
-#endif
-#if AETHER_KIT_QUESTS
-    std::unique_ptr<quest::QuestSystem> quests;
-#endif
+    // Declared after the services its kits reference so kit systems are destroyed first.
+    kit::KitRuntimeSet kit_runtimes;
 #if AETHER_GAME_SCRIPTING
     script::LuauHost host;
     std::unique_ptr<script::ScriptSystem> scripts;

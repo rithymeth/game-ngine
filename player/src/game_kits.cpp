@@ -2,6 +2,7 @@
 #include "game_runtime.h"
 
 #include "aether/core/log.h"
+#include <cstring>
 #include "aether/gameplay/gameplay_kit.h"
 #if AETHER_KIT_INVENTORY
 #include "aether/inventory/inventory_system.h"
@@ -74,27 +75,27 @@ void Game::LoadKitAssets() {
     kits_.LoadAssets(context);
 }
 
-void Game::CreateInventoryRuntime() {
+void Game::CreateKitRuntime() {
+    kit::KitRuntimeContext context;
+    context.world = world_.get();
+    context.find_service = [this](const char* name) -> void* {
+        if (std::strcmp(name, "game.effects") == 0) return runtime_->effects.get();
+        if (std::strcmp(name, "game.abilities") == 0) return runtime_->abilities.get();
 #if AETHER_KIT_INVENTORY
-    runtime_->inventory = std::make_unique<inv::InventorySystem>(*world_, runtime_->effects.get(), items_);
+        if (std::strcmp(name, "inventory.items") == 0) return &items_;
 #endif
-}
-
-void Game::CreateQuestsRuntime() {
 #if AETHER_KIT_QUESTS
-    runtime_->quests = std::make_unique<quest::QuestSystem>(*world_, runtime_->effects.get(), quests_);
+        if (std::strcmp(name, "quests.library") == 0) return &quests_;
 #endif
-}
-
-void Game::CreateInteractionRuntime() {
-#if AETHER_KIT_INTERACTION
-    runtime_->interaction = std::make_unique<interact::InteractionSystem>(*world_, runtime_->effects.get(), runtime_->abilities.get());
-#endif
+        return nullptr;
+    };
+    runtime_->kit_runtimes = kits_.CreateRuntime(context);
 }
 
 void Game::AddInventoryStage() {
 #if AETHER_KIT_INVENTORY
-    SystemDesc inventory = inv::MakeInventorySystem(runtime_ ? runtime_->inventory.get() : nullptr, [this](const inv::ItemEvent& e) {
+    inv::InventorySystem* inventory_system = runtime_ ? runtime_->kit_runtimes.Get<inv::InventorySystem>("Inventory", "InventorySystem") : nullptr;
+    SystemDesc inventory = inv::MakeInventorySystem(inventory_system, [this](const inv::ItemEvent& e) {
         if (!runtime_) return;
         using Kind = inv::ItemEvent::Kind;
         // Quest objectives consume inventory events in the Quests stage, so Inventory has no direct dependency on it.
@@ -144,7 +145,8 @@ void Game::AddInventoryStage() {
 
 void Game::AddInteractionStage() {
 #if AETHER_KIT_INTERACTION
-    SystemDesc interaction = interact::MakeInteractionSystem(runtime_ ? runtime_->interaction.get() : nullptr, [this](const interact::InteractionEvent& e) {
+    interact::InteractionSystem* interaction_system = runtime_ ? runtime_->kit_runtimes.Get<interact::InteractionSystem>("Interaction", "InteractionSystem") : nullptr;
+    SystemDesc interaction = interact::MakeInteractionSystem(interaction_system, [this](const interact::InteractionEvent& e) {
         if (!runtime_) return;
         const bool succeeded = e.kind == interact::InteractionEvent::Kind::Interacted;
 #if AETHER_GAME_SCRIPTING
@@ -169,7 +171,8 @@ void Game::AddInteractionStage() {
 
 void Game::AddQuestsStage() {
 #if AETHER_KIT_QUESTS
-    SystemDesc quests = quest::MakeQuestsSystem(runtime_ ? runtime_->quests.get() : nullptr, [this](quest::QuestSystem& system) {
+    quest::QuestSystem* quest_system = runtime_ ? runtime_->kit_runtimes.Get<quest::QuestSystem>("Quests", "QuestSystem") : nullptr;
+    SystemDesc quests = quest::MakeQuestsSystem(quest_system, [this](quest::QuestSystem& system) {
         if (!runtime_) return;
 #if AETHER_KIT_INVENTORY
         for (const inv::ItemEvent& item : runtime_->kit_events.Drain<inv::ItemEvent>()) {
@@ -183,8 +186,9 @@ void Game::AddQuestsStage() {
         if (!runtime_) return;
         using Kind = quest::QuestEvent::Kind;
 #if AETHER_KIT_INVENTORY
-        if (e.kind == Kind::Completed && runtime_->inventory) {
-            for (const quest::RewardItem& reward : e.reward_items) runtime_->inventory->Add(e.entity, reward.item, reward.count);
+        inv::InventorySystem* inventory = runtime_->kit_runtimes.Get<inv::InventorySystem>("Inventory", "InventorySystem");
+        if (e.kind == Kind::Completed && inventory) {
+            for (const quest::RewardItem& reward : e.reward_items) inventory->Add(e.entity, reward.item, reward.count);
         }
 #endif
 #if AETHER_GAME_SCRIPTING
