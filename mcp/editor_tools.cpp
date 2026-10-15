@@ -332,7 +332,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                     }});
 
     server.AddTool({"list_entities",
-                    "List entities in the scene (GUID, component names, parent GUID, effective collision layer index, and local active state). Optionally filter by component, exact entity name, direct parent or roots, layer index, local active value, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND.",
+                    "List a page of scene entities (GUID, component names, parent GUID, effective collision layer index, and local active state). Optionally filter by component, exact entity name, direct parent or roots, layer index, local active value, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND. Results are ordered by entity index and include total match count and has_more.",
                     Schema({{"component", {{"type", "string"}, {"description", "Only entities having this component"}}},
                             {"name", {{"type", "string"}, {"description", "Only entities whose name exactly matches"}}},
                             {"parent", kGuidProp},
@@ -341,6 +341,10 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                                              {"description", "Only entities on this collision layer; entities without Layer use index 0"}}},
                             {"active", {{"type", "boolean"},
                                          {"description", "Filter by the entity's local active value; missing Active defaults to true, and parent state is not composed"}}},
+                            {"offset", {{"type", "integer"}, {"minimum", 0}, {"maximum", 1000000000},
+                                         {"description", "Number of matching entities to skip (default 0)"}}},
+                            {"limit", {{"type", "integer"}, {"minimum", 1}, {"maximum", 1000},
+                                        {"description", "Maximum entities to return (default 200)"}}},
                             {"tag", {{"type", "string"}, {"description", "Only entities with this exact case-sensitive tag (legacy single-tag filter)"}}},
                             {"tags_all", {{"type", "array"}, {"items", {{"type", "string"}}}, {"maxItems", 32},
                                           {"description", "Only entities that have every exact case-sensitive tag listed"}}},
@@ -383,6 +387,32 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                             if (!args["active"].is_boolean()) throw ToolError("\"active\" must be a boolean");
                             active_filter = args["active"].get<bool>();
                         }
+                        usize offset = 0;
+                        if (args.contains("offset")) {
+                            if (!args["offset"].is_number_integer()) throw ToolError("\"offset\" must be an integer from 0 to 1000000000");
+                            if (args["offset"].is_number_unsigned()) {
+                                const u64 raw_offset = args["offset"].get<u64>();
+                                if (raw_offset > 1000000000) throw ToolError("\"offset\" must be an integer from 0 to 1000000000");
+                                offset = static_cast<usize>(raw_offset);
+                            } else {
+                                const i64 raw_offset = args["offset"].get<i64>();
+                                if (raw_offset < 0 || raw_offset > 1000000000) throw ToolError("\"offset\" must be an integer from 0 to 1000000000");
+                                offset = static_cast<usize>(raw_offset);
+                            }
+                        }
+                        usize limit = 200;
+                        if (args.contains("limit")) {
+                            if (!args["limit"].is_number_integer()) throw ToolError("\"limit\" must be an integer from 1 to 1000");
+                            if (args["limit"].is_number_unsigned()) {
+                                const u64 raw_limit = args["limit"].get<u64>();
+                                if (raw_limit == 0 || raw_limit > 1000) throw ToolError("\"limit\" must be an integer from 1 to 1000");
+                                limit = static_cast<usize>(raw_limit);
+                            } else {
+                                const i64 raw_limit = args["limit"].get<i64>();
+                                if (raw_limit < 1 || raw_limit > 1000) throw ToolError("\"limit\" must be an integer from 1 to 1000");
+                                limit = static_cast<usize>(raw_limit);
+                            }
+                        }
                         const std::string name_filter = args.contains("name") ? RequireString(args, "name") : std::string{};
                         const std::string tag_filter = args.contains("tag") ? RequireString(args, "tag") : std::string{};
                         auto ReadTagFilter = [&](const char* key) {
@@ -407,6 +437,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         const std::vector<std::string> tags_any = ReadTagFilter("tags_any");
                         const std::vector<std::string> tags_none = ReadTagFilter("tags_none");
                         Json out = Json::array();
+                        usize total_matches = 0;
                         for (Entity e : AllEntities(s)) {
                             const Parent* parent = s.world.GetComponent<Parent>(e);
                             if (args.contains("parent") && (parent == nullptr || parent->parent != parent_filter)) continue;
@@ -435,6 +466,8 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                             bool has_excluded_tag = false;
                             for (const std::string& tag : tags_none) has_excluded_tag = has_excluded_tag || HasTag(s.world, e, tag);
                             if (has_excluded_tag) continue;
+                            const usize match_index = total_matches++;
+                            if (match_index < offset || out.size() >= limit) continue;
                             const IdComponent* id = s.world.GetComponent<IdComponent>(e);
                             Json row = {{"entity", id ? ToString(id->guid) : ""}, {"components", ComponentNamesOf(s, e)},
                                         {"layer_index", entity_layer}, {"active", entity_active},
@@ -442,7 +475,8 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                             if (parent != nullptr && !parent->parent.IsNull()) row["parent"] = ToString(parent->parent);
                             out.push_back(std::move(row));
                         }
-                        return {{"count", out.size()}, {"entities", out}};
+                        return {{"count", out.size()}, {"total_matches", total_matches}, {"offset", offset},
+                                {"limit", limit}, {"has_more", total_matches > offset + out.size()}, {"entities", out}};
                     }});
 
     server.AddTool({"get_entity", "Every component of one entity, as JSON.", Schema({{"entity", kGuidProp}}, {"entity"}),
