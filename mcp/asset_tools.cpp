@@ -1844,6 +1844,57 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
                     }});
 
     server.AddTool(
+        {"content_read_many",
+         "Read 1–64 text files under Content/ in one call. Each file is limited to 2 MB and the total batch to 1 MB so the response stays within the MCP result limit; paths are validated before reading.",
+         Schema({{"paths", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "1–64 unique paths relative to Content/"}}}}, {"paths"}),
+         [host](const Json& args) -> Json {
+             OpenProject& p = host->Require();
+             if (!args["paths"].is_array() || args["paths"].empty() || args["paths"].size() > 64) {
+                 throw ToolError("\"paths\" must be a non-empty array of at most 64 paths");
+             }
+             struct PendingRead {
+                 std::string path;
+                 fs::path file;
+             };
+             std::vector<PendingRead> pending;
+             pending.reserve(args["paths"].size());
+             std::set<std::string> seen;
+             std::uintmax_t total_bytes = 0;
+             for (const Json& value : args["paths"]) {
+                 if (!value.is_string()) throw ToolError("Each entry in \"paths\" must be a string");
+                 const std::string relative = value.get<std::string>();
+                 const std::string path = CleanRelative(relative);
+                 const fs::path file = ContentFile(p, relative);
+                 if (!seen.insert(path).second) throw ToolError("Duplicate path in \"paths\": " + path);
+                 std::error_code ec;
+                 if (!fs::is_regular_file(file, ec)) throw ToolError("No such file: " + path);
+                 const std::uintmax_t size = fs::file_size(file, ec);
+                 if (ec) throw ToolError("Could not inspect " + path + ": " + ec.message());
+                 if (size > kMaxTextBytes) throw ToolError("File is larger than 2 MB: " + path);
+                 total_bytes += size;
+                 if (total_bytes > 1024ull * 1024) throw ToolError("The total content read batch exceeds 1 MB");
+                 pending.push_back({path, file});
+             }
+
+             Json files = Json::array();
+             std::uintmax_t actual_bytes = 0;
+             for (const PendingRead& item : pending) {
+                 std::ifstream in(item.file, std::ios::binary);
+                 if (!in) throw ToolError("Could not open " + item.path);
+                 std::stringstream stream;
+                 stream << in.rdbuf();
+                 if (in.bad()) throw ToolError("Could not read " + item.path);
+                 std::string text = stream.str();
+                 if (text.size() > kMaxTextBytes) throw ToolError("File is larger than 2 MB: " + item.path);
+                 actual_bytes += text.size();
+                 if (actual_bytes > 1024ull * 1024) throw ToolError("The total content read batch exceeds 1 MB");
+                 if (text.find('\0') != std::string::npos) throw ToolError("Not a text file (contains NUL bytes): " + item.path);
+                 files.push_back({{"path", item.path}, {"bytes", text.size()}, {"text", std::move(text)}});
+             }
+             return {{"read", files.size()}, {"files", std::move(files)}};
+         }});
+
+    server.AddTool(
         {"content_write",
          "Write a text file under Content/ (a scene, prefab, material or any JSON asset) as one agent-attributed undoable action; "
          "new recognized assets get a GUID. Refuses .ameta files (use asset_set_import_settings) and existing files over 2 MB. Overwrites an existing file.",
