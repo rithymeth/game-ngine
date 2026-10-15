@@ -3771,6 +3771,52 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_scale_entities_local_shared_many",
+         "Multiply local scale by one shared component factor on up to 64 unique live entities. Preserves local position and rotation; validates all handles, factor values and resulting scales before applying the batch.",
+         Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}},
+                 {"factor", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}}},
+                {"entities", "factor"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be an array of 1 to 64 entity handles");
+             }
+             if (!args["factor"].is_array() || args["factor"].size() != 3 ||
+                 !args["factor"][0].is_number() || !args["factor"][1].is_number() || !args["factor"][2].is_number()) {
+                 throw ToolError("\"factor\" must be [x, y, z]");
+             }
+             const Vec3 factor(args["factor"][0].get<f32>(), args["factor"][1].get<f32>(), args["factor"][2].get<f32>());
+             if (!std::isfinite(factor.x) || !std::isfinite(factor.y) || !std::isfinite(factor.z)) throw ToolError("\"factor\" values must be finite");
+             struct ScaleEdit { Entity entity; Vec3 scale; };
+             std::vector<ScaleEdit> edits;
+             edits.reserve(args["entities"].size());
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string() || value.get<std::string>().empty()) throw ToolError("Every \"entities\" entry must be a non-empty string");
+                 const Entity entity = FindEntity(game, value.get<std::string>());
+                 if (std::find_if(edits.begin(), edits.end(), [entity](const ScaleEdit& edit) { return edit.entity == entity; }) != edits.end()) {
+                     throw ToolError("\"entities\" must not repeat an entity");
+                 }
+                 const Transform* transform = world.GetComponent<Transform>(entity);
+                 if (transform == nullptr) throw ToolError("Entity " + EntityKey(world, entity) + " has no Transform");
+                 const Vec3& current = transform->scale;
+                 const Vec3 updated(current.x * factor.x, current.y * factor.y, current.z * factor.z);
+                 if (!std::isfinite(current.x) || !std::isfinite(current.y) || !std::isfinite(current.z) ||
+                     !std::isfinite(updated.x) || !std::isfinite(updated.y) || !std::isfinite(updated.z)) {
+                     throw ToolError("Local scale multiplication produced a non-finite result for " + EntityKey(world, entity));
+                 }
+                 edits.push_back({entity, updated});
+             }
+             Json results = Json::array();
+             for (const ScaleEdit& edit : edits) {
+                 world.GetComponent<Transform>(edit.entity)->scale = edit.scale;
+                 results.push_back({{"entity", EntityKey(world, edit.entity)},
+                                    {"scale", Json::array({edit.scale.x, edit.scale.y, edit.scale.z})}});
+             }
+             return {{"updated_count", results.size()}, {"results", results}};
+         }});
+
+    server.AddTool(
         {"game_rotate_entities_local_many",
          "Apply individual local-space quaternion deltas to up to 64 unique live entities. Preserves position and scale; validates the full request and normalizes each resulting rotation before applying.",
          Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
