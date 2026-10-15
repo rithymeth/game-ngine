@@ -778,7 +778,7 @@ void RegisterGameTools(McpServer& server) {
     server.AddTool(
         {"game_list_entities",
          "Entities in the running game: handle (GUID, or #index when it has none), entity generation, name, world position, collision layer index, local and in-hierarchy active state, direct parent GUID, tags and component names. "
-         "Optionally filter by exact name, case-insensitive ASCII name substring, one component or component groups, exact tag or tag groups, direct parent, root status, collision layer index or name, local active state or in-hierarchy active state. Results can be paged with a bounded limit and offset.",
+         "Optionally filter by exact name, case-insensitive ASCII name substring, one component or component groups, exact tag or tag groups, direct parent, root status, collision layer index or name, local active state or in-hierarchy active state. Results can be paged with a bounded limit and offset or entity-index cursor.",
          Schema({{"name", {{"type", "string"}, {"description", "Exact, case-sensitive entity name"}}},
                  {"name_contains", {{"type", "string"}, {"description", "Non-empty case-insensitive ASCII name substring"}}},
                  {"parent", {{"type", "string"}, {"description", "Direct parent entity GUID"}}},
@@ -801,7 +801,9 @@ void RegisterGameTools(McpServer& server) {
                  {"active", {{"type", "boolean"}, {"description", "Filter by local active state; entities without Active are active"}}},
                  {"active_in_hierarchy", {{"type", "boolean"}, {"description", "Filter by effective active state including ancestors"}}},
                  {"limit", {{"type", "integer"}, {"minimum", 1}, {"maximum", 1000}, {"description", "Page size, 1-1000 (default 200)"}}},
-                 {"offset", {{"type", "integer"}, {"minimum", 0}, {"description", "Number of matching entities to skip"}}}}),
+                 {"offset", {{"type", "integer"}, {"minimum", 0}, {"description", "Number of matching entities to skip; must be 0 with after_entity_index"}}},
+                 {"after_entity_index", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4294967295},
+                                          {"description", "Continue after this entity index in stable index order"}}}}),
          [host](const Json& args) -> Json {
              Game& game = host->Require();
              World& world = game.GetWorld();
@@ -894,6 +896,7 @@ void RegisterGameTools(McpServer& server) {
                  limit = static_cast<usize>(requested);
              }
              usize offset = 0;
+             std::optional<u32> after_entity_index;
              if (args.contains("offset")) {
                  if (!args["offset"].is_number_integer()) throw ToolError("\"offset\" must be a non-negative integer");
                  if (args["offset"].is_number_unsigned()) {
@@ -906,13 +909,36 @@ void RegisterGameTools(McpServer& server) {
                      offset = static_cast<usize>(requested);
                  }
              }
+             if (args.contains("after_entity_index")) {
+                 if (!args["after_entity_index"].is_number_integer()) {
+                     throw ToolError("\"after_entity_index\" must be an integer from 0 to 4294967295");
+                 }
+                 if (args["after_entity_index"].is_number_unsigned()) {
+                     const u64 requested = args["after_entity_index"].get<u64>();
+                     if (requested > std::numeric_limits<u32>::max()) {
+                         throw ToolError("\"after_entity_index\" must be an integer from 0 to 4294967295");
+                     }
+                     after_entity_index = static_cast<u32>(requested);
+                 } else {
+                     const i64 requested = args["after_entity_index"].get<i64>();
+                     if (requested < 0 || static_cast<u64>(requested) > std::numeric_limits<u32>::max()) {
+                         throw ToolError("\"after_entity_index\" must be an integer from 0 to 4294967295");
+                     }
+                     after_entity_index = static_cast<u32>(requested);
+                 }
+             }
+             if (after_entity_index.has_value() && offset != 0) {
+                 throw ToolError("\"offset\" must be 0 when using \"after_entity_index\"");
+             }
              std::vector<Entity> candidates;
              if (args.contains("tag")) candidates = FindEntitiesWithTag(world, RequireString(args, "tag"));
              else candidates = AllEntities(world);
+             std::sort(candidates.begin(), candidates.end(), [](Entity a, Entity b) { return a.index < b.index; });
              Json list = Json::array();
              usize total = 0;
              static const std::string implicit_default_layer = "Default";
              for (Entity e : candidates) {
+                 if (after_entity_index.has_value() && e.index <= *after_entity_index) continue;
                  if (filter != kInvalidComponentId && !world.HasComponentRaw(e, filter)) continue;
                  bool has_all_components = true;
                  for (ComponentId id : components_all) {
@@ -988,7 +1014,8 @@ void RegisterGameTools(McpServer& server) {
                      for (const std::string& tag : entity_tags->names) tags.push_back(tag);
                  }
                  Json parent = has_parent ? Json(ToString(parent_component->parent)) : Json(nullptr);
-                 Json row = {{"entity", EntityKey(world, e)}, {"entity_generation", e.generation}, {"components", names}, {"tags", tags},
+                 Json row = {{"entity", EntityKey(world, e)}, {"entity_index", e.index}, {"entity_generation", e.generation},
+                             {"components", names}, {"tags", tags},
                              {"layer", entity_layer},
                              {"active", active_component == nullptr || active_component->active},
                              {"active_in_hierarchy", args.contains("active_in_hierarchy") ? active_in_hierarchy
@@ -1003,7 +1030,9 @@ void RegisterGameTools(McpServer& server) {
                  list.push_back(row);
              }
              const usize remaining = total > offset ? total - offset : 0;
-             return {{"total", total}, {"offset", offset}, {"limit", limit}, {"has_more", list.size() < remaining}, {"entities", list}};
+             const Json next_entity_index = list.empty() ? Json(nullptr) : list.back()["entity_index"];
+             return {{"total", total}, {"offset", offset}, {"after_entity_index", after_entity_index.has_value() ? Json(*after_entity_index) : Json(nullptr)},
+                     {"next_entity_index", next_entity_index}, {"limit", limit}, {"has_more", list.size() < remaining}, {"entities", list}};
          }});
 
     server.AddTool({"game_get_entity", "Every component of one entity in the running game, as JSON.",
