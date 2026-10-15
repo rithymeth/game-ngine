@@ -1090,6 +1090,96 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
              return {{"updated", edits.size()}, {"entities", std::move(results)}};
          }});
 
+    server.AddTool(
+        {"set_entity_layers_many",
+         "Set the collision layer index on 1–64 unique scene entities as one undoable action. Layer indices are 0–31; entities without a Layer component receive one. All IDs and indices are validated before applying changes.",
+         Schema({{"edits", {{"type", "array"},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", kGuidProp}, {"layer_index", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxLayers - 1}}}}},
+                                        {"required", Json::array({"entity", "layer_index"})}}},
+                             {"description", "1–64 unique entity GUID and layer-index pairs"}}}},
+                {"edits"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity layers");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be a non-empty array of at most 64 entity layer edits");
+             }
+
+             struct LayerEdit {
+                 EntityGuid guid;
+                 u8 index;
+                 bool add_component = false;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+             };
+             std::vector<LayerEdit> edits;
+             edits.reserve(args["edits"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId layer_component = GetComponentId<Layer>();
+             for (const Json& entry : args["edits"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"edits\" must be an object");
+                 const EntityGuid guid = RequireGuid(entry, "entity");
+                 const Entity entity = RequireEntity(s, entry);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"edits\": " + ToString(guid));
+                 if (!entry.contains("layer_index") || !entry["layer_index"].is_number_integer() || entry["layer_index"].is_boolean()) {
+                     throw ToolError("\"layer_index\" must be an integer from 0 to 31");
+                 }
+                 const i64 raw_index = entry["layer_index"].get<i64>();
+                 if (raw_index < 0 || raw_index >= kMaxLayers) throw ToolError("\"layer_index\" must be an integer from 0 to 31");
+
+                 LayerEdit edit;
+                 edit.guid = guid;
+                 edit.index = static_cast<u8>(raw_index);
+                 const Json value = {{"index", raw_index}};
+                 if (s.world.HasComponentRaw(entity, layer_component)) {
+                     Json warnings = Json::array();
+                     edit.after = PatchedBytes(s, entity, layer_component, value, edit.before, warnings);
+                     if (!warnings.empty()) throw ToolError("Invalid Layer value for entity " + ToString(guid));
+                 } else {
+                     const ComponentInfo& info = GetComponentInfo(layer_component);
+                     reflect::Any sample = reflect::Any::DefaultOf(*info.reflected);
+                     if (!sample.HasValue()) throw ToolError("Cannot default-construct Layer");
+                     reflect::LoadReport report;
+                     if (!reflect::FromJson(*info.reflected, sample.Data(), value, &report)) {
+                         throw ToolError("Invalid layer index for entity " + ToString(guid));
+                     }
+                     info.serialize(sample.Data(), edit.after);
+                     reflect::Any defaults = reflect::Any::DefaultOf(*info.reflected);
+                     if (!defaults.HasValue()) throw ToolError("Cannot default-construct Layer");
+                     info.serialize(defaults.Data(), edit.before);
+                     edit.add_component = true;
+                 }
+                 edits.push_back(std::move(edit));
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Set Entity Layers " + std::to_string(++next_batch_id);
+             const usize undo_count_before = s.stack.UndoCount();
+             editor::CommandContext ctx = s.Context();
+             s.stack.BeginTransaction(transaction_label);
+             try {
+                 for (const LayerEdit& edit : edits) {
+                     if (edit.add_component) {
+                         auto add = std::make_unique<editor::AddComponentCommand>(edit.guid, layer_component);
+                         add->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(add));
+                     }
+                     auto set = std::make_unique<SetComponentCommand>(edit.guid, layer_component, edit.before, edit.after);
+                     set->SetAttribution("agent");
+                     s.stack.Execute(ctx, std::move(set));
+                 }
+                 s.stack.EndTransaction();
+             } catch (...) {
+                 s.stack.EndTransaction();
+                 if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                 throw;
+             }
+
+             Json results = Json::array();
+             for (const LayerEdit& edit : edits) results.push_back({{"entity", ToString(edit.guid)}, {"layer_index", edit.index}});
+             return {{"updated", edits.size()}, {"entities", std::move(results)}};
+         }});
+
     server.AddTool({"set_component",
                     "Change fields of a component the entity already has. `value` is a partial object: only the "
                     "fields it names change. Undoable.",
