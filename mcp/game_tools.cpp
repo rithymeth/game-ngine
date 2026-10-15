@@ -2385,6 +2385,59 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_get_world_transforms_many",
+         "Read world transforms for 1 to 64 unique live entities in request order. Returns each 4x4 matrix as column vectors plus world position and basis-length world scale. Rejects missing Transform components, cycles, excessive hierarchy depth and non-finite results.",
+         Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}}},
+                {"entities"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be an array of 1 to 64 entity handles");
+             }
+             std::vector<Entity> entities;
+             entities.reserve(args["entities"].size());
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string() || value.get<std::string>().empty()) throw ToolError("Every \"entities\" entry must be a non-empty string");
+                 const Entity entity = FindEntity(game, value.get<std::string>());
+                 if (std::find(entities.begin(), entities.end(), entity) != entities.end()) throw ToolError("\"entities\" must not repeat an entity");
+                 if (world.GetComponent<Transform>(entity) == nullptr) throw ToolError("Entity " + EntityKey(world, entity) + " has no Transform");
+                 entities.push_back(entity);
+             }
+             Json results = Json::array();
+             for (Entity entity : entities) {
+                 std::vector<Entity> visited;
+                 Entity current = entity;
+                 while (!current.IsNull()) {
+                     if (visited.size() >= kMaxHierarchyDepth) throw ToolError("World-transform query encountered excessive hierarchy depth");
+                     if (std::find(visited.begin(), visited.end(), current) != visited.end()) throw ToolError("World-transform query encountered a hierarchy cycle");
+                     visited.push_back(current);
+                     current = GetParent(world, game.Guids(), current);
+                 }
+                 const Mat4 matrix = ComputeWorldTransform(world, game.Guids(), entity);
+                 Json columns = Json::array();
+                 f32 scales[3]{};
+                 for (int axis = 0; axis < 4; ++axis) {
+                     const Vec4& column = matrix.cols[axis];
+                     if (!std::isfinite(column.x) || !std::isfinite(column.y) || !std::isfinite(column.z) || !std::isfinite(column.w)) {
+                         throw ToolError("World transform has a non-finite matrix for " + EntityKey(world, entity));
+                     }
+                     columns.push_back(Json::array({column.x, column.y, column.z, column.w}));
+                     if (axis < 3) {
+                         scales[axis] = Vec3(column.x, column.y, column.z).Length();
+                         if (!std::isfinite(scales[axis])) throw ToolError("World transform has a non-finite basis for " + EntityKey(world, entity));
+                     }
+                 }
+                 const Vec4& position = matrix.cols[3];
+                 results.push_back({{"entity", EntityKey(world, entity)},
+                                    {"world_position", Json::array({position.x, position.y, position.z})},
+                                    {"world_scale", Json::array({scales[0], scales[1], scales[2]})},
+                                    {"world_matrix_columns", std::move(columns)}});
+             }
+             return {{"count", results.size()}, {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
         {"game_reparent_entities_many",
          "Set or clear the parent of up to 64 unique live entities as one batch. By default parent changes retain local transforms; set preserve_world=true to retain world poses by updating local transforms. The batch validates stable parent GUIDs and the complete resulting hierarchy, and rejects cycles, excessive depth, singular transforms, or unrepresentable shear before applying.",
          Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
