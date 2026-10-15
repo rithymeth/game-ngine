@@ -3433,6 +3433,25 @@ void RegisterGameTools(McpServer& server) {
                     }});
 
     server.AddTool(
+        {"game_audio_events",
+         "Read AudioSource cues that finished during the loaded game's most recent audio update, with the source entity handle and cue path.",
+         Schema(Json::object()),
+         [host](const Json&) -> Json {
+             Game& game = host->Require();
+             audio::AudioSystem* audio = game.AudioSystem();
+             if (audio == nullptr) throw ToolError("This game has no audio system (load a scene first)");
+             World& world = game.GetWorld();
+             Json events = Json::array();
+             for (const audio::AudioFinishedEvent& event : audio->Events()) {
+                 const std::string entity = world.IsAlive(event.entity)
+                     ? EntityKey(world, event.entity)
+                     : "#" + std::to_string(event.entity.index) + ":" + std::to_string(event.entity.generation);
+                 events.push_back({{"type", "finished"}, {"entity", entity}, {"cue", event.cue}});
+             }
+             return {{"count", events.size()}, {"events", std::move(events)}};
+         }});
+
+    server.AddTool(
         {"game_play_sound",
          "Play a sound cue in the running game, once: in 2D, or at a `location` [x,y,z] (a spatial cue is heard from there). Returns whether "
          "anything started (false: the cue doesn't exist or plays nothing). Step the game to let it run; game_audio_state shows it playing.",
