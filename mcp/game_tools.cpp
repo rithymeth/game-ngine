@@ -1698,6 +1698,52 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_remove_entity_components_many",
+         "Remove different components from up to 64 live entity/component pairs. Validates every target first; Transform and game-managed IdComponent are protected.",
+         Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                             {"items", {{"type", "object"},
+                                         {"properties", {{"entity", {{"type", "string"}}}, {"component", {{"type", "string"}}}}},
+                                         {"required", Json::array({"entity", "component"})}}}}}},
+                {"edits"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be an array of 1 to 64 entity/component removals");
+             }
+             struct Removal {
+                 Entity entity;
+                 ComponentId id;
+             };
+             std::vector<Removal> removals;
+             removals.reserve(args["edits"].size());
+             for (const Json& item : args["edits"]) {
+                 if (!item.is_object() || !item.contains("entity") || !item["entity"].is_string() || item["entity"].get<std::string>().empty()) {
+                     throw ToolError("Every \"edits\" entry must contain a non-empty string \"entity\"");
+                 }
+                 if (!item.contains("component") || !item["component"].is_string()) throw ToolError("Every \"edits\" entry must contain a string \"component\"");
+                 const Entity entity = FindEntity(game, item["entity"].get<std::string>());
+                 const ComponentId id = RequireComponent(item["component"].get<std::string>());
+                 if (id == GetComponentId<Transform>() || id == GetComponentId<IdComponent>()) {
+                     throw ToolError(ComponentName(id) + " cannot be removed from a running entity");
+                 }
+                 if (std::find_if(removals.begin(), removals.end(), [entity, id](const Removal& removal) {
+                         return removal.entity == entity && removal.id == id;
+                     }) != removals.end()) {
+                     throw ToolError("\"edits\" must not repeat the same entity/component pair");
+                 }
+                 if (!world.HasComponentRaw(entity, id)) throw ToolError("Entity " + EntityKey(world, entity) + " has no " + ComponentName(id));
+                 removals.push_back({entity, id});
+             }
+             for (const Removal& removal : removals) world.RemoveComponentRaw(removal.entity, removal.id);
+             Json results = Json::array();
+             for (const Removal& removal : removals) {
+                 results.push_back({{"entity", EntityKey(world, removal.entity)}, {"component", ComponentName(removal.id)}, {"removed", true}});
+             }
+             return {{"removed_count", results.size()}, {"results", results}};
+         }});
+
+    server.AddTool(
         {"game_add_components_many",
          "Add one default-constructed component to up to 64 unique running entities as one validated batch. The batch is refused if any entity already has the component.",
          Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}},

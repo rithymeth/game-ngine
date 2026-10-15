@@ -405,6 +405,7 @@ saves and localization. The game has its own world, separate from the editor's.
 | `game_copy_entity_components_many` | Copy components across up to 64 explicit source/target/component edits after validating the complete request |
 | `game_remove_component` | Remove a component from a running entity |
 | `game_remove_components_many` | Remove one component from up to 64 unique live entities; validates the whole selection first and protects Transform and IdComponent |
+| `game_remove_entity_components_many` | Remove different components across up to 64 entity/component pairs after validating all targets; protects Transform and IdComponent |
 | `game_ui` | The running game's UI: each layer's widget tree with type, name, rectangle, visibility, enabled, and the text, value or percent a widget shows; or one widget by name |
 | `game_ui_click` | Click a widget of the game's UI by name (hover, press, release over its middle, a frame between each) |
 | `game_lifecycle` | Send suspend, resume or memory-pressure, as a phone's OS would: the game stands still, audio stops and saves are written; resume skips the time that passed. `level` is accepted only for memory-pressure and must be `moderate` or `critical` (default `moderate`). |
