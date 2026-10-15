@@ -26,7 +26,7 @@ and errors go to stderr.
 | --- | --- |
 | `editor_state` | Entity count, undo/redo labels and attribution, unsaved changes, play state |
 | `list_component_types` | Component names and their fields |
-| `list_entities` | Paged results (default 200, max 1000) with `offset`, `after_entity_index`/`next_entity_index`, total matches, and `has_more`; includes GUIDs, entity indices, component names, parent GUIDs, effective layer indices, and local active state; optional exact-name or case-insensitive ASCII name-substring/component/parent/root/layer/active/tag filters plus `tags_all`, `tags_any`, and `tags_none` groups (supplied filters combine with AND). The index cursor is not a scene snapshot. |
+| `list_entities` | Paged results (default 200, max 1000) with `offset`, `after_entity_index`/`next_entity_index`, total matches, and `has_more`; includes GUIDs, names (null when unnamed), entity indices, component names, parent GUIDs, effective layer indices, and local active state; optional exact-name or case-insensitive ASCII name-substring/component/parent/root/layer/active/tag filters plus `tags_all`, `tags_any`, and `tags_none` groups (supplied filters combine with AND). The index cursor is not a scene snapshot. |
 | `get_entity` | Every component of one entity, as JSON |
 | `get_entities_many` | Get full reflected component values for up to 64 unique entities in selection order; validates all GUIDs before returning data |
 | `get_entities_metadata_many` | Get names, active/layer overrides, layer indices, tags, and parent links for up to 64 selected entities |
