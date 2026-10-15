@@ -3559,6 +3559,126 @@ void RegisterGameTools(McpServer& server) {
              }
              throw ToolError("\"action\" must be state, count, configure, add, remove, move, split, equip, unequip or use");
          }});
+
+    server.AddTool(
+        {"game_inventory_many",
+         "Apply 1 to 64 inventory operations after validating every entity and argument. Operations run in order and report their individual result; inventory rules can reject an operation without stopping later operations. Item events and quest notifications are processed on the next game step.",
+         Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                             {"items", {{"type", "object"}, {"properties", {
+                                 {"entity", {{"type", "string"}}},
+                                 {"action", {{"type", "string"}, {"enum", Json::array({"configure", "add", "remove", "move", "split", "equip", "unequip", "use"})}},
+                                 {"item", {{"type", "string"}}}, {"count", {{"type", "integer"}}},
+                                 {"slot", {{"type", "integer"}}}, {"to_slot", {{"type", "integer"}}},
+                                 {"equipment_slot", {{"type", "string"}}}, {"capacity", {{"type", "integer"}}},
+                                 {"max_weight", {{"type", "number"}}}}}, {"required", Json::array({"entity", "action"})}}}}}},
+                {"edits"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             inv::InventorySystem* system = inv::InventorySystem::Active();
+             if (system == nullptr) throw ToolError("This game has no inventory system (load a scene with the Inventory kit)");
+             if (!args.contains("edits") || !args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be an array of 1 to 64 inventory operations");
+             }
+             struct InventoryEdit {
+                 Entity entity;
+                 std::string entity_key;
+                 std::string action;
+                 std::string item;
+                 std::string equipment_slot;
+                 i32 count = 1;
+                 i32 slot = 0;
+                 i32 to_slot = 0;
+                 i32 capacity = 0;
+                 f32 max_weight = 0.0f;
+             };
+             const World& world = game.GetWorld();
+             auto integer = [](const Json& edit, const char* key, i32 fallback, bool required) -> i32 {
+                 if (!edit.contains(key)) {
+                     if (required) throw ToolError(std::string("Missing integer argument \"") + key + "\"");
+                     return fallback;
+                 }
+                 if (!edit[key].is_number_integer()) throw ToolError(std::string("\"") + key + "\" must be an integer");
+                 if (edit[key].is_number_unsigned()) {
+                     const u64 value = edit[key].get<u64>();
+                     if (value > static_cast<u64>(std::numeric_limits<i32>::max())) throw ToolError(std::string("\"") + key + "\" is out of range");
+                     return static_cast<i32>(value);
+                 }
+                 const i64 value = edit[key].get<i64>();
+                 if (value < std::numeric_limits<i32>::min() || value > std::numeric_limits<i32>::max()) throw ToolError(std::string("\"") + key + "\" is out of range");
+                 return static_cast<i32>(value);
+             };
+             auto string_field = [](const Json& edit, const char* key, bool required) -> std::string {
+                 if (!edit.contains(key)) {
+                     if (required) throw ToolError(std::string("Missing string argument \"") + key + "\"");
+                     return {};
+                 }
+                 if (!edit[key].is_string()) throw ToolError(std::string("\"") + key + "\" must be a string");
+                 return edit[key].get<std::string>();
+             };
+             std::vector<InventoryEdit> parsed;
+             parsed.reserve(args["edits"].size());
+             for (const Json& raw : args["edits"]) {
+                 if (!raw.is_object()) throw ToolError("Every inventory edit must be an object");
+                 InventoryEdit edit;
+                 edit.entity_key = string_field(raw, "entity", true);
+                 edit.entity = FindEntity(game, edit.entity_key);
+                 edit.entity_key = EntityKey(world, edit.entity);
+                 edit.action = string_field(raw, "action", true);
+                 if (edit.action != "configure" && edit.action != "add" && edit.action != "remove" && edit.action != "move" &&
+                     edit.action != "split" && edit.action != "equip" && edit.action != "unequip" && edit.action != "use") {
+                     throw ToolError("Inventory action must be configure, add, remove, move, split, equip, unequip or use");
+                 }
+                 if (edit.action == "configure") {
+                     edit.capacity = integer(raw, "capacity", 0, true);
+                     if (raw.contains("max_weight")) {
+                         if (!raw["max_weight"].is_number()) throw ToolError("\"max_weight\" must be a number");
+                         edit.max_weight = raw["max_weight"].get<f32>();
+                         if (!std::isfinite(edit.max_weight) || edit.max_weight < 0.0f) throw ToolError("\"max_weight\" must be finite and non-negative");
+                     }
+                 } else if (edit.action == "add" || edit.action == "remove") {
+                     edit.item = string_field(raw, "item", true);
+                     edit.count = integer(raw, "count", 1, false);
+                 } else if (edit.action == "move" || edit.action == "split") {
+                     edit.slot = integer(raw, "slot", 0, true);
+                     edit.to_slot = integer(raw, "to_slot", 0, true);
+                     if (edit.action == "split") edit.count = integer(raw, "count", 1, false);
+                 } else if (edit.action == "equip" || edit.action == "use") {
+                     edit.slot = integer(raw, "slot", 0, true);
+                 } else {
+                     edit.equipment_slot = string_field(raw, "equipment_slot", true);
+                 }
+                 parsed.push_back(std::move(edit));
+             }
+
+             Json results = Json::array();
+             for (const InventoryEdit& edit : parsed) {
+                 if (edit.action == "configure") {
+                     results.push_back({{"entity", edit.entity_key}, {"action", edit.action},
+                                        {"configured", system->Configure(edit.entity, edit.capacity, edit.max_weight)},
+                                        {"capacity", edit.capacity}, {"max_weight", edit.max_weight}});
+                 } else if (edit.action == "add") {
+                     const i32 added = system->Add(edit.entity, edit.item, edit.count);
+                     results.push_back({{"entity", edit.entity_key}, {"action", edit.action}, {"item", edit.item},
+                                        {"requested", edit.count}, {"added", added}, {"count", system->Count(edit.entity, edit.item)}});
+                 } else if (edit.action == "remove") {
+                     const bool removed = system->Remove(edit.entity, edit.item, edit.count);
+                     results.push_back({{"entity", edit.entity_key}, {"action", edit.action}, {"item", edit.item},
+                                        {"requested", edit.count}, {"removed", removed}, {"count", system->Count(edit.entity, edit.item)}});
+                 } else if (edit.action == "move" || edit.action == "split") {
+                     const bool ok = edit.action == "move" ? system->Move(edit.entity, edit.slot, edit.to_slot)
+                                                             : system->Split(edit.entity, edit.slot, edit.count, edit.to_slot);
+                     results.push_back({{"entity", edit.entity_key}, {"action", edit.action}, {"slot", edit.slot},
+                                        {"to_slot", edit.to_slot}, {"success", ok}});
+                 } else if (edit.action == "equip" || edit.action == "use") {
+                     const bool ok = edit.action == "equip" ? system->Equip(edit.entity, edit.slot) : system->Use(edit.entity, edit.slot);
+                     results.push_back({{"entity", edit.entity_key}, {"action", edit.action}, {"slot", edit.slot}, {"success", ok}});
+                 } else {
+                     results.push_back({{"entity", edit.entity_key}, {"action", edit.action}, {"equipment_slot", edit.equipment_slot},
+                                        {"success", system->Unequip(edit.entity, edit.equipment_slot)}});
+                 }
+             }
+             return {{"count", results.size()}, {"results", std::move(results)}};
+         }});
 #endif
 
 #if AETHER_MCP_QUESTS
