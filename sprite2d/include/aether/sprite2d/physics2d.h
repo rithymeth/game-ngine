@@ -100,6 +100,8 @@ public:
     bool Raycast(Vec2 origin, Vec2 dir, f32 max_distance, RayHit2D& out, u32 mask = 0xFFFFFFFFu) const;
     // Entities whose colliders overlap the box.
     std::vector<Entity> OverlapBox(Vec2 center, Vec2 half_extents, u32 mask = 0xFFFFFFFFu) const;
+    // Entities whose colliders overlap the circle.
+    std::vector<Entity> OverlapCircle(Vec2 center, f32 radius, u32 mask = 0xFFFFFFFFu) const;
 
     usize BodyCount() const { return body_count_; }
 
