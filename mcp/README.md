@@ -35,6 +35,7 @@ and errors go to stderr.
 | `set_entity_layers_many` | Set collision layer indices (0–31) on up to 64 unique entities as one undoable action; creates `Layer` when needed |
 | `offset_entities_local_many` | Add one local-position offset to up to 64 unique entities in one undo action; preserves rotation and scale |
 | `set_entities_local_position_many` | Set one shared absolute local position on up to 64 unique entities in one undo action; preserves rotation and scale |
+| `set_entities_local_rotation_many` | Set one shared absolute local quaternion on up to 64 unique entities in one undo action; preserves position and scale |
 | `set_entities_active_many` | Set active states on up to 64 unique entities as one undoable action; missing `Active` means active, disabling adds `Active` |
 | `create_entity` / `create_entities` | Create an entity or up to 64 entities with component values, current-scene parents, or zero-based `parent_index` links within the batch; the batch validates the full hierarchy before creation and is one undo action |
 | `duplicate_entity` / `duplicate_entities` | Copy reflected component values for one entity or up to 64 unique entities as one undo action; `duplicate_entities` can preserve links within the selected group with `preserve_hierarchy: true`, duplicate selected entities and all descendants with `include_children: true`, and optionally remap internal EntityGuid references with `remap_internal_references: true` |
