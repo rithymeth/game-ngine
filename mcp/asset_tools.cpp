@@ -1176,6 +1176,37 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
                         return RecordJson(p, FindAsset(p, RequireString(args, "asset")), true);
                     }});
 
+    server.AddTool(
+        {"asset_info_many",
+         "Return full details for 1–32 unique assets (import settings, dependencies, referencers, sub-assets and import state) in one call. Resolves every asset before building the response and caps serialized output at 6 MB.",
+         Schema({{"assets", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "1–32 content paths or GUIDs"}}}}, {"assets"}),
+         [host](const Json& args) -> Json {
+             OpenProject& p = host->Require();
+             if (!args["assets"].is_array() || args["assets"].empty() || args["assets"].size() > 32) {
+                 throw ToolError("\"assets\" must be a non-empty array of at most 32 paths or GUIDs");
+             }
+
+             std::vector<const AssetRecord*> records;
+             records.reserve(args["assets"].size());
+             std::set<AssetGuid> seen;
+             for (const Json& value : args["assets"]) {
+                 if (!value.is_string()) throw ToolError("Each entry in \"assets\" must be a path or GUID string");
+                 const AssetRecord& record = FindAsset(p, value.get<std::string>());
+                 if (!seen.insert(record.guid).second) throw ToolError("Duplicate asset in \"assets\": " + record.path);
+                 records.push_back(&record);
+             }
+
+             Json results = Json::array();
+             std::size_t response_bytes = 0;
+             for (const AssetRecord* record : records) {
+                 Json detail = RecordJson(p, *record, true);
+                 response_bytes += detail.dump().size();
+                 if (response_bytes > 6ull * 1024 * 1024) throw ToolError("The asset information batch exceeds the 6 MB response limit");
+                 results.push_back(std::move(detail));
+             }
+             return {{"count", results.size()}, {"assets", std::move(results)}};
+         }});
+
     server.AddTool({"asset_references",
                     "The reference graph of an asset: what it uses (dependencies) or what uses it (referencers), to a depth.",
                     Schema({{"asset", {{"type", "string"}}},
