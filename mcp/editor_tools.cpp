@@ -333,7 +333,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                     }});
 
     server.AddTool({"list_entities",
-                    "List a page of scene entities (GUID, name when present, entity index, hierarchy depth, component names, parent GUID, effective collision layer index, local active state, and active/layer/parent override presence). Optionally filter by component, component groups that must all/any match or must not match, exact entity name, case-insensitive ASCII name substring, one parent, any of several parents, exclusion of several parents, descendants of one or several entities, entities beneath all of several ancestors, exclusion of descendants of several entities, root status or hierarchy depth, layer index, local active value, active/layer/parent override presence, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND. Results are ordered by entity index and include total match count, has_more, and a continuation cursor. The cursor is not a scene snapshot; entities created in a reused index at or before it are skipped.",
+                    "List a page of scene entities (GUID, name when present, entity index, hierarchy depth, component names, parent GUID, effective collision layer index, local active state, and active/layer/parent override presence). Optionally filter by component, component groups that must all/any match or must not match, exact entity name, case-insensitive ASCII name substring, one parent, any of several parents, exclusion of several parents, descendants of one or several entities, entities beneath all of several ancestors, exclusion of descendants of several entities, relative depth below descendant_of, root status or hierarchy depth, layer index, local active value, active/layer/parent override presence, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND. Results are ordered by entity index and include total match count, has_more, and a continuation cursor. The cursor is not a scene snapshot; entities created in a reused index at or before it are skipped.",
                     Schema({{"component", {{"type", "string"}, {"description", "Only entities having this component"}}},
                             {"components_all", {{"type", "array"}, {"items", {{"type", "string"}}}, {"maxItems", 32},
                                                  {"description", "Only entities that have every listed component"}}},
@@ -349,6 +349,10 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                             {"parent_none", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 32},
                                                {"description", "Exclude entities whose direct parent is one of these existing entity GUIDs"}}},
                             {"descendant_of", {{"type", "string"}, {"description", "Only descendants of this existing entity; the entity itself is excluded"}}},
+                            {"descendant_depth_min", {{"type", "integer"}, {"minimum", 1}, {"maximum", kMaxHierarchyDepth},
+                                                       {"description", "Only descendants at this or greater relative depth below descendant_of; immediate children are depth 1"}}},
+                            {"descendant_depth_max", {{"type", "integer"}, {"minimum", 1}, {"maximum", kMaxHierarchyDepth},
+                                                       {"description", "Only descendants at this or shallower relative depth below descendant_of; immediate children are depth 1"}}},
                             {"descendant_any", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 32},
                                                  {"description", "Only descendants of any listed existing entities; listed ancestors themselves are excluded"}}},
                             {"descendant_all", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 32},
@@ -503,7 +507,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         auto ReadParentDepth = [&](const char* key) -> std::optional<usize> {
                             if (!args.contains(key)) return std::nullopt;
                             if (!args[key].is_number_integer() || args[key].is_boolean()) {
-                                throw ToolError(std::string("\"") + key + "\" must be an integer from 0 to the maximum hierarchy depth");
+                                throw ToolError(std::string("\"") + key + "\" must be an integer hierarchy depth");
                             }
                             if (args[key].is_number_unsigned()) {
                                 const u64 value = args[key].get<u64>();
@@ -522,6 +526,19 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         if (parent_depth_min_filter.has_value() && parent_depth_max_filter.has_value() &&
                             *parent_depth_min_filter > *parent_depth_max_filter) {
                             throw ToolError("\"parent_depth_min\" cannot be greater than \"parent_depth_max\"");
+                        }
+                        const std::optional<usize> descendant_depth_min_filter = ReadParentDepth("descendant_depth_min");
+                        const std::optional<usize> descendant_depth_max_filter = ReadParentDepth("descendant_depth_max");
+                        if ((descendant_depth_min_filter.has_value() || descendant_depth_max_filter.has_value()) && !args.contains("descendant_of")) {
+                            throw ToolError("\"descendant_depth_min\" and \"descendant_depth_max\" require \"descendant_of\"");
+                        }
+                        if ((descendant_depth_min_filter.has_value() && *descendant_depth_min_filter == 0) ||
+                            (descendant_depth_max_filter.has_value() && *descendant_depth_max_filter == 0)) {
+                            throw ToolError("\"descendant_depth_min\" and \"descendant_depth_max\" must be from 1 to the maximum hierarchy depth");
+                        }
+                        if (descendant_depth_min_filter.has_value() && descendant_depth_max_filter.has_value() &&
+                            *descendant_depth_min_filter > *descendant_depth_max_filter) {
+                            throw ToolError("\"descendant_depth_min\" cannot be greater than \"descendant_depth_max\"");
                         }
                         i64 layer_filter = -1;
                         if (args.contains("layer_index")) {
@@ -657,6 +674,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                                 Entity current = e;
                                 std::set<u32> visited;
                                 bool matches_descendant_of = false;
+                                std::optional<usize> descendant_depth;
                                 bool matches_descendant_any = false;
                                 bool excluded_descendant = false;
                                 std::set<EntityGuid> matched_descendant_all;
@@ -665,7 +683,10 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                                     const Parent* current_parent = s.world.GetComponent<Parent>(current);
                                     if (current_parent == nullptr || current_parent->parent.IsNull()) break;
                                     if (depth >= kMaxHierarchyDepth) throw ToolError("Cannot filter by ancestry or parent depth: hierarchy exceeds the maximum depth");
-                                    if (args.contains("descendant_of") && current_parent->parent == descendant_of_filter) matches_descendant_of = true;
+                                    if (args.contains("descendant_of") && current_parent->parent == descendant_of_filter) {
+                                        matches_descendant_of = true;
+                                        descendant_depth = depth + 1;
+                                    }
                                     if (!descendant_any_filter.empty() && std::find(descendant_any_filter.begin(), descendant_any_filter.end(), current_parent->parent) != descendant_any_filter.end()) matches_descendant_any = true;
                                     if (!descendant_all_filter.empty() && std::find(descendant_all_filter.begin(), descendant_all_filter.end(), current_parent->parent) != descendant_all_filter.end()) matched_descendant_all.insert(current_parent->parent);
                                     if (!descendant_none_filter.empty() && std::find(descendant_none_filter.begin(), descendant_none_filter.end(), current_parent->parent) != descendant_none_filter.end()) excluded_descendant = true;
@@ -681,6 +702,8 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                                 if (parent_depth_filter.has_value() && depth != *parent_depth_filter) continue;
                                 if (parent_depth_min_filter.has_value() && depth < *parent_depth_min_filter) continue;
                                 if (parent_depth_max_filter.has_value() && depth > *parent_depth_max_filter) continue;
+                                if (descendant_depth_min_filter.has_value() && (!descendant_depth.has_value() || *descendant_depth < *descendant_depth_min_filter)) continue;
+                                if (descendant_depth_max_filter.has_value() && (!descendant_depth.has_value() || *descendant_depth > *descendant_depth_max_filter)) continue;
                             }
                             const Layer* layer_override = s.world.GetComponent<Layer>(e);
                             if (layer_override_filter.has_value() && (layer_override != nullptr) != *layer_override_filter) continue;
