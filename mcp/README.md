@@ -456,6 +456,7 @@ saves and localization. The game has its own world, separate from the editor's.
 | `game_physics3d_bodies` | Inspect and page through live 3D physics bodies, transforms, collider shapes and body-creation problems |
 | `game_physics3d_state_many` | Read live 3D body activation, position, rotation and linear/angular velocity for up to 64 selected entities |
 | `game_set_physics3d_velocities_many` | Partially set linear and/or angular velocity for up to 64 unique live 3D physics bodies as a validated batch |
+| `game_set_physics3d_poses_many` | Teleport position and/or rotation for up to 64 unique 3D physics entities, updating transforms and live bodies together |
 | `game_physics2d_state_many` | Read grounded and wall-contact state plus current velocity for up to 64 selected 2D entities |
 | `game_set_physics2d_bodies_many` | Partially update body type, mass, gravity scale and damping for up to 64 unique 2D rigidbodies; validates the full batch and preserves unspecified fields |
 | `game_set_physics2d_bodies_shared_many` | Apply one partial body-settings patch to up to 64 unique 2D rigidbodies; preserves unspecified per-entity values and validates every result first |
