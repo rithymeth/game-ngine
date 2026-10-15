@@ -54,6 +54,10 @@ namespace aether::sprite2d {
 class Physics2D;
 }
 
+namespace aether {
+class PhysicsScene;
+}
+
 namespace aether::audio {
 class AudioSystem;
 }
@@ -203,6 +207,9 @@ public:
     // PlatformerController2D entities are driven by the "Move" (x axis) and
     // "Jump" actions. Null before a scene is loaded.
     sprite2d::Physics2D* Physics2D() { return physics2d_.get(); }
+    // 3D scene queries (when the Physics module is linked); null until a
+    // scene is loaded or when this player was built without Physics.
+    PhysicsScene* PhysicsQueries();
 
     // Input (§26.4). The host (the window, or a test) sets keys, buttons and
     // mouse movement here before each Tick; the game's actions come from the
