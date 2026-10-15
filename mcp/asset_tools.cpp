@@ -1447,6 +1447,69 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
                         return {{"created", true}};
                     }});
 
+    server.AddTool(
+        {"asset_create_folders",
+         "Create 1-64 independent folders under existing Content/ parents as one agent-attributed undoable action. Each entry has an optional `parent` and required `name`. All entries are validated before any folder is created.",
+         Schema({{"folders", {{"type", "array"},
+                               {"items", {{"type", "object"},
+                                          {"properties", {{"parent", {{"type", "string"}}}, {"name", {{"type", "string"}}}}},
+                                          {"required", Json::array({"name"})}}},
+                               {"description", "1-64 independent folders; parent paths are relative to Content/ and must already exist"}}}},
+                {"folders"}),
+         [host, &session](const Json& args) -> Json {
+             OpenProject& p = host->Require();
+             if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before creating content folders");
+             if (!args["folders"].is_array() || args["folders"].empty() || args["folders"].size() > 64) {
+                 throw ToolError("\"folders\" must be a non-empty array of at most 64 folders");
+             }
+
+             struct Folder { std::string parent; std::string name; std::string path; };
+             std::vector<Folder> folders;
+             std::set<std::string> targets;
+             for (const Json& entry : args["folders"]) {
+                 if (!entry.is_object()) throw ToolError("Each folder must be an object with an optional \"parent\" and required \"name\"");
+                 Folder folder;
+                 folder.parent = CleanRelative(OptString(entry, "parent"));
+                 folder.name = RequireString(entry, "name");
+                 std::string name_error;
+                 if (!assets::IsValidAssetName(folder.name, &name_error)) throw ToolError(name_error);
+                 folder.path = folder.parent.empty() ? folder.name : folder.parent + "/" + folder.name;
+                 if (!targets.insert(folder.path).second) throw ToolError("Duplicate folder path: " + folder.path);
+
+                 const fs::path parent_path = p.paths.content / folder.parent;
+                 std::error_code ec;
+                 if (!fs::is_directory(parent_path, ec) || ec) {
+                     throw ToolError("Folder parent does not exist under Content/: " + folder.parent);
+                 }
+                 if (fs::exists(parent_path / folder.name, ec)) throw ToolError("Folder already exists: " + folder.path);
+                 if (ec) throw ToolError("Could not inspect folder path " + folder.path + ": " + ec.message());
+                 folders.push_back(std::move(folder));
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Create Content Folders " + std::to_string(++next_batch_id);
+             const usize undo_count_before = session.stack.UndoCount();
+             editor::CommandContext context = session.Context();
+             session.stack.BeginTransaction(transaction_label);
+             try {
+                 for (const Folder& folder : folders) {
+                     auto command = std::make_unique<CreateContentFolderCommand>(host, p.paths.file, folder.parent, folder.name);
+                     command->SetAttribution("agent");
+                     session.stack.Execute(context, std::move(command));
+                 }
+                 session.stack.EndTransaction();
+             } catch (...) {
+                 session.stack.EndTransaction();
+                 if (session.stack.UndoCount() != undo_count_before || session.stack.UndoLabel() == transaction_label) {
+                     session.stack.Undo(context);
+                 }
+                 throw;
+             }
+             Json created = Json::array();
+             for (const Folder& folder : folders) created.push_back(folder.path);
+             return {{"created", folders.size()}, {"folders", std::move(created)}};
+         }});
+
     server.AddTool({"asset_delete",
                     "Delete an asset's source and .ameta (with its sub-assets) as one agent-attributed undoable action. Refused while other assets reference it, unless `force`.",
                     Schema({{"asset", {{"type", "string"}}}, {"force", {{"type", "boolean"}}}}, {"asset"}), [host, &session](const Json& args) -> Json {
