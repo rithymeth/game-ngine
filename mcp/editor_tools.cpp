@@ -436,6 +436,84 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
          }});
 
     server.AddTool(
+        {"get_entities_descendants_many",
+         "Get descendants for 1–64 unique scene entities. Each requested root returns its descendants in deterministic parent-first order with parent GUID and depth relative to that root. The complete root selection is validated first; the query is limited to 64 returned descendant entries total and rejects cycles, excessive depth, or descendants without GUIDs.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique root entity GUIDs"}}}},
+                {"entities"}),
+         [&s](const Json& args) -> Json {
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             std::vector<EntityGuid> roots;
+             roots.reserve(args["entities"].size());
+             std::set<EntityGuid> seen_roots;
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 const std::string guid_text = value.get<std::string>();
+                 EntityGuid guid;
+                 if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid entity GUID: " + guid_text);
+                 if (!seen_roots.insert(guid).second) throw ToolError("Duplicate root in \"entities\": " + ToString(guid));
+                 if (s.guids.Find(s.world, guid).IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 roots.push_back(guid);
+             }
+
+             std::map<EntityGuid, std::vector<EntityGuid>> children_by_parent;
+             std::set<EntityGuid> parents_with_unguided_children;
+             for (const Entity entity : AllEntities(s)) {
+                 const Parent* parent = s.world.GetComponent<Parent>(entity);
+                 if (parent == nullptr || parent->parent.IsNull()) continue;
+                 const IdComponent* child_id = s.world.GetComponent<IdComponent>(entity);
+                 if (child_id == nullptr || child_id->guid.IsNull()) {
+                     parents_with_unguided_children.insert(parent->parent);
+                     continue;
+                 }
+                 children_by_parent[parent->parent].push_back(child_id->guid);
+             }
+             for (auto& [parent, children] : children_by_parent) {
+                 (void)parent;
+                 std::sort(children.begin(), children.end());
+             }
+
+             Json results = Json::array();
+             usize total_descendants = 0;
+             for (const EntityGuid root : roots) {
+                 Json descendants = Json::array();
+                 std::set<EntityGuid> path{root};
+                 std::function<void(EntityGuid, int)> append_children = [&](EntityGuid parent_guid, int depth) {
+                     if (depth >= kMaxHierarchyDepth) {
+                         throw ToolError("Descendant query encountered a hierarchy cycle or excessive depth");
+                     }
+                     if (parents_with_unguided_children.contains(parent_guid)) {
+                         throw ToolError("Cannot query descendants because a child entity has no GUID");
+                     }
+                     const auto children = children_by_parent.find(parent_guid);
+                     if (children == children_by_parent.end()) return;
+                     for (const EntityGuid child_guid : children->second) {
+                         if (!path.insert(child_guid).second) {
+                             throw ToolError("Descendant query encountered a hierarchy cycle at " + ToString(child_guid));
+                         }
+                         if (++total_descendants > 64) {
+                             throw ToolError("Descendant query would return more than 64 entries");
+                         }
+                         descendants.push_back({{"entity", ToString(child_guid)},
+                                                {"parent", ToString(parent_guid)},
+                                                {"depth", depth}});
+                         if (s.guids.Find(s.world, child_guid).IsNull()) {
+                             throw ToolError("Hierarchy child has no matching scene entity: " + ToString(child_guid));
+                         }
+                         append_children(child_guid, depth + 1);
+                         path.erase(child_guid);
+                     }
+                 };
+                 append_children(root, 1);
+                 results.push_back({{"root", ToString(root)}, {"count", descendants.size()},
+                                    {"descendants", std::move(descendants)}});
+             }
+             return {{"count", total_descendants}, {"roots", std::move(results)}};
+         }});
+
+    server.AddTool(
         {"get_entities_world_transforms_many",
          "Get derived world transforms for 1–64 unique scene entities in request order. Returns each world matrix as four column vectors plus world position and world-scale magnitudes (the lengths of the three basis columns). Parent transforms are composed through the hierarchy. Rejects missing Transform components, non-finite results, hierarchy cycles and excessive depth.",
          Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
