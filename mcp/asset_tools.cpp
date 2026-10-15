@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <set>
 #include <sstream>
 
@@ -798,6 +799,143 @@ private:
     assets::ImportAllResult imports_;
 };
 
+class AssetImportCommand final : public editor::ICommand {
+public:
+    struct SubAsset {
+        std::string key;
+        std::string importer;
+        AssetGuid guid;
+    };
+    struct SingleResult {
+        bool ok = false;
+        bool from_cache = false;
+        usize bytes = 0;
+        std::vector<std::string> warnings;
+        std::vector<SubAsset> sub_assets;
+        std::string error;
+    };
+
+    AssetImportCommand(std::shared_ptr<AssetHost> host, fs::path project_file, std::optional<AssetGuid> guid)
+        : host_(std::move(host)), project_file_(std::move(project_file)), guid_(guid) {}
+
+    void Do(editor::CommandContext&) override {
+        RequireSameProject();
+        if (executed_) {
+            Apply(after_, before_);
+            return;
+        }
+        before_ = CaptureMetadata();
+        try {
+            if (guid_) {
+                const assets::ImportOutput output = assets::ImportAsset(*host_->project->database, *guid_,
+                                                                          host_->project->importers, *host_->project->cache);
+                single_.ok = output.ok;
+                single_.from_cache = output.from_cache;
+                single_.bytes = output.data.size();
+                single_.warnings = output.warnings;
+                single_.error = output.error;
+                for (const assets::SubAssetOutput& sub : output.sub_assets) {
+                    single_.sub_assets.push_back({sub.key, sub.importer, sub.guid});
+                }
+            } else {
+                imports_ = assets::ImportAll(*host_->project->database, host_->project->importers, *host_->project->cache);
+            }
+            after_ = CaptureCurrentMetadata(before_);
+            scan_ = host_->project->database->Scan();
+            executed_ = true;
+        } catch (...) {
+            RestoreMetadata(before_);
+            host_->project->database->Scan();
+            throw;
+        }
+    }
+
+    void Undo(editor::CommandContext&) override {
+        RequireSameProject();
+        Apply(before_, after_);
+    }
+
+    std::string Label() const override { return guid_ ? "Import Asset" : "Import Pending Assets"; }
+    usize MemoryBytes() const override {
+        usize bytes = sizeof(*this) + project_file_.string().size() + single_.error.size();
+        auto count = [&](const auto& files) {
+            for (const auto& file : files) bytes += file.state.bytes.size();
+        };
+        count(before_);
+        count(after_);
+        for (const std::string& warning : single_.warnings) bytes += warning.size();
+        for (const SubAsset& sub : single_.sub_assets) bytes += sub.key.size() + sub.importer.size();
+        for (const std::string& error : imports_.errors) bytes += error.size();
+        return bytes;
+    }
+    const SingleResult& Single() const { return single_; }
+    const assets::ImportAllResult& All() const { return imports_; }
+
+private:
+    struct MetadataFile {
+        fs::path path;
+        ContentFileState state;
+    };
+
+    std::vector<MetadataFile> CaptureMetadata() const {
+        std::vector<MetadataFile> files;
+        std::set<fs::path> seen;
+        auto capture = [&](const AssetRecord* record) {
+            if (record == nullptr || record->IsSubAsset()) return;
+            const fs::path path = host_->project->database->MetaPath(record->guid);
+            if (seen.insert(path).second) files.push_back({path, CaptureContentFile(path)});
+        };
+        if (guid_) {
+            const AssetRecord* record = host_->project->database->Find(*guid_);
+            if (record != nullptr && record->IsSubAsset()) record = host_->project->database->Find(record->parent);
+            capture(record);
+        } else {
+            for (const AssetRecord* record : host_->project->database->All()) {
+                if (record->needs_import) capture(record);
+            }
+        }
+        return files;
+    }
+
+    static void RestoreMetadata(const std::vector<MetadataFile>& files) {
+        for (const MetadataFile& file : files) RestoreContentFile(file.path, file.state);
+    }
+
+    static std::vector<MetadataFile> CaptureCurrentMetadata(const std::vector<MetadataFile>& files) {
+        std::vector<MetadataFile> current;
+        current.reserve(files.size());
+        for (const MetadataFile& file : files) current.push_back({file.path, CaptureContentFile(file.path)});
+        return current;
+    }
+
+    void RequireSameProject() const {
+        if (!host_->project || host_->project->paths.file.lexically_normal() != project_file_.lexically_normal()) {
+            throw ToolError("Open the project that owns these assets before undoing or redoing this import");
+        }
+    }
+
+    void Apply(const std::vector<MetadataFile>& target, const std::vector<MetadataFile>& rollback) {
+        try {
+            RestoreMetadata(target);
+            scan_ = host_->project->database->Scan();
+        } catch (...) {
+            RestoreMetadata(rollback);
+            host_->project->database->Scan();
+            throw;
+        }
+    }
+
+    std::shared_ptr<AssetHost> host_;
+    fs::path project_file_;
+    std::optional<AssetGuid> guid_;
+    std::vector<MetadataFile> before_;
+    std::vector<MetadataFile> after_;
+    assets::ScanResult scan_;
+    SingleResult single_;
+    assets::ImportAllResult imports_;
+    bool executed_ = false;
+};
+
 Json ProjectJson(OpenProject& p) {
     usize sources = 0;
     for (const AssetRecord* r : p.database->All()) {
@@ -1062,19 +1200,38 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
     server.AddTool(
         {"asset_import",
          "Run the importers. With `asset`, (re)import that one (even if unchanged); without, import everything flagged needs_import. "
-         "Results come from the derived-data cache when the input is unchanged.",
+         "Import status and sub-asset metadata are one agent-attributed undoable action. Results come from the derived-data cache "
+         "when the input is unchanged.",
          Schema({{"asset", {{"type", "string"}, {"description", "Content path or GUID; omit to import all pending"}}}}),
-         [host](const Json& args) -> Json {
+         [host, &session](const Json& args) -> Json {
              OpenProject& p = host->Require();
-             if (!args.contains("asset")) {
-                 const assets::ImportAllResult r = assets::ImportAll(*p.database, p.importers, *p.cache);
+             if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before importing assets");
+             std::optional<AssetGuid> guid;
+             std::string path;
+             if (args.contains("asset")) {
+                 const AssetRecord& record = FindAsset(p, RequireString(args, "asset"));
+                 guid = record.guid;
+                 path = record.path;
+             } else {
+                 const std::vector<const AssetRecord*> records = p.database->All();
+                 const bool has_pending = std::any_of(records.begin(), records.end(), [](const AssetRecord* record) {
+                     return record->needs_import && !record->missing;
+                 });
+                 if (!has_pending) return {{"imported", 0}, {"from_cache", 0}, {"failed", 0}, {"skipped", 0}, {"errors", Json::array()}};
+             }
+             auto command = std::make_unique<AssetImportCommand>(host, p.paths.file, guid);
+             command->SetAttribution("agent");
+             AssetImportCommand* command_result = command.get();
+             editor::CommandContext context = session.Context();
+             session.stack.Execute(context, std::move(command));
+             if (!guid) {
+                 const assets::ImportAllResult& r = command_result->All();
                  return {{"imported", r.imported}, {"from_cache", r.from_cache}, {"failed", r.failed}, {"skipped", r.skipped}, {"errors", r.errors}};
              }
-             const AssetRecord& rec = FindAsset(p, RequireString(args, "asset"));
-             assets::ImportOutput out = assets::ImportAsset(*p.database, rec.guid, p.importers, *p.cache);
-             Json j = {{"ok", out.ok}, {"asset", rec.path}, {"from_cache", out.from_cache}, {"bytes", out.data.size()}, {"warnings", out.warnings}};
+             const AssetImportCommand::SingleResult& out = command_result->Single();
+             Json j = {{"ok", out.ok}, {"asset", path}, {"from_cache", out.from_cache}, {"bytes", out.bytes}, {"warnings", out.warnings}};
              Json subs = Json::array();
-             for (const assets::SubAssetOutput& s : out.sub_assets) subs.push_back({{"key", s.key}, {"importer", s.importer}, {"guid", assets::ToString(s.guid)}});
+             for (const AssetImportCommand::SubAsset& s : out.sub_assets) subs.push_back({{"key", s.key}, {"importer", s.importer}, {"guid", assets::ToString(s.guid)}});
              if (!subs.empty()) j["sub_assets"] = subs;
              if (!out.ok) j["error"] = out.error;
              return j;
