@@ -399,6 +399,7 @@ saves and localization. The game has its own world, separate from the editor's.
 | `game_spawn_entities_many` | Create 1-64 live entities in one validated request with per-entity components and optional tags; removes entities from the request if spawning fails partway |
 | `game_add_component` | Add a component to a running entity (or merge values onto an existing one) |
 | `game_add_components_many` | Add one default component to up to 64 unique live entities; validates the whole selection first, refuses if any target already has it, and protects game-managed IdComponent |
+| `game_add_entity_components_many` | Add different default components across up to 64 entity/component pairs after validating all targets; protects IdComponent |
 | `game_set_components_many` | Merge the same field patch onto one component across up to 64 unique live entities; validates all merged values before applying any update |
 | `game_set_entity_components_many` | Apply different component patches to up to 64 entity/component pairs after validating the complete request |
 | `game_reset_entity_components_many` | Reset different components on up to 64 entity/component pairs to reflected defaults, keeping them attached and reporting old/new values |
