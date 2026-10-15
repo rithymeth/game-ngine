@@ -387,6 +387,95 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_spawn_entities_many",
+         "Create 1-64 live entities as one validated batch. Each entry supplies component fields and optional tags; Transform and GUID are managed automatically. If creation fails, entities created by this request are destroyed.",
+         Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                                {"items", {{"type", "object"},
+                                            {"properties", {{"components", {{"type", "object"}}},
+                                                             {"tags", {{"type", "array"}, {"maxItems", 64}, {"items", {{"type", "string"}}}}}}},
+                                            {"required", Json::array({"components"})}}}}}},
+                {"entities"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be an array of 1 to 64 spawn specifications");
+             }
+             struct SpawnSpec {
+                 ComponentMask mask;
+                 std::vector<std::pair<ComponentId, Json>> components;
+                 std::vector<std::string> tags;
+                 bool has_tags = false;
+             };
+             std::vector<SpawnSpec> specs;
+             specs.reserve(args["entities"].size());
+             for (const Json& item : args["entities"]) {
+                 if (!item.is_object() || !item.contains("components") || !item["components"].is_object()) {
+                     throw ToolError("Every \"entities\" entry must contain an object \"components\"");
+                 }
+                 SpawnSpec spec;
+                 spec.mask.set(GetComponentId<Transform>());
+                 for (const auto& [name, values] : item["components"].items()) {
+                     const ComponentId id = RequireComponent(name);
+                     if (id == GetComponentId<IdComponent>()) throw ToolError("IdComponent is managed by the running game and cannot be spawned directly");
+                     if (!values.is_object()) throw ToolError("Values for component \"" + name + "\" must be an object");
+                     const ComponentInfo& info = GetComponentInfo(id);
+                     reflect::Any candidate = reflect::Any::DefaultOf(*info.reflected);
+                     if (!candidate.HasValue()) throw ToolError("Cannot default-construct " + name);
+                     reflect::LoadReport report;
+                     if (!reflect::FromJson(*info.reflected, candidate.Data(), values, &report)) {
+                         throw ToolError("Invalid values for component \"" + name + "\"");
+                     }
+                     spec.mask.set(id);
+                     spec.components.emplace_back(id, values);
+                 }
+                 if (item.contains("tags")) {
+                     if (!item["tags"].is_array() || item["tags"].size() > 64) throw ToolError("\"tags\" must be an array of at most 64 strings");
+                     if (spec.mask.test(GetComponentId<Tags>())) {
+                         throw ToolError("Supply tags either through the Tags component or the \"tags\" field, not both");
+                     }
+                     spec.has_tags = true;
+                     spec.mask.set(GetComponentId<Tags>());
+                     for (const Json& tag : item["tags"]) {
+                         if (!tag.is_string() || tag.get<std::string>().empty()) throw ToolError("Every \"tags\" entry must be a non-empty string");
+                         const std::string value = tag.get<std::string>();
+                         if (std::find(spec.tags.begin(), spec.tags.end(), value) != spec.tags.end()) throw ToolError("\"tags\" must not contain duplicate values");
+                         spec.tags.push_back(value);
+                     }
+                 }
+                 specs.push_back(std::move(spec));
+             }
+
+             std::vector<Entity> created;
+             std::vector<std::vector<std::string>> warnings;
+             created.reserve(specs.size());
+             warnings.reserve(specs.size());
+             try {
+                 for (const SpawnSpec& spec : specs) {
+                     const Entity entity = world.CreateEntityRaw(spec.mask);
+                     created.push_back(entity);
+                     EnsureGuid(world, entity, &game.Guids());
+                     warnings.emplace_back();
+                     for (const auto& [id, values] : spec.components) {
+                         const std::vector<std::string> component_warnings = ApplyComponentValues(world, entity, id, values);
+                         warnings.back().insert(warnings.back().end(), component_warnings.begin(), component_warnings.end());
+                     }
+                     if (spec.has_tags) world.GetComponent<Tags>(entity)->names = spec.tags;
+                 }
+             } catch (...) {
+                 for (auto it = created.rbegin(); it != created.rend(); ++it) game.GetLifecycle().Destroy(*it);
+                 throw;
+             }
+             Json results = Json::array();
+             for (usize i = 0; i < created.size(); ++i) {
+                 Json result = EntityJson(game, created[i]);
+                 if (!warnings[i].empty()) result["warnings"] = warnings[i];
+                 results.push_back(std::move(result));
+             }
+             return {{"spawned_count", results.size()}, {"entities", results}};
+         }});
+
+    server.AddTool(
         {"game_add_component",
          "Add a component to a running entity (default values, then `values` merged on); if it already has one, `values` are merged onto it. Not undoable.",
          Schema({{"entity", {{"type", "string"}, {"description", "GUID or #index[:generation]"}}},
