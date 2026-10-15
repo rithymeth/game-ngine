@@ -438,6 +438,7 @@ saves and localization. The game has its own world, separate from the editor's.
 | `game_reset_components_many` | Reset reflected fields of one component to defaults on up to 64 unique live entities, keeping the component attached and protecting game-managed IdComponent |
 | `game_set_component` / `game_destroy_entity` | Change the live world (not undoable; gone on reload) |
 | `game_set_transforms_many` | Set partial local position, rotation and/or scale on up to 64 unique live entities; validates all edits first and normalizes quaternions |
+| `game_set_world_positions_many` | Set world positions on up to 64 unique live entities through parent transforms; preserves local rotation and scale and rejects ancestor overlap, cycles, excessive depth and singular parents |
 | `game_destroy_entities_many` | Destroy up to 64 unique live roots through the lifecycle; reports roots and descendants destroyed, validates the whole selection first, and rejects ancestor/descendant overlap |
 | `game_unload` | Stop and unload |
 
