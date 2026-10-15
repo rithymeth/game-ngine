@@ -40,6 +40,7 @@ and errors go to stderr.
 | `scale_entities_local_many` | Multiply local scale using per-entity component-wise factors for up to 64 unique entities in one undo action |
 | `set_entities_local_position_many` | Set one shared absolute local position on up to 64 unique entities in one undo action; preserves rotation and scale |
 | `set_entities_local_positions_many` | Set individual local positions on up to 64 unique entities in one undo action; preserves rotation and scale |
+| `set_entities_world_positions_many` | Set individual world positions on up to 64 unique entities in one undo action; converts through parents and rejects selected ancestor pairs |
 | `set_entities_local_rotation_many` | Set one shared absolute local quaternion on up to 64 unique entities in one undo action; preserves position and scale |
 | `set_entities_local_scales_many` | Set individual local scales on up to 64 unique entities in one undo action; preserves position and rotation |
 | `set_entities_local_rotations_many` | Set individual local quaternions on up to 64 unique entities in one undo action; preserves position and scale |
