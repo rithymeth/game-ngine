@@ -3679,6 +3679,49 @@ void RegisterGameTools(McpServer& server) {
              }
              return {{"count", results.size()}, {"results", std::move(results)}};
          }});
+
+    server.AddTool(
+        {"game_inventories_many",
+         "Inspect the full inventory state of 1 to 64 distinct entities in one read-only request, including slots, equipment and total weight. Entities without an Inventory component are reported as unconfigured.",
+         Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}}}, {"entities"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             inv::InventorySystem* system = inv::InventorySystem::Active();
+             if (system == nullptr) throw ToolError("This game has no inventory system (load a scene with the Inventory kit)");
+             if (!args.contains("entities") || !args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be an array of 1 to 64 entity handles");
+             }
+             const World& world = game.GetWorld();
+             std::vector<Entity> entities;
+             entities.reserve(args["entities"].size());
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string() || value.get<std::string>().empty()) throw ToolError("Every \"entities\" entry must be a non-empty entity handle string");
+                 const Entity entity = FindEntity(game, value.get<std::string>());
+                 if (std::find(entities.begin(), entities.end(), entity) != entities.end()) throw ToolError("\"entities\" must not contain duplicate entities");
+                 entities.push_back(entity);
+             }
+             Json inventories = Json::array();
+             for (Entity entity : entities) {
+                 const inv::Inventory* inventory = world.GetComponent<inv::Inventory>(entity);
+                 Json slots = Json::array();
+                 Json equipment = Json::array();
+                 i32 capacity = 0;
+                 f32 max_weight = 0.0f;
+                 if (inventory != nullptr) {
+                     capacity = inventory->capacity;
+                     max_weight = inventory->max_weight;
+                     for (usize i = 0; i < inventory->slots.size(); ++i) {
+                         const inv::ItemStack& stack = inventory->slots[i];
+                         slots.push_back({{"slot", i}, {"item", stack.count > 0 ? Json(stack.item) : Json(nullptr)}, {"count", stack.count}});
+                     }
+                     for (const inv::EquipSlot& slot : inventory->equipment) equipment.push_back({{"slot", slot.name}, {"item", slot.item}});
+                 }
+                 inventories.push_back({{"entity", EntityKey(world, entity)}, {"configured", inventory != nullptr}, {"capacity", capacity},
+                                        {"max_weight", max_weight}, {"weight", system->TotalWeight(entity)},
+                                        {"slots", std::move(slots)}, {"equipment", std::move(equipment)}});
+             }
+             return {{"count", inventories.size()}, {"inventories", std::move(inventories)}};
+         }});
 #endif
 
 #if AETHER_MCP_QUESTS
