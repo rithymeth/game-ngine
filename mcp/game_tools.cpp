@@ -806,6 +806,56 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_set_layers_many",
+         "Set per-entity collision layer indices on up to 64 unique live entities in one validated batch; missing Layer components mean layer 0 and are created only when needed.",
+         Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                             {"items", {{"type", "object"}, {"properties", {{"entity", {{"type", "string"}}},
+                                                                                 {"layer_index", {{"type", "integer"}, {"minimum", 0}, {"maximum", 31}}}}},
+                                        {"required", Json::array({"entity", "layer_index"})}}}}}},
+                {"edits"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be an array of 1 to 64 entity layer edits");
+             }
+             struct LayerEdit {
+                 Entity entity;
+                 u8 layer;
+             };
+             std::vector<LayerEdit> edits;
+             edits.reserve(args["edits"].size());
+             for (const Json& item : args["edits"]) {
+                 if (!item.is_object() || !item.contains("entity") || !item["entity"].is_string() || item["entity"].get<std::string>().empty()) {
+                     throw ToolError("Every \"edits\" entry must contain a non-empty string \"entity\"");
+                 }
+                 if (!item.contains("layer_index") || !item["layer_index"].is_number_integer() || item["layer_index"].is_boolean()) {
+                     throw ToolError("\"layer_index\" must be an integer from 0 to 31");
+                 }
+                 const i64 layer = item["layer_index"].get<i64>();
+                 if (layer < 0 || layer >= static_cast<i64>(kMaxLayers)) throw ToolError("\"layer_index\" must be an integer from 0 to 31");
+                 const Entity entity = FindEntity(game, item["entity"].get<std::string>());
+                 if (std::find_if(edits.begin(), edits.end(), [entity](const LayerEdit& edit) { return edit.entity == entity; }) != edits.end()) {
+                     throw ToolError("\"edits\" must not contain the same entity more than once");
+                 }
+                 edits.push_back({entity, static_cast<u8>(layer)});
+             }
+             Json results = Json::array();
+             usize changed_count = 0;
+             for (const LayerEdit& edit : edits) {
+                 Layer* state = world.GetComponent<Layer>(edit.entity);
+                 const u8 old_layer = state == nullptr ? 0 : state->index;
+                 const bool changed = old_layer != edit.layer;
+                 if (changed && state == nullptr) world.AddComponent<Layer>(edit.entity, Layer{edit.layer});
+                 else if (changed) state->index = edit.layer;
+                 results.push_back({{"entity", EntityKey(world, edit.entity)}, {"old_layer", old_layer},
+                                    {"layer_index", edit.layer}, {"changed", changed}});
+                 if (changed) ++changed_count;
+             }
+             return {{"changed_count", changed_count}, {"results", results}};
+         }});
+
+    server.AddTool(
         {"game_rename_entities_many",
          "Rename up to 64 unique live entities in one validated batch; creates EntityName components when needed.",
          Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
