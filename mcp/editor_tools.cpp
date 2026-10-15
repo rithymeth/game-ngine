@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -1606,6 +1607,95 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
              Json results = Json::array();
              for (const LayerEdit& edit : edits) results.push_back({{"entity", ToString(edit.guid)}, {"layer_index", edit.index}});
              return {{"updated", edits.size()}, {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"offset_entities_local_many",
+         "Add one local-position offset to 1–64 unique scene entities as one undoable action. Each entity must have Transform; rotation and scale are preserved. Validate every target and resulting position before applying changes.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique entity GUIDs"}}},
+                 {"offset", {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 3}, {"maxItems", 3},
+                             {"description", "Local-space position offset [x, y, z]"}}}},
+                {"entities", "offset"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             if (!args["offset"].is_array() || args["offset"].size() != 3) throw ToolError("\"offset\" must be [x, y, z]");
+             for (const Json& value : args["offset"]) {
+                 if (!value.is_number() || !std::isfinite(value.get<double>())) throw ToolError("Offset values must be finite numbers");
+             }
+             const Vec3 offset{args["offset"][0].get<f32>(), args["offset"][1].get<f32>(), args["offset"][2].get<f32>()};
+             if (!std::isfinite(offset.x) || !std::isfinite(offset.y) || !std::isfinite(offset.z)) {
+                 throw ToolError("Offset values must fit finite engine coordinates");
+             }
+
+             struct PositionEdit {
+                 EntityGuid guid;
+                 Vec3 position;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<PositionEdit> edits;
+             edits.reserve(args["entities"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 const std::string text = value.get<std::string>();
+                 EntityGuid guid;
+                 if (!ParseEntityGuid(text, guid)) throw ToolError("Not a valid entity GUID: " + text);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 PositionEdit edit;
+                 edit.guid = guid;
+                 edit.position = current->position + offset;
+                 if (!std::isfinite(edit.position.x) || !std::isfinite(edit.position.y) || !std::isfinite(edit.position.z)) {
+                     throw ToolError("Offset would produce a non-finite position for entity " + ToString(guid));
+                 }
+                 Transform updated = *current;
+                 updated.position = edit.position;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+                 edits.push_back(std::move(edit));
+             }
+
+             bool any_changed = false;
+             for (const PositionEdit& edit : edits) any_changed = any_changed || edit.changed;
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Offset Entity Positions " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const PositionEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const PositionEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)}, {"position", {edit.position.x, edit.position.y, edit.position.z}}, {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const PositionEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
          }});
 
     server.AddTool(
