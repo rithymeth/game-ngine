@@ -8,6 +8,7 @@
 #include "aether/core/log.h"
 #include "aether/sequencer/sequence_system.h"
 #include "aether/gameplay/attribute_library.h"
+#include "aether/gameplay/attribute_system.h"
 #include "aether/gameplay/attribute_set.h"
 #include "aether/input/keys.h"
 #if AETHER_MCP_INTERACTION
@@ -2462,6 +2463,88 @@ void RegisterGameTools(McpServer& server) {
                      {"current", gas::Attributes::GetAttribute(e, name, 0.0f)},
                      {"min", gas::Attributes::GetAttributeMin(e, name, 0.0f)},
                      {"max", gas::Attributes::GetAttributeMax(e, name, 0.0f)}};
+         }});
+
+    server.AddTool(
+        {"game_set_attributes_many",
+         "Apply different base, delta or define operations to up to 64 unique live entity/attribute pairs through the gameplay attribute system, preserving bounds and change events. Validates the whole request first.",
+         Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                             {"items", {{"type", "object"},
+                                         {"properties", {{"entity", {{"type", "string"}}}, {"name", {{"type", "string"}}},
+                                                          {"base", {{"type", "number"}}}, {"delta", {{"type", "number"}}},
+                                                          {"define", {{"type", "object"}}}}},
+                                         {"required", Json::array({"entity", "name"})}}}}}},
+                {"edits"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             if (gas::AttributeSystem::Active() == nullptr) throw ToolError("This game has no attribute system (load a scene first)");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be an array of 1 to 64 entity/attribute changes");
+             }
+             struct AttributeEdit {
+                 Entity entity;
+                 std::string name;
+                 std::string mode;
+                 f32 value = 0.0f;
+                 f32 min = -3.0e38f;
+                 f32 max = 3.0e38f;
+             };
+             auto number = [](const Json& object, const char* key, f32 fallback) {
+                 if (!object.contains(key)) return fallback;
+                 if (!object[key].is_number()) throw ToolError(std::string("\"") + key + "\" must be a number");
+                 return object[key].get<f32>();
+             };
+             std::vector<AttributeEdit> edits;
+             edits.reserve(args["edits"].size());
+             for (const Json& item : args["edits"]) {
+                 if (!item.is_object() || !item.contains("entity") || !item["entity"].is_string() || item["entity"].get<std::string>().empty()) {
+                     throw ToolError("Every \"edits\" entry must contain a non-empty string \"entity\"");
+                 }
+                 if (!item.contains("name") || !item["name"].is_string() || item["name"].get<std::string>().empty()) {
+                     throw ToolError("Every \"edits\" entry must contain a non-empty string \"name\"");
+                 }
+                 const int modes = (item.contains("base") ? 1 : 0) + (item.contains("delta") ? 1 : 0) + (item.contains("define") ? 1 : 0);
+                 if (modes != 1) throw ToolError("Every \"edits\" entry must give exactly one of \"base\", \"delta\" or \"define\"");
+                 const Entity entity = FindEntity(game, item["entity"].get<std::string>());
+                 const std::string name = item["name"].get<std::string>();
+                 if (std::find_if(edits.begin(), edits.end(), [&entity, &name](const AttributeEdit& edit) {
+                         return edit.entity == entity && edit.name == name;
+                     }) != edits.end()) {
+                     throw ToolError("\"edits\" must not repeat the same entity/attribute pair");
+                 }
+                 AttributeEdit edit{entity, name};
+                 if (item.contains("define")) {
+                     if (!item["define"].is_object()) throw ToolError("\"define\" must be an object");
+                     edit.mode = "define";
+                     edit.value = number(item["define"], "base", 0.0f);
+                     edit.min = number(item["define"], "min", -3.0e38f);
+                     edit.max = number(item["define"], "max", 3.0e38f);
+                 } else if (item.contains("base")) {
+                     edit.mode = "base";
+                     edit.value = number(item, "base", 0.0f);
+                     if (!gas::Attributes::HasAttribute(entity, name)) throw ToolError("The entity has no attribute \"" + name + "\" (use define to create it)");
+                 } else {
+                     edit.mode = "delta";
+                     edit.value = number(item, "delta", 0.0f);
+                     if (!gas::Attributes::HasAttribute(entity, name)) throw ToolError("The entity has no attribute \"" + name + "\" (use define to create it)");
+                 }
+                 if (std::isnan(edit.value) || std::isnan(edit.min) || std::isnan(edit.max)) throw ToolError("Attribute changes cannot contain NaN");
+                 edits.push_back(std::move(edit));
+             }
+             Json results = Json::array();
+             for (const AttributeEdit& edit : edits) {
+                 bool ok = false;
+                 if (edit.mode == "define") ok = gas::Attributes::DefineAttribute(edit.entity, edit.name, edit.value, edit.min, edit.max);
+                 else if (edit.mode == "base") ok = gas::Attributes::SetAttributeBase(edit.entity, edit.name, edit.value);
+                 else ok = gas::Attributes::AddAttributeBase(edit.entity, edit.name, edit.value);
+                 if (!ok) throw ToolError("Attribute change was refused for \"" + edit.name + "\"");
+                 results.push_back({{"entity", EntityKey(game.GetWorld(), edit.entity)}, {"name", edit.name}, {"mode", edit.mode},
+                                    {"base", gas::Attributes::GetAttributeBase(edit.entity, edit.name, 0.0f)},
+                                    {"current", gas::Attributes::GetAttribute(edit.entity, edit.name, 0.0f)},
+                                    {"min", gas::Attributes::GetAttributeMin(edit.entity, edit.name, 0.0f)},
+                                    {"max", gas::Attributes::GetAttributeMax(edit.entity, edit.name, 0.0f)}});
+             }
+             return {{"updated_count", results.size()}, {"results", results}};
          }});
 
 #if AETHER_MCP_INTERACTION
