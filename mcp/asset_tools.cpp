@@ -311,6 +311,41 @@ private:
     ProjectSettings after_;
 };
 
+class MoveContentCommand final : public editor::ICommand {
+public:
+    MoveContentCommand(std::shared_ptr<AssetHost> host, fs::path project_file, std::string from, std::string to)
+        : host_(std::move(host)), project_file_(std::move(project_file)), from_(std::move(from)), to_(std::move(to)) {}
+
+    void Do(editor::CommandContext&) override { result_ = Move(from_, to_); }
+    void Undo(editor::CommandContext&) override {
+        const assets::MoveResult reversed = Move(to_, from_);
+        if (!reversed.ok) throw ToolError(reversed.error);
+    }
+    std::string Label() const override { return "Move Content Asset"; }
+    usize MemoryBytes() const override {
+        usize bytes = sizeof(*this) + from_.size() + to_.size() + result_.error.size();
+        for (const std::string& path : result_.rewritten) bytes += path.size();
+        return bytes;
+    }
+    const assets::MoveResult& Result() const { return result_; }
+
+private:
+    assets::MoveResult Move(const std::string& from, const std::string& to) {
+        if (!host_->project || host_->project->paths.file.lexically_normal() != project_file_.lexically_normal()) {
+            throw ToolError("Open the project that owns this content before undoing or redoing this action");
+        }
+        assets::MoveResult result = assets::MoveContent(*host_->project->database, from, to);
+        if (!result.ok) throw ToolError(result.error);
+        return result;
+    }
+
+    std::shared_ptr<AssetHost> host_;
+    fs::path project_file_;
+    std::string from_;
+    std::string to_;
+    assets::MoveResult result_;
+};
+
 Json ProjectJson(OpenProject& p) {
     usize sources = 0;
     for (const AssetRecord* r : p.database->All()) {
@@ -620,13 +655,19 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
          }});
 
     server.AddTool({"asset_move",
-                    "Move or rename an asset or a whole folder (both relative to Content/). GUIDs, so scene and prefab references, are "
-                    "unchanged; glTF relative URIs are rewritten.",
-                    Schema({{"from", {{"type", "string"}}}, {"to", {{"type", "string"}}}}, {"from", "to"}), [host](const Json& args) -> Json {
+                    "Move or rename an asset or a whole folder (both relative to Content/) as one agent-attributed undoable action. GUID references stay unchanged; glTF relative URIs are rewritten.",
+                    Schema({{"from", {{"type", "string"}}}, {"to", {{"type", "string"}}}}, {"from", "to"}), [host, &session](const Json& args) -> Json {
                         OpenProject& p = host->Require();
-                        const assets::MoveResult r = assets::MoveContent(*p.database, CleanRelative(RequireString(args, "from")), CleanRelative(RequireString(args, "to")));
-                        if (!r.ok) throw ToolError(r.error);
-                        return {{"moved", true}, {"rewritten", r.rewritten}};
+                        if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before moving content");
+                        auto command = std::make_unique<MoveContentCommand>(host, p.paths.file,
+                            CleanRelative(RequireString(args, "from")), CleanRelative(RequireString(args, "to")));
+                        command->SetAttribution("agent");
+                        MoveContentCommand* command_result = command.get();
+                        editor::CommandContext context = session.Context();
+                        session.stack.Execute(context, std::move(command));
+                        Json out = {{"moved", true}, {"rewritten", command_result->Result().rewritten}};
+                        if (!command_result->Result().error.empty()) out["warning"] = command_result->Result().error;
+                        return out;
                     }});
 
     server.AddTool({"asset_create_folder", "Create a folder under Content/ as one agent-attributed undoable action. Undo removes it only while it is empty.",
