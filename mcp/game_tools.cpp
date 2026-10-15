@@ -778,8 +778,10 @@ void RegisterGameTools(McpServer& server) {
     server.AddTool(
         {"game_list_entities",
          "Entities in the running game: handle (GUID, or #index when it has none), entity generation, name, local and in-hierarchy active state, direct parent GUID, tags and component names. "
-         "Optionally filter by component, tag, local active state or in-hierarchy active state. Results can be paged with a bounded limit and offset.",
-         Schema({{"component", {{"type", "string"}}}, {"tag", {{"type", "string"}}},
+         "Optionally filter by exact name, case-insensitive ASCII name substring, component, tag, local active state or in-hierarchy active state. Results can be paged with a bounded limit and offset.",
+         Schema({{"name", {{"type", "string"}, {"description", "Exact, case-sensitive entity name"}}},
+                 {"name_contains", {{"type", "string"}, {"description", "Non-empty case-insensitive ASCII name substring"}}},
+                 {"component", {{"type", "string"}}}, {"tag", {{"type", "string"}}},
                  {"active", {{"type", "boolean"}, {"description", "Filter by local active state; entities without Active are active"}}},
                  {"active_in_hierarchy", {{"type", "boolean"}, {"description", "Filter by effective active state including ancestors"}}},
                  {"limit", {{"type", "integer"}, {"minimum", 1}, {"maximum", 1000}, {"description", "Page size, 1-1000 (default 200)"}}},
@@ -789,6 +791,11 @@ void RegisterGameTools(McpServer& server) {
              World& world = game.GetWorld();
              ComponentId filter = kInvalidComponentId;
              if (args.contains("component")) filter = RequireComponent(RequireString(args, "component"));
+             const std::string name_filter = args.contains("name") ? RequireString(args, "name") : std::string{};
+             const std::string name_contains_filter = args.contains("name_contains") ? RequireString(args, "name_contains") : std::string{};
+             if (args.contains("name_contains") && name_contains_filter.empty()) {
+                 throw ToolError("\"name_contains\" must be a non-empty string");
+             }
              if (args.contains("active") && !args["active"].is_boolean()) throw ToolError("\"active\" must be a boolean");
              if (args.contains("active_in_hierarchy") && !args["active_in_hierarchy"].is_boolean()) {
                  throw ToolError("\"active_in_hierarchy\" must be a boolean");
@@ -820,6 +827,20 @@ void RegisterGameTools(McpServer& server) {
              usize total = 0;
              for (Entity e : candidates) {
                  if (filter != kInvalidComponentId && !world.HasComponentRaw(e, filter)) continue;
+                 const EntityName* entity_name = world.GetComponent<EntityName>(e);
+                 if (args.contains("name") && (entity_name == nullptr || entity_name->value != name_filter)) continue;
+                 if (args.contains("name_contains") &&
+                     (entity_name == nullptr || std::search(entity_name->value.begin(), entity_name->value.end(),
+                                                            name_contains_filter.begin(), name_contains_filter.end(),
+                                                            [](unsigned char lhs, unsigned char rhs) {
+                                                                const unsigned char folded_lhs = lhs >= 'A' && lhs <= 'Z'
+                                                                                                   ? static_cast<unsigned char>(lhs + ('a' - 'A'))
+                                                                                                   : lhs;
+                                                                const unsigned char folded_rhs = rhs >= 'A' && rhs <= 'Z'
+                                                                                                   ? static_cast<unsigned char>(rhs + ('a' - 'A'))
+                                                                                                   : rhs;
+                                                                return folded_lhs == folded_rhs;
+                                                            }) == entity_name->value.end())) continue;
                  const Active* active_component = world.GetComponent<Active>(e);
                  const bool active = active_component == nullptr || active_component->active;
                  if (args.contains("active") && active != args["active"].get<bool>()) continue;
@@ -846,7 +867,7 @@ void RegisterGameTools(McpServer& server) {
                              {"active_in_hierarchy", args.contains("active_in_hierarchy") ? active_in_hierarchy
                                                                                             : IsActiveInHierarchy(world, game.Guids(), e)},
                              {"parent", parent}};
-                 if (const EntityName* n = world.GetComponent<EntityName>(e)) row["name"] = n->value;
+                 if (entity_name != nullptr) row["name"] = entity_name->value;
                  list.push_back(row);
              }
              const usize remaining = total > offset ? total - offset : 0;
