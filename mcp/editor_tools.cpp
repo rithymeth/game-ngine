@@ -882,6 +882,82 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
          }});
 
     server.AddTool(
+        {"validate_scene_transforms",
+         "Audit derived scene transforms without modifying the scene. Reports non-finite local position, rotation or scale values, non-finite composed world matrices, hierarchy cycles, and parent chains beyond the supported depth. Entities without Transform use identity locally. Returns at most 128 detailed issues with total issue count and a truncation flag.",
+         Schema(Json::object()),
+         [&s](const Json&) -> Json {
+             const std::vector<Entity> entities = AllEntities(s);
+             std::map<u32, usize> slots;
+             for (usize i = 0; i < entities.size(); ++i) slots.emplace(entities[i].index, i);
+             Json issues = Json::array();
+             usize issue_count = 0;
+             bool truncated = false;
+             auto add_issue = [&](Json issue) {
+                 ++issue_count;
+                 if (issues.size() < 128) issues.push_back(std::move(issue));
+                 else truncated = true;
+             };
+             auto entity_label = [&](Entity entity) -> Json {
+                 const IdComponent* id = s.world.GetComponent<IdComponent>(entity);
+                 return id != nullptr && !id->guid.IsNull() ? Json(ToString(id->guid)) : Json(entity.index);
+             };
+             auto finite_transform = [](const Transform& transform) {
+                 return std::isfinite(transform.position.x) && std::isfinite(transform.position.y) &&
+                        std::isfinite(transform.position.z) && std::isfinite(transform.rotation.x) &&
+                        std::isfinite(transform.rotation.y) && std::isfinite(transform.rotation.z) &&
+                        std::isfinite(transform.rotation.w) && std::isfinite(transform.scale.x) &&
+                        std::isfinite(transform.scale.y) && std::isfinite(transform.scale.z);
+             };
+             auto finite_matrix = [](const Mat4& matrix) {
+                 for (const Vec4& column : matrix.cols) {
+                     if (!std::isfinite(column.x) || !std::isfinite(column.y) || !std::isfinite(column.z) ||
+                         !std::isfinite(column.w)) return false;
+                 }
+                 return true;
+             };
+             std::vector<u8> state(entities.size(), 0);
+             std::vector<Mat4> world_matrices(entities.size(), Mat4::Identity());
+             std::function<Mat4(usize, int)> compute_world = [&](usize slot, int depth) -> Mat4 {
+                 const Entity entity = entities[slot];
+                 if (state[slot] == 2) return world_matrices[slot];
+                 if (state[slot] == 1) {
+                     add_issue({{"kind", "hierarchy_cycle"}, {"entity", entity_label(entity)}});
+                     return Mat4::Identity();
+                 }
+                 if (depth >= kMaxHierarchyDepth) {
+                     add_issue({{"kind", "excessive_depth"}, {"entity", entity_label(entity)},
+                                {"max_depth", kMaxHierarchyDepth}});
+                     return Mat4::Identity();
+                 }
+                 state[slot] = 1;
+                 Mat4 local = Mat4::Identity();
+                 const Transform* transform = s.world.GetComponent<Transform>(entity);
+                 if (transform != nullptr) {
+                     if (!finite_transform(*transform)) {
+                         add_issue({{"kind", "non_finite_local_transform"}, {"entity", entity_label(entity)}});
+                     }
+                     local = LocalTransformMatrix(*transform);
+                 }
+                 Mat4 parent_world = Mat4::Identity();
+                 const Entity parent = GetParent(s.world, s.guids, entity);
+                 if (!parent.IsNull()) {
+                     const auto parent_slot = slots.find(parent.index);
+                     if (parent_slot != slots.end()) parent_world = compute_world(parent_slot->second, depth + 1);
+                 }
+                 const Mat4 world = parent_world * local;
+                 if (!finite_matrix(world)) {
+                     add_issue({{"kind", "non_finite_world_transform"}, {"entity", entity_label(entity)}});
+                 }
+                 world_matrices[slot] = world;
+                 state[slot] = 2;
+                 return world;
+             };
+             for (usize i = 0; i < entities.size(); ++i) compute_world(i, 0);
+             return {{"valid", issue_count == 0}, {"entity_count", entities.size()},
+                     {"issue_count", issue_count}, {"issues", std::move(issues)}, {"truncated", truncated}};
+         }});
+
+    server.AddTool(
         {"get_entities_world_transforms_many",
          "Get derived world transforms for 1–64 unique scene entities in request order. Returns each world matrix as four column vectors plus world position and world-scale magnitudes (the lengths of the three basis columns). Parent transforms are composed through the hierarchy. Rejects missing Transform components, non-finite results, hierarchy cycles and excessive depth.",
          Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
