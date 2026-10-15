@@ -31,7 +31,7 @@ and errors go to stderr.
 | `create_entity` / `create_entities` | Create an entity or up to 64 entities with optional component values and current-scene parents; batch validates all definitions before creating and is one undo action |
 | `duplicate_entity` / `duplicate_entities` | Copy reflected component values for one entity or up to 64 unique entities as one undo action; keep source parents, leave children as they are |
 | `destroy_entity` / `destroy_entities` | Delete one entity or up to 64 unique entities as one undoable action; the batch leaves children and GUID references unchanged and restores original GUIDs on undo |
-| `add_component` / `remove_component` | Add (with optional initial values) or remove a component |
+| `add_component` / `add_components_many` / `remove_component` | Add one component or components across up to 64 unique entities as one undo action after validating all additions; remove a component |
 | `set_component` / `set_components_many` | Partial component update; batch applies patches to up to 64 unique entities as one undo action after validating every patch |
 | `reparent` / `reparent_many` | Parent or detach entities; the batch variant applies up to 64 unique moves in one undo action after validating the final hierarchy for cycles |
 | `undo` / `redo` | Walk the editor history and return the source (`agent`) recorded with that action |
