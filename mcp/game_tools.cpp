@@ -802,7 +802,11 @@ void RegisterGameTools(McpServer& server) {
                  for (ComponentId id = 0; id < RegisteredComponentCount(); ++id) {
                      if (world.HasComponentRaw(e, id)) names.push_back(ComponentName(id));
                  }
-                 Json row = {{"entity", EntityKey(world, e)}, {"components", names}};
+                 Json tags = Json::array();
+                 if (const Tags* component_tags = world.GetComponent<Tags>(e)) {
+                     for (const std::string& tag : component_tags->names) tags.push_back(tag);
+                 }
+                 Json row = {{"entity", EntityKey(world, e)}, {"components", names}, {"tags", tags}};
                  if (const EntityName* n = world.GetComponent<EntityName>(e)) row["name"] = n->value;
                  list.push_back(row);
              }
