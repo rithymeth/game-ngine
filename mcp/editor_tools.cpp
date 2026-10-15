@@ -587,22 +587,24 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                             if (!parent_none_filter.empty() && parent != nullptr && std::find(parent_none_filter.begin(), parent_none_filter.end(), parent->parent) != parent_none_filter.end()) continue;
                             if (parent_override_filter.has_value() && (parent != nullptr) != *parent_override_filter) continue;
                             if (roots_only && parent != nullptr && !parent->parent.IsNull()) continue;
+                            std::optional<usize> entity_depth;
                             if (parent_depth_filter.has_value() || parent_depth_min_filter.has_value() || parent_depth_max_filter.has_value()) {
-                                usize entity_depth = 0;
+                                usize depth = 0;
                                 Entity current = e;
                                 std::set<u32> visited;
                                 while (true) {
                                     if (!visited.insert(current.index).second) throw ToolError("Cannot filter by parent depth: hierarchy contains a cycle");
                                     const Parent* current_parent = s.world.GetComponent<Parent>(current);
                                     if (current_parent == nullptr || current_parent->parent.IsNull()) break;
-                                    if (entity_depth >= kMaxHierarchyDepth) throw ToolError("Cannot filter by parent depth: hierarchy exceeds the maximum depth");
+                                    if (depth >= kMaxHierarchyDepth) throw ToolError("Cannot filter by parent depth: hierarchy exceeds the maximum depth");
                                     current = s.guids.Find(s.world, current_parent->parent);
                                     if (current.IsNull()) throw ToolError("Cannot filter by parent depth: hierarchy references a missing parent");
-                                    ++entity_depth;
+                                    ++depth;
                                 }
-                                if (parent_depth_filter.has_value() && entity_depth != *parent_depth_filter) continue;
-                                if (parent_depth_min_filter.has_value() && entity_depth < *parent_depth_min_filter) continue;
-                                if (parent_depth_max_filter.has_value() && entity_depth > *parent_depth_max_filter) continue;
+                                entity_depth = depth;
+                                if (parent_depth_filter.has_value() && depth != *parent_depth_filter) continue;
+                                if (parent_depth_min_filter.has_value() && depth < *parent_depth_min_filter) continue;
+                                if (parent_depth_max_filter.has_value() && depth > *parent_depth_max_filter) continue;
                             }
                             const Layer* layer_override = s.world.GetComponent<Layer>(e);
                             if (layer_override_filter.has_value() && (layer_override != nullptr) != *layer_override_filter) continue;
@@ -672,6 +674,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                                         {"has_active_override", active != nullptr},
                                         {"has_layer_override", layer_override != nullptr},
                                         {"has_parent_override", parent != nullptr}};
+                            if (entity_depth.has_value()) row["parent_depth"] = *entity_depth;
                             if (parent != nullptr && !parent->parent.IsNull()) row["parent"] = ToString(parent->parent);
                             out.push_back(std::move(row));
                         }
