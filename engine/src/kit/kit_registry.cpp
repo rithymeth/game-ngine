@@ -6,6 +6,16 @@
 
 namespace aether::kit {
 
+IKitRuntime* KitRuntimeSet::Find(const std::string& kit) const {
+    for (const auto& entry : runtimes_) if (entry.first == kit) return entry.second.get();
+    return nullptr;
+}
+
+void KitRuntimeSet::Add(const std::string& kit, std::unique_ptr<IKitRuntime> runtime) {
+    if (!runtime || Find(kit)) return;
+    runtimes_.emplace_back(kit, std::move(runtime));
+}
+
 bool KitRegistry::Add(std::unique_ptr<IKit> kit) {
     if (!kit) {
         errors_.push_back("null kit");
@@ -93,6 +103,12 @@ void KitRegistry::InstallBlueprintNodes() {
 
 void KitRegistry::InstallScriptApi(void* script_host) {
     for (IKit* kit : order_) kit->InstallScriptApi(script_host);
+}
+
+KitRuntimeSet KitRegistry::CreateRuntime(const KitRuntimeContext& context) {
+    KitRuntimeSet runtimes;
+    for (IKit* kit : order_) runtimes.Add(kit->Name(), kit->CreateRuntime(context));
+    return runtimes;
 }
 
 std::vector<KitStage> KitRegistry::Stages() const {

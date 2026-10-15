@@ -2,12 +2,10 @@
 
 // @stability: experimental
 //
-// IKit and KitRegistry (Phase 37 step 1, docs/design/UPGRADE_PLAN.md).
+// IKit and KitRegistry (Phase 37, docs/design/UPGRADE_PLAN.md).
 //
-// A kit is an optional gameplay module (gameplay, inventory, interaction, quests, ...). Today the player
-// wires each one by hand behind `#if AETHER_KIT_*`; an IKit describes what a kit contributes so a registry
-// can order and install them. This step is the interface and the registry only: the existing kits are
-// migrated in step 37.4.
+// A kit is an optional gameplay module (gameplay, inventory, interaction, quests, ...). IKit describes the
+// kit's install hooks, stages and scene-scoped runtime; KitRegistry orders and owns the installed kits.
 //
 // The engine knows nothing about any kit, the scripting host or the Blueprint VM (those sit above it), so the
 // hooks that touch them take opaque pointers that the layer which owns the type casts back.
@@ -17,7 +15,10 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
+
+namespace aether { class World; }
 
 namespace aether::kit {
 
@@ -50,6 +51,31 @@ struct KitScriptApiContext {
     std::function<void(const std::string&)> install;
 };
 
+// Scene-scoped kit state. The host owns each object for the scene lifetime; kits
+// expose selected services opaquely so the engine layer remains kit-agnostic.
+class IKitRuntime {
+public:
+    virtual ~IKitRuntime() = default;
+    virtual void* Find(const char* name) = 0;
+};
+
+struct KitRuntimeContext {
+    World* world = nullptr;
+    std::function<void*(const char* name)> find_service;
+};
+
+class KitRuntimeSet {
+public:
+    IKitRuntime* Find(const std::string& kit) const;
+    template <typename T> T* Get(const std::string& kit, const char* object) const {
+        IKitRuntime* runtime = Find(kit);
+        return runtime ? static_cast<T*>(runtime->Find(object)) : nullptr;
+    }
+    void Add(const std::string& kit, std::unique_ptr<IKitRuntime> runtime);
+private:
+    std::vector<std::pair<std::string, std::unique_ptr<IKitRuntime>>> runtimes_;
+};
+
 class IKit {
 public:
     virtual ~IKit() = default;
@@ -69,6 +95,8 @@ public:
     virtual void InstallScriptApi(void* script_host) { (void)script_host; }
     // Stages this kit adds to the frame, in the order it wants them listed.
     virtual std::vector<KitStage> Stages() const { return {}; }
+    // Creates scene-scoped state after host services are ready.
+    virtual std::unique_ptr<IKitRuntime> CreateRuntime(const KitRuntimeContext& context) { (void)context; return {}; }
 };
 
 class KitRegistry {
@@ -92,6 +120,7 @@ public:
     void LoadAssets(const KitAssetContext& context);
     void InstallBlueprintNodes();
     void InstallScriptApi(void* script_host);
+    KitRuntimeSet CreateRuntime(const KitRuntimeContext& context);
 
     // Every kit's stages in dependency order, each stage's `after` extended with the kit's dependencies'
     // last stage so a kit's stages never run before the kits it needs.

@@ -31,6 +31,18 @@ public:
         // Runs with the frame's Update, after effects have run, like the other gameplay kit systems.
         return {{"Player.Inventory", {"Player.Update", "Player.Sequencer", "Player.Effects"}}};
     }
+    std::unique_ptr<kit::IKitRuntime> CreateRuntime(const kit::KitRuntimeContext& context) override {
+        auto* items = context.find_service ? static_cast<ItemLibrary*>(context.find_service("inventory.items")) : nullptr;
+        auto* effects = context.find_service ? static_cast<gas::EffectSystem*>(context.find_service("game.effects")) : nullptr;
+        if (!context.world || !items) return {};
+        class Runtime final : public kit::IKitRuntime {
+        public:
+            Runtime(World& world, gas::EffectSystem* effects, const ItemLibrary& items) : system(world, effects, items) {}
+            void* Find(const char* name) override { return std::string(name) == "InventorySystem" ? &system : nullptr; }
+            InventorySystem system;
+        };
+        return std::make_unique<Runtime>(*context.world, effects, *items);
+    }
 private:
     ItemLibrary* items_;
     const gas::EffectLibrary* effects_;
