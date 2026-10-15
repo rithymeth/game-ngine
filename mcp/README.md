@@ -39,6 +39,7 @@ and errors go to stderr.
 | `validate_scene_hierarchy` | Audit scene-wide GUID and parent integrity, cycles, and excessive depth; returns up to 128 issues |
 | `validate_scene_transforms` | Audit finite local and derived world transforms, cycles, and excessive depth; returns up to 128 issues |
 | `validate_scene_components` | Audit component reflection and scene persistence support, reporting serialization errors and unsafe raw types |
+| `validate_scene_layers` | Audit project layer names and scene assignments for duplicates, empty names, unconfigured slots, and out-of-range indices |
 | `rename_entities` | Rename up to 64 unique entities as one undoable action; creates `EntityName` when needed |
 | `set_entity_tags_many` | Replace the complete tag list on up to 64 unique entities as one undoable action; creates `Tags` when needed |
 | `modify_entity_tags_many` | Add/remove tags on up to 64 unique entities as one undoable action; preserves tag order and reports no-op edits |
