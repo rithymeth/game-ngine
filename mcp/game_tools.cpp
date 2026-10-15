@@ -2626,6 +2626,115 @@ void RegisterGameTools(McpServer& server) {
              }
              throw ToolError("\"kind\" must be raycast, spherecast or overlap_sphere");
          }});
+
+    server.AddTool(
+        {"game_physics_queries_many",
+         "Run 1 to 64 3D raycast, spherecast, or sphere-overlap queries in one request. Each query can set its own layer mask, ignored entity, and trigger policy. Validates every query before running any of them.",
+         Schema({{"queries", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                               {"items", {{"type", "object"},
+                                          {"properties", {{"kind", {{"type", "string"}, {"enum", Json::array({"raycast", "spherecast", "overlap_sphere"})}},
+                                                          {"from", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
+                                                          {"to", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
+                                                          {"center", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
+                                                          {"radius", {{"type", "number"}, {"exclusiveMinimum", 0}}},
+                                                          {"layer_mask", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4294967295.0}}},
+                                                          {"ignore_entity", {{"type", "string"}}}, {"include_triggers", {{"type", "boolean"}}}},
+                                          {"required", Json::array({"kind"})}}}}}},
+                {"queries"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             PhysicsScene* scene = game.PhysicsQueries();
+             if (scene == nullptr) throw ToolError("The loaded game has no 3D physics scene");
+             if (!args.contains("queries") || !args["queries"].is_array() || args["queries"].empty() || args["queries"].size() > 64) {
+                 throw ToolError("\"queries\" must be an array of 1 to 64 physics queries");
+             }
+             struct PhysicsQuery {
+                 std::string kind;
+                 Vec3 from{};
+                 Vec3 to{};
+                 Vec3 center{};
+                 f32 radius = 0.0f;
+                 LayerMask layers = kAllLayers;
+                 Entity ignore = kNullEntity;
+                 bool include_triggers = false;
+             };
+             auto read_vec3 = [](const Json& query, const char* field) {
+                 if (!query.contains(field) || !query[field].is_array() || query[field].size() != 3 ||
+                     !query[field][0].is_number() || !query[field][1].is_number() || !query[field][2].is_number()) {
+                     throw ToolError(std::string("\"") + field + "\" must be [x, y, z]");
+                 }
+                 const Vec3 value(query[field][0].get<f32>(), query[field][1].get<f32>(), query[field][2].get<f32>());
+                 if (!std::isfinite(value.x) || !std::isfinite(value.y) || !std::isfinite(value.z)) {
+                     throw ToolError(std::string("\"") + field + "\" values must be finite");
+                 }
+                 return value;
+             };
+             std::vector<PhysicsQuery> parsed;
+             parsed.reserve(args["queries"].size());
+             for (const Json& raw : args["queries"]) {
+                 if (!raw.is_object() || !raw.contains("kind") || !raw["kind"].is_string()) throw ToolError("Every query must contain a string \"kind\"");
+                 PhysicsQuery query;
+                 query.kind = raw["kind"].get<std::string>();
+                 if (query.kind != "raycast" && query.kind != "spherecast" && query.kind != "overlap_sphere") {
+                     throw ToolError("Query kind must be raycast, spherecast or overlap_sphere");
+                 }
+                 if (query.kind == "raycast" || query.kind == "spherecast") {
+                     query.from = read_vec3(raw, "from");
+                     query.to = read_vec3(raw, "to");
+                 } else {
+                     query.center = read_vec3(raw, "center");
+                 }
+                 if (query.kind == "spherecast" || query.kind == "overlap_sphere") {
+                     if (!raw.contains("radius") || !raw["radius"].is_number()) throw ToolError("Sphere queries require a finite positive \"radius\"");
+                     query.radius = raw["radius"].get<f32>();
+                     if (!std::isfinite(query.radius) || query.radius <= 0.0f) throw ToolError("Sphere queries require a finite positive \"radius\"");
+                 }
+                 if (raw.contains("layer_mask")) {
+                     if (!raw["layer_mask"].is_number_integer()) throw ToolError("\"layer_mask\" must be an integer from 0 through 4294967295");
+                     u64 value = 0;
+                     if (raw["layer_mask"].is_number_unsigned()) value = raw["layer_mask"].get<u64>();
+                     else {
+                         const i64 signed_value = raw["layer_mask"].get<i64>();
+                         if (signed_value < 0) throw ToolError("\"layer_mask\" must be an integer from 0 through 4294967295");
+                         value = static_cast<u64>(signed_value);
+                     }
+                     if (value > std::numeric_limits<u32>::max()) throw ToolError("\"layer_mask\" must be an integer from 0 through 4294967295");
+                     query.layers = static_cast<LayerMask>(value);
+                 }
+                 if (raw.contains("ignore_entity")) {
+                     if (!raw["ignore_entity"].is_string() || raw["ignore_entity"].get<std::string>().empty()) throw ToolError("\"ignore_entity\" must be a non-empty entity handle");
+                     query.ignore = FindEntity(game, raw["ignore_entity"].get<std::string>());
+                 }
+                 if (raw.contains("include_triggers")) {
+                     if (!raw["include_triggers"].is_boolean()) throw ToolError("\"include_triggers\" must be a boolean");
+                     query.include_triggers = raw["include_triggers"].get<bool>();
+                 }
+                 parsed.push_back(query);
+             }
+             Json results = Json::array();
+             for (usize i = 0; i < parsed.size(); ++i) {
+                 const PhysicsQuery& query = parsed[i];
+                 if (query.kind == "raycast" || query.kind == "spherecast") {
+                     const SceneHit hit = query.kind == "raycast" ? scene->RayCast(query.from, query.to, query.layers, query.ignore, query.include_triggers)
+                                                                   : scene->SphereCast(query.radius, query.from, query.to, query.layers, query.ignore, query.include_triggers);
+                     Json result = {{"index", i}, {"kind", query.kind}, {"hit", hit.hit}};
+                     if (hit.hit) {
+                         result["entity"] = hit.entity.IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), hit.entity));
+                         result["point"] = Json::array({hit.point.x, hit.point.y, hit.point.z});
+                         result["normal"] = Json::array({hit.normal.x, hit.normal.y, hit.normal.z});
+                         result["distance"] = hit.distance;
+                     }
+                     results.push_back(std::move(result));
+                 } else {
+                     Json entities = Json::array();
+                     for (Entity entity : scene->OverlapSphere(query.center, query.radius, query.layers, query.ignore, query.include_triggers)) {
+                         entities.push_back(entity.IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), entity)));
+                     }
+                     results.push_back({{"index", i}, {"kind", query.kind}, {"count", entities.size()}, {"entities", std::move(entities)}});
+                 }
+             }
+             return {{"count", results.size()}, {"results", std::move(results)}};
+         }});
 #endif
 
     server.AddTool(
