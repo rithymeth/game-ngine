@@ -2742,6 +2742,76 @@ void RegisterGameTools(McpServer& server) {
              return {{"played", handle != 0}, {"cue", cue}, {"problems", audio->Problems()}};
          }});
 
+    server.AddTool(
+        {"game_play_sounds_many",
+         "Play 1 to 64 one-shot sound cues in 2D or at individual world locations. Validates all cues, locations, volumes and pitches before starting playback; step the game to hear them.",
+         Schema({{"sounds", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                              {"items", {{"type", "object"},
+                                          {"properties", {{"cue", {{"type", "string"}}},
+                                                           {"location", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
+                                                           {"volume_db", {{"type", "number"}}}, {"pitch", {{"type", "number"}}}}},
+                                          {"required", Json::array({"cue"})}}}}}},
+                {"sounds"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             audio::AudioSystem* audio = game.AudioSystem();
+             if (audio == nullptr) throw ToolError("This game has no audio system (load a scene first)");
+             if (!args["sounds"].is_array() || args["sounds"].empty() || args["sounds"].size() > 64) {
+                 throw ToolError("\"sounds\" must be an array of 1 to 64 sound cues");
+             }
+             struct SoundRequest {
+                 std::string cue;
+                 bool spatial = false;
+                 Vec3 location{};
+                 f32 volume = 0.0f;
+                 f32 pitch = 1.0f;
+             };
+             std::vector<SoundRequest> sounds;
+             sounds.reserve(args["sounds"].size());
+             for (const Json& item : args["sounds"]) {
+                 if (!item.is_object() || !item.contains("cue") || !item["cue"].is_string() || item["cue"].get<std::string>().empty()) {
+                     throw ToolError("Every \"sounds\" entry must contain a non-empty string \"cue\"");
+                 }
+                 SoundRequest sound;
+                 sound.cue = item["cue"].get<std::string>();
+                 if (item.contains("volume_db")) {
+                     if (!item["volume_db"].is_number()) throw ToolError("\"volume_db\" must be a number");
+                     sound.volume = item["volume_db"].get<f32>();
+                     if (!std::isfinite(sound.volume)) throw ToolError("\"volume_db\" must be finite");
+                 }
+                 if (item.contains("pitch")) {
+                     if (!item["pitch"].is_number()) throw ToolError("\"pitch\" must be a number");
+                     sound.pitch = item["pitch"].get<f32>();
+                     if (!std::isfinite(sound.pitch) || !(sound.pitch > 0.0f)) throw ToolError("\"pitch\" must be finite and above 0");
+                 }
+                 if (item.contains("location")) {
+                     const Json& location = item["location"];
+                     if (!location.is_array() || location.size() != 3 || !location[0].is_number() || !location[1].is_number() || !location[2].is_number()) {
+                         throw ToolError("\"location\" must be [x, y, z]");
+                     }
+                     sound.location = Vec3(location[0].get<f32>(), location[1].get<f32>(), location[2].get<f32>());
+                     if (!std::isfinite(sound.location.x) || !std::isfinite(sound.location.y) || !std::isfinite(sound.location.z)) {
+                         throw ToolError("\"location\" values must be finite");
+                     }
+                     sound.spatial = true;
+                 }
+                 sounds.push_back(std::move(sound));
+             }
+             Json results = Json::array();
+             usize played_count = 0;
+             for (const SoundRequest& sound : sounds) {
+                 const audio::CueHandle handle = sound.spatial
+                                                     ? audio->PlaySoundAtLocation(sound.cue, sound.location, sound.volume, sound.pitch)
+                                                     : audio->PlaySound2D(sound.cue, sound.volume, sound.pitch);
+                 const bool played = handle != 0;
+                 if (played) ++played_count;
+                 Json result = {{"cue", sound.cue}, {"played", played}, {"spatial", sound.spatial}};
+                 if (sound.spatial) result["location"] = Json::array({sound.location.x, sound.location.y, sound.location.z});
+                 results.push_back(std::move(result));
+             }
+             return {{"played_count", played_count}, {"requested_count", results.size()}, {"results", results}, {"problems", audio->Problems()}};
+         }});
+
     server.AddTool({"game_set_bus",
                     "Change a mixer bus in the running game: its volume (dB, optionally faded over seconds) and/or mute. Buses: Master, Music, SFX, UI, Voice "
                     "(game_audio_state lists them).",
