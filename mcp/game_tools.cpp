@@ -27,6 +27,7 @@
 #include "aether/ui/basic.h"
 #include "aether/ui/controls.h"
 #include "aether/ui/viewport.h"
+#include "aether/ui/widget_system.h"
 
 #include <algorithm>
 #include <cmath>
@@ -645,6 +646,28 @@ void RegisterGameTools(McpServer& server) {
 
              usize budget = 2000;
              return {{"widget", UiWidgetJson(*widget, budget)}};
+         }});
+
+    server.AddTool(
+        {"game_ui_events",
+         "Read UI control and animation events from the loaded game's most recent UI update, including the event kind, entity handle, widget name and any value or committed text.",
+         Schema(Json::object()),
+         [host](const Json&) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             ui::UISystem* system = game.Ui() != nullptr ? ui::UISystem::Active() : nullptr;
+             Json events = Json::array();
+             if (system != nullptr) {
+                 for (const ui::WidgetEvent& event : system->Events()) {
+                     const std::string entity = world.IsAlive(event.entity)
+                         ? EntityKey(world, event.entity)
+                         : "#" + std::to_string(event.entity.index) + ":" + std::to_string(event.entity.generation);
+                     events.push_back({{"type", ui::UISystem::BlueprintEventName(event.kind)},
+                                       {"entity", entity}, {"widget", event.widget},
+                                       {"value", event.value}, {"text", event.text}});
+                 }
+             }
+             return {{"count", events.size()}, {"events", std::move(events)}};
          }});
 
     server.AddTool(
