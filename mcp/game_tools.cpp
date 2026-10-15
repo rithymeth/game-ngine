@@ -619,6 +619,47 @@ void RegisterGameTools(McpServer& server) {
                     }});
 
     server.AddTool(
+        {"game_rename_entities_many",
+         "Rename up to 64 unique live entities in one validated batch; creates EntityName components when needed.",
+         Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                                {"items", {{"type", "object"}, {"properties", {{"entity", {{"type", "string"}}}, {"name", {{"type", "string"}}}}},
+                                            {"required", Json::array({"entity", "name"})}}}}}},
+                {"entities"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be an array of 1 to 64 entity/name objects");
+             }
+             struct Rename {
+                 Entity entity;
+                 std::string name;
+             };
+             std::vector<Rename> renames;
+             renames.reserve(args["entities"].size());
+             for (const Json& item : args["entities"]) {
+                 if (!item.is_object() || !item.contains("entity") || !item["entity"].is_string() || item["entity"].get<std::string>().empty() ||
+                     !item.contains("name") || !item["name"].is_string()) {
+                     throw ToolError("Every \"entities\" entry must contain a non-empty string \"entity\" and string \"name\"");
+                 }
+                 const Entity entity = FindEntity(game, item["entity"].get<std::string>());
+                 if (std::find_if(renames.begin(), renames.end(), [entity](const Rename& entry) { return entry.entity == entity; }) != renames.end()) {
+                     throw ToolError("\"entities\" must not contain the same entity more than once");
+                 }
+                 renames.push_back({entity, item["name"].get<std::string>()});
+             }
+             Json results = Json::array();
+             for (const Rename& rename : renames) {
+                 EntityName* current = world.GetComponent<EntityName>(rename.entity);
+                 const Json old_name = current == nullptr ? Json(nullptr) : Json(current->value);
+                 if (current == nullptr) world.AddComponent<EntityName>(rename.entity, EntityName{rename.name});
+                 else current->value = rename.name;
+                 results.push_back({{"entity", EntityKey(world, rename.entity)}, {"old_name", old_name}, {"name", rename.name}});
+             }
+             return {{"renamed_count", results.size()}, {"results", results}};
+         }});
+
+    server.AddTool(
         {"game_set_active_many",
          "Set the local active state on up to 64 unique running entities through the game's lifecycle, firing enable/disable behavior. Missing Active components mean active; unchanged entities are no-ops.",
          Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}},
