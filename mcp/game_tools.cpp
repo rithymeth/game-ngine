@@ -525,8 +525,8 @@ void RegisterGameTools(McpServer& server) {
          "movement.",
          Schema({{"width", {{"type", "integer"}, {"description", "64-3840 (default: the project's window width)"}}},
                  {"height", {{"type", "integer"}, {"description", "64-2160 (default: the project's window height)"}}},
-                 {"path", {{"type", "string"}, {"description", "Where to save the PNG (default: a temp folder)"}}},
-                 {"backend", {{"type", "string"}, {"description", "d3d12 or vulkan"}}},
+                 {"path", {{"type", "string"}, {"minLength", 1}, {"description", "Where to save the PNG (default: a temp folder)"}}},
+                 {"backend", {{"type", "string"}, {"enum", Json::array({"d3d12", "vulkan"})}, {"description", "d3d12 or vulkan"}}},
                  {"inline", {{"type", "boolean"}, {"description", "Return the image in the reply (default true)"}}}}),
          [host](const Json& args) -> Json {
              Game& game = host->Require();
@@ -540,13 +540,18 @@ void RegisterGameTools(McpServer& server) {
              };
              const u32 width = dimension("width", manifest.window_width, 64, 3840);
              const u32 height = dimension("height", manifest.window_height, 64, 2160);
-             const std::string backend = args.contains("backend") && args["backend"].is_string() ? args["backend"].get<std::string>() : "";
+             if (args.contains("backend") && !args["backend"].is_string()) throw ToolError("\"backend\" must be a string");
+             const std::string backend = args.contains("backend") ? args["backend"].get<std::string>() : "";
+             if (args.contains("backend") && backend != "d3d12" && backend != "vulkan") throw ToolError("\"backend\" must be \"d3d12\" or \"vulkan\"");
+             if (args.contains("path") && !args["path"].is_string()) throw ToolError("\"path\" must be a string");
+             if (args.contains("path") && args["path"].get<std::string>().empty()) throw ToolError("\"path\" must not be empty");
+             if (args.contains("inline") && !args["inline"].is_boolean()) throw ToolError("\"inline\" must be a boolean");
              if (!host->shots) host->shots = std::make_unique<GameScreenshotter>();
              GameScreenshotter::Result r = host->shots->Capture(game, *host->package, width, height, backend);
              if (!r.ok) throw ToolError("Screenshot failed: " + r.error);
 
              stdfs::path path;
-             if (args.contains("path") && args["path"].is_string()) {
+             if (args.contains("path")) {
                  path = args["path"].get<std::string>();
              } else {
                  path = stdfs::temp_directory_path() / "aether_mcp_screenshots" / ("shot_" + std::to_string(++host->shot_counter) + ".png");
@@ -559,7 +564,7 @@ void RegisterGameTools(McpServer& server) {
                  if (!file) throw ToolError("Could not write " + path.string());
              }
              Json out = {{"path", path.string()}, {"width", r.width}, {"height", r.height}, {"bytes", r.png.size()}, {"frame", game.Stats().frames}};
-             if (!args.contains("inline") || !args["inline"].is_boolean() || args["inline"].get<bool>()) {
+             if (!args.contains("inline") || args["inline"].get<bool>()) {
                  out["mcp_content"] = Json::array({{{"type", "image"}, {"data", Base64(r.png)}, {"mimeType", "image/png"}}});
              }
              return out;
