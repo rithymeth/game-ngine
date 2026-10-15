@@ -1345,6 +1345,60 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_copy_component_many",
+         "Copy all reflected values of one component from a live source entity to up to 64 unique target entities. Every target must already have the component; IdComponent is protected.",
+         Schema({{"source", {{"type", "string"}, {"description", "Source GUID or #index[:generation]"}}},
+                 {"targets", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}},
+                 {"component", {{"type", "string"}, {"description", "Component name from list_component_types"}}}},
+                {"source", "targets", "component"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["targets"].is_array() || args["targets"].empty() || args["targets"].size() > 64) {
+                 throw ToolError("\"targets\" must be an array of 1 to 64 entity handles");
+             }
+             const ComponentId id = RequireComponent(RequireString(args, "component"));
+             if (id == GetComponentId<IdComponent>()) throw ToolError("IdComponent is managed by the running game and cannot be copied directly");
+             const ComponentInfo& info = GetComponentInfo(id);
+             const Entity source = FindEntity(game, RequireString(args, "source"));
+             const void* source_data = world.GetComponentRaw(source, id);
+             if (source_data == nullptr) throw ToolError("Source entity has no " + ComponentName(id));
+             const Json source_values = reflect::ToJson(*info.reflected, source_data);
+             reflect::Any candidate = reflect::Any::DefaultOf(*info.reflected);
+             if (!candidate.HasValue()) throw ToolError("Cannot validate values for " + ComponentName(id));
+             reflect::LoadReport validation;
+             if (!reflect::FromJson(*info.reflected, candidate.Data(), source_values, &validation)) {
+                 throw ToolError("Source " + ComponentName(id) + " values cannot be copied");
+             }
+             std::vector<Entity> targets;
+             targets.reserve(args["targets"].size());
+             for (const Json& handle : args["targets"]) {
+                 if (!handle.is_string() || handle.get<std::string>().empty()) {
+                     throw ToolError("Every \"targets\" entry must be a non-empty entity handle");
+                 }
+                 const Entity target = FindEntity(game, handle.get<std::string>());
+                 if (std::find(targets.begin(), targets.end(), target) != targets.end()) {
+                     throw ToolError("\"targets\" must not contain the same entity more than once");
+                 }
+                 if (!world.HasComponentRaw(target, id)) throw ToolError("Target entity " + EntityKey(world, target) + " has no " + ComponentName(id));
+                 targets.push_back(target);
+             }
+             Json results = Json::array();
+             for (Entity target : targets) {
+                 void* data = world.GetComponentRaw(target, id);
+                 reflect::LoadReport report;
+                 if (!reflect::FromJson(*info.reflected, data, source_values, &report)) {
+                     throw ToolError("Validated component values could not be copied to " + EntityKey(world, target));
+                 }
+                 Json result = {{"entity", EntityKey(world, target)}, {"values", reflect::ToJson(*info.reflected, data)}};
+                 if (!report.warnings.empty()) result["warnings"] = report.warnings;
+                 results.push_back(std::move(result));
+             }
+             return {{"source", EntityKey(world, source)}, {"component", ComponentName(id)},
+                     {"copied_count", results.size()}, {"results", results}};
+         }});
+
+    server.AddTool(
         {"game_get_hierarchy",
          "Return an entity's live descendant tree in stable entity-index order. The root is included; depth and node caps bound the response.",
          Schema({{"entity", {{"type", "string"}, {"description", "GUID or #index[:generation]"}}},
