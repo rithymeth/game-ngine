@@ -277,6 +277,72 @@ private:
     std::string name_;
 };
 
+class DeleteContentFolderCommand final : public editor::ICommand {
+public:
+    DeleteContentFolderCommand(std::shared_ptr<AssetHost> host, fs::path project_file, fs::path content_root, std::string relative)
+        : host_(std::move(host)), project_file_(std::move(project_file)), content_root_(std::move(content_root)), relative_(std::move(relative)) {}
+
+    void Do(editor::CommandContext&) override {
+        RequireSameProject();
+        const fs::path folder = ResolveFolder(true);
+        std::error_code ec;
+        if (!fs::remove(folder, ec)) {
+            if (ec) throw ToolError("Could not delete " + folder.string() + ": " + ec.message());
+            throw ToolError("Could not delete folder because it is no longer empty: " + folder.string());
+        }
+    }
+
+    void Undo(editor::CommandContext&) override {
+        RequireSameProject();
+        const fs::path folder = ResolveFolder(false);
+        std::error_code ec;
+        const fs::file_status status = fs::symlink_status(folder, ec);
+        if (!ec && status.type() != fs::file_type::not_found) throw ToolError("Could not restore folder because its path is occupied: " + folder.string());
+        if (ec && ec != std::errc::no_such_file_or_directory) throw ToolError("Could not inspect folder restore path " + folder.string() + ": " + ec.message());
+        ec.clear();
+        fs::create_directories(folder.parent_path(), ec);
+        if (ec) throw ToolError("Could not restore folder parent " + folder.parent_path().string() + ": " + ec.message());
+        if (!fs::create_directory(folder, ec) || ec) throw ToolError("Could not restore folder " + folder.string() + ": " + ec.message());
+    }
+
+    std::string Label() const override { return "Delete Empty Content Folder"; }
+
+private:
+    fs::path ResolveFolder(bool require_existing) const {
+        std::error_code ec;
+        const fs::path root = fs::canonical(content_root_, ec);
+        if (ec) throw ToolError("Could not resolve Content/: " + ec.message());
+        const fs::path requested = content_root_ / relative_;
+        fs::path resolved;
+        if (require_existing) {
+            const fs::file_status status = fs::symlink_status(requested, ec);
+            if (ec) throw ToolError("Could not inspect " + requested.string() + ": " + ec.message());
+            if (!fs::is_directory(status) || fs::is_symlink(status)) throw ToolError("Not a Content folder: " + requested.string());
+            resolved = fs::canonical(requested, ec);
+        } else {
+            const fs::path parent = fs::weakly_canonical(requested.parent_path(), ec);
+            if (!ec) resolved = parent / requested.filename();
+        }
+        if (ec) throw ToolError("Could not resolve " + requested.string() + ": " + ec.message());
+        const fs::path relative = resolved.lexically_relative(root);
+        if (relative.empty() || relative == "." || relative.is_absolute()) throw ToolError("Folder must be inside Content/: " + relative_);
+        const auto first = relative.begin();
+        if (first == relative.end() || *first == fs::path("..")) throw ToolError("Folder must be inside Content/: " + relative_);
+        return resolved;
+    }
+
+    void RequireSameProject() const {
+        if (!host_->project || host_->project->paths.file.lexically_normal() != project_file_.lexically_normal()) {
+            throw ToolError("Open the project that owns this folder before undoing or redoing this action");
+        }
+    }
+
+    std::shared_ptr<AssetHost> host_;
+    fs::path project_file_;
+    fs::path content_root_;
+    std::string relative_;
+};
+
 class ProjectSettingsCommand final : public editor::ICommand {
 public:
     ProjectSettingsCommand(std::shared_ptr<AssetHost> host, fs::path project_file, ProjectSettings before, ProjectSettings after)
@@ -1593,6 +1659,79 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
              Json created = Json::array();
              for (const Folder& folder : folders) created.push_back(folder.path);
              return {{"created", folders.size()}, {"folders", std::move(created)}};
+         }});
+
+    server.AddTool(
+        {"asset_delete_folders",
+         "Delete 1-64 empty folders under Content/ as one agent-attributed undoable action. The Content/ root, non-empty folders, duplicate paths, and paths resolving outside Content/ are refused.",
+         Schema({{"folders", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "1-64 paths relative to Content/"}}}},
+                {"folders"}),
+         [host, &session](const Json& args) -> Json {
+             OpenProject& p = host->Require();
+             if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before deleting content folders");
+             if (!args["folders"].is_array() || args["folders"].empty() || args["folders"].size() > 64) {
+                 throw ToolError("\"folders\" must be a non-empty array of at most 64 paths");
+             }
+
+             std::error_code ec;
+             const fs::path content_root = fs::canonical(p.paths.content, ec);
+             if (ec) throw ToolError("Could not resolve Content/: " + ec.message());
+             struct Folder { std::string relative; fs::path canonical; };
+             std::vector<Folder> folders;
+             std::set<std::string> paths;
+             const auto is_child = [](const fs::path& child, const fs::path& parent) {
+                 const fs::path relative = child.lexically_relative(parent);
+                 if (relative.empty() || relative == "." || relative.is_absolute()) return false;
+                 const auto first = relative.begin();
+                 return first != relative.end() && *first != fs::path("..");
+             };
+             for (const Json& value : args["folders"]) {
+                 if (!value.is_string()) throw ToolError("Each folder path must be a string relative to Content/");
+                 const std::string relative = CleanRelative(value.get<std::string>());
+                 if (relative.empty()) throw ToolError("The Content/ root cannot be deleted");
+                 const fs::path requested = p.paths.content / relative;
+                 const fs::file_status status = fs::symlink_status(requested, ec);
+                 if (ec) throw ToolError("Could not inspect " + requested.string() + ": " + ec.message());
+                 if (!fs::is_directory(status) || fs::is_symlink(status)) throw ToolError("Not a real Content folder: " + relative);
+                 const fs::path canonical = fs::canonical(requested, ec);
+                 if (ec) throw ToolError("Could not resolve " + requested.string() + ": " + ec.message());
+                 if (!is_child(canonical, content_root)) throw ToolError("Folder must resolve inside Content/: " + relative);
+                 if (!paths.insert(canonical.generic_string()).second) throw ToolError("Duplicate folder path: " + relative);
+                 fs::directory_iterator entry(canonical, ec);
+                 if (ec) throw ToolError("Could not inspect folder contents " + relative + ": " + ec.message());
+                 if (entry != fs::directory_iterator()) throw ToolError("Folder is not empty: " + relative);
+                 folders.push_back({relative, canonical});
+             }
+             for (usize i = 0; i < folders.size(); ++i) {
+                 for (usize j = i + 1; j < folders.size(); ++j) {
+                     if (is_child(folders[i].canonical, folders[j].canonical) || is_child(folders[j].canonical, folders[i].canonical)) {
+                         throw ToolError("Folder paths overlap: " + folders[i].relative + " and " + folders[j].relative);
+                     }
+                 }
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Delete Empty Content Folders " + std::to_string(++next_batch_id);
+             const usize undo_count_before = session.stack.UndoCount();
+             editor::CommandContext context = session.Context();
+             session.stack.BeginTransaction(transaction_label);
+             try {
+                 for (const Folder& folder : folders) {
+                     auto command = std::make_unique<DeleteContentFolderCommand>(host, p.paths.file, p.paths.content, folder.relative);
+                     command->SetAttribution("agent");
+                     session.stack.Execute(context, std::move(command));
+                 }
+                 session.stack.EndTransaction();
+             } catch (...) {
+                 session.stack.EndTransaction();
+                 if (session.stack.UndoCount() != undo_count_before || session.stack.UndoLabel() == transaction_label) {
+                     session.stack.Undo(context);
+                 }
+                 throw;
+             }
+             Json deleted = Json::array();
+             for (const Folder& folder : folders) deleted.push_back(folder.relative);
+             return {{"deleted", folders.size()}, {"folders", std::move(deleted)}};
          }});
 
     server.AddTool({"asset_delete",
