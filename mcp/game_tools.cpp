@@ -1204,6 +1204,41 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_add_components_many",
+         "Add one default-constructed component to up to 64 unique running entities as one validated batch. The batch is refused if any entity already has the component.",
+         Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}},
+                 {"component", {{"type", "string"}, {"description", "Component name from list_component_types"}}}},
+                {"entities", "component"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be an array of 1 to 64 entity handles");
+             }
+             const ComponentId id = RequireComponent(RequireString(args, "component"));
+             if (id == GetComponentId<IdComponent>()) throw ToolError("IdComponent is managed by the running game and cannot be added directly");
+             std::vector<Entity> entities;
+             entities.reserve(args["entities"].size());
+             for (const Json& handle : args["entities"]) {
+                 if (!handle.is_string() || handle.get<std::string>().empty()) {
+                     throw ToolError("Every \"entities\" entry must be a non-empty entity handle");
+                 }
+                 const Entity entity = FindEntity(game, handle.get<std::string>());
+                 if (std::find(entities.begin(), entities.end(), entity) != entities.end()) {
+                     throw ToolError("\"entities\" must not contain the same entity more than once");
+                 }
+                 if (world.HasComponentRaw(entity, id)) {
+                     throw ToolError("Entity " + EntityKey(world, entity) + " already has " + ComponentName(id));
+                 }
+                 entities.push_back(entity);
+             }
+             for (Entity entity : entities) world.AddComponentRaw(entity, id);
+             Json results = Json::array();
+             for (Entity entity : entities) results.push_back({{"entity", EntityKey(world, entity)}, {"added", true}});
+             return {{"component", ComponentName(id)}, {"added_count", results.size()}, {"results", results}};
+         }});
+
+    server.AddTool(
         {"game_get_hierarchy",
          "Return an entity's live descendant tree in stable entity-index order. The root is included; depth and node caps bound the response.",
          Schema({{"entity", {{"type", "string"}, {"description", "GUID or #index[:generation]"}}},
