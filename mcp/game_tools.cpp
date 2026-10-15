@@ -3191,6 +3191,97 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_abilities_many",
+         "Check or control up to 64 distinct entity/ability pairs, or commit/end/cancel up to 64 distinct ability handles. Validates the complete request before applying commands; each ability can still fail its normal gameplay checks.",
+         Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                              {"items", {{"type", "object"},
+                                          {"properties", {{"entity", {{"type", "string"}}}, {"ability", {{"type", "string"}}},
+                                                           {"action", {{"type", "string"}, {"enum", Json::array({"state", "can_activate", "grant", "revoke", "activate", "commit", "end", "cancel"})}},
+                                                           {"handle", {{"type", "integer"}, {"minimum", 1}, {"maximum", std::numeric_limits<u32>::max()}}}}},
+                                          {"required", Json::array({"action"})}}}}}}},
+                {"edits"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             gas::AbilitySystem* system = gas::AbilitySystem::Active();
+             if (system == nullptr) throw ToolError("This game has no ability system (load a scene first)");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must contain 1 to 64 ability commands");
+             }
+             struct AbilityEdit {
+                 std::string action;
+                 Entity entity;
+                 std::string ability;
+                 gas::AbilityHandle handle = 0;
+             };
+             std::vector<AbilityEdit> edits;
+             edits.reserve(args["edits"].size());
+             for (const Json& item : args["edits"]) {
+                 if (!item.is_object() || !item.contains("action") || !item["action"].is_string()) throw ToolError("Every edit needs a string \"action\"");
+                 AbilityEdit edit;
+                 edit.action = item["action"].get<std::string>();
+                 const bool by_handle = edit.action == "commit" || edit.action == "end" || edit.action == "cancel";
+                 if (edit.action != "state" && edit.action != "can_activate" && edit.action != "grant" && edit.action != "revoke" &&
+                     edit.action != "activate" && !by_handle) throw ToolError("Unsupported ability action in \"edits\"");
+                 if (by_handle) {
+                     if (!item.contains("handle") || (!item["handle"].is_number_unsigned() && !item["handle"].is_number_integer())) {
+                         throw ToolError("Handle actions need a positive integer \"handle\"");
+                     }
+                     u64 raw = 0;
+                     if (item["handle"].is_number_unsigned()) raw = item["handle"].get<u64>();
+                     else {
+                         const i64 value = item["handle"].get<i64>();
+                         if (value <= 0) throw ToolError("\"handle\" must be between 1 and 4294967295");
+                         raw = static_cast<u64>(value);
+                     }
+                     if (raw == 0 || raw > std::numeric_limits<u32>::max()) throw ToolError("\"handle\" must be between 1 and 4294967295");
+                     edit.handle = static_cast<gas::AbilityHandle>(raw);
+                     if (std::find_if(edits.begin(), edits.end(), [&](const AbilityEdit& previous) { return previous.handle == edit.handle && previous.handle != 0; }) != edits.end()) {
+                         throw ToolError("Handle actions must not repeat a handle");
+                     }
+                 } else {
+                     if (!item.contains("entity") || !item["entity"].is_string() || item["entity"].get<std::string>().empty()) throw ToolError("Entity actions need a non-empty string \"entity\"");
+                     if (!item.contains("ability") || !item["ability"].is_string() || item["ability"].get<std::string>().empty()) throw ToolError("Entity actions need a non-empty string \"ability\"");
+                     edit.entity = FindEntity(game, item["entity"].get<std::string>());
+                     edit.ability = item["ability"].get<std::string>();
+                     if (std::find_if(edits.begin(), edits.end(), [&](const AbilityEdit& previous) {
+                             return previous.handle == 0 && previous.entity == edit.entity && previous.ability == edit.ability;
+                         }) != edits.end()) throw ToolError("Entity actions must not repeat an entity/ability pair");
+                 }
+                 edits.push_back(std::move(edit));
+             }
+             Json results = Json::array();
+             for (const AbilityEdit& edit : edits) {
+                 if (edit.handle != 0) {
+                     bool ok = false;
+                     if (edit.action == "commit") ok = system->Commit(edit.handle);
+                     else if (edit.action == "end") ok = system->End(edit.handle);
+                     else ok = system->Cancel(edit.handle);
+                     results.push_back({{"action", edit.action}, {"handle", edit.handle}, {"ok", ok}});
+                     continue;
+                 }
+                 const std::string entity_key = EntityKey(game.GetWorld(), edit.entity);
+                 if (edit.action == "state") {
+                     results.push_back({{"action", edit.action}, {"entity", entity_key}, {"ability", edit.ability},
+                                        {"granted", system->IsGranted(edit.entity, edit.ability)}, {"active", system->IsActive(edit.entity, edit.ability)},
+                                        {"active_count", system->ActiveCount(edit.entity)}});
+                 } else if (edit.action == "can_activate") {
+                     const gas::FailReason reason = system->CanActivate(edit.entity, edit.ability);
+                     results.push_back({{"action", edit.action}, {"entity", entity_key}, {"ability", edit.ability},
+                                        {"can_activate", reason == gas::FailReason::None}, {"reason", gas::FailReasonName(reason)}});
+                 } else if (edit.action == "grant" || edit.action == "revoke") {
+                     const bool changed = edit.action == "grant" ? system->Grant(edit.entity, edit.ability) : system->Revoke(edit.entity, edit.ability);
+                     results.push_back({{"action", edit.action}, {"entity", entity_key}, {"ability", edit.ability}, {"changed", changed},
+                                        {"granted", system->IsGranted(edit.entity, edit.ability)}, {"active", system->IsActive(edit.entity, edit.ability)}});
+                 } else {
+                     const gas::AbilitySystem::ActivateResult activated = system->TryActivate(edit.entity, edit.ability);
+                     results.push_back({{"action", edit.action}, {"entity", entity_key}, {"ability", edit.ability},
+                                        {"activated", activated.handle != 0}, {"handle", activated.handle}, {"reason", gas::FailReasonName(activated.reason)}});
+                 }
+             }
+             return {{"count", results.size()}, {"results", std::move(results)}};
+         }});
+
+    server.AddTool(
         {"game_effect",
          "Inspect active gameplay effects, apply an effect to an entity, remove one by runtime handle, or remove effects by granted tag. Effect callbacks are processed on the next game step.",
          Schema({{"action", {{"type", "string"}, {"enum", Json::array({"state", "apply", "remove", "remove_by_tag"})}},
