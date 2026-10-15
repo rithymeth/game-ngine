@@ -3001,6 +3001,51 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_set_physics2d_velocities_many",
+         "Set the 2D rigidbody velocity of up to 64 unique live entities. Validates every entity, component and finite velocity before applying any changes; preserves all other rigidbody settings.",
+         Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", {{"type", "string"}}},
+                                                        {"velocity", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}}}},
+                                        {"required", Json::array({"entity", "velocity"})}}}}}},
+                {"edits"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             if (game.Physics2D() == nullptr) throw ToolError("The loaded game has no 2D physics scene");
+             if (!args.contains("edits") || !args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be an array of 1 to 64 2D velocity edits");
+             }
+             World& world = game.GetWorld();
+             struct VelocityEdit { Entity entity; sprite2d::Vec2 velocity; };
+             std::vector<VelocityEdit> edits;
+             edits.reserve(args["edits"].size());
+             for (const Json& raw : args["edits"]) {
+                 if (!raw.is_object() || !raw.contains("entity") || !raw["entity"].is_string() || raw["entity"].get<std::string>().empty()) {
+                     throw ToolError("Every edit requires a non-empty entity handle");
+                 }
+                 if (!raw.contains("velocity") || !raw["velocity"].is_array() || raw["velocity"].size() != 2 ||
+                     !raw["velocity"][0].is_number() || !raw["velocity"][1].is_number()) {
+                     throw ToolError("Every \"velocity\" must be [x, y]");
+                 }
+                 const sprite2d::Vec2 velocity{raw["velocity"][0].get<f32>(), raw["velocity"][1].get<f32>()};
+                 if (!std::isfinite(velocity.x) || !std::isfinite(velocity.y)) throw ToolError("Velocity components must be finite");
+                 const Entity entity = FindEntity(game, raw["entity"].get<std::string>());
+                 if (std::find_if(edits.begin(), edits.end(), [entity](const VelocityEdit& edit) { return edit.entity == entity; }) != edits.end()) {
+                     throw ToolError("\"edits\" must not repeat an entity");
+                 }
+                 if (world.GetComponent<sprite2d::Rigidbody2D>(entity) == nullptr) throw ToolError("Every entity must have a Rigidbody2D component");
+                 edits.push_back({entity, velocity});
+             }
+             Json results = Json::array();
+             for (const VelocityEdit& edit : edits) {
+                 sprite2d::Rigidbody2D* body = world.GetComponent<sprite2d::Rigidbody2D>(edit.entity);
+                 body->velocity = edit.velocity;
+                 results.push_back({{"entity", EntityKey(world, edit.entity)}, {"velocity", Json::array({edit.velocity.x, edit.velocity.y})}});
+             }
+             return {{"count", results.size()}, {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
         {"game_reparent_entities_many",
          "Set or clear the parent of up to 64 unique live entities as one batch. By default parent changes retain local transforms; set preserve_world=true to retain world poses by updating local transforms. The batch validates stable parent GUIDs and the complete resulting hierarchy, and rejects cycles, excessive depth, singular transforms, or unrepresentable shear before applying.",
          Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
