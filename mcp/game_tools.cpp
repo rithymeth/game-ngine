@@ -3719,6 +3719,58 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_scale_entities_local_many",
+         "Multiply local scale independently on up to 64 unique live entities using per-entity component factors. Preserves local position and rotation; validates factors and resulting scales for the entire batch before applying.",
+         Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                              {"items", {{"type", "object"},
+                                          {"properties", {{"entity", {{"type", "string"}}},
+                                                           {"factor", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}}}},
+                                          {"required", Json::array({"entity", "factor"})}}}}}},
+                {"edits"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be an array of 1 to 64 local-scale edits");
+             }
+             struct ScaleEdit { Entity entity; Vec3 scale; };
+             std::vector<ScaleEdit> edits;
+             edits.reserve(args["edits"].size());
+             for (const Json& item : args["edits"]) {
+                 if (!item.is_object() || !item.contains("entity") || !item["entity"].is_string() || item["entity"].get<std::string>().empty()) {
+                     throw ToolError("Every \"edits\" entry must contain a non-empty string \"entity\"");
+                 }
+                 if (!item.contains("factor") || !item["factor"].is_array() || item["factor"].size() != 3 ||
+                     !item["factor"][0].is_number() || !item["factor"][1].is_number() || !item["factor"][2].is_number()) {
+                     throw ToolError("Every \"factor\" must be [x, y, z]");
+                 }
+                 const Vec3 factor(item["factor"][0].get<f32>(), item["factor"][1].get<f32>(), item["factor"][2].get<f32>());
+                 if (!std::isfinite(factor.x) || !std::isfinite(factor.y) || !std::isfinite(factor.z)) throw ToolError("\"factor\" values must be finite");
+                 const Entity entity = FindEntity(game, item["entity"].get<std::string>());
+                 if (std::find_if(edits.begin(), edits.end(), [entity](const ScaleEdit& edit) { return edit.entity == entity; }) != edits.end()) {
+                     throw ToolError("\"edits\" must not repeat an entity");
+                 }
+                 const Transform* transform = world.GetComponent<Transform>(entity);
+                 if (transform == nullptr) throw ToolError("Entity " + EntityKey(world, entity) + " has no Transform");
+                 const Vec3& current = transform->scale;
+                 const Vec3 updated(current.x * factor.x, current.y * factor.y, current.z * factor.z);
+                 if (!std::isfinite(current.x) || !std::isfinite(current.y) || !std::isfinite(current.z) ||
+                     !std::isfinite(updated.x) || !std::isfinite(updated.y) || !std::isfinite(updated.z)) {
+                     throw ToolError("Local scale multiplication produced a non-finite result for " + EntityKey(world, entity));
+                 }
+                 edits.push_back({entity, updated});
+             }
+             Json results = Json::array();
+             for (const ScaleEdit& edit : edits) {
+                 Transform* transform = world.GetComponent<Transform>(edit.entity);
+                 transform->scale = edit.scale;
+                 results.push_back({{"entity", EntityKey(world, edit.entity)},
+                                    {"scale", Json::array({edit.scale.x, edit.scale.y, edit.scale.z})}});
+             }
+             return {{"updated_count", results.size()}, {"results", results}};
+         }});
+
+    server.AddTool(
         {"game_rotate_entities_local_many",
          "Apply individual local-space quaternion deltas to up to 64 unique live entities. Preserves position and scale; validates the full request and normalizes each resulting rotation before applying.",
          Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
