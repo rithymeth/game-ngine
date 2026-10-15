@@ -619,6 +619,50 @@ void RegisterGameTools(McpServer& server) {
                     }});
 
     server.AddTool(
+        {"game_set_active_many",
+         "Set the local active state on up to 64 unique running entities through the game's lifecycle, firing enable/disable behavior. Missing Active components mean active; unchanged entities are no-ops.",
+         Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}},
+                 {"active", {{"type", "boolean"}, {"description", "The requested local active state"}}}},
+                {"entities", "active"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be an array of 1 to 64 entity handles");
+             }
+             if (!args["active"].is_boolean()) throw ToolError("\"active\" must be a boolean");
+             const bool requested_active = args["active"].get<bool>();
+             std::vector<Entity> entities;
+             entities.reserve(args["entities"].size());
+             for (const Json& handle : args["entities"]) {
+                 if (!handle.is_string() || handle.get<std::string>().empty()) {
+                     throw ToolError("Every \"entities\" entry must be a non-empty entity handle");
+                 }
+                 const Entity entity = FindEntity(game, handle.get<std::string>());
+                 if (std::find(entities.begin(), entities.end(), entity) != entities.end()) {
+                     throw ToolError("\"entities\" must not contain the same entity more than once");
+                 }
+                 entities.push_back(entity);
+             }
+             usize changed_count = 0;
+             for (Entity entity : entities) {
+                 const Active* state = world.GetComponent<Active>(entity);
+                 const bool was_active = state == nullptr || state->active;
+                 if (was_active != requested_active) {
+                     game.GetLifecycle().SetActive(entity, requested_active);
+                     ++changed_count;
+                 }
+             }
+             Json results = Json::array();
+             for (Entity entity : entities) {
+                 const Active* state = world.GetComponent<Active>(entity);
+                 results.push_back({{"entity", EntityKey(world, entity)}, {"active", state == nullptr || state->active},
+                                    {"active_in_hierarchy", IsActiveInHierarchy(world, game.Guids(), entity)}});
+             }
+             return {{"active", requested_active}, {"changed_count", changed_count}, {"results", results}};
+         }});
+
+    server.AddTool(
         {"game_input",
          "Set input for the game. Each entry of `set` is a key name (e.g. \"W\", \"Space\", \"MouseLeft\") and a value: 1 or 0 for "
          "buttons, -1..1 for axes. Values are held until changed. `mouse_delta` [dx, dy] applies to the next frame only. "
