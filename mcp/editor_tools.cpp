@@ -333,7 +333,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                     }});
 
     server.AddTool({"list_entities",
-                    "List a page of scene entities (GUID, name when present, entity index, component names, parent GUID, effective collision layer index, and local active state). Optionally filter by component, component groups that must all/any match or must not match, exact entity name, case-insensitive ASCII name substring, direct parent or roots, layer index, local active value, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND. Results are ordered by entity index and include total match count, has_more, and a continuation cursor. The cursor is not a scene snapshot; entities created in a reused index at or before it are skipped.",
+                    "List a page of scene entities (GUID, name when present, entity index, component names, parent GUID, effective collision layer index, local active state, and active-override presence). Optionally filter by component, component groups that must all/any match or must not match, exact entity name, case-insensitive ASCII name substring, direct parent or roots, layer index, local active value or override presence, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND. Results are ordered by entity index and include total match count, has_more, and a continuation cursor. The cursor is not a scene snapshot; entities created in a reused index at or before it are skipped.",
                     Schema({{"component", {{"type", "string"}, {"description", "Only entities having this component"}}},
                             {"components_all", {{"type", "array"}, {"items", {{"type", "string"}}}, {"maxItems", 32},
                                                  {"description", "Only entities that have every listed component"}}},
@@ -349,6 +349,8 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                                              {"description", "Only entities on this collision layer; entities without Layer use index 0"}}},
                             {"active", {{"type", "boolean"},
                                          {"description", "Filter by the entity's local active value; missing Active defaults to true, and parent state is not composed"}}},
+                            {"active_override", {{"type", "boolean"},
+                                                  {"description", "Filter by whether the entity has an explicit Active component"}}},
                             {"offset", {{"type", "integer"}, {"minimum", 0}, {"maximum", 1000000000},
                                          {"description", "Number of matching entities to skip (default 0)"}}},
                             {"after_entity_index", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4294967295LL},
@@ -396,6 +398,11 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         if (args.contains("active")) {
                             if (!args["active"].is_boolean()) throw ToolError("\"active\" must be a boolean");
                             active_filter = args["active"].get<bool>();
+                        }
+                        std::optional<bool> active_override_filter;
+                        if (args.contains("active_override")) {
+                            if (!args["active_override"].is_boolean()) throw ToolError("\"active_override\" must be a boolean");
+                            active_override_filter = args["active_override"].get<bool>();
                         }
                         usize offset = 0;
                         if (args.contains("offset")) {
@@ -500,6 +507,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                             const Active* active = s.world.GetComponent<Active>(e);
                             const bool entity_active = active == nullptr || active->active;
                             if (active_filter.has_value() && entity_active != *active_filter) continue;
+                            if (active_override_filter.has_value() && (active != nullptr) != *active_override_filter) continue;
                             if (filter != kInvalidComponentId && !s.world.HasComponentRaw(e, filter)) {
                                 continue;
                             }
