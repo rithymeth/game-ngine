@@ -6,7 +6,7 @@ namespace aether::gfx::rhi {
 
 class ISwapChain;
 
-// Backend-agnostic command recording. Two tiers:
+// Backend-agnostic command recording. Three tiers:
 //
 //  - Reset/Close/TransitionTexture/ClearRenderTarget/SetViewportAndScissor:
 //    the original swapchain present/clear lifecycle — clear-to-color, no
@@ -25,6 +25,9 @@ class ISwapChain;
 //    backend-specific (rhi_demo's cube mode, with real vertex buffers and a
 //    depth buffer, still uses each backend's NativeHandle() escape hatch
 //    directly).
+//  - BindComputePipeline/BindComputeStorageBuffer/BindComputeSampledTexture/
+//    BindComputeConstantBuffer/Dispatch: structured/raw-buffer compute
+//    kernels with sampled-texture reads shared by D3D12 and Vulkan.
 class ICommandList {
 public:
     virtual ~ICommandList() = default;
@@ -62,13 +65,21 @@ public:
     // Real vertex/index buffers + bindless textures (the "Unified Cross-API
     // Renderer" follow-up) — must be called after BindPipeline, with a
     // pipeline created with use_vertex_buffer/enable_bindless_textures set
-    // accordingly. `stride_bytes` must match the fixed { float3 position;
-    // float2 uv; } layout PipelineDesc::use_vertex_buffer bakes into the
-    // pipeline (both backends assert this rather than silently misreading
-    // vertex data at the wrong stride).
+    // accordingly. `stride_bytes` must match the selected
+    // PipelineDesc::vertex_layout baked into the pipeline (both backends
+    // reject a mismatch rather than silently misreading vertex data).
     virtual void BindVertexBuffer(BufferHandle buffer, u32 stride_bytes) = 0;
     virtual void BindIndexBuffer(BufferHandle buffer, IndexFormat format) = 0;
     virtual void DrawIndexed(u32 index_count) = 0;
+
+    // Compute dispatch. BindComputePipeline must precede Dispatch; dimensions
+    // are workgroup counts and must be non-zero.
+    virtual void BindComputePipeline(ComputePipelineHandle pipeline) = 0;
+    virtual void BindComputeStorageBuffer(u32 slot, BufferHandle buffer) = 0;
+    virtual void BindComputeSampledTexture(u32 slot, SampledTextureHandle texture) = 0;
+    virtual void BindComputeConstantBuffer(u32 slot, BufferHandle buffer) = 0;
+    virtual void ComputeBufferBarrier(BufferHandle buffer) = 0;
+    virtual void Dispatch(u32 groups_x, u32 groups_y = 1, u32 groups_z = 1) = 0;
 
     // Binds the device-global bindless texture table (IDevice::CreateTexture)
     // for the currently-bound pipeline (must have been created with

@@ -71,6 +71,7 @@ public:
                            const std::string& merge_key = {});
     bool AddService(const BtPath& path, ai::BtServiceType type);
     bool RemoveService(const BtPath& path, usize index);
+    bool MoveService(const BtPath& path, usize from, usize to);
     nlohmann::json ServiceJson(const BtPath& path, usize index) const;
     bool SetServiceField(const BtPath& path, usize index, const std::string& key, const nlohmann::json& value, std::string* error = nullptr,
                          const std::string& merge_key = {});

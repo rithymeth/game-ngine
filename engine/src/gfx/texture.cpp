@@ -84,17 +84,19 @@ Texture::Texture(Device& device, DescriptorHeap& bindless_heap, ID3D12GraphicsCo
         TransitionBarrier(resource_.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     upload_cmd->ResourceBarrier(1, &barrier);
 
-    bindless_index_ = bindless_heap.Allocate();
-    if (bindless_index_ == DescriptorHeap::kInvalidIndex) {
-        AETHER_LOG_ERROR("Texture", "Cannot create texture: bindless descriptor allocation failed");
-        throw std::length_error("Cannot create texture: bindless descriptor allocation failed");
-    }
     D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc{};
     srv_desc.Format = tex_desc.Format;
     srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
     srv_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     srv_desc.Texture2D.MipLevels = 1;
-    device.Handle()->CreateShaderResourceView(resource_.Get(), &srv_desc, bindless_heap.CPUHandle(bindless_index_));
+    device.WithQueuesIdle([&] {
+        bindless_index_ = bindless_heap.Allocate();
+        if (bindless_index_ == DescriptorHeap::kInvalidIndex) {
+            AETHER_LOG_ERROR("Texture", "Cannot create texture: bindless descriptor allocation failed");
+            throw std::length_error("Cannot create texture: bindless descriptor allocation failed");
+        }
+        device.Handle()->CreateShaderResourceView(resource_.Get(), &srv_desc, bindless_heap.CPUHandle(bindless_index_));
+    });
 }
 
 Texture::Texture(Device& device, DescriptorHeap& bindless_heap, ID3D12GraphicsCommandList* upload_cmd, DXGI_FORMAT format, u32 width, u32 height,

@@ -1,8 +1,11 @@
 # Platform plugins
 
-Windows, Linux and macOS are built in. Any other platform (Android, a
-console) plugs in from outside the engine as a **platform plugin**: a
-directory with a `CMakeLists.txt` that calls `aether_platform_plugin()`
+Windows, Linux and macOS have built-in engine configurations, but that does not
+mean each is a supported release target. Current release priorities and the
+gates for promoting a platform are in
+[Platform Support Priorities](../docs/design/PLATFORM_SUPPORT_POLICY.md).
+Other platforms (Android, a console) can plug in from outside the engine as a
+**platform plugin**: a directory with a `CMakeLists.txt` that calls `aether_platform_plugin()`
 (from `cmake/AetherPlatform.cmake`), plus the code that registers it with
 `AETHER_PLATFORM_PLUGIN`. Console plugins live in private repositories
 (their SDKs are under NDA); only the extension point is here.
@@ -28,7 +31,10 @@ All optional, in `aether::PlatformPlugin` (`aether/platform/platform_plugin.h`):
 its startups and reports a user data directory. Linux CI builds it into the
 tests, which check it registered.
 
-## Android
+## Android extension notes
+
+The notes below describe potentially reusable engine pieces; they do not
+represent a supported or validated Android target.
 
 The pieces Android needs already exist:
 

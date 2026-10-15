@@ -40,6 +40,8 @@ Buffer::Buffer(Device& device, u64 size_bytes, BufferKind kind, bool allow_uav)
         initial_state = D3D12_RESOURCE_STATE_GENERIC_READ;
     } else if (kind == BufferKind::Readback) {
         initial_state = D3D12_RESOURCE_STATE_COPY_DEST;
+    } else if (allow_uav) {
+        initial_state = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     }
 
     AETHER_D3D_CHECK(device.Handle()->CreateCommittedResource(&heap_props, D3D12_HEAP_FLAG_NONE, &desc, initial_state,

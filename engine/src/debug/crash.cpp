@@ -184,7 +184,7 @@ int CaptureFrames(void** frames, int max) {
 #endif
 }
 
-void Report(const char* reason, int signal, u64 address) {
+u64 Report(const char* reason, int signal, u64 address) {
     char stem[kPathSize], path[kPathSize + 8];
     const u64 when = static_cast<u64>(std::time(nullptr));
     ReportStem(stem, sizeof(stem), when);
@@ -193,6 +193,7 @@ void Report(const char* reason, int signal, u64 address) {
     void* frames[64];
     const int n = CaptureFrames(frames, 64);
     WriteReportFile(path, reason, signal, address, when, frames, n);
+    return when;
 }
 
 // --- Handlers ----------------------------------------------------------------------------------------
@@ -231,10 +232,10 @@ LONG WINAPI OnUnhandled(EXCEPTION_POINTERS* info) {
                          : code == EXCEPTION_INT_DIVIDE_BY_ZERO    ? "integer divide by zero"
                          : code == EXCEPTION_ILLEGAL_INSTRUCTION   ? "illegal instruction"
                                                                    : "unhandled exception";
-    Report(reason, static_cast<int>(code), address);
+    const u64 when = Report(reason, static_cast<int>(code), address);
     if (s.minidump) {
         char stem[kPathSize], path[kPathSize + 8];
-        ReportStem(stem, sizeof(stem), static_cast<u64>(std::time(nullptr)));
+        ReportStem(stem, sizeof(stem), when);
         Copy(path, sizeof(path), stem);
         std::strncat(path, ".dmp", sizeof(path) - std::strlen(path) - 1);
         HANDLE file = CreateFileA(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);

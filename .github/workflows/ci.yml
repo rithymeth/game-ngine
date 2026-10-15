@@ -115,8 +115,8 @@ jobs:
       - name: Registered regression tests
         run: ctest --test-dir build --output-on-failure --parallel 4 -R "^(fuzz_replay_.*|module_graph_catches_a_cycle|api_stability_annotations|api_freeze_checks|frozen_api_game|production_gate_table|m8_gate_table)$"
       - name: Benchmarks
-        # Phase 38 steps 1 and 6: the report is kept as an artifact, and compared with the checked-in
-        # baseline (bench/baseline.json) by calibration-normalized time. Advisory (continue-on-error)
+        # Phase 38 steps 1 and 6: retain a provenance-tagged report artifact, and compare with the checked-in
+        # baseline (bench/baseline.json) by calibration-normalized time. Comparison is advisory (continue-on-error)
         # until the thresholds have held for a couple of weeks; then it becomes required.
         if: matrix.name == 'GCC'
         continue-on-error: true
@@ -127,7 +127,7 @@ jobs:
         with:
           name: bench-report
           path: bench-report.json
-          if-no-files-found: ignore
+          if-no-files-found: error
       - name: Pack the assets
         # Phase 25: assets/ into an .apak archive and back, byte for byte.
         if: matrix.name == 'GCC'
@@ -487,6 +487,36 @@ jobs:
           path: functional-results.xml
           if-no-files-found: ignore
 
+  windows-package-validation:
+    name: Windows packaged editor (clean runner)
+    needs: windows
+    runs-on: windows-2022
+    steps:
+      - name: Download the packaged editor
+        uses: actions/download-artifact@v4
+        with:
+          name: AetherEditor-windows-x64
+          path: artifact
+      - name: Extract and launch without the source checkout
+        shell: pwsh
+        run: |
+          $packageRoot = Join-Path $env:RUNNER_TEMP 'AetherEditor-package'
+          $emptyWorkingDirectory = Join-Path $env:RUNNER_TEMP 'AetherEditor-empty-cwd'
+          New-Item -ItemType Directory -Force -Path $packageRoot, $emptyWorkingDirectory | Out-Null
+          Expand-Archive artifact/AetherEditor-windows-x64.zip -DestinationPath $packageRoot -Force
+          $editor = Join-Path $packageRoot 'AetherEditor.exe'
+          if (-not (Test-Path -LiteralPath $editor -PathType Leaf)) { throw 'Packaged AetherEditor.exe is missing' }
+          $originalPath = $env:PATH
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          Push-Location $emptyWorkingDirectory
+          try {
+            & $editor --self-test
+            if ($LASTEXITCODE -ne 0) { throw "Packaged Qt editor self-test failed with exit code $LASTEXITCODE" }
+          } finally {
+            Pop-Location
+            $env:PATH = $originalPath
+          }
+
   # Phase 37 step 6 (docs/design/UPGRADE_PLAN.md): extra analysis gates. They are advisory
   # (continue-on-error) until they have been clean for a while, then they become required.
   tsan:
@@ -632,7 +662,7 @@ jobs:
     # A pushed v* tag, or a manual run given a release_tag (which creates
     # the tag on the commit it built).
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
-    needs: [linux, macos, windows]
+    needs: [linux, macos, windows, windows-package-validation]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

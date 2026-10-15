@@ -18,9 +18,11 @@ public:
     // Creates a DEFAULT-heap 2D RGBA8 texture and uploads `pixels` (tightly
     // packed, width * height * 4 bytes) via a temporary UPLOAD-heap staging
     // buffer, recorded onto `upload_cmd` (the caller submits it and waits on
-    // the fence before the texture is sampled). Keep the upload staging buffer
-    // until that fence completes, then call ReleaseUploadStaging() so it does
-    // not occupy GPU memory for the texture's full lifetime.
+    // the fence before the texture is sampled). The SRV is written only while
+    // both queues are idle because the full bindless heap can be referenced by
+    // in-flight work. Keep the upload staging buffer until that fence completes,
+    // then call ReleaseUploadStaging() so it does not occupy GPU memory for the
+    // texture's full lifetime.
     Texture(Device& device, DescriptorHeap& bindless_heap, ID3D12GraphicsCommandList* upload_cmd, u32 width,
             u32 height, const u8* pixels);
 

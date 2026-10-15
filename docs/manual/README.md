@@ -1,10 +1,11 @@
 # The Aether manual
 
-How to make a game with Aether, in the order you'll need it. The chapters
-describe what is built today; the build specs in [../design](../design) say how
-it works inside.
+How to make a game with Aether, in the order you'll need it. Start with the
+[first playable build](01-getting-started.md), then use the chapters below as
+the workflow grows. The chapters describe current capabilities; build specs in
+[../design](../design) describe how they work inside.
 
-1. [Getting started](01-getting-started.md): get the editor, make a project from a template, play it.
+1. [Getting started](01-getting-started.md): build and play the Coin Run sample from a clean Windows checkout.
 2. [Projects and assets](02-projects-and-assets.md): the folders, GUIDs, scenes, prefabs, and what the asset database does.
 3. [Scripting](03-scripting.md): Luau scripts and Blueprints.
 4. [Input](04-input.md): actions, mapping contexts and bindings.

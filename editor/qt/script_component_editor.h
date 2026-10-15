@@ -19,7 +19,9 @@ namespace aether::editor::qt {
 
 class ScriptComponentEditor final : public QGroupBox {
 public:
-    explicit ScriptComponentEditor(SceneDocument& document, std::function<void()> changed, QWidget* parent = nullptr);
+    explicit ScriptComponentEditor(SceneDocument& document, std::function<void()> changed,
+                                   std::function<void(const std::filesystem::path&)> open_script,
+                                   QWidget* parent = nullptr);
     ~ScriptComponentEditor() override;
 
     void SetContentRoot(const std::filesystem::path& content_root);
@@ -36,6 +38,7 @@ private:
 
     SceneDocument& document_;
     std::function<void()> changed_;
+    std::function<void(const std::filesystem::path&)> open_script_;
     Entity entity_ = kNullEntity;
     std::filesystem::path content_root_;
     std::unique_ptr<assets::AssetDatabase> database_;
