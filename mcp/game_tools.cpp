@@ -1114,6 +1114,82 @@ void RegisterGameTools(McpServer& server) {
                     }});
 
     server.AddTool(
+        {"game_get_hierarchy",
+         "Return an entity's live descendant tree in stable entity-index order. The root is included; depth and node caps bound the response.",
+         Schema({{"entity", {{"type", "string"}, {"description", "GUID or #index[:generation]"}}},
+                 {"max_depth", {{"type", "integer"}, {"minimum", 1}, {"maximum", kMaxHierarchyDepth}, {"description", "Maximum descendant depth (default 8)"}}},
+                 {"max_nodes", {{"type", "integer"}, {"minimum", 1}, {"maximum", 1000}, {"description", "Maximum total nodes including the root (default 200)"}}}},
+                {"entity"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             const Entity root = RequireEntity(game, args);
+             usize max_depth = 8;
+             if (args.contains("max_depth")) {
+                 if (!args["max_depth"].is_number_integer()) throw ToolError("\"max_depth\" must be an integer from 1 to 64");
+                 const i64 requested = args["max_depth"].get<i64>();
+                 if (requested < 1 || requested > kMaxHierarchyDepth) throw ToolError("\"max_depth\" must be an integer from 1 to 64");
+                 max_depth = static_cast<usize>(requested);
+             }
+             usize max_nodes = 200;
+             if (args.contains("max_nodes")) {
+                 if (!args["max_nodes"].is_number_integer()) throw ToolError("\"max_nodes\" must be an integer from 1 to 1000");
+                 const i64 requested = args["max_nodes"].get<i64>();
+                 if (requested < 1 || requested > 1000) throw ToolError("\"max_nodes\" must be an integer from 1 to 1000");
+                 max_nodes = static_cast<usize>(requested);
+             }
+             usize remaining_nodes = max_nodes;
+             auto metadata = [&](Entity entity) -> Json {
+                 Json tags = Json::array();
+                 if (const Tags* entity_tags = world.GetComponent<Tags>(entity)) {
+                     for (const std::string& tag : entity_tags->names) tags.push_back(tag);
+                 }
+                 const EntityName* name = world.GetComponent<EntityName>(entity);
+                 const Active* active = world.GetComponent<Active>(entity);
+                 Json node = {{"entity", EntityKey(world, entity)}, {"entity_index", entity.index},
+                              {"entity_generation", entity.generation}, {"tags", tags},
+                              {"active", active == nullptr || active->active},
+                              {"active_in_hierarchy", IsActiveInHierarchy(world, game.Guids(), entity)}};
+                 if (name != nullptr) node["name"] = name->value;
+                 return node;
+             };
+             std::vector<Entity> path{root};
+             auto build = [&](auto&& self, Entity parent, usize depth) -> Json {
+                 Json node = metadata(parent);
+                 Json children_json = Json::array();
+                 const std::vector<Entity> children = ChildrenOf(world, game.Guids(), parent);
+                 if (depth >= max_depth) {
+                     if (!children.empty()) node["truncated"] = true;
+                     node["children"] = std::move(children_json);
+                     return node;
+                 }
+                 for (Entity child : children) {
+                     if (remaining_nodes == 0) {
+                         node["truncated"] = true;
+                         break;
+                     }
+                     if (std::find(path.begin(), path.end(), child) != path.end()) {
+                         --remaining_nodes;
+                         Json cycle = metadata(child);
+                         cycle["cycle"] = true;
+                         children_json.push_back(std::move(cycle));
+                         continue;
+                     }
+                     --remaining_nodes;
+                     path.push_back(child);
+                     children_json.push_back(self(self, child, depth + 1));
+                     path.pop_back();
+                 }
+                 node["children"] = std::move(children_json);
+                 return node;
+             };
+             // The root consumes one slot, even though it is always returned.
+             --remaining_nodes;
+             Json tree = build(build, root, 0);
+             return {{"max_depth", max_depth}, {"max_nodes", max_nodes}, {"tree", std::move(tree)}};
+         }});
+
+    server.AddTool(
         {"game_set_component",
          "Change fields of a component on a running entity (partial update: only the fields named change). Not undoable; "
          "gone when the game is reloaded.",
