@@ -592,17 +592,24 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
 
     server.AddTool(
         {"duplicate_entities",
-         "Duplicate 1–64 unique entities as one undoable action. Each duplicate copies reflected components and keeps its source's parent; children are not copied and entity GUID references in component values stay unchanged.",
-         Schema({{"entities", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "1–64 unique entity GUIDs"}}}}, {"entities"}),
+         "Duplicate 1–64 unique entities as one undoable action. Each duplicate copies reflected components and keeps its source's parent; children are not copied. Set preserve_hierarchy to true to reconnect selected children to their duplicated parents. Entity GUID references in component values stay unchanged.",
+         Schema({{"entities", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "1–64 unique entity GUIDs"}}},
+                 {"preserve_hierarchy", {{"type", "boolean"}, {"description", "When true, preserve parent links whose parent is also in the selection; defaults to false"}}}},
+                {"entities"}),
          [&s](const Json& args) -> Json {
              if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before duplicating entities");
              if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
                  throw ToolError("\"entities\" must be a non-empty array of at most 64 GUIDs");
              }
+             if (args.contains("preserve_hierarchy") && !args["preserve_hierarchy"].is_boolean()) {
+                 throw ToolError("\"preserve_hierarchy\" must be true or false");
+             }
+             const bool preserve_hierarchy = args.value("preserve_hierarchy", false);
 
              struct DuplicateSpec {
                  EntityGuid source_guid;
                  EntityGuid parent;
+                 EntityGuid duplicate_guid;
                  std::vector<std::pair<ComponentId, Json>> components;
              };
              std::vector<DuplicateSpec> specs;
@@ -629,15 +636,50 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                  specs.push_back(std::move(spec));
              }
 
+             std::vector<std::optional<usize>> parent_indices(specs.size());
+             std::vector<std::vector<usize>> children(specs.size());
+             std::vector<usize> indegree(specs.size(), 0);
+             if (preserve_hierarchy) {
+                 for (usize child_index = 0; child_index < specs.size(); ++child_index) {
+                     if (specs[child_index].parent.IsNull()) continue;
+                     const auto parent = std::find_if(specs.begin(), specs.end(), [&](const DuplicateSpec& candidate) {
+                         return candidate.source_guid == specs[child_index].parent;
+                     });
+                     if (parent == specs.end()) continue;
+                     const usize parent_index = static_cast<usize>(std::distance(specs.begin(), parent));
+                     parent_indices[child_index] = parent_index;
+                     children[parent_index].push_back(child_index);
+                     indegree[child_index] = 1;
+                 }
+             }
+
+             std::vector<usize> creation_order;
+             creation_order.reserve(specs.size());
+             for (usize index = 0; index < specs.size(); ++index) {
+                 if (indegree[index] == 0) creation_order.push_back(index);
+             }
+             for (usize cursor = 0; cursor < creation_order.size(); ++cursor) {
+                 for (const usize child_index : children[creation_order[cursor]]) {
+                     if (--indegree[child_index] == 0) creation_order.push_back(child_index);
+                 }
+             }
+             if (creation_order.size() != specs.size()) throw ToolError("The selected entities contain a cycle in their parent links");
+
+             for (DuplicateSpec& spec : specs) spec.duplicate_guid = NewEntityGuid();
+             for (usize index = 0; index < specs.size(); ++index) {
+                 if (parent_indices[index]) specs[index].parent = specs[*parent_indices[index]].duplicate_guid;
+             }
+
              static std::atomic<std::uint64_t> next_batch_id{0};
              const std::string transaction_label = "Duplicate Entities " + std::to_string(++next_batch_id);
              const usize undo_count_before = s.stack.UndoCount();
              editor::CommandContext ctx = s.Context();
-             Json results = Json::array();
+             std::vector<Json> result_rows(specs.size());
              s.stack.BeginTransaction(transaction_label);
              try {
-                 for (const DuplicateSpec& spec : specs) {
-                     const EntityGuid guid = NewEntityGuid();
+                 for (const usize spec_index : creation_order) {
+                     const DuplicateSpec& spec = specs[spec_index];
+                     const EntityGuid guid = spec.duplicate_guid;
                      Entity duplicate = s.world.CreateEntity(IdComponent{guid});
                      s.guids.Add(guid, duplicate);
                      try {
@@ -654,7 +696,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                          if (!spec.parent.IsNull()) s.world.AddComponent(duplicate, Parent{spec.parent});
                          Json row = {{"source", ToString(spec.source_guid)}, {"entity", EntityJson(s, duplicate)}};
                          if (!warnings.empty()) row["warnings"] = std::move(warnings);
-                         results.push_back(std::move(row));
+                         result_rows[spec_index] = std::move(row);
                          auto command = editor::CreateEntityCommand::FromExisting(ctx, duplicate);
                          command->SetAttribution("agent");
                          s.stack.Record(std::move(command));
@@ -670,6 +712,8 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                  if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
                  throw;
              }
+             Json results = Json::array();
+             for (Json& row : result_rows) results.push_back(std::move(row));
              return {{"duplicated", results.size()}, {"results", std::move(results)}};
          }});
 
