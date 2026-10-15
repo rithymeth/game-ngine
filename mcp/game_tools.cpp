@@ -5170,6 +5170,113 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_scale_entities_world_many",
+         "Multiply world-scale magnitudes using per-entity non-negative component factors on up to 64 unique live entities. Preserves local position and rotation and local mirror signs; validates hierarchies, parent bases and results before applying the batch.",
+         Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                              {"items", {{"type", "object"},
+                                          {"properties", {{"entity", {{"type", "string"}}},
+                                                           {"factor", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}}}},
+                                          {"required", Json::array({"entity", "factor"})}}}}}},
+                {"edits"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be an array of 1 to 64 world-scale edits");
+             }
+             struct ScaleEdit { Entity entity; Vec3 factor; Vec3 before; Vec3 local_scale; Vec3 after; };
+             std::vector<ScaleEdit> edits;
+             edits.reserve(args["edits"].size());
+             for (const Json& item : args["edits"]) {
+                 if (!item.is_object() || !item.contains("entity") || !item["entity"].is_string() || item["entity"].get<std::string>().empty()) {
+                     throw ToolError("Every \"edits\" entry must contain a non-empty string \"entity\"");
+                 }
+                 if (!item.contains("factor") || !item["factor"].is_array() || item["factor"].size() != 3 ||
+                     !item["factor"][0].is_number() || !item["factor"][1].is_number() || !item["factor"][2].is_number()) {
+                     throw ToolError("Every \"factor\" must be [x, y, z]");
+                 }
+                 const Vec3 factor(item["factor"][0].get<f32>(), item["factor"][1].get<f32>(), item["factor"][2].get<f32>());
+                 if (!std::isfinite(factor.x) || !std::isfinite(factor.y) || !std::isfinite(factor.z) || factor.x < 0.0f || factor.y < 0.0f || factor.z < 0.0f) {
+                     throw ToolError("\"factor\" must contain finite non-negative magnitudes");
+                 }
+                 const Entity entity = FindEntity(game, item["entity"].get<std::string>());
+                 if (std::find_if(edits.begin(), edits.end(), [entity](const ScaleEdit& edit) { return edit.entity == entity; }) != edits.end()) {
+                     throw ToolError("\"edits\" must not repeat an entity");
+                 }
+                 if (world.GetComponent<Transform>(entity) == nullptr) throw ToolError("Entity " + EntityKey(world, entity) + " has no Transform");
+                 edits.push_back({entity, factor, {}, {}, {}});
+             }
+             for (const ScaleEdit& edit : edits) {
+                 Entity current = GetParent(world, game.Guids(), edit.entity);
+                 std::vector<Entity> seen;
+                 for (int depth = 0; !current.IsNull(); ++depth) {
+                     if (depth >= kMaxHierarchyDepth) throw ToolError("Entity hierarchy exceeds the supported depth");
+                     if (current == edit.entity || std::find(seen.begin(), seen.end(), current) != seen.end()) throw ToolError("Entity hierarchy contains a cycle");
+                     if (std::find_if(edits.begin(), edits.end(), [current](const ScaleEdit& other) { return other.entity == current; }) != edits.end()) {
+                         throw ToolError("\"edits\" must not include both an entity and one of its ancestors");
+                     }
+                     seen.push_back(current);
+                     current = GetParent(world, game.Guids(), current);
+                 }
+             }
+             for (ScaleEdit& edit : edits) {
+                 const Transform* transform = world.GetComponent<Transform>(edit.entity);
+                 const Quaternion& rotation = transform->rotation;
+                 if (!std::isfinite(transform->scale.x) || !std::isfinite(transform->scale.y) || !std::isfinite(transform->scale.z) ||
+                     !std::isfinite(rotation.x) || !std::isfinite(rotation.y) || !std::isfinite(rotation.z) || !std::isfinite(rotation.w) ||
+                     !std::isfinite(rotation.LengthSq()) || rotation.LengthSq() <= 1.0e-12f) throw ToolError("Entity has an invalid local transform");
+                 const Entity parent = GetParent(world, game.Guids(), edit.entity);
+                 Mat4 parent_world = Mat4::Identity();
+                 if (!parent.IsNull() && world.GetComponent<Transform>(parent) != nullptr) parent_world = ComputeWorldTransform(world, game.Guids(), parent);
+                 for (const Vec4& column : parent_world.cols) {
+                     if (!std::isfinite(column.x) || !std::isfinite(column.y) || !std::isfinite(column.z) || !std::isfinite(column.w)) throw ToolError("Cannot scale through a non-finite parent transform");
+                 }
+                 Transform unit_transform = *transform;
+                 unit_transform.rotation = rotation.Normalized();
+                 unit_transform.scale = Vec3(1.0f, 1.0f, 1.0f);
+                 const Mat4 unit_world = parent_world * LocalTransformMatrix(unit_transform);
+                 const Mat4 current_world = parent_world * LocalTransformMatrix(*transform);
+                 const f32 unit_basis[3] = {
+                     Vec3(unit_world.cols[0].x, unit_world.cols[0].y, unit_world.cols[0].z).Length(),
+                     Vec3(unit_world.cols[1].x, unit_world.cols[1].y, unit_world.cols[1].z).Length(),
+                     Vec3(unit_world.cols[2].x, unit_world.cols[2].y, unit_world.cols[2].z).Length()};
+                 const f32 current_basis[3] = {
+                     Vec3(current_world.cols[0].x, current_world.cols[0].y, current_world.cols[0].z).Length(),
+                     Vec3(current_world.cols[1].x, current_world.cols[1].y, current_world.cols[1].z).Length(),
+                     Vec3(current_world.cols[2].x, current_world.cols[2].y, current_world.cols[2].z).Length()};
+                 const f32 factors[3] = {edit.factor.x, edit.factor.y, edit.factor.z};
+                 const f32 signs[3] = {transform->scale.x < 0.0f ? -1.0f : 1.0f, transform->scale.y < 0.0f ? -1.0f : 1.0f,
+                                       transform->scale.z < 0.0f ? -1.0f : 1.0f};
+                 f32 target[3]{};
+                 f32 local[3]{};
+                 for (int axis = 0; axis < 3; ++axis) {
+                     if (!std::isfinite(unit_basis[axis]) || !std::isfinite(current_basis[axis])) throw ToolError("Entity has a non-finite world basis");
+                     target[axis] = current_basis[axis] * factors[axis];
+                     if (!std::isfinite(target[axis])) throw ToolError("World scale multiplication produced a non-finite result");
+                     if (unit_basis[axis] <= 1.0e-12f) {
+                         if (target[axis] > 0.0f) throw ToolError("Cannot scale a world axis collapsed by the parent transform");
+                         local[axis] = 0.0f;
+                     } else {
+                         local[axis] = signs[axis] * target[axis] / unit_basis[axis];
+                         if (!std::isfinite(local[axis]) || (target[axis] > 0.0f && local[axis] == 0.0f)) throw ToolError("World scale would produce an invalid local scale");
+                     }
+                 }
+                 edit.before = Vec3(current_basis[0], current_basis[1], current_basis[2]);
+                 edit.after = Vec3(target[0], target[1], target[2]);
+                 edit.local_scale = Vec3(local[0], local[1], local[2]);
+             }
+             Json results = Json::array();
+             for (const ScaleEdit& edit : edits) {
+                 world.GetComponent<Transform>(edit.entity)->scale = edit.local_scale;
+                 results.push_back({{"entity", EntityKey(world, edit.entity)},
+                                    {"previous_world_scale", Json::array({edit.before.x, edit.before.y, edit.before.z})},
+                                    {"world_scale", Json::array({edit.after.x, edit.after.y, edit.after.z})},
+                                    {"local_scale", Json::array({edit.local_scale.x, edit.local_scale.y, edit.local_scale.z})}});
+             }
+             return {{"updated_count", results.size()}, {"results", results}};
+         }});
+
+    server.AddTool(
         {"game_destroy_entities_many",
          "Destroy up to 64 unique live entity roots through the lifecycle (OnDestroy runs for each root and descendant). The complete selection is validated first; overlapping ancestor/descendant roots are rejected.",
          Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}}},
