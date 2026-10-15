@@ -3212,7 +3212,41 @@ void RegisterGameTools(McpServer& server) {
          }});
 #endif
 
- #if AETHER_MCP_PHYSICS
+#if AETHER_MCP_PHYSICS
+    server.AddTool(
+        {"game_physics3d_settings",
+         "Read the global gravity vector for the loaded game's 3D physics world.",
+         Schema(Json::object()),
+         [host](const Json&) -> Json {
+             Game& game = host->Require();
+             PhysicsScene* scene = game.PhysicsQueries();
+             if (scene == nullptr) throw ToolError("The loaded game has no 3D physics scene");
+             const Vec3 gravity = scene->Physics().GetGravity();
+             return {{"gravity", Json::array({gravity.x, gravity.y, gravity.z})}, {"body_count", scene->BodyCount()}};
+         }});
+
+    server.AddTool(
+        {"game_set_physics3d_settings",
+         "Update the global gravity vector for the loaded game's 3D physics world.",
+         Schema({{"gravity", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}}}, {"gravity"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             PhysicsScene* scene = game.PhysicsQueries();
+             if (scene == nullptr) throw ToolError("The loaded game has no 3D physics scene");
+             const Json& value = args["gravity"];
+             if (!value.is_array() || value.size() != 3 || !value[0].is_number() || !value[1].is_number() || !value[2].is_number()) {
+                 throw ToolError("\"gravity\" must be [x, y, z]");
+             }
+             const Vec3 gravity(value[0].get<f32>(), value[1].get<f32>(), value[2].get<f32>());
+             if (!std::isfinite(gravity.x) || !std::isfinite(gravity.y) || !std::isfinite(gravity.z)) {
+                 throw ToolError("Gravity components must be finite");
+             }
+             scene->Physics().SetGravity(gravity);
+             return {{"gravity", Json::array({gravity.x, gravity.y, gravity.z})}};
+         }});
+#endif
+
+#if AETHER_MCP_PHYSICS
     server.AddTool(
         {"game_set_physics3d_velocities_many",
          "Partially set linear and/or angular velocity for up to 64 unique live 3D physics bodies. Validates the full batch before applying it.",
