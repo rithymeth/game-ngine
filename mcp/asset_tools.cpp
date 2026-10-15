@@ -1526,6 +1526,84 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
                         return {{"deleted", path}};
                     }});
 
+    server.AddTool(
+        {"asset_delete_many",
+         "Delete 1-64 assets (by Content/ path or GUID) as one agent-attributed undoable action. Assets that reference one another may be deleted together; references from outside the selection are refused unless `force` is true.",
+         Schema({{"assets", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "1-64 asset paths or GUIDs"}}},
+                 {"force", {{"type", "boolean"}, {"description", "Also delete assets with referencers outside the selection"}}}},
+                {"assets"}),
+         [host, &session](const Json& args) -> Json {
+             OpenProject& p = host->Require();
+             if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before deleting assets");
+             if (!args["assets"].is_array() || args["assets"].empty() || args["assets"].size() > 64) {
+                 throw ToolError("\"assets\" must be a non-empty array of at most 64 paths or GUIDs");
+             }
+
+             struct Target { assets::AssetGuid guid; std::string path; };
+             std::vector<Target> targets;
+             std::set<std::string> selected_guids;
+             for (const Json& value : args["assets"]) {
+                 if (!value.is_string()) throw ToolError("Each entry in \"assets\" must be a path or GUID string");
+                 const AssetRecord& record = FindAsset(p, value.get<std::string>());
+                 if (record.IsSubAsset()) throw ToolError(record.path + " is part of another asset; delete its source instead");
+                 const std::string guid = assets::ToString(record.guid);
+                 if (!selected_guids.insert(guid).second) throw ToolError("Duplicate asset in selection: " + record.path);
+                 targets.push_back({record.guid, record.path});
+             }
+
+             std::set<std::string> selected_owned_guids = selected_guids;
+             for (const Target& target : targets) {
+                 const AssetRecord* record = p.database->Find(target.guid);
+                 if (record == nullptr) throw ToolError("Asset disappeared while validating: " + target.path);
+                 for (const assets::AssetGuid& sub_asset : record->sub_assets) selected_owned_guids.insert(assets::ToString(sub_asset));
+             }
+             std::set<std::string> external_referencers;
+             const auto collect_external_referencers = [&](const assets::AssetGuid& guid) {
+                 for (const AssetRecord* referencer : p.database->Referencers(guid)) {
+                     if (!selected_owned_guids.contains(assets::ToString(referencer->guid))) external_referencers.insert(referencer->path);
+                 }
+             };
+             for (const Target& target : targets) {
+                 const AssetRecord* record = p.database->Find(target.guid);
+                 collect_external_referencers(target.guid);
+                 for (const assets::AssetGuid& sub_asset : record->sub_assets) collect_external_referencers(sub_asset);
+             }
+             const bool force = OptBool(args, "force", false);
+             if (!force && !external_referencers.empty()) {
+                 std::string message = "Selected assets are referenced by assets outside the selection:";
+                 for (const std::string& path : external_referencers) message += " " + path;
+                 throw ToolError(message + " (pass force to delete anyway)");
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Delete Content Assets " + std::to_string(++next_batch_id);
+             const usize undo_count_before = session.stack.UndoCount();
+             editor::CommandContext context = session.Context();
+             session.stack.BeginTransaction(transaction_label);
+             try {
+                 for (const Target& target : targets) {
+                     auto command = std::make_unique<DeleteAssetCommand>(host, p.paths.file, target.guid,
+                                                                         p.paths.content / target.path, true);
+                     command->SetAttribution("agent");
+                     session.stack.Execute(context, std::move(command));
+                 }
+                 session.stack.EndTransaction();
+             } catch (...) {
+                 session.stack.EndTransaction();
+                 if (session.stack.UndoCount() != undo_count_before || session.stack.UndoLabel() == transaction_label) {
+                     session.stack.Undo(context);
+                 }
+                 throw;
+             }
+
+             Json deleted = Json::array();
+             for (const Target& target : targets) deleted.push_back(target.path);
+             Json overridden = Json::array();
+             for (const std::string& path : external_referencers) overridden.push_back(path);
+             return {{"deleted", std::move(deleted)}, {"count", targets.size()}, {"force", force},
+                     {"external_referencers", std::move(overridden)}};
+         }});
+
     server.AddTool({"content_read", "Read a text file under Content/ (scenes, prefabs, materials, .ameta, JSON assets), up to 2 MB.",
                     Schema({{"path", {{"type", "string"}, {"description", "Relative to Content/"}}}}, {"path"}), [host](const Json& args) -> Json {
                         OpenProject& p = host->Require();
