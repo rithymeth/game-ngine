@@ -3439,6 +3439,59 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_offset_entities_local_many",
+         "Add individual local-position offsets to up to 64 unique live entities. Preserves rotation and scale; validates every offset and resulting position before applying the batch.",
+         Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                              {"items", {{"type", "object"},
+                                          {"properties", {{"entity", {{"type", "string"}}},
+                                                           {"offset", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}}}},
+                                          {"required", Json::array({"entity", "offset"})}}}}}},
+                {"edits"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be an array of 1 to 64 local-position offsets");
+             }
+             struct PositionEdit { Entity entity; Vec3 offset; Vec3 position; };
+             std::vector<PositionEdit> edits;
+             edits.reserve(args["edits"].size());
+             for (const Json& item : args["edits"]) {
+                 if (!item.is_object() || !item.contains("entity") || !item["entity"].is_string() || item["entity"].get<std::string>().empty()) {
+                     throw ToolError("Every \"edits\" entry must contain a non-empty string \"entity\"");
+                 }
+                 if (!item.contains("offset") || !item["offset"].is_array() || item["offset"].size() != 3 ||
+                     !item["offset"][0].is_number() || !item["offset"][1].is_number() || !item["offset"][2].is_number()) {
+                     throw ToolError("Every \"offset\" must be [x, y, z]");
+                 }
+                 const Vec3 offset(item["offset"][0].get<f32>(), item["offset"][1].get<f32>(), item["offset"][2].get<f32>());
+                 if (!std::isfinite(offset.x) || !std::isfinite(offset.y) || !std::isfinite(offset.z)) throw ToolError("\"offset\" values must be finite");
+                 const Entity entity = FindEntity(game, item["entity"].get<std::string>());
+                 if (std::find_if(edits.begin(), edits.end(), [entity](const PositionEdit& edit) { return edit.entity == entity; }) != edits.end()) {
+                     throw ToolError("\"edits\" must not repeat an entity");
+                 }
+                 const Transform* transform = world.GetComponent<Transform>(entity);
+                 if (transform == nullptr) throw ToolError("Entity " + EntityKey(world, entity) + " has no Transform");
+                 if (!std::isfinite(transform->position.x) || !std::isfinite(transform->position.y) || !std::isfinite(transform->position.z)) {
+                     throw ToolError("Entity " + EntityKey(world, entity) + " has a non-finite local position");
+                 }
+                 const Vec3 position = transform->position + offset;
+                 if (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z)) {
+                     throw ToolError("Offset would produce a non-finite local position for " + EntityKey(world, entity));
+                 }
+                 edits.push_back({entity, offset, position});
+             }
+             Json results = Json::array();
+             for (const PositionEdit& edit : edits) {
+                 world.GetComponent<Transform>(edit.entity)->position = edit.position;
+                 results.push_back({{"entity", EntityKey(world, edit.entity)},
+                                    {"offset", Json::array({edit.offset.x, edit.offset.y, edit.offset.z})},
+                                    {"position", Json::array({edit.position.x, edit.position.y, edit.position.z})}});
+             }
+             return {{"updated_count", results.size()}, {"results", results}};
+         }});
+
+    server.AddTool(
         {"game_rotate_entities_local_many",
          "Apply individual local-space quaternion deltas to up to 64 unique live entities. Preserves position and scale; validates the full request and normalizes each resulting rotation before applying.",
          Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
