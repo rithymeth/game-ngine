@@ -35,6 +35,7 @@ and errors go to stderr.
 | `set_entity_layers_many` | Set collision layer indices (0–31) on up to 64 unique entities as one undoable action; creates `Layer` when needed |
 | `offset_entities_local_many` | Add one local-position offset to up to 64 unique entities in one undo action; preserves rotation and scale |
 | `multiply_entities_local_scale_many` | Multiply local scale by one shared component-wise factor on up to 64 unique entities in one undo action |
+| `scale_entities_local_many` | Multiply local scale using per-entity component-wise factors for up to 64 unique entities in one undo action |
 | `set_entities_local_position_many` | Set one shared absolute local position on up to 64 unique entities in one undo action; preserves rotation and scale |
 | `set_entities_local_rotation_many` | Set one shared absolute local quaternion on up to 64 unique entities in one undo action; preserves position and scale |
 | `set_entities_active_many` | Set active states on up to 64 unique entities as one undoable action; missing `Active` means active, disabling adds `Active` |
