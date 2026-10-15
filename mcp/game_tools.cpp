@@ -4017,6 +4017,107 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_offset_entities_local_scale_many",
+         "Add individual component deltas to local scale on up to 64 unique live entities. Preserves local position and rotation; validates all deltas and resulting scales before applying the batch.",
+         Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                              {"items", {{"type", "object"},
+                                          {"properties", {{"entity", {{"type", "string"}}},
+                                                           {"delta", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}}}},
+                                          {"required", Json::array({"entity", "delta"})}}}}}},
+                {"edits"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be an array of 1 to 64 local-scale edits");
+             }
+             struct ScaleEdit { Entity entity; Vec3 before; Vec3 delta; Vec3 after; };
+             std::vector<ScaleEdit> edits;
+             edits.reserve(args["edits"].size());
+             for (const Json& item : args["edits"]) {
+                 if (!item.is_object() || !item.contains("entity") || !item["entity"].is_string() || item["entity"].get<std::string>().empty()) {
+                     throw ToolError("Every \"edits\" entry must contain a non-empty string \"entity\"");
+                 }
+                 if (!item.contains("delta") || !item["delta"].is_array() || item["delta"].size() != 3 ||
+                     !item["delta"][0].is_number() || !item["delta"][1].is_number() || !item["delta"][2].is_number()) {
+                     throw ToolError("Every \"delta\" must be [x, y, z]");
+                 }
+                 const Vec3 delta(item["delta"][0].get<f32>(), item["delta"][1].get<f32>(), item["delta"][2].get<f32>());
+                 if (!std::isfinite(delta.x) || !std::isfinite(delta.y) || !std::isfinite(delta.z)) throw ToolError("\"delta\" values must be finite");
+                 const Entity entity = FindEntity(game, item["entity"].get<std::string>());
+                 if (std::find_if(edits.begin(), edits.end(), [entity](const ScaleEdit& edit) { return edit.entity == entity; }) != edits.end()) {
+                     throw ToolError("\"edits\" must not repeat an entity");
+                 }
+                 const Transform* transform = world.GetComponent<Transform>(entity);
+                 if (transform == nullptr) throw ToolError("Entity " + EntityKey(world, entity) + " has no Transform");
+                 const Vec3 current = transform->scale;
+                 const Vec3 updated = current + delta;
+                 if (!std::isfinite(current.x) || !std::isfinite(current.y) || !std::isfinite(current.z) ||
+                     !std::isfinite(updated.x) || !std::isfinite(updated.y) || !std::isfinite(updated.z)) {
+                     throw ToolError("Local scale offset produced a non-finite result for " + EntityKey(world, entity));
+                 }
+                 edits.push_back({entity, current, delta, updated});
+             }
+             Json results = Json::array();
+             for (const ScaleEdit& edit : edits) {
+                 world.GetComponent<Transform>(edit.entity)->scale = edit.after;
+                 results.push_back({{"entity", EntityKey(world, edit.entity)},
+                                    {"previous_scale", Json::array({edit.before.x, edit.before.y, edit.before.z})},
+                                    {"delta", Json::array({edit.delta.x, edit.delta.y, edit.delta.z})},
+                                    {"scale", Json::array({edit.after.x, edit.after.y, edit.after.z})}});
+             }
+             return {{"updated_count", results.size()}, {"results", results}};
+         }});
+
+    server.AddTool(
+        {"game_offset_entities_local_scale_shared_many",
+         "Add one shared component delta to local scale on up to 64 unique live entities. Preserves local position and rotation; validates all entities and resulting scales before applying the batch.",
+         Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}},
+                 {"delta", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}}},
+                {"entities", "delta"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be an array of 1 to 64 entity handles");
+             }
+             if (!args["delta"].is_array() || args["delta"].size() != 3 ||
+                 !args["delta"][0].is_number() || !args["delta"][1].is_number() || !args["delta"][2].is_number()) {
+                 throw ToolError("\"delta\" must be [x, y, z]");
+             }
+             const Vec3 delta(args["delta"][0].get<f32>(), args["delta"][1].get<f32>(), args["delta"][2].get<f32>());
+             if (!std::isfinite(delta.x) || !std::isfinite(delta.y) || !std::isfinite(delta.z)) throw ToolError("\"delta\" values must be finite");
+             struct ScaleEdit { Entity entity; Vec3 before; Vec3 after; };
+             std::vector<ScaleEdit> edits;
+             edits.reserve(args["entities"].size());
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string() || value.get<std::string>().empty()) throw ToolError("Every \"entities\" entry must be a non-empty string");
+                 const Entity entity = FindEntity(game, value.get<std::string>());
+                 if (std::find_if(edits.begin(), edits.end(), [entity](const ScaleEdit& edit) { return edit.entity == entity; }) != edits.end()) {
+                     throw ToolError("\"entities\" must not repeat an entity");
+                 }
+                 const Transform* transform = world.GetComponent<Transform>(entity);
+                 if (transform == nullptr) throw ToolError("Entity " + EntityKey(world, entity) + " has no Transform");
+                 const Vec3 current = transform->scale;
+                 const Vec3 updated = current + delta;
+                 if (!std::isfinite(current.x) || !std::isfinite(current.y) || !std::isfinite(current.z) ||
+                     !std::isfinite(updated.x) || !std::isfinite(updated.y) || !std::isfinite(updated.z)) {
+                     throw ToolError("Local scale offset produced a non-finite result for " + EntityKey(world, entity));
+                 }
+                 edits.push_back({entity, current, updated});
+             }
+             Json results = Json::array();
+             for (const ScaleEdit& edit : edits) {
+                 world.GetComponent<Transform>(edit.entity)->scale = edit.after;
+                 results.push_back({{"entity", EntityKey(world, edit.entity)},
+                                    {"previous_scale", Json::array({edit.before.x, edit.before.y, edit.before.z})},
+                                    {"delta", Json::array({delta.x, delta.y, delta.z})},
+                                    {"scale", Json::array({edit.after.x, edit.after.y, edit.after.z})}});
+             }
+             return {{"updated_count", results.size()}, {"results", results}};
+         }});
+
+    server.AddTool(
         {"game_rotate_entities_local_many",
          "Apply individual local-space quaternion deltas to up to 64 unique live entities. Preserves position and scale; validates the full request and normalizes each resulting rotation before applying.",
          Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
