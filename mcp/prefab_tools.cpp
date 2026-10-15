@@ -6,6 +6,7 @@
 #include "aether/scene/entity_guid.h"
 #include "aether/scene/prefab.h"
 #include "aether/scene/prefab_library.h"
+#include "core/commands.h"
 
 #include <algorithm>
 #include <fstream>
@@ -169,11 +170,12 @@ void RegisterPrefabTools(McpServer& server, std::shared_ptr<AssetHost> host, Edi
 
     server.AddTool(
         {"prefab_instantiate",
-         "Place an instance of a prefab in the editor scene (not undoable). The root goes at `position` ([x, y, z]) if given, otherwise where the prefab's root is. Returns the root "
+         "Place an instance of a prefab in the editor scene as one undoable, agent-attributed action. The root goes at `position` ([x, y, z]) if given, otherwise where the prefab's root is. Returns the root "
          "entity's GUID and the resolve report (entities created, orphaned overrides).",
          Schema({{"prefab", {{"type", "string"}}}, {"position", {{"type", "array"}, {"items", {{"type", "number"}}}}}}, {"prefab"}),
          [host, &session](const Json& args) -> Json {
              OpenProject& p = host->Require();
+             if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before instantiating a prefab");
              const AssetRecord& r = RequirePrefab(p, RequireString(args, "prefab"));
              const assets::AssetGuid guid = r.guid;
              const std::string path = r.path;
@@ -191,6 +193,28 @@ void RegisterPrefabTools(McpServer& server, std::shared_ptr<AssetHost> host, Edi
              }
              ResolveReport report;
              const Entity root = InstantiatePrefab(session.world, session.guids, guid, *flat, at, &report);
+             if (root.IsNull()) {
+                 throw ToolError("Prefab instance couldn't be resolved: " + report.error);
+             }
+             const EntityGuid root_guid = session.world.GetComponent<IdComponent>(root)->guid;
+             std::vector<EntityGuid> created;
+             session.world.ForEach<PrefabLink, IdComponent>([&](const PrefabLink& link, const IdComponent& id) {
+                 if (link.instance == root_guid) created.push_back(id.guid);
+             });
+             if (std::find(created.begin(), created.end(), root_guid) == created.end()) created.push_back(root_guid);
+             editor::CommandContext context = session.Context();
+             session.stack.BeginTransaction("Instantiate Prefab");
+             for (const EntityGuid& entity : created) {
+                 const Entity existing = session.guids.Find(session.world, entity);
+                 if (!existing.IsNull()) {
+                     session.stack.Record(editor::CreateEntityCommand::FromExisting(context, existing));
+                 }
+             }
+             session.stack.EndTransaction();
+             if (!report.ok) {
+                 session.stack.Undo(context);
+                 throw ToolError("Prefab instance couldn't be resolved: " + report.error);
+             }
              Json out = {{"prefab", path}, {"report", ResolveReportJson(report)}};
              if (!root.IsNull()) {
                  if (const IdComponent* id = session.world.GetComponent<IdComponent>(root)) out["entity"] = ToString(id->guid);
