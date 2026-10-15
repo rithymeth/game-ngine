@@ -3093,33 +3093,27 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                      {"entities", std::move(results)}};
          }});
     server.AddTool(
-        {"multiply_entities_world_scale_many",
-         "Multiply the world-scale magnitudes of 1–64 unique scene entities by one shared factor [x, y, z] as one undoable action. World scale is measured as the lengths of the three world-transform basis columns; factors must be finite and non-negative. Targets are computed from each entity's original world scale, even when selected ancestors are also changed. Local mirror signs are preserved. Parent transforms, including selected ancestors with final scales, are accounted for. Rejects hierarchy cycles/excessive depth and non-zero requested axes collapsed by the parent transform. Position and rotation are preserved.",
-         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
-                               {"description", "1–64 unique entity GUIDs"}}},
-                 {"factor", {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 3}, {"maxItems", 3},
-                              {"description", "Shared non-negative world-scale multiplier [x, y, z]"}}}},
-                {"entities", "factor"}),
+        {"multiply_entities_world_scale_per_entity_many",
+         "Multiply the world-scale magnitudes of 1–64 unique scene entities by individual factors [x, y, z] as one undoable action. World scale is measured as the lengths of the three world-transform basis columns; factors must be finite and non-negative. Targets are computed from each entity's original world scale, even when selected ancestors are also changed. Local mirror signs are preserved. Parent transforms, including selected ancestors with final scales, are accounted for. Rejects hierarchy cycles/excessive depth and non-zero requested axes collapsed by the parent transform. Position and rotation are preserved.",
+         Schema({{"edits", {{"type", "array"},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", kGuidProp},
+                                                        {"factor", {{"type", "array"}, {"items", {{"type", "number"}}},
+                                                                     {"minItems", 3}, {"maxItems", 3}}}}},
+                                        {"required", Json::array({"entity", "factor"})}}},
+                             {"minItems", 1}, {"maxItems", 64},
+                             {"description", "1–64 unique entity GUID and world-scale multiplier pairs"}}}},
+                {"edits"}),
          [&s](const Json& args) -> Json {
              if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
-             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
-                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
-             }
-             if (!args["factor"].is_array() || args["factor"].size() != 3) throw ToolError("\"factor\" must be [x, y, z]");
-             for (const Json& value : args["factor"]) {
-                 if (!value.is_number() || !std::isfinite(value.get<double>())) throw ToolError("World-scale factors must be finite numbers");
-             }
-             const Vec3 factor{args["factor"][0].get<f32>(), args["factor"][1].get<f32>(), args["factor"][2].get<f32>()};
-             if (!std::isfinite(factor.x) || !std::isfinite(factor.y) || !std::isfinite(factor.z)) {
-                 throw ToolError("World-scale factors must fit finite engine coordinates");
-             }
-             if (factor.x < 0.0f || factor.y < 0.0f || factor.z < 0.0f) {
-                 throw ToolError("World-scale factors must be non-negative");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be a non-empty array of at most 64 entity scale changes");
              }
 
              struct ScaleEdit {
                  EntityGuid guid;
                  Entity entity;
+                 Vec3 factor;
                  Vec3 world_scale;
                  Vec3 local_scale;
                  std::vector<u8> before;
@@ -3127,16 +3121,29 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                  bool changed = false;
              };
              std::vector<ScaleEdit> edits;
-             edits.reserve(args["entities"].size());
+             edits.reserve(args["edits"].size());
              std::map<EntityGuid, usize> edit_indices;
              const ComponentId transform_component = GetComponentId<Transform>();
              const ComponentInfo& info = GetComponentInfo(transform_component);
-             for (const Json& value : args["entities"]) {
-                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
-                 const std::string text = value.get<std::string>();
-                 EntityGuid guid;
-                 if (!ParseEntityGuid(text, guid)) throw ToolError("Not a valid entity GUID: " + text);
-                 if (edit_indices.contains(guid)) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+             for (const Json& entry : args["edits"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"edits\" must be an object");
+                 const EntityGuid guid = RequireGuid(entry, "entity");
+                 if (edit_indices.contains(guid)) throw ToolError("Duplicate entity in \"edits\": " + ToString(guid));
+                 if (!entry.contains("factor") || !entry["factor"].is_array() || entry["factor"].size() != 3) {
+                     throw ToolError("Each \"factor\" must be [x, y, z]");
+                 }
+                 for (const Json& value : entry["factor"]) {
+                     if (!value.is_number() || !std::isfinite(value.get<double>())) {
+                         throw ToolError("World-scale factors must be finite numbers");
+                     }
+                 }
+                 const Vec3 factor{entry["factor"][0].get<f32>(), entry["factor"][1].get<f32>(), entry["factor"][2].get<f32>()};
+                 if (!std::isfinite(factor.x) || !std::isfinite(factor.y) || !std::isfinite(factor.z)) {
+                     throw ToolError("World-scale factors must fit finite engine coordinates");
+                 }
+                 if (factor.x < 0.0f || factor.y < 0.0f || factor.z < 0.0f) {
+                     throw ToolError("World-scale factors must be non-negative");
+                 }
                  const Entity entity = s.guids.Find(s.world, guid);
                  if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
                  if (s.world.GetComponent<Transform>(entity) == nullptr) {
@@ -3146,6 +3153,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                  ScaleEdit edit;
                  edit.guid = guid;
                  edit.entity = entity;
+                 edit.factor = factor;
                  edits.push_back(std::move(edit));
              }
 
@@ -3163,7 +3171,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                      Vec3(original_world.cols[0].x, original_world.cols[0].y, original_world.cols[0].z).Length(),
                      Vec3(original_world.cols[1].x, original_world.cols[1].y, original_world.cols[1].z).Length(),
                      Vec3(original_world.cols[2].x, original_world.cols[2].y, original_world.cols[2].z).Length()};
-                 const f32 factors[3] = {factor.x, factor.y, factor.z};
+                 const f32 factors[3] = {edit.factor.x, edit.factor.y, edit.factor.z};
                  f32 targets[3]{};
                  for (int axis = 0; axis < 3; ++axis) {
                      targets[axis] = original_lengths[axis] * factors[axis];
@@ -3239,7 +3247,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
              const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const ScaleEdit& edit) { return edit.changed; });
              if (any_changed) {
                  static std::atomic<std::uint64_t> next_batch_id{0};
-                 const std::string transaction_label = "Multiply Entity World Scale " + std::to_string(++next_batch_id);
+                 const std::string transaction_label = "Multiply Entity World Scales " + std::to_string(++next_batch_id);
                  const usize undo_count_before = s.stack.UndoCount();
                  editor::CommandContext ctx = s.Context();
                  s.stack.BeginTransaction(transaction_label);
@@ -3261,7 +3269,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
              Json results = Json::array();
              for (const ScaleEdit& edit : edits) {
                  results.push_back({{"entity", ToString(edit.guid)},
-                                    {"factor", {factor.x, factor.y, factor.z}},
+                                    {"factor", {edit.factor.x, edit.factor.y, edit.factor.z}},
                                     {"world_scale", {edit.world_scale.x, edit.world_scale.y, edit.world_scale.z}},
                                     {"local_scale", {edit.local_scale.x, edit.local_scale.y, edit.local_scale.z}},
                                     {"changed", edit.changed}});
