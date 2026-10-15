@@ -3761,6 +3761,37 @@ void RegisterGameTools(McpServer& server) {
              return out;
          }});
 
+    server.AddTool(
+        {"game_sequence_events",
+         "Read marker, audio-track, animation-track, and finished events from the loaded game's most recent sequence update.",
+         Schema(Json::object()),
+         [host](const Json&) -> Json {
+             Game& game = host->Require();
+             seq::SequenceSystem* system = seq::SequenceSystem::Active();
+             if (system == nullptr) throw ToolError("This game has no sequence system (load a scene first)");
+             World& world = game.GetWorld();
+             auto event_entity = [&](Entity entity) -> Json {
+                 if (entity.IsNull()) return nullptr;
+                 if (world.IsAlive(entity)) return EntityKey(world, entity);
+                 return "#" + std::to_string(entity.index) + ":" + std::to_string(entity.generation);
+             };
+             Json events = Json::array();
+             for (const seq::SequenceEvent& event : system->Events()) {
+                 const char* type = "marker";
+                 switch (event.kind) {
+                 case seq::SequenceEvent::Kind::Marker: type = "marker"; break;
+                 case seq::SequenceEvent::Kind::Finished: type = "finished"; break;
+                 case seq::SequenceEvent::Kind::Audio: type = "audio"; break;
+                 case seq::SequenceEvent::Kind::Animation: type = "animation"; break;
+                 }
+                 events.push_back({{"type", type}, {"entity", event_entity(event.entity)},
+                                   {"name", event.name}, {"payload", event.payload},
+                                   {"subject", event_entity(event.subject)}, {"value", event.value},
+                                   {"fade", event.fade}, {"skipped", event.skipped}});
+             }
+             return {{"count", events.size()}, {"events", std::move(events)}};
+         }});
+
     server.AddTool({"game_play_sequence",
                     "Play a level sequence in the running game, like the Blueprint node Play Sequence: it gets its own entity, which is removed when it ends. `sequence` is the "
                     "asset path (Sequences/Intro.asequence). Step the game to let it run; the entity comes back so game_sequence_control can drive it.",
