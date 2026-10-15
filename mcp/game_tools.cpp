@@ -777,7 +777,7 @@ void RegisterGameTools(McpServer& server) {
 
     server.AddTool(
         {"game_list_entities",
-         "Entities in the running game: handle (GUID, or #index when it has none), entity generation, name, collision layer index, local and in-hierarchy active state, direct parent GUID, tags and component names. "
+         "Entities in the running game: handle (GUID, or #index when it has none), entity generation, name, world position, collision layer index, local and in-hierarchy active state, direct parent GUID, tags and component names. "
          "Optionally filter by exact name, case-insensitive ASCII name substring, one component or component groups, exact tag or tag groups, direct parent, root status, collision layer index or name, local active state or in-hierarchy active state. Results can be paged with a bounded limit and offset.",
          Schema({{"name", {{"type", "string"}, {"description", "Exact, case-sensitive entity name"}}},
                  {"name_contains", {{"type", "string"}, {"description", "Non-empty case-insensitive ASCII name substring"}}},
@@ -994,6 +994,10 @@ void RegisterGameTools(McpServer& server) {
                              {"active_in_hierarchy", args.contains("active_in_hierarchy") ? active_in_hierarchy
                                                                                             : IsActiveInHierarchy(world, game.Guids(), e)},
                              {"parent", parent}};
+                 const Vec3 world_position = WorldPosition(world, game.Guids(), e);
+                 row["world_position"] = std::isfinite(world_position.x) && std::isfinite(world_position.y) && std::isfinite(world_position.z)
+                                              ? Json::array({world_position.x, world_position.y, world_position.z})
+                                              : Json(nullptr);
                  row["layer_name"] = entity_layer_name != nullptr ? Json(*entity_layer_name) : Json(nullptr);
                  if (entity_name != nullptr) row["name"] = entity_name->value;
                  list.push_back(row);
