@@ -52,7 +52,7 @@ These use the engine's own asset database, importers and cooker, in process, on 
 | `project_templates` | The project templates `project_create` can start from, with what each contains. |
 | `project_create` | Makes a new project in `<parent_dir>/<name>/` (optionally from a template: a startup scene, controller script, input bindings and a Blueprint) and opens it. |
 | `asset_list` / `asset_info` / `asset_references` | Browse and search content by folder/name/type; one asset's settings, dependencies and referencers; the reference graph |
-| `asset_add_files` | Copy source files (textures, models, audio) into `Content/<folder>`, scan and import them |
+| `asset_add_files` | Copy source files (textures, models, audio) into `Content/<folder>` as one agent-attributed undoable action; undo restores overwritten sources and `.ameta` sidecars, and import targets only the submitted files |
 | `asset_import` | (Re)import one asset, or everything pending; served from the derived-data cache when unchanged |
 | `asset_set_import_settings` | Merge importer settings into the `.ameta` (e.g. a texture's `cook_format`) as one agent-attributed undoable action; undo/redo restores metadata and reruns the selected import |
 | `asset_move` / `asset_create_folder` / `asset_delete` | Move/rename assets or folders as agent-attributed undoable actions (GUIDs and references survive; glTF URIs rewritten), make folders as undoable actions (undo only while empty), delete with source and metadata backed up under `Saved/` for undo (refused while referenced unless `force`) |
