@@ -3496,6 +3496,108 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_rotate_entities_world_many",
+         "Apply per-entity world-space quaternion deltas to up to 64 unique live entities. Preserves local position and scale, normalizes rotations, and rejects ancestor overlap or invalid hierarchies before applying the batch.",
+         Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                              {"items", {{"type", "object"},
+                                          {"properties", {{"entity", {{"type", "string"}}},
+                                                           {"delta", {{"type", "array"}, {"minItems", 4}, {"maxItems", 4}, {"items", {{"type", "number"}}}}}}},
+                                          {"required", Json::array({"entity", "delta"})}}}}}},
+                {"edits"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be an array of 1 to 64 world-rotation edits");
+             }
+             struct RotationEdit { Entity entity; Quaternion world_rotation; Quaternion local_rotation; };
+             std::vector<RotationEdit> edits;
+             edits.reserve(args["edits"].size());
+             for (const Json& item : args["edits"]) {
+                 if (!item.is_object() || !item.contains("entity") || !item["entity"].is_string() || item["entity"].get<std::string>().empty()) {
+                     throw ToolError("Every \"edits\" entry must contain a non-empty string \"entity\"");
+                 }
+                 if (!item.contains("delta") || !item["delta"].is_array() || item["delta"].size() != 4 ||
+                     !item["delta"][0].is_number() || !item["delta"][1].is_number() || !item["delta"][2].is_number() || !item["delta"][3].is_number()) {
+                     throw ToolError("Every \"delta\" must be [x, y, z, w]");
+                 }
+                 Quaternion delta(item["delta"][0].get<f32>(), item["delta"][1].get<f32>(), item["delta"][2].get<f32>(), item["delta"][3].get<f32>());
+                 if (!std::isfinite(delta.x) || !std::isfinite(delta.y) || !std::isfinite(delta.z) || !std::isfinite(delta.w) ||
+                     !std::isfinite(delta.LengthSq()) || delta.LengthSq() <= 1.0e-12f) {
+                     throw ToolError("\"delta\" must be a finite non-zero quaternion");
+                 }
+                 const Entity entity = FindEntity(game, item["entity"].get<std::string>());
+                 if (std::find_if(edits.begin(), edits.end(), [entity](const RotationEdit& edit) { return edit.entity == entity; }) != edits.end()) {
+                     throw ToolError("\"edits\" must not repeat an entity");
+                 }
+                 const Transform* transform = world.GetComponent<Transform>(entity);
+                 if (transform == nullptr) throw ToolError("Entity " + EntityKey(world, entity) + " has no Transform");
+                 const Quaternion& current = transform->rotation;
+                 if (!std::isfinite(current.x) || !std::isfinite(current.y) || !std::isfinite(current.z) || !std::isfinite(current.w) ||
+                     !std::isfinite(current.LengthSq()) || current.LengthSq() <= 1.0e-12f) {
+                     throw ToolError("Entity " + EntityKey(world, entity) + " has an invalid local rotation");
+                 }
+                 const Entity parent = GetParent(world, game.Guids(), entity);
+                 std::vector<Quaternion> parent_locals;
+                 Entity ancestor = parent;
+                 std::vector<Entity> seen_ancestors;
+                 for (int depth = 0; !ancestor.IsNull(); ++depth) {
+                     if (depth >= kMaxHierarchyDepth) throw ToolError("Entity hierarchy exceeds the supported depth");
+                     if (ancestor == entity || std::find(seen_ancestors.begin(), seen_ancestors.end(), ancestor) != seen_ancestors.end()) {
+                         throw ToolError("Entity hierarchy contains a cycle");
+                     }
+                     if (std::find_if(edits.begin(), edits.end(), [ancestor](const RotationEdit& edit) { return edit.entity == ancestor; }) != edits.end()) {
+                         throw ToolError("\"edits\" must not include both an entity and one of its ancestors");
+                     }
+                     seen_ancestors.push_back(ancestor);
+                     const Transform* parent_transform = world.GetComponent<Transform>(ancestor);
+                     if (parent_transform == nullptr) break;
+                     const Quaternion& local = parent_transform->rotation;
+                     if (!std::isfinite(local.x) || !std::isfinite(local.y) || !std::isfinite(local.z) || !std::isfinite(local.w) ||
+                         !std::isfinite(local.LengthSq()) || local.LengthSq() <= 1.0e-12f) {
+                         throw ToolError("An ancestor has an invalid rotation");
+                     }
+                     parent_locals.push_back(local.Normalized());
+                     ancestor = GetParent(world, game.Guids(), ancestor);
+                 }
+                 Quaternion parent_world = Quaternion::Identity();
+                 for (auto it = parent_locals.rbegin(); it != parent_locals.rend(); ++it) parent_world = (parent_world * *it).Normalized();
+                 const Quaternion current_world = (parent_world * current.Normalized()).Normalized();
+                 delta = delta.Normalized();
+                 const Quaternion desired_world = (delta * current_world).Normalized();
+                 const Quaternion inverse_parent{-parent_world.x, -parent_world.y, -parent_world.z, parent_world.w};
+                 const Quaternion desired_local = (inverse_parent * desired_world).Normalized();
+                 if (!std::isfinite(desired_local.x) || !std::isfinite(desired_local.y) || !std::isfinite(desired_local.z) || !std::isfinite(desired_local.w)) {
+                     throw ToolError("World rotation delta produced a non-finite local rotation");
+                 }
+                 edits.push_back({entity, desired_world, desired_local});
+             }
+             for (const RotationEdit& edit : edits) {
+                 Entity ancestor = GetParent(world, game.Guids(), edit.entity);
+                 std::vector<Entity> seen_ancestors;
+                 for (int depth = 0; !ancestor.IsNull(); ++depth) {
+                     if (depth >= kMaxHierarchyDepth) throw ToolError("Entity hierarchy exceeds the supported depth");
+                     if (ancestor == edit.entity || std::find(seen_ancestors.begin(), seen_ancestors.end(), ancestor) != seen_ancestors.end()) {
+                         throw ToolError("Entity hierarchy contains a cycle");
+                     }
+                     if (std::find_if(edits.begin(), edits.end(), [ancestor](const RotationEdit& other) { return other.entity == ancestor; }) != edits.end()) {
+                         throw ToolError("\"edits\" must not include both an entity and one of its ancestors");
+                     }
+                     seen_ancestors.push_back(ancestor);
+                     ancestor = GetParent(world, game.Guids(), ancestor);
+                 }
+             }
+             Json results = Json::array();
+             for (const RotationEdit& edit : edits) {
+                 world.GetComponent<Transform>(edit.entity)->rotation = edit.local_rotation;
+                 results.push_back({{"entity", EntityKey(world, edit.entity)},
+                                    {"world_rotation", Json::array({edit.world_rotation.x, edit.world_rotation.y, edit.world_rotation.z, edit.world_rotation.w})},
+                                    {"local_rotation", Json::array({edit.local_rotation.x, edit.local_rotation.y, edit.local_rotation.z, edit.local_rotation.w})}});
+             }
+             return {{"updated_count", results.size()}, {"results", results}};
+         }});
+
+    server.AddTool(
         {"game_set_world_positions_many",
          "Set world positions for up to 64 unique live entities while preserving local rotation and scale. Converts through parent transforms; rejects ancestor overlap, cycles, excessive depth and singular parent transforms.",
          Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
