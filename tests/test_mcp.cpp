@@ -646,7 +646,7 @@ AETHER_TEST(Mcp_AssetToolsImportMoveAndCookAProject) {
     Harness h;
     auto project = MakeAssetHost();
     RegisterAssetTools(h.server, project);
-    RegisterKitTools(h.server, project);
+    RegisterKitTools(h.server, project, h.session);
     AETHER_CHECK(h.Call("asset_list").is_error); // no project open yet
     AETHER_CHECK(h.Call("project_open", {{"project_file", (dir / "nope.aproject").string()}}).is_error);
 
@@ -717,7 +717,7 @@ AETHER_TEST(Mcp_KitToolsValidateWriteAndCrossCheckDefinitions) {
     Harness h;
     auto project = MakeAssetHost();
     RegisterAssetTools(h.server, project);
-    RegisterKitTools(h.server, project);
+    RegisterKitTools(h.server, project, h.session);
     AETHER_CHECK(h.Call("kit_list").is_error); // no project open
     AETHER_CHECK(!h.Call("project_open", {{"project_file", paths.file.string()}}).is_error);
 
@@ -814,7 +814,7 @@ AETHER_TEST(Mcp_AttributeToolsEditUndoAndCheckTheProject) {
     AETHER_CHECK(CreateProject(dir, "McpAttrs", &paths, &error));
     auto project = MakeAssetHost();
     RegisterAssetTools(h.server, project);
-    RegisterKitTools(h.server, project);
+    RegisterKitTools(h.server, project, h.session);
     AETHER_CHECK(!h.Call("project_open", {{"project_file", paths.file.string()}}).is_error);
     const Json scene = {{"$type", "Scene"}, {"$version", 1},
                         {"entities", Json::array({{{"components", {{"AttributeSet", {{"attributes", {{{"name", "Health"}, {"base", 100}, {"min", 0}, {"max", 100}}}}}}}}}})}};
@@ -916,7 +916,7 @@ AETHER_TEST(Mcp_InteractableToolsEditCheckAndDriveTheGame) {
     AETHER_CHECK(CreateProject(dir, "McpInteract", &paths, &error));
     auto project = MakeAssetHost();
     RegisterAssetTools(h.server, project);
-    RegisterKitTools(h.server, project);
+    RegisterKitTools(h.server, project, h.session);
     AETHER_CHECK(!h.Call("project_open", {{"project_file", paths.file.string()}}).is_error);
     const Json project_scene = {{"$type", "Scene"}, {"$version", 1},
                                 {"entities", Json::array({{{"components", {{"Interactable", {{"prompt", "Drink"}, {"effect", "Heal"}, {"ability", "Missing"}}}}}}})}};
@@ -1026,7 +1026,7 @@ AETHER_TEST(Mcp_AudioToolsEditCheckPreviewAndDriveTheGame) {
                                                     {{"id", 3}, {"type", "Wave"}, {"sound", "Audio/b.wav"}}})}};
     auto auto_project = MakeAssetHost();
     RegisterAssetTools(h.server, auto_project);
-    RegisterKitTools(h.server, auto_project);
+    RegisterKitTools(h.server, auto_project, h.session);
     RegisterAudioTools(h.server, auto_project);
     Json verdict = h.Call("cue_validate", {{"definition", random_cue}}).value;
     AETHER_CHECK(verdict["ok"] == true);
@@ -1580,7 +1580,7 @@ AETHER_TEST(Mcp_BlueprintToolsFindValidateCompileAndRun) {
     Harness h;
     auto project = MakeAssetHost();
     RegisterAssetTools(h.server, project);
-    RegisterKitTools(h.server, project);
+    RegisterKitTools(h.server, project, h.session);
     RegisterBlueprintTools(h.server, project);
 
     // --- the palette and a node's pins
@@ -1871,7 +1871,7 @@ AETHER_TEST(Mcp_SequenceToolsValidateEvaluateAndPlay) {
     Harness h;
     auto project = MakeAssetHost();
     RegisterAssetTools(h.server, project);
-    RegisterKitTools(h.server, project);
+    RegisterKitTools(h.server, project, h.session);
     RegisterSequenceTools(h.server, project);
 
     // --- the sample, validated and read without a project
@@ -2073,7 +2073,7 @@ AETHER_TEST(Mcp_TilemapToolsBuildPaintReadAndPreviewALevel) {
     Harness h;
     auto project = MakeAssetHost();
     RegisterAssetTools(h.server, project);
-    RegisterKitTools(h.server, project);
+    RegisterKitTools(h.server, project, h.session);
     RegisterTilemapTools(h.server, project);
 
     AETHER_CHECK(h.Call("tilemap_info", {{"asset", "Levels/x.atilemap"}}).is_error); // needs a project

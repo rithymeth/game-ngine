@@ -72,7 +72,7 @@ with `project_open`.
 | `kit_types` | The types, their extensions, and how many the project has |
 | `kit_schema` | One type's shape: a sample with every field set, the allowed words and cross-reference rules, the blank definition, and an example from the project |
 | `kit_validate` | Check a definition without writing it: ok, or the kit's named error (`effect.bad_duration: ...`) |
-| `kit_put` | Validate, then write normalized JSON under `Content/` (extension added) and scan it; nothing is written if it is invalid |
+| `kit_put` | Validate, then write normalized JSON under `Content/` (extension added) as one agent-attributed undoable action; undo/redo restores both the source and its GUID sidecar |
 | `kit_list` / `kit_get` | The project's definitions with their names and validity; read one |
 | `kit_check` | Every definition must parse and validate, names must be unique, and references must resolve: an ability's cost and cooldown effects, an item's use and equip effects, a quest's reward effects, reward items and prerequisites |
 
