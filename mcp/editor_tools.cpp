@@ -333,7 +333,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                     }});
 
     server.AddTool({"list_entities",
-                    "List a page of scene entities (GUID, name when present, entity index, hierarchy depth, component names, parent GUID, effective collision layer index, local active state, and active/layer/parent override presence). Optionally filter by component, component groups that must all/any match or must not match, exact entity name, case-insensitive ASCII name substring, one parent, any of several parents, exclusion of several parents, descendants of one or several entities with optional relative-depth bounds, entities beneath all of several ancestors with optional relative-depth bounds, exclusion of descendants of several entities with optional relative-depth bounds, relative depth below descendant_of, root status or hierarchy depth, layer index, local active value, active/layer/parent override presence, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND. Results are ordered by entity index and include total match count, has_more, and a continuation cursor. The cursor is not a scene snapshot; entities created in a reused index at or before it are skipped.",
+                    "List a page of scene entities (GUID, name when present, entity index, hierarchy depth, component names, parent GUID, effective collision layer index, local active state, and active/layer/parent override presence). Optionally filter by component, component groups that must all/any match or must not match, exact entity name, case-insensitive ASCII name substring, one parent, any of several parents, exclusion of several parents, descendants of one or several entities with optional relative-depth bounds, entities beneath all of several ancestors with optional relative-depth bounds, exclusion of descendants of several entities with optional relative-depth bounds, relative depth below descendant_of (depth 0 includes the selected entity), root status or hierarchy depth, layer index, local active value, active/layer/parent override presence, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND. Results are ordered by entity index and include total match count, has_more, and a continuation cursor. The cursor is not a scene snapshot; entities created in a reused index at or before it are skipped.",
                     Schema({{"component", {{"type", "string"}, {"description", "Only entities having this component"}}},
                             {"components_all", {{"type", "array"}, {"items", {{"type", "string"}}}, {"maxItems", 32},
                                                  {"description", "Only entities that have every listed component"}}},
@@ -348,13 +348,13 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                                               {"description", "Only entities whose direct parent is one of these existing entity GUIDs"}}},
                             {"parent_none", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 32},
                                                {"description", "Exclude entities whose direct parent is one of these existing entity GUIDs"}}},
-                            {"descendant_of", {{"type", "string"}, {"description", "Only descendants of this existing entity; the entity itself is excluded"}}},
-                            {"descendant_depth", {{"type", "integer"}, {"minimum", 1}, {"maximum", kMaxHierarchyDepth},
-                                                    {"description", "Only descendants at this exact relative depth below descendant_of; immediate children are depth 1"}}},
-                            {"descendant_depth_min", {{"type", "integer"}, {"minimum", 1}, {"maximum", kMaxHierarchyDepth},
-                                                       {"description", "Only descendants at this or greater relative depth below descendant_of; immediate children are depth 1"}}},
-                            {"descendant_depth_max", {{"type", "integer"}, {"minimum", 1}, {"maximum", kMaxHierarchyDepth},
-                                                       {"description", "Only descendants at this or shallower relative depth below descendant_of; immediate children are depth 1"}}},
+                            {"descendant_of", {{"type", "string"}, {"description", "Only descendants of this existing entity; the entity itself is excluded unless a relative-depth filter includes depth 0"}}},
+                            {"descendant_depth", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxHierarchyDepth},
+                                                    {"description", "Only entities at this exact relative depth below descendant_of; depth 0 is the selected entity and immediate children are depth 1"}}},
+                            {"descendant_depth_min", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxHierarchyDepth},
+                                                       {"description", "Only descendants at this or greater relative depth below descendant_of; depth 0 includes the selected entity and immediate children are depth 1"}}},
+                            {"descendant_depth_max", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxHierarchyDepth},
+                                                       {"description", "Only descendants at this or shallower relative depth below descendant_of; depth 0 includes the selected entity and immediate children are depth 1"}}},
                             {"descendant_any", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 32},
                                                  {"description", "Only descendants of any listed existing entities; listed ancestors themselves are excluded"}}},
                             {"descendant_any_depth_min", {{"type", "integer"}, {"minimum", 1}, {"maximum", kMaxHierarchyDepth},
@@ -547,11 +547,6 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         if ((descendant_depth_filter.has_value() || descendant_depth_min_filter.has_value() || descendant_depth_max_filter.has_value()) && !args.contains("descendant_of")) {
                             throw ToolError("\"descendant_depth\", \"descendant_depth_min\" and \"descendant_depth_max\" require \"descendant_of\"");
                         }
-                        if ((descendant_depth_filter.has_value() && *descendant_depth_filter == 0) ||
-                            (descendant_depth_min_filter.has_value() && *descendant_depth_min_filter == 0) ||
-                            (descendant_depth_max_filter.has_value() && *descendant_depth_max_filter == 0)) {
-                            throw ToolError("\"descendant_depth\", \"descendant_depth_min\" and \"descendant_depth_max\" must be from 1 to the maximum hierarchy depth");
-                        }
                         if (descendant_depth_min_filter.has_value() && descendant_depth_max_filter.has_value() &&
                             *descendant_depth_min_filter > *descendant_depth_max_filter) {
                             throw ToolError("\"descendant_depth_min\" cannot be greater than \"descendant_depth_max\"");
@@ -734,6 +729,19 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                                 bool matches_descendant_any_depth = false;
                                 bool excluded_descendant = false;
                                 std::set<EntityGuid> matched_descendant_all;
+                                if (args.contains("descendant_of")) {
+                                    const IdComponent* entity_id = s.world.GetComponent<IdComponent>(e);
+                                    if (entity_id != nullptr && entity_id->guid == descendant_of_filter) {
+                                        const bool has_relative_depth_filter = descendant_depth_filter.has_value() ||
+                                            descendant_depth_min_filter.has_value() || descendant_depth_max_filter.has_value();
+                                        const bool exact_matches = !descendant_depth_filter.has_value() || *descendant_depth_filter == 0;
+                                        const bool minimum_matches = !descendant_depth_min_filter.has_value() || *descendant_depth_min_filter == 0;
+                                        if (has_relative_depth_filter && exact_matches && minimum_matches) {
+                                            matches_descendant_of = true;
+                                            descendant_depth = 0;
+                                        }
+                                    }
+                                }
                                 while (true) {
                                     if (!visited.insert(current.index).second) throw ToolError("Cannot filter by ancestry or parent depth: hierarchy contains a cycle");
                                     const Parent* current_parent = s.world.GetComponent<Parent>(current);
