@@ -14,6 +14,10 @@
 #if AETHER_MCP_INVENTORY
 #include "aether/inventory/inventory_system.h"
 #endif
+#if AETHER_MCP_QUESTS
+#include "aether/quests/quest_log.h"
+#include "aether/quests/quest_system.h"
+#endif
 #include "aether/input/keys.h"
 #if AETHER_MCP_INTERACTION
 #include "aether/interaction/interaction_system.h"
@@ -3289,6 +3293,98 @@ void RegisterGameTools(McpServer& server) {
                  return {{"entity", EntityKey(world, entity)}, {"equipment_slot", slot}, {"success", ok}};
              }
              throw ToolError("\"action\" must be state, count, configure, add, remove, move, split, equip, unequip or use");
+         }});
+#endif
+
+#if AETHER_MCP_QUESTS
+    server.AddTool(
+        {"game_quest",
+         "Inspect a running entity's quest log, start/abandon/fail a quest, advance one objective, or notify matching objectives. Quest callbacks and rewards are processed on the next game step.",
+         Schema({{"entity", {{"type", "string"}}},
+                 {"action", {{"type", "string"}, {"enum", Json::array({"state", "start", "abandon", "fail", "progress", "notify"})}},
+                 {"quest", {{"type", "string"}}},
+                 {"objective", {{"type", "string"}}},
+                 {"kind", {{"type", "string"}, {"enum", Json::array({"count", "tag", "flag"})}},
+                 {"target", {{"type", "string"}}},
+                 {"amount", {{"type", "integer"}}}},
+                {"entity", "action"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             quest::QuestSystem* system = quest::QuestSystem::Active();
+             if (system == nullptr) throw ToolError("This game has no quest system (load a scene with the Quests kit)");
+             const std::string action = RequireString(args, "action");
+             if (action != "state" && action != "start" && action != "abandon" && action != "fail" && action != "progress" && action != "notify") {
+                 throw ToolError("\"action\" must be state, start, abandon, fail, progress or notify");
+             }
+             const Entity entity = FindEntity(game, RequireString(args, "entity"));
+             const World& world = game.GetWorld();
+             auto status_name = [](i32 state) {
+                 switch (state) {
+                 case quest::kActive: return "active";
+                 case quest::kCompleted: return "completed";
+                 case quest::kFailed: return "failed";
+                 default: return "inactive";
+                 }
+             };
+             auto read_amount = [&](i32 fallback) {
+                 if (!args.contains("amount")) return fallback;
+                 if (!args["amount"].is_number_integer()) throw ToolError("\"amount\" must be an integer");
+                 if (args["amount"].is_number_unsigned()) {
+                     const u64 amount = args["amount"].get<u64>();
+                     if (amount > static_cast<u64>(std::numeric_limits<i32>::max())) throw ToolError("\"amount\" is out of range");
+                     return static_cast<i32>(amount);
+                 }
+                 const i64 amount = args["amount"].get<i64>();
+                 if (amount < std::numeric_limits<i32>::min() || amount > std::numeric_limits<i32>::max()) throw ToolError("\"amount\" is out of range");
+                 return static_cast<i32>(amount);
+             };
+             if (action == "state") {
+                 Json quests = Json::array();
+                 const quest::QuestLog* log = world.GetComponent<quest::QuestLog>(entity);
+                 const bool has_filter = args.contains("quest");
+                 const std::string filter = has_filter ? RequireString(args, "quest") : std::string{};
+                 auto append = [&](const std::string& name, i32 state, const std::vector<quest::ObjectiveState>& objectives) {
+                     Json objective_rows = Json::array();
+                     for (const quest::ObjectiveState& objective : objectives) {
+                         objective_rows.push_back({{"id", objective.id}, {"text", system->ObjectiveText(name, objective.id)},
+                                                   {"progress", objective.progress}, {"done", objective.done}});
+                     }
+                     quests.push_back({{"quest", name}, {"title", system->Title(name)}, {"state", status_name(state)}, {"objectives", std::move(objective_rows)}});
+                 };
+                 if (has_filter) {
+                     const quest::QuestState* saved = log == nullptr ? nullptr : log->Find(filter);
+                     static const std::vector<quest::ObjectiveState> no_objectives;
+                     append(filter, saved == nullptr ? quest::kInactive : saved->state, saved == nullptr ? no_objectives : saved->objectives);
+                 } else if (log != nullptr) {
+                     for (const quest::QuestState& saved : log->quests) append(saved.name, saved.state, saved.objectives);
+                 }
+                 return {{"entity", EntityKey(world, entity)}, {"count", quests.size()}, {"quests", std::move(quests)}};
+             }
+             if (action == "notify") {
+                 const std::string kind = RequireString(args, "kind");
+                 quest::Objective::Kind objective_kind;
+                 if (kind == "count") objective_kind = quest::Objective::Kind::Count;
+                 else if (kind == "tag") objective_kind = quest::Objective::Kind::Tag;
+                 else if (kind == "flag") objective_kind = quest::Objective::Kind::Flag;
+                 else throw ToolError("\"kind\" must be count, tag or flag");
+                 const std::string target = RequireString(args, "target");
+                 const i32 moved = system->Notify(entity, objective_kind, target, read_amount(1));
+                 return {{"entity", EntityKey(world, entity)}, {"action", action}, {"kind", kind}, {"target", target}, {"advanced", moved}};
+             }
+             const std::string quest_name = RequireString(args, "quest");
+             quest::Result result = quest::Result::Ok;
+             if (action == "start") result = system->Start(entity, quest_name);
+             else if (action == "abandon") result = system->Abandon(entity, quest_name);
+             else if (action == "fail") result = system->Fail(entity, quest_name);
+             else if (action == "progress") {
+                 const std::string objective = RequireString(args, "objective");
+                 result = system->Progress(entity, quest_name, objective, read_amount(1));
+                 return {{"entity", EntityKey(world, entity)}, {"quest", quest_name}, {"objective", objective},
+                         {"result", quest::ResultName(result)}, {"progress", system->GetProgress(entity, quest_name, objective)},
+                         {"state", status_name(system->State(entity, quest_name))}};
+             }
+             return {{"entity", EntityKey(world, entity)}, {"quest", quest_name}, {"action", action},
+                     {"result", quest::ResultName(result)}, {"state", status_name(system->State(entity, quest_name))}};
          }});
 #endif
 
