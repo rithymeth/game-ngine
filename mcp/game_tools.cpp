@@ -3069,6 +3069,98 @@ void RegisterGameTools(McpServer& server) {
              return {{"count", results.size()}, {"entities", std::move(results)}};
          }});
 
+#if AETHER_MCP_PHYSICS
+    server.AddTool(
+        {"game_physics3d_bodies",
+         "Inspect and page through live 3D physics bodies in the loaded game. Each result includes transform, motion settings, available collider shapes and any body-build problem.",
+         Schema({{"limit", {{"type", "integer"}, {"minimum", 1}, {"maximum", 1000}, {"default", 200}}},
+                 {"offset", {{"type", "integer"}, {"minimum", 0}, {"default", 0}}}},
+                {}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             PhysicsScene* scene = game.PhysicsQueries();
+             if (scene == nullptr) throw ToolError("The loaded game has no 3D physics scene");
+             auto read_size = [](const Json& value, const char* field, u64 minimum, u64 maximum) {
+                 if (!value.is_number_integer()) throw ToolError(std::string("\"") + field + "\" must be a non-negative integer");
+                 u64 parsed = 0;
+                 if (value.is_number_unsigned()) parsed = value.get<u64>();
+                 else {
+                     const i64 signed_value = value.get<i64>();
+                     if (signed_value < 0) throw ToolError(std::string("\"") + field + "\" must be a non-negative integer");
+                     parsed = static_cast<u64>(signed_value);
+                 }
+                 if (parsed < minimum || parsed > maximum) throw ToolError(std::string("\"") + field + "\" is outside the supported range");
+                 return parsed;
+             };
+             const u64 limit = args.contains("limit") ? read_size(args["limit"], "limit", 1, 1000) : 200;
+             const u64 offset = args.contains("offset") ? read_size(args["offset"], "offset", 0, std::numeric_limits<u64>::max()) : 0;
+             World& world = game.GetWorld();
+             std::vector<Entity> entities;
+             for (Entity entity : AllEntities(world)) {
+                 if (HasCollider(world, entity)) entities.push_back(entity);
+             }
+             std::sort(entities.begin(), entities.end(), [](Entity a, Entity b) { return a.index < b.index; });
+             const u64 total = static_cast<u64>(entities.size());
+             const usize start = static_cast<usize>(std::min(offset, total));
+             const usize count = static_cast<usize>(std::min<u64>(limit, total - start));
+             const usize end = start + count;
+             Json results = Json::array();
+             for (usize i = start; i < end; ++i) {
+                 const Entity entity = entities[i];
+                 Json transform = nullptr;
+                 if (const Transform* value = world.GetComponent<Transform>(entity)) {
+                     transform = {{"position", Json::array({value->position.x, value->position.y, value->position.z})},
+                                  {"rotation", Json::array({value->rotation.x, value->rotation.y, value->rotation.z, value->rotation.w})},
+                                  {"scale", Json::array({value->scale.x, value->scale.y, value->scale.z})}};
+                 }
+                 Json body = nullptr;
+                 if (const RigidBody* value = world.GetComponent<RigidBody>(entity)) {
+                     const char* motion = value->motion == BodyMotion::Static ? "static" :
+                                          value->motion == BodyMotion::Kinematic ? "kinematic" : "dynamic";
+                     body = {{"motion", motion}, {"mass", value->mass}, {"linear_damping", value->linear_damping},
+                             {"angular_damping", value->angular_damping}, {"gravity_scale", value->gravity_scale},
+                             {"continuous_collision", value->continuous_collision},
+                             {"lock_rotation", Json::array({value->lock_rotation_x, value->lock_rotation_y, value->lock_rotation_z})}};
+                 }
+                 Json colliders = Json::array();
+                 auto append = [&](const char* shape, const Vec3& center, bool trigger, f32 friction, f32 restitution, bool report_stay) {
+                     colliders.push_back({{"shape", shape}, {"center", Json::array({center.x, center.y, center.z})},
+                                          {"trigger", trigger}, {"friction", friction}, {"restitution", restitution},
+                                          {"report_stay", report_stay}});
+                 };
+                 if (const BoxCollider* value = world.GetComponent<BoxCollider>(entity)) {
+                     append("box", value->center, value->is_trigger, value->friction, value->restitution, value->report_stay);
+                     colliders.back()["half_extents"] = Json::array({value->half_extents.x, value->half_extents.y, value->half_extents.z});
+                 }
+                 if (const SphereCollider* value = world.GetComponent<SphereCollider>(entity)) {
+                     append("sphere", value->center, value->is_trigger, value->friction, value->restitution, value->report_stay);
+                     colliders.back()["radius"] = value->radius;
+                 }
+                 if (const CapsuleCollider* value = world.GetComponent<CapsuleCollider>(entity)) {
+                     append("capsule", value->center, value->is_trigger, value->friction, value->restitution, value->report_stay);
+                     colliders.back()["radius"] = value->radius;
+                     colliders.back()["height"] = value->height;
+                 }
+                 if (const ConvexCollider* value = world.GetComponent<ConvexCollider>(entity)) {
+                     append("convex", value->center, value->is_trigger, value->friction, value->restitution, value->report_stay);
+                     colliders.back()["point_count"] = value->points.size();
+                 }
+                 if (const MeshCollider* value = world.GetComponent<MeshCollider>(entity)) {
+                     append("mesh", value->center, value->is_trigger, value->friction, value->restitution, value->report_stay);
+                     colliders.back()["vertex_count"] = value->vertices.size();
+                     colliders.back()["triangle_count"] = value->indices.size() / 3;
+                 }
+                 const auto problem = scene->Problems().find(entity.index);
+                 results.push_back({{"entity", EntityKey(world, entity)}, {"entity_index", entity.index},
+                                    {"transform", std::move(transform)}, {"rigidbody", std::move(body)},
+                                    {"colliders", std::move(colliders)}, {"body_created", !scene->BodyOf(entity).IsInvalid()},
+                                    {"problem", problem == scene->Problems().end() ? Json(nullptr) : Json(problem->second)}});
+             }
+             return {{"body_count", scene->BodyCount()}, {"total", total}, {"offset", start}, {"count", results.size()},
+                     {"next_offset", end < entities.size() ? Json(end) : Json(nullptr)}, {"bodies", std::move(results)}};
+         }});
+#endif
+
     server.AddTool(
         {"game_set_physics2d_bodies_many",
          "Apply partial Rigidbody2D settings to up to 64 unique entities. Supports body type, mass, gravity scale and linear damping; validates every body before applying any change and preserves unspecified fields.",
