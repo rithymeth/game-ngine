@@ -3468,9 +3468,13 @@ void RegisterGameTools(McpServer& server) {
 #if AETHER_MCP_PHYSICS
     server.AddTool(
         {"game_set_physics3d_colliders_shared_many",
-         "Apply one shared partial center, trigger, material or report-stay patch to all supported 3D colliders on up to 64 unique entities. Validates all entities before applying.",
+         "Apply shared center, trigger, material and report-stay settings to all supported 3D colliders on selected entities, with optional box and capsule/sphere geometry updates. Validates all targets before applying.",
          Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}},
                  {"center", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
+                 {"box_half_extents", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}, {"exclusiveMinimum", 0}, {"maximum", 100}}}}},
+                 {"sphere_radius", {{"type", "number"}, {"minimum", 0.01}, {"maximum", 100}}},
+                 {"capsule_radius", {{"type", "number"}, {"minimum", 0.01}, {"maximum", 100}}},
+                 {"capsule_height", {{"type", "number"}, {"minimum", 0.02}, {"maximum", 200}}},
                  {"trigger", {{"type", "boolean"}}},
                  {"friction", {{"type", "number"}, {"minimum", 0}, {"maximum", 2}}},
                  {"restitution", {{"type", "number"}, {"minimum", 0}, {"maximum", 1}}},
@@ -3482,14 +3486,18 @@ void RegisterGameTools(McpServer& server) {
              if (!args.contains("entities") || !args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
                  throw ToolError("\"entities\" must be an array of 1 to 64 entity handles");
              }
-             static const std::unordered_set<std::string> supported = {"entities", "center", "trigger", "friction", "restitution", "report_stay"};
+             static const std::unordered_set<std::string> supported = {"entities", "center", "box_half_extents", "sphere_radius", "capsule_radius",
+                                                                         "capsule_height", "trigger", "friction", "restitution", "report_stay"};
              for (auto it = args.begin(); it != args.end(); ++it) {
                  if (!supported.contains(it.key())) throw ToolError("Unsupported 3D collider field: " + it.key());
              }
              bool has_patch = false;
-             for (const char* field : {"center", "trigger", "friction", "restitution", "report_stay"}) has_patch = has_patch || args.contains(field);
+             for (const char* field : {"center", "box_half_extents", "sphere_radius", "capsule_radius", "capsule_height", "trigger", "friction",
+                                       "restitution", "report_stay"}) has_patch = has_patch || args.contains(field);
              if (!has_patch) throw ToolError("Provide at least one 3D collider field to update");
              std::optional<Vec3> center;
+             std::optional<Vec3> box_half_extents;
+             std::optional<f32> sphere_radius, capsule_radius, capsule_height;
              std::optional<bool> trigger, report_stay;
              std::optional<f32> friction, restitution;
              if (args.contains("center")) {
@@ -3502,6 +3510,27 @@ void RegisterGameTools(McpServer& server) {
                      throw ToolError("\"center\" components must be finite");
                  }
              }
+             if (args.contains("box_half_extents")) {
+                 const Json& value = args["box_half_extents"];
+                 if (!value.is_array() || value.size() != 3 || !value[0].is_number() || !value[1].is_number() || !value[2].is_number()) {
+                     throw ToolError("\"box_half_extents\" must be [x, y, z]");
+                 }
+                 box_half_extents = Vec3(value[0].get<f32>(), value[1].get<f32>(), value[2].get<f32>());
+                 if (!std::isfinite(box_half_extents->x) || !std::isfinite(box_half_extents->y) || !std::isfinite(box_half_extents->z) ||
+                     box_half_extents->x <= 0.0f || box_half_extents->y <= 0.0f || box_half_extents->z <= 0.0f ||
+                     box_half_extents->x > 100.0f || box_half_extents->y > 100.0f || box_half_extents->z > 100.0f) {
+                     throw ToolError("\"box_half_extents\" components must be finite, positive and at most 100");
+                 }
+             }
+             auto read_positive = [](const Json& value, const char* field, f32 minimum, f32 maximum) {
+                 if (!value.is_number()) throw ToolError(std::string("\"") + field + "\" must be finite and positive");
+                 const f32 result = value.get<f32>();
+                 if (!std::isfinite(result) || result < minimum || result > maximum) throw ToolError(std::string("\"") + field + "\" is outside its supported range");
+                 return result;
+             };
+             if (args.contains("sphere_radius")) sphere_radius = read_positive(args["sphere_radius"], "sphere_radius", 0.01f, 100.0f);
+             if (args.contains("capsule_radius")) capsule_radius = read_positive(args["capsule_radius"], "capsule_radius", 0.01f, 100.0f);
+             if (args.contains("capsule_height")) capsule_height = read_positive(args["capsule_height"], "capsule_height", 0.02f, 200.0f);
              if (args.contains("trigger")) {
                  if (!args["trigger"].is_boolean()) throw ToolError("\"trigger\" must be boolean");
                  trigger = args["trigger"].get<bool>();
@@ -3538,6 +3567,11 @@ void RegisterGameTools(McpServer& server) {
                  if (!(target.box || target.sphere || target.capsule || target.convex || target.mesh)) {
                      throw ToolError("Every entity must have at least one 3D collider component");
                  }
+                 if (box_half_extents && !target.box) throw ToolError("Every selected entity must have a BoxCollider when box_half_extents is supplied");
+                 if (sphere_radius && !target.sphere) throw ToolError("Every selected entity must have a SphereCollider when sphere_radius is supplied");
+                 if ((capsule_radius || capsule_height) && !target.capsule) {
+                     throw ToolError("Every selected entity must have a CapsuleCollider when capsule settings are supplied");
+                 }
                  targets.push_back(target);
              }
              Json results = Json::array();
@@ -3557,12 +3591,19 @@ void RegisterGameTools(McpServer& server) {
                  if (target.capsule) apply(world.GetComponent<CapsuleCollider>(target.entity), "capsule");
                  if (target.convex) apply(world.GetComponent<ConvexCollider>(target.entity), "convex");
                  if (target.mesh) apply(world.GetComponent<MeshCollider>(target.entity), "mesh");
+                 if (box_half_extents) world.GetComponent<BoxCollider>(target.entity)->half_extents = *box_half_extents;
+                 if (sphere_radius) world.GetComponent<SphereCollider>(target.entity)->radius = *sphere_radius;
+                 if (capsule_radius) world.GetComponent<CapsuleCollider>(target.entity)->radius = *capsule_radius;
+                 if (capsule_height) world.GetComponent<CapsuleCollider>(target.entity)->height = *capsule_height;
                  results.push_back({{"entity", EntityKey(world, target.entity)}, {"shapes", std::move(shapes)}});
              }
              return {{"count", results.size()}, {"entities", std::move(results)},
                      {"center", center ? Json::array({center->x, center->y, center->z}) : Json(nullptr)},
                      {"trigger", trigger ? Json(*trigger) : Json(nullptr)}, {"friction", friction ? Json(*friction) : Json(nullptr)},
-                     {"restitution", restitution ? Json(*restitution) : Json(nullptr)}, {"report_stay", report_stay ? Json(*report_stay) : Json(nullptr)}};
+                     {"restitution", restitution ? Json(*restitution) : Json(nullptr)}, {"report_stay", report_stay ? Json(*report_stay) : Json(nullptr)},
+                     {"box_half_extents", box_half_extents ? Json::array({box_half_extents->x, box_half_extents->y, box_half_extents->z}) : Json(nullptr)},
+                     {"sphere_radius", sphere_radius ? Json(*sphere_radius) : Json(nullptr)}, {"capsule_radius", capsule_radius ? Json(*capsule_radius) : Json(nullptr)},
+                     {"capsule_height", capsule_height ? Json(*capsule_height) : Json(nullptr)}};
          }});
 #endif
 
