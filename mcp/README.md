@@ -32,7 +32,7 @@ and errors go to stderr.
 | `set_entity_tags_many` | Replace the complete tag list on up to 64 unique entities as one undoable action; creates `Tags` when needed |
 | `set_entity_layers_many` | Set collision layer indices (0–31) on up to 64 unique entities as one undoable action; creates `Layer` when needed |
 | `set_entities_active_many` | Set active states on up to 64 unique entities as one undoable action; missing `Active` means active, disabling adds `Active` |
-| `create_entity` / `create_entities` | Create an entity or up to 64 entities with optional component values and current-scene parents; batch validates all definitions before creating and is one undo action |
+| `create_entity` / `create_entities` | Create an entity or up to 64 entities with component values, current-scene parents, or zero-based `parent_index` links within the batch; the batch validates the full hierarchy before creation and is one undo action |
 | `duplicate_entity` / `duplicate_entities` | Copy reflected component values for one entity or up to 64 unique entities as one undo action; keep source parents, leave children as they are |
 | `destroy_entity` / `destroy_entities` | Delete one entity or up to 64 unique entities as one undoable action; the batch leaves children and GUID references unchanged and restores original GUIDs on undo |
 | `add_component` / `add_components_many` / `remove_component` / `remove_components_many` | Add one component or components across up to 64 unique entities as one undo action after validating all additions; remove one component or up to 64 selected entity/component pairs as one confirmed undo action |
