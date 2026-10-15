@@ -4052,6 +4052,82 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_set_world_positions_shared_many",
+         "Set one world position on up to 64 unique live entities while preserving local rotation and scale. Converts through parent transforms and rejects ancestor overlap, cycles, excessive depth and singular parents before applying the batch.",
+         Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}},
+                 {"position", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}}},
+                {"entities", "position"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be an array of 1 to 64 entity handles");
+             }
+             if (!args["position"].is_array() || args["position"].size() != 3 ||
+                 !args["position"][0].is_number() || !args["position"][1].is_number() || !args["position"][2].is_number()) {
+                 throw ToolError("\"position\" must be [x, y, z]");
+             }
+             const Vec3 world_position(args["position"][0].get<f32>(), args["position"][1].get<f32>(), args["position"][2].get<f32>());
+             if (!std::isfinite(world_position.x) || !std::isfinite(world_position.y) || !std::isfinite(world_position.z)) {
+                 throw ToolError("\"position\" values must be finite");
+             }
+             struct PositionEdit { Entity entity; Vec3 local_position; };
+             std::vector<PositionEdit> edits;
+             edits.reserve(args["entities"].size());
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string() || value.get<std::string>().empty()) throw ToolError("Every \"entities\" entry must be a non-empty string");
+                 const Entity entity = FindEntity(game, value.get<std::string>());
+                 if (std::find_if(edits.begin(), edits.end(), [entity](const PositionEdit& edit) { return edit.entity == entity; }) != edits.end()) {
+                     throw ToolError("\"entities\" must not repeat an entity");
+                 }
+                 if (world.GetComponent<Transform>(entity) == nullptr) throw ToolError("Entity " + EntityKey(world, entity) + " has no Transform");
+                 edits.push_back({entity, {}});
+             }
+             for (const PositionEdit& edit : edits) {
+                 Entity current = GetParent(world, game.Guids(), edit.entity);
+                 std::vector<Entity> seen;
+                 for (int depth = 0; !current.IsNull(); ++depth) {
+                     if (depth >= kMaxHierarchyDepth) throw ToolError("An edited entity has a parent chain deeper than the supported limit");
+                     if (current == edit.entity || std::find(seen.begin(), seen.end(), current) != seen.end()) throw ToolError("An edited entity has a hierarchy cycle");
+                     if (std::find_if(edits.begin(), edits.end(), [current](const PositionEdit& other) { return other.entity == current; }) != edits.end()) {
+                         throw ToolError("\"entities\" must not include both an entity and one of its ancestors");
+                     }
+                     seen.push_back(current);
+                     current = GetParent(world, game.Guids(), current);
+                 }
+             }
+             for (PositionEdit& edit : edits) {
+                 const Entity parent = GetParent(world, game.Guids(), edit.entity);
+                 Mat4 inverse_parent = Mat4::Identity();
+                 if (!parent.IsNull() && world.GetComponent<Transform>(parent) != nullptr) {
+                     const Mat4 parent_world = ComputeWorldTransform(world, game.Guids(), parent);
+                     for (const Vec4& column : parent_world.cols) {
+                         if (!std::isfinite(column.x) || !std::isfinite(column.y) || !std::isfinite(column.z) || !std::isfinite(column.w)) {
+                             throw ToolError("Cannot set world position through a non-finite parent transform");
+                         }
+                     }
+                     if (!parent_world.TryInverse(inverse_parent)) throw ToolError("Cannot set world position through a singular parent transform");
+                 }
+                 const Vec4 local = inverse_parent * Vec4(world_position.x, world_position.y, world_position.z, 1.0f);
+                 if (!std::isfinite(local.x) || !std::isfinite(local.y) || !std::isfinite(local.z) || !std::isfinite(local.w) || std::abs(local.w) <= 1.0e-12f) {
+                     throw ToolError("Cannot calculate a finite local position for " + EntityKey(world, edit.entity));
+                 }
+                 edit.local_position = Vec3(local.x / local.w, local.y / local.w, local.z / local.w);
+                 if (!std::isfinite(edit.local_position.x) || !std::isfinite(edit.local_position.y) || !std::isfinite(edit.local_position.z)) {
+                     throw ToolError("Cannot calculate a finite local position for " + EntityKey(world, edit.entity));
+                 }
+             }
+             Json results = Json::array();
+             for (const PositionEdit& edit : edits) {
+                 world.GetComponent<Transform>(edit.entity)->position = edit.local_position;
+                 results.push_back({{"entity", EntityKey(world, edit.entity)},
+                                    {"world_position", Json::array({world_position.x, world_position.y, world_position.z})},
+                                    {"local_position", Json::array({edit.local_position.x, edit.local_position.y, edit.local_position.z})}});
+             }
+             return {{"updated_count", results.size()}, {"results", results}};
+         }});
+
+    server.AddTool(
         {"game_set_world_rotations_many",
          "Set world rotations for up to 64 unique live entities while preserving local position and scale. Rotations are normalized and converted through parent orientations; ancestor overlap, invalid quaternions, cycles and excessive depth are rejected.",
          Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
