@@ -34,6 +34,7 @@ and errors go to stderr.
 | `modify_entity_tags_many` | Add/remove tags on up to 64 unique entities as one undoable action; preserves tag order and reports no-op edits |
 | `set_entity_layers_many` | Set collision layer indices (0–31) on up to 64 unique entities as one undoable action; creates `Layer` when needed |
 | `offset_entities_local_many` | Add one local-position offset to up to 64 unique entities in one undo action; preserves rotation and scale |
+| `offset_entities_world_many` | Add one world-position offset to up to 64 unique entities in one undo action; resolves selected ancestor transforms |
 | `offset_entities_local_per_entity_many` | Apply individual local-position offsets to up to 64 unique entities in one undo action |
 | `multiply_entities_local_scale_many` | Multiply local scale by one shared component-wise factor on up to 64 unique entities in one undo action |
 | `multiply_entities_local_scale_per_entity_many` | Multiply local scale using individual component-wise factors for up to 64 unique entities in one undo action |
