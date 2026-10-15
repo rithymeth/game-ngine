@@ -20,6 +20,7 @@
 #include <new>
 #include <optional>
 #include <set>
+#include <unordered_map>
 
 namespace aether::mcp {
 
@@ -215,6 +216,38 @@ Json Schema(Json properties, std::vector<std::string> required = {}) {
 }
 
 const Json kGuidProp = {{"type", "string"}, {"description", "Entity GUID, as returned by list_entities"}};
+
+void RemapEntityGuidValues(const reflect::TypeInfo& type, Json& value,
+                           const std::unordered_map<EntityGuid, EntityGuid>& guid_remap) {
+    if (&type == &reflect::Reflect<EntityGuid>()) {
+        if (!value.is_string()) return;
+        EntityGuid referenced;
+        if (!ParseEntityGuid(value.get<std::string>(), referenced)) return;
+        const auto remapped = guid_remap.find(referenced);
+        if (remapped != guid_remap.end()) value = ToString(remapped->second);
+        return;
+    }
+
+    if (type.kind == reflect::TypeKind::Array) {
+        if (type.element == nullptr || !value.is_array()) return;
+        for (Json& element : value) RemapEntityGuidValues(*type.element, element, guid_remap);
+        return;
+    }
+    if (type.kind != reflect::TypeKind::Struct) return;
+
+    if (type.serialize_as_array && value.is_array()) {
+        const usize count = std::min<usize>(type.fields.size(), value.size());
+        for (usize index = 0; index < count; ++index) {
+            RemapEntityGuidValues(*type.fields[index].type, value[index], guid_remap);
+        }
+    } else if (value.is_object()) {
+        for (const reflect::FieldInfo& field : type.fields) {
+            if (field.HasFlag(reflect::Field_Transient)) continue;
+            auto member = value.find(field.name);
+            if (member != value.end()) RemapEntityGuidValues(*field.type, *member, guid_remap);
+        }
+    }
+}
 
 } // namespace
 
@@ -593,10 +626,11 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
 
     server.AddTool(
         {"duplicate_entities",
-         "Duplicate up to 64 unique entities as one undoable action. Each duplicate copies reflected components and keeps its source's parent. Set include_children to true to expand each selection to its descendants; this also preserves parent links inside the duplicated group. Otherwise, set preserve_hierarchy to true to preserve links only among explicitly selected entities. Entity GUID references in component values stay unchanged.",
+         "Duplicate up to 64 unique entities as one undoable action. Each duplicate copies reflected components and keeps its source's parent. Set include_children to true to expand each selection to its descendants; this also preserves parent links inside the duplicated group. Otherwise, set preserve_hierarchy to true to preserve links only among explicitly selected entities. Set remap_internal_references to true to redirect reflected EntityGuid references between duplicated entities to their copies; external references stay unchanged.",
          Schema({{"entities", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "1–64 unique entity GUIDs"}}},
                  {"preserve_hierarchy", {{"type", "boolean"}, {"description", "When true, preserve parent links whose parent is also in the selection; defaults to false"}}},
-                 {"include_children", {{"type", "boolean"}, {"description", "When true, include all descendants of the selected entities; defaults to false and still enforces a 64-entity total limit"}}}},
+                 {"include_children", {{"type", "boolean"}, {"description", "When true, include all descendants of the selected entities; defaults to false and still enforces a 64-entity total limit"}}},
+                 {"remap_internal_references", {{"type", "boolean"}, {"description", "When true, remap reflected EntityGuid references to duplicated entities; defaults to false"}}}},
                 {"entities"}),
          [&s](const Json& args) -> Json {
              if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before duplicating entities");
@@ -609,8 +643,12 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
              if (args.contains("include_children") && !args["include_children"].is_boolean()) {
                  throw ToolError("\"include_children\" must be true or false");
              }
+             if (args.contains("remap_internal_references") && !args["remap_internal_references"].is_boolean()) {
+                 throw ToolError("\"remap_internal_references\" must be true or false");
+             }
              const bool include_children = args.value("include_children", false);
              const bool preserve_hierarchy = args.value("preserve_hierarchy", false) || include_children;
+             const bool remap_internal_references = args.value("remap_internal_references", false);
 
              struct DuplicateSpec {
                  EntityGuid source_guid;
@@ -711,7 +749,12 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
              }
              if (creation_order.size() != specs.size()) throw ToolError("The selected entities contain a cycle in their parent links");
 
-             for (DuplicateSpec& spec : specs) spec.duplicate_guid = NewEntityGuid();
+             std::unordered_map<EntityGuid, EntityGuid> guid_remap;
+             guid_remap.reserve(specs.size());
+             for (DuplicateSpec& spec : specs) {
+                 spec.duplicate_guid = NewEntityGuid();
+                 guid_remap.emplace(spec.source_guid, spec.duplicate_guid);
+             }
              for (usize index = 0; index < specs.size(); ++index) {
                  if (parent_indices[index]) specs[index].parent = specs[*parent_indices[index]].duplicate_guid;
              }
@@ -730,10 +773,12 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                      s.guids.Add(guid, duplicate);
                      try {
                          Json warnings = Json::array();
-                         for (const auto& [id, value] : spec.components) {
+                         for (const auto& [id, source_value] : spec.components) {
                              s.world.AddComponentRaw(duplicate, id);
                              reflect::LoadReport report;
                              const ComponentInfo& info = GetComponentInfo(id);
+                             Json value = source_value;
+                             if (remap_internal_references) RemapEntityGuidValues(*info.reflected, value, guid_remap);
                              if (!reflect::FromJson(*info.reflected, s.world.GetComponentRaw(duplicate, id), value, &report)) {
                                  throw ToolError("Could not copy " + ComponentName(id));
                              }
