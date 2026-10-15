@@ -37,7 +37,7 @@ and errors go to stderr.
 | `destroy_entity` / `destroy_entities` | Delete one entity or up to 64 unique entities as one undoable action; the batch leaves children and GUID references unchanged and restores original GUIDs on undo |
 | `add_component` / `add_components_many` / `remove_component` / `remove_components_many` | Add one component or components across up to 64 unique entities as one undo action after validating all additions; remove one component or up to 64 selected entity/component pairs as one confirmed undo action |
 | `set_component` / `set_components_many` | Partial component update; batch applies patches to up to 64 unique entities as one undo action after validating every patch |
-| `reparent` / `reparent_many` | Parent or detach entities; the batch variant applies up to 64 unique moves in one undo action after validating the final hierarchy for cycles |
+| `reparent` / `reparent_many` | Parent or detach entities; `reparent_many` supports up to 64 unique per-entity moves or a selected entity list with one shared parent, in one undo action after validating the final hierarchy for cycles |
 | `undo` / `redo` | Walk the editor history and return the source (`agent`) recorded with that action |
 | `save_scene` / `load_scene` | `.json` (readable) or `.aesc` (binary); load can `replace` |. They stay inside the scene folder (the working folder, or `--scene-root`): relative paths resolve there, and absolute paths, `..` and symlinks that leave it are refused
 | `play` / `pause` / `stop` | Play-in-Editor; stop restores the scene exactly. `play` starts the simulation systems |
