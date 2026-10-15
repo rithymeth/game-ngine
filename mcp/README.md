@@ -435,6 +435,7 @@ saves and localization. The game has its own world, separate from the editor's.
 | `game_physics_query` | Raycast, sphere-cast or sphere-overlap against the loaded 3D scene; supports collision-layer masks, ignored entities and trigger inclusion |
 | `game_physics2d_query` | Raycast or axis-aligned box overlap against the loaded 2D scene, including solid-tile hit details and a collision-layer mask |
 | `game_physics_events` | Read recent 2D and 3D collision or trigger transitions with entity handles and available contact details; choose `dimension` as `2d`, `3d` or `all` |
+| `game_physics2d_state_many` | Read grounded and wall-contact state plus current velocity for up to 64 selected 2D entities |
 | `game_reparent_entities_many` | Set or clear parents on up to 64 entities as a validated batch; optionally preserves world poses by updating local transforms (`preserve_world: true`), and rejects cycles, excessive depth, singular transforms, or shear before applying |
 | `game_get_component` | Read one reflected component from a live entity by component name, without returning the entity's other component values |
 | `game_get_components_many` | Read the same reflected component across up to 64 unique live entities in one response; entries identify missing components with `present: false` |
