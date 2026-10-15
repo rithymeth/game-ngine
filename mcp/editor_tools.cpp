@@ -349,6 +349,8 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                             {"parent_none", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 32},
                                                {"description", "Exclude entities whose direct parent is one of these existing entity GUIDs"}}},
                             {"descendant_of", {{"type", "string"}, {"description", "Only descendants of this existing entity; the entity itself is excluded"}}},
+                            {"descendant_depth", {{"type", "integer"}, {"minimum", 1}, {"maximum", kMaxHierarchyDepth},
+                                                    {"description", "Only descendants at this exact relative depth below descendant_of; immediate children are depth 1"}}},
                             {"descendant_depth_min", {{"type", "integer"}, {"minimum", 1}, {"maximum", kMaxHierarchyDepth},
                                                        {"description", "Only descendants at this or greater relative depth below descendant_of; immediate children are depth 1"}}},
                             {"descendant_depth_max", {{"type", "integer"}, {"minimum", 1}, {"maximum", kMaxHierarchyDepth},
@@ -527,14 +529,16 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                             *parent_depth_min_filter > *parent_depth_max_filter) {
                             throw ToolError("\"parent_depth_min\" cannot be greater than \"parent_depth_max\"");
                         }
+                        const std::optional<usize> descendant_depth_filter = ReadParentDepth("descendant_depth");
                         const std::optional<usize> descendant_depth_min_filter = ReadParentDepth("descendant_depth_min");
                         const std::optional<usize> descendant_depth_max_filter = ReadParentDepth("descendant_depth_max");
-                        if ((descendant_depth_min_filter.has_value() || descendant_depth_max_filter.has_value()) && !args.contains("descendant_of")) {
-                            throw ToolError("\"descendant_depth_min\" and \"descendant_depth_max\" require \"descendant_of\"");
+                        if ((descendant_depth_filter.has_value() || descendant_depth_min_filter.has_value() || descendant_depth_max_filter.has_value()) && !args.contains("descendant_of")) {
+                            throw ToolError("\"descendant_depth\", \"descendant_depth_min\" and \"descendant_depth_max\" require \"descendant_of\"");
                         }
-                        if ((descendant_depth_min_filter.has_value() && *descendant_depth_min_filter == 0) ||
+                        if ((descendant_depth_filter.has_value() && *descendant_depth_filter == 0) ||
+                            (descendant_depth_min_filter.has_value() && *descendant_depth_min_filter == 0) ||
                             (descendant_depth_max_filter.has_value() && *descendant_depth_max_filter == 0)) {
-                            throw ToolError("\"descendant_depth_min\" and \"descendant_depth_max\" must be from 1 to the maximum hierarchy depth");
+                            throw ToolError("\"descendant_depth\", \"descendant_depth_min\" and \"descendant_depth_max\" must be from 1 to the maximum hierarchy depth");
                         }
                         if (descendant_depth_min_filter.has_value() && descendant_depth_max_filter.has_value() &&
                             *descendant_depth_min_filter > *descendant_depth_max_filter) {
@@ -699,6 +703,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                                 if (!descendant_any_filter.empty() && !matches_descendant_any) continue;
                                 if (!descendant_all_filter.empty() && matched_descendant_all.size() != descendant_all_filter.size()) continue;
                                 if (excluded_descendant) continue;
+                                if (descendant_depth_filter.has_value() && (!descendant_depth.has_value() || *descendant_depth != *descendant_depth_filter)) continue;
                                 if (parent_depth_filter.has_value() && depth != *parent_depth_filter) continue;
                                 if (parent_depth_min_filter.has_value() && depth < *parent_depth_min_filter) continue;
                                 if (parent_depth_max_filter.has_value() && depth > *parent_depth_max_filter) continue;
