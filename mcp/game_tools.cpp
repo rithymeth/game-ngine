@@ -47,6 +47,7 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <unordered_set>
 
 namespace aether::mcp {
 
@@ -2998,6 +2999,83 @@ void RegisterGameTools(McpServer& server) {
                  results.push_back(std::move(result));
              }
              return {{"count", results.size()}, {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"game_physics2d_settings",
+         "Read gravity and solver settings for the loaded game's 2D physics scene.",
+         Schema(Json::object()),
+         [host](const Json&) -> Json {
+             Game& game = host->Require();
+             sprite2d::Physics2D* physics = game.Physics2D();
+             if (physics == nullptr) throw ToolError("The loaded game has no 2D physics scene");
+             const sprite2d::Physics2DSettings& settings = physics->settings;
+             return {{"gravity", Json::array({settings.gravity.x, settings.gravity.y})},
+                     {"iterations", settings.iterations}, {"slop", settings.slop},
+                     {"correction", settings.correction}, {"max_step", settings.max_step}};
+         }});
+
+    server.AddTool(
+        {"game_set_physics2d_settings",
+         "Update selected 2D physics scene settings. Validates the complete resulting settings before applying; iterations must be 1-64, slop non-negative, correction 0-1 and max_step positive.",
+         Schema({{"gravity", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}},
+                 {"iterations", {{"type", "integer"}, {"minimum", 1}, {"maximum", 64}}},
+                 {"slop", {{"type", "number"}, {"minimum", 0}}},
+                 {"correction", {{"type", "number"}, {"minimum", 0}, {"maximum", 1}}},
+                 {"max_step", {{"type", "number"}, {"exclusiveMinimum", 0}}}},
+                {}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             sprite2d::Physics2D* physics = game.Physics2D();
+             if (physics == nullptr) throw ToolError("The loaded game has no 2D physics scene");
+             if (args.empty()) throw ToolError("Provide at least one 2D physics setting to update");
+             static const std::unordered_set<std::string> supported = {"gravity", "iterations", "slop", "correction", "max_step"};
+             for (auto it = args.begin(); it != args.end(); ++it) {
+                 if (!supported.contains(it.key())) throw ToolError("Unsupported 2D physics setting: " + it.key());
+             }
+             sprite2d::Physics2DSettings updated = physics->settings;
+             if (args.contains("gravity")) {
+                 const Json& value = args["gravity"];
+                 if (!value.is_array() || value.size() != 2 || !value[0].is_number() || !value[1].is_number()) {
+                     throw ToolError("\"gravity\" must be [x, y]");
+                 }
+                 updated.gravity = {value[0].get<f32>(), value[1].get<f32>()};
+                 if (!std::isfinite(updated.gravity.x) || !std::isfinite(updated.gravity.y)) throw ToolError("Gravity components must be finite");
+             }
+             if (args.contains("iterations")) {
+                 const Json& value = args["iterations"];
+                 if (!value.is_number_integer()) throw ToolError("\"iterations\" must be an integer from 1 through 64");
+                 u64 iterations = 0;
+                 if (value.is_number_unsigned()) iterations = value.get<u64>();
+                 else {
+                     const i64 signed_iterations = value.get<i64>();
+                     if (signed_iterations < 1) throw ToolError("\"iterations\" must be an integer from 1 through 64");
+                     iterations = static_cast<u64>(signed_iterations);
+                 }
+                 if (iterations < 1 || iterations > 64) throw ToolError("\"iterations\" must be an integer from 1 through 64");
+                 updated.iterations = static_cast<u32>(iterations);
+             }
+             if (args.contains("slop")) {
+                 if (!args["slop"].is_number()) throw ToolError("\"slop\" must be a finite non-negative number");
+                 updated.slop = args["slop"].get<f32>();
+                 if (!std::isfinite(updated.slop) || updated.slop < 0.0f) throw ToolError("\"slop\" must be a finite non-negative number");
+             }
+             if (args.contains("correction")) {
+                 if (!args["correction"].is_number()) throw ToolError("\"correction\" must be a finite number from 0 through 1");
+                 updated.correction = args["correction"].get<f32>();
+                 if (!std::isfinite(updated.correction) || updated.correction < 0.0f || updated.correction > 1.0f) {
+                     throw ToolError("\"correction\" must be a finite number from 0 through 1");
+                 }
+             }
+             if (args.contains("max_step")) {
+                 if (!args["max_step"].is_number()) throw ToolError("\"max_step\" must be a finite positive number");
+                 updated.max_step = args["max_step"].get<f32>();
+                 if (!std::isfinite(updated.max_step) || updated.max_step <= 0.0f) throw ToolError("\"max_step\" must be a finite positive number");
+             }
+             physics->settings = updated;
+             return {{"gravity", Json::array({updated.gravity.x, updated.gravity.y})},
+                     {"iterations", updated.iterations}, {"slop", updated.slop},
+                     {"correction", updated.correction}, {"max_step", updated.max_step}};
          }});
 
     server.AddTool(
