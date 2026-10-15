@@ -760,6 +760,52 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_set_layer_many",
+         "Set one collision layer index (0-31) on up to 64 unique live entities; missing Layer components mean layer 0 and are created only when needed.",
+         Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}},
+                 {"layer", {{"type", "integer"}, {"minimum", 0}, {"maximum", 31}}}},
+                {"entities", "layer"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be an array of 1 to 64 entity handles");
+             }
+             if (!args["layer"].is_number_integer()) throw ToolError("\"layer\" must be an integer from 0 to 31");
+             const i64 layer_value = args["layer"].get<i64>();
+             if (layer_value < 0 || layer_value >= static_cast<i64>(kMaxLayers)) throw ToolError("\"layer\" must be an integer from 0 to 31");
+             const u8 requested_layer = static_cast<u8>(layer_value);
+             std::vector<Entity> entities;
+             entities.reserve(args["entities"].size());
+             for (const Json& handle : args["entities"]) {
+                 if (!handle.is_string() || handle.get<std::string>().empty()) {
+                     throw ToolError("Every \"entities\" entry must be a non-empty entity handle");
+                 }
+                 const Entity entity = FindEntity(game, handle.get<std::string>());
+                 if (std::find(entities.begin(), entities.end(), entity) != entities.end()) {
+                     throw ToolError("\"entities\" must not contain the same entity more than once");
+                 }
+                 entities.push_back(entity);
+             }
+             Json results = Json::array();
+             usize changed_count = 0;
+             for (Entity entity : entities) {
+                 Layer* state = world.GetComponent<Layer>(entity);
+                 const u8 old_layer = state == nullptr ? 0 : state->index;
+                 const bool changed = old_layer != requested_layer;
+                 if (changed && state == nullptr) {
+                     world.AddComponent<Layer>(entity, Layer{requested_layer});
+                 } else if (changed) {
+                     state->index = requested_layer;
+                 }
+                 results.push_back({{"entity", EntityKey(world, entity)}, {"old_layer", old_layer},
+                                    {"layer", requested_layer}, {"changed", changed}});
+                 if (changed) ++changed_count;
+             }
+             return {{"layer", requested_layer}, {"changed_count", changed_count}, {"results", results}};
+         }});
+
+    server.AddTool(
         {"game_rename_entities_many",
          "Rename up to 64 unique live entities in one validated batch; creates EntityName components when needed.",
          Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
