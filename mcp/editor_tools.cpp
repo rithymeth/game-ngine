@@ -17,6 +17,7 @@
 #include <atomic>
 #include <cstdint>
 #include <new>
+#include <optional>
 #include <set>
 
 namespace aether::mcp {
@@ -383,11 +384,12 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
 
     server.AddTool(
         {"create_entities",
-         "Create 1–64 scene entities as one undoable action. Each entry may specify a component-name-to-fields object and a parent GUID from the current scene; all component names, values and parents are validated before any entity is created.",
+         "Create 1–64 scene entities as one undoable action. Each entry may specify component values and either a current-scene parent GUID or a zero-based parent_index referring to another entry in this batch; all values and hierarchy links are validated before creation.",
          Schema({{"entities", {{"type", "array"},
                                {"items", {{"type", "object"},
                                           {"properties", {{"components", {{"type", "object"}, {"description", "Component names mapped to field values"}}},
-                                                          {"parent", {{"type", Json::array({"string", "null"})}, {"description", "Optional current-scene parent GUID"}}}}}}},
+                                                          {"parent", {{"type", Json::array({"string", "null"})}, {"description", "Optional current-scene parent GUID"}},
+                                                          {"parent_index", {{"type", "integer"}, {"minimum", 0}, {"maximum", 63}, {"description", "Optional index of another entity entry in this batch"}}}}}}},
                                {"description", "1–64 entity definitions"}}}},
                 {"entities"}),
          [&s](const Json& args) -> Json {
@@ -398,17 +400,35 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
 
              struct EntitySpec {
                  EntityGuid parent;
+                 std::optional<usize> parent_index;
+                 EntityGuid guid;
                  std::vector<std::pair<ComponentId, Json>> components;
              };
              std::vector<EntitySpec> specs;
              specs.reserve(args["entities"].size());
              const ComponentId id_component = GetComponentId<IdComponent>();
-             for (const Json& entry : args["entities"]) {
+             for (usize index = 0; index < args["entities"].size(); ++index) {
+                 const Json& entry = args["entities"][index];
                  if (!entry.is_object()) throw ToolError("Each entry in \"entities\" must be an object");
                  EntitySpec spec;
+                 if (entry.contains("parent") && entry.contains("parent_index")) {
+                     throw ToolError("Specify either \"parent\" or \"parent_index\", not both");
+                 }
                  if (entry.contains("parent") && !entry["parent"].is_null()) {
                      spec.parent = RequireGuid(entry, "parent");
                      RequireEntity(s, entry, "parent");
+                 }
+                 if (entry.contains("parent_index")) {
+                     const Json& parent_index = entry["parent_index"];
+                     if (!parent_index.is_number_integer() || parent_index.is_boolean()) {
+                         throw ToolError("\"parent_index\" must be an integer referring to another entry in \"entities\"");
+                     }
+                     const i64 raw_parent_index = parent_index.get<i64>();
+                     if (raw_parent_index < 0 || static_cast<usize>(raw_parent_index) >= args["entities"].size()) {
+                         throw ToolError("\"parent_index\" must refer to an entry in \"entities\"");
+                     }
+                     if (static_cast<usize>(raw_parent_index) == index) throw ToolError("An entity cannot parent itself");
+                     spec.parent_index = static_cast<usize>(raw_parent_index);
                  }
                  if (entry.contains("components")) {
                      if (!entry["components"].is_object()) throw ToolError("\"components\" must be an object");
@@ -429,15 +449,40 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                  specs.push_back(std::move(spec));
              }
 
+             std::vector<std::vector<usize>> children(specs.size());
+             std::vector<usize> indegree(specs.size(), 0);
+             for (usize index = 0; index < specs.size(); ++index) {
+                 if (specs[index].parent_index) {
+                     children[*specs[index].parent_index].push_back(index);
+                     indegree[index] = 1;
+                 }
+             }
+             std::vector<usize> creation_order;
+             creation_order.reserve(specs.size());
+             for (usize index = 0; index < specs.size(); ++index) {
+                 if (indegree[index] == 0) creation_order.push_back(index);
+             }
+             for (usize cursor = 0; cursor < creation_order.size(); ++cursor) {
+                 for (const usize child : children[creation_order[cursor]]) {
+                     if (--indegree[child] == 0) creation_order.push_back(child);
+                 }
+             }
+             if (creation_order.size() != specs.size()) throw ToolError("The requested parent_index links contain a cycle");
+             for (EntitySpec& spec : specs) spec.guid = NewEntityGuid();
+             for (EntitySpec& spec : specs) {
+                 if (spec.parent_index) spec.parent = specs[*spec.parent_index].guid;
+             }
+
              static std::atomic<std::uint64_t> next_batch_id{0};
              const std::string transaction_label = "Create Entities " + std::to_string(++next_batch_id);
              const usize undo_count_before = s.stack.UndoCount();
              editor::CommandContext ctx = s.Context();
-             Json results = Json::array();
+             std::vector<Json> result_rows(specs.size());
              s.stack.BeginTransaction(transaction_label);
              try {
-                 for (const EntitySpec& spec : specs) {
-                     const EntityGuid guid = NewEntityGuid();
+                 for (const usize spec_index : creation_order) {
+                     const EntitySpec& spec = specs[spec_index];
+                     const EntityGuid guid = spec.guid;
                      Entity entity = s.world.CreateEntity(IdComponent{guid});
                      s.guids.Add(guid, entity);
                      try {
@@ -454,7 +499,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                          if (!spec.parent.IsNull()) s.world.AddComponent(entity, Parent{spec.parent});
                          Json row = EntityJson(s, entity);
                          if (!warnings.empty()) row["warnings"] = std::move(warnings);
-                         results.push_back(std::move(row));
+                         result_rows[spec_index] = std::move(row);
                          auto command = editor::CreateEntityCommand::FromExisting(ctx, entity);
                          command->SetAttribution("agent");
                          s.stack.Record(std::move(command));
@@ -470,6 +515,8 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                  if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
                  throw;
              }
+             Json results = Json::array();
+             for (Json& row : result_rows) results.push_back(std::move(row));
              return {{"created", results.size()}, {"entities", std::move(results)}};
          }});
 
