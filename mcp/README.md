@@ -452,6 +452,7 @@ saves and localization. The game has its own world, separate from the editor's.
 | `game_physics2d_query` | Raycast or axis-aligned box overlap against the loaded 2D scene, including solid-tile hit details and a collision-layer mask |
 | `game_physics2d_queries_many` | Run up to 64 validated 2D raycast or box-overlap queries in one request, each with its own collision-layer mask; results preserve input order and raycasts include solid-tile details |
 | `game_physics_events` | Read recent 2D and 3D collision or trigger transitions with entity handles and available contact details; choose `dimension` as `2d`, `3d` or `all` |
+| `game_physics2d_bodies` | Inspect and page through live 2D rigidbodies and colliders, including local positions and configuration |
 | `game_physics2d_state_many` | Read grounded and wall-contact state plus current velocity for up to 64 selected 2D entities |
 | `game_set_physics2d_bodies_many` | Partially update body type, mass, gravity scale and damping for up to 64 unique 2D rigidbodies; validates the full batch and preserves unspecified fields |
 | `game_set_physics2d_bodies_shared_many` | Apply one partial body-settings patch to up to 64 unique 2D rigidbodies; preserves unspecified per-entity values and validates every result first |
