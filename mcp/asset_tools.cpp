@@ -237,6 +237,41 @@ private:
     std::string import_error_;
 };
 
+class CreateContentFolderCommand final : public editor::ICommand {
+public:
+    CreateContentFolderCommand(std::shared_ptr<AssetHost> host, fs::path project_file, std::string parent, std::string name)
+        : host_(std::move(host)), project_file_(std::move(project_file)), parent_(std::move(parent)), name_(std::move(name)) {}
+
+    void Do(editor::CommandContext&) override {
+        RequireSameProject();
+        std::string error;
+        if (!assets::CreateContentFolder(*host_->project->database, parent_, name_, &error)) throw ToolError(error);
+    }
+
+    void Undo(editor::CommandContext&) override {
+        RequireSameProject();
+        std::error_code ec;
+        const fs::path folder = host_->project->paths.content / parent_ / name_;
+        const bool removed = fs::remove(folder, ec);
+        if (ec) throw ToolError("Could not remove " + folder.string() + ": " + ec.message());
+        if (!removed) throw ToolError("Could not undo folder creation because the folder is missing or contains files or subfolders: " + folder.string());
+    }
+
+    std::string Label() const override { return "Create Content Folder"; }
+
+private:
+    void RequireSameProject() const {
+        if (!host_->project || host_->project->paths.file.lexically_normal() != project_file_.lexically_normal()) {
+            throw ToolError("Open the project that owns this folder before undoing or redoing this action");
+        }
+    }
+
+    std::shared_ptr<AssetHost> host_;
+    fs::path project_file_;
+    std::string parent_;
+    std::string name_;
+};
+
 Json ProjectJson(OpenProject& p) {
     usize sources = 0;
     for (const AssetRecord* r : p.database->All()) {
@@ -552,11 +587,16 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
                         return {{"moved", true}, {"rewritten", r.rewritten}};
                     }});
 
-    server.AddTool({"asset_create_folder", "Create a folder under Content/.",
-                    Schema({{"parent", {{"type", "string"}}}, {"name", {{"type", "string"}}}}, {"name"}), [host](const Json& args) -> Json {
+    server.AddTool({"asset_create_folder", "Create a folder under Content/ as one agent-attributed undoable action. Undo removes it only while it is empty.",
+                    Schema({{"parent", {{"type", "string"}}}, {"name", {{"type", "string"}}}}, {"name"}), [host, &session](const Json& args) -> Json {
                         OpenProject& p = host->Require();
-                        std::string error;
-                        if (!assets::CreateContentFolder(*p.database, CleanRelative(OptString(args, "parent")), RequireString(args, "name"), &error)) throw ToolError(error);
+                        if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before creating a content folder");
+                        const std::string parent = CleanRelative(OptString(args, "parent"));
+                        const std::string name = RequireString(args, "name");
+                        auto command = std::make_unique<CreateContentFolderCommand>(host, p.paths.file, parent, name);
+                        command->SetAttribution("agent");
+                        editor::CommandContext context = session.Context();
+                        session.stack.Execute(context, std::move(command));
                         return {{"created", true}};
                     }});
 
