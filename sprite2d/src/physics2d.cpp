@@ -536,6 +536,28 @@ std::vector<Entity> Physics2D::OverlapBox(Vec2 center, Vec2 half, u32 mask) cons
     return result;
 }
 
+std::vector<Entity> Physics2D::OverlapCircle(Vec2 center, f32 radius, u32 mask) const {
+    std::vector<Entity> result;
+    const f32 radius_sq = radius * radius;
+    EachEntity(world_, [&](Entity e) {
+        const Transform* t = world_.GetComponent<Transform>(e);
+        const Collider2D* c = world_.GetComponent<Collider2D>(e);
+        if (!t || !c || (c->layer & mask) == 0) return;
+        const Vec2 p{t->position.x + c->offset.x, t->position.y + c->offset.y};
+        if (c->shape == Shape2D::Circle) {
+            const Vec2 delta = p - center;
+            const f32 combined = radius + c->radius;
+            if (delta.Dot(delta) <= combined * combined) result.push_back(e);
+        } else {
+            const Vec2 closest{std::clamp(center.x, p.x - c->half_extents.x, p.x + c->half_extents.x),
+                               std::clamp(center.y, p.y - c->half_extents.y, p.y + c->half_extents.y)};
+            const Vec2 delta = closest - center;
+            if (delta.Dot(delta) <= radius_sq) result.push_back(e);
+        }
+    });
+    return result;
+}
+
 void RegisterPhysics2DComponents() {
     (void)GetComponentId<Rigidbody2D>();
     (void)GetComponentId<Collider2D>();
