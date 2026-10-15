@@ -2749,6 +2749,59 @@ void RegisterGameTools(McpServer& server) {
              return {{"target", EntityKey(game.GetWorld(), focus.target)}, {"distance", focus.distance}, {"prompt", focus.prompt}};
          }});
 
+    server.AddTool(
+        {"game_interaction_focus_many",
+         "Find the nearest usable target for up to 64 unique interactors, optionally using a different forward direction for each. Validates all inputs before resolving focus.",
+         Schema({{"interactors", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                                   {"items", {{"type", "object"},
+                                               {"properties", {{"interactor", {{"type", "string"}}},
+                                                                {"forward", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}}}},
+                                               {"required", Json::array({"interactor"})}}}}}},
+                {"interactors"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             interact::InteractionSystem* system = interact::InteractionSystem::Active();
+             if (system == nullptr) throw ToolError("This game has no interaction system");
+             if (!args["interactors"].is_array() || args["interactors"].empty() || args["interactors"].size() > 64) {
+                 throw ToolError("\"interactors\" must be an array of 1 to 64 interactors");
+             }
+             struct Request { Entity entity; Vec3 forward; };
+             std::vector<Request> requests;
+             requests.reserve(args["interactors"].size());
+             for (const Json& item : args["interactors"]) {
+                 if (!item.is_object() || !item.contains("interactor") || !item["interactor"].is_string() || item["interactor"].get<std::string>().empty()) {
+                     throw ToolError("Every \"interactors\" entry must contain a non-empty string \"interactor\"");
+                 }
+                 Vec3 forward{0.0f, 0.0f, 0.0f};
+                 if (item.contains("forward")) {
+                     const Json& f = item["forward"];
+                     if (!f.is_array() || f.size() != 3 || !f[0].is_number() || !f[1].is_number() || !f[2].is_number()) {
+                         throw ToolError("\"forward\" must be [x, y, z]");
+                     }
+                     forward = Vec3(f[0].get<f32>(), f[1].get<f32>(), f[2].get<f32>());
+                 }
+                 const Entity entity = FindEntity(game, item["interactor"].get<std::string>());
+                 if (std::find_if(requests.begin(), requests.end(), [entity](const Request& request) { return request.entity == entity; }) != requests.end()) {
+                     throw ToolError("\"interactors\" must not repeat an interactor");
+                 }
+                 if (game.GetWorld().GetComponent<Transform>(entity) == nullptr) throw ToolError("An interactor has no Transform");
+                 requests.push_back({entity, forward});
+             }
+             Json results = Json::array();
+             for (const Request& request : requests) {
+                 const Transform* transform = game.GetWorld().GetComponent<Transform>(request.entity);
+                 const interact::FocusResult focus = system->Focus(request.entity, transform->position, request.forward);
+                 Json result = {{"interactor", EntityKey(game.GetWorld(), request.entity)}, {"target", nullptr}};
+                 if (!focus.target.IsNull()) {
+                     result["target"] = EntityKey(game.GetWorld(), focus.target);
+                     result["distance"] = focus.distance;
+                     result["prompt"] = focus.prompt;
+                 }
+                 results.push_back(std::move(result));
+             }
+             return {{"count", results.size()}, {"results", results}};
+         }});
+
     server.AddTool({"game_set_interactable", "Enable or disable an interactable in the running game, and/or reset a spent one-shot or cooling one so it can be used again.",
                     Schema({{"target", {{"type", "string"}}}, {"enabled", {{"type", "boolean"}}}, {"reset", {{"type", "boolean"}}}}, {"target"}),
                     [host](const Json& args) -> Json {
