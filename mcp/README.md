@@ -60,6 +60,7 @@ These use the engine's own asset database, importers and cooker, in process, on 
 | `asset_move` / `asset_create_folder` / `asset_delete` | Move/rename assets or folders as agent-attributed undoable actions (GUIDs and references survive; glTF URIs rewritten), make folders as undoable actions (undo only while empty), delete with source and metadata backed up under `Saved/` for undo (refused while referenced unless `force`) |
 | `asset_move_many` | Move up to 64 independent assets or folders as one undoable action; overlapping paths are rejected before moving, with a result for each move |
 | `asset_create_folders` | Create up to 64 folders under existing Content/ parents as one undoable action; all names and paths are checked before creation |
+| `asset_delete_folders` | Delete up to 64 empty Content/ folders as one undoable action; refuses the Content/ root, non-empty folders, and paths outside the content tree |
 | `asset_delete_many` | Delete up to 64 selected assets as one undoable action; mutual references within the selection are allowed, while external referencers require `force` and are returned explicitly |
 | `content_read` / `content_write` | Read text files under `Content/`; write/overwrite files up to 2 MB as one agent-attributed undoable action with source and GUID sidecar restored on undo/redo; paths cannot leave `Content/`, `.ameta` is not writable |
 | `asset_scan` | Rescan after changing files outside the tools |
