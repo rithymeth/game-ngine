@@ -439,6 +439,7 @@ saves and localization. The game has its own world, separate from the editor's.
 | `game_set_component` / `game_destroy_entity` | Change the live world (not undoable; gone on reload) |
 | `game_set_transforms_many` | Set partial local position, rotation and/or scale on up to 64 unique live entities; validates all edits first and normalizes quaternions |
 | `game_offset_entities_local_many` | Add per-entity local-position offsets on up to 64 unique live entities; preserves rotation and scale and validates all resulting positions before applying |
+| `game_offset_entities_local_shared_many` | Add one shared local-position offset to up to 64 unique live entities; preserves rotation and scale and validates all resulting positions before applying |
 | `game_rotate_entities_local_many` | Apply per-entity local quaternion deltas to up to 64 unique live entities; preserves local position and scale, normalizes results, and validates the full batch before applying |
 | `game_rotate_entities_world_many` | Apply per-entity world quaternion deltas to up to 64 unique live entities; preserves local position and scale, resolves parent orientations, and rejects ancestor overlap or invalid hierarchies |
 | `game_set_world_positions_many` | Set world positions on up to 64 unique live entities through parent transforms; preserves local rotation and scale and rejects ancestor overlap, cycles, excessive depth and singular parents |
