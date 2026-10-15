@@ -2637,6 +2637,57 @@ void RegisterGameTools(McpServer& server) {
                         return {{"enabled", i->enabled}, {"used", i->used}, {"remaining", i->remaining}};
                     }});
 
+    server.AddTool(
+        {"game_set_interactables_many",
+         "Enable or disable and/or reset up to 64 unique live interactables. Validates every target and requested action before applying changes.",
+         Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                             {"items", {{"type", "object"},
+                                         {"properties", {{"target", {{"type", "string"}}}, {"enabled", {{"type", "boolean"}}},
+                                                          {"reset", {{"type", "boolean"}}}}},
+                                         {"required", Json::array({"target"})}}}}}},
+                {"edits"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             interact::InteractionSystem* system = interact::InteractionSystem::Active();
+             if (system == nullptr) throw ToolError("This game has no interaction system");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be an array of 1 to 64 interactable updates");
+             }
+             struct InteractableEdit {
+                 Entity target;
+                 bool has_enabled = false;
+                 bool enabled = false;
+                 bool reset = false;
+             };
+             std::vector<InteractableEdit> edits;
+             edits.reserve(args["edits"].size());
+             for (const Json& item : args["edits"]) {
+                 if (!item.is_object() || !item.contains("target") || !item["target"].is_string() || item["target"].get<std::string>().empty()) {
+                     throw ToolError("Every \"edits\" entry must contain a non-empty string \"target\"");
+                 }
+                 if (!item.contains("enabled") && !item.contains("reset")) throw ToolError("Every edit must specify \"enabled\" and/or \"reset\"");
+                 if (item.contains("enabled") && !item["enabled"].is_boolean()) throw ToolError("\"enabled\" must be a boolean");
+                 if (item.contains("reset") && !item["reset"].is_boolean()) throw ToolError("\"reset\" must be a boolean");
+                 const Entity target = FindEntity(game, item["target"].get<std::string>());
+                 if (std::find_if(edits.begin(), edits.end(), [target](const InteractableEdit& edit) { return edit.target == target; }) != edits.end()) {
+                     throw ToolError("\"edits\" must not repeat the same target");
+                 }
+                 if (world.GetComponent<interact::Interactable>(target) == nullptr) throw ToolError("Target " + EntityKey(world, target) + " is not an interactable");
+                 edits.push_back({target, item.contains("enabled"), item.contains("enabled") ? item["enabled"].get<bool>() : false,
+                                  item.contains("reset") && item["reset"].get<bool>()});
+             }
+             Json results = Json::array();
+             for (const InteractableEdit& edit : edits) {
+                 if (edit.has_enabled && !system->SetEnabled(edit.target, edit.enabled)) throw ToolError("Could not update interactable " + EntityKey(world, edit.target));
+                 if (edit.reset && !system->Reset(edit.target)) throw ToolError("Could not reset interactable " + EntityKey(world, edit.target));
+                 const interact::Interactable* state = world.GetComponent<interact::Interactable>(edit.target);
+                 results.push_back({{"target", EntityKey(world, edit.target)}, {"enabled", state->enabled},
+                                    {"used", state->used}, {"remaining", state->remaining}});
+             }
+             return {{"updated_count", results.size()}, {"results", results}};
+         }});
+
 #endif // AETHER_MCP_INTERACTION
     // -- Audio (the running game's mixer, cue player and AudioSource components) ---------------------------------
     server.AddTool({"game_audio_state",
