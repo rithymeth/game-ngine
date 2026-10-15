@@ -333,8 +333,12 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                     }});
 
     server.AddTool({"list_entities",
-                    "List a page of scene entities (GUID, name when present, entity index, component names, parent GUID, effective collision layer index, and local active state). Optionally filter by component, exact entity name, case-insensitive ASCII name substring, direct parent or roots, layer index, local active value, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND. Results are ordered by entity index and include total match count, has_more, and a continuation cursor. The cursor is not a scene snapshot; entities created in a reused index at or before it are skipped.",
+                    "List a page of scene entities (GUID, name when present, entity index, component names, parent GUID, effective collision layer index, and local active state). Optionally filter by component, component groups that must all/any match, exact entity name, case-insensitive ASCII name substring, direct parent or roots, layer index, local active value, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND. Results are ordered by entity index and include total match count, has_more, and a continuation cursor. The cursor is not a scene snapshot; entities created in a reused index at or before it are skipped.",
                     Schema({{"component", {{"type", "string"}, {"description", "Only entities having this component"}}},
+                            {"components_all", {{"type", "array"}, {"items", {{"type", "string"}}}, {"maxItems", 32},
+                                                 {"description", "Only entities that have every listed component"}}},
+                            {"components_any", {{"type", "array"}, {"items", {{"type", "string"}}}, {"maxItems", 32},
+                                                 {"description", "Only entities that have at least one listed component"}}},
                             {"name", {{"type", "string"}, {"description", "Only entities whose name exactly matches"}}},
                             {"name_contains", {{"type", "string"}, {"description", "Only entities whose name contains this case-insensitive ASCII substring; must not be empty"}}},
                             {"parent", kGuidProp},
@@ -460,6 +464,27 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         const std::vector<std::string> tags_all = ReadTagFilter("tags_all");
                         const std::vector<std::string> tags_any = ReadTagFilter("tags_any");
                         const std::vector<std::string> tags_none = ReadTagFilter("tags_none");
+                        auto ReadComponentFilter = [&](const char* key) {
+                            std::vector<ComponentId> components;
+                            if (!args.contains(key)) return components;
+                            if (!args[key].is_array() || args[key].size() > 32) {
+                                throw ToolError(std::string("\"") + key + "\" must be an array of at most 32 component names");
+                            }
+                            std::set<ComponentId> unique;
+                            for (const Json& value : args[key]) {
+                                if (!value.is_string() || value.get<std::string>().empty()) {
+                                    throw ToolError(std::string("Every \"") + key + "\" entry must be a non-empty component name");
+                                }
+                                const ComponentId component = RequireComponent(value.get<std::string>());
+                                if (!unique.insert(component).second) {
+                                    throw ToolError(std::string("Duplicate component in \"") + key + "\": " + value.get<std::string>());
+                                }
+                                components.push_back(component);
+                            }
+                            return components;
+                        };
+                        const std::vector<ComponentId> components_all = ReadComponentFilter("components_all");
+                        const std::vector<ComponentId> components_any = ReadComponentFilter("components_any");
                         Json out = Json::array();
                         usize total_matches = 0;
                         for (Entity e : AllEntities(s)) {
@@ -474,6 +499,18 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                             if (active_filter.has_value() && entity_active != *active_filter) continue;
                             if (filter != kInvalidComponentId && !s.world.HasComponentRaw(e, filter)) {
                                 continue;
+                            }
+                            bool has_all_components = true;
+                            for (const ComponentId component : components_all) {
+                                has_all_components = has_all_components && s.world.HasComponentRaw(e, component);
+                            }
+                            if (!has_all_components) continue;
+                            if (!components_any.empty()) {
+                                bool has_any_component = false;
+                                for (const ComponentId component : components_any) {
+                                    has_any_component = has_any_component || s.world.HasComponentRaw(e, component);
+                                }
+                                if (!has_any_component) continue;
                             }
                             if (args.contains("name")) {
                                 const EntityName* name = s.world.GetComponent<EntityName>(e);
