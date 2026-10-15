@@ -3317,11 +3317,11 @@ void RegisterGameTools(McpServer& server) {
 #if AETHER_MCP_PHYSICS
     server.AddTool(
         {"game_apply_physics3d_forces_many",
-         "Apply a force or impulse to up to 64 unique live dynamic 3D bodies. Force is in newtons; impulse is in kg·m/s. Validates the entire batch before applying.",
+         "Apply a force, impulse, torque or angular impulse to up to 64 unique live dynamic 3D bodies. Validates the entire batch before applying.",
          Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
                              {"items", {{"type", "object"},
                                         {"properties", {{"entity", {{"type", "string"}}},
-                                                        {"mode", {{"type", "string"}, {"enum", Json::array({"force", "impulse"})}},
+                                                        {"mode", {{"type", "string"}, {"enum", Json::array({"force", "impulse", "torque", "angular_impulse"})}},
                                                         {"value", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}}}},
                                         {"required", Json::array({"entity", "mode", "value"})}}}}}},
                 {"edits"}),
@@ -3330,9 +3330,9 @@ void RegisterGameTools(McpServer& server) {
              PhysicsScene* scene = game.PhysicsQueries();
              if (scene == nullptr) throw ToolError("The loaded game has no 3D physics scene");
              if (!args.contains("edits") || !args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
-                 throw ToolError("\"edits\" must be an array of 1 to 64 force edits");
+                 throw ToolError("\"edits\" must be an array of 1 to 64 force/torque edits");
              }
-             struct ForceEdit { Entity entity; JPH::BodyID body; bool impulse; Vec3 value; };
+             struct ForceEdit { Entity entity; JPH::BodyID body; std::string mode; Vec3 value; };
              std::vector<ForceEdit> edits;
              edits.reserve(args["edits"].size());
              auto read_vector = [](const Json& value) {
@@ -3356,7 +3356,9 @@ void RegisterGameTools(McpServer& server) {
                      if (!supported.contains(it.key())) throw ToolError("Unsupported 3D force edit field: " + it.key());
                  }
                  const std::string mode = raw["mode"].get<std::string>();
-                 if (mode != "force" && mode != "impulse") throw ToolError("\"mode\" must be force or impulse");
+                 if (mode != "force" && mode != "impulse" && mode != "torque" && mode != "angular_impulse") {
+                     throw ToolError("\"mode\" must be force, impulse, torque or angular_impulse");
+                 }
                  const Entity entity = FindEntity(game, raw["entity"].get<std::string>());
                  if (std::find_if(edits.begin(), edits.end(), [entity](const ForceEdit& edit) { return edit.entity == entity; }) != edits.end()) {
                      throw ToolError("\"edits\" must not repeat an entity");
@@ -3366,17 +3368,22 @@ void RegisterGameTools(McpServer& server) {
                  if (scene->Physics().BodyInterface().GetMotionType(body) != JPH::EMotionType::Dynamic) {
                      throw ToolError("Force and impulse edits require dynamic bodies");
                  }
-                 edits.push_back({entity, body, mode == "impulse", read_vector(raw["value"])});
+                 edits.push_back({entity, body, mode, read_vector(raw["value"])});
              }
              JPH::BodyInterface& interface = scene->Physics().BodyInterface();
              Json results = Json::array();
              for (const ForceEdit& edit : edits) {
                  const JPH::Vec3 value(edit.value.x, edit.value.y, edit.value.z);
-                 if (edit.impulse) interface.AddImpulse(edit.body, value);
-                 else interface.AddForce(edit.body, value);
-                 const JPH::Vec3 velocity = interface.GetLinearVelocity(edit.body);
-                 results.push_back({{"entity", EntityKey(world, edit.entity)}, {"mode", edit.impulse ? "impulse" : "force"},
-                                    {"linear_velocity", Json::array({velocity.GetX(), velocity.GetY(), velocity.GetZ()})}});
+                 if (edit.mode == "force") interface.AddForce(edit.body, value);
+                 else if (edit.mode == "impulse") interface.AddImpulse(edit.body, value);
+                 else if (edit.mode == "torque") interface.AddTorque(edit.body, value);
+                 else interface.AddAngularImpulse(edit.body, value);
+                 const JPH::Vec3 linear = interface.GetLinearVelocity(edit.body);
+                 const JPH::Vec3 angular = interface.GetAngularVelocity(edit.body);
+                 Json result = {{"entity", EntityKey(world, edit.entity)}, {"mode", edit.mode}};
+                 if (edit.mode == "force" || edit.mode == "impulse") result["linear_velocity"] = Json::array({linear.GetX(), linear.GetY(), linear.GetZ()});
+                 else result["angular_velocity"] = Json::array({angular.GetX(), angular.GetY(), angular.GetZ()});
+                 results.push_back(std::move(result));
              }
              return {{"count", results.size()}, {"entities", std::move(results)}};
          }});
