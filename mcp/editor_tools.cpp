@@ -1022,6 +1022,47 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
          }});
 
     server.AddTool(
+        {"validate_scene_tags",
+         "Audit Tags components across the current scene without modifying it. Reports empty tag names and duplicate exact, case-sensitive names on an entity, with entity identifiers and tag positions. Returns at most 128 detailed issues with total issue count and a truncation flag.",
+         Schema(Json::object()),
+         [&s](const Json&) -> Json {
+             Json issues = Json::array();
+             usize issue_count = 0;
+             usize entities_with_tags = 0;
+             usize tag_count = 0;
+             bool truncated = false;
+             auto add_issue = [&](Json issue) {
+                 ++issue_count;
+                 if (issues.size() < 128) issues.push_back(std::move(issue));
+                 else truncated = true;
+             };
+             for (const Entity entity : AllEntities(s)) {
+                 const Tags* tags = s.world.GetComponent<Tags>(entity);
+                 if (tags == nullptr) continue;
+                 ++entities_with_tags;
+                 const IdComponent* id = s.world.GetComponent<IdComponent>(entity);
+                 const Json entity_id = id != nullptr && !id->guid.IsNull() ? Json(ToString(id->guid)) : Json(entity.index);
+                 std::map<std::string, usize> first_tag;
+                 for (usize i = 0; i < tags->names.size(); ++i) {
+                     ++tag_count;
+                     const std::string& name = tags->names[i];
+                     if (name.empty()) {
+                         add_issue({{"kind", "empty_tag_name"}, {"entity", entity_id}, {"tag_index", i}});
+                         continue;
+                     }
+                     const auto [it, inserted] = first_tag.emplace(name, i);
+                     if (!inserted) {
+                         add_issue({{"kind", "duplicate_tag"}, {"entity", entity_id}, {"tag", name},
+                                    {"first_index", it->second}, {"duplicate_index", i}});
+                     }
+                 }
+             }
+             return {{"valid", issue_count == 0}, {"entity_count", s.world.EntityCount()},
+                     {"entities_with_tags", entities_with_tags}, {"tag_count", tag_count},
+                     {"issue_count", issue_count}, {"issues", std::move(issues)}, {"truncated", truncated}};
+         }});
+
+    server.AddTool(
         {"get_entities_world_transforms_many",
          "Get derived world transforms for 1–64 unique scene entities in request order. Returns each world matrix as four column vectors plus world position and world-scale magnitudes (the lengths of the three basis columns). Parent transforms are composed through the hierarchy. Rejects missing Transform components, non-finite results, hierarchy cycles and excessive depth.",
          Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
