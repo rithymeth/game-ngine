@@ -1300,6 +1300,51 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_reset_components_many",
+         "Reset reflected fields of one component to its defaults on up to 64 unique running entities. The component stays attached; the whole selection is validated before any reset.",
+         Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}},
+                 {"component", {{"type", "string"}, {"description", "Component name from list_component_types"}}}},
+                {"entities", "component"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be an array of 1 to 64 entity handles");
+             }
+             const ComponentId id = RequireComponent(RequireString(args, "component"));
+             if (id == GetComponentId<IdComponent>()) throw ToolError("IdComponent is managed by the running game and cannot be reset directly");
+             const ComponentInfo& info = GetComponentInfo(id);
+             reflect::Any defaults = reflect::Any::DefaultOf(*info.reflected);
+             if (!defaults.HasValue()) throw ToolError("Cannot construct reflected defaults for " + ComponentName(id));
+             const Json default_values = reflect::ToJson(*info.reflected, defaults.Data());
+             std::vector<Entity> entities;
+             entities.reserve(args["entities"].size());
+             for (const Json& handle : args["entities"]) {
+                 if (!handle.is_string() || handle.get<std::string>().empty()) {
+                     throw ToolError("Every \"entities\" entry must be a non-empty entity handle");
+                 }
+                 const Entity entity = FindEntity(game, handle.get<std::string>());
+                 if (std::find(entities.begin(), entities.end(), entity) != entities.end()) {
+                     throw ToolError("\"entities\" must not contain the same entity more than once");
+                 }
+                 if (!world.HasComponentRaw(entity, id)) throw ToolError("Entity " + EntityKey(world, entity) + " has no " + ComponentName(id));
+                 entities.push_back(entity);
+             }
+             Json results = Json::array();
+             for (Entity entity : entities) {
+                 void* data = world.GetComponentRaw(entity, id);
+                 reflect::LoadReport report;
+                 if (!reflect::FromJson(*info.reflected, data, default_values, &report)) {
+                     throw ToolError("Default component values could not be applied to entity " + EntityKey(world, entity));
+                 }
+                 Json result = {{"entity", EntityKey(world, entity)}, {"values", reflect::ToJson(*info.reflected, data)}};
+                 if (!report.warnings.empty()) result["warnings"] = report.warnings;
+                 results.push_back(std::move(result));
+             }
+             return {{"component", ComponentName(id)}, {"reset_count", results.size()}, {"results", results}};
+         }});
+
+    server.AddTool(
         {"game_get_hierarchy",
          "Return an entity's live descendant tree in stable entity-index order. The root is included; depth and node caps bound the response.",
          Schema({{"entity", {{"type", "string"}, {"description", "GUID or #index[:generation]"}}},
