@@ -3038,6 +3038,47 @@ void RegisterGameTools(McpServer& server) {
                     }});
 
     server.AddTool(
+        {"game_play_sequences_many",
+         "Start 1 to 64 level sequences by asset path, each with its own optional loop setting. Validates the full request before playback; missing sequence assets are reported per entry.",
+         Schema({{"sequences", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                                 {"items", {{"type", "object"},
+                                             {"properties", {{"sequence", {{"type", "string"}}}, {"loop", {{"type", "boolean"}}}}},
+                                             {"required", Json::array({"sequence"})}}}}}},
+                {"sequences"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             seq::SequenceSystem* system = seq::SequenceSystem::Active();
+             if (system == nullptr) throw ToolError("This game has no sequence system (load a scene first)");
+             if (!args["sequences"].is_array() || args["sequences"].empty() || args["sequences"].size() > 64) {
+                 throw ToolError("\"sequences\" must be an array of 1 to 64 sequence requests");
+             }
+             struct SequenceRequest {
+                 std::string path;
+                 bool loop = false;
+             };
+             std::vector<SequenceRequest> requests;
+             requests.reserve(args["sequences"].size());
+             for (const Json& item : args["sequences"]) {
+                 if (!item.is_object() || !item.contains("sequence") || !item["sequence"].is_string() || item["sequence"].get<std::string>().empty()) {
+                     throw ToolError("Every \"sequences\" entry must contain a non-empty string \"sequence\"");
+                 }
+                 if (item.contains("loop") && !item["loop"].is_boolean()) throw ToolError("\"loop\" must be a boolean");
+                 requests.push_back({item["sequence"].get<std::string>(), item.contains("loop") && item["loop"].get<bool>()});
+             }
+             Json results = Json::array();
+             usize started_count = 0;
+             for (const SequenceRequest& request : requests) {
+                 const Entity entity = system->PlaySequence(request.path, request.loop);
+                 const bool started = !entity.IsNull();
+                 if (started) ++started_count;
+                 Json result = {{"sequence", request.path}, {"loop", request.loop}, {"started", started}};
+                 result["entity"] = started ? Json(EntityKey(game.GetWorld(), entity)) : Json(nullptr);
+                 results.push_back(std::move(result));
+             }
+             return {{"started_count", started_count}, {"requested_count", results.size()}, {"results", results}, {"problems", system->Problems()}};
+         }});
+
+    server.AddTool(
         {"game_sequence_control",
          "Control one SequenceComponent in the running game: play, pause, stop, skip (finish from here without firing the keys in between), set_time (value = seconds), set_rate "
          "(value; negative plays backward) or set_loop (value 1 or 0). Applied by the next frame's sequence update, so step the game.",
