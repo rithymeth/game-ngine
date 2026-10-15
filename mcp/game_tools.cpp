@@ -2386,11 +2386,12 @@ void RegisterGameTools(McpServer& server) {
 
     server.AddTool(
         {"game_reparent_entities_many",
-         "Set or clear the parent of up to 64 unique live entities as one batch. Parent changes retain local transforms (world poses may move), validate stable parent GUIDs and the complete resulting hierarchy, and reject cycles or excessive depth before applying.",
+         "Set or clear the parent of up to 64 unique live entities as one batch. By default parent changes retain local transforms; set preserve_world=true to retain world poses by updating local transforms. The batch validates stable parent GUIDs and the complete resulting hierarchy, and rejects cycles, excessive depth, singular transforms, or unrepresentable shear before applying.",
          Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
                               {"items", {{"type", "object"},
                                           {"properties", {{"entity", {{"type", "string"}}}, {"parent", {{"type", "string"}}}}},
-                                          {"required", Json::array({"entity", "parent"})}}}}}},
+                                          {"required", Json::array({"entity", "parent"})}}}},
+                 {"preserve_world", {{"type", "boolean"}, {"default", false}}},
                 {"edits"}),
          [host](const Json& args) -> Json {
              Game& game = host->Require();
@@ -2398,7 +2399,9 @@ void RegisterGameTools(McpServer& server) {
              if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
                  throw ToolError("\"edits\" must be an array of 1 to 64 reparent edits");
              }
-             struct ParentEdit { Entity entity; Entity parent; EntityGuid parent_guid; };
+             const bool preserve_world = args.contains("preserve_world") ?
+                 (args["preserve_world"].is_boolean() ? args["preserve_world"].get<bool>() : throw ToolError("\"preserve_world\" must be a boolean")) : false;
+             struct ParentEdit { Entity entity; Entity parent; EntityGuid parent_guid; Transform preserved_local; bool has_preserved_local = false; };
              std::vector<ParentEdit> edits;
              edits.reserve(args["edits"].size());
              for (const Json& item : args["edits"]) {
@@ -2421,7 +2424,7 @@ void RegisterGameTools(McpServer& server) {
                      }
                      parent_guid = id->guid;
                  }
-                 edits.push_back({entity, parent, parent_guid});
+                 edits.push_back({entity, parent, parent_guid, {}, false});
              }
              for (const ParentEdit& edit : edits) {
                  std::vector<Entity> visited{edit.entity};
@@ -2434,8 +2437,76 @@ void RegisterGameTools(McpServer& server) {
                      current = changed != edits.end() ? changed->parent : GetParent(world, game.Guids(), current);
                  }
              }
+             if (preserve_world) {
+                 auto finite_matrix = [](const Mat4& matrix) {
+                     for (const Vec4& column : matrix.cols) {
+                         if (!std::isfinite(column.x) || !std::isfinite(column.y) || !std::isfinite(column.z) || !std::isfinite(column.w)) return false;
+                     }
+                     return true;
+                 };
+                 auto rotation_from_basis = [](const Vec3& x, const Vec3& y, const Vec3& z) {
+                     const f32 m00 = x.x, m01 = y.x, m02 = z.x;
+                     const f32 m10 = x.y, m11 = y.y, m12 = z.y;
+                     const f32 m20 = x.z, m21 = y.z, m22 = z.z;
+                     Quaternion q;
+                     const f32 trace = m00 + m11 + m22;
+                     if (trace > 0.0f) {
+                         const f32 s = std::sqrt(trace + 1.0f) * 2.0f;
+                         q = Quaternion((m21 - m12) / s, (m02 - m20) / s, (m10 - m01) / s, 0.25f * s);
+                     } else if (m00 > m11 && m00 > m22) {
+                         const f32 s = std::sqrt(1.0f + m00 - m11 - m22) * 2.0f;
+                         q = Quaternion(0.25f * s, (m01 + m10) / s, (m02 + m20) / s, (m21 - m12) / s);
+                     } else if (m11 > m22) {
+                         const f32 s = std::sqrt(1.0f + m11 - m00 - m22) * 2.0f;
+                         q = Quaternion((m01 + m10) / s, 0.25f * s, (m12 + m21) / s, (m02 - m20) / s);
+                     } else {
+                         const f32 s = std::sqrt(1.0f + m22 - m00 - m11) * 2.0f;
+                         q = Quaternion((m02 + m20) / s, (m12 + m21) / s, 0.25f * s, (m10 - m01) / s);
+                     }
+                     return q.Normalized();
+                 };
+                 for (ParentEdit& edit : edits) {
+                     if (world.GetComponent<Transform>(edit.entity) == nullptr) continue;
+                     for (Entity ancestor = edit.parent; !ancestor.IsNull(); ancestor = GetParent(world, game.Guids(), ancestor)) {
+                         if (std::find_if(edits.begin(), edits.end(), [ancestor](const ParentEdit& candidate) { return candidate.entity == ancestor; }) != edits.end()) {
+                             throw ToolError("preserve_world cannot target a parent whose hierarchy is also being reparented in this batch");
+                         }
+                     }
+                     const Mat4 old_world = ComputeWorldTransform(world, game.Guids(), edit.entity);
+                     Mat4 parent_world;
+                     if (!edit.parent.IsNull() && world.GetComponent<Transform>(edit.parent) != nullptr) {
+                         parent_world = ComputeWorldTransform(world, game.Guids(), edit.parent);
+                     }
+                     if (!finite_matrix(old_world) || !finite_matrix(parent_world)) throw ToolError("Cannot preserve a non-finite world transform");
+                     Mat4 inverse_parent;
+                     if (!parent_world.TryInverse(inverse_parent)) throw ToolError("Cannot preserve world pose through a singular parent transform");
+                     const Mat4 local = inverse_parent * old_world;
+                     if (!finite_matrix(local) || std::abs(local.cols[0].w) > 1.0e-4f || std::abs(local.cols[1].w) > 1.0e-4f ||
+                         std::abs(local.cols[2].w) > 1.0e-4f || std::abs(local.cols[3].w - 1.0f) > 1.0e-4f) {
+                         throw ToolError("Cannot preserve world pose because the resulting local transform is not affine");
+                     }
+                     Vec3 x(local.cols[0].x, local.cols[0].y, local.cols[0].z);
+                     Vec3 y(local.cols[1].x, local.cols[1].y, local.cols[1].z);
+                     Vec3 z(local.cols[2].x, local.cols[2].y, local.cols[2].z);
+                     Vec3 scale(x.Length(), y.Length(), z.Length());
+                     if (scale.x <= 1.0e-8f || scale.y <= 1.0e-8f || scale.z <= 1.0e-8f) throw ToolError("Cannot preserve world pose with a zero-scale local transform");
+                     x = x * (1.0f / scale.x);
+                     y = y * (1.0f / scale.y);
+                     z = z * (1.0f / scale.z);
+                     if (std::abs(x.Dot(y)) > 1.0e-4f || std::abs(x.Dot(z)) > 1.0e-4f || std::abs(y.Dot(z)) > 1.0e-4f) {
+                         throw ToolError("Cannot preserve world pose because the reparenting would require shear");
+                     }
+                     if (x.Cross(y).Dot(z) < 0.0f) { x = x * -1.0f; scale.x = -scale.x; }
+                     Transform local_transform;
+                     local_transform.position = Vec3(local.cols[3].x, local.cols[3].y, local.cols[3].z);
+                     local_transform.rotation = rotation_from_basis(x, y, z);
+                     local_transform.scale = scale;
+                     edit.preserved_local = local_transform;
+                     edit.has_preserved_local = true;
+                 }
+             }
              Json results = Json::array();
-             for (const ParentEdit& edit : edits) {
+             for (ParentEdit& edit : edits) {
                  if (edit.parent.IsNull()) {
                      if (world.GetComponent<Parent>(edit.entity) != nullptr) world.RemoveComponent<Parent>(edit.entity);
                  } else if (Parent* component = world.GetComponent<Parent>(edit.entity)) {
@@ -2443,6 +2514,7 @@ void RegisterGameTools(McpServer& server) {
                  } else {
                      world.AddComponent<Parent>(edit.entity, Parent{edit.parent_guid});
                  }
+                 if (edit.has_preserved_local) *world.GetComponent<Transform>(edit.entity) = edit.preserved_local;
                  results.push_back({{"entity", EntityKey(world, edit.entity)},
                                     {"parent", edit.parent.IsNull() ? Json(nullptr) : Json(EntityKey(world, edit.parent))}});
              }
