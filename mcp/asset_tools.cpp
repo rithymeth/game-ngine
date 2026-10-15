@@ -27,6 +27,116 @@ namespace {
 
 using namespace detail;
 
+struct ContentFileState {
+    bool exists = false;
+    std::vector<u8> bytes;
+};
+
+ContentFileState CaptureContentFile(const fs::path& path) {
+    ContentFileState state;
+    std::error_code ec;
+    const fs::file_status status = fs::symlink_status(path, ec);
+    if (ec == std::errc::no_such_file_or_directory) return state;
+    if (ec) throw ToolError("Could not inspect " + path.string() + ": " + ec.message());
+    if (!fs::exists(status)) return state;
+    if (!fs::is_regular_file(status)) throw ToolError("Not a regular file: " + path.string());
+    const auto bytes = fs::file_size(path, ec);
+    if (ec) throw ToolError("Could not inspect " + path.string() + ": " + ec.message());
+    if (bytes > kMaxTextBytes) throw ToolError("Existing file is larger than 2 MB and cannot be captured for undo: " + path.string());
+    state.exists = true;
+    if (!aether::fs::ReadFileBytes(path.string(), state.bytes)) throw ToolError("Could not read " + path.string());
+    return state;
+}
+
+void RestoreContentFile(const fs::path& path, const ContentFileState& state) {
+    if (state.exists) {
+        const void* data = state.bytes.empty() ? "" : state.bytes.data();
+        if (!aether::fs::WriteFileAtomic(path.string(), data, state.bytes.size())) throw ToolError("Could not restore " + path.string());
+        return;
+    }
+    std::error_code ec;
+    fs::remove(path, ec);
+    if (ec) throw ToolError("Could not remove " + path.string() + ": " + ec.message());
+}
+
+class ContentWriteCommand final : public editor::ICommand {
+public:
+    ContentWriteCommand(std::shared_ptr<AssetHost> host, fs::path project_file, fs::path file, std::string text,
+                        ContentFileState before_source, ContentFileState before_meta)
+        : host_(std::move(host)), project_file_(std::move(project_file)), file_(std::move(file)),
+          before_source_(std::move(before_source)), before_meta_(std::move(before_meta)) {
+        after_source_.exists = true;
+        after_source_.bytes.assign(text.begin(), text.end());
+    }
+
+    void Do(editor::CommandContext&) override {
+        RequireSameProject();
+        if (!executed_) {
+            try {
+                WriteSource();
+                scan_ = host_->project->database->Scan();
+                after_meta_ = CaptureContentFile(MetaFile());
+                executed_ = true;
+            } catch (...) {
+                RestoreContentFile(file_, before_source_);
+                RestoreContentFile(MetaFile(), before_meta_);
+                host_->project->database->Scan();
+                throw;
+            }
+            return;
+        }
+        Apply(after_source_, after_meta_, before_source_, before_meta_);
+    }
+
+    void Undo(editor::CommandContext&) override {
+        RequireSameProject();
+        Apply(before_source_, before_meta_, after_source_, after_meta_);
+    }
+
+    std::string Label() const override { return "Write Content File"; }
+    usize MemoryBytes() const override {
+        usize bytes = sizeof(*this) + before_source_.bytes.size() + before_meta_.bytes.size() + after_source_.bytes.size() + after_meta_.bytes.size();
+        for (const std::string& warning : scan_.warnings) bytes += warning.size();
+        return bytes;
+    }
+    const assets::ScanResult& Scan() const { return scan_; }
+
+private:
+    fs::path MetaFile() const { return fs::path(file_.string() + assets::AssetMeta::kExtension); }
+    void RequireSameProject() const {
+        if (!host_->project || host_->project->paths.file.lexically_normal() != project_file_.lexically_normal()) {
+            throw ToolError("Open the project that owns this content file before undoing or redoing this action");
+        }
+    }
+    void WriteSource() const {
+        const void* data = after_source_.bytes.empty() ? "" : after_source_.bytes.data();
+        if (!aether::fs::WriteFileAtomic(file_.string(), data, after_source_.bytes.size())) throw ToolError("Could not write " + file_.string());
+    }
+    void Apply(const ContentFileState& source, const ContentFileState& meta, const ContentFileState& rollback_source,
+               const ContentFileState& rollback_meta) {
+        try {
+            RestoreContentFile(file_, source);
+            RestoreContentFile(MetaFile(), meta);
+            scan_ = host_->project->database->Scan();
+        } catch (...) {
+            RestoreContentFile(file_, rollback_source);
+            RestoreContentFile(MetaFile(), rollback_meta);
+            host_->project->database->Scan();
+            throw;
+        }
+    }
+
+    std::shared_ptr<AssetHost> host_;
+    fs::path project_file_;
+    fs::path file_;
+    ContentFileState before_source_;
+    ContentFileState before_meta_;
+    ContentFileState after_source_;
+    ContentFileState after_meta_;
+    assets::ScanResult scan_;
+    bool executed_ = false;
+};
+
 class ImportSettingsCommand final : public editor::ICommand {
 public:
     ImportSettingsCommand(std::shared_ptr<AssetHost> host, fs::path project_file, AssetGuid guid, fs::path meta_file,
@@ -478,24 +588,24 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
 
     server.AddTool(
         {"content_write",
-         "Write a text file under Content/ (a scene, prefab, material or any JSON asset), creating folders; then rescan so a new "
-         "file gets a GUID. Refuses .ameta files (use asset_set_import_settings). Overwrites an existing file.",
-         Schema({{"path", {{"type", "string"}}}, {"text", {{"type", "string"}}}}, {"path", "text"}), [host](const Json& args) -> Json {
+         "Write a text file under Content/ (a scene, prefab, material or any JSON asset) as one agent-attributed undoable action; "
+         "new recognized assets get a GUID. Refuses .ameta files (use asset_set_import_settings) and existing files over 2 MB. Overwrites an existing file.",
+         Schema({{"path", {{"type", "string"}}}, {"text", {{"type", "string"}}}}, {"path", "text"}), [host, &session](const Json& args) -> Json {
              OpenProject& p = host->Require();
+             if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before writing content");
              const std::string rel = RequireString(args, "path");
              const fs::path file = ContentFile(p, rel);
              if (file.extension() == assets::AssetMeta::kExtension) throw ToolError(".ameta files are managed by the asset tools");
              const std::string text = RequireString(args, "text");
              if (text.size() > kMaxTextBytes) throw ToolError("Text is larger than 2 MB");
-             std::error_code ec;
-             fs::create_directories(file.parent_path(), ec);
-             {
-                 std::ofstream out(file, std::ios::binary | std::ios::trunc);
-                 out.write(text.data(), static_cast<std::streamsize>(text.size()));
-                 if (!out) throw ToolError("Could not write " + rel);
-             }
-             const assets::ScanResult scan = p.database->Scan();
-             Json j = {{"path", CleanRelative(rel)}, {"bytes", text.size()}, {"scan", ScanJson(scan)}};
+             ContentFileState before_source = CaptureContentFile(file);
+             ContentFileState before_meta = CaptureContentFile(fs::path(file.string() + assets::AssetMeta::kExtension));
+             auto command = std::make_unique<ContentWriteCommand>(host, p.paths.file, file, text, std::move(before_source), std::move(before_meta));
+             command->SetAttribution("agent");
+             ContentWriteCommand* command_result = command.get();
+             editor::CommandContext context = session.Context();
+             session.stack.Execute(context, std::move(command));
+             Json j = {{"path", CleanRelative(rel)}, {"bytes", text.size()}, {"scan", ScanJson(command_result->Scan())}};
              if (const AssetRecord* r = p.database->FindByPath(CleanRelative(rel))) j["asset"] = RecordJson(p, *r);
              return j;
          }});
