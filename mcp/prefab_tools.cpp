@@ -21,6 +21,60 @@ struct PrefabLookupCache {
     std::unique_ptr<PrefabLibrary> library;
 };
 
+class ApplyPrefabOverridesCommand final : public editor::ICommand {
+public:
+    ApplyPrefabOverridesCommand(std::shared_ptr<AssetHost> host, EditorSession& session, std::filesystem::path project_file,
+                                assets::AssetGuid prefab, EntityGuid instance_root, PrefabData before_prefab,
+                                PrefabData after_prefab, PrefabInstance before_instance, PrefabInstance after_instance)
+        : host_(std::move(host)), session_(&session), project_file_(std::move(project_file)), prefab_(prefab),
+          instance_root_(instance_root), before_prefab_(std::move(before_prefab)), after_prefab_(std::move(after_prefab)),
+          before_instance_(std::move(before_instance)), after_instance_(std::move(after_instance)) {
+        memory_bytes_ = sizeof(*this) + PrefabToJson(before_prefab_).dump().size() + PrefabToJson(after_prefab_).dump().size();
+        for (const PrefabInstance* instance : {&before_instance_, &after_instance_}) {
+            memory_bytes_ += instance->removed_entities.size() * sizeof(PrefabLocalId);
+            for (const PropertyOverride& override_value : instance->overrides) {
+                memory_bytes_ += sizeof(override_value) + override_value.component.size() + override_value.field_path.size() +
+                                 override_value.value.size();
+            }
+        }
+    }
+
+    void Do(editor::CommandContext&) override { SaveAndPropagate(after_prefab_, after_instance_); }
+    void Undo(editor::CommandContext&) override { SaveAndPropagate(before_prefab_, before_instance_); }
+    std::string Label() const override { return "Apply Overrides to Prefab"; }
+    usize MemoryBytes() const override { return memory_bytes_; }
+    const PropagationReport& LastReport() const { return last_report_; }
+
+private:
+    void SaveAndPropagate(const PrefabData& data, const PrefabInstance& instance) {
+        if (!host_->project || host_->project->paths.file.lexically_normal() != project_file_.lexically_normal()) {
+            throw ToolError("Open the project that owns this prefab before undoing or redoing this action");
+        }
+        const Entity root = session_->guids.Find(session_->world, instance_root_);
+        if (root.IsNull() || !session_->world.HasComponent<PrefabInstance>(root)) {
+            throw ToolError("The prefab instance no longer exists");
+        }
+        PrefabLibrary library(*host_->project->database);
+        std::string error;
+        const auto affected = library.Save(prefab_, data, &error);
+        if (affected.empty() && !error.empty()) throw ToolError("Couldn't save the prefab: " + error);
+        *session_->world.GetComponent<PrefabInstance>(root) = instance;
+        last_report_ = PropagatePrefabChange(session_->world, session_->guids, library, prefab_);
+    }
+
+    std::shared_ptr<AssetHost> host_;
+    EditorSession* session_;
+    std::filesystem::path project_file_;
+    assets::AssetGuid prefab_;
+    EntityGuid instance_root_;
+    PrefabData before_prefab_;
+    PrefabData after_prefab_;
+    PrefabInstance before_instance_;
+    PrefabInstance after_instance_;
+    PropagationReport last_report_;
+    usize memory_bytes_ = 0;
+};
+
 const AssetRecord& RequirePrefab(OpenProject& p, const std::string& key) {
     const AssetRecord& r = FindAsset(p, key);
     if (r.importer != "Prefab") throw ToolError(r.path + " is not a prefab (it is a " + r.importer + ")");
@@ -270,23 +324,33 @@ void RegisterPrefabTools(McpServer& server, std::shared_ptr<AssetHost> host, Edi
     server.AddTool(
         {"prefab_apply",
          "\"Apply to Prefab\": write an instance's overrides into the prefab asset (same selection arguments as prefab_revert), remove them from the instance, save the prefab, "
-         "and re-resolve every instance of it or of prefabs built on it in the editor scene. Orphaned overrides can't be applied and stay. Overrides inside nested prefabs stay "
+         "and re-resolve every instance of it or of prefabs built on it in the editor scene. This is one undoable, agent-attributed action. "
+         "Orphaned overrides can't be applied and stay. Overrides inside nested prefabs stay "
          "on the instance. Returns how many were applied, how many instances were re-resolved, and any failures.",
          Schema({{"entity", {{"type", "string"}}}, {"local_id", {{"type", "integer"}}}, {"component", {{"type", "string"}}}, {"field_path", {{"type", "string"}}}}, {"entity"}),
          [host, &session](const Json& args) -> Json {
              OpenProject& p = host->Require();
+             if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before applying prefab overrides");
              const InstanceRef ref = RequireInstance(session, RequireEntity(session, args));
              const assets::AssetGuid guid = ref.instance->source.guid;
              PrefabLibrary lib(*p.database);
              const PrefabData* current = lib.Get(guid);
              if (current == nullptr) throw ToolError("Can't read the prefab: " + lib.LastError(guid));
-             PrefabData edited = *current;
-             const usize applied = ApplyOverridesToPrefab(edited, *ref.instance, OptLocalId(args), OptString(args, "component"), OptString(args, "field_path"));
-             Json out = {{"applied", applied}, {"remaining", ref.instance->overrides.size()}};
+             PrefabData before_prefab = *current;
+             PrefabData edited = before_prefab;
+             const PrefabInstance before_instance = *ref.instance;
+             PrefabInstance edited_instance = before_instance;
+             const usize applied = ApplyOverridesToPrefab(edited, edited_instance, OptLocalId(args), OptString(args, "component"), OptString(args, "field_path"));
+             Json out = {{"applied", applied}, {"remaining", edited_instance.overrides.size()}};
              if (applied == 0) return out;
-             std::string error;
-             if (lib.Save(guid, std::move(edited), &error).empty() && !error.empty()) throw ToolError("Couldn't save the prefab: " + error);
-             const PropagationReport propagated = PropagatePrefabChange(session.world, session.guids, lib, guid);
+             const EntityGuid root_guid = session.world.GetComponent<IdComponent>(ref.root)->guid;
+             auto command = std::make_unique<ApplyPrefabOverridesCommand>(host, session, p.paths.file, guid, root_guid,
+                                                                           std::move(before_prefab), std::move(edited),
+                                                                           before_instance, std::move(edited_instance));
+             ApplyPrefabOverridesCommand* command_result = command.get();
+             editor::CommandContext context = session.Context();
+             session.stack.Execute(context, std::move(command));
+             const PropagationReport& propagated = command_result->LastReport();
              out["instances_resolved"] = propagated.instances;
              out["orphaned"] = propagated.orphaned;
              out["failed"] = propagated.failed;
