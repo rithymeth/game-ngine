@@ -17,6 +17,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <exception>
 #include <functional>
 #include <map>
 #include <new>
@@ -955,6 +956,69 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
              for (usize i = 0; i < entities.size(); ++i) compute_world(i, 0);
              return {{"valid", issue_count == 0}, {"entity_count", entities.size()},
                      {"issue_count", issue_count}, {"issues", std::move(issues)}, {"truncated", truncated}};
+         }});
+
+    server.AddTool(
+        {"validate_scene_components",
+         "Audit scene component persistence and reflection without modifying the scene. Reports components without serializer/deserializer support, unsafe unreflected raw components, and exceptions during reflected JSON conversion or component serialization. Returns at most 128 detailed issues with total issue count and a truncation flag.",
+         Schema(Json::object()),
+         [&s](const Json&) -> Json {
+             Json issues = Json::array();
+             usize issue_count = 0;
+             usize component_count = 0;
+             bool truncated = false;
+             auto add_issue = [&](Json issue) {
+                 ++issue_count;
+                 if (issues.size() < 128) issues.push_back(std::move(issue));
+                 else truncated = true;
+             };
+             for (const Entity entity : AllEntities(s)) {
+                 const IdComponent* id = s.world.GetComponent<IdComponent>(entity);
+                 const Json entity_id = id != nullptr && !id->guid.IsNull() ? Json(ToString(id->guid)) : Json(entity.index);
+                 for (ComponentId component = 0; component < RegisteredComponentCount(); ++component) {
+                     if (!s.world.HasComponentRaw(entity, component)) continue;
+                     ++component_count;
+                     const ComponentInfo& info = GetComponentInfo(component);
+                     const std::string name = ComponentName(component);
+                     const void* value = s.world.GetComponentRaw(entity, component);
+                     if (info.serialize == nullptr) {
+                         add_issue({{"kind", "missing_serializer"}, {"entity", entity_id}, {"component", name}});
+                     }
+                     if (info.deserialize == nullptr) {
+                         add_issue({{"kind", "missing_deserializer"}, {"entity", entity_id}, {"component", name}});
+                     }
+                     if (info.reflected == nullptr && info.encoding == ComponentEncoding::Raw && !info.trivially_copyable) {
+                         add_issue({{"kind", "unsafe_unreflected_raw_component"},
+                                    {"entity", entity_id}, {"component", name}});
+                     }
+                     if (info.reflected != nullptr) {
+                         try {
+                             (void)reflect::ToJson(*info.reflected, value);
+                         } catch (const std::exception& error) {
+                             add_issue({{"kind", "reflection_error"}, {"entity", entity_id},
+                                        {"component", name}, {"error", error.what()}});
+                         } catch (...) {
+                             add_issue({{"kind", "reflection_error"}, {"entity", entity_id},
+                                        {"component", name}, {"error", "unknown exception"}});
+                         }
+                     }
+                     if (info.serialize != nullptr) {
+                         try {
+                             std::vector<u8> bytes;
+                             info.serialize(value, bytes);
+                         } catch (const std::exception& error) {
+                             add_issue({{"kind", "serialization_error"}, {"entity", entity_id},
+                                        {"component", name}, {"error", error.what()}});
+                         } catch (...) {
+                             add_issue({{"kind", "serialization_error"}, {"entity", entity_id},
+                                        {"component", name}, {"error", "unknown exception"}});
+                         }
+                     }
+                 }
+             }
+             return {{"valid", issue_count == 0}, {"entity_count", s.world.EntityCount()},
+                     {"component_count", component_count}, {"issue_count", issue_count},
+                     {"issues", std::move(issues)}, {"truncated", truncated}};
          }});
 
     server.AddTool(
