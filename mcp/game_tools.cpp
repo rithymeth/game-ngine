@@ -2632,6 +2632,52 @@ void RegisterGameTools(McpServer& server) {
                     }});
 
     server.AddTool(
+        {"game_can_interact_many",
+         "Check whether up to 64 interactor/target pairs can interact right now without changing the game. Returns the reason for each pair.",
+         Schema({{"checks", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                              {"items", {{"type", "object"},
+                                          {"properties", {{"interactor", {{"type", "string"}}}, {"target", {{"type", "string"}}}}},
+                                          {"required", Json::array({"interactor", "target"})}}}}}},
+                {"checks"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             interact::InteractionSystem* system = interact::InteractionSystem::Active();
+             if (system == nullptr) throw ToolError("This game has no interaction system");
+             if (!args["checks"].is_array() || args["checks"].empty() || args["checks"].size() > 64) {
+                 throw ToolError("\"checks\" must be an array of 1 to 64 interactor/target pairs");
+             }
+             struct Pair {
+                 Entity interactor;
+                 Entity target;
+             };
+             std::vector<Pair> pairs;
+             pairs.reserve(args["checks"].size());
+             for (const Json& item : args["checks"]) {
+                 if (!item.is_object() || !item.contains("interactor") || !item["interactor"].is_string() || item["interactor"].get<std::string>().empty()) {
+                     throw ToolError("Every \"checks\" entry must contain a non-empty string \"interactor\"");
+                 }
+                 if (!item.contains("target") || !item["target"].is_string() || item["target"].get<std::string>().empty()) {
+                     throw ToolError("Every \"checks\" entry must contain a non-empty string \"target\"");
+                 }
+                 const Entity interactor = FindEntity(game, item["interactor"].get<std::string>());
+                 const Entity target = FindEntity(game, item["target"].get<std::string>());
+                 if (std::find_if(pairs.begin(), pairs.end(), [interactor, target](const Pair& pair) {
+                         return pair.interactor == interactor && pair.target == target;
+                     }) != pairs.end()) {
+                     throw ToolError("\"checks\" must not repeat the same interactor/target pair");
+                 }
+                 pairs.push_back({interactor, target});
+             }
+             Json results = Json::array();
+             for (const Pair& pair : pairs) {
+                 const interact::Reason reason = system->Check(pair.interactor, pair.target);
+                 results.push_back({{"interactor", EntityKey(game.GetWorld(), pair.interactor)}, {"target", EntityKey(game.GetWorld(), pair.target)},
+                                    {"can_interact", reason == interact::Reason::None}, {"reason", interact::ReasonName(reason)}});
+             }
+             return {{"count", results.size()}, {"results", results}};
+         }});
+
+    server.AddTool(
         {"game_interaction_focus",
          "What `interactor` would be prompted to use: the nearest usable target within its range, in front of `forward` ([x,y,z]; omit to look all "
          "round), measured from the interactor's position. Returns the target, its distance and prompt, or null.",
