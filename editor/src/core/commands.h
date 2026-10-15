@@ -145,15 +145,18 @@ private:
 // "Revert to Prefab" for part of a prefab instance (§9.3): removes the
 // overrides of `entity`'s `component` at `field_path` (and inside it; "" =
 // the whole component, ComponentId kInvalidComponentId = every component of
-// the entity) and resolves the instance. Undo puts the overrides back.
-// Needs CommandContext::find_prefab.
+// the entity). The overload with an explicit local id can select one prefab
+// entity or 0 for every entity in the instance. Resolves the instance; undo
+// puts the overrides back. Needs CommandContext::find_prefab.
 class RevertPrefabOverrideCommand final : public ICommand {
 public:
     RevertPrefabOverrideCommand(EntityGuid entity, ComponentId component, std::string field_path);
+    RevertPrefabOverrideCommand(EntityGuid entity, PrefabLocalId local_id, ComponentId component, std::string field_path);
     void Do(CommandContext& ctx) override;
     void Undo(CommandContext& ctx) override;
     std::string Label() const override;
     usize MemoryBytes() const override;
+    const ResolveReport& LastReport() const { return last_report_; }
 
 private:
     void Resolve(CommandContext& ctx, Entity root);
@@ -161,7 +164,10 @@ private:
     EntityGuid entity_;
     ComponentId component_;
     std::string field_path_;
+    PrefabLocalId local_id_ = 0;
+    bool has_local_id_ = false;
     std::vector<PropertyOverride> before_; // the instance's overrides before Do
+    ResolveReport last_report_;
 };
 
 // Turns an edit a widget already made in place into an undoable command: if

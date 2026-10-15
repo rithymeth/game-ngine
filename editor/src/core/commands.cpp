@@ -322,12 +322,19 @@ RevertPrefabOverrideCommand::RevertPrefabOverrideCommand(EntityGuid entity, Comp
                                                          std::string field_path)
     : entity_(entity), component_(component), field_path_(std::move(field_path)) {}
 
+RevertPrefabOverrideCommand::RevertPrefabOverrideCommand(EntityGuid entity, PrefabLocalId local_id,
+                                                         ComponentId component, std::string field_path)
+    : entity_(entity), component_(component), field_path_(std::move(field_path)), local_id_(local_id), has_local_id_(true) {}
+
 void RevertPrefabOverrideCommand::Resolve(CommandContext& ctx, Entity root) {
     if (!ctx.find_prefab) {
+        last_report_ = {false, "Prefab lookup is unavailable"};
         return;
     }
     if (const PrefabData* prefab = ctx.find_prefab(ctx.world.GetComponent<PrefabInstance>(root)->source.guid)) {
-        ResolvePrefabInstance(ctx.world, ctx.guids, root, *prefab);
+        last_report_ = ResolvePrefabInstance(ctx.world, ctx.guids, root, *prefab);
+    } else {
+        last_report_ = {false, "Prefab could not be loaded"};
     }
 }
 
@@ -338,7 +345,7 @@ void RevertPrefabOverrideCommand::Do(CommandContext& ctx) {
     if (root.IsNull() || link == nullptr) {
         return;
     }
-    const PrefabLocalId local_id = link->local_id;
+    const PrefabLocalId local_id = has_local_id_ ? local_id_ : link->local_id;
     PrefabInstance& instance = *ctx.world.GetComponent<PrefabInstance>(root);
     before_ = instance.overrides;
     const std::string component = component_ == kInvalidComponentId ? std::string() : ComponentName(component_);
