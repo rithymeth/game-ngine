@@ -1,6 +1,7 @@
 #include "editor_tools.h"
 
 #include "aether/reflection/serialize.h"
+#include "aether/reflection/any.h"
 #include "aether/gameplay/attribute_set.h"
 #include "aether/gameplay/gameplay_tag.h"
 #include "aether/scene/gameplay.h"
@@ -378,6 +379,98 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                  out["warnings"] = warnings;
              }
              return out;
+         }});
+
+    server.AddTool(
+        {"create_entities",
+         "Create 1–64 scene entities as one undoable action. Each entry may specify a component-name-to-fields object and a parent GUID from the current scene; all component names, values and parents are validated before any entity is created.",
+         Schema({{"entities", {{"type", "array"},
+                               {"items", {{"type", "object"},
+                                          {"properties", {{"components", {{"type", "object"}, {"description", "Component names mapped to field values"}}},
+                                                          {"parent", {{"type", Json::array({"string", "null"})}, {"description", "Optional current-scene parent GUID"}}}}}}},
+                               {"description", "1–64 entity definitions"}}}},
+                {"entities"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before creating entities");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 definitions");
+             }
+
+             struct EntitySpec {
+                 EntityGuid parent;
+                 std::vector<std::pair<ComponentId, Json>> components;
+             };
+             std::vector<EntitySpec> specs;
+             specs.reserve(args["entities"].size());
+             const ComponentId id_component = GetComponentId<IdComponent>();
+             for (const Json& entry : args["entities"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"entities\" must be an object");
+                 EntitySpec spec;
+                 if (entry.contains("parent") && !entry["parent"].is_null()) {
+                     spec.parent = RequireGuid(entry, "parent");
+                     RequireEntity(s, entry, "parent");
+                 }
+                 if (entry.contains("components")) {
+                     if (!entry["components"].is_object()) throw ToolError("\"components\" must be an object");
+                     for (const auto& [name, value] : entry["components"].items()) {
+                         const ComponentId id = RequireComponent(name);
+                         if (id == id_component) continue;
+                         const ComponentInfo& info = GetComponentInfo(id);
+                         if (info.reflected == nullptr) throw ToolError("Cannot initialize unreflected component " + ComponentName(id));
+                         reflect::Any sample = reflect::Any::DefaultOf(*info.reflected);
+                         if (!sample.HasValue()) throw ToolError("Cannot default-construct component " + ComponentName(id));
+                         reflect::LoadReport report;
+                         if (!reflect::FromJson(*info.reflected, sample.Data(), value, &report)) {
+                             throw ToolError("Value does not match the shape of " + ComponentName(id));
+                         }
+                         spec.components.emplace_back(id, value);
+                     }
+                 }
+                 specs.push_back(std::move(spec));
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Create Entities " + std::to_string(++next_batch_id);
+             const usize undo_count_before = s.stack.UndoCount();
+             editor::CommandContext ctx = s.Context();
+             Json results = Json::array();
+             s.stack.BeginTransaction(transaction_label);
+             try {
+                 for (const EntitySpec& spec : specs) {
+                     const EntityGuid guid = NewEntityGuid();
+                     Entity entity = s.world.CreateEntity(IdComponent{guid});
+                     s.guids.Add(guid, entity);
+                     try {
+                         Json warnings = Json::array();
+                         for (const auto& [id, value] : spec.components) {
+                             s.world.AddComponentRaw(entity, id);
+                             reflect::LoadReport report;
+                             const ComponentInfo& info = GetComponentInfo(id);
+                             if (!reflect::FromJson(*info.reflected, s.world.GetComponentRaw(entity, id), value, &report)) {
+                                 throw ToolError("Could not initialize " + ComponentName(id));
+                             }
+                             for (const std::string& warning : report.warnings) warnings.push_back(warning);
+                         }
+                         if (!spec.parent.IsNull()) s.world.AddComponent(entity, Parent{spec.parent});
+                         Json row = EntityJson(s, entity);
+                         if (!warnings.empty()) row["warnings"] = std::move(warnings);
+                         results.push_back(std::move(row));
+                         auto command = editor::CreateEntityCommand::FromExisting(ctx, entity);
+                         command->SetAttribution("agent");
+                         s.stack.Record(std::move(command));
+                     } catch (...) {
+                         s.guids.Remove(guid);
+                         s.world.DestroyEntity(entity);
+                         throw;
+                     }
+                 }
+                 s.stack.EndTransaction();
+             } catch (...) {
+                 s.stack.EndTransaction();
+                 if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                 throw;
+             }
+             return {{"created", results.size()}, {"entities", std::move(results)}};
          }});
 
     server.AddTool(
