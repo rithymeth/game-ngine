@@ -1868,6 +1868,81 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
          }});
 
     server.AddTool(
+        {"content_write_many",
+         "Write 1–64 text files under Content/ as one agent-attributed undoable action. Validates every path and source/metadata snapshot before writing; refuses .ameta files and files or text over 2 MB.",
+         Schema({{"files", {{"type", "array"}, {"items", {{"type", "object"}, {"properties", {{"path", {{"type", "string"}}}, {"text", {{"type", "string"}}}}}, {"required", {"path", "text"}}}}},
+                 {"description", "Files to write (1–64); paths are relative to Content/"}}}}, {"files"}),
+         [host, &session](const Json& args) -> Json {
+             OpenProject& p = host->Require();
+             if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before writing content");
+             if (!args["files"].is_array() || args["files"].empty() || args["files"].size() > 64) {
+                 throw ToolError("\"files\" must be a non-empty array of at most 64 {path, text} entries");
+             }
+
+             struct PendingWrite {
+                 std::string path;
+                 std::string text;
+                 usize bytes = 0;
+                 fs::path file;
+                 ContentFileState before_source;
+                 ContentFileState before_meta;
+                 ContentWriteCommand* command = nullptr;
+             };
+             std::vector<PendingWrite> writes;
+             writes.reserve(args["files"].size());
+             std::set<std::string> seen;
+             usize snapshot_bytes = 0;
+             for (const Json& entry : args["files"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"files\" must be an object");
+                 const std::string relative = RequireString(entry, "path");
+                 const std::string path = CleanRelative(relative);
+                 const fs::path file = ContentFile(p, relative);
+                 if (file.extension() == assets::AssetMeta::kExtension) throw ToolError(".ameta files are managed by the asset tools");
+                 if (!seen.insert(path).second) throw ToolError("Duplicate path in \"files\": " + path);
+                 std::string text = RequireString(entry, "text");
+                 if (text.size() > kMaxTextBytes) throw ToolError("Text is larger than 2 MB: " + path);
+                 ContentFileState before_source = CaptureContentFile(file);
+                 ContentFileState before_meta = CaptureContentFile(fs::path(file.string() + assets::AssetMeta::kExtension));
+                 const usize bytes = text.size();
+                 snapshot_bytes += bytes + before_source.bytes.size() + before_meta.bytes.size();
+                 if (snapshot_bytes > 128ull * 1024 * 1024) {
+                     throw ToolError("The total content write batch exceeds the 128 MB undo-history limit");
+                 }
+                 writes.push_back({path, std::move(text), bytes, file, std::move(before_source), std::move(before_meta), nullptr});
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Write Content Files " + std::to_string(++next_batch_id);
+             const usize undo_count_before = session.stack.UndoCount();
+             editor::CommandContext context = session.Context();
+             session.stack.BeginTransaction(transaction_label);
+             try {
+                 for (PendingWrite& write : writes) {
+                     auto command = std::make_unique<ContentWriteCommand>(host, p.paths.file, write.file, std::move(write.text),
+                                                                          std::move(write.before_source), std::move(write.before_meta));
+                     command->SetAttribution("agent");
+                     write.command = command.get();
+                     session.stack.Execute(context, std::move(command));
+                 }
+                 session.stack.EndTransaction();
+             } catch (...) {
+                 session.stack.EndTransaction();
+                 if (session.stack.UndoCount() != undo_count_before || session.stack.UndoLabel() == transaction_label) {
+                     session.stack.Undo(context);
+                 }
+                 throw;
+             }
+
+             Json results = Json::array();
+             for (const PendingWrite& write : writes) {
+                 Json result = {{"path", write.path}, {"bytes", write.bytes}, {"scan", ScanJson(write.command->Scan())}};
+                 if (const AssetRecord* record = p.database->FindByPath(write.path)) result["asset"] = RecordJson(p, *record);
+                 results.push_back(std::move(result));
+             }
+             return {{"written", writes.size()}, {"results", std::move(results)}};
+         }});
+
+    server.AddTool(
         {"asset_cook",
          "Cook the open project into an .apak archive (only what the startup scene, always_cook and `always_cook` reach, with "
          "textures block-compressed and meshes given LODs). Runs the importers as needed. The result's pak_file can be given to "
