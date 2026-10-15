@@ -29,6 +29,8 @@
 #include <fstream>
 #include <limits>
 #include <memory>
+#include <optional>
+#include <stdexcept>
 
 namespace aether::mcp {
 
@@ -103,13 +105,28 @@ Entity FindEntity(Game& game, const std::string& key) {
     World& world = game.GetWorld();
     if (!key.empty() && key[0] == '#') {
         u64 index = 0;
+        std::optional<u32> generation;
         try {
-            index = std::stoull(key.substr(1));
+            const std::string value = key.substr(1);
+            const usize separator = value.find(':');
+            const std::string index_text = value.substr(0, separator);
+            usize consumed = 0;
+            index = std::stoull(index_text, &consumed);
+            if (consumed != index_text.size()) throw std::invalid_argument("trailing index data");
+            if (separator != std::string::npos) {
+                const std::string generation_text = value.substr(separator + 1);
+                consumed = 0;
+                const unsigned long parsed_generation = std::stoul(generation_text, &consumed);
+                if (generation_text.empty() || consumed != generation_text.size() || parsed_generation > std::numeric_limits<u32>::max()) {
+                    throw std::invalid_argument("invalid entity generation");
+                }
+                generation = static_cast<u32>(parsed_generation);
+            }
         } catch (...) {
-            throw ToolError("Not a valid entity handle: " + key);
+            throw ToolError("Not a valid entity handle: " + key + " (expected #index or #index:generation)");
         }
         for (Entity e : AllEntities(world)) {
-            if (e.index == index) return e;
+            if (e.index == index && (!generation.has_value() || e.generation == *generation)) return e;
         }
         throw ToolError("No entity " + key);
     }
@@ -352,7 +369,7 @@ void RegisterGameTools(McpServer& server) {
     server.AddTool(
         {"game_add_component",
          "Add a component to a running entity (default values, then `values` merged on); if it already has one, `values` are merged onto it. Not undoable.",
-         Schema({{"entity", {{"type", "string"}, {"description", "GUID or #index"}}},
+         Schema({{"entity", {{"type", "string"}, {"description", "GUID or #index[:generation]"}}},
                  {"component", {{"type", "string"}}},
                  {"values", {{"type", "object"}, {"description", "Fields to set (optional)"}}}},
                 {"entity", "component"}),
@@ -373,7 +390,7 @@ void RegisterGameTools(McpServer& server) {
 
     server.AddTool(
         {"game_remove_component", "Remove a component from a running entity. Not undoable.",
-         Schema({{"entity", {{"type", "string"}, {"description", "GUID or #index"}}}, {"component", {{"type", "string"}}}}, {"entity", "component"}),
+         Schema({{"entity", {{"type", "string"}, {"description", "GUID or #index[:generation]"}}}, {"component", {{"type", "string"}}}}, {"entity", "component"}),
          [host](const Json& args) -> Json {
              Game& game = host->Require();
              World& world = game.GetWorld();
@@ -760,7 +777,7 @@ void RegisterGameTools(McpServer& server) {
 
     server.AddTool(
         {"game_list_entities",
-         "Entities in the running game: handle (GUID, or #index if it has none), name, local and in-hierarchy active state, direct parent GUID, tags and component names. "
+         "Entities in the running game: handle (GUID, or #index when it has none), entity generation, name, local and in-hierarchy active state, direct parent GUID, tags and component names. "
          "Optionally filter by component, tag, local active state or in-hierarchy active state. Results can be paged with a bounded limit and offset.",
          Schema({{"component", {{"type", "string"}}}, {"tag", {{"type", "string"}}},
                  {"active", {{"type", "boolean"}, {"description", "Filter by local active state; entities without Active are active"}}},
@@ -824,7 +841,7 @@ void RegisterGameTools(McpServer& server) {
                  if (const Parent* parent_component = world.GetComponent<Parent>(e); parent_component != nullptr && !parent_component->parent.IsNull()) {
                      parent = ToString(parent_component->parent);
                  }
-                 Json row = {{"entity", EntityKey(world, e)}, {"components", names}, {"tags", tags},
+                 Json row = {{"entity", EntityKey(world, e)}, {"entity_generation", e.generation}, {"components", names}, {"tags", tags},
                              {"active", active_component == nullptr || active_component->active},
                              {"active_in_hierarchy", args.contains("active_in_hierarchy") ? active_in_hierarchy
                                                                                             : IsActiveInHierarchy(world, game.Guids(), e)},
@@ -837,7 +854,7 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool({"game_get_entity", "Every component of one entity in the running game, as JSON.",
-                    Schema({{"entity", {{"type", "string"}, {"description", "GUID or #index from game_list_entities"}}}}, {"entity"}),
+                    Schema({{"entity", {{"type", "string"}, {"description", "GUID or #index[:generation] from game_list_entities"}}}}, {"entity"}),
                     [host](const Json& args) -> Json {
                         Game& game = host->Require();
                         return EntityJson(game.GetWorld(), RequireEntity(game, args));
@@ -870,7 +887,7 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool({"game_attributes", "The attributes (name, base, current, min, max) of an entity in the running game.",
-                    Schema({{"entity", {{"type", "string"}, {"description", "GUID or #index"}}}}, {"entity"}), [host](const Json& args) -> Json {
+                    Schema({{"entity", {{"type", "string"}, {"description", "GUID or #index[:generation]"}}}}, {"entity"}), [host](const Json& args) -> Json {
                         Game& game = host->Require();
                         Entity e = RequireEntity(game, args);
                         const gas::AttributeSet* set = game.GetWorld().GetComponent<gas::AttributeSet>(e);
@@ -931,7 +948,7 @@ void RegisterGameTools(McpServer& server) {
          "The usable things in the running game: entities with an Interactable, with prompt, range, state (enabled, used, cooling down) and, "
          "if an `interactor` is given, whether and why it can use each (the reason names are the ones scripts hear: out_of_range, "
          "missing_tag, blocked_tag, cooldown, used, disabled...).",
-         Schema({{"interactor", {{"type", "string"}, {"description", "Entity that would use them (GUID or #index)"}}}}), [host](const Json& args) -> Json {
+         Schema({{"interactor", {{"type", "string"}, {"description", "Entity that would use them (GUID or #index[:generation])"}}}}), [host](const Json& args) -> Json {
              Game& game = host->Require();
              World& world = game.GetWorld();
              interact::InteractionSystem* system = interact::InteractionSystem::Active();
