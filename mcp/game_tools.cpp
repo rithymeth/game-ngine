@@ -1190,6 +1190,67 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_get_ancestors",
+         "Return an entity's live parent chain from its immediate parent toward the root. The chain is bounded and reports truncation or cycles.",
+         Schema({{"entity", {{"type", "string"}, {"description", "GUID or #index[:generation]"}}},
+                 {"max_depth", {{"type", "integer"}, {"minimum", 1}, {"maximum", kMaxHierarchyDepth},
+                                {"description", "Maximum number of ancestors to return (default 16)"}}}},
+                {"entity"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             const Entity entity = RequireEntity(game, args);
+             usize max_depth = 16;
+             if (args.contains("max_depth")) {
+                 if (!args["max_depth"].is_number_integer()) throw ToolError("\"max_depth\" must be an integer from 1 to 64");
+                 const i64 requested = args["max_depth"].get<i64>();
+                 if (requested < 1 || requested > kMaxHierarchyDepth) throw ToolError("\"max_depth\" must be an integer from 1 to 64");
+                 max_depth = static_cast<usize>(requested);
+             }
+             auto summary = [&](Entity current) {
+                 Json tags = Json::array();
+                 if (const Tags* entity_tags = world.GetComponent<Tags>(current)) {
+                     for (const std::string& tag : entity_tags->names) tags.push_back(tag);
+                 }
+                 const EntityName* name = world.GetComponent<EntityName>(current);
+                 const Active* active = world.GetComponent<Active>(current);
+                 Json node = {{"entity", EntityKey(world, current)}, {"entity_index", current.index},
+                              {"entity_generation", current.generation}, {"tags", tags},
+                              {"active", active == nullptr || active->active},
+                              {"active_in_hierarchy", IsActiveInHierarchy(world, game.Guids(), current)}};
+                 if (name != nullptr) node["name"] = name->value;
+                 return node;
+             };
+             Json ancestors = Json::array();
+             std::vector<Entity> visited{entity};
+             Entity current = entity;
+             bool root_reached = false;
+             bool truncated = false;
+             bool cycle = false;
+             for (usize depth = 0; depth < max_depth; ++depth) {
+                 const Entity parent = GetParent(world, game.Guids(), current);
+                 if (parent.IsNull()) {
+                     root_reached = true;
+                     break;
+                 }
+                 if (std::find(visited.begin(), visited.end(), parent) != visited.end()) {
+                     cycle = true;
+                     break;
+                 }
+                 visited.push_back(parent);
+                 ancestors.push_back(summary(parent));
+                 current = parent;
+             }
+             if (!root_reached && !cycle) {
+                 if (GetParent(world, game.Guids(), current).IsNull()) root_reached = true;
+                 else if (ancestors.size() >= max_depth) truncated = true;
+             }
+             return {{"entity", EntityKey(world, entity)}, {"entity_index", entity.index},
+                     {"entity_generation", entity.generation}, {"ancestors", ancestors},
+                     {"root_reached", root_reached}, {"truncated", truncated}, {"cycle", cycle}};
+         }});
+
+    server.AddTool(
         {"game_set_component",
          "Change fields of a component on a running entity (partial update: only the fields named change). Not undoable; "
          "gone when the game is reloaded.",
