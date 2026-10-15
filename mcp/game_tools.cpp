@@ -3364,6 +3364,81 @@ void RegisterGameTools(McpServer& server) {
                     }});
 
     server.AddTool(
+        {"game_set_transforms_many",
+         "Set local position, rotation and/or scale on up to 64 unique live entities. Validates every edit before applying any; rotation is normalized.",
+         Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                              {"items", {{"type", "object"},
+                                          {"properties", {{"entity", {{"type", "string"}}},
+                                                           {"position", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
+                                                           {"rotation", {{"type", "array"}, {"minItems", 4}, {"maxItems", 4}, {"items", {{"type", "number"}}}}},
+                                                           {"scale", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}}}},
+                                          {"required", Json::array({"entity"})}}}}}},
+                {"edits"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be an array of 1 to 64 transform edits");
+             }
+             struct TransformEdit {
+                 Entity entity;
+                 std::optional<Vec3> position;
+                 std::optional<Quaternion> rotation;
+                 std::optional<Vec3> scale;
+             };
+             auto read_vec3 = [](const Json& value, const char* name) {
+                 if (!value.is_array() || value.size() != 3 || !value[0].is_number() || !value[1].is_number() || !value[2].is_number()) {
+                     throw ToolError(std::string("\"") + name + "\" must be [x, y, z]");
+                 }
+                 Vec3 result(value[0].get<f32>(), value[1].get<f32>(), value[2].get<f32>());
+                 if (!std::isfinite(result.x) || !std::isfinite(result.y) || !std::isfinite(result.z)) {
+                     throw ToolError(std::string("\"") + name + "\" coordinates must be finite");
+                 }
+                 return result;
+             };
+             std::vector<TransformEdit> edits;
+             edits.reserve(args["edits"].size());
+             for (const Json& item : args["edits"]) {
+                 if (!item.is_object() || !item.contains("entity") || !item["entity"].is_string() || item["entity"].get<std::string>().empty()) {
+                     throw ToolError("Every \"edits\" entry must contain a non-empty string \"entity\"");
+                 }
+                 if (!item.contains("position") && !item.contains("rotation") && !item.contains("scale")) {
+                     throw ToolError("Every transform edit must specify at least one of \"position\", \"rotation\" or \"scale\"");
+                 }
+                 TransformEdit edit{FindEntity(game, item["entity"].get<std::string>())};
+                 if (std::find_if(edits.begin(), edits.end(), [&edit](const TransformEdit& previous) { return previous.entity == edit.entity; }) != edits.end()) {
+                     throw ToolError("\"edits\" must not repeat an entity");
+                 }
+                 if (world.GetComponent<Transform>(edit.entity) == nullptr) throw ToolError("Entity " + EntityKey(world, edit.entity) + " has no Transform");
+                 if (item.contains("position")) edit.position = read_vec3(item["position"], "position");
+                 if (item.contains("scale")) edit.scale = read_vec3(item["scale"], "scale");
+                 if (item.contains("rotation")) {
+                     const Json& value = item["rotation"];
+                     if (!value.is_array() || value.size() != 4 || !value[0].is_number() || !value[1].is_number() || !value[2].is_number() || !value[3].is_number()) {
+                         throw ToolError("\"rotation\" must be [x, y, z, w]");
+                     }
+                     Quaternion rotation(value[0].get<f32>(), value[1].get<f32>(), value[2].get<f32>(), value[3].get<f32>());
+                     if (!std::isfinite(rotation.x) || !std::isfinite(rotation.y) || !std::isfinite(rotation.z) || !std::isfinite(rotation.w) || rotation.LengthSq() <= 1.0e-12f) {
+                         throw ToolError("\"rotation\" must be a finite non-zero quaternion");
+                     }
+                     edit.rotation = rotation.Normalized();
+                 }
+                 edits.push_back(std::move(edit));
+             }
+             Json results = Json::array();
+             for (const TransformEdit& edit : edits) {
+                 Transform* transform = world.GetComponent<Transform>(edit.entity);
+                 if (edit.position) transform->position = *edit.position;
+                 if (edit.rotation) transform->rotation = *edit.rotation;
+                 if (edit.scale) transform->scale = *edit.scale;
+                 results.push_back({{"entity", EntityKey(world, edit.entity)}, {"position", Json::array({transform->position.x, transform->position.y, transform->position.z})},
+                                    {"rotation", Json::array({transform->rotation.x, transform->rotation.y, transform->rotation.z, transform->rotation.w})},
+                                    {"scale", Json::array({transform->scale.x, transform->scale.y, transform->scale.z})}});
+             }
+             return {{"updated_count", results.size()}, {"results", results}};
+         }});
+
+    server.AddTool(
         {"game_destroy_entities_many",
          "Destroy up to 64 unique live entity roots through the lifecycle (OnDestroy runs for each root and descendant). The complete selection is validated first; overlapping ancestor/descendant roots are rejected.",
          Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}}},
