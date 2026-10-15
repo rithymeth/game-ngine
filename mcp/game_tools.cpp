@@ -3161,6 +3161,57 @@ void RegisterGameTools(McpServer& server) {
          }});
 #endif
 
+#if AETHER_MCP_PHYSICS
+    server.AddTool(
+        {"game_physics3d_state_many",
+         "Read live 3D body state for up to 64 selected entities, including body activation, position, rotation and linear/angular velocity.",
+         Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}}}, {"entities"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             PhysicsScene* scene = game.PhysicsQueries();
+             if (scene == nullptr) throw ToolError("The loaded game has no 3D physics scene");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be an array of 1 to 64 entity handles");
+             }
+             World& world = game.GetWorld();
+             std::vector<Entity> requested;
+             requested.reserve(args["entities"].size());
+             Json results = Json::array();
+             for (const Json& handle : args["entities"]) {
+                 if (!handle.is_string() || handle.get<std::string>().empty()) {
+                     throw ToolError("Every \"entities\" entry must be a non-empty entity handle");
+                 }
+                 const Entity entity = FindEntity(game, handle.get<std::string>());
+                 if (std::find(requested.begin(), requested.end(), entity) != requested.end()) {
+                     throw ToolError("\"entities\" must not repeat an entity");
+                 }
+                 requested.push_back(entity);
+                 const JPH::BodyID body = scene->BodyOf(entity);
+                 Json result = {{"entity", EntityKey(world, entity)}, {"body_created", !body.IsInvalid()}};
+                 if (body.IsInvalid()) {
+                     result["active"] = nullptr;
+                     result["position"] = nullptr;
+                     result["rotation"] = nullptr;
+                     result["linear_velocity"] = nullptr;
+                     result["angular_velocity"] = nullptr;
+                 } else {
+                     JPH::BodyInterface& interface = scene->Physics().BodyInterface();
+                     const JPH::Vec3 linear = interface.GetLinearVelocity(body);
+                     const JPH::Vec3 angular = interface.GetAngularVelocity(body);
+                     const Vec3 position = scene->Physics().GetPosition(body);
+                     const Quaternion rotation = scene->Physics().GetRotation(body);
+                     result["active"] = interface.IsActive(body);
+                     result["position"] = Json::array({position.x, position.y, position.z});
+                     result["rotation"] = Json::array({rotation.x, rotation.y, rotation.z, rotation.w});
+                     result["linear_velocity"] = Json::array({linear.GetX(), linear.GetY(), linear.GetZ()});
+                     result["angular_velocity"] = Json::array({angular.GetX(), angular.GetY(), angular.GetZ()});
+                 }
+                 results.push_back(std::move(result));
+             }
+             return {{"count", results.size()}, {"entities", std::move(results)}};
+         }});
+#endif
+
     server.AddTool(
         {"game_set_physics2d_bodies_many",
          "Apply partial Rigidbody2D settings to up to 64 unique entities. Supports body type, mass, gravity scale and linear damping; validates every body before applying any change and preserves unspecified fields.",
