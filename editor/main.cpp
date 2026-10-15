@@ -1191,6 +1191,7 @@ int main(int argc, char** argv) {
         // commands themselves know nothing about physics.
         GuidIndex guids;
         editor::CommandStack commands;
+        commands.SetAttribution("user");
         editor::EditorHooks hooks;
         auto destroy_body = [&](Entity e) {
             if (RigidBody* b = world.GetComponent<RigidBody>(e); b != nullptr && !b->body_id.IsInvalid()) {

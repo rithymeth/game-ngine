@@ -61,6 +61,11 @@ public:
     virtual void Undo(CommandContext& ctx) = 0;
     virtual std::string Label() const = 0;
 
+    // The source that created this history entry (for example, "agent" or
+    // "user"). Kept with the command so undo/redo remains attributable.
+    const std::string& Attribution() const { return attribution_; }
+    void SetAttribution(std::string attribution) { attribution_ = std::move(attribution); }
+
     // Offered the next command when it's executed with merging allowed (e.g.
     // successive values during one slider drag). Return true after absorbing
     // `next`'s effect, so this entry now undoes both at once; `next` has
@@ -72,6 +77,9 @@ public:
 
     // Approximate memory this entry holds, for the stack's memory budget.
     virtual usize MemoryBytes() const { return sizeof(*this); }
+
+private:
+    std::string attribution_;
 };
 
 enum class MergePolicy { Never, Allow };
@@ -99,6 +107,9 @@ public:
     // e.g. spawning an entity and then recording a CreateEntityCommand
     // captured from it.
     void Record(std::unique_ptr<ICommand> command, MergePolicy merge = MergePolicy::Never);
+    // Applies to commands recorded after this call. Existing history retains
+    // its original attribution.
+    void SetAttribution(std::string attribution) { attribution_ = std::move(attribution); }
 
     bool CanUndo() const { return !undo_.empty() && transaction_depth_ == 0 && !frozen_; }
     bool CanRedo() const { return !redo_.empty() && transaction_depth_ == 0 && !frozen_; }
@@ -109,6 +120,8 @@ public:
 
     std::string UndoLabel() const; // "" if nothing to undo
     std::string RedoLabel() const;
+    std::string UndoAttribution() const;
+    std::string RedoAttribution() const;
 
     void BeginTransaction(const std::string& label);
     void EndTransaction();
@@ -143,6 +156,7 @@ private:
     int transaction_depth_ = 0;
     bool merge_open_ = false;
     bool frozen_ = false;
+    std::string attribution_;
 
     // Undo depth at the last MarkSaved, and whether that state is still
     // reachable by undo/redo (it isn't once a new command replaces the redo

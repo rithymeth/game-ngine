@@ -1,5 +1,6 @@
 #include "core/command_stack.h"
 
+#include <algorithm>
 #include <utility>
 
 namespace aether::editor {
@@ -10,7 +11,15 @@ namespace {
 class CompoundCommand final : public ICommand {
 public:
     CompoundCommand(std::string label, std::vector<std::unique_ptr<ICommand>> commands)
-        : label_(std::move(label)), commands_(std::move(commands)) {}
+        : label_(std::move(label)), commands_(std::move(commands)) {
+        if (!commands_.empty()) {
+            const std::string& first = commands_.front()->Attribution();
+            const bool same_source = std::all_of(commands_.begin(), commands_.end(), [&](const auto& command) {
+                return command->Attribution() == first;
+            });
+            SetAttribution(same_source ? first : "mixed");
+        }
+    }
 
     void Do(CommandContext& ctx) override {
         for (auto& command : commands_) {
@@ -49,6 +58,7 @@ void CommandStack::SetFrozen(bool frozen) {
 }
 
 void CommandStack::Record(std::unique_ptr<ICommand> command, MergePolicy merge) {
+    if (command->Attribution().empty()) command->SetAttribution(attribution_);
     if (frozen_) {
         return; // applied, but not part of the history (see SetFrozen)
     }
@@ -69,6 +79,9 @@ void CommandStack::Record(std::unique_ptr<ICommand> command, MergePolicy merge) 
     if (merge == MergePolicy::Allow && merge_open_ && !undo_.empty()) {
         usize before = undo_.back()->MemoryBytes();
         if (undo_.back()->TryMerge(*command)) {
+            if (undo_.back()->Attribution() != command->Attribution()) {
+                undo_.back()->SetAttribution("mixed");
+            }
             memory_used_ = memory_used_ - before + undo_.back()->MemoryBytes();
             return;
         }
@@ -109,6 +122,14 @@ std::string CommandStack::UndoLabel() const {
 
 std::string CommandStack::RedoLabel() const {
     return redo_.empty() ? std::string() : redo_.back()->Label();
+}
+
+std::string CommandStack::UndoAttribution() const {
+    return undo_.empty() ? std::string() : undo_.back()->Attribution();
+}
+
+std::string CommandStack::RedoAttribution() const {
+    return redo_.empty() ? std::string() : redo_.back()->Attribution();
 }
 
 void CommandStack::BeginTransaction(const std::string& label) {

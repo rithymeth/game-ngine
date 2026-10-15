@@ -4070,6 +4070,20 @@ private:
         open_project_action_->setEnabled(editing);
         undo_action_->setEnabled(editing && scene_document_.CanUndo());
         redo_action_->setEnabled(editing && scene_document_.CanRedo());
+        if (scene_document_.CanUndo()) {
+            undo_action_->setToolTip(QString("Undo %1 (%2) (Ctrl+Z)")
+                .arg(QString::fromStdString(scene_document_.UndoLabel()),
+                     QString::fromStdString(scene_document_.UndoAttribution())));
+        } else {
+            undo_action_->setToolTip("Undo the last scene edit (Ctrl+Z)");
+        }
+        if (scene_document_.CanRedo()) {
+            redo_action_->setToolTip(QString("Redo %1 (%2) (Ctrl+Y)")
+                .arg(QString::fromStdString(scene_document_.RedoLabel()),
+                     QString::fromStdString(scene_document_.RedoAttribution())));
+        } else {
+            redo_action_->setToolTip("Redo the last undone scene edit (Ctrl+Y)");
+        }
         const bool has_selection = !selected_entity_.IsNull() && scene_document_.GetWorld().IsAlive(selected_entity_);
         physics_component_panel_->setEnabled(editing);
 #if defined(AETHER_QT_EDITOR_SCRIPTING)
