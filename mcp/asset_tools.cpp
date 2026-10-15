@@ -10,6 +10,7 @@
 #include "aether/assets/importer.h"
 #include "aether/cook/cooker.h"
 #include "aether/project/project.h"
+#include "aether/scene/gameplay.h"
 #include "aether/platform/filesystem.h"
 #if AETHER_MCP_TEMPLATES
 #include "aether/templates/templates.h"
@@ -21,6 +22,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <map>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -1114,6 +1116,72 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
                         out["window"] = {{"title", p.settings.window_title}, {"width", p.settings.window_width}, {"height", p.settings.window_height}};
                         return out;
                     }});
+
+    server.AddTool(
+        {"validate_scene_layers",
+         "Audit the open project's collision layer table and the current scene's Layer assignments without modifying either. Reports oversized tables, empty or duplicate layer names, non-Default layer zero, out-of-range indices, and assignments to unconfigured indices. Returns at most 128 detailed issues.",
+         Schema(Json::object()),
+         [host, &session](const Json&) -> Json {
+             OpenProject& project = host->Require();
+             const std::vector<std::string>& layers = project.settings.layers;
+             Json issues = Json::array();
+             usize issue_count = 0;
+             bool truncated = false;
+             auto add_issue = [&](Json issue) {
+                 ++issue_count;
+                 if (issues.size() < 128) issues.push_back(std::move(issue));
+                 else truncated = true;
+             };
+
+             if (layers.size() > kMaxLayers) {
+                 add_issue({{"kind", "too_many_layers"}, {"configured_count", layers.size()}, {"maximum", kMaxLayers}});
+             }
+             if (!layers.empty() && layers.front() != "Default") {
+                 add_issue({{"kind", "default_layer_name"}, {"index", 0}, {"expected", "Default"}, {"actual", layers.front()}});
+             }
+             std::map<std::string, usize> first_layer;
+             for (usize i = 0; i < layers.size(); ++i) {
+                 if (layers[i].empty()) {
+                     add_issue({{"kind", "empty_layer_name"}, {"layer_index", i}});
+                     continue;
+                 }
+                 const auto [it, inserted] = first_layer.emplace(layers[i], i);
+                 if (!inserted) {
+                     add_issue({{"kind", "duplicate_layer_name"}, {"name", layers[i]},
+                                {"first_index", it->second}, {"duplicate_index", i}});
+                 }
+             }
+
+             usize assigned_entity_count = 0;
+             session.world.ForEachArchetype([&](const Archetype& archetype) {
+                 if (!archetype.Has(GetComponentId<Layer>())) return;
+                 for (usize chunk_index = 0; chunk_index < archetype.ChunkCount(); ++chunk_index) {
+                     const u32 count = archetype.ChunkEntityCount(chunk_index);
+                     const Entity* entities = archetype.EntityArray(chunk_index);
+                     const Layer* values = static_cast<const Layer*>(archetype.ComponentArray(chunk_index, GetComponentId<Layer>()));
+                     for (u32 row = 0; row < count; ++row) {
+                         ++assigned_entity_count;
+                         const Entity entity = entities[row];
+                         const IdComponent* id = session.world.GetComponent<IdComponent>(entity);
+                         const Json entity_id = id != nullptr && !id->guid.IsNull() ? Json(ToString(id->guid)) : Json(entity.index);
+                         if (values[row].index >= kMaxLayers) {
+                             add_issue({{"kind", "layer_index_out_of_range"}, {"entity", entity_id},
+                                        {"layer_index", values[row].index}, {"maximum", kMaxLayers - 1}});
+                         } else if (values[row].index >= layers.size()) {
+                             add_issue({{"kind", "unconfigured_layer"}, {"entity", entity_id},
+                                        {"layer_index", values[row].index}});
+                         } else if (layers[values[row].index].empty()) {
+                             add_issue({{"kind", "assigned_empty_layer"}, {"entity", entity_id},
+                                        {"layer_index", values[row].index}});
+                         }
+                     }
+                 }
+             });
+
+             return {{"valid", issue_count == 0}, {"entity_count", session.world.EntityCount()},
+                     {"assigned_entity_count", assigned_entity_count}, {"configured_layer_count", layers.size()},
+                     {"issue_count", issue_count}, {"issues", std::move(issues)}, {"truncated", truncated}};
+         }});
 
     server.AddTool(
         {"project_set",
