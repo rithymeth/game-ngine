@@ -29,6 +29,7 @@ and errors go to stderr.
 | `list_entities` | GUIDs, component names and parent GUIDs; optional exact name/component/tag filters plus `tags_all`, `tags_any`, and `tags_none` groups (supplied filters combine with AND) |
 | `get_entity` | Every component of one entity, as JSON |
 | `get_entities_many` | Get full reflected component values for up to 64 unique entities in selection order; validates all GUIDs before returning data |
+| `get_entities_metadata_many` | Get names, active/layer overrides, layer indices, tags, and parent links for up to 64 selected entities |
 | `get_components_many` | Read up to 64 entity/component pairs in request order; reports absent components explicitly and validates the whole request first |
 | `compare_entity_components_many` | Compare up to 64 entities across up to 32 component types; reports per-entity presence plus common, mixed, and absent types |
 | `summarize_entity_components_many` | Count each reflected component across up to 64 entities and list the types shared by all selected entities |
