@@ -229,7 +229,7 @@ PhysicsWorld::PhysicsWorld(JobSystem& job_system) {
     physics_system_->Init(kMaxBodies, kNumBodyMutexes, kMaxBodyPairs, kMaxContactConstraints,
                            layers_->broad_phase_layer_interface, layers_->object_vs_broad_phase_layer_filter,
                            layers_->object_layer_pair_filter);
-    physics_system_->SetGravity(JPH::Vec3(0.0f, -9.81f, 0.0f));
+    SetGravity(gravity_);
     contact_queue_ = std::make_unique<ContactQueue>();
     contact_queue_->report_stay.assign(kMaxBodies, 0);
     physics_system_->SetContactListener(contact_queue_.get());
@@ -248,6 +248,7 @@ PhysicsWorld::~PhysicsWorld() {
 }
 
 void PhysicsWorld::SetGravity(const Vec3& gravity) {
+    gravity_ = gravity;
     physics_system_->SetGravity(ToJolt(gravity));
 }
 

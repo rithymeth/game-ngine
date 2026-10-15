@@ -70,6 +70,7 @@ public:
     PhysicsWorld& operator=(const PhysicsWorld&) = delete;
 
     void SetGravity(const Vec3& gravity);
+    const Vec3& GetGravity() const { return gravity_; }
 
     // Static box, e.g. a ground plane. `half_extents` per Jolt convention
     // (half the box's size along each axis).
@@ -136,6 +137,7 @@ private:
     std::unique_ptr<JPH::JobSystem> jolt_job_system_;
     std::unique_ptr<Layers> layers_;
     std::unique_ptr<JPH::PhysicsSystem> physics_system_;
+    Vec3 gravity_{0.0f, -9.81f, 0.0f};
 
     struct ContactQueue; // the Jolt listener and its buffer; defined in the .cpp
     struct PairState {
