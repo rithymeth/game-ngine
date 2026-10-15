@@ -3160,6 +3160,121 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_set_physics2d_colliders_many",
+         "Apply partial Collider2D edits to up to 64 unique entities. Validates every resulting collider before applying any edit; unspecified settings are preserved.",
+         Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", {{"type", "string"}}},
+                                                        {"shape", {{"type", "string"}, {"enum", Json::array({"box", "circle"})}}},
+                                                        {"half_extents", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}},
+                                                        {"radius", {{"type", "number"}, {"exclusiveMinimum", 0}}},
+                                                        {"offset", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}},
+                                                        {"friction", {{"type", "number"}, {"minimum", 0}, {"maximum", 2}}},
+                                                        {"restitution", {{"type", "number"}, {"minimum", 0}, {"maximum", 1}}},
+                                                        {"trigger", {{"type", "boolean"}}},
+                                                        {"layer", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4294967295.0}}},
+                                                        {"mask", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4294967295.0}}}}},
+                                        {"required", Json::array({"entity"})}}}}}},
+                {"edits"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             if (game.Physics2D() == nullptr) throw ToolError("The loaded game has no 2D physics scene");
+             if (!args.contains("edits") || !args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be an array of 1 to 64 collider edits");
+             }
+             World& world = game.GetWorld();
+             struct ColliderEdit { Entity entity; sprite2d::Collider2D collider; };
+             static const std::unordered_set<std::string> supported = {"entity", "shape", "half_extents", "radius", "offset", "friction", "restitution", "trigger", "layer", "mask"};
+             auto read_vec2 = [](const Json& value, const char* field) {
+                 if (!value.is_array() || value.size() != 2 || !value[0].is_number() || !value[1].is_number()) {
+                     throw ToolError(std::string("\"") + field + "\" must be [x, y]");
+                 }
+                 const sprite2d::Vec2 result{value[0].get<f32>(), value[1].get<f32>()};
+                 if (!std::isfinite(result.x) || !std::isfinite(result.y)) throw ToolError(std::string("\"") + field + "\" values must be finite");
+                 return result;
+             };
+             auto read_u32 = [](const Json& value, const char* field) {
+                 if (!value.is_number_integer()) throw ToolError(std::string("\"") + field + "\" must be an integer from 0 through 4294967295");
+                 u64 parsed_value = 0;
+                 if (value.is_number_unsigned()) parsed_value = value.get<u64>();
+                 else {
+                     const i64 signed_value = value.get<i64>();
+                     if (signed_value < 0) throw ToolError(std::string("\"") + field + "\" must be an integer from 0 through 4294967295");
+                     parsed_value = static_cast<u64>(signed_value);
+                 }
+                 if (parsed_value > std::numeric_limits<u32>::max()) throw ToolError(std::string("\"") + field + "\" must be an integer from 0 through 4294967295");
+                 return static_cast<u32>(parsed_value);
+             };
+             std::vector<ColliderEdit> edits;
+             edits.reserve(args["edits"].size());
+             for (const Json& raw : args["edits"]) {
+                 if (!raw.is_object() || !raw.contains("entity") || !raw["entity"].is_string() || raw["entity"].get<std::string>().empty()) {
+                     throw ToolError("Every collider edit requires a non-empty entity handle");
+                 }
+                 for (auto it = raw.begin(); it != raw.end(); ++it) {
+                     if (!supported.contains(it.key())) throw ToolError("Unsupported Collider2D field: " + it.key());
+                 }
+                 const Entity entity = FindEntity(game, raw["entity"].get<std::string>());
+                 if (std::find_if(edits.begin(), edits.end(), [entity](const ColliderEdit& edit) { return edit.entity == entity; }) != edits.end()) {
+                     throw ToolError("\"edits\" must not repeat an entity");
+                 }
+                 const sprite2d::Collider2D* current = world.GetComponent<sprite2d::Collider2D>(entity);
+                 if (current == nullptr) throw ToolError("Every entity must have a Collider2D component");
+                 sprite2d::Collider2D updated = *current;
+                 if (raw.contains("shape")) {
+                     if (!raw["shape"].is_string()) throw ToolError("\"shape\" must be box or circle");
+                     const std::string shape = raw["shape"].get<std::string>();
+                     if (shape == "box") updated.shape = sprite2d::Shape2D::Box;
+                     else if (shape == "circle") updated.shape = sprite2d::Shape2D::Circle;
+                     else throw ToolError("\"shape\" must be box or circle");
+                 }
+                 if (raw.contains("half_extents")) updated.half_extents = read_vec2(raw["half_extents"], "half_extents");
+                 if (raw.contains("radius")) {
+                     if (!raw["radius"].is_number()) throw ToolError("\"radius\" must be a finite positive number");
+                     updated.radius = raw["radius"].get<f32>();
+                     if (!std::isfinite(updated.radius) || updated.radius <= 0.0f) throw ToolError("\"radius\" must be a finite positive number");
+                 }
+                 if (raw.contains("offset")) updated.offset = read_vec2(raw["offset"], "offset");
+                 if (raw.contains("friction")) {
+                     if (!raw["friction"].is_number()) throw ToolError("\"friction\" must be a finite number from 0 through 2");
+                     updated.friction = raw["friction"].get<f32>();
+                 }
+                 if (raw.contains("restitution")) {
+                     if (!raw["restitution"].is_number()) throw ToolError("\"restitution\" must be a finite number from 0 through 1");
+                     updated.restitution = raw["restitution"].get<f32>();
+                 }
+                 if (raw.contains("trigger")) {
+                     if (!raw["trigger"].is_boolean()) throw ToolError("\"trigger\" must be a boolean");
+                     updated.trigger = raw["trigger"].get<bool>();
+                 }
+                 if (raw.contains("layer")) updated.layer = read_u32(raw["layer"], "layer");
+                 if (raw.contains("mask")) updated.mask = read_u32(raw["mask"], "mask");
+                 if (!std::isfinite(updated.half_extents.x) || !std::isfinite(updated.half_extents.y) ||
+                     !std::isfinite(updated.offset.x) || !std::isfinite(updated.offset.y) ||
+                     !std::isfinite(updated.radius) || !std::isfinite(updated.friction) || !std::isfinite(updated.restitution) ||
+                     updated.friction < 0.0f || updated.friction > 2.0f || updated.restitution < 0.0f || updated.restitution > 1.0f ||
+                     (updated.shape != sprite2d::Shape2D::Box && updated.shape != sprite2d::Shape2D::Circle) ||
+                     (updated.shape == sprite2d::Shape2D::Box && (updated.half_extents.x <= 0.0f || updated.half_extents.y <= 0.0f)) ||
+                     (updated.shape == sprite2d::Shape2D::Circle && updated.radius <= 0.0f)) {
+                     throw ToolError("The resulting collider has invalid geometry or material values");
+                 }
+                 edits.push_back({entity, updated});
+             }
+             Json results = Json::array();
+             for (const ColliderEdit& edit : edits) {
+                 *world.GetComponent<sprite2d::Collider2D>(edit.entity) = edit.collider;
+                 results.push_back({{"entity", EntityKey(world, edit.entity)},
+                                    {"shape", edit.collider.shape == sprite2d::Shape2D::Box ? "box" : "circle"},
+                                    {"half_extents", Json::array({edit.collider.half_extents.x, edit.collider.half_extents.y})},
+                                    {"radius", edit.collider.radius},
+                                    {"offset", Json::array({edit.collider.offset.x, edit.collider.offset.y})},
+                                    {"friction", edit.collider.friction}, {"restitution", edit.collider.restitution},
+                                    {"trigger", edit.collider.trigger}, {"layer", edit.collider.layer}, {"mask", edit.collider.mask}});
+             }
+             return {{"count", results.size()}, {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
         {"game_reparent_entities_many",
          "Set or clear the parent of up to 64 unique live entities as one batch. By default parent changes retain local transforms; set preserve_world=true to retain world poses by updating local transforms. The batch validates stable parent GUIDs and the complete resulting hierarchy, and rejects cycles, excessive depth, singular transforms, or unrepresentable shear before applying.",
          Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
