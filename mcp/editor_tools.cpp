@@ -1610,6 +1610,103 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
          }});
 
     server.AddTool(
+        {"set_entities_local_rotations_many",
+         "Set local rotations individually for 1–64 unique scene entities as one undoable action. Each entity must have Transform; position and scale are preserved. Validate each finite, non-zero quaternion and normalize it before applying any changes.",
+         Schema({{"edits", {{"type", "array"},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", kGuidProp},
+                                                        {"rotation", {{"type", "array"}, {"items", {{"type", "number"}}},
+                                                                       {"minItems", 4}, {"maxItems", 4}}}}},
+                                        {"required", Json::array({"entity", "rotation"})}}},
+                             {"minItems", 1}, {"maxItems", 64},
+                             {"description", "1–64 unique entity GUID and local-quaternion pairs"}}}},
+                {"edits"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be a non-empty array of at most 64 entity rotation changes");
+             }
+
+             struct RotationEdit {
+                 EntityGuid guid;
+                 Quaternion rotation;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<RotationEdit> edits;
+             edits.reserve(args["edits"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& entry : args["edits"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"edits\" must be an object");
+                 const EntityGuid guid = RequireGuid(entry, "entity");
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"edits\": " + ToString(guid));
+                 if (!entry.contains("rotation") || !entry["rotation"].is_array() || entry["rotation"].size() != 4) {
+                     throw ToolError("Each \"rotation\" must be [x, y, z, w]");
+                 }
+                 for (const Json& value : entry["rotation"]) {
+                     if (!value.is_number() || !std::isfinite(value.get<double>())) {
+                         throw ToolError("Rotation values must be finite numbers");
+                     }
+                 }
+                 Quaternion rotation{entry["rotation"][0].get<f32>(), entry["rotation"][1].get<f32>(),
+                                     entry["rotation"][2].get<f32>(), entry["rotation"][3].get<f32>()};
+                 if (!std::isfinite(rotation.x) || !std::isfinite(rotation.y) || !std::isfinite(rotation.z) || !std::isfinite(rotation.w)) {
+                     throw ToolError("Rotation values must fit finite engine coordinates");
+                 }
+                 const f32 length_sq = rotation.LengthSq();
+                 if (!std::isfinite(length_sq) || length_sq <= 1.0e-12f) throw ToolError("Rotation quaternion must be non-zero");
+                 rotation = rotation.Normalized();
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 RotationEdit edit;
+                 edit.guid = guid;
+                 edit.rotation = rotation;
+                 Transform updated = *current;
+                 updated.rotation = rotation;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+                 edits.push_back(std::move(edit));
+             }
+
+             const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const RotationEdit& edit) { return edit.changed; });
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Set Entity Rotations " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const RotationEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const RotationEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)},
+                                    {"rotation", {edit.rotation.x, edit.rotation.y, edit.rotation.z, edit.rotation.w}},
+                                    {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const RotationEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
         {"set_entities_local_rotation_many",
          "Set the local rotation of 1–64 unique scene entities to one shared quaternion [x, y, z, w] as one undoable action. Each entity must have Transform; position and scale are preserved. The quaternion must be finite and non-zero, and is normalized before use.",
          Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
