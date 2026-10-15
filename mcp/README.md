@@ -36,6 +36,7 @@ and errors go to stderr.
 | `offset_entities_local_many` | Add one local-position offset to up to 64 unique entities in one undo action; preserves rotation and scale |
 | `offset_entities_local_per_entity_many` | Apply individual local-position offsets to up to 64 unique entities in one undo action |
 | `multiply_entities_local_scale_many` | Multiply local scale by one shared component-wise factor on up to 64 unique entities in one undo action |
+| `multiply_entities_local_scale_per_entity_many` | Multiply local scale using individual component-wise factors for up to 64 unique entities in one undo action |
 | `scale_entities_local_many` | Multiply local scale using per-entity component-wise factors for up to 64 unique entities in one undo action |
 | `set_entities_local_position_many` | Set one shared absolute local position on up to 64 unique entities in one undo action; preserves rotation and scale |
 | `set_entities_local_positions_many` | Set individual local positions on up to 64 unique entities in one undo action; preserves rotation and scale |
