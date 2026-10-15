@@ -43,6 +43,7 @@ and errors go to stderr.
 | `validate_scene_names` | Audit entity names for empty values and leading or trailing ASCII whitespace; duplicate names remain allowed |
 | `validate_scene_layers` | Audit project layer names and scene assignments for duplicates, empty names, unconfigured slots, and out-of-range indices |
 | `rename_entities` | Rename up to 64 unique entities as one undoable action; creates `EntityName` when needed |
+| `rename_entities_shared_many` | Assign one shared name to up to 64 unique entities as one undoable action; creates `EntityName` when needed and reports no-op edits |
 | `set_entity_tags_many` | Replace the complete tag list on up to 64 unique entities as one undoable action; creates `Tags` when needed |
 | `set_entities_tags_many` | Replace the complete tag list on up to 64 unique entities with one shared list in one undoable action; creates `Tags` when needed and reports no-op edits |
 | `modify_entity_tags_many` | Add/remove tags on up to 64 unique entities as one undoable action; preserves tag order and reports no-op edits |
