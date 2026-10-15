@@ -3406,6 +3406,69 @@ void RegisterGameTools(McpServer& server) {
 
 #if AETHER_MCP_PHYSICS
     server.AddTool(
+        {"game_set_physics3d_velocities_shared_many",
+         "Set one shared linear and/or angular velocity on up to 64 unique live 3D physics bodies. Validates every entity and body before applying; unspecified velocity channels are preserved.",
+         Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}},
+                 {"linear_velocity", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
+                 {"angular_velocity", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}}},
+                {"entities"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             PhysicsScene* scene = game.PhysicsQueries();
+             if (scene == nullptr) throw ToolError("The loaded game has no 3D physics scene");
+             if (!args.contains("entities") || !args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be an array of 1 to 64 entity handles");
+             }
+             static const std::unordered_set<std::string> supported = {"entities", "linear_velocity", "angular_velocity"};
+             for (auto it = args.begin(); it != args.end(); ++it) {
+                 if (!supported.contains(it.key())) throw ToolError("Unsupported shared 3D velocity field: " + it.key());
+             }
+             const bool set_linear = args.contains("linear_velocity");
+             const bool set_angular = args.contains("angular_velocity");
+             if (!set_linear && !set_angular) throw ToolError("Provide linear_velocity, angular_velocity or both");
+             auto read_vector = [](const Json& value, const char* field) {
+                 if (!value.is_array() || value.size() != 3 || !value[0].is_number() || !value[1].is_number() || !value[2].is_number()) {
+                     throw ToolError(std::string("\"") + field + "\" must be [x, y, z]");
+                 }
+                 const Vec3 result{value[0].get<f32>(), value[1].get<f32>(), value[2].get<f32>()};
+                 if (!std::isfinite(result.x) || !std::isfinite(result.y) || !std::isfinite(result.z)) {
+                     throw ToolError(std::string("\"") + field + "\" components must be finite");
+                 }
+                 return result;
+             };
+             const Vec3 linear = set_linear ? read_vector(args["linear_velocity"], "linear_velocity") : Vec3{};
+             const Vec3 angular = set_angular ? read_vector(args["angular_velocity"], "angular_velocity") : Vec3{};
+             struct VelocityTarget { Entity entity; JPH::BodyID body; };
+             std::vector<VelocityTarget> targets;
+             targets.reserve(args["entities"].size());
+             World& world = game.GetWorld();
+             for (const Json& handle : args["entities"]) {
+                 if (!handle.is_string() || handle.get<std::string>().empty()) throw ToolError("Every \"entities\" entry must be a non-empty entity handle");
+                 const Entity entity = FindEntity(game, handle.get<std::string>());
+                 if (std::find_if(targets.begin(), targets.end(), [entity](const VelocityTarget& target) { return target.entity == entity; }) != targets.end()) {
+                     throw ToolError("\"entities\" must not repeat an entity");
+                 }
+                 const JPH::BodyID body = scene->BodyOf(entity);
+                 if (body.IsInvalid()) throw ToolError("Every entity must have a live 3D physics body");
+                 targets.push_back({entity, body});
+             }
+             JPH::BodyInterface& interface = scene->Physics().BodyInterface();
+             Json results = Json::array();
+             for (const VelocityTarget& target : targets) {
+                 if (set_linear) interface.SetLinearVelocity(target.body, JPH::Vec3(linear.x, linear.y, linear.z));
+                 if (set_angular) interface.SetAngularVelocity(target.body, JPH::Vec3(angular.x, angular.y, angular.z));
+                 const JPH::Vec3 current_linear = interface.GetLinearVelocity(target.body);
+                 const JPH::Vec3 current_angular = interface.GetAngularVelocity(target.body);
+                 results.push_back({{"entity", EntityKey(world, target.entity)},
+                                    {"linear_velocity", Json::array({current_linear.GetX(), current_linear.GetY(), current_linear.GetZ()})},
+                                    {"angular_velocity", Json::array({current_angular.GetX(), current_angular.GetY(), current_angular.GetZ()})}});
+             }
+             return {{"count", results.size()}, {"entities", std::move(results)}};
+         }});
+#endif
+
+#if AETHER_MCP_PHYSICS
+    server.AddTool(
         {"game_apply_physics3d_forces_many",
          "Apply a force, impulse, torque or angular impulse to up to 64 unique live dynamic 3D bodies. Validates the entire batch before applying.",
          Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
