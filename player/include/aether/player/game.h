@@ -285,9 +285,7 @@ private:
     void StartRuntime(); // scripts and Blueprints for the loaded scene
     void ApplyAudioSettings();
     void BuildKits();    // adds the kits this build has and orders them
-    void CreateInventoryRuntime();
-    void CreateQuestsRuntime();
-    void CreateInteractionRuntime();
+    void CreateKitRuntime();
     void AddInventoryStage();
     void AddInteractionStage();
     void AddQuestsStage();

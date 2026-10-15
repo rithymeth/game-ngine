@@ -21,6 +21,19 @@ public:
         // Runs with the frame's Update, after effects have run, like the other gameplay kit systems.
         return {{"Player.Interaction", {"Player.Update", "Player.Sequencer", "Player.Effects"}}};
     }
+    std::unique_ptr<kit::IKitRuntime> CreateRuntime(const kit::KitRuntimeContext& context) override {
+        auto* effects = context.find_service ? static_cast<gas::EffectSystem*>(context.find_service("game.effects")) : nullptr;
+        auto* abilities = context.find_service ? static_cast<gas::AbilitySystem*>(context.find_service("game.abilities")) : nullptr;
+        if (!context.world) return {};
+        class Runtime final : public kit::IKitRuntime {
+        public:
+            Runtime(World& world, gas::EffectSystem* effects, gas::AbilitySystem* abilities)
+                : system(world, effects, abilities) {}
+            void* Find(const char* name) override { return std::string(name) == "InteractionSystem" ? &system : nullptr; }
+            InteractionSystem system;
+        };
+        return std::make_unique<Runtime>(*context.world, effects, abilities);
+    }
 };
 
 } // namespace
