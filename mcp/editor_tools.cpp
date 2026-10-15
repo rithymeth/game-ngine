@@ -329,10 +329,16 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                     }});
 
     server.AddTool({"list_entities",
-                    "List entities in the scene (GUID, component names and parent GUID). Optionally filter by component, exact entity name, and/or exact case-sensitive tag; filters combine with AND.",
+                    "List entities in the scene (GUID, component names and parent GUID). Optionally filter by component, exact entity name, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND.",
                     Schema({{"component", {{"type", "string"}, {"description", "Only entities having this component"}}},
                             {"name", {{"type", "string"}, {"description", "Only entities whose name exactly matches"}}},
-                            {"tag", {{"type", "string"}, {"description", "Only entities with this exact case-sensitive tag"}}}}),
+                            {"tag", {{"type", "string"}, {"description", "Only entities with this exact case-sensitive tag (legacy single-tag filter)"}}},
+                            {"tags_all", {{"type", "array"}, {"items", {{"type", "string"}}}, {"maxItems", 32},
+                                          {"description", "Only entities that have every exact case-sensitive tag listed"}}},
+                            {"tags_any", {{"type", "array"}, {"items", {{"type", "string"}}}, {"maxItems", 32},
+                                          {"description", "Only entities that have at least one exact case-sensitive tag listed"}}},
+                            {"tags_none", {{"type", "array"}, {"items", {{"type", "string"}}}, {"maxItems", 32},
+                                           {"description", "Exclude entities that have any exact case-sensitive tag listed"}}}}),
                     [&s](const Json& args) -> Json {
                         editor::EnsureAllGuids(s.world, s.guids);
                         ComponentId filter = kInvalidComponentId;
@@ -341,6 +347,27 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         }
                         const std::string name_filter = args.contains("name") ? RequireString(args, "name") : std::string{};
                         const std::string tag_filter = args.contains("tag") ? RequireString(args, "tag") : std::string{};
+                        auto ReadTagFilter = [&](const char* key) {
+                            std::vector<std::string> tags;
+                            if (!args.contains(key)) return tags;
+                            if (!args[key].is_array() || args[key].size() > 32) {
+                                throw ToolError(std::string("\"") + key + "\" must be an array of at most 32 strings");
+                            }
+                            std::set<std::string> unique;
+                            for (const Json& value : args[key]) {
+                                if (!value.is_string() || value.get<std::string>().empty()) {
+                                    throw ToolError(std::string("Every \"") + key + "\" entry must be a non-empty string");
+                                }
+                                if (!unique.insert(value.get<std::string>()).second) {
+                                    throw ToolError(std::string("Duplicate tag in \"") + key + "\": " + value.get<std::string>());
+                                }
+                                tags.push_back(value.get<std::string>());
+                            }
+                            return tags;
+                        };
+                        const std::vector<std::string> tags_all = ReadTagFilter("tags_all");
+                        const std::vector<std::string> tags_any = ReadTagFilter("tags_any");
+                        const std::vector<std::string> tags_none = ReadTagFilter("tags_none");
                         Json out = Json::array();
                         for (Entity e : AllEntities(s)) {
                             if (filter != kInvalidComponentId && !s.world.HasComponentRaw(e, filter)) {
@@ -351,6 +378,17 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                                 if (name == nullptr || name->value != name_filter) continue;
                             }
                             if (args.contains("tag") && !HasTag(s.world, e, tag_filter)) continue;
+                            bool has_all_tags = true;
+                            for (const std::string& tag : tags_all) has_all_tags = has_all_tags && HasTag(s.world, e, tag);
+                            if (!has_all_tags) continue;
+                            if (!tags_any.empty()) {
+                                bool has_any_tag = false;
+                                for (const std::string& tag : tags_any) has_any_tag = has_any_tag || HasTag(s.world, e, tag);
+                                if (!has_any_tag) continue;
+                            }
+                            bool has_excluded_tag = false;
+                            for (const std::string& tag : tags_none) has_excluded_tag = has_excluded_tag || HasTag(s.world, e, tag);
+                            if (has_excluded_tag) continue;
                             const IdComponent* id = s.world.GetComponent<IdComponent>(e);
                             const Parent* parent = s.world.GetComponent<Parent>(e);
                             Json row = {{"entity", id ? ToString(id->guid) : ""}, {"components", ComponentNamesOf(s, e)}};
