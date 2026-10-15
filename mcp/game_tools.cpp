@@ -778,9 +778,11 @@ void RegisterGameTools(McpServer& server) {
     server.AddTool(
         {"game_list_entities",
          "Entities in the running game: handle (GUID, or #index when it has none), entity generation, name, local and in-hierarchy active state, direct parent GUID, tags and component names. "
-         "Optionally filter by exact name, case-insensitive ASCII name substring, component, tag, local active state or in-hierarchy active state. Results can be paged with a bounded limit and offset.",
+         "Optionally filter by exact name, case-insensitive ASCII name substring, component, tag, direct parent, root status, local active state or in-hierarchy active state. Results can be paged with a bounded limit and offset.",
          Schema({{"name", {{"type", "string"}, {"description", "Exact, case-sensitive entity name"}}},
                  {"name_contains", {{"type", "string"}, {"description", "Non-empty case-insensitive ASCII name substring"}}},
+                 {"parent", {{"type", "string"}, {"description", "Direct parent entity GUID"}}},
+                 {"root_only", {{"type", "boolean"}, {"description", "Only entities without a parent"}}},
                  {"component", {{"type", "string"}}}, {"tag", {{"type", "string"}}},
                  {"active", {{"type", "boolean"}, {"description", "Filter by local active state; entities without Active are active"}}},
                  {"active_in_hierarchy", {{"type", "boolean"}, {"description", "Filter by effective active state including ancestors"}}},
@@ -796,6 +798,11 @@ void RegisterGameTools(McpServer& server) {
              if (args.contains("name_contains") && name_contains_filter.empty()) {
                  throw ToolError("\"name_contains\" must be a non-empty string");
              }
+             EntityGuid parent_filter;
+             if (args.contains("parent") && !ParseEntityGuid(RequireString(args, "parent"), parent_filter)) {
+                 throw ToolError("\"parent\" must be an entity GUID");
+             }
+             if (args.contains("root_only") && !args["root_only"].is_boolean()) throw ToolError("\"root_only\" must be a boolean");
              if (args.contains("active") && !args["active"].is_boolean()) throw ToolError("\"active\" must be a boolean");
              if (args.contains("active_in_hierarchy") && !args["active_in_hierarchy"].is_boolean()) {
                  throw ToolError("\"active_in_hierarchy\" must be a boolean");
@@ -841,6 +848,10 @@ void RegisterGameTools(McpServer& server) {
                                                                                                    : rhs;
                                                                 return folded_lhs == folded_rhs;
                                                             }) == entity_name->value.end())) continue;
+                 const Parent* parent_component = world.GetComponent<Parent>(e);
+                 const bool has_parent = parent_component != nullptr && !parent_component->parent.IsNull();
+                 if (args.contains("parent") && (!has_parent || parent_component->parent != parent_filter)) continue;
+                 if (args.contains("root_only") && args["root_only"].get<bool>() == has_parent) continue;
                  const Active* active_component = world.GetComponent<Active>(e);
                  const bool active = active_component == nullptr || active_component->active;
                  if (args.contains("active") && active != args["active"].get<bool>()) continue;
@@ -858,10 +869,7 @@ void RegisterGameTools(McpServer& server) {
                  if (const Tags* component_tags = world.GetComponent<Tags>(e)) {
                      for (const std::string& tag : component_tags->names) tags.push_back(tag);
                  }
-                 Json parent = nullptr;
-                 if (const Parent* parent_component = world.GetComponent<Parent>(e); parent_component != nullptr && !parent_component->parent.IsNull()) {
-                     parent = ToString(parent_component->parent);
-                 }
+                 Json parent = has_parent ? Json(ToString(parent_component->parent)) : Json(nullptr);
                  Json row = {{"entity", EntityKey(world, e)}, {"entity_generation", e.generation}, {"components", names}, {"tags", tags},
                              {"active", active_component == nullptr || active_component->active},
                              {"active_in_hierarchy", args.contains("active_in_hierarchy") ? active_in_hierarchy
