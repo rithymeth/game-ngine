@@ -29,6 +29,7 @@ and errors go to stderr.
 | `list_entities` | GUIDs, component names and parent GUIDs; optional exact name/component/tag filters plus `tags_all`, `tags_any`, and `tags_none` groups (supplied filters combine with AND) |
 | `get_entity` | Every component of one entity, as JSON |
 | `get_entities_many` | Get full reflected component values for up to 64 unique entities in selection order; validates all GUIDs before returning data |
+| `get_entities_world_transforms_many` | Get parent-composed world position, basis-length scale magnitudes, and column-major matrices for up to 64 unique entities |
 | `rename_entities` | Rename up to 64 unique entities as one undoable action; creates `EntityName` when needed |
 | `set_entity_tags_many` | Replace the complete tag list on up to 64 unique entities as one undoable action; creates `Tags` when needed |
 | `modify_entity_tags_many` | Add/remove tags on up to 64 unique entities as one undoable action; preserves tag order and reports no-op edits |

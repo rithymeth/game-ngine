@@ -436,6 +436,83 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
          }});
 
     server.AddTool(
+        {"get_entities_world_transforms_many",
+         "Get derived world transforms for 1–64 unique scene entities in request order. Returns each world matrix as four column vectors plus world position and world-scale magnitudes (the lengths of the three basis columns). Parent transforms are composed through the hierarchy. Rejects missing Transform components, non-finite results, hierarchy cycles and excessive depth.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique scene entity GUIDs, returned in this order"}}}},
+                {"entities"}),
+         [&s](const Json& args) -> Json {
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             std::vector<std::pair<EntityGuid, Entity>> entities;
+             entities.reserve(args["entities"].size());
+             std::set<EntityGuid> seen;
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 const std::string guid_text = value.get<std::string>();
+                 EntityGuid guid;
+                 if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid entity GUID: " + guid_text);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 if (s.world.GetComponent<Transform>(entity) == nullptr) {
+                     throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 }
+                 entities.emplace_back(guid, entity);
+             }
+
+             std::map<EntityGuid, Mat4> world_cache;
+             std::function<Mat4(Entity, int)> compute_world = [&](Entity entity, int depth) -> Mat4 {
+                 if (entity.IsNull()) return Mat4::Identity();
+                 if (depth >= kMaxHierarchyDepth) throw ToolError("World-transform query encountered a hierarchy cycle or excessive depth");
+                 const IdComponent* id = s.world.GetComponent<IdComponent>(entity);
+                 if (id != nullptr) {
+                     const auto cached = world_cache.find(id->guid);
+                     if (cached != world_cache.end()) return cached->second;
+                 }
+                 const Transform* transform = s.world.GetComponent<Transform>(entity);
+                 const Entity parent = GetParent(s.world, s.guids, entity);
+                 const Mat4 parent_world = parent.IsNull() ? Mat4::Identity() : compute_world(parent, depth + 1);
+                 const Mat4 local = transform == nullptr ? Mat4::Identity() : LocalTransformMatrix(*transform);
+                 const Mat4 world = parent_world * local;
+                 if (id != nullptr) world_cache.emplace(id->guid, world);
+                 return world;
+             };
+
+             Json results = Json::array();
+             for (const auto& [guid, entity] : entities) {
+                 const Mat4 world = compute_world(entity, 0);
+                 Json columns = Json::array();
+                 f32 scale[3]{};
+                 for (int axis = 0; axis < 3; ++axis) {
+                     const Vec4& column = world.cols[axis];
+                     const Vec3 basis{column.x, column.y, column.z};
+                     scale[axis] = basis.Length();
+                     if (!std::isfinite(column.x) || !std::isfinite(column.y) || !std::isfinite(column.z) ||
+                         !std::isfinite(column.w) || !std::isfinite(scale[axis])) {
+                         throw ToolError("World transform has a non-finite basis for entity " + ToString(guid));
+                     }
+                     columns.push_back(Json::array({column.x, column.y, column.z, column.w}));
+                 }
+                 const Vec4& position = world.cols[3];
+                 if (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z) ||
+                     !std::isfinite(position.w)) {
+                     throw ToolError("World transform has a non-finite position for entity " + ToString(guid));
+                 }
+                 columns.push_back(Json::array({position.x, position.y, position.z, position.w}));
+                 Json result = {{"entity", ToString(guid)},
+                                {"world_position", {position.x, position.y, position.z}},
+                                {"world_scale", {scale[0], scale[1], scale[2]}},
+                                {"world_matrix_columns", std::move(columns)}};
+                 const Parent* parent = s.world.GetComponent<Parent>(entity);
+                 if (parent != nullptr && !parent->parent.IsNull()) result["parent"] = ToString(parent->parent);
+                 results.push_back(std::move(result));
+             }
+             return {{"count", results.size()}, {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
         {"create_entity",
          "Create an entity. `components` maps component names to (partial) field values, e.g. "
          "{\"Transform\": {\"position\": [1, 2, 3]}}. Optionally parent it to another entity. Undoable.",
