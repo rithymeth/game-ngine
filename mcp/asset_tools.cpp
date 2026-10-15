@@ -16,6 +16,8 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -344,6 +346,160 @@ private:
     std::string from_;
     std::string to_;
     assets::MoveResult result_;
+};
+
+class DeleteAssetCommand final : public editor::ICommand {
+public:
+    DeleteAssetCommand(std::shared_ptr<AssetHost> host, fs::path project_file, assets::AssetGuid guid, fs::path source,
+                       bool force)
+        : host_(std::move(host)), project_file_(std::move(project_file)), guid_(guid), source_(std::move(source)),
+          meta_(source_.string() + assets::AssetMeta::kExtension), force_(force) {}
+
+    ~DeleteAssetCommand() override {
+        if (!backup_dir_.empty() && !preserve_backup_) {
+            std::error_code ec;
+            fs::remove_all(backup_dir_, ec);
+        }
+    }
+
+    void Do(editor::CommandContext&) override {
+        RequireSameProject();
+        if (!backed_up_) {
+            PrepareBackup();
+            try {
+                DeleteCurrent();
+                backed_up_ = true;
+            } catch (...) {
+                try {
+                    RestorePartialDelete();
+                } catch (...) {
+                    host_->project->database->Scan();
+                    throw ToolError("Asset deletion failed and its recovery backup was retained at " + backup_dir_.string());
+                }
+                host_->project->database->Scan();
+                std::error_code ec;
+                fs::remove_all(backup_dir_, ec);
+                backup_dir_.clear();
+                throw;
+            }
+            return;
+        }
+        DeleteCurrent();
+    }
+
+    void Undo(editor::CommandContext&) override {
+        RequireSameProject();
+        std::error_code ec;
+        if (fs::exists(source_, ec) || fs::exists(meta_, ec)) {
+            throw ToolError("Could not restore deleted asset because its original path is occupied");
+        }
+        if (ec) throw ToolError("Could not check asset restore path: " + ec.message());
+        fs::create_directories(source_.parent_path(), ec);
+        if (ec) throw ToolError("Could not create " + source_.parent_path().string() + ": " + ec.message());
+        bool restored_source = false;
+        try {
+            if (had_source_) {
+                fs::copy_file(backup_source_, source_, ec);
+                if (ec) throw ToolError("Could not restore " + source_.string() + ": " + ec.message());
+                restored_source = true;
+            }
+            if (had_meta_) {
+                fs::copy_file(backup_meta_, meta_, ec);
+                if (ec) throw ToolError("Could not restore " + meta_.string() + ": " + ec.message());
+            }
+            host_->project->database->Scan();
+        } catch (...) {
+            if (restored_source) {
+                std::error_code remove_error;
+                fs::remove(source_, remove_error);
+            }
+            host_->project->database->Scan();
+            throw;
+        }
+    }
+
+    std::string Label() const override { return "Delete Content Asset"; }
+    usize MemoryBytes() const override {
+        return sizeof(*this) + project_file_.string().size() + source_.string().size() + meta_.string().size() + backup_dir_.string().size();
+    }
+
+private:
+    void RequireSameProject() const {
+        if (!host_->project || host_->project->paths.file.lexically_normal() != project_file_.lexically_normal()) {
+            throw ToolError("Open the project that owns this asset before undoing or redoing this action");
+        }
+    }
+
+    void PrepareBackup() {
+        const fs::path root = host_->project->paths.saved / ".AgentUndo";
+        std::error_code ec;
+        fs::create_directories(root, ec);
+        if (ec) throw ToolError("Could not create undo backup folder: " + ec.message());
+        const std::string token = assets::ToString(guid_) + "-" + std::to_string(++next_backup_id_);
+        backup_dir_ = root / token;
+        if (!fs::create_directory(backup_dir_, ec) || ec) throw ToolError("Could not create undo backup folder: " + ec.message());
+        backup_source_ = backup_dir_ / "source";
+        backup_meta_ = backup_dir_ / "metadata";
+        had_source_ = BackupFile(source_, backup_source_);
+        had_meta_ = BackupFile(meta_, backup_meta_);
+    }
+
+    bool BackupFile(const fs::path& source, const fs::path& backup) {
+        std::error_code ec;
+        const fs::file_status status = fs::symlink_status(source, ec);
+        if (ec == std::errc::no_such_file_or_directory) return false;
+        if (ec) throw ToolError("Could not inspect " + source.string() + ": " + ec.message());
+        if (!fs::exists(status)) return false;
+        if (!fs::is_regular_file(status)) throw ToolError("Cannot create an undo backup for non-file asset data: " + source.string());
+        fs::copy_file(source, backup, ec);
+        if (ec) throw ToolError("Could not back up " + source.string() + ": " + ec.message());
+        return true;
+    }
+
+    void DeleteCurrent() {
+        std::string error;
+        if (!host_->project->database->Delete(guid_, force_, &error)) throw ToolError(error);
+        std::error_code ec;
+        if (fs::exists(source_, ec) || fs::exists(meta_, ec) || ec) {
+            RestorePartialDelete();
+            host_->project->database->Scan();
+            throw ToolError("The asset database could not remove all files for " + source_.string());
+        }
+        host_->project->database->Scan();
+    }
+
+    void RestorePartialDelete() {
+        try {
+            const auto restore = [](const fs::path& destination, const fs::path& backup, bool existed) {
+                if (!existed) return;
+                std::error_code ec;
+                if (fs::exists(destination, ec)) return;
+                if (ec) throw ToolError("Could not inspect " + destination.string() + ": " + ec.message());
+                fs::copy_file(backup, destination, ec);
+                if (ec) throw ToolError("Could not restore " + destination.string() + ": " + ec.message());
+            };
+            restore(source_, backup_source_, had_source_);
+            restore(meta_, backup_meta_, had_meta_);
+        } catch (...) {
+            preserve_backup_ = true;
+            throw;
+        }
+    }
+
+    inline static std::atomic<std::uint64_t> next_backup_id_{0};
+    std::shared_ptr<AssetHost> host_;
+    fs::path project_file_;
+    assets::AssetGuid guid_;
+    fs::path source_;
+    fs::path meta_;
+    fs::path backup_dir_;
+    fs::path backup_source_;
+    fs::path backup_meta_;
+    bool force_ = false;
+    bool had_source_ = false;
+    bool had_meta_ = false;
+    bool backed_up_ = false;
+    bool preserve_backup_ = false;
 };
 
 Json ProjectJson(OpenProject& p) {
@@ -684,13 +840,18 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
                     }});
 
     server.AddTool({"asset_delete",
-                    "Delete an asset's source and .ameta (with its sub-assets). Refused while other assets reference it, unless `force`.",
-                    Schema({{"asset", {{"type", "string"}}}, {"force", {{"type", "boolean"}}}}, {"asset"}), [host](const Json& args) -> Json {
+                    "Delete an asset's source and .ameta (with its sub-assets) as one agent-attributed undoable action. Refused while other assets reference it, unless `force`.",
+                    Schema({{"asset", {{"type", "string"}}}, {"force", {{"type", "boolean"}}}}, {"asset"}), [host, &session](const Json& args) -> Json {
                         OpenProject& p = host->Require();
+                        if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before deleting an asset");
                         const AssetRecord& rec = FindAsset(p, RequireString(args, "asset"));
                         const std::string path = rec.path;
-                        std::string error;
-                        if (!p.database->Delete(rec.guid, OptBool(args, "force", false), &error)) throw ToolError(error);
+                        const assets::AssetGuid guid = rec.guid;
+                        auto command = std::make_unique<DeleteAssetCommand>(host, p.paths.file, guid, p.paths.content / path,
+                                                                            OptBool(args, "force", false));
+                        command->SetAttribution("agent");
+                        editor::CommandContext context = session.Context();
+                        session.stack.Execute(context, std::move(command));
                         return {{"deleted", path}};
                     }});
 

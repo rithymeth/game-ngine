@@ -55,7 +55,7 @@ These use the engine's own asset database, importers and cooker, in process, on 
 | `asset_add_files` | Copy source files (textures, models, audio) into `Content/<folder>`, scan and import them |
 | `asset_import` | (Re)import one asset, or everything pending; served from the derived-data cache when unchanged |
 | `asset_set_import_settings` | Merge importer settings into the `.ameta` (e.g. a texture's `cook_format`) as one agent-attributed undoable action; undo/redo restores metadata and reruns the selected import |
-| `asset_move` / `asset_create_folder` / `asset_delete` | Move/rename assets or folders as agent-attributed undoable actions (GUIDs and references survive; glTF URIs rewritten), make folders as undoable actions (undo only while empty), delete (refused while referenced unless `force`) |
+| `asset_move` / `asset_create_folder` / `asset_delete` | Move/rename assets or folders as agent-attributed undoable actions (GUIDs and references survive; glTF URIs rewritten), make folders as undoable actions (undo only while empty), delete with source and metadata backed up under `Saved/` for undo (refused while referenced unless `force`) |
 | `content_read` / `content_write` | Read text files under `Content/`; write/overwrite files up to 2 MB as one agent-attributed undoable action with source and GUID sidecar restored on undo/redo; paths cannot leave `Content/`, `.ameta` is not writable |
 | `asset_scan` | Rescan after changing files outside the tools |
 | `asset_cook` | Cook into an `.apak` (configuration, extra roots, compression, strict, encryption, patch); returns the archive path, sizes, warnings and the cooked assets |
