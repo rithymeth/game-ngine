@@ -253,14 +253,19 @@ std::filesystem::path ResolveScenePath(const std::filesystem::path& root, const 
 }
 
 void RegisterEditorTools(McpServer& server, EditorSession& s) {
+    // This session is controlled through MCP, so all its scene history entries
+    // are attributable to an agent. The stack preserves this across undo/redo.
+    s.stack.SetAttribution("agent");
     server.AddTool({"editor_state",
                     "Summary of the editor session: entity count, undo/redo availability, unsaved changes, play state.",
                     Schema(Json::object()), [&s](const Json&) -> Json {
                         return {{"entities", s.world.EntityCount()},
                                 {"can_undo", s.stack.CanUndo()},
                                 {"undo_label", s.stack.UndoLabel()},
+                                {"undo_attribution", s.stack.UndoAttribution()},
                                 {"can_redo", s.stack.CanRedo()},
                                 {"redo_label", s.stack.RedoLabel()},
+                                {"redo_attribution", s.stack.RedoAttribution()},
                                 {"dirty", s.stack.IsDirty()},
                                 {"play_state", PlayStateName(s.play.GetState())}};
                     }});
@@ -477,19 +482,21 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
 
     server.AddTool({"undo", "Undo the last editor action.", Schema(Json::object()), [&s](const Json&) -> Json {
                         std::string label = s.stack.UndoLabel();
+                        std::string attribution = s.stack.UndoAttribution();
                         editor::CommandContext ctx = s.Context();
                         if (!s.stack.Undo(ctx)) {
                             throw ToolError("Nothing to undo");
                         }
-                        return {{"undone", label}};
+                        return {{"undone", label}, {"attribution", attribution}};
                     }});
     server.AddTool({"redo", "Redo the last undone editor action.", Schema(Json::object()), [&s](const Json&) -> Json {
                         std::string label = s.stack.RedoLabel();
+                        std::string attribution = s.stack.RedoAttribution();
                         editor::CommandContext ctx = s.Context();
                         if (!s.stack.Redo(ctx)) {
                             throw ToolError("Nothing to redo");
                         }
-                        return {{"redone", label}};
+                        return {{"redone", label}, {"attribution", attribution}};
                     }});
 
     server.AddTool({"save_scene", "Save the scene to a file: JSON (.json, human-readable) or binary (.aesc).",

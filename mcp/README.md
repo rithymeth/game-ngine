@@ -24,7 +24,7 @@ and errors go to stderr.
 
 | Tool | What it does |
 | --- | --- |
-| `editor_state` | Entity count, undo/redo labels, unsaved changes, play state |
+| `editor_state` | Entity count, undo/redo labels and attribution, unsaved changes, play state |
 | `list_component_types` | Component names and their fields |
 | `list_entities` | GUIDs and component names; optional component filter |
 | `get_entity` | Every component of one entity, as JSON |
@@ -33,7 +33,7 @@ and errors go to stderr.
 | `add_component` / `remove_component` | Add (with optional initial values) or remove a component |
 | `set_component` | Partial update: only the fields named change |
 | `reparent` | Parent or detach an entity; rejects cycles |
-| `undo` / `redo` | Walk the editor history |
+| `undo` / `redo` | Walk the editor history and return the source (`agent`) recorded with that action |
 | `save_scene` / `load_scene` | `.json` (readable) or `.aesc` (binary); load can `replace` |. They stay inside the scene folder (the working folder, or `--scene-root`): relative paths resolve there, and absolute paths, `..` and symlinks that leave it are refused
 | `play` / `pause` / `stop` | Play-in-Editor; stop restores the scene exactly. `play` starts the simulation systems |
 | `list_systems` | The simulation systems in execution order, with enabled state (play mode) |

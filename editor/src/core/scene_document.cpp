@@ -59,7 +59,9 @@ std::string SuggestedEntityName(const World& world, Entity entity) {
 
 } // namespace
 
-SceneDocument::SceneDocument() : context_(world_, guids_) {}
+SceneDocument::SceneDocument() : context_(world_, guids_) {
+    commands_.SetAttribution("user");
+}
 
 void SceneDocument::Reset() {
     if (!play_session_.IsEditing()) play_session_.Stop(context_, commands_);

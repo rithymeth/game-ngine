@@ -37,6 +37,8 @@ public:
     bool CanRedo() const { return commands_.CanRedo(); }
     std::string UndoLabel() const { return commands_.UndoLabel(); }
     std::string RedoLabel() const { return commands_.RedoLabel(); }
+    std::string UndoAttribution() const { return commands_.UndoAttribution(); }
+    std::string RedoAttribution() const { return commands_.RedoAttribution(); }
 
     void NewScene();
     bool Load(const std::filesystem::path& file, std::string* error = nullptr);
