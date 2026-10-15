@@ -333,7 +333,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                     }});
 
     server.AddTool({"list_entities",
-                    "List a page of scene entities (GUID, name when present, entity index, component names, parent GUID, effective collision layer index, local active state, and active/layer/parent override presence). Optionally filter by component, component groups that must all/any match or must not match, exact entity name, case-insensitive ASCII name substring, direct parent or roots, layer index, local active value, active/layer/parent override presence, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND. Results are ordered by entity index and include total match count, has_more, and a continuation cursor. The cursor is not a scene snapshot; entities created in a reused index at or before it are skipped.",
+                    "List a page of scene entities (GUID, name when present, entity index, component names, parent GUID, effective collision layer index, local active state, and active/layer/parent override presence). Optionally filter by component, component groups that must all/any match or must not match, exact entity name, case-insensitive ASCII name substring, one parent or any of several parents, roots, layer index, local active value, active/layer/parent override presence, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND. Results are ordered by entity index and include total match count, has_more, and a continuation cursor. The cursor is not a scene snapshot; entities created in a reused index at or before it are skipped.",
                     Schema({{"component", {{"type", "string"}, {"description", "Only entities having this component"}}},
                             {"components_all", {{"type", "array"}, {"items", {{"type", "string"}}}, {"maxItems", 32},
                                                  {"description", "Only entities that have every listed component"}}},
@@ -344,7 +344,9 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                             {"name", {{"type", "string"}, {"description", "Only entities whose name exactly matches"}}},
                             {"name_contains", {{"type", "string"}, {"description", "Only entities whose name contains this case-insensitive ASCII substring; must not be empty"}}},
                             {"parent", kGuidProp},
-                            {"roots_only", {{"type", "boolean"}, {"description", "Only entities without a parent; cannot be combined with parent"}}},
+                            {"parent_any", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 32},
+                                              {"description", "Only entities whose direct parent is one of these existing entity GUIDs"}}},
+                            {"roots_only", {{"type", "boolean"}, {"description", "Only entities without a parent; cannot be combined with parent or parent_any"}}},
                             {"parent_override", {{"type", "boolean"},
                                                    {"description", "Filter by whether the entity has an explicit Parent component"}}},
                             {"layer_index", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxLayers - 1},
@@ -386,6 +388,25 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                             roots_only = args["roots_only"].get<bool>();
                         }
                         if (args.contains("parent") && roots_only) throw ToolError("\"parent\" and \"roots_only\" cannot be combined");
+                        if (args.contains("parent_any") && (args.contains("parent") || roots_only)) {
+                            throw ToolError("\"parent_any\" cannot be combined with \"parent\" or \"roots_only\"");
+                        }
+                        std::vector<EntityGuid> parent_any_filter;
+                        if (args.contains("parent_any")) {
+                            if (!args["parent_any"].is_array() || args["parent_any"].empty() || args["parent_any"].size() > 32) {
+                                throw ToolError("\"parent_any\" must be an array of 1 to 32 entity GUIDs");
+                            }
+                            std::set<std::string> unique_parents;
+                            for (const Json& value : args["parent_any"]) {
+                                if (!value.is_string()) throw ToolError("Every \"parent_any\" entry must be an entity GUID string");
+                                EntityGuid guid;
+                                const std::string guid_text = value.get<std::string>();
+                                if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid parent entity GUID: " + guid_text);
+                                if (!unique_parents.insert(ToString(guid)).second) throw ToolError("Duplicate parent in \"parent_any\": " + ToString(guid));
+                                if (s.guids.Find(s.world, guid).IsNull()) throw ToolError("No entity with parent GUID " + ToString(guid));
+                                parent_any_filter.push_back(guid);
+                            }
+                        }
                         std::optional<bool> parent_override_filter;
                         if (args.contains("parent_override")) {
                             if (!args["parent_override"].is_boolean()) throw ToolError("\"parent_override\" must be a boolean");
@@ -515,6 +536,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                             if (after_entity_index.has_value() && e.index <= *after_entity_index) continue;
                             const Parent* parent = s.world.GetComponent<Parent>(e);
                             if (args.contains("parent") && (parent == nullptr || parent->parent != parent_filter)) continue;
+                            if (!parent_any_filter.empty() && (parent == nullptr || std::find(parent_any_filter.begin(), parent_any_filter.end(), parent->parent) == parent_any_filter.end())) continue;
                             if (parent_override_filter.has_value() && (parent != nullptr) != *parent_override_filter) continue;
                             if (roots_only && parent != nullptr && !parent->parent.IsNull()) continue;
                             const Layer* layer_override = s.world.GetComponent<Layer>(e);
