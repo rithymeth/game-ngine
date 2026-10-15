@@ -412,6 +412,7 @@ saves and localization. The game has its own world, separate from the editor's.
 | `game_sequences` / `game_play_sequence` / `game_sequence_control` / `game_stop_sequences` | The running game's level sequences: every `SequenceComponent` with its time and state, the screen fade and problems; play a sequence by asset path; play, pause, stop, skip, set time, rate or loop on one; stop or skip them all |
 | `game_set_paused` | Freeze or resume the simulation |
 | `game_set_layer_many` | Set a shared collision layer index (0-31) on up to 64 unique live entities; missing layers default to 0 and no-op changes are reported |
+| `game_set_layers_many` | Set per-entity collision layer indices (0-31) on up to 64 unique live entities after validating every edit |
 | `game_update_tags_many` | Add/remove shared tags on up to 64 unique live entities, preserve unmentioned tags, and report per-entity changes |
 | `game_set_tags_many` | Replace the complete tag list on up to 64 unique live entities; supports clearing tags and reports old/new lists and no-op entries |
 | `game_rename_entities_many` | Rename up to 64 unique live entities in a validated batch, adding `EntityName` when needed and returning old and new names |
