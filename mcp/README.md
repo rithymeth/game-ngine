@@ -30,6 +30,7 @@ and errors go to stderr.
 | `get_entity` | Every component of one entity, as JSON |
 | `rename_entities` | Rename up to 64 unique entities as one undoable action; creates `EntityName` when needed |
 | `set_entity_tags_many` | Replace the complete tag list on up to 64 unique entities as one undoable action; creates `Tags` when needed |
+| `modify_entity_tags_many` | Add/remove tags on up to 64 unique entities as one undoable action; preserves tag order and reports no-op edits |
 | `set_entity_layers_many` | Set collision layer indices (0–31) on up to 64 unique entities as one undoable action; creates `Layer` when needed |
 | `set_entities_active_many` | Set active states on up to 64 unique entities as one undoable action; missing `Active` means active, disabling adds `Active` |
 | `create_entity` / `create_entities` | Create an entity or up to 64 entities with component values, current-scene parents, or zero-based `parent_index` links within the batch; the batch validates the full hierarchy before creation and is one undo action |
