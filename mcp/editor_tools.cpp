@@ -2254,6 +2254,104 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
          }});
 
     server.AddTool(
+        {"rename_entities_shared_many",
+         "Set one shared name on 1–64 unique scene entities as one undoable action. Entities without an EntityName component receive one. Validate the complete selection and name before applying changes.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique entity GUIDs"}}},
+                 {"name", {{"type", "string"}, {"description", "Shared entity name"}}}},
+                {"entities", "name"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before renaming entities");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             const std::string name = RequireString(args, "name");
+             struct Rename {
+                 EntityGuid guid;
+                 bool add_component = false;
+                 bool changed = false;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 Json warnings = Json::array();
+             };
+             std::vector<Rename> renames;
+             renames.reserve(args["entities"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId name_component = GetComponentId<EntityName>();
+             const ComponentInfo& info = GetComponentInfo(name_component);
+             const Json component_value = {{"value", name}};
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 EntityGuid guid;
+                 const std::string guid_text = value.get<std::string>();
+                 if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid entity GUID: " + guid_text);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 Rename rename;
+                 rename.guid = guid;
+                 const EntityName* current = s.world.GetComponent<EntityName>(entity);
+                 if (current != nullptr) {
+                     rename.changed = current->value != name;
+                     if (rename.changed) {
+                         rename.after = PatchedBytes(s, entity, name_component, component_value, rename.before, rename.warnings);
+                         if (!rename.warnings.empty()) throw ToolError("Invalid EntityName value for entity " + ToString(guid));
+                     }
+                 } else {
+                     reflect::Any sample = reflect::Any::DefaultOf(*info.reflected);
+                     if (!sample.HasValue()) throw ToolError("Cannot default-construct EntityName");
+                     reflect::LoadReport report;
+                     if (!reflect::FromJson(*info.reflected, sample.Data(), component_value, &report)) {
+                         throw ToolError("Name does not match the EntityName component");
+                     }
+                     info.serialize(sample.Data(), rename.after);
+                     reflect::Any defaults = reflect::Any::DefaultOf(*info.reflected);
+                     if (!defaults.HasValue()) throw ToolError("Cannot default-construct EntityName");
+                     info.serialize(defaults.Data(), rename.before);
+                     rename.add_component = true;
+                     rename.changed = true;
+                     for (const std::string& warning : report.warnings) rename.warnings.push_back(warning);
+                 }
+                 renames.push_back(std::move(rename));
+             }
+
+             const usize changed_count = std::count_if(renames.begin(), renames.end(), [](const Rename& rename) { return rename.changed; });
+             if (changed_count > 0) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Rename Entities " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const Rename& rename : renames) {
+                         if (!rename.changed) continue;
+                         if (rename.add_component) {
+                             auto add = std::make_unique<editor::AddComponentCommand>(rename.guid, name_component);
+                             add->SetAttribution("agent");
+                             s.stack.Execute(ctx, std::move(add));
+                         }
+                         auto set = std::make_unique<SetComponentCommand>(rename.guid, name_component, rename.before, rename.after);
+                         set->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(set));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const Rename& rename : renames) {
+                 Json row = {{"entity", ToString(rename.guid)}, {"name", name}, {"changed", rename.changed}};
+                 if (!rename.warnings.empty()) row["warnings"] = rename.warnings;
+                 results.push_back(std::move(row));
+             }
+             return {{"renamed", changed_count}, {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
         {"rename_entities",
          "Rename 1–64 unique scene entities as one undoable action. Entities without an EntityName component receive one; all IDs and names are validated before any rename is applied.",
          Schema({{"renames", {{"type", "array"},
