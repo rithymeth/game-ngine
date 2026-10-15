@@ -316,7 +316,7 @@ Prefabs are project assets, so these need `project_open`. They act on the editor
 | --- | --- |
 | `prefab_info` | Looks inside a prefab: entities, nested prefabs, the variant base, what it flattens to (or why it can't), orphaned overrides and the prefabs built on it. `scenes` also checks every scene that uses it. |
 | `prefab_make` | Captures an entity and its descendants from the editor scene as a new `.aprefab` under `Content/`. |
-| `prefab_instantiate` | Places an instance in the editor scene, at `position` or where the prefab's root is. |
+| `prefab_instantiate` | Places an instance in the editor scene, at `position` or where the prefab's root is; one undoable, agent-attributed action. |
 | `prefab_overrides` | Lists an instance's overrides and deleted entities. |
 | `prefab_revert` | Removes overrides (all, or one entity / component / field path) and re-resolves the instance; undoable and agent-attributed. |
 | `prefab_apply` | Writes overrides into the prefab asset, saves it, and re-resolves every instance of it or of prefabs built on it in the editor scene. |
