@@ -760,25 +760,44 @@ void RegisterGameTools(McpServer& server) {
     server.AddTool(
         {"game_list_entities",
          "Entities in the running game: handle (GUID, or #index if it has none), name, tags and component names. "
-         "Optionally only those with a component or tag.",
+         "Optionally only those with a component or tag. Results can be paged with a bounded limit and offset.",
          Schema({{"component", {{"type", "string"}}}, {"tag", {{"type", "string"}}},
-                 {"limit", {{"type", "integer"}, {"description", "Default 200"}}}}),
+                 {"limit", {{"type", "integer"}, {"minimum", 1}, {"maximum", 1000}, {"description", "Page size, 1-1000 (default 200)"}}},
+                 {"offset", {{"type", "integer"}, {"minimum", 0}, {"description", "Number of matching entities to skip"}}}}),
          [host](const Json& args) -> Json {
              Game& game = host->Require();
              World& world = game.GetWorld();
              ComponentId filter = kInvalidComponentId;
              if (args.contains("component")) filter = RequireComponent(RequireString(args, "component"));
+             usize limit = 200;
+             if (args.contains("limit")) {
+                 if (!args["limit"].is_number_integer()) throw ToolError("\"limit\" must be an integer");
+                 const f64 requested = args["limit"].get<f64>();
+                 if (requested < 1 || requested > 1000) throw ToolError("\"limit\" must be between 1 and 1000");
+                 limit = static_cast<usize>(requested);
+             }
+             usize offset = 0;
+             if (args.contains("offset")) {
+                 if (!args["offset"].is_number_integer()) throw ToolError("\"offset\" must be a non-negative integer");
+                 if (args["offset"].is_number_unsigned()) {
+                     const u64 requested = args["offset"].get<u64>();
+                     if (requested > std::numeric_limits<usize>::max()) throw ToolError("\"offset\" is too large");
+                     offset = static_cast<usize>(requested);
+                 } else {
+                     const i64 requested = args["offset"].get<i64>();
+                     if (requested < 0) throw ToolError("\"offset\" must be a non-negative integer");
+                     offset = static_cast<usize>(requested);
+                 }
+             }
              std::vector<Entity> candidates;
              if (args.contains("tag")) candidates = FindEntitiesWithTag(world, RequireString(args, "tag"));
              else candidates = AllEntities(world);
-             usize limit = 200;
-             if (args.contains("limit") && args["limit"].is_number_integer()) limit = static_cast<usize>(std::max<i64>(1, args["limit"].get<i64>()));
              Json list = Json::array();
              usize total = 0;
              for (Entity e : candidates) {
                  if (filter != kInvalidComponentId && !world.HasComponentRaw(e, filter)) continue;
                  ++total;
-                 if (list.size() >= limit) continue;
+                 if (total <= offset || list.size() >= limit) continue;
                  Json names = Json::array();
                  for (ComponentId id = 0; id < RegisteredComponentCount(); ++id) {
                      if (world.HasComponentRaw(e, id)) names.push_back(ComponentName(id));
@@ -787,7 +806,8 @@ void RegisterGameTools(McpServer& server) {
                  if (const EntityName* n = world.GetComponent<EntityName>(e)) row["name"] = n->value;
                  list.push_back(row);
              }
-             return {{"total", total}, {"entities", list}};
+             const usize remaining = total > offset ? total - offset : 0;
+             return {{"total", total}, {"offset", offset}, {"limit", limit}, {"has_more", list.size() < remaining}, {"entities", list}};
          }});
 
     server.AddTool({"game_get_entity", "Every component of one entity in the running game, as JSON.",
