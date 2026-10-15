@@ -28,7 +28,7 @@ and errors go to stderr.
 | `list_component_types` | Component names and their fields |
 | `list_entities` | GUIDs, component names and parent GUIDs; optional exact name/tag and component filters (combined with AND) |
 | `get_entity` | Every component of one entity, as JSON |
-| `create_entity` | New entity with optional components and parent (all-or-nothing) |
+| `create_entity` / `create_entities` | Create an entity or up to 64 entities with optional component values and current-scene parents; batch validates all definitions before creating and is one undo action |
 | `duplicate_entity` / `duplicate_entities` | Copy reflected component values for one entity or up to 64 unique entities as one undo action; keep source parents, leave children as they are |
 | `destroy_entity` | Delete an entity |
 | `add_component` / `remove_component` | Add (with optional initial values) or remove a component |
