@@ -332,9 +332,11 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                     }});
 
     server.AddTool({"list_entities",
-                    "List entities in the scene (GUID, component names and parent GUID). Optionally filter by component, exact entity name, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND.",
+                    "List entities in the scene (GUID, component names, parent GUID, and effective collision layer index). Optionally filter by component, exact entity name, layer index, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND.",
                     Schema({{"component", {{"type", "string"}, {"description", "Only entities having this component"}}},
                             {"name", {{"type", "string"}, {"description", "Only entities whose name exactly matches"}}},
+                            {"layer_index", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxLayers - 1},
+                                             {"description", "Only entities on this collision layer; entities without Layer use index 0"}}},
                             {"tag", {{"type", "string"}, {"description", "Only entities with this exact case-sensitive tag (legacy single-tag filter)"}}},
                             {"tags_all", {{"type", "array"}, {"items", {{"type", "string"}}}, {"maxItems", 32},
                                           {"description", "Only entities that have every exact case-sensitive tag listed"}}},
@@ -347,6 +349,18 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         ComponentId filter = kInvalidComponentId;
                         if (args.contains("component")) {
                             filter = RequireComponent(args["component"].get<std::string>());
+                        }
+                        i64 layer_filter = -1;
+                        if (args.contains("layer_index")) {
+                            if (!args["layer_index"].is_number_integer()) throw ToolError("\"layer_index\" must be an integer from 0 to 31");
+                            if (args["layer_index"].is_number_unsigned()) {
+                                const u64 raw_layer = args["layer_index"].get<u64>();
+                                if (raw_layer >= kMaxLayers) throw ToolError("\"layer_index\" must be an integer from 0 to 31");
+                                layer_filter = static_cast<i64>(raw_layer);
+                            } else {
+                                layer_filter = args["layer_index"].get<i64>();
+                                if (layer_filter < 0 || layer_filter >= kMaxLayers) throw ToolError("\"layer_index\" must be an integer from 0 to 31");
+                            }
                         }
                         const std::string name_filter = args.contains("name") ? RequireString(args, "name") : std::string{};
                         const std::string tag_filter = args.contains("tag") ? RequireString(args, "tag") : std::string{};
@@ -373,6 +387,8 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         const std::vector<std::string> tags_none = ReadTagFilter("tags_none");
                         Json out = Json::array();
                         for (Entity e : AllEntities(s)) {
+                            const u8 entity_layer = LayerOf(s.world, e);
+                            if (layer_filter >= 0 && entity_layer != static_cast<u8>(layer_filter)) continue;
                             if (filter != kInvalidComponentId && !s.world.HasComponentRaw(e, filter)) {
                                 continue;
                             }
@@ -394,7 +410,8 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                             if (has_excluded_tag) continue;
                             const IdComponent* id = s.world.GetComponent<IdComponent>(e);
                             const Parent* parent = s.world.GetComponent<Parent>(e);
-                            Json row = {{"entity", id ? ToString(id->guid) : ""}, {"components", ComponentNamesOf(s, e)}};
+                            Json row = {{"entity", id ? ToString(id->guid) : ""}, {"components", ComponentNamesOf(s, e)},
+                                        {"layer_index", entity_layer}};
                             if (parent != nullptr && !parent->parent.IsNull()) row["parent"] = ToString(parent->parent);
                             out.push_back(std::move(row));
                         }
