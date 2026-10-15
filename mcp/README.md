@@ -453,6 +453,7 @@ saves and localization. The game has its own world, separate from the editor's.
 | `game_physics2d_queries_many` | Run up to 64 validated 2D raycast or box-overlap queries in one request, each with its own collision-layer mask; results preserve input order and raycasts include solid-tile details |
 | `game_physics_events` | Read recent 2D and 3D collision or trigger transitions with entity handles and available contact details; choose `dimension` as `2d`, `3d` or `all` |
 | `game_physics2d_state_many` | Read grounded and wall-contact state plus current velocity for up to 64 selected 2D entities |
+| `game_physics2d_settings` / `game_set_physics2d_settings` | Inspect or partially update 2D gravity and solver settings; validates the complete resulting configuration before applying |
 | `game_set_physics2d_velocities_many` | Set velocities on up to 64 unique 2D rigidbodies as a validated batch; preserves other body settings |
 | `game_set_physics2d_velocity_shared_many` | Set one velocity on up to 64 unique 2D rigidbodies in a validated batch; preserves other body settings |
 | `game_reparent_entities_many` | Set or clear parents on up to 64 entities as a validated batch; optionally preserves world poses by updating local transforms (`preserve_world: true`), and rejects cycles, excessive depth, singular transforms, or shear before applying |
