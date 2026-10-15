@@ -378,6 +378,76 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
              return out;
          }});
 
+    server.AddTool(
+        {"duplicate_entity",
+         "Duplicate one entity with its reflected component values. The new entity keeps the source's parent unless `parent` is supplied; "
+         "set `parent` to null to detach it. `name` can override the copied name. Children are not duplicated, and entity GUID references in "
+         "component values are copied as-is. Undoable.",
+         Schema({{"entity", kGuidProp}, {"name", {{"type", "string"}, {"description", "Optional name for the duplicate"}}},
+                 {"parent", {{"type", Json::array({"string", "null"})}, {"description", "Parent entity GUID, or null to make the duplicate a root"}}}},
+                {"entity"}),
+         [&s](const Json& args) -> Json {
+             const Entity source = RequireEntity(s, args);
+             const IdComponent* source_id = s.world.GetComponent<IdComponent>(source);
+             if (source_id == nullptr || source_id->guid.IsNull()) throw ToolError("The source entity has no GUID");
+
+             const ComponentId id_component = GetComponentId<IdComponent>();
+             const ComponentId parent_component = GetComponentId<Parent>();
+             std::vector<std::pair<ComponentId, Json>> values;
+             for (ComponentId id = 0; id < RegisteredComponentCount(); ++id) {
+                 if (!s.world.HasComponentRaw(source, id) || id == id_component || id == parent_component) continue;
+                 const ComponentInfo& info = GetComponentInfo(id);
+                 if (info.reflected == nullptr) throw ToolError("Cannot duplicate an entity with unreflected component " + ComponentName(id));
+                 values.emplace_back(id, reflect::ToJson(*info.reflected, s.world.GetComponentRaw(source, id)));
+             }
+
+             EntityGuid parent;
+             if (args.contains("parent")) {
+                 if (!args["parent"].is_null()) {
+                     parent = RequireGuid(args, "parent");
+                     RequireEntity(s, args, "parent");
+                 }
+             } else if (const Parent* source_parent = s.world.GetComponent<Parent>(source)) {
+                 parent = source_parent->parent;
+             }
+
+             const EntityGuid guid = NewEntityGuid();
+             Entity duplicate = s.world.CreateEntity(IdComponent{guid});
+             s.guids.Add(guid, duplicate);
+             Json warnings = Json::array();
+             Json out;
+             try {
+                 for (const auto& [id, value] : values) {
+                     s.world.AddComponentRaw(duplicate, id);
+                     reflect::LoadReport report;
+                     const ComponentInfo& info = GetComponentInfo(id);
+                     if (!reflect::FromJson(*info.reflected, s.world.GetComponentRaw(duplicate, id), value, &report)) {
+                         throw ToolError("Could not copy " + ComponentName(id));
+                     }
+                     for (const std::string& warning : report.warnings) warnings.push_back(warning);
+                 }
+                 if (args.contains("name")) {
+                     const std::string name = RequireString(args, "name");
+                     EntityName* component = s.world.GetComponent<EntityName>(duplicate);
+                     if (component == nullptr) {
+                         s.world.AddComponent<EntityName>(duplicate);
+                         component = s.world.GetComponent<EntityName>(duplicate);
+                     }
+                     component->value = name;
+                 }
+                 if (!parent.IsNull()) s.world.AddComponent(duplicate, Parent{parent});
+                 out = EntityJson(s, duplicate);
+                 if (!warnings.empty()) out["warnings"] = std::move(warnings);
+             } catch (...) {
+                 s.guids.Remove(guid);
+                 s.world.DestroyEntity(duplicate);
+                 throw;
+             }
+             editor::CommandContext ctx = s.Context();
+             s.stack.Record(editor::CreateEntityCommand::FromExisting(ctx, duplicate));
+             return out;
+         }});
+
     server.AddTool({"destroy_entity", "Delete an entity. Undoable.", Schema({{"entity", kGuidProp}}, {"entity"}),
                     [&s](const Json& args) -> Json {
                         EntityGuid guid = RequireGuid(args, "entity");
