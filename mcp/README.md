@@ -42,6 +42,8 @@ and errors go to stderr.
 | `set_entities_local_positions_many` | Set individual local positions on up to 64 unique entities in one undo action; preserves rotation and scale |
 | `set_entities_world_positions_many` | Set individual world positions on up to 64 unique entities in one undo action; converts through parents and rejects selected ancestor pairs |
 | `set_entities_world_position_many` | Set one shared world position on up to 64 unique entities in one undo action; resolves final parent transforms for selected hierarchies |
+| `set_entities_world_rotation_many` | Set one shared normalized world quaternion on up to 64 unique entities in one undo action; resolves final parent orientations for selected hierarchies |
+| `set_entities_world_rotations_many` | Set individual world quaternions on up to 64 unique entities in one undo action; resolves final parent orientations for selected hierarchies |
 | `set_entities_local_rotation_many` | Set one shared absolute local quaternion on up to 64 unique entities in one undo action; preserves position and scale |
 | `set_entities_local_scales_many` | Set individual local scales on up to 64 unique entities in one undo action; preserves position and rotation |
 | `set_entities_local_rotations_many` | Set individual local quaternions on up to 64 unique entities in one undo action; preserves position and scale |
