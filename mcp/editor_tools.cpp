@@ -3,6 +3,7 @@
 #include "aether/reflection/serialize.h"
 #include "aether/gameplay/attribute_set.h"
 #include "aether/gameplay/gameplay_tag.h"
+#include "aether/scene/gameplay.h"
 #if AETHER_MCP_INTERACTION
 #include "aether/interaction/interactable.h"
 #endif
@@ -288,22 +289,33 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                     }});
 
     server.AddTool({"list_entities",
-                    "List entities in the scene (GUID and component names). Optionally only those with a given component.",
-                    Schema({{"component", {{"type", "string"}, {"description", "Only entities having this component"}}}}),
+                    "List entities in the scene (GUID, component names and parent GUID). Optionally filter by component, exact entity name, and/or exact case-sensitive tag; filters combine with AND.",
+                    Schema({{"component", {{"type", "string"}, {"description", "Only entities having this component"}}},
+                            {"name", {{"type", "string"}, {"description", "Only entities whose name exactly matches"}}},
+                            {"tag", {{"type", "string"}, {"description", "Only entities with this exact case-sensitive tag"}}}}),
                     [&s](const Json& args) -> Json {
                         editor::EnsureAllGuids(s.world, s.guids);
                         ComponentId filter = kInvalidComponentId;
                         if (args.contains("component")) {
                             filter = RequireComponent(args["component"].get<std::string>());
                         }
+                        const std::string name_filter = args.contains("name") ? RequireString(args, "name") : std::string{};
+                        const std::string tag_filter = args.contains("tag") ? RequireString(args, "tag") : std::string{};
                         Json out = Json::array();
                         for (Entity e : AllEntities(s)) {
                             if (filter != kInvalidComponentId && !s.world.HasComponentRaw(e, filter)) {
                                 continue;
                             }
+                            if (args.contains("name")) {
+                                const EntityName* name = s.world.GetComponent<EntityName>(e);
+                                if (name == nullptr || name->value != name_filter) continue;
+                            }
+                            if (args.contains("tag") && !HasTag(s.world, e, tag_filter)) continue;
                             const IdComponent* id = s.world.GetComponent<IdComponent>(e);
-                            out.push_back({{"entity", id ? ToString(id->guid) : ""},
-                                           {"components", ComponentNamesOf(s, e)}});
+                            const Parent* parent = s.world.GetComponent<Parent>(e);
+                            Json row = {{"entity", id ? ToString(id->guid) : ""}, {"components", ComponentNamesOf(s, e)}};
+                            if (parent != nullptr && !parent->parent.IsNull()) row["parent"] = ToString(parent->parent);
+                            out.push_back(std::move(row));
                         }
                         return {{"count", out.size()}, {"entities", out}};
                     }});
