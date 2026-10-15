@@ -1229,6 +1229,56 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
                         return {{"asset", r.path}, {"direction", dir}, {"nodes", nodes}};
                     }});
 
+    server.AddTool(
+        {"asset_references_many",
+         "Query dependencies or referencers for 1–32 unique assets in one call. Uses one shared direction and depth (default dependencies and depth 4, maximum 16) and caps serialized output at 6 MB.",
+         Schema({{"assets", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "1–32 content paths or GUIDs"}}},
+                 {"direction", {{"type", "string"}, {"description", "dependencies (default) or referencers"}}},
+                 {"max_depth", {{"type", "integer"}, {"description", "Default 4, max 16"}}}},
+                {"assets"}),
+         [host](const Json& args) -> Json {
+             OpenProject& p = host->Require();
+             if (!args["assets"].is_array() || args["assets"].empty() || args["assets"].size() > 32) {
+                 throw ToolError("\"assets\" must be a non-empty array of at most 32 paths or GUIDs");
+             }
+             const std::string direction = OptString(args, "direction", "dependencies");
+             if (direction != "dependencies" && direction != "referencers") {
+                 throw ToolError("\"direction\" must be dependencies or referencers");
+             }
+             long long depth = 4;
+             if (args.contains("max_depth") && args["max_depth"].is_number_integer()) {
+                 depth = std::clamp<long long>(args["max_depth"].get<long long>(), 1, 16);
+             }
+
+             std::vector<const AssetRecord*> records;
+             records.reserve(args["assets"].size());
+             std::set<AssetGuid> seen;
+             for (const Json& value : args["assets"]) {
+                 if (!value.is_string()) throw ToolError("Each entry in \"assets\" must be a path or GUID string");
+                 const AssetRecord& record = FindAsset(p, value.get<std::string>());
+                 if (!seen.insert(record.guid).second) throw ToolError("Duplicate asset in \"assets\": " + record.path);
+                 records.push_back(&record);
+             }
+
+             Json results = Json::array();
+             std::size_t response_bytes = 0;
+             const assets::ReferenceDirection ref_direction = direction == "referencers" ? assets::ReferenceDirection::Referencers
+                                                                                         : assets::ReferenceDirection::Dependencies;
+             for (const AssetRecord* record : records) {
+                 Json nodes = Json::array();
+                 for (const assets::ReferenceNode& node : assets::CollectReferences(*p.database, record->guid, ref_direction, static_cast<u32>(depth))) {
+                     nodes.push_back({{"path", node.path}, {"depth", node.depth}, {"repeated", node.repeated}});
+                 }
+                 Json result = {{"asset", record->path}, {"nodes", std::move(nodes)}};
+                 response_bytes += result.dump().size();
+                 if (response_bytes > 4ull * 1024 * 1024) throw ToolError("The asset references batch exceeds the 6 MB response limit");
+                 results.push_back(std::move(result));
+             }
+             Json response = {{"count", results.size()}, {"direction", direction}, {"max_depth", depth}, {"results", std::move(results)}};
+             if (response.dump(2).size() > 6ull * 1024 * 1024) throw ToolError("The asset references batch exceeds the 6 MB response limit");
+             return response;
+         }});
+
     server.AddTool({"asset_scan",
                     "Rescan Content/: new files get GUIDs, changed sources are flagged needs_import, missing ones are reported.",
                     Schema(Json::object()), [host](const Json&) -> Json { return ScanJson(host->Require().database->Scan()); }});
