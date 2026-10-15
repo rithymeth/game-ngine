@@ -460,6 +460,7 @@ saves and localization. The game has its own world, separate from the editor's.
 | `game_apply_physics3d_forces_many` | Apply force, impulse, torque or angular impulse to up to 64 unique live dynamic 3D bodies after validating the whole batch |
 | `game_set_physics3d_poses_many` | Teleport position and/or rotation for up to 64 unique 3D physics entities, updating transforms and live bodies together |
 | `game_set_physics3d_bodies_many` | Partially update motion type, mass, damping, gravity, CCD and rotation locks on up to 64 3D rigidbodies as a validated batch |
+| `game_set_physics3d_bodies_shared_many` | Apply one partial motion, mass, damping, gravity, CCD or rotation-lock patch to up to 64 unique 3D rigidbodies; validates every result before applying and preserves unspecified per-entity values |
 | `game_set_physics3d_colliders_shared_many` | Apply shared center, material, trigger, report-stay and optional box/sphere/capsule geometry settings across up to 64 selected 3D collider entities |
 | `game_set_physics3d_colliders_many` | Apply per-entity 3D collider center/material/trigger settings and shape-specific box, sphere or capsule geometry updates as a validated batch |
 | `game_physics2d_state_many` | Read grounded and wall-contact state plus current velocity for up to 64 selected 2D entities |
