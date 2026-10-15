@@ -778,7 +778,7 @@ void RegisterGameTools(McpServer& server) {
     server.AddTool(
         {"game_list_entities",
          "Entities in the running game: handle (GUID, or #index when it has none), entity generation, name, collision layer index, local and in-hierarchy active state, direct parent GUID, tags and component names. "
-         "Optionally filter by exact name, case-insensitive ASCII name substring, one component or component groups, exact tag or tag groups, direct parent, root status, collision layer index, local active state or in-hierarchy active state. Results can be paged with a bounded limit and offset.",
+         "Optionally filter by exact name, case-insensitive ASCII name substring, one component or component groups, exact tag or tag groups, direct parent, root status, collision layer index or name, local active state or in-hierarchy active state. Results can be paged with a bounded limit and offset.",
          Schema({{"name", {{"type", "string"}, {"description", "Exact, case-sensitive entity name"}}},
                  {"name_contains", {{"type", "string"}, {"description", "Non-empty case-insensitive ASCII name substring"}}},
                  {"parent", {{"type", "string"}, {"description", "Direct parent entity GUID"}}},
@@ -797,6 +797,7 @@ void RegisterGameTools(McpServer& server) {
                  {"tags_none", {{"type", "array"}, {"maxItems", 32}, {"items", {{"type", "string"}}},
                                 {"description", "Exclude entities with any listed exact tag"}}},
                  {"layer", {{"type", "integer"}, {"minimum", 0}, {"maximum", 31}, {"description", "Filter by collision layer index (0-31; absent Layer means 0)"}}},
+                 {"layer_name", {{"type", "string"}, {"description", "Exact, case-sensitive configured collision layer name"}}},
                  {"active", {{"type", "boolean"}, {"description", "Filter by local active state; entities without Active are active"}}},
                  {"active_in_hierarchy", {{"type", "boolean"}, {"description", "Filter by effective active state including ancestors"}}},
                  {"limit", {{"type", "integer"}, {"minimum", 1}, {"maximum", 1000}, {"description", "Page size, 1-1000 (default 200)"}}},
@@ -871,6 +872,16 @@ void RegisterGameTools(McpServer& server) {
                      layer_filter = static_cast<u8>(requested);
                  }
              }
+             const auto& configured_layers = host->package->Manifest().layers;
+             std::string layer_name_filter;
+             if (args.contains("layer_name")) {
+                 layer_name_filter = RequireString(args, "layer_name");
+                 if (layer_name_filter.empty()) throw ToolError("\"layer_name\" must not be empty");
+                 const bool implicit_default = configured_layers.empty() && layer_name_filter == "Default";
+                 if (!implicit_default && std::find(configured_layers.begin(), configured_layers.end(), layer_name_filter) == configured_layers.end()) {
+                     throw ToolError("Unknown collision layer \"" + layer_name_filter + "\"");
+                 }
+             }
              if (args.contains("active") && !args["active"].is_boolean()) throw ToolError("\"active\" must be a boolean");
              if (args.contains("active_in_hierarchy") && !args["active_in_hierarchy"].is_boolean()) {
                  throw ToolError("\"active_in_hierarchy\" must be a boolean");
@@ -900,6 +911,7 @@ void RegisterGameTools(McpServer& server) {
              else candidates = AllEntities(world);
              Json list = Json::array();
              usize total = 0;
+             static const std::string implicit_default_layer = "Default";
              for (Entity e : candidates) {
                  if (filter != kInvalidComponentId && !world.HasComponentRaw(e, filter)) continue;
                  bool has_all_components = true;
@@ -955,6 +967,9 @@ void RegisterGameTools(McpServer& server) {
                  if (args.contains("root_only") && args["root_only"].get<bool>() == has_parent) continue;
                  const u8 entity_layer = LayerOf(world, e);
                  if (args.contains("layer") && entity_layer != layer_filter) continue;
+                 const std::string* entity_layer_name = entity_layer < configured_layers.size() ? &configured_layers[entity_layer] : nullptr;
+                 if (entity_layer_name == nullptr && entity_layer == 0 && configured_layers.empty()) entity_layer_name = &implicit_default_layer;
+                 if (args.contains("layer_name") && (entity_layer_name == nullptr || *entity_layer_name != layer_name_filter)) continue;
                  const Active* active_component = world.GetComponent<Active>(e);
                  const bool active = active_component == nullptr || active_component->active;
                  if (args.contains("active") && active != args["active"].get<bool>()) continue;
@@ -979,6 +994,7 @@ void RegisterGameTools(McpServer& server) {
                              {"active_in_hierarchy", args.contains("active_in_hierarchy") ? active_in_hierarchy
                                                                                             : IsActiveInHierarchy(world, game.Guids(), e)},
                              {"parent", parent}};
+                 row["layer_name"] = entity_layer_name != nullptr ? Json(*entity_layer_name) : Json(nullptr);
                  if (entity_name != nullptr) row["name"] = entity_name->value;
                  list.push_back(row);
              }
