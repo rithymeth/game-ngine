@@ -62,7 +62,7 @@ These use the engine's own asset database, importers and cooker, in process, on 
 | `asset_create_folders` | Create up to 64 folders under existing Content/ parents as one undoable action; all names and paths are checked before creation |
 | `asset_delete_folders` | Delete up to 64 empty Content/ folders as one undoable action; refuses the Content/ root, non-empty folders, and paths outside the content tree |
 | `asset_delete_many` | Delete up to 64 selected assets as one undoable action; mutual references within the selection are allowed, while external referencers require `force` and are returned explicitly |
-| `content_read` / `content_write` / `content_write_many` | Read text files under `Content/`; write/overwrite files up to 2 MB as agent-attributed undoable actions with source and GUID sidecars restored on undo/redo; `content_write_many` writes up to 64 files (128 MB total undo snapshot limit) as one undo action after validating the full batch; paths cannot leave `Content/`, `.ameta` is not writable |
+| `content_read` / `content_read_many` / `content_write` / `content_write_many` | Read text files under `Content/`; `content_read_many` reads up to 64 unique paths with a 1 MB aggregate response cap; write/overwrite files up to 2 MB as agent-attributed undoable actions with source and GUID sidecars restored on undo/redo; `content_write_many` writes up to 64 files (128 MB total undo snapshot limit) as one undo action after validating the full batch; paths cannot leave `Content/`, `.ameta` is not writable |
 | `asset_scan` | Rescan after changing files outside the tools |
 | `asset_cook` | Cook into an `.apak` (configuration, extra roots, compression, strict, encryption, patch); returns the archive path, sizes, warnings and the cooked assets |
 
