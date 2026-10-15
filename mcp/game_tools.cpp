@@ -2800,6 +2800,103 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_physics2d_queries_many",
+         "Run 1 to 64 validated 2D raycast or axis-aligned box-overlap queries in one request. Each query can set its own 32-bit collision-layer mask; raycasts include solid-tile hit details.",
+         Schema({{"queries", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                               {"items", {{"type", "object"},
+                                          {"properties", {{"kind", {{"type", "string"}, {"enum", Json::array({"raycast", "overlap_box"})}},
+                                                          {"origin", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}},
+                                                          {"direction", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}},
+                                                          {"max_distance", {{"type", "number"}, {"exclusiveMinimum", 0}}},
+                                                          {"center", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}},
+                                                          {"half_extents", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}},
+                                                          {"mask", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4294967295.0}}}},
+                                          {"required", Json::array({"kind"})}}}}}},
+                {"queries"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             sprite2d::Physics2D* physics = game.Physics2D();
+             if (physics == nullptr) throw ToolError("The loaded game has no 2D physics scene");
+             if (!args.contains("queries") || !args["queries"].is_array() || args["queries"].empty() || args["queries"].size() > 64) {
+                 throw ToolError("\"queries\" must be an array of 1 to 64 2D physics queries");
+             }
+             struct Physics2DQuery {
+                 std::string kind;
+                 sprite2d::Vec2 origin{};
+                 sprite2d::Vec2 direction{};
+                 f32 max_distance = 0.0f;
+                 sprite2d::Vec2 center{};
+                 sprite2d::Vec2 half_extents{};
+                 u32 mask = 0xFFFFFFFFu;
+             };
+             auto read_vec2 = [](const Json& query, const char* field) {
+                 if (!query.contains(field) || !query[field].is_array() || query[field].size() != 2 ||
+                     !query[field][0].is_number() || !query[field][1].is_number()) throw ToolError(std::string("\"") + field + "\" must be [x, y]");
+                 const sprite2d::Vec2 value{query[field][0].get<f32>(), query[field][1].get<f32>()};
+                 if (!std::isfinite(value.x) || !std::isfinite(value.y)) throw ToolError(std::string("\"") + field + "\" values must be finite");
+                 return value;
+             };
+             std::vector<Physics2DQuery> parsed;
+             parsed.reserve(args["queries"].size());
+             for (const Json& raw : args["queries"]) {
+                 if (!raw.is_object() || !raw.contains("kind") || !raw["kind"].is_string()) throw ToolError("Every query must contain a string \"kind\"");
+                 Physics2DQuery query;
+                 query.kind = raw["kind"].get<std::string>();
+                 if (query.kind == "raycast") {
+                     query.origin = read_vec2(raw, "origin");
+                     query.direction = read_vec2(raw, "direction");
+                     if (!raw.contains("max_distance") || !raw["max_distance"].is_number()) throw ToolError("Raycasts require a finite positive \"max_distance\"");
+                     query.max_distance = raw["max_distance"].get<f32>();
+                     if (!std::isfinite(query.max_distance) || query.max_distance <= 0.0f) throw ToolError("Raycasts require a finite positive \"max_distance\"");
+                 } else if (query.kind == "overlap_box") {
+                     query.center = read_vec2(raw, "center");
+                     query.half_extents = read_vec2(raw, "half_extents");
+                     if (query.half_extents.x <= 0.0f || query.half_extents.y <= 0.0f) throw ToolError("\"half_extents\" must contain positive values");
+                 } else {
+                     throw ToolError("Query kind must be raycast or overlap_box");
+                 }
+                 if (raw.contains("mask")) {
+                     if (!raw["mask"].is_number_integer()) throw ToolError("\"mask\" must be an integer from 0 through 4294967295");
+                     u64 value = 0;
+                     if (raw["mask"].is_number_unsigned()) value = raw["mask"].get<u64>();
+                     else {
+                         const i64 signed_value = raw["mask"].get<i64>();
+                         if (signed_value < 0) throw ToolError("\"mask\" must be an integer from 0 through 4294967295");
+                         value = static_cast<u64>(signed_value);
+                     }
+                     if (value > std::numeric_limits<u32>::max()) throw ToolError("\"mask\" must be an integer from 0 through 4294967295");
+                     query.mask = static_cast<u32>(value);
+                 }
+                 parsed.push_back(query);
+             }
+             Json results = Json::array();
+             for (usize i = 0; i < parsed.size(); ++i) {
+                 const Physics2DQuery& query = parsed[i];
+                 if (query.kind == "raycast") {
+                     sprite2d::RayHit2D hit;
+                     const bool did_hit = physics->Raycast(query.origin, query.direction, query.max_distance, hit, query.mask);
+                     Json result = {{"index", i}, {"kind", query.kind}, {"hit", did_hit}};
+                     if (did_hit) {
+                         result["entity"] = hit.entity.IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), hit.entity));
+                         result["tile"] = hit.tile;
+                         result["point"] = Json::array({hit.point.x, hit.point.y});
+                         result["normal"] = Json::array({hit.normal.x, hit.normal.y});
+                         result["distance"] = hit.distance;
+                         if (hit.tile) result["tile_coordinates"] = Json::array({hit.tile_x, hit.tile_y});
+                     }
+                     results.push_back(std::move(result));
+                 } else {
+                     Json entities = Json::array();
+                     for (Entity entity : physics->OverlapBox(query.center, query.half_extents, query.mask)) {
+                         entities.push_back(entity.IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), entity)));
+                     }
+                     results.push_back({{"index", i}, {"kind", query.kind}, {"count", entities.size()}, {"entities", std::move(entities)}});
+                 }
+             }
+             return {{"count", results.size()}, {"results", std::move(results)}};
+         }});
+
+    server.AddTool(
         {"game_physics_events",
          "Read the most recent 2D and 3D collision and trigger events from the loaded game. Events represent transitions from its latest physics step and include entity handles and contact details where available.",
          Schema({{"dimension", {{"type", "string"}, {"enum", Json::array({"all", "2d", "3d"})}, {"default", "all"}}}),
