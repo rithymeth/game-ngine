@@ -96,6 +96,7 @@ public:
     // --- Queries (Phase 13 step 4) --------------------------------------------
     // Safe at any time outside Step. The nearest hit along `from` -> `to`.
     QueryHit RayCast(const Vec3& from, const Vec3& to, const QueryFilter& filter = {}) const;
+    std::vector<QueryHit> RayCastAll(const Vec3& from, const Vec3& to, const QueryFilter& filter = {}, usize max_hits = 64) const;
     // Sweeps `shape` (at `rotation`) from `from` to `to`; the first hit.
     // Starting inside something counts as a hit at distance 0.
     QueryHit ShapeCast(const JPH::Shape& shape, const Vec3& from, const Vec3& to, const Quaternion& rotation = Quaternion::Identity(),
