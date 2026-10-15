@@ -3767,6 +3767,7 @@ void RegisterGameTools(McpServer& server) {
              }
              return {{"count", results.size()}, {"results", std::move(results)}};
          }});
+
 #endif
 
 #if AETHER_MCP_QUESTS
@@ -3966,6 +3967,74 @@ void RegisterGameTools(McpServer& server) {
                      results.push_back({{"entity", edit.entity_key}, {"action", edit.action}, {"quest", edit.quest_name},
                                         {"result", quest::ResultName(result)}, {"state", status_name(system->State(edit.entity, edit.quest_name))}});
                  }
+             }
+             return {{"count", results.size()}, {"results", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"game_quest_states_many",
+         "Read quest logs for 1 to 64 distinct entities in one request. Optionally pass a quest name to return that quest's state for each entity, including inactive entries. This is read-only.",
+         Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}},
+                 {"quest", {{"type", "string"}}}},
+                {"entities"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             quest::QuestSystem* system = quest::QuestSystem::Active();
+             if (system == nullptr) throw ToolError("This game has no quest system (load a scene with the Quests kit)");
+             if (!args.contains("entities") || !args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be an array of 1 to 64 entity handles");
+             }
+             std::string filter;
+             const bool has_filter = args.contains("quest");
+             if (has_filter) {
+                 if (!args["quest"].is_string()) throw ToolError("\"quest\" must be a string");
+                 filter = args["quest"].get<std::string>();
+             }
+             struct QuestLogQuery {
+                 Entity entity;
+                 std::string key;
+             };
+             std::vector<QuestLogQuery> queries;
+             queries.reserve(args["entities"].size());
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string() || value.get<std::string>().empty()) throw ToolError("Every \"entities\" entry must be a non-empty entity handle string");
+                 const Entity entity = FindEntity(game, value.get<std::string>());
+                 if (std::find_if(queries.begin(), queries.end(), [entity](const QuestLogQuery& query) { return query.entity == entity; }) != queries.end()) {
+                     throw ToolError("\"entities\" must not contain duplicate entities");
+                 }
+                 queries.push_back({entity, EntityKey(game.GetWorld(), entity)});
+             }
+             const World& world = game.GetWorld();
+             auto status_name = [](i32 state) {
+                 switch (state) {
+                 case quest::kActive: return "active";
+                 case quest::kCompleted: return "completed";
+                 case quest::kFailed: return "failed";
+                 default: return "inactive";
+                 }
+             };
+             Json results = Json::array();
+             for (const QuestLogQuery& query : queries) {
+                 Json quests = Json::array();
+                 const quest::QuestLog* log = world.GetComponent<quest::QuestLog>(query.entity);
+                 auto append = [&](const std::string& name, i32 state, const std::vector<quest::ObjectiveState>& objectives) {
+                     Json objective_rows = Json::array();
+                     for (const quest::ObjectiveState& objective : objectives) {
+                         objective_rows.push_back({{"id", objective.id}, {"text", system->ObjectiveText(name, objective.id)},
+                                                   {"progress", objective.progress}, {"done", objective.done}});
+                     }
+                     quests.push_back({{"quest", name}, {"title", system->Title(name)}, {"state", status_name(state)},
+                                       {"objectives", std::move(objective_rows)}});
+                 };
+                 if (has_filter) {
+                     const quest::QuestState* saved = log == nullptr ? nullptr : log->Find(filter);
+                     static const std::vector<quest::ObjectiveState> no_objectives;
+                     append(filter, saved == nullptr ? quest::kInactive : saved->state,
+                            saved == nullptr ? no_objectives : saved->objectives);
+                 } else if (log != nullptr) {
+                     for (const quest::QuestState& saved : log->quests) append(saved.name, saved.state, saved.objectives);
+                 }
+                 results.push_back({{"entity", query.key}, {"count", quests.size()}, {"quests", std::move(quests)}});
              }
              return {{"count", results.size()}, {"results", std::move(results)}};
          }});
