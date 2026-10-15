@@ -376,6 +376,15 @@ SceneHit PhysicsScene::RayCast(const Vec3& from, const Vec3& to, LayerMask layer
     return {hit.hit, hit.hit ? EntityOf(hit.body) : kNullEntity, hit.point, hit.normal, hit.distance};
 }
 
+std::vector<SceneHit> PhysicsScene::RayCastAll(const Vec3& from, const Vec3& to, LayerMask layers, Entity ignore,
+                                               bool include_triggers, usize max_hits) const {
+    std::vector<SceneHit> out;
+    for (const QueryHit& hit : physics_.RayCastAll(from, to, FilterFor(*this, layers, ignore, include_triggers), max_hits)) {
+        out.push_back({hit.hit, EntityOf(hit.body), hit.point, hit.normal, hit.distance});
+    }
+    return out;
+}
+
 SceneHit PhysicsScene::SphereCast(f32 radius, const Vec3& from, const Vec3& to, LayerMask layers, Entity ignore,
                                   bool include_triggers) const {
     const QueryHit hit = physics_.SphereCast(radius, from, to, FilterFor(*this, layers, ignore, include_triggers));
