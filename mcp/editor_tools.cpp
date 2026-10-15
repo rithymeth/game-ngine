@@ -333,7 +333,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                     }});
 
     server.AddTool({"list_entities",
-                    "List a page of scene entities (GUID, name when present, entity index, component names, parent GUID, effective collision layer index, local active state, and active/layer/parent override presence). Optionally filter by component, component groups that must all/any match or must not match, exact entity name, case-insensitive ASCII name substring, one parent, any of several parents, or exclusion of several parents, roots, layer index, local active value, active/layer/parent override presence, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND. Results are ordered by entity index and include total match count, has_more, and a continuation cursor. The cursor is not a scene snapshot; entities created in a reused index at or before it are skipped.",
+                    "List a page of scene entities (GUID, name when present, entity index, component names, parent GUID, effective collision layer index, local active state, and active/layer/parent override presence). Optionally filter by component, component groups that must all/any match or must not match, exact entity name, case-insensitive ASCII name substring, one parent, any of several parents, exclusion of several parents, root status or hierarchy depth, layer index, local active value, active/layer/parent override presence, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND. Results are ordered by entity index and include total match count, has_more, and a continuation cursor. The cursor is not a scene snapshot; entities created in a reused index at or before it are skipped.",
                     Schema({{"component", {{"type", "string"}, {"description", "Only entities having this component"}}},
                             {"components_all", {{"type", "array"}, {"items", {{"type", "string"}}}, {"maxItems", 32},
                                                  {"description", "Only entities that have every listed component"}}},
@@ -351,6 +351,8 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                             {"roots_only", {{"type", "boolean"}, {"description", "Only entities without a parent; cannot be combined with parent or parent_any"}}},
                             {"parent_override", {{"type", "boolean"},
                                                    {"description", "Filter by whether the entity has an explicit Parent component"}}},
+                            {"parent_depth", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxHierarchyDepth},
+                                                {"description", "Only entities at this hierarchy depth; roots are depth 0"}}},
                             {"layer_index", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxLayers - 1},
                                              {"description", "Only entities on this collision layer; entities without Layer use index 0"}}},
                             {"layer_override", {{"type", "boolean"},
@@ -429,6 +431,21 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         if (args.contains("parent_override")) {
                             if (!args["parent_override"].is_boolean()) throw ToolError("\"parent_override\" must be a boolean");
                             parent_override_filter = args["parent_override"].get<bool>();
+                        }
+                        std::optional<usize> parent_depth_filter;
+                        if (args.contains("parent_depth")) {
+                            if (!args["parent_depth"].is_number_integer() || args["parent_depth"].is_boolean()) {
+                                throw ToolError("\"parent_depth\" must be an integer from 0 to the maximum hierarchy depth");
+                            }
+                            if (args["parent_depth"].is_number_unsigned()) {
+                                const u64 value = args["parent_depth"].get<u64>();
+                                if (value > kMaxHierarchyDepth) throw ToolError("\"parent_depth\" exceeds the maximum hierarchy depth");
+                                parent_depth_filter = static_cast<usize>(value);
+                            } else {
+                                const i64 value = args["parent_depth"].get<i64>();
+                                if (value < 0 || value > kMaxHierarchyDepth) throw ToolError("\"parent_depth\" must be from 0 to the maximum hierarchy depth");
+                                parent_depth_filter = static_cast<usize>(value);
+                            }
                         }
                         i64 layer_filter = -1;
                         if (args.contains("layer_index")) {
@@ -558,6 +575,21 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                             if (!parent_none_filter.empty() && parent != nullptr && std::find(parent_none_filter.begin(), parent_none_filter.end(), parent->parent) != parent_none_filter.end()) continue;
                             if (parent_override_filter.has_value() && (parent != nullptr) != *parent_override_filter) continue;
                             if (roots_only && parent != nullptr && !parent->parent.IsNull()) continue;
+                            if (parent_depth_filter.has_value()) {
+                                usize entity_depth = 0;
+                                Entity current = e;
+                                std::set<u32> visited;
+                                while (true) {
+                                    if (!visited.insert(current.index).second) throw ToolError("Cannot filter by parent depth: hierarchy contains a cycle");
+                                    const Parent* current_parent = s.world.GetComponent<Parent>(current);
+                                    if (current_parent == nullptr || current_parent->parent.IsNull()) break;
+                                    if (entity_depth >= kMaxHierarchyDepth) throw ToolError("Cannot filter by parent depth: hierarchy exceeds the maximum depth");
+                                    current = s.guids.Find(s.world, current_parent->parent);
+                                    if (current.IsNull()) throw ToolError("Cannot filter by parent depth: hierarchy references a missing parent");
+                                    ++entity_depth;
+                                }
+                                if (entity_depth != *parent_depth_filter) continue;
+                            }
                             const Layer* layer_override = s.world.GetComponent<Layer>(e);
                             if (layer_override_filter.has_value() && (layer_override != nullptr) != *layer_override_filter) continue;
                             const u8 entity_layer = LayerOf(s.world, e);
