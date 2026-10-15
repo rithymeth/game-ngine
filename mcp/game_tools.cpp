@@ -257,6 +257,17 @@ Json UiWidgetJson(const ui::Widget& w, usize& budget) {
     if (const auto* toggle = dynamic_cast<const ui::Toggle*>(&w)) j["checked"] = toggle->checked;
     if (const auto* bar = dynamic_cast<const ui::ProgressBar*>(&w)) j["percent"] = bar->percent;
     if (const auto* input = dynamic_cast<const ui::TextInput*>(&w)) j["text"] = input->text;
+    if (const auto* dropdown = dynamic_cast<const ui::Dropdown*>(&w)) {
+        j["selected_index"] = dropdown->selected;
+        j["options"] = dropdown->options;
+        j["open"] = dropdown->IsOpen();
+        j["selected_option"] = dropdown->selected >= 0 && static_cast<usize>(dropdown->selected) < dropdown->options.size()
+            ? Json(dropdown->options[static_cast<usize>(dropdown->selected)]) : Json(nullptr);
+    }
+    if (const auto* stick = dynamic_cast<const ui::VirtualStick*>(&w)) {
+        j["value"] = Json::array({stick->value.x, stick->value.y});
+        j["active"] = stick->IsActive();
+    }
     if (w.Interactive()) j["interactive"] = true;
     if (w.ChildCount() > 0) {
         Json children = Json::array();
