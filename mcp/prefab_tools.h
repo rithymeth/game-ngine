@@ -5,9 +5,9 @@
 // and scenes depend on it), capture an entity and its descendants from the editor scene as a new prefab asset, place an instance in the
 // editor scene, list an instance's overrides, and revert them or apply them back to the prefab (re-resolving every instance of it).
 //
-// Prefabs are project assets, so these need a project open (project_open). They act on the editor scene's world directly: the entities they
-// create or change are undoable where they affect the editor scene; prefab
-// asset writes remain project-level operations.
+// Prefabs are project assets, so these need a project open (project_open).
+// Instance creation, reverts and apply-to-prefab changes use the attributed
+// undo history; making a new prefab asset remains a standalone project write.
 
 #include "asset_tools.h"
 #include "editor_tools.h"

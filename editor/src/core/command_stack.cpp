@@ -97,8 +97,15 @@ bool CommandStack::Undo(CommandContext& ctx) {
     }
     std::unique_ptr<ICommand> command = std::move(undo_.back());
     undo_.pop_back();
-    memory_used_ -= command->MemoryBytes();
-    command->Undo(ctx);
+    const usize memory = command->MemoryBytes();
+    memory_used_ -= memory;
+    try {
+        command->Undo(ctx);
+    } catch (...) {
+        memory_used_ += memory;
+        undo_.push_back(std::move(command));
+        throw;
+    }
     redo_.push_back(std::move(command));
     merge_open_ = false;
     return true;
@@ -110,7 +117,12 @@ bool CommandStack::Redo(CommandContext& ctx) {
     }
     std::unique_ptr<ICommand> command = std::move(redo_.back());
     redo_.pop_back();
-    command->Do(ctx);
+    try {
+        command->Do(ctx);
+    } catch (...) {
+        redo_.push_back(std::move(command));
+        throw;
+    }
     PushUndo(std::move(command));
     merge_open_ = false;
     return true;
