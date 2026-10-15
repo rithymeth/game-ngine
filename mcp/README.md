@@ -411,6 +411,7 @@ saves and localization. The game has its own world, separate from the editor's.
 | `game_audio_state` / `game_play_sound` / `game_set_bus` / `game_stop_sounds` / `game_audio_source` | The audio kit in the running game: voices, cues playing, listener, reverb, every bus and the cue problems found; play a cue in 2D or at a location; set a bus's volume (faded) or mute; stop everything; play/stop/fade/set volume or cue on an entity's AudioSource |
 | `game_sequences` / `game_play_sequence` / `game_sequence_control` / `game_stop_sequences` | The running game's level sequences: every `SequenceComponent` with its time and state, the screen fade and problems; play a sequence by asset path; play, pause, stop, skip, set time, rate or loop on one; stop or skip them all |
 | `game_set_paused` | Freeze or resume the simulation |
+| `game_rename_entities_many` | Rename up to 64 unique live entities in a validated batch, adding `EntityName` when needed and returning old and new names |
 | `game_set_active_many` | Set local active state on up to 64 unique live entities through the lifecycle so enable/disable behavior runs; unchanged entities are no-ops |
 | `game_toggle_active_many` | Toggle local active state on up to 64 unique live entities through the lifecycle and return each entity's resulting local and effective active state |
 | `game_load_scene` | Switch to another cooked scene |
