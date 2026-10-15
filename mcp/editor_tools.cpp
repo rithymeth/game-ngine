@@ -1786,6 +1786,100 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
          }});
 
     server.AddTool(
+        {"scale_entities_local_many",
+         "Multiply local scale for 1–64 unique scene entities using a per-entity component-wise factor as one undoable action. Each entity must have Transform; position and rotation are preserved. Validate the complete selection and finite resulting scales before applying changes.",
+         Schema({{"edits", {{"type", "array"},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", kGuidProp},
+                                                        {"factor", {{"type", "array"}, {"items", {{"type", "number"}}},
+                                                                    {"minItems", 3}, {"maxItems", 3}}}}},
+                                        {"required", Json::array({"entity", "factor"})}}},
+                             {"minItems", 1}, {"maxItems", 64},
+                             {"description", "1–64 unique entity GUID and scale-factor pairs"}}}},
+                {"edits"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be a non-empty array of at most 64 entity scale changes");
+             }
+
+             struct ScaleEdit {
+                 EntityGuid guid;
+                 Vec3 scale;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<ScaleEdit> edits;
+             edits.reserve(args["edits"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& entry : args["edits"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"edits\" must be an object");
+                 const EntityGuid guid = RequireGuid(entry, "entity");
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"edits\": " + ToString(guid));
+                 if (!entry.contains("factor") || !entry["factor"].is_array() || entry["factor"].size() != 3) {
+                     throw ToolError("Each \"factor\" must be [x, y, z]");
+                 }
+                 for (const Json& value : entry["factor"]) {
+                     if (!value.is_number() || !std::isfinite(value.get<double>())) {
+                         throw ToolError("Scale factors must be finite numbers");
+                     }
+                 }
+                 const Vec3 factor{entry["factor"][0].get<f32>(), entry["factor"][1].get<f32>(), entry["factor"][2].get<f32>()};
+                 if (!std::isfinite(factor.x) || !std::isfinite(factor.y) || !std::isfinite(factor.z)) {
+                     throw ToolError("Scale factors must fit finite engine coordinates");
+                 }
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 ScaleEdit edit;
+                 edit.guid = guid;
+                 edit.scale = {current->scale.x * factor.x, current->scale.y * factor.y, current->scale.z * factor.z};
+                 if (!std::isfinite(edit.scale.x) || !std::isfinite(edit.scale.y) || !std::isfinite(edit.scale.z)) {
+                     throw ToolError("Scale factor would produce a non-finite scale for entity " + ToString(guid));
+                 }
+                 Transform updated = *current;
+                 updated.scale = edit.scale;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+                 edits.push_back(std::move(edit));
+             }
+
+             const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const ScaleEdit& edit) { return edit.changed; });
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Scale Entities " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const ScaleEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const ScaleEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)}, {"scale", {edit.scale.x, edit.scale.y, edit.scale.z}}, {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const ScaleEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
         {"multiply_entities_local_scale_many",
          "Multiply the local scale of 1–64 unique scene entities by one shared component-wise factor as one undoable action. Each entity must have Transform; position and rotation are preserved. Validate every target and finite resulting scale before applying changes.",
          Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
