@@ -74,6 +74,8 @@ public:
                      bool include_triggers = false) const;
     SceneHit SphereCast(f32 radius, const Vec3& from, const Vec3& to, LayerMask layers = kAllLayers, Entity ignore = kNullEntity,
                         bool include_triggers = false) const;
+    SceneHit CapsuleCast(f32 radius, f32 height, const Vec3& from, const Vec3& to, LayerMask layers = kAllLayers,
+                         Entity ignore = kNullEntity, bool include_triggers = false) const;
     // Entities whose bodies touch the sphere, in BodyID order.
     std::vector<Entity> OverlapSphere(const Vec3& center, f32 radius, LayerMask layers = kAllLayers, Entity ignore = kNullEntity,
                                       bool include_triggers = false) const;
