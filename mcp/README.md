@@ -454,6 +454,7 @@ saves and localization. The game has its own world, separate from the editor's.
 | `game_physics_events` | Read recent 2D and 3D collision or trigger transitions with entity handles and available contact details; choose `dimension` as `2d`, `3d` or `all` |
 | `game_physics2d_state_many` | Read grounded and wall-contact state plus current velocity for up to 64 selected 2D entities |
 | `game_set_physics2d_bodies_many` | Partially update body type, mass, gravity scale and damping for up to 64 unique 2D rigidbodies; validates the full batch and preserves unspecified fields |
+| `game_set_physics2d_bodies_shared_many` | Apply one partial body-settings patch to up to 64 unique 2D rigidbodies; preserves unspecified per-entity values and validates every result first |
 | `game_physics2d_settings` / `game_set_physics2d_settings` | Inspect or partially update 2D gravity and solver settings; validates the complete resulting configuration before applying |
 | `game_set_physics2d_velocities_many` | Set velocities on up to 64 unique 2D rigidbodies as a validated batch; preserves other body settings |
 | `game_set_physics2d_velocity_shared_many` | Set one velocity on up to 64 unique 2D rigidbodies in a validated batch; preserves other body settings |
