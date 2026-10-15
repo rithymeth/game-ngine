@@ -845,6 +845,70 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         return {{"removed", ComponentName(id)}};
                     }});
 
+    server.AddTool(
+        {"remove_components_many",
+         "Remove 1–64 components from scene entities as one undoable action. The complete entity/component selection is validated before any removal.",
+         Schema({{"removals", {{"type", "array"},
+                                {"items", {{"type", "object"},
+                                           {"properties", {{"entity", kGuidProp}, {"component", {{"type", "string"}}}}},
+                                           {"required", Json::array({"entity", "component"})}}},
+                                {"description", "1–64 entity/component pairs"}}}},
+                {"removals"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before removing components");
+             if (!args["removals"].is_array() || args["removals"].empty() || args["removals"].size() > 64) {
+                 throw ToolError("\"removals\" must be a non-empty array of at most 64 component removals");
+             }
+
+             struct Removal {
+                 EntityGuid entity;
+                 ComponentId component;
+                 std::string component_name;
+             };
+             std::vector<Removal> removals;
+             removals.reserve(args["removals"].size());
+             std::set<std::pair<EntityGuid, ComponentId>> seen;
+             const ComponentId id_component = GetComponentId<IdComponent>();
+             for (const Json& entry : args["removals"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"removals\" must be an object");
+                 const EntityGuid guid = RequireGuid(entry, "entity");
+                 const Entity entity = RequireEntity(s, entry);
+                 const ComponentId id = RequireComponent(RequireString(entry, "component"));
+                 if (id == id_component) throw ToolError("An entity's identity can't be removed");
+                 if (!s.world.HasComponentRaw(entity, id)) {
+                     throw ToolError("Entity " + ToString(guid) + " doesn't have " + ComponentName(id));
+                 }
+                 if (!seen.emplace(guid, id).second) {
+                     throw ToolError("Duplicate component removal for entity " + ToString(guid) + " and " + ComponentName(id));
+                 }
+                 removals.push_back({guid, id, ComponentName(id)});
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Remove Components " + std::to_string(++next_batch_id);
+             const usize undo_count_before = s.stack.UndoCount();
+             editor::CommandContext ctx = s.Context();
+             s.stack.BeginTransaction(transaction_label);
+             try {
+                 for (const Removal& removal : removals) {
+                     auto command = std::make_unique<editor::RemoveComponentCommand>(removal.entity, removal.component);
+                     command->SetAttribution("agent");
+                     s.stack.Execute(ctx, std::move(command));
+                 }
+                 s.stack.EndTransaction();
+             } catch (...) {
+                 s.stack.EndTransaction();
+                 if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                 throw;
+             }
+
+             Json removed = Json::array();
+             for (const Removal& removal : removals) {
+                 removed.push_back({{"entity", ToString(removal.entity)}, {"component", removal.component_name}});
+             }
+             return {{"removed", removed.size()}, {"components", std::move(removed)}};
+         }});
+
     server.AddTool({"set_component",
                     "Change fields of a component the entity already has. `value` is a partial object: only the "
                     "fields it names change. Undoable.",
@@ -1892,7 +1956,7 @@ void RegisterSequenceEditorTools(McpServer& server, EditorSession& s) {
                     }});
 
     // Work undo cannot bring back: the built-in permission rule asks the person before these run (permissions.h).
-    for (const char* name : {"destroy_entity", "destroy_entities", "remove_component", "save_scene", "load_scene"}) server.MarkDestructive(name);
+    for (const char* name : {"destroy_entity", "destroy_entities", "remove_component", "remove_components_many", "save_scene", "load_scene"}) server.MarkDestructive(name);
 }
 
 } // namespace aether::mcp
