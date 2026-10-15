@@ -15,6 +15,7 @@
 #include "aether/interaction/interaction_system.h"
 #endif
 #include "aether/player/game.h"
+#include "aether/sprite2d/physics2d.h"
 #if AETHER_MCP_PHYSICS
 #include "aether/physics/physics_scene.h"
 #endif
@@ -2520,6 +2521,68 @@ void RegisterGameTools(McpServer& server) {
              throw ToolError("\"kind\" must be raycast, spherecast or overlap_sphere");
          }});
 #endif
+
+    server.AddTool(
+        {"game_physics2d_query",
+         "Query the loaded game's 2D physics scene with a raycast or axis-aligned box overlap. Supports a 32-bit collision-layer mask; raycasts report entity or solid-tile hits.",
+         Schema({{"kind", {{"type", "string"}, {"enum", Json::array({"raycast", "overlap_box"})}}},
+                 {"origin", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}},
+                 {"direction", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}},
+                 {"max_distance", {{"type", "number"}, {"exclusiveMinimum", 0}}},
+                 {"center", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}},
+                 {"half_extents", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}},
+                 {"mask", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4294967295.0}}}},
+                {"kind"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             sprite2d::Physics2D* physics = game.Physics2D();
+             if (physics == nullptr) throw ToolError("The loaded game has no 2D physics scene");
+             const std::string kind = RequireString(args, "kind");
+             auto read_vec2 = [&](const char* field) {
+                 if (!args.contains(field) || !args[field].is_array() || args[field].size() != 2 ||
+                     !args[field][0].is_number() || !args[field][1].is_number()) throw ToolError(std::string("\"") + field + "\" must be [x, y]");
+                 const sprite2d::Vec2 value{args[field][0].get<f32>(), args[field][1].get<f32>()};
+                 if (!std::isfinite(value.x) || !std::isfinite(value.y)) throw ToolError(std::string("\"") + field + "\" values must be finite");
+                 return value;
+             };
+             u32 mask = 0xFFFFFFFFu;
+             if (args.contains("mask")) {
+                 if (!args["mask"].is_number_integer()) throw ToolError("\"mask\" must be an integer from 0 through 4294967295");
+                 const i64 value = args["mask"].get<i64>();
+                 if (value < 0 || static_cast<u64>(value) > std::numeric_limits<u32>::max()) throw ToolError("\"mask\" must be an integer from 0 through 4294967295");
+                 mask = static_cast<u32>(value);
+             }
+             if (kind == "raycast") {
+                 const sprite2d::Vec2 origin = read_vec2("origin");
+                 const sprite2d::Vec2 direction = read_vec2("direction");
+                 if (!args.contains("max_distance") || !args["max_distance"].is_number()) throw ToolError("\"max_distance\" must be a finite positive number");
+                 const f32 max_distance = args["max_distance"].get<f32>();
+                 if (!std::isfinite(max_distance) || max_distance <= 0.0f) throw ToolError("\"max_distance\" must be a finite positive number");
+                 sprite2d::RayHit2D hit;
+                 const bool did_hit = physics->Raycast(origin, direction, max_distance, hit, mask);
+                 Json result = {{"kind", kind}, {"hit", did_hit}};
+                 if (did_hit) {
+                     result["entity"] = hit.entity.IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), hit.entity));
+                     result["tile"] = hit.tile;
+                     result["point"] = Json::array({hit.point.x, hit.point.y});
+                     result["normal"] = Json::array({hit.normal.x, hit.normal.y});
+                     result["distance"] = hit.distance;
+                     if (hit.tile) result["tile_coordinates"] = Json::array({hit.tile_x, hit.tile_y});
+                 }
+                 return result;
+             }
+             if (kind == "overlap_box") {
+                 const sprite2d::Vec2 center = read_vec2("center");
+                 const sprite2d::Vec2 half_extents = read_vec2("half_extents");
+                 if (half_extents.x <= 0.0f || half_extents.y <= 0.0f) throw ToolError("\"half_extents\" must contain positive values");
+                 Json entities = Json::array();
+                 for (Entity entity : physics->OverlapBox(center, half_extents, mask)) {
+                     entities.push_back(entity.IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), entity)));
+                 }
+                 return {{"kind", kind}, {"count", entities.size()}, {"entities", std::move(entities)}};
+             }
+             throw ToolError("\"kind\" must be raycast or overlap_box");
+         }});
 
     server.AddTool(
         {"game_reparent_entities_many",
