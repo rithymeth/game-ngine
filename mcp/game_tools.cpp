@@ -1974,6 +1974,59 @@ void RegisterGameTools(McpServer& server) {
                         game.GetLifecycle().Destroy(e);
                         return {{"destroyed", args["entity"]}};
                     }});
+
+    server.AddTool(
+        {"game_destroy_entities_many",
+         "Destroy up to 64 unique live entity roots through the lifecycle (OnDestroy runs for each root and descendant). The complete selection is validated first; overlapping ancestor/descendant roots are rejected.",
+         Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}}},
+                {"entities"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be an array of 1 to 64 entity handles");
+             }
+             std::vector<Entity> roots;
+             roots.reserve(args["entities"].size());
+             for (const Json& handle : args["entities"]) {
+                 if (!handle.is_string() || handle.get<std::string>().empty()) {
+                     throw ToolError("Every \"entities\" entry must be a non-empty entity handle");
+                 }
+                 const Entity entity = FindEntity(game, handle.get<std::string>());
+                 if (std::find(roots.begin(), roots.end(), entity) != roots.end()) {
+                     throw ToolError("\"entities\" must not contain the same entity more than once");
+                 }
+                 roots.push_back(entity);
+             }
+
+             std::vector<Entity> affected;
+             std::vector<std::string> affected_keys;
+             for (Entity root : roots) {
+                 std::vector<Entity> subtree;
+                 std::vector<Entity> pending{root};
+                 while (!pending.empty()) {
+                     const Entity current = pending.back();
+                     pending.pop_back();
+                     if (std::find(subtree.begin(), subtree.end(), current) != subtree.end()) continue;
+                     subtree.push_back(current);
+                     for (Entity child : ChildrenOf(world, game.Guids(), current)) pending.push_back(child);
+                 }
+                 for (Entity entity : subtree) {
+                     if (std::find(affected.begin(), affected.end(), entity) != affected.end()) {
+                         throw ToolError("\"entities\" must not include both an ancestor and its descendant");
+                     }
+                 }
+                 for (Entity entity : subtree) {
+                     affected.push_back(entity);
+                     affected_keys.push_back(EntityKey(world, entity));
+                 }
+             }
+
+             for (Entity root : roots) game.GetLifecycle().Destroy(root);
+             Json destroyed = Json::array();
+             for (const std::string& key : affected_keys) destroyed.push_back(key);
+             return {{"destroyed_count", affected.size()}, {"destroyed", destroyed}};
+         }});
 }
 
 } // namespace aether::mcp
