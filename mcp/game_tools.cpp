@@ -761,8 +761,10 @@ void RegisterGameTools(McpServer& server) {
     server.AddTool(
         {"game_list_entities",
          "Entities in the running game: handle (GUID, or #index if it has none), name, local and in-hierarchy active state, direct parent GUID, tags and component names. "
-         "Optionally only those with a component or tag. Results can be paged with a bounded limit and offset.",
+         "Optionally filter by component, tag, local active state or in-hierarchy active state. Results can be paged with a bounded limit and offset.",
          Schema({{"component", {{"type", "string"}}}, {"tag", {{"type", "string"}}},
+                 {"active", {{"type", "boolean"}, {"description", "Filter by local active state; entities without Active are active"}}},
+                 {"active_in_hierarchy", {{"type", "boolean"}, {"description", "Filter by effective active state including ancestors"}}},
                  {"limit", {{"type", "integer"}, {"minimum", 1}, {"maximum", 1000}, {"description", "Page size, 1-1000 (default 200)"}}},
                  {"offset", {{"type", "integer"}, {"minimum", 0}, {"description", "Number of matching entities to skip"}}}}),
          [host](const Json& args) -> Json {
@@ -770,6 +772,10 @@ void RegisterGameTools(McpServer& server) {
              World& world = game.GetWorld();
              ComponentId filter = kInvalidComponentId;
              if (args.contains("component")) filter = RequireComponent(RequireString(args, "component"));
+             if (args.contains("active") && !args["active"].is_boolean()) throw ToolError("\"active\" must be a boolean");
+             if (args.contains("active_in_hierarchy") && !args["active_in_hierarchy"].is_boolean()) {
+                 throw ToolError("\"active_in_hierarchy\" must be a boolean");
+             }
              usize limit = 200;
              if (args.contains("limit")) {
                  if (!args["limit"].is_number_integer()) throw ToolError("\"limit\" must be an integer");
@@ -797,6 +803,13 @@ void RegisterGameTools(McpServer& server) {
              usize total = 0;
              for (Entity e : candidates) {
                  if (filter != kInvalidComponentId && !world.HasComponentRaw(e, filter)) continue;
+                 const Active* active_component = world.GetComponent<Active>(e);
+                 const bool active = active_component == nullptr || active_component->active;
+                 if (args.contains("active") && active != args["active"].get<bool>()) continue;
+                 const bool active_in_hierarchy = args.contains("active_in_hierarchy")
+                                                      ? IsActiveInHierarchy(world, game.Guids(), e)
+                                                      : active;
+                 if (args.contains("active_in_hierarchy") && active_in_hierarchy != args["active_in_hierarchy"].get<bool>()) continue;
                  ++total;
                  if (total <= offset || list.size() >= limit) continue;
                  Json names = Json::array();
@@ -807,14 +820,15 @@ void RegisterGameTools(McpServer& server) {
                  if (const Tags* component_tags = world.GetComponent<Tags>(e)) {
                      for (const std::string& tag : component_tags->names) tags.push_back(tag);
                  }
-                 const Active* active_component = world.GetComponent<Active>(e);
                  Json parent = nullptr;
                  if (const Parent* parent_component = world.GetComponent<Parent>(e); parent_component != nullptr && !parent_component->parent.IsNull()) {
                      parent = ToString(parent_component->parent);
                  }
                  Json row = {{"entity", EntityKey(world, e)}, {"components", names}, {"tags", tags},
                              {"active", active_component == nullptr || active_component->active},
-                             {"active_in_hierarchy", IsActiveInHierarchy(world, game.Guids(), e)}, {"parent", parent}};
+                             {"active_in_hierarchy", args.contains("active_in_hierarchy") ? active_in_hierarchy
+                                                                                            : IsActiveInHierarchy(world, game.Guids(), e)},
+                             {"parent", parent}};
                  if (const EntityName* n = world.GetComponent<EntityName>(e)) row["name"] = n->value;
                  list.push_back(row);
              }
