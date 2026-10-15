@@ -2425,6 +2425,39 @@ void RegisterGameTools(McpServer& server) {
                     }});
 
     server.AddTool(
+        {"game_attributes_many",
+         "Read attributes (name, base, current, min, max) for up to 64 unique live entities. Entities without an AttributeSet return an empty attribute list.",
+         Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}}}, {"entities"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be an array of 1 to 64 entity handles");
+             }
+             std::vector<Entity> entities;
+             entities.reserve(args["entities"].size());
+             for (const Json& handle : args["entities"]) {
+                 if (!handle.is_string() || handle.get<std::string>().empty()) throw ToolError("Every \"entities\" entry must be a non-empty entity handle");
+                 const Entity entity = FindEntity(game, handle.get<std::string>());
+                 if (std::find(entities.begin(), entities.end(), entity) != entities.end()) throw ToolError("\"entities\" must not contain the same entity more than once");
+                 entities.push_back(entity);
+             }
+             Json results = Json::array();
+             for (Entity entity : entities) {
+                 Json attributes = Json::array();
+                 const gas::AttributeSet* set = world.GetComponent<gas::AttributeSet>(entity);
+                 if (set != nullptr) {
+                     for (const gas::Attribute& attribute : set->attributes) {
+                         attributes.push_back({{"name", attribute.name}, {"base", attribute.base}, {"current", attribute.current},
+                                               {"min", attribute.min}, {"max", attribute.max}});
+                     }
+                 }
+                 results.push_back({{"entity", EntityKey(world, entity)}, {"entity_index", entity.index}, {"attributes", attributes}});
+             }
+             return {{"count", results.size()}, {"results", results}};
+         }});
+
+    server.AddTool(
         {"game_set_attribute",
          "Change an attribute of a running entity the way the game's own code does (so attribute-changed events fire and bounds apply): "
          "set its `base`, add a `delta` to the base, or `define` it with bounds. Effects and abilities then see the new value.",
