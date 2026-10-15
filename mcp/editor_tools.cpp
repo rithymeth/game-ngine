@@ -2342,6 +2342,110 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
          }});
 
     server.AddTool(
+        {"set_entities_tags_many",
+         "Set the same complete tag list on 1–64 unique scene entities as one undoable action. This replaces each entity's existing tags and adds Tags components when needed. Tag names must be non-empty and unique. Validate the complete selection and tag list before applying changes.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique entity GUIDs"}}},
+                 {"tags", {{"type", "array"}, {"items", {{"type", "string"}}},
+                           {"description", "Shared complete list of non-empty, unique tag names"}}}},
+                {"entities", "tags"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before editing entity tags");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             if (!args["tags"].is_array()) throw ToolError("\"tags\" must be an array of strings");
+             std::set<std::string> unique_tags;
+             for (const Json& tag : args["tags"]) {
+                 if (!tag.is_string() || tag.get<std::string>().empty()) throw ToolError("Tags must be non-empty strings");
+                 if (!unique_tags.insert(tag.get<std::string>()).second) throw ToolError("Duplicate tag: " + tag.get<std::string>());
+             }
+
+             struct TagEdit {
+                 EntityGuid guid;
+                 bool add_component = false;
+                 bool changed = false;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+             };
+             std::vector<TagEdit> edits;
+             edits.reserve(args["entities"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId tags_component = GetComponentId<Tags>();
+             const ComponentInfo& info = GetComponentInfo(tags_component);
+             const Json component_value = {{"names", args["tags"]}};
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 EntityGuid guid;
+                 const std::string guid_text = value.get<std::string>();
+                 if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid entity GUID: " + guid_text);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+
+                 TagEdit edit;
+                 edit.guid = guid;
+                 if (s.world.HasComponentRaw(entity, tags_component)) {
+                     const Json current = ComponentJson(s, entity, tags_component).value("names", Json::array());
+                     if (!current.is_array()) throw ToolError("Invalid Tags value for entity " + ToString(guid));
+                     edit.changed = current != args["tags"];
+                     if (edit.changed) {
+                         Json warnings = Json::array();
+                         edit.after = PatchedBytes(s, entity, tags_component, component_value, edit.before, warnings);
+                         if (!warnings.empty()) throw ToolError("Invalid Tags value for entity " + ToString(guid));
+                     }
+                 } else {
+                     reflect::Any sample = reflect::Any::DefaultOf(*info.reflected);
+                     if (!sample.HasValue()) throw ToolError("Cannot default-construct Tags");
+                     reflect::LoadReport report;
+                     if (!reflect::FromJson(*info.reflected, sample.Data(), component_value, &report)) {
+                         throw ToolError("Invalid tag list");
+                     }
+                     info.serialize(sample.Data(), edit.after);
+                     reflect::Any defaults = reflect::Any::DefaultOf(*info.reflected);
+                     if (!defaults.HasValue()) throw ToolError("Cannot default-construct Tags");
+                     info.serialize(defaults.Data(), edit.before);
+                     edit.add_component = true;
+                     edit.changed = true;
+                 }
+                 edits.push_back(std::move(edit));
+             }
+
+             const usize changed_count = std::count_if(edits.begin(), edits.end(), [](const TagEdit& edit) { return edit.changed; });
+             if (changed_count > 0) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Set Entity Tags " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const TagEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         if (edit.add_component) {
+                             auto add = std::make_unique<editor::AddComponentCommand>(edit.guid, tags_component);
+                             add->SetAttribution("agent");
+                             s.stack.Execute(ctx, std::move(add));
+                         }
+                         auto set = std::make_unique<SetComponentCommand>(edit.guid, tags_component, edit.before, edit.after);
+                         set->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(set));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const TagEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)}, {"tags", args["tags"]}, {"changed", edit.changed}});
+             }
+             return {{"updated", changed_count}, {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
         {"set_entity_tags_many",
          "Set the complete tag list for 1–64 unique scene entities as one undoable action. This replaces each entity's existing tags; entities without a Tags component receive one. Validate every GUID and tag list before applying changes.",
          Schema({{"edits", {{"type", "array"},
