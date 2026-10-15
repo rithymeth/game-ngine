@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <new>
 #include <optional>
@@ -819,13 +820,19 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
 
     server.AddTool(
         {"destroy_entities",
-         "Delete 1–64 unique scene entities as one undoable action. Children and entity GUID references are left unchanged; undo restores each entity with its original GUID.",
-         Schema({{"entities", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "1–64 unique entity GUIDs"}}}}, {"entities"}),
+         "Delete up to 64 unique scene entities as one undoable action. Children and entity GUID references are left unchanged by default. Set include_children to true to also delete descendants; the batch deletes children before parents so undo restores parents first.",
+         Schema({{"entities", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "1–64 unique entity GUIDs"}}},
+                 {"include_children", {{"type", "boolean"}, {"description", "When true, also delete descendants; defaults to false and enforces a 64-entity total limit"}}}},
+                {"entities"}),
          [&s](const Json& args) -> Json {
              if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before deleting entities");
              if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
                  throw ToolError("\"entities\" must be a non-empty array of at most 64 GUIDs");
              }
+             if (args.contains("include_children") && !args["include_children"].is_boolean()) {
+                 throw ToolError("\"include_children\" must be true or false");
+             }
+             const bool include_children = args.value("include_children", false);
 
              std::vector<EntityGuid> guids;
              guids.reserve(args["entities"].size());
@@ -836,6 +843,42 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                  RequireEntity(s, Json{{"entity", value}});
                  if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
                  guids.push_back(guid);
+             }
+
+             if (include_children) {
+                 std::map<EntityGuid, std::vector<EntityGuid>> children_by_parent;
+                 std::set<EntityGuid> parents_with_unguided_children;
+                 for (const Entity entity : AllEntities(s)) {
+                     const Parent* parent = s.world.GetComponent<Parent>(entity);
+                     if (parent == nullptr || parent->parent.IsNull()) continue;
+                     const IdComponent* child_id = s.world.GetComponent<IdComponent>(entity);
+                     if (child_id == nullptr || child_id->guid.IsNull()) {
+                         parents_with_unguided_children.insert(parent->parent);
+                         continue;
+                     }
+                     children_by_parent[parent->parent].push_back(child_id->guid);
+                 }
+
+                 const std::vector<EntityGuid> roots = guids;
+                 guids.clear();
+                 std::set<EntityGuid> visited;
+                 std::set<EntityGuid> visiting;
+                 std::function<void(EntityGuid)> append_postorder = [&](EntityGuid guid) {
+                     if (visited.count(guid)) return;
+                     if (!visiting.insert(guid).second) throw ToolError("The selected hierarchy contains a parent cycle");
+                     if (parents_with_unguided_children.count(guid)) {
+                         throw ToolError("Cannot include descendants because a child entity has no GUID");
+                     }
+                     const auto descendants = children_by_parent.find(guid);
+                     if (descendants != children_by_parent.end()) {
+                         for (const EntityGuid child : descendants->second) append_postorder(child);
+                     }
+                     visiting.erase(guid);
+                     visited.insert(guid);
+                     if (guids.size() >= 64) throw ToolError("Including descendants would delete more than 64 entities");
+                     guids.push_back(guid);
+                 };
+                 for (const EntityGuid root : roots) append_postorder(root);
              }
 
              static std::atomic<std::uint64_t> next_batch_id{0};
