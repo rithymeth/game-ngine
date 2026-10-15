@@ -51,6 +51,7 @@ and errors go to stderr.
 | `multiply_entities_world_scale_many` | Multiply world-scale magnitudes by one shared factor for up to 64 unique entities in one undo action; derives each target from original world scale |
 | `multiply_entities_world_scale_per_entity_many` | Multiply world-scale magnitudes by per-entity factors for up to 64 unique entities in one undo action; derives each target from original world scale |
 | `offset_entities_world_scale_many` | Add one shared delta to world-scale magnitudes for up to 64 unique entities in one undo action; derives each target from original world scale |
+| `offset_entities_world_scale_per_entity_many` | Add per-entity deltas to world-scale magnitudes for up to 64 unique entities in one undo action; derives each target from original world scale |
 | `rotate_entities_world_many` | Apply per-entity world quaternion deltas on up to 64 unique entities in one undo action; resolves selected ancestor orientations |
 | `rotate_entities_world_shared_many` | Apply one world quaternion delta to up to 64 unique entities in one undo action; resolves selected ancestor orientations |
 | `set_entities_local_rotation_many` | Set one shared absolute local quaternion on up to 64 unique entities in one undo action; preserves position and scale |
