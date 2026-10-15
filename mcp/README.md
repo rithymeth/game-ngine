@@ -47,6 +47,7 @@ and errors go to stderr.
 | `set_entity_tags_many` | Replace the complete tag list on up to 64 unique entities as one undoable action; creates `Tags` when needed |
 | `set_entities_tags_many` | Replace the complete tag list on up to 64 unique entities with one shared list in one undoable action; creates `Tags` when needed and reports no-op edits |
 | `modify_entity_tags_many` | Add/remove tags on up to 64 unique entities as one undoable action; preserves tag order and reports no-op edits |
+| `modify_entities_tags_shared_many` | Add/remove the same tags on up to 64 unique entities as one undoable action; preserves tag order and reports no-op edits |
 | `set_entity_layers_many` | Set collision layer indices (0–31) on up to 64 unique entities as one undoable action; creates `Layer` when needed |
 | `set_entities_layer_many` | Set one shared collision layer index on up to 64 unique entities as one undoable action; creates `Layer` when needed and reports no-op edits |
 | `offset_entities_local_many` | Add one local-position offset to up to 64 unique entities in one undo action; preserves rotation and scale |
