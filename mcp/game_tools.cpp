@@ -3722,6 +3722,51 @@ void RegisterGameTools(McpServer& server) {
              }
              return {{"count", inventories.size()}, {"inventories", std::move(inventories)}};
          }});
+
+    server.AddTool(
+        {"game_inventory_counts_many",
+         "Read item counts for 1 to 64 distinct entity/item pairs in one request. Each result reports the entity, item key, and current count; this does not change inventory state.",
+         Schema({{"queries", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                               {"items", {{"type", "object"},
+                                          {"properties", {{"entity", {{"type", "string"}}}, {"item", {{"type", "string"}}}}},
+                                          {"required", Json::array({"entity", "item"})}}}}}},
+                {"queries"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             inv::InventorySystem* system = inv::InventorySystem::Active();
+             if (system == nullptr) throw ToolError("This game has no inventory system (load a scene with the Inventory kit)");
+             if (!args.contains("queries") || !args["queries"].is_array() || args["queries"].empty() || args["queries"].size() > 64) {
+                 throw ToolError("\"queries\" must be an array of 1 to 64 entity/item pairs");
+             }
+             struct InventoryCountQuery {
+                 Entity entity;
+                 std::string entity_key;
+                 std::string item;
+             };
+             std::vector<InventoryCountQuery> queries;
+             queries.reserve(args["queries"].size());
+             for (const Json& query : args["queries"]) {
+                 if (!query.is_object() || !query.contains("entity") || !query["entity"].is_string() || query["entity"].get<std::string>().empty()) {
+                     throw ToolError("Every \"queries\" entry must contain a non-empty string \"entity\"");
+                 }
+                 if (!query.contains("item") || !query["item"].is_string() || query["item"].get<std::string>().empty()) {
+                     throw ToolError("Every \"queries\" entry must contain a non-empty string \"item\"");
+                 }
+                 const Entity entity = FindEntity(game, query["entity"].get<std::string>());
+                 const std::string item = query["item"].get<std::string>();
+                 if (std::find_if(queries.begin(), queries.end(), [&](const InventoryCountQuery& existing) {
+                         return existing.entity == entity && existing.item == item;
+                     }) != queries.end()) {
+                     throw ToolError("\"queries\" must not repeat an entity/item pair");
+                 }
+                 queries.push_back({entity, EntityKey(game.GetWorld(), entity), item});
+             }
+             Json results = Json::array();
+             for (const InventoryCountQuery& query : queries) {
+                 results.push_back({{"entity", query.entity_key}, {"item", query.item}, {"count", system->Count(query.entity, query.item)}});
+             }
+             return {{"count", results.size()}, {"results", std::move(results)}};
+         }});
 #endif
 
 #if AETHER_MCP_QUESTS
