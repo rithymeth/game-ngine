@@ -1617,6 +1617,52 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_get_entity_components_many",
+         "Read different reflected components from up to 64 live entity/component pairs in request order; missing components are reported with present=false.",
+         Schema({{"reads", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                             {"items", {{"type", "object"},
+                                         {"properties", {{"entity", {{"type", "string"}}}, {"component", {{"type", "string"}}}}},
+                                         {"required", Json::array({"entity", "component"})}}}}}},
+                {"reads"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["reads"].is_array() || args["reads"].empty() || args["reads"].size() > 64) {
+                 throw ToolError("\"reads\" must be an array of 1 to 64 entity/component pairs");
+             }
+             struct ReadRequest {
+                 Entity entity;
+                 ComponentId id;
+             };
+             std::vector<ReadRequest> requests;
+             requests.reserve(args["reads"].size());
+             for (const Json& item : args["reads"]) {
+                 if (!item.is_object() || !item.contains("entity") || !item["entity"].is_string() || item["entity"].get<std::string>().empty()) {
+                     throw ToolError("Every \"reads\" entry must contain a non-empty string \"entity\"");
+                 }
+                 if (!item.contains("component") || !item["component"].is_string()) throw ToolError("Every \"reads\" entry must contain a string \"component\"");
+                 const Entity entity = FindEntity(game, item["entity"].get<std::string>());
+                 const ComponentId id = RequireComponent(item["component"].get<std::string>());
+                 if (std::find_if(requests.begin(), requests.end(), [entity, id](const ReadRequest& request) {
+                         return request.entity == entity && request.id == id;
+                     }) != requests.end()) {
+                     throw ToolError("\"reads\" must not repeat the same entity/component pair");
+                 }
+                 requests.push_back({entity, id});
+             }
+             Json results = Json::array();
+             for (const ReadRequest& request : requests) {
+                 const void* data = world.GetComponentRaw(request.entity, request.id);
+                 Json result = {{"entity", EntityKey(world, request.entity)}, {"entity_index", request.entity.index},
+                                {"entity_generation", request.entity.generation}, {"component", ComponentName(request.id)},
+                                {"present", data != nullptr}};
+                 if (data != nullptr) result["values"] = reflect::ToJson(*GetComponentInfo(request.id).reflected, data);
+                 results.push_back(std::move(result));
+             }
+             return {{"results", results}};
+         }});
+
+    server.AddTool(
         {"game_remove_components_many",
          "Remove one component from up to 64 unique running entities as one validated batch. Transform and IdComponent are protected; no entity is changed unless the entire selection is valid.",
          Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}},
