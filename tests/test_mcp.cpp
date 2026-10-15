@@ -645,7 +645,7 @@ AETHER_TEST(Mcp_AssetToolsImportMoveAndCookAProject) {
 
     Harness h;
     auto project = MakeAssetHost();
-    RegisterAssetTools(h.server, project);
+    RegisterAssetTools(h.server, project, h.session);
     RegisterKitTools(h.server, project, h.session);
     AETHER_CHECK(h.Call("asset_list").is_error); // no project open yet
     AETHER_CHECK(h.Call("project_open", {{"project_file", (dir / "nope.aproject").string()}}).is_error);
@@ -716,7 +716,7 @@ AETHER_TEST(Mcp_KitToolsValidateWriteAndCrossCheckDefinitions) {
 
     Harness h;
     auto project = MakeAssetHost();
-    RegisterAssetTools(h.server, project);
+    RegisterAssetTools(h.server, project, h.session);
     RegisterKitTools(h.server, project, h.session);
     AETHER_CHECK(h.Call("kit_list").is_error); // no project open
     AETHER_CHECK(!h.Call("project_open", {{"project_file", paths.file.string()}}).is_error);
@@ -813,7 +813,7 @@ AETHER_TEST(Mcp_AttributeToolsEditUndoAndCheckTheProject) {
     std::string error;
     AETHER_CHECK(CreateProject(dir, "McpAttrs", &paths, &error));
     auto project = MakeAssetHost();
-    RegisterAssetTools(h.server, project);
+    RegisterAssetTools(h.server, project, h.session);
     RegisterKitTools(h.server, project, h.session);
     AETHER_CHECK(!h.Call("project_open", {{"project_file", paths.file.string()}}).is_error);
     const Json scene = {{"$type", "Scene"}, {"$version", 1},
@@ -915,7 +915,7 @@ AETHER_TEST(Mcp_InteractableToolsEditCheckAndDriveTheGame) {
     std::string error;
     AETHER_CHECK(CreateProject(dir, "McpInteract", &paths, &error));
     auto project = MakeAssetHost();
-    RegisterAssetTools(h.server, project);
+    RegisterAssetTools(h.server, project, h.session);
     RegisterKitTools(h.server, project, h.session);
     AETHER_CHECK(!h.Call("project_open", {{"project_file", paths.file.string()}}).is_error);
     const Json project_scene = {{"$type", "Scene"}, {"$version", 1},
@@ -1025,7 +1025,7 @@ AETHER_TEST(Mcp_AudioToolsEditCheckPreviewAndDriveTheGame) {
                                                     {{"id", 2}, {"type", "Wave"}, {"sound", "Audio/a.wav"}},
                                                     {{"id", 3}, {"type", "Wave"}, {"sound", "Audio/b.wav"}}})}};
     auto auto_project = MakeAssetHost();
-    RegisterAssetTools(h.server, auto_project);
+    RegisterAssetTools(h.server, auto_project, h.session);
     RegisterKitTools(h.server, auto_project, h.session);
     RegisterAudioTools(h.server, auto_project);
     Json verdict = h.Call("cue_validate", {{"definition", random_cue}}).value;
@@ -1181,7 +1181,7 @@ AETHER_TEST(Mcp_VfxToolsEditValidateSimulateAndCheck) {
 
     // --- the format, without a project
     auto project = MakeAssetHost();
-    RegisterAssetTools(h.server, project);
+    RegisterAssetTools(h.server, project, h.session);
     RegisterVfxTools(h.server, project);
     Json schema = h.Call("vfx_schema").value;
     AETHER_CHECK(schema["modules"]["spawn"].size() == 3);
@@ -1579,7 +1579,7 @@ AETHER_TEST(Mcp_BlueprintToolsFindValidateCompileAndRun) {
     namespace stdfs = std::filesystem;
     Harness h;
     auto project = MakeAssetHost();
-    RegisterAssetTools(h.server, project);
+    RegisterAssetTools(h.server, project, h.session);
     RegisterKitTools(h.server, project, h.session);
     RegisterBlueprintTools(h.server, project);
 
@@ -1717,7 +1717,7 @@ AETHER_TEST(Mcp_LocToolsFormatEditGatherValidateAndRoundTrip) {
     namespace stdfs = std::filesystem;
     Harness h;
     auto project = MakeAssetHost();
-    RegisterAssetTools(h.server, project);
+    RegisterAssetTools(h.server, project, h.session);
     RegisterLocTools(h.server, project);
 
     // --- formatting and languages need no project
@@ -1870,7 +1870,7 @@ AETHER_TEST(Mcp_SequenceToolsValidateEvaluateAndPlay) {
     namespace stdfs = std::filesystem;
     Harness h;
     auto project = MakeAssetHost();
-    RegisterAssetTools(h.server, project);
+    RegisterAssetTools(h.server, project, h.session);
     RegisterKitTools(h.server, project, h.session);
     RegisterSequenceTools(h.server, project);
 
@@ -2072,7 +2072,7 @@ AETHER_TEST(Mcp_TilemapToolsBuildPaintReadAndPreviewALevel) {
     namespace stdfs = std::filesystem;
     Harness h;
     auto project = MakeAssetHost();
-    RegisterAssetTools(h.server, project);
+    RegisterAssetTools(h.server, project, h.session);
     RegisterKitTools(h.server, project, h.session);
     RegisterTilemapTools(h.server, project);
 
@@ -2648,7 +2648,7 @@ AETHER_TEST(Mcp_PrefabToolsMakeInstantiateOverrideAndApply) {
     namespace stdfs = std::filesystem;
     Harness h;
     auto project = MakeAssetHost();
-    RegisterAssetTools(h.server, project);
+    RegisterAssetTools(h.server, project, h.session);
     RegisterPrefabTools(h.server, project, h.session);
 
     AETHER_CHECK(h.Call("prefab_info", {{"prefab", "Prefabs/x.aprefab"}}).is_error); // needs a project
@@ -2712,7 +2712,7 @@ AETHER_TEST(Mcp_ProjectCreateMakesBlankAndTemplateProjects) {
     namespace stdfs = std::filesystem;
     Harness h;
     auto project = MakeAssetHost();
-    RegisterAssetTools(h.server, project);
+    RegisterAssetTools(h.server, project, h.session);
     const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_new_projects";
     stdfs::remove_all(dir);
 
@@ -2745,7 +2745,7 @@ AETHER_TEST(Mcp_ScriptToolsCheckCompleteRunSimulateAndCheckTheProject) {
     namespace stdfs = std::filesystem;
     Harness h;
     auto project = MakeAssetHost();
-    RegisterAssetTools(h.server, project);
+    RegisterAssetTools(h.server, project, h.session);
     RegisterScriptTools(h.server, project);
 
     const std::string spin =
