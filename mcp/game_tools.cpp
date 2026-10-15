@@ -778,7 +778,7 @@ void RegisterGameTools(McpServer& server) {
     server.AddTool(
         {"game_list_entities",
          "Entities in the running game: handle (GUID, or #index when it has none), entity generation, name, local and in-hierarchy active state, direct parent GUID, tags and component names. "
-         "Optionally filter by exact name, case-insensitive ASCII name substring, one component or component groups, tag, direct parent, root status, local active state or in-hierarchy active state. Results can be paged with a bounded limit and offset.",
+         "Optionally filter by exact name, case-insensitive ASCII name substring, one component or component groups, exact tag or tag groups, direct parent, root status, local active state or in-hierarchy active state. Results can be paged with a bounded limit and offset.",
          Schema({{"name", {{"type", "string"}, {"description", "Exact, case-sensitive entity name"}}},
                  {"name_contains", {{"type", "string"}, {"description", "Non-empty case-insensitive ASCII name substring"}}},
                  {"parent", {{"type", "string"}, {"description", "Direct parent entity GUID"}}},
@@ -790,6 +790,12 @@ void RegisterGameTools(McpServer& server) {
                                      {"description", "Require at least one listed component"}}},
                  {"components_none", {{"type", "array"}, {"maxItems", 32}, {"items", {{"type", "string"}}},
                                       {"description", "Exclude entities with any listed component"}}},
+                 {"tags_all", {{"type", "array"}, {"maxItems", 32}, {"items", {{"type", "string"}}},
+                               {"description", "Require every listed exact tag"}}},
+                 {"tags_any", {{"type", "array"}, {"maxItems", 32}, {"items", {{"type", "string"}}},
+                               {"description", "Require at least one listed exact tag"}}},
+                 {"tags_none", {{"type", "array"}, {"maxItems", 32}, {"items", {{"type", "string"}}},
+                                {"description", "Exclude entities with any listed exact tag"}}},
                  {"active", {{"type", "boolean"}, {"description", "Filter by local active state; entities without Active are active"}}},
                  {"active_in_hierarchy", {{"type", "boolean"}, {"description", "Filter by effective active state including ancestors"}}},
                  {"limit", {{"type", "integer"}, {"minimum", 1}, {"maximum", 1000}, {"description", "Page size, 1-1000 (default 200)"}}},
@@ -820,6 +826,27 @@ void RegisterGameTools(McpServer& server) {
              const std::vector<ComponentId> components_all = read_component_filter("components_all");
              const std::vector<ComponentId> components_any = read_component_filter("components_any");
              const std::vector<ComponentId> components_none = read_component_filter("components_none");
+             auto read_tag_filter = [&](const char* key) {
+                 std::vector<std::string> tags;
+                 if (!args.contains(key)) return tags;
+                 if (!args[key].is_array() || args[key].size() > 32) {
+                     throw ToolError(std::string("\"") + key + "\" must be an array of at most 32 tags");
+                 }
+                 for (const Json& value : args[key]) {
+                     if (!value.is_string() || value.get<std::string>().empty()) {
+                         throw ToolError(std::string("Every \"") + key + "\" entry must be a non-empty tag");
+                     }
+                     const std::string tag = value.get<std::string>();
+                     if (std::find(tags.begin(), tags.end(), tag) != tags.end()) {
+                         throw ToolError(std::string("Duplicate tag in \"") + key + "\": " + tag);
+                     }
+                     tags.push_back(tag);
+                 }
+                 return tags;
+             };
+             const std::vector<std::string> tags_all = read_tag_filter("tags_all");
+             const std::vector<std::string> tags_any = read_tag_filter("tags_any");
+             const std::vector<std::string> tags_none = read_tag_filter("tags_none");
              const std::string name_filter = args.contains("name") ? RequireString(args, "name") : std::string{};
              const std::string name_contains_filter = args.contains("name_contains") ? RequireString(args, "name_contains") : std::string{};
              if (args.contains("name_contains") && name_contains_filter.empty()) {
@@ -878,6 +905,22 @@ void RegisterGameTools(McpServer& server) {
                      has_excluded_component = has_excluded_component || world.HasComponentRaw(e, id);
                  }
                  if (has_excluded_component) continue;
+                 const Tags* entity_tags = world.GetComponent<Tags>(e);
+                 auto has_tag = [&](const std::string& tag) {
+                     return entity_tags != nullptr &&
+                            std::find(entity_tags->names.begin(), entity_tags->names.end(), tag) != entity_tags->names.end();
+                 };
+                 bool has_all_tags = true;
+                 for (const std::string& tag : tags_all) has_all_tags = has_all_tags && has_tag(tag);
+                 if (!has_all_tags) continue;
+                 if (!tags_any.empty()) {
+                     bool has_any_tag = false;
+                     for (const std::string& tag : tags_any) has_any_tag = has_any_tag || has_tag(tag);
+                     if (!has_any_tag) continue;
+                 }
+                 bool has_excluded_tag = false;
+                 for (const std::string& tag : tags_none) has_excluded_tag = has_excluded_tag || has_tag(tag);
+                 if (has_excluded_tag) continue;
                  const EntityName* entity_name = world.GetComponent<EntityName>(e);
                  if (args.contains("name") && (entity_name == nullptr || entity_name->value != name_filter)) continue;
                  if (args.contains("name_contains") &&
@@ -910,8 +953,8 @@ void RegisterGameTools(McpServer& server) {
                      if (world.HasComponentRaw(e, id)) names.push_back(ComponentName(id));
                  }
                  Json tags = Json::array();
-                 if (const Tags* component_tags = world.GetComponent<Tags>(e)) {
-                     for (const std::string& tag : component_tags->names) tags.push_back(tag);
+                 if (entity_tags != nullptr) {
+                     for (const std::string& tag : entity_tags->names) tags.push_back(tag);
                  }
                  Json parent = has_parent ? Json(ToString(parent_component->parent)) : Json(nullptr);
                  Json row = {{"entity", EntityKey(world, e)}, {"entity_generation", e.generation}, {"components", names}, {"tags", tags},
