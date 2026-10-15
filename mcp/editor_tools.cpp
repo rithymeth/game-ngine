@@ -909,6 +909,94 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
              return {{"removed", removed.size()}, {"components", std::move(removed)}};
          }});
 
+    server.AddTool(
+        {"rename_entities",
+         "Rename 1–64 unique scene entities as one undoable action. Entities without an EntityName component receive one; all IDs and names are validated before any rename is applied.",
+         Schema({{"renames", {{"type", "array"},
+                               {"items", {{"type", "object"},
+                                          {"properties", {{"entity", kGuidProp}, {"name", {{"type", "string"}}}}},
+                                          {"required", Json::array({"entity", "name"})}}},
+                               {"description", "1–64 unique entity GUID and name pairs"}}}},
+                {"renames"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before renaming entities");
+             if (!args["renames"].is_array() || args["renames"].empty() || args["renames"].size() > 64) {
+                 throw ToolError("\"renames\" must be a non-empty array of at most 64 entity renames");
+             }
+
+             struct Rename {
+                 EntityGuid guid;
+                 std::string name;
+                 bool add_component = false;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 Json warnings = Json::array();
+             };
+             std::vector<Rename> renames;
+             renames.reserve(args["renames"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId name_component = GetComponentId<EntityName>();
+             for (const Json& entry : args["renames"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"renames\" must be an object");
+                 const EntityGuid guid = RequireGuid(entry, "entity");
+                 const Entity entity = RequireEntity(s, entry);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"renames\": " + ToString(guid));
+                 Rename rename;
+                 rename.guid = guid;
+                 rename.name = RequireString(entry, "name");
+                 const Json value = {{"value", rename.name}};
+                 if (s.world.HasComponentRaw(entity, name_component)) {
+                     rename.after = PatchedBytes(s, entity, name_component, value, rename.before, rename.warnings);
+                 } else {
+                     const ComponentInfo& info = GetComponentInfo(name_component);
+                     reflect::Any sample = reflect::Any::DefaultOf(*info.reflected);
+                     if (!sample.HasValue()) throw ToolError("Cannot default-construct EntityName");
+                     reflect::LoadReport report;
+                     if (!reflect::FromJson(*info.reflected, sample.Data(), value, &report)) {
+                         throw ToolError("Name does not match the EntityName component");
+                     }
+                     info.serialize(sample.Data(), rename.after);
+                     reflect::Any defaults = reflect::Any::DefaultOf(*info.reflected);
+                     if (!defaults.HasValue()) throw ToolError("Cannot default-construct EntityName");
+                     info.serialize(defaults.Data(), rename.before);
+                     rename.add_component = true;
+                     for (const std::string& warning : report.warnings) rename.warnings.push_back(warning);
+                 }
+                 renames.push_back(std::move(rename));
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Rename Entities " + std::to_string(++next_batch_id);
+             const usize undo_count_before = s.stack.UndoCount();
+             editor::CommandContext ctx = s.Context();
+             s.stack.BeginTransaction(transaction_label);
+             try {
+                 for (const Rename& rename : renames) {
+                     if (rename.add_component) {
+                         auto add = std::make_unique<editor::AddComponentCommand>(rename.guid, name_component);
+                         add->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(add));
+                     }
+                     auto set = std::make_unique<SetComponentCommand>(rename.guid, name_component, rename.before, rename.after);
+                     set->SetAttribution("agent");
+                     s.stack.Execute(ctx, std::move(set));
+                 }
+                 s.stack.EndTransaction();
+             } catch (...) {
+                 s.stack.EndTransaction();
+                 if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                 throw;
+             }
+
+             Json results = Json::array();
+             for (const Rename& rename : renames) {
+                 Json row = {{"entity", ToString(rename.guid)}, {"name", rename.name}};
+                 if (!rename.warnings.empty()) row["warnings"] = rename.warnings;
+                 results.push_back(std::move(row));
+             }
+             return {{"renamed", renames.size()}, {"entities", std::move(results)}};
+         }});
+
     server.AddTool({"set_component",
                     "Change fields of a component the entity already has. `value` is a partial object: only the "
                     "fields it names change. Undoable.",
