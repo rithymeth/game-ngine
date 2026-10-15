@@ -2001,6 +2001,152 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
          }});
 
     server.AddTool(
+        {"set_entities_world_rotations_many",
+         "Set world rotations individually for 1–64 unique scene entities as one undoable action. Each entity must have Transform; position and scale are preserved. World orientations compose normalized local quaternions parent-first; rotations are converted against final parent orientations, including parents changed in this batch. Singular quaternions, cycles and hierarchy chains deeper than the supported limit are rejected. Validate the complete selection before applying changes.",
+         Schema({{"edits", {{"type", "array"},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", kGuidProp},
+                                                        {"rotation", {{"type", "array"}, {"items", {{"type", "number"}}},
+                                                                       {"minItems", 4}, {"maxItems", 4}}}}},
+                                        {"required", Json::array({"entity", "rotation"})}}},
+                             {"minItems", 1}, {"maxItems", 64},
+                             {"description", "1–64 unique entity GUID and world-quaternion pairs"}}}},
+                {"edits"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be a non-empty array of at most 64 entity rotation changes");
+             }
+
+             struct RotationEdit {
+                 EntityGuid guid;
+                 Entity entity;
+                 Quaternion world_rotation;
+                 Quaternion local_rotation;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<RotationEdit> edits;
+             edits.reserve(args["edits"].size());
+             std::map<EntityGuid, usize> edit_indices;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& entry : args["edits"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"edits\" must be an object");
+                 const EntityGuid guid = RequireGuid(entry, "entity");
+                 if (edit_indices.contains(guid)) throw ToolError("Duplicate entity in \"edits\": " + ToString(guid));
+                 if (!entry.contains("rotation") || !entry["rotation"].is_array() || entry["rotation"].size() != 4) {
+                     throw ToolError("Each \"rotation\" must be [x, y, z, w]");
+                 }
+                 for (const Json& value : entry["rotation"]) {
+                     if (!value.is_number() || !std::isfinite(value.get<double>())) {
+                         throw ToolError("World-rotation values must be finite numbers");
+                     }
+                 }
+                 Quaternion world_rotation{entry["rotation"][0].get<f32>(), entry["rotation"][1].get<f32>(),
+                                          entry["rotation"][2].get<f32>(), entry["rotation"][3].get<f32>()};
+                 if (!std::isfinite(world_rotation.x) || !std::isfinite(world_rotation.y) ||
+                     !std::isfinite(world_rotation.z) || !std::isfinite(world_rotation.w)) {
+                     throw ToolError("World-rotation values must fit finite engine coordinates");
+                 }
+                 const f32 length_sq = world_rotation.LengthSq();
+                 if (!std::isfinite(length_sq) || length_sq <= 1.0e-12f) {
+                     throw ToolError("World-rotation quaternion must be non-zero");
+                 }
+                 world_rotation = world_rotation.Normalized();
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 if (s.world.GetComponent<Transform>(entity) == nullptr) {
+                     throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 }
+                 edit_indices.emplace(guid, edits.size());
+                 RotationEdit edit;
+                 edit.guid = guid;
+                 edit.entity = entity;
+                 edit.world_rotation = world_rotation;
+                 edits.push_back(std::move(edit));
+             }
+
+             std::function<Quaternion(Entity, int)> compute_final_world_rotation = [&](Entity entity, int depth) -> Quaternion {
+                 if (entity.IsNull()) return Quaternion::Identity();
+                 if (depth >= kMaxHierarchyDepth) throw ToolError("World-rotation batch encountered a hierarchy cycle or excessive depth");
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) return Quaternion::Identity();
+                 Quaternion parent_rotation = Quaternion::Identity();
+                 const Entity parent = GetParent(s.world, s.guids, entity);
+                 if (!parent.IsNull()) parent_rotation = compute_final_world_rotation(parent, depth + 1);
+
+                 const IdComponent* id = s.world.GetComponent<IdComponent>(entity);
+                 if (id != nullptr) {
+                     const auto selected = edit_indices.find(id->guid);
+                     if (selected != edit_indices.end()) {
+                         const Quaternion inverse_parent{-parent_rotation.x, -parent_rotation.y, -parent_rotation.z, parent_rotation.w};
+                         RotationEdit& edit = edits[selected->second];
+                         edit.local_rotation = (inverse_parent * edit.world_rotation).Normalized();
+                         if (!std::isfinite(edit.local_rotation.x) || !std::isfinite(edit.local_rotation.y) ||
+                             !std::isfinite(edit.local_rotation.z) || !std::isfinite(edit.local_rotation.w)) {
+                             throw ToolError("World rotation would produce a non-finite local rotation for entity " + ToString(id->guid));
+                         }
+                         return edit.world_rotation;
+                     }
+                 }
+
+                 const Quaternion& local = current->rotation;
+                 if (!std::isfinite(local.x) || !std::isfinite(local.y) || !std::isfinite(local.z) || !std::isfinite(local.w)) {
+                     throw ToolError("Ancestor entity has a non-finite rotation");
+                 }
+                 const f32 local_length_sq = local.LengthSq();
+                 if (!std::isfinite(local_length_sq) || local_length_sq <= 1.0e-12f) {
+                     throw ToolError("Ancestor entity has a zero rotation quaternion");
+                 }
+                 return (parent_rotation * local.Normalized()).Normalized();
+             };
+
+             for (const RotationEdit& edit : edits) (void)compute_final_world_rotation(edit.entity, 0);
+             for (RotationEdit& edit : edits) {
+                 const Transform* current = s.world.GetComponent<Transform>(edit.entity);
+                 Transform updated = *current;
+                 updated.rotation = edit.local_rotation;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+             }
+
+             const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const RotationEdit& edit) { return edit.changed; });
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Set Entity World Rotations " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const RotationEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const RotationEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)},
+                                    {"world_rotation", {edit.world_rotation.x, edit.world_rotation.y, edit.world_rotation.z, edit.world_rotation.w}},
+                                    {"local_rotation", {edit.local_rotation.x, edit.local_rotation.y, edit.local_rotation.z, edit.local_rotation.w}},
+                                    {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const RotationEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
         {"set_entities_world_position_many",
          "Set 1–64 unique scene entities to one shared world position as one undoable action. Each entity must have Transform; rotation and scale are preserved. Positions are converted through the final parent transforms, including parents changed in this batch. Singular parent transforms, cycles, and hierarchy chains deeper than the supported limit are rejected. Validate the complete selection before applying changes.",
          Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
