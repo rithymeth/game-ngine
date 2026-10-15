@@ -489,6 +489,73 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
          }});
 
     server.AddTool(
+        {"compare_entity_components_many",
+         "Compare selected component presence across 1–64 unique entities and 1–32 unique reflected component types. Returns a boolean presence matrix and classifies each requested component as common, mixed, or absent across the selection.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64}}},
+                 {"components", {{"type", "array"}, {"items", {{"type", "string"}}}, {"minItems", 1},
+                                 {"maxItems", 32}}}},
+                {"entities", "components"}),
+         [&s](const Json& args) -> Json {
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             if (!args["components"].is_array() || args["components"].empty() || args["components"].size() > 32) {
+                 throw ToolError("\"components\" must be a non-empty array of at most 32 component names");
+             }
+             std::vector<std::pair<EntityGuid, Entity>> entities;
+             entities.reserve(args["entities"].size());
+             std::set<EntityGuid> seen_entities;
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 const std::string guid_text = value.get<std::string>();
+                 EntityGuid guid;
+                 if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid entity GUID: " + guid_text);
+                 if (!seen_entities.insert(guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 entities.emplace_back(guid, entity);
+             }
+             std::vector<ComponentId> component_ids;
+             component_ids.reserve(args["components"].size());
+             std::set<ComponentId> seen_components;
+             for (const Json& value : args["components"]) {
+                 if (!value.is_string() || value.get<std::string>().empty()) {
+                     throw ToolError("Every entry in \"components\" must be a non-empty component name");
+                 }
+                 const ComponentId component = RequireComponent(value.get<std::string>());
+                 if (!seen_components.insert(component).second) {
+                     throw ToolError("Duplicate component in \"components\": " + ComponentName(component));
+                 }
+                 component_ids.push_back(component);
+             }
+
+             Json rows = Json::array();
+             std::vector<usize> present_counts(component_ids.size(), 0);
+             for (const auto& [guid, entity] : entities) {
+                 Json presence = Json::object();
+                 for (usize i = 0; i < component_ids.size(); ++i) {
+                     const bool present = s.world.HasComponentRaw(entity, component_ids[i]);
+                     presence[ComponentName(component_ids[i])] = present;
+                     if (present) ++present_counts[i];
+                 }
+                 rows.push_back({{"entity", ToString(guid)}, {"components", std::move(presence)}});
+             }
+             Json common = Json::array();
+             Json mixed = Json::array();
+             Json absent = Json::array();
+             for (usize i = 0; i < component_ids.size(); ++i) {
+                 const std::string name = ComponentName(component_ids[i]);
+                 if (present_counts[i] == entities.size()) common.push_back(name);
+                 else if (present_counts[i] == 0) absent.push_back(name);
+                 else mixed.push_back({{"component", name}, {"present_count", present_counts[i]},
+                                       {"entity_count", entities.size()}});
+             }
+             return {{"entity_count", entities.size()}, {"rows", std::move(rows)},
+                     {"common_components", std::move(common)}, {"mixed_components", std::move(mixed)},
+                     {"absent_components", std::move(absent)}};
+         }});
+
+    server.AddTool(
         {"get_entities_descendants_many",
          "Get descendants for 1–64 unique scene entities. Each requested root returns its descendants in deterministic parent-first order with parent GUID and depth relative to that root. The complete root selection is validated first; the query is limited to 64 returned descendant entries total and rejects cycles, excessive depth, or descendants without GUIDs.",
          Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
