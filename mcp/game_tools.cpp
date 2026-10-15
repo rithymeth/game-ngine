@@ -3210,6 +3210,96 @@ void RegisterGameTools(McpServer& server) {
              }
              return {{"count", results.size()}, {"entities", std::move(results)}};
          }});
+
+    server.AddTool(
+        {"game_set_physics3d_bodies_shared_many",
+         "Apply the same partial Rigidbody settings to up to 64 unique 3D entities. Validates every resulting body before applying; unspecified values retain their per-entity settings.",
+         Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}}},
+                 {"motion", {{"type", "string"}, {"enum", Json::array({"static", "kinematic", "dynamic"})}}},
+                 {"mass", {{"type", "number"}, {"minimum", 0.01}, {"maximum", 10000}}},
+                 {"linear_damping", {{"type", "number"}, {"minimum", 0}, {"maximum", 10}}},
+                 {"angular_damping", {{"type", "number"}, {"minimum", 0}, {"maximum", 10}}},
+                 {"gravity_scale", {{"type", "number"}, {"minimum", -10}, {"maximum", 10}}},
+                 {"continuous_collision", {{"type", "boolean"}}},
+                 {"lock_rotation", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "boolean"}}}}}},
+                {"entities"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             if (game.PhysicsQueries() == nullptr) throw ToolError("The loaded game has no 3D physics scene");
+             if (!args.contains("entities") || !args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be an array of 1 to 64 entity handles");
+             }
+             static const std::unordered_set<std::string> supported = {"entities", "motion", "mass", "linear_damping", "angular_damping",
+                                                                         "gravity_scale", "continuous_collision", "lock_rotation"};
+             for (auto it = args.begin(); it != args.end(); ++it) {
+                 if (!supported.contains(it.key())) throw ToolError("Unsupported Rigidbody field: " + it.key());
+             }
+             if (args.size() < 2) throw ToolError("Provide at least one Rigidbody setting to update");
+             struct BodyEdit { Entity entity; RigidBody body; };
+             std::vector<BodyEdit> edits;
+             edits.reserve(args["entities"].size());
+             World& world = game.GetWorld();
+             auto read_number = [](const Json& value, const char* field) {
+                 if (!value.is_number()) throw ToolError(std::string("\"") + field + "\" must be a finite number");
+                 const f32 result = value.get<f32>();
+                 if (!std::isfinite(result)) throw ToolError(std::string("\"") + field + "\" must be a finite number");
+                 return result;
+             };
+             for (const Json& handle : args["entities"]) {
+                 if (!handle.is_string() || handle.get<std::string>().empty()) throw ToolError("Every \"entities\" entry must be a non-empty entity handle");
+                 const Entity entity = FindEntity(game, handle.get<std::string>());
+                 if (std::find_if(edits.begin(), edits.end(), [entity](const BodyEdit& edit) { return edit.entity == entity; }) != edits.end()) {
+                     throw ToolError("\"entities\" must not repeat an entity");
+                 }
+                 const RigidBody* current = world.GetComponent<RigidBody>(entity);
+                 if (current == nullptr) throw ToolError("Every entity must have a Rigidbody component");
+                 RigidBody updated = *current;
+                 if (args.contains("motion")) {
+                     if (!args["motion"].is_string()) throw ToolError("\"motion\" must be static, kinematic or dynamic");
+                     const std::string motion = args["motion"].get<std::string>();
+                     if (motion == "static") updated.motion = BodyMotion::Static;
+                     else if (motion == "kinematic") updated.motion = BodyMotion::Kinematic;
+                     else if (motion == "dynamic") updated.motion = BodyMotion::Dynamic;
+                     else throw ToolError("\"motion\" must be static, kinematic or dynamic");
+                 }
+                 if (args.contains("mass")) updated.mass = read_number(args["mass"], "mass");
+                 if (args.contains("linear_damping")) updated.linear_damping = read_number(args["linear_damping"], "linear_damping");
+                 if (args.contains("angular_damping")) updated.angular_damping = read_number(args["angular_damping"], "angular_damping");
+                 if (args.contains("gravity_scale")) updated.gravity_scale = read_number(args["gravity_scale"], "gravity_scale");
+                 if (args.contains("continuous_collision")) {
+                     if (!args["continuous_collision"].is_boolean()) throw ToolError("\"continuous_collision\" must be boolean");
+                     updated.continuous_collision = args["continuous_collision"].get<bool>();
+                 }
+                 if (args.contains("lock_rotation")) {
+                     const Json& locks = args["lock_rotation"];
+                     if (!locks.is_array() || locks.size() != 3 || !locks[0].is_boolean() || !locks[1].is_boolean() || !locks[2].is_boolean()) {
+                         throw ToolError("\"lock_rotation\" must be [x, y, z] booleans");
+                     }
+                     updated.lock_rotation_x = locks[0].get<bool>();
+                     updated.lock_rotation_y = locks[1].get<bool>();
+                     updated.lock_rotation_z = locks[2].get<bool>();
+                 }
+                 if (!std::isfinite(updated.mass) || updated.mass < 0.01f || updated.mass > 10000.0f ||
+                     !std::isfinite(updated.linear_damping) || updated.linear_damping < 0.0f || updated.linear_damping > 10.0f ||
+                     !std::isfinite(updated.angular_damping) || updated.angular_damping < 0.0f || updated.angular_damping > 10.0f ||
+                     !std::isfinite(updated.gravity_scale) || updated.gravity_scale < -10.0f || updated.gravity_scale > 10.0f ||
+                     (updated.motion != BodyMotion::Static && updated.motion != BodyMotion::Kinematic && updated.motion != BodyMotion::Dynamic)) {
+                     throw ToolError("The resulting Rigidbody settings are outside the supported ranges");
+                 }
+                 edits.push_back({entity, updated});
+             }
+             Json results = Json::array();
+             for (const BodyEdit& edit : edits) {
+                 *world.GetComponent<RigidBody>(edit.entity) = edit.body;
+                 const char* motion = edit.body.motion == BodyMotion::Static ? "static" :
+                                      edit.body.motion == BodyMotion::Kinematic ? "kinematic" : "dynamic";
+                 results.push_back({{"entity", EntityKey(world, edit.entity)}, {"motion", motion}, {"mass", edit.body.mass},
+                                    {"linear_damping", edit.body.linear_damping}, {"angular_damping", edit.body.angular_damping},
+                                    {"gravity_scale", edit.body.gravity_scale}, {"continuous_collision", edit.body.continuous_collision},
+                                    {"lock_rotation", Json::array({edit.body.lock_rotation_x, edit.body.lock_rotation_y, edit.body.lock_rotation_z})}});
+             }
+             return {{"count", results.size()}, {"entities", std::move(results)}};
+         }});
 #endif
 
 #if AETHER_MCP_PHYSICS
