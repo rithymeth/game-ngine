@@ -1602,18 +1602,46 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         return {{"entity", ToString(guid)}, {"parent", parent.IsNull() ? Json(nullptr) : Json(ToString(parent))}};
                     }});
 
+    Json reparent_many_schema = Schema(Json::object());
+    reparent_many_schema["properties"]["moves"] = {
+        {"type", "array"},
+        {"items", {{"type", "object"},
+                   {"properties", {{"entity", kGuidProp}, {"parent", {{"type", Json::array({"string", "null"})}}}}},
+                   {"required", Json::array({"entity"})}}},
+        {"description", "1–64 per-entity moves; omitted or null parent detaches that entity"}};
+    reparent_many_schema["properties"]["entities"] = {
+        {"type", "array"}, {"items", {{"type", "string"}}},
+        {"description", "1–64 entity GUIDs to reparent together; use instead of moves"}};
+    reparent_many_schema["properties"]["parent"] = {
+        {"type", Json::array({"string", "null"})},
+        {"description", "Shared parent for entities; omit or set null to detach all"}};
+
     server.AddTool(
         {"reparent_many",
-         "Reparent or detach 1–64 unique entities as one undoable action. Each move has an `entity` GUID and optional `parent` GUID (omit or null to detach); the final hierarchy is checked for cycles before changes are applied.",
-         Schema({{"moves", {{"type", "array"},
-                            {"items", {{"type", "object"},
-                                       {"properties", {{"entity", kGuidProp}, {"parent", {{"type", Json::array({"string", "null"})}}}}},
-                                       {"required", Json::array({"entity"})}}},
-                            {"description", "1–64 moves; omitted or null parent detaches the entity"}}}},
-                {"moves"}),
+         "Reparent or detach up to 64 unique entities as one undoable action. Use `moves` for a different parent per entity, or `entities` with a shared optional `parent` for a selection; omit or set the shared parent to null to detach all. The final hierarchy is checked for cycles before changes are applied.",
+         reparent_many_schema,
          [&s](const Json& args) -> Json {
              if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before reparenting entities");
-             if (!args["moves"].is_array() || args["moves"].empty() || args["moves"].size() > 64) {
+             const bool has_moves = args.contains("moves");
+             const bool has_entities = args.contains("entities");
+             if (has_moves == has_entities) throw ToolError("Specify either \"moves\" or \"entities\" with a shared \"parent\"");
+             Json requested_moves = args.value("moves", Json::array());
+             if (has_entities) {
+                 if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                     throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+                 }
+                 Json shared_parent = args.value("parent", Json(nullptr));
+                 if (!shared_parent.is_null() && !shared_parent.is_string()) {
+                     throw ToolError("\"parent\" must be an entity GUID string or null");
+                 }
+                 requested_moves = Json::array();
+                 for (const Json& entity : args["entities"]) {
+                     requested_moves.push_back({{"entity", entity}, {"parent", shared_parent}});
+                 }
+             } else if (args.contains("parent")) {
+                 throw ToolError("Use the per-entity \"parent\" inside each move, or use \"entities\" with a shared parent");
+             }
+             if (!requested_moves.is_array() || requested_moves.empty() || requested_moves.size() > 64) {
                  throw ToolError("\"moves\" must be a non-empty array of at most 64 entity/parent pairs");
              }
 
@@ -1623,9 +1651,9 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                  EntityGuid parent;
              };
              std::vector<Move> moves;
-             moves.reserve(args["moves"].size());
+             moves.reserve(requested_moves.size());
              std::set<EntityGuid> seen;
-             for (const Json& entry : args["moves"]) {
+             for (const Json& entry : requested_moves) {
                  if (!entry.is_object()) throw ToolError("Each entry in \"moves\" must be an object");
                  const EntityGuid entity_guid = RequireGuid(entry, "entity");
                  const Entity entity = RequireEntity(s, entry, "entity");
