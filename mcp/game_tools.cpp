@@ -3439,6 +3439,63 @@ void RegisterGameTools(McpServer& server) {
          }});
 
     server.AddTool(
+        {"game_rotate_entities_local_many",
+         "Apply individual local-space quaternion deltas to up to 64 unique live entities. Preserves position and scale; validates the full request and normalizes each resulting rotation before applying.",
+         Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                              {"items", {{"type", "object"},
+                                          {"properties", {{"entity", {{"type", "string"}}},
+                                                           {"delta", {{"type", "array"}, {"minItems", 4}, {"maxItems", 4}, {"items", {{"type", "number"}}}}}}},
+                                          {"required", Json::array({"entity", "delta"})}}}}}},
+                {"edits"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be an array of 1 to 64 rotation edits");
+             }
+             struct RotationEdit { Entity entity; Quaternion rotation; };
+             std::vector<RotationEdit> edits;
+             edits.reserve(args["edits"].size());
+             for (const Json& item : args["edits"]) {
+                 if (!item.is_object() || !item.contains("entity") || !item["entity"].is_string() || item["entity"].get<std::string>().empty()) {
+                     throw ToolError("Every \"edits\" entry must contain a non-empty string \"entity\"");
+                 }
+                 if (!item.contains("delta") || !item["delta"].is_array() || item["delta"].size() != 4 ||
+                     !item["delta"][0].is_number() || !item["delta"][1].is_number() || !item["delta"][2].is_number() || !item["delta"][3].is_number()) {
+                     throw ToolError("Every \"delta\" must be [x, y, z, w]");
+                 }
+                 Quaternion delta(item["delta"][0].get<f32>(), item["delta"][1].get<f32>(), item["delta"][2].get<f32>(), item["delta"][3].get<f32>());
+                 if (!std::isfinite(delta.x) || !std::isfinite(delta.y) || !std::isfinite(delta.z) || !std::isfinite(delta.w) ||
+                     !std::isfinite(delta.LengthSq()) || delta.LengthSq() <= 1.0e-12f) {
+                     throw ToolError("\"delta\" must be a finite non-zero quaternion");
+                 }
+                 const Entity entity = FindEntity(game, item["entity"].get<std::string>());
+                 if (std::find_if(edits.begin(), edits.end(), [entity](const RotationEdit& edit) { return edit.entity == entity; }) != edits.end()) {
+                     throw ToolError("\"edits\" must not repeat an entity");
+                 }
+                 const Transform* transform = world.GetComponent<Transform>(entity);
+                 if (transform == nullptr) throw ToolError("Entity " + EntityKey(world, entity) + " has no Transform");
+                 const Quaternion& current = transform->rotation;
+                 if (!std::isfinite(current.x) || !std::isfinite(current.y) || !std::isfinite(current.z) || !std::isfinite(current.w) ||
+                     !std::isfinite(current.LengthSq()) || current.LengthSq() <= 1.0e-12f) {
+                     throw ToolError("Entity " + EntityKey(world, entity) + " has an invalid local rotation");
+                 }
+                 const Quaternion updated = (current.Normalized() * delta.Normalized()).Normalized();
+                 if (!std::isfinite(updated.x) || !std::isfinite(updated.y) || !std::isfinite(updated.z) || !std::isfinite(updated.w)) {
+                     throw ToolError("Rotation delta produced a non-finite result");
+                 }
+                 edits.push_back({entity, updated});
+             }
+             Json results = Json::array();
+             for (const RotationEdit& edit : edits) {
+                 world.GetComponent<Transform>(edit.entity)->rotation = edit.rotation;
+                 results.push_back({{"entity", EntityKey(world, edit.entity)},
+                                    {"rotation", Json::array({edit.rotation.x, edit.rotation.y, edit.rotation.z, edit.rotation.w})}});
+             }
+             return {{"updated_count", results.size()}, {"results", results}};
+         }});
+
+    server.AddTool(
         {"game_set_world_positions_many",
          "Set world positions for up to 64 unique live entities while preserving local rotation and scale. Converts through parent transforms; rejects ancestor overlap, cycles, excessive depth and singular parent transforms.",
          Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
