@@ -2923,6 +2923,67 @@ void RegisterGameTools(McpServer& server) {
              return {{"action", action}, {"sequence", c->sequence}, {"playing", c->playing}, {"time", c->time}, {"queued_commands", c->commands.size()}};
          }});
 
+    server.AddTool(
+        {"game_sequence_controls_many",
+         "Queue different play, pause, stop, skip, time, rate or loop commands on up to 64 unique live SequenceComponents. Validates every target and action before queueing; step the game to apply them.",
+         Schema({{"edits", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                             {"items", {{"type", "object"},
+                                         {"properties", {{"entity", {{"type", "string"}}},
+                                                          {"action", {{"type", "string"}, {"description", "play | pause | stop | skip | set_time | set_rate | set_loop"}}},
+                                                          {"value", {{"type", "number"}}}}},
+                                         {"required", Json::array({"entity", "action"})}}}}}},
+                {"edits"}),
+         [host](const Json& args) -> Json {
+             Game& game = host->Require();
+             World& world = game.GetWorld();
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be an array of 1 to 64 sequence commands");
+             }
+             struct SequenceEdit {
+                 Entity entity;
+                 std::string action;
+                 f32 value = 0.0f;
+             };
+             std::vector<SequenceEdit> edits;
+             edits.reserve(args["edits"].size());
+             for (const Json& item : args["edits"]) {
+                 if (!item.is_object() || !item.contains("entity") || !item["entity"].is_string() || item["entity"].get<std::string>().empty()) {
+                     throw ToolError("Every \"edits\" entry must contain a non-empty string \"entity\"");
+                 }
+                 if (!item.contains("action") || !item["action"].is_string()) throw ToolError("Every \"edits\" entry must contain a string \"action\"");
+                 const std::string action = item["action"].get<std::string>();
+                 if (action != "play" && action != "pause" && action != "stop" && action != "skip" && action != "set_time" && action != "set_rate" && action != "set_loop") {
+                     throw ToolError("\"action\" must be play, pause, stop, skip, set_time, set_rate or set_loop");
+                 }
+                 f32 value = 0.0f;
+                 if (item.contains("value")) {
+                     if (!item["value"].is_number()) throw ToolError("\"value\" must be a number");
+                     value = item["value"].get<f32>();
+                     if (!std::isfinite(value)) throw ToolError("\"value\" must be finite");
+                 }
+                 const Entity entity = FindEntity(game, item["entity"].get<std::string>());
+                 if (std::find_if(edits.begin(), edits.end(), [entity](const SequenceEdit& edit) { return edit.entity == entity; }) != edits.end()) {
+                     throw ToolError("\"edits\" must not repeat the same entity");
+                 }
+                 if (world.GetComponent<SequenceComponent>(entity) == nullptr) throw ToolError("Entity " + EntityKey(world, entity) + " has no SequenceComponent");
+                 edits.push_back({entity, action, value});
+             }
+             Json results = Json::array();
+             for (const SequenceEdit& edit : edits) {
+                 SequenceComponent* component = world.GetComponent<SequenceComponent>(edit.entity);
+                 if (edit.action == "play") component->Play();
+                 else if (edit.action == "pause") component->Pause();
+                 else if (edit.action == "stop") component->Stop();
+                 else if (edit.action == "skip") component->Skip();
+                 else if (edit.action == "set_time") component->SetTime(edit.value);
+                 else if (edit.action == "set_rate") component->SetRate(edit.value);
+                 else component->SetLoop(edit.value != 0.0f);
+                 results.push_back({{"entity", EntityKey(world, edit.entity)}, {"action", edit.action}, {"sequence", component->sequence},
+                                    {"playing", component->playing}, {"time", component->time}, {"queued_commands", component->commands.size()}});
+             }
+             return {{"queued_count", results.size()}, {"results", results}};
+         }});
+
     server.AddTool({"game_stop_sequences", "Stop or skip every playing sequence in the running game (skip finishes each from where it is without firing the keys in between).",
                     Schema({{"skip", {{"type", "boolean"}, {"description", "Skip instead of stop"}}}}), [host](const Json& args) -> Json {
                         host->Require();
