@@ -591,6 +591,38 @@ std::vector<SceneComponent> CollectSceneComponents(OpenProject& p, const std::st
 } // namespace
 
 void RegisterKitTools(McpServer& server, std::shared_ptr<detail::AssetHost> host, EditorSession& session) {
+    const auto validate_kit = [](const std::string& type_name, const Json& args) -> Json {
+        const KitType& t = RequireType(type_name);
+        Json canonical;
+        const std::string error = t.check(DefinitionText(args), canonical);
+        if (!error.empty()) return {{"ok", false}, {"error", error}};
+        return {{"ok", true}, {"normalized", canonical}};
+    };
+    const auto put_kit = [host, &session](const std::string& type_name, const Json& args) -> Json {
+        OpenProject& p = host->Require();
+        if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before writing a kit definition");
+        const KitType& t = RequireType(type_name);
+        std::string rel = CleanRelative(RequireString(args, "path"));
+        if (rel.empty()) throw ToolError("\"path\" must name a file under Content/");
+        if (fs::path(rel).extension() != t.extension) rel += t.extension;
+        Json canonical;
+        const std::string error = t.check(DefinitionText(args), canonical);
+        if (!error.empty()) throw ToolError("Invalid " + t.name + ": " + error);
+
+        const fs::path file = p.paths.content / rel;
+        const FileState before_source = CaptureFile(file);
+        if (before_source.exists && !OptBool(args, "overwrite", false)) throw ToolError(rel + " already exists (pass overwrite)");
+        const FileState before_meta = CaptureFile(fs::path(file.string() + assets::AssetMeta::kExtension));
+        const std::string text = canonical.dump(2) + "\n";
+        auto command = std::make_unique<PutKitCommand>(host, p.paths.file, file, before_source, before_meta, text);
+        command->SetAttribution("agent");
+        editor::CommandContext context = session.Context();
+        session.stack.Execute(context, std::move(command));
+        Json out = {{"type", t.name}, {"path", rel}, {"name", NameOf(canonical)}};
+        if (const AssetRecord* r = p.database->FindByPath(rel)) out["guid"] = assets::ToString(r->guid);
+        return out;
+    };
+
     server.AddTool({"kit_types",
                     "The gameplay-kit definition types: file extension, what each is, and how many the open project has. Use kit_schema for the "
                     "shape of one.",
@@ -637,13 +669,17 @@ void RegisterKitTools(McpServer& server, std::shared_ptr<detail::AssetHost> host
                     "Check a definition with the kit's own parser and validator without writing anything. Returns ok, or the kit's named error "
                     "(e.g. \"effect.name_empty: ...\").",
                     Schema({{"type", {{"type", "string"}}}, {"definition", {{"description", "The definition: a JSON object, or its text"}}}}, {"type", "definition"}),
-                    [](const Json& args) -> Json {
-                        const KitType& t = RequireType(RequireString(args, "type"));
-                        Json canonical;
-                        const std::string error = t.check(DefinitionText(args), canonical);
-                        if (!error.empty()) return {{"ok", false}, {"error", error}};
-                        return {{"ok", true}, {"normalized", canonical}};
+                    [validate_kit](const Json& args) -> Json {
+                        return validate_kit(RequireString(args, "type"), args);
                     }});
+
+    for (const KitType& t : Types()) {
+        const std::string type = t.name;
+        server.AddTool({"kit_validate_" + type,
+                        "Validate a " + type + " definition using its own parser, without writing it. " + t.description,
+                        Schema({{"definition", {{"description", "The definition: a JSON object, or its text"}}}}, {"definition"}),
+                        [validate_kit, type](const Json& args) -> Json { return validate_kit(type, args); }});
+    }
 
     server.AddTool({"kit_list",
                     "The kit definitions in the open project (all types, or one): path, definition name and whether it parses and validates.",
@@ -685,31 +721,21 @@ void RegisterKitTools(McpServer& server, std::shared_ptr<detail::AssetHost> host
                  {"definition", {{"description", "The definition: a JSON object, or its text"}}},
                  {"overwrite", {{"type", "boolean"}, {"description", "Replace an existing file (default false)"}}}},
                 {"type", "path", "definition"}),
-         [host, &session](const Json& args) -> Json {
-             OpenProject& p = host->Require();
-             if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before writing a kit definition");
-             const KitType& t = RequireType(RequireString(args, "type"));
-             std::string rel = CleanRelative(RequireString(args, "path"));
-             if (rel.empty()) throw ToolError("\"path\" must name a file under Content/");
-             if (fs::path(rel).extension() != t.extension) rel += t.extension;
-             Json canonical;
-             const std::string error = t.check(DefinitionText(args), canonical);
-             if (!error.empty()) throw ToolError("Invalid " + t.name + ": " + error);
-
-             const fs::path file = p.paths.content / rel;
-             std::error_code ec;
-             const FileState before_source = CaptureFile(file);
-             if (before_source.exists && !OptBool(args, "overwrite", false)) throw ToolError(rel + " already exists (pass overwrite)");
-             const FileState before_meta = CaptureFile(fs::path(file.string() + assets::AssetMeta::kExtension));
-             const std::string text = canonical.dump(2) + "\n";
-             auto command = std::make_unique<PutKitCommand>(host, p.paths.file, file, before_source, before_meta, text);
-             command->SetAttribution("agent");
-             editor::CommandContext context = session.Context();
-             session.stack.Execute(context, std::move(command));
-             Json out = {{"type", t.name}, {"path", rel}, {"name", NameOf(canonical)}};
-             if (const AssetRecord* r = p.database->FindByPath(rel)) out["guid"] = assets::ToString(r->guid);
-             return out;
+         [put_kit](const Json& args) -> Json {
+             return put_kit(RequireString(args, "type"), args);
          }});
+
+    for (const KitType& t : Types()) {
+        const std::string type = t.name;
+        server.AddTool({"kit_put_" + type,
+                        "Create or replace a " + type + " in the open project. It is validated and normalized before writing under Content/; " +
+                            "the " + t.extension + " extension is added when omitted. " + t.description,
+                        Schema({{"path", {{"type", "string"}, {"description", "Under Content/, e.g. Gameplay/Effects/Heal (extension is added)"}}},
+                                {"definition", {{"description", "The definition: a JSON object, or its text"}}},
+                                {"overwrite", {{"type", "boolean"}, {"description", "Replace an existing file (default false)"}}}},
+                               {"path", "definition"}),
+                        [put_kit, type](const Json& args) -> Json { return put_kit(type, args); }});
+    }
 
     server.AddTool(
         {"attribute_project",
