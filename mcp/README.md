@@ -40,6 +40,7 @@ and errors go to stderr.
 | `set_entities_local_position_many` | Set one shared absolute local position on up to 64 unique entities in one undo action; preserves rotation and scale |
 | `set_entities_local_positions_many` | Set individual local positions on up to 64 unique entities in one undo action; preserves rotation and scale |
 | `set_entities_local_rotation_many` | Set one shared absolute local quaternion on up to 64 unique entities in one undo action; preserves position and scale |
+| `set_entities_local_scales_many` | Set individual local scales on up to 64 unique entities in one undo action; preserves position and rotation |
 | `set_entities_local_rotations_many` | Set individual local quaternions on up to 64 unique entities in one undo action; preserves position and scale |
 | `set_entities_active_many` | Set active states on up to 64 unique entities as one undoable action; missing `Active` means active, disabling adds `Active` |
 | `create_entity` / `create_entities` | Create an entity or up to 64 entities with component values, current-scene parents, or zero-based `parent_index` links within the batch; the batch validates the full hierarchy before creation and is one undo action |
