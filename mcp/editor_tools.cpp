@@ -333,12 +333,14 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                     }});
 
     server.AddTool({"list_entities",
-                    "List a page of scene entities (GUID, name when present, entity index, component names, parent GUID, effective collision layer index, and local active state). Optionally filter by component, component groups that must all/any match, exact entity name, case-insensitive ASCII name substring, direct parent or roots, layer index, local active value, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND. Results are ordered by entity index and include total match count, has_more, and a continuation cursor. The cursor is not a scene snapshot; entities created in a reused index at or before it are skipped.",
+                    "List a page of scene entities (GUID, name when present, entity index, component names, parent GUID, effective collision layer index, and local active state). Optionally filter by component, component groups that must all/any match or must not match, exact entity name, case-insensitive ASCII name substring, direct parent or roots, layer index, local active value, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND. Results are ordered by entity index and include total match count, has_more, and a continuation cursor. The cursor is not a scene snapshot; entities created in a reused index at or before it are skipped.",
                     Schema({{"component", {{"type", "string"}, {"description", "Only entities having this component"}}},
                             {"components_all", {{"type", "array"}, {"items", {{"type", "string"}}}, {"maxItems", 32},
                                                  {"description", "Only entities that have every listed component"}}},
                             {"components_any", {{"type", "array"}, {"items", {{"type", "string"}}}, {"maxItems", 32},
                                                  {"description", "Only entities that have at least one listed component"}}},
+                            {"components_none", {{"type", "array"}, {"items", {{"type", "string"}}}, {"maxItems", 32},
+                                                 {"description", "Exclude entities that have any listed component"}}},
                             {"name", {{"type", "string"}, {"description", "Only entities whose name exactly matches"}}},
                             {"name_contains", {{"type", "string"}, {"description", "Only entities whose name contains this case-insensitive ASCII substring; must not be empty"}}},
                             {"parent", kGuidProp},
@@ -485,6 +487,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         };
                         const std::vector<ComponentId> components_all = ReadComponentFilter("components_all");
                         const std::vector<ComponentId> components_any = ReadComponentFilter("components_any");
+                        const std::vector<ComponentId> components_none = ReadComponentFilter("components_none");
                         Json out = Json::array();
                         usize total_matches = 0;
                         for (Entity e : AllEntities(s)) {
@@ -512,6 +515,11 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                                 }
                                 if (!has_any_component) continue;
                             }
+                            bool has_excluded_component = false;
+                            for (const ComponentId component : components_none) {
+                                has_excluded_component = has_excluded_component || s.world.HasComponentRaw(e, component);
+                            }
+                            if (has_excluded_component) continue;
                             if (args.contains("name")) {
                                 const EntityName* name = s.world.GetComponent<EntityName>(e);
                                 if (name == nullptr || name->value != name_filter) continue;
