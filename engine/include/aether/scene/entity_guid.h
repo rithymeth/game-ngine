@@ -27,6 +27,7 @@ struct EntityGuid {
     bool IsNull() const { return hi == 0 && lo == 0; }
     bool operator==(const EntityGuid& o) const { return hi == o.hi && lo == o.lo; }
     bool operator!=(const EntityGuid& o) const { return !(*this == o); }
+    bool operator<(const EntityGuid& o) const { return hi != o.hi ? hi < o.hi : lo < o.lo; }
 };
 
 // A new random version 4 UUID. Thread-safe.

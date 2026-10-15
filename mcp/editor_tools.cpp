@@ -567,6 +567,69 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
          }});
 
     server.AddTool(
+        {"get_entities_ancestors_many",
+         "Get the ancestor chain for 1–64 unique scene entities. Each root returns its ancestors nearest-parent first with their own parent GUID and distance from the root. The complete root selection is validated first; rejects missing parent entities, cycles and excessive depth, with a 64-ancestor total response cap.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique entity GUIDs whose ancestor chains are requested"}}}},
+                {"entities"}),
+         [&s](const Json& args) -> Json {
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             std::vector<std::pair<EntityGuid, Entity>> roots;
+             roots.reserve(args["entities"].size());
+             std::set<EntityGuid> seen;
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 const std::string guid_text = value.get<std::string>();
+                 EntityGuid guid;
+                 if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid entity GUID: " + guid_text);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 roots.emplace_back(guid, entity);
+             }
+
+             Json results = Json::array();
+             usize total_ancestors = 0;
+             for (const auto& [root_guid, root_entity] : roots) {
+                 Json ancestors = Json::array();
+                 std::set<EntityGuid> path{root_guid};
+                 Entity current = root_entity;
+                 for (int depth = 1;; ++depth) {
+                     const Parent* relation = s.world.GetComponent<Parent>(current);
+                     if (relation == nullptr || relation->parent.IsNull()) break;
+                     if (depth >= kMaxHierarchyDepth) {
+                         throw ToolError("Ancestor query encountered a hierarchy cycle or excessive depth");
+                     }
+                     const EntityGuid parent_guid = relation->parent;
+                     if (!path.insert(parent_guid).second) {
+                         throw ToolError("Ancestor query encountered a hierarchy cycle at " + ToString(parent_guid));
+                     }
+                     const Entity parent = s.guids.Find(s.world, parent_guid);
+                     if (parent.IsNull()) {
+                         throw ToolError("Hierarchy parent does not exist: " + ToString(parent_guid));
+                     }
+                     const IdComponent* parent_id = s.world.GetComponent<IdComponent>(parent);
+                     if (parent_id == nullptr || parent_id->guid != parent_guid) {
+                         throw ToolError("Hierarchy parent has inconsistent GUID: " + ToString(parent_guid));
+                     }
+                     if (++total_ancestors > 64) throw ToolError("Ancestor query would return more than 64 entries");
+                     const Parent* parent_relation = s.world.GetComponent<Parent>(parent);
+                     Json result = {{"entity", ToString(parent_guid)}, {"depth", depth}};
+                     if (parent_relation != nullptr && !parent_relation->parent.IsNull()) {
+                         result["parent"] = ToString(parent_relation->parent);
+                     }
+                     ancestors.push_back(std::move(result));
+                     current = parent;
+                 }
+                 results.push_back({{"root", ToString(root_guid)}, {"count", ancestors.size()},
+                                    {"ancestors", std::move(ancestors)}});
+             }
+             return {{"count", total_ancestors}, {"roots", std::move(results)}};
+         }});
+
+    server.AddTool(
         {"get_entities_world_transforms_many",
          "Get derived world transforms for 1–64 unique scene entities in request order. Returns each world matrix as four column vectors plus world position and world-scale magnitudes (the lengths of the three basis columns). Parent transforms are composed through the hierarchy. Rejects missing Transform components, non-finite results, hierarchy cycles and excessive depth.",
          Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
