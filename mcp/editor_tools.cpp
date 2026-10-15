@@ -1180,6 +1180,99 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
              return {{"updated", edits.size()}, {"entities", std::move(results)}};
          }});
 
+    server.AddTool(
+        {"set_entities_active_many",
+         "Set the active state of 1–64 unique scene entities as one undoable action. Missing Active components mean active; disabling an entity adds Active{false}. Validate all GUIDs and boolean values before applying changes.",
+         Schema({{"edits", {{"type", "array"},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", kGuidProp}, {"active", {{"type", "boolean"}}}}},
+                                        {"required", Json::array({"entity", "active"})}}},
+                             {"description", "1–64 unique entity GUID and active-state pairs"}}}},
+                {"edits"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity activity");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be a non-empty array of at most 64 entity activity changes");
+             }
+
+             struct ActiveEdit {
+                 EntityGuid guid;
+                 bool active;
+                 bool add_component = false;
+                 bool changed = true;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+             };
+             std::vector<ActiveEdit> edits;
+             edits.reserve(args["edits"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId active_component = GetComponentId<Active>();
+             usize change_count = 0;
+             for (const Json& entry : args["edits"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"edits\" must be an object");
+                 const EntityGuid guid = RequireGuid(entry, "entity");
+                 const Entity entity = RequireEntity(s, entry);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"edits\": " + ToString(guid));
+                 if (!entry.contains("active") || !entry["active"].is_boolean()) throw ToolError("\"active\" must be true or false");
+                 ActiveEdit edit;
+                 edit.guid = guid;
+                 edit.active = entry["active"].get<bool>();
+                 if (s.world.HasComponentRaw(entity, active_component)) {
+                     Json warnings = Json::array();
+                     edit.after = PatchedBytes(s, entity, active_component, Json{{"active", edit.active}}, edit.before, warnings);
+                     const Active* current = s.world.GetComponent<Active>(entity);
+                     edit.changed = current == nullptr || current->active != edit.active;
+                 } else if (!edit.active) {
+                     const ComponentInfo& info = GetComponentInfo(active_component);
+                     reflect::Any sample = reflect::Any::DefaultOf(*info.reflected);
+                     if (!sample.HasValue()) throw ToolError("Cannot default-construct Active");
+                     reflect::LoadReport report;
+                     if (!reflect::FromJson(*info.reflected, sample.Data(), Json{{"active", false}}, &report)) {
+                         throw ToolError("Invalid active state");
+                     }
+                     info.serialize(sample.Data(), edit.after);
+                     reflect::Any defaults = reflect::Any::DefaultOf(*info.reflected);
+                     if (!defaults.HasValue()) throw ToolError("Cannot default-construct Active");
+                     info.serialize(defaults.Data(), edit.before);
+                     edit.add_component = true;
+                 } else {
+                     edit.changed = false; // no component means active by default
+                 }
+                 if (edit.changed) ++change_count;
+                 edits.push_back(std::move(edit));
+             }
+
+             if (change_count > 0) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Set Entity Activity " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const ActiveEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         if (edit.add_component) {
+                             auto add = std::make_unique<editor::AddComponentCommand>(edit.guid, active_component);
+                             add->SetAttribution("agent");
+                             s.stack.Execute(ctx, std::move(add));
+                         }
+                         auto set = std::make_unique<SetComponentCommand>(edit.guid, active_component, edit.before, edit.after);
+                         set->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(set));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const ActiveEdit& edit : edits) results.push_back({{"entity", ToString(edit.guid)}, {"active", edit.active}});
+             return {{"changed", change_count}, {"entities", std::move(results)}};
+         }});
+
     server.AddTool({"set_component",
                     "Change fields of a component the entity already has. `value` is a partial object: only the "
                     "fields it names change. Undoable.",
