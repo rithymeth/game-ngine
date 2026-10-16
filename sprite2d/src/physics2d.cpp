@@ -990,6 +990,25 @@ std::vector<Entity> Physics2D::OverlapCapsule(Vec2 point_a, Vec2 point_b, f32 ra
     return result;
 }
 
+std::vector<Entity> Physics2D::OverlapPoint(Vec2 point, u32 mask) const {
+    std::vector<Entity> result;
+    EachEntity(world_, [&](Entity e) {
+        const Transform* transform = world_.GetComponent<Transform>(e);
+        const Collider2D* collider = world_.GetComponent<Collider2D>(e);
+        if (!transform || !collider || (collider->layer & mask) == 0) return;
+        const Vec2 center{transform->position.x + collider->offset.x,
+                          transform->position.y + collider->offset.y};
+        if (collider->shape == Shape2D::Circle) {
+            const Vec2 delta = point - center;
+            if (delta.Dot(delta) <= collider->radius * collider->radius) result.push_back(e);
+        } else if (std::fabs(point.x - center.x) <= collider->half_extents.x &&
+                   std::fabs(point.y - center.y) <= collider->half_extents.y) {
+            result.push_back(e);
+        }
+    });
+    return result;
+}
+
 void RegisterPhysics2DComponents() {
     (void)GetComponentId<Rigidbody2D>();
     (void)GetComponentId<Collider2D>();
