@@ -594,6 +594,93 @@ bool Physics2D::Raycast(Vec2 origin, Vec2 dir, f32 max_distance, RayHit2D& out, 
     return found;
 }
 
+std::vector<RayHit2D> Physics2D::RaycastAll(Vec2 origin, Vec2 dir, f32 max_distance, u32 mask, usize max_hits) const {
+    std::vector<RayHit2D> hits;
+    if (max_hits == 0 || dir.Dot(dir) <= 1e-18f || max_distance < 0.0f) return hits;
+    EachEntity(world_, [&](Entity e) {
+        const Transform* transform = world_.GetComponent<Transform>(e);
+        const Collider2D* collider = world_.GetComponent<Collider2D>(e);
+        if (!transform || !collider || collider->trigger || (collider->layer & mask) == 0) return;
+        const Vec2 center{transform->position.x + collider->offset.x,
+                          transform->position.y + collider->offset.y};
+        f32 t = 0.0f;
+        Vec2 normal{};
+        bool did_hit = false;
+        if (collider->shape == Shape2D::Box) {
+            did_hit = SlabRay(origin, dir,
+                              {center.x - collider->half_extents.x, center.y - collider->half_extents.y},
+                              {center.x + collider->half_extents.x, center.y + collider->half_extents.y},
+                              max_distance, t, normal);
+        } else {
+            const Vec2 offset = origin - center;
+            const f32 a = dir.Dot(dir), b = offset.Dot(dir), c = offset.Dot(offset) - collider->radius * collider->radius;
+            const f32 discriminant = b * b - a * c;
+            if (c <= 0.0f) {
+                did_hit = true;
+                t = 0.0f;
+            } else if (discriminant >= 0.0f) {
+                t = (-b - std::sqrt(discriminant)) / a;
+                did_hit = t >= 0.0f && t <= max_distance;
+            }
+            if (did_hit) {
+                Vec2 delta = origin + dir * t - center;
+                const f32 length = delta.Length();
+                normal = length > 1e-9f ? delta * (1.0f / length) : Vec2{0.0f, 1.0f};
+            }
+        }
+        if (!did_hit || t < 0.0f || t > max_distance) return;
+        RayHit2D hit;
+        hit.entity = e;
+        hit.distance = t;
+        hit.point = origin + dir * t;
+        hit.normal = normal;
+        hits.push_back(hit);
+    });
+
+    if (tiles_.tilemaps && tiles_.tilesets && (mask & 1u) != 0) {
+        const Vec2 end = origin + dir * max_distance;
+        EachEntity(world_, [&](Entity e) {
+            const TilemapRenderer* renderer = world_.GetComponent<TilemapRenderer>(e);
+            const Transform* transform = world_.GetComponent<Transform>(e);
+            if (!renderer || !transform || renderer->pixels_per_unit <= 0.0f) return;
+            const TilemapData* map = tiles_.tilemaps(renderer->tilemap.guid);
+            const Tileset* tileset = map ? tiles_.tilesets(map->tileset) : nullptr;
+            if (!map || !tileset) return;
+            const f32 cell_width = static_cast<f32>(tileset->tile_width) / renderer->pixels_per_unit;
+            const f32 cell_height = static_cast<f32>(tileset->tile_height) / renderer->pixels_per_unit;
+            if (cell_width <= 0.0f || cell_height <= 0.0f) return;
+            const i32 x0 = std::max(0, static_cast<i32>(std::floor((std::min(origin.x, end.x) - transform->position.x) / cell_width)));
+            const i32 x1 = std::min(static_cast<i32>(map->width) - 1, static_cast<i32>(std::floor((std::max(origin.x, end.x) - transform->position.x) / cell_width)));
+            const i32 y0 = std::max(0, static_cast<i32>(std::floor((std::min(origin.y, end.y) - transform->position.y) / cell_height)));
+            const i32 y1 = std::min(static_cast<i32>(map->height) - 1, static_cast<i32>(std::floor((std::max(origin.y, end.y) - transform->position.y) / cell_height)));
+            for (i32 y = y0; y <= y1; ++y) {
+                for (i32 x = x0; x <= x1; ++x) {
+                    if (!IsSolidAt(*map, *tileset, x, y)) continue;
+                    const Vec2 lo{transform->position.x + static_cast<f32>(x) * cell_width,
+                                  transform->position.y + static_cast<f32>(y) * cell_height};
+                    f32 t = 0.0f;
+                    Vec2 normal{};
+                    if (!SlabRay(origin, dir, lo, {lo.x + cell_width, lo.y + cell_height},
+                                 max_distance, t, normal)) continue;
+                    RayHit2D hit;
+                    hit.tile = true;
+                    hit.tile_x = x;
+                    hit.tile_y = y;
+                    hit.distance = t;
+                    hit.point = origin + dir * t;
+                    hit.normal = normal;
+                    hits.push_back(hit);
+                }
+            }
+        });
+    }
+    std::stable_sort(hits.begin(), hits.end(), [](const RayHit2D& a, const RayHit2D& b) {
+        return a.distance < b.distance;
+    });
+    if (hits.size() > max_hits) hits.resize(max_hits);
+    return hits;
+}
+
 bool Physics2D::CircleCast(Vec2 origin, Vec2 dir, f32 radius, f32 max_distance, RayHit2D& out, u32 mask) const {
     if (radius <= 0.0f || max_distance < 0.0f || dir.Dot(dir) <= 1e-18f) return false;
     f32 best = max_distance;
