@@ -30,7 +30,8 @@ void UpdatePlatformers(World& world, const Physics2D& physics, f32 dt) {
     if (!std::isfinite(dt) || dt <= 0.0f) return;
     std::vector<Entity> controlled;
     EachEntityWith(world, [&](Entity e) {
-        if (world.GetComponent<PlatformerController2D>(e) && world.GetComponent<Rigidbody2D>(e)) controlled.push_back(e);
+        if (world.GetComponent<PlatformerController2D>(e) && world.GetComponent<Rigidbody2D>(e) &&
+            world.GetComponent<Collider2D>(e) && world.GetComponent<Transform>(e)) controlled.push_back(e);
     });
     for (Entity e : controlled) {
         PlatformerController2D& pc = *world.GetComponent<PlatformerController2D>(e);
