@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace aether::sprite2d {
 
@@ -53,11 +54,17 @@ void AddBox(std::vector<Segment2D>& out, Vec2 lo, Vec2 hi) {
 } // namespace
 
 LightColor LightMap::Sample(f32 x, f32 y) const {
-    if (width == 0 || height == 0) return {};
-    const f32 fx = (x - origin.x) / cell_size - 0.5f;
-    const f32 fy = (y - origin.y) / cell_size - 0.5f;
+    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(origin.x) || !std::isfinite(origin.y) ||
+        !std::isfinite(cell_size) || cell_size <= 0.0f || width == 0 || height == 0 ||
+        cells.size() < static_cast<u64>(width) * height) return {};
+    const f64 fx = (static_cast<f64>(x) - origin.x) / cell_size - 0.5;
+    const f64 fy = (static_cast<f64>(y) - origin.y) / cell_size - 0.5;
+    constexpr f64 min_index = static_cast<f64>(std::numeric_limits<i32>::min());
+    constexpr f64 max_index = static_cast<f64>(std::numeric_limits<i32>::max()) - 1.0;
+    if (!std::isfinite(fx) || !std::isfinite(fy) || std::floor(fx) < min_index || std::floor(fx) > max_index ||
+        std::floor(fy) < min_index || std::floor(fy) > max_index) return {};
     const i32 x0 = static_cast<i32>(std::floor(fx)), y0 = static_cast<i32>(std::floor(fy));
-    const f32 tx = fx - static_cast<f32>(x0), ty = fy - static_cast<f32>(y0);
+    const f32 tx = static_cast<f32>(fx - x0), ty = static_cast<f32>(fy - y0);
     const auto lerp = [](const LightColor& a, const LightColor& b, f32 t) {
         return LightColor{a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t};
     };
@@ -67,9 +74,11 @@ LightColor LightMap::Sample(f32 x, f32 y) const {
 }
 
 const LightColor& LightMap::At(i32 x, i32 y) const {
-    x = std::clamp(x, 0, static_cast<i32>(width) - 1);
-    y = std::clamp(y, 0, static_cast<i32>(height) - 1);
-    return cells[static_cast<usize>(y) * width + static_cast<usize>(x)];
+    static const LightColor empty{};
+    if (width == 0 || height == 0 || cells.size() < static_cast<u64>(width) * height) return empty;
+    const u32 cx = x < 0 ? 0u : std::min(static_cast<u32>(x), width - 1);
+    const u32 cy = y < 0 ? 0u : std::min(static_cast<u32>(y), height - 1);
+    return cells[static_cast<usize>(cy) * width + cx];
 }
 
 std::vector<Segment2D> GatherOccluders(const World& world, const Resolvers2D& tiles, Vec2 region_min, Vec2 region_max) {
