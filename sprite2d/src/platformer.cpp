@@ -73,6 +73,7 @@ void UpdateCameraFollow2D(World& world, f32 dt) {
     });
     if (target.IsNull()) return;
     const Vec3 at = world.GetComponent<Transform>(target)->position;
+    if (!std::isfinite(at.x) || !std::isfinite(at.y)) return;
     std::vector<Entity> cameras;
     EachEntityWith(world, [&](Entity e) {
         if (world.GetComponent<CameraFollow2D>(e) && world.GetComponent<Transform>(e)) cameras.push_back(e);
@@ -80,6 +81,12 @@ void UpdateCameraFollow2D(World& world, f32 dt) {
     for (Entity e : cameras) {
         const CameraFollow2D& follow = *world.GetComponent<CameraFollow2D>(e);
         Transform& t = *world.GetComponent<Transform>(e);
+        if (!std::isfinite(follow.smoothing) || follow.smoothing < 0.0f ||
+            !std::isfinite(follow.offset.x) || !std::isfinite(follow.offset.y) ||
+            !std::isfinite(t.position.x) || !std::isfinite(t.position.y)) continue;
+        if (follow.use_bounds &&
+            (!std::isfinite(follow.min_bounds.x) || !std::isfinite(follow.min_bounds.y) ||
+             !std::isfinite(follow.max_bounds.x) || !std::isfinite(follow.max_bounds.y))) continue;
         f32 goal_x = at.x + follow.offset.x, goal_y = at.y + follow.offset.y;
         if (follow.use_bounds) {
             goal_x = std::clamp(goal_x, follow.min_bounds.x, std::max(follow.min_bounds.x, follow.max_bounds.x));
