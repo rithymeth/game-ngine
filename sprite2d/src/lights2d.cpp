@@ -152,12 +152,18 @@ LightColor LightAt(const World& world, const std::vector<Segment2D>& occluders, 
 
 LightMap BuildLightMap(const World& world, const Resolvers2D& tiles, Vec2 region_min, Vec2 region_max, f32 cell_size) {
     LightMap map;
-    if (cell_size <= 0.0f || region_max.x <= region_min.x || region_max.y <= region_min.y) return map;
+    if (!std::isfinite(cell_size) || cell_size <= 0.0f || !std::isfinite(region_min.x) ||
+        !std::isfinite(region_min.y) || !std::isfinite(region_max.x) || !std::isfinite(region_max.y) ||
+        region_max.x <= region_min.x || region_max.y <= region_min.y) return map;
+    constexpr f64 max_cells = 4.0 * 1024.0 * 1024.0;
+    const f64 width = std::ceil((static_cast<f64>(region_max.x) - region_min.x) / cell_size);
+    const f64 height = std::ceil((static_cast<f64>(region_max.y) - region_min.y) / cell_size);
+    if (!std::isfinite(width) || !std::isfinite(height) || width < 1.0 || height < 1.0 ||
+        width > max_cells || height > max_cells || width * height > max_cells) return map;
     map.origin = region_min;
     map.cell_size = cell_size;
-    map.width = static_cast<u32>(std::ceil((region_max.x - region_min.x) / cell_size));
-    map.height = static_cast<u32>(std::ceil((region_max.y - region_min.y) / cell_size));
-    if (static_cast<u64>(map.width) * map.height > 4u * 1024u * 1024u) return LightMap{};
+    map.width = static_cast<u32>(width);
+    map.height = static_cast<u32>(height);
     // Occluders from a little beyond the region: a light outside still shadows it.
     f32 reach = 0.0f;
     EachEntity(world, [&](Entity e) {
