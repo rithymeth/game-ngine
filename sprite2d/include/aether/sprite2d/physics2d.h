@@ -130,12 +130,26 @@ public:
     usize BodyCount() const { return body_count_; }
 
 private:
+    struct PairIdentity {
+        u64 first = 0, second = 0;
+        bool first_tile = false, second_tile = false, trigger = false;
+
+        bool operator<(const PairIdentity& other) const {
+            if (first_tile != other.first_tile) return first_tile < other.first_tile;
+            if (first != other.first) return first < other.first;
+            if (second_tile != other.second_tile) return second_tile < other.second_tile;
+            if (second != other.second) return second < other.second;
+            return trigger < other.trigger;
+        }
+        bool operator==(const PairIdentity&) const = default;
+    };
+
     World& world_;
     Resolvers2D tiles_;
     std::vector<Event2D> events_;
     std::vector<u64> grounded_, left_wall_, right_wall_; // entity keys
-    std::vector<u64> pairs_;                             // last step's contacting pairs
-    std::vector<std::pair<u64, Event2D>> last_info_;     // and what each was
+    std::vector<PairIdentity> pairs_;                    // last step's contacting pairs
+    std::vector<std::pair<PairIdentity, Event2D>> last_info_; // and what each was
     usize body_count_ = 0;
 };
 
