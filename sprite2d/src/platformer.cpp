@@ -38,7 +38,7 @@ void UpdatePlatformers(World& world, const Physics2D& physics, f32 dt) {
         pc.grounded = physics.IsGrounded(e);
         pc.time_since_grounded = pc.grounded ? 0.0f : std::min(pc.time_since_grounded + dt, 99.0f);
 
-        const f32 move = std::clamp(pc.input_move, -1.0f, 1.0f);
+        const f32 move = std::isfinite(pc.input_move) ? std::clamp(pc.input_move, -1.0f, 1.0f) : 0.0f;
         const f32 accel = pc.grounded ? pc.ground_acceleration : pc.air_acceleration;
         rb.velocity.x = MoveToward(rb.velocity.x, move * pc.move_speed, accel * dt);
         if (std::fabs(move) > 0.05f) pc.facing = move < 0.0f ? -1 : 1;
