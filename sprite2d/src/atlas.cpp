@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <numeric>
 
 namespace aether::sprite2d {
@@ -152,7 +153,10 @@ namespace {
 
 u32 NextPow2(u32 v) {
     u32 p = 1;
-    while (p < v) p <<= 1;
+    while (p < v) {
+        if (p > std::numeric_limits<u32>::max() / 2) return 0;
+        p <<= 1;
+    }
     return p;
 }
 
@@ -160,7 +164,7 @@ u32 NextPow2(u32 v) {
 bool TryPack(const std::vector<PackInput>& in, const std::vector<usize>& order, u32 padding, u32 width, u32 height,
              std::vector<PackedRect>& rects) {
     rects.assign(in.size(), {});
-    u32 x = 0, y = 0, shelf = 0;
+    u64 x = 0, y = 0, shelf = 0;
     for (usize index : order) {
         const PackInput& r = in[index];
         if (r.w > width || r.h > height) return false;
@@ -190,19 +194,35 @@ bool PackRects(const std::vector<PackInput>& inputs, u32 padding, u32 max_size, 
     std::stable_sort(order.begin(), order.end(), [&](usize a, usize b) { return inputs[a].h > inputs[b].h; });
     u64 area = 0;
     u32 widest = 1, tallest = 1;
+    if (max_size == 0 || max_size > static_cast<u32>(std::numeric_limits<i32>::max()) || padding > max_size) {
+        if (error) *error = "the sprites don't fit in " + std::to_string(max_size) + "x" + std::to_string(max_size);
+        return false;
+    }
+    const u64 max_area = static_cast<u64>(max_size) * max_size;
     for (const PackInput& r : inputs) {
         if (r.w == 0 || r.h == 0) {
             if (error) *error = "'" + r.name + "' has no size";
             return false;
         }
-        area += static_cast<u64>(r.w + padding) * (r.h + padding);
+        if (r.w > static_cast<u32>(std::numeric_limits<i32>::max()) ||
+            r.h > static_cast<u32>(std::numeric_limits<i32>::max()) ||
+            static_cast<u64>(r.w) + padding > max_size || static_cast<u64>(r.h) + padding > max_size) {
+            if (error) *error = "the sprites don't fit in " + std::to_string(max_size) + "x" + std::to_string(max_size);
+            return false;
+        }
+        const u64 padded_area = (static_cast<u64>(r.w) + padding) * (static_cast<u64>(r.h) + padding);
+        if (padded_area > max_area - area) {
+            if (error) *error = "the sprites don't fit in " + std::to_string(max_size) + "x" + std::to_string(max_size);
+            return false;
+        }
+        area += padded_area;
         widest = std::max(widest, r.w);
         tallest = std::max(tallest, r.h);
     }
     // Grow the texture, trying a wide shape before a taller one, until it fits.
     u32 side = NextPow2(static_cast<u32>(std::ceil(std::sqrt(static_cast<f64>(area)))));
     side = std::max({side, NextPow2(widest), 1u});
-    for (; side <= max_size; side <<= 1) {
+    for (; side != 0 && side <= max_size;) {
         for (u32 height : {side / 2, side}) {
             if (height == 0 || height < tallest) continue;
             std::vector<PackedRect> rects;
@@ -213,6 +233,8 @@ bool PackRects(const std::vector<PackInput>& inputs, u32 padding, u32 max_size, 
                 return true;
             }
         }
+        if (side > max_size / 2) break;
+        side <<= 1;
     }
     if (error) *error = "the sprites don't fit in " + std::to_string(max_size) + "x" + std::to_string(max_size);
     return false;
