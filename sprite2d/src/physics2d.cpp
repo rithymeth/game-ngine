@@ -450,7 +450,7 @@ void Physics2D::Step(f32 dt) {
             if (b.Min().x > a.Max().x) break;
             if (b.Min().y > a.Max().y || b.Max().y < a.Min().y) continue;
             const bool a_moves = a.rb && a.rb->type != BodyType2D::Static, b_moves = b.rb && b.rb->type != BodyType2D::Static;
-            if (!a_moves && !b_moves) continue; // two static things never meet
+            if (!a_moves && !b_moves && !a.trigger && !b.trigger) continue; // static triggers still report overlaps
             if (!Allowed(a, b)) continue;
             // A moving body is `a`, so an event names it first.
             if (!a_moves) candidates.push_back({order[j], order[i]});
