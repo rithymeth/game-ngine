@@ -217,10 +217,14 @@ LightMap BuildLightMap(const World& world, const Resolvers2D& tiles, Vec2 region
 
 std::vector<Vec2> VisibilityPolygon(Vec2 center, f32 radius, const std::vector<Segment2D>& occluders) {
     std::vector<Vec2> polygon;
-    if (radius <= 0.0f) return polygon;
+    if (!std::isfinite(center.x) || !std::isfinite(center.y) || !std::isfinite(radius) || radius <= 0.0f) return polygon;
+    const Vec2 bounds_min{center.x - radius, center.y - radius};
+    const Vec2 bounds_max{center.x + radius, center.y + radius};
+    if (!std::isfinite(bounds_min.x) || !std::isfinite(bounds_min.y) ||
+        !std::isfinite(bounds_max.x) || !std::isfinite(bounds_max.y)) return polygon;
     // The bounds: a square round the light, so every ray ends somewhere.
     std::vector<Segment2D> segs = occluders;
-    AddBox(segs, {center.x - radius, center.y - radius}, {center.x + radius, center.y + radius});
+    AddBox(segs, bounds_min, bounds_max);
     // Rays at every endpoint, and a hair either side of it.
     std::vector<f32> angles;
     for (const Segment2D& s : segs) {
