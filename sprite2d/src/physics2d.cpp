@@ -25,6 +25,15 @@ void EachEntity(const World& world, F&& f) {
 }
 
 u64 Key(Entity e) { return (static_cast<u64>(e.generation) << 32) | e.index; }
+bool RayHitBefore(const RayHit2D& a, const RayHit2D& b) {
+    if (a.distance != b.distance) return a.distance < b.distance;
+    if (a.tile != b.tile) return !a.tile;
+    if (a.tile) {
+        if (a.tile_y != b.tile_y) return a.tile_y < b.tile_y;
+        return a.tile_x < b.tile_x;
+    }
+    return Key(a.entity) < Key(b.entity);
+}
 void SortEntities(std::vector<Entity>& entities) {
     std::sort(entities.begin(), entities.end(), [](Entity a, Entity b) { return Key(a) < Key(b); });
 }
@@ -566,13 +575,16 @@ bool Physics2D::Raycast(Vec2 origin, Vec2 dir, f32 max_distance, RayHit2D& out, 
             }
         }
         if (hit && hit_t <= best) {
-            best = hit_t;
-            found = true;
-            out = {};
-            out.entity = e;
-            out.distance = hit_t;
-            out.point = origin + dir * hit_t;
-            out.normal = n;
+            RayHit2D candidate;
+            candidate.entity = e;
+            candidate.distance = hit_t;
+            candidate.point = origin + dir * hit_t;
+            candidate.normal = n;
+            if (!found || RayHitBefore(candidate, out)) {
+                best = hit_t;
+                found = true;
+                out = candidate;
+            }
         }
     });
     if (tiles_.tilemaps && tiles_.tilesets && (mask & 1u) != 0) { // solid tiles are on layer 1
@@ -596,15 +608,18 @@ bool Physics2D::Raycast(Vec2 origin, Vec2 dir, f32 max_distance, RayHit2D& out, 
                     f32 hit_t = 0;
                     Vec2 n{};
                     if (SlabRay(origin, dir, lo, {lo.x + cw, lo.y + ch}, best, hit_t, n) && hit_t <= best) {
-                        best = hit_t;
-                        found = true;
-                        out = {};
-                        out.tile = true;
-                        out.tile_x = x;
-                        out.tile_y = y;
-                        out.distance = hit_t;
-                        out.point = origin + dir * hit_t;
-                        out.normal = n;
+                        RayHit2D candidate;
+                        candidate.tile = true;
+                        candidate.tile_x = x;
+                        candidate.tile_y = y;
+                        candidate.distance = hit_t;
+                        candidate.point = origin + dir * hit_t;
+                        candidate.normal = n;
+                        if (!found || RayHitBefore(candidate, out)) {
+                            best = hit_t;
+                            found = true;
+                            out = candidate;
+                        }
                     }
                 }
             }
@@ -696,9 +711,7 @@ std::vector<RayHit2D> Physics2D::RaycastAll(Vec2 origin, Vec2 dir, f32 max_dista
             }
         });
     }
-    std::stable_sort(hits.begin(), hits.end(), [](const RayHit2D& a, const RayHit2D& b) {
-        return a.distance < b.distance;
-    });
+    std::sort(hits.begin(), hits.end(), RayHitBefore);
     if (hits.size() > max_hits) hits.resize(max_hits);
     return hits;
 }
@@ -712,16 +725,22 @@ bool Physics2D::CircleCast(Vec2 origin, Vec2 dir, f32 radius, f32 max_distance, 
     bool found = false;
     auto set_hit = [&](f32 t, Vec2 point, Vec2 normal, Entity entity, bool tile, i32 tile_x, i32 tile_y) {
         if (t < 0.0f || t > best) return;
-        best = t;
-        found = true;
-        out = {};
-        out.entity = entity;
-        out.tile = tile;
-        out.tile_x = tile_x;
-        out.tile_y = tile_y;
-        out.distance = t;
-        out.point = point;
-        out.normal = normal;
+        RayHit2D candidate;
+        candidate.entity = entity;
+        candidate.tile = tile;
+        candidate.tile_x = tile_x;
+        candidate.tile_y = tile_y;
+        candidate.distance = t;
+        candidate.point = point;
+        candidate.normal = normal;
+        if (!found && t <= best) {
+            best = t;
+            found = true;
+            out = candidate;
+        } else if (found && RayHitBefore(candidate, out)) {
+            best = t;
+            out = candidate;
+        }
     };
 
     EachEntity(world_, [&](Entity e) {
@@ -806,16 +825,22 @@ bool Physics2D::BoxCast(Vec2 origin, Vec2 half, Vec2 dir, f32 max_distance, RayH
     bool found = false;
     auto set_hit = [&](f32 t, Vec2 point, Vec2 normal, Entity entity, bool tile, i32 tile_x, i32 tile_y) {
         if (t < 0.0f || t > best) return;
-        best = t;
-        found = true;
-        out = {};
-        out.entity = entity;
-        out.tile = tile;
-        out.tile_x = tile_x;
-        out.tile_y = tile_y;
-        out.distance = t;
-        out.point = point;
-        out.normal = normal;
+        RayHit2D candidate;
+        candidate.entity = entity;
+        candidate.tile = tile;
+        candidate.tile_x = tile_x;
+        candidate.tile_y = tile_y;
+        candidate.distance = t;
+        candidate.point = point;
+        candidate.normal = normal;
+        if (!found) {
+            best = t;
+            found = true;
+            out = candidate;
+        } else if (RayHitBefore(candidate, out)) {
+            best = t;
+            out = candidate;
+        }
     };
     auto box_hit_point = [&](Vec2 cast_center, Vec2 target_lo, Vec2 target_hi, Vec2 normal) {
         if (normal.x < -0.5f) return Vec2{target_lo.x, std::clamp(cast_center.y, target_lo.y, target_hi.y)};
