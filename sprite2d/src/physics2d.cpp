@@ -82,15 +82,6 @@ bool RayHitBefore(const RayHit2D& a, const RayHit2D& b) {
 void SortEntities(std::vector<Entity>& entities) {
     std::sort(entities.begin(), entities.end(), [](Entity a, Entity b) { return Key(a) < Key(b); });
 }
-// The same for (a, b) and (b, a), so a pair keeps its identity whatever order the sweep finds it in.
-u64 PairKey(u64 a, u64 b, bool trigger) {
-    if (a > b) std::swap(a, b);
-    u64 h = a * 0x9E3779B97F4A7C15ull;
-    h ^= b + 0x7F4A7C15ull + (h << 6) + (h >> 2);
-    h *= 0xC2B2AE3D27D4EB4Full;
-    return (h & ~1ull) | (trigger ? 1ull : 0ull);
-}
-
 struct Body {
     Entity e;
     Transform* transform = nullptr;
@@ -522,8 +513,9 @@ void Physics2D::Step(f32 dt) {
     }
 
     // Contacts for events and grounding: a small margin counts resting touches.
-    std::vector<u64> now_pairs, grounded, left_wall, right_wall;
-    std::vector<std::pair<u64, Event2D>> info; // by pair key
+    std::vector<PairIdentity> now_pairs;
+    std::vector<u64> grounded, left_wall, right_wall;
+    std::vector<std::pair<PairIdentity, Event2D>> info;
     for (const Candidate& c : candidates) {
         Body& a = body_at(c.a);
         Body& b = body_at(c.b);
@@ -534,8 +526,6 @@ void Physics2D::Step(f32 dt) {
             if (b.tile && InternalFace(b, m.normal * -1.0f)) continue;
             if (a.tile && InternalFace(a, m.normal)) continue;
         }
-        const u64 ka = a.tile ? (1ull << 63) : Key(a.e); // all of the tiles are one thing to touch
-        const u64 kb = b.tile ? (1ull << 63) : Key(b.e);
         // Grounding: the contact normal (a to b) points up onto a, or down onto b... a body is grounded when
         // something is below it: for a (the lower side of the normal pointing up toward b means b is above a).
         if (!trigger_pair) {
@@ -550,15 +540,22 @@ void Physics2D::Step(f32 dt) {
                 if (m.normal.x > 0.7f) left_wall.push_back(Key(b.e));
             }
         }
-        // A pair's identity; a tile contact is its body with the cell.
-        const u64 pk = PairKey(ka, kb, trigger_pair);
-        now_pairs.push_back(pk);
+        // Store both exact entity keys and whether either side represents the aggregate tile contact.
+        // Canonical ordering keeps the pair stable when candidate order changes between frames.
+        u64 first = a.tile ? 0 : Key(a.e), second = b.tile ? 0 : Key(b.e);
+        bool first_tile = a.tile, second_tile = b.tile;
+        if (first_tile != second_tile ? first_tile : first > second) {
+            std::swap(first, second);
+            std::swap(first_tile, second_tile);
+        }
+        const PairIdentity identity{first, second, first_tile, second_tile, trigger_pair};
+        now_pairs.push_back(identity);
         Event2D ev;
         ev.kind = trigger_pair ? Event2D::Kind::TriggerEnter : Event2D::Kind::Begin;
         ev.a = a.tile ? b.e : a.e;
         ev.b = a.tile ? Entity{} : (b.tile ? Entity{} : b.e);
         ev.normal = a.tile ? m.normal * -1.0f : m.normal;
-        info.emplace_back(pk, ev);
+        info.emplace_back(identity, ev);
     }
     std::sort(now_pairs.begin(), now_pairs.end());
     now_pairs.erase(std::unique(now_pairs.begin(), now_pairs.end()), now_pairs.end());
@@ -571,7 +568,7 @@ void Physics2D::Step(f32 dt) {
     for (const auto& [old, ev] : last_info_) {
         if (std::binary_search(now_pairs.begin(), now_pairs.end(), old)) continue;
         Event2D end = ev;
-        end.kind = (old & 1) ? Event2D::Kind::TriggerExit : Event2D::Kind::End;
+        end.kind = old.trigger ? Event2D::Kind::TriggerExit : Event2D::Kind::End;
         events_.push_back(end);
     }
     std::stable_sort(info.begin(), info.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
