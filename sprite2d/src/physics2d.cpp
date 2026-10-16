@@ -588,7 +588,7 @@ void Physics2D::Step(f32 dt) {
 bool Physics2D::Raycast(Vec2 origin, Vec2 dir, f32 max_distance, RayHit2D& out, u32 mask) const {
     const f32 len = dir.Length();
     if (!IsFinite(origin) || !IsFinite(dir) || !std::isfinite(len) || !std::isfinite(max_distance) ||
-        len < 1e-9f || max_distance <= 0.0f) return false;
+        len < 1e-9f || max_distance < 0.0f) return false;
     dir = dir * (1.0f / len);
     f32 best = max_distance;
     bool found = false;
