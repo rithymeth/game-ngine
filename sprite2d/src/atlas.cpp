@@ -30,11 +30,15 @@ const SpriteClip* SpriteAtlas::FindClip(std::string_view name) const {
 }
 
 bool SpriteAtlas::Uv(const SpriteFrame& frame, f32 out[4]) const {
-    if (width == 0 || height == 0) return false;
+    if (!out || width == 0 || height == 0 || frame.x < 0 || frame.y < 0 || frame.w <= 0 || frame.h <= 0)
+        return false;
+    const u64 right = static_cast<u64>(frame.x) + static_cast<u64>(frame.w);
+    const u64 bottom = static_cast<u64>(frame.y) + static_cast<u64>(frame.h);
+    if (right > width || bottom > height) return false;
     out[0] = static_cast<f32>(frame.x) / static_cast<f32>(width);
     out[1] = static_cast<f32>(frame.y) / static_cast<f32>(height);
-    out[2] = static_cast<f32>(frame.x + frame.w) / static_cast<f32>(width);
-    out[3] = static_cast<f32>(frame.y + frame.h) / static_cast<f32>(height);
+    out[2] = static_cast<f32>(right) / static_cast<f32>(width);
+    out[3] = static_cast<f32>(bottom) / static_cast<f32>(height);
     return true;
 }
 
