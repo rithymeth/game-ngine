@@ -25,6 +25,9 @@ void EachEntity(const World& world, F&& f) {
 }
 
 u64 Key(Entity e) { return (static_cast<u64>(e.generation) << 32) | e.index; }
+void SortEntities(std::vector<Entity>& entities) {
+    std::sort(entities.begin(), entities.end(), [](Entity a, Entity b) { return Key(a) < Key(b); });
+}
 // The same for (a, b) and (b, a), so a pair keeps its identity whatever order the sweep finds it in.
 u64 PairKey(u64 a, u64 b, bool trigger) {
     if (a > b) std::swap(a, b);
@@ -892,6 +895,7 @@ std::vector<Entity> Physics2D::OverlapBox(Vec2 center, Vec2 half, u32 mask) cons
         const Vec2 h = c->shape == Shape2D::Box ? c->half_extents : Vec2{c->radius, c->radius};
         if (std::fabs(p.x - center.x) <= h.x + half.x && std::fabs(p.y - center.y) <= h.y + half.y) result.push_back(e);
     });
+    SortEntities(result);
     return result;
 }
 
@@ -914,6 +918,7 @@ std::vector<Entity> Physics2D::OverlapCircle(Vec2 center, f32 radius, u32 mask) 
             if (delta.Dot(delta) <= radius_sq) result.push_back(e);
         }
     });
+    SortEntities(result);
     return result;
 }
 
@@ -944,6 +949,7 @@ std::vector<Entity> Physics2D::OverlapOrientedBox(Vec2 center, Vec2 half, f32 ra
             std::fabs(delta.Dot(axis_y)) > half.y + box_half.x * std::fabs(axis_y.x) + box_half.y * std::fabs(axis_y.y)) return;
         result.push_back(e);
     });
+    SortEntities(result);
     return result;
 }
 
@@ -1002,6 +1008,7 @@ std::vector<Entity> Physics2D::OverlapCapsule(Vec2 point_a, Vec2 point_b, f32 ra
             result.push_back(e);
         }
     });
+    SortEntities(result);
     return result;
 }
 
@@ -1021,6 +1028,7 @@ std::vector<Entity> Physics2D::OverlapPoint(Vec2 point, u32 mask) const {
             result.push_back(e);
         }
     });
+    SortEntities(result);
     return result;
 }
 
