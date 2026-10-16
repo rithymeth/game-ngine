@@ -326,6 +326,11 @@ void Physics2D::Step(f32 dt) {
     bool any = false;
     world_.ForEachChunk<Collider2D>([&](u32, Collider2D*) { any = true; });
     if (!any) { // nothing 2D here: skip the walk, and end what was touching
+        for (const auto& [old, ev] : last_info_) {
+            Event2D end = ev;
+            end.kind = old.trigger ? Event2D::Kind::TriggerExit : Event2D::Kind::End;
+            events_.push_back(end);
+        }
         body_count_ = 0;
         pairs_.clear();
         last_info_.clear();
