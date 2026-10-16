@@ -51,6 +51,34 @@ void AddBox(std::vector<Segment2D>& out, Vec2 lo, Vec2 hi) {
     out.push_back({d, a});
 }
 
+struct LightTileRange {
+    i32 first = 0;
+    i32 last = -1;
+    bool Valid() const { return first <= last; }
+};
+
+LightTileRange GetLightTileRange(f32 world_min, f32 world_max, f32 origin, f32 cell_size, u32 extent) {
+    if (extent == 0 || !std::isfinite(world_min) || !std::isfinite(world_max) || world_min > world_max ||
+        !std::isfinite(origin) || !std::isfinite(cell_size) || cell_size <= 0.0f) return {};
+    const f64 grid_min = (static_cast<f64>(world_min) - origin) / cell_size;
+    const f64 grid_max = (static_cast<f64>(world_max) - origin) / cell_size;
+    if (!std::isfinite(grid_min) || !std::isfinite(grid_max) || grid_max < 0.0 || grid_min > extent) return {};
+    const f64 max_index = static_cast<f64>(std::min<u64>(static_cast<u64>(extent) - 1,
+                                                         static_cast<u64>(std::numeric_limits<i32>::max() - 1)));
+    const auto index = [max_index](f64 value) {
+        return static_cast<i32>(std::clamp(std::floor(value), 0.0, max_index));
+    };
+    return {index(grid_min), index(grid_max)};
+}
+
+bool LightTileGeometry(const Tileset& tileset, f32 pixels_per_unit, Vec2& cell_size) {
+    if (!std::isfinite(pixels_per_unit) || pixels_per_unit <= 0.0f ||
+        tileset.tile_width == 0 || tileset.tile_height == 0) return false;
+    cell_size = {static_cast<f32>(tileset.tile_width) / pixels_per_unit,
+                 static_cast<f32>(tileset.tile_height) / pixels_per_unit};
+    return std::isfinite(cell_size.x) && std::isfinite(cell_size.y) && cell_size.x > 0.0f && cell_size.y > 0.0f;
+}
+
 } // namespace
 
 LightColor LightMap::Sample(f32 x, f32 y) const {
@@ -102,21 +130,21 @@ std::vector<Segment2D> GatherOccluders(const World& world, const Resolvers2D& ti
             }
         }
         const TilemapRenderer* r = world.GetComponent<TilemapRenderer>(e);
-        if (!r || !tiles.tilemaps || !tiles.tilesets || r->pixels_per_unit <= 0.0f) return;
+        if (!r || !tiles.tilemaps || !tiles.tilesets || !std::isfinite(t->position.x) || !std::isfinite(t->position.y)) return;
         const TilemapData* map = tiles.tilemaps(r->tilemap.guid);
         const Tileset* ts = map ? tiles.tilesets(map->tileset) : nullptr;
         if (!map || !ts) return;
-        const f32 cw = static_cast<f32>(ts->tile_width) / r->pixels_per_unit, ch = static_cast<f32>(ts->tile_height) / r->pixels_per_unit;
-        const i32 x0 = std::max(0, static_cast<i32>(std::floor((region_min.x - t->position.x) / cw)));
-        const i32 y0 = std::max(0, static_cast<i32>(std::floor((region_min.y - t->position.y) / ch)));
-        const i32 x1 = std::min(static_cast<i32>(map->width) - 1, static_cast<i32>(std::floor((region_max.x - t->position.x) / cw)));
-        const i32 y1 = std::min(static_cast<i32>(map->height) - 1, static_cast<i32>(std::floor((region_max.y - t->position.y) / ch)));
+        Vec2 cell;
+        if (!LightTileGeometry(*ts, r->pixels_per_unit, cell)) return;
+        const LightTileRange xr = GetLightTileRange(region_min.x, region_max.x, t->position.x, cell.x, map->width);
+        const LightTileRange yr = GetLightTileRange(region_min.y, region_max.y, t->position.y, cell.y, map->height);
+        if (!xr.Valid() || !yr.Valid()) return;
         const auto solid = [&](i32 x, i32 y) { return map->InBounds(x, y) && IsSolidAt(*map, *ts, x, y); };
-        for (i32 y = y0; y <= y1; ++y) {
-            for (i32 x = x0; x <= x1; ++x) {
+        for (i32 y = yr.first; y <= yr.last; ++y) {
+            for (i32 x = xr.first; x <= xr.last; ++x) {
                 if (!solid(x, y)) continue;
-                const f32 lx = t->position.x + static_cast<f32>(x) * cw, ly = t->position.y + static_cast<f32>(y) * ch;
-                const Vec2 bl{lx, ly}, br{lx + cw, ly}, tr{lx + cw, ly + ch}, tl{lx, ly + ch};
+                const f32 lx = t->position.x + static_cast<f32>(x) * cell.x, ly = t->position.y + static_cast<f32>(y) * cell.y;
+                const Vec2 bl{lx, ly}, br{lx + cell.x, ly}, tr{lx + cell.x, ly + cell.y}, tl{lx, ly + cell.y};
                 if (!solid(x, y - 1)) out.push_back({bl, br});
                 if (!solid(x + 1, y)) out.push_back({br, tr});
                 if (!solid(x, y + 1)) out.push_back({tr, tl});
@@ -196,16 +224,22 @@ LightMap BuildLightMap(const World& world, const Resolvers2D& tiles, Vec2 region
     EachEntity(world, [&](Entity e) {
         const Transform* t = world.GetComponent<Transform>(e);
         const TilemapRenderer* r = world.GetComponent<TilemapRenderer>(e);
-        if (!t || !r || !tiles.tilemaps || !tiles.tilesets || r->pixels_per_unit <= 0.0f) return;
+        if (!t || !r || !tiles.tilemaps || !tiles.tilesets || !std::isfinite(t->position.x) ||
+            !std::isfinite(t->position.y)) return;
         const TilemapData* tm = tiles.tilemaps(r->tilemap.guid);
         const Tileset* ts = tm ? tiles.tilesets(tm->tileset) : nullptr;
         if (!tm || !ts) return;
-        const f32 cw = static_cast<f32>(ts->tile_width) / r->pixels_per_unit, ch = static_cast<f32>(ts->tile_height) / r->pixels_per_unit;
+        Vec2 cell;
+        if (!LightTileGeometry(*ts, r->pixels_per_unit, cell)) return;
         for (u32 y = 0; y < map.height; ++y) {
             for (u32 x = 0; x < map.width; ++x) {
-                const f32 px = region_min.x + (static_cast<f32>(x) + 0.5f) * cell_size - t->position.x;
-                const f32 py = region_min.y + (static_cast<f32>(y) + 0.5f) * cell_size - t->position.y;
-                const i32 cx = static_cast<i32>(std::floor(px / cw)), cy = static_cast<i32>(std::floor(py / ch));
+                const f64 px = (static_cast<f64>(region_min.x) + (static_cast<f64>(x) + 0.5) * cell_size - t->position.x) / cell.x;
+                const f64 py = (static_cast<f64>(region_min.y) + (static_cast<f64>(y) + 0.5) * cell_size - t->position.y) / cell.y;
+                if (!std::isfinite(px) || !std::isfinite(py) || px < 0.0 || py < 0.0 ||
+                    px >= tm->width || py >= tm->height ||
+                    px > static_cast<f64>(std::numeric_limits<i32>::max()) ||
+                    py > static_cast<f64>(std::numeric_limits<i32>::max())) continue;
+                const i32 cx = static_cast<i32>(std::floor(px)), cy = static_cast<i32>(std::floor(py));
                 if (tm->InBounds(cx, cy) && IsSolidAt(*tm, *ts, cx, cy)) solid[static_cast<usize>(y) * map.width + x] = 1;
             }
         }
