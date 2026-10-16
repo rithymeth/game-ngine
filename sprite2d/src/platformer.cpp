@@ -27,6 +27,7 @@ void EachEntityWith(const World& world, const std::function<void(Entity)>& f) {
 } // namespace
 
 void UpdatePlatformers(World& world, const Physics2D& physics, f32 dt) {
+    if (!std::isfinite(dt) || dt <= 0.0f) return;
     std::vector<Entity> controlled;
     EachEntityWith(world, [&](Entity e) {
         if (world.GetComponent<PlatformerController2D>(e) && world.GetComponent<Rigidbody2D>(e)) controlled.push_back(e);
@@ -65,6 +66,7 @@ void UpdatePlatformers(World& world, const Physics2D& physics, f32 dt) {
 }
 
 void UpdateCameraFollow2D(World& world, f32 dt) {
+    if (!std::isfinite(dt) || dt <= 0.0f) return;
     Entity target;
     EachEntityWith(world, [&](Entity e) {
         if (target.IsNull() && world.GetComponent<PlatformerController2D>(e) && world.GetComponent<Transform>(e)) target = e;
