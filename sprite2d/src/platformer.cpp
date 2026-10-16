@@ -108,6 +108,10 @@ void UpdateCameraFollow2D(World& world, f32 dt) {
         const f32 k = follow.smoothing > 0.0f ? 1.0f - std::exp(-follow.smoothing * dt) : 1.0f;
         t.position.x += (goal_x - t.position.x) * k;
         t.position.y += (goal_y - t.position.y) * k;
+        if (follow.use_bounds) {
+            t.position.x = std::clamp(t.position.x, follow.min_bounds.x, std::max(follow.min_bounds.x, follow.max_bounds.x));
+            t.position.y = std::clamp(t.position.y, follow.min_bounds.y, std::max(follow.min_bounds.y, follow.max_bounds.y));
+        }
     }
 }
 
