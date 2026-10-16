@@ -541,7 +541,12 @@ bool Physics2D::Raycast(Vec2 origin, Vec2 dir, f32 max_distance, RayHit2D& out, 
             const Vec2 oc = origin - center;
             const f32 b = oc.Dot(dir), cc = oc.Dot(oc) - c->radius * c->radius;
             const f32 disc = b * b - cc;
-            if (disc >= 0.0f) {
+            if (cc <= 0.0f) {
+                hit = true;
+                hit_t = 0.0f;
+                const f32 distance = oc.Length();
+                n = distance > 1e-9f ? oc * (1.0f / distance) : Vec2{0.0f, 1.0f};
+            } else if (disc >= 0.0f) {
                 const f32 s = std::sqrt(disc);
                 f32 tt = -b - s;
                 if (tt < 0.0f) tt = -b + s;
