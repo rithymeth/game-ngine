@@ -132,6 +132,7 @@ bool Occluded(const std::vector<Segment2D>& occluders, Vec2 from, Vec2 to) {
 
 LightColor LightAt(const World& world, const std::vector<Segment2D>& occluders, Vec2 point) {
     LightColor sum;
+    if (!std::isfinite(point.x) || !std::isfinite(point.y)) return sum;
     EachEntity(world, [&](Entity e) {
         const Light2D* light = world.GetComponent<Light2D>(e);
         const Transform* t = world.GetComponent<Transform>(e);
