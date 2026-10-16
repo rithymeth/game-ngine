@@ -183,6 +183,15 @@ bool SlabRay(Vec2 origin, Vec2 dir, Vec2 lo, Vec2 hi, f32 max_t, f32& t_out, Vec
         if (t0 > t1) return false;
     }
     t_out = t0;
+    if (t0 == 0.0f && n.Dot(n) == 0.0f) {
+        const f32 left = origin.x - lo.x, right = hi.x - origin.x;
+        const f32 bottom = origin.y - lo.y, top = hi.y - origin.y;
+        const f32 nearest = std::min({left, right, bottom, top});
+        if (nearest == left) n = {-1, 0};
+        else if (nearest == right) n = {1, 0};
+        else if (nearest == bottom) n = {0, -1};
+        else n = {0, 1};
+    }
     normal = n;
     return true;
 }
@@ -855,15 +864,6 @@ bool Physics2D::BoxCast(Vec2 origin, Vec2 half, Vec2 dir, f32 max_distance, RayH
         const Vec2 expanded_hi{target_hi.x + half.x, target_hi.y + half.y};
         if (!SlabRay(origin, dir, expanded_lo, expanded_hi, t_limit, t, normal)) return false;
         const Vec2 cast_center = origin + dir * t;
-        if (t == 0.0f && normal.Dot(normal) == 0.0f) {
-            const f32 left = cast_center.x - expanded_lo.x, right = expanded_hi.x - cast_center.x;
-            const f32 bottom = cast_center.y - expanded_lo.y, top = expanded_hi.y - cast_center.y;
-            const f32 nearest = std::min({left, right, bottom, top});
-            if (nearest == left) normal = {-1, 0};
-            else if (nearest == right) normal = {1, 0};
-            else if (nearest == bottom) normal = {0, -1};
-            else normal = {0, 1};
-        }
         point = box_hit_point(cast_center, target_lo, target_hi, normal);
         return true;
     };
