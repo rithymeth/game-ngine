@@ -382,7 +382,12 @@ void Physics2D::Step(f32 dt) {
     // Body pairs by a sweep along x, and tile cells for moving bodies.
     std::vector<int> order(bodies.size());
     for (usize i = 0; i < order.size(); ++i) order[i] = static_cast<int>(i);
-    std::sort(order.begin(), order.end(), [&](int a, int b) { return bodies[static_cast<usize>(a)].Min().x < bodies[static_cast<usize>(b)].Min().x; });
+    std::sort(order.begin(), order.end(), [&](int a, int b) {
+        const Body& body_a = bodies[static_cast<usize>(a)];
+        const Body& body_b = bodies[static_cast<usize>(b)];
+        const f32 min_a = body_a.Min().x, min_b = body_b.Min().x;
+        return min_a == min_b ? Key(body_a.e) < Key(body_b.e) : min_a < min_b;
+    });
     for (usize i = 0; i < order.size(); ++i) {
         const Body& a = bodies[static_cast<usize>(order[i])];
         for (usize j = i + 1; j < order.size(); ++j) {
