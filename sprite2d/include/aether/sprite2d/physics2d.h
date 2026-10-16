@@ -84,7 +84,9 @@ public:
     Physics2DSettings settings;
 
     // Advances by `dt`: bodies are read from the world, moved, and written
-    // back (Transform x, y and Rigidbody2D::velocity).
+    // back (Transform x, y and Rigidbody2D::velocity). Non-finite or
+    // non-positive time steps, and invalid settings, leave the simulation
+    // unchanged and clear the event list.
     void Step(f32 dt);
 
     // Contact and trigger transitions of the last Step.
