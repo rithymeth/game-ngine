@@ -11,6 +11,24 @@ namespace {
 bool IsFinite(Vec2 value) {
     return std::isfinite(value.x) && std::isfinite(value.y);
 }
+bool IsValidCollider(const Collider2D& collider, const Transform& transform) {
+    const Vec2 position{transform.position.x, transform.position.y};
+    const Vec2 center = position + collider.offset;
+    if (!IsFinite(position) || !IsFinite(collider.offset) || !IsFinite(center) ||
+        !std::isfinite(collider.friction) || collider.friction < 0.0f || collider.friction > 2.0f ||
+        !std::isfinite(collider.restitution) || collider.restitution < 0.0f || collider.restitution > 1.0f) return false;
+    if (collider.shape == Shape2D::Box)
+        return IsFinite(collider.half_extents) && collider.half_extents.x >= 0.0f && collider.half_extents.y >= 0.0f;
+    if (collider.shape == Shape2D::Circle) return std::isfinite(collider.radius) && collider.radius >= 0.0f;
+    return false;
+}
+bool IsValidRigidbody(const Rigidbody2D& body) {
+    if (body.type == BodyType2D::Static) return true;
+    if (body.type == BodyType2D::Kinematic) return IsFinite(body.velocity);
+    return body.type == BodyType2D::Dynamic && std::isfinite(body.mass) && body.mass > 0.0f &&
+           std::isfinite(body.gravity_scale) && std::isfinite(body.linear_damping) &&
+           body.linear_damping >= 0.0f && IsFinite(body.velocity);
+}
 bool TilemapGeometry(const TilemapRenderer& renderer, const Transform& transform, const Tileset& tileset,
                      Vec2& origin, Vec2& cell_size) {
     origin = {transform.position.x, transform.position.y};
@@ -338,6 +356,7 @@ void Physics2D::Step(f32 dt) {
         b.transform = world_.GetComponent<Transform>(e);
         const Collider2D* c = world_.GetComponent<Collider2D>(e);
         b.rb = world_.GetComponent<Rigidbody2D>(e);
+        if (!IsValidCollider(*c, *b.transform) || (b.rb && !IsValidRigidbody(*b.rb))) continue;
         b.shape = c->shape;
         b.half = c->half_extents;
         b.radius = c->radius;
@@ -578,7 +597,7 @@ bool Physics2D::Raycast(Vec2 origin, Vec2 dir, f32 max_distance, RayHit2D& out, 
     EachEntity(world_, [&](Entity e) {
         const Transform* t = world_.GetComponent<Transform>(e);
         const Collider2D* c = world_.GetComponent<Collider2D>(e);
-        if (!t || !c || c->trigger || (c->layer & mask) == 0) return;
+        if (!t || !c || !IsValidCollider(*c, *t) || c->trigger || (c->layer & mask) == 0) return;
         const Vec2 center{t->position.x + c->offset.x, t->position.y + c->offset.y};
         f32 hit_t = 0;
         Vec2 n{};
@@ -675,7 +694,8 @@ std::vector<RayHit2D> Physics2D::RaycastAll(Vec2 origin, Vec2 dir, f32 max_dista
     EachEntity(world_, [&](Entity e) {
         const Transform* transform = world_.GetComponent<Transform>(e);
         const Collider2D* collider = world_.GetComponent<Collider2D>(e);
-        if (!transform || !collider || collider->trigger || (collider->layer & mask) == 0) return;
+        if (!transform || !collider || !IsValidCollider(*collider, *transform) || collider->trigger ||
+            (collider->layer & mask) == 0) return;
         const Vec2 center{transform->position.x + collider->offset.x,
                           transform->position.y + collider->offset.y};
         f32 t = 0.0f;
@@ -785,7 +805,8 @@ bool Physics2D::CircleCast(Vec2 origin, Vec2 dir, f32 radius, f32 max_distance, 
     EachEntity(world_, [&](Entity e) {
         const Transform* transform = world_.GetComponent<Transform>(e);
         const Collider2D* collider = world_.GetComponent<Collider2D>(e);
-        if (!transform || !collider || collider->trigger || (collider->layer & mask) == 0) return;
+        if (!transform || !collider || !IsValidCollider(*collider, *transform) || collider->trigger ||
+            (collider->layer & mask) == 0) return;
         const Vec2 center{transform->position.x + collider->offset.x,
                           transform->position.y + collider->offset.y};
         if (collider->shape == Shape2D::Box) {
@@ -904,7 +925,8 @@ bool Physics2D::BoxCast(Vec2 origin, Vec2 half, Vec2 dir, f32 max_distance, RayH
     EachEntity(world_, [&](Entity e) {
         const Transform* transform = world_.GetComponent<Transform>(e);
         const Collider2D* collider = world_.GetComponent<Collider2D>(e);
-        if (!transform || !collider || collider->trigger || (collider->layer & mask) == 0) return;
+        if (!transform || !collider || !IsValidCollider(*collider, *transform) || collider->trigger ||
+            (collider->layer & mask) == 0) return;
         const Vec2 center{transform->position.x + collider->offset.x,
                           transform->position.y + collider->offset.y};
         f32 t = 0.0f;
@@ -963,7 +985,7 @@ std::vector<Entity> Physics2D::OverlapBox(Vec2 center, Vec2 half, u32 mask) cons
     EachEntity(world_, [&](Entity e) {
         const Transform* t = world_.GetComponent<Transform>(e);
         const Collider2D* c = world_.GetComponent<Collider2D>(e);
-        if (!t || !c || (c->layer & mask) == 0) return;
+        if (!t || !c || !IsValidCollider(*c, *t) || (c->layer & mask) == 0) return;
         const Vec2 p{t->position.x + c->offset.x, t->position.y + c->offset.y};
         if (c->shape == Shape2D::Circle) {
             const Vec2 closest{std::clamp(p.x, center.x - half.x, center.x + half.x),
@@ -986,7 +1008,7 @@ std::vector<Entity> Physics2D::OverlapCircle(Vec2 center, f32 radius, u32 mask) 
     EachEntity(world_, [&](Entity e) {
         const Transform* t = world_.GetComponent<Transform>(e);
         const Collider2D* c = world_.GetComponent<Collider2D>(e);
-        if (!t || !c || (c->layer & mask) == 0) return;
+        if (!t || !c || !IsValidCollider(*c, *t) || (c->layer & mask) == 0) return;
         const Vec2 p{t->position.x + c->offset.x, t->position.y + c->offset.y};
         if (c->shape == Shape2D::Circle) {
             const Vec2 delta = p - center;
@@ -1011,7 +1033,7 @@ std::vector<Entity> Physics2D::OverlapOrientedBox(Vec2 center, Vec2 half, f32 ra
     EachEntity(world_, [&](Entity e) {
         const Transform* t = world_.GetComponent<Transform>(e);
         const Collider2D* collider = world_.GetComponent<Collider2D>(e);
-        if (!t || !collider || (collider->layer & mask) == 0) return;
+        if (!t || !collider || !IsValidCollider(*collider, *t) || (collider->layer & mask) == 0) return;
         const Vec2 p{t->position.x + collider->offset.x, t->position.y + collider->offset.y};
         const Vec2 delta = p - center;
         if (collider->shape == Shape2D::Circle) {
@@ -1056,7 +1078,7 @@ std::vector<Entity> Physics2D::OverlapCapsule(Vec2 point_a, Vec2 point_b, f32 ra
     EachEntity(world_, [&](Entity e) {
         const Transform* transform = world_.GetComponent<Transform>(e);
         const Collider2D* collider = world_.GetComponent<Collider2D>(e);
-        if (!transform || !collider || (collider->layer & mask) == 0) return;
+        if (!transform || !collider || !IsValidCollider(*collider, *transform) || (collider->layer & mask) == 0) return;
         const Vec2 center{transform->position.x + collider->offset.x,
                           transform->position.y + collider->offset.y};
         if (collider->shape == Shape2D::Circle) {
@@ -1101,7 +1123,7 @@ std::vector<Entity> Physics2D::OverlapPoint(Vec2 point, u32 mask) const {
     EachEntity(world_, [&](Entity e) {
         const Transform* transform = world_.GetComponent<Transform>(e);
         const Collider2D* collider = world_.GetComponent<Collider2D>(e);
-        if (!transform || !collider || (collider->layer & mask) == 0) return;
+        if (!transform || !collider || !IsValidCollider(*collider, *transform) || (collider->layer & mask) == 0) return;
         const Vec2 center{transform->position.x + collider->offset.x,
                           transform->position.y + collider->offset.y};
         if (collider->shape == Shape2D::Circle) {
