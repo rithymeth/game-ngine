@@ -399,8 +399,7 @@ void Physics2D::Step(f32 dt) {
     }
     for (int i = 0; i < dynamic_count; ++i) {
         const Body& b = bodies[static_cast<usize>(i)];
-        if (b.dynamic && !b.trigger) add_tiles_for(i);
-        else if (b.trigger && b.rb && b.rb->type != BodyType2D::Static) add_tiles_for(i); // triggers see tiles as contacts too
+        if (b.rb && b.rb->type != BodyType2D::Static) add_tiles_for(i); // moving and trigger bodies detect solid tile contacts
     }
     const auto body_at = [&](int i) -> Body& {
         return i < dynamic_count ? bodies[static_cast<usize>(i)] : statics[static_cast<usize>(i - dynamic_count)];
