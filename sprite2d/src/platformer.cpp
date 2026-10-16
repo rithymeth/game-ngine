@@ -35,6 +35,18 @@ void UpdatePlatformers(World& world, const Physics2D& physics, f32 dt) {
     for (Entity e : controlled) {
         PlatformerController2D& pc = *world.GetComponent<PlatformerController2D>(e);
         Rigidbody2D& rb = *world.GetComponent<Rigidbody2D>(e);
+        if (!std::isfinite(pc.move_speed) || pc.move_speed < 0.0f ||
+            !std::isfinite(pc.ground_acceleration) || pc.ground_acceleration < 0.0f ||
+            !std::isfinite(pc.air_acceleration) || pc.air_acceleration < 0.0f ||
+            !std::isfinite(pc.jump_speed) || pc.jump_speed < 0.0f ||
+            !std::isfinite(pc.coyote_time) || pc.coyote_time < 0.0f ||
+            !std::isfinite(pc.jump_buffer) || pc.jump_buffer < 0.0f ||
+            !std::isfinite(pc.jump_cut) || pc.jump_cut < 0.0f || pc.jump_cut > 1.0f ||
+            !std::isfinite(pc.fall_gravity_scale) || pc.fall_gravity_scale < 0.0f ||
+            !std::isfinite(pc.max_fall_speed) || pc.max_fall_speed < 0.0f ||
+            !std::isfinite(pc.time_since_grounded) || pc.time_since_grounded < 0.0f ||
+            !std::isfinite(pc.jump_buffer_timer) || pc.jump_buffer_timer < 0.0f ||
+            !std::isfinite(rb.velocity.x) || !std::isfinite(rb.velocity.y)) continue;
         pc.grounded = physics.IsGrounded(e);
         pc.time_since_grounded = pc.grounded ? 0.0f : std::min(pc.time_since_grounded + dt, 99.0f);
 
