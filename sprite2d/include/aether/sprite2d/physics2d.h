@@ -107,10 +107,12 @@ public:
     // face. `dir` needn't be normalised.
     std::vector<RayHit2D> RaycastAll(Vec2 origin, Vec2 dir, f32 max_distance,
                                      u32 mask = 0xFFFFFFFFu, usize max_hits = 64) const;
-    // Sweeps a circle along a ray, reporting the nearest collider or solid tile hit. `dir` needn't be normalised.
+    // Sweeps a circle along a ray, reporting the nearest collider or solid tile hit. A zero radius is a point cast;
+    // `dir` needn't be normalised.
     bool CircleCast(Vec2 origin, Vec2 dir, f32 radius, f32 max_distance, RayHit2D& out,
                     u32 mask = 0xFFFFFFFFu) const;
-    // Sweeps an axis-aligned box along a ray, reporting the nearest collider or solid tile hit. `dir` needn't be normalised.
+    // Sweeps an axis-aligned box along a ray, reporting the nearest collider or solid tile hit. Zero half-extents are
+    // allowed for line or point casts; `dir` needn't be normalised.
     bool BoxCast(Vec2 origin, Vec2 half_extents, Vec2 dir, f32 max_distance, RayHit2D& out,
                  u32 mask = 0xFFFFFFFFu) const;
     // All overlap queries return no matches for non-finite coordinates/angles or negative dimensions.
