@@ -2911,8 +2911,8 @@ void RegisterGameTools(McpServer& server) {
 
     server.AddTool(
         {"game_physics2d_query",
-         "Query the loaded game's 2D physics scene with a raycast, axis-aligned or oriented box overlap, circle overlap, or capsule overlap. Oriented-box rotation is counter-clockwise radians; capsules use two segment endpoints and a radius. Supports a 32-bit collision-layer mask; raycasts report entity or solid-tile hits.",
-         Schema({{"kind", {{"type", "string"}, {"enum", Json::array({"raycast", "overlap_box", "overlap_oriented_box", "overlap_circle", "overlap_capsule"})}}},
+         "Query the loaded game's 2D physics scene with a raycast, circle cast, axis-aligned or oriented box overlap, circle overlap, or capsule overlap. Oriented-box rotation is counter-clockwise radians; capsules use two segment endpoints and a radius. Supports a 32-bit collision-layer mask; casts report entity or solid-tile hits.",
+         Schema({{"kind", {{"type", "string"}, {"enum", Json::array({"raycast", "circlecast", "overlap_box", "overlap_oriented_box", "overlap_circle", "overlap_capsule"})}}},
                  {"origin", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}},
                  {"direction", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}},
                  {"max_distance", {{"type", "number"}, {"exclusiveMinimum", 0}}},
@@ -2951,6 +2951,28 @@ void RegisterGameTools(McpServer& server) {
                  if (!std::isfinite(max_distance) || max_distance <= 0.0f) throw ToolError("\"max_distance\" must be a finite positive number");
                  sprite2d::RayHit2D hit;
                  const bool did_hit = physics->Raycast(origin, direction, max_distance, hit, mask);
+                 Json result = {{"kind", kind}, {"hit", did_hit}};
+                 if (did_hit) {
+                     result["entity"] = hit.entity.IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), hit.entity));
+                     result["tile"] = hit.tile;
+                     result["point"] = Json::array({hit.point.x, hit.point.y});
+                     result["normal"] = Json::array({hit.normal.x, hit.normal.y});
+                     result["distance"] = hit.distance;
+                     if (hit.tile) result["tile_coordinates"] = Json::array({hit.tile_x, hit.tile_y});
+                 }
+                 return result;
+             }
+             if (kind == "circlecast") {
+                 const sprite2d::Vec2 origin = read_vec2("origin");
+                 const sprite2d::Vec2 direction = read_vec2("direction");
+                 if (!args.contains("radius") || !args["radius"].is_number()) throw ToolError("Circle casts require a finite positive \"radius\"");
+                 const f32 radius = args["radius"].get<f32>();
+                 if (!std::isfinite(radius) || radius <= 0.0f) throw ToolError("Circle casts require a finite positive \"radius\"");
+                 if (!args.contains("max_distance") || !args["max_distance"].is_number()) throw ToolError("Circle casts require a finite positive \"max_distance\"");
+                 const f32 max_distance = args["max_distance"].get<f32>();
+                 if (!std::isfinite(max_distance) || max_distance <= 0.0f) throw ToolError("Circle casts require a finite positive \"max_distance\"");
+                 sprite2d::RayHit2D hit;
+                 const bool did_hit = physics->CircleCast(origin, direction, radius, max_distance, hit, mask);
                  Json result = {{"kind", kind}, {"hit", did_hit}};
                  if (did_hit) {
                      result["entity"] = hit.entity.IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), hit.entity));
@@ -3008,15 +3030,15 @@ void RegisterGameTools(McpServer& server) {
                  }
                  return {{"kind", kind}, {"count", entities.size()}, {"entities", std::move(entities)}};
              }
-             throw ToolError("\"kind\" must be raycast, overlap_box, overlap_oriented_box, overlap_circle or overlap_capsule");
+             throw ToolError("\"kind\" must be raycast, circlecast, overlap_box, overlap_oriented_box, overlap_circle or overlap_capsule");
          }});
 
     server.AddTool(
         {"game_physics2d_queries_many",
-         "Run 1 to 64 validated 2D raycast, axis-aligned or oriented box-overlap, circle-overlap, or capsule-overlap queries in one request. Oriented-box rotation is counter-clockwise radians; capsules use two segment endpoints and a radius. Each query can set its own 32-bit collision-layer mask; raycasts include solid-tile hit details.",
+         "Run 1 to 64 validated 2D raycast, circle-cast, axis-aligned or oriented box-overlap, circle-overlap, or capsule-overlap queries in one request. Oriented-box rotation is counter-clockwise radians; capsules use two segment endpoints and a radius. Each query can set its own 32-bit collision-layer mask; casts include solid-tile hit details.",
          Schema({{"queries", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
                                {"items", {{"type", "object"},
-                                          {"properties", {{"kind", {{"type", "string"}, {"enum", Json::array({"raycast", "overlap_box", "overlap_oriented_box", "overlap_circle", "overlap_capsule"})}},
+                                          {"properties", {{"kind", {{"type", "string"}, {"enum", Json::array({"raycast", "circlecast", "overlap_box", "overlap_oriented_box", "overlap_circle", "overlap_capsule"})}},
                                                           {"origin", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}},
                                                           {"direction", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}},
                                                           {"max_distance", {{"type", "number"}, {"exclusiveMinimum", 0}}},
@@ -3068,6 +3090,15 @@ void RegisterGameTools(McpServer& server) {
                      if (!raw.contains("max_distance") || !raw["max_distance"].is_number()) throw ToolError("Raycasts require a finite positive \"max_distance\"");
                      query.max_distance = raw["max_distance"].get<f32>();
                      if (!std::isfinite(query.max_distance) || query.max_distance <= 0.0f) throw ToolError("Raycasts require a finite positive \"max_distance\"");
+                 } else if (query.kind == "circlecast") {
+                     query.origin = read_vec2(raw, "origin");
+                     query.direction = read_vec2(raw, "direction");
+                     if (!raw.contains("max_distance") || !raw["max_distance"].is_number()) throw ToolError("Circle casts require a finite positive \"max_distance\"");
+                     query.max_distance = raw["max_distance"].get<f32>();
+                     if (!std::isfinite(query.max_distance) || query.max_distance <= 0.0f) throw ToolError("Circle casts require a finite positive \"max_distance\"");
+                     if (!raw.contains("radius") || !raw["radius"].is_number()) throw ToolError("Circle casts require a finite positive \"radius\"");
+                     query.radius = raw["radius"].get<f32>();
+                     if (!std::isfinite(query.radius) || query.radius <= 0.0f) throw ToolError("Circle casts require a finite positive \"radius\"");
                  } else if (query.kind == "overlap_box") {
                      query.center = read_vec2(raw, "center");
                      query.half_extents = read_vec2(raw, "half_extents");
@@ -3091,7 +3122,7 @@ void RegisterGameTools(McpServer& server) {
                      query.radius = raw["radius"].get<f32>();
                      if (!std::isfinite(query.radius) || query.radius <= 0.0f) throw ToolError("Capsule overlaps require a finite positive \"radius\"");
                  } else {
-                     throw ToolError("Query kind must be raycast, overlap_box, overlap_oriented_box, overlap_circle or overlap_capsule");
+                     throw ToolError("Query kind must be raycast, circlecast, overlap_box, overlap_oriented_box, overlap_circle or overlap_capsule");
                  }
                  if (raw.contains("mask")) {
                      if (!raw["mask"].is_number_integer()) throw ToolError("\"mask\" must be an integer from 0 through 4294967295");
@@ -3113,6 +3144,19 @@ void RegisterGameTools(McpServer& server) {
                  if (query.kind == "raycast") {
                      sprite2d::RayHit2D hit;
                      const bool did_hit = physics->Raycast(query.origin, query.direction, query.max_distance, hit, query.mask);
+                     Json result = {{"index", i}, {"kind", query.kind}, {"hit", did_hit}};
+                     if (did_hit) {
+                         result["entity"] = hit.entity.IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), hit.entity));
+                         result["tile"] = hit.tile;
+                         result["point"] = Json::array({hit.point.x, hit.point.y});
+                         result["normal"] = Json::array({hit.normal.x, hit.normal.y});
+                         result["distance"] = hit.distance;
+                         if (hit.tile) result["tile_coordinates"] = Json::array({hit.tile_x, hit.tile_y});
+                     }
+                     results.push_back(std::move(result));
+                 } else if (query.kind == "circlecast") {
+                     sprite2d::RayHit2D hit;
+                     const bool did_hit = physics->CircleCast(query.origin, query.direction, query.radius, query.max_distance, hit, query.mask);
                      Json result = {{"index", i}, {"kind", query.kind}, {"hit", did_hit}};
                      if (did_hit) {
                          result["entity"] = hit.entity.IsNull() ? Json(nullptr) : Json(EntityKey(game.GetWorld(), hit.entity));
