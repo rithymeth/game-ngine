@@ -899,8 +899,15 @@ std::vector<Entity> Physics2D::OverlapBox(Vec2 center, Vec2 half, u32 mask) cons
         const Collider2D* c = world_.GetComponent<Collider2D>(e);
         if (!t || !c || (c->layer & mask) == 0) return;
         const Vec2 p{t->position.x + c->offset.x, t->position.y + c->offset.y};
-        const Vec2 h = c->shape == Shape2D::Box ? c->half_extents : Vec2{c->radius, c->radius};
-        if (std::fabs(p.x - center.x) <= h.x + half.x && std::fabs(p.y - center.y) <= h.y + half.y) result.push_back(e);
+        if (c->shape == Shape2D::Circle) {
+            const Vec2 closest{std::clamp(p.x, center.x - half.x, center.x + half.x),
+                               std::clamp(p.y, center.y - half.y, center.y + half.y)};
+            const Vec2 delta = p - closest;
+            if (delta.Dot(delta) <= c->radius * c->radius) result.push_back(e);
+            return;
+        }
+        if (std::fabs(p.x - center.x) <= c->half_extents.x + half.x &&
+            std::fabs(p.y - center.y) <= c->half_extents.y + half.y) result.push_back(e);
     });
     SortEntities(result);
     return result;
