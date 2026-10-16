@@ -117,6 +117,8 @@ public:
     // Entities whose colliders overlap the capsule swept between `point_a` and `point_b`.
     std::vector<Entity> OverlapCapsule(Vec2 point_a, Vec2 point_b, f32 radius,
                                        u32 mask = 0xFFFFFFFFu) const;
+    // Entities whose colliders contain the point.
+    std::vector<Entity> OverlapPoint(Vec2 point, u32 mask = 0xFFFFFFFFu) const;
 
     usize BodyCount() const { return body_count_; }
 
