@@ -889,6 +889,7 @@ bool Physics2D::BoxCast(Vec2 origin, Vec2 half, Vec2 dir, f32 max_distance, RayH
 
 std::vector<Entity> Physics2D::OverlapBox(Vec2 center, Vec2 half, u32 mask) const {
     std::vector<Entity> result;
+    if (!IsFinite(center) || !IsFinite(half) || half.x < 0.0f || half.y < 0.0f) return result;
     EachEntity(world_, [&](Entity e) {
         const Transform* t = world_.GetComponent<Transform>(e);
         const Collider2D* c = world_.GetComponent<Collider2D>(e);
@@ -903,6 +904,7 @@ std::vector<Entity> Physics2D::OverlapBox(Vec2 center, Vec2 half, u32 mask) cons
 
 std::vector<Entity> Physics2D::OverlapCircle(Vec2 center, f32 radius, u32 mask) const {
     std::vector<Entity> result;
+    if (!IsFinite(center) || !std::isfinite(radius) || radius < 0.0f) return result;
     const f32 radius_sq = radius * radius;
     EachEntity(world_, [&](Entity e) {
         const Transform* t = world_.GetComponent<Transform>(e);
@@ -926,6 +928,7 @@ std::vector<Entity> Physics2D::OverlapCircle(Vec2 center, f32 radius, u32 mask) 
 
 std::vector<Entity> Physics2D::OverlapOrientedBox(Vec2 center, Vec2 half, f32 radians, u32 mask) const {
     std::vector<Entity> result;
+    if (!IsFinite(center) || !IsFinite(half) || !std::isfinite(radians) || half.x < 0.0f || half.y < 0.0f) return result;
     const f32 c = std::cos(radians), s = std::sin(radians);
     const Vec2 axis_x{c, s}, axis_y{-s, c};
     EachEntity(world_, [&](Entity e) {
@@ -957,6 +960,7 @@ std::vector<Entity> Physics2D::OverlapOrientedBox(Vec2 center, Vec2 half, f32 ra
 
 std::vector<Entity> Physics2D::OverlapCapsule(Vec2 point_a, Vec2 point_b, f32 radius, u32 mask) const {
     std::vector<Entity> result;
+    if (!IsFinite(point_a) || !IsFinite(point_b) || !std::isfinite(radius) || radius < 0.0f) return result;
     const Vec2 segment = point_b - point_a;
     const f32 segment_length_sq = segment.Dot(segment);
     auto distance_sq_to_segment = [&](Vec2 point) {
@@ -1016,6 +1020,7 @@ std::vector<Entity> Physics2D::OverlapCapsule(Vec2 point_a, Vec2 point_b, f32 ra
 
 std::vector<Entity> Physics2D::OverlapPoint(Vec2 point, u32 mask) const {
     std::vector<Entity> result;
+    if (!IsFinite(point)) return result;
     EachEntity(world_, [&](Entity e) {
         const Transform* transform = world_.GetComponent<Transform>(e);
         const Collider2D* collider = world_.GetComponent<Collider2D>(e);
