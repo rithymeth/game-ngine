@@ -684,6 +684,102 @@ bool Physics2D::CircleCast(Vec2 origin, Vec2 dir, f32 radius, f32 max_distance, 
     return found;
 }
 
+bool Physics2D::BoxCast(Vec2 origin, Vec2 half, Vec2 dir, f32 max_distance, RayHit2D& out, u32 mask) const {
+    if (half.x <= 0.0f || half.y <= 0.0f || max_distance < 0.0f || dir.Dot(dir) <= 1e-18f) return false;
+    f32 best = max_distance;
+    bool found = false;
+    auto set_hit = [&](f32 t, Vec2 point, Vec2 normal, Entity entity, bool tile, i32 tile_x, i32 tile_y) {
+        if (t < 0.0f || t > best) return;
+        best = t;
+        found = true;
+        out = {};
+        out.entity = entity;
+        out.tile = tile;
+        out.tile_x = tile_x;
+        out.tile_y = tile_y;
+        out.distance = t;
+        out.point = point;
+        out.normal = normal;
+    };
+    auto box_hit_point = [&](Vec2 cast_center, Vec2 target_lo, Vec2 target_hi, Vec2 normal) {
+        if (normal.x < -0.5f) return Vec2{target_lo.x, std::clamp(cast_center.y, target_lo.y, target_hi.y)};
+        if (normal.x > 0.5f) return Vec2{target_hi.x, std::clamp(cast_center.y, target_lo.y, target_hi.y)};
+        if (normal.y < -0.5f) return Vec2{std::clamp(cast_center.x, target_lo.x, target_hi.x), target_lo.y};
+        if (normal.y > 0.5f) return Vec2{std::clamp(cast_center.x, target_lo.x, target_hi.x), target_hi.y};
+        return Vec2{std::clamp(cast_center.x, target_lo.x, target_hi.x),
+                    std::clamp(cast_center.y, target_lo.y, target_hi.y)};
+    };
+    auto sweep_box_target = [&](Vec2 target_lo, Vec2 target_hi, f32 t_limit, f32& t, Vec2& normal, Vec2& point) {
+        const Vec2 expanded_lo{target_lo.x - half.x, target_lo.y - half.y};
+        const Vec2 expanded_hi{target_hi.x + half.x, target_hi.y + half.y};
+        if (!SlabRay(origin, dir, expanded_lo, expanded_hi, t_limit, t, normal)) return false;
+        const Vec2 cast_center = origin + dir * t;
+        if (t == 0.0f && normal.Dot(normal) == 0.0f) {
+            const f32 left = cast_center.x - expanded_lo.x, right = expanded_hi.x - cast_center.x;
+            const f32 bottom = cast_center.y - expanded_lo.y, top = expanded_hi.y - cast_center.y;
+            const f32 nearest = std::min({left, right, bottom, top});
+            if (nearest == left) normal = {-1, 0};
+            else if (nearest == right) normal = {1, 0};
+            else if (nearest == bottom) normal = {0, -1};
+            else normal = {0, 1};
+        }
+        point = box_hit_point(cast_center, target_lo, target_hi, normal);
+        return true;
+    };
+
+    EachEntity(world_, [&](Entity e) {
+        const Transform* transform = world_.GetComponent<Transform>(e);
+        const Collider2D* collider = world_.GetComponent<Collider2D>(e);
+        if (!transform || !collider || collider->trigger || (collider->layer & mask) == 0) return;
+        const Vec2 center{transform->position.x + collider->offset.x,
+                          transform->position.y + collider->offset.y};
+        f32 t = 0.0f;
+        Vec2 normal{}, point{};
+        if (collider->shape == Shape2D::Box) {
+            if (!sweep_box_target({center.x - collider->half_extents.x, center.y - collider->half_extents.y},
+                                  {center.x + collider->half_extents.x, center.y + collider->half_extents.y},
+                                  best, t, normal, point)) return;
+        } else {
+            if (!CircleCastAabb(origin, dir, collider->radius,
+                                {center.x - half.x, center.y - half.y},
+                                {center.x + half.x, center.y + half.y}, best, t, normal, point)) return;
+            point = center + normal * collider->radius;
+        }
+        set_hit(t, point, normal, e, false, 0, 0);
+    });
+
+    if (tiles_.tilemaps && tiles_.tilesets && (mask & 1u) != 0) {
+        const Vec2 end = origin + dir * best;
+        EachEntity(world_, [&](Entity e) {
+            const TilemapRenderer* renderer = world_.GetComponent<TilemapRenderer>(e);
+            const Transform* transform = world_.GetComponent<Transform>(e);
+            if (!renderer || !transform || renderer->pixels_per_unit <= 0.0f) return;
+            const TilemapData* map = tiles_.tilemaps(renderer->tilemap.guid);
+            const Tileset* tileset = map ? tiles_.tilesets(map->tileset) : nullptr;
+            if (!map || !tileset) return;
+            const f32 cell_width = static_cast<f32>(tileset->tile_width) / renderer->pixels_per_unit;
+            const f32 cell_height = static_cast<f32>(tileset->tile_height) / renderer->pixels_per_unit;
+            if (cell_width <= 0.0f || cell_height <= 0.0f) return;
+            const i32 x0 = std::max(0, static_cast<i32>(std::floor((std::min(origin.x, end.x) - half.x - transform->position.x) / cell_width)));
+            const i32 x1 = std::min(static_cast<i32>(map->width) - 1, static_cast<i32>(std::floor((std::max(origin.x, end.x) + half.x - transform->position.x) / cell_width)));
+            const i32 y0 = std::max(0, static_cast<i32>(std::floor((std::min(origin.y, end.y) - half.y - transform->position.y) / cell_height)));
+            const i32 y1 = std::min(static_cast<i32>(map->height) - 1, static_cast<i32>(std::floor((std::max(origin.y, end.y) + half.y - transform->position.y) / cell_height)));
+            for (i32 y = y0; y <= y1; ++y) {
+                for (i32 x = x0; x <= x1; ++x) {
+                    if (!IsSolidAt(*map, *tileset, x, y)) continue;
+                    const Vec2 lo{transform->position.x + static_cast<f32>(x) * cell_width,
+                                  transform->position.y + static_cast<f32>(y) * cell_height};
+                    const Vec2 hi{lo.x + cell_width, lo.y + cell_height};
+                    f32 t = 0.0f;
+                    Vec2 normal{}, point{};
+                    if (sweep_box_target(lo, hi, best, t, normal, point)) set_hit(t, point, normal, {}, true, x, y);
+                }
+            }
+        });
+    }
+    return found;
+}
+
 std::vector<Entity> Physics2D::OverlapBox(Vec2 center, Vec2 half, u32 mask) const {
     std::vector<Entity> result;
     EachEntity(world_, [&](Entity e) {
