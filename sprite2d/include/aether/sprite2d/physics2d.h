@@ -97,10 +97,12 @@ public:
     // Touching a wall: -1 on the left, 1 on the right, 0 none.
     int WallSide(Entity e) const;
 
-    // The nearest hit along a ray (dir needn't be normalised) within `max_distance`.
+    // The nearest hit along a ray (dir needn't be normalised) within `max_distance`;
+    // starting inside a collider reports a hit at distance zero.
     // Solid tiles count as layer 1 (bit 0 of `mask`).
     bool Raycast(Vec2 origin, Vec2 dir, f32 max_distance, RayHit2D& out, u32 mask = 0xFFFFFFFFu) const;
-    // Distinct collider and solid-tile hits along a ray, nearest first. `dir` needn't be normalised.
+    // Distinct collider and solid-tile hits along a ray, nearest first. Starting
+    // inside a collider reports distance zero. `dir` needn't be normalised.
     std::vector<RayHit2D> RaycastAll(Vec2 origin, Vec2 dir, f32 max_distance,
                                      u32 mask = 0xFFFFFFFFu, usize max_hits = 64) const;
     // Sweeps a circle along a ray, reporting the nearest collider or solid tile hit. `dir` needn't be normalised.
