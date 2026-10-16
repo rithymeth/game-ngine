@@ -20,6 +20,24 @@ bool TilemapGeometry(const TilemapRenderer& renderer, const Transform& transform
                  static_cast<f32>(tileset.tile_height) / renderer.pixels_per_unit};
     return IsFinite(cell_size) && cell_size.x > 0.0f && cell_size.y > 0.0f;
 }
+struct TileRange {
+    i32 first = 0;
+    i32 last = -1;
+    bool Valid() const { return first <= last; }
+};
+TileRange GetTileRange(f32 world_min, f32 world_max, f32 origin, f32 cell_size, u32 extent) {
+    if (extent == 0 || !std::isfinite(world_min) || !std::isfinite(world_max) || world_min > world_max ||
+        !std::isfinite(origin) || !std::isfinite(cell_size) || cell_size <= 0.0f) return {};
+    const f64 grid_min = (static_cast<f64>(world_min) - origin) / cell_size;
+    const f64 grid_max = (static_cast<f64>(world_max) - origin) / cell_size;
+    if (!std::isfinite(grid_min) || !std::isfinite(grid_max) || grid_max < 0.0 || grid_min > extent) return {};
+    const f64 max_index = static_cast<f64>(std::min<u64>(static_cast<u64>(extent) - 1,
+                                                         static_cast<u64>(std::numeric_limits<i32>::max() - 1)));
+    const auto clamp_index = [max_index](f64 grid) {
+        return static_cast<i32>(std::clamp(std::floor(grid), 0.0, max_index));
+    };
+    return {clamp_index(grid_min), clamp_index(grid_max)};
+}
 
 // Every live entity (ForEach hands out components, not entities).
 template <typename F>
@@ -383,12 +401,11 @@ void Physics2D::Step(f32 dt) {
         const Body& body = bodies[static_cast<usize>(index)];
         const Vec2 lo = body.Min(), hi = body.Max();
         for (const MapInfo& m : maps) {
-            const i32 x0 = std::max(0, static_cast<i32>(std::floor((lo.x - m.origin.x) / m.cell.x)));
-            const i32 y0 = std::max(0, static_cast<i32>(std::floor((lo.y - m.origin.y) / m.cell.y)));
-            const i32 x1 = std::min(static_cast<i32>(m.map->width) - 1, static_cast<i32>(std::floor((hi.x - m.origin.x) / m.cell.x)));
-            const i32 y1 = std::min(static_cast<i32>(m.map->height) - 1, static_cast<i32>(std::floor((hi.y - m.origin.y) / m.cell.y)));
-            for (i32 y = y0; y <= y1; ++y) {
-                for (i32 x = x0; x <= x1; ++x) {
+            const TileRange x_range = GetTileRange(lo.x, hi.x, m.origin.x, m.cell.x, m.map->width);
+            const TileRange y_range = GetTileRange(lo.y, hi.y, m.origin.y, m.cell.y, m.map->height);
+            if (!x_range.Valid() || !y_range.Valid()) continue;
+            for (i32 y = y_range.first; y <= y_range.last; ++y) {
+                for (i32 x = x_range.first; x <= x_range.last; ++x) {
                     if (!IsSolidAt(*m.map, *m.tileset, x, y)) continue;
                     Body t;
                     t.tile = true;
@@ -617,12 +634,13 @@ bool Physics2D::Raycast(Vec2 origin, Vec2 dir, f32 max_distance, RayHit2D& out, 
             if (!TilemapGeometry(*r, *t, *ts, map_origin, cell_size)) return;
             const f32 cw = cell_size.x, ch = cell_size.y;
             const Vec2 end = origin + dir * best;
-            const i32 x0 = std::max(0, static_cast<i32>(std::floor((std::min(origin.x, end.x) - map_origin.x) / cw)));
-            const i32 x1 = std::min(static_cast<i32>(map->width) - 1, static_cast<i32>(std::floor((std::max(origin.x, end.x) - map_origin.x) / cw)));
-            const i32 y0 = std::max(0, static_cast<i32>(std::floor((std::min(origin.y, end.y) - map_origin.y) / ch)));
-            const i32 y1 = std::min(static_cast<i32>(map->height) - 1, static_cast<i32>(std::floor((std::max(origin.y, end.y) - map_origin.y) / ch)));
-            for (i32 y = y0; y <= y1; ++y) {
-                for (i32 x = x0; x <= x1; ++x) {
+            const TileRange x_range = GetTileRange(std::min(origin.x, end.x), std::max(origin.x, end.x),
+                                                   map_origin.x, cw, map->width);
+            const TileRange y_range = GetTileRange(std::min(origin.y, end.y), std::max(origin.y, end.y),
+                                                   map_origin.y, ch, map->height);
+            if (!x_range.Valid() || !y_range.Valid()) return;
+            for (i32 y = y_range.first; y <= y_range.last; ++y) {
+                for (i32 x = x_range.first; x <= x_range.last; ++x) {
                     if (!IsSolidAt(*map, *ts, x, y)) continue;
                     const Vec2 lo{map_origin.x + static_cast<f32>(x) * cw, map_origin.y + static_cast<f32>(y) * ch};
                     f32 hit_t = 0;
@@ -706,12 +724,13 @@ std::vector<RayHit2D> Physics2D::RaycastAll(Vec2 origin, Vec2 dir, f32 max_dista
             Vec2 map_origin{}, cell_size{};
             if (!TilemapGeometry(*renderer, *transform, *tileset, map_origin, cell_size)) return;
             const f32 cell_width = cell_size.x, cell_height = cell_size.y;
-            const i32 x0 = std::max(0, static_cast<i32>(std::floor((std::min(origin.x, end.x) - map_origin.x) / cell_width)));
-            const i32 x1 = std::min(static_cast<i32>(map->width) - 1, static_cast<i32>(std::floor((std::max(origin.x, end.x) - map_origin.x) / cell_width)));
-            const i32 y0 = std::max(0, static_cast<i32>(std::floor((std::min(origin.y, end.y) - map_origin.y) / cell_height)));
-            const i32 y1 = std::min(static_cast<i32>(map->height) - 1, static_cast<i32>(std::floor((std::max(origin.y, end.y) - map_origin.y) / cell_height)));
-            for (i32 y = y0; y <= y1; ++y) {
-                for (i32 x = x0; x <= x1; ++x) {
+            const TileRange x_range = GetTileRange(std::min(origin.x, end.x), std::max(origin.x, end.x),
+                                                   map_origin.x, cell_width, map->width);
+            const TileRange y_range = GetTileRange(std::min(origin.y, end.y), std::max(origin.y, end.y),
+                                                   map_origin.y, cell_height, map->height);
+            if (!x_range.Valid() || !y_range.Valid()) return;
+            for (i32 y = y_range.first; y <= y_range.last; ++y) {
+                for (i32 x = x_range.first; x <= x_range.last; ++x) {
                     if (!IsSolidAt(*map, *tileset, x, y)) continue;
                     const Vec2 lo{map_origin.x + static_cast<f32>(x) * cell_width,
                                   map_origin.y + static_cast<f32>(y) * cell_height};
@@ -813,12 +832,15 @@ bool Physics2D::CircleCast(Vec2 origin, Vec2 dir, f32 radius, f32 max_distance, 
             Vec2 map_origin{}, cell_size{};
             if (!TilemapGeometry(*renderer, *transform, *tileset, map_origin, cell_size)) return;
             const f32 cell_width = cell_size.x, cell_height = cell_size.y;
-            const i32 x0 = std::max(0, static_cast<i32>(std::floor((std::min(origin.x, end.x) - radius - map_origin.x) / cell_width)));
-            const i32 x1 = std::min(static_cast<i32>(map->width) - 1, static_cast<i32>(std::floor((std::max(origin.x, end.x) + radius - map_origin.x) / cell_width)));
-            const i32 y0 = std::max(0, static_cast<i32>(std::floor((std::min(origin.y, end.y) - radius - map_origin.y) / cell_height)));
-            const i32 y1 = std::min(static_cast<i32>(map->height) - 1, static_cast<i32>(std::floor((std::max(origin.y, end.y) + radius - map_origin.y) / cell_height)));
-            for (i32 y = y0; y <= y1; ++y) {
-                for (i32 x = x0; x <= x1; ++x) {
+            const TileRange x_range = GetTileRange(std::min(origin.x, end.x) - radius,
+                                                   std::max(origin.x, end.x) + radius,
+                                                   map_origin.x, cell_width, map->width);
+            const TileRange y_range = GetTileRange(std::min(origin.y, end.y) - radius,
+                                                   std::max(origin.y, end.y) + radius,
+                                                   map_origin.y, cell_height, map->height);
+            if (!x_range.Valid() || !y_range.Valid()) return;
+            for (i32 y = y_range.first; y <= y_range.last; ++y) {
+                for (i32 x = x_range.first; x <= x_range.last; ++x) {
                     if (!IsSolidAt(*map, *tileset, x, y)) continue;
                     const Vec2 lo{map_origin.x + static_cast<f32>(x) * cell_width,
                                   map_origin.y + static_cast<f32>(y) * cell_height};
@@ -912,12 +934,15 @@ bool Physics2D::BoxCast(Vec2 origin, Vec2 half, Vec2 dir, f32 max_distance, RayH
             Vec2 map_origin{}, cell_size{};
             if (!TilemapGeometry(*renderer, *transform, *tileset, map_origin, cell_size)) return;
             const f32 cell_width = cell_size.x, cell_height = cell_size.y;
-            const i32 x0 = std::max(0, static_cast<i32>(std::floor((std::min(origin.x, end.x) - half.x - map_origin.x) / cell_width)));
-            const i32 x1 = std::min(static_cast<i32>(map->width) - 1, static_cast<i32>(std::floor((std::max(origin.x, end.x) + half.x - map_origin.x) / cell_width)));
-            const i32 y0 = std::max(0, static_cast<i32>(std::floor((std::min(origin.y, end.y) - half.y - map_origin.y) / cell_height)));
-            const i32 y1 = std::min(static_cast<i32>(map->height) - 1, static_cast<i32>(std::floor((std::max(origin.y, end.y) + half.y - map_origin.y) / cell_height)));
-            for (i32 y = y0; y <= y1; ++y) {
-                for (i32 x = x0; x <= x1; ++x) {
+            const TileRange x_range = GetTileRange(std::min(origin.x, end.x) - half.x,
+                                                   std::max(origin.x, end.x) + half.x,
+                                                   map_origin.x, cell_width, map->width);
+            const TileRange y_range = GetTileRange(std::min(origin.y, end.y) - half.y,
+                                                   std::max(origin.y, end.y) + half.y,
+                                                   map_origin.y, cell_height, map->height);
+            if (!x_range.Valid() || !y_range.Valid()) return;
+            for (i32 y = y_range.first; y <= y_range.last; ++y) {
+                for (i32 x = x_range.first; x <= x_range.last; ++x) {
                     if (!IsSolidAt(*map, *tileset, x, y)) continue;
                     const Vec2 lo{map_origin.x + static_cast<f32>(x) * cell_width,
                                   map_origin.y + static_cast<f32>(y) * cell_height};
