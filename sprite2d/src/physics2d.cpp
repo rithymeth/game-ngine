@@ -360,8 +360,8 @@ void Physics2D::Step(f32 dt) {
         b.p = {b.transform->position.x + c->offset.x, b.transform->position.y + c->offset.y};
         if (b.rb) {
             b.v = b.rb->velocity;
-            b.dynamic = b.rb->type == BodyType2D::Dynamic && !c->trigger;
-            b.inv_mass = b.dynamic ? 1.0f / std::max(b.rb->mass, 1e-3f) : 0.0f;
+            b.dynamic = b.rb->type == BodyType2D::Dynamic;
+            b.inv_mass = b.dynamic && !c->trigger ? 1.0f / std::max(b.rb->mass, 1e-3f) : 0.0f;
         }
         bodies.push_back(b);
     }
