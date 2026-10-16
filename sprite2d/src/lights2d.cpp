@@ -168,33 +168,46 @@ bool Occluded(const std::vector<Segment2D>& occluders, Vec2 from, Vec2 to) {
 }
 
 LightColor LightAt(const World& world, const std::vector<Segment2D>& occluders, Vec2 point) {
-    LightColor sum;
-    if (!std::isfinite(point.x) || !std::isfinite(point.y)) return sum;
+    f64 red = 0.0, green = 0.0, blue = 0.0;
+    if (!std::isfinite(point.x) || !std::isfinite(point.y)) return {};
     EachEntity(world, [&](Entity e) {
         const Light2D* light = world.GetComponent<Light2D>(e);
         const Transform* t = world.GetComponent<Transform>(e);
-        if (!light || !t || !light->enabled) return;
+        if (!light || !t || !light->enabled || !std::isfinite(light->intensity) || light->intensity < 0.0f ||
+            !std::isfinite(light->color.r) || !std::isfinite(light->color.g) || !std::isfinite(light->color.b)) return;
         f32 amount = light->intensity;
         if (light->type != Light2DType::Global) {
+            if (!std::isfinite(t->position.x) || !std::isfinite(t->position.y) || !std::isfinite(light->radius) ||
+                light->radius <= 0.0f || !std::isfinite(light->falloff) || light->falloff < 0.0f) return;
             const Vec2 at{t->position.x, t->position.y};
             const Vec2 d = point - at;
             const f32 dist = d.Length();
-            if (dist >= light->radius || light->radius <= 0.0f) return;
+            if (!std::isfinite(dist) || dist >= light->radius) return;
             amount *= std::pow(1.0f - dist / light->radius, light->falloff);
-            if (light->type == Light2DType::Spot && dist > 1e-5f) {
-                const f32 axis = (light->direction_degrees + AngleOf(t->rotation)) * kPi / 180.0f;
-                const f32 cos_to = d.Dot(Vec2{std::cos(axis), std::sin(axis)}) * (1.0f / dist);
-                const f32 angle = std::acos(std::clamp(cos_to, -1.0f, 1.0f)) * 180.0f / kPi;
-                amount *= 1.0f - SmoothStep(light->inner_angle, light->outer_angle, angle);
+            if (light->type == Light2DType::Spot) {
+                if (!std::isfinite(light->direction_degrees) || !std::isfinite(light->inner_angle) ||
+                    !std::isfinite(light->outer_angle) || !std::isfinite(t->rotation.z) ||
+                    !std::isfinite(t->rotation.w)) return;
+                if (dist <= 1e-5f) {
+                    // The cone direction is undefined at its origin; keep the full point-light contribution.
+                } else {
+                    const f32 axis = (light->direction_degrees + AngleOf(t->rotation)) * kPi / 180.0f;
+                    if (!std::isfinite(axis)) return;
+                    const f32 cos_to = d.Dot(Vec2{std::cos(axis), std::sin(axis)}) * (1.0f / dist);
+                    const f32 angle = std::acos(std::clamp(cos_to, -1.0f, 1.0f)) * 180.0f / kPi;
+                    amount *= 1.0f - SmoothStep(light->inner_angle, light->outer_angle, angle);
+                }
             }
-            if (amount <= 0.0f) return;
+            if (!std::isfinite(amount) || amount <= 0.0f) return;
             if (light->cast_shadows && Occluded(occluders, at, point)) return;
         }
-        sum.r += light->color.r * amount;
-        sum.g += light->color.g * amount;
-        sum.b += light->color.b * amount;
+        red += static_cast<f64>(light->color.r) * amount;
+        green += static_cast<f64>(light->color.g) * amount;
+        blue += static_cast<f64>(light->color.b) * amount;
     });
-    return sum;
+    const f64 limit = std::numeric_limits<f32>::max();
+    return {static_cast<f32>(std::clamp(red, -limit, limit)), static_cast<f32>(std::clamp(green, -limit, limit)),
+            static_cast<f32>(std::clamp(blue, -limit, limit))};
 }
 
 LightMap BuildLightMap(const World& world, const Resolvers2D& tiles, Vec2 region_min, Vec2 region_max, f32 cell_size) {
