@@ -134,15 +134,14 @@ bool SaveAtlas(const std::filesystem::path& file, const SpriteAtlas& atlas, std:
 usize ClipFrameAt(const SpriteClip& clip, f32 time, bool* finished) {
     if (finished) *finished = false;
     const usize count = clip.frames.size();
-    if (count == 0 || clip.fps <= 0.0f) return 0;
-    const f32 position = std::max(time, 0.0f) * clip.fps;
-    const usize step = static_cast<usize>(position);
-    if (clip.loop) return step % count;
-    if (step >= count) {
+    if (count == 0 || !std::isfinite(clip.fps) || clip.fps <= 0.0f || !std::isfinite(time) || time <= 0.0f) return 0;
+    const f64 step = std::floor(static_cast<f64>(time) * clip.fps);
+    if (clip.loop) return static_cast<usize>(std::fmod(step, static_cast<f64>(count)));
+    if (step >= static_cast<f64>(count)) {
         if (finished) *finished = true;
         return count - 1;
     }
-    return step;
+    return static_cast<usize>(step);
 }
 
 namespace {
