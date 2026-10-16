@@ -174,10 +174,10 @@ Manifold CircleBox(const Body& circle, const Body& box, f32 margin) {
     m.hit = true;
     if (px < py) {
         m.normal = {d.x < 0.0f ? 1.0f : -1.0f, 0.0f}; // from the circle, back toward the box's centre side
-        m.depth = px + circle.radius;
+        m.depth = px + r;
     } else {
         m.normal = {0.0f, d.y < 0.0f ? 1.0f : -1.0f};
-        m.depth = py + circle.radius;
+        m.depth = py + r;
     }
     return m;
 }
