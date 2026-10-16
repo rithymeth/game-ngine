@@ -409,6 +409,7 @@ void Physics2D::Step(f32 dt) {
     const int dynamic_count = static_cast<int>(bodies.size());
     const auto add_tiles_for = [&](int index) {
         const Body& body = bodies[static_cast<usize>(index)];
+        if (body.layer == 0 || (body.mask & 1u) == 0) return; // tilemaps use layer 1 and accept every nonzero layer
         const Vec2 lo = body.Min(), hi = body.Max();
         for (const MapInfo& m : maps) {
             const TileRange x_range = GetTileRange(lo.x, hi.x, m.origin.x, m.cell.x, m.map->width);
