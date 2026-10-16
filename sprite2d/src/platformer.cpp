@@ -48,7 +48,7 @@ void UpdatePlatformers(World& world, const Physics2D& physics, f32 dt) {
         const bool pressed = pc.input_jump && !pc.jump_was_held;
         pc.jump_was_held = pc.input_jump;
         pc.jump_buffer_timer = pressed ? pc.jump_buffer : std::max(pc.jump_buffer_timer - dt, 0.0f);
-        if (pc.jump_buffer_timer > 0.0f && pc.time_since_grounded <= pc.coyote_time) {
+        if ((pressed || pc.jump_buffer_timer > 0.0f) && pc.time_since_grounded <= pc.coyote_time) {
             rb.velocity.y = pc.jump_speed;
             pc.jump_buffer_timer = 0.0f;
             pc.time_since_grounded = 99.0f; // used up: no second jump from the same ground
