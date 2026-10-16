@@ -596,7 +596,9 @@ bool Physics2D::Raycast(Vec2 origin, Vec2 dir, f32 max_distance, RayHit2D& out, 
 
 std::vector<RayHit2D> Physics2D::RaycastAll(Vec2 origin, Vec2 dir, f32 max_distance, u32 mask, usize max_hits) const {
     std::vector<RayHit2D> hits;
-    if (max_hits == 0 || dir.Dot(dir) <= 1e-18f || max_distance < 0.0f) return hits;
+    const f32 direction_length = dir.Length();
+    if (max_hits == 0 || !std::isfinite(direction_length) || direction_length < 1e-9f || max_distance < 0.0f) return hits;
+    dir = dir * (1.0f / direction_length);
     EachEntity(world_, [&](Entity e) {
         const Transform* transform = world_.GetComponent<Transform>(e);
         const Collider2D* collider = world_.GetComponent<Collider2D>(e);
@@ -682,7 +684,9 @@ std::vector<RayHit2D> Physics2D::RaycastAll(Vec2 origin, Vec2 dir, f32 max_dista
 }
 
 bool Physics2D::CircleCast(Vec2 origin, Vec2 dir, f32 radius, f32 max_distance, RayHit2D& out, u32 mask) const {
-    if (radius <= 0.0f || max_distance < 0.0f || dir.Dot(dir) <= 1e-18f) return false;
+    const f32 direction_length = dir.Length();
+    if (radius <= 0.0f || max_distance < 0.0f || !std::isfinite(direction_length) || direction_length < 1e-9f) return false;
+    dir = dir * (1.0f / direction_length);
     f32 best = max_distance;
     bool found = false;
     auto set_hit = [&](f32 t, Vec2 point, Vec2 normal, Entity entity, bool tile, i32 tile_x, i32 tile_y) {
@@ -772,7 +776,9 @@ bool Physics2D::CircleCast(Vec2 origin, Vec2 dir, f32 radius, f32 max_distance, 
 }
 
 bool Physics2D::BoxCast(Vec2 origin, Vec2 half, Vec2 dir, f32 max_distance, RayHit2D& out, u32 mask) const {
-    if (half.x <= 0.0f || half.y <= 0.0f || max_distance < 0.0f || dir.Dot(dir) <= 1e-18f) return false;
+    const f32 direction_length = dir.Length();
+    if (half.x <= 0.0f || half.y <= 0.0f || max_distance < 0.0f || !std::isfinite(direction_length) || direction_length < 1e-9f) return false;
+    dir = dir * (1.0f / direction_length);
     f32 best = max_distance;
     bool found = false;
     auto set_hit = [&](f32 t, Vec2 point, Vec2 normal, Entity entity, bool tile, i32 tile_x, i32 tile_y) {
