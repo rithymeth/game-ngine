@@ -265,8 +265,10 @@ int Physics2D::WallSide(Entity e) const {
 
 void Physics2D::Step(f32 dt) {
     events_.clear();
+    if (!std::isfinite(dt) || dt <= 0.0f || !std::isfinite(settings.max_step) || settings.max_step <= 0.0f ||
+        !IsFinite(settings.gravity) || !std::isfinite(settings.slop) || settings.slop < 0.0f ||
+        !std::isfinite(settings.correction) || settings.correction < 0.0f || settings.correction > 1.0f) return;
     dt = std::min(dt, settings.max_step);
-    if (dt <= 0.0f) return;
     bool any = false;
     world_.ForEachChunk<Collider2D>([&](u32, Collider2D*) { any = true; });
     if (!any) { // nothing 2D here: skip the walk, and end what was touching
