@@ -8,6 +8,10 @@ namespace aether::sprite2d {
 
 namespace {
 
+bool IsFinite(Vec2 value) {
+    return std::isfinite(value.x) && std::isfinite(value.y);
+}
+
 // Every live entity (ForEach hands out components, not entities).
 template <typename F>
 void EachEntity(const World& world, F&& f) {
@@ -513,7 +517,8 @@ void Physics2D::Step(f32 dt) {
 
 bool Physics2D::Raycast(Vec2 origin, Vec2 dir, f32 max_distance, RayHit2D& out, u32 mask) const {
     const f32 len = dir.Length();
-    if (len < 1e-9f || max_distance <= 0.0f) return false;
+    if (!IsFinite(origin) || !IsFinite(dir) || !std::isfinite(len) || !std::isfinite(max_distance) ||
+        len < 1e-9f || max_distance <= 0.0f) return false;
     dir = dir * (1.0f / len);
     f32 best = max_distance;
     bool found = false;
@@ -597,7 +602,8 @@ bool Physics2D::Raycast(Vec2 origin, Vec2 dir, f32 max_distance, RayHit2D& out, 
 std::vector<RayHit2D> Physics2D::RaycastAll(Vec2 origin, Vec2 dir, f32 max_distance, u32 mask, usize max_hits) const {
     std::vector<RayHit2D> hits;
     const f32 direction_length = dir.Length();
-    if (max_hits == 0 || !std::isfinite(direction_length) || direction_length < 1e-9f || max_distance < 0.0f) return hits;
+    if (max_hits == 0 || !IsFinite(origin) || !IsFinite(dir) || !std::isfinite(direction_length) ||
+        !std::isfinite(max_distance) || direction_length < 1e-9f || max_distance < 0.0f) return hits;
     dir = dir * (1.0f / direction_length);
     EachEntity(world_, [&](Entity e) {
         const Transform* transform = world_.GetComponent<Transform>(e);
@@ -685,7 +691,8 @@ std::vector<RayHit2D> Physics2D::RaycastAll(Vec2 origin, Vec2 dir, f32 max_dista
 
 bool Physics2D::CircleCast(Vec2 origin, Vec2 dir, f32 radius, f32 max_distance, RayHit2D& out, u32 mask) const {
     const f32 direction_length = dir.Length();
-    if (radius <= 0.0f || max_distance < 0.0f || !std::isfinite(direction_length) || direction_length < 1e-9f) return false;
+    if (!IsFinite(origin) || !IsFinite(dir) || !std::isfinite(radius) || !std::isfinite(max_distance) ||
+        radius <= 0.0f || max_distance < 0.0f || !std::isfinite(direction_length) || direction_length < 1e-9f) return false;
     dir = dir * (1.0f / direction_length);
     f32 best = max_distance;
     bool found = false;
@@ -777,7 +784,9 @@ bool Physics2D::CircleCast(Vec2 origin, Vec2 dir, f32 radius, f32 max_distance, 
 
 bool Physics2D::BoxCast(Vec2 origin, Vec2 half, Vec2 dir, f32 max_distance, RayHit2D& out, u32 mask) const {
     const f32 direction_length = dir.Length();
-    if (half.x <= 0.0f || half.y <= 0.0f || max_distance < 0.0f || !std::isfinite(direction_length) || direction_length < 1e-9f) return false;
+    if (!IsFinite(origin) || !IsFinite(half) || !IsFinite(dir) || !std::isfinite(max_distance) ||
+        half.x <= 0.0f || half.y <= 0.0f || max_distance < 0.0f ||
+        !std::isfinite(direction_length) || direction_length < 1e-9f) return false;
     dir = dir * (1.0f / direction_length);
     f32 best = max_distance;
     bool found = false;
