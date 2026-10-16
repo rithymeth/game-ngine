@@ -83,14 +83,23 @@ const LightColor& LightMap::At(i32 x, i32 y) const {
 
 std::vector<Segment2D> GatherOccluders(const World& world, const Resolvers2D& tiles, Vec2 region_min, Vec2 region_max) {
     std::vector<Segment2D> out;
+    if (!std::isfinite(region_min.x) || !std::isfinite(region_min.y) || !std::isfinite(region_max.x) ||
+        !std::isfinite(region_max.y) || region_max.x < region_min.x || region_max.y < region_min.y) return out;
     EachEntity(world, [&](Entity e) {
         const Transform* t = world.GetComponent<Transform>(e);
         if (!t) return;
         if (const ShadowCaster2D* c = world.GetComponent<ShadowCaster2D>(e)) {
-            const Vec2 centre{t->position.x + c->offset.x, t->position.y + c->offset.y};
-            const Vec2 lo{centre.x - c->half_extents.x, centre.y - c->half_extents.y};
-            const Vec2 hi{centre.x + c->half_extents.x, centre.y + c->half_extents.y};
-            if (hi.x >= region_min.x && lo.x <= region_max.x && hi.y >= region_min.y && lo.y <= region_max.y) AddBox(out, lo, hi);
+            if (std::isfinite(t->position.x) && std::isfinite(t->position.y) &&
+                std::isfinite(c->offset.x) && std::isfinite(c->offset.y) &&
+                std::isfinite(c->half_extents.x) && c->half_extents.x >= 0.0f &&
+                std::isfinite(c->half_extents.y) && c->half_extents.y >= 0.0f) {
+                const Vec2 centre{t->position.x + c->offset.x, t->position.y + c->offset.y};
+                const Vec2 lo{centre.x - c->half_extents.x, centre.y - c->half_extents.y};
+                const Vec2 hi{centre.x + c->half_extents.x, centre.y + c->half_extents.y};
+                if (std::isfinite(lo.x) && std::isfinite(lo.y) && std::isfinite(hi.x) && std::isfinite(hi.y) &&
+                    hi.x >= region_min.x && lo.x <= region_max.x && hi.y >= region_min.y && lo.y <= region_max.y)
+                    AddBox(out, lo, hi);
+            }
         }
         const TilemapRenderer* r = world.GetComponent<TilemapRenderer>(e);
         if (!r || !tiles.tilemaps || !tiles.tilesets || r->pixels_per_unit <= 0.0f) return;
