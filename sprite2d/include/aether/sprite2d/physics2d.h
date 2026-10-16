@@ -98,6 +98,9 @@ public:
     // The nearest hit along a ray (dir needn't be normalised) within `max_distance`.
     // Solid tiles count as layer 1 (bit 0 of `mask`).
     bool Raycast(Vec2 origin, Vec2 dir, f32 max_distance, RayHit2D& out, u32 mask = 0xFFFFFFFFu) const;
+    // Sweeps a circle along a ray, reporting the nearest collider or solid tile hit.
+    bool CircleCast(Vec2 origin, Vec2 dir, f32 radius, f32 max_distance, RayHit2D& out,
+                    u32 mask = 0xFFFFFFFFu) const;
     // Entities whose colliders overlap the box.
     std::vector<Entity> OverlapBox(Vec2 center, Vec2 half_extents, u32 mask = 0xFFFFFFFFu) const;
     // Entities whose colliders overlap a query box rotated counter-clockwise by `radians`.
