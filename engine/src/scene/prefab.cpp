@@ -262,6 +262,7 @@ std::vector<PrefabEntity> ApplyPrefabEdits(const std::vector<PrefabEntity>& enti
         *migrated = overrides;
     }
     std::vector<PrefabEntity> data;
+    data.reserve(entities.size());
     std::unordered_set<PrefabLocalId> kept;
     std::unordered_set<PrefabLocalId> all;
     std::unordered_set<PrefabLocalId> removed;
@@ -285,17 +286,9 @@ std::vector<PrefabEntity> ApplyPrefabEdits(const std::vector<PrefabEntity>& enti
         data_indices.try_emplace(data[i].id, i);
     }
 
-    std::vector<const PropertyOverride*> ordered;
-    for (const PropertyOverride& override_ : overrides) {
-        ordered.push_back(&override_);
-    }
-    std::stable_sort(ordered.begin(), ordered.end(), [](const PropertyOverride* a, const PropertyOverride* b) {
-        return a->field_path.empty() && !b->field_path.empty();
-    });
-    for (const PropertyOverride* override_ptr : ordered) {
-        const PropertyOverride& override_ = *override_ptr;
+    auto apply_override = [&](const PropertyOverride& override_) {
         if (all.count(override_.entity) != 0 && kept.count(override_.entity) == 0) {
-            continue; // on a removed entity: moot, not orphaned
+            return; // on a removed entity: moot, not orphaned
         }
         Json* field = nullptr;
         if (const auto entity_it = data_indices.find(override_.entity); entity_it != data_indices.end()) {
@@ -307,9 +300,21 @@ std::vector<PrefabEntity> ApplyPrefabEdits(const std::vector<PrefabEntity>& enti
         Json value = Json::parse(override_.value, nullptr, /*allow_exceptions=*/false);
         if (field == nullptr || value.is_discarded()) {
             orphaned.push_back(override_);
-            continue;
+            return;
         }
         *field = std::move(value);
+    };
+    // Whole-component overrides must run first; two stable passes retain the
+    // original order within each group without allocating/sorting pointers.
+    for (const PropertyOverride& override_ : overrides) {
+        if (override_.field_path.empty()) {
+            apply_override(override_);
+        }
+    }
+    for (const PropertyOverride& override_ : overrides) {
+        if (!override_.field_path.empty()) {
+            apply_override(override_);
+        }
     }
     return data;
 }
