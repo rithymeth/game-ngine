@@ -15,6 +15,7 @@
 #include <limits>
 #include <map>
 #include <system_error>
+#include <unordered_set>
 
 namespace aether::assets {
 
@@ -632,17 +633,17 @@ std::vector<AssetGuid> AssetDatabase::SetSubAssets(const AssetGuid& source_ref,
         SetError(error, "No source asset with GUID " + ToString(source));
         return {};
     }
-    for (usize i = 0; i < sub_assets.size(); ++i) {
-        const std::string& key = sub_assets[i].key;
+    std::unordered_set<std::string> seen_keys;
+    seen_keys.reserve(sub_assets.size());
+    for (const SubAssetMeta& sub : sub_assets) {
+        const std::string& key = sub.key;
         if (key.empty()) {
             SetError(error, "Sub-asset keys can't be empty");
             return {};
         }
-        for (usize k = 0; k < i; ++k) {
-            if (sub_assets[k].key == key) {
-                SetError(error, "Duplicate sub-asset key \"" + key + "\"");
-                return {};
-            }
+        if (!seen_keys.insert(key).second) {
+            SetError(error, "Duplicate sub-asset key \"" + key + "\"");
+            return {};
         }
     }
     const stdfs::path meta_file = MetaPath(source);
@@ -657,11 +658,14 @@ std::vector<AssetGuid> AssetDatabase::SetSubAssets(const AssetGuid& source_ref,
     }
     std::vector<AssetGuid> guids;
     std::vector<SubAssetMeta> updated;
+    std::unordered_set<AssetGuid> current_guids;
+    current_guids.reserve(sub_assets.size());
     for (const SubAssetMeta& wanted : sub_assets) {
         SubAssetMeta sub = wanted;
         auto found = existing.find(sub.key);
         sub.guid = found != existing.end() ? found->second : NewAssetGuid();
         guids.push_back(sub.guid);
+        current_guids.insert(sub.guid);
         updated.push_back(std::move(sub));
     }
     std::sort(updated.begin(), updated.end(), [](const SubAssetMeta& a, const SubAssetMeta& b) { return a.key < b.key; });
@@ -673,7 +677,7 @@ std::vector<AssetGuid> AssetDatabase::SetSubAssets(const AssetGuid& source_ref,
     // Update the records: drop keys no longer produced, add or refresh the rest.
     const std::vector<AssetGuid> old_subs = it->second.sub_assets;
     for (const AssetGuid& old : old_subs) {
-        if (std::find(guids.begin(), guids.end(), old) == guids.end()) {
+        if (current_guids.count(old) == 0) {
             EraseRecord(old);
         }
     }
