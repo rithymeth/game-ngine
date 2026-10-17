@@ -82,6 +82,7 @@ std::vector<ContentEntry> ListContent(const AssetDatabase& database, const Conte
     const std::string folder = Normalized(query.folder);
     const std::string search = Lower(query.search);
     const bool recursive = query.recursive || !search.empty();
+    const std::unordered_set<std::string> types(query.types.begin(), query.types.end());
     std::vector<ContentEntry> folders;
     std::vector<ContentEntry> assets;
 
@@ -106,8 +107,7 @@ std::vector<ContentEntry> ListContent(const AssetDatabase& database, const Conte
         if (recursive ? !IsInside(record_folder, folder) : record_folder != folder) {
             continue;
         }
-        if (!query.types.empty() &&
-            std::find(query.types.begin(), query.types.end(), record->importer) == query.types.end()) {
+        if (!types.empty() && types.count(record->importer) == 0) {
             continue;
         }
         std::string name = record->IsSubAsset() ? record->sub_key : stdfs::path(record->path).filename().string();
