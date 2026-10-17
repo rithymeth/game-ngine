@@ -7,25 +7,6 @@
 
 namespace aether {
 
-namespace {
-
-std::vector<Entity> EntitiesWith(const World& world, ComponentId id) {
-    std::vector<Entity> result;
-    world.ForEachArchetype([&](const Archetype& archetype) {
-        if (!archetype.Mask().test(id)) {
-            return;
-        }
-        for (usize c = 0; c < archetype.ChunkCount(); ++c) {
-            const Entity* entities = archetype.EntityArray(c);
-            result.insert(result.end(), entities, entities + archetype.ChunkEntityCount(c));
-        }
-    });
-    std::sort(result.begin(), result.end(), [](Entity a, Entity b) { return a.index < b.index; });
-    return result;
-}
-
-} // namespace
-
 bool IsActiveInHierarchy(const World& world, const GuidIndex& guids, Entity entity) {
     for (int depth = 0; world.IsAlive(entity) && depth <= kMaxHierarchyDepth; ++depth) {
         if (const Active* active = world.GetComponent<Active>(entity); active != nullptr && !active->active) {
@@ -149,11 +130,22 @@ bool RemoveTag(World& world, Entity entity, std::string_view tag) {
 
 std::vector<Entity> FindEntitiesWithTag(const World& world, std::string_view tag) {
     std::vector<Entity> result;
-    for (Entity entity : EntitiesWith(world, GetComponentId<Tags>())) {
-        if (HasTag(world, entity, tag)) {
-            result.push_back(entity);
+    const ComponentId tags_id = GetComponentId<Tags>();
+    world.ForEachArchetype([&](const Archetype& archetype) {
+        if (!archetype.Mask().test(tags_id)) {
+            return;
         }
-    }
+        for (usize c = 0; c < archetype.ChunkCount(); ++c) {
+            const Entity* entities = archetype.EntityArray(c);
+            const auto* tags = static_cast<const Tags*>(archetype.ComponentArray(c, tags_id));
+            for (u32 row = 0; row < archetype.ChunkEntityCount(c); ++row) {
+                if (std::find(tags[row].names.begin(), tags[row].names.end(), tag) != tags[row].names.end()) {
+                    result.push_back(entities[row]);
+                }
+            }
+        }
+    });
+    std::sort(result.begin(), result.end(), [](Entity a, Entity b) { return a.index < b.index; });
     return result;
 }
 
