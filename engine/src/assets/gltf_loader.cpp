@@ -410,12 +410,15 @@ void FlattenNodeInstances(const std::vector<GltfNode>& nodes, const std::vector<
         Mat4 parent_world;
     };
     std::vector<StackEntry> stack;
+    std::vector<bool> visited(nodes.size(), false);
     for (usize root : roots) {
         stack.push_back({root, Mat4::Identity()});
     }
     while (!stack.empty()) {
         StackEntry entry = stack.back();
         stack.pop_back();
+        if (entry.node_index >= nodes.size() || visited[entry.node_index]) continue;
+        visited[entry.node_index] = true;
         const GltfNode& node = nodes[entry.node_index];
         Mat4 world = entry.parent_world * node.LocalTransform();
         if (out_world_transforms) (*out_world_transforms)[entry.node_index] = world;
