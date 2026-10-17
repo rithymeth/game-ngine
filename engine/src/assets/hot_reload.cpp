@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <set>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace aether::assets {
 
@@ -15,9 +16,10 @@ std::string SettingsText(AssetDatabase& database, const AssetGuid& guid) {
 
 std::vector<AssetGuid> DependentsOf(const AssetDatabase& database, const AssetGuid& guid) {
     std::vector<AssetGuid> dependents;
+    std::unordered_set<AssetGuid> included;
     auto add_users = [&](const AssetGuid& used) {
         for (const AssetRecord* user : database.Referencers(used)) {
-            if (std::find(dependents.begin(), dependents.end(), user->guid) == dependents.end()) {
+            if (included.insert(user->guid).second) {
                 dependents.push_back(user->guid);
             }
         }
