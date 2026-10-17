@@ -94,8 +94,9 @@ std::vector<Entity> GuidIndex::Rebuild(World& world) {
     // Visit in entity-index order so "the earlier entity keeps the GUID" is
     // deterministic, independent of archetype iteration order.
     std::vector<std::pair<Entity, EntityGuid>> found;
+    found.reserve(world.EntityCount());
+    const ComponentId id = GetComponentId<IdComponent>();
     world.ForEachArchetype([&](const Archetype& archetype) {
-        ComponentId id = GetComponentId<IdComponent>();
         if (!archetype.Has(id)) {
             return;
         }
