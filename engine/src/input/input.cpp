@@ -265,6 +265,10 @@ void InputSystem::Update(const InputState& input, f32 dt) {
     std::sort(extra.begin(), extra.end());
     order.insert(order.end(), extra.begin(), extra.end());
 
+    // Reuse the snapshot's storage across events. Handlers may change
+    // subscriptions while running, so refresh it for each event.
+    std::vector<Subscription> subscription_snapshot;
+    subscription_snapshot.reserve(subscriptions_.size());
     for (const std::string& name : order) {
         ActionState& now = current[name];
         auto it = previous.find(name);
@@ -287,7 +291,8 @@ void InputSystem::Update(const InputState& input, f32 dt) {
         }
         states_[name] = now;
         for (ActionEvent event : events) {
-            for (const Subscription& sub : std::vector<Subscription>(subscriptions_)) {
+            subscription_snapshot.assign(subscriptions_.begin(), subscriptions_.end());
+            for (const Subscription& sub : subscription_snapshot) {
                 if ((sub.action.empty() || sub.action == name) && sub.event == event) {
                     sub.handler(name, event, now);
                 }
