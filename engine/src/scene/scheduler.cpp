@@ -54,6 +54,7 @@ bool SystemScheduler::Add(SystemDesc system, std::string* error) {
 
 bool SystemScheduler::Build(std::string* error) {
     std::unordered_map<std::string, u32> by_name;
+    by_name.reserve(systems_.size());
     for (u32 i = 0; i < systems_.size(); ++i) {
         by_name[systems_[i].name] = i;
     }
