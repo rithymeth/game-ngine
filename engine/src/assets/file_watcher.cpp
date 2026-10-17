@@ -85,18 +85,28 @@ void FileWatcher::Refresh(const std::string& path) {
 
 std::vector<FileChange> FileWatcher::Poll(Clock::time_point now) {
     std::map<std::string, FileState> current = Snapshot();
-    for (const auto& [path, state] : current) {
-        auto old = files_.find(path);
-        if (old == files_.end()) {
-            Note(path, FileChange::Kind::Added, now);
-        } else if (!(old->second == state)) {
-            Note(path, FileChange::Kind::Modified, now);
+    auto old = files_.begin();
+    auto fresh = current.begin();
+    while (old != files_.end() && fresh != current.end()) {
+        if (old->first < fresh->first) {
+            Note(old->first, FileChange::Kind::Removed, now);
+            ++old;
+        } else if (fresh->first < old->first) {
+            Note(fresh->first, FileChange::Kind::Added, now);
+            ++fresh;
+        } else {
+            if (!(old->second == fresh->second)) {
+                Note(fresh->first, FileChange::Kind::Modified, now);
+            }
+            ++old;
+            ++fresh;
         }
     }
-    for (const auto& [path, state] : files_) {
-        if (current.count(path) == 0) {
-            Note(path, FileChange::Kind::Removed, now);
-        }
+    for (; old != files_.end(); ++old) {
+        Note(old->first, FileChange::Kind::Removed, now);
+    }
+    for (; fresh != current.end(); ++fresh) {
+        Note(fresh->first, FileChange::Kind::Added, now);
     }
     files_ = std::move(current);
 
