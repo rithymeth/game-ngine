@@ -283,10 +283,19 @@ u8 NeighbourMask(const TilemapData& map, usize layer, i32 x, i32 y) {
     const i32 self = map.Get(layer, x, y);
     if (self == kEmpty) return 0;
     u8 mask = 0;
-    if (map.Get(layer, x, y + 1) == self) mask |= kNorth;
-    if (map.Get(layer, x + 1, y) == self) mask |= kEast;
-    if (map.Get(layer, x, y - 1) == self) mask |= kSouth;
-    if (map.Get(layer, x - 1, y) == self) mask |= kWest;
+    const auto matches = [&](i64 neighbour_x, i64 neighbour_y) {
+        if (neighbour_x < std::numeric_limits<i32>::min() ||
+            neighbour_x > std::numeric_limits<i32>::max() ||
+            neighbour_y < std::numeric_limits<i32>::min() ||
+            neighbour_y > std::numeric_limits<i32>::max()) {
+            return false;
+        }
+        return map.Get(layer, static_cast<i32>(neighbour_x), static_cast<i32>(neighbour_y)) == self;
+    };
+    if (matches(x, static_cast<i64>(y) + 1)) mask |= kNorth;
+    if (matches(static_cast<i64>(x) + 1, y)) mask |= kEast;
+    if (matches(x, static_cast<i64>(y) - 1)) mask |= kSouth;
+    if (matches(static_cast<i64>(x) - 1, y)) mask |= kWest;
     return mask;
 }
 
