@@ -275,6 +275,11 @@ std::vector<PrefabEntity> ApplyPrefabEdits(const std::vector<PrefabEntity>& enti
         data.push_back(entity);
         UpgradeComponents(data.back().components);
     }
+    std::unordered_map<PrefabLocalId, usize> data_indices;
+    data_indices.reserve(data.size());
+    for (usize i = 0; i < data.size(); ++i) {
+        data_indices.try_emplace(data[i].id, i);
+    }
 
     std::vector<const PropertyOverride*> ordered;
     for (const PropertyOverride& override_ : overrides) {
@@ -289,14 +294,11 @@ std::vector<PrefabEntity> ApplyPrefabEdits(const std::vector<PrefabEntity>& enti
             continue; // on a removed entity: moot, not orphaned
         }
         Json* field = nullptr;
-        for (PrefabEntity& entity : data) {
-            if (entity.id != override_.entity) {
-                continue;
-            }
+        if (const auto entity_it = data_indices.find(override_.entity); entity_it != data_indices.end()) {
+            PrefabEntity& entity = data[entity_it->second];
             if (auto component = entity.components.find(override_.component); component != entity.components.end()) {
                 field = FindField(*component, override_.field_path);
             }
-            break;
         }
         Json value = Json::parse(override_.value, nullptr, /*allow_exceptions=*/false);
         if (field == nullptr || value.is_discarded()) {
