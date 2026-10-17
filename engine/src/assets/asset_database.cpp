@@ -120,7 +120,7 @@ bool SaveAssetMeta(const stdfs::path& meta_file, const AssetMeta& meta, std::str
     }
     std::string text = json.dump(2);
     text.push_back('\n');
-    if (!fs::WriteFileBytes(meta_file.string(), text.data(), text.size())) {
+    if (!fs::WriteFileAtomic(meta_file.string(), text.data(), text.size())) {
         SetError(error, "Couldn't write " + meta_file.string());
         return false;
     }
