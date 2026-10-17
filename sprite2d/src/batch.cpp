@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace aether::sprite2d {
 
@@ -37,6 +38,16 @@ bool Visible(const ViewRect* view, const Rect& r) {
     return !view || (r.max_x >= view->min_x && r.min_x <= view->max_x && r.max_y >= view->min_y && r.min_y <= view->max_y);
 }
 
+bool FiniteColor(const SpriteColor& color) {
+    return std::isfinite(color.r) && std::isfinite(color.g) && std::isfinite(color.b) && std::isfinite(color.a);
+}
+
+bool FiniteTransform2D(const Transform& transform) {
+    return std::isfinite(transform.position.x) && std::isfinite(transform.position.y) &&
+           std::isfinite(transform.position.z) && std::isfinite(transform.rotation.z) &&
+           std::isfinite(transform.rotation.w);
+}
+
 void PushQuad(std::vector<SpriteVertex>& out, const f32 px[4], const f32 py[4], f32 z, const f32 uv[4], const SpriteColor& c,
               bool flip_x, bool flip_y) {
     f32 u0 = uv[0], v0 = uv[1], u1 = uv[2], v1 = uv[3];
@@ -52,6 +63,8 @@ void PushQuad(std::vector<SpriteVertex>& out, const f32 px[4], const f32 py[4], 
 
 std::vector<SpriteBatch> BuildSpriteBatches(const World& world, const Resolvers2D& resolvers, const ViewRect* view) {
     std::vector<Item> items;
+    if (view && (!std::isfinite(view->min_x) || !std::isfinite(view->min_y) || !std::isfinite(view->max_x) ||
+                 !std::isfinite(view->max_y) || view->min_x > view->max_x || view->min_y > view->max_y)) return {};
     usize sequence = 0;
 
     world.ForEach<Transform, Sprite>([&](Transform& t_ref, Sprite& sprite_ref) {
@@ -61,9 +74,12 @@ std::vector<SpriteBatch> BuildSpriteBatches(const World& world, const Resolvers2
         const SpriteAtlas* atlas = resolvers.atlases ? resolvers.atlases(sprite->atlas.guid) : nullptr;
         const SpriteFrame* frame = atlas ? atlas->FindFrame(sprite->frame) : nullptr;
         f32 uv[4];
-        if (!frame || !atlas->Uv(*frame, uv) || sprite->pixels_per_unit <= 0.0f) return;
+        if (!frame || !atlas->Uv(*frame, uv) || !std::isfinite(sprite->pixels_per_unit) ||
+            sprite->pixels_per_unit <= 0.0f || !FiniteTransform2D(*t) || !FiniteColor(sprite->color) ||
+            !std::isfinite(frame->pivot_x) || !std::isfinite(frame->pivot_y)) return;
         const f32 w = static_cast<f32>(frame->w) / sprite->pixels_per_unit;
         const f32 h = static_cast<f32>(frame->h) / sprite->pixels_per_unit;
+        if (!std::isfinite(w) || !std::isfinite(h)) return;
         // Local corners from the pivot (fractions from the frame's top left).
         const f32 left = -frame->pivot_x * w, right = (1.0f - frame->pivot_x) * w;
         const f32 top = frame->pivot_y * h, bottom = -(1.0f - frame->pivot_y) * h;
@@ -75,6 +91,7 @@ std::vector<SpriteBatch> BuildSpriteBatches(const World& world, const Resolvers2
             rotation.Apply(lx[i], ly[i], px[i], py[i]);
             px[i] += t->position.x;
             py[i] += t->position.y;
+            if (!std::isfinite(px[i]) || !std::isfinite(py[i])) return;
         }
         const Rect bounds{std::min({px[0], px[1], px[2], px[3]}), std::min({py[0], py[1], py[2], py[3]}),
                           std::max({px[0], px[1], px[2], px[3]}), std::max({py[0], py[1], py[2], py[3]})};
@@ -90,9 +107,12 @@ std::vector<SpriteBatch> BuildSpriteBatches(const World& world, const Resolvers2
         ++sequence;
         const TilemapData* map = resolvers.tilemaps ? resolvers.tilemaps(renderer->tilemap.guid) : nullptr;
         const Tileset* tileset = map && resolvers.tilesets ? resolvers.tilesets(map->tileset) : nullptr;
-        if (!map || !tileset || renderer->pixels_per_unit <= 0.0f) return;
+        if (!map || !tileset || !std::isfinite(renderer->pixels_per_unit) || renderer->pixels_per_unit <= 0.0f ||
+            !FiniteTransform2D(*t) || !FiniteColor(renderer->color) || map->width > static_cast<u32>(std::numeric_limits<i32>::max()) ||
+            map->height > static_cast<u32>(std::numeric_limits<i32>::max()) || tileset->tile_width == 0 || tileset->tile_height == 0) return;
         const f32 tw = static_cast<f32>(tileset->tile_width) / renderer->pixels_per_unit;
         const f32 th = static_cast<f32>(tileset->tile_height) / renderer->pixels_per_unit;
+        if (!std::isfinite(tw) || !std::isfinite(th) || tw <= 0.0f || th <= 0.0f) return;
         const PlaneRotation rotation(t->rotation);
         // Each layer is one item, so layers sort with the entity's order and keep their own order.
         for (usize layer = 0; layer < map->layers.size(); ++layer) {
@@ -100,10 +120,15 @@ std::vector<SpriteBatch> BuildSpriteBatches(const World& world, const Resolvers2
             // Cells in the view only (the rotation is rarely used on maps; the box handles it).
             i32 x0 = 0, y0 = 0, x1 = static_cast<i32>(map->width) - 1, y1 = static_cast<i32>(map->height) - 1;
             if (view && std::abs(rotation.s) < 1e-6f && rotation.c > 0.0f) {
-                x0 = std::max(x0, static_cast<i32>(std::floor((view->min_x - t->position.x) / tw)));
-                y0 = std::max(y0, static_cast<i32>(std::floor((view->min_y - t->position.y) / th)));
-                x1 = std::min(x1, static_cast<i32>(std::floor((view->max_x - t->position.x) / tw)));
-                y1 = std::min(y1, static_cast<i32>(std::floor((view->max_y - t->position.y) / th)));
+                const auto cell_index = [](f32 bound, f32 origin, f32 size, u32 count) {
+                    const f64 index = std::floor((static_cast<f64>(bound) - origin) / size);
+                    return static_cast<i32>(std::clamp(index, 0.0, static_cast<f64>(count - 1)));
+                };
+                if (map->width == 0 || map->height == 0) return;
+                x0 = cell_index(view->min_x, t->position.x, tw, map->width);
+                y0 = cell_index(view->min_y, t->position.y, th, map->height);
+                x1 = cell_index(view->max_x, t->position.x, tw, map->width);
+                y1 = cell_index(view->max_y, t->position.y, th, map->height);
             }
             for (i32 y = y0; y <= y1; ++y) {
                 for (i32 x = x0; x <= x1; ++x) {
@@ -115,11 +140,14 @@ std::vector<SpriteBatch> BuildSpriteBatches(const World& world, const Resolvers2
                     const f32 ly[4] = {static_cast<f32>(y + 1) * th, static_cast<f32>(y + 1) * th, static_cast<f32>(y) * th,
                                        static_cast<f32>(y) * th};
                     f32 px[4], py[4];
+                    bool finite = true;
                     for (int i = 0; i < 4; ++i) {
                         rotation.Apply(lx[i], ly[i], px[i], py[i]);
                         px[i] += t->position.x;
                         py[i] += t->position.y;
+                        finite = finite && std::isfinite(px[i]) && std::isfinite(py[i]);
                     }
+                    if (!finite) continue;
                     if (view) {
                         const Rect bounds{std::min({px[0], px[1], px[2], px[3]}), std::min({py[0], py[1], py[2], py[3]}),
                                           std::max({px[0], px[1], px[2], px[3]}), std::max({py[0], py[1], py[2], py[3]})};
