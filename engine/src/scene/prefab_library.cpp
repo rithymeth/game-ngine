@@ -89,7 +89,9 @@ std::vector<assets::AssetGuid> PrefabLibrary::Dependents(const assets::AssetGuid
     std::unordered_set<assets::AssetGuid> seen;
     seen.reserve(prefabs.size());
     seen.insert(guid);
-    std::vector<assets::AssetGuid> pending{guid};
+    std::vector<assets::AssetGuid> pending;
+    pending.reserve(prefabs.size());
+    pending.push_back(guid);
     while (!pending.empty()) {
         const assets::AssetGuid next = pending.back();
         pending.pop_back();
