@@ -182,8 +182,14 @@ ActionPhase InputSystem::EvaluateBinding(const InputBinding& binding, BindingSta
 
 void InputSystem::Update(const InputState& input, f32 dt) {
     const std::unordered_map<std::string, ActionState> previous = states_;
+    usize binding_count = 0;
+    for (const ContextEntry& entry : contexts_) {
+        binding_count += entry.context.bindings.size();
+    }
     std::unordered_map<std::string, ActionState> current;
+    current.reserve(actions_.size() + binding_count);
     std::unordered_set<std::string> evaluated;
+    evaluated.reserve(binding_count);
     for (const InputAction& action : actions_) {
         current[action.name] = ActionState{};
     }
