@@ -66,14 +66,13 @@ PrefabLookup PrefabLibrary::FlatLookup() {
 std::vector<assets::AssetGuid> PrefabLibrary::Dependents(const assets::AssetGuid& guid) {
     // Which prefabs refer to which (nesting or base), from their data.
     std::unordered_map<assets::AssetGuid, std::vector<assets::AssetGuid>> users;
-    std::vector<assets::AssetGuid> prefabs;
-    for (const assets::AssetRecord* record : database_.All()) {
-        if (record->importer == "Prefab" && !record->IsSubAsset()) {
-            prefabs.push_back(record->guid);
-        }
-    }
+    const std::vector<const assets::AssetRecord*> prefabs = database_.FindByImporter("Prefab");
     users.reserve(prefabs.size());
-    for (const assets::AssetGuid& prefab : prefabs) {
+    for (const assets::AssetRecord* record : prefabs) {
+        if (record->IsSubAsset()) {
+            continue;
+        }
+        const assets::AssetGuid& prefab = record->guid;
         const PrefabData* data = Get(prefab);
         if (data == nullptr) {
             continue;

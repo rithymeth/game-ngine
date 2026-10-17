@@ -99,6 +99,8 @@ public:
     const AssetRecord* FindByPath(const std::string& path) const;
     // Every record, sorted by path.
     std::vector<const AssetRecord*> All() const;
+    // Records produced by an importer, in unspecified order.
+    std::vector<const AssetRecord*> FindByImporter(const std::string& importer) const;
 
     // Moves/renames an asset's source and .ameta together. Its GUID — and so
     // every reference to it — is unchanged, as are its sub-assets' (whose
