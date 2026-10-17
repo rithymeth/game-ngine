@@ -164,6 +164,7 @@ private:
                                 const std::function<bool(const std::string&)>& chord_triggered);
 
     std::vector<InputAction> actions_;
+    std::unordered_map<std::string, usize> action_indices_;
     std::vector<ContextEntry> contexts_; // sorted, highest priority first
     u64 next_order_ = 0;
     std::unordered_map<std::string, ActionState> states_;
