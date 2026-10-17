@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <set>
 #include <system_error>
@@ -426,22 +427,27 @@ std::vector<ReferenceNode> CollectReferences(const AssetDatabase& database, cons
 
 Thumbnail MakeThumbnail(const std::vector<u8>& rgba, u32 width, u32 height, u32 max_size) {
     Thumbnail thumb;
-    if (width == 0 || height == 0 || max_size == 0 || rgba.size() < static_cast<usize>(width) * height * 4) {
+    if (width == 0 || height == 0 || max_size == 0) {
         return thumb;
     }
+    const u64 pixel_count = static_cast<u64>(width) * height;
+    if (pixel_count > std::numeric_limits<usize>::max() / 4 || rgba.size() < static_cast<usize>(pixel_count) * 4)
+        return thumb;
     const u32 longest = std::max(width, height);
     const u32 out_w = longest <= max_size ? width : std::max<u32>(1, static_cast<u32>(u64{width} * max_size / longest));
     const u32 out_h = longest <= max_size ? height : std::max<u32>(1, static_cast<u32>(u64{height} * max_size / longest));
+    const u64 output_pixels = static_cast<u64>(out_w) * out_h;
+    if (output_pixels > std::numeric_limits<usize>::max() / 4) return thumb;
     thumb.width = out_w;
     thumb.height = out_h;
-    thumb.rgba.resize(static_cast<usize>(out_w) * out_h * 4);
+    thumb.rgba.resize(static_cast<usize>(output_pixels) * 4);
     for (u32 y = 0; y < out_h; ++y) {
         const u32 y0 = static_cast<u32>(u64{y} * height / out_h);
         const u32 y1 = std::max(y0 + 1, static_cast<u32>(u64{y + 1} * height / out_h));
         for (u32 x = 0; x < out_w; ++x) {
             const u32 x0 = static_cast<u32>(u64{x} * width / out_w);
             const u32 x1 = std::max(x0 + 1, static_cast<u32>(u64{x + 1} * width / out_w));
-            u32 sum[4] = {0, 0, 0, 0};
+            u64 sum[4] = {0, 0, 0, 0};
             for (u32 sy = y0; sy < y1; ++sy) {
                 for (u32 sx = x0; sx < x1; ++sx) {
                     const u8* p = &rgba[(static_cast<usize>(sy) * width + sx) * 4];
@@ -450,7 +456,7 @@ Thumbnail MakeThumbnail(const std::vector<u8>& rgba, u32 width, u32 height, u32 
                     }
                 }
             }
-            const u32 count = (y1 - y0) * (x1 - x0);
+            const u64 count = static_cast<u64>(y1 - y0) * (x1 - x0);
             u8* out = &thumb.rgba[(static_cast<usize>(y) * out_w + x) * 4];
             for (int c = 0; c < 4; ++c) {
                 out[c] = static_cast<u8>((sum[c] + count / 2) / count);
