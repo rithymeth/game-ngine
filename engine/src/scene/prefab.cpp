@@ -20,6 +20,7 @@ namespace {
 
 constexpr int kPrefabVersion = 1;
 constexpr usize kMaxPrefabFileBytes = 32 * 1024 * 1024;
+constexpr usize kMaxPrefabEntities = 1'000'000;
 
 void SetError(std::string* error, std::string message) {
     if (error != nullptr) {
@@ -402,6 +403,10 @@ static bool PrefabFromJsonImpl(const Json& json, PrefabData& out, std::string* e
     auto entities = json.find("entities");
     if (entities == json.end() || !entities->is_array() || (entities->empty() && !prefab.IsVariant())) {
         SetError(error, "The prefab has no entities");
+        return false;
+    }
+    if (entities->size() > kMaxPrefabEntities) {
+        SetError(error, "The prefab has too many entities");
         return false;
     }
     std::set<PrefabLocalId> seen;
