@@ -151,13 +151,20 @@ PropagationReport PropagatePrefabChange(World& world, GuidIndex& guids, PrefabLi
     // handing them no data.
     PrefabLookup lookup = library.Lookup();
     std::vector<Entity> roots;
+    const ComponentId prefab_instance_id = GetComponentId<PrefabInstance>();
     world.ForEachArchetype([&](const Archetype& archetype) {
-        if (!archetype.Mask().test(GetComponentId<PrefabInstance>())) {
+        if (!archetype.Mask().test(prefab_instance_id)) {
             return;
         }
         for (usize c = 0; c < archetype.ChunkCount(); ++c) {
             const Entity* entities = archetype.EntityArray(c);
-            roots.insert(roots.end(), entities, entities + archetype.ChunkEntityCount(c));
+            const auto* instances = static_cast<const PrefabInstance*>(
+                archetype.ComponentArray(c, prefab_instance_id));
+            for (u32 row = 0; row < archetype.ChunkEntityCount(c); ++row) {
+                if (affected_set.count(instances[row].source.guid) != 0) {
+                    roots.push_back(entities[row]);
+                }
+            }
         }
     });
     std::sort(roots.begin(), roots.end(), [](Entity a, Entity b) { return a.index < b.index; });
