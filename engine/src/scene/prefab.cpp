@@ -925,12 +925,21 @@ ResolveReport ResolvePrefabInstance(World& world, GuidIndex& guids, Entity root,
 
     // 4. Entities that already belong to this instance, by local id.
     std::unordered_map<PrefabLocalId, Entity> existing;
-    for (Entity entity : EntitiesWith(world, GetComponentId<PrefabLink>())) {
-        const PrefabLink* link = world.GetComponent<PrefabLink>(entity);
-        if (link->instance == root_guid && entity != root) {
-            existing[link->local_id] = entity;
+    const ComponentId prefab_link_id = GetComponentId<PrefabLink>();
+    world.ForEachArchetype([&](const Archetype& archetype) {
+        if (!archetype.Mask().test(prefab_link_id)) {
+            return;
         }
-    }
+        for (usize c = 0; c < archetype.ChunkCount(); ++c) {
+            const Entity* entities = archetype.EntityArray(c);
+            const auto* links = static_cast<const PrefabLink*>(archetype.ComponentArray(c, prefab_link_id));
+            for (u32 row = 0; row < archetype.ChunkEntityCount(c); ++row) {
+                if (entities[row] != root && links[row].instance == root_guid) {
+                    existing[links[row].local_id] = entities[row];
+                }
+            }
+        }
+    });
     existing[root_id] = root;
 
     // 5. Create or update each entity, parents first.
