@@ -72,11 +72,10 @@ bool LoadPluginDescriptorFromMemory(std::span<const u8> bytes, const std::string
 }
 
 bool LoadPluginDescriptor(const stdfs::path& file, PluginDescriptor& out, std::string* error) {
-    std::error_code size_error;
-    const auto size = stdfs::file_size(file, size_error);
-    if (!size_error && size > kMaxPluginDescriptorBytes) return Fail(error, file.string() + " is too large to be a plugin descriptor");
     std::vector<u8> bytes;
-    if (!fs::ReadFileBytes(file.string(), bytes)) return Fail(error, "Can't read " + file.string());
+    if (!fs::ReadFileBytes(file.string(), bytes, kMaxPluginDescriptorBytes)) {
+        return Fail(error, "Can't read " + file.string() + " or it is too large to be a plugin descriptor");
+    }
     return LoadPluginDescriptorFromMemory(bytes, file.string(), out, error);
 }
 

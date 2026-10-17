@@ -101,22 +101,14 @@ bool ResolveBufferData(const Json& buffer_json, const std::string& base_dir, boo
     }
     if (!allow_external) return false;
     std::string path = JoinPath(base_dir, UriDecode(uri));
-    const usize file_size = fs::FileSize(path);
-    if (file_size > remaining_budget) {
-        AETHER_LOG_ERROR("glTF", "Referenced buffer \"%s\" exceeds the remaining glTF buffer budget", path.c_str());
-        return false;
-    }
+    if (!fs::ReadFileBytes(path, out_data, remaining_budget)) return false;
     if (buffer_json.contains("byteLength")) {
         const usize declared_size = buffer_json["byteLength"].get<usize>();
-        if (declared_size > remaining_budget || file_size != declared_size) {
+        if (declared_size > remaining_budget || out_data.size() != declared_size) {
             AETHER_LOG_ERROR("glTF", "Referenced buffer \"%s\" is larger than its declared or allowed size", path.c_str());
+            out_data.clear();
             return false;
         }
-    }
-    if (!fs::ReadFileBytes(path, out_data)) return false;
-    if (out_data.size() > remaining_budget) {
-        out_data.clear();
-        return false;
     }
     return true;
 }
@@ -935,15 +927,13 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
 }
 
 bool LoadGltf(const std::string& path, GltfScene& out_scene) {
-    if (fs::FileSize(path) > kMaxJsonBytes) {
-        AETHER_LOG_ERROR("glTF", "File \"%s\" is too large", path.c_str());
+    std::vector<u8> bytes;
+    if (!fs::ReadFileBytes(path, bytes, kMaxJsonBytes)) {
+        AETHER_LOG_ERROR("glTF", "Failed to read \"%s\" or file is too large", path.c_str());
         return false;
     }
     std::string text;
-    if (!fs::ReadFileText(path, text)) {
-        AETHER_LOG_ERROR("glTF", "Failed to read \"%s\"", path.c_str());
-        return false;
-    }
+    if (!bytes.empty()) text.assign(reinterpret_cast<const char*>(bytes.data()), bytes.size());
     GltfScene scene;
     try {
         if (!ParseGltfText(text, path, true, scene)) return false;

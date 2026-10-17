@@ -401,13 +401,9 @@ bool LoadSceneJson(World& world, const std::string& path) {
 }
 
 bool LoadSceneJson(World& world, const std::string& path, const SceneLoadOptions& options) {
-    if (fs::FileSize(path) > kMaxJsonSceneBytes) {
-        AETHER_LOG_ERROR("Scene", "JSON scene is too large: %s", path.c_str());
-        return false;
-    }
     std::vector<u8> bytes;
-    if (!fs::ReadFileBytes(path, bytes)) {
-        AETHER_LOG_ERROR("Scene", "Failed to read scene file: %s", path.c_str());
+    if (!fs::ReadFileBytes(path, bytes, kMaxJsonSceneBytes)) {
+        AETHER_LOG_ERROR("Scene", "Failed to read scene file or JSON scene is too large: %s", path.c_str());
         return false;
     }
     return LoadSceneJsonFromMemory(world, bytes, path, options);
