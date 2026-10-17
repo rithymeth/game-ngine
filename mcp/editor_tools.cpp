@@ -5601,7 +5601,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                                                                     {"minItems", 3}, {"maxItems", 3}}}}},
                                         {"required", Json::array({"entity", "scale"})}}},
                              {"minItems", 1}, {"maxItems", 64},
-                             {"description", "1–64 unique entity GUID and world-scale pairs"}}}}},
+                             {"description", "1–64 unique entity GUID and world-scale pairs"}}}},
                 {"edits"}),
          [&s](const Json& args) -> Json {
              if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
