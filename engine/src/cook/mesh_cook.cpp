@@ -2,6 +2,7 @@
 
 #include "aether/pak/pak.h"
 
+#include <cmath>
 #include <cstring>
 
 namespace aether::cook {
@@ -117,6 +118,10 @@ bool ReadMeshlets(Reader& r, MeshletMesh& m, u32 vertex_count, std::string* erro
         if (!r.F32(b.center.x) || !r.F32(b.center.y) || !r.F32(b.center.z) || !r.F32(b.radius) || !r.F32(b.cone_axis.x) ||
             !r.F32(b.cone_axis.y) || !r.F32(b.cone_axis.z) || !r.F32(b.cone_cutoff))
             return Fail(error, "truncated meshlet bounds");
+        if (!std::isfinite(b.center.x) || !std::isfinite(b.center.y) || !std::isfinite(b.center.z) ||
+            !std::isfinite(b.radius) || b.radius < 0.0f || !std::isfinite(b.cone_axis.x) ||
+            !std::isfinite(b.cone_axis.y) || !std::isfinite(b.cone_axis.z) || !std::isfinite(b.cone_cutoff))
+            return Fail(error, "invalid meshlet bounds");
     }
     for (const Meshlet& ml : m.meshlets) {
         const u64 v_end = static_cast<u64>(ml.vertex_offset) + ml.vertex_count;
@@ -238,7 +243,8 @@ bool LoadAmesh(std::span<const u8> bytes, CookedMesh& out, std::string* error) {
         p.lods.resize(lod_count);
         for (CookedMeshLod& l : p.lods) {
             u32 icount = 0;
-            if (!r.F32(l.error) || !r.U32(icount) || !r.Fits(icount, 4) || icount % 3 != 0) return Fail(error, "bad LOD indices");
+            if (!r.F32(l.error) || !std::isfinite(l.error) || l.error < 0.0f || !r.U32(icount) || !r.Fits(icount, 4) ||
+                icount % 3 != 0) return Fail(error, "bad LOD indices");
             l.indices.resize(icount);
             for (u32& i : l.indices) {
                 if (!r.U32(i)) return Fail(error, "truncated LOD indices");
