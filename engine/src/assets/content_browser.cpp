@@ -138,12 +138,31 @@ std::vector<ContentEntry> ListContent(const AssetDatabase& database, const Conte
 }
 
 usize ApplyVcsStatus(std::vector<ContentEntry>& entries, const VcsStatus& status) {
+    std::unordered_map<std::string, VcsState> folder_states;
+    if (status.available) {
+        folder_states.reserve(status.files.size());
+        for (const auto& [path, state] : status.files) {
+            if (status.prefix.empty() || path.compare(0, status.prefix.size(), status.prefix) == 0) {
+                folder_states[status.prefix] = WorseVcsState(folder_states[status.prefix], state);
+            }
+            for (usize slash = path.find('/'); slash != std::string::npos; slash = path.find('/', slash + 1)) {
+                const std::string folder = path.substr(0, slash + 1);
+                std::string& repo_folder = folder_states[folder];
+                repo_folder = WorseVcsState(repo_folder, state);
+            }
+        }
+    }
+
     usize changed = 0;
     for (ContentEntry& entry : entries) {
         entry.vcs = VcsState::Clean;
         if (!status.available) continue;
         if (entry.is_folder) {
-            entry.vcs = status.OfLocalFolder(entry.path);
+            std::string folder = status.prefix + entry.path;
+            if (!folder.empty() && folder.back() != '/') folder.push_back('/');
+            if (auto it = folder_states.find(folder); it != folder_states.end()) {
+                entry.vcs = it->second;
+            }
         } else {
             std::string source = entry.path;
             if (const usize hash = source.find('#'); hash != std::string::npos) source.resize(hash); // a sub-asset's source
