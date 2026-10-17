@@ -105,6 +105,7 @@ struct EntitySlot {
 // stable enough for reproducible files).
 std::vector<EntitySlot> CollectEntities(const World& world) {
     std::vector<EntitySlot> slots;
+    slots.reserve(world.EntityCount());
     world.ForEachArchetype([&](const Archetype& archetype) {
         for (usize c = 0; c < archetype.ChunkCount(); ++c) {
             const Entity* entities = archetype.EntityArray(c);
