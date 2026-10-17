@@ -2731,7 +2731,7 @@ void RegisterGameTools(McpServer& server) {
                                                           {"max_hits", {{"type", "integer"}, {"minimum", 1}, {"maximum", 64}}},
                                                           {"layer_mask", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4294967295.0}}},
                                                           {"ignore_entity", {{"type", "string"}}}, {"include_triggers", {{"type", "boolean"}}}},
-                                          {"required", Json::array({"kind"})}}}}}},
+                                          {"required", Json::array({"kind"})}}}}}}}},
                 {"queries"}),
          [host](const Json& args) -> Json {
              Game& game = host->Require();
@@ -3111,7 +3111,7 @@ void RegisterGameTools(McpServer& server) {
                                                           {"point_a", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}},
                                                           {"point_b", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}},
                                                           {"mask", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4294967295.0}}}}},
-                                          {"required", Json::array({"kind"})}}}}}},
+                                          {"required", Json::array({"kind"})}}}}}}},
                 {"queries"}),
          [host](const Json& args) -> Json {
              Game& game = host->Require();
@@ -3896,7 +3896,7 @@ void RegisterGameTools(McpServer& server) {
                                         {"properties", {{"entity", {{"type", "string"}}},
                                                         {"mode", {{"type", "string"}, {"enum", Json::array({"force", "impulse", "torque", "angular_impulse"})}},
                                                         {"value", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}}}},
-                                        {"required", Json::array({"entity", "mode", "value"})}}}}}},
+                                        {"required", Json::array({"entity", "mode", "value"})}}}}}}},
                 {"edits"}),
          [host](const Json& args) -> Json {
              Game& game = host->Require();
@@ -4213,7 +4213,7 @@ void RegisterGameTools(McpServer& server) {
                                                         {"gravity_scale", {{"type", "number"}, {"minimum", -10}, {"maximum", 10}}},
                                                         {"continuous_collision", {{"type", "boolean"}}},
                                                         {"lock_rotation", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "boolean"}}}}}}},
-                                        {"required", Json::array({"entity"})}}}}}},
+                                        {"required", Json::array({"entity"})}}}}}}},
                 {"edits"}),
          [host](const Json& args) -> Json {
              Game& game = host->Require();
@@ -4454,7 +4454,7 @@ void RegisterGameTools(McpServer& server) {
                                                         {"friction", {{"type", "number"}, {"minimum", 0}, {"maximum", 2}}},
                                                         {"restitution", {{"type", "number"}, {"minimum", 0}, {"maximum", 1}}},
                                                         {"report_stay", {{"type", "boolean"}}}}},
-                                        {"required", Json::array({"entity", "shape"})}}}}}},
+                                        {"required", Json::array({"entity", "shape"})}}}}}}},
                 {"edits"}),
          [host](const Json& args) -> Json {
              Game& game = host->Require();
@@ -5017,7 +5017,7 @@ void RegisterGameTools(McpServer& server) {
                  {"restitution", {{"type", "number"}, {"minimum", 0}, {"maximum", 1}}},
                  {"trigger", {{"type", "boolean"}}},
                  {"layer", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4294967295.0}}},
-                 {"mask", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4294967295.0}}}},
+                 {"mask", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4294967295.0}}}}},
                 {"entities"}),
          [host](const Json& args) -> Json {
              Game& game = host->Require();
@@ -5142,7 +5142,7 @@ void RegisterGameTools(McpServer& server) {
                               {"items", {{"type", "object"},
                                           {"properties", {{"entity", {{"type", "string"}}}, {"parent", {{"type", "string"}}}}},
                                           {"required", Json::array({"entity", "parent"})}}}},
-                 {"preserve_world", {{"type", "boolean"}, {"default", false}}},
+                 {"preserve_world", {{"type", "boolean"}, {"default", false}}}}},
                 {"edits"}),
          [host](const Json& args) -> Json {
              Game& game = host->Require();
@@ -5474,7 +5474,7 @@ void RegisterGameTools(McpServer& server) {
          Schema({{"entity", {{"type", "string"}}},
                  {"ability", {{"type", "string"}}},
                  {"action", {{"type", "string"}, {"enum", Json::array({"state", "can_activate", "grant", "revoke", "activate", "commit", "end", "cancel"})}},
-                 {"handle", {{"type", "integer"}, {"minimum", 1}, {"maximum", std::numeric_limits<u32>::max()}}}},
+                 {"handle", {{"type", "integer"}, {"minimum", 1}, {"maximum", std::numeric_limits<u32>::max()}}}}},
                 {"action"}),
          [host](const Json& args) -> Json {
              Game& game = host->Require();
@@ -5630,7 +5630,7 @@ void RegisterGameTools(McpServer& server) {
                  {"source", {{"type", "string"}}},
                  {"effect", {{"type", "string"}}},
                  {"handle", {{"type", "integer"}, {"minimum", 1}, {"maximum", std::numeric_limits<u32>::max()}}},
-                 {"tag", {{"type", "string"}}}},
+                 {"tag", {{"type", "string"}}}}},
                 {"action"}),
          [host](const Json& args) -> Json {
              Game& game = host->Require();
@@ -5806,7 +5806,7 @@ void RegisterGameTools(McpServer& server) {
                  {"to_slot", {{"type", "integer"}}},
                  {"equipment_slot", {{"type", "string"}}},
                  {"capacity", {{"type", "integer"}}},
-                 {"max_weight", {{"type", "number"}}}},
+                 {"max_weight", {{"type", "number"}}}}},
                 {"entity", "action"}),
          [host](const Json& args) -> Json {
              Game& game = host->Require();
@@ -5911,7 +5911,7 @@ void RegisterGameTools(McpServer& server) {
                                  {"item", {{"type", "string"}}}, {"count", {{"type", "integer"}}},
                                  {"slot", {{"type", "integer"}}}, {"to_slot", {{"type", "integer"}}},
                                  {"equipment_slot", {{"type", "string"}}}, {"capacity", {{"type", "integer"}}},
-                                 {"max_weight", {{"type", "number"}}}}}, {"required", Json::array({"entity", "action"})}}}}}},
+                                 {"max_weight", {{"type", "number"}}}}}, {"required", Json::array({"entity", "action"})}}}}}}},
                 {"edits"}),
          [host](const Json& args) -> Json {
              Game& game = host->Require();
@@ -6121,7 +6121,7 @@ void RegisterGameTools(McpServer& server) {
                  {"objective", {{"type", "string"}}},
                  {"kind", {{"type", "string"}, {"enum", Json::array({"count", "tag", "flag"})}},
                  {"target", {{"type", "string"}}},
-                 {"amount", {{"type", "integer"}}}},
+                 {"amount", {{"type", "integer"}}}}}},
                 {"entity", "action"}),
          [host](const Json& args) -> Json {
              Game& game = host->Require();
@@ -6212,7 +6212,7 @@ void RegisterGameTools(McpServer& server) {
                                                         {"quest", {{"type", "string"}}}, {"objective", {{"type", "string"}}},
                                                         {"kind", {{"type", "string"}, {"enum", Json::array({"count", "tag", "flag"})}},
                                                         {"target", {{"type", "string"}}}, {"amount", {{"type", "integer"}}}},
-                                        {"required", Json::array({"entity", "action"})}}}}}},
+                                        {"required", Json::array({"entity", "action"})}}}}}}}}},
                 {"edits"}),
          [host](const Json& args) -> Json {
              Game& game = host->Require();
@@ -7295,7 +7295,7 @@ void RegisterGameTools(McpServer& server) {
          Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}},
                  {"position", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
                  {"rotation", {{"type", "array"}, {"minItems", 4}, {"maxItems", 4}, {"items", {{"type", "number"}}}}},
-                 {"scale", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}}},
+                 {"scale", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}}}},
                 {"entities"}),
          [host](const Json& args) -> Json {
              Game& game = host->Require();
@@ -7688,7 +7688,7 @@ void RegisterGameTools(McpServer& server) {
         {"game_scale_entities_local_shared_many",
          "Multiply local scale by one shared component factor on up to 64 unique live entities. Preserves local position and rotation; validates all handles, factor values and resulting scales before applying the batch.",
          Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}},
-                 {"factor", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}}},
+                 {"factor", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}}}},
                 {"entities", "factor"}),
          [host](const Json& args) -> Json {
              Game& game = host->Require();
@@ -7892,7 +7892,7 @@ void RegisterGameTools(McpServer& server) {
         {"game_rotate_entities_local_shared_many",
          "Apply one local-space quaternion delta to up to 64 unique live entities. Preserves local position and scale; validates all handles and rotations and normalizes every result before applying the batch.",
          Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}},
-                 {"delta", {{"type", "array"}, {"minItems", 4}, {"maxItems", 4}, {"items", {{"type", "number"}}}}}},
+                 {"delta", {{"type", "array"}, {"minItems", 4}, {"maxItems", 4}, {"items", {{"type", "number"}}}}}}},
                 {"entities", "delta"}),
          [host](const Json& args) -> Json {
              Game& game = host->Require();
@@ -8043,7 +8043,7 @@ void RegisterGameTools(McpServer& server) {
         {"game_rotate_entities_world_shared_many",
          "Apply one world-space quaternion delta to up to 64 unique live entities. Preserves local position and scale, resolves parent orientations, and rejects ancestor overlap or invalid hierarchies before applying the batch.",
          Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}},
-                 {"delta", {{"type", "array"}, {"minItems", 4}, {"maxItems", 4}, {"items", {{"type", "number"}}}}}},
+                 {"delta", {{"type", "array"}, {"minItems", 4}, {"maxItems", 4}, {"items", {{"type", "number"}}}}}}},
                 {"entities", "delta"}),
          [host](const Json& args) -> Json {
              Game& game = host->Require();
@@ -8317,7 +8317,7 @@ void RegisterGameTools(McpServer& server) {
          Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}},
                  {"position", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}},
                  {"rotation", {{"type", "array"}, {"minItems", 4}, {"maxItems", 4}, {"items", {{"type", "number"}}}}},
-                 {"scale", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}}},
+                 {"scale", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}}}},
                 {"entities"}),
          [host](const Json& args) -> Json {
              Game& game = host->Require();
@@ -8552,7 +8552,7 @@ void RegisterGameTools(McpServer& server) {
         {"game_set_world_positions_shared_many",
          "Set one world position on up to 64 unique live entities while preserving local rotation and scale. Converts through parent transforms and rejects ancestor overlap, cycles, excessive depth and singular parents before applying the batch.",
          Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}},
-                 {"position", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}}},
+                 {"position", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}}}},
                 {"entities", "position"}),
          [host](const Json& args) -> Json {
              Game& game = host->Require();
@@ -8715,7 +8715,7 @@ void RegisterGameTools(McpServer& server) {
         {"game_set_world_rotations_shared_many",
          "Set one world rotation on up to 64 unique live entities while preserving local position and scale. Normalizes the quaternion and converts through parent orientations; ancestor overlap, invalid hierarchies and excessive depth are rejected before applying the batch.",
          Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}},
-                 {"rotation", {{"type", "array"}, {"minItems", 4}, {"maxItems", 4}, {"items", {{"type", "number"}}}}}},
+                 {"rotation", {{"type", "array"}, {"minItems", 4}, {"maxItems", 4}, {"items", {{"type", "number"}}}}}}},
                 {"entities", "rotation"}),
          [host](const Json& args) -> Json {
              Game& game = host->Require();
@@ -9018,7 +9018,7 @@ void RegisterGameTools(McpServer& server) {
         {"game_scale_entities_world_shared_many",
          "Multiply world-scale magnitudes by one shared non-negative component factor on up to 64 unique live entities. Preserves local position and rotation and local mirror signs; validates hierarchies, parent bases and results before applying the batch.",
          Schema({{"entities", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64}, {"items", {{"type", "string"}}}},
-                 {"factor", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}}},
+                 {"factor", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", {{"type", "number"}}}}}}},
                 {"entities", "factor"}),
          [host](const Json& args) -> Json {
              Game& game = host->Require();
