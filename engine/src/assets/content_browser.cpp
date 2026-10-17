@@ -382,9 +382,10 @@ std::vector<AssetGuid> Neighbours(const AssetDatabase& database, const AssetReco
     if (direction == ReferenceDirection::Dependencies) {
         result = record.dependencies;
     } else {
+        std::unordered_set<AssetGuid> included;
         auto add = [&](const AssetGuid& used) {
             for (const AssetRecord* user : database.Referencers(used)) {
-                if (std::find(result.begin(), result.end(), user->guid) == result.end()) {
+                if (included.insert(user->guid).second) {
                     result.push_back(user->guid);
                 }
             }
