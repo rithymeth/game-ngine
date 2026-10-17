@@ -247,9 +247,6 @@ void InputSystem::Update(const InputState& input, f32 dt) {
 
     // Phase transitions -> events, in action order (declared ones first).
     std::vector<std::string> order;
-    for (const InputAction& action : actions_) {
-        order.push_back(action.name);
-    }
     std::vector<std::string> extra;
     for (const auto& [name, state] : current) {
         if (FindAction(name) == nullptr) {
@@ -263,7 +260,13 @@ void InputSystem::Update(const InputState& input, f32 dt) {
         }
     }
     std::sort(extra.begin(), extra.end());
-    order.insert(order.end(), extra.begin(), extra.end());
+    order.reserve(actions_.size() + extra.size());
+    for (const InputAction& action : actions_) {
+        order.push_back(action.name);
+    }
+    for (std::string& name : extra) {
+        order.push_back(std::move(name));
+    }
 
     // Reuse the snapshot's storage across events. Handlers may change
     // subscriptions while running, so refresh it for each event.
