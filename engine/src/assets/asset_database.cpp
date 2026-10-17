@@ -564,12 +564,17 @@ const AssetRecord* AssetDatabase::FindByPath(const std::string& path) const {
     return it != by_path_.end() ? Find(it->second) : nullptr;
 }
 
-std::vector<const AssetRecord*> AssetDatabase::All() const {
+std::vector<const AssetRecord*> AssetDatabase::AllUnsorted() const {
     std::vector<const AssetRecord*> all;
     all.reserve(records_.size());
     for (const auto& [guid, record] : records_) {
         all.push_back(&record);
     }
+    return all;
+}
+
+std::vector<const AssetRecord*> AssetDatabase::All() const {
+    std::vector<const AssetRecord*> all = AllUnsorted();
     std::sort(all.begin(), all.end(), [](const AssetRecord* a, const AssetRecord* b) { return a->path < b->path; });
     return all;
 }
