@@ -58,22 +58,17 @@ Vec3 ApplyModifiers(f32 raw, const std::vector<InputModifier>& modifiers) {
 }
 
 void InputSystem::AddAction(InputAction action) {
-    for (InputAction& existing : actions_) {
-        if (existing.name == action.name) {
-            existing = std::move(action);
-            return;
-        }
+    if (auto it = action_indices_.find(action.name); it != action_indices_.end()) {
+        actions_[it->second] = std::move(action);
+        return;
     }
     actions_.push_back(std::move(action));
+    action_indices_.emplace(actions_.back().name, actions_.size() - 1);
 }
 
 const InputAction* InputSystem::FindAction(const std::string& name) const {
-    for (const InputAction& action : actions_) {
-        if (action.name == name) {
-            return &action;
-        }
-    }
-    return nullptr;
+    auto it = action_indices_.find(name);
+    return it != action_indices_.end() ? &actions_[it->second] : nullptr;
 }
 
 void InputSystem::AddContext(InputMappingContext context, i32 priority) {
