@@ -406,11 +406,20 @@ std::vector<AssetGuid> Neighbours(const AssetDatabase& database, const AssetReco
             add(sub);
         }
     }
-    std::sort(result.begin(), result.end(), [&](const AssetGuid& a, const AssetGuid& b) {
-        const AssetRecord* ra = database.Find(a);
-        const AssetRecord* rb = database.Find(b);
-        return (ra ? ra->path : std::string()) < (rb ? rb->path : std::string());
+    std::vector<std::pair<AssetGuid, std::string>> keyed;
+    keyed.reserve(result.size());
+    for (const AssetGuid& neighbour : result) {
+        const AssetRecord* record = database.Find(neighbour);
+        keyed.emplace_back(neighbour, record != nullptr ? record->path : std::string());
+    }
+    std::sort(keyed.begin(), keyed.end(), [](const auto& a, const auto& b) {
+        return a.second < b.second;
     });
+    result.clear();
+    result.reserve(keyed.size());
+    for (auto& neighbour : keyed) {
+        result.push_back(std::move(neighbour.first));
+    }
     return result;
 }
 
