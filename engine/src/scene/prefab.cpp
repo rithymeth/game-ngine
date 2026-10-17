@@ -956,14 +956,14 @@ ResolveReport ResolvePrefabInstance(World& world, GuidIndex& guids, Entity root,
         // The root keeps its own placement once it has one.
         const bool keep_root_transform = is_root && world.HasComponent<Transform>(entity);
         const std::string transform_name = GetComponentInfo(GetComponentId<Transform>()).reflected->name;
-        std::set<ComponentId> wanted;
+        ComponentMask wanted;
         for (auto it = entity_data.components.begin(); it != entity_data.components.end(); ++it) {
             const ComponentId id = FindComponentIdByName(it.key());
             if (id == kInvalidComponentId || GetComponentInfo(id).reflected == nullptr || IsManaged(id)) {
                 AETHER_LOG_WARN("Prefab", "Skipping unknown component '%s' in a prefab", it.key().c_str());
                 continue;
             }
-            wanted.insert(id);
+            wanted.set(id);
             if (keep_root_transform && it.key() == transform_name) {
                 continue;
             }
@@ -974,7 +974,7 @@ ResolveReport ResolvePrefabInstance(World& world, GuidIndex& guids, Entity root,
         // Transform and non-reflected runtime components stay).
         for (ComponentId id : ComponentsOf(world, entity)) {
             const ComponentInfo& info = GetComponentInfo(id);
-            if (!IsManaged(id) && info.reflected != nullptr && wanted.count(id) == 0 &&
+            if (!IsManaged(id) && info.reflected != nullptr && !wanted.test(id) &&
                 !(is_root && id == GetComponentId<Transform>())) {
                 world.RemoveComponentRaw(entity, id);
             }
