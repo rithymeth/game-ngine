@@ -12,6 +12,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <random>
 
 namespace aether::pak {
@@ -132,19 +133,22 @@ std::vector<u8> CompressWith(Compression method, std::span<const u8> in, int zst
 }
 
 bool Decompress(Compression method, std::span<const u8> in, u64 size, std::vector<u8>& out) {
-    out.resize(static_cast<usize>(size));
+    if (size > std::numeric_limits<usize>::max()) return false;
     switch (method) {
         case Compression::None:
             if (in.size() != size) return false;
+            out.resize(static_cast<usize>(size));
             if (size) std::memcpy(out.data(), in.data(), static_cast<usize>(size));
             return true;
         case Compression::LZ4: {
             if (size > static_cast<u64>(LZ4_MAX_INPUT_SIZE) || in.size() > static_cast<usize>(LZ4_MAX_INPUT_SIZE)) return false;
+            out.resize(static_cast<usize>(size));
             const int n = LZ4_decompress_safe(reinterpret_cast<const char*>(in.data()), reinterpret_cast<char*>(out.data()),
                                               static_cast<int>(in.size()), static_cast<int>(size));
             return n >= 0 && static_cast<u64>(n) == size;
         }
         case Compression::Zstd: {
+            out.resize(static_cast<usize>(size));
             const usize n = ZSTD_decompress(out.data(), out.size(), in.data(), in.size());
             return !ZSTD_isError(n) && n == size;
         }
