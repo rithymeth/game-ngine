@@ -3110,7 +3110,7 @@ void RegisterGameTools(McpServer& server) {
                                                           {"rotation", {{"type", "number"}}},
                                                           {"point_a", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}},
                                                           {"point_b", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}},
-                                                          {"mask", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4294967295.0}}}},
+                                                          {"mask", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4294967295.0}}}}},
                                           {"required", Json::array({"kind"})}}}}}},
                 {"queries"}),
          [host](const Json& args) -> Json {
@@ -3320,7 +3320,7 @@ void RegisterGameTools(McpServer& server) {
     server.AddTool(
         {"game_physics_events",
          "Read the most recent 2D and 3D collision and trigger events from the loaded game. Events represent transitions from its latest physics step and include entity handles and contact details where available.",
-         Schema({{"dimension", {{"type", "string"}, {"enum", Json::array({"all", "2d", "3d"})}, {"default", "all"}}}),
+         Schema({{"dimension", {{"type", "string"}, {"enum", Json::array({"all", "2d", "3d"})}, {"default", "all"}}}},
                 {}),
          [host](const Json& args) -> Json {
              Game& game = host->Require();
