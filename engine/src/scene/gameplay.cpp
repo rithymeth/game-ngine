@@ -76,16 +76,28 @@ Mat4 CameraView(const World& world, const GuidIndex& guids, Entity entity) {
 Entity FindActiveCamera(const World& world, const GuidIndex& guids) {
     Entity best = kNullEntity;
     i32 best_priority = 0;
-    for (Entity entity : EntitiesWith(world, GetComponentId<Camera>())) {
-        if (!IsActiveInHierarchy(world, guids, entity)) {
-            continue;
+    const ComponentId camera_id = GetComponentId<Camera>();
+    world.ForEachArchetype([&](const Archetype& archetype) {
+        if (!archetype.Mask().test(camera_id)) {
+            return;
         }
-        const i32 priority = world.GetComponent<Camera>(entity)->priority;
-        if (best.IsNull() || priority > best_priority) {
-            best = entity;
-            best_priority = priority;
+        for (usize c = 0; c < archetype.ChunkCount(); ++c) {
+            const Entity* entities = archetype.EntityArray(c);
+            const auto* cameras = static_cast<const Camera*>(archetype.ComponentArray(c, camera_id));
+            for (u32 row = 0; row < archetype.ChunkEntityCount(c); ++row) {
+                const Entity entity = entities[row];
+                if (!IsActiveInHierarchy(world, guids, entity)) {
+                    continue;
+                }
+                const i32 priority = cameras[row].priority;
+                if (best.IsNull() || priority > best_priority ||
+                    (priority == best_priority && entity.index < best.index)) {
+                    best = entity;
+                    best_priority = priority;
+                }
+            }
         }
-    }
+    });
     return best;
 }
 
@@ -98,13 +110,11 @@ f32 CineFovDegrees(const CineCamera& camera) {
 
 usize ApplyCineCameras(World& world) {
     usize applied = 0;
-    for (Entity entity : EntitiesWith(world, GetComponentId<CineCamera>())) {
-        Camera* camera = world.GetComponent<Camera>(entity);
-        if (!camera) continue;
-        camera->projection = Projection::Perspective;
-        camera->fov_degrees = CineFovDegrees(*world.GetComponent<CineCamera>(entity));
+    world.ForEach<CineCamera, Camera>([&](const CineCamera& cine_camera, Camera& camera) {
+        camera.projection = Projection::Perspective;
+        camera.fov_degrees = CineFovDegrees(cine_camera);
         ++applied;
-    }
+    });
     return applied;
 }
 
