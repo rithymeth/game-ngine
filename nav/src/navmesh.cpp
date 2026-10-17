@@ -478,7 +478,7 @@ void Put(std::vector<u8>& b, const T& v) {
 }
 template <typename T>
 bool Get(const std::vector<u8>& b, usize& at, T& v) {
-    if (at + sizeof(T) > b.size()) return false;
+    if (at > b.size() || sizeof(T) > b.size() - at) return false;
     std::memcpy(&v, b.data() + at, sizeof(T));
     at += sizeof(T);
     return true;
@@ -509,7 +509,7 @@ bool LoadNavMesh(const std::vector<u8>& b, NavMeshData& out, std::string* error)
     for (u32 i = 0; i < count; ++i) {
         NavMeshData::Tile t;
         u32 size = 0;
-        if (!Get(b, at, t.x) || !Get(b, at, t.z) || !Get(b, at, size) || at + size > b.size()) return Fail(error, "the file is cut short");
+        if (!Get(b, at, t.x) || !Get(b, at, t.z) || !Get(b, at, size) || size > b.size() - at) return Fail(error, "the file is cut short");
         t.data.assign(b.begin() + static_cast<std::ptrdiff_t>(at), b.begin() + static_cast<std::ptrdiff_t>(at + size));
         at += size;
         d.tiles.push_back(std::move(t));
