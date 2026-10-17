@@ -370,14 +370,31 @@ bool BuildNavMesh(const NavGeometry& g, const NavMeshSettings& s, NavMeshData& o
     if (!Settle(s, error)) return false;
     Vec3 lo, hi;
     if (!g.Bounds(lo, hi) || g.TriangleCount() == 0) return Fail(error, "no geometry to build from");
+    if (!std::isfinite(lo.x) || !std::isfinite(lo.y) || !std::isfinite(lo.z) || !std::isfinite(hi.x) ||
+        !std::isfinite(hi.y) || !std::isfinite(hi.z)) {
+        return Fail(error, "geometry bounds must be finite");
+    }
     NavMeshData data;
     data.settings = s;
     data.origin = lo;
-    const f32 extent = std::max(hi.x - lo.x, hi.z - lo.z);
-    data.tile_world_size = s.tile_size > 0 ? static_cast<f32>(s.tile_size) * s.cell_size : std::ceil(extent / s.cell_size + 1.0f) * s.cell_size;
-    data.tiles_x = std::max(1, static_cast<i32>(std::ceil((hi.x - lo.x) / data.tile_world_size)));
-    data.tiles_z = std::max(1, static_cast<i32>(std::ceil((hi.z - lo.z) / data.tile_world_size)));
-    if (static_cast<i64>(data.tiles_x) * data.tiles_z > (1 << 14)) return Fail(error, "too many tiles: make tile_size bigger");
+    const f64 extent_x = static_cast<f64>(hi.x) - lo.x;
+    const f64 extent_z = static_cast<f64>(hi.z) - lo.z;
+    const f64 extent = std::max(extent_x, extent_z);
+    const f64 tile_world_size = s.tile_size > 0 ? static_cast<f64>(s.tile_size) * s.cell_size
+                                                 : std::ceil(extent / s.cell_size + 1.0) * s.cell_size;
+    if (!std::isfinite(extent_x) || !std::isfinite(extent_z) || extent_x < 0.0 || extent_z < 0.0 ||
+        !std::isfinite(tile_world_size) || tile_world_size <= 0.0 ||
+        tile_world_size > std::numeric_limits<f32>::max()) {
+        return Fail(error, "the navmesh tile size is outside the supported range");
+    }
+    const f64 tiles_x = std::max(1.0, std::ceil(extent_x / tile_world_size));
+    const f64 tiles_z = std::max(1.0, std::ceil(extent_z / tile_world_size));
+    if (!std::isfinite(tiles_x) || !std::isfinite(tiles_z) || tiles_x * tiles_z > (1 << 14)) {
+        return Fail(error, "too many tiles: make tile_size bigger");
+    }
+    data.tile_world_size = static_cast<f32>(tile_world_size);
+    data.tiles_x = static_cast<i32>(tiles_x);
+    data.tiles_z = static_cast<i32>(tiles_z);
     NavBuildStats st;
     for (i32 z = 0; z < data.tiles_z; ++z) {
         for (i32 x = 0; x < data.tiles_x; ++x) {
