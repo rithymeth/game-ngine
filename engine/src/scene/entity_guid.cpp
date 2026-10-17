@@ -110,6 +110,7 @@ std::vector<Entity> GuidIndex::Rebuild(World& world) {
     });
     std::sort(found.begin(), found.end(),
               [](const auto& a, const auto& b) { return a.first.index < b.first.index; });
+    by_guid_.reserve(found.size());
     for (const auto& [entity, guid] : found) {
         if (guid.IsNull()) {
             continue;
