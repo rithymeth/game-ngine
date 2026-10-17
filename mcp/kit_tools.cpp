@@ -57,7 +57,7 @@ FileState CaptureFile(const fs::path& path) {
 
 void RestoreFile(const fs::path& path, const FileState& state) {
     if (state.exists) {
-        const void* data = state.bytes.empty() ? "" : state.bytes.data();
+        const void* data = state.bytes.empty() ? static_cast<const void*>("") : static_cast<const void*>(state.bytes.data());
         if (!aether::fs::WriteFileAtomic(path.string(), data, state.bytes.size())) {
             throw ToolError("Could not restore " + path.string());
         }
