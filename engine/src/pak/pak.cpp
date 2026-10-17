@@ -512,6 +512,10 @@ bool PakReader::Parse(std::string* error, std::span<const PakKey> keys) {
         e.path.assign(reinterpret_cast<const char*>(index.data() + p), len);
         p += len;
         const u8 method = index[p];
+        if (index[p + 1] != 0 || index[p + 2] != 0 || index[p + 3] != 0) {
+            SetError(error, "entry '" + e.path + "' has nonzero reserved bytes");
+            return false;
+        }
         p += 4;
         e.offset = Get(index.data() + p, 8);
         e.stored_size = Get(index.data() + p + 8, 8);
@@ -523,6 +527,10 @@ bool PakReader::Parse(std::string* error, std::span<const PakKey> keys) {
             return false;
         }
         e.compression = static_cast<Compression>(method);
+        if (e.compression == Compression::None && e.stored_size != e.size) {
+            SetError(error, "entry '" + e.path + "' has inconsistent uncompressed sizes");
+            return false;
+        }
         if (e.offset < kHeaderSize || e.offset > index_offset || e.stored_size > index_offset - e.offset ||
             e.path.empty() || NormalizePath(e.path) != e.path) {
             SetError(error, "entry '" + e.path + "' is malformed");
