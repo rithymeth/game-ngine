@@ -72,6 +72,7 @@ std::vector<assets::AssetGuid> PrefabLibrary::Dependents(const assets::AssetGuid
             prefabs.push_back(record->guid);
         }
     }
+    users.reserve(prefabs.size());
     for (const assets::AssetGuid& prefab : prefabs) {
         const PrefabData* data = Get(prefab);
         if (data == nullptr) {
@@ -93,9 +94,11 @@ std::vector<assets::AssetGuid> PrefabLibrary::Dependents(const assets::AssetGuid
     while (!pending.empty()) {
         const assets::AssetGuid next = pending.back();
         pending.pop_back();
-        for (const assets::AssetGuid& user : users[next]) {
-            if (seen.insert(user).second) {
-                pending.push_back(user);
+        if (auto it = users.find(next); it != users.end()) {
+            for (const assets::AssetGuid& user : it->second) {
+                if (seen.insert(user).second) {
+                    pending.push_back(user);
+                }
             }
         }
     }
