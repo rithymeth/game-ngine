@@ -54,6 +54,7 @@ void Lifecycle::Sync() {
     // 1. What should be tracked now.
     std::vector<Item> fresh;
     std::unordered_map<Key, Entity, KeyHash> present;
+    present.reserve(tracked_.size());
     for (usize r = 0; r < registrations_.size(); ++r) {
         const ComponentId component = registrations_[r].component;
         std::vector<Entity> entities;
