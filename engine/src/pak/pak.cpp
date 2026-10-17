@@ -524,8 +524,16 @@ bool PakReader::Parse(std::string* error, std::span<const PakKey> keys) {
             SetError(error, "entry '" + e.path + "' is malformed");
             return false;
         }
+        if (index_.find(e.path) != index_.end()) {
+            SetError(error, "duplicate archive entry '" + e.path + "'");
+            return false;
+        }
         index_[e.path] = entries_.size();
         entries_.push_back(std::move(e));
+    }
+    if (p != index.size()) {
+        SetError(error, "the index contains trailing bytes");
+        return false;
     }
     open_ = true;
     return true;
