@@ -40,7 +40,7 @@ HotReloader::HotReloader(AssetDatabase& database, const ImporterRegistry& import
                          std::chrono::milliseconds debounce, std::string platform)
     : database_(database), importers_(importers), cache_(cache), platform_(std::move(platform)),
       watcher_(database.ContentRoot(), debounce) {
-    for (const AssetRecord* record : database_.All()) {
+    for (const AssetRecord* record : database_.AllUnsorted()) {
         if (!record->IsSubAsset()) {
             settings_[record->guid] = SettingsText(database_, record->guid);
             hashes_[record->guid] = record->source_hash;
@@ -59,7 +59,7 @@ std::vector<AssetChange> HotReloader::Update(FileWatcher::Clock::time_point now)
         bool missing;
     };
     std::unordered_map<AssetGuid, Before> before;
-    for (const AssetRecord* record : database_.All()) {
+    for (const AssetRecord* record : database_.AllUnsorted()) {
         if (!record->IsSubAsset()) {
             before[record->guid] = {record->path, record->missing};
         }
