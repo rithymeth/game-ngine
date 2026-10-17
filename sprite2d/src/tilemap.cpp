@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <limits>
 
 namespace aether::sprite2d {
 
@@ -15,25 +16,41 @@ constexpr int kTilemapFormatVersion = 1;
 } // namespace
 
 u32 Tileset::Columns() const {
-    if (tile_width == 0 || texture_width < 2 * margin) return 0;
-    return (texture_width - 2 * margin + spacing) / (tile_width + spacing);
+    const u64 margins = static_cast<u64>(margin) * 2;
+    if (tile_width == 0 || texture_width < margins) return 0;
+    const u64 usable = static_cast<u64>(texture_width) - margins;
+    const u64 stride = static_cast<u64>(tile_width) + spacing;
+    return static_cast<u32>((usable + spacing) / stride);
 }
 u32 Tileset::Rows() const {
-    if (tile_height == 0 || texture_height < 2 * margin) return 0;
-    return (texture_height - 2 * margin + spacing) / (tile_height + spacing);
+    const u64 margins = static_cast<u64>(margin) * 2;
+    if (tile_height == 0 || texture_height < margins) return 0;
+    const u64 usable = static_cast<u64>(texture_height) - margins;
+    const u64 stride = static_cast<u64>(tile_height) + spacing;
+    return static_cast<u32>((usable + spacing) / stride);
+}
+
+u32 Tileset::TileCount() const {
+    const u64 count = static_cast<u64>(Columns()) * Rows();
+    // Tile ids are signed 32-bit values, so higher indices cannot be addressed.
+    return static_cast<u32>(std::min<u64>(count, static_cast<u64>(std::numeric_limits<i32>::max()) + 1));
 }
 
 bool Tileset::Uv(i32 tile, f32 out[4]) const {
     const u32 columns = Columns();
-    if (tile < 0 || columns == 0 || static_cast<u32>(tile) >= TileCount()) return false;
+    if (!out || tile < 0 || texture_width == 0 || texture_height == 0 || columns == 0 ||
+        static_cast<u32>(tile) >= TileCount()) return false;
     const u32 col = static_cast<u32>(tile) % columns;
     const u32 row = static_cast<u32>(tile) / columns;
-    const f32 x = static_cast<f32>(margin + col * (tile_width + spacing));
-    const f32 y = static_cast<f32>(margin + row * (tile_height + spacing));
-    out[0] = x / static_cast<f32>(texture_width);
-    out[1] = y / static_cast<f32>(texture_height);
-    out[2] = (x + static_cast<f32>(tile_width)) / static_cast<f32>(texture_width);
-    out[3] = (y + static_cast<f32>(tile_height)) / static_cast<f32>(texture_height);
+    const u64 x = static_cast<u64>(margin) + static_cast<u64>(col) * (static_cast<u64>(tile_width) + spacing);
+    const u64 y = static_cast<u64>(margin) + static_cast<u64>(row) * (static_cast<u64>(tile_height) + spacing);
+    const u64 right = x + tile_width;
+    const u64 bottom = y + tile_height;
+    if (right > texture_width || bottom > texture_height) return false;
+    out[0] = static_cast<f32>(x) / static_cast<f32>(texture_width);
+    out[1] = static_cast<f32>(y) / static_cast<f32>(texture_height);
+    out[2] = static_cast<f32>(right) / static_cast<f32>(texture_width);
+    out[3] = static_cast<f32>(bottom) / static_cast<f32>(texture_height);
     return true;
 }
 

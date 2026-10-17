@@ -52,7 +52,7 @@ struct Tileset {
 
     u32 Columns() const;
     u32 Rows() const;
-    u32 TileCount() const { return Columns() * Rows(); }
+    u32 TileCount() const;
     // {u0, v0, u1, v1} of a tile, v growing downward; false if out of range.
     bool Uv(i32 tile, f32 out[4]) const;
     bool IsSolid(i32 tile) const { return tile >= 0 && static_cast<usize>(tile) < solid.size() && solid[static_cast<usize>(tile)] != 0; }
