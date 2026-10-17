@@ -34,10 +34,10 @@ bool DecodeWav(const std::vector<u8>& b, SoundWave& out, std::string* error) {
     u32 rate = 0;
     const u8* data = nullptr;
     usize data_size = 0;
-    for (usize at = 12; at + 8 <= b.size();) {
+    for (usize at = 12; b.size() - at >= 8;) {
         const u8* chunk = b.data() + at;
         const u32 size = U32(chunk + 4);
-        const usize available = b.size() - (at + 8);
+        const usize available = b.size() - at - 8;
         if (std::memcmp(chunk, "fmt ", 4) == 0) {
             if (size < 16 || available < 16) return fail("the WAV's format chunk is cut short");
             const u8* f = chunk + 8;
@@ -54,7 +54,10 @@ bool DecodeWav(const std::vector<u8>& b, SoundWave& out, std::string* error) {
             data = chunk + 8;
             data_size = std::min<usize>(size, available); // files that claim more than they hold play what's there
         }
-        at += 8 + static_cast<usize>(size) + (size & 1); // chunks are padded to even sizes
+        const usize chunk_size = static_cast<usize>(size);
+        const usize padding = size & 1u;
+        if (chunk_size > available || padding > available - chunk_size) break;
+        at += 8 + chunk_size + padding; // chunks are padded to even sizes
         if (data != nullptr && format != 0) break;
     }
     if (format == 0) return fail("the WAV has no format chunk");
