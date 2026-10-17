@@ -130,6 +130,7 @@ bool RemoveTag(World& world, Entity entity, std::string_view tag) {
 
 std::vector<Entity> FindEntitiesWithTag(const World& world, std::string_view tag) {
     std::vector<Entity> result;
+    result.reserve(world.EntityCount());
     const ComponentId tags_id = GetComponentId<Tags>();
     world.ForEachArchetype([&](const Archetype& archetype) {
         if (!archetype.Mask().test(tags_id)) {
