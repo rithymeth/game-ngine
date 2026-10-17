@@ -52,8 +52,8 @@ std::vector<Entity> ChildrenOf(const World& world, const GuidIndex& guids, Entit
     if (id == nullptr || id->guid.IsNull()) {
         return children;
     }
+    const ComponentId parent_id = GetComponentId<Parent>();
     world.ForEachArchetype([&](const Archetype& archetype) {
-        const ComponentId parent_id = GetComponentId<Parent>();
         if (!archetype.Has(parent_id)) {
             return;
         }
