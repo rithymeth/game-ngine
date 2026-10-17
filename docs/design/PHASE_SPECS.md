@@ -1748,9 +1748,10 @@ can be added later) pulls from the mixer on its own thread.
   | CU006 | a Wave with no sound |
   | CU007 | a sound that doesn't exist |
   | CU008 | an inverted or invalid range |
-  | CU009 | negative or all-zero weights |
+  | CU009 | non-finite, negative, or all-zero weights |
   | CU010 | (warning) inputs after one that never ends |
   | CU011 | (warning) a node the output doesn't reach |
+  | CU012 | non-finite output settings or mix volumes |
 
 - **CuePlayer**: plays cues from a `SoundBank` (decoded or streamed
   sounds by name).
