@@ -177,7 +177,8 @@ void TilemapData::Resize(u32 new_width, u32 new_height) {
         std::vector<i32> cells(static_cast<usize>(new_width) * new_height, kEmpty);
         for (u32 y = 0; y < std::min(height, new_height); ++y) {
             for (u32 x = 0; x < std::min(width, new_width); ++x) {
-                cells[static_cast<usize>(y) * new_width + x] = layer.cells[static_cast<usize>(y) * width + x];
+                const u64 source = static_cast<u64>(y) * width + x;
+                if (source < layer.cells.size()) cells[static_cast<usize>(y) * new_width + x] = layer.cells[source];
             }
         }
         layer.cells = std::move(cells);
@@ -196,20 +197,31 @@ usize TilemapData::AddLayer(const std::string& name) {
 
 i32 TilemapData::Get(usize layer, i32 x, i32 y) const {
     if (layer >= layers.size() || !InBounds(x, y)) return kEmpty;
-    return layers[layer].cells[static_cast<usize>(y) * width + static_cast<usize>(x)];
+    const u64 index = static_cast<u64>(y) * width + static_cast<u32>(x);
+    if (index >= layers[layer].cells.size()) return kEmpty;
+    return layers[layer].cells[static_cast<usize>(index)];
 }
 
 bool TilemapData::Set(usize layer, i32 x, i32 y, i32 cell) {
     if (layer >= layers.size() || !InBounds(x, y)) return false;
-    layers[layer].cells[static_cast<usize>(y) * width + static_cast<usize>(x)] = cell;
+    const u64 index = static_cast<u64>(y) * width + static_cast<u32>(x);
+    if (index >= layers[layer].cells.size()) return false;
+    layers[layer].cells[static_cast<usize>(index)] = cell;
     return true;
 }
 
 usize TilemapData::Fill(usize layer, i32 x0, i32 y0, i32 x1, i32 y1, i32 cell) {
+    if (layer >= layers.size() || width == 0 || height == 0 ||
+        static_cast<u64>(layers[layer].cells.size()) < static_cast<u64>(width) * height) return 0;
+    const i64 left = std::max<i64>(std::min(x0, x1), 0);
+    const i64 right = std::min<i64>(std::max(x0, x1), static_cast<i64>(width) - 1);
+    const i64 bottom = std::max<i64>(std::min(y0, y1), 0);
+    const i64 top = std::min<i64>(std::max(y0, y1), static_cast<i64>(height) - 1);
+    if (left > right || bottom > top) return 0;
     usize n = 0;
-    for (i32 y = std::min(y0, y1); y <= std::max(y0, y1); ++y) {
-        for (i32 x = std::min(x0, x1); x <= std::max(x0, x1); ++x) {
-            if (Set(layer, x, y, cell)) ++n;
+    for (i64 y = bottom; y <= top; ++y) {
+        for (i64 x = left; x <= right; ++x) {
+            if (Set(layer, static_cast<i32>(x), static_cast<i32>(y), cell)) ++n;
         }
     }
     return n;
