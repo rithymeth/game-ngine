@@ -4,6 +4,7 @@
 #include "aether/reflection/serialize.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 
@@ -157,6 +158,22 @@ bool DecodeMeshData(const std::vector<u8>& bytes, MeshData& out) {
             !ReadArray(bytes, offset, primitive.weights)) return false;
         primitive.bounds_min = Vec3{bounds[0], bounds[1], bounds[2]};
         primitive.bounds_max = Vec3{bounds[3], bounds[4], bounds[5]};
+        if (!std::isfinite(primitive.bounds_min.x) || !std::isfinite(primitive.bounds_min.y) ||
+            !std::isfinite(primitive.bounds_min.z) || !std::isfinite(primitive.bounds_max.x) ||
+            !std::isfinite(primitive.bounds_max.y) || !std::isfinite(primitive.bounds_max.z) ||
+            primitive.bounds_min.x > primitive.bounds_max.x || primitive.bounds_min.y > primitive.bounds_max.y ||
+            primitive.bounds_min.z > primitive.bounds_max.z || primitive.indices.size() % 3 != 0 ||
+            (!primitive.joints.empty() && primitive.joints.size() != primitive.vertices.size()) ||
+            primitive.joints.size() != primitive.weights.size()) return false;
+        for (const MeshVertex& vertex : primitive.vertices) {
+            for (f32 value : vertex.position) if (!std::isfinite(value)) return false;
+            for (f32 value : vertex.normal) if (!std::isfinite(value)) return false;
+            for (f32 value : vertex.uv) if (!std::isfinite(value)) return false;
+            for (f32 value : vertex.tangent) if (!std::isfinite(value)) return false;
+        }
+        for (const u32 index : primitive.indices) if (index >= primitive.vertices.size()) return false;
+        for (const auto& weights : primitive.weights)
+            for (f32 weight : weights) if (!std::isfinite(weight) || weight < 0.0f) return false;
         mesh.primitives.push_back(std::move(primitive));
     }
     if (offset != bytes.size()) {
