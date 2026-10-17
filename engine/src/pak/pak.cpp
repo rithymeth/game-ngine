@@ -21,6 +21,7 @@ namespace {
 constexpr char kMagic[4] = {'A', 'P', 'A', 'K'};
 constexpr u32 kVersion = 1;
 constexpr usize kHeaderSize = 40;
+constexpr usize kMinIndexEntrySize = 35; // length, non-empty path, and fixed metadata
 // Entries smaller than this get LZ4 under the Auto policy (fast to read,
 // and zstd's advantage is small there); larger ones get zstd.
 constexpr usize kAutoZstdThreshold = 16 * 1024;
@@ -466,6 +467,12 @@ bool PakReader::Parse(std::string* error, std::span<const PakKey> keys) {
     const u32 index_crc = static_cast<u32>(Get(header + 32, 4));
     if (index_offset < kHeaderSize || index_offset > file_size || index_size > file_size - index_offset) {
         SetError(error, "the index lies outside the file (truncated?)");
+        return false;
+    }
+    // Each entry needs at least a length, one path byte, and the fixed metadata.
+    // Bound the untrusted count before reserve() can allocate from it.
+    if (count > index_size / kMinIndexEntrySize) {
+        SetError(error, "the index entry count is larger than the index can hold");
         return false;
     }
     index.resize(static_cast<usize>(index_size));
