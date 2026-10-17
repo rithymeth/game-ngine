@@ -243,6 +243,9 @@ std::string NormalizePath(const std::string& path) {
         return true;
     };
     for (char c : path) {
+        // A colon can introduce a Windows drive or alternate data stream, and
+        // NUL would truncate paths passed to native filesystem APIs.
+        if (c == ':' || c == '\0') return {};
         if (c == '/' || c == '\\') {
             if (!flush()) return {};
         } else {
