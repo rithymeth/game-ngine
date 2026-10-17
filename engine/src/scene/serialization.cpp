@@ -460,6 +460,10 @@ bool LoadSceneJsonFromMemoryImpl(World& world, std::span<const u8> bytes, const 
         AETHER_LOG_ERROR("Scene", "JSON scene has no \"entities\" array: %s", path.c_str());
         return false;
     }
+    if (entities->size() > kMaxSceneEntities) {
+        AETHER_LOG_ERROR("Scene", "JSON scene has too many entities: %s", path.c_str());
+        return false;
+    }
 
     struct PendingJsonEntity {
         ComponentMask mask;
