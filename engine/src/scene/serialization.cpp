@@ -118,16 +118,6 @@ std::vector<EntitySlot> CollectEntities(const World& world) {
     return slots;
 }
 
-std::vector<ComponentId> ComponentIdsOf(const ComponentMask& mask) {
-    std::vector<ComponentId> ids;
-    for (ComponentId id = 0; id < kMaxComponentTypes; ++id) {
-        if (mask.test(id)) {
-            ids.push_back(id);
-        }
-    }
-    return ids;
-}
-
 const void* ComponentPtr(const EntitySlot& slot, ComponentId id) {
     const u8* base = static_cast<const u8*>(slot.archetype->ComponentArray(slot.chunk, id));
     return base + static_cast<usize>(slot.row) * GetComponentInfo(id).size;
@@ -185,7 +175,7 @@ std::vector<u8> SaveSceneToMemory(const World& world) {
 
     std::vector<u8> component_bytes;
     for (const EntitySlot& slot : slots) {
-        std::vector<ComponentId> ids = ComponentIdsOf(slot.archetype->Mask());
+        const std::vector<ComponentId>& ids = slot.archetype->ComponentIds();
         AppendU32(buffer, static_cast<u32>(ids.size()));
         for (ComponentId id : ids) {
             const ComponentInfo& info = GetComponentInfo(id);
@@ -366,7 +356,7 @@ bool SaveSceneJson(const World& world, const std::string& path) {
     for (const EntitySlot& slot : CollectEntities(world)) {
         Json components = Json::object();
         Json guid;
-        for (ComponentId id : ComponentIdsOf(slot.archetype->Mask())) {
+        for (ComponentId id : slot.archetype->ComponentIds()) {
             const ComponentInfo& info = GetComponentInfo(id);
             if (id == id_component) {
                 // The entity's identity goes at entity level (§A.3), not
