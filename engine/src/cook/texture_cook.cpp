@@ -339,6 +339,8 @@ CookedTexture CookTexture(std::span<const u8> rgba, u32 width, u32 height, const
 std::vector<u8> DecodeMip(const CookedTexture& texture, usize index) {
     if (index >= texture.mips.size()) return {};
     const CookedMip& mip = texture.mips[index];
+    const usize expected_size = MipBytes(texture.format, mip.width, mip.height);
+    if (expected_size == 0 || mip.data.size() != expected_size) return {};
     if (texture.format == TextureFormat::RGBA8) return mip.data;
     if (IsAstc(texture.format)) return DecodeAstc(texture, mip);
     InitEncoders();
