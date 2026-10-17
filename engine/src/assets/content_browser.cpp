@@ -116,12 +116,23 @@ std::vector<ContentEntry> ListContent(const AssetDatabase& database, const Conte
         }
         assets.push_back({false, std::move(name), record->path, record});
     }
-    auto by_name = [](const ContentEntry& a, const ContentEntry& b) {
-        const std::string la = Lower(a.name), lb = Lower(b.name);
-        return la != lb ? la < lb : a.path < b.path;
+    auto sort_by_name = [](std::vector<ContentEntry>& entries) {
+        std::vector<std::pair<std::string, ContentEntry>> keyed;
+        keyed.reserve(entries.size());
+        for (ContentEntry& entry : entries) {
+            keyed.emplace_back(Lower(entry.name), std::move(entry));
+        }
+        std::sort(keyed.begin(), keyed.end(), [](const auto& a, const auto& b) {
+            return a.first != b.first ? a.first < b.first : a.second.path < b.second.path;
+        });
+        entries.clear();
+        entries.reserve(keyed.size());
+        for (auto& entry : keyed) {
+            entries.push_back(std::move(entry.second));
+        }
     };
-    std::sort(folders.begin(), folders.end(), by_name);
-    std::sort(assets.begin(), assets.end(), by_name);
+    sort_by_name(folders);
+    sort_by_name(assets);
     folders.insert(folders.end(), std::make_move_iterator(assets.begin()), std::make_move_iterator(assets.end()));
     return folders;
 }
