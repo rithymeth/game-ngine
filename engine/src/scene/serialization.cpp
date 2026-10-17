@@ -47,6 +47,7 @@ constexpr u32 kVersion = 2;
 constexpr u32 kJsonSceneVersion = 1;
 constexpr usize kMaxJsonSceneBytes = 64 * 1024 * 1024;
 constexpr usize kMaxBinarySceneBytes = 256 * 1024 * 1024;
+constexpr u32 kMaxSceneEntities = 1'000'000;
 
 void AppendU32(std::vector<u8>& buffer, u32 value) {
     const u8* bytes = reinterpret_cast<const u8*>(&value);
@@ -250,6 +251,11 @@ bool LoadSceneFromMemory(World& world, std::span<const u8> buffer, const std::st
     u32 entity_count = 0;
     if (!reader.ReadU32(entity_count)) {
         AETHER_LOG_ERROR("Scene", "Truncated scene file: %s", path.c_str());
+        return false;
+    }
+    const usize minimum_entity_size = version == kLegacyVersion ? sizeof(u64) : sizeof(u32);
+    if (entity_count > kMaxSceneEntities || entity_count > reader.Remaining() / minimum_entity_size) {
+        AETHER_LOG_ERROR("Scene", "Invalid or excessive entity count in scene file: %s", path.c_str());
         return false;
     }
 
