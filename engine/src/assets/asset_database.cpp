@@ -8,8 +8,10 @@
 #include "aether/scene/entity_guid.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdio>
+#include <fstream>
 #include <limits>
 #include <map>
 #include <system_error>
@@ -210,14 +212,22 @@ std::string ImporterForExtension(const stdfs::path& file) {
 }
 
 std::string HashFile(const stdfs::path& file) {
-    std::vector<u8> bytes;
-    if (!fs::ReadFileBytes(file.string(), bytes)) {
+    std::ifstream input(file, std::ios::binary);
+    if (!input) {
         return {};
     }
     u64 hash = 0xcbf29ce484222325ull;
-    for (u8 b : bytes) {
-        hash ^= b;
-        hash *= 0x100000001b3ull;
+    std::array<u8, 64 * 1024> buffer{};
+    while (input) {
+        input.read(reinterpret_cast<char*>(buffer.data()), static_cast<std::streamsize>(buffer.size()));
+        const std::streamsize count = input.gcount();
+        for (std::streamsize i = 0; i < count; ++i) {
+            hash ^= buffer[static_cast<usize>(i)];
+            hash *= 0x100000001b3ull;
+        }
+    }
+    if (input.bad() || !input.eof()) {
+        return {};
     }
     char text[32];
     std::snprintf(text, sizeof(text), "fnv1a64:%016llx", static_cast<unsigned long long>(hash));
