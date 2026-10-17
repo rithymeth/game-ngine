@@ -48,6 +48,7 @@ FileState CaptureFile(const fs::path& path) {
     FileState state;
     std::error_code ec;
     state.exists = fs::is_regular_file(path, ec);
+    if (ec == std::errc::no_such_file_or_directory) return state;
     if (ec) throw ToolError("Could not inspect " + path.string() + ": " + ec.message());
     if (state.exists && !aether::fs::ReadFileBytes(path.string(), state.bytes)) {
         throw ToolError("Could not read " + path.string());
