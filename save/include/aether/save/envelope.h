@@ -18,6 +18,7 @@
 namespace aether::save::envelope {
 
 constexpr unsigned kFormat = 1;
+inline constexpr usize kMaxEnvelopeBytes = 64 * 1024 * 1024;
 
 // The file's contents for `object`. `name` is the slot or file name (informational).
 std::string Make(std::string_view kind, std::string_view name, const reflect::TypeInfo& type, const void* object);

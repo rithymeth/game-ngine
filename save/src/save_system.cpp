@@ -90,7 +90,7 @@ std::vector<SlotInfo> SaveSystem::ListSlots() const {
         const stdfs::path file = directory_ / name;
         info.bytes = fs::FileSize(file.string());
         std::vector<u8> bytes;
-        if (fs::ReadFileBytes(file.string(), bytes)) {
+        if (fs::ReadFileBytes(file.string(), bytes, envelope::kMaxEnvelopeBytes)) {
             const Json j = Json::parse(bytes.begin(), bytes.end(), nullptr, false);
             if (!j.is_discarded() && j.is_object() && JsonString(j, "$type") == "aether.save") {
                 info.type = j.value("type", "");
