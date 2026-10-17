@@ -82,6 +82,9 @@ bool SystemScheduler::Build(std::string* error) {
                 must_follow[i].push_back(it->second);
             }
         }
+        for (u32 i : members) {
+            std::sort(must_follow[i].begin(), must_follow[i].end());
+        }
         // Base order: topological by explicit edges, registration order first.
         std::vector<u32> base;
         std::vector<bool> placed(systems_.size(), false);
@@ -132,7 +135,7 @@ bool SystemScheduler::Build(std::string* error) {
             for (usize j = 0; j < k; ++j) {
                 const u32 earlier = base[j];
                 const auto& deps = must_follow[i];
-                const bool explicit_edge = std::find(deps.begin(), deps.end(), earlier) != deps.end();
+                const bool explicit_edge = std::binary_search(deps.begin(), deps.end(), earlier);
                 if (explicit_edge || Conflicts(systems_[earlier], systems_[i])) {
                     level = std::max(level, level_of[earlier] + 1);
                 }
