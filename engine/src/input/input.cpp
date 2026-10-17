@@ -276,27 +276,26 @@ void InputSystem::Update(const InputState& input, f32 dt) {
         if (now.phase == ActionPhase::Triggered) {
             now.triggered_time = before.phase == ActionPhase::Triggered ? before.triggered_time + dt : 0.0f;
         }
-        std::vector<ActionEvent> events;
-        if (before.phase == ActionPhase::None && now.phase != ActionPhase::None) {
-            events.push_back(ActionEvent::Started);
-        }
-        if (now.phase == ActionPhase::Ongoing) {
-            events.push_back(ActionEvent::Ongoing);
-        } else if (now.phase == ActionPhase::Triggered) {
-            events.push_back(ActionEvent::Triggered);
-        } else if (before.phase == ActionPhase::Triggered) {
-            events.push_back(ActionEvent::Completed);
-        } else if (before.phase == ActionPhase::Ongoing) {
-            events.push_back(ActionEvent::Canceled);
-        }
         states_[name] = now;
-        for (ActionEvent event : events) {
+        auto dispatch = [&](ActionEvent event) {
             subscription_snapshot.assign(subscriptions_.begin(), subscriptions_.end());
             for (const Subscription& sub : subscription_snapshot) {
                 if ((sub.action.empty() || sub.action == name) && sub.event == event) {
                     sub.handler(name, event, now);
                 }
             }
+        };
+        if (before.phase == ActionPhase::None && now.phase != ActionPhase::None) {
+            dispatch(ActionEvent::Started);
+        }
+        if (now.phase == ActionPhase::Ongoing) {
+            dispatch(ActionEvent::Ongoing);
+        } else if (now.phase == ActionPhase::Triggered) {
+            dispatch(ActionEvent::Triggered);
+        } else if (before.phase == ActionPhase::Triggered) {
+            dispatch(ActionEvent::Completed);
+        } else if (before.phase == ActionPhase::Ongoing) {
+            dispatch(ActionEvent::Canceled);
         }
     }
     // Actions no longer produced by anything are dropped once they're None.
