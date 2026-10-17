@@ -10,7 +10,7 @@ namespace aether::fs {
 [[nodiscard]] bool Exists(const std::string& path);
 
 // Reads the whole file into a byte buffer. Returns false (and leaves
-// out_bytes untouched) if the file could not be opened.
+// out_bytes untouched) if the file can't be read completely.
 [[nodiscard]] bool ReadFileBytes(const std::string& path, std::vector<u8>& out_bytes);
 
 // Reads the whole file as text, normalizing line endings via text-mode I/O.
