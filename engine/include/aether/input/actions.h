@@ -152,6 +152,7 @@ private:
         i32 priority;
         u64 order;
         std::vector<BindingState> states;
+        std::vector<bool> has_chord;
     };
     struct Subscription {
         u32 id;

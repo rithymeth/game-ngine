@@ -75,6 +75,13 @@ void InputSystem::AddContext(InputMappingContext context, i32 priority) {
     RemoveContext(context.name);
     ContextEntry entry{std::move(context), priority, next_order_++, {}};
     entry.states.resize(entry.context.bindings.size());
+    entry.has_chord.reserve(entry.context.bindings.size());
+    for (const InputBinding& binding : entry.context.bindings) {
+        entry.has_chord.push_back(std::any_of(binding.triggers.begin(), binding.triggers.end(),
+                                              [](const InputTrigger& trigger) {
+                                                  return trigger.type == TriggerType::Chord;
+                                              }));
+    }
     contexts_.push_back(std::move(entry));
     std::stable_sort(contexts_.begin(), contexts_.end(), [](const ContextEntry& a, const ContextEntry& b) {
         return a.priority != b.priority ? a.priority > b.priority : a.order < b.order;
@@ -197,11 +204,6 @@ void InputSystem::Update(const InputState& input, f32 dt) {
         auto it = previous.find(action);
         return it != previous.end() && it->second.phase == ActionPhase::Triggered;
     };
-    auto has_chord = [](const InputBinding& b) {
-        return std::any_of(b.triggers.begin(), b.triggers.end(),
-                           [](const InputTrigger& t) { return t.type == TriggerType::Chord; });
-    };
-
     std::bitset<kKeyCount> consumed;
     bool blocked = false;
     for (ContextEntry& entry : contexts_) {
@@ -212,7 +214,7 @@ void InputSystem::Update(const InputState& input, f32 dt) {
         for (int pass = 0; pass < 2; ++pass) { // bindings without chords first
             for (usize i = 0; i < entry.context.bindings.size(); ++i) {
                 const InputBinding& binding = entry.context.bindings[i];
-                if (has_chord(binding) != (pass == 1)) {
+                if (entry.has_chord[i] != (pass == 1)) {
                     continue;
                 }
                 BindingState& state = entry.states[i];
