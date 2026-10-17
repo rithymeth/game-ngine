@@ -46,6 +46,12 @@ struct Owned {
 };
 
 bool Settle(const NavMeshSettings& s, std::string* error) {
+    if (!std::isfinite(s.cell_size) || !std::isfinite(s.cell_height) || !std::isfinite(s.agent_height) ||
+        !std::isfinite(s.agent_radius) || !std::isfinite(s.agent_max_climb) || !std::isfinite(s.agent_max_slope) ||
+        !std::isfinite(s.edge_max_length) || !std::isfinite(s.edge_max_error) ||
+        !std::isfinite(s.detail_sample_distance) || !std::isfinite(s.detail_sample_max_error)) {
+        return Fail(error, "navmesh settings must be finite");
+    }
     if (s.cell_size <= 0.0f || s.cell_height <= 0.0f) return Fail(error, "cell sizes must be more than 0");
     if (s.agent_height <= 0.0f || s.agent_radius < 0.0f || s.agent_max_climb < 0.0f) return Fail(error, "the agent's height must be more than 0, and its radius and climb 0 or more");
     if (s.verts_per_poly < 3 || s.verts_per_poly > DT_VERTS_PER_POLYGON) return Fail(error, "verts_per_poly must be 3 to 6");
