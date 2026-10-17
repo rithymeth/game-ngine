@@ -68,6 +68,11 @@ ImportResult ImportDecoded(ImageData image, const nlohmann::json& settings);
 } // namespace
 
 std::vector<u8> DownsampleRGBA8(const std::vector<u8>& pixels, u32 width, u32 height, bool srgb) {
+    if (width == 0 || height == 0) return {};
+    const u64 pixel_count = static_cast<u64>(width) * height;
+    if (pixel_count > std::numeric_limits<usize>::max() / 4 || pixels.size() != static_cast<usize>(pixel_count) * 4)
+        return {};
+
     const u32 out_w = std::max<u32>(1, width / 2);
     const u32 out_h = std::max<u32>(1, height / 2);
     const auto& to_linear = SrgbToLinearTable();
