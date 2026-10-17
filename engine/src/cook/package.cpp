@@ -21,6 +21,8 @@ namespace stdfs = std::filesystem;
 
 namespace {
 
+constexpr usize kMaxPackageManifestBytes = 16 * 1024 * 1024;
+
 #if defined(_WIN32)
 constexpr const char* kExeSuffix = ".exe";
 #else
@@ -343,6 +345,10 @@ bool VerifyPackageManifest(const stdfs::path& directory, std::vector<std::string
     std::string error;
     if (!CheckPackageFile(directory, "PackageManifest.json", error)) {
         problems.push_back(error);
+        return false;
+    }
+    if (fs::FileSize(manifest_file.string()) > kMaxPackageManifestBytes) {
+        problems.push_back("PackageManifest.json is too large");
         return false;
     }
     if (!fs::ReadFileBytes(manifest_file.string(), bytes)) {
