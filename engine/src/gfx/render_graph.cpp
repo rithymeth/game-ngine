@@ -399,13 +399,14 @@ void RenderGraph::Compile() {
 }
 
 void RenderGraph::ExecuteQueue(const std::vector<usize>& order, ID3D12GraphicsCommandList* cmd) {
+    std::vector<D3D12_RESOURCE_BARRIER> alias_barriers;
+    std::vector<D3D12_RESOURCE_BARRIER> barriers;
     for (usize global_index : order) {
         Pass& pass = passes_[global_index];
         AETHER_ASSERT(cmd != nullptr);
 
+        alias_barriers.clear();
         if (!pass.aliasing_barriers.empty()) {
-            std::vector<D3D12_RESOURCE_BARRIER> alias_barriers;
-            alias_barriers.reserve(pass.aliasing_barriers.size());
             for (const AliasingBarrier& ab : pass.aliasing_barriers) {
                 D3D12_RESOURCE_BARRIER barrier{};
                 barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_ALIASING;
@@ -416,7 +417,7 @@ void RenderGraph::ExecuteQueue(const std::vector<usize>& order, ID3D12GraphicsCo
             cmd->ResourceBarrier(static_cast<UINT>(alias_barriers.size()), alias_barriers.data());
         }
 
-        std::vector<D3D12_RESOURCE_BARRIER> barriers;
+        barriers.clear();
         for (const Usage& usage : pass.usages) {
             TrackedResource& tracked = resources_[usage.resource];
             if (tracked.current_state != usage.state) {
