@@ -208,6 +208,14 @@ MoveResult MoveContent(AssetDatabase& database, const std::string& from_path, co
     if (!is_folder && !stdfs::is_regular_file(from_abs, ec)) {
         return Fail(from + " doesn't exist");
     }
+    if (!is_folder) {
+        const std::string from_extension = Lower(stdfs::path(from).extension().string());
+        const std::string to_extension = Lower(stdfs::path(to).extension().string());
+        if (from_extension != to_extension) {
+            return Fail("Changing the extension (" + from_extension + " to " + to_extension +
+                        ") would change how it's imported");
+        }
+    }
     stdfs::path from_meta = from_abs;
     from_meta += AssetMeta::kExtension;
     stdfs::path to_meta = to_abs;
