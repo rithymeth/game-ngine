@@ -17,6 +17,7 @@ namespace aether::assets {
 namespace {
 
 using Json = nlohmann::json;
+constexpr usize kMaxJsonBytes = 32 * 1024 * 1024;
 
 std::vector<u8> DecodeBase64(const std::string& text) {
     static const std::string kAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -910,6 +911,10 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
 }
 
 bool LoadGltf(const std::string& path, GltfScene& out_scene) {
+    if (fs::FileSize(path) > kMaxJsonBytes) {
+        AETHER_LOG_ERROR("glTF", "File \"%s\" is too large", path.c_str());
+        return false;
+    }
     std::string text;
     if (!fs::ReadFileText(path, text)) {
         AETHER_LOG_ERROR("glTF", "Failed to read \"%s\"", path.c_str());
@@ -927,7 +932,6 @@ bool LoadGltf(const std::string& path, GltfScene& out_scene) {
 }
 
 bool LoadGltfFromMemory(std::span<const u8> json, GltfScene& out_scene) {
-    constexpr usize kMaxJsonBytes = 32 * 1024 * 1024;
     if (json.empty() || json.size() > kMaxJsonBytes) return false;
     const std::string text(reinterpret_cast<const char*>(json.data()), json.size());
     GltfScene scene;
