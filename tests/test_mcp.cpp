@@ -740,6 +740,7 @@ AETHER_TEST(Mcp_KitToolsValidateWriteAndCrossCheckDefinitions) {
 
     const Json heal = {{"name", "Heal"}, {"duration_policy", "instant"}, {"modifiers", {{{"attribute", "Health"}, {"op", "add"}, {"magnitude", 25}}}}};
     Harness::Result put = h.Call("kit_put", {{"type", "effect"}, {"path", "Gameplay/Heal"}, {"definition", heal}});
+    if (put.is_error) std::printf("  kit_put error: %s\n", put.text.c_str());
     AETHER_CHECK(!put.is_error);
     AETHER_CHECK(put.value["path"] == "Gameplay/Heal.aeffect");
     AETHER_CHECK(stdfs::exists(paths.content / "Gameplay" / "Heal.aeffect"));
