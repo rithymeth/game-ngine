@@ -46,6 +46,7 @@ constexpr u32 kLegacyVersion = 1;
 constexpr u32 kVersion = 2;
 constexpr u32 kJsonSceneVersion = 1;
 constexpr usize kMaxJsonSceneBytes = 64 * 1024 * 1024;
+constexpr usize kMaxBinarySceneBytes = 256 * 1024 * 1024;
 
 void AppendU32(std::vector<u8>& buffer, u32 value) {
     const u8* bytes = reinterpret_cast<const u8*>(&value);
@@ -220,8 +221,8 @@ bool LoadScene(World& world, const std::string& path) {
 
 bool LoadScene(World& world, const std::string& path, const SceneLoadOptions& options) {
     std::vector<u8> buffer;
-    if (!fs::ReadFileBytes(path, buffer)) {
-        AETHER_LOG_ERROR("Scene", "Failed to read scene file: %s", path.c_str());
+    if (!fs::ReadFileBytes(path, buffer, kMaxBinarySceneBytes)) {
+        AETHER_LOG_ERROR("Scene", "Failed to read scene file or binary scene is too large: %s", path.c_str());
         return false;
     }
     return LoadSceneFromMemory(world, buffer, path, options);
