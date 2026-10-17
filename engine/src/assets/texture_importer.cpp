@@ -125,9 +125,16 @@ bool DecodeTextureData(const std::vector<u8>& bytes, TextureData& out) {
     u32 version = 0, width = 0, height = 0, mip_count = 0, flags = 0;
     if (!ReadU32(bytes, offset, version) || version != kFormatVersion || !ReadU32(bytes, offset, width) ||
         !ReadU32(bytes, offset, height) || !ReadU32(bytes, offset, mip_count) || !ReadU32(bytes, offset, flags) ||
-        width == 0 || height == 0 || mip_count == 0 || mip_count > 32) {
+        width == 0 || height == 0 || mip_count == 0 || (flags & ~kFlagSrgb) != 0) {
         return false;
     }
+    u32 largest_dimension = std::max(width, height);
+    u32 max_mips = 1;
+    while (largest_dimension > 1) {
+        largest_dimension >>= 1;
+        ++max_mips;
+    }
+    if (mip_count > max_mips) return false;
     TextureData texture;
     texture.width = width;
     texture.height = height;
