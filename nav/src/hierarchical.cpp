@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <queue>
 
@@ -21,8 +22,14 @@ f32 Dist(const Vec3& a, const Vec3& b) { return (a - b).Length(); }
 i32 HierarchicalPathfinder::TileOf(const Vec3& p, i32& z) const {
     const NavMeshData& d = mesh_->Data();
     const f32 size = d.tile_world_size > 0 ? d.tile_world_size : 1.0f;
-    z = static_cast<i32>(std::floor((p.z - d.origin.z) / size));
-    return static_cast<i32>(std::floor((p.x - d.origin.x) / size));
+    const auto coordinate = [size](f32 position, f32 origin) {
+        const f64 tile = std::floor((static_cast<f64>(position) - origin) / size);
+        if (std::isnan(tile)) return i32{0};
+        return static_cast<i32>(std::clamp(tile, static_cast<f64>(std::numeric_limits<i32>::min()),
+                                           static_cast<f64>(std::numeric_limits<i32>::max())));
+    };
+    z = coordinate(p.z, d.origin.z);
+    return coordinate(p.x, d.origin.x);
 }
 
 bool HierarchicalPathfinder::Build(const NavMesh& mesh) {
@@ -113,7 +120,7 @@ bool HierarchicalPathfinder::FindPath(const Vec3& start, const Vec3& end, NavPat
     if (!mesh_->NearestPoint(start, s) || !mesh_->NearestPoint(end, e)) return direct();
     i32 sz, ez;
     const i32 sx = TileOf(s, sz), ex = TileOf(e, ez);
-    if (std::abs(sx - ex) <= 1 && std::abs(sz - ez) <= 1) return direct();
+    if (std::abs(static_cast<i64>(sx) - ex) <= 1 && std::abs(static_cast<i64>(sz) - ez) <= 1) return direct();
 
     // A* over the portals, from the start's tile to the goal's. Node n = portal n; start and goal are virtual.
     const u32 n = static_cast<u32>(portals_.size());
