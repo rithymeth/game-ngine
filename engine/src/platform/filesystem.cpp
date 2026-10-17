@@ -16,6 +16,10 @@ bool Exists(const std::string& path) {
 }
 
 bool ReadFileBytes(const std::string& path, std::vector<u8>& out_bytes) {
+    return ReadFileBytes(path, out_bytes, std::numeric_limits<usize>::max());
+}
+
+bool ReadFileBytes(const std::string& path, std::vector<u8>& out_bytes, usize max_bytes) {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file) {
         return false;
@@ -25,7 +29,7 @@ bool ReadFileBytes(const std::string& path, std::vector<u8>& out_bytes) {
     if (size < 0) {
         return false;
     }
-    if (static_cast<u64>(size) > std::numeric_limits<usize>::max()) {
+    if (static_cast<u64>(size) > std::numeric_limits<usize>::max() || static_cast<u64>(size) > max_bytes) {
         return false;
     }
     file.seekg(0, std::ios::beg);

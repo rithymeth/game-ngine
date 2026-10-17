@@ -133,13 +133,9 @@ bool SaveAssetMeta(const stdfs::path& meta_file, const AssetMeta& meta, std::str
 }
 
 bool LoadAssetMeta(const stdfs::path& meta_file, AssetMeta& out, std::string* error) {
-    if (fs::FileSize(meta_file.string()) > kMaxAssetMetaBytes) {
-        SetError(error, meta_file.string() + " is too large to be asset metadata");
-        return false;
-    }
     std::vector<u8> bytes;
-    if (!fs::ReadFileBytes(meta_file.string(), bytes)) {
-        SetError(error, "Couldn't read " + meta_file.string());
+    if (!fs::ReadFileBytes(meta_file.string(), bytes, kMaxAssetMetaBytes)) {
+        SetError(error, "Couldn't read " + meta_file.string() + " or it is too large to be asset metadata");
         return false;
     }
     return LoadAssetMetaFromMemory(bytes, out, error);
@@ -449,15 +445,8 @@ void AssetDatabase::RebuildDependencies() {
         std::vector<u8> bytes;
         if (record.importer != "Model") {
             const std::string source_path = Absolute(record.path).string();
-            if (fs::FileSize(source_path) > kMaxDependencyScanBytes) {
-                AETHER_LOG_WARN("Assets", "Skipping dependency scan for oversized asset: %s", source_path.c_str());
-                continue;
-            }
-            if (!fs::ReadFileBytes(source_path, bytes)) {
-                continue;
-            }
-            if (bytes.size() > kMaxDependencyScanBytes) {
-                AETHER_LOG_WARN("Assets", "Skipping dependency scan for oversized asset: %s", source_path.c_str());
+            if (!fs::ReadFileBytes(source_path, bytes, kMaxDependencyScanBytes)) {
+                AETHER_LOG_WARN("Assets", "Skipping dependency scan for unreadable or oversized asset: %s", source_path.c_str());
                 continue;
             }
         }
