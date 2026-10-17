@@ -19,6 +19,7 @@ using Json = nlohmann::json;
 namespace {
 
 constexpr int kPrefabVersion = 1;
+constexpr usize kMaxPrefabFileBytes = 32 * 1024 * 1024;
 
 void SetError(std::string* error, std::string message) {
     if (error != nullptr) {
@@ -463,6 +464,10 @@ bool SavePrefab(const PrefabData& prefab, const std::filesystem::path& path, std
 }
 
 bool LoadPrefab(const std::filesystem::path& path, PrefabData& out, std::string* error) {
+    if (fs::FileSize(path.string()) > kMaxPrefabFileBytes) {
+        SetError(error, path.string() + " is too large to be a prefab file");
+        return false;
+    }
     std::vector<u8> bytes;
     if (!fs::ReadFileBytes(path.string(), bytes)) {
         SetError(error, "Couldn't read " + path.string());
