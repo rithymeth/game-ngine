@@ -132,7 +132,10 @@ public:
     // Clears the pass list for the next frame. Tracked resource states and
     // transient resource allocations are NOT cleared — see ImportResource
     // and CreateTransientTexture.
-    void Reset() { passes_.clear(); }
+    void Reset() {
+        passes_.clear();
+        execution_orders_dirty_ = true;
+    }
 
 private:
     struct Usage {
@@ -176,7 +179,7 @@ private:
         std::vector<ResourceHandle> resources_in_order;
     };
 
-    std::vector<usize> ComputeExecutionOrder(QueueType queue) const;
+    const std::vector<usize>& ComputeExecutionOrder(QueueType queue);
     void Compile();
     void AllocateTransientResources();
     void AssignAliasingBarriers();
@@ -189,6 +192,9 @@ private:
     std::vector<Pass> passes_;
     std::vector<TransientBucket> transient_buckets_; // persists across Reset(); rebuilt only when a transient is (re)declared
     bool transients_dirty_ = true;
+    std::vector<usize> graphics_execution_order_;
+    std::vector<usize> compute_execution_order_;
+    bool execution_orders_dirty_ = true;
     // Reused while recording each queue so per-frame execution doesn't
     // allocate fresh barrier arrays.
     std::vector<D3D12_RESOURCE_BARRIER> barrier_scratch_;
