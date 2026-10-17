@@ -296,6 +296,10 @@ bool LoadSceneFromMemory(World& world, std::span<const u8> buffer, const std::st
                 AETHER_LOG_ERROR("Scene", "Truncated scene file: %s", path.c_str());
                 return false;
             }
+            if (version != kLegacyVersion && encoding > static_cast<u8>(ComponentEncoding::Reflected)) {
+                AETHER_LOG_ERROR("Scene", "Invalid component encoding in scene file: %s", path.c_str());
+                return false;
+            }
 
             ComponentId resolved_id = FindComponentIdByName(name);
             if (resolved_id == kInvalidComponentId) {
@@ -307,6 +311,10 @@ bool LoadSceneFromMemory(World& world, std::span<const u8> buffer, const std::st
                 AETHER_LOG_WARN("Scene", "Skipping unknown component '%s' while loading %s", name.c_str(),
                                 path.c_str());
                 continue;
+            }
+            if (pending_entity.mask.test(resolved_id)) {
+                AETHER_LOG_ERROR("Scene", "Duplicate component '%s' in scene entity: %s", name.c_str(), path.c_str());
+                return false;
             }
             ComponentEncoding file_encoding = static_cast<ComponentEncoding>(encoding);
             if (version == kLegacyVersion) {
@@ -320,6 +328,10 @@ bool LoadSceneFromMemory(World& world, std::span<const u8> buffer, const std::st
             pending_entity.components.push_back({resolved_id, file_encoding, std::move(data)});
         }
         pending_entities.push_back(std::move(pending_entity));
+    }
+    if (reader.Remaining() != 0) {
+        AETHER_LOG_ERROR("Scene", "Scene file contains trailing bytes: %s", path.c_str());
+        return false;
     }
 
     // The file is fully parsed and all strict-unknown checks have passed.
