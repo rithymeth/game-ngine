@@ -399,34 +399,32 @@ void RenderGraph::Compile() {
 }
 
 void RenderGraph::ExecuteQueue(const std::vector<usize>& order, ID3D12GraphicsCommandList* cmd) {
-    std::vector<D3D12_RESOURCE_BARRIER> alias_barriers;
-    std::vector<D3D12_RESOURCE_BARRIER> barriers;
     for (usize global_index : order) {
         Pass& pass = passes_[global_index];
         AETHER_ASSERT(cmd != nullptr);
 
-        alias_barriers.clear();
+        alias_barrier_scratch_.clear();
         if (!pass.aliasing_barriers.empty()) {
             for (const AliasingBarrier& ab : pass.aliasing_barriers) {
                 D3D12_RESOURCE_BARRIER barrier{};
                 barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_ALIASING;
                 barrier.Aliasing.pResourceBefore = ab.before;
                 barrier.Aliasing.pResourceAfter = ab.after;
-                alias_barriers.push_back(barrier);
+                alias_barrier_scratch_.push_back(barrier);
             }
-            cmd->ResourceBarrier(static_cast<UINT>(alias_barriers.size()), alias_barriers.data());
+            cmd->ResourceBarrier(static_cast<UINT>(alias_barrier_scratch_.size()), alias_barrier_scratch_.data());
         }
 
-        barriers.clear();
+        barrier_scratch_.clear();
         for (const Usage& usage : pass.usages) {
             TrackedResource& tracked = resources_[usage.resource];
             if (tracked.current_state != usage.state) {
-                barriers.push_back(TransitionBarrier(tracked.resource, tracked.current_state, usage.state));
+                barrier_scratch_.push_back(TransitionBarrier(tracked.resource, tracked.current_state, usage.state));
                 tracked.current_state = usage.state;
             }
         }
-        if (!barriers.empty()) {
-            cmd->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
+        if (!barrier_scratch_.empty()) {
+            cmd->ResourceBarrier(static_cast<UINT>(barrier_scratch_.size()), barrier_scratch_.data());
         }
 
         pass.execute(cmd);
