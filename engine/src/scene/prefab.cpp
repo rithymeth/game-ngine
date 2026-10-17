@@ -75,7 +75,8 @@ Json* FindField(Json& root, const std::string& path) {
                 return nullptr;
             }
             const std::string digits = path.substr(i + 1, close - i - 1);
-            if (!std::all_of(digits.begin(), digits.end(), [](unsigned char c) { return std::isdigit(c); })) {
+            if (!std::all_of(digits.begin(), digits.end(), [](unsigned char c) { return std::isdigit(c); }) ||
+                digits.size() > 6) {
                 return nullptr;
             }
             const usize index = std::stoul(digits);
