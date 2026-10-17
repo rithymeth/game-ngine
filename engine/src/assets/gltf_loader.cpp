@@ -27,7 +27,7 @@ std::vector<u8> DecodeBase64(const std::string& text) {
     }
 
     std::vector<u8> out;
-    int value = 0;
+    u32 value = 0;
     int bits = -8;
     for (u8 c : text) {
         if (c == '=') {
@@ -36,7 +36,7 @@ std::vector<u8> DecodeBase64(const std::string& text) {
         if (reverse[c] == -1) {
             continue; // skip whitespace/newlines
         }
-        value = (value << 6) + reverse[c];
+        value = (value << 6) + static_cast<u32>(reverse[c]);
         bits += 6;
         if (bits >= 0) {
             out.push_back(static_cast<u8>((value >> bits) & 0xFF));
