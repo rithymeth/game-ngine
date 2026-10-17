@@ -49,6 +49,7 @@ std::vector<ComponentId> ComponentsOf(const World& world, Entity entity) {
 // Every live entity with component `id`, in entity-index order.
 std::vector<Entity> EntitiesWith(const World& world, ComponentId id) {
     std::vector<Entity> result;
+    result.reserve(world.EntityCount());
     world.ForEachArchetype([&](const Archetype& archetype) {
         if (!archetype.Mask().test(id)) {
             return;
