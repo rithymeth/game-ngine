@@ -126,6 +126,7 @@ bool RenderGraph::ShareHeapAllocation(ResourceHandle a, ResourceHandle b) const 
 void RenderGraph::AddPass(const char* name, SetupFunc setup, ExecuteFunc execute, QueueType queue) {
     usize index = passes_.size();
     passes_.push_back(Pass{name, std::move(execute), {}, queue, {}});
+    execution_orders_dirty_ = true;
     PassBuilder builder(*this, index);
     setup(builder);
 }
@@ -139,7 +140,7 @@ bool RenderGraph::HasComputePasses() const {
     return false;
 }
 
-std::vector<usize> RenderGraph::ComputeExecutionOrder(QueueType queue) const {
+const std::vector<usize>& RenderGraph::ComputeExecutionOrder(QueueType queue) {
     // Filters passes_ down to one queue's, in registration order. An earlier
     // version of this function attempted an actual dependency-driven
     // topological sort (edges from whichever pass most recently touched a
@@ -155,18 +156,24 @@ std::vector<usize> RenderGraph::ComputeExecutionOrder(QueueType queue) const {
     // require a backward edge) can never detect one either. It was a
     // correctly-implemented no-op. Genuine dependency-driven reordering
     // needs resource versioning; that's real future work, not this.
-    std::vector<usize> queue_passes;
-    for (usize i = 0; i < passes_.size(); ++i) {
-        if (passes_[i].queue == queue) {
-            queue_passes.push_back(i);
+    if (execution_orders_dirty_) {
+        graphics_execution_order_.clear();
+        compute_execution_order_.clear();
+        for (usize i = 0; i < passes_.size(); ++i) {
+            if (passes_[i].queue == QueueType::Graphics) {
+                graphics_execution_order_.push_back(i);
+            } else {
+                compute_execution_order_.push_back(i);
+            }
         }
+        execution_orders_dirty_ = false;
     }
-    return queue_passes;
+    return queue == QueueType::Graphics ? graphics_execution_order_ : compute_execution_order_;
 }
 
 void RenderGraph::AllocateTransientResources() {
-    std::vector<usize> graphics_order = ComputeExecutionOrder(QueueType::Graphics);
-    std::vector<usize> compute_order = ComputeExecutionOrder(QueueType::Compute);
+    const std::vector<usize>& graphics_order = ComputeExecutionOrder(QueueType::Graphics);
+    const std::vector<usize>& compute_order = ComputeExecutionOrder(QueueType::Compute);
 
     struct Candidate {
         ResourceHandle handle = kInvalidHandle;
@@ -351,8 +358,8 @@ void RenderGraph::AssignAliasingBarriers() {
         return;
     }
 
-    std::vector<usize> graphics_order = ComputeExecutionOrder(QueueType::Graphics);
-    std::vector<usize> compute_order = ComputeExecutionOrder(QueueType::Compute);
+    const std::vector<usize>& graphics_order = ComputeExecutionOrder(QueueType::Graphics);
+    const std::vector<usize>& compute_order = ComputeExecutionOrder(QueueType::Compute);
 
     auto find_first_use = [&](ResourceHandle handle) -> usize {
         for (usize global_index : graphics_order) {
