@@ -494,9 +494,14 @@ bool AssetDatabase::Delete(const AssetGuid& guid_ref, bool force, std::string* e
     }
     // Users of the asset or any of its sub-assets, from outside it.
     std::vector<const AssetRecord*> users = Referencers(guid);
+    std::unordered_set<AssetGuid> user_guids;
+    user_guids.reserve(users.size());
+    for (const AssetRecord* user : users) {
+        user_guids.insert(user->guid);
+    }
     for (const AssetGuid& sub : it->second.sub_assets) {
         for (const AssetRecord* user : Referencers(sub)) {
-            if (std::find(users.begin(), users.end(), user) == users.end()) {
+            if (user_guids.insert(user->guid).second) {
                 users.push_back(user);
             }
         }
