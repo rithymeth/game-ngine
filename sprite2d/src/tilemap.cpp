@@ -294,12 +294,17 @@ bool IsSolidAt(const TilemapData& map, const Tileset& tileset, i32 x, i32 y) {
 }
 
 void LocalToCell(f32 local_x, f32 local_y, f32 tile_units, i32& out_x, i32& out_y) {
-    if (tile_units <= 0.0f) {
+    if (!std::isfinite(local_x) || !std::isfinite(local_y) || !std::isfinite(tile_units) || tile_units <= 0.0f) {
         out_x = out_y = 0;
         return;
     }
-    out_x = static_cast<i32>(std::floor(local_x / tile_units));
-    out_y = static_cast<i32>(std::floor(local_y / tile_units));
+    const auto to_cell = [tile_units](f32 local) {
+        const f64 cell = std::floor(static_cast<f64>(local) / tile_units);
+        return static_cast<i32>(std::clamp(cell, static_cast<f64>(std::numeric_limits<i32>::min()),
+                                           static_cast<f64>(std::numeric_limits<i32>::max())));
+    };
+    out_x = to_cell(local_x);
+    out_y = to_cell(local_y);
 }
 
 } // namespace aether::sprite2d
