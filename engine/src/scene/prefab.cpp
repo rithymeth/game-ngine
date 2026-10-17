@@ -262,9 +262,13 @@ std::vector<PrefabEntity> ApplyPrefabEdits(const std::vector<PrefabEntity>& enti
         *migrated = overrides;
     }
     std::vector<PrefabEntity> data;
-    std::set<PrefabLocalId> kept;
-    std::set<PrefabLocalId> all;
-    const std::set<PrefabLocalId> removed(removed_ids.begin(), removed_ids.end());
+    std::unordered_set<PrefabLocalId> kept;
+    std::unordered_set<PrefabLocalId> all;
+    std::unordered_set<PrefabLocalId> removed;
+    kept.reserve(entities.size());
+    all.reserve(entities.size());
+    removed.reserve(removed_ids.size());
+    removed.insert(removed_ids.begin(), removed_ids.end());
     for (const PrefabEntity& entity : entities) {
         all.insert(entity.id);
         const bool is_root = entity.id == root_id;
@@ -412,7 +416,8 @@ static bool PrefabFromJsonImpl(const Json& json, PrefabData& out, std::string* e
         SetError(error, "The prefab has too many entities");
         return false;
     }
-    std::set<PrefabLocalId> seen;
+    std::unordered_set<PrefabLocalId> seen;
+    seen.reserve(entities->size());
     for (const Json& item : *entities) {
         if (!item.is_object() || !item.contains("id") || !item["id"].is_number_unsigned()) {
             SetError(error, "A prefab entity has no valid id");
