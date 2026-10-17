@@ -176,7 +176,7 @@ bool TryPack(const std::vector<PackInput>& in, const std::vector<usize>& order, 
         if (y + r.h > height) return false;
         rects[index] = {r.name, static_cast<i32>(x), static_cast<i32>(y), r.w, r.h};
         x += r.w + padding;
-        shelf = std::max(shelf, r.h);
+        shelf = std::max(shelf, static_cast<u64>(r.h));
     }
     return true;
 }
