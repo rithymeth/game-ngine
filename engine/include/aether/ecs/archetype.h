@@ -39,6 +39,7 @@ public:
 
     const ComponentMask& Mask() const { return mask_; }
     bool Has(ComponentId id) const { return mask_.test(id); }
+    const std::vector<ComponentId>& ComponentIds() const { return component_ids_; }
 
     usize ChunkCount() const { return chunks_.size(); }
     u32 ChunkEntityCount(usize chunk_index) const { return chunks_[chunk_index]->count; }
