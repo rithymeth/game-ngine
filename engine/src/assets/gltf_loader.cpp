@@ -10,6 +10,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <limits>
 
 namespace aether::assets {
 
@@ -167,13 +168,28 @@ bool ResolveAccessor(const Json& gltf, usize accessor_index, const std::vector<s
         return false;
     }
     out.stride = buffer_view.value("byteStride", element_size);
+    if (out.stride < element_size) {
+        return false;
+    }
 
     if (buffer_index >= buffers.size()) {
         return false;
     }
-    usize total_offset = bv_byte_offset + accessor_byte_offset;
-    usize required = total_offset + (out.count > 0 ? (out.count - 1) * out.stride + element_size : 0);
-    if (required > buffers[buffer_index].size()) {
+    constexpr usize max_size = std::numeric_limits<usize>::max();
+    if (accessor_byte_offset > max_size - bv_byte_offset) {
+        return false;
+    }
+    const usize total_offset = bv_byte_offset + accessor_byte_offset;
+    usize required_size = 0;
+    if (out.count > 0) {
+        const usize preceding_elements = out.count - 1;
+        if (preceding_elements > (max_size - element_size) / out.stride) {
+            return false;
+        }
+        required_size = preceding_elements * out.stride + element_size;
+    }
+    if (total_offset > buffers[buffer_index].size() ||
+        required_size > buffers[buffer_index].size() - total_offset) {
         AETHER_LOG_ERROR("glTF", "Accessor %zu reads past the end of its buffer", accessor_index);
         return false;
     }
