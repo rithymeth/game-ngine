@@ -90,6 +90,7 @@ bool DecodeWav(const std::vector<u8>& b, SoundWave& out, std::string* error) {
         } else {
             v = static_cast<f32>(static_cast<i32>(U32(p))) / 2147483648.0f;
         }
+        if (!std::isfinite(v)) return fail("the WAV contains a non-finite sample");
         s.samples[i] = v;
     }
     out = std::move(s);
