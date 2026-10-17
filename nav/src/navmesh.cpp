@@ -56,6 +56,27 @@ bool Settle(const NavMeshSettings& s, std::string* error) {
     if (s.agent_height <= 0.0f || s.agent_radius < 0.0f || s.agent_max_climb < 0.0f) return Fail(error, "the agent's height must be more than 0, and its radius and climb 0 or more");
     if (s.verts_per_poly < 3 || s.verts_per_poly > DT_VERTS_PER_POLYGON) return Fail(error, "verts_per_poly must be 3 to 6");
     if (s.tile_size < 0) return Fail(error, "tile_size can't be negative");
+    constexpr f64 max_voxel_value = static_cast<f64>(std::numeric_limits<int>::max()) / 8.0;
+    const f64 walkable_height = std::ceil(static_cast<f64>(s.agent_height) / s.cell_height);
+    const f64 walkable_climb = std::floor(static_cast<f64>(s.agent_max_climb) / s.cell_height);
+    const f64 walkable_radius = std::ceil(static_cast<f64>(s.agent_radius) / s.cell_size);
+    const f64 max_edge_length = static_cast<f64>(s.edge_max_length) / s.cell_size;
+    const f64 max_border = walkable_radius + 3.0;
+    const f64 max_region_size = std::sqrt(static_cast<f64>(std::numeric_limits<int>::max()));
+    const f64 detail_sample_distance = static_cast<f64>(s.cell_size) * s.detail_sample_distance;
+    const f64 detail_sample_error = static_cast<f64>(s.cell_height) * s.detail_sample_max_error;
+    if (s.agent_max_slope < 0.0f || s.agent_max_slope > 90.0f || s.edge_max_length < 0.0f ||
+        s.edge_max_error < 0.0f || s.detail_sample_max_error < 0.0f || s.region_min_size < 0 || s.region_merge_size < 0 ||
+        s.region_min_size > max_region_size || s.region_merge_size > max_region_size ||
+        s.tile_size > std::numeric_limits<int>::max() / 2 ||
+        !std::isfinite(walkable_height) || walkable_height > max_voxel_value ||
+        !std::isfinite(walkable_climb) || walkable_climb > max_voxel_value ||
+        !std::isfinite(walkable_radius) || walkable_radius > max_voxel_value ||
+        !std::isfinite(max_edge_length) || max_edge_length > max_voxel_value || max_border > max_voxel_value ||
+        !std::isfinite(detail_sample_distance) || detail_sample_distance > std::numeric_limits<f32>::max() ||
+        !std::isfinite(detail_sample_error) || detail_sample_error > std::numeric_limits<f32>::max()) {
+        return Fail(error, "navmesh settings exceed supported Recast limits");
+    }
     return true;
 }
 
@@ -202,16 +223,24 @@ void MarkVolume(rcContext& ctx, const NavVolume& v, rcCompactHeightfield& chf) {
     }
 }
 
-i32 BorderCells(const NavMeshSettings& s) { return static_cast<i32>(std::ceil(s.agent_radius / s.cell_size)) + 3; }
 } // namespace
 
 std::vector<std::pair<i32, i32>> NavTilesTouching(const NavMeshData& grid, const Vec3& lo, const Vec3& hi) {
     std::vector<std::pair<i32, i32>> out;
-    if (grid.tile_world_size <= 0.0f) return out;
-    const f32 border = static_cast<f32>(BorderCells(grid.settings)) * grid.settings.cell_size;
-    const auto cell = [&](f32 v, f32 origin) { return static_cast<i32>(std::floor((v - origin) / grid.tile_world_size)); };
-    const i32 x0 = std::max(0, cell(lo.x - border, grid.origin.x)), x1 = std::min(grid.tiles_x - 1, cell(hi.x + border, grid.origin.x));
-    const i32 z0 = std::max(0, cell(lo.z - border, grid.origin.z)), z1 = std::min(grid.tiles_z - 1, cell(hi.z + border, grid.origin.z));
+    if (!Settle(grid.settings, nullptr) || !std::isfinite(grid.tile_world_size) || grid.tile_world_size <= 0.0f ||
+        grid.tiles_x <= 0 || grid.tiles_z <= 0 || !std::isfinite(grid.origin.x) || !std::isfinite(grid.origin.z) ||
+        !std::isfinite(lo.x) || !std::isfinite(lo.z) || !std::isfinite(hi.x) || !std::isfinite(hi.z)) return out;
+    const f64 border = (std::ceil(static_cast<f64>(grid.settings.agent_radius) / grid.settings.cell_size) + 3.0) * grid.settings.cell_size;
+    const auto cell = [&](f64 v, f32 origin) {
+        const f64 index = std::floor((v - origin) / grid.tile_world_size);
+        if (std::isnan(index)) return i32{0};
+        return static_cast<i32>(std::clamp(index, static_cast<f64>(std::numeric_limits<i32>::min()),
+                                           static_cast<f64>(std::numeric_limits<i32>::max())));
+    };
+    const i32 x0 = std::max(0, cell(static_cast<f64>(lo.x) - border, grid.origin.x));
+    const i32 x1 = std::min(grid.tiles_x - 1, cell(static_cast<f64>(hi.x) + border, grid.origin.x));
+    const i32 z0 = std::max(0, cell(static_cast<f64>(lo.z) - border, grid.origin.z));
+    const i32 z1 = std::min(grid.tiles_z - 1, cell(static_cast<f64>(hi.z) + border, grid.origin.z));
     for (i32 z = z0; z <= z1; ++z)
         for (i32 x = x0; x <= x1; ++x) out.emplace_back(x, z);
     return out;
@@ -221,8 +250,17 @@ bool BuildNavTile(const NavGeometry& g, const NavMeshData& grid, i32 tx, i32 tz,
                   const std::vector<NavVolume>* extra_volumes, const std::vector<NavLink>* extra_links) {
     const NavMeshSettings& s = grid.settings;
     out = {tx, tz, {}};
+    if (!Settle(s, error) || !std::isfinite(grid.tile_world_size) || grid.tile_world_size <= 0.0f) {
+        if (error != nullptr && error->empty()) *error = "invalid navmesh tile grid";
+        return false;
+    }
+    if (grid.tiles_x <= 0 || grid.tiles_z <= 0 || tx < 0 || tx >= grid.tiles_x || tz < 0 || tz >= grid.tiles_z) {
+        return Fail(error, "tile coordinates are outside the navmesh grid");
+    }
     Vec3 gmin, gmax;
     if (!g.Bounds(gmin, gmax)) return Fail(error, "no geometry to build from");
+    if (!std::isfinite(gmin.x) || !std::isfinite(gmin.y) || !std::isfinite(gmin.z) || !std::isfinite(gmax.x) ||
+        !std::isfinite(gmax.y) || !std::isfinite(gmax.z)) return Fail(error, "geometry bounds must be finite");
     rcConfig cfg{};
     cfg.cs = s.cell_size;
     cfg.ch = s.cell_height;
@@ -235,8 +273,13 @@ bool BuildNavTile(const NavGeometry& g, const NavMeshData& grid, i32 tx, i32 tz,
     cfg.minRegionArea = s.region_min_size * s.region_min_size;
     cfg.mergeRegionArea = s.region_merge_size * s.region_merge_size;
     cfg.maxVertsPerPoly = s.verts_per_poly;
-    cfg.tileSize = static_cast<int>(std::lround(grid.tile_world_size / cfg.cs));
-    cfg.borderSize = BorderCells(s);
+    const f64 tile_size = std::round(static_cast<f64>(grid.tile_world_size) / cfg.cs);
+    const f64 border_size = std::ceil(static_cast<f64>(s.agent_radius) / cfg.cs) + 3.0;
+    const f64 config_size = tile_size + border_size * 2.0;
+    if (!std::isfinite(tile_size) || tile_size < 1.0 || !std::isfinite(config_size) ||
+        config_size > std::numeric_limits<int>::max()) return Fail(error, "the navmesh tile exceeds Recast's size limits");
+    cfg.tileSize = static_cast<int>(tile_size);
+    cfg.borderSize = static_cast<int>(border_size);
     cfg.width = cfg.tileSize + cfg.borderSize * 2;
     cfg.height = cfg.tileSize + cfg.borderSize * 2;
     cfg.detailSampleDist = s.detail_sample_distance < 0.9f ? 0.0f : cfg.cs * s.detail_sample_distance;
@@ -247,6 +290,11 @@ bool BuildNavTile(const NavGeometry& g, const NavMeshData& grid, i32 tx, i32 tz,
     cfg.bmax[0] = cfg.bmin[0] + static_cast<f32>(cfg.width) * cfg.cs;
     cfg.bmax[1] = gmax.y + s.agent_height + 1.0f;
     cfg.bmax[2] = cfg.bmin[2] + static_cast<f32>(cfg.height) * cfg.cs;
+    if (!std::isfinite(cfg.detailSampleDist) || !std::isfinite(cfg.detailSampleMaxError) ||
+        !std::isfinite(cfg.bmin[0]) || !std::isfinite(cfg.bmin[1]) || !std::isfinite(cfg.bmin[2]) ||
+        !std::isfinite(cfg.bmax[0]) || !std::isfinite(cfg.bmax[1]) || !std::isfinite(cfg.bmax[2])) {
+        return Fail(error, "navmesh tile bounds exceed the supported range");
+    }
 
     Context ctx;
     Owned<rcHeightfield, rcFreeHeightField> hf{rcAllocHeightfield()};
@@ -494,6 +542,11 @@ void NavMesh::Unload() {
 }
 
 bool NavMesh::Load(const NavMeshData& data, std::string* error) {
+    if (!Settle(data.settings, error) || !std::isfinite(data.tile_world_size) || data.tile_world_size <= 0.0f ||
+        !std::isfinite(data.origin.x) || !std::isfinite(data.origin.y) || !std::isfinite(data.origin.z)) {
+        if (error != nullptr && error->empty()) *error = "invalid navmesh tile grid";
+        return false;
+    }
     if (data.tiles_x <= 0 || data.tiles_z <= 0 ||
         static_cast<u64>(data.tiles_x) * static_cast<u64>(data.tiles_z) > (1u << 14)) {
         return Fail(error, "the tile grid exceeds Detour's capacity");
