@@ -598,6 +598,10 @@ struct Flattener {
                 return false;
             }
             if (!entity.nested) {
+                if (result.size() >= kMaxPrefabEntities) {
+                    error = "Flattened prefab exceeds the one million entity limit";
+                    return false;
+                }
                 result.push_back(entity);
                 continue;
             }
@@ -607,6 +611,10 @@ struct Flattener {
             }
             const PrefabLocalId sub_root = sub.front().id;
             sub = ApplyPrefabEdits(sub, sub_root, entity.nested->overrides, entity.nested->removed_entities, orphaned);
+            if (sub.size() > kMaxPrefabEntities - result.size()) {
+                error = "Flattened prefab exceeds the one million entity limit";
+                return false;
+            }
             for (PrefabEntity& inner : sub) {
                 if (inner.id == sub_root) {
                     inner.id = entity.id;
