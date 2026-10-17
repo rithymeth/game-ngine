@@ -14,6 +14,8 @@ namespace stdfs = std::filesystem;
 
 namespace {
 
+constexpr usize kMaxInputBindingFileBytes = 16 * 1024 * 1024;
+
 void SetError(std::string* error, std::string message) {
     if (error != nullptr) {
         *error = std::move(message);
@@ -54,6 +56,10 @@ bool ParseTyped(const char* kind, std::string_view text, const std::string& sour
 
 template <typename T>
 bool LoadTyped(const char* kind, const stdfs::path& file, T& out, std::string* error) {
+    if (fs::FileSize(file.string()) > kMaxInputBindingFileBytes) {
+        SetError(error, file.string() + " is too large to be input binding data");
+        return false;
+    }
     std::vector<u8> bytes;
     if (!fs::ReadFileBytes(file.string(), bytes)) {
         SetError(error, "Couldn't read " + file.string());
