@@ -45,6 +45,7 @@ constexpr char kMagic[4] = {'A', 'E', 'S', 'C'};
 constexpr u32 kLegacyVersion = 1;
 constexpr u32 kVersion = 2;
 constexpr u32 kJsonSceneVersion = 1;
+constexpr usize kMaxJsonSceneBytes = 64 * 1024 * 1024;
 
 void AppendU32(std::vector<u8>& buffer, u32 value) {
     const u8* bytes = reinterpret_cast<const u8*>(&value);
@@ -400,6 +401,10 @@ bool LoadSceneJson(World& world, const std::string& path) {
 }
 
 bool LoadSceneJson(World& world, const std::string& path, const SceneLoadOptions& options) {
+    if (fs::FileSize(path) > kMaxJsonSceneBytes) {
+        AETHER_LOG_ERROR("Scene", "JSON scene is too large: %s", path.c_str());
+        return false;
+    }
     std::vector<u8> bytes;
     if (!fs::ReadFileBytes(path, bytes)) {
         AETHER_LOG_ERROR("Scene", "Failed to read scene file: %s", path.c_str());
@@ -421,6 +426,10 @@ bool LoadSceneJsonFromMemory(World& world, std::span<const u8> bytes, const std:
 
 bool LoadSceneJsonFromMemory(World& world, std::span<const u8> bytes, const std::string& path,
                              const SceneLoadOptions& options) {
+    if (bytes.size() > kMaxJsonSceneBytes) {
+        AETHER_LOG_ERROR("Scene", "JSON scene is too large: %s", path.c_str());
+        return false;
+    }
     try {
         return LoadSceneJsonFromMemoryImpl(world, bytes, path, options);
     } catch (const nlohmann::json::exception& e) {
