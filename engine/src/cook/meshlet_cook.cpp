@@ -3,6 +3,7 @@
 #include <meshoptimizer.h>
 
 #include <algorithm>
+#include <cmath>
 
 namespace aether::cook {
 
@@ -16,6 +17,10 @@ bool Fail(std::string* error, std::string message) {
 }
 
 bool CheckMesh(std::span<const Vec3> positions, std::span<const u32> indices, std::string* error) {
+    for (const Vec3& position : positions) {
+        if (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z))
+            return Fail(error, "a vertex position isn't finite");
+    }
     if (indices.size() % 3 != 0) return Fail(error, "the index count isn't a multiple of 3");
     for (const u32 i : indices) {
         if (i >= positions.size()) return Fail(error, "an index is outside the vertex array");
