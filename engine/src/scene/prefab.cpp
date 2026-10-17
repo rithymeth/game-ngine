@@ -11,6 +11,7 @@
 #include <cctype>
 #include <set>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace aether {
 
@@ -590,9 +591,28 @@ struct Flattener {
             }
             result = ApplyPrefabEdits(base, base.front().id, prefab.base_overrides, prefab.base_removed, orphaned);
         }
+        std::unordered_set<PrefabLocalId> result_ids;
+        result_ids.reserve(result.size() + prefab.entities.size());
+        for (const PrefabEntity& entity : result) {
+            result_ids.insert(entity.id);
+        }
+        const auto append = [&](PrefabEntity entity) {
+            if (entity.parent != 0 && result_ids.count(entity.parent) == 0) {
+                error = "Prefab entity " + std::to_string(entity.id) + "'s parent " + std::to_string(entity.parent) +
+                        " doesn't exist (removed from the base, or listed after it)";
+                return false;
+            }
+            if (!result_ids.insert(entity.id).second) {
+                error = "Two prefab entities got local id " + std::to_string(entity.id) +
+                        "; renumber the entities of one of the nested prefabs";
+                return false;
+            }
+            result.push_back(std::move(entity));
+            return true;
+        };
         for (const PrefabEntity& entity : prefab.entities) {
             if (entity.parent != 0 &&
-                std::none_of(result.begin(), result.end(), [&](const PrefabEntity& e) { return e.id == entity.parent; })) {
+                result_ids.count(entity.parent) == 0) {
                 error = "Prefab entity " + std::to_string(entity.id) + "'s parent " + std::to_string(entity.parent) +
                         " doesn't exist (removed from the base, or listed after it)";
                 return false;
@@ -602,7 +622,9 @@ struct Flattener {
                     error = "Flattened prefab exceeds the one million entity limit";
                     return false;
                 }
-                result.push_back(entity);
+                if (!append(entity)) {
+                    return false;
+                }
                 continue;
             }
             std::vector<PrefabEntity> sub;
@@ -626,20 +648,14 @@ struct Flattener {
                     inner.id = NestedLocalId(entity.id, inner.id);
                     inner.parent = inner.parent == sub_root ? entity.id : NestedLocalId(entity.id, inner.parent);
                 }
-                result.push_back(std::move(inner));
+                if (!append(std::move(inner))) {
+                    return false;
+                }
             }
         }
         if (result.empty() || result.front().parent != 0) {
             error = "The prefab has no root entity";
             return false;
-        }
-        std::set<PrefabLocalId> ids;
-        for (const PrefabEntity& entity : result) {
-            if (!ids.insert(entity.id).second) {
-                error = "Two prefab entities got local id " + std::to_string(entity.id) +
-                        "; renumber the entities of one of the nested prefabs";
-                return false;
-            }
         }
         out = std::move(result);
         return true;
