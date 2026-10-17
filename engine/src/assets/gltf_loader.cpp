@@ -18,6 +18,7 @@ namespace {
 
 using Json = nlohmann::json;
 constexpr usize kMaxJsonBytes = 32 * 1024 * 1024;
+constexpr usize kMaxBufferBytes = 512 * 1024 * 1024;
 
 std::vector<u8> DecodeBase64(const std::string& text) {
     static const std::string kAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -84,7 +85,7 @@ std::string UriDecode(const std::string& uri) {
 }
 
 bool ResolveBufferData(const Json& buffer_json, const std::string& base_dir, bool allow_external,
-                       std::vector<u8>& out_data) {
+                       usize remaining_budget, std::vector<u8>& out_data) {
     if (!buffer_json.contains("uri")) {
         AETHER_LOG_ERROR("glTF", "Buffer with no uri (GLB-embedded binary chunk) is not supported");
         return false;
@@ -100,7 +101,24 @@ bool ResolveBufferData(const Json& buffer_json, const std::string& base_dir, boo
     }
     if (!allow_external) return false;
     std::string path = JoinPath(base_dir, UriDecode(uri));
-    return fs::ReadFileBytes(path, out_data);
+    const usize file_size = fs::FileSize(path);
+    if (file_size > remaining_budget) {
+        AETHER_LOG_ERROR("glTF", "Referenced buffer \"%s\" exceeds the remaining glTF buffer budget", path.c_str());
+        return false;
+    }
+    if (buffer_json.contains("byteLength")) {
+        const usize declared_size = buffer_json["byteLength"].get<usize>();
+        if (declared_size > remaining_budget || file_size != declared_size) {
+            AETHER_LOG_ERROR("glTF", "Referenced buffer \"%s\" is larger than its declared or allowed size", path.c_str());
+            return false;
+        }
+    }
+    if (!fs::ReadFileBytes(path, out_data)) return false;
+    if (out_data.size() > remaining_budget) {
+        out_data.clear();
+        return false;
+    }
+    return true;
 }
 
 usize ComponentSize(int component_type) {
@@ -710,13 +728,19 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
     std::string base_dir = allow_external ? fs::ParentPath(path) : std::string();
 
     std::vector<std::vector<u8>> buffers;
+    usize buffer_budget = kMaxBufferBytes;
     if (gltf.contains("buffers")) {
         for (const auto& buffer_json : gltf["buffers"]) {
             std::vector<u8> data;
-            if (!ResolveBufferData(buffer_json, base_dir, allow_external, data)) {
+            if (!ResolveBufferData(buffer_json, base_dir, allow_external, buffer_budget, data)) {
                 AETHER_LOG_ERROR("glTF", "Failed to resolve a buffer referenced by \"%s\"", path.c_str());
                 return false;
             }
+            if (data.size() > buffer_budget) {
+                AETHER_LOG_ERROR("glTF", "Buffers in \"%s\" exceed the total glTF buffer budget", path.c_str());
+                return false;
+            }
+            buffer_budget -= data.size();
             buffers.push_back(std::move(data));
         }
     }
