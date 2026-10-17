@@ -9,6 +9,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <mutex>
 
 namespace aether::cook {
@@ -66,6 +67,12 @@ void FetchBlock(const std::vector<u8>& rgba, u32 width, u32 height, u32 bx, u32 
 }
 
 bool IsAstc(TextureFormat f) { return f == TextureFormat::ASTC_4x4 || f == TextureFormat::ASTC_6x6 || f == TextureFormat::ASTC_8x8; }
+
+bool HasValidRgbaSize(std::span<const u8> rgba, u32 width, u32 height) {
+    if (width == 0 || height == 0) return false;
+    const u64 pixel_count = static_cast<u64>(width) * height;
+    return pixel_count <= std::numeric_limits<usize>::max() / 4 && rgba.size() == static_cast<usize>(pixel_count) * 4;
+}
 
 // quality 0..4 is astc-encoder's fastest, fast, medium, thorough and exhaustive presets.
 f32 AstcPreset(u32 quality) {
@@ -242,6 +249,7 @@ TextureFormat ChooseTextureFormat(std::span<const u8> rgba, bool normal_map, Tex
 
 std::vector<CookedMip> GenerateMips(std::span<const u8> rgba, u32 width, u32 height, bool srgb, bool normal_map) {
     std::vector<CookedMip> mips;
+    if (!HasValidRgbaSize(rgba, width, height)) return mips;
     mips.push_back({width, height, std::vector<u8>(rgba.begin(), rgba.end())});
     const auto& to_linear = SrgbTable();
     while (mips.back().width > 1 || mips.back().height > 1) {
@@ -298,11 +306,11 @@ CookedTexture CookTexture(std::span<const u8> rgba, u32 width, u32 height, const
     texture.width = width;
     texture.height = height;
     texture.normal_map = settings.normal_map;
+    if (!HasValidRgbaSize(rgba, width, height)) return texture;
     texture.format = settings.auto_format ? ChooseTextureFormat(rgba, settings.normal_map, settings.target) : settings.format;
     // Single- and two-channel formats hold data, not colour.
     texture.srgb = settings.srgb && !settings.normal_map && texture.format != TextureFormat::BC4 &&
                    texture.format != TextureFormat::BC5;
-    if (width == 0 || height == 0 || rgba.size() < static_cast<usize>(width) * height * 4) return texture;
     std::vector<CookedMip> levels;
     if (settings.mips) {
         levels = GenerateMips(rgba, width, height, texture.srgb, settings.normal_map);
