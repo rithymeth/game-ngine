@@ -66,7 +66,7 @@ bool SystemScheduler::Build(std::string* error) {
             }
         }
         // Explicit edges.
-        std::unordered_map<u32, std::vector<u32>> must_follow; // system -> systems it runs after
+        std::vector<std::vector<u32>> must_follow(systems_.size()); // system -> systems it runs after
         for (u32 i : members) {
             for (const std::string& name : systems_[i].after) {
                 auto it = by_name.find(name);
