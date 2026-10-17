@@ -147,7 +147,9 @@ std::vector<assets::AssetGuid> PrefabLibrary::Reload(const assets::AssetGuid& gu
 PropagationReport PropagatePrefabChange(World& world, GuidIndex& guids, PrefabLibrary& library,
                                         const assets::AssetGuid& changed) {
     const std::vector<assets::AssetGuid> affected = library.Dependents(changed);
-    const std::unordered_set<assets::AssetGuid> affected_set(affected.begin(), affected.end());
+    std::unordered_set<assets::AssetGuid> affected_set;
+    affected_set.reserve(affected.size());
+    affected_set.insert(affected.begin(), affected.end());
     // Resolve only instances of affected prefabs; others are skipped by
     // handing them no data.
     PrefabLookup lookup = library.Lookup();
@@ -196,7 +198,9 @@ PropagationReport PropagatePrefabChange(World& world, GuidIndex& guids, PrefabLi
 std::vector<SceneImpact> CheckScenesUsingPrefab(PrefabLibrary& library, const assets::AssetGuid& prefab) {
     assets::AssetDatabase& database = library.Database();
     const std::vector<assets::AssetGuid> affected = library.Dependents(prefab);
-    const std::unordered_set<assets::AssetGuid> affected_set(affected.begin(), affected.end());
+    std::unordered_set<assets::AssetGuid> affected_set;
+    affected_set.reserve(affected.size());
+    affected_set.insert(affected.begin(), affected.end());
     std::set<std::string> scenes;
     for (const assets::AssetGuid& guid : affected) {
         for (const assets::AssetRecord* user : database.Referencers(guid)) {
