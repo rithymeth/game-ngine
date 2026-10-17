@@ -596,6 +596,10 @@ void ParseAnimations(const Json& gltf, const std::vector<std::vector<u8>>& buffe
                 continue;
             }
 
+            if (output_info.count > std::numeric_limits<usize>::max() / components) {
+                AETHER_LOG_WARN("glTF", "Skipping animation channel whose value count overflows addressable memory");
+                continue;
+            }
             channel.values.resize(output_info.count * components);
             bool valid_values = true;
             for (usize i = 0; i < output_info.count; ++i) {
