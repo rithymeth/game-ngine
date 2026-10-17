@@ -68,6 +68,8 @@ bool AssetRefFromJson(const nlohmann::json& data, void* object) {
 
 namespace {
 
+constexpr usize kMaxAssetMetaBytes = 16 * 1024 * 1024;
+
 void SetError(std::string* error, std::string message) {
     if (error != nullptr) {
         *error = std::move(message);
@@ -128,6 +130,10 @@ bool SaveAssetMeta(const stdfs::path& meta_file, const AssetMeta& meta, std::str
 }
 
 bool LoadAssetMeta(const stdfs::path& meta_file, AssetMeta& out, std::string* error) {
+    if (fs::FileSize(meta_file.string()) > kMaxAssetMetaBytes) {
+        SetError(error, meta_file.string() + " is too large to be asset metadata");
+        return false;
+    }
     std::vector<u8> bytes;
     if (!fs::ReadFileBytes(meta_file.string(), bytes)) {
         SetError(error, "Couldn't read " + meta_file.string());
@@ -137,6 +143,10 @@ bool LoadAssetMeta(const stdfs::path& meta_file, AssetMeta& out, std::string* er
 }
 
 bool LoadAssetMetaFromMemory(std::span<const u8> bytes, AssetMeta& out, std::string* error) {
+    if (bytes.size() > kMaxAssetMetaBytes) {
+        SetError(error, "Input is too large to be asset metadata");
+        return false;
+    }
     Json json = Json::parse(bytes.begin(), bytes.end(), nullptr, /*allow_exceptions=*/false);
     if (json.is_discarded() || !json.is_object()) {
         SetError(error, "Input isn't an asset metadata file");
