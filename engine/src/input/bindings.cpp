@@ -56,13 +56,9 @@ bool ParseTyped(const char* kind, std::string_view text, const std::string& sour
 
 template <typename T>
 bool LoadTyped(const char* kind, const stdfs::path& file, T& out, std::string* error) {
-    if (fs::FileSize(file.string()) > kMaxInputBindingFileBytes) {
-        SetError(error, file.string() + " is too large to be input binding data");
-        return false;
-    }
     std::vector<u8> bytes;
-    if (!fs::ReadFileBytes(file.string(), bytes)) {
-        SetError(error, "Couldn't read " + file.string());
+    if (!fs::ReadFileBytes(file.string(), bytes, kMaxInputBindingFileBytes)) {
+        SetError(error, "Couldn't read " + file.string() + " or it is too large to be input binding data");
         return false;
     }
     return ParseTyped(kind, std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), file.string(), out,

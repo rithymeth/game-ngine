@@ -347,11 +347,7 @@ bool VerifyPackageManifest(const stdfs::path& directory, std::vector<std::string
         problems.push_back(error);
         return false;
     }
-    if (fs::FileSize(manifest_file.string()) > kMaxPackageManifestBytes) {
-        problems.push_back("PackageManifest.json is too large");
-        return false;
-    }
-    if (!fs::ReadFileBytes(manifest_file.string(), bytes)) {
+    if (!fs::ReadFileBytes(manifest_file.string(), bytes, kMaxPackageManifestBytes)) {
         problems.push_back("Can't read " + manifest_file.string());
         return false;
     }
