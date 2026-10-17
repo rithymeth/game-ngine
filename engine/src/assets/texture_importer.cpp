@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <limits>
 
 namespace aether::assets {
 
@@ -40,7 +41,7 @@ void AppendU32(std::vector<u8>& out, u32 value) {
 }
 
 bool ReadU32(const std::vector<u8>& in, usize& offset, u32& value) {
-    if (offset + 4 > in.size()) {
+    if (offset > in.size() || in.size() - offset < 4) {
         return false;
     }
     std::memcpy(&value, in.data() + offset, 4);
@@ -128,8 +129,13 @@ bool DecodeTextureData(const std::vector<u8>& bytes, TextureData& out) {
     texture.srgb = (flags & kFlagSrgb) != 0;
     for (u32 level = 0; level < mip_count; ++level) {
         u32 size = 0;
-        const usize expected = static_cast<usize>(texture.MipWidth(level)) * texture.MipHeight(level) * 4;
-        if (!ReadU32(bytes, offset, size) || size != expected || offset + size > bytes.size()) {
+        const u64 pixels = static_cast<u64>(texture.MipWidth(level)) * texture.MipHeight(level);
+        if (pixels > std::numeric_limits<usize>::max() / 4) {
+            return false;
+        }
+        const usize expected = static_cast<usize>(pixels) * 4;
+        if (!ReadU32(bytes, offset, size) || size != expected || offset > bytes.size() ||
+            size > bytes.size() - offset) {
             return false;
         }
         texture.mips.emplace_back(bytes.begin() + static_cast<std::ptrdiff_t>(offset),
