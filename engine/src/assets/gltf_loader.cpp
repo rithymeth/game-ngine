@@ -160,6 +160,7 @@ bool ResolveAccessor(const Json& gltf, usize accessor_index, const std::vector<s
     const Json& buffer_view = gltf["bufferViews"][bv_index];
     usize buffer_index = buffer_view.value("buffer", static_cast<usize>(0));
     usize bv_byte_offset = buffer_view.value("byteOffset", static_cast<usize>(0));
+    usize bv_byte_length = buffer_view.value("byteLength", static_cast<usize>(0));
 
     usize component_size = ComponentSize(out.component_type);
     usize element_size = component_size * out.num_components;
@@ -176,10 +177,6 @@ bool ResolveAccessor(const Json& gltf, usize accessor_index, const std::vector<s
         return false;
     }
     constexpr usize max_size = std::numeric_limits<usize>::max();
-    if (accessor_byte_offset > max_size - bv_byte_offset) {
-        return false;
-    }
-    const usize total_offset = bv_byte_offset + accessor_byte_offset;
     usize required_size = 0;
     if (out.count > 0) {
         const usize preceding_elements = out.count - 1;
@@ -188,11 +185,19 @@ bool ResolveAccessor(const Json& gltf, usize accessor_index, const std::vector<s
         }
         required_size = preceding_elements * out.stride + element_size;
     }
-    if (total_offset > buffers[buffer_index].size() ||
-        required_size > buffers[buffer_index].size() - total_offset) {
-        AETHER_LOG_ERROR("glTF", "Accessor %zu reads past the end of its buffer", accessor_index);
+    if (accessor_byte_offset > bv_byte_length || required_size > bv_byte_length - accessor_byte_offset) {
+        AETHER_LOG_ERROR("glTF", "Accessor %zu reads past the end of its bufferView", accessor_index);
         return false;
     }
+    const usize buffer_size = buffers[buffer_index].size();
+    if (bv_byte_offset > buffer_size || bv_byte_length > buffer_size - bv_byte_offset) {
+        AETHER_LOG_ERROR("glTF", "Accessor %zu references a bufferView past the end of its buffer", accessor_index);
+        return false;
+    }
+    if (accessor_byte_offset > max_size - bv_byte_offset) {
+        return false;
+    }
+    const usize total_offset = bv_byte_offset + accessor_byte_offset;
     out.data = buffers[buffer_index].data() + total_offset;
     return true;
 }
