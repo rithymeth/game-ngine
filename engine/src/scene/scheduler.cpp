@@ -5,6 +5,7 @@
 #include "aether/core/log.h"
 
 #include <algorithm>
+#include <queue>
 #include <unordered_map>
 
 namespace aether {
@@ -84,30 +85,43 @@ bool SystemScheduler::Build(std::string* error) {
         // Base order: topological by explicit edges, registration order first.
         std::vector<u32> base;
         std::vector<bool> placed(systems_.size(), false);
-        while (base.size() < members.size()) {
-            bool progressed = false;
+        std::vector<u32> remaining_dependencies(systems_.size(), 0);
+        std::vector<std::vector<u32>> dependents(systems_.size());
+        for (u32 i : members) {
+            const auto& deps = must_follow[i];
+            remaining_dependencies[i] = static_cast<u32>(deps.size());
+            for (u32 dependency : deps) {
+                dependents[dependency].push_back(i);
+            }
+        }
+        // Always select the lowest registered ready system, matching the
+        // previous restart-from-the-beginning scan.
+        std::priority_queue<u32, std::vector<u32>, std::greater<>> ready;
+        for (u32 i : members) {
+            if (remaining_dependencies[i] == 0) {
+                ready.push(i);
+            }
+        }
+        while (!ready.empty()) {
+            const u32 i = ready.top();
+            ready.pop();
+            base.push_back(i);
+            placed[i] = true;
+            for (u32 dependent : dependents[i]) {
+                if (--remaining_dependencies[dependent] == 0) {
+                    ready.push(dependent);
+                }
+            }
+        }
+        if (base.size() != members.size()) {
+            std::string names;
             for (u32 i : members) {
-                if (placed[i]) {
-                    continue;
-                }
-                const auto& deps = must_follow[i];
-                if (std::all_of(deps.begin(), deps.end(), [&](u32 d) { return placed[d]; })) {
-                    base.push_back(i);
-                    placed[i] = true;
-                    progressed = true;
-                    break; // restart: keep registration order as the tie-break
+                if (!placed[i]) {
+                    names += (names.empty() ? "" : ", ") + systems_[i].name;
                 }
             }
-            if (!progressed) {
-                std::string names;
-                for (u32 i : members) {
-                    if (!placed[i]) {
-                        names += (names.empty() ? "" : ", ") + systems_[i].name;
-                    }
-                }
-                SetError(error, std::string("Systems in ") + SystemPhaseName(phase) + " form a cycle through their \"after\" lists: " + names);
-                return false;
-            }
+            SetError(error, std::string("Systems in ") + SystemPhaseName(phase) + " form a cycle through their \"after\" lists: " + names);
+            return false;
         }
         // Levels: explicit edges plus conflicts directed by the base order.
         std::unordered_map<u32, u32> level_of;
