@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <set>
+#include <unordered_set>
 
 namespace aether {
 
@@ -85,7 +86,9 @@ std::vector<assets::AssetGuid> PrefabLibrary::Dependents(const assets::AssetGuid
             }
         }
     }
-    std::set<assets::AssetGuid> seen{guid};
+    std::unordered_set<assets::AssetGuid> seen;
+    seen.reserve(prefabs.size());
+    seen.insert(guid);
     std::vector<assets::AssetGuid> pending{guid};
     while (!pending.empty()) {
         const assets::AssetGuid next = pending.back();
@@ -96,7 +99,9 @@ std::vector<assets::AssetGuid> PrefabLibrary::Dependents(const assets::AssetGuid
             }
         }
     }
-    return {seen.begin(), seen.end()};
+    std::vector<assets::AssetGuid> result(seen.begin(), seen.end());
+    std::sort(result.begin(), result.end());
+    return result;
 }
 
 void PrefabLibrary::Invalidate(const std::vector<assets::AssetGuid>& guids) {
@@ -138,7 +143,7 @@ std::vector<assets::AssetGuid> PrefabLibrary::Reload(const assets::AssetGuid& gu
 PropagationReport PropagatePrefabChange(World& world, GuidIndex& guids, PrefabLibrary& library,
                                         const assets::AssetGuid& changed) {
     const std::vector<assets::AssetGuid> affected = library.Dependents(changed);
-    const std::set<assets::AssetGuid> affected_set(affected.begin(), affected.end());
+    const std::unordered_set<assets::AssetGuid> affected_set(affected.begin(), affected.end());
     // Resolve only instances of affected prefabs; others are skipped by
     // handing them no data.
     PrefabLookup lookup = library.Lookup();
@@ -180,7 +185,7 @@ PropagationReport PropagatePrefabChange(World& world, GuidIndex& guids, PrefabLi
 std::vector<SceneImpact> CheckScenesUsingPrefab(PrefabLibrary& library, const assets::AssetGuid& prefab) {
     assets::AssetDatabase& database = library.Database();
     const std::vector<assets::AssetGuid> affected = library.Dependents(prefab);
-    const std::set<assets::AssetGuid> affected_set(affected.begin(), affected.end());
+    const std::unordered_set<assets::AssetGuid> affected_set(affected.begin(), affected.end());
     std::set<std::string> scenes;
     for (const assets::AssetGuid& guid : affected) {
         for (const assets::AssetRecord* user : database.Referencers(guid)) {
