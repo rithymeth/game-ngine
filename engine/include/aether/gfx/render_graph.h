@@ -189,6 +189,10 @@ private:
     std::vector<Pass> passes_;
     std::vector<TransientBucket> transient_buckets_; // persists across Reset(); rebuilt only when a transient is (re)declared
     bool transients_dirty_ = true;
+    // Reused while recording each queue so per-frame execution doesn't
+    // allocate fresh barrier arrays.
+    std::vector<D3D12_RESOURCE_BARRIER> alias_barrier_scratch_;
+    std::vector<D3D12_RESOURCE_BARRIER> barrier_scratch_;
 
     // Created lazily, only if a pass ever asks for an RTV/DSV of a transient
     // resource — most graphs (e.g. ones only importing the swap chain's own
