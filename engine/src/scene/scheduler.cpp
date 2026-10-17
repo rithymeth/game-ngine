@@ -124,7 +124,7 @@ bool SystemScheduler::Build(std::string* error) {
             return false;
         }
         // Levels: explicit edges plus conflicts directed by the base order.
-        std::unordered_map<u32, u32> level_of;
+        std::vector<u32> level_of(systems_.size(), 0);
         std::vector<std::vector<u32>> levels;
         for (usize k = 0; k < base.size(); ++k) {
             const u32 i = base[k];
