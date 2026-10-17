@@ -71,6 +71,7 @@ bool AssetRefFromJson(const nlohmann::json& data, void* object) {
 namespace {
 
 constexpr usize kMaxAssetMetaBytes = 16 * 1024 * 1024;
+constexpr usize kMaxDependencyScanBytes = 64 * 1024 * 1024;
 
 void SetError(std::string* error, std::string message) {
     if (error != nullptr) {
@@ -446,8 +447,19 @@ void AssetDatabase::RebuildDependencies() {
             continue;
         }
         std::vector<u8> bytes;
-        if (record.importer != "Model" && !fs::ReadFileBytes(Absolute(record.path).string(), bytes)) {
-            continue;
+        if (record.importer != "Model") {
+            const std::string source_path = Absolute(record.path).string();
+            if (fs::FileSize(source_path) > kMaxDependencyScanBytes) {
+                AETHER_LOG_WARN("Assets", "Skipping dependency scan for oversized asset: %s", source_path.c_str());
+                continue;
+            }
+            if (!fs::ReadFileBytes(source_path, bytes)) {
+                continue;
+            }
+            if (bytes.size() > kMaxDependencyScanBytes) {
+                AETHER_LOG_WARN("Assets", "Skipping dependency scan for oversized asset: %s", source_path.c_str());
+                continue;
+            }
         }
         for (const AssetGuid& referenced : FindGuidStrings(bytes)) {
             // Entity GUIDs share the format; only known asset GUIDs count.
