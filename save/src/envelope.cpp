@@ -57,6 +57,9 @@ std::string Make(std::string_view kind, std::string_view name, const reflect::Ty
 }
 
 SaveResult Write(const stdfs::path& file, std::string_view contents) {
+    if (contents.size() > kMaxEnvelopeBytes) {
+        return Fail(SaveError::IoError, "save or settings data is too large (over 64 MB)");
+    }
     std::error_code ec;
     if (!file.parent_path().empty()) stdfs::create_directories(file.parent_path(), ec);
     if (stdfs::exists(file, ec)) {
@@ -80,12 +83,12 @@ EnvelopeInfo Inspect(const stdfs::path& file) {
         return info;
     }
     info.bytes = size;
-    if (size > 64ull * 1024 * 1024) {
+    if (size > kMaxEnvelopeBytes) {
         info.error = "the file is too large to inspect (over 64 MB)";
         return info;
     }
     std::vector<u8> bytes;
-    if (!fs::ReadFileBytes(file.string(), bytes)) {
+    if (!fs::ReadFileBytes(file.string(), bytes, kMaxEnvelopeBytes)) {
         info.error = "can't read " + file.string();
         return info;
     }
@@ -97,6 +100,10 @@ EnvelopeInfo Inspect(const stdfs::path& file) {
 EnvelopeInfo InspectBytes(std::span<const u8> bytes) {
     EnvelopeInfo info;
     info.bytes = bytes.size();
+    if (bytes.size() > kMaxEnvelopeBytes) {
+        info.error = "the file is too large to inspect (over 64 MB)";
+        return info;
+    }
     info.raw_text.assign(bytes.begin(), bytes.end());
     const Json j = Json::parse(bytes.begin(), bytes.end(), nullptr, /*allow_exceptions=*/false);
     if (j.is_discarded() || !j.is_object() || !j.contains("data") || !j.contains("$type")) {
@@ -127,11 +134,16 @@ EnvelopeInfo InspectBytes(std::span<const u8> bytes) {
 
 SaveResult Read(const stdfs::path& file, std::string_view kind, const reflect::TypeInfo& type, void* object) {
     std::vector<u8> bytes;
-    if (!fs::ReadFileBytes(file.string(), bytes)) return Fail(SaveError::NotFound, "no file at " + file.string());
+    if (!fs::ReadFileBytes(file.string(), bytes, kMaxEnvelopeBytes)) {
+        return Fail(SaveError::NotFound, "no readable " + std::string(kind) + " file (missing or over 64 MB) at " + file.string());
+    }
     return ReadFromMemory(bytes, file.string(), kind, type, object);
 }
 
 SaveResult ReadFromMemory(std::span<const u8> bytes, const std::string& source, std::string_view kind, const reflect::TypeInfo& type, void* object) {
+    if (bytes.size() > kMaxEnvelopeBytes) {
+        return Fail(SaveError::Corrupt, source + " is too large to read (over 64 MB)");
+    }
     const Json envelope = Json::parse(bytes.begin(), bytes.end(), nullptr, /*allow_exceptions=*/false);
     if (envelope.is_discarded() || !envelope.is_object() || !envelope.contains("data")) {
         return Fail(SaveError::Corrupt, source + " isn't a readable " + std::string(kind) + " file");
