@@ -106,6 +106,7 @@ inline void CellToLocal(i32 x, i32 y, f32 tile_units, f32& out_x, f32& out_y) {
     out_x = static_cast<f32>(x) * tile_units;
     out_y = static_cast<f32>(y) * tile_units;
 }
+// Invalid coordinates or tile sizes map to (0, 0); large coordinates saturate to i32 bounds.
 void LocalToCell(f32 local_x, f32 local_y, f32 tile_units, i32& out_x, i32& out_y);
 
 } // namespace aether::sprite2d
