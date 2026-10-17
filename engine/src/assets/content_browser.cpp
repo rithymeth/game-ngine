@@ -95,7 +95,7 @@ std::vector<ContentEntry> ListContent(const AssetDatabase& database, const Conte
             }
         }
     }
-    for (const AssetRecord* record : database.All()) {
+    for (const AssetRecord* record : database.AllUnsorted()) {
         if (record->IsSubAsset() && !query.include_sub_assets) {
             continue;
         }
@@ -269,8 +269,8 @@ MoveResult MoveContent(AssetDatabase& database, const std::string& from_path, co
         std::vector<GltfFileReference> refs;
     };
     std::vector<GltfRefs> gltfs;
-    for (const AssetRecord* record : database.All()) {
-        if (!record->IsSubAsset() && !record->missing && record->importer == "Model") {
+    for (const AssetRecord* record : database.FindByImporter("Model")) {
+        if (!record->IsSubAsset() && !record->missing) {
             std::vector<GltfFileReference> refs = GltfFileReferences(root, record->path);
             if (!refs.empty()) {
                 gltfs.push_back({record->path, std::move(refs)});

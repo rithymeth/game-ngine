@@ -97,6 +97,8 @@ public:
 
     const AssetRecord* Find(const AssetGuid& guid) const;
     const AssetRecord* FindByPath(const std::string& path) const;
+    // Every record, in unspecified order.
+    std::vector<const AssetRecord*> AllUnsorted() const;
     // Every record, sorted by path.
     std::vector<const AssetRecord*> All() const;
     // Records produced by an importer, in unspecified order.
