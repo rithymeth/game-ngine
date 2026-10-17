@@ -574,6 +574,17 @@ std::vector<const AssetRecord*> AssetDatabase::All() const {
     return all;
 }
 
+std::vector<const AssetRecord*> AssetDatabase::FindByImporter(const std::string& importer) const {
+    std::vector<const AssetRecord*> result;
+    for (const auto& [guid, record] : records_) {
+        (void)guid;
+        if (record.importer == importer) {
+            result.push_back(&record);
+        }
+    }
+    return result;
+}
+
 bool AssetDatabase::Move(const AssetGuid& guid_ref, const std::string& new_path, std::string* error) {
     const AssetGuid guid = guid_ref; // may refer into the record being updated
     auto it = records_.find(guid);
