@@ -377,7 +377,7 @@ bool BuildNavMesh(const NavGeometry& g, const NavMeshSettings& s, NavMeshData& o
     data.tile_world_size = s.tile_size > 0 ? static_cast<f32>(s.tile_size) * s.cell_size : std::ceil(extent / s.cell_size + 1.0f) * s.cell_size;
     data.tiles_x = std::max(1, static_cast<i32>(std::ceil((hi.x - lo.x) / data.tile_world_size)));
     data.tiles_z = std::max(1, static_cast<i32>(std::ceil((hi.z - lo.z) / data.tile_world_size)));
-    if (static_cast<i64>(data.tiles_x) * data.tiles_z > (1 << 16)) return Fail(error, "too many tiles: make tile_size bigger");
+    if (static_cast<i64>(data.tiles_x) * data.tiles_z > (1 << 14)) return Fail(error, "too many tiles: make tile_size bigger");
     NavBuildStats st;
     for (i32 z = 0; z < data.tiles_z; ++z) {
         for (i32 x = 0; x < data.tiles_x; ++x) {
@@ -477,11 +477,15 @@ void NavMesh::Unload() {
 }
 
 bool NavMesh::Load(const NavMeshData& data, std::string* error) {
+    if (data.tiles_x <= 0 || data.tiles_z <= 0 ||
+        static_cast<u64>(data.tiles_x) * static_cast<u64>(data.tiles_z) > (1u << 14)) {
+        return Fail(error, "the tile grid exceeds Detour's capacity");
+    }
     Free();
     dtNavMeshParams params{};
     params.orig[0] = data.origin.x, params.orig[1] = data.origin.y, params.orig[2] = data.origin.z;
     params.tileWidth = params.tileHeight = data.tile_world_size;
-    const u32 tiles = static_cast<u32>(std::max(1, data.tiles_x * data.tiles_z));
+    const u32 tiles = static_cast<u32>(static_cast<u64>(data.tiles_x) * static_cast<u64>(data.tiles_z));
     int tile_bits = 0;
     while ((1u << tile_bits) < tiles) ++tile_bits;
     tile_bits = std::min(tile_bits, 14);
