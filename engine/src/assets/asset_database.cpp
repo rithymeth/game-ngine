@@ -529,15 +529,24 @@ void AssetDatabase::EraseRecord(const AssetGuid& guid_ref) {
         return;
     }
     by_path_.erase(it->second.path);
+    // Remove this record from the reverse edges of its dependencies.
+    for (const AssetGuid& dependency : it->second.dependencies) {
+        if (auto refs = referencers_.find(dependency); refs != referencers_.end()) {
+            auto& list = refs->second;
+            list.erase(std::remove(list.begin(), list.end(), guid), list.end());
+        }
+    }
+    // Remove the deleted GUID from only the records that refer to it.
+    if (auto refs = referencers_.find(guid); refs != referencers_.end()) {
+        for (const AssetGuid& referencer : refs->second) {
+            if (auto record = records_.find(referencer); record != records_.end()) {
+                auto& dependencies = record->second.dependencies;
+                dependencies.erase(std::remove(dependencies.begin(), dependencies.end(), guid), dependencies.end());
+            }
+        }
+        referencers_.erase(refs);
+    }
     records_.erase(it);
-    referencers_.erase(guid);
-    for (auto& [other, list] : referencers_) {
-        list.erase(std::remove(list.begin(), list.end(), guid), list.end());
-    }
-    for (auto& [other, record] : records_) {
-        record.dependencies.erase(std::remove(record.dependencies.begin(), record.dependencies.end(), guid),
-                                  record.dependencies.end());
-    }
 }
 
 const AssetRecord* AssetDatabase::Find(const AssetGuid& guid) const {
