@@ -26,6 +26,7 @@ add_library(aether_engine STATIC
     src/cook/package.cpp
     src/plugin/plugin.cpp
     src/plugin/package.cpp
+    src/plugin/registry.cpp
     src/cook/texture_cook.cpp
     src/math/math.cpp
     src/job/job_system.cpp

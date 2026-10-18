@@ -45,6 +45,7 @@ describes what is on `master`, not a promise of a version number or a date.
 - Plugins can be packed into one `.apkg`, inspected without unpacking, checked for unmet dependencies, and
   installed with a staged, all-or-nothing install.
 - Plugin descriptors carry an ABI number; a plugin built for another ABI is refused with a clear message.
+- An offline local plugin registry stores immutable package versions and installs an exact selected version through the staged installer.
 
 ## Robustness and quality gates
 
