@@ -49,6 +49,7 @@ aether_fuzz_target(net fuzz_net.cpp Aether::Net)
 aether_fuzz_target(assetmeta fuzz_assetmeta.cpp Aether::Engine)
 aether_fuzz_target(texture fuzz_texture.cpp Aether::Engine)
 aether_fuzz_target(gltf fuzz_gltf.cpp Aether::Engine)
+aether_fuzz_target(model_import fuzz_model_import.cpp Aether::Engine)
 
 # Loaders that read untrusted JSON (Phase 47 step 1, second batch).
 aether_fuzz_target(prefab fuzz_prefab.cpp Aether::Engine)

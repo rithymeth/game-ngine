@@ -149,10 +149,15 @@ struct AccessorInfo {
 
 bool ResolveAccessor(const Json& gltf, usize accessor_index, const std::vector<std::vector<u8>>& buffers,
                       AccessorInfo& out) {
-    if (accessor_index >= gltf["accessors"].size()) {
+    if (!gltf.is_object() || !gltf.contains("accessors") || !gltf["accessors"].is_array() ||
+        !gltf.contains("bufferViews") || !gltf["bufferViews"].is_array() ||
+        accessor_index >= gltf["accessors"].size()) {
         return false;
     }
     const Json& accessor = gltf["accessors"][accessor_index];
+    if (!accessor.is_object()) {
+        return false;
+    }
     out.count = accessor.value("count", static_cast<usize>(0));
     out.component_type = accessor.value("componentType", 0);
     out.normalized = accessor.value("normalized", false);
@@ -169,6 +174,9 @@ bool ResolveAccessor(const Json& gltf, usize accessor_index, const std::vector<s
         return false;
     }
     const Json& buffer_view = gltf["bufferViews"][bv_index];
+    if (!buffer_view.is_object()) {
+        return false;
+    }
     usize buffer_index = buffer_view.value("buffer", static_cast<usize>(0));
     usize bv_byte_offset = buffer_view.value("byteOffset", static_cast<usize>(0));
     usize bv_byte_length = buffer_view.value("byteLength", static_cast<usize>(0));
