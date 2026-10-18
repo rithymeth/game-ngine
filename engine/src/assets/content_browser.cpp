@@ -147,7 +147,7 @@ usize ApplyVcsStatus(std::vector<ContentEntry>& entries, const VcsStatus& status
             }
             for (usize slash = path.find('/'); slash != std::string::npos; slash = path.find('/', slash + 1)) {
                 const std::string folder = path.substr(0, slash + 1);
-                std::string& repo_folder = folder_states[folder];
+                VcsState& repo_folder = folder_states[folder];
                 repo_folder = WorseVcsState(repo_folder, state);
             }
         }

@@ -1753,7 +1753,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
          Schema({{"entities", {{"type", "array"},
                                {"items", {{"type", "object"},
                                           {"properties", {{"components", {{"type", "object"}, {"description", "Component names mapped to field values"}}},
-                                                          {"parent", {{"type", Json::array({"string", "null"})}, {"description", "Optional current-scene parent GUID"}},
+                                                          {"parent", {{"type", Json::array({"string", "null"})}, {"description", "Optional current-scene parent GUID"}}},
                                                           {"parent_index", {{"type", "integer"}, {"minimum", 0}, {"maximum", 63}, {"description", "Optional index of another entity entry in this batch"}}}}}}},
                                {"description", "1–64 entity definitions"}}}},
                 {"entities"}),
@@ -3475,7 +3475,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                                                                     {"minItems", 4}, {"maxItems", 4}}}}},
                                         {"required", Json::array({"entity", "delta"})}}},
                              {"minItems", 1}, {"maxItems", 64},
-                             {"description", "1–64 unique entity GUID and world rotation-delta pairs"}}}}},
+                             {"description", "1–64 unique entity GUID and world rotation-delta pairs"}}}},
                 {"edits"}),
          [&s](const Json& args) -> Json {
              if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
@@ -4561,7 +4561,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                                                                      {"minItems", 3}, {"maxItems", 3}}}}},
                                         {"required", Json::array({"entity", "offset"})}}},
                              {"minItems", 1}, {"maxItems", 64},
-                             {"description", "1–64 unique entity GUID and world-position-offset pairs"}}}}},
+                             {"description", "1–64 unique entity GUID and world-position-offset pairs"}}}},
                 {"edits"}),
          [&s](const Json& args) -> Json {
              if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
@@ -5601,7 +5601,7 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                                                                     {"minItems", 3}, {"maxItems", 3}}}}},
                                         {"required", Json::array({"entity", "scale"})}}},
                              {"minItems", 1}, {"maxItems", 64},
-                             {"description", "1–64 unique entity GUID and world-scale pairs"}}}}},
+                             {"description", "1–64 unique entity GUID and world-scale pairs"}}}},
                 {"edits"}),
          [&s](const Json& args) -> Json {
              if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");

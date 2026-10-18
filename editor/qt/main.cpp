@@ -2759,6 +2759,25 @@ public:
             return condition;
         };
         bool passed = true;
+        // A modal error dialog would otherwise block the self-test forever on
+        // headless/package-validation runners. Surface the dialog as a test
+        // failure and dismiss it so the caller can report a useful log.
+        QTimer modal_dialog_guard;
+        modal_dialog_guard.setInterval(100);
+        QObject::connect(&modal_dialog_guard, &QTimer::timeout, this, [&passed] {
+            for (QWidget* widget : QApplication::topLevelWidgets()) {
+                auto* dialog = qobject_cast<QDialog*>(widget);
+                if (!dialog || !dialog->isModal() || !dialog->isVisible()) continue;
+                const auto* message_box = qobject_cast<QMessageBox*>(dialog);
+                const QString description = message_box
+                    ? message_box->text() : dialog->windowTitle();
+                AETHER_LOG_ERROR("QtEditor", "Unexpected modal dialog during self-test: %s",
+                                 description.toUtf8().constData());
+                passed = false;
+                dialog->reject();
+            }
+        });
+        modal_dialog_guard.start();
         passed &= require(scene_document_.Entities().size() == 5, "default scene should have five entities");
         passed &= require(!selected_entity_.IsNull() && inspector_name_->isEnabled() &&
                           inspector_name_->text() == QString::fromStdString(scene_document_.Name(selected_entity_)) &&
@@ -3114,6 +3133,7 @@ public:
                               "the Inspector Mesh section should list the placed cube's four LODs, 12 triangles at LOD0");
         }
         std::filesystem::remove_all(self_test_root, filesystem_error);
+        modal_dialog_guard.stop();
         if (passed) qInfo() << "Qt editor self-test passed";
         return passed;
     }
@@ -4368,8 +4388,38 @@ private:
     void PlaceModel(const std::filesystem::path& file) {
         if (project_file_.empty()) return;
         const auto content = aether::ProjectPaths::ForFile(project_file_).content;
-        const auto relative = file.lexically_relative(content);
-        if (relative.empty() || *relative.begin() == "..") {
+        std::error_code path_error;
+        const auto canonical_content = std::filesystem::canonical(content, path_error);
+        const auto canonical_file = path_error ? std::filesystem::path{} : std::filesystem::canonical(file, path_error);
+        std::filesystem::path relative;
+        bool is_inside_content = false;
+        if (!path_error && !canonical_content.empty() && !canonical_file.empty()) {
+            // lexical_relative() treats Windows short and long path spellings as
+            // different roots. Walk the canonical file's parents and compare
+            // filesystem identity so a valid asset under Content is accepted
+            // regardless of how Windows spelled the same directory.
+            std::vector<std::filesystem::path> components;
+            auto ancestor = canonical_file;
+            while (!ancestor.empty()) {
+                path_error.clear();
+                if (std::filesystem::equivalent(ancestor, canonical_content, path_error)) {
+                    is_inside_content = !path_error;
+                    break;
+                }
+                if (path_error) break;
+                const auto component = ancestor.filename();
+                const auto parent = ancestor.parent_path();
+                if (component.empty() || parent == ancestor) break;
+                components.push_back(component);
+                ancestor = parent;
+            }
+            if (is_inside_content) {
+                for (auto component = components.rbegin(); component != components.rend(); ++component) {
+                    relative /= *component;
+                }
+            }
+        }
+        if (!is_inside_content || relative.empty()) {
             QMessageBox::warning(this, "Model outside project", "Choose a model inside this project's Content folder.");
             return;
         }

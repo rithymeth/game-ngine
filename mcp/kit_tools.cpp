@@ -48,6 +48,7 @@ FileState CaptureFile(const fs::path& path) {
     FileState state;
     std::error_code ec;
     state.exists = fs::is_regular_file(path, ec);
+    if (ec == std::errc::no_such_file_or_directory) return state;
     if (ec) throw ToolError("Could not inspect " + path.string() + ": " + ec.message());
     if (state.exists && !aether::fs::ReadFileBytes(path.string(), state.bytes)) {
         throw ToolError("Could not read " + path.string());
@@ -57,7 +58,7 @@ FileState CaptureFile(const fs::path& path) {
 
 void RestoreFile(const fs::path& path, const FileState& state) {
     if (state.exists) {
-        const void* data = state.bytes.empty() ? "" : state.bytes.data();
+        const void* data = state.bytes.empty() ? static_cast<const void*>("") : static_cast<const void*>(state.bytes.data());
         if (!aether::fs::WriteFileAtomic(path.string(), data, state.bytes.size())) {
             throw ToolError("Could not restore " + path.string());
         }
