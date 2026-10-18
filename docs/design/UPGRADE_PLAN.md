@@ -163,7 +163,7 @@ when advisory gates become required.
 |---|---|---|
 | **45.1** | *(started: actions, mapping contexts, persisted user rebinds and key capture are implemented; AETHER-01's Controls menu now lists cooked bindings, captures keyboard/gamepad input, resets an individual binding or all defaults, and saves changes immediately. A reusable remapping screen for other games remains.)* Input abstraction and remapping UI (`engine/input`). `||` | - |
 | **45.2** | *(complete: `PlatformLifecycle` provides suspend, resume, memory-pressure and permission APIs with a mock backend; platform plugins connect native callbacks through the shared lifecycle service.)* Lifecycle, permissions and memory-pressure events in `platforms/` (the interface and a mock backend are testable here). `||` | - |
-| **45.3** | Android build: CMake toolchain, Gradle, signing. *CI-only* (NDK). | 45.2 |
+| **45.3** | *(started: Android arm64 Gradle app links a JNI shim to the native engine core; CI installs the pinned NDK/CMake and uploads a debug-signed APK. Optional release signing reads keystore values from environment variables; Android windowing/Vulkan and device testing remain.)* Android build: CMake toolchain, Gradle, signing. *CI-only* (NDK). | 45.2 |
 | **45.4** | iOS build. *CI-only* (macOS runners). | 45.2 |
 | **45.5** | Touch and haptics. | 45.1 |
 | **45.6** | Console certification checklists, storage and suspend/resume through the platform-plugin interface. `||` | 45.2 |
