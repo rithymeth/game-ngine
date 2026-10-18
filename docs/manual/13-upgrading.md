@@ -30,6 +30,8 @@ What to check when you move a project or a plugin to a newer engine. The newest 
   accepted.
 - To ship one, pack its folder with `PackagePlugin`, and install with `InstallPluginPackage` after checking
   `UnmetDependencies`. A package holds one folder named after the plugin and nothing outside it.
+- `LocalPluginRegistry` stores validated `.apkg` files by plugin name and numeric dotted version. Published versions
+  are immutable; select the exact version to install. See the [registry and marketplace format](14-plugin-marketplace.md).
 
 ## After you upgrade
 
