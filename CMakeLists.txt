@@ -17,6 +17,7 @@ endif()
 
 option(AETHER_BUILD_TESTS "Build Aether unit tests" ON)
 option(AETHER_BUILD_MCP "Build the MCP (Model Context Protocol) editor server" ON)
+option(AETHER_BUILD_ANDROID_APP "Build the Android native runtime shim" OFF)
 
 # Phase 37 step 6: -Werror for the engine and the gameplay kits, off by default (the four gameplay libraries build clean with GCC under it; CI will turn it on once Clang and MSVC are checked).
 option(AETHER_WARNINGS_AS_ERRORS "Treat warnings as errors in the engine and the gameplay kits" OFF)
@@ -317,6 +318,12 @@ else()
 endif()
 
 add_subdirectory(engine)
+
+if(ANDROID AND AETHER_BUILD_ANDROID_APP)
+    add_library(aether_android SHARED platforms/android/app/src/main/cpp/native_entry.cpp)
+    target_link_libraries(aether_android PRIVATE Aether::Engine)
+    target_compile_features(aether_android PRIVATE cxx_std_20)
+endif()
 # Platform plugins (platforms/README.md): directories listed here are built
 # and linked into the tests, the functional runner and the editor shell.
 set(AETHER_PLATFORM_PLUGINS "" CACHE STRING "Platform plugin directories (;-separated)")

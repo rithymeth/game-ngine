@@ -566,36 +566,35 @@ jobs:
         run: xvfb-run -a ./build/tests/aether_tests
 
   android:
-    # Phase 45 step 3 (first slice): the portable libraries cross-compile for arm64 Android with the NDK the runner
-    # ships. No window, Vulkan, scripting, physics or tests yet (those need the platform plugin and a device); the
-    # point is to find what in the portable code does not build for Android, and to keep it building once it does.
-    # Advisory until it has passed for a while.
-    name: Android (arm64, NDK, libraries, advisory)
+    # Phase 45 step 3: build and package the arm64 native engine core through
+    # Gradle/ExternalNativeBuild. This produces a debug-signed APK; release
+    # signing remains opt-in through repository or local secret variables.
+    # Advisory while the Android target is still missing windowing and Vulkan.
+    name: Android (arm64, Gradle APK, advisory)
     runs-on: ubuntu-24.04
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - name: Install tools
-        run: sudo apt-get update && sudo apt-get install -y ninja-build
-      - name: Cache fetched dependencies
-        uses: actions/cache@v4
+      - uses: actions/setup-java@v5
         with:
-          path: build-android/_deps
-          key: deps-android-${{ hashFiles('**/CMakeLists.txt') }}
-          restore-keys: deps-android-
-      - name: Configure
-        run: >
-          cmake -S . -B build-android -G Ninja -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake"
-          -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-28
-          -DAETHER_BUILD_TESTS=OFF -DAETHER_BUILD_MCP=OFF -DAETHER_BUILD_SANDBOX=OFF -DAETHER_BUILD_PHYSICS=OFF
-          -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_EDITOR_UI=OFF -DAETHER_BUILD_VULKAN=OFF
-          -DAETHER_BUILD_SCRIPTING=OFF -DAETHER_BUILD_WINDOWING=OFF -DAETHER_BUILD_BENCH=OFF
-      - name: Build the portable libraries
-        run: >
-          cmake --build build-android --parallel
-          --target aether_engine aether_net aether_nav aether_ai aether_streaming aether_gameplay aether_sprite2d
-          aether_animation aether_save aether_ui aether_audio -- -k 0
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses
+      - name: Install Android SDK, NDK and CMake
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358" "cmake;3.22.1"
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '9.1.0'
+      - name: Build debug APK
+        working-directory: platforms/android
+        run: gradle --no-daemon --stacktrace :app:assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aether-android-arm64-debug
+          path: platforms/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
 
   clang-tidy:
     name: clang-tidy (changed files, advisory)
