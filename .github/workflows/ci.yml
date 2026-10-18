@@ -729,10 +729,10 @@ jobs:
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DAETHER_BUILD_FUZZERS=ON
           -DAETHER_BUILD_PHYSICS=OFF -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_SANDBOX=OFF -DAETHER_BUILD_TESTS=OFF
       - name: Build the fuzzers
-        run: cmake --build build --target aether_fuzz_pak aether_fuzz_scene aether_fuzz_blueprint aether_fuzz_gameplay --parallel
+        run: cmake --build build --target aether_fuzz_pak aether_fuzz_scene aether_fuzz_blueprint aether_fuzz_gameplay aether_fuzz_model_import --parallel
       - name: Fuzz
         run: |
-          for t in pak scene blueprint gameplay; do
+          for t in pak scene blueprint gameplay model_import; do
             mkdir -p work/$t
             cp -r tools/fuzz/corpus/$t/. work/$t/
             ./build/tools/fuzz/aether_fuzz_$t -max_total_time=60 -rss_limit_mb=2048 -timeout=10 work/$t
