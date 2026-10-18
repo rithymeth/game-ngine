@@ -110,6 +110,13 @@ jobs:
             -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/build/sdk-install"
           cmake --build build/sdk-template-consumer --parallel
           ./build/sdk-template-consumer/aether_template_sdk_consumer
+      - name: Upload the installed SDK for clean-machine validation
+        if: matrix.name == 'GCC'
+        uses: actions/upload-artifact@v4
+        with:
+          name: aether-sdk-linux-x64
+          path: build/sdk-install
+          if-no-files-found: error
       - name: Unit tests
         env:
           # Under LeakSanitizer, Mesa's lavapipe reports allocations its
@@ -168,6 +175,26 @@ jobs:
           name: functional-results-linux-${{ matrix.name }}
           path: functional-results.xml
           if-no-files-found: ignore
+
+  clean-machine-sdk:
+    name: Clean-machine SDK consumer (Linux container)
+    needs: [linux]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the installed SDK
+        uses: actions/download-artifact@v4
+        with:
+          name: aether-sdk-linux-x64
+          path: sdk-install
+      - name: Build and run the consumer in a fresh container
+        run: |
+          docker build --tag aether-sdk-clean-machine tools/sdk-clean-machine
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE/sdk-install:/opt/aether-sdk:ro" \
+            --volume "$GITHUB_WORKSPACE/tools/sdk-template-consumer:/workspace:ro" \
+            aether-sdk-clean-machine \
+            sh -euxc 'cmake -S /workspace -B /tmp/consumer -G Ninja -DCMAKE_PREFIX_PATH=/opt/aether-sdk && cmake --build /tmp/consumer --parallel && /tmp/consumer/aether_template_sdk_consumer'
 
   macos:
     name: macOS (Apple Silicon, MoltenVK)
@@ -723,7 +750,7 @@ jobs:
     # A pushed v* tag, or a manual run given a release_tag (which creates
     # the tag on the commit it built).
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
-    needs: [linux, macos, windows, windows-package-validation]
+    needs: [linux, clean-machine-sdk, macos, windows, windows-package-validation]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
