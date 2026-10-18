@@ -2522,6 +2522,14 @@ Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 11
     read actions, returning vectors for axes.
   - `Input.OnStarted` / `OnTriggered` / `OnCompleted` / `OnCanceled(action)`
     are events fired with the action's value.
+  - `Input.HasHapticOutput()` reports whether the host connected a device
+    backend. `Input.PlayHaptic(effect, intensity)` requests `selection`,
+    `impact_light`, `impact_medium`, `impact_heavy`, `success`, `warning`,
+    or `error`; intensity is optional and ranges from 0 to 1. The request
+    returns false for an unknown effect, out-of-range intensity, or missing
+    host backend.
+    C++ hosts install the platform mapping through
+    `Game::HapticFeedback().SetHandler(...)`.
   - Without a bound input system, everything reads as released.
 - **Ownership (§11.2)**: connections and timers made while an entity's
   callbacks run belong to that entity's script. They end when it's

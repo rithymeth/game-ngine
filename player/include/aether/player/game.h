@@ -225,6 +225,10 @@ public:
     // order), and scripts read them through Input.*.
     input::InputState& Input() { return input_state_; }
     input::InputSystem& InputActions() { return input_; }
+    // Host platform code installs its device mapping here. Luau can request
+    // semantic effects with Input.PlayHaptic(...); it returns false when the
+    // host has no haptic backend.
+    input::Haptics& HapticFeedback() { return input_.HapticFeedback(); }
     const input::InputAssetLibrary& InputAssets() const { return input_library_; }
     // Bindings in context/action order, with the player's overrides applied.
     std::vector<RebindableInput> RebindableInputs() const;
