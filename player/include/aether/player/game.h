@@ -259,8 +259,11 @@ public:
     // game does not jump ahead. MemoryPressure is counted and passed to anything that subscribed (the renderer answers a Critical one
     // by freeing its GPU textures before the next frame: models fall back to untextured white until the game is restarted, UI images reload on
     // demand). Subscribe to react to the events yourself.
-    platform::PlatformLifecycle& Platform() { return platform_; }
-    bool Suspended() const { return platform_.Suspended(); }
+    // Replace the game's owned lifecycle service with the host's shared
+    // platform service. The referenced service must outlive this Game.
+    void UsePlatformLifecycle(platform::PlatformLifecycle& lifecycle);
+    platform::PlatformLifecycle& Platform() { return *platform_lifecycle_; }
+    bool Suspended() const { return platform_lifecycle_->Suspended(); }
     // The UI is laid out in the swap chain's pixels and pointers arrive in window pixels. With a quality preset's resolution scale the two differ
     // (a 1280 x 720 window drawn into 960 x 540); the host sets how many UI pixels one window pixel is (0.75 there) and pointers are scaled by it
     // for the UI's hit tests. 1 by default.
@@ -375,6 +378,8 @@ private:
     void RefreshSaveContext();
     void OnPlatformEvent(const platform::LifecycleMessage& message);
     platform::PlatformLifecycle platform_;
+    platform::PlatformLifecycle* platform_lifecycle_ = &platform_;
+    platform::PlatformLifecycle::Handle platform_listener_ = 0;
     bool audio_was_running_ = false; // output was on when the game was suspended
     bool skip_next_dt_ = false;      // the first Tick after a resume
     u32 memory_pressure_events_ = 0;

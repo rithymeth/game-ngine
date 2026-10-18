@@ -1,14 +1,22 @@
 # Platform plugins
 
 Windows, Linux and macOS have built-in engine configurations, but that does not
-mean each is a supported release target. Current release priorities and the
-gates for promoting a platform are in
-[Platform Support Priorities](../docs/design/PLATFORM_SUPPORT_POLICY.md).
+mean each is a supported release target. Before promoting a console target,
+complete its platform-specific gates alongside the
+[console certification checklist](../docs/design/CONSOLE_CERTIFICATION.md).
 Other platforms (Android, a console) can plug in from outside the engine as a
 **platform plugin**: a directory with a `CMakeLists.txt` that calls `aether_platform_plugin()`
 (from `cmake/AetherPlatform.cmake`), plus the code that registers it with
 `AETHER_PLATFORM_PLUGIN`. Console plugins live in private repositories
 (their SDKs are under NDA); only the extension point is here.
+
+The player starts linked platform plugins after loading the game package and
+shuts them down after the game exits. Its lifecycle events are connected to
+the running `Game`; its `user_data_dir` supplies the save/settings root when
+`--user-dir` and `AETHER_USER_DIR` are not set. See the
+[console certification checklist](../docs/design/CONSOLE_CERTIFICATION.md) for
+platform-neutral release gates. Native SDK and certification requirements
+must be filled in by each licensed platform integration.
 
 ```sh
 cmake -S . -B build -DAETHER_PLATFORM_PLUGINS="platforms/example;/path/to/my-console"
@@ -24,8 +32,12 @@ All optional, in `aether::PlatformPlugin` (`aether/platform/platform_plugin.h`):
   `startup`, so a backend can install a permission requester and forward native
   suspend, resume, and memory-pressure events. Call `Dispatch(...)` on the main
   thread; remove native callbacks and clear any permission
-  requester that captures plugin state during `shutdown`.
-- `user_data_dir`: where saves and settings go.
+  requester that captures plugin state during `shutdown`. The player connects
+  this service to `Game::Platform()` so suspend flushes saves, stops audio and
+  pauses game time; resume restarts audio with a zero-delta first frame.
+- `user_data_dir`: the exact root used for saves, settings and crash reports
+  when command-line and environment overrides are absent. The player stores
+  files in `Saves/` and `Config/` beneath this root.
 - `create_device`: an RHI device (`gfx::rhi::IDevice`) for a graphics API
   the engine doesn't build in, created with
   `PlatformPlugins::Get().CreateDevice(name, debug)`.

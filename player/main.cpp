@@ -16,8 +16,9 @@
 // The window's title, size and vsync, and the quality preset, come from the
 // player's settings file (settings.asettings, §28.6) if it has one, else the
 // project's settings (§25.5), unless given here. Saves and settings live in
-// the player's folder: --user-dir, else AETHER_USER_DIR, else the OS's
-// per-user data folder (Saves/ and Config/ inside it). A settings file is
+// the player's folder: --user-dir, else AETHER_USER_DIR, then a platform
+// plugin's user_data_dir, then the OS's per-user data folder (Saves/ and
+// Config/ inside it). A settings file is
 // only written when this run changed something (the old
 // Saved/Config/Input.json rebinds are moved into it once).
 //
@@ -28,6 +29,7 @@
 
 #include "aether/player/bindings_migrate.h"
 #include "aether/player/game.h"
+#include "aether/platform/platform_plugin.h"
 #include "aether/player/scene_renderer.h"
 
 #include "aether/core/log.h"
@@ -232,10 +234,18 @@ int main(int argc, char** argv) {
                     cook::ConfigurationName(config), paks.size(), manifest.assets.size());
     for (const std::string& dlc : package.Dlcs()) AETHER_LOG_INFO("Player", "DLC: %s", dlc.c_str());
 
+    struct PlatformPluginSession {
+        PlatformPlugins& plugins;
+        explicit PlatformPluginSession(PlatformPlugins& value) : plugins(value) { plugins.Startup(); }
+        ~PlatformPluginSession() { plugins.Shutdown(); }
+    } platform_session(PlatformPlugins::Get());
+
     // The player's folder, settings and old rebinds, before the scene: the
     // settings decide the window and quality, the rebinds the input contexts.
     Game game(package);
-    const UserPaths user_paths = ResolveUserPaths(manifest.project, options.user_dir);
+    game.UsePlatformLifecycle(platform_session.plugins.Lifecycle());
+    const UserPaths user_paths = ResolveUserPaths(manifest.project, options.user_dir,
+                                                   platform_session.plugins.UserDataDir(""));
     game.SetUserPaths(user_paths);
     CrashConfig crash_config;
     crash_config.directory = (user_paths.root / "Crashes").string();
