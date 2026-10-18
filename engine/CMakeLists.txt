@@ -66,9 +66,15 @@ add_library(aether_engine STATIC
 target_include_directories(aether_engine PRIVATE ${stb_SOURCE_DIR})
 # PUBLIC: reflection/serialize.h exposes nlohmann::json (the in-memory form
 # of the JSON archive, and what schema migration hooks edit).
-target_link_libraries(aether_engine PUBLIC nlohmann_json::nlohmann_json)
+target_link_libraries(aether_engine PUBLIC aether-json-dependency)
 # .apak compression (Phase 25).
-target_link_libraries(aether_engine PRIVATE lz4_static libzstd_static aether_bcenc aether_meshopt)
+target_link_libraries(aether_engine PRIVATE
+    "$<BUILD_INTERFACE:lz4_static>"
+    "$<INSTALL_INTERFACE:LZ4::lz4_static>"
+    "$<BUILD_INTERFACE:libzstd_static>"
+    "$<INSTALL_INTERFACE:zstd::libzstd_static>"
+    aether_bcenc aether_meshopt
+)
 
 if(WIN32)
     target_sources(aether_engine PRIVATE
@@ -100,7 +106,9 @@ elseif(AETHER_BUILD_WINDOWING)
     set(GLFW_BUILD_WAYLAND ${AETHER_GLFW_WAYLAND} CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(glfw)
     target_sources(aether_engine PRIVATE src/platform/window_glfw.cpp)
-    target_link_libraries(aether_engine PRIVATE glfw)
+    target_link_libraries(aether_engine PRIVATE
+        "$<BUILD_INTERFACE:glfw>"
+        "$<INSTALL_INTERFACE:Aether::glfw>")
     target_compile_definitions(aether_engine PUBLIC AETHER_HAS_WINDOW PRIVATE AETHER_HAS_GLFW)
     if(AETHER_GLFW_WAYLAND)
         target_compile_definitions(aether_engine PRIVATE AETHER_GLFW_WAYLAND)
@@ -127,7 +135,10 @@ if(AETHER_BUILD_VULKAN)
     # same NativeHandle()-based escape hatch the D3D12 backend header already
     # supports), so Vulkan-Headers' include dir must propagate to consumers.
     target_include_directories(aether_engine PUBLIC ${AETHER_VULKAN_INCLUDE_DIRS})
-    target_link_libraries(aether_engine PRIVATE ${AETHER_VULKAN_LIBRARY})
+    target_link_libraries(aether_engine PRIVATE
+        "$<BUILD_INTERFACE:${AETHER_VULKAN_LIBRARY}>"
+        "$<INSTALL_INTERFACE:Vulkan::Vulkan>")
+    target_link_libraries(aether_engine INTERFACE "$<INSTALL_INTERFACE:Vulkan::Vulkan>")
     target_compile_definitions(aether_engine PUBLIC AETHER_HAS_VULKAN)
 endif()
 

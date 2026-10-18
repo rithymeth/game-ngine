@@ -8,7 +8,9 @@ target_include_directories(aether_mcp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 if(MSVC)
     target_compile_options(aether_mcp PRIVATE /bigobj)
 endif()
-target_link_libraries(aether_mcp PUBLIC Aether::Engine aether_editor_core nlohmann_json::nlohmann_json)
+target_link_libraries(aether_mcp PUBLIC
+    Aether::Engine aether_editor_core
+)
 # Modules whose components are exposed to agents.
 target_link_libraries(aether_mcp PRIVATE
     Aether::Animation Aether::Audio Aether::Blueprint Aether::Gameplay Aether::Nav
