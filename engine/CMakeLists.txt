@@ -66,7 +66,7 @@ add_library(aether_engine STATIC
 target_include_directories(aether_engine PRIVATE ${stb_SOURCE_DIR})
 # PUBLIC: reflection/serialize.h exposes nlohmann::json (the in-memory form
 # of the JSON archive, and what schema migration hooks edit).
-target_link_libraries(aether_engine PUBLIC aether_json_dependency)
+target_link_libraries(aether_engine PUBLIC aether-json-dependency)
 # .apak compression (Phase 25).
 target_link_libraries(aether_engine PRIVATE
     "$<BUILD_INTERFACE:lz4_static>"

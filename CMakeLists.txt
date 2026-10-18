@@ -108,9 +108,9 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(nlohmann_json)
-add_library(aether_json_dependency INTERFACE)
-target_link_libraries(aether_json_dependency INTERFACE nlohmann_json::nlohmann_json)
-add_library(Aether::Json ALIAS aether_json_dependency)
+add_library(aether-json-dependency INTERFACE)
+target_link_libraries(aether-json-dependency INTERFACE nlohmann_json::nlohmann_json)
+add_library(Aether::Json ALIAS aether-json-dependency)
 
 # Phase 25: compression for .apak archives - LZ4 (fast) and zstd (small).
 # Both are BSD-licensed and built static with no command-line tools.
@@ -595,7 +595,7 @@ endforeach()
 # Phase 46 step 1: installable SDK target exports and package config.
 include(cmake/AetherPackage.cmake)
 
-aether_install_target(aether_json_dependency Json
+aether_install_target(aether-json-dependency Json
     BUILD_INCLUDES "${nlohmann_json_SOURCE_DIR}/include"
     INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}")
 install(DIRECTORY "${nlohmann_json_SOURCE_DIR}/include/nlohmann" DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
