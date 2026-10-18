@@ -162,7 +162,7 @@ when advisory gates become required.
 | Step | Work | Needs |
 |---|---|---|
 | **45.1** | *(started: actions, mapping contexts, persisted user rebinds and key capture are implemented; AETHER-01's Controls menu now lists cooked bindings, captures keyboard/gamepad input, resets an individual binding or all defaults, and saves changes immediately. A reusable remapping screen for other games remains.)* Input abstraction and remapping UI (`engine/input`). `||` | - |
-| **45.2** | *(started: `aether/platform/lifecycle.h` has `PlatformLifecycle` (suspend, resume and memory-pressure events, permission requests asked once) and a `MockLifecycleBackend`; wiring a real backend through a platform plugin remains)*  Lifecycle, permissions and memory-pressure events in `platforms/` (the interface and a mock backend are testable here). `||` | - |
+| **45.2** | *(complete: `PlatformLifecycle` provides suspend, resume, memory-pressure and permission APIs with a mock backend; platform plugins connect native callbacks through the shared lifecycle service.)* Lifecycle, permissions and memory-pressure events in `platforms/` (the interface and a mock backend are testable here). `||` | - |
 | **45.3** | Android build: CMake toolchain, Gradle, signing. *CI-only* (NDK). | 45.2 |
 | **45.4** | iOS build. *CI-only* (macOS runners). | 45.2 |
 | **45.5** | Touch and haptics. | 45.1 |
