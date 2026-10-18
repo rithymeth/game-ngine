@@ -5,6 +5,7 @@
 #include "aether/core/log.h"
 
 #include <charconv>
+#include <iomanip>
 #include <locale>
 #include <sstream>
 #include <cmath>
@@ -123,6 +124,25 @@ double ShortestF32(f32 value) {
     if (!std::isfinite(value)) {
         return value; // written as null by the JSON encoder
     }
+#if defined(__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__) && __ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__ < 160300
+    // Apple only makes floating-point to_chars available starting in iOS
+    // 16.3. Find the shortest classic-locale representation that round-trips
+    // to the same f32 so projects can keep targeting earlier iOS releases.
+    for (int precision = 1; precision <= std::numeric_limits<f32>::max_digits10; ++precision) {
+        std::ostringstream out;
+        out.imbue(std::locale::classic());
+        out << std::setprecision(precision) << value;
+        const std::string text = out.str();
+
+        std::istringstream in(text);
+        in.imbue(std::locale::classic());
+        double result = 0.0;
+        if (in >> result && static_cast<f32>(result) == value) {
+            return result;
+        }
+    }
+    return value;
+#else
     char buffer[32];
     auto written = std::to_chars(buffer, buffer + sizeof(buffer), value);
     double result = value;
@@ -136,6 +156,7 @@ double ShortestF32(f32 value) {
     in >> result;
 #endif
     return result;
+#endif
 }
 
 // ---------------------------------------------------------------------------

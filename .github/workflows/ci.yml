@@ -596,6 +596,44 @@ jobs:
           path: platforms/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
+  ios:
+    # Phase 45 step 4: cross-compile and package the arm64 UIKit app shell
+    # against the engine core. Signing and device execution remain out of scope.
+    name: iOS (arm64, unsigned app, advisory)
+    runs-on: macos-15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache fetched dependencies
+        uses: actions/cache@v4
+        with:
+          path: build-ios/_deps
+          key: deps-ios-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: deps-ios-
+      - name: Configure iOS arm64 app
+        run: >
+          cmake -S . -B build-ios -G Xcode
+          -DCMAKE_SYSTEM_NAME=iOS
+          -DCMAKE_OSX_SYSROOT=iphoneos
+          -DCMAKE_OSX_ARCHITECTURES=arm64
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0
+          -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO
+          -DAETHER_BUILD_IOS_APP=ON
+          -DAETHER_BUILD_TESTS=OFF -DAETHER_BUILD_MCP=OFF
+          -DAETHER_BUILD_SANDBOX=OFF -DAETHER_BUILD_PHYSICS=OFF
+          -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_EDITOR_UI=OFF
+          -DAETHER_BUILD_VULKAN=OFF -DAETHER_BUILD_SCRIPTING=OFF
+          -DAETHER_BUILD_WINDOWING=OFF -DAETHER_BUILD_BENCH=OFF
+      - name: Build unsigned iOS app
+        run: cmake --build build-ios --config Release --target aether_ios --parallel
+      - name: Package app bundle
+        run: ditto -c -k --sequesterRsrc --keepParent build-ios/Release-iphoneos/AetherEngine.app dist/AetherEngine-iphoneos-arm64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aether-ios-iphoneos-arm64
+          path: dist/AetherEngine-iphoneos-arm64.zip
+          if-no-files-found: error
+
   clang-tidy:
     name: clang-tidy (changed files, advisory)
     runs-on: ubuntu-latest
