@@ -1,0 +1,35 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+find_dependency(Threads REQUIRED)
+find_dependency(zstd CONFIG REQUIRED)
+
+if(NOT TARGET LZ4::lz4_static)
+    add_library(LZ4::lz4_static STATIC IMPORTED)
+    set_target_properties(LZ4::lz4_static PROPERTIES
+        IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@/@AETHER_PACKAGE_LZ4_FILENAME@"
+        INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_INCLUDEDIR@")
+endif()
+
+if(@AETHER_PACKAGE_USE_VULKAN@)
+    find_dependency(Vulkan REQUIRED)
+    if(@AETHER_PACKAGE_USE_GLSLANG@)
+        find_dependency(glslang CONFIG REQUIRED)
+    endif()
+endif()
+
+if(@AETHER_PACKAGE_USE_RECAST@)
+    find_dependency(recastnavigation CONFIG REQUIRED)
+endif()
+
+if(@AETHER_PACKAGE_USE_JOLT@)
+    find_dependency(Jolt CONFIG REQUIRED)
+endif()
+
+if(@AETHER_PACKAGE_USE_TRACY@)
+    find_dependency(Tracy CONFIG REQUIRED)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/AetherTargets.cmake")
+check_required_components(Aether)
