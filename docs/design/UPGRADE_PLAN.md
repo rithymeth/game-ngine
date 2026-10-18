@@ -165,7 +165,7 @@ when advisory gates become required.
 | **45.2** | *(complete: `PlatformLifecycle` provides suspend, resume, memory-pressure and permission APIs with a mock backend; platform plugins connect native callbacks through the shared lifecycle service.)* Lifecycle, permissions and memory-pressure events in `platforms/` (the interface and a mock backend are testable here). `||` | - |
 | **45.3** | *(started: Android arm64 Gradle app links a JNI shim to the native engine core; CI installs the pinned NDK/CMake and uploads a debug-signed APK. Optional release signing reads keystore values from environment variables; Android windowing/Vulkan and device testing remain.)* Android build: CMake toolchain, Gradle, signing. *CI-only* (NDK). | 45.2 |
 | **45.4** | *(started: CMake/Xcode builds an unsigned iOS arm64 app shell linked to the engine core; macOS CI packages the `.app` artifact. Device signing, simulator/device execution and platform windowing remain.)* iOS build. *CI-only* (macOS runners). | 45.2 |
-| **45.5** | Touch and haptics. | 45.1 |
+| **45.5** | *(started: touch pointers, UI routing, virtual sticks/buttons and Windows `WM_TOUCH` are implemented; `input::Haptics` and Luau `Input.PlayHaptic` provide semantic feedback requests. Android/iOS touch integration and native haptic handlers remain.)* Touch and haptics. | 45.1 |
 | **45.6** | Console certification checklists, storage and suspend/resume through the platform-plugin interface. `||` | 45.2 |
 | **45.7** | Device-farm job. *Needs an account for a paid service: the user's decision.* | 45.3, 45.4 |
 

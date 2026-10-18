@@ -158,6 +158,25 @@ int InputOnTriggered(lua_State* L) { return InputEventOf(L, input::ActionEvent::
 int InputOnCompleted(lua_State* L) { return InputEventOf(L, input::ActionEvent::Completed); }
 int InputOnCanceled(lua_State* L) { return InputEventOf(L, input::ActionEvent::Canceled); }
 
+int InputHasHapticOutput(lua_State* L) {
+    input::InputSystem* input = System(L).BoundInput();
+    lua_pushboolean(L, input && input->HapticFeedback().IsAvailable() ? 1 : 0);
+    return 1;
+}
+
+int InputPlayHaptic(lua_State* L) {
+    const char* name = luaL_checkstring(L, 1);
+    input::HapticEffect effect;
+    if (!input::HapticEffectFromName(name, effect)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    const f32 intensity = static_cast<f32>(luaL_optnumber(L, 2, 1.0));
+    input::InputSystem* input = System(L).BoundInput();
+    lua_pushboolean(L, input && input->HapticFeedback().Play(effect, intensity) ? 1 : 0);
+    return 1;
+}
+
 void SetFunction(lua_State* L, const char* name, lua_CFunction fn) {
     lua_pushcfunction(L, fn, name);
     lua_setfield(L, -2, name);
@@ -204,7 +223,7 @@ void ScriptSystem::InstallApi(bool install_kit_apis) {
     SetFunction(L, "Every", &TimerEvery);
     lua_setglobal(L, "Timer");
 
-    lua_createtable(L, 0, 8);
+    lua_createtable(L, 0, 10);
     SetFunction(L, "IsTriggered", &InputIsTriggered);
     SetFunction(L, "GetAxis1D", &InputGetAxis1D);
     SetFunction(L, "GetAxis2D", &InputGetAxis2D);
@@ -213,6 +232,8 @@ void ScriptSystem::InstallApi(bool install_kit_apis) {
     SetFunction(L, "OnTriggered", &InputOnTriggered);
     SetFunction(L, "OnCompleted", &InputOnCompleted);
     SetFunction(L, "OnCanceled", &InputOnCanceled);
+    SetFunction(L, "HasHapticOutput", &InputHasHapticOutput);
+    SetFunction(L, "PlayHaptic", &InputPlayHaptic);
     lua_setglobal(L, "Input");
 
 #if AETHER_SCRIPTING_PHYSICS

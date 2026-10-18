@@ -1,10 +1,10 @@
-# Mobile readiness (research)
+# Mobile readiness
 
-What it would take to make mobile games (Android, iOS) with Aether, from reading the repo's plans and code. Nothing here was built or run on
-a device: "looks supported" means supported on paper. Mobile is out of scope for the current AETHER-01 work
-(`AETHER_01_ENGINE_READINESS_MATRIX.md`, `M8_PRODUCTION_TECHNOLOGY.md`), so none of it is scheduled.
+Current state of the mobile work in Phase 45. Android and iOS app shells now build in CI, but neither has been run on a device. The
+device-farm step still needs a paid service and the user's decision.
 
-**Bottom line:** the engine has building blocks for mobile, but nothing builds or runs on Android or iOS today.
+**Current state:** Android and iOS app bundles build in CI. Shared touch controls and a platform-neutral haptic request API are implemented;
+native mobile windowing, real-device input, and haptic backends remain open.
 
 ## Status in the plans
 
@@ -12,9 +12,10 @@ a device: "looks supported" means supported on paper. Mobile is out of scope for
   (a directory with a `CMakeLists.txt` that calls `aether_platform_plugin()`). Only an example plugin exists.
 - `UPGRADE_PLAN.md`, Phase 45 (Mobile and Console):
   - 45.1 input abstraction and remapping: done except a remapping UI.
-  - 45.2 lifecycle, permissions and memory-pressure events: started (`aether/platform/lifecycle.h`, a mock backend); no real backend.
-  - 45.3 Android build (CMake toolchain, Gradle, signing) and 45.4 iOS build: not started; CI-only (NDK, macOS runners).
-  - 45.5 touch and haptics: not started.
+  - 45.2 lifecycle, permissions and memory-pressure events: complete interface and mock; platform plugins can connect native callbacks.
+  - 45.3 Android build: started; arm64 Gradle app and debug APK build in CI. Android windowing and device testing remain.
+  - 45.4 iOS build: started; unsigned arm64 app bundle build in CI. Signing, platform windowing and device testing remain.
+  - 45.5 touch and haptics: started; touch controls and semantic haptic requests are implemented. Native mobile haptic backends remain.
   - 45.7 device-farm job: needs a paid service, so the user's decision.
 - `PHASE_SPECS.md` §25.3: cooked textures are BC1/3/4/5/7; "ASTC for mobile ... comes with Phase 33's mobile targets".
 
@@ -30,8 +31,8 @@ a device: "looks supported" means supported on paper. Mobile is out of scope for
 
 1. **No window or surface layer.** `window.h` has a Win32 and a GLFW implementation; GLFW has no Android or iOS target. A platform plugin
    would supply the native window, surface and event loop.
-2. **No touch input.** `WindowEvent` carries keys, mouse and gamepad axes only. Nothing feeds touches to the UI or to gameplay, and there is no
-   on-screen virtual stick.
+2. **No mobile touch backend.** The shared input state, UI routing and virtual controls support touch, and Windows emits `WM_TOUCH` events.
+   Android and iOS app shells do not yet feed native touch events into `WindowEvent`.
 3. **Texture formats.** The cooker writes BC formats, which most mobile GPUs lack; mobile needs ASTC or ETC2.
 4. **Hard limits that fit mobile poorly.**
    - The bindless texture table is `kMaxBindlessTextures = 32`.
@@ -41,7 +42,8 @@ a device: "looks supported" means supported on paper. Mobile is out of scope for
 5. **Renderer cost.** The player's renderer is a plain forward pass with a per-pixel loop over lights. There is no mobile tuning (quality
    tiers beyond the presets, resolution scale, thermal or battery handling) that I could find.
 6. **No packaging.** No Gradle build, signing, Android manifest or iOS project, and no way to run on a device.
-7. **UI input.** The player's UI works with keys and the gamepad, not the mouse or touch.
+7. **Mobile haptics.** Scripts can request semantic feedback through `Input.PlayHaptic`, but the Android and iOS shells have not installed a
+   native haptic handler yet.
 
 ## Suggested order
 
@@ -338,4 +340,12 @@ Verified: 1023/1023 tests locally; the Vulkan code is syntax-checked only (Vulka
 - `IDevice::DestroyTexture` frees a GPU texture and its bindless slot (D3D12 and Vulkan; waits for the GPU). A Critical memory-pressure event makes the renderer free its textures: models draw untextured afterwards, UI images reload on demand.
 - Windows `WM_TOUCH` becomes `Touch` / `TouchMove` events (the mouse messages Windows synthesizes from a finger are dropped). `Window::SetCursorMode` adds Hidden and Locked on Win32 and GLFW.
 - Quality presets now do two things: **resolution scale** (the swap chain is created smaller than the window and D3D12's flip model stretches it; UI pointers are scaled to match; Vulkan keeps full size because its surface must match the window) and **view distance** (the camera's far plane is pulled in). A preset change made while playing is applied on the next frame. Shadows, MSAA and bloom are in the presets but the renderer has none of them, so they do nothing.
-- Still open, needing a device or the NDK: Android packaging and a touch backend, a native-window buffer size for resolution scale on Vulkan/Android, and real profiling to tune the presets.
+- Still open, needing a device or the NDK: Android/iOS native window and touch integration, a native-window buffer size for resolution scale on Vulkan/Android, and real profiling to tune the presets.
+
+## Status: haptic request API (built)
+
+- `input::Haptics` accepts semantic effects (`selection`, light/medium/heavy impact, success, warning and error) with a normalized intensity.
+- `Game::HapticFeedback()` lets a platform host install the device handler. Luau scripts can query `Input.HasHapticOutput()` and request
+  feedback with `Input.PlayHaptic(effect, intensity)`; the request returns false when no handler is connected.
+- No Android or iOS haptic handler is connected yet. The mobile application shells still need native runtime integration before real devices
+  can produce feedback.
