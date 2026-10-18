@@ -102,6 +102,14 @@ jobs:
           python3 tools/check_module_graph.py --dot build/graph.dot
       - name: Build
         run: cmake --build build --parallel
+      - name: Install the SDK and build its template consumer
+        if: matrix.name == 'GCC'
+        run: |
+          cmake --install build --prefix "$GITHUB_WORKSPACE/build/sdk-install"
+          cmake -S tools/sdk-template-consumer -B build/sdk-template-consumer -G Ninja \
+            -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/build/sdk-install"
+          cmake --build build/sdk-template-consumer --parallel
+          ./build/sdk-template-consumer/aether_template_sdk_consumer
       - name: Unit tests
         env:
           # Under LeakSanitizer, Mesa's lavapipe reports allocations its
