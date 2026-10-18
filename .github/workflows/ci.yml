@@ -491,6 +491,7 @@ jobs:
     name: Windows packaged editor (clean runner)
     needs: windows
     runs-on: windows-2022
+    timeout-minutes: 10
     steps:
       - name: Download the packaged editor
         uses: actions/download-artifact@v4
@@ -508,11 +509,26 @@ jobs:
           if (-not (Test-Path -LiteralPath $editor -PathType Leaf)) { throw 'Packaged AetherEditor.exe is missing' }
           $originalPath = $env:PATH
           $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          $stdout = Join-Path $env:RUNNER_TEMP 'AetherEditor-self-test.stdout.log'
+          $stderr = Join-Path $env:RUNNER_TEMP 'AetherEditor-self-test.stderr.log'
           Push-Location $emptyWorkingDirectory
+          $selfTest = $null
           try {
-            $selfTest = Start-Process -FilePath $editor -ArgumentList '--self-test' -PassThru -Wait
+            $selfTest = Start-Process -FilePath $editor -ArgumentList '--self-test' -PassThru `
+              -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WindowStyle Hidden
+            if (-not $selfTest.WaitForExit(120000)) {
+              Stop-Process -Id $selfTest.Id -Force -ErrorAction SilentlyContinue
+              $selfTest.WaitForExit()
+              $output = Get-Content $stdout -Raw -ErrorAction SilentlyContinue
+              $errors = Get-Content $stderr -Raw -ErrorAction SilentlyContinue
+              throw "Packaged Qt editor self-test timed out after 120 seconds. stdout: $output`nstderr: $errors"
+            }
+            $selfTest.WaitForExit()
+            Get-Content $stdout -ErrorAction SilentlyContinue
+            Get-Content $stderr -ErrorAction SilentlyContinue
             if ($selfTest.ExitCode -ne 0) { throw "Packaged Qt editor self-test failed with exit code $($selfTest.ExitCode)" }
           } finally {
+            if ($selfTest -and -not $selfTest.HasExited) { Stop-Process -Id $selfTest.Id -Force -ErrorAction SilentlyContinue }
             Pop-Location
             $env:PATH = $originalPath
           }
