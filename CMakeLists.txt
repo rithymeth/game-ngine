@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(Aether LANGUAGES CXX)
+project(Aether VERSION 0.27.6 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -100,6 +100,7 @@ FetchContent_MakeAvailable(stb)
 # well-tested parser (spec-correct string escaping/unicode/number handling)
 # rather than a hand-rolled one just for this.
 set(JSON_BuildTests OFF CACHE INTERNAL "")
+set(NLOHMANN_JSON_TARGET_NAME nlohmann_json CACHE STRING "nlohmann_json target name" FORCE)
 FetchContent_Declare(
     nlohmann_json
     GIT_REPOSITORY https://github.com/nlohmann/json.git
@@ -107,6 +108,9 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(nlohmann_json)
+add_library(aether_json_dependency INTERFACE)
+target_link_libraries(aether_json_dependency INTERFACE nlohmann_json::nlohmann_json)
+add_library(Aether::Json ALIAS aether_json_dependency)
 
 # Phase 25: compression for .apak archives - LZ4 (fast) and zstd (small).
 # Both are BSD-licensed and built static with no command-line tools.
@@ -161,9 +165,12 @@ add_library(aether_bcenc STATIC
     ${bc7enc_SOURCE_DIR}/bc7decomp.cpp
     ${bc7enc_SOURCE_DIR}/rgbcx.cpp
 )
-target_link_libraries(aether_bcenc PUBLIC astcenc-none-static)
-target_include_directories(aether_bcenc SYSTEM PUBLIC ${astcenc_SOURCE_DIR}/Source)
-target_include_directories(aether_bcenc SYSTEM PUBLIC ${bc7enc_SOURCE_DIR})
+target_link_libraries(aether_bcenc PUBLIC
+    "$<BUILD_INTERFACE:astcenc-none-static>"
+    "$<INSTALL_INTERFACE:Aether::astcenc>"
+)
+target_include_directories(aether_bcenc SYSTEM PRIVATE ${astcenc_SOURCE_DIR}/Source)
+target_include_directories(aether_bcenc SYSTEM PRIVATE ${bc7enc_SOURCE_DIR})
 if(MSVC)
     target_compile_options(aether_bcenc PRIVATE /w)
 else()
@@ -183,7 +190,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(meshoptimizer)
 file(GLOB _meshopt_sources ${meshoptimizer_SOURCE_DIR}/src/*.cpp)
 add_library(aether_meshopt STATIC ${_meshopt_sources})
-target_include_directories(aether_meshopt SYSTEM PUBLIC ${meshoptimizer_SOURCE_DIR}/src)
+target_include_directories(aether_meshopt SYSTEM PRIVATE ${meshoptimizer_SOURCE_DIR}/src)
 if(MSVC)
     target_compile_options(aether_meshopt PRIVATE /w)
 else()
@@ -584,3 +591,85 @@ foreach(host aether_player aether_editor_shell aether_editor aether_editor_qt ae
         aether_link_modules(${host})
     endif()
 endforeach()
+
+# Phase 46 step 1: installable SDK target exports and package config.
+include(cmake/AetherPackage.cmake)
+
+aether_install_target(aether_json_dependency Json
+    BUILD_INCLUDES "${nlohmann_json_SOURCE_DIR}/include"
+    INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}")
+install(DIRECTORY "${nlohmann_json_SOURCE_DIR}/include/nlohmann" DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+get_target_property(AETHER_LZ4_OUTPUT_NAME lz4_static OUTPUT_NAME)
+if(NOT AETHER_LZ4_OUTPUT_NAME)
+    set(AETHER_LZ4_OUTPUT_NAME lz4_static)
+endif()
+set(AETHER_LZ4_INSTALL_FILENAME "${CMAKE_STATIC_LIBRARY_PREFIX}${AETHER_LZ4_OUTPUT_NAME}${CMAKE_STATIC_LIBRARY_SUFFIX}")
+install(FILES "$<TARGET_FILE:lz4_static>" DESTINATION "${CMAKE_INSTALL_LIBDIR}" RENAME "${AETHER_LZ4_INSTALL_FILENAME}")
+install(FILES
+    "${lz4_SOURCE_DIR}/lib/lz4.h"
+    "${lz4_SOURCE_DIR}/lib/lz4frame.h"
+    "${lz4_SOURCE_DIR}/lib/lz4hc.h"
+    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+aether_install_target(aether_engine Engine
+    BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/engine/include;${AETHER_VULKAN_INCLUDE_DIRS}"
+    INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}"
+    HEADERS "${PROJECT_SOURCE_DIR}/engine/include")
+aether_install_target(aether_blueprint Blueprint BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/blueprint/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/blueprint/include")
+aether_install_target(aether_physics Physics BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/physics/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/physics/include")
+aether_install_target(aether_templates Templates BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/templates/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/templates/include")
+aether_install_target(aether_renderer Renderer BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/renderer/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/renderer/include")
+aether_install_target(aether_animation Animation BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/animation/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/animation/include")
+aether_install_target(aether_audio Audio BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/audio/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/audio/include")
+aether_install_target(aether_ui UI BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/ui/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/ui/include")
+aether_install_target(aether_vfx VFX BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/vfx/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/vfx/include")
+aether_install_target(aether_terrain Terrain BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/terrain/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/terrain/include")
+aether_install_target(aether_streaming Streaming BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/streaming/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/streaming/include")
+aether_install_target(aether_sprite2d Sprite2D BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/sprite2d/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/sprite2d/include")
+aether_install_target(aether_sequencer Sequencer BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/sequencer/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/sequencer/include")
+aether_install_target(aether_save Save BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/save/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/save/include")
+aether_install_target(aether_loc Loc BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/loc/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/loc/include")
+aether_install_target(aether_gameplay Gameplay BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/gameplay/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/gameplay/include")
+aether_install_target(aether_bench_lib Bench BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/bench/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/bench/include")
+aether_install_target(aether_inventory Inventory BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/inventory/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/inventory/include")
+aether_install_target(aether_interaction Interaction BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/interaction/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/interaction/include")
+aether_install_target(aether_quests Quests BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/quests/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/quests/include")
+aether_install_target(aether_net Net BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/net/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/net/include")
+aether_install_target(aether_nav Nav BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/nav/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/nav/include")
+aether_install_target(aether_ai AI BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/ai/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/ai/include")
+aether_install_target(aether_scripting Scripting BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/scripting/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/scripting/include")
+aether_install_target(aether_editor_core EditorCore BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/editor/src" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/editor/src")
+aether_install_target(aether_editor_ui EditorUI BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/editor/src;${imgui_SOURCE_DIR}" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${imgui_SOURCE_DIR}")
+aether_install_target(aether_editor_vulkan EditorVulkan BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/editor/src;${imgui_SOURCE_DIR}/backends" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR};${CMAKE_INSTALL_INCLUDEDIR}/backends" HEADERS "${imgui_SOURCE_DIR}/backends")
+aether_install_target(aether_mcp MCP BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/mcp" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/mcp")
+aether_install_target(aether_game Game BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/player/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/player/include")
+aether_install_target(aether_bcenc bcenc BUILD_INCLUDES "${astcenc_SOURCE_DIR}/Source;${bc7enc_SOURCE_DIR}")
+aether_install_target(aether_meshopt meshopt BUILD_INCLUDES "${meshoptimizer_SOURCE_DIR}/src")
+aether_install_target(imgui_core imgui_core BUILD_INCLUDES "${imgui_SOURCE_DIR}" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${imgui_SOURCE_DIR}")
+aether_install_target(glfw glfw BUILD_INCLUDES "${glfw_SOURCE_DIR}/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${glfw_SOURCE_DIR}/include")
+aether_install_target(astcenc-none-static astcenc BUILD_INCLUDES "${astcenc_SOURCE_DIR}/Source")
+
+if(TARGET Luau.Common)
+    foreach(_luau_target IN ITEMS Common Ast Bytecode Compiler VM)
+        aether_install_target(Luau.${_luau_target} Luau.${_luau_target}
+            BUILD_INCLUDES "${luau_SOURCE_DIR}/${_luau_target}/include"
+            INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}"
+            HEADERS "${luau_SOURCE_DIR}/${_luau_target}/include")
+    endforeach()
+endif()
+
+set(AETHER_PACKAGE_USE_VULKAN ${AETHER_BUILD_VULKAN})
+set(AETHER_PACKAGE_USE_GLSLANG OFF)
+if(AETHER_BUILD_VULKAN AND NOT WIN32)
+    set(AETHER_PACKAGE_USE_GLSLANG ON)
+endif()
+set(AETHER_PACKAGE_USE_RECAST OFF)
+if(TARGET RecastNavigation::Recast)
+    set(AETHER_PACKAGE_USE_RECAST ON)
+endif()
+set(AETHER_PACKAGE_USE_JOLT OFF)
+if(TARGET Jolt::Jolt)
+    set(AETHER_PACKAGE_USE_JOLT ON)
+endif()
+set(AETHER_PACKAGE_USE_TRACY ${AETHER_TRACY})
+set(AETHER_PACKAGE_LZ4_FILENAME "${AETHER_LZ4_INSTALL_FILENAME}")
+aether_generate_package_config()
