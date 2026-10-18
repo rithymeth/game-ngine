@@ -177,7 +177,7 @@ when advisory gates become required.
 | **46.2** | *(done: `kPluginAbi` and `PluginDescriptor::abi`; a plugin built for another ABI is refused with a clear message when it is enabled, a descriptor without the field is accepted, new scaffolds carry the current ABI)* A versioned plugin ABI (an ABI integer in the descriptor and the load path). | 37.3 |
 | **46.3** | Plugin packaging and dependency resolution. **Done** (`aether/plugin/package.h`): `PackagePlugin` to one `.apkg`, `InspectPluginPackage`, `UnmetDependencies`, and a staged `InstallPluginPackage` that refuses mismatched names, several folders, newer ABIs and damaged entries. Not yet: a CLI or editor command, and installing dependencies automatically. | 46.2 |
 | **46.4** | *(started: Linux GCC CI installs the SDK, configures an independent consumer through `find_package(Aether)`, links `Aether::Templates`, and creates every available project template from the installed package.)* Templates built in CI against the installed SDK. | 46.1 |
-| **46.5** | A clean-machine SDK test job: install into a fresh prefix, build a sample in a container. Runs on Linux here. | 46.1 |
+| **46.5** | *(started: Linux GCC CI uploads its fresh-prefix SDK install; a new Ubuntu 24.04 container installs only system toolchain/backend dependencies, then finds the SDK through `AetherConfig.cmake`, builds the template consumer, and creates every available template.)* A clean-machine SDK test job: install into a fresh prefix, build a sample in a container. Runs on Linux here. | 46.1 |
 | **46.6** | Marketplace specification and a local registry. *The hosting and signing model is the user's decision.* | 46.3 |
 | **46.7** | Documentation site generated from the code and the manual (extends `tools/docgen`). `||` | - |
 
