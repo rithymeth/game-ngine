@@ -2759,6 +2759,25 @@ public:
             return condition;
         };
         bool passed = true;
+        // A modal error dialog would otherwise block the self-test forever on
+        // headless/package-validation runners. Surface the dialog as a test
+        // failure and dismiss it so the caller can report a useful log.
+        QTimer modal_dialog_guard;
+        modal_dialog_guard.setInterval(100);
+        QObject::connect(&modal_dialog_guard, &QTimer::timeout, this, [&passed] {
+            for (QWidget* widget : QApplication::topLevelWidgets()) {
+                auto* dialog = qobject_cast<QDialog*>(widget);
+                if (!dialog || !dialog->isModal() || !dialog->isVisible()) continue;
+                const auto* message_box = qobject_cast<QMessageBox*>(dialog);
+                const QString description = message_box
+                    ? message_box->text() : dialog->windowTitle();
+                AETHER_LOG_ERROR("QtEditor", "Unexpected modal dialog during self-test: %s",
+                                 description.toUtf8().constData());
+                passed = false;
+                dialog->reject();
+            }
+        });
+        modal_dialog_guard.start();
         passed &= require(scene_document_.Entities().size() == 5, "default scene should have five entities");
         passed &= require(!selected_entity_.IsNull() && inspector_name_->isEnabled() &&
                           inspector_name_->text() == QString::fromStdString(scene_document_.Name(selected_entity_)) &&
@@ -3114,6 +3133,7 @@ public:
                               "the Inspector Mesh section should list the placed cube's four LODs, 12 triangles at LOD0");
         }
         std::filesystem::remove_all(self_test_root, filesystem_error);
+        modal_dialog_guard.stop();
         if (passed) qInfo() << "Qt editor self-test passed";
         return passed;
     }
