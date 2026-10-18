@@ -9,6 +9,13 @@ function(aether_install_target target export_name)
     cmake_parse_arguments(PKG "" "" "BUILD_INCLUDES;INSTALL_INCLUDES;HEADERS;HEADER_DESTINATIONS" ${ARGN})
 
     set_target_properties("${target}" PROPERTIES EXPORT_NAME "${export_name}")
+    if(target STREQUAL "aether_json_dependency")
+        # nlohmann is bundled into the SDK headers, so consumers must not need
+        # the FetchContent target from the engine's build tree.
+        set_property(TARGET "${target}" PROPERTY INTERFACE_LINK_LIBRARIES "")
+        set_property(TARGET "${target}" PROPERTY INTERFACE_INCLUDE_DIRECTORIES
+            "$<BUILD_INTERFACE:${nlohmann_json_SOURCE_DIR}/include>;$<INSTALL_INTERFACE:include>")
+    endif()
     set(_interface_includes "")
     foreach(_include IN LISTS PKG_BUILD_INCLUDES)
         list(APPEND _interface_includes "$<BUILD_INTERFACE:${_include}>")
