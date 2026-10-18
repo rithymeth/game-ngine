@@ -4388,8 +4388,38 @@ private:
     void PlaceModel(const std::filesystem::path& file) {
         if (project_file_.empty()) return;
         const auto content = aether::ProjectPaths::ForFile(project_file_).content;
-        const auto relative = file.lexically_relative(content);
-        if (relative.empty() || *relative.begin() == "..") {
+        std::error_code path_error;
+        const auto canonical_content = std::filesystem::canonical(content, path_error);
+        const auto canonical_file = path_error ? std::filesystem::path{} : std::filesystem::canonical(file, path_error);
+        std::filesystem::path relative;
+        bool is_inside_content = false;
+        if (!path_error && !canonical_content.empty() && !canonical_file.empty()) {
+            // lexical_relative() treats Windows short and long path spellings as
+            // different roots. Walk the canonical file's parents and compare
+            // filesystem identity so a valid asset under Content is accepted
+            // regardless of how Windows spelled the same directory.
+            std::vector<std::filesystem::path> components;
+            auto ancestor = canonical_file;
+            while (!ancestor.empty()) {
+                path_error.clear();
+                if (std::filesystem::equivalent(ancestor, canonical_content, path_error)) {
+                    is_inside_content = !path_error;
+                    break;
+                }
+                if (path_error) break;
+                const auto component = ancestor.filename();
+                const auto parent = ancestor.parent_path();
+                if (component.empty() || parent == ancestor) break;
+                components.push_back(component);
+                ancestor = parent;
+            }
+            if (is_inside_content) {
+                for (auto component = components.rbegin(); component != components.rend(); ++component) {
+                    relative /= *component;
+                }
+            }
+        }
+        if (!is_inside_content || relative.empty()) {
             QMessageBox::warning(this, "Model outside project", "Choose a model inside this project's Content folder.");
             return;
         }
