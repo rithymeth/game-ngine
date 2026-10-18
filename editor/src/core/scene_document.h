@@ -32,7 +32,7 @@ public:
     const std::filesystem::path& FilePath() const { return file_; }
     GuidIndex& Guids() { return guids_; }
     const GuidIndex& Guids() const { return guids_; }
-    bool IsDirty() const { return commands_.IsDirty(); }
+    bool IsDirty() const { return recovered_unsaved_ || commands_.IsDirty(); }
     bool CanUndo() const { return commands_.CanUndo(); }
     bool CanRedo() const { return commands_.CanRedo(); }
     std::string UndoLabel() const { return commands_.UndoLabel(); }
@@ -43,6 +43,9 @@ public:
     void NewScene();
     bool Load(const std::filesystem::path& file, std::string* error = nullptr);
     bool Save(const std::filesystem::path& file = {}, std::string* error = nullptr);
+    bool SaveAutosave(const std::filesystem::path& file, std::string* error = nullptr) const;
+    bool LoadAutosave(const std::filesystem::path& autosave, const std::filesystem::path& source,
+                      std::string* error = nullptr);
     std::vector<Entity> Entities() const;
     std::string Name(Entity entity) const;
     bool Rename(Entity entity, const std::string& name, bool committed = true);
@@ -77,6 +80,7 @@ private:
     CommandContext context_;
     PlaySession play_session_;
     std::filesystem::path file_;
+    bool recovered_unsaved_ = false;
     EntityGuid pending_position_entity_{};
     std::optional<reflect::Any> pending_position_before_;
     EntityGuid pending_rotation_entity_{};
