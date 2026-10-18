@@ -18,6 +18,14 @@ endif()
 option(AETHER_BUILD_TESTS "Build Aether unit tests" ON)
 option(AETHER_BUILD_MCP "Build the MCP (Model Context Protocol) editor server" ON)
 option(AETHER_BUILD_ANDROID_APP "Build the Android native runtime shim" OFF)
+option(AETHER_BUILD_IOS_APP "Build the iOS native runtime shell" OFF)
+
+if(AETHER_BUILD_IOS_APP)
+    if(NOT APPLE OR NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        message(FATAL_ERROR "AETHER_BUILD_IOS_APP requires an Apple iOS toolchain")
+    endif()
+    enable_language(OBJCXX)
+endif()
 
 # Phase 37 step 6: -Werror for the engine and the gameplay kits, off by default (the four gameplay libraries build clean with GCC under it; CI will turn it on once Clang and MSVC are checked).
 option(AETHER_WARNINGS_AS_ERRORS "Treat warnings as errors in the engine and the gameplay kits" OFF)
@@ -323,6 +331,21 @@ if(ANDROID AND AETHER_BUILD_ANDROID_APP)
     add_library(aether_android SHARED platforms/android/app/src/main/cpp/native_entry.cpp)
     target_link_libraries(aether_android PRIVATE Aether::Engine)
     target_compile_features(aether_android PRIVATE cxx_std_20)
+endif()
+
+if(APPLE AND CMAKE_SYSTEM_NAME STREQUAL "iOS" AND AETHER_BUILD_IOS_APP)
+    find_library(AETHER_UIKIT_FRAMEWORK UIKit REQUIRED)
+    add_executable(aether_ios MACOSX_BUNDLE platforms/ios/src/main.mm)
+    target_link_libraries(aether_ios PRIVATE Aether::Engine "${AETHER_UIKIT_FRAMEWORK}")
+    target_compile_features(aether_ios PRIVATE cxx_std_20)
+    set_target_properties(aether_ios PROPERTIES
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/platforms/ios/Info.plist"
+        OUTPUT_NAME "AetherEngine"
+        OBJCXX_STANDARD 20
+        OBJCXX_STANDARD_REQUIRED YES
+        XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED "NO"
+        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.aether.engine"
+    )
 endif()
 # Platform plugins (platforms/README.md): directories listed here are built
 # and linked into the tests, the functional runner and the editor shell.
