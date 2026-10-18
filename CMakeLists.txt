@@ -645,7 +645,13 @@ aether_install_target(aether_game Game BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/pla
 aether_install_target(aether_bcenc bcenc BUILD_INCLUDES "${astcenc_SOURCE_DIR}/Source;${bc7enc_SOURCE_DIR}")
 aether_install_target(aether_meshopt meshopt BUILD_INCLUDES "${meshoptimizer_SOURCE_DIR}/src")
 aether_install_target(imgui_core imgui_core BUILD_INCLUDES "${imgui_SOURCE_DIR}" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${imgui_SOURCE_DIR}")
-aether_install_target(glfw glfw BUILD_INCLUDES "${glfw_SOURCE_DIR}/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${glfw_SOURCE_DIR}/include")
+if(TARGET glfw)
+    FetchContent_GetProperties(glfw SOURCE_DIR AETHER_GLFW_SOURCE_DIR)
+    aether_install_target(glfw glfw
+        BUILD_INCLUDES "${AETHER_GLFW_SOURCE_DIR}/include"
+        INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}"
+        HEADERS "${AETHER_GLFW_SOURCE_DIR}/include")
+endif()
 aether_install_target(astcenc-none-static astcenc BUILD_INCLUDES "${astcenc_SOURCE_DIR}/Source")
 
 if(TARGET Luau.Common)
