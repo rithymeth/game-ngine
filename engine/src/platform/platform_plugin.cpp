@@ -17,8 +17,10 @@ bool PlatformPlugins::Register(PlatformPlugin plugin) {
         return false;
     }
     plugins_.push_back(std::move(plugin));
-    if (started_ && plugins_.back().startup) {
-        plugins_.back().startup(); // registered late: start it now
+    if (started_) {
+        PlatformPlugin& added = plugins_.back();
+        if (added.connect_lifecycle) added.connect_lifecycle(lifecycle_);
+        if (added.startup) added.startup(); // registered late: connect and start it now
     }
     return true;
 }
@@ -35,6 +37,7 @@ void PlatformPlugins::Startup() {
     started_ = true;
     for (const PlatformPlugin& p : plugins_) {
         AETHER_LOG_INFO("Platform", "Starting platform plugin '%s'", p.name.c_str());
+        if (p.connect_lifecycle) p.connect_lifecycle(lifecycle_);
         if (p.startup) p.startup();
     }
 }

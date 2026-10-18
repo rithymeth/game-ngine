@@ -20,10 +20,20 @@ All optional, in `aether::PlatformPlugin` (`aether/platform/platform_plugin.h`):
 
 - `startup` / `shutdown`: bring the platform's SDK up and down; run by
   `PlatformPlugins::Get().Startup()` / `Shutdown()` (shutdown in reverse).
+- `connect_lifecycle`: receives the shared `PlatformLifecycle` before
+  `startup`, so a backend can install a permission requester and forward native
+  suspend, resume, and memory-pressure events. Call `Dispatch(...)` on the main
+  thread; remove native callbacks and clear any permission
+  requester that captures plugin state during `shutdown`.
 - `user_data_dir`: where saves and settings go.
 - `create_device`: an RHI device (`gfx::rhi::IDevice`) for a graphics API
   the engine doesn't build in, created with
   `PlatformPlugins::Get().CreateDevice(name, debug)`.
+
+Game and engine code can subscribe through
+`PlatformPlugins::Get().Lifecycle()`. The lifecycle service keeps the platform
+API boundary independent of Android or console SDKs, while
+`MockLifecycleBackend` drives the same interface in headless tests.
 
 ## The example
 
