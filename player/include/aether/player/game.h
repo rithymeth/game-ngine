@@ -165,6 +165,14 @@ struct GameStats {
 
 class Game {
 public:
+    struct RebindableInput {
+        std::string context;
+        std::string action;
+        u32 slot = 0;
+        input::Key default_key = input::Key::None;
+        input::Key current_key = input::Key::None;
+    };
+
     explicit Game(GamePackage& package);
     ~Game();
     Game(const Game&) = delete;
@@ -218,6 +226,8 @@ public:
     input::InputState& Input() { return input_state_; }
     input::InputSystem& InputActions() { return input_; }
     const input::InputAssetLibrary& InputAssets() const { return input_library_; }
+    // Bindings in context/action order, with the player's overrides applied.
+    std::vector<RebindableInput> RebindableInputs() const;
     // Script and Blueprint problems, as text.
     std::vector<std::string> ScriptErrors() const;
     std::vector<std::string> BlueprintErrors() const;
@@ -315,6 +325,10 @@ private:
     FrameContext last_frame_;
     bool paused_ = false, exit_requested_ = false;
     i32 proof_menu_ = 0, proof_menu_row_ = 0, proof_settings_status_ = 0;
+    input::KeyCapture proof_key_capture_;
+    bool proof_key_capture_active_ = false;
+    std::string proof_capture_context_, proof_capture_action_;
+    u32 proof_capture_slot_ = 0;
     input::InputState menu_previous_;
     bool proof_load_input_ = false, proof_new_input_ = false;
     struct Physics;

@@ -75,8 +75,9 @@ level's unrotated box colliders; rotated/other collider shapes remain unsupporte
 - N: start a new game
 - F5: load the last milestone checkpoint while alive or dead
 - Escape / Gamepad Start: pause menu
-- Arrows / Gamepad D-pad: menu navigation and volume adjustment
-- Enter / Gamepad A: confirm; Escape / Gamepad B: back
+- Arrows / Gamepad D-pad: menu navigation, volume adjustment and control selection
+- Enter / Gamepad A: confirm or begin rebinding a selected control; Escape / Gamepad B: back or cancel key capture
+- Controls menu: select a binding and press a keyboard key or gamepad button to assign it; Delete restores that binding, and Reset All restores every default
 
 ## Build and run (Windows)
 

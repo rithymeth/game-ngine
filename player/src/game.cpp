@@ -1144,7 +1144,32 @@ void Game::UpdateProofMenu() {
     const bool right = pressed(Key::Right) || pressed(Key::GamepadDPadRight);
     menu_previous_ = input_state_;
     const i32 previous_menu = proof_menu_;
-    if (back) {
+    const std::vector<RebindableInput> bindings = RebindableInputs();
+    if (proof_key_capture_active_) {
+        if (pressed(Key::Escape) || pressed(Key::GamepadB) || pressed(Key::GamepadStart)) {
+            proof_key_capture_.Cancel();
+            proof_key_capture_active_ = false;
+            proof_settings_status_ = 0;
+        } else {
+            Key captured = Key::None;
+            const input::KeyCapture::Result result = proof_key_capture_.Update(input_state_, captured);
+            if (result == input::KeyCapture::Result::Captured) {
+                proof_key_capture_active_ = false;
+                save::GameSettings next = settings_->Get();
+                next.bindings.Set(proof_capture_context_, proof_capture_action_, proof_capture_slot_, captured);
+                settings_->Set(next);
+                const bool saved = settings_->Save().ok;
+                const input::InputMappingContext* context = input_library_.FindContext(proof_capture_context_);
+                const bool has_conflict = context != nullptr &&
+                    !input::FindConflicts(input::ApplyUserBindings(*context, settings_->Get().bindings), captured,
+                                          proof_capture_action_, proof_capture_slot_).empty();
+                proof_settings_status_ = saved ? (has_conflict ? 2 : 1) : -1;
+            } else if (result == input::KeyCapture::Result::Canceled) {
+                proof_key_capture_active_ = false;
+                proof_settings_status_ = 0;
+            }
+        }
+    } else if (back) {
         proof_menu_ = proof_menu_ == 0 ? 1 : proof_menu_ == 1 ? 0 : 1;
         proof_menu_row_ = 0;
         proof_settings_status_ = 0;
@@ -1153,7 +1178,7 @@ void Game::UpdateProofMenu() {
         if (accept) switch (proof_menu_row_) {
         case 0: proof_menu_ = 0; break;
         case 1: proof_menu_ = 2; proof_menu_row_ = 0; break;
-        case 2: proof_menu_ = 3; break;
+        case 2: proof_menu_ = 3; proof_menu_row_ = 0; break;
         case 3:
             if (saves_ && saves_->Exists(scene_.find("Campaign") != std::string::npos ? "aether-campaign" : "first-contact")) {
                 input_state_.SetButton(Key::F5, true); proof_load_input_ = true; proof_menu_ = 0;
@@ -1172,7 +1197,48 @@ void Game::UpdateProofMenu() {
             settings_->Set(next);
             proof_settings_status_ = settings_->Save().ok ? 1 : -1;
         }
-    } else if (proof_menu_ == 3 && accept) { proof_menu_ = 1; proof_menu_row_ = 0; }
+    } else if (proof_menu_ == 3) {
+        const i32 binding_count = static_cast<i32>(bindings.size());
+        const i32 reset_all_row = binding_count;
+        const i32 back_row = binding_count + 1;
+        const i32 row_count = binding_count + 2;
+        if (row_count > 0) proof_menu_row_ = (proof_menu_row_ + (down ? 1 : up ? row_count - 1 : 0)) % row_count;
+        if (pressed(Key::Delete) && proof_menu_row_ < binding_count) {
+            const RebindableInput& binding = bindings[static_cast<usize>(proof_menu_row_)];
+            save::GameSettings next = settings_->Get();
+            const bool changed = next.bindings.Reset(binding.context, binding.action, binding.slot);
+            if (changed) {
+                settings_->Set(next);
+                proof_settings_status_ = settings_->Save().ok ? 1 : -1;
+            } else {
+                proof_settings_status_ = 0;
+            }
+        }
+        if (accept) {
+            if (proof_menu_row_ < binding_count) {
+                const RebindableInput& binding = bindings[static_cast<usize>(proof_menu_row_)];
+                proof_capture_context_ = binding.context;
+                proof_capture_action_ = binding.action;
+                proof_capture_slot_ = binding.slot;
+                proof_key_capture_.Begin(input_state_);
+                proof_key_capture_active_ = true;
+                proof_settings_status_ = 3;
+            } else if (proof_menu_row_ == reset_all_row) {
+                save::GameSettings next = settings_->Get();
+                if (!next.bindings.overrides.empty()) {
+                    next.bindings.ResetAll();
+                    settings_->Set(next);
+                    proof_settings_status_ = settings_->Save().ok ? 1 : 0;
+                } else {
+                    proof_settings_status_ = 0;
+                }
+            } else if (proof_menu_row_ == back_row) {
+                proof_menu_ = 1;
+                proof_menu_row_ = 0;
+                proof_settings_status_ = 0;
+            }
+        }
+    }
     if (previous_menu != proof_menu_) paused_ = proof_menu_ != 0;
     if (previous_menu != 0 && proof_menu_ == 0 && !proof_load_input_ && !proof_new_input_) {
         // Consume the menu confirmation/back edge before gameplay reads it.
@@ -1185,10 +1251,28 @@ void Game::UpdateProofMenu() {
     if (!attributes) return;
     attributes->Define("MenuState", 0, 0, 3);
     attributes->Define("MenuRow", 0, 0, 5);
-    attributes->Define("SettingsStatus", 0, -2, 1);
+    attributes->Define("SettingsStatus", 0, -2, 3);
     attributes->SetBase("MenuState", static_cast<f32>(proof_menu_));
     attributes->SetBase("MenuRow", static_cast<f32>(proof_menu_row_));
     attributes->SetBase("SettingsStatus", static_cast<f32>(proof_settings_status_));
+}
+
+std::vector<Game::RebindableInput> Game::RebindableInputs() const {
+    std::vector<RebindableInput> out;
+    if (!settings_) return out;
+    const input::UserBindings& user = settings_->Get().bindings;
+    for (const std::string& name : input_library_.ContextNames()) {
+        const input::InputMappingContext* context = input_library_.FindContext(name);
+        if (!context) continue;
+        const input::InputMappingContext current = input::ApplyUserBindings(*context, user);
+        std::unordered_map<std::string, u32> slots;
+        for (usize i = 0; i < context->bindings.size(); ++i) {
+            const input::InputBinding& binding = context->bindings[i];
+            const u32 slot = slots[binding.action]++;
+            out.push_back({name, binding.action, slot, binding.key, current.bindings[i].key});
+        }
+    }
+    return out;
 }
 
 GameStats Game::Stats() const {
