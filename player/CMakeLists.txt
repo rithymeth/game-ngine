@@ -4,6 +4,11 @@
 add_library(aether_game STATIC src/game.cpp src/game_kits.cpp src/user_paths.cpp src/settings_apply.cpp src/bindings_migrate.cpp
                                src/scene_renderer.cpp src/frame_lights.cpp src/package_textures.cpp)
 target_include_directories(aether_game PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+# game.cpp includes the complete runtime surface and can exceed MSVC's
+# default COFF section-count limit in Debug builds.
+if(MSVC)
+    target_compile_options(aether_game PRIVATE /bigobj)
+endif()
 target_link_libraries(aether_game PUBLIC Aether::Engine Aether::UI Aether::Audio Aether::Renderer)
 if(TARGET Aether::Physics)
     target_link_libraries(aether_game PRIVATE Aether::Physics)

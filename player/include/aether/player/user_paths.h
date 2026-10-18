@@ -19,10 +19,12 @@ struct UserPaths {
 std::string SanitizeProjectFolder(const std::string& project_name);
 
 // Precedence: `override_root` (the --user-dir option), then the AETHER_USER_DIR
-// environment variable, then the OS's per-user data folder (%APPDATA% on
-// Windows, ~/Library/Application Support on macOS, $XDG_DATA_HOME or
-// ~/.local/share elsewhere) plus the sanitized project name. With none of them
-// available, a folder under the system temp directory.
-UserPaths ResolveUserPaths(const std::string& project_name, const std::filesystem::path& override_root = {});
+// environment variable, then `platform_root` supplied by a platform plugin,
+// then the OS's per-user data folder (%APPDATA% on Windows,
+// ~/Library/Application Support on macOS, $XDG_DATA_HOME or ~/.local/share
+// elsewhere) plus the sanitized project name. With none of them available, a
+// folder under the system temp directory.
+UserPaths ResolveUserPaths(const std::string& project_name, const std::filesystem::path& override_root = {},
+                           const std::filesystem::path& platform_root = {});
 
 } // namespace aether::player
