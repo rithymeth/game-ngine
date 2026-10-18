@@ -335,6 +335,7 @@ endif()
 
 if(APPLE AND CMAKE_SYSTEM_NAME STREQUAL "iOS" AND AETHER_BUILD_IOS_APP)
     find_library(AETHER_UIKIT_FRAMEWORK UIKit REQUIRED)
+    target_compile_definitions(aether_engine PUBLIC AETHER_PLATFORM_IOS)
     add_executable(aether_ios MACOSX_BUNDLE platforms/ios/src/main.mm)
     target_link_libraries(aether_ios PRIVATE Aether::Engine "${AETHER_UIKIT_FRAMEWORK}")
     target_compile_features(aether_ios PRIVATE cxx_std_20)

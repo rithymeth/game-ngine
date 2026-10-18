@@ -110,6 +110,12 @@ void ChildProcess::Reset() {
 
 bool ChildProcess::Start(const stdfs::path& program, const std::vector<std::string>& args, const stdfs::path& working_dir,
                          std::string* error) {
+#if defined(AETHER_PLATFORM_IOS)
+    (void)program;
+    (void)args;
+    (void)working_dir;
+    return Fail(error, "Starting child processes isn't supported on iOS");
+#else
     if (started_ && !exited_ && Running()) return Fail(error, "The process is still running");
     Reset();
     std::error_code ec;
@@ -153,6 +159,7 @@ bool ChildProcess::Start(const stdfs::path& program, const std::vector<std::stri
 #endif
     started_ = true;
     return true;
+#endif
 }
 
 bool ChildProcess::Running() {
