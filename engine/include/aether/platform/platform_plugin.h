@@ -1,6 +1,7 @@
 #pragma once
 
 #include "aether/core/base.h"
+#include "aether/platform/lifecycle.h"
 
 #include <functional>
 #include <memory>
@@ -27,6 +28,10 @@ struct PlatformPlugin {
     // reverse): the platform's SDK, its file system mounts, its threads.
     std::function<void()> startup;
     std::function<void()> shutdown;
+    // Connects a platform's native lifecycle and permission APIs to the
+    // engine-facing lifecycle service before startup runs. The platform may
+    // dispatch lifecycle messages and install a permission requester here.
+    std::function<void(platform::PlatformLifecycle&)> connect_lifecycle;
     // Where saves and settings go on this platform; empty for the default.
     std::function<std::string()> user_data_dir;
     // An RHI device on a graphics API the engine doesn't build in.
@@ -47,6 +52,9 @@ public:
     void Startup();
     void Shutdown();
     bool IsStarted() const { return started_; }
+    // Shared lifecycle service populated by platform plugins during startup.
+    platform::PlatformLifecycle& Lifecycle() { return lifecycle_; }
+    const platform::PlatformLifecycle& Lifecycle() const { return lifecycle_; }
 
     // The first plugin's user data directory, or `fallback`.
     std::string UserDataDir(const std::string& fallback) const;
@@ -59,6 +67,7 @@ public:
 
 private:
     std::vector<PlatformPlugin> plugins_;
+    platform::PlatformLifecycle lifecycle_;
     bool started_ = false;
 };
 
