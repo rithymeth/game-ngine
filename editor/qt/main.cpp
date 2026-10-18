@@ -2330,6 +2330,22 @@ QWidget* MakeContentBrowser(QComboBox*& breadcrumb, QFileSystemModel*& asset_mod
     return root;
 }
 
+std::string StablePathKey(const std::filesystem::path& path) {
+    std::error_code ec;
+    std::filesystem::path absolute = std::filesystem::absolute(path, ec);
+    if (ec) absolute = path;
+    const std::string key = absolute.lexically_normal().generic_string();
+    aether::u64 hash = 14695981039346656037ull;
+    for (const unsigned char byte : key) hash = (hash ^ byte) * 1099511628211ull;
+    constexpr char digits[] = "0123456789abcdef";
+    std::string encoded(16, '0');
+    for (int i = 15; i >= 0; --i) {
+        encoded[static_cast<std::size_t>(i)] = digits[hash & 0xfu];
+        hash >>= 4u;
+    }
+    return encoded;
+}
+
 class EditorWindow final : public QMainWindow {
 public:
     EditorWindow() {
@@ -2689,12 +2705,20 @@ public:
         connect_lens(camera_inspector_.aperture, "aperture_f");
         connect_lens(camera_inspector_.focus_distance, "focus_distance");
         scene_document_.NewScene();
+        autosave_timer_.setInterval(5 * 60 * 1000);
+        QObject::connect(&autosave_timer_, &QTimer::timeout, this, [this] { WriteSceneAutosave(); });
+        autosave_timer_.start();
         RefreshHierarchy();
         viewport_->FitAll();
         UpdateSceneStatus();
     }
 
     void OpenProjectFile(const std::filesystem::path& file) { OpenProject(file, false); }
+
+    void SetCrashRecoveryContext(std::filesystem::path directory, bool available) {
+        crash_report_directory_ = std::move(directory);
+        crash_recovery_available_ = available;
+    }
 
     // Shows what the selected entity's model cooks to: its LOD chain and meshlet counts, from the same code the
     // cooker uses. Hidden when the entity has no model. Cached per file and write time; a model that can't be read or
@@ -3754,13 +3778,90 @@ private:
     }
 
     bool ConfirmDiscardSceneChanges() {
-        if (!scene_document_.IsDirty()) return true;
+        if (!scene_document_.IsDirty()) {
+            RemoveSceneAutosave(AutosaveSourcePath());
+            return true;
+        }
         QMessageBox prompt(QMessageBox::Warning, "Unsaved Scene Changes",
                            "Save the scene changes before continuing?",
                            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, this);
         const auto choice = static_cast<QMessageBox::StandardButton>(prompt.exec());
         if (choice == QMessageBox::Save) return SaveScene();
-        return choice == QMessageBox::Discard;
+        if (choice != QMessageBox::Discard) return false;
+        RemoveSceneAutosave(AutosaveSourcePath());
+        return true;
+    }
+
+    std::filesystem::path AutosaveSourcePath() const {
+        if (!scene_document_.FilePath().empty()) return scene_document_.FilePath();
+        if (project_file_.empty()) return {};
+        const auto content = aether::ProjectPaths::ForFile(project_file_).content;
+        if (!project_settings_.startup_scene.empty()) return content / project_settings_.startup_scene;
+        return content / "Scenes" / "Main.ascene";
+    }
+
+    std::filesystem::path SceneAutosavePath(const std::filesystem::path& source) const {
+        if (project_file_.empty() || source.empty()) return {};
+        return aether::ProjectPaths::ForFile(project_file_).saved / "Autosaves" /
+               ("scene-" + StablePathKey(source) + ".ascene");
+    }
+
+    void RemoveSceneAutosave(const std::filesystem::path& source) {
+        const auto autosave = SceneAutosavePath(source);
+        if (autosave.empty()) return;
+        std::error_code ec;
+        std::filesystem::remove(autosave, ec);
+    }
+
+    void WriteSceneAutosave() {
+        if (project_file_.empty()) return;
+        if (!scene_document_.IsDirty()) {
+            RemoveSceneAutosave(AutosaveSourcePath());
+            return;
+        }
+        if (scene_document_.PlayState() != aether::editor::PlaySession::State::Editing) return;
+        const auto autosave = SceneAutosavePath(AutosaveSourcePath());
+        if (autosave.empty()) return;
+        std::string error;
+        if (!scene_document_.SaveAutosave(autosave, &error))
+            AETHER_LOG_WARN("Editor", "Scene autosave failed: %s", error.c_str());
+        else
+            statusBar()->showMessage("Scene autosaved for crash recovery", 5000);
+    }
+
+    void MaybeRestoreAutosave(const std::filesystem::path& source) {
+        if (!crash_recovery_available_ || crash_report_directory_.empty() || source.empty()) return;
+        const auto autosave = SceneAutosavePath(source);
+        if (autosave.empty()) return;
+        std::error_code ec;
+        const auto autosave_time = std::filesystem::last_write_time(autosave, ec);
+        if (ec) return;
+        bool crash_after_autosave = false;
+        for (const auto& report : aether::ListCrashReports(crash_report_directory_.string(), true)) {
+            if (report.Field("context.project") != StablePathKey(project_file_)) continue;
+            const auto crash_time = std::filesystem::last_write_time(report.path, ec);
+            if (!ec && crash_time >= autosave_time) {
+                crash_after_autosave = true;
+                break;
+            }
+            ec.clear();
+        }
+        if (!crash_after_autosave) return;
+        const auto choice = QMessageBox::question(
+            this, "Recover Autosaved Scene",
+            QString("The editor crashed after the last autosave of %1. Restore that version?")
+                .arg(QString::fromStdWString(source.filename().wstring())),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+        if (choice == QMessageBox::Yes) {
+            std::string error;
+            if (!scene_document_.LoadAutosave(autosave, source, &error)) {
+                QMessageBox::warning(this, "Couldn't restore autosave", QString::fromStdString(error));
+                return;
+            }
+            AETHER_LOG_INFO("Editor", "Recovered scene autosave for %s", source.string().c_str());
+        } else {
+            std::filesystem::remove(autosave, ec);
+        }
     }
 
     void RefreshHierarchy(bool preserveSelection = false) {
@@ -4073,6 +4174,7 @@ private:
     }
 
     void UpdateSceneStatus() {
+        if (!scene_document_.IsDirty()) RemoveSceneAutosave(AutosaveSourcePath());
         const auto play_state = scene_document_.PlayState();
         const bool editing = play_state == aether::editor::PlaySession::State::Editing;
         const bool playing = play_state == aether::editor::PlaySession::State::Playing;
@@ -4298,6 +4400,7 @@ private:
             QMessageBox::critical(this, "Couldn't open scene", QString::fromStdString(error));
             return false;
         }
+        MaybeRestoreAutosave(file);
         navigation_editor_widget_->ResetForScene();
         selected_guid_ = {};
         selected_entity_ = aether::kNullEntity;
@@ -4327,6 +4430,7 @@ private:
             QMessageBox::critical(this, "Couldn't save scene", QString::fromStdString(error));
             return false;
         }
+        RemoveSceneAutosave(path);
         if (!project_file_.empty()) {
             const auto content = aether::ProjectPaths::ForFile(project_file_).content;
             const auto relative = path.lexically_relative(content);
@@ -4634,6 +4738,7 @@ private:
             QMessageBox::critical(this, "Couldn't prepare project folders", QString::fromStdString(error));
             return;
         }
+        aether::CrashHandler::SetContext("project", StablePathKey(file));
 
         aether::plugin::PluginManager candidate_plugins;
         if (!aether::plugin::ResolveProjectPlugins(file, candidate_plugins, &error) ||
@@ -4674,6 +4779,7 @@ private:
         plugin_manager_ = std::move(candidate_plugins);
         project_file_ = file;
         project_settings_ = std::move(settings);
+        MaybeRestoreAutosave(AutosaveSourcePath());
         blueprint_editor_widget_->ClearDocument();
         material_editor_widget_->ClearDocument();
         vfx_editor_widget_->ClearDocument();
@@ -5614,6 +5720,9 @@ private:
     RhiViewport* viewport_ = nullptr;
     aether::plugin::PluginManager plugin_manager_;
     aether::editor::SceneDocument scene_document_;
+    QTimer autosave_timer_;
+    std::filesystem::path crash_report_directory_;
+    bool crash_recovery_available_ = false;
     aether::EntityGuid selected_guid_{};
     aether::Entity selected_entity_ = aether::kNullEntity;
     QComboBox* content_breadcrumb_ = nullptr;
@@ -5702,7 +5811,9 @@ int main(int argc, char** argv) {
     std::string crash_error;
     if (!aether::CrashHandler::Install(crash_config, &crash_error))
         qWarning() << "Crash reports are unavailable:" << QString::fromStdString(crash_error);
+    const auto previous_crash_reports = aether::ListCrashReports(crash_config.directory, true);
     EditorWindow window;
+    window.SetCrashRecoveryContext(crash_config.directory, !previous_crash_reports.empty());
     if (app.arguments().contains("--self-test")) {
         const bool passed = window.RunSelfTest();
         aether::CrashHandler::Uninstall();
