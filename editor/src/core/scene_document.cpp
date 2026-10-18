@@ -69,6 +69,7 @@ void SceneDocument::Reset() {
     guids_.Clear();
     commands_.Clear();
     file_.clear();
+    recovered_unsaved_ = false;
     pending_position_before_.reset();
     pending_position_entity_ = {};
     pending_rotation_before_.reset();
@@ -146,6 +147,7 @@ bool SceneDocument::Load(const std::filesystem::path& file, std::string* error) 
     pending_rotation_before_.reset();
     pending_rotation_entity_ = {};
     file_ = file;
+    recovered_unsaved_ = false;
     commands_.MarkSaved();
     return true;
 }
@@ -167,7 +169,38 @@ bool SceneDocument::Save(const std::filesystem::path& file, std::string* error) 
         return false;
     }
     file_ = target;
+    recovered_unsaved_ = false;
     commands_.MarkSaved();
+    return true;
+}
+
+bool SceneDocument::SaveAutosave(const std::filesystem::path& file, std::string* error) const {
+    if (!play_session_.IsEditing()) {
+        if (error) *error = "Stop Play mode before autosaving the scene.";
+        return false;
+    }
+    if (file.empty()) {
+        if (error) *error = "Choose an autosave path.";
+        return false;
+    }
+    std::error_code ec;
+    std::filesystem::create_directories(file.parent_path(), ec);
+    if (ec) {
+        if (error) *error = "The autosave directory couldn't be created: " + ec.message();
+        return false;
+    }
+    if (!SaveSceneJson(world_, file.string())) {
+        if (error) *error = "The scene couldn't be autosaved.";
+        return false;
+    }
+    return true;
+}
+
+bool SceneDocument::LoadAutosave(const std::filesystem::path& autosave, const std::filesystem::path& source,
+                                 std::string* error) {
+    if (!Load(autosave, error)) return false;
+    file_ = source;
+    recovered_unsaved_ = true;
     return true;
 }
 

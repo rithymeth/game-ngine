@@ -386,7 +386,7 @@ bool SaveSceneJson(const World& world, const std::string& path) {
     Json scene = {{"$type", "Scene"}, {"$version", kJsonSceneVersion}, {"entities", std::move(entities)}};
     std::string text = scene.dump(2);
     text.push_back('\n');
-    if (!fs::WriteFileBytes(path, text.data(), text.size())) {
+    if (!fs::WriteFileAtomic(path, text.data(), text.size())) {
         AETHER_LOG_ERROR("Scene", "Failed to write scene file: %s", path.c_str());
         return false;
     }
