@@ -1,0 +1,6 @@
+#pragma once
+
+namespace aether::docs::site_assets {
+inline constexpr char kJavaScript[] = R"AETHER_DOCGEN_JS(@AETHER_DOCGEN_SITE_JS@)AETHER_DOCGEN_JS";
+inline constexpr char kStylesheet[] = R"AETHER_DOCGEN_CSS(@AETHER_DOCGEN_SITE_CSS@)AETHER_DOCGEN_CSS";
+} // namespace aether::docs::site_assets
