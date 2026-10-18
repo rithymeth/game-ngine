@@ -24,6 +24,7 @@ aether_renderer 2
 aether_replay_ai 4
 aether_replay_assetmeta 2
 aether_replay_gltf 2
+aether_replay_model_import 2
 aether_replay_input 2
 aether_replay_pak 2
 aether_replay_plugin 2

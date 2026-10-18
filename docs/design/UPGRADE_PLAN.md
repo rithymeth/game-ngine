@@ -185,7 +185,7 @@ when advisory gates become required.
 
 | Step | Work | Needs |
 |---|---|---|
-| **47.1** *(started: pak, scene, Blueprint, gameplay-data, prefab, material, sequence, animation, manifest, save-envelope, session-info, asset metadata, bounded texture import and bounded self-contained glTF parsing have fuzz targets. Metadata has wrong-type coverage; image decoding enforces a pixel budget; glTF memory parsing refuses external file URIs. Still to do: full model-import result generation and richer valid seeds for the other loaders)* | libFuzzer harnesses (`tools/fuzz/`, `AETHER_BUILD_FUZZERS`, Clang): pak reader, scene, Blueprint and save loaders, the net protocol, importers. One PR per target, runnable here. `||` | - |
+| **47.1** *(started: pak, scene, Blueprint, gameplay-data, prefab, material, sequence, animation, manifest, save-envelope, session-info, asset metadata, bounded texture import, self-contained glTF parsing, and complete model import result generation have fuzz targets. Metadata has wrong-type coverage; image decoding enforces a pixel budget; in-memory glTF/model import refuses external file URIs. Still to do: richer valid seeds for the other loaders)* | libFuzzer harnesses (`tools/fuzz/`, `AETHER_BUILD_FUZZERS`, Clang): pak reader, scene, Blueprint and save loaders, the net protocol, importers. One PR per target, runnable here. `||` | - |
 | **47.2** | A corpus and a fixed-budget fuzz job in CI. | 47.1 |
 | **47.3** | Editor autosave and crash recovery (extends the crash reporter). | - |
 | **47.4** | Crash-dump symbolication. The Windows dump path is Windows-CI-only. | - |
