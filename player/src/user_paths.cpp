@@ -33,10 +33,12 @@ UserPaths Make(const stdfs::path& root) {
 
 } // namespace
 
-UserPaths ResolveUserPaths(const std::string& project_name, const stdfs::path& override_root) {
+UserPaths ResolveUserPaths(const std::string& project_name, const stdfs::path& override_root,
+                           const stdfs::path& platform_root) {
     if (!override_root.empty()) return Make(override_root);
     const std::string env = Env("AETHER_USER_DIR");
     if (!env.empty()) return Make(env);
+    if (!platform_root.empty()) return Make(platform_root);
     const std::string folder = SanitizeProjectFolder(project_name);
     stdfs::path base;
 #if defined(AETHER_PLATFORM_WINDOWS)

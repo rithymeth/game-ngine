@@ -239,7 +239,7 @@ PhysicsScene* Game::PhysicsQueries() {
 Game::Game(GamePackage& package)
     : package_(package), world_(std::make_unique<World>()), settings_(std::make_unique<save::SettingsStore<save::GameSettings>>(std::filesystem::path())) {
     lifecycle_ = std::make_unique<Lifecycle>(*world_, guids_);
-    platform_.Subscribe([this](const platform::LifecycleMessage& message) { OnPlatformEvent(message); });
+    platform_listener_ = platform_lifecycle_->Subscribe([this](const platform::LifecycleMessage& message) { OnPlatformEvent(message); });
     BuildKits();
     localization_ = std::make_unique<loc::Localization>();
     localization_->MakeActive();
@@ -264,6 +264,7 @@ Game::Game(GamePackage& package)
 }
 
 Game::~Game() {
+    if (platform_lifecycle_ && platform_listener_ != 0) platform_lifecycle_->Unsubscribe(platform_listener_);
     EndPlay();
     localization_.reset();
     saves_.reset(); // drains queued saves; its world context points into what's below
@@ -274,6 +275,14 @@ Game::~Game() {
         modules_.back().second->Shutdown();
         modules_.pop_back();
     }
+}
+
+void Game::UsePlatformLifecycle(platform::PlatformLifecycle& lifecycle) {
+    if (platform_lifecycle_ == &lifecycle) return;
+    if (platform_lifecycle_ && platform_listener_ != 0) platform_lifecycle_->Unsubscribe(platform_listener_);
+    platform_lifecycle_ = &lifecycle;
+    platform_listener_ = platform_lifecycle_->Subscribe([this](const platform::LifecycleMessage& message) { OnPlatformEvent(message); });
+    if (platform_lifecycle_->Suspended()) OnPlatformEvent({platform::LifecycleEvent::Suspend, platform::MemoryLevel::Moderate});
 }
 
 void Game::RefreshSaveContext() {
@@ -1101,7 +1110,7 @@ void Game::OnPlatformEvent(const platform::LifecycleMessage& message) {
 
 FrameContext Game::Tick(f32 dt) {
     if (!loop_) BuildFrame();
-    if (platform_.Suspended()) {
+    if (platform_lifecycle_->Suspended()) {
         // In the background the game stands still: no time passes and input is left alone.
         FrameContext frame = last_frame_;
         frame.dt = 0;
