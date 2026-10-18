@@ -3724,6 +3724,13 @@ in-game overlays too.
     context, backtrace and log.
   - Buttons: Copy report, Dismiss, Delete and Dismiss all.
 
+- **Windows minidump symbolication**: `tools/symbolicate/aether_symbolicate`
+  reads the captured x64 thread contexts and stack memory from a `.dmp`,
+  resolves frames with DbgHelp/PDBs from a supplied directory, and writes a
+  sibling `.symbols.txt` file. It reports unresolved addresses when a matching
+  PDB is not available. The current tool supports x64 dumps; ARM64 and x86
+  dumps are reported as unsupported.
+
 ### 23.5 Functional tests
 
 Whole-game scenarios, run headless (`aether/testing/functional_test.h`).
