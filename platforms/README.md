@@ -55,3 +55,25 @@ The pieces Android needs already exist:
   from the native activity.
 
 It's built with the NDK's CMake toolchain file.
+
+## Android build shell
+
+`android/` contains a small Gradle application used to build and package the
+engine's portable native core for `arm64-v8a`. Gradle configures the root CMake
+project through Android's NDK toolchain, then packages the JNI shim and engine
+static libraries in a debug APK. The CI job uploads that APK as an artifact.
+
+Build locally with Android SDK command-line tools, JDK 17, Gradle 9.1.0, NDK
+28.2.13676358, CMake 3.22.1 and API 36 installed:
+
+```sh
+gradle -p platforms/android :app:assembleDebug
+```
+
+For an optionally signed release APK, set `AETHER_ANDROID_KEYSTORE`,
+`AETHER_ANDROID_STORE_PASSWORD`, `AETHER_ANDROID_KEY_ALIAS`, and
+`AETHER_ANDROID_KEY_PASSWORD` in the environment and run
+`gradle -p platforms/android :app:assembleRelease`. Keep keystore material in
+your local secret store or CI secrets; the repository contains no signing keys.
+This first build target packages the native engine core only; it does not yet
+provide Android windowing, Vulkan, or a playable game shell.
