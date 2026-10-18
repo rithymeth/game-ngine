@@ -5,6 +5,7 @@ RUN apt-get update \
         build-essential \
         cmake \
         glslang-dev \
+        glslang-tools \
         libvulkan-dev \
         libxcursor-dev \
         libxi-dev \
