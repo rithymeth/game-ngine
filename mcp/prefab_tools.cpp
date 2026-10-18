@@ -90,6 +90,25 @@ Entity RequireEntity(EditorSession& s, const Json& args, const char* key = "enti
     return e;
 }
 
+ComponentId RequireComponent(const std::string& name) {
+    const ComponentId id = FindComponentIdByName(name);
+    if (id == kInvalidComponentId || id >= RegisteredComponentCount() || GetComponentInfo(id).reflected == nullptr) {
+        throw ToolError("Unknown component \"" + name + "\"");
+    }
+    return id;
+}
+
+EntityGuid RequireGuid(const Json& args, const char* key) {
+    if (!args.contains(key) || !args[key].is_string()) {
+        throw ToolError(std::string("Missing string argument \"") + key + "\" (an entity GUID)");
+    }
+    EntityGuid guid;
+    if (!ParseEntityGuid(args[key].get<std::string>(), guid)) {
+        throw ToolError("Not a valid entity GUID: " + args[key].get<std::string>());
+    }
+    return guid;
+}
+
 Json OverrideJson(const PropertyOverride& o) {
     Json j = {{"entity", o.entity}, {"component", o.component}, {"field_path", o.field_path}};
     const Json value = Json::parse(o.value, nullptr, false);

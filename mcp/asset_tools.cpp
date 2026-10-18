@@ -57,7 +57,7 @@ ContentFileState CaptureContentFile(const fs::path& path) {
 
 void RestoreContentFile(const fs::path& path, const ContentFileState& state) {
     if (state.exists) {
-        const void* data = state.bytes.empty() ? "" : state.bytes.data();
+        const void* data = state.bytes.empty() ? static_cast<const void*>("") : static_cast<const void*>(state.bytes.data());
         if (!aether::fs::WriteFileAtomic(path.string(), data, state.bytes.size())) throw ToolError("Could not restore " + path.string());
         return;
     }
@@ -116,7 +116,7 @@ private:
         }
     }
     void WriteSource() const {
-        const void* data = after_source_.bytes.empty() ? "" : after_source_.bytes.data();
+        const void* data = after_source_.bytes.empty() ? static_cast<const void*>("") : static_cast<const void*>(after_source_.bytes.data());
         if (!aether::fs::WriteFileAtomic(file_.string(), data, after_source_.bytes.size())) throw ToolError("Could not write " + file_.string());
     }
     void Apply(const ContentFileState& source, const ContentFileState& meta, const ContentFileState& rollback_source,
@@ -200,7 +200,7 @@ private:
         return bytes;
     }
     void Restore(const std::vector<u8>& bytes) const {
-        const void* data = bytes.empty() ? "" : bytes.data();
+        const void* data = bytes.empty() ? static_cast<const void*>("") : static_cast<const void*>(bytes.data());
         if (!aether::fs::WriteFileAtomic(meta_file_.string(), data, bytes.size())) throw ToolError("Could not restore " + meta_file_.string());
     }
     void SaveAfter() const {
@@ -2071,7 +2071,7 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
         {"content_write_many",
          "Write 1–64 text files under Content/ as one agent-attributed undoable action. Validates every path and source/metadata snapshot before writing; refuses .ameta files and files or text over 2 MB.",
          Schema({{"files", {{"type", "array"}, {"items", {{"type", "object"}, {"properties", {{"path", {{"type", "string"}}}, {"text", {{"type", "string"}}}}}, {"required", {"path", "text"}}}}},
-                 {"description", "Files to write (1–64); paths are relative to Content/"}}}}, {"files"}),
+                 {"description", "Files to write (1–64); paths are relative to Content/"}}}, {"files"}),
          [host, &session](const Json& args) -> Json {
              OpenProject& p = host->Require();
              if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before writing content");
