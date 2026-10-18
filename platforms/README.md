@@ -77,3 +77,29 @@ For an optionally signed release APK, set `AETHER_ANDROID_KEYSTORE`,
 your local secret store or CI secrets; the repository contains no signing keys.
 This first build target packages the native engine core only; it does not yet
 provide Android windowing, Vulkan, or a playable game shell.
+
+## iOS build shell
+
+`ios/` contains a minimal UIKit app used to cross-compile and link the native
+engine core for arm64 iOS. It is built with CMake's Xcode generator and does not
+require code signing for compile validation. On a Mac with Xcode and CMake:
+
+```sh
+cmake -S . -B build-ios -G Xcode \
+  -DCMAKE_SYSTEM_NAME=iOS \
+  -DCMAKE_OSX_SYSROOT=iphoneos \
+  -DCMAKE_OSX_ARCHITECTURES=arm64 \
+  -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
+  -DAETHER_BUILD_IOS_APP=ON \
+  -DAETHER_BUILD_TESTS=OFF -DAETHER_BUILD_MCP=OFF \
+  -DAETHER_BUILD_SANDBOX=OFF -DAETHER_BUILD_PHYSICS=OFF \
+  -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_EDITOR_UI=OFF \
+  -DAETHER_BUILD_VULKAN=OFF -DAETHER_BUILD_SCRIPTING=OFF \
+  -DAETHER_BUILD_WINDOWING=OFF -DAETHER_BUILD_BENCH=OFF
+cmake --build build-ios --config Release --target aether_ios
+```
+
+The macOS CI job uploads the unsigned `AetherEngine.app` bundle. This validates
+the arm64 engine link and app packaging; distribution signing, launching on an
+iOS device or simulator, and a production window/rendering backend are follow-up
+work.
