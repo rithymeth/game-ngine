@@ -75,15 +75,16 @@ bool SettingOr(const nlohmann::json& settings, const char* name, bool fallback, 
 
 // The loader resolves texture URIs against the .gltf's folder. Re-express
 // them relative to the content root, as asset paths are.
-std::string ContentRelativeTexture(const std::string& resolved, const ImportContext& context,
+std::string ContentRelativeTexture(const std::string& resolved, const stdfs::path& source_path,
+                                   const std::string& asset_path,
                                    std::vector<std::string>& warnings) {
     if (resolved.empty()) {
         return {};
     }
     const stdfs::path from_model =
-        stdfs::path(resolved).lexically_normal().lexically_relative(context.source.parent_path().lexically_normal());
+        stdfs::path(resolved).lexically_normal().lexically_relative(source_path.parent_path().lexically_normal());
     const stdfs::path in_content =
-        (stdfs::path(context.record.path).parent_path() / from_model).lexically_normal();
+        (stdfs::path(asset_path).parent_path() / from_model).lexically_normal();
     const std::string text = in_content.generic_string();
     if (from_model.empty() || text.empty() || text.rfind("..", 0) == 0) {
         warnings.push_back("Texture " + resolved + " is outside the content folder; its path is kept as-is");
@@ -187,16 +188,13 @@ nlohmann::json ModelImporter::DefaultSettings() const {
     return {{"import_materials", true}, {"import_animations", true}};
 }
 
-ImportResult ModelImporter::Import(const ImportContext& context) const {
-    ImportResult result;
-    const bool import_materials = SettingOr(context.settings, "import_materials", true, result.warnings);
-    const bool import_animations = SettingOr(context.settings, "import_animations", true, result.warnings);
+namespace {
 
-    GltfScene scene;
-    if (!LoadGltf(context.source.string(), scene)) {
-        result.error = "Couldn't load the glTF file (see the log for details)";
-        return result;
-    }
+ImportResult ImportScene(const GltfScene& scene, const nlohmann::json& settings,
+                         const stdfs::path& source_path, const std::string& asset_path) {
+    ImportResult result;
+    const bool import_materials = SettingOr(settings, "import_materials", true, result.warnings);
+    const bool import_animations = SettingOr(settings, "import_animations", true, result.warnings);
 
     ModelData model;
 
@@ -212,11 +210,11 @@ ImportResult ModelImporter::Import(const ImportContext& context) const {
             material.occlusion_strength = source.occlusion_strength;
             material.alpha_cutoff = source.alpha_cutoff;
             material.alpha_mode = source.alpha_mode;
-            material.base_color_texture = ContentRelativeTexture(source.base_color_texture, context, result.warnings);
-            material.normal_texture = ContentRelativeTexture(source.normal_texture, context, result.warnings);
+            material.base_color_texture = ContentRelativeTexture(source.base_color_texture, source_path, asset_path, result.warnings);
+            material.normal_texture = ContentRelativeTexture(source.normal_texture, source_path, asset_path, result.warnings);
             material.metallic_roughness_texture =
-                ContentRelativeTexture(source.metallic_roughness_texture, context, result.warnings);
-            material.occlusion_texture = ContentRelativeTexture(source.occlusion_texture, context, result.warnings);
+                ContentRelativeTexture(source.metallic_roughness_texture, source_path, asset_path, result.warnings);
+            material.occlusion_texture = ContentRelativeTexture(source.occlusion_texture, source_path, asset_path, result.warnings);
             model.materials.push_back(Key("material", i));
             result.sub_assets.push_back({model.materials.back(), "Material", reflect::SaveBinary(material), {}});
         }
@@ -306,6 +304,31 @@ ImportResult ModelImporter::Import(const ImportContext& context) const {
     result.data = reflect::SaveBinary(model);
     result.ok = true;
     return result;
+}
+
+} // namespace
+
+ImportResult ModelImporter::Import(const ImportContext& context) const {
+    GltfScene scene;
+    if (!LoadGltf(context.source.string(), scene)) {
+        ImportResult result;
+        result.error = "Couldn't load the glTF file (see the log for details)";
+        return result;
+    }
+    return ImportScene(scene, context.settings, context.source, context.record.path);
+}
+
+ImportResult ModelImporter::ImportFromMemory(std::span<const u8> bytes, const nlohmann::json& settings) const {
+    GltfScene scene;
+    if (!LoadGltfFromMemory(bytes, scene)) {
+        ImportResult result;
+        result.error = "Couldn't load the self-contained glTF document";
+        return result;
+    }
+    // The memory loader rejects filesystem URIs. These stable placeholder paths
+    // preserve the normal content-relative conversion for any future in-memory
+    // texture representation without allowing disk access.
+    return ImportScene(scene, settings, stdfs::path("model.gltf"), "model.gltf");
 }
 
 } // namespace aether::assets
