@@ -1,5 +1,11 @@
 # Aether documentation
 
+The offline documentation site is generated from this directory and the
+engine reflection registry. Build `aether_docs_site` with CMake, or run
+`aether_docgen --site build/docs-site --docs docs` from the repository root.
+Open `build/docs-site/index.html` in a browser; the generated site works
+without a server or network connection.
+
 | Document | What it's for |
 |---|---|
 | [ROADMAP.md](ROADMAP.md) | The overall plan: Phases 6–48, including M7's Aether 1.0 production gate and the improvement-only M8 milestone |
