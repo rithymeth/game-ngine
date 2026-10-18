@@ -888,15 +888,40 @@ struct SceneRenderer::Impl {
                     if (i < 4) text(std::to_string(static_cast<i32>(std::round(volumes[i] * 100))) + "%",
                                     mx + 366, my + 72 + i * 42.0f, 17, cyan, 70);
                 }
+            } else if (menu_state == 3) {
+                const std::vector<Game::RebindableInput> bindings = game.RebindableInputs();
+                const i32 binding_count = static_cast<i32>(bindings.size());
+                const i32 item_count = binding_count + 2; // reset all, back
+                const i32 first = std::min(std::max(0, menu_row - 5), std::max(0, item_count - 6));
+                for (i32 visible = 0; visible < 6 && first + visible < item_count; ++visible) {
+                    const i32 index = first + visible;
+                    const f32 y = my + 66 + visible * 36.0f;
+                    if (index == menu_row) solid(mx + 20, y, 440, 32, dim);
+                    if (index < binding_count) {
+                        const Game::RebindableInput& binding = bindings[static_cast<usize>(index)];
+                        std::string label = binding.context + " / " + binding.action;
+                        if (binding.slot > 0) label += " [" + std::to_string(binding.slot + 1) + "]";
+                        text(label, mx + 30, y + 7, 14, index == menu_row ? cyan : pale, 285);
+                        std::string key = input::KeyName(binding.current_key);
+                        if (binding.current_key != binding.default_key) key += " *";
+                        text(key, mx + 330, y + 7, 14, cyan, 112);
+                    } else {
+                        const char* label = index == binding_count ? "RESET ALL TO DEFAULTS" : "BACK";
+                        text(label, mx + 30, y + 7, 14, index == menu_row ? cyan : pale, 400);
+                    }
+                }
             } else {
                 const char* rows[] = {"WASD / LEFT STICK: MOVE", "MOUSE / RIGHT STICK: LOOK", "LEFT CLICK / RT: FIRE",
                     campaign_act > 0 ? "1-5 WEAPONS / SHIFT DASH / Q PULSE" : "1 2 3 / D-PAD: WEAPONS", "R / X: RELOAD    SPACE / A: JUMP", "E / B: INTERACT    F5: CHECKPOINT"};
                 for (i32 i = 0; i < 6; ++i) text(rows[i], mx + 24, my + 73 + i * 35.0f, 15, pale, 432);
             }
-            text(settings_status == -1 ? "SETTINGS SAVE FAILED" : settings_status == -2 ? "NO CHECKPOINT YET" :
+            text(settings_status == 3 ? "PRESS A KEY OR PAD BUTTON  ·  ESC CANCEL" :
+                 settings_status == 2 ? "SHARED BINDING SAVED" :
+                 settings_status == -1 ? "SETTINGS SAVE FAILED" : settings_status == -2 ? "NO CHECKPOINT YET" :
                  settings_status == 1 ? "SETTINGS SAVED" : "SIMULATION PAUSED",
                  mx + 24, my + 310, 13, settings_status < 0 ? red : muted, 430);
-            text(menu_state == 2 ? "LEFT/RIGHT ADJUST   ESC BACK" : "ARROWS SELECT   ENTER CONFIRM   ESC BACK",
+            text(menu_state == 2 ? "LEFT/RIGHT ADJUST   ESC BACK" : menu_state == 3 ?
+                 "UP/DOWN SELECT  ENTER REBIND  DEL RESET  ESC BACK" : "ARROWS SELECT   ENTER CONFIRM   ESC BACK",
                  mx + 24, my + 344, 12, muted, 435);
         }
         SubmitHudQuads(commands, list, width, height);
