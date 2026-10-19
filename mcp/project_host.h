@@ -91,6 +91,61 @@ inline std::string CleanRelative(const std::string& path) {
     return s;
 }
 
+// Resolve a content-relative path only when every existing component is a
+// normal directory or file. Reject symlinks before reads or writes can follow
+// them outside the project. A missing suffix is allowed for new paths.
+inline fs::path ContentPath(OpenProject& project, const std::string& relative) {
+    const std::string rel = CleanRelative(relative);
+    if (rel.empty()) throw ToolError("Path must name a file under Content/");
+    std::error_code ec;
+    const fs::path root = fs::canonical(project.paths.content, ec);
+    if (ec) throw ToolError("Could not resolve Content/: " + ec.message());
+    const fs::path relative_path(rel);
+    fs::path current = root;
+    for (auto part = relative_path.begin(); part != relative_path.end(); ++part) {
+        current /= *part;
+        auto next = part;
+        ++next;
+        const fs::file_status status = fs::symlink_status(current, ec);
+        if (ec == std::errc::no_such_file_or_directory) return root / relative_path;
+        if (ec) throw ToolError("Could not inspect Content path " + current.string() + ": " + ec.message());
+        if (fs::is_symlink(status)) throw ToolError("Content paths cannot traverse symbolic links: " + rel);
+        if (status.type() == fs::file_type::not_found) return root / relative_path;
+        if (next != relative_path.end() && !fs::is_directory(status)) {
+            throw ToolError("A parent of the Content path is not a folder: " + rel);
+        }
+    }
+    return root / relative_path;
+}
+
+inline fs::path ContentFile(OpenProject& project, const std::string& relative) {
+    const fs::path path = ContentPath(project, relative);
+    std::error_code ec;
+    const fs::file_status status = fs::symlink_status(path, ec);
+    if (!ec && status.type() != fs::file_type::not_found && !fs::is_regular_file(status)) {
+        throw ToolError("Content path is not a regular file: " + relative);
+    }
+    if (ec && ec != std::errc::no_such_file_or_directory) throw ToolError("Could not inspect Content path " + path.string() + ": " + ec.message());
+    return path;
+}
+
+inline fs::path ContentDirectory(OpenProject& project, const std::string& relative) {
+    if (CleanRelative(relative).empty()) {
+        std::error_code ec;
+        const fs::path root = fs::canonical(project.paths.content, ec);
+        if (ec) throw ToolError("Could not resolve Content/: " + ec.message());
+        return root;
+    }
+    const fs::path path = ContentPath(project, relative);
+    std::error_code ec;
+    const fs::file_status status = fs::symlink_status(path, ec);
+    if (!ec && status.type() != fs::file_type::not_found && !fs::is_directory(status)) {
+        throw ToolError("Content path is not a folder: " + relative);
+    }
+    if (ec && ec != std::errc::no_such_file_or_directory) throw ToolError("Could not inspect Content path " + path.string() + ": " + ec.message());
+    return path;
+}
+
 inline const AssetRecord& FindAsset(OpenProject& p, const std::string& key) {
     AssetGuid guid;
     if (assets::ParseAssetGuid(key, guid)) {

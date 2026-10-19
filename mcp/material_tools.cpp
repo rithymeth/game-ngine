@@ -32,7 +32,7 @@ Json ReadJsonArg(AssetHost& host, const Json& args, const char* def_key, const c
     if (args.contains(file_key)) {
         const std::string name = RequireString(args, file_key);
         fs::path path(name);
-        if (!path.is_absolute()) path = host.Require().paths.content / CleanRelative(name);
+        if (!path.is_absolute()) path = ContentFile(host.Require(), name);
         std::ifstream in(path, std::ios::binary);
         if (!in) throw ToolError("Can't read " + path.string());
         std::stringstream ss;
