@@ -3,6 +3,8 @@
 // entity count returning to where it started) broke. Heap bytes are counted exactly: every allocation carries a
 // size header, so frees subtract what the matching allocation added.
 
+#include "aether/audio/mixer.h"
+#include "aether/audio/sound.h"
 #include "aether/core/log.h"
 #include "aether/ecs/world.h"
 #include "aether/net/replication.h"
@@ -188,7 +190,28 @@ int main() {
                   },
                   nullptr, 30};
 
-    Scenario* scenarios[] = {&churn, &stream, &repl};
+    // 4. Audio: mix and retire a burst of looping voices repeatedly. This is
+    // device-independent, so it also exercises the audio heap gate in headless CI.
+    audio::Mixer mixer;
+    mixer.AddDefaultBuses();
+    const audio::SoundWave tone = audio::GenerateTone(440.0f, 0.25f);
+    std::vector<f32> mixed(256);
+    Scenario audio_churn{"audio: voice allocation and retirement",
+                         nullptr,
+                         [&] {
+                             std::vector<audio::VoiceId> voices;
+                             voices.reserve(64);
+                             audio::PlayParams params;
+                             params.loop = true;
+                             for (int i = 0; i < 64; ++i) voices.push_back(mixer.Play(&tone, params));
+                             mixer.Render(mixed.data(), 128);
+                             for (audio::VoiceId voice : voices) mixer.Stop(voice);
+                             mixer.Render(mixed.data(), 128);
+                             return mixer.VoiceCount() == 0;
+                         },
+                         nullptr, 50};
+
+    Scenario* scenarios[] = {&churn, &stream, &repl, &audio_churn};
     for (Scenario* s : scenarios) Run(*s, scale);
     // Tear the long-lived objects down inside main so nothing outlives the counter.
     std::printf("%s\n", g_failures == 0 ? "soak passed" : "soak FAILED");
