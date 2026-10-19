@@ -7,6 +7,7 @@
 #include "aether/audio/sound.h"
 #include "aether/core/log.h"
 #include "aether/ecs/world.h"
+#include "aether/gfx/rhi/device.h"
 #include "aether/net/replication.h"
 #include "aether/scene/components.h"
 #include "aether/scene/test_world.h"
@@ -211,7 +212,44 @@ int main() {
                          },
                          nullptr, 50};
 
-    Scenario* scenarios[] = {&churn, &stream, &repl, &audio_churn};
+#if defined(_WIN32)
+    // The D3D12 device returns bindless slots as textures are destroyed. Keep
+    // creating and releasing real GPU resources and verify the same slots are
+    // reused instead of the per-device table growing throughout the soak.
+    std::unique_ptr<gfx::rhi::IDevice> gpu_device;
+    constexpr u8 kPixel[4] = {80, 160, 240, 255};
+    std::vector<u32> gpu_slots;
+    Scenario gpu_churn{"gpu: D3D12 texture lifetime",
+                       [&] {
+                           gpu_device = gfx::rhi::CreateDevice(gfx::rhi::Backend::D3D12, false);
+                           if (!gpu_device) std::abort();
+                       },
+                       [&] {
+                           std::vector<gfx::rhi::SampledTextureHandle> textures;
+                           textures.reserve(4);
+                           for (int i = 0; i < 4; ++i) {
+                               const auto texture = gpu_device->CreateTexture(1, 1, kPixel);
+                               if (!texture.IsValid()) return false;
+                               textures.push_back(texture);
+                           }
+                           std::vector<u32> slots;
+                           slots.reserve(textures.size());
+                           for (const auto texture : textures) slots.push_back(texture.index);
+                           std::sort(slots.begin(), slots.end());
+                           if (gpu_slots.empty()) gpu_slots = slots;
+                           else if (gpu_slots != slots) return false;
+                           for (const auto texture : textures) {
+                               if (!gpu_device->DestroyTexture(texture)) return false;
+                           }
+                           return true;
+                       },
+                       [&] { gpu_device.reset(); }, 25};
+#endif
+
+    std::vector<Scenario*> scenarios = {&churn, &stream, &repl, &audio_churn};
+#if defined(_WIN32)
+    scenarios.push_back(&gpu_churn);
+#endif
     for (Scenario* s : scenarios) Run(*s, scale);
     // Tear the long-lived objects down inside main so nothing outlives the counter.
     std::printf("%s\n", g_failures == 0 ? "soak passed" : "soak FAILED");
