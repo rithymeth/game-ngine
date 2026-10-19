@@ -155,6 +155,41 @@ AETHER_TEST(Pak_FilesOnDisk) {
     std::filesystem::remove_all(dir);
 }
 
+AETHER_TEST(Pak_AddDirectoryDoesNotFollowSymlinks) {
+    namespace fs = std::filesystem;
+    const fs::path root = TempDir("symlinks");
+    const fs::path content = root / "content";
+    const fs::path outside = root / "outside";
+    WriteText(content / "inside.txt", "inside");
+    WriteText(outside / "secret.txt", "outside file");
+
+    std::error_code ec;
+    fs::create_symlink(outside / "secret.txt", content / "file-link.txt", ec);
+    const bool file_link_created = !ec;
+    if (file_link_created) CHECK(fs::is_symlink(content / "file-link.txt"));
+    ec.clear();
+    fs::create_directory_symlink(outside, content / "directory-link", ec);
+    const bool directory_link_created = !ec;
+    if (directory_link_created) CHECK(fs::is_symlink(content / "directory-link"));
+
+    PakWriter writer;
+    CHECK(writer.AddDirectory(content.string(), "mount") == 1);
+    PakReader reader;
+    CHECK(reader.OpenMemory(writer.Build()));
+    CHECK(reader.Contains("mount/inside.txt"));
+    CHECK(!reader.Contains("mount/file-link.txt") && !reader.Contains("mount/directory-link/secret.txt"));
+
+    // A directory symlink passed as the mount root is rejected as well.
+    const fs::path root_link = root / "root-link";
+    ec.clear();
+    fs::create_directory_symlink(content, root_link, ec);
+    if (!ec) CHECK(PakWriter{}.AddDirectory(root_link.string(), "mount") == 0);
+    // Some Windows configurations do not allow creating symlinks; the regular
+    // file path assertion above still checks ordinary directory handling.
+    (void)file_link_created;
+    (void)directory_link_created;
+}
+
 AETHER_TEST(Pak_VirtualFileSystemOverrides) {
     const std::string dir = TempDir("vfs");
     const std::filesystem::path root(dir);
