@@ -1,4 +1,5 @@
 #define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
 #include <windows.h>
 #include <dbghelp.h>
 #include <minidumpapiset.h>
@@ -100,7 +101,7 @@ std::wstring DumpString(const DumpView& dump, ULONG32 rva) {
 
 bool LoadMemoryRanges(DumpView& dump) {
     void* stream = nullptr;
-    ULONG32 stream_size = 0;
+    ULONG stream_size = 0;
     if (MiniDumpReadDumpStream(dump.base, MemoryListStream, nullptr, &stream, &stream_size) &&
         stream_size >= offsetof(MINIDUMP_MEMORY_LIST, MemoryRanges)) {
         const auto* list = static_cast<const MINIDUMP_MEMORY_LIST*>(stream);
@@ -240,7 +241,7 @@ int Symbolicate(const std::filesystem::path& dump_path, const std::filesystem::p
     struct SymCleanup { HANDLE process; ~SymCleanup() { ::SymCleanup(process); } } cleanup{process};
 
     void* stream = nullptr;
-    ULONG32 stream_size = 0;
+    ULONG stream_size = 0;
     if (!MiniDumpReadDumpStream(dump.base, ModuleListStream, nullptr, &stream, &stream_size)) {
         std::wcerr << L"The minidump does not include a module list.\n";
         return 1;
