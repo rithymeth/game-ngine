@@ -227,7 +227,7 @@ void RegisterPrefabTools(McpServer& server, std::shared_ptr<AssetHost> host, Edi
              const Entity root = RequireEntity(session, args);
              const std::string rel = CleanRelative(RequireString(args, "path"));
              if (fs::path(rel).extension() != ".aprefab") throw ToolError("A prefab's path ends in .aprefab");
-             const fs::path file = p.paths.content / rel;
+             const fs::path file = ContentFile(p, rel);
              std::error_code ec;
              if (fs::exists(file, ec) && !OptBool(args, "overwrite", false)) throw ToolError(rel + " exists; pass overwrite true to replace it");
              const PrefabData data = MakePrefab(session.world, session.guids, root);

@@ -610,7 +610,7 @@ void RegisterKitTools(McpServer& server, std::shared_ptr<detail::AssetHost> host
         const std::string error = t.check(DefinitionText(args), canonical);
         if (!error.empty()) throw ToolError("Invalid " + t.name + ": " + error);
 
-        const fs::path file = p.paths.content / rel;
+        const fs::path file = ContentFile(p, rel);
         const FileState before_source = CaptureFile(file);
         if (before_source.exists && !OptBool(args, "overwrite", false)) throw ToolError(rel + " already exists (pass overwrite)");
         const FileState before_meta = CaptureFile(fs::path(file.string() + assets::AssetMeta::kExtension));

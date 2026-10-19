@@ -66,7 +66,7 @@ vfx::ParticleSystemAsset ReadSystem(AssetHost& host, const Json& args, std::stri
     } else if (args.contains("asset")) {
         OpenProject& p = host.Require();
         const std::string rel = CleanRelative(RequireString(args, "asset"));
-        const fs::path file = p.paths.content / rel;
+        const fs::path file = ContentFile(p, rel);
         std::error_code ec;
         if (rel.empty() || file.extension() != kExtension || !fs::is_regular_file(file, ec)) throw ToolError("No particle effect \"" + RequireString(args, "asset") + "\" (an .avfx under Content/)");
         text = ReadAll(file);
@@ -210,7 +210,7 @@ void RegisterVfxTools(McpServer& server, std::shared_ptr<AssetHost> host) {
              const vfx::ParticleSystemAsset system = ReadSystem(*host, {{"definition", args["definition"]}}, nullptr);
              const std::vector<vfx::EmitterDiagnostic> diagnostics = vfx::ValidateParticleSystem(system);
              if (HasError(diagnostics)) throw ToolError("Invalid effect: " + DiagnosticsJson(diagnostics).dump());
-             const fs::path file = p.paths.content / rel;
+             const fs::path file = ContentFile(p, rel);
              std::error_code ec;
              if (fs::exists(file, ec) && !OptBool(args, "overwrite", false)) throw ToolError(rel + " already exists (pass overwrite)");
              fs::create_directories(file.parent_path(), ec);
@@ -238,7 +238,7 @@ void RegisterVfxTools(McpServer& server, std::shared_ptr<AssetHost> host) {
                             vfx::ParticleSystemAsset system;
                             std::string error;
                             Json row = {{"path", rel}};
-                            if (!vfx::LoadParticleSystem(ReadAll(p.paths.content / rel), system, &error)) {
+                            if (!vfx::LoadParticleSystem(ReadAll(ContentFile(p, rel)), system, &error)) {
                                 row["valid"] = false;
                                 row["error"] = error;
                             } else {
@@ -265,7 +265,7 @@ void RegisterVfxTools(McpServer& server, std::shared_ptr<AssetHost> host) {
              for (const std::string& rel : effects) {
                  vfx::ParticleSystemAsset system;
                  std::string error;
-                 if (!vfx::LoadParticleSystem(ReadAll(p.paths.content / rel), system, &error)) {
+                 if (!vfx::LoadParticleSystem(ReadAll(ContentFile(p, rel)), system, &error)) {
                      problems.push_back({{"path", rel}, {"problem", error}});
                      continue;
                  }
