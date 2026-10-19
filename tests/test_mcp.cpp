@@ -627,6 +627,48 @@ AETHER_TEST(Mcp_ToolsCanReturnImages) {
 #include "aether/assets/image.h"
 #include "aether/project/project.h"
 
+AETHER_TEST(Mcp_ContentFilesCannotTraverseSymlinks) {
+    namespace stdfs = std::filesystem;
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_content_symlink_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+
+    ProjectPaths paths;
+    std::string error;
+    AETHER_CHECK(CreateProject(dir, "McpContentSymlinks", &paths, &error));
+    Harness h;
+    auto project = MakeAssetHost();
+    RegisterAssetTools(h.server, project, h.session);
+    AETHER_CHECK(!h.Call("project_open", {{"project_file", paths.file.string()}}).is_error);
+
+    // Assert the boundary whenever the OS permits creating symlinks.
+    const stdfs::path outside = dir / "outside";
+    stdfs::create_directories(outside);
+    {
+        std::ofstream secret(outside / "secret.txt");
+        secret << "keep me private";
+    }
+    std::error_code symlink_error;
+    stdfs::create_directory_symlink(outside, paths.content / "linked", symlink_error);
+    if (!symlink_error) {
+        AETHER_CHECK(h.Call("content_read", {{"path", "linked/secret.txt"}}).is_error);
+        AETHER_CHECK(h.Call("content_write", {{"path", "linked/secret.txt"}, {"text", "overwritten"}}).is_error);
+    }
+    symlink_error.clear();
+    stdfs::create_symlink(outside / "secret.txt", paths.content / "secret-link.txt", symlink_error);
+    if (!symlink_error) {
+        AETHER_CHECK(h.Call("content_read", {{"path", "secret-link.txt"}}).is_error);
+        AETHER_CHECK(h.Call("content_write", {{"path", "secret-link.txt"}, {"text", "overwritten"}}).is_error);
+    }
+    std::string private_text;
+    {
+        std::ifstream private_file(outside / "secret.txt");
+        std::getline(private_file, private_text);
+    }
+    AETHER_CHECK(private_text == "keep me private");
+    stdfs::remove_all(dir);
+}
+
 AETHER_TEST(Mcp_AssetToolsImportMoveAndCookAProject) {
     namespace stdfs = std::filesystem;
     const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_asset_test";
@@ -662,29 +704,6 @@ AETHER_TEST(Mcp_AssetToolsImportMoveAndCookAProject) {
     AETHER_CHECK(h.Call("content_write", {{"path", "../escape.json"}, {"text", "{}"}}).is_error);
     AETHER_CHECK(h.Call("content_write", {{"path", "Scenes/x.ameta"}, {"text", "{}"}}).is_error);
     AETHER_CHECK(h.Call("content_read", {{"path", "../../etc/passwd"}}).is_error);
-
-    // Content paths cannot follow a link out of the project, for either reads
-    // or writes. Symlinks are unavailable in some local Windows setups, so
-    // assert the boundary whenever the OS lets the fixture create them.
-    const stdfs::path outside = dir / "outside";
-    stdfs::create_directories(outside);
-    std::ofstream(outside / "secret.txt") << "keep me private";
-    std::error_code symlink_error;
-    stdfs::create_directory_symlink(outside, paths.content / "linked", symlink_error);
-    if (!symlink_error) {
-        AETHER_CHECK(h.Call("content_read", {{"path", "linked/secret.txt"}}).is_error);
-        AETHER_CHECK(h.Call("content_write", {{"path", "linked/secret.txt"}, {"text", "overwritten"}}).is_error);
-    }
-    symlink_error.clear();
-    stdfs::create_symlink(outside / "secret.txt", paths.content / "secret-link.txt", symlink_error);
-    if (!symlink_error) {
-        AETHER_CHECK(h.Call("content_read", {{"path", "secret-link.txt"}}).is_error);
-        AETHER_CHECK(h.Call("content_write", {{"path", "secret-link.txt"}, {"text", "overwritten"}}).is_error);
-    }
-    std::string private_text;
-    std::ifstream private_file(outside / "secret.txt");
-    std::getline(private_file, private_text);
-    AETHER_CHECK(private_text == "keep me private");
 
     const Json scene = {{"$type", "Scene"}, {"$version", 1},
                         {"entities", Json::array({{{"components", {{"Transform", {{"position", {1, 2, 3}}, {"rotation", {0, 0, 0, 1}}, {"scale", {1, 1, 1}}}}}}}})}};
