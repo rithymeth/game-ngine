@@ -166,12 +166,17 @@ jobs:
         run: |
           xvfb-run -a -s "-screen 0 1920x1080x24" ./build/editor/shell/aether_editor_shell
           test -s editor-screenshot-linux.png
+      - name: Verify and record the editor screenshot
+        if: matrix.name == 'GCC' && always()
+        run: python3 tools/verify_editor_capture.py editor-screenshot-linux.png --platform linux-x64 --manifest editor-capture-linux.json
       - name: Upload the editor screenshot
         if: matrix.name == 'GCC' && always()
         uses: actions/upload-artifact@v4
         with:
           name: editor-screenshot-linux
-          path: editor-screenshot-linux.png
+          path: |
+            editor-screenshot-linux.png
+            editor-capture-linux.json
           if-no-files-found: ignore
       - name: Keep the functional report
         if: always()
@@ -245,12 +250,17 @@ jobs:
           AETHER_EDITOR_MAX_FRAMES: "10"
           AETHER_EDITOR_SCREENSHOT: ${{ github.workspace }}/editor-screenshot-macos.png
         run: ./build/editor/shell/aether_editor_shell
+      - name: Verify and record the editor screenshot
+        if: always()
+        run: python3 tools/verify_editor_capture.py editor-screenshot-macos.png --platform macos-arm64 --manifest editor-capture-macos.json --optional
       - name: Upload the editor screenshot
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: editor-screenshot-macos
-          path: editor-screenshot-macos.png
+          path: |
+            editor-screenshot-macos.png
+            editor-capture-macos.json
           if-no-files-found: ignore
       - name: Keep the functional report
         if: always()
@@ -516,12 +526,17 @@ jobs:
           ./AetherEditorLegacy.exe
           Pop-Location
           if (-not (Test-Path editor-screenshot.png)) { throw "the editor wrote no screenshot" }
+      - name: Verify and record the editor screenshot
+        if: always()
+        run: python tools/verify_editor_capture.py editor-screenshot.png --platform windows-x64 --manifest editor-capture-windows.json --optional
       - name: Upload the screenshot
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: editor-screenshot-windows
-          path: editor-screenshot.png
+          path: |
+            editor-screenshot.png
+            editor-capture-windows.json
           if-no-files-found: ignore
       - name: Keep the functional report
         if: always()
