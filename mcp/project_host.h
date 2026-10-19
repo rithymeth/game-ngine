@@ -91,15 +91,25 @@ inline std::string CleanRelative(const std::string& path) {
     return s;
 }
 
+inline fs::path CanonicalContentRoot(OpenProject& project) {
+    std::error_code ec;
+    const fs::file_status status = fs::symlink_status(project.paths.content, ec);
+    if (ec) throw ToolError("Could not inspect Content/: " + ec.message());
+    if (fs::is_symlink(status)) throw ToolError("Content/ cannot be a symbolic link");
+    if (!fs::is_directory(status)) throw ToolError("Content/ is not a folder");
+    const fs::path root = fs::canonical(project.paths.content, ec);
+    if (ec) throw ToolError("Could not resolve Content/: " + ec.message());
+    return root;
+}
+
 // Resolve a content-relative path only when every existing component is a
 // normal directory or file. Reject symlinks before reads or writes can follow
 // them outside the project. A missing suffix is allowed for new paths.
 inline fs::path ContentPath(OpenProject& project, const std::string& relative) {
     const std::string rel = CleanRelative(relative);
     if (rel.empty()) throw ToolError("Path must name a file under Content/");
+    const fs::path root = CanonicalContentRoot(project);
     std::error_code ec;
-    const fs::path root = fs::canonical(project.paths.content, ec);
-    if (ec) throw ToolError("Could not resolve Content/: " + ec.message());
     const fs::path relative_path(rel);
     fs::path current = root;
     for (auto part = relative_path.begin(); part != relative_path.end(); ++part) {
@@ -131,10 +141,7 @@ inline fs::path ContentFile(OpenProject& project, const std::string& relative) {
 
 inline fs::path ContentDirectory(OpenProject& project, const std::string& relative) {
     if (CleanRelative(relative).empty()) {
-        std::error_code ec;
-        const fs::path root = fs::canonical(project.paths.content, ec);
-        if (ec) throw ToolError("Could not resolve Content/: " + ec.message());
-        return root;
+        return CanonicalContentRoot(project);
     }
     const fs::path path = ContentPath(project, relative);
     std::error_code ec;
