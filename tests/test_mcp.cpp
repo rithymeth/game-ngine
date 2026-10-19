@@ -371,7 +371,11 @@ AETHER_TEST(Mcp_SystemsRunOnlyWhilePlaying) {
     AETHER_CHECK(stepped.value["fixed_steps"] == 30);
 
     AETHER_CHECK(h.Call("step_simulation", {{"frames", 0}}).is_error);
+    AETHER_CHECK(h.Call("step_simulation", {{"frames", 10001}}).is_error);
+    AETHER_CHECK(h.Call("step_simulation", {{"frames", 1.5}}).is_error);
     AETHER_CHECK(h.Call("step_simulation", {{"dt", -1}}).is_error);
+    AETHER_CHECK(h.Call("step_simulation", {{"dt", 0}}).is_error);
+    AETHER_CHECK(h.Call("step_simulation", {{"dt", 1.01}}).is_error);
     AETHER_CHECK(h.Call("set_system_enabled", {{"system", "NoSuchSystem"}, {"enabled", false}}).is_error);
     AETHER_CHECK(!h.Call("set_system_enabled", {{"system", systems[0]["name"]}, {"enabled", false}}).is_error);
     AETHER_CHECK(h.Call("list_systems").value[0]["enabled"] == false);
