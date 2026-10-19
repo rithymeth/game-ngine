@@ -129,6 +129,11 @@ jobs:
         run: ./build/tools/functional/aether_functional --quiet --junit functional-results.xml
       - name: Registered regression tests
         run: ctest --test-dir build --output-on-failure --parallel 4 -R "^(fuzz_replay_.*|module_graph_catches_a_cycle|api_stability_annotations|api_freeze_checks|frozen_api_game|production_gate_table|m8_gate_table)$"
+      - name: Long-running heap soak
+        if: matrix.name == 'GCC'
+        env:
+          AETHER_SOAK_SCALE: "4"
+        run: ctest --test-dir build --output-on-failure -R "^soak$"
       - name: Benchmarks
         # Phase 38 steps 1 and 6: retain a provenance-tagged report artifact, and compare with the checked-in
         # baseline (bench/baseline.json) by calibration-normalized time. Comparison is advisory (continue-on-error)
@@ -298,6 +303,10 @@ jobs:
         run: .\build\tools\functional\Release\aether_functional.exe --quiet --junit functional-results.xml
       - name: Registered regression tests
         run: ctest --test-dir build -C Release --output-on-failure --parallel 4 -R "^(fuzz_replay_.*|module_graph_catches_a_cycle|api_stability_annotations|api_freeze_checks|frozen_api_game|production_gate_table|m8_gate_table)$"
+      - name: Long-running heap soak
+        env:
+          AETHER_SOAK_SCALE: "4"
+        run: ctest --test-dir build -C Release --output-on-failure -R "^soak$"
       - name: Cook and launch the AETHER-01 proof project
         shell: pwsh
         run: |
