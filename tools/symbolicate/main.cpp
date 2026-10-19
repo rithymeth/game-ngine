@@ -219,7 +219,7 @@ int Symbolicate(const std::filesystem::path& dump_path, const std::filesystem::p
     }
 
     MINIDUMP_SYSTEM_INFO* system = nullptr;
-    ULONG32 system_size = 0;
+    ULONG system_size = 0;
     if (!MiniDumpReadDumpStream(dump.base, SystemInfoStream, nullptr, reinterpret_cast<void**>(&system), &system_size) ||
         !LoadMemoryRanges(dump)) {
         std::wcerr << L"The input is not a readable minidump with captured memory.\n";
