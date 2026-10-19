@@ -1873,6 +1873,7 @@ QWidget* MakeInspector(QScrollArea*& inspector_scroll, QStackedWidget*& inspecto
     layout->addWidget(selection_status);
     entity_name = new QLineEdit;
     entity_name->setObjectName("entityNameField");
+    entity_name->setAccessibleName("Selected entity name");
     entity_name->setPlaceholderText("Entity name");
     entity_name->setToolTip("Rename the selected scene entity");
     entity_name->setEnabled(false);
