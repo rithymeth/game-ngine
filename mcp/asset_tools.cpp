@@ -1043,7 +1043,28 @@ Json OpenProjectFile(AssetHost& host, const fs::path& file) {
 fs::path ContentFile(OpenProject& p, const std::string& relative) {
     const std::string rel = CleanRelative(relative);
     if (rel.empty()) throw ToolError("\"path\" must name a file under Content/");
-    return p.paths.content / rel;
+    std::error_code ec;
+    const fs::path root = fs::canonical(p.paths.content, ec);
+    if (ec) throw ToolError("Could not resolve Content/: " + ec.message());
+    const fs::path relative_path(rel);
+    fs::path current = root;
+    for (auto part = relative_path.begin(); part != relative_path.end(); ++part) {
+        current /= *part;
+        auto next = part;
+        ++next;
+        const fs::file_status status = fs::symlink_status(current, ec);
+        if (ec == std::errc::no_such_file_or_directory) return root / relative_path;
+        if (ec) throw ToolError("Could not inspect Content path " + current.string() + ": " + ec.message());
+        if (fs::is_symlink(status)) throw ToolError("Content paths cannot traverse symbolic links: " + rel);
+        if (status.type() == fs::file_type::not_found) return root / relative_path;
+        if (next != relative_path.end() && !fs::is_directory(status)) {
+            throw ToolError("A parent of the Content path is not a folder: " + rel);
+        }
+        if (next == relative_path.end() && !fs::is_regular_file(status)) {
+            throw ToolError("Content path is not a regular file: " + rel);
+        }
+    }
+    return root / relative_path;
 }
 
 std::string KindOfCookFailure(const cook::CookReport& r) { return r.error.empty() ? "The cook failed" : r.error; }
