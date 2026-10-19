@@ -297,8 +297,8 @@ jobs:
         env:
           AETHER01_INPUT_TRACE: ${{ github.workspace }}/build/aether01-input-trace.json
         run: .\build\tests\Release\aether_tests.exe
-      - name: Qt editor self-test
-        run: .\build\editor\Release\aether_editor.exe --self-test
+      - name: Editor session soak
+        run: .\build\editor\Release\aether_editor.exe --self-test --self-test-repeats 4
       - name: Functional tests
         run: .\build\tools\functional\Release\aether_functional.exe --quiet --junit functional-results.xml
       - name: Registered regression tests
