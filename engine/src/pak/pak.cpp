@@ -285,16 +285,28 @@ bool PakWriter::AddFile(const std::string& path, const std::string& file_on_disk
 usize PakWriter::AddDirectory(const std::string& directory, const std::string& prefix) {
     namespace sfs = std::filesystem;
     std::error_code ec;
-    if (!sfs::is_directory(directory, ec)) return 0;
+    const sfs::path root(directory);
+    const sfs::file_status root_status = sfs::symlink_status(root, ec);
+    if (ec || sfs::is_symlink(root_status) || !sfs::is_directory(root_status)) return 0;
     std::vector<sfs::path> files;
-    for (auto it = sfs::recursive_directory_iterator(directory, ec); !ec && it != sfs::recursive_directory_iterator();
+    for (auto it = sfs::recursive_directory_iterator(root, ec); !ec && it != sfs::recursive_directory_iterator();
          it.increment(ec)) {
-        if (it->is_regular_file(ec)) files.push_back(it->path());
+        const sfs::file_status status = it->symlink_status(ec);
+        if (ec) break;
+        if (sfs::is_symlink(status)) {
+            it.disable_recursion_pending();
+            continue;
+        }
+        if (sfs::is_regular_file(status)) files.push_back(it->path());
     }
     std::sort(files.begin(), files.end()); // deterministic archives
     usize added = 0;
     for (const sfs::path& f : files) {
-        const std::string rel = sfs::relative(f, directory, ec).generic_string();
+        const std::string rel = sfs::relative(f, root, ec).generic_string();
+        if (ec) {
+            ec.clear();
+            continue;
+        }
         if (AddFile(prefix.empty() ? rel : prefix + "/" + rel, f.string())) ++added;
     }
     return added;

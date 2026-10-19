@@ -7506,8 +7506,10 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
     server.AddTool({"step_simulation",
                     "Advance the running simulation by a number of frames (default 1) of dt seconds (default 1/60), "
                     "running every enabled system. Works in play mode and while paused.",
-                    Schema({{"frames", {{"type", "integer"}, {"description", "Frames to run, 1-10000 (default 1)"}}},
-                            {"dt", {{"type", "number"}, {"description", "Seconds per frame (default 1/60)"}}}}),
+                    Schema({{"frames", {{"type", "integer"}, {"minimum", 1}, {"maximum", 10000},
+                                        {"description", "Frames to run, 1-10000 (default 1)"}}},
+                            {"dt", {{"type", "number"}, {"exclusiveMinimum", 0}, {"maximum", 1},
+                                     {"description", "Seconds per frame in (0, 1] (default 1/60)"}}}}),
                     [&s](const Json& args) -> Json {
                         if (!s.sim) throw ToolError("No simulation: call play first");
                         i64 frames = 1;
