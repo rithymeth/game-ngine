@@ -54,6 +54,7 @@
 #endif
 
 #include <QApplication>
+#include <QEvent>
 #include <QAbstractItemView>
 #include <QAction>
 #include <QActionGroup>
@@ -5812,14 +5813,42 @@ int main(int argc, char** argv) {
     if (!aether::CrashHandler::Install(crash_config, &crash_error))
         qWarning() << "Crash reports are unavailable:" << QString::fromStdString(crash_error);
     const auto previous_crash_reports = aether::ListCrashReports(crash_config.directory, true);
-    EditorWindow window;
-    window.SetCrashRecoveryContext(crash_config.directory, !previous_crash_reports.empty());
-    if (app.arguments().contains("--self-test")) {
-        const bool passed = window.RunSelfTest();
+    const QStringList arguments = app.arguments();
+    if (arguments.contains("--self-test")) {
+        int repeats = 1;
+        const int repeat_option = arguments.indexOf("--self-test-repeats");
+        if (repeat_option >= 0) {
+            bool valid_count = false;
+            if (repeat_option + 1 < arguments.size()) repeats = arguments[repeat_option + 1].toInt(&valid_count);
+            if (!valid_count || repeats < 1 || repeats > 16) {
+                qCritical() << "--self-test-repeats requires a count from 1 to 16";
+                aether::CrashHandler::Uninstall();
+                return 2;
+            }
+        }
+
+        const int baseline_widgets = QApplication::allWidgets().size();
+        bool passed = true;
+        for (int repeat = 0; repeat < repeats; ++repeat) {
+            {
+                EditorWindow window;
+                window.SetCrashRecoveryContext(crash_config.directory, !previous_crash_reports.empty());
+                if (!window.RunSelfTest()) passed = false;
+            }
+            QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+            app.processEvents();
+            const int remaining_widgets = QApplication::allWidgets().size();
+            if (remaining_widgets != baseline_widgets) {
+                qCritical() << "Editor session" << (repeat + 1) << "left" << remaining_widgets - baseline_widgets
+                            << "widget(s) alive";
+                passed = false;
+            }
+        }
         aether::CrashHandler::Uninstall();
         return passed ? 0 : 1;
     }
-    const QStringList arguments = app.arguments();
+    EditorWindow window;
+    window.SetCrashRecoveryContext(crash_config.directory, !previous_crash_reports.empty());
     const int project_option = arguments.indexOf("--project");
     if (project_option >= 0 && project_option + 1 < arguments.size())
         window.OpenProjectFile(std::filesystem::path(arguments[project_option + 1].toStdWString()));
