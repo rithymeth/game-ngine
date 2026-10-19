@@ -54,6 +54,7 @@
 #endif
 
 #include <QApplication>
+#include <QAccessible>
 #include <QEvent>
 #include <QAbstractItemView>
 #include <QAction>
@@ -1872,6 +1873,7 @@ QWidget* MakeInspector(QScrollArea*& inspector_scroll, QStackedWidget*& inspecto
     layout->addWidget(selection_status);
     entity_name = new QLineEdit;
     entity_name->setObjectName("entityNameField");
+    entity_name->setAccessibleName("Selected entity name");
     entity_name->setPlaceholderText("Entity name");
     entity_name->setToolTip("Rename the selected scene entity");
     entity_name->setEnabled(false);
@@ -2784,6 +2786,26 @@ public:
             return condition;
         };
         bool passed = true;
+        const auto require_accessible_name = [&require](QWidget* widget, const char* message) {
+            if (!widget) return require(false, message);
+            QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(widget);
+            const QString name = accessible ? accessible->text(QAccessible::Name).trimmed()
+                                            : widget->accessibleName().trimmed();
+            return require(!name.isEmpty(), message);
+        };
+        passed &= require_accessible_name(viewport_, "3D viewport should expose an accessible name");
+        passed &= require_accessible_name(hierarchy_tree_, "World hierarchy should expose an accessible name");
+        passed &= require_accessible_name(hierarchy_filter_, "Hierarchy filter should expose an accessible name");
+        passed &= require_accessible_name(add_entity_button_, "Add entity control should expose an accessible name");
+        passed &= require_accessible_name(duplicate_entity_button_, "Duplicate entity control should expose an accessible name");
+        passed &= require_accessible_name(inspector_name_, "Entity name editor should expose an accessible name");
+        passed &= require_accessible_name(asset_filter_, "Content search should expose an accessible name");
+        passed &= require_accessible_name(asset_view_, "Content asset view should expose an accessible name");
+        passed &= require(hierarchy_tree_ && hierarchy_filter_ && inspector_name_ &&
+                          hierarchy_tree_->focusPolicy() != Qt::NoFocus &&
+                          hierarchy_filter_->focusPolicy() != Qt::NoFocus &&
+                          inspector_name_->focusPolicy() != Qt::NoFocus,
+                          "hierarchy, search and Inspector controls should be keyboard focusable");
         // A modal error dialog would otherwise block the self-test forever on
         // headless/package-validation runners. Surface the dialog as a test
         // failure and dismiss it so the caller can report a useful log.
