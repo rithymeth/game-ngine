@@ -1,28 +1,39 @@
 # Serialized formats, their current version, and what a loader does with a file from another version
-# (Phase 48 step 2, docs/design/UPGRADE_PLAN.md). Checked by tests/test_format_versions.cpp for the JSON formats.
+# (Phase 48 step 2, docs/design/UPGRADE_PLAN.md). Core JSON formats are checked by tests/test_format_versions.cpp;
+# other rows describe version checks in their loaders. "missing/0 accepted" means an unversioned file
+# defaults to version 0 and is read without a migration.
 #
 # format             where                                   version  older file          newer file
-material             renderer/src/material.cpp               1        n/a (first)         refused
-material instance    renderer/src/material_instance.cpp      1        n/a (first)         refused
-level sequence       sequencer/include/.../sequence.h        1        n/a (first)         refused
-montage              animation/src/montage.cpp               1        n/a (first)         refused
-animation graph      animation/src/anim_graph.cpp            1        n/a (first)         refused
-blend space          animation/src/blend_space.cpp           1        n/a (first)         refused
-blueprint            blueprint/src/graph.cpp                 1        n/a (first)         refused
-prefab               engine/src/scene/prefab.cpp             1        n/a (first)         refused
-scene (JSON)         engine/src/scene/serialization.cpp      1        n/a (first)         refused (any other version)
+material             renderer/src/material.cpp               1        missing/0 accepted  refused
+material function    renderer/src/material.cpp               1        missing/0 accepted  refused
+material instance    renderer/src/material_instance.cpp      1        missing/0 accepted  refused
+level sequence       sequencer/src/sequence.cpp              1        refused             refused
+montage              animation/src/montage.cpp               1        missing/0 accepted  refused
+animation graph      animation/src/anim_graph.cpp            1        missing/0 accepted  refused
+blend space          animation/src/blend_space.cpp           1        missing/0 accepted  refused
+utility brain        ai/src/utility.cpp                      1        missing/0 accepted  refused
+state tree           ai/src/state_tree.cpp                   1        missing/0 accepted  refused
+blueprint            blueprint/src/graph.cpp                 1        missing/0 accepted  refused
+prefab               engine/src/scene/prefab.cpp             1        refused             refused
+scene (JSON)         engine/src/scene/serialization.cpp      1        refused             refused (any other version)
 scene (binary)       engine/src/scene/serialization.cpp      2        version 1 loads     refused
-sprite atlas         sprite2d/src/atlas.cpp                  1        n/a (first)         refused (since 48.2)
-tileset              sprite2d/src/tilemap.cpp                1        n/a (first)         refused (since 48.2)
-tilemap              sprite2d/src/tilemap.cpp                1        n/a (first)         refused (since 48.2)
-pak                  engine/src/pak/pak.cpp                  1        n/a (first)         refused
-texture (imported)   engine/src/assets/texture_importer.cpp  1        n/a (first)         refused
-texture (cooked)     engine/src/cook/texture_cook.cpp        1        n/a (first)         refused
-mesh (imported)      engine/src/assets/model_importer.cpp    2        see the importer    refused
-mesh (cooked)        engine/src/cook/mesh_cook.cpp           1        n/a (first)         refused
+sprite atlas         sprite2d/src/atlas.cpp                  1        missing/0 accepted  refused
+tileset              sprite2d/src/tilemap.cpp                1        missing/0 accepted  refused
+tilemap              sprite2d/src/tilemap.cpp                1        missing/0 accepted  refused
+pak                  engine/src/pak/pak.cpp                  1        refused             refused
+animation clip       animation/src/compression.cpp           2        version 1 loads     refused
+navigation mesh      nav/src/navmesh.cpp                     1        refused             refused
+texture (imported)   engine/src/assets/texture_importer.cpp  1        refused             refused
+texture (cooked)     engine/src/cook/texture_cook.cpp        1        refused             refused
+mesh (imported)      engine/src/assets/model_importer.cpp    2        version 1 loads     refused
+mesh (cooked)        engine/src/cook/mesh_cook.cpp           1        refused             refused
+derived data cache   engine/src/assets/importer.cpp          1        refused             refused
+save/settings envelope save/src/envelope.cpp                 1        refused             refused
+CookManifest         player/src/game.cpp                     1        refused             refused
+DlcManifest          player/src/game.cpp                     1        refused             refused
+PackageManifest      engine/src/cook/package.cpp             1        refused             refused
 #
-# "n/a (first)": no older version exists yet. The day a format bumps, keep a file of the old version in the
-# tests and add a migration test next to it; a loader that only knows the latest must say so in this table.
+# When a format bumps, keep a fixture of each supported older version and add a migration test next to it.
 #
 # Files from earlier tools: tests/fixtures/legacy/<baseline>/ holds real scenes, Blueprints, sequences, input assets, layouts,
 # plugin descriptors, projects and asset metadata, and tests/test_legacy_files.cpp loads every one with the current loaders.
