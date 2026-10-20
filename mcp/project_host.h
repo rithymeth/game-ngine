@@ -108,7 +108,7 @@ inline fs::path ContentPath(OpenProject& project, const std::string& relative) {
     const fs::path root = CanonicalContentRoot(project);
     std::error_code ec;
     const fs::path relative_path(rel);
-    const fs::path destination = root / relative_path;
+    const fs::path destination = project.paths.content / relative_path;
     const fs::path resolved = fs::weakly_canonical(destination, ec);
     if (ec) throw ToolError("Could not resolve Content path " + destination.string() + ": " + ec.message());
     const fs::path within_root = resolved.lexically_relative(root);
@@ -132,7 +132,8 @@ inline fs::path ContentFile(OpenProject& project, const std::string& relative) {
 
 inline fs::path ContentDirectory(OpenProject& project, const std::string& relative) {
     if (CleanRelative(relative).empty()) {
-        return CanonicalContentRoot(project);
+        CanonicalContentRoot(project);
+        return project.paths.content;
     }
     const fs::path path = ContentPath(project, relative);
     std::error_code ec;
