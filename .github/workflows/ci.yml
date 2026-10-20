@@ -655,6 +655,57 @@ jobs:
           path: platforms/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
+  android-emulator:
+    # Runs the app on an x86_64 emulator (KVM on the Linux runner): it plays Lantern Run on start and logs
+    # "AETHER_SMOKE PASS" under the tag "Aether". Advisory until it has passed a few runs in a row.
+    name: Android (x86_64 emulator, Lantern Run, advisory)
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses
+      - name: Install Android SDK, NDK and CMake
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358" "cmake;3.22.1"
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '9.1.0'
+      - name: Build x86_64 debug APK
+        working-directory: platforms/android
+        run: gradle --no-daemon --stacktrace :app:assembleDebug -Paether.abis=x86_64
+      - name: Run on the emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+          script: |
+            adb install -r platforms/android/app/build/outputs/apk/debug/app-debug.apk
+            adb logcat -c
+            adb shell am start -W -n com.aether.engine/.MainActivity
+            for i in $(seq 1 60); do adb logcat -d -s Aether:* | grep -q AETHER_SMOKE && break; sleep 1; done
+            adb logcat -d -s Aether:* AndroidRuntime:E DEBUG:* | tee emulator-logcat.txt
+            grep -q "AETHER_SMOKE PASS" emulator-logcat.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aether-android-emulator-logcat
+          path: emulator-logcat.txt
+          if-no-files-found: ignore
+
   ios:
     # Phase 45 step 4: cross-compile and package the arm64 UIKit app shell
     # against the engine core. Signing and device execution remain out of scope.
