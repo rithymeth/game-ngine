@@ -5,6 +5,25 @@ describes what is on `master`, not a promise of a version number or a date.
 
 - Added an offline documentation site generated from the manual and reflected engine API (`aether_docgen --site ...` or the CMake `aether_docs_site` target).
 
+## API compatibility
+
+- The 1.0 preparation freezes the public names and normalized function-like declaration signatures in selected
+  stable headers. CI checks those baselines. Other public APIs remain experimental; this is not a binary ABI or
+  semantic compatibility guarantee. See [API stability](../manual/api_stability.md).
+
+## Samples
+
+- Added Beacon Run, a third playable sample. Its fixed-step ECS simulation is portable; the Windows sample uses a
+  small Win32/GDI renderer. Collect eight beacons while avoiding patrol drones.
+
+## Release artifacts
+
+- The release workflow checks Windows editor and AETHER-01 archives against `SHA256SUMS.txt` and attaches a Sigstore
+  build-provenance attestation. When both `AETHER_WINDOWS_SIGNING_PFX_BASE64` and
+  `AETHER_WINDOWS_SIGNING_PFX_PASSWORD` are configured, the release job Authenticode-signs the packaged EXEs and DLLs
+  and verifies those signatures. Without the certificate secrets, it publishes unsigned archives and records
+  `signed: false` in `RELEASE_MANIFEST.json`.
+
 ## Agent and MCP tools
 
 - The MCP server has tools for UI layouts, themes and animations, saves and settings, world partitions,
