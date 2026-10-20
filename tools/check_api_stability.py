@@ -9,9 +9,12 @@ by level.
 Stable headers are also frozen (Phase 48 step 3): docs/design/api_frozen.txt records the public names each one
 declares (types, functions, macros, aliases), and a name that disappears is an error unless it is listed in
 docs/design/api_removed.txt ("<header> <name>", added after a deprecation release). New names are fine.
---update-frozen adds the names of stable headers to the baseline (it never drops one).
+docs/design/api_frozen_signatures.txt records a digest of normalized function-like declarations. A signature
+change is an error until the baseline is reviewed and updated. --update-frozen adds new names and refreshes
+the reviewed signature digests.
 """
 import argparse
+import hashlib
 import os
 import re
 import sys
@@ -29,6 +32,7 @@ typeid static_cast dynamic_cast reinterpret_cast const_cast co_await co_return c
 DECL = re.compile(r"\b(?:class|struct|union|enum\s+class|enum\s+struct|enum|namespace|using|typedef)\s+([A-Za-z_]\w*)")
 CALL = re.compile(r"\b([A-Za-z_]\w*)\s*\(")
 MACRO = re.compile(r"^\s*#\s*define\s+([A-Za-z_]\w*)", re.M)
+SIGNATURE_NAME = re.compile(r"\b(?:operator\s*[^\w\s(]+|[A-Za-z_]\w*)\s*\(")
 
 
 BODY_END = re.compile(r"(?:\)|\bconst|\bnoexcept|\boverride|\bfinal|\bmutable|->\s*[\w:<>,&* ]+)\s*$")
@@ -66,6 +70,28 @@ def public_names(text):
     return sorted(n for n in names if n not in KEYWORDS and not n.startswith("_"))
 
 
+def public_signatures(text):
+    """Collect normalized function-like declarations, excluding inline function bodies."""
+    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
+    text = re.sub(r"//[^\n]*", " ", text)
+    text = re.sub(r'"(?:\\.|[^"\\])*"', '""', text)
+    text = strip_bodies(text)
+    signatures = set()
+    for fragment in re.split(r"[;{}]", text):
+        fragment = " ".join(fragment.split())
+        if not fragment or not SIGNATURE_NAME.search(fragment):
+            continue
+        # Whitespace between identifiers matters; whitespace around punctuation does not.
+        fragment = re.sub(r"\s*([,()<>*&\[\]=:])\s*", r"\1", fragment)
+        signatures.add(fragment)
+    return sorted(signatures)
+
+
+def signature_digest(text):
+    declarations = "\n".join(public_signatures(text))
+    return hashlib.sha256(declarations.encode("utf-8")).hexdigest()
+
+
 def read_frozen(path):
     frozen = {}
     if os.path.exists(path):
@@ -87,6 +113,18 @@ def read_removed(path):
                 if line:
                     removed.add(tuple(line.split(None, 1)))
     return removed
+
+
+def read_signatures(path):
+    signatures = {}
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    header, _, digest = line.partition(":")
+                    signatures[header.strip()] = digest.strip()
+    return signatures
 
 
 INCLUDE = re.compile(r'^\s*#\s*include\s+"(aether/[^"]+)"', re.M)
@@ -149,6 +187,7 @@ def main():
     ap.add_argument("--levels", default=os.path.join(ROOT, "docs", "design", "api_stability.txt"))
     ap.add_argument("--table", action="store_true")
     ap.add_argument("--frozen", default=os.path.join(ROOT, "docs", "design", "api_frozen.txt"))
+    ap.add_argument("--signatures", default=os.path.join(ROOT, "docs", "design", "api_frozen_signatures.txt"))
     ap.add_argument("--removed", default=os.path.join(ROOT, "docs", "design", "api_removed.txt"))
     ap.add_argument("--consumer", action="append", default=[], metavar="DIR",
                     help="check that the sources in DIR include only stable headers (and what those include is stable or internal)")
@@ -167,6 +206,7 @@ def main():
             problems.append(f"module '{m}' is in the levels file but has no public headers")
     table = {}
     stable_headers = {}
+    stable_signatures = {}
     for m in modules:
         counts = Counter()
         for base, _, files in os.walk(os.path.join(ROOT, m, "include")):
@@ -187,7 +227,10 @@ def main():
                 counts[level] += 1
                 if level == "stable":
                     with open(path, encoding="utf-8", errors="replace") as f:
-                        stable_headers[os.path.relpath(path, ROOT).replace(os.sep, "/")] = set(public_names(f.read()))
+                        text = f.read()
+                    header = os.path.relpath(path, ROOT).replace(os.sep, "/")
+                    stable_headers[header] = set(public_names(text))
+                    stable_signatures[header] = signature_digest(text)
         table[m] = counts
     # A stable header may include only stable or internal ones: anything else would put an unfrozen layout in the frozen API.
     for header in sorted(stable_headers):
@@ -210,6 +253,7 @@ def main():
                         problems.append(f"{os.path.relpath(path, ROOT)}: includes {name}, which is {header_level(dep, levels)}, not stable")
     frozen = read_frozen(args.frozen)
     removed = read_removed(args.removed)
+    signatures = read_signatures(args.signatures)
     if args.update_frozen:
         for header, names in stable_headers.items():
             frozen[header] = frozen.get(header, set()) | names
@@ -219,7 +263,14 @@ def main():
             for header in sorted(frozen):
                 if header in stable_headers:
                     f.write(header + ": " + " ".join(sorted(frozen[header])) + "\n")
-        print(f"check_api_stability: wrote {os.path.relpath(args.frozen, ROOT)} ({len(stable_headers)} headers)")
+        signatures.update(stable_signatures)
+        with open(args.signatures, "w", encoding="utf-8") as f:
+            f.write("# SHA-256 of normalized function-like declarations in stable headers (Phase 48 step 3).\n")
+            f.write("# Written by: tools/check_api_stability.py --update-frozen\n")
+            for header in sorted(signatures):
+                if header in stable_signatures:
+                    f.write(header + ": " + signatures[header] + "\n")
+        print(f"check_api_stability: wrote {os.path.relpath(args.frozen, ROOT)} and {os.path.relpath(args.signatures, ROOT)} ({len(stable_headers)} headers)")
         return 0
     for header, names in sorted(stable_headers.items()):
         if header not in frozen:
@@ -228,8 +279,14 @@ def main():
         for name in sorted(frozen[header] - names):
             if (header, name) not in removed:
                 problems.append(f"{header}: '{name}' was removed from a stable header (deprecate it for a release first, then list it in {os.path.relpath(args.removed, ROOT)})")
+        if header not in signatures:
+            problems.append(f"{header} has no signature baseline in {os.path.relpath(args.signatures, ROOT)} (run --update-frozen)")
+        elif signatures[header] != stable_signatures[header]:
+            problems.append(f"{header}: public declaration signatures changed (review and update {os.path.relpath(args.signatures, ROOT)})")
     for header in sorted(set(frozen) - set(stable_headers)):
         problems.append(f"{header} is in the frozen baseline but is no longer a stable header")
+    for header in sorted(set(signatures) - set(stable_signatures)):
+        problems.append(f"{header} has a signature baseline but is no longer a stable header")
     if args.table:
         for m in modules:
             print(f"{m:14} " + "  ".join(f"{k} {v}" for k, v in sorted(table[m].items())))
