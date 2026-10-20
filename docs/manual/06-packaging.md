@@ -100,3 +100,16 @@ player picks the default preset or one named with `--quality`.
 A project's **Plugins** tool lists the engine's and the project's plugins and
 turns them on; the cooker records which, and the player starts their runtime
 modules before the first scene loads.
+
+## Verifying an engine download
+
+Each GitHub release lists `SHA256SUMS.txt` and `RELEASE_MANIFEST.json` next to the zips. Every file also carries a
+signed build-provenance attestation, which shows it was built by this repository's CI from the tagged commit:
+
+```sh
+sha256sum -c SHA256SUMS.txt                                   # the zips match the published sums
+gh attestation verify AetherEditor-windows-x64.zip --repo rithymeth/game-ngine
+```
+
+The Windows executables are not Authenticode-signed yet (`"signed": false` in the manifest), so Windows SmartScreen
+may warn the first time you run them.
