@@ -13,7 +13,7 @@ native mobile windowing, real-device input, and haptic backends remain open.
 - `UPGRADE_PLAN.md`, Phase 45 (Mobile and Console):
   - 45.1 input abstraction and remapping: done except a remapping UI.
   - 45.2 lifecycle, permissions and memory-pressure events: complete interface and mock; platform plugins can connect native callbacks.
-  - 45.3 Android build: started; arm64 Gradle app and debug APK build in CI. Android windowing and device testing remain.
+  - 45.3 Android build: started; arm64 Gradle app and debug APK build in CI, and an x86_64 build runs on an emulator in CI, where the app plays Lantern Run headless on start (advisory job). Android windowing and real-device testing remain.
   - 45.4 iOS build: started; unsigned arm64 app bundle build in CI. Signing, platform windowing and device testing remain.
   - 45.5 touch and haptics: started; touch controls and semantic haptic requests are implemented. Native mobile haptic backends remain.
   - 45.7 device-farm job: needs a paid service, so the user's decision.

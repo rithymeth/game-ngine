@@ -335,8 +335,10 @@ endif()
 add_subdirectory(engine)
 
 if(ANDROID AND AETHER_BUILD_ANDROID_APP)
-    add_library(aether_android SHARED platforms/android/app/src/main/cpp/native_entry.cpp)
-    target_link_libraries(aether_android PRIVATE Aether::Engine)
+    add_library(aether_android SHARED platforms/android/app/src/main/cpp/native_entry.cpp
+                samples/frozen_api_game/lantern_run.cpp)
+    target_include_directories(aether_android PRIVATE samples/frozen_api_game)
+    target_link_libraries(aether_android PRIVATE Aether::Engine log)
     target_compile_features(aether_android PRIVATE cxx_std_20)
 endif()
 
