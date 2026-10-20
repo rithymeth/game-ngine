@@ -17,19 +17,21 @@ header can differ from its module with a comment line near the top:
 
 ## Current compatibility status
 
-At engine version 0.27.6, all public modules are marked **experimental**; no
-public C++ API currently carries a stability guarantee. The annotation checker
-confirms that public modules and header overrides have valid labels. It does
-not compare C++ declarations or binary ABI against a previous release. Those
-compatibility checks and the decision to promote selected APIs belong to the
-Core API 1.0 freeze; do not treat the labels alone as proof of compatibility.
+All public modules default to **experimental**. Selected headers override that level and are marked **stable**;
+[`api_frozen.txt`](../design/api_frozen.txt) lists their public names. The accompanying
+[`api_frozen_signatures.txt`](../design/api_frozen_signatures.txt) records SHA-256 digests of normalized function-like
+declarations. CI checks both baselines and fails when a stable name is removed or one of those declarations changes.
+
+This is a source-level guard for the declarations the checker recognizes. It does not promise binary ABI compatibility,
+preserve class or data layout, or detect semantic behavior changes. Stable APIs still follow the deprecation policy
+below; experimental APIs may change in any release.
 
 `tools/check_api_stability.py` (also a test in the suite) checks that every module with public headers has a
 level, and that every override names a real one. `--table` prints how many headers each module has at each level.
-Stable headers are frozen: [`docs/design/api_frozen.txt`](../design/api_frozen.txt) records the names each one
-declares, and the same check fails when one disappears. To retire a name, deprecate it for a release, then
-remove it and list it in [`docs/design/api_removed.txt`](../design/api_removed.txt) (`<header> <name>`). New names
-need nothing; `python3 tools/check_api_stability.py --update-frozen` adds them to the baseline.
+Stable headers are frozen: the checker compares their public names and normalized function-like declarations.
+To retire a name, deprecate it for a release, then remove it and list it in
+[`docs/design/api_removed.txt`](../design/api_removed.txt) (`<header> <name>`). Review signature-baseline updates
+carefully; `python3 tools/check_api_stability.py --update-frozen` refreshes both baselines.
 A game built on the frozen API is checked too: `samples/frozen_api_game` (Lantern Run) is written the way a third party
 would write one, and `python3 tools/check_api_stability.py --consumer <folder>` fails if any source in the folder
 includes a header that is not `stable`. A stable header may include only stable or internal ones. The checks
