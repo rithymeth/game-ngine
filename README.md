@@ -16,6 +16,9 @@ to build and play **Coin Run** from a clean Windows checkout. It covers the
 prerequisites, exact build commands, controls, and a first code change. The
 sample uses software rendering, so you do not need a graphics card.
 
+Other playable samples: [Gem Hop](samples/gem_hop/README.md),
+[Beacon Run](samples/beacon_run/README.md), and the cooked [Stardust Hop](games/STARDUST-HOP/README.md).
+
 - [Aether manual](docs/manual/README.md) — projects, assets, scripting, input,
   and packaging.
 - [Current platform priorities](docs/design/PLATFORM_SUPPORT_POLICY.md) — what
