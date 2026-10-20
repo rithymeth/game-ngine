@@ -1,6 +1,7 @@
 # API stability per public module (Phase 37 step 3). Levels: stable, experimental, internal.
-# Nothing is "stable" until Phase 48 step 3 (the API freeze) promotes it; until then modules are
-# experimental. A header can override its module with a comment line:  // @stability: stable
+# Modules default to experimental; selected headers are stable after Phase 48.3 and have frozen name
+# and normalized function-like declaration baselines. A header can override its module with a comment:
+#   // @stability: stable
 # Checked by tools/check_api_stability.py (a test in the suite).
 ai experimental
 animation experimental
