@@ -22,7 +22,8 @@ android {
         versionName = "0.1.0"
 
         ndk {
-            abiFilters += "arm64-v8a"
+            // arm64-v8a ships; CI adds x86_64 (-Paether.abis=x86_64) to run the app on an x86_64 emulator.
+            abiFilters += (providers.gradleProperty("aether.abis").orNull ?: "arm64-v8a").split(",")
         }
 
         externalNativeBuild {
