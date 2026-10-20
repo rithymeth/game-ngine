@@ -528,8 +528,8 @@ void RegisterNavTools(McpServer& server, EditorSession& session) {
              if (png.empty()) throw ToolError("Could not encode the PNG");
              Json out = {{"width", pw}, {"height", ph}, {"polygons", polys.size()}, {"world_bounds", {{"min", Vec3Json(lo)}, {"max", Vec3Json(hi)}}}, {"paths", drawn}};
              if (args.contains("path") && args["path"].is_string()) {
-                 std::error_code ec;
                  const fs::path file = args["path"].get<std::string>();
+                 std::error_code ec;
                  if (file.has_parent_path()) fs::create_directories(file.parent_path(), ec);
                  std::ofstream f(file, std::ios::binary | std::ios::trunc);
                  f.write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
