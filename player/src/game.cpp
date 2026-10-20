@@ -167,6 +167,7 @@ bool GamePackage::LoadManifest(std::string* error) {
         if (d.is_discarded() || !d.is_object() || JsonString(d, "$type") != "DlcManifest") {
             return Fail(error, path + " isn't a DLC manifest");
         }
+        if (JsonVersion(d) != 1) return Fail(error, path + " has an unsupported version");
         GameManifest part;
         json as_base = {{"$type", "CookManifest"}, {"$version", 1}, {"assets", d.value("assets", json::array())}};
         if (!ParseGameManifest(as_base.dump(), part, error)) return false;
