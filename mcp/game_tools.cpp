@@ -1,4 +1,5 @@
 #include "game_tools.h"
+#include "project_host.h"
 
 #include "aether/platform/window.h"
 
@@ -797,7 +798,7 @@ void RegisterGameTools(McpServer& server) {
              } else {
                  path = stdfs::temp_directory_path() / "aether_mcp_screenshots" / ("shot_" + std::to_string(++host->shot_counter) + ".png");
              }
-             RequireNoSymlinkOutputPath(path);
+             detail::RequireNoSymlinkOutputPath(path);
              std::error_code ec;
              if (path.has_parent_path()) stdfs::create_directories(path.parent_path(), ec);
              {
