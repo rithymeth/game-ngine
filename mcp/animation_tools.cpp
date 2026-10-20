@@ -31,7 +31,7 @@ Json ReadDefinition(AssetHost& host, const Json& args) {
     if (args.contains("file")) {
         const std::string name = RequireString(args, "file");
         fs::path path(name);
-        if (!path.is_absolute()) path = host.Require().paths.content / CleanRelative(name);
+        if (!path.is_absolute()) path = ContentFile(host.Require(), name);
         std::ifstream in(path, std::ios::binary);
         if (!in) throw ToolError("Can't read " + path.string());
         std::stringstream ss;
