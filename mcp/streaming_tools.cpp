@@ -73,7 +73,8 @@ void RegisterStreamingTools(McpServer& server, EditorSession& session) {
              Json out = IndexJson(result.index);
              out["written"] = false;
              if (args.contains("directory")) {
-                 const fs::path dir(RequireString(args, "directory"));
+                 const fs::path dir = RequireNoSymlinkOutputPath(RequireString(args, "directory"));
+                 RequireNoSymlinkOutputPath(dir / "cells" / "partition-check.aesc");
                  std::error_code ec;
                  fs::create_directories(dir, ec);
                  std::string error;

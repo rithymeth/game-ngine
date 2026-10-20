@@ -146,6 +146,29 @@ inline fs::path ContentDirectory(OpenProject& project, const std::string& relati
     return path;
 }
 
+// Caller-specified MCP exports may live outside the project, but must not
+// follow an existing symlink at any point in the destination path. In
+// particular, world_partition replaces files under its output directory.
+inline fs::path RequireNoSymlinkOutputPath(const fs::path& path) {
+    if (path.empty()) throw ToolError("Output path must not be empty");
+    std::error_code ec;
+    fs::path absolute = fs::absolute(path, ec);
+    if (ec) throw ToolError("Could not resolve output path " + path.string() + ": " + ec.message());
+    absolute = absolute.lexically_normal();
+    fs::path current = absolute.root_path();
+    for (const fs::path& component : absolute.relative_path()) {
+        current /= component;
+        const fs::file_status status = fs::symlink_status(current, ec);
+        if (ec == std::errc::no_such_file_or_directory || ec == std::errc::not_a_directory) {
+            ec.clear();
+            continue;
+        }
+        if (ec) throw ToolError("Could not inspect output path " + current.string() + ": " + ec.message());
+        if (fs::is_symlink(status)) throw ToolError("Output paths cannot traverse symlinks: " + current.string());
+    }
+    return path;
+}
+
 inline const AssetRecord& FindAsset(OpenProject& p, const std::string& key) {
     AssetGuid guid;
     if (assets::ParseAssetGuid(key, guid)) {

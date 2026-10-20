@@ -499,7 +499,8 @@ void RegisterTerrainTools(McpServer& server) {
              Json out = {{"mode", mode}, {"width", pw}, {"height", ph}, {"bytes", png.size()}, {"height_range", {{"min", st.min}, {"max", st.max}}},
                          {"world_size", {{"width", W}, {"depth", D}}}};
              if (args.contains("path") && args["path"].is_string()) {
-                 WriteBytes(args["path"].get<std::string>(), png.data(), png.size());
+                 const fs::path path = RequireNoSymlinkOutputPath(args["path"].get<std::string>());
+                 WriteBytes(path, png.data(), png.size());
                  out["path"] = args["path"];
              }
              out["mcp_content"] = Json::array({{{"type", "image"}, {"data", Base64Encode(png)}, {"mimeType", "image/png"}}});
@@ -656,6 +657,9 @@ void RegisterTerrainTools(McpServer& server) {
              const Workbench& w = *bench;
              if (!args["path"].is_string() || args["path"].get<std::string>().empty()) throw ToolError("\"path\" must be a file path without extension");
              const std::string base = args["path"].get<std::string>();
+             RequireNoSymlinkOutputPath(base + ".r16");
+             RequireNoSymlinkOutputPath(base + ".splat");
+             RequireNoSymlinkOutputPath(base + ".terrain.json");
              const std::vector<f32>& h = w.data.heightmap.heights;
              f32 lo = h.empty() ? 0.0f : h[0], hi = lo;
              for (f32 v : h) {
