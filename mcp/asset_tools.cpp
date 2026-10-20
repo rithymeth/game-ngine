@@ -407,6 +407,8 @@ private:
         if (!host_->project || host_->project->paths.file.lexically_normal() != project_file_.lexically_normal()) {
             throw ToolError("Open the project that owns this content before undoing or redoing this action");
         }
+        ContentPath(*host_->project, from);
+        ContentPath(*host_->project, to);
         assets::MoveResult result = assets::MoveContent(*host_->project->database, from, to);
         if (!result.ok) throw ToolError(result.error);
         return result;
@@ -1039,34 +1041,6 @@ Json OpenProjectFile(AssetHost& host, const fs::path& file) {
     return out;
 }
 
-// A file inside Content/ for reading or writing text.
-fs::path ContentFile(OpenProject& p, const std::string& relative) {
-    const std::string rel = CleanRelative(relative);
-    if (rel.empty()) throw ToolError("\"path\" must name a file under Content/");
-    std::error_code ec;
-    const fs::path root = fs::canonical(p.paths.content, ec);
-    if (ec) throw ToolError("Could not resolve Content/: " + ec.message());
-    const fs::path relative_path(rel);
-    fs::path current = root;
-    for (auto part = relative_path.begin(); part != relative_path.end(); ++part) {
-        current /= *part;
-        auto next = part;
-        ++next;
-        const fs::file_status status = fs::symlink_status(current, ec);
-        if (ec == std::errc::no_such_file_or_directory) return root / relative_path;
-        if (ec) throw ToolError("Could not inspect Content path " + current.string() + ": " + ec.message());
-        if (fs::is_symlink(status)) throw ToolError("Content paths cannot traverse symbolic links: " + rel);
-        if (status.type() == fs::file_type::not_found) return root / relative_path;
-        if (next != relative_path.end() && !fs::is_directory(status)) {
-            throw ToolError("A parent of the Content path is not a folder: " + rel);
-        }
-        if (next == relative_path.end() && !fs::is_regular_file(status)) {
-            throw ToolError("Content path is not a regular file: " + rel);
-        }
-    }
-    return root / relative_path;
-}
-
 std::string KindOfCookFailure(const cook::CookReport& r) { return r.error.empty() ? "The cook failed" : r.error; }
 
 } // namespace
@@ -1393,7 +1367,7 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
                  if (!assets::IsValidAssetName(part.string(), &why)) throw ToolError("Bad destination folder name \"" + part.string() + "\": " + why);
              }
              const bool overwrite = OptBool(args, "overwrite", false);
-             const fs::path dest_dir = folder.empty() ? p.paths.content : p.paths.content / folder;
+             const fs::path dest_dir = ContentDirectory(p, folder);
              std::vector<AddFilesCommand::File> files;
              std::set<std::string> destinations;
              for (const std::string& src : sources) {
@@ -1403,8 +1377,8 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
                  if (ec || !fs::is_regular_file(status)) throw ToolError("Not a file: " + src);
                  std::string why;
                  if (!assets::IsValidAssetName(from.filename().string(), &why)) throw ToolError("Bad file name \"" + from.filename().string() + "\": " + why);
-                 const fs::path to = dest_dir / from.filename();
                  const std::string rel = (folder.empty() ? "" : folder + "/") + from.filename().generic_string();
+                 const fs::path to = ContentFile(p, rel);
                  if (!destinations.insert(rel).second) throw ToolError("Duplicate destination file: " + rel);
                  if (fs::exists(to, ec) && !overwrite) throw ToolError(to.filename().string() + " already exists in " + (folder.empty() ? "Content/" : folder) + " (pass overwrite)");
                  if (ec) throw ToolError("Could not inspect " + to.string() + ": " + ec.message());
@@ -1760,6 +1734,9 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
                         OpenProject& p = host->Require();
                         if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before creating a content folder");
                         const std::string parent = CleanRelative(OptString(args, "parent"));
+                        const fs::path parent_path = ContentDirectory(p, parent);
+                        std::error_code ec;
+                        if (!fs::is_directory(parent_path, ec) || ec) throw ToolError("Folder parent does not exist under Content/: " + parent);
                         const std::string name = RequireString(args, "name");
                         auto command = std::make_unique<CreateContentFolderCommand>(host, p.paths.file, parent, name);
                         command->SetAttribution("agent");
@@ -1797,7 +1774,7 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
                  folder.path = folder.parent.empty() ? folder.name : folder.parent + "/" + folder.name;
                  if (!targets.insert(folder.path).second) throw ToolError("Duplicate folder path: " + folder.path);
 
-                 const fs::path parent_path = p.paths.content / folder.parent;
+                 const fs::path parent_path = ContentDirectory(p, folder.parent);
                  std::error_code ec;
                  if (!fs::is_directory(parent_path, ec) || ec) {
                      throw ToolError("Folder parent does not exist under Content/: " + folder.parent);
