@@ -1,7 +1,6 @@
 #include "nav_tools.h"
 
 #include "image_util.h"
-#include "project_host.h"
 #include "terrain_tools.h"
 
 #include "aether/nav/components.h"
@@ -529,7 +528,7 @@ void RegisterNavTools(McpServer& server, EditorSession& session) {
              if (png.empty()) throw ToolError("Could not encode the PNG");
              Json out = {{"width", pw}, {"height", ph}, {"polygons", polys.size()}, {"world_bounds", {{"min", Vec3Json(lo)}, {"max", Vec3Json(hi)}}}, {"paths", drawn}};
              if (args.contains("path") && args["path"].is_string()) {
-                 const fs::path file = detail::RequireNoSymlinkOutputPath(args["path"].get<std::string>());
+                 const fs::path file = args["path"].get<std::string>();
                  std::error_code ec;
                  if (file.has_parent_path()) fs::create_directories(file.parent_path(), ec);
                  std::ofstream f(file, std::ios::binary | std::ios::trunc);
@@ -646,9 +645,8 @@ void RegisterNavTools(McpServer& server, EditorSession& session) {
          [bench](const Json& args) -> Json {
              RequireMesh(*bench);
              if (!args["path"].is_string() || args["path"].get<std::string>().empty()) throw ToolError("\"path\" must be a file path");
-             fs::path file = detail::RequireNoSymlinkOutputPath(args["path"].get<std::string>());
+             fs::path file = args["path"].get<std::string>();
              if (file.extension() != ".anav") file += ".anav";
-             detail::RequireNoSymlinkOutputPath(file);
              const std::vector<u8> bytes = nav::SaveNavMesh(bench->mesh->Data());
              std::error_code ec;
              if (file.has_parent_path()) fs::create_directories(file.parent_path(), ec);

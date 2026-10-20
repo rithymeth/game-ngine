@@ -2164,7 +2164,7 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
              OpenProject& p = host->Require();
              cook::CookOptions o;
              o.project_file = p.paths.file;
-             o.output_dir = RequireNoSymlinkOutputPath(RequireString(args, "output_dir")).string();
+             o.output_dir = RequireString(args, "output_dir");
              if (args.contains("configuration") && !cook::ParseConfiguration(OptString(args, "configuration"), o.configuration)) {
                  throw ToolError("\"configuration\" must be debug, development or shipping");
              }
