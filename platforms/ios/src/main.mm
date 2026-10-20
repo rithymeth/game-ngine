@@ -3,6 +3,11 @@
 #include <aether/core/log.h>
 #include <aether/core/version.h>
 
+#include "smoke.h"
+
+#include <cstdio>
+#include <string>
+
 @interface AetherAppDelegate : UIResponder <UIApplicationDelegate>
 @property(nonatomic, strong) UIWindow* window;
 @end
@@ -17,6 +22,11 @@
     logger.SetStdout(false);
     logger.Log(aether::LogLevel::Info, "iOS", "Aether Engine native core started");
 
+    // Plays Lantern Run headless; the CI simulator job reads this line from the app's stdout.
+    const std::string smoke = lantern::SmokeLine();
+    std::printf("%s\n", smoke.c_str());
+    std::fflush(stdout);
+
     self.window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
     UIViewController* root = [[UIViewController alloc] init];
     root.view.backgroundColor = UIColor.systemBackgroundColor;
@@ -25,8 +35,9 @@
     status.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     status.textAlignment = NSTextAlignmentCenter;
     status.numberOfLines = 0;
-    status.text = [NSString stringWithFormat:@"Aether Engine %@\nNative core ready",
-                                             [NSString stringWithUTF8String:aether::kEngineVersion]];
+    status.text = [NSString stringWithFormat:@"Aether Engine %@\n%@",
+                                             [NSString stringWithUTF8String:aether::kEngineVersion],
+                                             [NSString stringWithUTF8String:smoke.c_str()]];
     [root.view addSubview:status];
 
     self.window.rootViewController = root;

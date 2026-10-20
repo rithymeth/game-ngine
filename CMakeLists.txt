@@ -336,7 +336,7 @@ add_subdirectory(engine)
 
 if(ANDROID AND AETHER_BUILD_ANDROID_APP)
     add_library(aether_android SHARED platforms/android/app/src/main/cpp/native_entry.cpp
-                samples/frozen_api_game/lantern_run.cpp)
+                samples/frozen_api_game/lantern_run.cpp samples/frozen_api_game/smoke.cpp)
     target_include_directories(aether_android PRIVATE samples/frozen_api_game)
     target_link_libraries(aether_android PRIVATE Aether::Engine log)
     target_compile_features(aether_android PRIVATE cxx_std_20)
@@ -345,7 +345,9 @@ endif()
 if(APPLE AND CMAKE_SYSTEM_NAME STREQUAL "iOS" AND AETHER_BUILD_IOS_APP)
     find_library(AETHER_UIKIT_FRAMEWORK UIKit REQUIRED)
     target_compile_definitions(aether_engine PUBLIC AETHER_PLATFORM_IOS)
-    add_executable(aether_ios MACOSX_BUNDLE platforms/ios/src/main.mm)
+    add_executable(aether_ios MACOSX_BUNDLE platforms/ios/src/main.mm
+                   samples/frozen_api_game/lantern_run.cpp samples/frozen_api_game/smoke.cpp)
+    target_include_directories(aether_ios PRIVATE samples/frozen_api_game)
     target_link_libraries(aether_ios PRIVATE Aether::Engine "${AETHER_UIKIT_FRAMEWORK}")
     target_compile_features(aether_ios PRIVATE cxx_std_20)
     set_target_properties(aether_ios PROPERTIES
