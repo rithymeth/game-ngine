@@ -744,6 +744,57 @@ jobs:
           path: dist/AetherEngine-iphoneos-arm64.zip
           if-no-files-found: error
 
+  ios-simulator:
+    # Runs the app on the iOS Simulator: it plays Lantern Run on start and prints "AETHER_SMOKE PASS" to stdout.
+    # Advisory until it has passed a few runs in a row.
+    name: iOS (Simulator, Lantern Run, advisory)
+    runs-on: macos-15
+    continue-on-error: true
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache fetched dependencies
+        uses: actions/cache@v4
+        with:
+          path: build-ios-sim/_deps
+          key: deps-ios-sim-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: deps-ios-sim-
+      - name: Configure iOS Simulator app
+        run: >
+          cmake -S . -B build-ios-sim -G Xcode
+          -DCMAKE_SYSTEM_NAME=iOS
+          -DCMAKE_OSX_SYSROOT=iphonesimulator
+          -DCMAKE_OSX_ARCHITECTURES=arm64
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0
+          -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO
+          -DAETHER_BUILD_IOS_APP=ON
+          -DAETHER_BUILD_TESTS=OFF -DAETHER_BUILD_MCP=OFF
+          -DAETHER_BUILD_SANDBOX=OFF -DAETHER_BUILD_PHYSICS=OFF
+          -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_EDITOR_UI=OFF
+          -DAETHER_BUILD_VULKAN=OFF -DAETHER_BUILD_SCRIPTING=OFF
+          -DAETHER_BUILD_WINDOWING=OFF -DAETHER_BUILD_BENCH=OFF
+      - name: Build Simulator app
+        run: cmake --build build-ios-sim --config Release --target aether_ios --parallel -- -sdk iphonesimulator
+      - name: Run on the Simulator
+        run: |
+          app=build-ios-sim/Release-iphonesimulator/AetherEngine.app
+          udid=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next(x['udid'] for r in d if 'iOS' in r for x in d[r] if x['name'].startswith('iPhone')))")
+          echo "device $udid"
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+          xcrun simctl install "$udid" "$app"
+          xcrun simctl launch --stdout="$PWD/simulator-stdout.txt" "$udid" com.aether.engine
+          for i in $(seq 1 60); do grep -q AETHER_SMOKE simulator-stdout.txt 2>/dev/null && break; sleep 1; done
+          cat simulator-stdout.txt || true
+          xcrun simctl shutdown "$udid" || true
+          grep -q "AETHER_SMOKE PASS" simulator-stdout.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aether-ios-simulator-stdout
+          path: simulator-stdout.txt
+          if-no-files-found: ignore
+
   clang-tidy:
     name: clang-tidy (changed files, advisory)
     runs-on: ubuntu-latest
