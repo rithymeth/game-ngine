@@ -73,8 +73,15 @@ void RegisterStreamingTools(McpServer& server, EditorSession& session) {
              Json out = IndexJson(result.index);
              out["written"] = false;
              if (args.contains("directory")) {
-                 const fs::path dir = RequireNoSymlinkOutputPath(RequireString(args, "directory"));
-                 RequireNoSymlinkOutputPath(dir / "cells" / "partition-check.aesc");
+                 const fs::path dir(RequireString(args, "directory"));
+                 std::error_code status_error;
+                 const fs::file_status cells_status = fs::symlink_status(dir / "cells", status_error);
+                 if (!status_error && fs::is_symlink(cells_status)) {
+                     throw ToolError("The partition cells folder cannot be a symlink because export removes stale cell files");
+                 }
+                 if (status_error != std::errc::no_such_file_or_directory && status_error) {
+                     throw ToolError("Could not inspect partition cells folder: " + status_error.message());
+                 }
                  std::error_code ec;
                  fs::create_directories(dir, ec);
                  std::string error;
