@@ -501,7 +501,7 @@ bool LoadNavMesh(const std::vector<u8>& b, NavMeshData& out, std::string* error)
     u32 magic = 0, version = 0, count = 0;
     NavMeshData d;
     if (!Get(b, at, magic) || magic != kMagic) return Fail(error, "not a navigation mesh");
-    if (!Get(b, at, version) || version > kVersion) return Fail(error, "made by a newer version");
+    if (!Get(b, at, version) || version != kVersion) return Fail(error, "unsupported navigation mesh version");
     if (!Get(b, at, d.settings) || !Get(b, at, d.origin.x) || !Get(b, at, d.origin.y) || !Get(b, at, d.origin.z) || !Get(b, at, d.tile_world_size) ||
         !Get(b, at, d.tiles_x) || !Get(b, at, d.tiles_z) || !Get(b, at, count)) {
         return Fail(error, "the file is cut short");
