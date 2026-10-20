@@ -797,6 +797,7 @@ void RegisterGameTools(McpServer& server) {
              } else {
                  path = stdfs::temp_directory_path() / "aether_mcp_screenshots" / ("shot_" + std::to_string(++host->shot_counter) + ".png");
              }
+             RequireNoSymlinkOutputPath(path);
              std::error_code ec;
              if (path.has_parent_path()) stdfs::create_directories(path.parent_path(), ec);
              {
