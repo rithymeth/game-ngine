@@ -136,10 +136,9 @@ jobs:
         run: ctest --test-dir build --output-on-failure -R "^soak$"
       - name: Benchmarks
         # Phase 38 steps 1 and 6: retain a provenance-tagged report artifact, and compare with the checked-in
-        # baseline (bench/baseline.json) by calibration-normalized time. Comparison is advisory (continue-on-error)
-        # until the thresholds have held for a couple of weeks; then it becomes required.
+        # baseline (bench/baseline.json) by calibration-normalized time. Required since it held with no regression
+        # on ten master runs in a row (2026-10-15 to 2026-10-22); docs/design/PERFORMANCE.md says how to refresh it.
         if: matrix.name == 'GCC'
-        continue-on-error: true
         run: ./build/bench/aether_bench --repeat 5 --json bench-report.json --baseline bench/baseline.json --tolerance 3.0
       - name: Upload the benchmark report
         if: matrix.name == 'GCC' && always()
