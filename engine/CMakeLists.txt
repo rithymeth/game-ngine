@@ -119,9 +119,10 @@ endif()
 if(AETHER_BUILD_VULKAN)
     target_sources(aether_engine PRIVATE src/gfx/rhi/vulkan/vulkan_backend.cpp)
     if(ANDROID)
-        # Android: the device factory, and no shader compiler yet (glslang is not built for Android).
-        target_sources(aether_engine PRIVATE src/gfx/rhi/device_factory.cpp src/gfx/shader_compiler_unavailable.cpp)
-        target_link_libraries(aether_engine PRIVATE android)
+        # Android: the device factory, and glslang built from source by the root CMakeLists.txt.
+        target_sources(aether_engine PRIVATE src/gfx/rhi/device_factory.cpp src/gfx/shader_compiler_glslang.cpp)
+        target_link_libraries(aether_engine PRIVATE android ${AETHER_GLSLANG_LIBRARIES})
+        target_include_directories(aether_engine PRIVATE "${AETHER_GLSLANG_SHIM_INCLUDE}")
         set_source_files_properties(src/gfx/rhi/vulkan/vulkan_backend.cpp PROPERTIES
                                     COMPILE_OPTIONS -Wno-missing-field-initializers)
     elseif(NOT WIN32)
