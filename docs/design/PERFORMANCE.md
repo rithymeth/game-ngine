@@ -55,5 +55,7 @@ had in fact got faster. Absolute time fell for every benchmark the two files sha
 will compare against it), with all 20 benchmarks. To refresh it again: run the `Linux (GCC)` job, copy the table
 from its Benchmarks step, and keep `calibration_ms` as the line printed above it.
 
-The step stays advisory for now. Making it required needs a few runs to show how much the shared runner moves
-between runs; the 3.0 tolerance is wide on purpose until then.
+The step is required. It reported no regression on the ten master runs from 2026-10-15 to 2026-10-22, so a
+failure now means a benchmark got more than 3x slower than its baseline after calibration. If a change makes
+something deliberately slower, or the runner hardware changes, refresh the baseline as above in the same PR and say
+why. The 3.0 tolerance is wide on purpose; tighten it once the spread between runs is measured.
