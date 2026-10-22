@@ -313,6 +313,18 @@ if(AETHER_BUILD_VULKAN AND WIN32)
             set(AETHER_BUILD_VULKAN OFF)
         endif()
     endif()
+elseif(AETHER_BUILD_VULKAN AND ANDROID)
+    # Android: the NDK sysroot carries vulkan/vulkan.h and libvulkan.so (API 24+). Pipelines need HLSL to SPIR-V,
+    # which glslang does elsewhere and is not built for Android yet, so CreatePipeline throws there for now
+    # (src/gfx/shader_compiler_unavailable.cpp); swap chains, clears and presents work.
+    find_library(AETHER_VULKAN_LIBRARY vulkan)
+    if(AETHER_VULKAN_LIBRARY)
+        set(AETHER_VULKAN_INCLUDE_DIRS "")
+        message(STATUS "Vulkan: Android NDK loader (${AETHER_VULKAN_LIBRARY}), no shader compiler yet")
+    else()
+        message(STATUS "Vulkan: backend off (the NDK has no libvulkan for this API level)")
+        set(AETHER_BUILD_VULKAN OFF)
+    endif()
 elseif(AETHER_BUILD_VULKAN)
     # Linux and macOS: the system Vulkan loader and headers (libvulkan-dev),
     # and glslang (glslang-dev) to compile HLSL to SPIR-V. Without either,
@@ -338,7 +350,7 @@ if(ANDROID AND AETHER_BUILD_ANDROID_APP)
     add_library(aether_android SHARED platforms/android/app/src/main/cpp/native_entry.cpp
                 samples/frozen_api_game/lantern_run.cpp samples/frozen_api_game/smoke.cpp)
     target_include_directories(aether_android PRIVATE samples/frozen_api_game)
-    target_link_libraries(aether_android PRIVATE Aether::Engine log)
+    target_link_libraries(aether_android PRIVATE Aether::Engine log android)
     target_compile_features(aether_android PRIVATE cxx_std_20)
 endif()
 
@@ -673,7 +685,7 @@ endif()
 
 set(AETHER_PACKAGE_USE_VULKAN ${AETHER_BUILD_VULKAN})
 set(AETHER_PACKAGE_USE_GLSLANG OFF)
-if(AETHER_BUILD_VULKAN AND NOT WIN32)
+if(AETHER_BUILD_VULKAN AND NOT WIN32 AND NOT ANDROID)
     set(AETHER_PACKAGE_USE_GLSLANG ON)
 endif()
 set(AETHER_PACKAGE_USE_RECAST OFF)
