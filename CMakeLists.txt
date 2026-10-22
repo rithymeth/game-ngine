@@ -326,7 +326,7 @@ elseif(AETHER_BUILD_VULKAN AND ANDROID)
         set(GLSLANG_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
         set(BUILD_EXTERNAL OFF CACHE BOOL "" FORCE)
         set(ENABLE_PCH OFF CACHE BOOL "" FORCE)
-        FetchContent_Declare(glslang GIT_REPOSITORY https://github.com/KhronosGroup/glslang.git GIT_TAG 15.1.0
+        FetchContent_Declare(glslang GIT_REPOSITORY https://github.com/KhronosGroup/glslang.git GIT_TAG 14.3.0
                              GIT_SHALLOW TRUE)
         FetchContent_MakeAvailable(glslang)
         # The engine includes <glslang/SPIRV/GlslangToSpv.h>, the installed layout; in the source tree SPIRV/ sits at
@@ -335,7 +335,7 @@ elseif(AETHER_BUILD_VULKAN AND ANDROID)
         file(MAKE_DIRECTORY "${AETHER_GLSLANG_SHIM_INCLUDE}/glslang")
         file(CREATE_LINK "${glslang_SOURCE_DIR}/SPIRV" "${AETHER_GLSLANG_SHIM_INCLUDE}/glslang/SPIRV" SYMBOLIC)
         set(AETHER_GLSLANG_LIBRARIES glslang::glslang glslang::SPIRV glslang::glslang-default-resource-limits)
-        message(STATUS "Vulkan: Android NDK loader (${AETHER_VULKAN_LIBRARY}), shaders through glslang 15.1.0 (built)")
+        message(STATUS "Vulkan: Android NDK loader (${AETHER_VULKAN_LIBRARY}), shaders through glslang 14.3.0 (built)")
     else()
         message(STATUS "Vulkan: backend off (the NDK has no libvulkan for this API level)")
         set(AETHER_BUILD_VULKAN OFF)
