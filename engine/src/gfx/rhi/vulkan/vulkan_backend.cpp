@@ -16,6 +16,36 @@
 #include <GLFW/glfw3.h>
 #endif
 
+#if defined(__ANDROID__)
+// Android's libvulkan.so exports only Vulkan 1.0 entry points below API 31, so the 1.2 timeline-semaphore calls are
+// looked up through vkGetDeviceProcAddr (core name first, then the VK_KHR_timeline_semaphore one) on first use.
+namespace {
+
+template <typename Fn>
+Fn AetherDeviceProc(VkDevice device, const char* core_name, const char* khr_name) {
+    PFN_vkVoidFunction fn = vkGetDeviceProcAddr(device, core_name);
+    if (!fn) fn = vkGetDeviceProcAddr(device, khr_name);
+    if (!fn) throw std::runtime_error(std::string("Vulkan driver lacks ") + core_name);
+    return reinterpret_cast<Fn>(fn);
+}
+
+VkResult AetherVkWaitSemaphores(VkDevice device, const VkSemaphoreWaitInfo* info, uint64_t timeout) {
+    static const PFN_vkWaitSemaphores fn =
+        AetherDeviceProc<PFN_vkWaitSemaphores>(device, "vkWaitSemaphores", "vkWaitSemaphoresKHR");
+    return fn(device, info, timeout);
+}
+
+VkResult AetherVkGetSemaphoreCounterValue(VkDevice device, VkSemaphore semaphore, uint64_t* value) {
+    static const PFN_vkGetSemaphoreCounterValue fn = AetherDeviceProc<PFN_vkGetSemaphoreCounterValue>(
+        device, "vkGetSemaphoreCounterValue", "vkGetSemaphoreCounterValueKHR");
+    return fn(device, semaphore, value);
+}
+
+} // namespace
+#define vkWaitSemaphores AetherVkWaitSemaphores
+#define vkGetSemaphoreCounterValue AetherVkGetSemaphoreCounterValue
+#endif
+
 namespace aether::gfx::rhi::vulkan_backend {
 
 namespace {
