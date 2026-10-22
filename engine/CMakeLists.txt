@@ -118,7 +118,13 @@ endif()
 
 if(AETHER_BUILD_VULKAN)
     target_sources(aether_engine PRIVATE src/gfx/rhi/vulkan/vulkan_backend.cpp)
-    if(NOT WIN32)
+    if(ANDROID)
+        # Android: the device factory, and no shader compiler yet (glslang is not built for Android).
+        target_sources(aether_engine PRIVATE src/gfx/rhi/device_factory.cpp src/gfx/shader_compiler_unavailable.cpp)
+        target_link_libraries(aether_engine PRIVATE android)
+        set_source_files_properties(src/gfx/rhi/vulkan/vulkan_backend.cpp PROPERTIES
+                                    COMPILE_OPTIONS -Wno-missing-field-initializers)
+    elseif(NOT WIN32)
         # Off Windows: the RHI's device factory, and glslang for HLSL to
         # SPIR-V (DXC's role on Windows).
         target_sources(aether_engine PRIVATE src/gfx/rhi/device_factory.cpp src/gfx/shader_compiler_glslang.cpp)

@@ -137,7 +137,8 @@ VkInstance CreateInstance(bool /*enable_debug_layer*/) {
     std::vector<VkExtensionProperties> available(available_count);
     vkEnumerateInstanceExtensionProperties(nullptr, &available_count, available.data());
     static const char* const kWanted[] = {"VK_KHR_surface", "VK_KHR_xcb_surface", "VK_KHR_xlib_surface",
-                                          "VK_KHR_wayland_surface", "VK_EXT_metal_surface"};
+                                          "VK_KHR_wayland_surface", "VK_EXT_metal_surface",
+                                          "VK_KHR_android_surface"};
     std::vector<const char*> extensions;
     for (const char* wanted : kWanted) {
         for (const VkExtensionProperties& ext : available) {
@@ -1828,6 +1829,11 @@ VulkanSwapChain::VulkanSwapChain(VulkanDevice& device, void* native_window_handl
             surface_info.hinstance = GetModuleHandleW(nullptr);
             surface_info.hwnd = static_cast<HWND>(window_);
             AETHER_VK_CHECK(vkCreateWin32SurfaceKHR(device_.Instance(), &surface_info, nullptr, &surface_));
+#elif defined(__ANDROID__)
+            // On Android the native handle is the ANativeWindow* of a SurfaceView (ANativeWindow_fromSurface).
+            VkAndroidSurfaceCreateInfoKHR surface_info{VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR};
+            surface_info.window = static_cast<ANativeWindow*>(window_);
+            AETHER_VK_CHECK(vkCreateAndroidSurfaceKHR(device_.Instance(), &surface_info, nullptr, &surface_));
 #elif defined(AETHER_HAS_GLFW)
             AETHER_VK_CHECK(
                 glfwCreateWindowSurface(device_.Instance(), static_cast<GLFWwindow*>(window_), nullptr, &surface_));
