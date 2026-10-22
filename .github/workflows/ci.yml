@@ -136,10 +136,9 @@ jobs:
         run: ctest --test-dir build --output-on-failure -R "^soak$"
       - name: Benchmarks
         # Phase 38 steps 1 and 6: retain a provenance-tagged report artifact, and compare with the checked-in
-        # baseline (bench/baseline.json) by calibration-normalized time. Comparison is advisory (continue-on-error)
-        # until the thresholds have held for a couple of weeks; then it becomes required.
+        # baseline (bench/baseline.json) by calibration-normalized time. Required since it held with no regression
+        # on ten master runs in a row (2026-10-15 to 2026-10-22); docs/design/PERFORMANCE.md says how to refresh it.
         if: matrix.name == 'GCC'
-        continue-on-error: true
         run: ./build/bench/aether_bench --repeat 5 --json bench-report.json --baseline bench/baseline.json --tolerance 3.0
       - name: Upload the benchmark report
         if: matrix.name == 'GCC' && always()
@@ -666,10 +665,9 @@ jobs:
     # Phase 45 step 3: build and package the arm64 native engine core through
     # Gradle/ExternalNativeBuild. This produces a debug-signed APK; release
     # signing remains opt-in through repository or local secret variables.
-    # Advisory while the Android target is still missing windowing and Vulkan.
-    name: Android (arm64, Gradle APK, advisory)
+    # Required since it built clean on every master run; Android windowing and Vulkan are still missing.
+    name: Android (arm64, Gradle APK)
     runs-on: ubuntu-24.04
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -695,10 +693,9 @@ jobs:
 
   android-emulator:
     # Runs the app on an x86_64 emulator (KVM on the Linux runner): it plays Lantern Run on start and logs
-    # "AETHER_SMOKE PASS" under the tag "Aether". Advisory until it has passed a few runs in a row.
-    name: Android (x86_64 emulator, Lantern Run, advisory)
+    # "AETHER_SMOKE PASS" under the tag "Aether". Required since it passed on every master run.
+    name: Android (x86_64 emulator, Lantern Run)
     runs-on: ubuntu-24.04
-    continue-on-error: true
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -747,9 +744,8 @@ jobs:
   ios:
     # Phase 45 step 4: cross-compile and package the arm64 UIKit app shell
     # against the engine core. Signing and device execution remain out of scope.
-    name: iOS (arm64, unsigned app, advisory)
+    name: iOS (arm64, unsigned app)
     runs-on: macos-15
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - name: Cache fetched dependencies
@@ -784,10 +780,9 @@ jobs:
 
   ios-simulator:
     # Runs the app on the iOS Simulator: it plays Lantern Run on start and prints "AETHER_SMOKE PASS" to stdout.
-    # Advisory until it has passed a few runs in a row.
-    name: iOS (Simulator, Lantern Run, advisory)
+    # Required since it passed on every master run that got a runner.
+    name: iOS (Simulator, Lantern Run)
     runs-on: macos-15
-    continue-on-error: true
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -915,7 +910,7 @@ jobs:
     # A pushed v* tag, or a manual run given a release_tag (which creates
     # the tag on the commit it built).
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
-    needs: [linux, clean-machine-sdk, macos, windows, windows-package-validation, windows-sign-release]
+    needs: [linux, clean-machine-sdk, macos, windows, windows-package-validation, windows-sign-release, android, android-emulator, ios, ios-simulator]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
