@@ -1,12 +1,19 @@
 // The Android app shell's native side.
 // - On start it plays Lantern Run headless (samples/frozen_api_game/smoke.h) and logs "AETHER_SMOKE PASS" or
 //   "AETHER_SMOKE FAIL <check>" under the log tag "Aether".
-// - When the SurfaceView has a surface, a render thread opens the Vulkan RHI on it and clears each frame to
-//   kClearColor. After kFramesToReport presented frames it logs "AETHER_RENDER PRESENTED <n> <width>x<height>"; on
-//   failure, "AETHER_RENDER FAIL <reason>". The CI emulator job checks both lines and samples the screen.
+// - When the SurfaceView has a surface, a render thread opens the Vulkan RHI on it, clears each frame to
+//   kClearColor and draws a triangle over the middle of the screen in kTriangleColor with an HLSL pipeline
+//   (compiled on the device by glslang). After kFramesToReport presented frames it logs
+//   "AETHER_RENDER PRESENTED <n> <width>x<height>"; on failure, "AETHER_RENDER FAIL <reason>". The CI emulator job
+//   checks both lines and samples the screen (tools/android/check_screen.py).
+// - Touches from the SurfaceView reach the render thread as WindowEvents and go through ApplyWindowEvents into an
+//   input::InputState, as on desktop. While the first finger is down (Key::MouseLeft) the triangle is drawn in
+//   kPressedColor; each new finger logs "AETHER_INPUT DOWN <x> <y>".
 #include "smoke.h"
 
 #include "aether/gfx/rhi/device.h"
+#include "aether/input/keys.h"
+#include "aether/platform/window.h"
 
 #include <android/log.h>
 #include <android/native_window_jni.h>
@@ -18,6 +25,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace {
 
@@ -25,12 +33,34 @@ namespace rhi = aether::gfx::rhi;
 
 // A colour no Android default theme uses, so a screenshot shows whether the engine drew the frame.
 constexpr rhi::ClearColor kClearColor{0.15f, 0.55f, 0.35f, 1.0f};
+constexpr float kTriangleColor[4] = {0.90f, 0.45f, 0.10f, 1.0f};
+constexpr float kPressedColor[4] = {0.20f, 0.35f, 0.90f, 1.0f};
 constexpr int kFramesToReport = 60;
+
+// A triangle that covers the centre of the screen whichever way up clip space is.
+constexpr const char* kTriangleShader = R"(
+struct PushConstants { float4 color; };
+[[vk::push_constant]]
+ConstantBuffer<PushConstants> g_PC : register(b0);
+
+float4 VSMain(uint id : SV_VertexID) : SV_Position {
+    float2 corners[3] = { float2(-0.6, -0.6), float2(0.6, -0.6), float2(0.0, 0.7) };
+    return float4(corners[id], 0.0, 1.0);
+}
+
+float4 PSMain() : SV_Target { return g_PC.color; }
+)";
 
 void Log(int priority, const std::string& line) { __android_log_print(priority, "Aether", "%s", line.c_str()); }
 
 class Renderer {
 public:
+    // From the UI thread; the render thread applies them at the start of its next frame.
+    void QueueEvent(const aether::WindowEvent& event) {
+        std::lock_guard<std::mutex> lock(events_mutex_);
+        pending_events_.push_back(event);
+    }
+
     void Start(ANativeWindow* window, int width, int height) {
         Stop();
         stop_ = false;
@@ -49,18 +79,36 @@ private:
             if (!device) throw std::runtime_error("no Vulkan device");
             std::unique_ptr<rhi::ISwapChain> swap_chain =
                 device->CreateSwapChain(window, static_cast<aether::u32>(width), static_cast<aether::u32>(height), 3);
+            rhi::PipelineDesc desc;
+            desc.hlsl_source = kTriangleShader;
+            desc.push_constant_size_bytes = sizeof(kTriangleColor);
+            const rhi::PipelineHandle pipeline = device->CreatePipeline(desc, *swap_chain);
+            if (!pipeline.IsValid()) throw std::runtime_error("triangle pipeline did not build");
             std::unique_ptr<rhi::ICommandList> cmd = device->CreateCommandList();
+            aether::input::InputState input;
+            std::vector<aether::WindowEvent> events;
             int presented = 0;
             aether::u64 last_fence = 0;
             while (!stop_) {
+                {
+                    std::lock_guard<std::mutex> lock(events_mutex_);
+                    events.swap(pending_events_);
+                }
+                aether::ApplyWindowEvents(events, input);
+                events.clear();
+                const float* color = input.IsDown(aether::input::Key::MouseLeft) ? kPressedColor : kTriangleColor;
                 swap_chain->AcquireNextImage();
                 cmd->Reset();
                 cmd->BeginRenderPass(*swap_chain, kClearColor);
+                cmd->BindPipeline(pipeline);
+                cmd->SetPushConstants(color, sizeof(kTriangleColor));
+                cmd->Draw(3);
                 cmd->EndRenderPass();
                 cmd->Close();
                 last_fence = device->Submit(*cmd, swap_chain.get());
                 device->WaitForFence(last_fence);
                 swap_chain->Present(true);
+                input.EndFrame();
                 if (++presented == kFramesToReport) {
                     Log(ANDROID_LOG_INFO, "AETHER_RENDER PRESENTED " + std::to_string(presented) + " " +
                                               std::to_string(swap_chain->Width()) + "x" +
@@ -76,6 +124,8 @@ private:
 
     std::thread thread_;
     std::atomic<bool> stop_{false};
+    std::mutex events_mutex_;
+    std::vector<aether::WindowEvent> pending_events_;
 };
 
 Renderer& TheRenderer() {
@@ -105,4 +155,17 @@ Java_com_aether_engine_MainActivity_nativeSurfaceChanged(JNIEnv* env, jclass, jo
 
 extern "C" JNIEXPORT void JNICALL Java_com_aether_engine_MainActivity_nativeSurfaceDestroyed(JNIEnv*, jclass) {
     TheRenderer().Stop();
+}
+
+extern "C" JNIEXPORT void JNICALL Java_com_aether_engine_MainActivity_nativeTouch(JNIEnv*, jclass, jint pointer_id,
+                                                                                   jint action, jfloat x, jfloat y) {
+    aether::WindowEvent event;
+    event.type = action == 2 ? aether::WindowEventType::TouchMove : aether::WindowEventType::Touch;
+    event.down = action == 0;
+    event.x = x;
+    event.y = y;
+    event.pointer = static_cast<aether::u32>(pointer_id);
+    if (action == 0) Log(ANDROID_LOG_INFO, "AETHER_INPUT DOWN " + std::to_string(static_cast<int>(x)) + " " +
+                                               std::to_string(static_cast<int>(y)));
+    TheRenderer().QueueEvent(event);
 }
