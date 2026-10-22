@@ -16,6 +16,36 @@
 #include <GLFW/glfw3.h>
 #endif
 
+#if defined(__ANDROID__)
+// Android's libvulkan.so exports only Vulkan 1.0 entry points below API 31, so the 1.2 timeline-semaphore calls are
+// looked up through vkGetDeviceProcAddr (core name first, then the VK_KHR_timeline_semaphore one) on first use.
+namespace {
+
+template <typename Fn>
+Fn AetherDeviceProc(VkDevice device, const char* core_name, const char* khr_name) {
+    PFN_vkVoidFunction fn = vkGetDeviceProcAddr(device, core_name);
+    if (!fn) fn = vkGetDeviceProcAddr(device, khr_name);
+    if (!fn) throw std::runtime_error(std::string("Vulkan driver lacks ") + core_name);
+    return reinterpret_cast<Fn>(fn);
+}
+
+VkResult AetherVkWaitSemaphores(VkDevice device, const VkSemaphoreWaitInfo* info, uint64_t timeout) {
+    static const PFN_vkWaitSemaphores fn =
+        AetherDeviceProc<PFN_vkWaitSemaphores>(device, "vkWaitSemaphores", "vkWaitSemaphoresKHR");
+    return fn(device, info, timeout);
+}
+
+VkResult AetherVkGetSemaphoreCounterValue(VkDevice device, VkSemaphore semaphore, uint64_t* value) {
+    static const PFN_vkGetSemaphoreCounterValue fn = AetherDeviceProc<PFN_vkGetSemaphoreCounterValue>(
+        device, "vkGetSemaphoreCounterValue", "vkGetSemaphoreCounterValueKHR");
+    return fn(device, semaphore, value);
+}
+
+} // namespace
+#define vkWaitSemaphores AetherVkWaitSemaphores
+#define vkGetSemaphoreCounterValue AetherVkGetSemaphoreCounterValue
+#endif
+
 namespace aether::gfx::rhi::vulkan_backend {
 
 namespace {
@@ -137,7 +167,8 @@ VkInstance CreateInstance(bool /*enable_debug_layer*/) {
     std::vector<VkExtensionProperties> available(available_count);
     vkEnumerateInstanceExtensionProperties(nullptr, &available_count, available.data());
     static const char* const kWanted[] = {"VK_KHR_surface", "VK_KHR_xcb_surface", "VK_KHR_xlib_surface",
-                                          "VK_KHR_wayland_surface", "VK_EXT_metal_surface"};
+                                          "VK_KHR_wayland_surface", "VK_EXT_metal_surface",
+                                          "VK_KHR_android_surface"};
     std::vector<const char*> extensions;
     for (const char* wanted : kWanted) {
         for (const VkExtensionProperties& ext : available) {
@@ -1828,6 +1859,11 @@ VulkanSwapChain::VulkanSwapChain(VulkanDevice& device, void* native_window_handl
             surface_info.hinstance = GetModuleHandleW(nullptr);
             surface_info.hwnd = static_cast<HWND>(window_);
             AETHER_VK_CHECK(vkCreateWin32SurfaceKHR(device_.Instance(), &surface_info, nullptr, &surface_));
+#elif defined(__ANDROID__)
+            // On Android the native handle is the ANativeWindow* of a SurfaceView (ANativeWindow_fromSurface).
+            VkAndroidSurfaceCreateInfoKHR surface_info{VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR};
+            surface_info.window = static_cast<ANativeWindow*>(window_);
+            AETHER_VK_CHECK(vkCreateAndroidSurfaceKHR(device_.Instance(), &surface_info, nullptr, &surface_));
 #elif defined(AETHER_HAS_GLFW)
             AETHER_VK_CHECK(
                 glfwCreateWindowSurface(device_.Instance(), static_cast<GLFWwindow*>(window_), nullptr, &surface_));
