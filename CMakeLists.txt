@@ -314,13 +314,28 @@ if(AETHER_BUILD_VULKAN AND WIN32)
         endif()
     endif()
 elseif(AETHER_BUILD_VULKAN AND ANDROID)
-    # Android: the NDK sysroot carries vulkan/vulkan.h and libvulkan.so (API 24+). Pipelines need HLSL to SPIR-V,
-    # which glslang does elsewhere and is not built for Android yet, so CreatePipeline throws there for now
-    # (src/gfx/shader_compiler_unavailable.cpp); swap chains, clears and presents work.
+    # Android: the NDK sysroot carries vulkan/vulkan.h and libvulkan.so (API 24+). There is no system glslang, so
+    # it is built from source here (HLSL front end and SPIR-V back end only, no spirv-opt or tools).
     find_library(AETHER_VULKAN_LIBRARY vulkan)
     if(AETHER_VULKAN_LIBRARY)
         set(AETHER_VULKAN_INCLUDE_DIRS "")
-        message(STATUS "Vulkan: Android NDK loader (${AETHER_VULKAN_LIBRARY}), no shader compiler yet")
+        set(ENABLE_OPT OFF CACHE BOOL "" FORCE)
+        set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "" FORCE)
+        set(ENABLE_SPVREMAPPER OFF CACHE BOOL "" FORCE)
+        set(GLSLANG_TESTS OFF CACHE BOOL "" FORCE)
+        set(GLSLANG_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+        set(BUILD_EXTERNAL OFF CACHE BOOL "" FORCE)
+        set(ENABLE_PCH OFF CACHE BOOL "" FORCE)
+        FetchContent_Declare(glslang GIT_REPOSITORY https://github.com/KhronosGroup/glslang.git GIT_TAG 15.1.0
+                             GIT_SHALLOW TRUE)
+        FetchContent_MakeAvailable(glslang)
+        # The engine includes <glslang/SPIRV/GlslangToSpv.h>, the installed layout; in the source tree SPIRV/ sits at
+        # the top, so give it that name under a build-tree include root.
+        set(AETHER_GLSLANG_SHIM_INCLUDE "${CMAKE_BINARY_DIR}/glslang_include")
+        file(MAKE_DIRECTORY "${AETHER_GLSLANG_SHIM_INCLUDE}/glslang")
+        file(CREATE_LINK "${glslang_SOURCE_DIR}/SPIRV" "${AETHER_GLSLANG_SHIM_INCLUDE}/glslang/SPIRV" SYMBOLIC)
+        set(AETHER_GLSLANG_LIBRARIES glslang::glslang glslang::SPIRV glslang::glslang-default-resource-limits)
+        message(STATUS "Vulkan: Android NDK loader (${AETHER_VULKAN_LIBRARY}), shaders through glslang 15.1.0 (built)")
     else()
         message(STATUS "Vulkan: backend off (the NDK has no libvulkan for this API level)")
         set(AETHER_BUILD_VULKAN OFF)

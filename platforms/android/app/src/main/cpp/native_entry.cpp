@@ -1,9 +1,11 @@
 // The Android app shell's native side.
 // - On start it plays Lantern Run headless (samples/frozen_api_game/smoke.h) and logs "AETHER_SMOKE PASS" or
 //   "AETHER_SMOKE FAIL <check>" under the log tag "Aether".
-// - When the SurfaceView has a surface, a render thread opens the Vulkan RHI on it and clears each frame to
-//   kClearColor. After kFramesToReport presented frames it logs "AETHER_RENDER PRESENTED <n> <width>x<height>"; on
-//   failure, "AETHER_RENDER FAIL <reason>". The CI emulator job checks both lines and samples the screen.
+// - When the SurfaceView has a surface, a render thread opens the Vulkan RHI on it, clears each frame to
+//   kClearColor and draws a triangle over the middle of the screen in kTriangleColor with an HLSL pipeline
+//   (compiled on the device by glslang). After kFramesToReport presented frames it logs
+//   "AETHER_RENDER PRESENTED <n> <width>x<height>"; on failure, "AETHER_RENDER FAIL <reason>". The CI emulator job
+//   checks both lines and samples the screen (tools/android/check_screen.py).
 #include "smoke.h"
 
 #include "aether/gfx/rhi/device.h"
@@ -25,7 +27,22 @@ namespace rhi = aether::gfx::rhi;
 
 // A colour no Android default theme uses, so a screenshot shows whether the engine drew the frame.
 constexpr rhi::ClearColor kClearColor{0.15f, 0.55f, 0.35f, 1.0f};
+constexpr float kTriangleColor[4] = {0.90f, 0.45f, 0.10f, 1.0f};
 constexpr int kFramesToReport = 60;
+
+// A triangle that covers the centre of the screen whichever way up clip space is.
+constexpr const char* kTriangleShader = R"(
+struct PushConstants { float4 color; };
+[[vk::push_constant]]
+ConstantBuffer<PushConstants> g_PC : register(b0);
+
+float4 VSMain(uint id : SV_VertexID) : SV_Position {
+    float2 corners[3] = { float2(-0.6, -0.6), float2(0.6, -0.6), float2(0.0, 0.7) };
+    return float4(corners[id], 0.0, 1.0);
+}
+
+float4 PSMain() : SV_Target { return g_PC.color; }
+)";
 
 void Log(int priority, const std::string& line) { __android_log_print(priority, "Aether", "%s", line.c_str()); }
 
@@ -49,6 +66,11 @@ private:
             if (!device) throw std::runtime_error("no Vulkan device");
             std::unique_ptr<rhi::ISwapChain> swap_chain =
                 device->CreateSwapChain(window, static_cast<aether::u32>(width), static_cast<aether::u32>(height), 3);
+            rhi::PipelineDesc desc;
+            desc.hlsl_source = kTriangleShader;
+            desc.push_constant_size_bytes = sizeof(kTriangleColor);
+            const rhi::PipelineHandle pipeline = device->CreatePipeline(desc, *swap_chain);
+            if (!pipeline.IsValid()) throw std::runtime_error("triangle pipeline did not build");
             std::unique_ptr<rhi::ICommandList> cmd = device->CreateCommandList();
             int presented = 0;
             aether::u64 last_fence = 0;
@@ -56,6 +78,9 @@ private:
                 swap_chain->AcquireNextImage();
                 cmd->Reset();
                 cmd->BeginRenderPass(*swap_chain, kClearColor);
+                cmd->BindPipeline(pipeline);
+                cmd->SetPushConstants(kTriangleColor, sizeof(kTriangleColor));
+                cmd->Draw(3);
                 cmd->EndRenderPass();
                 cmd->Close();
                 last_fence = device->Submit(*cmd, swap_chain.get());
