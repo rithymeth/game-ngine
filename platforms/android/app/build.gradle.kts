@@ -36,7 +36,7 @@ android {
                     "-DAETHER_BUILD_PHYSICS=OFF",
                     "-DAETHER_BUILD_EDITOR=OFF",
                     "-DAETHER_BUILD_EDITOR_UI=OFF",
-                    "-DAETHER_BUILD_VULKAN=OFF",
+                    "-DAETHER_BUILD_VULKAN=ON",
                     "-DAETHER_BUILD_SCRIPTING=OFF",
                     "-DAETHER_BUILD_WINDOWING=OFF",
                     "-DAETHER_BUILD_BENCH=OFF",
