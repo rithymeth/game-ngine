@@ -2,6 +2,7 @@ package com.aether.engine;
 
 import android.app.Activity;
 import android.os.Bundle;
+import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
@@ -18,6 +19,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     // The native side renders into the surface on its own thread until nativeSurfaceDestroyed returns.
     private static native void nativeSurfaceChanged(Surface surface, int width, int height);
     private static native void nativeSurfaceDestroyed();
+    // action: 0 down, 1 up (or cancelled), 2 move. Coordinates are in surface pixels.
+    private static native void nativeTouch(int pointerId, int action, float x, float y);
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -25,6 +28,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         FrameLayout root = new FrameLayout(this);
         SurfaceView view = new SurfaceView(this);
         view.getHolder().addCallback(this);
+        view.setOnTouchListener((v, event) -> {
+            forwardTouch(event);
+            return true;
+        });
         root.addView(view, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                                                         ViewGroup.LayoutParams.MATCH_PARENT));
         TextView status = new TextView(this);
@@ -34,6 +41,35 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         root.addView(status, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
                                                           ViewGroup.LayoutParams.WRAP_CONTENT));
         setContentView(root);
+    }
+
+    private static void forwardTouch(MotionEvent event) {
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+            case MotionEvent.ACTION_POINTER_DOWN: {
+                int i = event.getActionIndex();
+                nativeTouch(event.getPointerId(i), 0, event.getX(i), event.getY(i));
+                break;
+            }
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_POINTER_UP: {
+                int i = event.getActionIndex();
+                nativeTouch(event.getPointerId(i), 1, event.getX(i), event.getY(i));
+                break;
+            }
+            case MotionEvent.ACTION_CANCEL:
+                for (int i = 0; i < event.getPointerCount(); ++i) {
+                    nativeTouch(event.getPointerId(i), 1, event.getX(i), event.getY(i));
+                }
+                break;
+            case MotionEvent.ACTION_MOVE:
+                for (int i = 0; i < event.getPointerCount(); ++i) {
+                    nativeTouch(event.getPointerId(i), 2, event.getX(i), event.getY(i));
+                }
+                break;
+            default:
+                break;
+        }
     }
 
     @Override

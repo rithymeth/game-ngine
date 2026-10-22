@@ -738,6 +738,13 @@ jobs:
             grep -q "AETHER_SMOKE PASS" emulator-logcat.txt
             grep -q "AETHER_RENDER PRESENTED" emulator-logcat.txt
             python3 tools/android/check_screen.py emulator-screen.raw
+            adb shell wm size
+            (adb shell input swipe 160 330 160 330 5000 &) ; sleep 3
+            adb exec-out screencap > emulator-pressed.raw
+            sleep 3
+            adb logcat -d -s Aether:* | tee emulator-input.txt
+            grep -q "AETHER_INPUT DOWN" emulator-input.txt
+            python3 tools/android/check_screen.py emulator-pressed.raw --pressed
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -745,6 +752,8 @@ jobs:
           path: |
             emulator-logcat.txt
             emulator-screen.raw
+            emulator-input.txt
+            emulator-pressed.raw
           if-no-files-found: ignore
 
   ios:

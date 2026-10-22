@@ -6,13 +6,16 @@ centre (must be the triangle) and a row near the bottom (must be the clear colou
 left). The swap chain may be UNORM or sRGB, so either encoding counts. Passes when at least three quarters of each set
 match.
 
-usage: python3 check_screen.py screen.raw
+With --pressed, the triangle must be blue (0.20, 0.35, 0.90): the app draws it so while a finger is down.
+
+usage: python3 check_screen.py screen.raw [--pressed]
 """
 import struct
 import sys
 
 CLEAR = (0.15, 0.55, 0.35)
 TRIANGLE = (0.90, 0.45, 0.10)
+PRESSED = (0.20, 0.35, 0.90)
 TOLERANCE = 12
 
 
@@ -37,7 +40,7 @@ def score(data, header, width, points, expected):
     return matches, len(points), common
 
 
-def main(path):
+def main(path, pressed=False):
     data = open(path, "rb").read()
     width, height, _fmt = struct.unpack_from("<III", data, 0)
     # Android 12+ adds a colour-space word after the format; older releases do not.
@@ -49,7 +52,7 @@ def main(path):
               for dx in (-0.04, 0.0, 0.04) for dy in (-0.04, 0.0, 0.04)]
     bottom = [(int(width * (i + 0.5) / 8), int(height * 0.93)) for i in range(8)]
     ok = True
-    for label, points, colour in (("triangle at the centre", centre, TRIANGLE), ("clear colour at the bottom", bottom, CLEAR)):
+    for label, points, colour in (("triangle at the centre", centre, PRESSED if pressed else TRIANGLE), ("clear colour at the bottom", bottom, CLEAR)):
         matches, total, common = score(data, header, width, points, encodings(colour))
         print(f"{width}x{height} {label}: {matches}/{total} match {encodings(colour)}; most common {common}")
         ok = ok and matches * 4 >= total * 3
@@ -57,4 +60,4 @@ def main(path):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1]))
+    sys.exit(main(sys.argv[1], "--pressed" in sys.argv[2:]))
