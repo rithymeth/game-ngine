@@ -10,6 +10,9 @@
 #include "test_framework.h"
 #include "aether/ai/perception.h"
 #include "aether/nav/components.h"
+#if AETHER_TEST_HAS_PHYSICS
+#include "aether/physics/components.h"
+#endif
 
 #include <filesystem>
 #include <algorithm>
