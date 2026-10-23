@@ -103,7 +103,7 @@ endif()
 
 if(TARGET Aether::Scripting)
     target_compile_definitions(aether_tests PRIVATE AETHER_TEST_HAS_SCRIPTING=1)
-    target_sources(aether_tests PRIVATE test_luau_host.cpp test_luau_bindings.cpp test_script_system.cpp test_script_api.cpp test_script_reload.cpp test_script_debugger.cpp test_script_dap.cpp test_nav_script.cpp test_ai_script.cpp test_net_rpc_script.cpp test_debug_draw_script.cpp)
+    target_sources(aether_tests PRIVATE test_luau_host.cpp test_luau_bindings.cpp test_script_system.cpp test_script_api.cpp test_script_reload.cpp test_script_debugger.cpp test_script_dap.cpp test_nav_script.cpp test_ai_script.cpp test_ai_nav_api.cpp test_net_rpc_script.cpp test_debug_draw_script.cpp)
     target_link_libraries(aether_tests PRIVATE Aether::Scripting)
 endif()
 

@@ -65,6 +65,9 @@ public:
     // Adds a return value (nil, boolean, number, string).
     void Return(const ScriptValue& value);
     void ReturnVector(const Vec3& value);
+    // Adds a return value that is an array (1-based) of values or of vectors.
+    void ReturnList(const std::vector<ScriptValue>& values);
+    void ReturnVectorList(const std::vector<Vec3>& values);
     // Raises a script error from the call, once the function returns.
     void Fail(const std::string& message) { error_ = message; }
 
