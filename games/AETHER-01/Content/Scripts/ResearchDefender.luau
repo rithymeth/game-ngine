@@ -1,8 +1,32 @@
 -- The service route's shielded Sentinel and ambushing Hunter are game content.
 local Defender = {}
 
-local function ClearSight(shooter, target)
-    -- Same unrotated-box contract as the game's hitscan/camera queries.
+-- Tuning. Where an archetype may move and when it wakes are per-instance data:
+-- the scene overrides these on the Hunter (its room and its ambush trigger),
+-- so no mission coordinates live in this script. The defaults bound nothing.
+--@range 0 100
+Defender.sight_range = 18
+--@range 0 20
+Defender.approach_speed = 3.6
+--@range 0 40
+Defender.charge_speed = 8
+--@tooltip The Hunter keeps inside this box (world space, min corner).
+Defender.arena_min = vector.create(-1e6, -1e6, -1e6)
+--@tooltip The Hunter keeps inside this box (world space, max corner).
+Defender.arena_max = vector.create(1e6, 1e6, 1e6)
+--@tooltip The Hunter stays dormant until the player is inside this box (min corner).
+Defender.wake_min = vector.create(-1e6, -1e6, -1e6)
+--@tooltip The Hunter stays dormant until the player is inside this box (max corner).
+Defender.wake_max = vector.create(1e6, 1e6, 1e6)
+
+local function Inside(point, low, high)
+    return point.x >= low.x and point.x <= high.x and point.y >= low.y and point.y <= high.y
+        and point.z >= low.z and point.z <= high.z
+end
+
+local function BoxSight(shooter, target)
+    -- Fallback for hosts without a perception world: the same unrotated-box
+    -- contract as the game's hitscan/camera queries.
     local available, boxes = pcall(function() return world:EntitiesWith("BoxCollider") end)
     if not available then return true end
     local origin = shooter:Get("Transform").position
@@ -31,6 +55,13 @@ local function ClearSight(shooter, target)
     return true
 end
 
+-- The engine's line of sight (AI.CanSee through the active PerceptionWorld)
+-- when the host provides one; the script's own box test otherwise.
+local function ClearSight(shooter, target)
+    if AI ~= nil and AI.IsSightReady() then return AI.CanSee(shooter, target) end
+    return BoxSight(shooter, target)
+end
+
 function Defender:OnCreate()
     self.player, self.marker, self.shell = nil, nil, nil
     self.hunter = false
@@ -53,6 +84,11 @@ function Defender:OnCreate()
     Attributes.Define(self.entity, "KnockbackScale", self.hunter and 1 or 0.15, 0, 1)
     self.state, self.timer, self.damaged = "idle", 2, false
     self.target = vector.create(0, 0, 0)
+end
+
+function Defender:Confine(x, y, z)
+    local low, high = self.arena_min, self.arena_max
+    return vector.create(math.clamp(x, low.x, high.x), y, math.clamp(z, low.z, high.z))
 end
 
 function Defender:HideTell()
@@ -92,29 +128,27 @@ function Defender:OnUpdate(dt)
     local distance = math.sqrt(dx * dx + dz * dz)
     self.timer -= dt
     if self.hunter then
-        if player.z > -13 then return end -- ambush stays dormant until Kael enters research
+        if not Inside(player, self.wake_min, self.wake_max) then return end -- the ambush waits for its trigger
         if self.state == "charge" then
             local cx, cz = self.target.x - p.x, self.target.z - p.z
             local length = math.sqrt(cx * cx + cz * cz)
             if length > 0.05 then
-                local step = math.min(8 * dt, length)
-                transform.position = vector.create(math.clamp(p.x + cx / length * step, -4.3, 4.3),
-                                                    p.y, math.clamp(p.z + cz / length * step, -21.5, -9))
+                local step = math.min(self.charge_speed * dt, length)
+                transform.position = self:Confine(p.x + cx / length * step, p.y, p.z + cz / length * step)
             end
             if distance < 1.4 and not self.damaged then self:DamagePlayer(); self.damaged = true end
             if self.timer <= 0 then self.state, self.timer = "idle", 1.5; self:HideTell() end
         elseif self.state == "tell" then
             if self.timer <= 0 then self.state, self.timer, self.damaged = "charge", 0.65, false end
         elseif distance > 5 then
-            local step = math.min(3.6 * dt, distance - 3)
-            transform.position = vector.create(math.clamp(p.x + dx / distance * step, -4.3, 4.3),
-                                                p.y, math.clamp(p.z + dz / distance * step, -21.5, -9))
+            local step = math.min(self.approach_speed * dt, distance - 3)
+            transform.position = self:Confine(p.x + dx / distance * step, p.y, p.z + dz / distance * step)
         elseif self.timer <= 0 then
             self.state, self.timer, self.target = "tell", 0.75, player
             Attributes.SetBase(self.entity, "AttackState", 1)
             if self.marker ~= nil then self.marker:Get("Transform").position = vector.create(player.x, 0.035, player.z) end
         end
-    elseif distance <= 18 and ClearSight(self.entity, self.player) then
+    elseif distance <= self.sight_range and ClearSight(self.entity, self.player) then
         if self.state == "tell" and self.timer <= 0 then
             if math.abs(player.x - self.target.x) <= 0.8 and math.abs(player.z - self.target.z) <= 0.8 then self:DamagePlayer() end
             self.state, self.timer = "idle", 2

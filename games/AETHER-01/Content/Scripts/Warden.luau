@@ -2,6 +2,13 @@
 -- Red floor plates mark the exact attack area before each ranged strike.
 local Warden = {}
 
+-- Where the armor shell and the exposed core sit, relative to the Warden
+-- (not mission coordinates), so the encounter works wherever it is placed.
+--@tooltip The armor shell's offset from the Warden (shown in phase 1).
+Warden.armor_offset = vector.create(0, 0, 0)
+--@tooltip The exposed core's offset from the Warden (shown from phase 3).
+Warden.core_offset = vector.create(0, 0, 1.7)
+
 function Warden:OnCreate()
     self.player = nil
     for _, entity in ipairs(world:EntitiesWith("Tags")) do
@@ -48,11 +55,12 @@ function Warden:OnUpdate(dt)
     end
     self.phase = health > 9 and 1 or health > 6 and 2 or health > 3 and 3 or 4
     Attributes.SetBase(self.entity, "Phase", self.phase)
+    local at = self.entity:Get("Transform").position
     if self.armor ~= nil then
-        self.armor:Get("Transform").position = self.phase >= 2 and vector.create(0, -100, 0) or vector.create(0, 2, -35)
+        self.armor:Get("Transform").position = self.phase >= 2 and vector.create(0, -100, 0) or at + self.armor_offset
     end
     if self.core ~= nil then
-        self.core:Get("Transform").position = self.phase >= 3 and vector.create(0, 2, -33.3) or vector.create(0, -100, 0)
+        self.core:Get("Transform").position = self.phase >= 3 and at + self.core_offset or vector.create(0, -100, 0)
     end
     self.timer -= dt
     if self.timer > 0 then return end
