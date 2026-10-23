@@ -996,7 +996,17 @@ void VulkanDevice::UpdateStorageBuffer(BufferHandle buffer, const void* data, u6
 
 void VulkanDevice::UpdateVertexBuffer(BufferHandle buffer, const void* data, u64 size_bytes) {
     if (!IsVertexBuffer(buffer) || buffer.index >= buffers_.size()) {
-        AETHER_LOG_ERROR("Vulkan", "UpdateVertexBuffer received an invalid buffer handle (%u)", buffer.index);
+        if (buffer.IsValid() && buffer.index < buffers_.size()) {
+            const BufferRecord& r = buffers_[buffer.index];
+            AETHER_LOG_ERROR("Vulkan",
+                             "UpdateVertexBuffer received a handle (%u of %zu) that is not a vertex buffer "
+                             "(vertex=%d index=%d constant=%d storage=%d, %llu bytes)",
+                             buffer.index, buffers_.size(), r.is_vertex, r.is_index, r.is_constant, r.is_storage,
+                             static_cast<unsigned long long>(r.size_bytes));
+        } else {
+            AETHER_LOG_ERROR("Vulkan", "UpdateVertexBuffer received an invalid buffer handle (%u of %zu)", buffer.index,
+                             buffers_.size());
+        }
         return;
     }
     BufferRecord& record = buffers_[buffer.index];
@@ -1303,6 +1313,24 @@ bool VulkanDevice::DestroyTexture(SampledTextureHandle texture) {
     sampled_textures_[position] = {};
     free_texture_slots_.push_back(position);
     return true;
+}
+
+// Frame constant buffers are host-visible and mapped (CreateBufferInternal) but are not vertex buffers, so this cannot
+// go through UpdateVertexBuffer, which rejects them: it used to, and the player's lights never reached the GPU. The
+// caller only rewrites a slot whose previous frame has finished (SceneRenderer keeps one per frame in flight).
+void VulkanDevice::UpdateFrameConstantBuffer(BufferHandle buffer, const void* data, u64 size_bytes) {
+    if (!buffer.IsValid() || buffer.index >= buffers_.size() || buffers_[buffer.index].constants_set == VK_NULL_HANDLE) {
+        AETHER_LOG_ERROR("Vulkan", "UpdateFrameConstantBuffer needs a buffer made by CreateFrameConstantBuffer (%u)",
+                         buffer.index);
+        return;
+    }
+    BufferRecord& record = buffers_[buffer.index];
+    if (!data || !record.mapped || size_bytes == 0 || size_bytes > record.size_bytes) {
+        AETHER_LOG_ERROR("Vulkan", "UpdateFrameConstantBuffer: null data, unmapped buffer, or %llu bytes into %llu",
+                         static_cast<unsigned long long>(size_bytes), static_cast<unsigned long long>(record.size_bytes));
+        return;
+    }
+    std::memcpy(record.mapped, data, static_cast<usize>(size_bytes));
 }
 
 BufferHandle VulkanDevice::CreateFrameConstantBuffer(u64 size_bytes) {

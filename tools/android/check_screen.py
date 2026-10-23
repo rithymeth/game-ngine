@@ -8,7 +8,11 @@ match.
 
 With --pressed, the triangle must be blue (0.20, 0.35, 0.90): the app draws it so while a finger is down.
 
-usage: python3 check_screen.py screen.raw [--pressed]
+With --scene, the screen is the cooked game drawn by player::SceneRenderer, whose colours are not fixed: the check is
+that the frame is not one flat colour (no single colour covers more than 90% of a 16x32 sample grid, and at least 8
+distinct colours appear), which an empty or failed render would be.
+
+usage: python3 check_screen.py screen.raw [--pressed | --scene]
 """
 import struct
 import sys
@@ -40,7 +44,24 @@ def score(data, header, width, points, expected):
     return matches, len(points), common
 
 
-def main(path, pressed=False):
+def check_scene(data, header, width, height):
+    seen = {}
+    total = 0
+    for gy in range(32):
+        for gx in range(16):
+            x = int((gx + 0.5) * width / 16)
+            y = int((gy + 0.5) * height / 32)
+            o = header + (y * width + x) * 4
+            rgb = tuple(c // 8 for c in data[o:o + 3])  # coarse, so dithering and filtering do not count as variety
+            seen[rgb] = seen.get(rgb, 0) + 1
+            total += 1
+    top = max(seen.values())
+    common = sorted(seen.items(), key=lambda kv: -kv[1])[:4]
+    print(f"{width}x{height} scene: {len(seen)} distinct colours, the commonest covers {top}/{total}; top {common}")
+    return 0 if len(seen) >= 8 and top * 10 <= total * 9 else 1
+
+
+def main(path, pressed=False, scene=False):
     data = open(path, "rb").read()
     width, height, _fmt = struct.unpack_from("<III", data, 0)
     # Android 12+ adds a colour-space word after the format; older releases do not.
@@ -48,6 +69,8 @@ def main(path, pressed=False):
     if len(data) != header + width * height * 4:
         print(f"unexpected screencap size {len(data)} for {width}x{height}")
         return 1
+    if scene:
+        return check_scene(data, header, width, height)
     centre = [(int(width * (0.5 + dx)), int(height * (0.5 + dy)))
               for dx in (-0.04, 0.0, 0.04) for dy in (-0.04, 0.0, 0.04)]
     bottom = [(int(width * (i + 0.5) / 8), int(height * 0.93)) for i in range(8)]
@@ -60,4 +83,4 @@ def main(path, pressed=False):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1], "--pressed" in sys.argv[2:]))
+    sys.exit(main(sys.argv[1], "--pressed" in sys.argv[2:], "--scene" in sys.argv[2:]))

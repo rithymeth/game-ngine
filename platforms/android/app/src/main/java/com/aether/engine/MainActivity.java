@@ -1,6 +1,7 @@
 package com.aether.engine;
 
 import android.app.Activity;
+import android.content.res.AssetManager;
 import android.os.Bundle;
 import android.view.MotionEvent;
 import android.view.Surface;
@@ -9,6 +10,12 @@ import android.view.SurfaceView;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.TextView;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 
 public final class MainActivity extends Activity implements SurfaceHolder.Callback {
     static {
@@ -24,11 +31,16 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     // event: 0 suspend, 1 resume, 2 memory pressure (critical: the system is about to kill background apps).
     private static native void nativeLifecycle(int event, boolean critical);
     private static native void nativeSetUserDataDir(String path);
+    // Scene mode runs the cooked game copied to <files>/Paks instead of the triangle test.
+    private static native void nativeSetSceneMode(boolean scene);
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         nativeSetUserDataDir(getFilesDir().getAbsolutePath());
+        boolean scene = "scene".equals(getIntent().getStringExtra("mode"));
+        if (scene) copyPaks();
+        nativeSetSceneMode(scene);
         FrameLayout root = new FrameLayout(this);
         SurfaceView view = new SurfaceView(this);
         view.getHolder().addCallback(this);
@@ -45,6 +57,28 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         root.addView(status, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
                                                           ViewGroup.LayoutParams.WRAP_CONTENT));
         setContentView(root);
+    }
+
+    // The APK's assets/Paks/*.apak to <files>/Paks, where the player runtime mounts them from.
+    private void copyPaks() {
+        AssetManager assets = getAssets();
+        File dir = new File(getFilesDir(), "Paks");
+        if (!dir.isDirectory() && !dir.mkdirs()) return;
+        try {
+            String[] names = assets.list("Paks");
+            if (names == null) return;
+            byte[] buffer = new byte[1 << 16];
+            for (String name : names) {
+                if (!name.endsWith(".apak")) continue;
+                try (InputStream in = assets.open("Paks/" + name);
+                     OutputStream out = new FileOutputStream(new File(dir, name))) {
+                    int n;
+                    while ((n = in.read(buffer)) > 0) out.write(buffer, 0, n);
+                }
+            }
+        } catch (IOException e) {
+            // Scene mode then reports that no .apak was found.
+        }
     }
 
     private static void forwardTouch(MotionEvent event) {
