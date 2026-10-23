@@ -72,6 +72,12 @@ public:
     // Every entity with a reported state, a cached path or an AIPerception (alive in `world`), by entity index.
     std::vector<AiDebugEntry> Collect(World& world) const;
 
+    // Measurement only (profile tests): when off, Nav.MoveTowards re-paths on
+    // every call instead of reusing the cached path. Process-wide, default on;
+    // not reachable from scripts.
+    static void SetPathCacheEnabled(bool enabled);
+    static bool PathCacheEnabled();
+
 private:
     struct State {
         Entity entity;
