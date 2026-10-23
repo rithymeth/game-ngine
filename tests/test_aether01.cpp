@@ -10,12 +10,16 @@
 #include "test_framework.h"
 #include "aether/ai/perception.h"
 #include "aether/nav/components.h"
+#include "aether/nav/dynamic.h"
+#include "aether/scene/script_component.h"
 #if AETHER_TEST_HAS_PHYSICS
 #include "aether/physics/components.h"
 #endif
 
 #include <filesystem>
 #include <algorithm>
+#include <chrono>
+#include <cstdio>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
@@ -615,17 +619,27 @@ struct Aether01Ai {
         });
 #endif
     }
-    // Closes the service doorway with a solid box.
-    void BlockDoorway(World& world) {
+    // Closes the service doorway with a solid box; OpenDoorway takes it away again.
+    Entity BlockDoorway(World& world) {
 #if AETHER_TEST_HAS_PHYSICS
         Transform at;
         at.position = Vec3(0, 2, -8.5f);
         BoxCollider gate;
         gate.half_extents = Vec3(1, 2, 0.4f);
-        world.CreateEntity(at, gate);
+        return world.CreateEntity(at, gate);
 #else
         (void)world;
         walls.push_back({{0, 2, -8.5f}, {1, 2, 0.4f}});
+        return kNullEntity;
+#endif
+    }
+    void OpenDoorway(World& world, Entity gate) {
+#if AETHER_TEST_HAS_PHYSICS
+        world.GetComponent<Transform>(gate)->position.y = -100;
+#else
+        (void)world;
+        (void)gate;
+        walls.pop_back();
 #endif
     }
 };
@@ -676,6 +690,241 @@ AETHER_TEST(Aether01_SentinelLosesKaelWhenSightIsBlocked) {
     run.Frames(240);
     AETHER_CHECK(run.Stat(sentinel, "AttackState") == 0);
     AETHER_CHECK(run.Stat(run.hero, "Health") == 3);
+}
+
+// M8.8 encounter scenarios: one deterministic run per archetype covering
+// detection, loss of target, a navmesh rebuild mid-path (movers only),
+// checkpoint reload and (Warden) the boss phases. Obstacles are carved into
+// the active navmesh as dynamic volumes, so both configs rebuild the same way.
+namespace {
+Vec3 PositionOf(ProofRun& run, Entity e) { return run.game->GetWorld().GetComponent<Transform>(e)->position; }
+f32 Flat(const Vec3& a, const Vec3& b) { return std::hypot(a.x - b.x, a.z - b.z); }
+bool InBox(const Vec3& p, const Vec3& center, const Vec3& half, f32 grow) {
+    return std::abs(p.x - center.x) < half.x + grow && std::abs(p.z - center.z) < half.z + grow;
+}
+// Carves a box into the active navmesh and rebakes it now.
+nav::DynamicNavMesh::Id CarveObstacle(const Vec3& center, const Vec3& half) {
+    nav::NavWorld* nw = nav::NavWorld::Active();
+    AETHER_CHECK(nw != nullptr && nw->Ready());
+    const u64 before = nw->Dynamic().Revision();
+    const auto id = nw->Dynamic().AddVolume(nav::NavVolume::Box(center, half));
+    nw->Dynamic().Update(0);
+    AETHER_CHECK(nw->Dynamic().Revision() != before && nw->Dynamic().PendingTiles() == 0);
+    return id;
+}
+} // namespace
+
+AETHER_TEST(Aether01_Scenario_Scout) {
+    ProofRun run("scenario_scout");
+    const Vec3 authored = PositionOf(run, run.scout);
+    run.Frames(60);
+    AETHER_CHECK(Flat(PositionOf(run, run.scout), authored) < 1e-4f); // dormant before the rifle
+    run.Tap(input::Key::E);                                             // checkpoint: MissionStage 1 is saved
+    AETHER_CHECK(run.Stat(run.hero, "MissionStage") == 1 && run.Stat(run.hero, "SaveStatus") == 1);
+    run.Frames(30);
+    AETHER_CHECK(Flat(PositionOf(run, run.scout), authored) > 0.3f);
+    // Checkpoint reload: a fresh runtime puts the Scout back and it re-engages.
+    run.Start();
+    AETHER_CHECK(run.Stat(run.hero, "MissionStage") == 1);
+    AETHER_CHECK(Flat(PositionOf(run, run.scout), authored) < 0.05f); // (Start ran one frame of pursuit)
+    auto& world = run.game->GetWorld();
+    Aether01Ai ai(world);
+    const Vec3 hero = PositionOf(run, run.hero);
+    // Detection: it closes on Kael.
+    const f32 d0 = Flat(PositionOf(run, run.scout), hero);
+    run.Frames(30);
+    AETHER_CHECK(Flat(PositionOf(run, run.scout), hero) < d0 - 0.4f);
+    // Loss of target: beyond its leash it holds position, then re-engages in range.
+    const Vec3 far(0, 0.9f, hero.z - 40.0f);
+    world.GetComponent<Transform>(run.scout)->position = far;
+    run.Frames(60);
+    AETHER_CHECK(Flat(PositionOf(run, run.scout), far) < 1e-4f);
+    // Path rebuild: start it walking down the middle, then drop a crate across the line.
+    const Vec3 start(hero.x, 0.9f, hero.z - 9.0f);
+    world.GetComponent<Transform>(run.scout)->position = start;
+    run.Frames(10);
+    const Vec3 walking = PositionOf(run, run.scout);
+    AETHER_CHECK(Flat(walking, start) > 0.1f);
+    const Vec3 crate(hero.x + (walking.x - hero.x) * 0.5f, 1.0f, hero.z + (walking.z - hero.z) * 0.5f), crate_half(1.2f, 1.0f, 0.4f);
+    CarveObstacle(crate, crate_half);
+    bool entered = false;
+    f32 widest = 0.0f;
+    for (int frame = 0; frame < 360; ++frame) {
+        run.Frames(1);
+        const Vec3 p = PositionOf(run, run.scout);
+        if (InBox(p, crate, crate_half, 0.3f)) entered = true;
+        widest = std::max(widest, std::abs(p.x - hero.x));
+    }
+    AETHER_CHECK(!entered);
+    AETHER_CHECK(widest > 1.2f); // it went round the crate's end
+    AETHER_CHECK(Flat(PositionOf(run, run.scout), hero) < Flat(walking, hero) - 2.0f);
+}
+
+AETHER_TEST(Aether01_Scenario_Sentinel) {
+    ProofRun run("scenario_sentinel");
+    run.Tap(input::Key::E);
+    for (int shot = 0; shot < 3; ++shot) { run.Tap(input::Key::MouseLeft); run.Frames(15); }
+    AETHER_CHECK(run.Stat(run.hero, "MissionStage") == 2); // research checkpoint saved
+    Entity sentinel = FindEntitiesWithTag(run.game->GetWorld(), "Sentinel").front();
+    run.game->GetWorld().GetComponent<gas::AttributeSet>(sentinel)->SetBase("Shield", 0);
+    run.game->GetWorld().GetComponent<gas::AttributeSet>(sentinel)->SetBase("Health", 2);
+    run.Start(); // checkpoint reload restores the Sentinel
+    auto& world = run.game->GetWorld();
+    sentinel = FindEntitiesWithTag(world, "Sentinel").front();
+    AETHER_CHECK(run.Stat(run.hero, "MissionStage") == 2);
+    AETHER_CHECK(run.Stat(sentinel, "Shield") == 6 && run.Stat(sentinel, "Health") == 6 && run.Stat(sentinel, "AttackState") == 0);
+    Aether01Ai ai(world);
+    run.Frames(120);
+    AETHER_CHECK(run.Stat(sentinel, "AttackState") == 1); // detection through the open doorway
+    const Entity gate = ai.BlockDoorway(world);
+    run.Frames(1);
+    AETHER_CHECK(run.Stat(sentinel, "AttackState") == 0); // loss of target
+    run.Frames(150);
+    AETHER_CHECK(run.Stat(sentinel, "AttackState") == 0 && run.Stat(run.hero, "Health") == 3);
+    // The Sentinel is a stationary turret: no path to rebuild. Reopen sight; it reacquires.
+    ai.OpenDoorway(world, gate);
+    bool reacquired = false;
+    for (int i = 0; i < 180 && !reacquired; ++i) { run.Frames(1); reacquired = run.Stat(sentinel, "AttackState") == 1; }
+    AETHER_CHECK(reacquired);
+}
+
+AETHER_TEST(Aether01_Scenario_Hunter) {
+    ProofRun run("scenario_hunter");
+    run.Tap(input::Key::E);
+    for (int shot = 0; shot < 3; ++shot) { run.Tap(input::Key::MouseLeft); run.Frames(15); }
+    Entity hunter = FindEntitiesWithTag(run.game->GetWorld(), "Hunter").front();
+    const Vec3 authored = PositionOf(run, hunter);
+    run.game->GetWorld().GetComponent<gas::AttributeSet>(hunter)->SetBase("Health", 1);
+    run.game->GetWorld().GetComponent<Transform>(hunter)->position.x += 2;
+    run.Start(); // checkpoint reload restores the Hunter
+    auto& world = run.game->GetWorld();
+    hunter = FindEntitiesWithTag(world, "Hunter").front();
+    AETHER_CHECK(run.Stat(hunter, "Health") == 4 && run.Stat(hunter, "AttackState") == 0);
+    AETHER_CHECK(Flat(PositionOf(run, hunter), authored) < 1e-4f);
+    Aether01Ai ai(world);
+    const Entity sentinel = FindEntitiesWithTag(world, "Sentinel").front();
+    world.GetComponent<gas::AttributeSet>(sentinel)->SetBase("Health", 0); // isolate the Hunter
+    world.GetComponent<Transform>(sentinel)->position.y = -100;
+    run.Frames(60);
+    AETHER_CHECK(Flat(PositionOf(run, hunter), authored) < 1e-4f); // dormant outside its trigger
+    // Detection: Kael enters the ambush room.
+    run.game->Input().SetButton(input::Key::W, true);
+    run.Frames(155);
+    run.game->Input().SetButton(input::Key::W, false);
+    bool told = false;
+    for (int i = 0; i < 200 && !told; ++i) { run.Frames(1); told = run.Stat(hunter, "AttackState") == 1; }
+    AETHER_CHECK(told);
+    // Loss of target: Kael leaves the trigger mid-tell; the tell is dropped and it holds.
+    world.GetComponent<Transform>(run.hero)->position = Vec3(0, 0, 0);
+    run.Frames(1);
+    AETHER_CHECK(run.Stat(hunter, "AttackState") == 0);
+    const Vec3 held = PositionOf(run, hunter);
+    run.Frames(60);
+    AETHER_CHECK(Flat(PositionOf(run, hunter), held) < 1e-4f && run.Stat(run.hero, "Health") == 3);
+    // Path rebuild: Kael back at the room's mouth, the Hunter at the far end; it
+    // starts its approach, then a barrier is carved across its line.
+    const Vec3 kael(0, 0, -13.2f);
+    world.GetComponent<Transform>(run.hero)->position = kael;
+    const Vec3 start(0, authored.y, -21.3f);
+    world.GetComponent<Transform>(hunter)->position = start;
+    run.Frames(5);
+    AETHER_CHECK(PositionOf(run, hunter).z > start.z + 0.05f);
+    const Vec3 barrier(0, 1, -19.0f), barrier_half(2.0f, 1.0f, 0.3f);
+    CarveObstacle(barrier, barrier_half);
+    bool entered = false;
+    f32 widest = 0.0f;
+    for (int frame = 0; frame < 120 && run.Stat(hunter, "AttackState") == 0; ++frame) {
+        world.GetComponent<Transform>(run.hero)->position = kael;
+        run.Frames(1);
+        const Vec3 p = PositionOf(run, hunter);
+        if (InBox(p, barrier, barrier_half, 0.3f)) entered = true;
+        widest = std::max(widest, std::abs(p.x));
+    }
+    AETHER_CHECK(!entered);
+    AETHER_CHECK(widest > 2.0f);
+    AETHER_CHECK(Flat(PositionOf(run, hunter), kael) < 5.3f); // it reached striking range past the barrier
+}
+
+AETHER_TEST(Aether01_Scenario_WardenPhases) {
+    ProofRun run("scenario_warden");
+    run.Tap(input::Key::E);
+    for (int shot = 0; shot < 3; ++shot) { run.Tap(input::Key::MouseLeft); run.Frames(15); }
+    run.Start();
+    run.ClearResearch();
+    run.game->Input().SetButton(input::Key::W, true);
+    run.Frames(280);
+    run.game->Input().SetButton(input::Key::W, false);
+    AETHER_CHECK(run.Stat(run.hero, "MissionStage") == 3); // arena checkpoint saved
+    auto& world = run.game->GetWorld();
+    const Entity warden = FindEntitiesWithTag(world, "Warden").front();
+    const Entity armor = FindEntitiesWithTag(world, "WardenArmor").front();
+    const Entity core = FindEntitiesWithTag(world, "WardenCore").front();
+    // Detection: the Warden telegraphs a strike at Kael.
+    bool told = false;
+    for (int i = 0; i < 150 && !told; ++i) { run.Frames(1); told = run.Stat(warden, "AttackState") == 1; }
+    AETHER_CHECK(told);
+    AETHER_CHECK(run.Stat(warden, "Phase") == 1);
+    AETHER_CHECK(PositionOf(run, armor).y > -50 && PositionOf(run, core).y < -50);
+    // Phase transitions follow its health: 2 drops the armor, 3 exposes the core.
+    auto* stats = world.GetComponent<gas::AttributeSet>(warden);
+    const struct { f32 health; f32 phase; bool armor, core; } phases[] = {{9, 2, false, false}, {6, 3, false, true}, {3, 4, false, true}};
+    for (const auto& step : phases) {
+        stats->SetBase("Health", step.health);
+        run.Frames(1);
+        AETHER_CHECK(run.Stat(warden, "Phase") == step.phase);
+        AETHER_CHECK((PositionOf(run, armor).y > -50) == step.armor);
+        AETHER_CHECK((PositionOf(run, core).y > -50) == step.core);
+    }
+    // Checkpoint reload: back to a full-health phase 1 Warden in the arena.
+    run.Start();
+    auto& reloaded = run.game->GetWorld();
+    const Entity warden2 = FindEntitiesWithTag(reloaded, "Warden").front();
+    AETHER_CHECK(run.Stat(run.hero, "MissionStage") == 3);
+    AETHER_CHECK(run.Stat(warden2, "Health") == 12 && run.Stat(warden2, "Phase") == 1);
+    AETHER_CHECK(PositionOf(run, FindEntitiesWithTag(reloaded, "WardenArmor").front()).y > -50);
+    // Loss of target: Kael is down mid-telegraph; the strike is cancelled.
+    told = false;
+    for (int i = 0; i < 150 && !told; ++i) { run.Frames(1); told = run.Stat(warden2, "AttackState") == 1; }
+    AETHER_CHECK(told);
+    reloaded.GetComponent<gas::AttributeSet>(run.hero)->SetBase("Health", 0);
+    run.Frames(1);
+    AETHER_CHECK(run.Stat(warden2, "AttackState") == 0);
+    for (Entity marker : FindEntitiesWithTag(reloaded, "WardenMarker")) AETHER_CHECK(PositionOf(run, marker).y < -50);
+}
+
+// M8.8 profile: the planned encounter load (24 Scout path followers; the plan
+// names no count) on the AETHER-01 navmesh. Prints ms/frame for the whole
+// headless tick with and without them; the difference is the AI+nav cost.
+AETHER_TEST(Aether01_Profile_24NavFollowers) {
+    ProofRun run("profile");
+    run.Tap(input::Key::E);
+    auto& world = run.game->GetWorld();
+    Aether01Ai ai(world);
+    const auto time_frames = [&](int frames) {
+        const auto t0 = std::chrono::steady_clock::now();
+        run.Frames(frames);
+        return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() / frames;
+    };
+    run.Frames(10);
+    time_frames(480); // warm up: the opening frames carry one-off work (hints, audio starts)
+    const double base = time_frames(240);
+    const ScriptComponent script = *world.GetComponent<ScriptComponent>(run.scout);
+    const gas::AttributeSet stats = *world.GetComponent<gas::AttributeSet>(run.scout);
+    std::vector<Entity> followers;
+    for (int i = 0; i < 24; ++i) {
+        Transform at;
+        // Half in the route room (they path through the doorway), half in the bay.
+        at.position = i < 12 ? Vec3(-4.0f + (i % 4) * 2.6f, 0.9f, -12.0f - (i / 4) * 3.0f) : Vec3(-4.0f + (i % 4) * 2.6f, 0.9f, -6.0f + ((i - 12) / 4) * 1.5f);
+        followers.push_back(world.CreateEntity(at, ScriptComponent(script), gas::AttributeSet(stats)));
+    }
+    std::vector<Vec3> spawned;
+    for (Entity e : followers) spawned.push_back(world.GetComponent<Transform>(e)->position);
+    run.Frames(10);
+    const double loaded = time_frames(240);
+    int moved = 0;
+    for (usize i = 0; i < followers.size(); ++i) moved += Flat(world.GetComponent<Transform>(followers[i])->position, spawned[i]) > 0.5f;
+    AETHER_CHECK(moved == 24);
+    std::printf("[profile] AETHER-01 24 nav followers: %.3f ms/frame (baseline %.3f, AI+nav %.3f ms/frame)\n", loaded, base, loaded - base);
 }
 
 #if AETHER_TEST_HAS_PHYSICS

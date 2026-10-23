@@ -5,6 +5,9 @@ local Scout = {}
 Scout.speed = 1.2
 --@range 0 20
 Scout.stop_distance = 1.2
+--@range 0 200
+--@tooltip Beyond this distance the Scout loses Kael and holds position.
+Scout.leash_distance = 30
 
 function Scout:OnCreate()
     self.player = nil
@@ -25,6 +28,7 @@ function Scout:OnUpdate(dt)
     local p = transform.position
     local dx, dz = player.x - p.x, player.z - p.z
     local distance = math.sqrt(dx * dx + dz * dz)
+    if distance > self.leash_distance then return end -- out of range: the Scout disengages
     if distance > self.stop_distance then
         local step = math.min(self.speed * dt, distance - self.stop_distance)
         -- Walk the scene's navigation mesh around walls and props when there is
