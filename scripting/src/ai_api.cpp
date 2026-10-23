@@ -108,6 +108,13 @@ std::vector<AiDebugEntry> AiDebugStore::Collect(World& world) const {
     return out;
 }
 
+namespace {
+bool g_path_cache_enabled = true;
+} // namespace
+
+void AiDebugStore::SetPathCacheEnabled(bool enabled) { g_path_cache_enabled = enabled; }
+bool AiDebugStore::PathCacheEnabled() { return g_path_cache_enabled; }
+
 std::shared_ptr<AiDebugStore> InstallAiApi(LuauHost& host) {
     LuauHost* h = &host;
     auto store = std::make_shared<AiDebugStore>();
@@ -175,7 +182,7 @@ std::shared_ptr<AiDebugStore> InstallAiApi(LuauHost& host) {
         const u64 revision = nw->Dynamic().Revision();
         AiDebugStore::CachedPath& entry = store->PathSlot(entity);
         const auto flat = [](const Vec3& a, const Vec3& b) { return std::hypot(a.x - b.x, a.z - b.z); };
-        if (entry.entity != entity || entry.mesh != mesh || entry.revision != revision || (goal - entry.goal).Length() > kGoalMove ||
+        if (!g_path_cache_enabled || entry.entity != entity || entry.mesh != mesh || entry.revision != revision || (goal - entry.goal).Length() > kGoalMove ||
             flat(t->position, entry.left_at) > kOffPath || entry.points.empty()) {
             entry = AiDebugStore::CachedPath{entity, mesh, revision, goal, t->position, 0, false, {}};
             nav::NavPath found;
