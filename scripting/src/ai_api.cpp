@@ -6,6 +6,11 @@
 #include "aether/nav/navmesh.h"
 #include "aether/scene/components.h"
 
+#include <algorithm>
+#include <cmath>
+#include <memory>
+#include <unordered_map>
+
 namespace aether::script {
 
 namespace {
@@ -87,25 +92,50 @@ void InstallAiApi(LuauHost& host) {
         c.ReturnVectorList(path.points);
         c.Return(path.status == nav::PathStatus::Complete);
     });
-    def("Nav", "MoveTowards", [h](NativeCall& c) {
+    // Paths are cached per entity: a call re-paths only when the goal moved more
+    // than kGoalMove, the mesh was rebaked (its revision moved), or the entity
+    // isn't where the last call left it (a script or a reload teleported it).
+    struct CachedPath {
+        Entity entity;
+        const nav::NavMesh* mesh = nullptr;
+        u64 revision = 0;
+        Vec3 goal, left_at;
+        usize next = 0; // the corner being walked to
+        nav::NavPath path;
+    };
+    auto cache = std::make_shared<std::unordered_map<u32, CachedPath>>();
+    def("Nav", "MoveTowards", [h, cache](NativeCall& c) {
         if (!NeedEntity(c, 0, "Nav.MoveTowards", "the entity") || !NeedVector(c, 1, "Nav.MoveTowards", "the goal") ||
             !NeedNumber(c, 2, "Nav.MoveTowards", "the speed") || !NeedNumber(c, 3, "Nav.MoveTowards", "dt"))
             return;
+        constexpr f32 kGoalMove = 0.25f, kOffPath = 1e-3f;
         const auto none = [&] { c.Return(false); c.Return(ScriptValue{}); };
         World* world = h->BoundWorld();
-        Transform* t = world != nullptr ? world->GetComponent<Transform>(c.EntityArg(0)) : nullptr;
+        const Entity entity = c.EntityArg(0);
+        Transform* t = world != nullptr ? world->GetComponent<Transform>(entity) : nullptr;
+        nav::NavWorld* nw = nav::NavWorld::Active();
         const nav::NavMesh* mesh = ActiveMesh();
-        nav::NavPath path;
-        if (t == nullptr || mesh == nullptr || !mesh->FindPath(t->position, c.Vector(1), path) || path.status == nav::PathStatus::None ||
-            path.points.empty())
-            return none();
+        if (t == nullptr || mesh == nullptr) return none();
+        const Vec3 goal = c.Vector(1);
+        const u64 revision = nw->Dynamic().Revision();
+        CachedPath& entry = (*cache)[entity.index];
+        const auto flat = [](const Vec3& a, const Vec3& b) { return std::hypot(a.x - b.x, a.z - b.z); };
+        if (entry.entity != entity || entry.mesh != mesh || entry.revision != revision || (goal - entry.goal).Length() > kGoalMove ||
+            flat(t->position, entry.left_at) > kOffPath || entry.path.points.empty()) {
+            entry = CachedPath{entity, mesh, revision, goal, t->position, 0, {}};
+            if (!mesh->FindPath(t->position, goal, entry.path) || entry.path.status == nav::PathStatus::None || entry.path.points.empty()) {
+                entry.path.points.clear();
+                return none();
+            }
+        }
+        const nav::NavPath& path = entry.path;
         f32 step = static_cast<f32>(c.Number(2) * c.Number(3));
         if (!(step > 0.0f)) step = 0.0f;
         // Walk the corners; the first is the mesh point under the entity. Dropping
         // onto the mesh is free, so an entity whose origin is above its feet (a
         // box centred off the floor) still moves the full step along the ground.
-        Vec3 at(t->position.x, path.points.front().y, t->position.z);
-        usize next = 0;
+        usize next = std::min(entry.next, path.points.size() - 1);
+        Vec3 at(t->position.x, path.points[next].y, t->position.z);
         while (next < path.points.size()) {
             const Vec3 to = path.points[next];
             const f32 d = (to - at).Length();
@@ -119,6 +149,8 @@ void InstallAiApi(LuauHost& host) {
             ++next;
         }
         t->position = at;
+        entry.next = next;
+        entry.left_at = at;
         f32 remaining = next < path.points.size() ? (path.points[next] - at).Length() : 0.0f;
         for (usize i = next + 1; i < path.points.size(); ++i) remaining += (path.points[i] - path.points[i - 1]).Length();
         c.Return(remaining <= 1e-3f && path.status == nav::PathStatus::Complete);

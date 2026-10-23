@@ -128,7 +128,12 @@ function Defender:OnUpdate(dt)
     local distance = math.sqrt(dx * dx + dz * dz)
     self.timer -= dt
     if self.hunter then
-        if not Inside(player, self.wake_min, self.wake_max) then return end -- the ambush waits for its trigger
+        if not Inside(player, self.wake_min, self.wake_max) then
+            -- The ambush waits for its trigger; a pending tell is dropped when the
+            -- player leaves it (a committed charge still plays out).
+            if self.state == "tell" then self:HideTell(); self.state, self.timer = "idle", 1.5 end
+            if self.state ~= "charge" then return end
+        end
         if self.state == "charge" then
             local cx, cz = self.target.x - p.x, self.target.z - p.z
             local length = math.sqrt(cx * cx + cz * cz)
@@ -142,7 +147,20 @@ function Defender:OnUpdate(dt)
             if self.timer <= 0 then self.state, self.timer, self.damaged = "charge", 0.65, false end
         elseif distance > 5 then
             local step = math.min(self.approach_speed * dt, distance - 3)
-            transform.position = self:Confine(p.x + dx / distance * step, p.y, p.z + dz / distance * step)
+            -- Approach along the navigation mesh (around props and obstacles)
+            -- when the host has one; straight at the player otherwise.
+            local moved = false
+            if Nav ~= nil and Nav.IsReady() and dt > 0 then
+                local arrived, remaining = Nav.MoveTowards(self.entity, player, step / dt, dt)
+                if remaining ~= nil and (arrived or remaining > 0.05) then
+                    local at = transform.position
+                    transform.position = self:Confine(at.x, p.y, at.z)
+                    moved = true
+                end
+            end
+            if not moved then
+                transform.position = self:Confine(p.x + dx / distance * step, p.y, p.z + dz / distance * step)
+            end
         elseif self.timer <= 0 then
             self.state, self.timer, self.target = "tell", 0.75, player
             Attributes.SetBase(self.entity, "AttackState", 1)
