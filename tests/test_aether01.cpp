@@ -29,6 +29,7 @@ using namespace aether;
 namespace fs = std::filesystem;
 
 #if AETHER_TEST_HAS_SCRIPTING
+#include "aether/script/ai_api.h"
 namespace {
 struct ProofProject {
     fs::path root;
@@ -953,7 +954,15 @@ AETHER_TEST(Aether01_Scenario_WardenPhases) {
 // M8.8 profile: the planned encounter load (24 Scout path followers; the plan
 // names no count) on the AETHER-01 navmesh. Prints ms/frame for the whole
 // headless tick with and without them; the difference is the AI+nav cost.
-AETHER_TEST(Aether01_Profile_24NavFollowers) {
+// M8.8 profile: baseline vs N scripted nav followers, with and without the
+// Nav.MoveTowards path cache. Prints only; timing is never asserted (CI noise).
+namespace {
+struct ProfileResult {
+    double base = 0, loaded = 0;
+    int moved = 0;
+};
+ProfileResult ProfileNavFollowers(int count, bool cache) {
+    script::AiDebugStore::SetPathCacheEnabled(cache);
     ProofRun run("profile");
     run.Tap(input::Key::E);
     auto& world = run.game->GetWorld();
@@ -965,24 +974,42 @@ AETHER_TEST(Aether01_Profile_24NavFollowers) {
     };
     run.Frames(10);
     time_frames(480); // warm up: the opening frames carry one-off work (hints, audio starts)
-    const double base = time_frames(240);
+    ProfileResult r;
+    r.base = time_frames(240);
     const ScriptComponent script = *world.GetComponent<ScriptComponent>(run.scout);
     const gas::AttributeSet stats = *world.GetComponent<gas::AttributeSet>(run.scout);
     std::vector<Entity> followers;
-    for (int i = 0; i < 24; ++i) {
+    for (int i = 0; i < count; ++i) {
         Transform at;
-        // Half in the route room (they path through the doorway), half in the bay.
-        at.position = i < 12 ? Vec3(-4.0f + (i % 4) * 2.6f, 0.9f, -12.0f - (i / 4) * 3.0f) : Vec3(-4.0f + (i % 4) * 2.6f, 0.9f, -6.0f + ((i - 12) / 4) * 1.5f);
+        // Half in the route room (they path through the doorway), half in the bay;
+        // past 24 the extra rows are offset half a cell so nobody spawns stacked.
+        const int k = i % 24;
+        const f32 off = (i / 24) * 1.3f;
+        at.position = k < 12 ? Vec3(-4.0f + (k % 4) * 2.6f + off, 0.9f, -12.0f - (k / 4) * 3.0f)
+                             : Vec3(-4.0f + (k % 4) * 2.6f + off, 0.9f, -6.0f + ((k - 12) / 4) * 1.5f);
         followers.push_back(world.CreateEntity(at, ScriptComponent(script), gas::AttributeSet(stats)));
     }
     std::vector<Vec3> spawned;
     for (Entity e : followers) spawned.push_back(world.GetComponent<Transform>(e)->position);
     run.Frames(10);
-    const double loaded = time_frames(240);
-    int moved = 0;
-    for (usize i = 0; i < followers.size(); ++i) moved += Flat(world.GetComponent<Transform>(followers[i])->position, spawned[i]) > 0.5f;
-    AETHER_CHECK(moved == 24);
-    std::printf("[profile] AETHER-01 24 nav followers: %.3f ms/frame (baseline %.3f, AI+nav %.3f ms/frame)\n", loaded, base, loaded - base);
+    r.loaded = time_frames(240);
+    for (usize i = 0; i < followers.size(); ++i) r.moved += Flat(world.GetComponent<Transform>(followers[i])->position, spawned[i]) > 0.5f;
+    script::AiDebugStore::SetPathCacheEnabled(true);
+    std::printf("[profile] AETHER-01 %d nav followers, path cache %s: %.3f ms/frame (baseline %.3f, AI+nav %.3f ms/frame)\n", count,
+                cache ? "on " : "off", r.loaded, r.base, r.loaded - r.base);
+    return r;
+}
+} // namespace
+
+AETHER_TEST(Aether01_Profile_24NavFollowers) {
+    AETHER_CHECK(ProfileNavFollowers(24, true).moved == 24);
+}
+
+AETHER_TEST(Aether01_Profile_NavFollowersCacheAndScaling) {
+    AETHER_CHECK(ProfileNavFollowers(24, false).moved == 24);
+    AETHER_CHECK(ProfileNavFollowers(48, true).moved == 48);
+    AETHER_CHECK(ProfileNavFollowers(48, false).moved == 48);
+    AETHER_CHECK(script::AiDebugStore::PathCacheEnabled());
 }
 
 #if AETHER_TEST_HAS_PHYSICS
