@@ -7,6 +7,7 @@
 
 #if defined(AETHER_HAS_VULKAN) && !defined(_WIN32)
 
+#include "aether/core/log.h"
 #include "aether/gfx/rhi/device.h"
 #include "aether/gfx/shader_compiler.h"
 #include "aether/platform/window.h"
@@ -128,6 +129,27 @@ float4 VSMain(uint id : SV_VertexID) : SV_Position { return float4(float(id), 0.
         i += count;
     }
     CHECK(push_constant_bindings == 0);
+}
+
+// The player's lights go through UpdateFrameConstantBuffer every frame. On Vulkan it used to forward to
+// UpdateVertexBuffer, which rejects frame-constant buffers, so nothing was written and an error was logged per frame.
+AETHER_TEST(Vulkan_FrameConstantBufferUpdates) {
+    std::unique_ptr<rhi::IDevice> device = MakeDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    CHECK(device->SupportsFrameConstants());
+    const rhi::BufferHandle buffer = device->CreateFrameConstantBuffer(64);
+    CHECK(buffer.IsValid());
+    int vulkan_errors = 0;
+    const int sink = Logger::Instance().AddSink([&](const LogLine& line) {
+        if (line.level >= LogLevel::Error && line.category == "Vulkan") ++vulkan_errors;
+    });
+    const f32 data[16] = {1.0f, 2.0f, 3.0f, 4.0f};
+    device->UpdateFrameConstantBuffer(buffer, data, sizeof(data));
+    Logger::Instance().RemoveSink(sink);
+    CHECK(vulkan_errors == 0);
 }
 
 AETHER_TEST(Vulkan_OffscreenFrameReadsBack) {

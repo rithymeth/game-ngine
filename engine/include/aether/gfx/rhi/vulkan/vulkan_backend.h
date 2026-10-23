@@ -131,7 +131,7 @@ public:
     // `register(b0, space2)` lands under DXC's default mapping (space N is set N, register bN is binding N).
     bool SupportsFrameConstants() const override { return true; }
     BufferHandle CreateFrameConstantBuffer(u64 size_bytes) override;
-    void UpdateFrameConstantBuffer(BufferHandle buffer, const void* data, u64 size_bytes) override { UpdateVertexBuffer(buffer, data, size_bytes); }
+    void UpdateFrameConstantBuffer(BufferHandle buffer, const void* data, u64 size_bytes) override;
     VkDescriptorSetLayout FrameConstantsSetLayout() const { return frame_constants_set_layout_; }
     SampledTextureHandle CreateR32FloatTexture(u32 width, u32 height, const f32* values) override;
     const SampledTextureRecord& GetSampledTexture(SampledTextureHandle handle) const {
