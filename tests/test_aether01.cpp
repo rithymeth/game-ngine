@@ -8,8 +8,12 @@
 #include "aether/reflection/serialize.h"
 #include "aether/sequencer/sequence_system.h"
 #include "test_framework.h"
+#include "aether/ai/perception.h"
+#include "aether/nav/components.h"
 
 #include <filesystem>
+#include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <memory>
@@ -557,6 +561,120 @@ AETHER_TEST(Aether01_CheckpointWriteFailureIsVisible) {
     AETHER_CHECK(!run.game->Saves()->LastError().empty());
 }
 
+// M8.8: the archetypes use the engine's navigation and line of sight. A physics
+// player bakes both from the scene's box colliders; without physics there are no
+// colliders, so these tests stand in the same boxes (Main.ascene's static ones).
+struct Aether01Ai {
+    struct Box {
+        Vec3 center, half;
+    };
+    std::vector<Box> walls = {
+        {{0, -0.5f, 0}, {5.5f, 0.5f, 8.5f}},      {{-5.5f, 2, 0}, {0.5f, 2, 8.5f}},      {{5.5f, 2, 0}, {0.5f, 2, 8.5f}},
+        {{-3.5f, 2, -8.5f}, {2.5f, 2, 0.5f}},     {{3.5f, 2, -8.5f}, {2.5f, 2, 0.5f}},   {{0, 3.5f, -8.5f}, {1, 0.5f, 0.5f}},
+        {{-3.5f, 2, 8.5f}, {2.5f, 2, 0.5f}},      {{3.5f, 2, 8.5f}, {2.5f, 2, 0.5f}},    {{0, 3.5f, 8.5f}, {1, 0.5f, 0.5f}},
+        {{-3, 1.5f, -4}, {0.5f, 1.5f, 0.5f}},     {{3, 1.5f, -4}, {0.5f, 1.5f, 0.5f}},   {{0, -0.5f, -17}, {5.5f, 0.5f, 8.5f}},
+        {{-5.5f, 2, -17}, {0.5f, 2, 8.5f}},       {{5.5f, 2, -17}, {0.5f, 2, 8.5f}},
+    };
+    std::unique_ptr<nav::NavWorld> navigation;
+    std::unique_ptr<ai::PerceptionWorld> perception;
+
+    // Makes sure the game has them: the player's own (physics builds) or these.
+    explicit Aether01Ai(World& world) {
+#if AETHER_TEST_HAS_PHYSICS
+        (void)world;
+        AETHER_CHECK(nav::NavWorld::Active() != nullptr && nav::NavWorld::Active()->Ready());
+        AETHER_CHECK(ai::PerceptionWorld::Active() != nullptr && ai::PerceptionWorld::Active()->HasLineOfSightTest());
+#else
+        AETHER_CHECK(nav::NavWorld::Active() == nullptr); // nothing to bake from without colliders
+        nav::NavGeometry geometry;
+        for (const Box& box : walls) geometry.AddBox(box.center, box.half);
+        navigation = std::make_unique<nav::NavWorld>(world, [](const ModelRenderer&, std::vector<Vec3>&, std::vector<u32>&) { return false; });
+        std::string error;
+        AETHER_CHECK(navigation->Dynamic().Build(std::move(geometry), nav::NavMeshSettings{}, &error));
+        perception = std::make_unique<ai::PerceptionWorld>(world);
+        perception->SetLineOfSight([this](const Vec3& from, const Vec3& to, Entity, Entity) {
+            for (const Box& box : walls) {
+                f32 first = 0, last = 1;
+                const f32 o[3] = {from.x, from.y, from.z}, d[3] = {to.x - from.x, to.y - from.y, to.z - from.z};
+                const f32 c[3] = {box.center.x, box.center.y, box.center.z}, h[3] = {box.half.x, box.half.y, box.half.z};
+                bool hit = true;
+                for (int axis = 0; axis < 3 && hit; ++axis) {
+                    if (std::abs(d[axis]) < 1e-5f) { hit = o[axis] >= c[axis] - h[axis] && o[axis] <= c[axis] + h[axis]; continue; }
+                    f32 a = (c[axis] - h[axis] - o[axis]) / d[axis], b = (c[axis] + h[axis] - o[axis]) / d[axis];
+                    if (a > b) std::swap(a, b);
+                    first = std::max(first, a);
+                    last = std::min(last, b);
+                    hit = first <= last;
+                }
+                if (hit) return false;
+            }
+            return true;
+        });
+#endif
+    }
+    // Closes the service doorway with a solid box.
+    void BlockDoorway(World& world) {
+#if AETHER_TEST_HAS_PHYSICS
+        Transform at;
+        at.position = Vec3(0, 2, -8.5f);
+        BoxCollider gate;
+        gate.half_extents = Vec3(1, 2, 0.4f);
+        world.CreateEntity(at, gate);
+#else
+        (void)world;
+        walls.push_back({{0, 2, -8.5f}, {1, 2, 0.4f}});
+#endif
+    }
+};
+
+AETHER_TEST(Aether01_ScoutPathsAroundACryoPodOnTheNavMesh) {
+    ProofRun run("scout_nav");
+    auto& world = run.game->GetWorld();
+    Aether01Ai ai(world);
+    run.Tap(input::Key::E); // the rifle wakes the Scout
+    AETHER_CHECK(run.Stat(run.hero, "MissionStage") == 1);
+    const Vec3 hero = world.GetComponent<Transform>(run.hero)->position;
+    // Directly behind the pod at (3, -4) as seen from Kael: a straight chase walks into it.
+    const Vec3 pod(3.0f, 0.0f, -4.0f);
+    const f32 along = std::hypot(pod.x - hero.x, pod.z - hero.z);
+    const Vec3 away((pod.x - hero.x) / along, 0, (pod.z - hero.z) / along);
+    const Vec3 start(pod.x + away.x * 1.5f, 0.9f, pod.z + away.z * 1.5f);
+    world.GetComponent<Transform>(run.scout)->position = start;
+    const f32 start_distance = std::hypot(start.x - hero.x, start.z - hero.z);
+    bool entered_pod = false;
+    f32 widest = 0.0f; // how far it strayed from the straight line
+    for (int frame = 0; frame < 300; ++frame) {
+        run.Frames(1);
+        const Vec3 p = world.GetComponent<Transform>(run.scout)->position;
+        // The pod's box grown by the Scout's half width.
+        if (std::abs(p.x - pod.x) < 0.9f && std::abs(p.z - pod.z) < 0.9f) entered_pod = true;
+        AETHER_CHECK(std::abs(p.y - 0.9f) < 1e-4f);
+        widest = std::max(widest, std::abs((p.x - hero.x) * away.z - (p.z - hero.z) * away.x));
+    }
+    const Vec3 end = world.GetComponent<Transform>(run.scout)->position;
+    AETHER_CHECK(!entered_pod);
+    AETHER_CHECK(widest > 0.9f);
+    AETHER_CHECK(std::hypot(end.x - hero.x, end.z - hero.z) < start_distance - 2.0f);
+}
+
+AETHER_TEST(Aether01_SentinelLosesKaelWhenSightIsBlocked) {
+    ProofRun run("sentinel_sight");
+    run.Tap(input::Key::E);
+    for (int shot = 0; shot < 3; ++shot) { run.Tap(input::Key::MouseLeft); run.Frames(15); }
+    run.Start(); // research checkpoint
+    auto& world = run.game->GetWorld();
+    Aether01Ai ai(world);
+    const Entity sentinel = FindEntitiesWithTag(world, "Sentinel").front();
+    run.Frames(120);
+    AETHER_CHECK(run.Stat(sentinel, "AttackState") == 1); // it sees Kael through the open door and telegraphs
+    ai.BlockDoorway(world); // mid-tell: the Sentinel loses its target
+    run.Frames(1);
+    AETHER_CHECK(run.Stat(sentinel, "AttackState") == 0);
+    run.Frames(240);
+    AETHER_CHECK(run.Stat(sentinel, "AttackState") == 0);
+    AETHER_CHECK(run.Stat(run.hero, "Health") == 3);
+}
+
 #if AETHER_TEST_HAS_PHYSICS
 AETHER_TEST(Aether01_CameraShortensBeforeTheRoomWall) {
     ProofRun run("camera");
@@ -569,3 +687,4 @@ AETHER_TEST(Aether01_CameraShortensBeforeTheRoomWall) {
 }
 #endif
 #endif
+

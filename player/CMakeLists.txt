@@ -25,6 +25,14 @@ if(TARGET Aether::Scripting)
 else()
     target_compile_definitions(aether_game PRIVATE AETHER_GAME_SCRIPTING=0)
 endif()
+# AI line of sight and the navigation mesh (Nav.*, AI.CanSee) for scene scripts,
+# both from the scene's box colliders (game.cpp: so only with physics).
+if(TARGET Aether::AI AND TARGET Aether::Nav)
+    target_link_libraries(aether_game PRIVATE Aether::AI Aether::Nav)
+    target_compile_definitions(aether_game PRIVATE AETHER_GAME_AI=1)
+else()
+    target_compile_definitions(aether_game PRIVATE AETHER_GAME_AI=0)
+endif()
 # The inventory genre kit (Phase 30 step 7a), when built.
 if(TARGET Aether::Inventory)
     target_link_libraries(aether_game PUBLIC Aether::Inventory)
