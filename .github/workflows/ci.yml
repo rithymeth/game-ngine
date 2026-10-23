@@ -128,7 +128,14 @@ jobs:
       - name: Functional tests
         run: ./build/tools/functional/aether_functional --quiet --junit functional-results.xml
       - name: Registered regression tests
-        run: ctest --test-dir build --output-on-failure --parallel 4 -R "^(fuzz_replay_.*|module_graph_catches_a_cycle|api_stability_annotations|api_freeze_checks|frozen_api_game|production_gate_table|m8_gate_table)$"
+        run: ctest --test-dir build --output-on-failure --parallel 4 -R "^(fuzz_replay_.*|module_graph_catches_a_cycle|api_stability_annotations|api_freeze_checks|api_inventory|frozen_api_game|production_gate_table|m8_gate_table)$"
+      - name: API inventory (M8.1)
+        # The Physics lane builds every optional module, which is the configuration the Luau inventory records.
+        # A failure means the public C++ or Luau API changed without a reviewed inventory update; to accept an
+        # intended change run `python3 tools/api_inventory.py --update --tests build/tests/aether_tests` and
+        # commit docs/design/api_inventory_*.txt.
+        if: matrix.name == 'Physics'
+        run: python3 tools/api_inventory.py --tests ./build/tests/aether_tests
       - name: Long-running heap soak
         if: matrix.name == 'GCC'
         env:
@@ -285,7 +292,7 @@ jobs:
       - name: Functional tests
         run: ./build/tools/functional/aether_functional --quiet --junit functional-results.xml
       - name: Registered regression tests
-        run: ctest --test-dir build --output-on-failure --parallel 4 -R "^(fuzz_replay_.*|module_graph_catches_a_cycle|api_stability_annotations|api_freeze_checks|frozen_api_game|production_gate_table|m8_gate_table)$"
+        run: ctest --test-dir build --output-on-failure --parallel 4 -R "^(fuzz_replay_.*|module_graph_catches_a_cycle|api_stability_annotations|api_freeze_checks|api_inventory|frozen_api_game|production_gate_table|m8_gate_table)$"
       - name: Screenshot the editor shell
         # Offscreen through MoltenVK; hosted runners may have no Metal
         # device, so this reports without failing the job.
@@ -357,7 +364,7 @@ jobs:
       - name: Functional tests
         run: .\build\tools\functional\Release\aether_functional.exe --quiet --junit functional-results.xml
       - name: Registered regression tests
-        run: ctest --test-dir build -C Release --output-on-failure --parallel 4 -R "^(fuzz_replay_.*|module_graph_catches_a_cycle|api_stability_annotations|api_freeze_checks|frozen_api_game|production_gate_table|m8_gate_table)$"
+        run: ctest --test-dir build -C Release --output-on-failure --parallel 4 -R "^(fuzz_replay_.*|module_graph_catches_a_cycle|api_stability_annotations|api_freeze_checks|api_inventory|frozen_api_game|production_gate_table|m8_gate_table)$"
       - name: Long-running heap soak
         env:
           AETHER_SOAK_SCALE: "4"
