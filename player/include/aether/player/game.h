@@ -232,6 +232,21 @@ public:
     const input::InputAssetLibrary& InputAssets() const { return input_library_; }
     // Bindings in context/action order, with the player's overrides applied.
     std::vector<RebindableInput> RebindableInputs() const;
+    // The AI debugger (M8.8): per AI entity, the state its script reports
+    // (AI.SetDebugState), what its AIPerception knows and targets, and the
+    // path Nav.MoveTowards walks it along. Empty without scripting.
+    struct AiDebugInfo {
+        Entity entity;
+        std::string state;
+        bool has_perception = false;
+        Entity target;
+        std::vector<Entity> known;
+        std::vector<Vec3> path; // corners; empty when it has no path
+        usize next_corner = 0;  // the corner it is walking to (== path.size(): arrived)
+        bool path_complete = false;
+        Vec3 goal;
+    };
+    std::vector<AiDebugInfo> AiDebug() const;
     // Script and Blueprint problems, as text.
     std::vector<std::string> ScriptErrors() const;
     std::vector<std::string> BlueprintErrors() const;

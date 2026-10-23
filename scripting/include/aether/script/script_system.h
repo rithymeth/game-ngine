@@ -7,6 +7,7 @@
 #include "aether/script/luau_host.h"
 
 #include <functional>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -54,6 +55,8 @@ struct ScriptError {
 //   Physics.GetLinearVelocity(entity), Physics.Raycast(...), Physics.SphereCast(...)
 // Connections and timers made while one of an entity's callbacks runs belong
 // to that entity's script, and end when it's destroyed (§11.2).
+class AiDebugStore;
+
 class ScriptSystem {
 public:
     // Reads a script asset's source; false if it isn't available.
@@ -115,6 +118,8 @@ public:
     ScriptValue GetField(Entity entity, const std::string& field);
 
     usize InstanceCount() const { return instances_.size(); }
+    // The AI debugger's data (AI.SetDebugState, Nav.MoveTowards' paths; ai_api.h). Never null.
+    const AiDebugStore& AiDebug() const { return *ai_debug_; }
     const std::vector<std::string>& Errors() const { return errors_; }
     void ClearErrors() { errors_.clear(); }
 
@@ -198,6 +203,7 @@ private:
     u32 next_id_ = 1;
     u64 next_owner_ = 1;
     u64 current_owner_ = 0; // the instance whose callback is running
+    std::shared_ptr<AiDebugStore> ai_debug_;
 };
 
 } // namespace aether::script
