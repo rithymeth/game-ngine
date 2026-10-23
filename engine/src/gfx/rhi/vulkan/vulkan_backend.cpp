@@ -996,7 +996,17 @@ void VulkanDevice::UpdateStorageBuffer(BufferHandle buffer, const void* data, u6
 
 void VulkanDevice::UpdateVertexBuffer(BufferHandle buffer, const void* data, u64 size_bytes) {
     if (!IsVertexBuffer(buffer) || buffer.index >= buffers_.size()) {
-        AETHER_LOG_ERROR("Vulkan", "UpdateVertexBuffer received an invalid buffer handle (%u)", buffer.index);
+        if (buffer.IsValid() && buffer.index < buffers_.size()) {
+            const BufferRecord& r = buffers_[buffer.index];
+            AETHER_LOG_ERROR("Vulkan",
+                             "UpdateVertexBuffer received a handle (%u of %zu) that is not a vertex buffer "
+                             "(vertex=%d index=%d constant=%d storage=%d, %llu bytes)",
+                             buffer.index, buffers_.size(), r.is_vertex, r.is_index, r.is_constant, r.is_storage,
+                             static_cast<unsigned long long>(r.size_bytes));
+        } else {
+            AETHER_LOG_ERROR("Vulkan", "UpdateVertexBuffer received an invalid buffer handle (%u of %zu)", buffer.index,
+                             buffers_.size());
+        }
         return;
     }
     BufferRecord& record = buffers_[buffer.index];
