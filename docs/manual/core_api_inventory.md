@@ -29,4 +29,23 @@ this inventory does not promote any header to a 1.0 stability guarantee.
 4. Resolve the open error-return convention and audit ownership, mutation and
    allocation behavior in the hot ECS, jobs and serialization paths.
 
+## Generated inventory and compatibility corpus
+
+- `python3 tools/api_inventory.py` checks the generated C++ inventory
+  ([api_inventory_cpp.txt](../design/api_inventory_cpp.txt): each installed
+  header, its level, declared types and normalized declarations). Adding
+  `--tests <build>/tests/aether_tests` also checks the Luau inventory
+  ([api_inventory_luau.txt](../design/api_inventory_luau.txt)), which a full
+  build (physics, quests, interaction, inventory) records.
+- After an intended API change, run
+  `python3 tools/api_inventory.py --update --tests <build>/tests/aether_tests`
+  and commit both files. The diff is what reviewers approve.
+- `tests/compat/luau/*.luau` (top-level scripts) and `tests/compat/luau/entity/`
+  (entity script classes) were written against the 0.27 script API and must
+  keep running. Do not edit them to fit a new API; record a reviewed break here.
+- Limits: member declarations are listed per header without their class, so a
+  member moving between classes in one header is not visible. Editor and MCP
+  headers are listed by path only. The editor's `editor`/`ui` script tables are
+  not in the Luau inventory.
+
 These are release-gate tasks, not claims that Core API 1.0 is complete.
