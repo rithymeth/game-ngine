@@ -765,10 +765,12 @@ jobs:
             [ "$(grep -c 'AETHER_RENDER PRESENTED' emulator-lifecycle.txt)" -ge 2 ]
             adb shell am force-stop com.aether.engine
             adb logcat -c
+            sh -c 'adb logcat -s Aether:* AetherEngine:* AndroidRuntime:* DEBUG:* libc:* vulkan:* > emulator-scene-stream.txt 2>&1 &'
             adb shell am start -W -n com.aether.engine/.MainActivity --es mode scene
-            for i in $(seq 1 120); do adb logcat -d -s Aether:* | grep -q 'AETHER_SCENE PRESENTED\|AETHER_SCENE FAIL' && break; sleep 1; done
-            adb exec-out screencap > emulator-scene.raw
-            adb logcat -d -s Aether:* AetherEngine:* AndroidRuntime:E DEBUG:* | tee emulator-scene.txt
+            timeout 150 sh -c 'until grep -q "AETHER_SCENE PRESENTED\|AETHER_SCENE FAIL" emulator-scene-stream.txt; do sleep 2; done' || { echo "no AETHER_SCENE result; device state: $(timeout 10 adb get-state 2>&1)"; cat emulator-scene-stream.txt; exit 1; }
+            timeout 20 adb exec-out screencap > emulator-scene.raw
+            cp emulator-scene-stream.txt emulator-scene.txt
+            cat emulator-scene.txt
             grep -q "AETHER_SCENE LOADED" emulator-scene.txt
             grep -q "AETHER_SCENE PRESENTED" emulator-scene.txt
             python3 tools/android/check_screen.py emulator-scene.raw --scene
@@ -782,6 +784,7 @@ jobs:
             emulator-input.txt
             emulator-lifecycle.txt
             emulator-scene.txt
+            emulator-scene-stream.txt
             emulator-scene.raw
             emulator-pressed.raw
           if-no-files-found: ignore
