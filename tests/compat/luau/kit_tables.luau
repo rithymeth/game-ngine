@@ -16,8 +16,12 @@ local expected = {
     Physics = {'AddForce', 'AddImpulse', 'GetLinearVelocity', 'Raycast', 'SetLinearVelocity', 'SphereCast'},
     Draw = {'line', 'box', 'sphere', 'text', 'point', 'arrow'},
 }
+-- Tables from optional modules (the inventory's "Build features" line) exist only when the
+-- module is built in; a lean build skips them, a full build must still have every name.
+local optional = {Physics = true, Quests = true, Interaction = true, Inventory = true}
 for name, fns in pairs(expected) do
     local t = _G[name]
+    if t == nil and optional[name] then continue end
     assert(type(t) == 'table', name .. ' is missing')
     for _, fn in ipairs(fns) do assert(type(t[fn]) == 'function', name .. '.' .. fn .. ' is missing') end
 end
