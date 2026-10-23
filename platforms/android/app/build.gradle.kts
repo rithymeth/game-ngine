@@ -46,6 +46,12 @@ android {
         }
     }
 
+    // CI cooks a game and passes its folder (holding Paks/*.apak) with -Paether.assets=<dir>; the app copies the paks
+    // out in scene mode. Without it the APK has no game and scene mode reports that.
+    providers.gradleProperty("aether.assets").orNull?.let { dir ->
+        sourceSets.getByName("main").assets.srcDir(dir)
+    }
+
     externalNativeBuild {
         cmake {
             path = file("../../../CMakeLists.txt")
