@@ -768,7 +768,7 @@ jobs:
             adb shell am start -W -n com.aether.engine/.MainActivity --es mode scene
             for i in $(seq 1 120); do adb logcat -d -s Aether:* | grep -q 'AETHER_SCENE PRESENTED\|AETHER_SCENE FAIL' && break; sleep 1; done
             adb exec-out screencap > emulator-scene.raw
-            adb logcat -d -s Aether:* Player:* Scene:* AndroidRuntime:E DEBUG:* | tee emulator-scene.txt
+            adb logcat -d -s Aether:* AetherEngine:* AndroidRuntime:E DEBUG:* | tee emulator-scene.txt
             grep -q "AETHER_SCENE LOADED" emulator-scene.txt
             grep -q "AETHER_SCENE PRESENTED" emulator-scene.txt
             python3 tools/android/check_screen.py emulator-scene.raw --scene
