@@ -16,8 +16,11 @@
 // - The "android" platform plugin: Activity pause, resume and onTrimMemory reach the engine's PlatformLifecycle
 //   (dispatched on the UI thread, Android's main thread), which logs "AETHER_LIFECYCLE <event>"; user_data_dir is the
 //   app's files directory. The surface goes away while paused, and the render thread starts again on the new one.
+//   Its startup sends the engine's own log (AETHER_LOG_*) to logcat under the tag "AetherEngine"; stdout goes nowhere
+//   on Android.
 #include "smoke.h"
 
+#include "aether/core/log.h"
 #include "aether/gfx/rhi/device.h"
 #include "aether/input/keys.h"
 #include "aether/platform/lifecycle.h"
@@ -250,7 +253,21 @@ Renderer& TheRenderer() {
 AETHER_PLATFORM_PLUGIN(android) {
     aether::PlatformPlugin p;
     p.name = "android";
-    p.description = "Android app shell: Activity lifecycle and the app's files directory";
+    p.description = "Android app shell: Activity lifecycle, the app's files directory and the engine log in logcat";
+    p.startup = [] {
+        aether::Logger& logger = aether::Logger::Instance();
+        logger.SetStdout(false);
+        logger.AddSink([](const aether::LogLine& line) {
+            int priority = ANDROID_LOG_INFO;
+            switch (line.level) {
+                case aether::LogLevel::Trace: priority = ANDROID_LOG_VERBOSE; break;
+                case aether::LogLevel::Info: priority = ANDROID_LOG_INFO; break;
+                case aether::LogLevel::Warn: priority = ANDROID_LOG_WARN; break;
+                default: priority = ANDROID_LOG_ERROR; break;
+            }
+            __android_log_print(priority, "AetherEngine", "%s: %s", line.category.c_str(), line.message.c_str());
+        });
+    };
     p.connect_lifecycle = [](aether::platform::PlatformLifecycle& lifecycle) {
         lifecycle.Subscribe([](const aether::platform::LifecycleMessage& m) {
             Log(ANDROID_LOG_INFO, std::string("AETHER_LIFECYCLE ") + LifecycleName(m));
