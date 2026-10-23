@@ -181,6 +181,20 @@ jobs:
           grep -E "^import cache: [0-9]+ reused, $models imported$" m85/edited.txt
           grep -E "^texture cache: [0-9]+ reused, 0 cooked$" m85/edited.txt
           [ "$(sha256sum < m85/first/Game.apak)" != "$(sha256sum < m85/edited/Game.apak)" ]
+      - name: Package the dedicated server (M8.9)
+        # aether_server + aether_netclient + server.json + the cooked AETHER-01 pak as a .tar.gz with SHA256SUMS
+        # (tools/package_server.sh); the dedicated-server job below runs it on a clean container.
+        if: matrix.name == 'GCC'
+        run: |
+          ./build/tools/cook/aether_cook games/AETHER-01/AETHER-01.aproject --out server-cook --config development
+          tools/package_server.sh --build build --paks server-cook --out server-dist
+      - name: Upload the server package
+        if: matrix.name == 'GCC'
+        uses: actions/upload-artifact@v4
+        with:
+          name: aether-server-linux-x64
+          path: server-dist
+          if-no-files-found: error
       - name: Play AETHER-01 through Vulkan with the validation layer
         # The cooked game in the player under Xvfb, drawn through Vulkan on lavapipe with the Khronos validation layer:
         # any validation error fails the step. Windows plays it on D3D12; this is the scene path on Vulkan (Linux,
@@ -257,6 +271,42 @@ jobs:
             --volume "$GITHUB_WORKSPACE/tools/sdk-template-consumer:/workspace:ro" \
             aether-sdk-clean-machine \
             sh -euxc 'cmake -S /workspace -B /tmp/consumer -G Ninja -DCMAKE_PREFIX_PATH=/opt/aether-sdk && cmake --build /tmp/consumer --parallel && /tmp/consumer/aether_template_sdk_consumer'
+
+  dedicated-server:
+    name: Dedicated server package (Linux clean container, M8.9)
+    # The packaged server on a machine with nothing installed: a bare ubuntu:24.04 container (no compilers,
+    # Vulkan, X11 or engine checkout on its PATH) checks the archive's SHA-256, unpacks it, starts
+    # bin/aether_server on localhost with --max-runtime/--quit-when-empty, runs two bin/aether_netclient
+    # processes over real UDP plus a wrong-password one, and asserts both joined, saw replicated state and
+    # had their RPC acknowledged (tools/server_smoke.sh). The server log is uploaded if it fails.
+    needs: [linux]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the server package
+        uses: actions/download-artifact@v4
+        with:
+          name: aether-server-linux-x64
+          path: server-dist
+      - name: Host it in a clean container and connect two clients
+        run: |
+          mkdir -p server-run
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE/server-dist:/dist:ro" \
+            --volume "$GITHUB_WORKSPACE/tools/server_smoke.sh:/server_smoke.sh:ro" \
+            --volume "$GITHUB_WORKSPACE/server-run:/run-out" \
+            ubuntu:24.04 \
+            sh -euxc 'apt-get update -qq && apt-get install -y -qq python3 > /dev/null && \
+              status=0; bash /server_smoke.sh /dist /tmp/server 7777 || status=$?; \
+              cp -r /tmp/server/aether-server-*/logs /tmp/server/aether-server-*/*.out /run-out/ 2>/dev/null || true; exit $status'
+      - name: Upload the server log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dedicated-server-log
+          path: server-run
+          if-no-files-found: ignore
 
   macos:
     name: macOS (Apple Silicon, MoltenVK)

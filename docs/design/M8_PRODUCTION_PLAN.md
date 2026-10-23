@@ -215,6 +215,11 @@ waive this gate if multiplayer ships as a supported 1.0 feature.
 
 ### M8.9 evidence so far (automatable part)
 
+Status: not passed. Left before sign-off: security/auth hardening (tokens or accounts, packet
+authentication against spoofed source addresses, rate limits per address), a reviewed sign-off of
+the recorded thresholds below (and measuring them against the packaged server, not only the
+loopback simulation), a network profiler capture, and server packages beyond Linux x86-64.
+
 `tests/test_net_production.cpp` (`NetProd_*`, in the default `aether_tests` run) drives a
 server (`SessionHost` + `ReplicationServer` + `RpcRouter`) and four clients (`SessionClient` +
 `ReplicationClient` + `RpcRouter`) over the existing seeded `LoopbackNetwork` (latency, jitter,
@@ -243,17 +248,31 @@ At 3 m/s, 0.3 m of divergence means state is 100 ms stale, 1.5 m means 500 ms, 2
 
 What this does not cover, so the gate stays open:
 
-- **No dedicated-server package.** There is no `aether_server` executable or packaging profile
-  (M8.10 lists it; nothing in CMake builds one). The editor's `NetPlaySession` can run a dedicated
-  server in-process, and `Net_RealUdpLocalhost` proves a `NetHost` handshake over real localhost
-  UDP, but there is nothing to package and start on a clean machine, so no CI smoke of a packaged
-  server exists. Needed: a headless `aether_server` target (config file/CLI: port, max players,
-  password, build id, map), a packaging step, and a CI job that starts it and connects a headless
-  client over UDP.
+- **Dedicated server: built, packaged and smoke-tested on Linux only.** `aether_server`
+  (`tools/server/`, [manual](../manual/15-dedicated-server.md)) mounts a cooked game in a headless
+  `player::Game` and hosts it with `SessionHost` + `ReplicationServer` + `RpcRouter` over real UDP
+  at a fixed tick, configured by `server.json` and the command line (port, max players, password /
+  `AETHER_SERVER_PASSWORD`, build id, scene, tick rate, log file, `--max-runtime`,
+  `--quit-when-empty`), with clean SIGINT/SIGTERM shutdown and exit codes. `aether_netclient`
+  joins headless, receives state, sends a server RPC and prints a JSON summary.
+  `tools/package_server.sh` makes `aether-server-linux-x64.tar.gz` + `SHA256SUMS.txt` +
+  `SERVER_PACKAGE.json`; the CI `dedicated-server` job unpacks it in a bare `ubuntu:24.04`
+  container and runs `tools/server_smoke.sh` (two clients join, see the 43 replicated AETHER-01
+  entities and get their RPC acked over localhost UDP; a wrong password is refused and gets no
+  state). `DedicatedServer_*` in `aether_tests` cover config parsing and an in-process real-UDP
+  run (two joins, a wrong password, a wrong build). Local Release run, 2026-10-23: both clients
+  joined in ~0.08 s, 43 entities, 46 snapshots, RPC ack in ~0.07 s, 3.5 s wall time end to end.
+  Still open for this item: a Windows (and macOS) server package; the smoke runs on one host
+  (localhost), not across two machines or a NAT; the server package is not yet a release asset
+  (the `release` job publishes only the Windows zips); the dedicated server does not answer LAN
+  discovery; the soak/loss/latency thresholds above are measured on `LoopbackNetwork`, not
+  against the packaged server.
 - **Authentication is a session password plus entity ownership.** `RpcRouter` gates server calls
   by ownership only; it does not know whether a peer has joined the session (a connected,
   not-joined peer owns nothing, so it is rejected, and `SessionHost` drops it after
-  `join_timeout`). There are no tokens, encryption or packet signing: a spoofed source address can
+  `join_timeout`). The dedicated server additionally hides every entity from peers that have not
+  joined (a `ReplicationServer` relevancy rule); the bare `ReplicationServer` still sends state to
+  any connected peer. There are no tokens, encryption or packet signing: a spoofed source address can
   inject data frames for a joined peer (the test shows the server survives it, not that it is
   prevented).
 - **Network profiler capture.** `NetProfile` / `NetStatGroup` exist but no capture is recorded as

@@ -10,6 +10,7 @@ aether_audio 2
 aether_bench_lib 2
 aether_blueprint 2
 aether_cook 3
+aether_server_core 3
 aether_functional 3
 aether_gltf_demo 2
 aether_gameplay 2
@@ -62,6 +63,7 @@ aether_replay_sequence 3
 aether_templates 3
 aether_ui 3
 aether_docgen 4
+aether_netclient 4
 aether_mcp 6
 aether_module_AI 4
 aether_replay_gameplay 4
@@ -74,6 +76,7 @@ aether_mcp_server 7
 aether_editor 6
 aether_editor_vulkan 6
 aether_player 6
+aether_server 6
 aether_replay_manifest 6
 aether_editor_shell 7
 aether_tests 7

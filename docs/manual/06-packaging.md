@@ -16,6 +16,10 @@ output; `aether_cook` reports how many textures were reused and cooked.
 In the editor, **Tools > Project > Build and Package** does the same with a
 progress bar, a log, a Cancel button and Launch.
 
+For multiplayer games, `tools/package_server.sh` packages the same cook with the
+headless `aether_server` as a `.tar.gz` with SHA-256 checksums; see
+[Dedicated servers](15-dedicated-server.md).
+
 ## Packaged audio
 
 The player runs the existing `AudioSource`, `AudioListener` and `ReverbZone`
