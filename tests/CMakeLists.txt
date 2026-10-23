@@ -103,7 +103,7 @@ endif()
 
 if(TARGET Aether::Scripting)
     target_compile_definitions(aether_tests PRIVATE AETHER_TEST_HAS_SCRIPTING=1)
-    target_sources(aether_tests PRIVATE test_luau_host.cpp test_luau_bindings.cpp test_script_system.cpp test_script_api.cpp test_script_reload.cpp test_script_debugger.cpp test_script_dap.cpp test_nav_script.cpp test_ai_script.cpp test_ai_nav_api.cpp test_net_rpc_script.cpp test_debug_draw_script.cpp)
+    target_sources(aether_tests PRIVATE test_luau_host.cpp test_luau_bindings.cpp test_script_system.cpp test_script_api.cpp test_script_reload.cpp test_script_debugger.cpp test_script_dap.cpp test_nav_script.cpp test_ai_script.cpp test_ai_nav_api.cpp test_net_rpc_script.cpp test_debug_draw_script.cpp test_api_inventory.cpp test_compat_corpus.cpp)
     target_link_libraries(aether_tests PRIVATE Aether::Scripting)
 endif()
 
@@ -143,6 +143,7 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(module_graph_catches_a_cycle PROPERTIES WILL_FAIL TRUE)
     add_test(NAME api_stability_annotations COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_api_stability.py)
     add_test(NAME api_freeze_checks COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/check_api_freeze.py)
+    add_test(NAME api_inventory COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/api_inventory.py)
     add_test(NAME production_gate_table COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/gate.py)
     add_test(NAME m8_gate_table COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/gate.py
         --table ${CMAKE_SOURCE_DIR}/docs/design/m8_gates.json)
