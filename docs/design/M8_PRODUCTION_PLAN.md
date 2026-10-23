@@ -213,6 +213,54 @@ reconnect behavior explicit.
 latency, reconnect and security checks meet recorded thresholds. A single-player slice does not
 waive this gate if multiplayer ships as a supported 1.0 feature.
 
+### M8.9 evidence so far (automatable part)
+
+`tests/test_net_production.cpp` (`NetProd_*`, in the default `aether_tests` run) drives a
+server (`SessionHost` + `ReplicationServer` + `RpcRouter`) and four clients (`SessionClient` +
+`ReplicationClient` + `RpcRouter`) over the existing seeded `LoopbackNetwork` (latency, jitter,
+loss, duplication). The scenario: 12 NPCs circling at 3 m/s with one NPC despawned/respawned every
+second, one owned pawn per player, and a replicated server-authoritative score each owner bumps by
+reliable RPC every 0.5 s. Time is simulated at 60 Hz and every link is seeded, so the numbers below
+are identical run to run (checked by hashing the output of three runs) and the tests assert against
+the thresholds, not against wall-clock time.
+
+Divergence is the worst client-vs-server position error while things move, after 2 s of warm-up.
+Convergence is how long after motion stops until every client has exactly the server's entity set,
+positions (within 1e-4 m) and scores. Bandwidth is server-to-client bytes per client per second.
+At 3 m/s, 0.3 m of divergence means state is 100 ms stale, 1.5 m means 500 ms, 2.4 m means 800 ms.
+
+| Check | Link | Threshold | Measured (Release, 2026-10-23) |
+| --- | --- | --- | --- |
+| Clean baseline, 30 s | none | divergence <= 0.3 m, converge <= 0.5 s, <= 16000 B/s/client | 0.200 m, 0.033 s, 11242 B/s |
+| Soak, 300 s, 290+ churns | 50 ms + 0-20 ms jitter, 2% loss | divergence <= 1.5 m, converge <= 1.5 s, <= 16000 B/s; entity tables equal live set, < 64 datagrams in flight, < 8 unacked reliable per peer, 2400 RPCs applied exactly once | 0.696 m, 0.117 s, 12070 B/s; all bounds held |
+| Packet loss 5%, 60 s | 20 ms, 5% loss | divergence <= 1.5 m, converge <= 1.0 s | 1.086 m, 0.100 s, 10796 B/s |
+| Packet loss 20%, 60 s | 20 ms, 20% loss, 5% duplicates | divergence <= 2.4 m, converge <= 2.0 s | 1.086 m, 0.133 s, 10762 B/s |
+| Latency/jitter, 60 s | 100 ms + 0-60 ms jitter (130 +/- 30), 2% loss, 1% duplicates | divergence <= 1.5 m, converge <= 1.5 s | 0.892 m, 0.267 s, 11201 B/s |
+| Reconnect (hard drop) | 50 ms, 5% loss | server drops the dead peer <= 5.5 s; rejoin on the same address -> full exact state <= 2.0 s; pawn reused and owned again; its RPCs land | 5.067 s, 0.533 s; yes |
+| Reconnect (instant restart, same address) | same | old peer replaced, full state <= 2.0 s | 0.367 s |
+| Security: garbage | clean | 200 rounds of noise, empty, truncated, 64 KiB and every-kind framed junk from a stranger, plus junk data frames from a joined client's address: no crash, no stranger peer, the other clients stay exact | held |
+| Security: replay and authority | clean | a recorded RPC's datagrams replayed 3x from the owner and once from another address run it once; a non-owner (hacked `locally_owned`) is rejected; a wrong password is refused; a raw peer that skips the session gets no authority and is dropped after the join timeout | held |
+
+What this does not cover, so the gate stays open:
+
+- **No dedicated-server package.** There is no `aether_server` executable or packaging profile
+  (M8.10 lists it; nothing in CMake builds one). The editor's `NetPlaySession` can run a dedicated
+  server in-process, and `Net_RealUdpLocalhost` proves a `NetHost` handshake over real localhost
+  UDP, but there is nothing to package and start on a clean machine, so no CI smoke of a packaged
+  server exists. Needed: a headless `aether_server` target (config file/CLI: port, max players,
+  password, build id, map), a packaging step, and a CI job that starts it and connects a headless
+  client over UDP.
+- **Authentication is a session password plus entity ownership.** `RpcRouter` gates server calls
+  by ownership only; it does not know whether a peer has joined the session (a connected,
+  not-joined peer owns nothing, so it is rejected, and `SessionHost` drops it after
+  `join_timeout`). There are no tokens, encryption or packet signing: a spoofed source address can
+  inject data frames for a joined peer (the test shows the server survives it, not that it is
+  prevented).
+- **Network profiler capture.** `NetProfile` / `NetStatGroup` exist but no capture is recorded as
+  evidence.
+- Interest management is exercised by the replication tests, not at production scale; the soak
+  is 4 clients and 16 entities.
+
 ## M8.10 — Build & Ship
 
 Create one documented Validate → Cook → Package → Test → Release path across development, debug,
