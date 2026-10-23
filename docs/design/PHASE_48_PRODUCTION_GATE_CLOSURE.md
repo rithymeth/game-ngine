@@ -36,3 +36,9 @@ Windows x64 D3D12 is the documented AETHER-01 shipping proof target. Mobile simu
 
 ## Handoff
 Next: inspect CI workflows and gate evidence files, implement the smallest missing automated check, run it, and submit a reviewed pull request. This document is a coordination artifact, not proof that Phase 48 implementation or validation is complete.
+
+## Phase 48 implementation increment — benchmark baseline integrity
+- Added `tools/validate_benchmark_baseline.py`: rejects missing/duplicate benchmark names, non-finite or negative timings, and inconsistent timing ordering.
+- CI Linux GCC now executes the validator immediately before its required benchmark regression comparison.
+- This is a scoped preventive check, **not** evidence that benchmark performance or hardware targets pass.
+- Validation still pending: run the script locally and inspect the branch CI result; independent review has not occurred.
