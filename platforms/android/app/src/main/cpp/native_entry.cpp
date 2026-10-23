@@ -9,10 +9,15 @@
 // - Touches from the SurfaceView reach the render thread as WindowEvents and go through ApplyWindowEvents into an
 //   input::InputState, as on desktop. While the first finger is down (Key::MouseLeft) the triangle is drawn in
 //   kPressedColor; each new finger logs "AETHER_INPUT DOWN <x> <y>".
+// - The "android" platform plugin: Activity pause, resume and onTrimMemory reach the engine's PlatformLifecycle
+//   (dispatched on the UI thread, Android's main thread), which logs "AETHER_LIFECYCLE <event>"; user_data_dir is the
+//   app's files directory. The surface goes away while paused, and the render thread starts again on the new one.
 #include "smoke.h"
 
 #include "aether/gfx/rhi/device.h"
 #include "aether/input/keys.h"
+#include "aether/platform/lifecycle.h"
+#include "aether/platform/platform_plugin.h"
 #include "aether/platform/window.h"
 
 #include <android/log.h>
@@ -128,12 +133,41 @@ private:
     std::vector<aether::WindowEvent> pending_events_;
 };
 
+std::mutex g_user_data_mutex;
+std::string g_user_data_dir;
+
+const char* LifecycleName(const aether::platform::LifecycleMessage& m) {
+    switch (m.event) {
+        case aether::platform::LifecycleEvent::Suspend: return "Suspend";
+        case aether::platform::LifecycleEvent::Resume: return "Resume";
+        case aether::platform::LifecycleEvent::MemoryPressure:
+            return m.level == aether::platform::MemoryLevel::Critical ? "MemoryPressure Critical" : "MemoryPressure";
+    }
+    return "?";
+}
+
 Renderer& TheRenderer() {
     static Renderer renderer;
     return renderer;
 }
 
 } // namespace
+
+AETHER_PLATFORM_PLUGIN(android) {
+    aether::PlatformPlugin p;
+    p.name = "android";
+    p.description = "Android app shell: Activity lifecycle and the app's files directory";
+    p.connect_lifecycle = [](aether::platform::PlatformLifecycle& lifecycle) {
+        lifecycle.Subscribe([](const aether::platform::LifecycleMessage& m) {
+            Log(ANDROID_LOG_INFO, std::string("AETHER_LIFECYCLE ") + LifecycleName(m));
+        });
+    };
+    p.user_data_dir = [] {
+        std::lock_guard<std::mutex> lock(g_user_data_mutex);
+        return g_user_data_dir;
+    };
+    return p;
+}
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_aether_engine_MainActivity_nativeEngineStatus(JNIEnv* env, jclass) {
@@ -168,4 +202,27 @@ extern "C" JNIEXPORT void JNICALL Java_com_aether_engine_MainActivity_nativeTouc
     if (action == 0) Log(ANDROID_LOG_INFO, "AETHER_INPUT DOWN " + std::to_string(static_cast<int>(x)) + " " +
                                                std::to_string(static_cast<int>(y)));
     TheRenderer().QueueEvent(event);
+}
+
+extern "C" JNIEXPORT void JNICALL Java_com_aether_engine_MainActivity_nativeSetUserDataDir(JNIEnv* env, jclass,
+                                                                                            jstring path) {
+    const char* chars = env->GetStringUTFChars(path, nullptr);
+    {
+        std::lock_guard<std::mutex> lock(g_user_data_mutex);
+        g_user_data_dir = chars ? chars : "";
+    }
+    if (chars) env->ReleaseStringUTFChars(path, chars);
+    aether::PlatformPlugins& plugins = aether::PlatformPlugins::Get();
+    if (!plugins.IsStarted()) plugins.Startup();
+    Log(ANDROID_LOG_INFO, "AETHER_USER_DATA " + plugins.UserDataDir("(none)"));
+}
+
+extern "C" JNIEXPORT void JNICALL Java_com_aether_engine_MainActivity_nativeLifecycle(JNIEnv*, jclass, jint event,
+                                                                                       jboolean critical) {
+    aether::platform::LifecycleMessage message;
+    message.event = event == 0   ? aether::platform::LifecycleEvent::Suspend
+                    : event == 1 ? aether::platform::LifecycleEvent::Resume
+                                 : aether::platform::LifecycleEvent::MemoryPressure;
+    message.level = critical ? aether::platform::MemoryLevel::Critical : aether::platform::MemoryLevel::Moderate;
+    aether::PlatformPlugins::Get().Lifecycle().Dispatch(message);
 }

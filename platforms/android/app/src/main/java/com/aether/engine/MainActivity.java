@@ -21,10 +21,14 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeSurfaceDestroyed();
     // action: 0 down, 1 up (or cancelled), 2 move. Coordinates are in surface pixels.
     private static native void nativeTouch(int pointerId, int action, float x, float y);
+    // event: 0 suspend, 1 resume, 2 memory pressure (critical: the system is about to kill background apps).
+    private static native void nativeLifecycle(int event, boolean critical);
+    private static native void nativeSetUserDataDir(String path);
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        nativeSetUserDataDir(getFilesDir().getAbsolutePath());
         FrameLayout root = new FrameLayout(this);
         SurfaceView view = new SurfaceView(this);
         view.getHolder().addCallback(this);
@@ -69,6 +73,26 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 break;
             default:
                 break;
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        nativeLifecycle(0, false);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        nativeLifecycle(1, false);
+    }
+
+    @Override
+    public void onTrimMemory(int level) {
+        super.onTrimMemory(level);
+        if (level >= TRIM_MEMORY_RUNNING_LOW) {
+            nativeLifecycle(2, level >= TRIM_MEMORY_RUNNING_CRITICAL);
         }
     }
 
