@@ -91,6 +91,8 @@ struct CookReport {
     usize stripped_fields = 0;                // editor-only fields removed
     usize texture_cache_hits = 0;             // cooked textures reused from the derived data cache
     usize texture_cache_misses = 0;           // cooked textures generated or regenerated
+    usize import_cache_hits = 0;              // importer outputs reused from the derived data cache
+    usize import_cache_misses = 0;            // assets imported again (new, or their source or a dependency changed)
     u64 original_bytes = 0;                   // content as stored, before compression
     u64 pak_bytes = 0;                        // the archive on disk
     std::filesystem::path pak_file;
