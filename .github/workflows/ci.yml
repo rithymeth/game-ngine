@@ -134,6 +134,9 @@ jobs:
         env:
           AETHER_SOAK_SCALE: "4"
         run: ctest --test-dir build --output-on-failure -R "^soak$"
+      - name: Validate benchmark baseline
+        if: matrix.name == 'GCC'
+        run: python3 tools/validate_benchmark_baseline.py
       - name: Benchmarks
         # Phase 38 steps 1 and 6: retain a provenance-tagged report artifact, and compare with the checked-in
         # baseline (bench/baseline.json) by calibration-normalized time. Required since it held with no regression
