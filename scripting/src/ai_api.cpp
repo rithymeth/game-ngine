@@ -51,8 +51,66 @@ bool CanSee(World& world, Entity viewer, Entity target, f64 max_distance) {
 
 } // namespace
 
-void InstallAiApi(LuauHost& host) {
+void AiDebugStore::SetState(Entity entity, std::string state) {
+    if (state.empty()) {
+        states_.erase(entity.index);
+        return;
+    }
+    State& slot = states_[entity.index];
+    slot.entity = entity;
+    if (slot.text != state) slot.text = std::move(state); // a script reports every frame: copy only on change
+}
+
+const std::string* AiDebugStore::FindState(Entity entity) const {
+    const auto it = states_.find(entity.index);
+    return it != states_.end() && it->second.entity == entity ? &it->second.text : nullptr;
+}
+
+const AiDebugStore::CachedPath* AiDebugStore::FindPath(Entity entity) const {
+    const auto it = paths_.find(entity.index);
+    return it != paths_.end() && it->second.entity == entity && !it->second.points.empty() ? &it->second : nullptr;
+}
+
+std::vector<AiDebugEntry> AiDebugStore::Collect(World& world) const {
+    std::vector<Entity> entities;
+    for (const auto& [index, s] : states_) entities.push_back(s.entity);
+    for (const auto& [index, p] : paths_) if (!p.points.empty()) entities.push_back(p.entity);
+    const ComponentId perception = GetComponentId<AIPerception>();
+    world.ForEachArchetype([&](Archetype& archetype) {
+        if (!archetype.Mask().test(perception)) return;
+        for (usize c = 0; c < archetype.ChunkCount(); ++c) {
+            const Entity* e = archetype.EntityArray(c);
+            entities.insert(entities.end(), e, e + archetype.ChunkEntityCount(c));
+        }
+    });
+    std::sort(entities.begin(), entities.end(), [](Entity a, Entity b) { return a.index != b.index ? a.index < b.index : a.generation < b.generation; });
+    entities.erase(std::unique(entities.begin(), entities.end()), entities.end());
+    std::vector<AiDebugEntry> out;
+    for (Entity e : entities) {
+        if (!world.IsAlive(e)) continue;
+        AiDebugEntry entry;
+        entry.entity = e;
+        if (const std::string* state = FindState(e)) entry.state = *state;
+        if (const AIPerception* p = world.GetComponent<AIPerception>(e)) {
+            entry.has_perception = true;
+            entry.target = p->GetTarget();
+            for (const PerceivedActor& k : p->known) entry.known.push_back(k.actor);
+        }
+        if (const CachedPath* path = FindPath(e)) {
+            entry.path = path->points;
+            entry.next_corner = std::min(path->next, path->points.size());
+            entry.path_complete = path->complete;
+            entry.goal = path->goal;
+        }
+        if (entry.state.empty() && !entry.has_perception && entry.path.empty()) continue;
+        out.push_back(std::move(entry));
+    }
+    return out;
+}
+
+std::shared_ptr<AiDebugStore> InstallAiApi(LuauHost& host) {
     LuauHost* h = &host;
+    auto store = std::make_shared<AiDebugStore>();
     const auto def = [&](const char* table, const char* name, NativeFunction fn) { host.RegisterNative(table, name, std::move(fn)); };
 
     def("AI", "CanSee", [h](NativeCall& c) {
@@ -82,6 +140,11 @@ void InstallAiApi(LuauHost& host) {
         c.Return(t.IsNull() ? ScriptValue{} : ScriptValue(EntityRef{t}));
     });
 
+    def("AI", "SetDebugState", [store](NativeCall& c) {
+        if (!NeedEntity(c, 0, "AI.SetDebugState", "the entity")) return;
+        store->SetState(c.EntityArg(0), c.IsString(1) ? c.String(1) : std::string());
+    });
+
     def("Nav", "IsReady", [](NativeCall& c) { c.Return(ActiveMesh() != nullptr); });
     def("Nav", "FindPath", [](NativeCall& c) {
         if (!NeedVector(c, 0, "Nav.FindPath", "the start") || !NeedVector(c, 1, "Nav.FindPath", "the goal")) return;
@@ -95,16 +158,8 @@ void InstallAiApi(LuauHost& host) {
     // Paths are cached per entity: a call re-paths only when the goal moved more
     // than kGoalMove, the mesh was rebaked (its revision moved), or the entity
     // isn't where the last call left it (a script or a reload teleported it).
-    struct CachedPath {
-        Entity entity;
-        const nav::NavMesh* mesh = nullptr;
-        u64 revision = 0;
-        Vec3 goal, left_at;
-        usize next = 0; // the corner being walked to
-        nav::NavPath path;
-    };
-    auto cache = std::make_shared<std::unordered_map<u32, CachedPath>>();
-    def("Nav", "MoveTowards", [h, cache](NativeCall& c) {
+    // The cache is the debug store's, so the AI debugger shows the same path.
+    def("Nav", "MoveTowards", [h, store](NativeCall& c) {
         if (!NeedEntity(c, 0, "Nav.MoveTowards", "the entity") || !NeedVector(c, 1, "Nav.MoveTowards", "the goal") ||
             !NeedNumber(c, 2, "Nav.MoveTowards", "the speed") || !NeedNumber(c, 3, "Nav.MoveTowards", "dt"))
             return;
@@ -118,26 +173,26 @@ void InstallAiApi(LuauHost& host) {
         if (t == nullptr || mesh == nullptr) return none();
         const Vec3 goal = c.Vector(1);
         const u64 revision = nw->Dynamic().Revision();
-        CachedPath& entry = (*cache)[entity.index];
+        AiDebugStore::CachedPath& entry = store->PathSlot(entity);
         const auto flat = [](const Vec3& a, const Vec3& b) { return std::hypot(a.x - b.x, a.z - b.z); };
         if (entry.entity != entity || entry.mesh != mesh || entry.revision != revision || (goal - entry.goal).Length() > kGoalMove ||
-            flat(t->position, entry.left_at) > kOffPath || entry.path.points.empty()) {
-            entry = CachedPath{entity, mesh, revision, goal, t->position, 0, {}};
-            if (!mesh->FindPath(t->position, goal, entry.path) || entry.path.status == nav::PathStatus::None || entry.path.points.empty()) {
-                entry.path.points.clear();
-                return none();
-            }
+            flat(t->position, entry.left_at) > kOffPath || entry.points.empty()) {
+            entry = AiDebugStore::CachedPath{entity, mesh, revision, goal, t->position, 0, false, {}};
+            nav::NavPath found;
+            if (!mesh->FindPath(t->position, goal, found) || found.status == nav::PathStatus::None || found.points.empty()) return none();
+            entry.complete = found.status == nav::PathStatus::Complete;
+            entry.points = std::move(found.points);
         }
-        const nav::NavPath& path = entry.path;
+        const std::vector<Vec3>& points = entry.points;
         f32 step = static_cast<f32>(c.Number(2) * c.Number(3));
         if (!(step > 0.0f)) step = 0.0f;
         // Walk the corners; the first is the mesh point under the entity. Dropping
         // onto the mesh is free, so an entity whose origin is above its feet (a
         // box centred off the floor) still moves the full step along the ground.
-        usize next = std::min(entry.next, path.points.size() - 1);
-        Vec3 at(t->position.x, path.points[next].y, t->position.z);
-        while (next < path.points.size()) {
-            const Vec3 to = path.points[next];
+        usize next = std::min(entry.next, points.size() - 1);
+        Vec3 at(t->position.x, points[next].y, t->position.z);
+        while (next < points.size()) {
+            const Vec3 to = points[next];
             const f32 d = (to - at).Length();
             if (d > step) {
                 at = at + (to - at) * (step / d);
@@ -151,11 +206,12 @@ void InstallAiApi(LuauHost& host) {
         t->position = at;
         entry.next = next;
         entry.left_at = at;
-        f32 remaining = next < path.points.size() ? (path.points[next] - at).Length() : 0.0f;
-        for (usize i = next + 1; i < path.points.size(); ++i) remaining += (path.points[i] - path.points[i - 1]).Length();
-        c.Return(remaining <= 1e-3f && path.status == nav::PathStatus::Complete);
+        f32 remaining = next < points.size() ? (points[next] - at).Length() : 0.0f;
+        for (usize i = next + 1; i < points.size(); ++i) remaining += (points[i] - points[i - 1]).Length();
+        c.Return(remaining <= 1e-3f && entry.complete);
         c.Return(static_cast<f64>(remaining));
     });
+    return store;
 }
 
 } // namespace aether::script

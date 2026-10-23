@@ -367,6 +367,36 @@ void RegisterGameTools(McpServer& server) {
     server.AddTool({"game_state", "Frames, time, entity and physics counts, script/Blueprint errors and load warnings of the hosted game.",
                     Schema(Json::object()), [host](const Json&) -> Json { return StatsJson(host->Require()); }});
 
+    // M8.8's AI debugger: decisions and navigation state, per AI entity.
+    server.AddTool({"game_ai_debug",
+                    "Per AI entity of the hosted game: the state its script reports (AI.SetDebugState, e.g. idle/tell/charge), "
+                    "its AIPerception's target and known actors, and the path Nav.MoveTowards walks it along (corners, the next "
+                    "corner, the goal, whether the path is complete).",
+                    Schema(Json::object()), [host](const Json&) -> Json {
+                        Game& game = host->Require();
+                        const World& world = game.GetWorld();
+                        const auto vec = [](const Vec3& v) { return Json::array({v.x, v.y, v.z}); };
+                        Json agents = Json::array();
+                        for (const Game::AiDebugInfo& a : game.AiDebug()) {
+                            Json j = {{"entity", EntityKey(world, a.entity)}, {"state", a.state}};
+                            if (const EntityName* name = world.GetComponent<EntityName>(a.entity)) j["name"] = name->value;
+                            if (a.has_perception) {
+                                j["target"] = a.target.IsNull() ? Json() : Json(EntityKey(world, a.target));
+                                Json known = Json::array();
+                                for (Entity k : a.known) known.push_back(EntityKey(world, k));
+                                j["known"] = std::move(known);
+                            }
+                            if (!a.path.empty()) {
+                                Json corners = Json::array();
+                                for (const Vec3& p : a.path) corners.push_back(vec(p));
+                                j["path"] = {{"corners", std::move(corners)}, {"next_corner", a.next_corner},
+                                             {"complete", a.path_complete}, {"goal", vec(a.goal)}};
+                            }
+                            agents.push_back(std::move(j));
+                        }
+                        return {{"agents", std::move(agents)}};
+                    }});
+
     server.AddTool(
         {"game_spawn_entity",
          "Create a new entity in the running game with the components named in `components` (component name -> fields to set, {} for defaults). "

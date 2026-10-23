@@ -338,7 +338,7 @@ void ScriptSystem::InstallApi(bool install_kit_apis) {
     InstallSaveApi(host_); // SaveGames (Phase 28 step 4)
     InstallLocApi(host_);  // Localization (Phase 29 step 2)
     InstallUiApi(host_);   // UI: text, bars and visibility by widget name
-    InstallAiApi(host_);   // AI perception and Nav path queries (M8.8)
+    ai_debug_ = InstallAiApi(host_); // AI perception and Nav path queries (M8.8)
     if (install_kit_apis) {
         InstallKitApi("Quests");
         InstallKitApi("Interaction");

@@ -159,3 +159,66 @@ AETHER_TEST(AINavApi_NoNavMeshIsNil) {
     }
     CHECK(world.GetComponent<Transform>(walker)->position.x == 1.0f);
 }
+
+// M8.8 debugger: AI.SetDebugState, AIPerception and Nav.MoveTowards' cached path, read back from C++.
+AETHER_TEST(AINavApi_DebugStoreCollectsStatePerceptionAndPath) {
+    World world;
+    GuidIndex guids;
+    LuauHost host;
+    const std::shared_ptr<AiDebugStore> store = InstallAiApi(host);
+    CHECK(store != nullptr);
+    (void)GetComponentId<Transform>();
+    ModelRenderer floor;
+    SetModelPath(floor, "floor");
+    world.CreateEntity(Transform{}, floor);
+    NavWorld nav(world, FloorWithPillar);
+    CHECK(nav.Bake({}));
+    nav.MakeActive();
+    ai::PerceptionWorld perception(world);
+    perception.UseNavMeshLineOfSight(nav.Mesh());
+    const Entity walker = Actor(world, guids, Vec3(-6, 0, 0));
+    const Entity guard = Actor(world, guids, Vec3(-6, 0, 6));
+    const Entity hero = Actor(world, guids, Vec3(-3, 0, 6));
+    AIPerception senses;
+    senses.fov_degrees = 360;
+    world.AddComponent(guard, senses);
+    world.AddComponent(hero, AIStimuliSource{});
+    perception.Update(0.1f);
+    host.BindWorld(&world, &guids);
+    host.SetGlobal("walker", EntityRef{walker});
+    host.SetGlobal("guard", EntityRef{guard});
+    ScriptResult r = host.Run(R"(
+        AI.SetDebugState(walker, "chase")
+        AI.SetDebugState(guard, "tell")
+        AI.SetDebugState(guard, "idle") -- the latest wins
+        Nav.MoveTowards(walker, vector.create(6, 0, 0), 2, 0.5)
+    )");
+    Report(r);
+    CHECK(r.ok);
+    std::vector<AiDebugEntry> entries = store->Collect(world);
+    CHECK(entries.size() == 2);
+    const auto find = [&](Entity e) -> const AiDebugEntry* {
+        for (const AiDebugEntry& a : entries) if (a.entity == e) return &a;
+        return nullptr;
+    };
+    const AiDebugEntry* w = find(walker);
+    const AiDebugEntry* g = find(guard);
+    CHECK(w != nullptr && g != nullptr);
+    if (w != nullptr && g != nullptr) {
+        CHECK(w->state == "chase" && !w->has_perception);
+        CHECK(w->path.size() >= 3 && w->path_complete); // round the pillar
+        CHECK(w->next_corner >= 1 && w->next_corner < w->path.size());
+        CHECK(std::abs(w->goal.x - 6.0f) < 1e-4f);
+        CHECK(g->state == "idle" && g->has_perception && g->path.empty());
+        CHECK(g->target == hero && g->known.size() == 1 && g->known.front() == hero);
+    }
+    // nil clears a state; a destroyed entity drops out.
+    r = host.Run("AI.SetDebugState(guard, nil)");
+    CHECK(r.ok);
+    world.DestroyEntity(walker);
+    entries = store->Collect(world);
+    CHECK(entries.size() == 1 && entries.front().entity == guard && entries.front().state.empty());
+    // A non-entity is a script error.
+    r = host.Run("AI.SetDebugState(5, 'x')");
+    CHECK(!r.ok);
+}

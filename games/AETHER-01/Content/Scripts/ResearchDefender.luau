@@ -62,6 +62,26 @@ local function ClearSight(shooter, target)
     return BoxSight(shooter, target)
 end
 
+-- Gives the archetype an AIPerception (so AI.GetKnown / AI.GetTarget and the
+-- AI debugger see what it senses) and makes Kael sensable. Its eyes are where
+-- AI.CanSee already looked from (1.6 above the origin), so sight timing is
+-- unchanged. Hosts without the AI module skip this.
+local function GiveSenses(entity, player, range)
+    pcall(function()
+        local senses = entity:Add("AIPerception")
+        senses.eye_height = 1.6
+        senses.sight_radius = range
+        senses.lose_sight_radius = range
+        senses.fov_degrees = 360
+        if player ~= nil and not player:Has("AIStimuliSource") then player:Add("AIStimuliSource") end
+    end)
+end
+
+-- What the AI debugger shows for an entity (hosts without it skip this).
+local function ReportState(entity, state)
+    if AI ~= nil and AI.SetDebugState ~= nil then AI.SetDebugState(entity, state) end
+end
+
 function Defender:OnCreate()
     self.player, self.marker, self.shell = nil, nil, nil
     self.hunter = false
@@ -84,6 +104,7 @@ function Defender:OnCreate()
     Attributes.Define(self.entity, "KnockbackScale", self.hunter and 1 or 0.15, 0, 1)
     self.state, self.timer, self.damaged = "idle", 2, false
     self.target = vector.create(0, 0, 0)
+    GiveSenses(self.entity, self.player, self.sight_range)
 end
 
 function Defender:Confine(x, y, z)
@@ -103,6 +124,11 @@ function Defender:DamagePlayer()
 end
 
 function Defender:OnUpdate(dt)
+    self:Decide(dt)
+    ReportState(self.entity, self.state)
+end
+
+function Defender:Decide(dt)
     if self.player == nil or not self.player:IsValid() then return end
     local health = Attributes.Get(self.entity, "Health")
     local transform = self.entity:Get("Transform")
