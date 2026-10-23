@@ -1,7 +1,7 @@
 {
   "version": 1,
   "gates": [
-    {"name": "M8.1_core_api", "status": "n/a yet", "evidence": "Core API 1.0 inventory, compatibility corpus, and supported compiler/platform CI runs"},
+    {"name": "M8.1_core_api", "status": "n/a yet", "evidence": "Partial: generated C++/Luau API inventory with CI diff check (tools/api_inventory.py, docs/design/api_inventory_*.txt) and a script compatibility corpus (tests/compat, CompatCorpus_* tests). Open: stable/experimental decisions for Core API 1.0, older-version project corpus on every platform, sanitizer/fuzz/stress lane owners, race and format-break dispositions"},
     {"name": "M8.2_rendering", "status": "n/a yet", "evidence": "Approved AETHER-01 captures and CPU/GPU frame and memory budgets on named backends and hardware"},
     {"name": "M8.3_editor", "status": "n/a yet", "evidence": "Clean-machine first-game authoring study, editor recovery, keyboard access, and screenshot runs"},
     {"name": "M8.4_gameplay", "status": "n/a yet", "evidence": "AETHER-01 checkpoint, combat ability, and quest authored through public APIs and cooked without an engine fork"},

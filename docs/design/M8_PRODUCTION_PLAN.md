@@ -63,6 +63,20 @@ The [Core API inventory](../manual/core_api_inventory.md) is a first contract
 record. It leaves every module experimental and lists compatibility work still
 needed for the 1.0 gate.
 
+**Evidence so far (not passed).** `tools/api_inventory.py` regenerates the
+machine inventory of installed C++ headers
+([api_inventory_cpp.txt](api_inventory_cpp.txt)) and every Luau global, kit
+table and handle method ([api_inventory_luau.txt](api_inventory_luau.txt)); the
+Linux Physics CI lane and the `api_inventory` ctest fail on an unreviewed
+difference. `tests/compat/luau` is a script compatibility corpus run by
+`CompatCorpus_*` in `aether_tests`, next to the existing format corpus
+(`tests/fixtures/legacy`) and C++ consumer (`samples/frozen_api_game`). Still
+open: choosing the stable Core API 1.0 surface (all modules remain
+experimental, so detection is a review gate, not a compatibility guarantee),
+a corpus captured from older engine releases run on Windows and macOS lanes,
+named owners for fuzz/stress/sanitizer failures, and tracked dispositions for
+races and format breaks.
+
 ## M8.2 — Rendering 2.0
 
 Ship a coherent D3D12 and Vulkan path for PBR, IBL, HDR, exposure, tone mapping, bloom, SSAO,
