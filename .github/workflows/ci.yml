@@ -717,9 +717,19 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '9.1.0'
+      - name: Cook AETHER-01 on the host
+        # The scene-mode run below plays this cooked game; the APK carries it as assets/Paks/Game.apak.
+        run: |
+          sudo apt-get update && sudo apt-get install -y ninja-build
+          cmake -S . -B build-host -G Ninja -DCMAKE_BUILD_TYPE=Release -DAETHER_BUILD_TESTS=OFF \
+            -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_EDITOR_UI=OFF -DAETHER_BUILD_SANDBOX=OFF -DAETHER_BUILD_MCP=OFF \
+            -DAETHER_BUILD_BENCH=OFF -DAETHER_BUILD_VULKAN=OFF -DAETHER_BUILD_WINDOWING=OFF
+          cmake --build build-host --target aether_cook
+          ./build-host/tools/cook/aether_cook games/AETHER-01/AETHER-01.aproject --out game-assets/Paks --config development
+          ls -l game-assets/Paks
       - name: Build x86_64 debug APK
         working-directory: platforms/android
-        run: gradle --no-daemon --stacktrace :app:assembleDebug -Paether.abis=x86_64
+        run: gradle --no-daemon --stacktrace :app:assembleDebug -Paether.abis=x86_64 "-Paether.assets=${{ github.workspace }}/game-assets"
       - name: Run on the emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -753,6 +763,15 @@ jobs:
             grep -q "AETHER_LIFECYCLE Suspend" emulator-lifecycle.txt
             [ "$(grep -c 'AETHER_LIFECYCLE Resume' emulator-lifecycle.txt)" -ge 2 ]
             [ "$(grep -c 'AETHER_RENDER PRESENTED' emulator-lifecycle.txt)" -ge 2 ]
+            adb shell am force-stop com.aether.engine
+            adb logcat -c
+            adb shell am start -W -n com.aether.engine/.MainActivity --es mode scene
+            for i in $(seq 1 120); do adb logcat -d -s Aether:* | grep -q 'AETHER_SCENE PRESENTED\|AETHER_SCENE FAIL' && break; sleep 1; done
+            adb exec-out screencap > emulator-scene.raw
+            adb logcat -d -s Aether:* Player:* Scene:* AndroidRuntime:E DEBUG:* | tee emulator-scene.txt
+            grep -q "AETHER_SCENE LOADED" emulator-scene.txt
+            grep -q "AETHER_SCENE PRESENTED" emulator-scene.txt
+            python3 tools/android/check_screen.py emulator-scene.raw --scene
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -762,6 +781,8 @@ jobs:
             emulator-screen.raw
             emulator-input.txt
             emulator-lifecycle.txt
+            emulator-scene.txt
+            emulator-scene.raw
             emulator-pressed.raw
           if-no-files-found: ignore
 

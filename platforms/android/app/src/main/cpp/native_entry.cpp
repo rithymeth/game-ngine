@@ -9,6 +9,10 @@
 // - Touches from the SurfaceView reach the render thread as WindowEvents and go through ApplyWindowEvents into an
 //   input::InputState, as on desktop. While the first finger is down (Key::MouseLeft) the triangle is drawn in
 //   kPressedColor; each new finger logs "AETHER_INPUT DOWN <x> <y>".
+// - Scene mode (the activity started with `--es mode scene`): the render thread mounts the .apak files the activity
+//   copied to <files>/Paks, loads the startup scene into a player Game and draws it with player::SceneRenderer, the
+//   same path as the desktop player. Touches go to the game's input. It logs "AETHER_SCENE LOADED <project> <scene>"
+//   and, after kFramesToReport frames, "AETHER_SCENE PRESENTED <n> <width>x<height>"; on failure "AETHER_SCENE FAIL".
 // - The "android" platform plugin: Activity pause, resume and onTrimMemory reach the engine's PlatformLifecycle
 //   (dispatched on the UI thread, Android's main thread), which logs "AETHER_LIFECYCLE <event>"; user_data_dir is the
 //   app's files directory. The surface goes away while paused, and the render thread starts again on the new one.
@@ -18,14 +22,21 @@
 #include "aether/input/keys.h"
 #include "aether/platform/lifecycle.h"
 #include "aether/platform/platform_plugin.h"
+#include "aether/player/game.h"
+#include "aether/player/scene_renderer.h"
+#include "aether/player/user_paths.h"
 #include "aether/platform/window.h"
 
 #include <android/log.h>
 #include <android/native_window_jni.h>
 #include <jni.h>
 
+#include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <exception>
+#include <filesystem>
+#include <stdexcept>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -58,6 +69,15 @@ float4 PSMain() : SV_Target { return g_PC.color; }
 
 void Log(int priority, const std::string& line) { __android_log_print(priority, "Aether", "%s", line.c_str()); }
 
+std::mutex g_user_data_mutex;
+std::string g_user_data_dir;
+std::atomic<bool> g_scene_mode{false};
+
+std::string UserDataDir() {
+    std::lock_guard<std::mutex> lock(g_user_data_mutex);
+    return g_user_data_dir;
+}
+
 class Renderer {
 public:
     // From the UI thread; the render thread applies them at the start of its next frame.
@@ -79,6 +99,11 @@ public:
 
 private:
     void Run(ANativeWindow* window, int width, int height) {
+        if (g_scene_mode) {
+            RunScene(window, width, height);
+            ANativeWindow_release(window);
+            return;
+        }
         try {
             std::unique_ptr<rhi::IDevice> device = rhi::CreateDevice(rhi::Backend::Vulkan, false);
             if (!device) throw std::runtime_error("no Vulkan device");
@@ -127,14 +152,83 @@ private:
         ANativeWindow_release(window);
     }
 
+    void DrainEvents(std::vector<aether::WindowEvent>& out) {
+        std::lock_guard<std::mutex> lock(events_mutex_);
+        out.swap(pending_events_);
+    }
+
+    // The cooked game in <files>/Paks, through the player runtime and SceneRenderer.
+    void RunScene(ANativeWindow* window, int width, int height) {
+        namespace player = aether::player;
+        try {
+            const std::string files = UserDataDir();
+            const std::vector<std::string> paks = player::GamePackage::FindPaks(std::filesystem::path(files) / "Paks");
+            if (paks.empty()) throw std::runtime_error("no .apak in " + files + "/Paks");
+            player::GamePackage package;
+            std::string error;
+            for (size_t i = 0; i < paks.size(); ++i) {
+                if (!package.Mount(paks[i], static_cast<int>(i), &error)) throw std::runtime_error(error);
+            }
+            if (!package.LoadManifest(&error)) throw std::runtime_error(error);
+            player::Game game(package);
+            game.UsePlatformLifecycle(aether::PlatformPlugins::Get().Lifecycle());
+            game.SetUserPaths(player::ResolveUserPaths(package.Manifest().project, {}, files));
+            if (!game.LoadStartupScene(&error)) throw std::runtime_error(error);
+            Log(ANDROID_LOG_INFO, "AETHER_SCENE LOADED " + package.Manifest().project + " " + game.SceneName());
+
+            std::unique_ptr<rhi::IDevice> device = rhi::CreateDevice(rhi::Backend::Vulkan, false);
+            if (!device) throw std::runtime_error("no Vulkan device");
+            std::unique_ptr<rhi::ISwapChain> swap_chain =
+                device->CreateSwapChain(window, static_cast<aether::u32>(width), static_cast<aether::u32>(height), 2);
+            const aether::u32 frame_count = std::max(swap_chain->BufferCount(), 1u);
+            std::vector<std::unique_ptr<rhi::ICommandList>> commands;
+            std::vector<aether::u64> fences(frame_count, 0);
+            for (aether::u32 i = 0; i < frame_count; ++i) commands.push_back(device->CreateCommandList());
+            player::SceneRenderer scene_renderer(*device, *swap_chain, package);
+            game.BeginPlay();
+
+            std::vector<aether::WindowEvent> events;
+            auto last = std::chrono::steady_clock::now();
+            aether::u32 slot = 0;
+            int presented = 0;
+            while (!stop_ && !game.ExitRequested()) {
+                DrainEvents(events);
+                aether::ApplyWindowEvents(events, game.Input());
+                events.clear();
+                const auto now = std::chrono::steady_clock::now();
+                const float dt = std::min(std::chrono::duration<float>(now - last).count(), 0.25f);
+                last = now;
+                game.Tick(dt);
+                device->WaitForFence(fences[slot]);
+                swap_chain->AcquireNextImage();
+                rhi::ICommandList& cmd = *commands[slot];
+                cmd.Reset();
+                scene_renderer.Draw(game, cmd, slot);
+                cmd.Close();
+                fences[slot] = device->Submit(cmd, swap_chain.get());
+                swap_chain->Present(true);
+                game.Input().EndFrame();
+                slot = (slot + 1) % frame_count;
+                if (++presented == kFramesToReport) {
+                    Log(ANDROID_LOG_INFO, "AETHER_SCENE PRESENTED " + std::to_string(presented) + " " +
+                                              std::to_string(swap_chain->Width()) + "x" +
+                                              std::to_string(swap_chain->Height()));
+                }
+            }
+            for (aether::u64 fence : fences) {
+                if (fence != 0) device->WaitForFence(fence);
+            }
+            game.EndPlay();
+        } catch (const std::exception& e) {
+            Log(ANDROID_LOG_ERROR, std::string("AETHER_SCENE FAIL ") + e.what());
+        }
+    }
+
     std::thread thread_;
     std::atomic<bool> stop_{false};
     std::mutex events_mutex_;
     std::vector<aether::WindowEvent> pending_events_;
 };
-
-std::mutex g_user_data_mutex;
-std::string g_user_data_dir;
 
 const char* LifecycleName(const aether::platform::LifecycleMessage& m) {
     switch (m.event) {
@@ -162,10 +256,7 @@ AETHER_PLATFORM_PLUGIN(android) {
             Log(ANDROID_LOG_INFO, std::string("AETHER_LIFECYCLE ") + LifecycleName(m));
         });
     };
-    p.user_data_dir = [] {
-        std::lock_guard<std::mutex> lock(g_user_data_mutex);
-        return g_user_data_dir;
-    };
+    p.user_data_dir = [] { return UserDataDir(); };
     return p;
 }
 
@@ -225,4 +316,9 @@ extern "C" JNIEXPORT void JNICALL Java_com_aether_engine_MainActivity_nativeLife
                                  : aether::platform::LifecycleEvent::MemoryPressure;
     message.level = critical ? aether::platform::MemoryLevel::Critical : aether::platform::MemoryLevel::Moderate;
     aether::PlatformPlugins::Get().Lifecycle().Dispatch(message);
+}
+
+extern "C" JNIEXPORT void JNICALL Java_com_aether_engine_MainActivity_nativeSetSceneMode(JNIEnv*, jclass,
+                                                                                          jboolean scene) {
+    g_scene_mode = scene != 0;
 }

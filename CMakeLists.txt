@@ -365,7 +365,8 @@ if(ANDROID AND AETHER_BUILD_ANDROID_APP)
     add_library(aether_android SHARED platforms/android/app/src/main/cpp/native_entry.cpp
                 samples/frozen_api_game/lantern_run.cpp samples/frozen_api_game/smoke.cpp)
     target_include_directories(aether_android PRIVATE samples/frozen_api_game)
-    target_link_libraries(aether_android PRIVATE Aether::Engine log android)
+    # aether_game is the player runtime (mount paks, run the scene, SceneRenderer); the app uses it in scene mode.
+    target_link_libraries(aether_android PRIVATE Aether::Engine aether_game log android)
     target_compile_features(aether_android PRIVATE cxx_std_20)
 endif()
 
