@@ -299,6 +299,7 @@ CookReport Cook(const CookOptions& options) {
         json sub_assets = json::array();
         if (options.include_imported && importers.Find(record.importer)) {
             const assets::ImportOutput output = assets::ImportAsset(database, guid, importers, cache, options.platform);
+            if (output.ok) ++(output.from_cache ? report.import_cache_hits : report.import_cache_misses);
             for (const std::string& warning : output.warnings) {
                 report.warnings.push_back(record.path + ": " + warning);
             }

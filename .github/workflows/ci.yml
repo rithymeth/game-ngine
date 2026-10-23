@@ -155,6 +155,25 @@ jobs:
           ./build/tools/pak/aether_pak verify assets.apak
           ./build/tools/pak/aether_pak extract assets.apak unpacked
           diff -r assets unpacked/assets
+      - name: Content pipeline evidence (M8.5)
+        # Repeat cooks are byte-identical and reuse every import and texture; editing a file the models depend on
+        # (the .bin buffer all 22 AETHER-01 models share, which is not an asset itself) re-imports exactly those models.
+        if: matrix.name == 'GCC'
+        run: |
+          rm -rf m85 && mkdir m85 && cp -r games/AETHER-01 m85/project && rm -rf m85/project/Intermediate
+          cook() { ./build/tools/cook/aether_cook m85/project/AETHER-01.aproject --out "m85/$1" --config development | tee "m85/$1.txt"; }
+          cook first && cook repeat
+          sha256sum m85/first/Game.apak m85/repeat/Game.apak
+          [ "$(sha256sum < m85/first/Game.apak)" = "$(sha256sum < m85/repeat/Game.apak)" ]
+          grep -E "^import cache: [0-9]+ reused, 0 imported$" m85/repeat.txt
+          grep -E "^texture cache: [0-9]+ reused, 0 cooked$" m85/repeat.txt
+          python3 -c "import struct,sys; f=open(sys.argv[1],'r+b'); x=struct.unpack('<f',f.read(4))[0]; f.seek(0); f.write(struct.pack('<f',x+0.5))" m85/project/Content/models/test_cube.bin
+          cook edited
+          models=$(grep -l '"test_cube.bin"' m85/project/Content/models/*.gltf | wc -l)
+          echo "models that reference test_cube.bin: $models"
+          grep -E "^import cache: [0-9]+ reused, $models imported$" m85/edited.txt
+          grep -E "^texture cache: [0-9]+ reused, 0 cooked$" m85/edited.txt
+          [ "$(sha256sum < m85/first/Game.apak)" != "$(sha256sum < m85/edited/Game.apak)" ]
       - name: Play AETHER-01 through Vulkan with the validation layer
         # The cooked game in the player under Xvfb, drawn through Vulkan on lavapipe with the Khronos validation layer:
         # any validation error fails the step. Windows plays it on D3D12; this is the scene path on Vulkan (Linux,

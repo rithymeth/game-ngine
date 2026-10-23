@@ -271,3 +271,43 @@ AETHER_TEST(ModelImport_MoveDeleteAndCopyWithSubAssets) {
     AETHER_CHECK(std::string(reflect::Reflect<AssetRef<MeshAsset>>().asset_type) == "Mesh" && ref.IsSet());
     stdfs::remove_all(project);
 }
+
+// M8.5 incremental dependency rebuild: a .gltf's buffer file is not an asset of its own, so editing it leaves the .gltf
+// (and its source hash) untouched. The import cache key must still change, or the next cook reuses the stale mesh.
+AETHER_TEST(ModelImport_EditingTheBufferFileReimports) {
+    stdfs::path project = ProjectWithModels("aether_test_model_buffer_edit");
+    AssetDatabase db(project / "Content");
+    db.Scan();
+    ImporterRegistry importers = ImporterRegistry::WithBuiltins();
+    DerivedDataCache cache(project / "Intermediate/DDC");
+    const AssetRecord* cube = db.FindByPath("models/test_textured_cube.gltf");
+    AETHER_CHECK(cube != nullptr);
+    const AssetGuid guid = cube->guid;
+
+    const ImportOutput first = ImportAsset(db, guid, importers, cache);
+    AETHER_CHECK(first.ok);
+    const ImportOutput unchanged = ImportAsset(db, guid, importers, cache);
+    AETHER_CHECK(unchanged.ok && unchanged.from_cache);
+
+    // Move the first vertex: same length, so the .gltf stays valid and byte-identical.
+    const stdfs::path bin = project / "Content/models/test_cube.bin";
+    std::fstream file(bin, std::ios::in | std::ios::out | std::ios::binary);
+    AETHER_CHECK(file.good());
+    float x = 0.0f;
+    file.read(reinterpret_cast<char*>(&x), sizeof(x));
+    x += 0.5f;
+    file.seekp(0);
+    file.write(reinterpret_cast<const char*>(&x), sizeof(x));
+    file.close();
+
+    AssetDatabase rescanned(project / "Content");
+    rescanned.Scan();
+    AETHER_CHECK(rescanned.Find(guid) != nullptr && rescanned.Find(guid)->source_hash == cube->source_hash);
+    const ImportOutput edited = ImportAsset(rescanned, guid, importers, cache);
+    AETHER_CHECK(edited.ok && !edited.from_cache);
+    const SubAssetOutput* old_mesh = FindSub(first.sub_assets, "mesh:0");
+    const SubAssetOutput* new_mesh = FindSub(edited.sub_assets, "mesh:0");
+    AETHER_CHECK(old_mesh != nullptr && new_mesh != nullptr && old_mesh->data != new_mesh->data);
+    const ImportOutput again = ImportAsset(rescanned, guid, importers, cache);
+    AETHER_CHECK(again.ok && again.from_cache); // and the new result is cached in turn
+}
