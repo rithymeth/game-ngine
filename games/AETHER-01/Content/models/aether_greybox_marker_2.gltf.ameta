@@ -3,10 +3,10 @@
   "$v": 1,
   "guid": "002d67e6-871a-4d79-ae68-d0975b155708",
   "importer": "Model",
-  "importer_version": 1,
+  "importer_version": 4,
   "labels": [],
   "settings": {},
-  "source_hash": "fnv1a64:db9910cf1f0bf5be",
+  "source_hash": "fnv1a64:35ee8108d31e97b0",
   "sub_assets": {
     "material:0": {
       "guid": "766e46d3-f517-47e5-95eb-329dabb851d5",
