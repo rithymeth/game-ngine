@@ -16,6 +16,7 @@
 #include <cstring>
 #include <memory>
 #include <stdexcept>
+#include <vector>
 
 using namespace aether;
 using namespace aether::gfx;
@@ -86,6 +87,47 @@ AETHER_TEST(Vulkan_GlslangCompilesHlslToSpirv) {
     }
     CHECK(threw);
     CHECK(!rhi::IsBackendAvailable(rhi::Backend::D3D12) && rhi::IsBackendAvailable(rhi::Backend::Vulkan));
+}
+
+// The player's scene and HUD shaders, the editor's and rhi_demo's guard [[vk::push_constant]] with #ifdef __spirv__, as
+// DXC defines it; the glslang path must define it too, or the push constants turn into a uniform buffer.
+AETHER_TEST(Vulkan_GlslangDefinesSpirvForPushConstants) {
+    constexpr const char* kGuarded = R"(
+struct PushConstants { float4 color; };
+#ifdef __spirv__
+[[vk::push_constant]]
+#endif
+ConstantBuffer<PushConstants> g_PC : register(b0);
+float4 VSMain(uint id : SV_VertexID) : SV_Position { return float4(float(id), 0.0, 0.0, 1.0) * g_PC.color; }
+)";
+    const ShaderBytecode vs = CompileHLSLToSPIRV(kGuarded, "VSMain", "vs_6_0", "guarded_push_constants");
+    CHECK(vs.Size() >= 20 && vs.Size() % 4 == 0);
+    // Walk the instructions: OpVariable (opcode 59) is [count|59, result type, result id, storage class, ...].
+    std::vector<u32> words(vs.Size() / 4);
+    std::memcpy(words.data(), vs.Data(), vs.Size());
+    usize push_constant_vars = 0, uniform_vars = 0;
+    u32 push_constant_id = 0;
+    for (usize i = 5; i < words.size();) {
+        const u32 count = words[i] >> 16, opcode = words[i] & 0xFFFFu;
+        if (count == 0) break;
+        if (opcode == 59 && i + 3 < words.size()) {
+            if (words[i + 3] == 9) ++push_constant_vars, push_constant_id = words[i + 2]; // StorageClass PushConstant
+            if (words[i + 3] == 2) ++uniform_vars;                                       // StorageClass Uniform
+        }
+        i += count;
+    }
+    CHECK(push_constant_vars == 1);
+    CHECK(uniform_vars == 0);
+    // ...and carries no Binding (33) or DescriptorSet (34) decoration, which Vulkan forbids on push constants.
+    usize push_constant_bindings = 0;
+    for (usize i = 5; i < words.size();) {
+        const u32 count = words[i] >> 16, opcode = words[i] & 0xFFFFu;
+        if (count == 0) break;
+        if (opcode == 71 && count >= 3 && words[i + 1] == push_constant_id && (words[i + 2] == 33 || words[i + 2] == 34))
+            ++push_constant_bindings;
+        i += count;
+    }
+    CHECK(push_constant_bindings == 0);
 }
 
 AETHER_TEST(Vulkan_OffscreenFrameReadsBack) {
