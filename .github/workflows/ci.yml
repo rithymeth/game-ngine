@@ -783,6 +783,10 @@ jobs:
           arch: x86_64
           target: google_apis
           disable-animations: true
+          # The scene-mode run uploads the cooked game's meshes and textures through the emulator's
+          # host-side SwiftShader; with the default AVD memory the emulator process died mid-upload.
+          ram-size: 4096M
+          heap-size: 512M
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
           script: |
             adb install -r platforms/android/app/build/outputs/apk/debug/app-debug.apk
@@ -833,6 +837,7 @@ jobs:
             emulator-scene-stream.txt
             emulator-scene.raw
             emulator-pressed.raw
+            /tmp/android-runner/emu-crash-*.db
           if-no-files-found: ignore
 
   ios:

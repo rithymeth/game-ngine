@@ -320,6 +320,24 @@ void NativeCall::ReturnVector(const Vec3& value) {
     ++returns_;
 }
 
+void NativeCall::ReturnList(const std::vector<ScriptValue>& values) {
+    lua_createtable(state_, static_cast<int>(values.size()), 0);
+    for (usize i = 0; i < values.size(); ++i) {
+        PushScriptValue(state_, values[i]);
+        lua_rawseti(state_, -2, static_cast<int>(i) + 1);
+    }
+    ++returns_;
+}
+
+void NativeCall::ReturnVectorList(const std::vector<Vec3>& values) {
+    lua_createtable(state_, static_cast<int>(values.size()), 0);
+    for (usize i = 0; i < values.size(); ++i) {
+        lua_pushvector(state_, values[i].x, values[i].y, values[i].z);
+        lua_rawseti(state_, -2, static_cast<int>(i) + 1);
+    }
+    ++returns_;
+}
+
 int NativeTrampoline(lua_State* L) {
     NativeFunction* function = static_cast<NativeFunction*>(lua_touserdata(L, lua_upvalueindex(1)));
     std::string error;
