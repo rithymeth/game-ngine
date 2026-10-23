@@ -36,6 +36,9 @@
 #include "aether/physics/physics_scene.h"
 #include "aether/physics/physics_world.h"
 #endif
+#if AETHER_GAME_SCRIPTING
+#include "aether/script/ai_api.h"
+#endif
 
 namespace aether::player {
 
@@ -427,6 +430,9 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     sprite2d::RegisterPhysics2DComponents(); // 2D bodies and colliders
     sprite2d::RegisterPlatformerComponents();
     sprite2d::RegisterLight2DComponents();
+#if AETHER_GAME_AI
+    RegisterPerceptionComponents(); // AIPerception / AIStimuliSource, for scenes and scripts' entity:Add
+#endif
 #if AETHER_GAME_PHYSICS
     (void)GetComponentId<CharacterMovement>();
 #endif
@@ -798,6 +804,18 @@ std::string Game::UiImagePath(u32 id) const {
     return runtime_->ui_images[id - 1];
 }
 
+std::vector<Game::AiDebugInfo> Game::AiDebug() const {
+    std::vector<AiDebugInfo> out;
+#if AETHER_GAME_SCRIPTING
+    if (!runtime_ || !runtime_->scripts) return out;
+    for (script::AiDebugEntry& e : runtime_->scripts->AiDebug().Collect(*world_)) {
+        out.push_back({e.entity, std::move(e.state), e.has_perception, e.target, std::move(e.known), std::move(e.path), e.next_corner,
+                       e.path_complete, e.goal});
+    }
+#endif
+    return out;
+}
+
 std::vector<std::string> Game::ScriptErrors() const {
 #if AETHER_GAME_SCRIPTING
     if (runtime_ && runtime_->scripts) return runtime_->scripts->Errors();
@@ -958,6 +976,14 @@ void Game::BuildFrame() {
         // Menus: the keys and the pad move focus and press the focused control (only when the game has UI on screen, so a game
         // without one never sees its input used here); scripts read the clicks next frame through UI.WasClicked.
         if (runtime_ && runtime_->ui_bridge && runtime_->ui_viewport.LayerCount() > 0) runtime_->ui_bridge->Update(input_state_, frame.dt);
+#if AETHER_GAME_AI
+        // Senses before scripts decide, so AI.GetKnown / AI.GetTarget are this frame's. The runtime's own
+        // perception world (physics builds), else the active one a host supplied (a test, a tool).
+        if (runtime_) {
+            ai::PerceptionWorld* perception = runtime_->perception ? runtime_->perception.get() : ai::PerceptionWorld::Active();
+            if (perception) perception->Update(frame.dt);
+        }
+#endif
         lifecycle_->Update(frame.dt);
         if (runtime_ && runtime_->ui) runtime_->ui->Update(frame.dt); // after scripts, so what they set shows this frame
     };

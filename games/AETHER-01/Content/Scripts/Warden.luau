@@ -21,7 +21,7 @@ function Warden:OnCreate()
     Attributes.Define(self.entity, "Health", completed and 0 or 12, 0, 12)
     Attributes.Define(self.entity, "Phase", 1, 1, 4)
     Attributes.Define(self.entity, "AttackState", 0, 0, 1)
-    self.timer, self.telegraph, self.phase = 1.5, false, 1
+    self.timer, self.telegraph, self.phase, self.state = 1.5, false, 1, "idle"
     self.target = vector.create(0, 0, 0)
     self.markers, self.armor, self.core = {}, nil, nil
     for _, entity in ipairs(world:EntitiesWith("Tags")) do
@@ -38,11 +38,24 @@ function Warden:HideMarkers()
     Attributes.SetBase(self.entity, "AttackState", 0)
 end
 
+-- Whether the Warden can see Kael: the engine's line of sight (AI.CanSee) when
+-- the host has one; without it the arena counts as open (it always sees him).
+function Warden:Sees(player)
+    if AI == nil or not AI.IsSightReady() then return true end
+    return AI.CanSee(self.entity, player)
+end
+
 function Warden:OnUpdate(dt)
+    self:Decide(dt)
+    if AI ~= nil and AI.SetDebugState ~= nil then AI.SetDebugState(self.entity, self.state) end
+end
+
+function Warden:Decide(dt)
     local player = self.player
     if player == nil or not player:IsValid() then return end
     local health = Attributes.Get(self.entity, "Health")
     if health <= 0 then
+        self.state = "defeated"
         self:HideMarkers()
         if self.armor ~= nil then self.armor:Get("Transform").position = vector.create(0, -100, 0) end
         if self.core ~= nil then self.core:Get("Transform").position = vector.create(0, -100, 0) end
@@ -50,7 +63,7 @@ function Warden:OnUpdate(dt)
     end
     if Attributes.Get(player, "MissionStage") ~= 3 or Attributes.Get(player, "Health") <= 0 then
         self:HideMarkers()
-        self.timer, self.telegraph = 1.5, false
+        self.timer, self.telegraph, self.state = 1.5, false, "idle"
         return
     end
     self.phase = health > 9 and 1 or health > 6 and 2 or health > 3 and 3 or 4
@@ -62,6 +75,14 @@ function Warden:OnUpdate(dt)
     if self.core ~= nil then
         self.core:Get("Transform").position = self.phase >= 3 and at + self.core_offset or vector.create(0, -100, 0)
     end
+    -- Loss of target: out of sight, a pending strike is cancelled and it waits
+    -- to see Kael again (phases above still follow its health).
+    if not self:Sees(player) then
+        self:HideMarkers()
+        self.timer, self.telegraph, self.state = 1.5, false, "lost"
+        return
+    end
+    self.state = self.telegraph and "telegraph" or "wait"
     self.timer -= dt
     if self.timer > 0 then return end
     if not self.telegraph then
@@ -76,6 +97,7 @@ function Warden:OnUpdate(dt)
                 and vector.create(self.target.x, 0.035, self.target.z) or vector.create(0, -100, 0)
         end
         self.radius = radius
+        self.state = "telegraph"
         Attributes.SetBase(self.entity, "AttackState", 1)
     else
         local p = player:Get("Transform").position
@@ -84,7 +106,7 @@ function Warden:OnUpdate(dt)
             Attributes.SetBase(player, "DamageFlash", 1)
         end
         self:HideMarkers()
-        self.telegraph = false
+        self.telegraph, self.state = false, "wait"
         self.timer = self.phase >= 4 and 0.65 or 1.2
     end
 end

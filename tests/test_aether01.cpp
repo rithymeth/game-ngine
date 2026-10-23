@@ -620,20 +620,23 @@ struct Aether01Ai {
 #endif
     }
     // Closes the service doorway with a solid box; OpenDoorway takes it away again.
-    Entity BlockDoorway(World& world) {
+    Entity BlockDoorway(World& world) { return Block(world, Vec3(0, 2, -8.5f), Vec3(1, 2, 0.4f)); }
+    void OpenDoorway(World& world, Entity gate) { Unblock(world, gate); }
+    // A solid box that blocks sight (the last one made is the one Unblock takes away).
+    Entity Block(World& world, const Vec3& center, const Vec3& half) {
 #if AETHER_TEST_HAS_PHYSICS
         Transform at;
-        at.position = Vec3(0, 2, -8.5f);
+        at.position = center;
         BoxCollider gate;
-        gate.half_extents = Vec3(1, 2, 0.4f);
+        gate.half_extents = half;
         return world.CreateEntity(at, gate);
 #else
         (void)world;
-        walls.push_back({{0, 2, -8.5f}, {1, 2, 0.4f}});
+        walls.push_back({center, half});
         return kNullEntity;
 #endif
     }
-    void OpenDoorway(World& world, Entity gate) {
+    void Unblock(World& world, Entity gate) {
 #if AETHER_TEST_HAS_PHYSICS
         world.GetComponent<Transform>(gate)->position.y = -100;
 #else
@@ -697,6 +700,11 @@ AETHER_TEST(Aether01_SentinelLosesKaelWhenSightIsBlocked) {
 // checkpoint reload and (Warden) the boss phases. Obstacles are carved into
 // the active navmesh as dynamic volumes, so both configs rebuild the same way.
 namespace {
+// The AI debugger's row for an entity (Game::AiDebug); null if it has none.
+const player::Game::AiDebugInfo* DebugOf(const std::vector<player::Game::AiDebugInfo>& rows, Entity e) {
+    for (const auto& row : rows) if (row.entity == e) return &row;
+    return nullptr;
+}
 Vec3 PositionOf(ProofRun& run, Entity e) { return run.game->GetWorld().GetComponent<Transform>(e)->position; }
 f32 Flat(const Vec3& a, const Vec3& b) { return std::hypot(a.x - b.x, a.z - b.z); }
 bool InBox(const Vec3& p, const Vec3& center, const Vec3& half, f32 grow) {
@@ -776,9 +784,25 @@ AETHER_TEST(Aether01_Scenario_Sentinel) {
     Aether01Ai ai(world);
     run.Frames(120);
     AETHER_CHECK(run.Stat(sentinel, "AttackState") == 1); // detection through the open doorway
+    {
+        // The debugger sees the decision and the perception (ticked by the game) behind it.
+        const auto rows = run.game->AiDebug();
+        const auto* row = DebugOf(rows, sentinel);
+        AETHER_CHECK(row != nullptr);
+        if (row != nullptr) {
+            AETHER_CHECK(row->state == "tell" && row->has_perception && row->target == run.hero);
+            AETHER_CHECK(row->known.size() == 1 && row->known.front() == run.hero && row->path.empty());
+        }
+    }
     const Entity gate = ai.BlockDoorway(world);
     run.Frames(1);
     AETHER_CHECK(run.Stat(sentinel, "AttackState") == 0); // loss of target
+    {
+        const auto rows = run.game->AiDebug();
+        const auto* row = DebugOf(rows, sentinel);
+        AETHER_CHECK(row != nullptr && row->state == "idle");
+        if (row != nullptr) AETHER_CHECK(!row->known.empty()); // remembered, not seen (forgotten after 10 s)
+    }
     run.Frames(150);
     AETHER_CHECK(run.Stat(sentinel, "AttackState") == 0 && run.Stat(run.hero, "Health") == 3);
     // The Sentinel is a stationary turret: no path to rebuild. Reopen sight; it reacquires.
@@ -829,6 +853,16 @@ AETHER_TEST(Aether01_Scenario_Hunter) {
     world.GetComponent<Transform>(hunter)->position = start;
     run.Frames(5);
     AETHER_CHECK(PositionOf(run, hunter).z > start.z + 0.05f);
+    {
+        // The debugger shows the path it is walking (Nav.MoveTowards' cache) toward Kael.
+        const auto rows = run.game->AiDebug();
+        const auto* row = DebugOf(rows, hunter);
+        AETHER_CHECK(row != nullptr);
+        if (row != nullptr) {
+            AETHER_CHECK(row->state == "idle" && row->has_perception);
+            AETHER_CHECK(row->path.size() >= 2 && row->next_corner < row->path.size() && Flat(row->goal, kael) < 0.3f);
+        }
+    }
     const Vec3 barrier(0, 1, -19.0f), barrier_half(2.0f, 1.0f, 0.3f);
     CarveObstacle(barrier, barrier_half);
     bool entered = false;
@@ -874,6 +908,30 @@ AETHER_TEST(Aether01_Scenario_WardenPhases) {
         AETHER_CHECK(run.Stat(warden, "Phase") == step.phase);
         AETHER_CHECK((PositionOf(run, armor).y > -50) == step.armor);
         AETHER_CHECK((PositionOf(run, core).y > -50) == step.core);
+    }
+    {
+        // Loss of sight: a wall between them cancels the pending strike and it holds
+        // ("lost") until it sees Kael again. (Scoped: its perception world must go
+        // before this game does.)
+        Aether01Ai ai(world);
+        told = false;
+        for (int i = 0; i < 150 && !told; ++i) { run.Frames(1); told = run.Stat(warden, "AttackState") == 1; }
+        AETHER_CHECK(told);
+        const Vec3 w = PositionOf(run, warden), k = PositionOf(run, run.hero);
+        const f32 health = run.Stat(run.hero, "Health");
+        const Entity wall = ai.Block(world, Vec3((w.x + k.x) * 0.5f, 2.0f, (w.z + k.z) * 0.5f), Vec3(6, 4, 0.3f));
+        run.Frames(1);
+        AETHER_CHECK(run.Stat(warden, "AttackState") == 0);
+        for (Entity marker : FindEntitiesWithTag(world, "WardenMarker")) AETHER_CHECK(PositionOf(run, marker).y < -50);
+        run.Frames(120);
+        AETHER_CHECK(run.Stat(warden, "AttackState") == 0 && run.Stat(run.hero, "Health") == health);
+        const auto rows = run.game->AiDebug();
+        const auto* row = DebugOf(rows, warden);
+        AETHER_CHECK(row != nullptr && row->state == "lost");
+        ai.Unblock(world, wall);
+        bool reacquired = false;
+        for (int i = 0; i < 150 && !reacquired; ++i) { run.Frames(1); reacquired = run.Stat(warden, "AttackState") == 1; }
+        AETHER_CHECK(reacquired);
     }
     // Checkpoint reload: back to a full-health phase 1 Warden in the arena.
     run.Start();
