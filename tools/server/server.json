@@ -1,0 +1,18 @@
+{
+    // The dedicated server's config (docs/manual/15-dedicated-server.md).
+    // The command line overrides every key; AETHER_SERVER_PASSWORD overrides "password".
+    "name": "Aether dedicated server",
+    "port": 7777,
+    "max_players": 8,
+    "password": "",
+    "build_id": 1,
+    "scene": "",
+    "paks": ["Paks"],
+    "tick_rate": 30,
+    "log_file": "logs/server.log",
+    "log_level": "info",
+    "replicate_scene": true,
+    "max_runtime": 0,
+    "quit_when_empty": false,
+    "status_interval": 10
+}
