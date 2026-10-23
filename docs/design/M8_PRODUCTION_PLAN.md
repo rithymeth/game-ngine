@@ -160,6 +160,34 @@ where required by the slice. Expose decisions and navigation state in the editor
 checkpoint reload and boss phase transitions; no archetype depends on hard-coded mission paths.
 Profile the scene with the planned enemy count.
 
+### M8.8 profile (Release, scripted nav followers)
+
+`Aether01_Profile_24NavFollowers` and `Aether01_Profile_NavFollowersCacheAndScaling`
+(tests/test_aether01.cpp) run the AETHER-01 `profile` scenario headless: 480 warm-up frames,
+240 timed baseline frames, then N clones of the Scout script (Luau AI + `Nav.MoveTowards`)
+and 240 more timed frames. The path cache is switched off with
+`AiDebugStore::SetPathCacheEnabled(false)` (C++ only, measurement hook; not script-visible),
+which makes every `Nav.MoveTowards` call re-path. The tests print and assert only that every
+follower moved; timings are never asserted.
+
+Config: `CMAKE_BUILD_TYPE=Release`, Ninja, GCC, editor/sandbox/MCP/bench off, physics and
+scripting on. Machine: CI-like Linux container, 4 vCPU Intel Xeon @ 2.80 GHz, shared host,
+so single runs vary by roughly +/-0.1 ms. Six runs (including one inside the full suite);
+"AI+nav" is loaded minus that run's baseline.
+
+| Case | AI+nav ms/frame, median (range) |
+|---|---|
+| Baseline scene (no followers), absolute | 0.30 (0.26-0.49) |
+| 24 followers, path cache on | 0.13 (0.06-0.18) |
+| 24 followers, path cache off | 0.25 (0.22-0.43) |
+| 48 followers, path cache on | 0.31 (0.25-0.56) |
+| 48 followers, path cache off | 0.41 (0.27-0.61) |
+
+Reading: at the planned 24 enemies, AI+nav is roughly 0.13 ms/frame (under 1% of a 16.6 ms
+frame); the cache roughly halves it. Going to 48 costs about 2x-2.5x with the cache, so
+scaling is close to linear. Debug numbers for the same 24-follower case were 0.43-0.53 ms.
+The editor AI-debugger panel is still outstanding, so the M8.8 gate stays open.
+
 ## M8.9 — Multiplayer Production
 
 Turn replication, prediction, reconciliation, RPC and sessions into a documented developer
