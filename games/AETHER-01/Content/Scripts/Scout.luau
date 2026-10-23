@@ -27,6 +27,18 @@ function Scout:OnUpdate(dt)
     local distance = math.sqrt(dx * dx + dz * dz)
     if distance > self.stop_distance then
         local step = math.min(self.speed * dt, distance - self.stop_distance)
+        -- Walk the scene's navigation mesh around walls and props when there is
+        -- one; otherwise (or off the mesh) step straight at Kael as before.
+        if Nav.IsReady() and dt > 0 then
+            local arrived, remaining = Nav.MoveTowards(self.entity, player, step / dt, dt)
+            local at = transform.position
+            -- A partial path ends where the mesh stops (Kael hugging a wall is
+            -- off it): from there, close the last gap in a straight line.
+            if remaining ~= nil and (arrived or remaining > 0.05) then
+                transform.position = vector.create(at.x, p.y, at.z) -- the mesh is at floor height; keep the authored height
+                return
+            end
+        end
         transform.position = vector.create(p.x + dx / distance * step, p.y, p.z + dz / distance * step)
     end
 end

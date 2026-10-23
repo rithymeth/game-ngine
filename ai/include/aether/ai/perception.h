@@ -108,6 +108,8 @@ public:
     void UseNavMeshLineOfSight(const nav::NavMesh& mesh);
     // The line-of-sight test sight uses (true when none is set): for scripts' AI.CanSee.
     bool HasLineOfSight(const Vec3& from, const Vec3& to, Entity looker, Entity target) const { return !los_ || los_(from, to, looker, target); }
+    // Whether a line-of-sight test is set (without one, walls block nothing).
+    bool HasLineOfSightTest() const { return static_cast<bool>(los_); }
 
     void ReportNoise(const Vec3& location, f32 loudness, Entity instigator);
     void ReportDamage(Entity victim, Entity instigator, f32 amount);

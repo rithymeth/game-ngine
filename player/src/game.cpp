@@ -573,8 +573,87 @@ void Game::ActivateInputContexts() {
     for (const std::string& name : input_library_.ContextNames()) input_library_.Activate(input_, name, priority++, user);
 }
 
+#if AETHER_GAME_AI && AETHER_GAME_PHYSICS
+namespace {
+// Whether the segment crosses a box, using the same unrotated-box contract as
+// the games' hitscan and camera queries.
+bool SegmentHitsBox(const Vec3& from, const Vec3& to, const Vec3& center, const Vec3& half) {
+    const f32 origin[3] = {from.x, from.y, from.z}, delta[3] = {to.x - from.x, to.y - from.y, to.z - from.z};
+    const f32 mid[3] = {center.x, center.y, center.z}, size[3] = {half.x, half.y, half.z};
+    f32 first = 0.0f, last = 1.0f;
+    for (int axis = 0; axis < 3; ++axis) {
+        const f32 o = origin[axis], d = delta[axis], low = mid[axis] - size[axis], high = mid[axis] + size[axis];
+        if (std::abs(d) < 1e-5f) {
+            if (o < low || o > high) return false;
+            continue;
+        }
+        f32 a = (low - o) / d, b = (high - o) / d;
+        if (a > b) std::swap(a, b);
+        first = std::max(first, a);
+        last = std::min(last, b);
+        if (first > last) return false;
+    }
+    return true;
+}
+
+template <typename Func>
+void ForEachBox(World& world, Func&& func) {
+    const ComponentId transform = GetComponentId<Transform>(), collider = GetComponentId<BoxCollider>();
+    world.ForEachArchetype([&](Archetype& archetype) {
+        if (!archetype.Mask().test(transform) || !archetype.Mask().test(collider)) return;
+        for (usize c = 0; c < archetype.ChunkCount(); ++c) {
+            const Entity* entities = archetype.EntityArray(c);
+            for (u32 i = 0; i < archetype.ChunkEntityCount(c); ++i) {
+                const Entity e = entities[i];
+                func(e, *world.GetComponent<Transform>(e), *world.GetComponent<BoxCollider>(e));
+            }
+        }
+    });
+}
+
+// AI.CanSee's walls: every solid box collider where it is now (a gate that
+// moves away stops blocking), but the looker's and the target's.
+bool BoxLineOfSight(World& world, const Vec3& from, const Vec3& to, Entity looker, Entity target) {
+    bool clear = true;
+    ForEachBox(world, [&](Entity e, const Transform& t, const BoxCollider& box) {
+        if (!clear || e == looker || e == target || box.is_trigger) return;
+        if (SegmentHitsBox(from, to, t.position + box.center, box.half_extents)) clear = false;
+    });
+    return clear;
+}
+
+// A scene opts into a navigation mesh by tagging its floors NavWalkable. The
+// mesh is baked from every static (no RigidBody) solid box collider - the same
+// boxes the character walks on and into - so floors are walked on and walls
+// and props walked around; moving bodies (gates, enemies) stay out of it.
+std::unique_ptr<nav::NavWorld> BakeSceneNavigation(World& world, std::vector<std::string>& warnings) {
+    if (FindEntitiesWithTag(world, "NavWalkable").empty()) return nullptr;
+    nav::NavGeometry geometry;
+    ForEachBox(world, [&](Entity e, const Transform& t, const BoxCollider& box) {
+        if (box.is_trigger || world.GetComponent<RigidBody>(e) != nullptr) return;
+        geometry.AddBox(t.position + box.center, box.half_extents);
+    });
+    auto navigation = std::make_unique<nav::NavWorld>(
+        world, [](const ModelRenderer&, std::vector<Vec3>&, std::vector<u32>&) { return false; });
+    std::string error;
+    if (!navigation->Dynamic().Build(std::move(geometry), nav::NavMeshSettings{}, &error)) {
+        warnings.push_back("Navigation: the scene's mesh couldn't be baked" + (error.empty() ? "" : ": " + error));
+        return nullptr;
+    }
+    return navigation;
+}
+} // namespace
+#endif
+
 void Game::StartRuntime() {
     runtime_ = std::make_unique<Runtime>();
+#if AETHER_GAME_AI && AETHER_GAME_PHYSICS
+    runtime_->navigation = BakeSceneNavigation(*world_, warnings_);
+    runtime_->perception = std::make_unique<ai::PerceptionWorld>(*world_);
+    runtime_->perception->SetLineOfSight([world = world_.get()](const Vec3& from, const Vec3& to, Entity looker, Entity target) {
+        return BoxLineOfSight(*world, from, to, looker, target);
+    });
+#endif
     runtime_->mixer.AddDefaultBuses();
     for (const auto& asset : package_.Manifest().assets) {
         std::string extension = stdfs::path(asset.path).extension().string();

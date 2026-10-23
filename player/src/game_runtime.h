@@ -28,6 +28,10 @@
 #if AETHER_GAME_SCRIPTING
 #include "aether/script/script_system.h"
 #endif
+#if AETHER_GAME_AI
+#include "aether/ai/perception.h"
+#include "aether/nav/components.h"
+#endif
 
 namespace aether::player {
 
@@ -56,6 +60,13 @@ struct Game::Runtime {
     std::unique_ptr<gas::AbilitySystem> abilities;
     // Declared after the services its kits reference so kit systems are destroyed first.
     kit::KitRuntimeSet kit_runtimes;
+#if AETHER_GAME_AI
+    // The scene's navigation mesh and AI.CanSee's walls (game.cpp, BakeSceneNavigation):
+    // both from the scene's solid box colliders, so physics builds only. Active while
+    // this runtime lives; declared before the scripts that query them.
+    std::unique_ptr<nav::NavWorld> navigation;
+    std::unique_ptr<ai::PerceptionWorld> perception;
+#endif
 #if AETHER_GAME_SCRIPTING
     script::LuauHost host;
     std::unique_ptr<script::ScriptSystem> scripts;
