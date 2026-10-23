@@ -55,6 +55,10 @@ void InstallAiApi(LuauHost& host) {
         World* world = h->BoundWorld();
         c.Return(world != nullptr && CanSee(*world, c.EntityArg(0), c.EntityArg(1), c.IsNumber(2) ? c.Number(2) : -1.0));
     });
+    def("AI", "IsSightReady", [](NativeCall& c) {
+        const ai::PerceptionWorld* pw = ai::PerceptionWorld::Active();
+        c.Return(pw != nullptr && pw->HasLineOfSightTest());
+    });
     def("AI", "GetKnown", [h](NativeCall& c) {
         if (!NeedEntity(c, 0, "AI.GetKnown", "the entity")) return;
         World* world = h->BoundWorld();
@@ -97,8 +101,10 @@ void InstallAiApi(LuauHost& host) {
             return none();
         f32 step = static_cast<f32>(c.Number(2) * c.Number(3));
         if (!(step > 0.0f)) step = 0.0f;
-        // Walk the corners; the first is the mesh point under the entity.
-        Vec3 at = t->position;
+        // Walk the corners; the first is the mesh point under the entity. Dropping
+        // onto the mesh is free, so an entity whose origin is above its feet (a
+        // box centred off the floor) still moves the full step along the ground.
+        Vec3 at(t->position.x, path.points.front().y, t->position.z);
         usize next = 0;
         while (next < path.points.size()) {
             const Vec3 to = path.points[next];

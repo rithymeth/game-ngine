@@ -157,7 +157,8 @@
           "names": [
             "Environment",
             "Greybox",
-            "CryoBayFloor"
+            "CryoBayFloor",
+            "NavWalkable"
           ]
         }
       }
@@ -799,7 +800,8 @@
           "$v": 1,
           "names": [
             "ServiceRouteFloor",
-            "Greybox"
+            "Greybox",
+            "NavWalkable"
           ]
         },
         "Transform": {
@@ -934,7 +936,8 @@
           "$v": 1,
           "names": [
             "ServiceRouteFloor",
-            "Greybox"
+            "Greybox",
+            "NavWalkable"
           ]
         },
         "Transform": {
@@ -1492,7 +1495,24 @@
         "ScriptComponent": {
           "$v": 1,
           "script": "ca683da8-d13c-41f0-a529-795d7224f5f4",
-          "properties": []
+          "properties": [
+            {
+              "name": "arena_min",
+              "value": "[-4.3, -1000, -21.5]"
+            },
+            {
+              "name": "arena_max",
+              "value": "[4.3, 1000, -9]"
+            },
+            {
+              "name": "wake_min",
+              "value": "[-5.5, -10, -25.5]"
+            },
+            {
+              "name": "wake_max",
+              "value": "[5.5, 10, -13]"
+            }
+          ]
         },
         "RigidBody": {
           "$v": 1,
