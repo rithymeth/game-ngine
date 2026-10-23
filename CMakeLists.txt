@@ -600,6 +600,7 @@ add_subdirectory(tools/fuzz)
 # Phase 25: the .apak archive tool and the cooker.
 add_subdirectory(tools/pak)
 add_subdirectory(tools/cook)
+add_subdirectory(tools/server)
 add_subdirectory(tools/docgen)
 add_subdirectory(tools/loc)
 if(WIN32)
