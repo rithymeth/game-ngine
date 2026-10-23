@@ -1,5 +1,7 @@
 #include "aether/assets/importer.h"
 
+#include "aether/assets/gltf_references.h"
+
 #include "aether/assets/model_importer.h"
 #include "aether/assets/texture_importer.h"
 
@@ -145,8 +147,23 @@ ImportOutput ImportAsset(AssetDatabase& database, const AssetGuid& guid, const I
 
     nlohmann::json settings = importer->DefaultSettings();
     settings.merge_patch(meta.settings); // the .ameta's choices win
+    // The key covers what the import reads besides the source itself, so changing a dependency re-imports (M8.5):
+    // the files a .gltf points at (its .bin buffers and images, which need not be assets) and the current source
+    // hashes of the assets it depends on. Without this, editing a model's .bin reused the stale import.
+    std::string inputs;
+    if (record->importer == "Model") {
+        for (const GltfFileReference& ref : GltfFileReferences(database.ContentRoot(), record->path)) {
+            if (ref.path.empty()) continue; // outside the content folder: the importer reports it
+            inputs += ref.path + "=" + HashFile(database.ContentRoot() / ref.path) + ";";
+        }
+    }
+    for (const AssetGuid& dependency : record->dependencies) {
+        const AssetRecord* d = database.Find(dependency);
+        inputs += ToString(dependency) + "=" + (d ? d->source_hash : std::string("missing")) + ";";
+    }
+    const std::string source_key = inputs.empty() ? record->source_hash : record->source_hash + "|" + inputs;
     const std::string key =
-        DerivedDataCache::MakeKey(importer->Name(), importer->Version(), record->source_hash, settings.dump(), platform);
+        DerivedDataCache::MakeKey(importer->Name(), importer->Version(), source_key, settings.dump(), platform);
 
     std::optional<std::vector<u8>> cached = cache.Get(key);
     if (cached && DecodeCacheEntry(*cached, output.data, output.sub_assets)) {
