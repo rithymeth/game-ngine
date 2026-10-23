@@ -1134,6 +1134,9 @@ struct SceneRenderer::Impl {
                             device.CreateVertexBuffer(vertices.data(), vertices.size() * sizeof(SceneVertex)));
                     }
                     draw.vertices = draw.frame_vertex_buffers.front();
+                    AETHER_LOG_INFO("PlayerRenderer", "Skinned primitive: %zu vertices, per-frame vertex buffers %u..%u",
+                                    vertices.size(), draw.frame_vertex_buffers.front().index,
+                                    draw.frame_vertex_buffers.back().index);
                 } else {
                     draw.vertices = device.CreateVertexBuffer(vertices.data(), vertices.size() * sizeof(SceneVertex));
                 }
