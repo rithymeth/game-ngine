@@ -28,6 +28,65 @@
       ]
     },
     {
+      "id": "archive-dialogue",
+      "name": "AETHER dialogue",
+      "type": "audio",
+      "mute": false,
+      "locked": false,
+      "channels": [],
+      "audio": [
+        {
+          "time": 0.5,
+          "cue": "Audio/dialogue_archive_1.acue",
+          "action": "play",
+          "fade": 0,
+          "volume_db": 0
+        },
+        {
+          "time": 2.75,
+          "cue": "Audio/dialogue_archive_2.acue",
+          "action": "play",
+          "fade": 0,
+          "volume_db": 0
+        },
+        {
+          "time": 5.0,
+          "cue": "Audio/dialogue_archive_3.acue",
+          "action": "play",
+          "fade": 0,
+          "volume_db": 0
+        }
+      ]
+    },
+    {
+      "id": "archive-subtitles",
+      "name": "AETHER subtitles",
+      "type": "subtitle",
+      "mute": false,
+      "locked": false,
+      "channels": [],
+      "subtitles": [
+        {
+          "time": 0.5,
+          "duration": 1.8,
+          "text": "dlg.archive.1",
+          "speaker": "dlg.speaker.aether"
+        },
+        {
+          "time": 2.75,
+          "duration": 1.8,
+          "text": "dlg.archive.2",
+          "speaker": "dlg.speaker.aether"
+        },
+        {
+          "time": 5.0,
+          "duration": 1.8,
+          "text": "dlg.archive.3",
+          "speaker": "dlg.speaker.aether"
+        }
+      ]
+    },
+    {
       "id": "archive-camera",
       "name": "Terminal camera move",
       "type": "transform",

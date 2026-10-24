@@ -127,6 +127,7 @@ void SequencePlayer::Deactivate(bool send_cue_stops) {
         fade_ = FadeState{};
         if (on_fade) on_fade(fade_);
     }
+    subtitle_ = nullptr;
 }
 
 void SequencePlayer::Report(usize index, const std::string& message) {
@@ -198,7 +199,8 @@ bool SequencePlayer::ResolveTrack(usize index) {
     }
     t.entity = track.binding.IsNull() ? kNullEntity : guids_.Find(world_, track.binding);
     const bool entity_optional = track.type == TrackType::Event || track.type == TrackType::Spawn || track.type == TrackType::CameraCut ||
-                                 track.type == TrackType::Audio || track.type == TrackType::Fade || track.type == TrackType::Subsequence;
+                                 track.type == TrackType::Audio || track.type == TrackType::Fade || track.type == TrackType::Subsequence ||
+                                 track.type == TrackType::Subtitle;
     if (entity_optional) {
         // These work without their entity (a bound one that is missing is
         // simply treated as none).
@@ -483,6 +485,7 @@ void SequencePlayer::ApplyProperty(const Track& track, Target& target) {
 
 void SequencePlayer::Evaluate() {
     pending_fade_ = FadeState{};
+    const SubtitleKey* subtitle = nullptr;
     for (usize i = 0; i < sequence_.tracks.size(); ++i) {
         const Track& track = sequence_.tracks[i];
         if (track.mute) continue;
@@ -508,8 +511,21 @@ void SequencePlayer::Evaluate() {
                 pending_fade_.amount = amount;
                 pending_fade_.color = track.fade_color;
             }
+        } else if (track.type == TrackType::Subtitle) {
+            for (const SubtitleKey& k : track.subtitles) {
+                if (k.time > time_) break; // sorted by time
+                if (time_ < k.time + k.duration && (!subtitle || k.time >= subtitle->time)) subtitle = &k;
+            }
         }
     }
+    if (!subtitle) {
+        for (const Target& target : targets_) {
+            for (usize c = 0; c < target.children.size() && !subtitle; ++c) {
+                if (target.children[c] && c < target.child_active.size() && target.child_active[c]) subtitle = target.children[c]->Subtitle();
+            }
+        }
+    }
+    subtitle_ = final_pose_ ? nullptr : subtitle;
     if (!(pending_fade_ == fade_)) {
         fade_ = pending_fade_;
         if (on_fade) on_fade(fade_);

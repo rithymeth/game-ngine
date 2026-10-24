@@ -542,6 +542,36 @@
             "time": 0.5
           }
         ]
+      },
+      {
+        "$v": 1,
+        "action": "SkipCinematic",
+        "actuation": 0.5,
+        "key": "Enter",
+        "modifiers": [],
+        "triggers": [
+          {
+            "chord_action": "",
+            "one_shot": true,
+            "time": 0.5,
+            "type": "Pressed"
+          }
+        ]
+      },
+      {
+        "$v": 1,
+        "action": "SkipCinematic",
+        "actuation": 0.5,
+        "key": "GamepadBack",
+        "modifiers": [],
+        "triggers": [
+          {
+            "chord_action": "",
+            "one_shot": true,
+            "time": 0.5,
+            "type": "Pressed"
+          }
+        ]
       }
     ],
     "block_lower_contexts": false,
