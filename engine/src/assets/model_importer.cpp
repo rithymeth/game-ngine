@@ -310,9 +310,10 @@ ImportResult ImportScene(const GltfScene& scene, const nlohmann::json& settings,
 
 ImportResult ModelImporter::Import(const ImportContext& context) const {
     GltfScene scene;
-    if (!LoadGltf(context.source.string(), scene)) {
+    std::string error;
+    if (!LoadGltf(context.source.string(), scene, &error)) {
         ImportResult result;
-        result.error = "Couldn't load the glTF file (see the log for details)";
+        result.error = error;
         return result;
     }
     return ImportScene(scene, context.settings, context.source, context.record.path);

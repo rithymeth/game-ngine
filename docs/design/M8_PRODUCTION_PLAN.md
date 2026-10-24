@@ -114,6 +114,16 @@ data-driven examples so game rules do not require editing engine internals.
 documented framework; hot reload or reopen the project; cook the result with no engine fork.
 Record the steps and time needed by a new developer.
 
+**Status (partial):** AETHER-01's mission is the cooked quest `Content/Gameplay/FirstContact.aquest`
+(one flag objective per checkpoint stage; `MissionStage` is derived from Quests progress, and the
+quest log is rebuilt from the `first-contact` save on reopen). Firing is the cooked
+`FireWeapon.aability`, whose `AmmoCost.aeffect` spends a round, so an empty magazine fails with
+`cannot_afford`. The game drives both from Luau through the public Quests, Abilities, Attributes and
+SaveGames APIs; `games/AETHER-01` needs no engine source changes. Evidence:
+`Aether01_CookedQuestAndFireAbilityUseThePublicKits` on the cooked pak, plus the existing Aether01
+checkpoint and combat tests. Open: the new-developer steps and time are not recorded, per-weapon fire
+cooldowns are still script timers, and kit-asset hot reload is not exercised (reopen is).
+
 ## M8.5 — Asset & Content Pipeline
 
 Support the project's required FBX, glTF, PNG/JPG/HDR and WAV/OGG/MP3 imports with explicit
@@ -135,6 +145,21 @@ evidence remain open. Texture cooking now reuses cached output for unchanged
 sources and settings; a focused regression confirms that changing one texture
 recooks only that texture. This is a partial incremental-cook result, not the
 full dependent-asset rebuild gate.
+
+**Status (partial; awaiting CI):** every pass criterion now has evidence. The Linux GCC step
+"Content pipeline evidence (M8.5)" cooks AETHER-01 twice and checks the paks are byte-identical,
+with no imports and no texture cooks the second time. It then edits `test_cube.bin` and checks that
+exactly the 22 models that use it are re-imported. The step logs the sha256s with the git revision
+and the gcc and cmake versions. Finally it runs the first pak headless in `aether_player` from an
+empty directory, with the project sources moved away, and requires no errors and no kit-asset
+warnings. The Windows package check also loads the packaged game with the source tree hidden.
+`Cook_InvalidSourcesAreReportedByPathWithTheReason` covers importer validation. Corrupt or
+truncated PNGs, malformed glTF, a glTF with a missing buffer, a WAV with no fmt or data chunk,
+invalid prefab JSON and a missing `always_cook` path are each reported with their content path and
+reason, the good content still cooks, and a strict cook writes no archive. glTF import errors now
+carry the loader's first reason (`LoadGltf(path, scene, &error)`), and the cooker checks sound
+container headers. Open: these additions have not run on CI yet. Kit assets (`.aquest`,
+`.aability`, `.aeffect`, `.aitem`) are validated by the player when it loads them, not by the cooker.
 
 ## M8.6 — Animation & Character
 

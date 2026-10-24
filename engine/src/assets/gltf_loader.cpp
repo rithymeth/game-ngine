@@ -7,6 +7,8 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cstdarg>
+#include <cstdio>
 #include <array>
 #include <cmath>
 #include <cstring>
@@ -17,6 +19,19 @@ namespace aether::assets {
 namespace {
 
 using Json = nlohmann::json;
+
+// The first error of the current LoadGltf on this thread, for callers that report it (the cooker).
+thread_local std::string t_first_error;
+
+void GltfError(const char* fmt, ...) {
+    char text[1024];
+    va_list args;
+    va_start(args, fmt);
+    std::vsnprintf(text, sizeof(text), fmt, args);
+    va_end(args);
+    if (t_first_error.empty()) t_first_error = text;
+    AETHER_LOG_ERROR("glTF", "%s", text);
+}
 constexpr usize kMaxJsonBytes = 32 * 1024 * 1024;
 constexpr usize kMaxBufferBytes = 512 * 1024 * 1024;
 
@@ -87,7 +102,7 @@ std::string UriDecode(const std::string& uri) {
 bool ResolveBufferData(const Json& buffer_json, const std::string& base_dir, bool allow_external,
                        usize remaining_budget, std::vector<u8>& out_data) {
     if (!buffer_json.contains("uri")) {
-        AETHER_LOG_ERROR("glTF", "Buffer with no uri (GLB-embedded binary chunk) is not supported");
+        GltfError("Buffer with no uri (GLB-embedded binary chunk) is not supported");
         return false;
     }
     std::string uri = buffer_json["uri"].get<std::string>();
@@ -101,11 +116,14 @@ bool ResolveBufferData(const Json& buffer_json, const std::string& base_dir, boo
     }
     if (!allow_external) return false;
     std::string path = JoinPath(base_dir, UriDecode(uri));
-    if (!fs::ReadFileBytes(path, out_data, remaining_budget)) return false;
+    if (!fs::ReadFileBytes(path, out_data, remaining_budget)) {
+        GltfError("Can't read the buffer \"%s\" (missing, unreadable or over the size budget)", uri.c_str());
+        return false;
+    }
     if (buffer_json.contains("byteLength")) {
         const usize declared_size = buffer_json["byteLength"].get<usize>();
         if (declared_size > remaining_budget || out_data.size() != declared_size) {
-            AETHER_LOG_ERROR("glTF", "Referenced buffer \"%s\" is larger than its declared or allowed size", path.c_str());
+            GltfError("Referenced buffer \"%s\" is larger than its declared or allowed size", path.c_str());
             out_data.clear();
             return false;
         }
@@ -165,7 +183,7 @@ bool ResolveAccessor(const Json& gltf, usize accessor_index, const std::vector<s
     usize accessor_byte_offset = accessor.value("byteOffset", static_cast<usize>(0));
 
     if (!accessor.contains("bufferView")) {
-        AETHER_LOG_ERROR("glTF", "Accessor %zu has no bufferView (sparse-only accessors are not supported)",
+        GltfError("Accessor %zu has no bufferView (sparse-only accessors are not supported)",
                           accessor_index);
         return false;
     }
@@ -184,7 +202,7 @@ bool ResolveAccessor(const Json& gltf, usize accessor_index, const std::vector<s
     usize component_size = ComponentSize(out.component_type);
     usize element_size = component_size * out.num_components;
     if (component_size == 0 || out.num_components == 0) {
-        AETHER_LOG_ERROR("glTF", "Accessor %zu has an unrecognized componentType/type", accessor_index);
+        GltfError("Accessor %zu has an unrecognized componentType/type", accessor_index);
         return false;
     }
     out.stride = buffer_view.value("byteStride", element_size);
@@ -205,12 +223,12 @@ bool ResolveAccessor(const Json& gltf, usize accessor_index, const std::vector<s
         required_size = preceding_elements * out.stride + element_size;
     }
     if (accessor_byte_offset > bv_byte_length || required_size > bv_byte_length - accessor_byte_offset) {
-        AETHER_LOG_ERROR("glTF", "Accessor %zu reads past the end of its bufferView", accessor_index);
+        GltfError("Accessor %zu reads past the end of its bufferView", accessor_index);
         return false;
     }
     const usize buffer_size = buffers[buffer_index].size();
     if (bv_byte_offset > buffer_size || bv_byte_length > buffer_size - bv_byte_offset) {
-        AETHER_LOG_ERROR("glTF", "Accessor %zu references a bufferView past the end of its buffer", accessor_index);
+        GltfError("Accessor %zu references a bufferView past the end of its buffer", accessor_index);
         return false;
     }
     if (accessor_byte_offset > max_size - bv_byte_offset) {
@@ -721,7 +739,7 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
     try {
         gltf = Json::parse(text);
     } catch (const Json::parse_error& e) {
-        AETHER_LOG_ERROR("glTF", "Failed to parse \"%s\": %s", path.c_str(), e.what());
+        GltfError("Failed to parse \"%s\": %s", path.c_str(), e.what());
         return false;
     }
 
@@ -733,11 +751,11 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
         for (const auto& buffer_json : gltf["buffers"]) {
             std::vector<u8> data;
             if (!ResolveBufferData(buffer_json, base_dir, allow_external, buffer_budget, data)) {
-                AETHER_LOG_ERROR("glTF", "Failed to resolve a buffer referenced by \"%s\"", path.c_str());
+                GltfError("Failed to resolve a buffer referenced by \"%s\"", path.c_str());
                 return false;
             }
             if (data.size() > buffer_budget) {
-                AETHER_LOG_ERROR("glTF", "Buffers in \"%s\" exceed the total glTF buffer budget", path.c_str());
+                GltfError("Buffers in \"%s\" exceed the total glTF buffer budget", path.c_str());
                 return false;
             }
             buffer_budget -= data.size();
@@ -934,10 +952,18 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
     return true;
 }
 
+bool LoadGltf(const std::string& path, GltfScene& out_scene, std::string* error) {
+    t_first_error.clear();
+    const bool ok = LoadGltf(path, out_scene);
+    if (!ok && error != nullptr) *error = t_first_error.empty() ? "Couldn't load the glTF file" : t_first_error;
+    t_first_error.clear();
+    return ok;
+}
+
 bool LoadGltf(const std::string& path, GltfScene& out_scene) {
     std::vector<u8> bytes;
     if (!fs::ReadFileBytes(path, bytes, kMaxJsonBytes)) {
-        AETHER_LOG_ERROR("glTF", "Failed to read \"%s\" or file is too large", path.c_str());
+        GltfError("Failed to read \"%s\" or file is too large", path.c_str());
         return false;
     }
     std::string text;
@@ -946,7 +972,7 @@ bool LoadGltf(const std::string& path, GltfScene& out_scene) {
     try {
         if (!ParseGltfText(text, path, true, scene)) return false;
     } catch (const std::exception& e) {
-        AETHER_LOG_ERROR("glTF", "Malformed \"%s\": %s", path.c_str(), e.what());
+        GltfError("Malformed \"%s\": %s", path.c_str(), e.what());
         return false;
     }
     out_scene = std::move(scene);
