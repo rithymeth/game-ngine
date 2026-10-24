@@ -30,6 +30,7 @@ namespace assets { class AssetDatabase; }
 namespace script {
 class LuauHost;
 class ScriptSystem;
+struct AiDebugEntry;
 }
 }
 
@@ -65,6 +66,11 @@ public:
     std::vector<BehaviorTreeDebugSnapshot> BehaviorTreeDebugSnapshots() const;
     bool ControlBehaviorTree(Entity entity, const std::string& command);
     const nav::NavCrowd* NavigationCrowd() const { return nav_crowd_.get(); }
+    // M8.8 AI Debugger: script-reported states, perception and Nav.MoveTowards paths
+    // (empty without scripting). Call between ticks.
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+    std::vector<script::AiDebugEntry> AiDebugSnapshot() const;
+#endif
 
 private:
     World& world_;

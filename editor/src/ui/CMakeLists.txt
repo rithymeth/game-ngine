@@ -67,6 +67,7 @@ target_include_directories(aether_editor_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/.
 target_link_libraries(aether_editor_ui PUBLIC aether_editor_core Aether::Engine Aether::Blueprint Aether::Renderer Aether::Animation Aether::Audio Aether::UI Aether::VFX Aether::AI Aether::Terrain Aether::Streaming Aether::Net Aether::Templates Aether::Sprite2D Aether::Sequencer Aether::Save Aether::Gameplay imgui_core)
 if(TARGET Aether::Scripting)
     target_link_libraries(aether_editor_ui PUBLIC Aether::Scripting)
+    target_sources(aether_editor_ui PRIVATE ../ai/ai_debugger.cpp)
     target_compile_definitions(aether_editor_ui PUBLIC AETHER_EDITOR_SCRIPTING=1)
 endif()
 add_library(Aether::EditorUI ALIAS aether_editor_ui)

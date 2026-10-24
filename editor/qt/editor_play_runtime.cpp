@@ -16,6 +16,7 @@
 #if defined(AETHER_QT_EDITOR_SCRIPTING)
 #include "aether/script/luau_host.h"
 #include "aether/script/script_system.h"
+#include "aether/script/ai_api.h"
 #endif
 
 #include <algorithm>
@@ -296,6 +297,13 @@ std::vector<std::tuple<std::filesystem::path, std::string, bp::NodeId>> EditorPl
     }
     return result;
 }
+
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+std::vector<script::AiDebugEntry> EditorPlayRuntime::AiDebugSnapshot() const {
+    if (scripts_) return scripts_->AiDebug().Collect(world_);
+    return {};
+}
+#endif
 
 std::vector<BehaviorTreeDebugSnapshot> EditorPlayRuntime::BehaviorTreeDebugSnapshots() const {
     std::vector<BehaviorTreeDebugSnapshot> snapshots;

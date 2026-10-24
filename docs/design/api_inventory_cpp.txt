@@ -6456,6 +6456,7 @@
   void Stop()
   void Teleport(const EmitterPose&pose)
   void Update(f32 dt)
+[editor/src/ai/ai_debugger.h] internal-tooling
 [editor/src/ai/bt_document.h] internal-tooling
 [editor/src/ai/bt_editor.h] internal-tooling
 [editor/src/ai/nav_panel.h] internal-tooling

@@ -512,6 +512,58 @@ AETHER_TEST(Mcp_LogRecentShowsWhatScriptsPrint) {
     stdfs::remove_all(dir);
 }
 
+// M8.8: game_ai_debug reports what scripts set with AI.SetDebugState and which agents have an AIPerception.
+AETHER_TEST(Mcp_GameAiDebugReportsStateAndPerception) {
+    if (!aether::player::Game::HasScripting()) return;
+    namespace stdfs = std::filesystem;
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_ai_debug_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+    const std::string script_guid = assets::ToString(assets::NewAssetGuid());
+    const Json manifest = {{"$type", "CookManifest"}, {"$version", 1}, {"project", "McpAi"}, {"configuration", "Development"},
+                           {"startup_scene", "Scenes/start.ascene"}, {"fixed_timestep_hz", 60.0}, {"gravity", {0.0, -9.81, 0.0}},
+                           {"layers", {"Default"}}, {"collision_matrix", Json::array()},
+                           {"assets", Json::array({{{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/start.ascene"}, {"importer", "Scene"}},
+                                                   {{"guid", script_guid}, {"path", "Scripts/Guard.luau"}, {"importer", "Script"}}})},
+                           {"files", Json::array()}};
+    const Json transform = {{"position", {0, 0, 0}}, {"rotation", {0, 0, 0, 1}}, {"scale", {1, 1, 1}}};
+    const Json scene = {{"$type", "Scene"}, {"$version", 1},
+                        {"entities", Json::array({{{"components", {{"EntityName", {{"value", "Guard"}}}, {"Transform", transform},
+                                                                   {"ScriptComponent", {{"script", script_guid}}}}}},
+                                                  {{"components", {{"EntityName", {{"value", "Sentinel"}}}, {"Transform", transform},
+                                                                   {"AIPerception", Json::object()}}}},
+                                                  {{"components", {{"EntityName", {{"value", "Crate"}}}, {"Transform", transform}}}}})}};
+    pak::PakWriter writer;
+    writer.Add("Manifest.json", manifest.dump());
+    writer.Add("Content/Scenes/start.ascene", scene.dump());
+    writer.Add("Content/Scripts/Guard.luau",
+               std::string("local T = {}\nfunction T:OnUpdate(dt) AI.SetDebugState(self.entity, 'patrol') end\nreturn T\n"));
+    const stdfs::path file = dir / "game.apak";
+    AETHER_CHECK(writer.Write(file.string()));
+
+    Harness h;
+    RegisterGameTools(h.server);
+    AETHER_CHECK(h.Call("game_ai_debug").is_error); // nothing loaded yet
+    AETHER_CHECK(!h.Call("game_load", {{"paks", {file.string()}}, {"user_dir", (dir / "user").string()}}).is_error);
+    AETHER_CHECK(!h.Call("game_step", {{"frames", 3}}).is_error);
+    Harness::Result r = h.Call("game_ai_debug");
+    AETHER_CHECK(!r.is_error);
+    const Json& agents = r.value["agents"];
+    AETHER_CHECK(agents.is_array() && agents.size() == 2); // the Crate is no agent
+    const auto find = [&](const std::string& name) -> Json {
+        for (const Json& a : agents) if (a.value("name", "") == name) return a;
+        return Json();
+    };
+    const Json guard = find("Guard");
+    const Json sentinel = find("Sentinel");
+    AETHER_CHECK(guard.is_object() && guard["state"] == "patrol" && !guard.contains("known") && !guard.contains("path"));
+    AETHER_CHECK(guard["entity"].is_string());
+    AETHER_CHECK(sentinel.is_object() && sentinel["state"] == "" && sentinel["target"].is_null());
+    AETHER_CHECK(sentinel["known"].is_array() && sentinel["known"].empty());
+    h.Call("game_unload");
+    stdfs::remove_all(dir);
+}
+
 #include "build_tools.h"
 #include "subprocess.h"
 
