@@ -51,6 +51,8 @@
 #if defined(AETHER_QT_EDITOR_SCRIPTING)
 #include "script_component_editor.h"
 #include "script_editor_widget.h"
+#include "ai_debugger_widget.h"
+#include "aether/script/ai_api.h"
 #endif
 
 #include <QApplication>
@@ -2456,7 +2458,16 @@ public:
                                                 Qt::BottomDockWidgetArea, "behaviorTreeEditorDock");
         navigation_editor_widget_ = new aether::editor::qt::NavigationEditorWidget(scene_document_);
         viewport_->SetNavigationDebugSource([this] {
-            return navigation_editor_widget_->DebugDraw(play_runtime_ ? play_runtime_->NavigationCrowd() : nullptr);
+            aether::nav::NavDebugDraw draw = navigation_editor_widget_->DebugDraw(play_runtime_ ? play_runtime_->NavigationCrowd() : nullptr);
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+            if (play_runtime_ && ai_debugger_widget_ && !ai_debug_snapshot_.empty()) {
+                aether::editor::AiDebugOverlayOptions options;
+                options.all_agents = ai_debugger_widget_->ShowAllAgents();
+                options.selected = selected_entity_;
+                aether::editor::BuildAiDebugOverlay(scene_document_.GetWorld(), ai_debug_snapshot_, options, draw);
+            }
+#endif
+            return draw;
         });
         navigation_editor_widget_->SetOverlayChangedCallback([this] { if (viewport_) viewport_->update(); });
         navigation_editor_dock_ = MakeDock("AI · NAVIGATION", navigation_editor_widget_, *this,
@@ -2477,6 +2488,11 @@ public:
         script_editor_widget_ = new aether::editor::qt::ScriptEditorWidget;
         script_editor_dock_ = MakeDock("SCRIPT · LUAU", script_editor_widget_, *this,
                                        Qt::BottomDockWidgetArea, "scriptEditorDock");
+        ai_debugger_widget_ = new aether::editor::qt::AiDebuggerWidget;
+        ai_debugger_widget_->SetEntityActivatedCallback([this](aether::Entity entity) { SelectEntityInHierarchy(entity); });
+        ai_debugger_widget_->SetOverlayChangedCallback([this] { if (viewport_) viewport_->update(); });
+        ai_debugger_dock_ = MakeDock("AI · DEBUGGER", ai_debugger_widget_, *this,
+                                     Qt::BottomDockWidgetArea, "aiDebuggerDock");
 #endif
         tabifyDockWidget(content_dock_, output_dock_);
         tabifyDockWidget(content_dock_, sequence_dock_);
@@ -2492,6 +2508,7 @@ public:
         tabifyDockWidget(content_dock_, sound_cue_editor_dock_);
 #if defined(AETHER_QT_EDITOR_SCRIPTING)
         tabifyDockWidget(content_dock_, script_editor_dock_);
+        tabifyDockWidget(content_dock_, ai_debugger_dock_);
 #endif
         content_dock_->raise();
         resizeDocks({content_dock_}, {230}, Qt::Vertical);
@@ -2512,6 +2529,7 @@ public:
         window_menu_->addAction(sound_cue_editor_dock_->toggleViewAction());
 #if defined(AETHER_QT_EDITOR_SCRIPTING)
         window_menu_->addAction(script_editor_dock_->toggleViewAction());
+        window_menu_->addAction(ai_debugger_dock_->toggleViewAction());
 #endif
         window_menu_->addSeparator();
         QAction* reset_layout_action = window_menu_->addAction("Reset Workspace Layout");
@@ -4000,11 +4018,35 @@ private:
         UpdateSceneStatus();
     }
 
+    // Selects `entity`'s outliner row (which selects it in the viewport and inspector).
+    void SelectEntityInHierarchy(aether::Entity entity) {
+        aether::World& world = scene_document_.GetWorld();
+        if (entity.IsNull() || !world.IsAlive(entity)) return;
+        const aether::IdComponent* id = world.GetComponent<aether::IdComponent>(entity);
+        if (!id) return;
+        const std::string key = aether::ToString(id->guid);
+        std::function<QTreeWidgetItem*(QTreeWidgetItem*)> find_item = [&](QTreeWidgetItem* item) -> QTreeWidgetItem* {
+            if (item->data(0, Qt::UserRole).toString().toStdString() == key) return item;
+            for (int child_index = 0; child_index < item->childCount(); ++child_index)
+                if (auto* found = find_item(item->child(child_index))) return found;
+            return nullptr;
+        };
+        for (int root_index = 0; root_index < hierarchy_tree_->topLevelItemCount(); ++root_index) {
+            if (auto* found = find_item(hierarchy_tree_->topLevelItem(root_index))) {
+                hierarchy_tree_->setCurrentItem(found);
+                return;
+            }
+        }
+    }
+
     void SelectHierarchyItem(QTreeWidgetItem* item) {
         if (!item || !item->parent()) {
             selected_entity_ = aether::kNullEntity;
             selected_guid_ = {};
             viewport_->SetSelectedGuid({});
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+            if (ai_debugger_widget_) ai_debugger_widget_->SetSelectedEntity(aether::kNullEntity);
+#endif
             inspector_stack_->setCurrentIndex(0);
             inspector_scroll_->verticalScrollBar()->setValue(0);
             inspector_name_->clear();
@@ -4045,6 +4087,9 @@ private:
         if (selected_entity_.IsNull()) return;
         selected_guid_ = guid;
         viewport_->SetSelectedGuid(guid);
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+        if (ai_debugger_widget_) ai_debugger_widget_->SetSelectedEntity(selected_entity_);
+#endif
         physics_component_panel_->SetEntity(selected_entity_);
 #if defined(AETHER_QT_EDITOR_SCRIPTING)
         script_component_editor_->SetEntity(selected_entity_);
@@ -4376,6 +4421,11 @@ private:
         play_runtime_.reset();
         if (behavior_tree_editor_widget_) behavior_tree_editor_widget_->SetLiveDebugSnapshots({});
         if (blueprint_editor_widget_) blueprint_editor_widget_->ClearLiveTrace();
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+        ai_debug_snapshot_.clear();
+        ai_debug_rows_clock_.invalidate();
+        if (ai_debugger_widget_) ai_debugger_widget_->Clear();
+#endif
         scene_document_.Stop();
         selected_entity_ = scene_document_.Guids().Find(scene_document_.GetWorld(), selected_guid_);
         if (selected_entity_.IsNull()) selected_guid_ = {};
@@ -4391,6 +4441,16 @@ private:
             blueprint_editor_widget_->SetLiveTraceEvents(play_runtime_->TakeBlueprintTrace());
         if (behavior_tree_editor_widget_)
             behavior_tree_editor_widget_->SetLiveDebugSnapshots(play_runtime_->BehaviorTreeDebugSnapshots());
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+        if (ai_debugger_widget_) {
+            ai_debug_snapshot_ = play_runtime_->AiDebugSnapshot();
+            if (!ai_debug_rows_clock_.isValid() || ai_debug_rows_clock_.elapsed() >= 250) { // ~4 Hz
+                ai_debug_rows_clock_.start();
+                ai_debugger_widget_->SetRows(aether::editor::BuildAiDebugRows(scene_document_.GetWorld(), ai_debug_snapshot_));
+            }
+            if (!ai_debug_snapshot_.empty()) viewport_->update();
+        }
+#endif
         if (!selected_entity_.IsNull() && scene_document_.GetWorld().IsAlive(selected_entity_)) {
             SyncInspectorPosition();
             viewport_->update();
@@ -5711,6 +5771,10 @@ private:
 #if defined(AETHER_QT_EDITOR_SCRIPTING)
     QDockWidget* script_editor_dock_ = nullptr;
     aether::editor::qt::ScriptEditorWidget* script_editor_widget_ = nullptr;
+    QDockWidget* ai_debugger_dock_ = nullptr;
+    aether::editor::qt::AiDebuggerWidget* ai_debugger_widget_ = nullptr;
+    std::vector<aether::script::AiDebugEntry> ai_debug_snapshot_; // last Play tick's AiDebugStore::Collect
+    QElapsedTimer ai_debug_rows_clock_; // throttles the dock's table (overlay follows every tick)
 #endif
     QPushButton* search_button_ = nullptr;
     QPushButton* play_button_ = nullptr;
