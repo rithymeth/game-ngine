@@ -206,7 +206,8 @@ AETHER_TEST(Animator_GraphNotifiesAreWeighted) {
             if (e.type == AnimEventType::Notify) seen = e.weight;
         }
     }
-    AETHER_CHECK(Close(seen, 0.3f)); // FootL at 0.25 s into the walk: 0.3 of the way through the blend
+    // FootL at 0.25 s into the walk, in the frame that takes the blend from 0.2 to 0.3: it counts by the frame's average (M8.6).
+    AETHER_CHECK(Close(seen, 0.25f));
     AETHER_CHECK(Count(cross.Events(), AnimEventType::StateChanged) == 0);
 }
 

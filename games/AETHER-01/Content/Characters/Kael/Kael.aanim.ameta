@@ -1,0 +1,13 @@
+{
+  "$type": "AssetMeta",
+  "$v": 1,
+  "guid": "2df91180-f4f6-5700-a64b-630e838266d8",
+  "importer": "AnimGraph",
+  "importer_version": 1,
+  "settings": {},
+  "labels": [
+    "Prototype",
+    "generated"
+  ],
+  "source_hash": ""
+}

@@ -1,0 +1,10 @@
+{
+  "$type": "Montage",
+  "$version": 1,
+  "name": "Kael_ArchiveListen",
+  "clip": "Interact",
+  "slot": "Default",
+  "blend_in": 0.2,
+  "blend_out": 0.3,
+  "sections": []
+}

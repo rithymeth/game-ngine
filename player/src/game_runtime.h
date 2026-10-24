@@ -1,6 +1,8 @@
 #pragma once
 
 #include "aether/player/game.h"
+#include "aether/animation/animator.h"
+#include "aether/animation/gltf_source.h"
 #include "aether/audio/backend.h"
 #include "aether/audio/audio_system.h"
 #include "aether/blueprint/system.h"
@@ -46,6 +48,14 @@ struct Game::Runtime {
     std::unique_ptr<audio::AudioOutput> output; // stops its thread before audio/mixer/bank destruction
     std::map<std::pair<u32, std::string>, audio::CueHandle> sequence_audio;
     std::unique_ptr<seq::SequenceSystem> sequences;
+    // Characters' animation (M8.6): graphs (.aanim), skinned glTF rigs and
+    // their clips, and montages (.amontage), read from the package by path on
+    // first use; the system runs every Animator after the sequencer.
+    std::map<std::string, std::unique_ptr<anim::AnimGraph>> anim_graphs;     // null: unreadable (warned once)
+    std::map<std::string, std::unique_ptr<anim::GltfCharacter>> anim_rigs;  // by glTF path
+    std::map<std::string, std::unique_ptr<anim::Montage>> anim_montages;
+    std::unique_ptr<anim::AnimationSystem> animation;
+    usize animation_problems = 0; // how many of animation->Problems() are already reported
     // The on-screen UI. Layout and painting use the renderer's font, so this one only serves the input router's text metrics.
     ui::BuiltinFont ui_font;
     ui::Viewport ui_viewport;

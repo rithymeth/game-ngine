@@ -23,6 +23,25 @@ std::string Canonical(const std::string& name) {
     return out;
 }
 
+// Root translation scales by the ratio of the skeletons' heights: the root's,
+// or when the root sits on the ground (a "Root" bone at the feet) the first
+// mapped bone below it that stands above the ground (the hips). 1 if none does.
+f32 HeightScale(const std::vector<i32>& source_of, i32 root, const std::vector<ModelTransform>& sm, const std::vector<ModelTransform>& tm,
+                bool* found = nullptr) {
+    if (found) *found = false;
+    if (root < 0 || source_of[static_cast<usize>(root)] < 0) return 1.0f;
+    for (usize t = static_cast<usize>(root); t < source_of.size(); ++t) {
+        const i32 s = source_of[t];
+        if (s < 0) continue;
+        const f32 sh = sm[static_cast<usize>(s)].position.y, th = tm[t].position.y;
+        if (std::fabs(sh) > 1e-4f && std::fabs(th) > 1e-4f) {
+            if (found) *found = true;
+            return th / sh;
+        }
+    }
+    return 1.0f;
+}
+
 } // namespace
 
 BoneMapping AutoMapBones(const Skeleton& source, const Skeleton& target) {
@@ -34,6 +53,91 @@ BoneMapping AutoMapBones(const Skeleton& source, const Skeleton& target) {
         if (it != by_name.end()) m.bones.push_back({it->second, b.name});
     }
     return m;
+}
+
+std::string RetargetReport::Describe() const {
+    std::string out;
+    for (const RetargetIssue& i : issues) {
+        out += i.code + (i.error ? " error" : " warning") + (i.bone.empty() ? "" : " [" + i.bone + "]") + ": " + i.message + "\n";
+    }
+    return out;
+}
+
+RetargetReport ValidateRetarget(const Skeleton& source, const Skeleton& target, const BoneMapping& mapping,
+                                const std::vector<std::string>& required) {
+    RetargetReport r;
+    r.target_bones = target.bones.size();
+    auto add = [&](const char* code, bool error, const std::string& bone, std::string message) {
+        r.issues.push_back({code, error, bone, std::move(message)});
+    };
+    std::string why;
+    if (!source.Valid(&why)) add("RT001", true, {}, "The source skeleton isn't valid: " + why);
+    why.clear();
+    if (!target.Valid(&why)) add("RT001", true, {}, "The target skeleton isn't valid: " + why);
+    if (!r.issues.empty()) return r;
+
+    std::vector<i32> source_of(target.bones.size(), -1);
+    for (const auto& [from, to] : mapping.bones) {
+        const i32 s = source.Find(from), t = target.Find(to);
+        if (s < 0) add("RT002", true, from, "The mapping names the source bone '" + from + "', which the source skeleton doesn't have.");
+        if (t < 0) add("RT002", true, to, "The mapping names the target bone '" + to + "', which the target skeleton doesn't have.");
+        if (s < 0 || t < 0) continue;
+        i32& slot = source_of[static_cast<usize>(t)];
+        if (slot >= 0 && slot != s) {
+            add("RT007", true, to, "Both '" + source.bones[static_cast<usize>(slot)].name + "' and '" + from + "' drive the target bone '" + to + "'.");
+            continue;
+        }
+        slot = s;
+    }
+    r.mapped = static_cast<usize>(std::count_if(source_of.begin(), source_of.end(), [](i32 s) { return s >= 0; }));
+    if (r.mapped == 0) {
+        add("RT003", true, {}, "No bone maps from the source to the target (the names don't match and no mapping was given).");
+        return r;
+    }
+    i32 root = -1;
+    if (!mapping.root.empty()) {
+        root = target.Find(mapping.root);
+        if (root < 0) add("RT004", true, mapping.root, "The root '" + mapping.root + "' isn't a bone of the target.");
+        else if (source_of[static_cast<usize>(root)] < 0) add("RT004", true, mapping.root, "The root '" + mapping.root + "' has no source bone, so the character can't move.");
+    } else {
+        for (usize i = 0; i < source_of.size(); ++i) {
+            if (source_of[i] >= 0) { root = static_cast<i32>(i); break; }
+        }
+    }
+    for (usize t = 0; t < target.bones.size(); ++t) {
+        if (source_of[t] < 0) continue;
+        i32 ancestor = target.bones[t].parent;
+        while (ancestor >= 0 && source_of[static_cast<usize>(ancestor)] < 0) ancestor = target.bones[static_cast<usize>(ancestor)].parent;
+        if (ancestor < 0) continue;
+        const i32 s = source_of[t], sa = source_of[static_cast<usize>(ancestor)];
+        if (sa == s || !source.IsAncestor(sa, s)) {
+            add("RT005", true, target.bones[t].name,
+                "'" + target.bones[t].name + "' is under '" + target.bones[static_cast<usize>(ancestor)].name + "' in the target, but its source bone '" +
+                    source.bones[static_cast<usize>(s)].name + "' isn't under '" + source.bones[static_cast<usize>(sa)].name + "'.");
+        }
+    }
+    for (const std::string& name : required) {
+        const i32 t = target.Find(name);
+        if (t < 0) add("RT006", true, name, "The required bone '" + name + "' isn't in the target skeleton.");
+        else if (source_of[static_cast<usize>(t)] < 0) add("RT006", true, name, "The required bone '" + name + "' has no source bone.");
+    }
+    if (r.mapped < target.bones.size()) {
+        std::string list;
+        for (usize t = 0; t < target.bones.size(); ++t) {
+            if (source_of[t] < 0) list += (list.empty() ? "" : ", ") + target.bones[t].name;
+        }
+        add("RT008", false, {}, std::to_string(target.bones.size() - r.mapped) + " target bone(s) keep their rest pose: " + list + ".");
+    }
+    if (root >= 0 && source_of[static_cast<usize>(root)] >= 0) {
+        std::vector<ModelTransform> sm, tm;
+        ComputeModelTransforms(source, RestPose(source), sm);
+        ComputeModelTransforms(target, RestPose(target), tm);
+        bool found = false;
+        HeightScale(source_of, root, sm, tm, &found);
+        if (!found) add("RT009", false, target.bones[static_cast<usize>(root)].name, "No mapped bone stands above the ground, so root translation isn't scaled to the target.");
+    }
+    r.compatible = std::none_of(r.issues.begin(), r.issues.end(), [](const RetargetIssue& i) { return i.error; });
+    return r;
 }
 
 Retargeter::Retargeter(const Skeleton& source, const Skeleton& target, const BoneMapping& mapping) : source_(source), target_(target) {
@@ -57,10 +161,7 @@ Retargeter::Retargeter(const Skeleton& source, const Skeleton& target, const Bon
     ComputeModelTransforms(target, RestPose(target), tm);
     for (const ModelTransform& t : sm) source_rest_model_.push_back(t.rotation);
     for (const ModelTransform& t : tm) target_rest_model_.push_back(t.rotation);
-    if (root_ >= 0 && source_root_ >= 0) {
-        const f32 sh = sm[static_cast<usize>(source_root_)].position.y, th = tm[static_cast<usize>(root_)].position.y;
-        scale_ = std::fabs(sh) > 1e-4f ? th / sh : 1.0f;
-    }
+    scale_ = HeightScale(source_of_, root_, sm, tm);
 }
 
 usize Retargeter::MappedCount() const {

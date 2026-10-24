@@ -1,0 +1,556 @@
+{
+  "$type": "AnimGraph",
+  "$version": 1,
+  "variables": [
+    {
+      "name": "Speed",
+      "type": "float",
+      "default": 0.0
+    },
+    {
+      "name": "Grounded",
+      "type": "bool",
+      "default": 1.0
+    },
+    {
+      "name": "Aiming",
+      "type": "bool",
+      "default": 0.0
+    },
+    {
+      "name": "Dead",
+      "type": "bool",
+      "default": 0.0
+    },
+    {
+      "name": "Jump",
+      "type": "trigger",
+      "default": 0.0
+    },
+    {
+      "name": "Fire",
+      "type": "trigger",
+      "default": 0.0
+    },
+    {
+      "name": "Reload",
+      "type": "trigger",
+      "default": 0.0
+    },
+    {
+      "name": "Hit",
+      "type": "trigger",
+      "default": 0.0
+    },
+    {
+      "name": "Interact",
+      "type": "trigger",
+      "default": 0.0
+    }
+  ],
+  "output": 30,
+  "nodes": [
+    {
+      "id": 1,
+      "kind": "Clip",
+      "asset": "Idle"
+    },
+    {
+      "id": 2,
+      "kind": "Clip",
+      "asset": "Walk"
+    },
+    {
+      "id": 3,
+      "kind": "Clip",
+      "asset": "Run"
+    },
+    {
+      "id": 4,
+      "kind": "Clip",
+      "asset": "Sprint"
+    },
+    {
+      "id": 5,
+      "kind": "Clip",
+      "asset": "Jump",
+      "loop": false
+    },
+    {
+      "id": 6,
+      "kind": "Clip",
+      "asset": "Fall"
+    },
+    {
+      "id": 7,
+      "kind": "Clip",
+      "asset": "Land",
+      "loop": false
+    },
+    {
+      "id": 8,
+      "kind": "Clip",
+      "asset": "Aim"
+    },
+    {
+      "id": 9,
+      "kind": "Clip",
+      "asset": "Fire",
+      "loop": false
+    },
+    {
+      "id": 10,
+      "kind": "Clip",
+      "asset": "Reload",
+      "loop": false
+    },
+    {
+      "id": 11,
+      "kind": "Clip",
+      "asset": "Hit",
+      "loop": false
+    },
+    {
+      "id": 12,
+      "kind": "Clip",
+      "asset": "Death",
+      "loop": false
+    },
+    {
+      "id": 13,
+      "kind": "Clip",
+      "asset": "Interact",
+      "loop": false
+    },
+    {
+      "id": 20,
+      "kind": "StateMachine",
+      "machine": "Locomotion"
+    },
+    {
+      "id": 30,
+      "kind": "Slot",
+      "inputs": [
+        20
+      ],
+      "slot": "Default"
+    }
+  ],
+  "machines": [
+    {
+      "name": "Locomotion",
+      "entry": "Idle",
+      "states": [
+        {
+          "name": "Idle",
+          "pose": 1
+        },
+        {
+          "name": "Walk",
+          "pose": 2
+        },
+        {
+          "name": "Run",
+          "pose": 3
+        },
+        {
+          "name": "Sprint",
+          "pose": 4
+        },
+        {
+          "name": "Jump",
+          "pose": 5
+        },
+        {
+          "name": "Fall",
+          "pose": 6
+        },
+        {
+          "name": "Land",
+          "pose": 7
+        },
+        {
+          "name": "Aim",
+          "pose": 8
+        },
+        {
+          "name": "Fire",
+          "pose": 9
+        },
+        {
+          "name": "Reload",
+          "pose": 10
+        },
+        {
+          "name": "Hit",
+          "pose": 11
+        },
+        {
+          "name": "Death",
+          "pose": 12
+        },
+        {
+          "name": "Interact",
+          "pose": 13
+        }
+      ],
+      "transitions": [
+        {
+          "from": "*",
+          "to": "Death",
+          "blend_time": 0.15,
+          "conditions": [
+            {
+              "variable": "Dead",
+              "op": "true"
+            }
+          ],
+          "priority": 100
+        },
+        {
+          "from": "Death",
+          "to": "Idle",
+          "blend_time": 0.2,
+          "conditions": [
+            {
+              "variable": "Dead",
+              "op": "false"
+            }
+          ]
+        },
+        {
+          "from": "*",
+          "to": "Hit",
+          "blend_time": 0.05,
+          "conditions": [
+            {
+              "variable": "Hit",
+              "op": "triggered"
+            },
+            {
+              "variable": "Dead",
+              "op": "false"
+            }
+          ],
+          "priority": 50
+        },
+        {
+          "from": "*",
+          "to": "Jump",
+          "blend_time": 0.05,
+          "conditions": [
+            {
+              "variable": "Jump",
+              "op": "triggered"
+            },
+            {
+              "variable": "Dead",
+              "op": "false"
+            }
+          ],
+          "priority": 40
+        },
+        {
+          "from": "Idle",
+          "to": "Fall",
+          "blend_time": 0.15,
+          "conditions": [
+            {
+              "variable": "Grounded",
+              "op": "false"
+            },
+            {
+              "variable": "Dead",
+              "op": "false"
+            }
+          ],
+          "priority": 30
+        },
+        {
+          "from": "Walk",
+          "to": "Fall",
+          "blend_time": 0.15,
+          "conditions": [
+            {
+              "variable": "Grounded",
+              "op": "false"
+            },
+            {
+              "variable": "Dead",
+              "op": "false"
+            }
+          ],
+          "priority": 30
+        },
+        {
+          "from": "Run",
+          "to": "Fall",
+          "blend_time": 0.15,
+          "conditions": [
+            {
+              "variable": "Grounded",
+              "op": "false"
+            },
+            {
+              "variable": "Dead",
+              "op": "false"
+            }
+          ],
+          "priority": 30
+        },
+        {
+          "from": "Sprint",
+          "to": "Fall",
+          "blend_time": 0.15,
+          "conditions": [
+            {
+              "variable": "Grounded",
+              "op": "false"
+            },
+            {
+              "variable": "Dead",
+              "op": "false"
+            }
+          ],
+          "priority": 30
+        },
+        {
+          "from": "Aim",
+          "to": "Fall",
+          "blend_time": 0.15,
+          "conditions": [
+            {
+              "variable": "Grounded",
+              "op": "false"
+            },
+            {
+              "variable": "Dead",
+              "op": "false"
+            }
+          ],
+          "priority": 30
+        },
+        {
+          "from": "*",
+          "to": "Reload",
+          "blend_time": 0.1,
+          "conditions": [
+            {
+              "variable": "Reload",
+              "op": "triggered"
+            },
+            {
+              "variable": "Grounded",
+              "op": "true"
+            },
+            {
+              "variable": "Dead",
+              "op": "false"
+            }
+          ],
+          "priority": 20
+        },
+        {
+          "from": "*",
+          "to": "Interact",
+          "blend_time": 0.1,
+          "conditions": [
+            {
+              "variable": "Interact",
+              "op": "triggered"
+            },
+            {
+              "variable": "Grounded",
+              "op": "true"
+            },
+            {
+              "variable": "Dead",
+              "op": "false"
+            }
+          ],
+          "priority": 15
+        },
+        {
+          "from": "*",
+          "to": "Fire",
+          "blend_time": 0.05,
+          "conditions": [
+            {
+              "variable": "Fire",
+              "op": "triggered"
+            },
+            {
+              "variable": "Dead",
+              "op": "false"
+            }
+          ],
+          "priority": 10
+        },
+        {
+          "from": "Jump",
+          "to": "Fall",
+          "blend_time": 0.1,
+          "conditions": [],
+          "when_finished": true
+        },
+        {
+          "from": "Fall",
+          "to": "Land",
+          "blend_time": 0.05,
+          "conditions": [
+            {
+              "variable": "Grounded",
+              "op": "true"
+            }
+          ]
+        },
+        {
+          "from": "Land",
+          "to": "Idle",
+          "blend_time": 0.1,
+          "conditions": [],
+          "when_finished": true
+        },
+        {
+          "from": "Fire",
+          "to": "Idle",
+          "blend_time": 0.1,
+          "conditions": [],
+          "when_finished": true
+        },
+        {
+          "from": "Reload",
+          "to": "Idle",
+          "blend_time": 0.1,
+          "conditions": [],
+          "when_finished": true
+        },
+        {
+          "from": "Hit",
+          "to": "Idle",
+          "blend_time": 0.1,
+          "conditions": [],
+          "when_finished": true
+        },
+        {
+          "from": "Interact",
+          "to": "Idle",
+          "blend_time": 0.1,
+          "conditions": [],
+          "when_finished": true
+        },
+        {
+          "from": "Idle",
+          "to": "Walk",
+          "blend_time": 0.15,
+          "conditions": [
+            {
+              "variable": "Speed",
+              "op": ">",
+              "value": 0.5
+            }
+          ]
+        },
+        {
+          "from": "Idle",
+          "to": "Aim",
+          "blend_time": 0.1,
+          "conditions": [
+            {
+              "variable": "Aiming",
+              "op": "true"
+            },
+            {
+              "variable": "Speed",
+              "op": "<=",
+              "value": 0.5
+            }
+          ]
+        },
+        {
+          "from": "Aim",
+          "to": "Idle",
+          "blend_time": 0.1,
+          "conditions": [
+            {
+              "variable": "Aiming",
+              "op": "false"
+            }
+          ]
+        },
+        {
+          "from": "Aim",
+          "to": "Walk",
+          "blend_time": 0.15,
+          "conditions": [
+            {
+              "variable": "Speed",
+              "op": ">",
+              "value": 0.5
+            }
+          ]
+        },
+        {
+          "from": "Walk",
+          "to": "Idle",
+          "blend_time": 0.2,
+          "conditions": [
+            {
+              "variable": "Speed",
+              "op": "<=",
+              "value": 0.5
+            }
+          ]
+        },
+        {
+          "from": "Walk",
+          "to": "Run",
+          "blend_time": 0.2,
+          "conditions": [
+            {
+              "variable": "Speed",
+              "op": ">",
+              "value": 3.5
+            }
+          ]
+        },
+        {
+          "from": "Run",
+          "to": "Walk",
+          "blend_time": 0.2,
+          "conditions": [
+            {
+              "variable": "Speed",
+              "op": "<=",
+              "value": 3.5
+            }
+          ]
+        },
+        {
+          "from": "Run",
+          "to": "Sprint",
+          "blend_time": 0.2,
+          "conditions": [
+            {
+              "variable": "Speed",
+              "op": ">",
+              "value": 7.0
+            }
+          ]
+        },
+        {
+          "from": "Sprint",
+          "to": "Run",
+          "blend_time": 0.2,
+          "conditions": [
+            {
+              "variable": "Speed",
+              "op": "<=",
+              "value": 7.0
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
