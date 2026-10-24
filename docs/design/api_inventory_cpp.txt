@@ -3837,27 +3837,36 @@
   type enum class Kind
   type enum class NetEventType
   type enum class PeerState
+  type struct Bucket
   type struct HostConfig
+  type struct HostSecurityStats
+  type struct Keys
   type struct NetEvent
   type struct PeerInfo
   type struct PeerState_
   PeerId Connect(const Address&server,f64 now)
   PeerState_*ByAddress(const Address&a)
+  bool Allow(const Address&from,usize bytes,bool handshake,f64 now)
   bool Send(PeerId peer,u8 channel,std::span<const u8>data)
+  bool Verify(const PeerState_&peer,std::span<const u8>datagram)const
   const HostConfig&Config()const
+  const HostSecurityStats&SecurityStats()const
   const char*DisconnectReasonName(DisconnectReason reason)
   public:NetHost(DatagramSocket&socket,HostConfig config=
   std::optional<PeerInfo>Peer(PeerId peer)const
   std::vector<NetEvent>TakeEvents()
   std::vector<PeerId>Peers()const
+  u64 Cookie(const Address&from,u64 nonce,u64 time_ms)const
   usize Broadcast(u8 channel,std::span<const u8>data,PeerId except=kNoPeer)
   usize PeerCount()const
+  usize TrackedAddresses()const
   void Disconnect(PeerId peer,f64 now)
   void DisconnectAll(f64 now)
   void Drop(PeerId peer,DisconnectReason reason)
   void Handle(const Address&from,std::span<const u8>datagram,f64 now)
   void Listen(bool accept=true)
   void SendRaw(const Address&to,Kind kind,std::span<const u8>payload=
+  void SendSigned(const PeerState_&peer,Kind kind,std::span<const u8>payload=
   void Update(f64 now)
   ~NetHost()
 [net/include/aether/net/interpolation.h] experimental
@@ -3988,6 +3997,9 @@
   type enum class JoinResult
   type enum class SessionEventType
   type enum class State
+  type enum class TokenCheck
+  type struct JoinToken
+  type struct JoinTokenConfig
   type struct LanSession
   type struct LobbyEntry
   type struct SessionConfig
@@ -4000,6 +4012,7 @@
   PeerId Server()const
   SessionInfo&MutableInfo()
   State GetState()const
+  TokenCheck VerifyJoinToken(const std::string&issuer_secret,const std::string&text,u32 build,u64 now_unix,JoinToken*out=nullptr)
   bool Advertise(const SessionInfo&info)override
   bool Advertising()const
   bool DecodeSessionInfo(std::span<const u8>data,SessionInfo&out)
@@ -4009,6 +4022,7 @@
   const SessionPlayer*Player(PeerId peer)const
   const char*JoinResultName(JoinResult result)
   const char*Name()const override
+  const char*TokenCheckName(TokenCheck check)
   const std::string&PlayerName()const
   const std::string*Property(const std::string&key)const
   const std::vector<SessionPlayer>&Players()const
@@ -4019,26 +4033,33 @@
   public:SessionHost(NetHost&host,SessionInfo info,std::string password=
   public:explicit SessionClient(NetHost&host,SessionConfig config=
   public:virtual ~LobbyService()=default
+  std::function<u64()>clock=UnixNow
+  std::string IssueJoinToken(const std::string&issuer_secret,const JoinToken&token)
   std::vector<LanSession>Results()const
   std::vector<LobbyEntry>Results()const override
   std::vector<SessionEvent>TakeEvents()
   std::vector<u8>EncodeSessionInfo(const SessionInfo&info)
   u32 Answered()const
+  u64 UnixNow()
   virtual bool Advertise(const SessionInfo&info)=0
   virtual const char*Name()const=0
   virtual std::vector<LobbyEntry>Results()const=0
   virtual void Search(f64 now)=0
   virtual void StopAdvertising()=0
   virtual void Update(f64 now)=0
-  void Join(const Address&server,const std::string&player_name,const std::string&password,u32 build,f64 now)
+  void Join(const Address&server,const std::string&player_name,const std::string&password,u32 build,f64 now,const std::string&token=
   void Kick(PeerId peer,f64 now)
   void Leave(f64 now)
   void Search(f64 now)
   void Search(f64 now)override
+  void SetJoinTokens(JoinTokenConfig tokens)
   void StopAdvertising()override
   void Update()
   void Update(f64 now)
   void Update(f64 now)override
+[net/include/aether/net/siphash.h] experimental
+  bool TagEqual(u64 a,u64 b)
+  u64 SipHash24(const SipKey&key,std::span<const u8>data)
 [net/include/aether/net/socket.h] experimental
   type class DatagramSocket
   type class LoopbackNetwork
