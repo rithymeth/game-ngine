@@ -1013,6 +1013,7 @@ struct SceneRenderer::Impl {
         if (!LoadPackageTexture(package, path, image, &why)) {
             AETHER_LOG_WARN("PlayerRenderer", "Couldn't load model texture '%s' (%s); using the white fallback", path.c_str(), why.c_str());
             out = white_texture;
+            textures.emplace(path, white_texture); // remembered, so a missing UI image isn't read and decoded again every frame
             return false;
         }
         out = device.CreateTexture(image.width, image.height, image.pixels.data());

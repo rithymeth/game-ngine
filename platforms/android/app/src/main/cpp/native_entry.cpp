@@ -181,13 +181,17 @@ private:
 
             std::unique_ptr<rhi::IDevice> device = rhi::CreateDevice(rhi::Backend::Vulkan, false);
             if (!device) throw std::runtime_error("no Vulkan device");
+            Log(ANDROID_LOG_INFO, "AETHER_SCENE STAGE device");
             std::unique_ptr<rhi::ISwapChain> swap_chain =
                 device->CreateSwapChain(window, static_cast<aether::u32>(width), static_cast<aether::u32>(height), 2);
+            Log(ANDROID_LOG_INFO, "AETHER_SCENE STAGE swapchain " + std::to_string(swap_chain->Width()) + "x" +
+                                      std::to_string(swap_chain->Height()));
             const aether::u32 frame_count = std::max(swap_chain->BufferCount(), 1u);
             std::vector<std::unique_ptr<rhi::ICommandList>> commands;
             std::vector<aether::u64> fences(frame_count, 0);
             for (aether::u32 i = 0; i < frame_count; ++i) commands.push_back(device->CreateCommandList());
             player::SceneRenderer scene_renderer(*device, *swap_chain, package);
+            Log(ANDROID_LOG_INFO, "AETHER_SCENE STAGE renderer");
             game.BeginPlay();
 
             std::vector<aether::WindowEvent> events;
@@ -212,7 +216,10 @@ private:
                 swap_chain->Present(true);
                 game.Input().EndFrame();
                 slot = (slot + 1) % frame_count;
-                if (++presented == kFramesToReport) {
+                ++presented;
+                // Progress markers: when the emulator dies mid-run, the last one says how far the scene got.
+                if (presented == 1 || presented == 10) Log(ANDROID_LOG_INFO, "AETHER_SCENE STAGE frame " + std::to_string(presented));
+                if (presented == kFramesToReport) {
                     Log(ANDROID_LOG_INFO, "AETHER_SCENE PRESENTED " + std::to_string(presented) + " " +
                                               std::to_string(swap_chain->Width()) + "x" +
                                               std::to_string(swap_chain->Height()));
