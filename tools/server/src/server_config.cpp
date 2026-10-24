@@ -45,6 +45,7 @@ bool Validate(const ServerConfig& c, std::string* error) {
     if (!(c.tick_rate >= 1.0 && c.tick_rate <= 240.0)) return Fail(error, "tick_rate must be 1..240");
     if (c.max_runtime < 0) return Fail(error, "max_runtime must be >= 0");
     if (c.status_interval < 0) return Fail(error, "status_interval must be >= 0");
+    if (!(c.profile_interval > 0)) return Fail(error, "profile_interval must be > 0");
     if (!ValidLevel(c.log_level)) return Fail(error, "log_level must be trace, info, warn or error");
     if (c.name.size() > 64) return Fail(error, "name must be at most 64 characters");
     if (!c.token_secret.empty() && c.token_secret.size() < 16) return Fail(error, "token_secret must be at least 16 characters");
@@ -108,6 +109,10 @@ bool ParseServerConfigJson(const std::string& text, ServerConfig& config, std::s
         else if (key == "max_runtime") ok = want_number(c.max_runtime);
         else if (key == "quit_when_empty") ok = want_bool(c.quit_when_empty);
         else if (key == "status_interval") ok = want_number(c.status_interval);
+        else if (key == "lan_advertise") ok = want_bool(c.lan_advertise);
+        else if (key == "lan_port") ok = want_uint(65535, u) && (c.lan_port = static_cast<u16>(u), true);
+        else if (key == "profile") ok = want_string(c.profile);
+        else if (key == "profile_interval") ok = want_number(c.profile_interval);
         else if (key == "paks") {
             if (!v.is_array()) return Fail(error, "'paks' must be an array of strings");
             c.paks.clear();
@@ -129,6 +134,7 @@ const char* ServerUsage() {
            "                     [--name <text>] [--tick-rate <hz>] [--log-file <path>] [--log-level <level>]\n"
            "                     [--max-runtime <seconds>] [--quit-when-empty] [--no-replicate-scene]\n"
            "                     [--status-interval <seconds>] [--token-secret <text>] [--require-token | --optional-token]\n"
+           "                     [--lan-port <n>] [--no-lan-advertise] [--profile <file.jsonl>] [--profile-interval <seconds>]\n"
            "       aether_server [--config <server.json>] [--token-secret <text>] [--build-id <n>]\n"
            "                     --issue-token <player> [--token-ttl <seconds>]   (prints a join token and exits)\n"
            "The command line overrides the config file; AETHER_SERVER_PASSWORD and AETHER_SERVER_TOKEN_SECRET\n"
@@ -162,9 +168,20 @@ bool ParseServerArgs(const std::vector<std::string>& args, ServerConfig& config,
         if (a == "--config") { ++i; continue; }
         if (a == "--require-token") { c.require_token = true; continue; }
         if (a == "--optional-token") { c.require_token = false; continue; }
+        if (a == "--no-lan-advertise") { c.lan_advertise = false; continue; }
+        if (a == "--lan-advertise") { c.lan_advertise = true; continue; }
         if (a == "--port") {
             if (!need("a port") || !ParseU64(value, 65535, u)) return Fail(error, "--port must be 0..65535");
             c.port = static_cast<u16>(u);
+        } else if (a == "--lan-port") {
+            if (!need("a port") || !ParseU64(value, 65535, u)) return Fail(error, "--lan-port must be 0..65535");
+            c.lan_port = static_cast<u16>(u);
+        } else if (a == "--profile") {
+            if (!need("a file")) return false;
+            c.profile = value;
+        } else if (a == "--profile-interval") {
+            if (!need("seconds") || !ParseF64(value, f)) return Fail(error, "--profile-interval must be a number");
+            c.profile_interval = f;
         } else if (a == "--max-players") {
             if (!need("a count") || !ParseU64(value, 1024, u)) return Fail(error, "--max-players must be 1..1024");
             c.max_players = static_cast<u32>(u);

@@ -261,3 +261,54 @@ AETHER_TEST(Session_LanLobbyService) {
     run(400); // expired, and no answer to the new search
     CHECK(lobby.Results().empty());
 }
+
+// M8.9: a beacon never answers with more bytes than it was asked with, and rate-limits each source IP.
+AETHER_TEST(Session_LanBeaconAntiAmplification) {
+    LoopbackNetwork net;
+    auto beacon_socket = net.OpenAt(kHostA, kDefaultDiscoveryPort);
+    auto attacker = net.OpenAt(kPlayer, 5000);
+    auto other_socket = net.OpenAt(kHostB);
+    LanBeacon beacon(*beacon_socket);
+    beacon.info = Info("Alpha", 7777);
+    const u32 protocol = HostConfig{}.protocol_id;
+    auto query = [&](usize bytes) {
+        std::vector<u8> q;
+        auto u32le = [&](u32 v) { for (int i = 0; i < 4; ++i) q.push_back(static_cast<u8>(v >> (8 * i))); };
+        u32le(0x51444541), u32le(protocol), u32le(1), u32le(0);
+        q.resize(bytes, 0);
+        return q;
+    };
+    auto answers = [&](DatagramSocket& s, usize* largest = nullptr) {
+        net.Advance(0.01);
+        beacon.Update();
+        net.Advance(0.01);
+        int n = 0;
+        Address from;
+        std::vector<u8> data;
+        while (s.Receive(from, data)) {
+            ++n;
+            if (largest) *largest = std::max(*largest, data.size());
+        }
+        return n;
+    };
+    // An unpadded (old-style, 16 B) query would be amplified by the info: no answer.
+    attacker->Send({kHostA, kDefaultDiscoveryPort}, query(16));
+    CHECK(answers(*attacker) == 0 && beacon.Oversized() == 1 && beacon.Answered() == 0);
+    // A padded query is answered with no more bytes than it carried.
+    usize largest = 0;
+    attacker->Send({kHostA, kDefaultDiscoveryPort}, query(kDiscoveryQueryBytes));
+    CHECK(answers(*attacker, &largest) == 1 && largest > 16 && largest <= kDiscoveryQueryBytes);
+    // A flood from one address gets at most the burst; another address is still answered.
+    for (int i = 0; i < 200; ++i) attacker->Send({kHostA, kDefaultDiscoveryPort}, query(kDiscoveryQueryBytes));
+    const int flood = answers(*attacker);
+    CHECK(flood >= 1 && flood <= static_cast<int>(beacon.answer_burst));
+    CHECK(beacon.RateLimited() >= 200 - static_cast<u32>(beacon.answer_burst));
+    other_socket->Send({kHostA, kDefaultDiscoveryPort}, query(kDiscoveryQueryBytes));
+    CHECK(answers(*other_socket) == 1);
+    // The browser's own queries are padded, so it still finds the beacon.
+    auto browser_socket = net.OpenAt(Address::IPv4(10, 0, 0, 7));
+    LanBrowser browser(*browser_socket, 7);
+    browser.Search(net.Now());
+    for (int i = 0; i < 5; ++i) net.Advance(kStep), beacon.Update(), browser.Update(net.Now());
+    CHECK(browser.Results().size() == 1 && browser.Results()[0].info.name == "Alpha");
+}

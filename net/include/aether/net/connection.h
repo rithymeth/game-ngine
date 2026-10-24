@@ -34,6 +34,9 @@ struct ConnectionStats {
     u64 packets_sent = 0, packets_received = 0, packets_acked = 0, packets_lost = 0;
     u64 bytes_sent = 0, bytes_received = 0;
     u64 messages_resent = 0;
+    // Message bytes (headers and payload, resends included) per channel, for the first kStatChannels channels.
+    static constexpr usize kStatChannels = 8;
+    std::array<u64, kStatChannels> channel_bytes_sent{}, channel_bytes_received{};
 };
 
 // One end of a connection over datagrams (Phase 22 step 1,

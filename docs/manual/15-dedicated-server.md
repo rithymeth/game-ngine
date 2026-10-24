@@ -18,11 +18,24 @@ Both are built with the engine (`tools/server/`). To make a server package from 
     aether_cook Game.aproject --out cooked --config shipping
     tools/package_server.sh --build build --paks cooked --out dist
 
-`dist/` then holds `aether-server-linux-x64.tar.gz`, `SHA256SUMS.txt` (the
-archive's SHA-256) and `SERVER_PACKAGE.json` (the size and SHA-256 of the
-archive and of every file in it). `--config <file>` packages your own
-`server.json` instead of `tools/server/server.json`; `--platform` names the archive.
-The archive holds one folder:
+`dist/` then holds the archive, `SHA256SUMS.txt` (its SHA-256) and
+`SERVER_PACKAGE.json` (the platform, size and SHA-256 of the archive and of
+every file in it). The script runs under bash on Linux, macOS and Windows (Git
+Bash) and needs Python 3; the platform is detected, or given with `--platform`:
+
+| Platform | Archive | Built by |
+| --- | --- | --- |
+| `linux-x64` | `aether-server-linux-x64.tar.gz` | GCC (CI `linux` job, smoke in a bare `ubuntu:24.04` container) |
+| `windows-x64` | `aether-server-windows-x64.zip` | MSVC (CI `windows` job; binaries from `build/tools/server/Release/`) |
+| `macos-arm64` | `aether-server-macos-arm64.tar.gz` | Apple clang (CI `macos` job) |
+
+Archives are reproducible (sorted names, fixed owner, mtime from the last
+commit or `SOURCE_DATE_EPOCH`). `--config <file>` packages your own
+`server.json` instead of `tools/server/server.json`; `--no-strip` keeps
+symbols in the Linux/macOS binaries. Tagged releases publish all three
+archives (and their `SERVER_PACKAGE.json` as `aether-server-<platform>.json`),
+listed in the release `SHA256SUMS.txt` and covered by its build-provenance
+attestation. The archive holds one folder (`.exe` binaries on Windows):
 
     aether-server-linux-x64/
       bin/aether_server
@@ -32,8 +45,9 @@ The archive holds one folder:
       logs/
       README.txt
 
-The binaries need only glibc and libstdc++ (Ubuntu 24.04 or newer); no Vulkan
-loader, X11 or audio libraries. Unpack it anywhere and run `bin/aether_server`:
+On Linux the binaries need only glibc and libstdc++ (Ubuntu 24.04 or newer);
+no Vulkan loader, X11 or audio libraries. The Windows build needs the MSVC
+runtime the engine build links; the macOS build targets Apple Silicon. Unpack it anywhere and run `bin/aether_server`:
 it reads `server.json` beside itself or one folder up, and relative paths in
 that file (`paks`, `log_file`) are relative to the file.
 
@@ -60,6 +74,10 @@ unknown keys and wrong types stop the server with exit code 2.
 | `max_runtime` | `0` | Stop after this many seconds (0: run until signalled). |
 | `quit_when_empty` | `false` | Stop once players have joined and all of them have left. |
 | `status_interval` | `10` | Seconds between status lines in the log (0: none). |
+| `lan_advertise` | `true` | Answer LAN discovery queries on `lan_port` (see LAN discovery). |
+| `lan_port` | `7778` | UDP port for LAN discovery (0: a free one). If it is taken (another server on this host) the server logs a warning and runs without advertising. |
+| `profile` | empty | Write a network profile capture (JSON lines) to this file. |
+| `profile_interval` | `1` | Seconds between capture records (> 0). |
 
 ## Command line
 
@@ -68,6 +86,7 @@ unknown keys and wrong types stop the server with exit code 2.
                   [--name <text>] [--tick-rate <hz>] [--log-file <path>] [--log-level <level>]
                   [--max-runtime <seconds>] [--quit-when-empty] [--no-replicate-scene]
                   [--status-interval <seconds>] [--token-secret <text>] [--require-token | --optional-token]
+                  [--lan-port <n>] [--no-lan-advertise] [--profile <file.jsonl>] [--profile-interval <seconds>]
     aether_server [--config <server.json>] [--token-secret <text>] [--build-id <n>]
                   --issue-token <player id> [--token-ttl <seconds>]
 
@@ -80,11 +99,14 @@ for `--token-ttl` seconds (default 3600) on `build_id`, and exits; it is meant
 for testing and small setups, a real backend issues tokens itself (see
 Security). `AETHER_PAK_KEY` opens encrypted archives.
 
-When the port is bound the server prints `AETHER_SERVER_READY port=<n>`, and
-when it stops `AETHER_SERVER_SUMMARY {...}` (why it stopped, ticks, joins,
-leaves, refusals, peak players, RPCs run, and the security drop counters
-`rate_limited`, `bad_cookies`, `replayed_handshakes`, `bad_macs`). Ctrl+C or SIGTERM stops it cleanly:
-connected clients are told goodbye.
+When the port is bound the server prints `AETHER_SERVER_READY port=<n> lan_port=<n>`
+(`lan_port=0`: not advertising), and when it stops `AETHER_SERVER_SUMMARY {...}`
+(why it stopped, ticks, joins, leaves, refusals, peak players, RPCs run, the
+security drop counters `rate_limited`, `bad_cookies`, `replayed_handshakes`,
+`bad_macs`, and `lan_answered` / `lan_rate_limited`). With `--profile` it also
+prints `AETHER_SERVER_PROFILE {...}` (the capture summary). Ctrl+C or SIGTERM
+stops it cleanly, and on Windows so do Ctrl+Break and closing the console
+(`SetConsoleCtrlHandler`): connected clients are told goodbye.
 
 | Exit code | Meaning |
 | --- | --- |
@@ -95,9 +117,59 @@ connected clients are told goodbye.
 
 ## Ports and firewalls
 
-The server uses one UDP port (`port`, default 7777) for everything; open it for
-inbound UDP. There is no TCP port. LAN discovery (UDP 7778) is not answered by
-the dedicated server yet.
+The server uses one UDP port (`port`, default 7777) for the game; open it for
+inbound UDP. LAN discovery uses a second UDP port (`lan_port`, default 7778);
+open it only on networks where clients should find the server by broadcast,
+or turn it off with `--no-lan-advertise`. There is no TCP port.
+
+## LAN discovery
+
+The server answers discovery queries on `lan_port` with its advert: `name`,
+`players` (kept current), `max_players`, `build`, the game `port`, `mode`
+(`dedicated`), whether a password is needed (never the password) and a
+`requires_token` property. Find servers with:
+
+    aether_netclient --discover [--timeout 1] [--lan-port 7778] [--query <ip:port>]... [--build-id <n>]
+
+It broadcasts to `255.255.255.255:<lan_port>` and also queries `127.0.0.1`
+(and every `--query` address: use it for a known host, or where broadcast
+does not reach), repeating every 0.25 s for `--timeout` seconds, then prints
+`AETHER_DISCOVER {"count":..,"servers":[{"address","name","players","max_players","build","port","compatible","password","requires_token","ping_ms",...}]}`
+and exits 0 if any answered. A server reached both by broadcast and by
+127.0.0.1 is listed once per address. `--discover --join-first` then joins
+the first compatible server (lowest ping) with the usual join options.
+
+Discovery replies are unauthenticated, so they follow the same
+anti-amplification rules as the handshake: queries are padded to 1024 bytes
+and an answer is never bigger than the query (shorter queries, as sent by
+builds before this change, get no answer); each source IP gets 4 answers a
+second (burst 8) from a table of at most 1024 addresses. The advert is
+information, not authority: joining still needs the password, token and
+build id.
+
+## Network profile capture
+
+`--profile logs/profile.jsonl` (or `profile` in `server.json`) writes one JSON
+object per `profile_interval`:
+
+- `t`, `players`;
+- `peers[]`: `peer`, `address`, `player`, `rtt_ms`, `loss` (smoothed),
+  `bytes_sent` / `bytes_received`, `packets_sent` / `packets_received` /
+  `packets_lost`, `messages_resent`, and `channels[]` with message bytes sent
+  and received per channel (0 reliable session/RPC, 1 unreliable, 2 sequenced
+  snapshots; headers and resends included, so they sum to less than the
+  packet bytes);
+- `interval`: seconds, `snapshots`, `snapshot_bytes`, `avg_snapshot_bytes`
+  and bytes sent/received across peers since the previous record;
+- `security`: the `HostSecurityStats` counters (`rate_limited`,
+  `challenges_sent`, `bad_cookies`, `replayed_handshakes`, `bad_macs`,
+  `malformed`);
+- `lan`: discovery `answered`, `rate_limited`, `oversized`.
+
+The last line is `{"summary":{...}}`: records, peak peers, mean/max RTT, max
+loss, snapshots and their mean size, total bytes, and the security and LAN
+counters. Byte deltas count peers present at a record; a peer that connects
+and leaves between two records (a refused join, say) is not in them.
 
 ## Checking a server
 
@@ -113,9 +185,13 @@ It prints one line, `AETHER_NETCLIENT` followed by JSON with `joined`,
 entities and (unless `--no-rpc`) its RPC was acknowledged, else 1.
 
 `tools/server_smoke.sh <dist> <work dir> [port]` is the clean-machine check CI
-runs: it verifies the archive's checksum, unpacks it, starts the server, runs
-two clients at once with join tokens from `--issue-token`, a wrong-password
-client and a forged-token client, and checks the summaries.
+runs on Linux (bare container), Windows (Git Bash) and macOS: it verifies the
+archive's checksum, unpacks it, starts the server with `--profile`, checks
+that `--discover` finds it with the right advert, runs two clients at once
+with join tokens from `--issue-token` (one joining by `--discover
+--join-first`), a wrong-password client and a forged-token client, and checks
+the summaries and the profile capture. The `dedicated-server-profile*` CI
+artifacts hold the server log and capture.
 
 ## Security
 
@@ -179,5 +255,6 @@ What it does not do:
   pawn the server spawns carries only `ServerPlayer` (a ping counter). Games
   that need their own player pawn or spawn rules embed `aether::server::DedicatedServer`
   (`tools/server/include/aether/server/dedicated_server.h`) in their own host.
-- Linux x86-64 is the packaged and tested platform. The code is portable, but
-  there is no Windows or macOS server package yet.
+- Packages and smoke tests cover Linux x86-64, Windows x64 and macOS arm64,
+  each on one machine over localhost. No cross-machine or NAT run is
+  recorded yet, and discovery is LAN broadcast only (no internet lobby).
