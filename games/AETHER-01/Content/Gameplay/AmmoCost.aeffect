@@ -1,0 +1,5 @@
+{
+  "name": "AmmoCost",
+  "duration_policy": "instant",
+  "modifiers": [{"attribute": "Ammo", "op": "add", "magnitude": -1}]
+}

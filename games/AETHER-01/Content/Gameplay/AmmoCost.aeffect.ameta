@@ -1,0 +1,9 @@
+{
+  "$type": "AssetMeta",
+  "$v": 1,
+  "guid": "f36214ce-f110-47ce-8129-6293e227dcdf",
+  "importer": "GameplayEffect",
+  "importer_version": 1,
+  "labels": [],
+  "settings": {}
+}
