@@ -3998,6 +3998,7 @@
   type enum class SessionEventType
   type enum class State
   type enum class TokenCheck
+  type struct Bucket
   type struct JoinToken
   type struct JoinTokenConfig
   type struct LanSession
@@ -4040,6 +4041,8 @@
   std::vector<SessionEvent>TakeEvents()
   std::vector<u8>EncodeSessionInfo(const SessionInfo&info)
   u32 Answered()const
+  u32 Oversized()const
+  u32 RateLimited()const
   u64 UnixNow()
   virtual bool Advertise(const SessionInfo&info)=0
   virtual const char*Name()const=0

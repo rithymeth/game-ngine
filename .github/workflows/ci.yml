@@ -278,7 +278,8 @@ jobs:
     # Vulkan, X11 or engine checkout on its PATH) checks the archive's SHA-256, unpacks it, starts
     # bin/aether_server on localhost with --max-runtime/--quit-when-empty, runs two bin/aether_netclient
     # processes over real UDP plus a wrong-password one, and asserts both joined, saw replicated state and
-    # had their RPC acknowledged (tools/server_smoke.sh). The server log is uploaded if it fails.
+    # had their RPC acknowledged (tools/server_smoke.sh). LAN discovery (--discover, and one client joining by
+    # --join-first) runs first; the server writes a network profile capture. Log + capture are uploaded.
     needs: [linux]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -300,11 +301,15 @@ jobs:
             sh -euxc 'apt-get update -qq && apt-get install -y -qq python3 > /dev/null && \
               status=0; bash /server_smoke.sh /dist /tmp/server 7777 || status=$?; \
               cp -r /tmp/server/aether-server-*/logs /tmp/server/aether-server-*/*.out /run-out/ 2>/dev/null || true; exit $status'
-      - name: Upload the server log
-        if: failure()
+          # The network profile capture's summary, for the job log (the full capture is uploaded below).
+          tail -n 1 server-run/logs/profile.jsonl
+      - name: Upload the server log and network profile capture
+        # Always: logs/profile.jsonl (per-peer RTT, loss, bytes per channel, snapshot sizes, security and LAN
+        # discovery counters every 0.5 s, then a summary line) is M8.9 profiler evidence.
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dedicated-server-log
+          name: dedicated-server-profile
           path: server-run
           if-no-files-found: ignore
 
@@ -343,6 +348,27 @@ jobs:
         run: ./build/tools/functional/aether_functional --quiet --junit functional-results.xml
       - name: Registered regression tests
         run: ctest --test-dir build --output-on-failure --parallel 4 -R "^(fuzz_replay_.*|module_graph_catches_a_cycle|api_stability_annotations|api_freeze_checks|api_inventory|frozen_api_game|production_gate_table|m8_gate_table)$"
+      - name: Package and smoke the dedicated server (M8.9)
+        # aether_server/aether_netclient are already built; cook AETHER-01, package it as
+        # aether-server-macos-arm64.tar.gz and run the same localhost smoke as Linux (discovery, 2 clients with
+        # tokens, refusals, profile capture). A few seconds on top of the build.
+        run: |
+          ./build/tools/cook/aether_cook games/AETHER-01/AETHER-01.aproject --out server-cook --config development
+          tools/package_server.sh --build build --paks server-cook --out server-dist --platform macos-arm64
+          bash tools/server_smoke.sh server-dist server-run 7777
+      - name: Upload the server package
+        uses: actions/upload-artifact@v4
+        with:
+          name: aether-server-macos-arm64
+          path: server-dist
+          if-no-files-found: error
+      - name: Upload the server log and profile capture
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dedicated-server-profile-macos
+          path: server-run/aether-server-macos-arm64/logs
+          if-no-files-found: ignore
       - name: Screenshot the editor shell
         # Offscreen through MoltenVK; hosted runners may have no Metal
         # device, so this reports without failing the job.
@@ -426,6 +452,27 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & .\build\player\Release\aether_player.exe --pak build\aether01-cooked\Game.apak --headless --frames 120 --report
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Package and smoke the dedicated server (M8.9)
+        # The MSVC aether_server/aether_netclient from the build above, with the pak cooked in the previous step:
+        # aether-server-windows-x64.zip, then the same localhost smoke as Linux under Git Bash (discovery, 2 clients
+        # with tokens, refusals, profile capture).
+        shell: bash
+        run: |
+          tools/package_server.sh --build build --paks build/aether01-cooked --out server-dist --platform windows-x64
+          bash tools/server_smoke.sh server-dist server-run 7777
+      - name: Upload the server package
+        uses: actions/upload-artifact@v4
+        with:
+          name: aether-server-windows-x64
+          path: server-dist
+          if-no-files-found: error
+      - name: Upload the server log and profile capture
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dedicated-server-profile-windows
+          path: server-run/aether-server-windows-x64/logs
+          if-no-files-found: ignore
       - name: Verify repeat cook and incremental texture cache
         shell: pwsh
         run: |
@@ -1092,7 +1139,7 @@ jobs:
     # A pushed v* tag, or a manual run given a release_tag (which creates
     # the tag on the commit it built).
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
-    needs: [linux, clean-machine-sdk, macos, windows, windows-package-validation, windows-sign-release, android, android-emulator, ios, ios-simulator]
+    needs: [linux, clean-machine-sdk, dedicated-server, macos, windows, windows-package-validation, windows-sign-release, android, android-emulator, ios, ios-simulator]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -1104,9 +1151,37 @@ jobs:
         with:
           name: Aether-release-assets
           path: release-assets
+      # M8.9: the dedicated-server packages (each with its own SHA256SUMS.txt and SERVER_PACKAGE.json).
+      - uses: actions/download-artifact@v4
+        with:
+          name: aether-server-linux-x64
+          path: server-input/linux
+      - uses: actions/download-artifact@v4
+        with:
+          name: aether-server-windows-x64
+          path: server-input/windows
+      - uses: actions/download-artifact@v4
+        with:
+          name: aether-server-macos-arm64
+          path: server-input/macos
+      - name: Add the server packages to the release assets and SHA256SUMS
+        # Each archive is checked against the SHA256SUMS.txt it was packaged with, copied in, and its line
+        # appended to the release SHA256SUMS.txt (normalised to LF, no BOM). The per-package manifests ship
+        # as aether-server-<platform>.json.
+        run: |
+          tr -d '\r' < release-assets/SHA256SUMS.txt | sed '1s/^\xEF\xBB\xBF//' > sums.txt
+          for dir in server-input/*; do
+            (cd "$dir" && sha256sum -c SHA256SUMS.txt)
+            archive=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['name'])" "$dir/SERVER_PACKAGE.json")
+            cp "$dir/$archive" release-assets/
+            cp "$dir/SERVER_PACKAGE.json" "release-assets/${archive%%.*}.json"
+            (cd release-assets && sha256sum "$archive" "${archive%%.*}.json") >> sums.txt
+          done
+          mv sums.txt release-assets/SHA256SUMS.txt
+          cat release-assets/SHA256SUMS.txt
       - name: Check the archives against SHA256SUMS
         run: |
-          for f in AetherEditor-windows-x64.zip AETHER-01-windows-x64.zip; do
+          for f in AetherEditor-windows-x64.zip AETHER-01-windows-x64.zip aether-server-linux-x64.tar.gz aether-server-windows-x64.zip aether-server-macos-arm64.tar.gz; do
             want=$(tr -d '\r\357\273\277' < release-assets/SHA256SUMS.txt | awk -v n="$f" '$2==n {print tolower($1)}')
             have=$(sha256sum "release-assets/$f" | cut -d' ' -f1)
             echo "$f want=$want have=$have"
@@ -1119,6 +1194,9 @@ jobs:
           subject-path: |
             release-assets/AetherEditor-windows-x64.zip
             release-assets/AETHER-01-windows-x64.zip
+            release-assets/aether-server-linux-x64.tar.gz
+            release-assets/aether-server-windows-x64.zip
+            release-assets/aether-server-macos-arm64.tar.gz
             release-assets/RELEASE_MANIFEST.json
             release-assets/SHA256SUMS.txt
       - name: Publish
@@ -1127,6 +1205,10 @@ jobs:
           files: |
             release-assets/AetherEditor-windows-x64.zip
             release-assets/AETHER-01-windows-x64.zip
+            release-assets/aether-server-linux-x64.tar.gz
+            release-assets/aether-server-windows-x64.zip
+            release-assets/aether-server-macos-arm64.tar.gz
+            release-assets/aether-server-*.json
             release-assets/RELEASE_MANIFEST.json
             release-assets/SHA256SUMS.txt
           generate_release_notes: true

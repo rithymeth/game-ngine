@@ -1,3 +1,4 @@
+#include "aether/reflection/serialize.h"
 #include "aether/scene/components.h"
 #include "aether/server/dedicated_server.h"
 #include "test_framework.h"
@@ -33,6 +34,14 @@ AETHER_TEST(DedicatedServer_ConfigJson) {
     CHECK(c.scene == "Scenes/Arena.ascene" && c.paks.size() == 1 && c.tick_rate == 60.0 && c.log_file == "logs/server.log");
     CHECK(c.log_level == "warn" && !c.replicate_scene && c.max_runtime == 30.0 && c.quit_when_empty && c.status_interval == 0.0);
 
+    ServerConfig lan;
+    CHECK(lan.lan_advertise && lan.lan_port == 7778 && lan.profile.empty());
+    CHECK(ParseServerConfigJson(R"({"lan_advertise":false,"lan_port":27016,"profile":"logs/p.jsonl","profile_interval":0.5})", lan, &error));
+    CHECK(!lan.lan_advertise && lan.lan_port == 27016 && lan.profile == "logs/p.jsonl" && lan.profile_interval == 0.5);
+    CHECK(ParseServerArgs({"--lan-advertise", "--lan-port", "0", "--profile", "x.jsonl", "--profile-interval", "2"}, lan, &error));
+    CHECK(lan.lan_advertise && lan.lan_port == 0 && lan.profile == "x.jsonl" && lan.profile_interval == 2.0);
+    CHECK(ParseServerArgs({"--no-lan-advertise"}, lan, &error) && !lan.lan_advertise);
+    CHECK(!ParseServerArgs({"--profile-interval", "0"}, lan, &error));
     // Errors leave the config as it was.
     ServerConfig d;
     CHECK(!ParseServerConfigJson(R"({"prot":7777})", d, &error) && error.find("prot") != std::string::npos);
@@ -208,5 +217,86 @@ AETHER_TEST(DedicatedServer_RealUdpJoinTokens) {
     CHECK(clients[3]->Result().join_result == "BadToken");
     CHECK(clients[4]->Result().join_result == "BadToken");
     for (usize i = 1; i < clients.size(); ++i) CHECK(!clients[i]->Result().joined && clients[i]->Result().entities_seen == 0);
+    server.Stop();
+}
+
+// M8.9: the dedicated server answers LAN discovery over real UDP (broadcast plus a 127.0.0.1 query, since a
+// container may have no broadcast route), the advert carries name/players/max/build/port/requires_token, a
+// client joins what it found, and the profile capture records per-peer and per-channel traffic.
+AETHER_TEST(DedicatedServer_RealUdpLanDiscoveryAndProfile) {
+    RegisterServerComponents();
+    World world;
+    for (int i = 0; i < 3; ++i) world.CreateEntity(Transform{Vec3{static_cast<f32>(i), 0, 0}, Quaternion{}});
+    ServerConfig config;
+    config.port = 0;
+    config.lan_port = 0; // any free port
+    config.name = "LAN test";
+    config.max_players = 3;
+    config.build_id = 89;
+    config.token_secret = "lan-discovery-test-secret-0123";
+    config.require_token = false;
+    DedicatedServer server;
+    std::string error;
+    if (!server.Start(config, world, &error)) {
+        std::printf("    (no UDP here: %s)\n", error.c_str());
+        return;
+    }
+    CHECK(server.LanPort() != 0 && server.Advert() != nullptr);
+    using Clock = std::chrono::steady_clock;
+    const auto start = Clock::now();
+    const auto now = [&] { return std::chrono::duration<f64>(Clock::now() - start).count(); };
+    DiscoverConfig dc;
+    dc.build_id = 89;
+    dc.lan_port = server.LanPort();
+    dc.timeout = 0.6;
+    std::vector<net::LanSession> found = DiscoverServers(dc, &error, [&] { server.Tick(now()); });
+    std::printf("    [m8.9] AETHER_DISCOVER %s\n", DiscoveryJson(found).c_str());
+    auto mine = std::find_if(found.begin(), found.end(), [&](const net::LanSession& s) { return s.info.port == server.Port() && s.info.name == "LAN test"; });
+    CHECK(mine != found.end());
+    if (mine == found.end()) return;
+    CHECK(mine->compatible && mine->info.build == 89 && mine->info.max_players == 3 && mine->info.players == 0);
+    CHECK(mine->info.Property("requires_token") && *mine->info.Property("requires_token") == "0");
+    CHECK(DiscoveryJson(found).find("\"requires_token\":false") != std::string::npos);
+    CHECK(server.Stats().lan_answered >= 1);
+    const net::Address found_address = mine->address;
+    // Another build sees it as incompatible.
+    dc.build_id = 88;
+    found = DiscoverServers(dc, &error, [&] { server.Tick(now()); });
+    CHECK(!found.empty() && !found[0].compatible);
+
+    // Join what was found and play; the profile sees the peer.
+    NetClientConfig cc;
+    cc.server = net::Address::Loopback(found_address.port);
+    cc.build_id = 89;
+    cc.duration = 1.0;
+    NetClient client;
+    CHECK(client.Start(cc, now(), &error));
+    std::string record;
+    f64 last = 0;
+    u32 advert_players = 0;
+    while (!client.Done() && now() < 8.0) {
+        server.Tick(now());
+        client.Tick(now());
+        if (now() - last > 0.3 && server.Stats().players == 1) last = now(), record = server.ProfileRecord(now());
+        if (server.Stats().players == 1) advert_players = std::max(advert_players, server.Advert()->players); // the advert follows
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    std::printf("    [m8.9] client %s\n", client.Result().ToJson().c_str());
+    CHECK(client.Result().Passed(true) && advert_players == 1);
+    std::printf("    [m8.9] profile record %s\n", record.c_str());
+    const reflect::Json j = reflect::Json::parse(record, nullptr, false);
+    CHECK(!j.is_discarded() && j["players"] == 1 && j["peers"].size() == 1);
+    if (!j.is_discarded() && j["peers"].size() == 1) {
+        const reflect::Json& p = j["peers"][0];
+        CHECK(p["bytes_sent"].get<u64>() > 0 && p["bytes_received"].get<u64>() > 0 && p["channels"].size() == 3);
+        u64 channel_sent = 0;
+        for (const reflect::Json& c : p["channels"]) channel_sent += c["bytes_sent"].get<u64>();
+        CHECK(channel_sent > 0 && channel_sent <= p["bytes_sent"].get<u64>());
+        CHECK(j["interval"]["snapshots"].get<u64>() > 0 && j["interval"]["snapshot_bytes"].get<u64>() > 0);
+        CHECK(j["security"].contains("bad_macs") && j["lan"]["answered"].get<u64>() >= 1);
+    }
+    const std::string summary = server.ProfileSummaryJson();
+    std::printf("    [m8.9] profile summary %s\n", summary.c_str());
+    CHECK(summary.find("\"peak_peers\":1") != std::string::npos);
     server.Stop();
 }

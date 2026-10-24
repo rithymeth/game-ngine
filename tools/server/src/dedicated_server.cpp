@@ -7,7 +7,9 @@
 #include "aether/scene/components.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
+#include <thread>
 
 AETHER_REFLECT(aether::server::ServerPlayer, 1,
     AETHER_FIELD(pings, Field_Replicated),
@@ -75,6 +77,21 @@ bool DedicatedServer::Start(const ServerConfig& config, World& world, std::strin
     replication_->SetRelevancy([session](PeerId peer, Entity) { return session->Player(peer) != nullptr; });
     rpc_ = std::make_unique<RpcRouter>(world, *host_, *replication_);
     stats_ = {};
+    profile_ = {};
+    profile_snapshot_bytes_ = 0, profile_snapshots_ = 0, profile_last_ = 0;
+    profile_peer_bytes_.clear();
+    if (config.lan_advertise) {
+        std::string lan_error;
+        if (lan_socket_.Open(config.lan_port, &lan_error)) {
+            beacon_ = std::make_unique<LanBeacon>(lan_socket_);
+            beacon_->info = session_->Info();
+            beacon_->info.properties = {{"requires_token", !config.token_secret.empty() && config.require_token ? "1" : "0"}};
+            AETHER_LOG_INFO("Server", "answering LAN discovery on UDP %u", lan_socket_.LocalAddress().port);
+        } else {
+            AETHER_LOG_WARN("Server", "not answering LAN discovery: UDP %u: %s (another server on this host?)", config.lan_port,
+                            lan_error.c_str());
+        }
+    }
     return true;
 }
 
@@ -84,6 +101,8 @@ void DedicatedServer::Stop() {
         host_->DisconnectAll(last_now_);
         host_->Update(last_now_);
     }
+    beacon_.reset();
+    lan_socket_.Close();
     rpc_.reset();
     replication_.reset();
     session_.reset();
@@ -137,6 +156,10 @@ void DedicatedServer::Tick(f64 now) {
     for (const SessionEvent& e : session_->TakeEvents()) OnSessionEvent(e);
     rpc_->Tick(now);
     replication_->Update(now);
+    if (beacon_) {
+        beacon_->info.players = session_->Info().players;
+        beacon_->Update();
+    }
     ++stats_.ticks;
 }
 
@@ -144,6 +167,7 @@ ServerStats DedicatedServer::Stats() const {
     ServerStats s = stats_;
     if (!host_) return s;
     s.security = host_->SecurityStats();
+    if (beacon_) s.lan_answered = beacon_->Answered(), s.lan_rate_limited = beacon_->RateLimited(), s.lan_oversized = beacon_->Oversized();
     for (PeerId p : host_->Peers())
         if (const std::optional<PeerInfo> info = host_->Peer(p); info && info->connection) {
             s.bytes_sent += info->connection->Stats().bytes_sent;
@@ -157,6 +181,137 @@ ServerStats DedicatedServer::Stats() const {
         for (usize c = 0; c < archetype.ChunkCount(); ++c) s.replicated_entities += archetype.ChunkEntityCount(c);
     });
     return s;
+}
+
+std::string DedicatedServer::ProfileRecord(f64 now) {
+    reflect::Json j;
+    j["t"] = now;
+    if (!host_) return j.dump();
+    const ServerStats st = Stats();
+    j["players"] = st.players;
+    reflect::Json peers = reflect::Json::array();
+    u64 sent_delta = 0, received_delta = 0;
+    std::map<PeerId, std::pair<u64, u64>> seen;
+    for (PeerId p : host_->Peers()) {
+        const std::optional<PeerInfo> info = host_->Peer(p);
+        if (!info || !info->connection) continue;
+        const ConnectionStats& cs = info->connection->Stats();
+        reflect::Json peer;
+        peer["peer"] = p;
+        peer["address"] = info->address.ToString();
+        const SessionPlayer* player = session_->Player(p);
+        peer["player"] = player ? player->name : std::string();
+        peer["rtt_ms"] = cs.rtt * 1000.0;
+        peer["loss"] = cs.packet_loss;
+        peer["bytes_sent"] = cs.bytes_sent;
+        peer["bytes_received"] = cs.bytes_received;
+        peer["packets_sent"] = cs.packets_sent;
+        peer["packets_received"] = cs.packets_received;
+        peer["packets_lost"] = cs.packets_lost;
+        peer["messages_resent"] = cs.messages_resent;
+        reflect::Json channels = reflect::Json::array();
+        for (usize c = 0; c < std::min(info->connection->ChannelCount(), ConnectionStats::kStatChannels); ++c)
+            channels.push_back({{"channel", c}, {"bytes_sent", cs.channel_bytes_sent[c]}, {"bytes_received", cs.channel_bytes_received[c]}});
+        peer["channels"] = std::move(channels);
+        peers.push_back(std::move(peer));
+        const auto last = profile_peer_bytes_.find(p);
+        const std::pair<u64, u64> before = last != profile_peer_bytes_.end() ? last->second : std::pair<u64, u64>{0, 0};
+        sent_delta += cs.bytes_sent - std::min(cs.bytes_sent, before.first);
+        received_delta += cs.bytes_received - std::min(cs.bytes_received, before.second);
+        seen[p] = {cs.bytes_sent, cs.bytes_received};
+        ++profile_.peer_samples;
+        profile_.rtt_sum += cs.rtt * 1000.0;
+        profile_.rtt_max = std::max(profile_.rtt_max, cs.rtt * 1000.0);
+        profile_.loss_max = std::max(profile_.loss_max, static_cast<f64>(cs.packet_loss));
+    }
+    profile_peer_bytes_ = std::move(seen);
+    profile_.peak_peers = std::max(profile_.peak_peers, static_cast<u32>(peers.size()));
+    j["peers"] = std::move(peers);
+    const NetProfile& np = replication_->Profile();
+    const u64 snap_bytes = np.snapshot_bytes - std::min(np.snapshot_bytes, profile_snapshot_bytes_);
+    const u32 snaps = np.snapshots - std::min(np.snapshots, profile_snapshots_);
+    profile_snapshot_bytes_ = np.snapshot_bytes, profile_snapshots_ = np.snapshots;
+    const f64 avg = snaps ? static_cast<f64>(snap_bytes) / snaps : 0.0;
+    reflect::Json interval;
+    interval["seconds"] = now - profile_last_;
+    interval["snapshots"] = snaps;
+    interval["snapshot_bytes"] = snap_bytes;
+    interval["avg_snapshot_bytes"] = avg;
+    interval["bytes_sent"] = sent_delta;
+    interval["bytes_received"] = received_delta;
+    j["interval"] = std::move(interval);
+    profile_last_ = now;
+    j["security"] = {{"rate_limited", st.security.rate_limited}, {"challenges_sent", st.security.challenges_sent},
+                     {"bad_cookies", st.security.bad_cookies}, {"replayed_handshakes", st.security.replayed_handshakes},
+                     {"bad_macs", st.security.bad_macs}, {"malformed", st.security.malformed}};
+    j["lan"] = {{"answered", st.lan_answered}, {"rate_limited", st.lan_rate_limited}, {"oversized", st.lan_oversized}};
+    ++profile_.records;
+    profile_.snapshots += snaps, profile_.snapshot_bytes += snap_bytes;
+    profile_.bytes_sent += sent_delta, profile_.bytes_received += received_delta;
+    profile_.max_snapshot_avg = std::max(profile_.max_snapshot_avg, avg);
+    return j.dump();
+}
+
+std::string DedicatedServer::ProfileSummaryJson() const {
+    reflect::Json j;
+    j["records"] = profile_.records;
+    j["peak_peers"] = profile_.peak_peers;
+    j["rtt_ms_mean"] = profile_.peer_samples ? profile_.rtt_sum / static_cast<f64>(profile_.peer_samples) : 0.0;
+    j["rtt_ms_max"] = profile_.rtt_max;
+    j["loss_max"] = profile_.loss_max;
+    j["snapshots"] = profile_.snapshots;
+    j["snapshot_bytes"] = profile_.snapshot_bytes;
+    j["avg_snapshot_bytes"] = profile_.snapshots ? static_cast<f64>(profile_.snapshot_bytes) / static_cast<f64>(profile_.snapshots) : 0.0;
+    j["max_interval_avg_snapshot_bytes"] = profile_.max_snapshot_avg;
+    j["bytes_sent"] = profile_.bytes_sent;
+    j["bytes_received"] = profile_.bytes_received;
+    const ServerStats st = Stats();
+    j["rate_limited"] = st.security.rate_limited;
+    j["bad_macs"] = st.security.bad_macs;
+    j["bad_cookies"] = st.security.bad_cookies;
+    j["lan_answered"] = st.lan_answered;
+    j["lan_rate_limited"] = st.lan_rate_limited;
+    return j.dump();
+}
+
+// --- LAN discovery ------------------------------------------------------------------------------
+
+std::vector<LanSession> DiscoverServers(const DiscoverConfig& config, std::string* error, const std::function<void()>& pump) {
+    UdpSocket socket;
+    std::string socket_error;
+    if (!socket.Open(0, &socket_error)) {
+        if (error) *error = "can't open a UDP socket: " + socket_error;
+        return {};
+    }
+    LanBrowser browser(socket, config.build_id, config.lan_port);
+    browser.also_query = config.also_query;
+    browser.auto_search = 0.25;
+    browser.expiry = config.timeout + 1.0;
+    using Clock = std::chrono::steady_clock;
+    const auto start = Clock::now();
+    for (;;) {
+        const f64 t = std::chrono::duration<f64>(Clock::now() - start).count();
+        browser.Update(t);
+        if (t >= config.timeout) break;
+        if (pump) pump();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    return browser.Results();
+}
+
+std::string DiscoveryJson(const std::vector<LanSession>& servers) {
+    reflect::Json list = reflect::Json::array();
+    for (const LanSession& s : servers) {
+        const std::string* token = s.info.Property("requires_token");
+        list.push_back({{"address", s.address.ToString()}, {"name", s.info.name}, {"mode", s.info.mode}, {"map", s.info.map},
+                        {"players", s.info.players}, {"max_players", s.info.max_players}, {"build", s.info.build},
+                        {"port", s.info.port}, {"compatible", s.compatible}, {"password", s.info.password},
+                        {"requires_token", token && *token == "1"}, {"ping_ms", s.ping * 1000.0}});
+    }
+    reflect::Json j;
+    j["count"] = servers.size();
+    j["servers"] = std::move(list);
+    return j.dump();
 }
 
 // --- NetClient ----------------------------------------------------------------------------------
