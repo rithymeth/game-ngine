@@ -1,11 +1,15 @@
 {
     // The dedicated server's config (docs/manual/15-dedicated-server.md).
-    // The command line overrides every key; AETHER_SERVER_PASSWORD overrides "password".
+    // The command line overrides every key; AETHER_SERVER_PASSWORD overrides "password",
+    // AETHER_SERVER_TOKEN_SECRET overrides "token_secret".
     "name": "Aether dedicated server",
     "port": 7777,
     "max_players": 8,
     "password": "",
     "build_id": 1,
+    // Join tokens: set an issuer secret (or AETHER_SERVER_TOKEN_SECRET) to require signed tokens.
+    "token_secret": "",
+    "require_token": true,
     "scene": "",
     "paks": ["Paks"],
     "tick_rate": 30,

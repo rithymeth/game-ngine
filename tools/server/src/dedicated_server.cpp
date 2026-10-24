@@ -66,6 +66,7 @@ bool DedicatedServer::Start(const ServerConfig& config, World& world, std::strin
     info.build = config.build_id;
     info.max_players = config.max_players;
     session_ = std::make_unique<SessionHost>(*host_, info, config.password);
+    if (!config.token_secret.empty()) session_->SetJoinTokens({config.token_secret, config.require_token});
     replication_ = std::make_unique<ReplicationServer>(world, *host_);
     // Only players see the world: a peer that has connected but not yet joined (or was refused - a wrong
     // password, an old build) gets no entities. Its RPCs can't reach anything either: only an entity's owner
@@ -142,6 +143,7 @@ void DedicatedServer::Tick(f64 now) {
 ServerStats DedicatedServer::Stats() const {
     ServerStats s = stats_;
     if (!host_) return s;
+    s.security = host_->SecurityStats();
     for (PeerId p : host_->Peers())
         if (const std::optional<PeerInfo> info = host_->Peer(p); info && info->connection) {
             s.bytes_sent += info->connection->Stats().bytes_sent;
@@ -176,7 +178,7 @@ bool NetClient::Start(const NetClientConfig& config, f64 now, std::string* error
     }
     host_ = std::make_unique<NetHost>(socket_);
     session_ = std::make_unique<SessionClient>(*host_);
-    session_->Join(config.server, config.name, config.password, config.build_id, now);
+    session_->Join(config.server, config.name, config.password, config.build_id, now, config.token);
     const PeerId server = session_->Server();
     replication_ = std::make_unique<ReplicationClient>(world_, *host_, server);
     replication_->OnSpawn(kPlayerArchetype, [](World& w, Entity e, const NetIdentity&) { w.AddComponent(e, ServerPlayer{}); });

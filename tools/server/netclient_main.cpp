@@ -19,15 +19,16 @@ using namespace aether::server;
 namespace {
 void Usage() {
     std::fprintf(stderr,
-                 "usage: aether_netclient [--server <ip:port>] [--name <text>] [--password <text>] [--build-id <n>]\n"
-                 "                        [--duration <seconds>] [--join-timeout <seconds>] [--no-rpc]\n"
-                 "AETHER_SERVER_PASSWORD is used when --password isn't given.\n");
+                 "usage: aether_netclient [--server <ip:port>] [--name <text>] [--password <text>] [--token <join token>]\n"
+                 "                        [--build-id <n>] [--duration <seconds>] [--join-timeout <seconds>] [--no-rpc]\n"
+                 "AETHER_SERVER_PASSWORD / AETHER_JOIN_TOKEN are used when --password / --token aren't given.\n");
 }
 } // namespace
 
 int main(int argc, char** argv) {
     NetClientConfig config;
     if (const char* pw = std::getenv("AETHER_SERVER_PASSWORD")) config.password = pw;
+    if (const char* tk = std::getenv("AETHER_JOIN_TOKEN")) config.token = tk;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         const bool has = i + 1 < argc;
@@ -45,6 +46,8 @@ int main(int argc, char** argv) {
             config.name = argv[++i];
         } else if (a == "--password" && has) {
             config.password = argv[++i];
+        } else if (a == "--token" && has) {
+            config.token = argv[++i];
         } else if (a == "--build-id" && has) {
             if (!number(v) || v > 4294967295.0) return Usage(), 2;
             config.build_id = static_cast<u32>(v);

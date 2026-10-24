@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <chrono>
 
+#include "aether/net/siphash.h"
+
 namespace aether::net {
 
 namespace {
@@ -92,8 +94,88 @@ const char* JoinResultName(JoinResult result) {
     case JoinResult::Kicked: return "Kicked";
     case JoinResult::ConnectFailed: return "ConnectFailed";
     case JoinResult::Lost: return "Lost";
+    case JoinResult::BadToken: return "BadToken";
+    case JoinResult::TokenExpired: return "TokenExpired";
     }
     return "?";
+}
+
+// ---------------------------------------------------------------- join tokens
+
+namespace {
+SipKey TokenKey(const std::string& secret) {
+    // Two SipHash calls under fixed, domain-separated keys stretch the secret into a 128-bit key.
+    SipKey a{}, b{};
+    const char* da = "aether.token.k0!";
+    const char* db = "aether.token.k1!";
+    std::copy_n(da, 16, a.begin()), std::copy_n(db, 16, b.begin());
+    const std::span<const u8> s(reinterpret_cast<const u8*>(secret.data()), secret.size());
+    const u64 lo = SipHash24(a, s), hi = SipHash24(b, s);
+    SipKey k{};
+    for (int i = 0; i < 8; ++i) k[i] = static_cast<u8>(lo >> (8 * i)), k[8 + i] = static_cast<u8>(hi >> (8 * i));
+    return k;
+}
+std::string Hex(std::span<const u8> b) {
+    static const char* d = "0123456789abcdef";
+    std::string s;
+    for (u8 x : b) s += d[x >> 4], s += d[x & 15];
+    return s;
+}
+bool Unhex(const std::string& s, std::vector<u8>& out) {
+    if (s.size() % 2) return false;
+    auto v = [](char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1; };
+    out.clear();
+    for (usize i = 0; i < s.size(); i += 2) {
+        const int h = v(s[i]), l = v(s[i + 1]);
+        if (h < 0 || l < 0) return false;
+        out.push_back(static_cast<u8>(h * 16 + l));
+    }
+    return true;
+}
+} // namespace
+
+u64 UnixNow() {
+    return static_cast<u64>(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+}
+
+const char* TokenCheckName(TokenCheck c) {
+    switch (c) {
+    case TokenCheck::Ok: return "Ok";
+    case TokenCheck::Malformed: return "Malformed";
+    case TokenCheck::BadSignature: return "BadSignature";
+    case TokenCheck::Expired: return "Expired";
+    case TokenCheck::WrongBuild: return "WrongBuild";
+    }
+    return "?";
+}
+
+std::string IssueJoinToken(const std::string& issuer_secret, const JoinToken& token) {
+    Out o;
+    o.U8(1), o.U64(token.expires), o.U32(token.build);
+    o.Str(token.player.substr(0, 64));
+    const u64 tag = SipHash24(TokenKey(issuer_secret), o.bytes);
+    Out t;
+    t.U64(tag);
+    return "aet1." + Hex(o.bytes) + "." + Hex(t.bytes);
+}
+
+TokenCheck VerifyJoinToken(const std::string& issuer_secret, const std::string& text, u32 build, u64 now_unix, JoinToken* out) {
+    if (text.size() > 255 || text.rfind("aet1.", 0) != 0) return TokenCheck::Malformed;
+    const usize dot = text.find('.', 5);
+    if (dot == std::string::npos) return TokenCheck::Malformed;
+    std::vector<u8> payload, tag;
+    if (!Unhex(text.substr(5, dot - 5), payload) || !Unhex(text.substr(dot + 1), tag) || tag.size() != 8) return TokenCheck::Malformed;
+    In tin{tag};
+    if (!TagEqual(SipHash24(TokenKey(issuer_secret), payload), tin.U64())) return TokenCheck::BadSignature;
+    In in{payload};
+    JoinToken t;
+    const u8 version = in.U8();
+    t.expires = in.U64(), t.build = in.U32(), t.player = in.Str();
+    if (!in.ok || version != 1 || in.at != payload.size()) return TokenCheck::Malformed;
+    if (now_unix >= t.expires) return TokenCheck::Expired;
+    if (t.build != build) return TokenCheck::WrongBuild;
+    if (out) *out = std::move(t);
+    return TokenCheck::Ok;
 }
 
 // ---------------------------------------------------------------- LAN discovery
@@ -217,9 +299,17 @@ bool SessionHost::HandleEvent(const NetEvent& event, f64 now) {
     const u32 build = in.U32();
     std::string name = in.Str();
     const std::string password = in.Str();
+    // Newer clients append a token (possibly empty); older requests end at the password.
+    const std::string token = in.ok && in.at < event.data.size() ? in.Str() : std::string();
     JoinResult refuse = JoinResult::Ok;
+    JoinToken claims;
+    TokenCheck check = TokenCheck::Ok;
+    const bool check_token = !tokens_.issuer_secret.empty() && (tokens_.required || !token.empty());
+    if (check_token) check = VerifyJoinToken(tokens_.issuer_secret, token, info_.build, tokens_.clock ? tokens_.clock() : UnixNow(), &claims);
     const u32 max = info_.max_players != 0 ? info_.max_players : host_.Config().max_peers;
     if (!in.ok || build != info_.build) refuse = JoinResult::BuildMismatch;
+    else if (check_token && check == TokenCheck::Expired) refuse = JoinResult::TokenExpired;
+    else if (check_token && check != TokenCheck::Ok) refuse = JoinResult::BadToken;
     else if (!password_.empty() && password != password_) refuse = JoinResult::WrongPassword;
     else if (players_.size() >= max) refuse = JoinResult::Full;
     if (refuse != JoinResult::Ok) {
@@ -231,7 +321,7 @@ bool SessionHost::HandleEvent(const NetEvent& event, f64 now) {
     const std::string base = name;
     for (int n = 2; std::any_of(players_.begin(), players_.end(), [&](const SessionPlayer& p) { return p.name == name; }); ++n)
         name = base + " (" + std::to_string(n) + ")";
-    players_.push_back({event.peer, name});
+    players_.push_back({event.peer, name, check_token ? claims.player : std::string()});
     info_.players = static_cast<u32>(players_.size());
     Out o;
     o.U8(kJoinAccept);
@@ -270,8 +360,8 @@ std::vector<SessionEvent> SessionHost::TakeEvents() { return std::exchange(event
 // ---------------------------------------------------------------- joining
 
 void SessionClient::Join(const Address& server, const std::string& player_name, const std::string& password, u32 build,
-                         f64 now) {
-    name_ = player_name, password_ = password, build_ = build;
+                         f64 now, const std::string& token) {
+    name_ = player_name, password_ = password, token_ = token, build_ = build;
     result_ = JoinResult::Ok;
     info_ = {};
     server_ = host_.Connect(server, now);
@@ -292,6 +382,7 @@ bool SessionClient::HandleEvent(const NetEvent& event) {
         o.U32(build_);
         o.Str(name_);
         o.Str(password_);
+        o.Str(token_);
         host_.Send(server_, config_.channel, o.bytes);
         return false;
     }
@@ -318,7 +409,7 @@ bool SessionClient::HandleEvent(const NetEvent& event) {
     }
     if (kind == kJoinRefuse) {
         const u8 reason = in.U8();
-        result_ = in.ok && reason <= static_cast<u8>(JoinResult::Lost) ? static_cast<JoinResult>(reason) : JoinResult::Lost;
+        result_ = in.ok && reason <= static_cast<u8>(JoinResult::TokenExpired) ? static_cast<JoinResult>(reason) : JoinResult::Lost;
         state_ = State::Failed;
         return true;
     }
