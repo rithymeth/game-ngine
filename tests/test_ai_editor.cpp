@@ -432,3 +432,85 @@ AETHER_TEST(AIEditor_NavigationPanel) {
     CHECK(!panel.Bake() && panel.Status().find("Bake failed") == 0);
     ui.Frame([&] { panel.Draw(); });
 }
+
+#if defined(AETHER_EDITOR_SCRIPTING)
+#include "ai/ai_debugger.h"
+#include "aether/scene/components.h"
+
+// M8.8: the editor's AI Debugger rows and viewport overlay, from an
+// AiDebugStore::Collect-shaped snapshot (no Qt, no Luau).
+AETHER_TEST(AiDebugger_RowsAndOverlayFromSnapshot) {
+    World world;
+    const Entity scout = world.CreateEntity(Transform{Vec3(0, 0, 0)}, EntityName{"Scout"});
+    const Entity hero = world.CreateEntity(Transform{Vec3(4, 0, 0)}, EntityName{"Hero"});
+    const Entity sentinel = world.CreateEntity(Transform{Vec3(0, 0, 5)});
+    const Entity gone = world.CreateEntity(Transform{});
+    world.DestroyEntity(gone);
+
+    script::AiDebugEntry a;
+    a.entity = scout;
+    a.state = "chase";
+    a.has_perception = true;
+    a.target = hero;
+    a.known = {hero, sentinel};
+    a.path = {Vec3(0, 0, 0), Vec3(2, 0, 1), Vec3(4, 0, 1), Vec3(6, 0, 0)};
+    a.next_corner = 2;
+    a.path_complete = false;
+    a.goal = Vec3(7, 0, 0);
+    script::AiDebugEntry b;
+    b.entity = sentinel;
+    b.has_perception = true;
+    script::AiDebugEntry c;
+    c.entity = hero;
+    c.state = "idle";
+    c.path = {Vec3(4, 0, 0), Vec3(5, 0, 0)};
+    c.next_corner = 2;
+    c.path_complete = true;
+    c.goal = Vec3(5, 0, 0);
+    script::AiDebugEntry d = b;
+    d.entity = hero;
+    d.target = gone;
+    const std::vector<script::AiDebugEntry> entries = {a, b, c};
+
+    const std::vector<AiDebugRow> rows = BuildAiDebugRows(world, entries);
+    CHECK(rows.size() == 3);
+    CHECK(rows[0].entity == scout && rows[0].name == "Scout" && rows[0].state == "chase");
+    CHECK(rows[0].target == "Hero" && rows[0].known == 2 && rows[0].path == "corner 2/3 (partial)");
+    CHECK(rows[1].name == "#" + std::to_string(sentinel.index) && rows[1].state == "-");
+    CHECK(rows[1].target == "-" && rows[1].known == 0 && rows[1].path == "none");
+    CHECK(rows[2].target.empty() && rows[2].path == "arrived"); // no AIPerception
+    CHECK(BuildAiDebugRows(world, {d})[0].target.find("(gone)") != std::string::npos);
+
+    // Only the selected agent: 3 path segments (2 walked, 1 ahead), agent->next corner,
+    // next-corner cross (3), goal cross (3), the target line.
+    nav::NavDebugDraw draw;
+    AiDebugOverlayOptions options;
+    options.selected = scout;
+    BuildAiDebugOverlay(world, entries, options, draw);
+    CHECK(draw.lines.size() == 3 + 1 + 3 + 3 + 1);
+    const auto count = [&](u32 color) {
+        return std::count_if(draw.lines.begin(), draw.lines.end(), [&](const nav::NavDebugLine& l) { return l.color == color; });
+    };
+    CHECK(count(ai_debug_colors::kPathWalked) == 2 && count(ai_debug_colors::kPathAhead) == 1);
+    CHECK(count(ai_debug_colors::kGoalPartial) == 3 && count(ai_debug_colors::kGoal) == 0);
+    CHECK(count(ai_debug_colors::kTarget) == 1);
+    const auto target_line = std::find_if(draw.lines.begin(), draw.lines.end(),
+                                          [](const nav::NavDebugLine& l) { return l.color == ai_debug_colors::kTarget; });
+    CHECK(std::abs(target_line->b.x - 4.0f) < 1e-5f);
+
+    // All agents: the hero adds 1 walked segment and a complete-goal cross (arrived: no next corner).
+    draw.Clear();
+    options.all_agents = true;
+    BuildAiDebugOverlay(world, entries, options, draw);
+    CHECK(draw.lines.size() == 11 + 1 + 3);
+    CHECK(count(ai_debug_colors::kGoal) == 3);
+    // Nothing selected, not all: nothing drawn; a dead target draws no line.
+    draw.Clear();
+    BuildAiDebugOverlay(world, entries, AiDebugOverlayOptions{}, draw);
+    CHECK(draw.lines.empty());
+    options.selected = hero;
+    options.all_agents = false;
+    BuildAiDebugOverlay(world, {d}, options, draw);
+    CHECK(draw.lines.empty());
+}
+#endif

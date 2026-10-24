@@ -88,7 +88,8 @@ if(WIN32)
 endif()
 
 if(AETHER_BUILD_SCRIPTING)
-    target_sources(aether_editor_qt PRIVATE script_component_editor.cpp script_editor_widget.cpp)
+    target_sources(aether_editor_qt PRIVATE script_component_editor.cpp script_editor_widget.cpp
+        ai_debugger_widget.cpp ../src/ai/ai_debugger.cpp)
     target_link_libraries(aether_editor_qt PRIVATE Aether::Scripting)
     target_compile_definitions(aether_editor_qt PRIVATE AETHER_QT_EDITOR_SCRIPTING=1)
 endif()

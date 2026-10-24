@@ -200,7 +200,28 @@ so single runs vary by roughly +/-0.1 ms. Six runs (including one inside the ful
 Reading: at the planned 24 enemies, AI+nav is roughly 0.13 ms/frame (under 1% of a 16.6 ms
 frame); the cache roughly halves it. Going to 48 costs about 2x-2.5x with the cache, so
 scaling is close to linear. Debug numbers for the same 24-follower case were 0.43-0.53 ms.
-The editor AI-debugger panel is still outstanding, so the M8.8 gate stays open.
+
+### M8.8 editor AI debugger
+
+Qt editor, Window menu -> **AI · DEBUGGER** (tabbed with the Content Browser; built when
+scripting is on). During Play-in-Editor it lists every agent from the play runtime's
+`ScriptSystem::AiDebug().Collect` (`EditorPlayRuntime::AiDebugSnapshot`): name, reported state
+(`AI.SetDebugState`), perception target, known-actor count and path status (`corner i/n`,
+`arrived`, `none`, `(partial)`). The table refreshes at about 4 Hz; selecting a row selects the
+entity in the Hierarchy (and so the viewport and Inspector), and Hierarchy selection highlights
+its row. The viewport overlay (drawn through the navigation debug-line source the viewport already
+renders) shows the selected agent's path corners (walked dim, ahead amber), a line to its next
+corner, crosses at the next corner and the goal (green: complete, orange: partial) and a red line
+to its perception target; "Draw all agents" shows every agent. Rows and overlay lines are shaped
+in `editor/src/ai/ai_debugger.{h,cpp}` (no Qt), tested headless by
+`AiDebugger_RowsAndOverlayFromSnapshot` (tests/test_ai_editor.cpp). `game_ai_debug` (the same data
+over MCP) is tested by `Mcp_GameAiDebugReportsStateAndPerception` (tests/test_mcp.cpp).
+
+Status: not passed. Every pass criterion above has automated evidence (the four
+`Aether01_Scenario_*` runs, AI/Nav-driven archetypes, the profile), and the debugger deliverable
+now exists, but the Qt dock is compiled only by the Windows CI editor jobs (the Qt editor needs
+Windows D3D12; it was not built locally) and has not been exercised by hand in Play-in-Editor.
+Flip the gate after a green Windows editor CI run and a manual Play check.
 
 ## M8.9 — Multiplayer Production
 
