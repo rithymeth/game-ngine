@@ -216,10 +216,12 @@ waive this gate if multiplayer ships as a supported 1.0 feature.
 ### M8.9 evidence so far (automatable part)
 
 Status: not passed. Left before sign-off: a reviewed sign-off of the recorded thresholds below (and
-measuring them against the packaged server, not only the loopback simulation), a network profiler
-capture, server packages beyond Linux x86-64, publishing the server package as a release asset, LAN
-discovery from the dedicated server, and a cross-machine (and NAT) run. Security/auth hardening
-landed (2026-10-24, see "Security hardening" below); transport encryption is still out of scope.
+measuring them against the packaged server, not only the loopback simulation), a decision on
+transport encryption (currently out of scope: authenticated, not encrypted), and a cross-machine
+(and NAT) run. Security/auth hardening landed (2026-10-24, see "Security hardening" below). LAN
+discovery from the dedicated server, a network profiler capture, Windows/macOS server packages and
+release publishing of the server packages landed 2026-10-24 (see "Dedicated server: discovery,
+profiler, platforms, release" below); the Windows and macOS parts are verified only by CI.
 
 `tests/test_net_production.cpp` (`NetProd_*`, in the default `aether_tests` run) drives a
 server (`SessionHost` + `ReplicationServer` + `RpcRouter`) and four clients (`SessionClient` +
@@ -267,11 +269,9 @@ What this does not cover, so the gate stays open:
   state). `DedicatedServer_*` in `aether_tests` cover config parsing and an in-process real-UDP
   run (two joins, a wrong password, a wrong build). Local Release run, 2026-10-23: both clients
   joined in ~0.08 s, 43 entities, 46 snapshots, RPC ack in ~0.07 s, 3.5 s wall time end to end.
-  Still open for this item: a Windows (and macOS) server package; the smoke runs on one host
-  (localhost), not across two machines or a NAT; the server package is not yet a release asset
-  (the `release` job publishes only the Windows zips); the dedicated server does not answer LAN
-  discovery; the soak/loss/latency thresholds above are measured on `LoopbackNetwork`, not
-  against the packaged server.
+  Still open for this item: the smoke runs on one host (localhost), not across two machines or a
+  NAT; the soak/loss/latency thresholds above are measured on `LoopbackNetwork`, not against the
+  packaged server. (Windows/macOS packages, release publishing and LAN discovery: see below.)
 - **Authentication is a session password plus entity ownership.** `RpcRouter` gates server calls
   by ownership only; it does not know whether a peer has joined the session (a connected,
   not-joined peer owns nothing, so it is rejected, and `SessionHost` drops it after
@@ -300,8 +300,46 @@ What this does not cover, so the gate stays open:
   thresholds unchanged; the bandwidth check now also applies to wire bytes. Not done: encryption
   (an on-path observer can read the keys in the Accept), token revocation, per-IP (rather than
   per-ip:port) limits; the wire protocol is incompatible with older builds.
-- **Network profiler capture.** `NetProfile` / `NetStatGroup` exist but no capture is recorded as
-  evidence.
+- **Dedicated server: discovery, profiler, platforms, release (2026-10-24).**
+  - *LAN discovery.* `aether_server` answers LAN discovery on `lan_port` (default 7778,
+    `lan_advertise` default on; a taken port is a warning) with name, players (kept current), max
+    players, build, game port, password flag and a `requires_token` property.
+    `aether_netclient --discover [--timeout s] [--lan-port n] [--query ip:port]` broadcasts and also
+    queries 127.0.0.1, prints `AETHER_DISCOVER {...}` JSON, and `--join-first` joins the first
+    compatible server. `LanBeacon` now follows the #687 anti-amplification rules: queries are padded
+    to 1024 B and no answer is larger than its query (16 B legacy queries get none, counted as
+    oversized); 4 answers/s, burst 8, per source IP in a table bounded at 1024. Tests:
+    `Session_LanBeaconAntiAmplification` (unpadded query unanswered; answer <= query; a 200-query
+    flood from one address answered at most 8 times while another address is still answered),
+    `DedicatedServer_RealUdpLanDiscoveryAndProfile` (real UDP: broadcast + 127.0.0.1, advert fields,
+    another build listed incompatible, a client joins the discovered address, the advert's player
+    count follows), and `tools/server_smoke.sh` (discovers the packaged server before anyone joins;
+    bravo joins by `--discover --join-first`).
+  - *Network profiler capture.* `aether_server --profile <file.jsonl> [--profile-interval s]`
+    writes per-peer RTT, loss, bytes/packets each way, message bytes per channel (new
+    `ConnectionStats::channel_bytes_*`), snapshots and snapshot bytes per interval (from
+    `NetProfile`), `HostSecurityStats` (rate_limited, bad_cookies, replays, bad_macs, malformed) and
+    LAN discovery counters, then a summary line (also printed as `AETHER_SERVER_PROFILE`). The CI
+    `dedicated-server` job uploads it as the `dedicated-server-profile` artifact (also
+    `-windows` / `-macos`). Sample capture, local Release packaged smoke, 2026-10-24 (localhost,
+    2 token clients for 3 s + 2 refused, 30 Hz, 43 replicated AETHER-01 entities): 11 records at
+    0.5 s, peak 2 peers, RTT mean 33.7 ms / max 35.3 ms (on localhost this is the 30 Hz tick
+    batching, not the network), loss max 0, 92 snapshots averaging 96.9 B (largest interval
+    average 462 B: the initial spawns), 10915 B sent / 3088 B received, rate_limited 0, bad_macs 0,
+    16 LAN discovery answers, 0 rate-limited.
+  - *Platforms.* `tools/package_server.sh` now runs on Linux, macOS and Windows Git Bash (archives
+    written by Python: reproducible `.tar.gz`, or `.zip` on Windows; checked byte-identical across
+    two local runs) and makes `aether-server-windows-x64.zip` / `aether-server-macos-arm64.tar.gz`.
+    The `windows` (MSVC) and `macos` (Apple clang) CI jobs package their already-built
+    `aether_server`/`aether_netclient` with the AETHER-01 cook and run the same
+    `tools/server_smoke.sh` natively (discovery, 2 clients with tokens, refusals, profile). Windows
+    adds `SetConsoleCtrlHandler` (Ctrl+C/Break, console close) to the existing signal handling.
+    Only CI exercises these two platforms; no Windows or macOS run was made locally.
+  - *Release.* The `release` job (now also needing `dedicated-server`) downloads the three server
+    artifacts, checks each against its own SHA256SUMS, appends the archives and their
+    `SERVER_PACKAGE.json` (as `aether-server-<platform>.json`) to the release `SHA256SUMS.txt`,
+    re-checks every archive against it, attests them with the other assets, and publishes them.
+    Not yet exercised by a tagged release.
 - Interest management is exercised by the replication tests, not at production scale; the soak
   is 4 clients and 16 entities.
 

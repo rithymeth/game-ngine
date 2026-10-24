@@ -191,6 +191,25 @@ void LanBeacon::Update() {
         Out o;
         o.U32(kAnswerMagic), o.U32(protocol_), o.U64(nonce);
         WriteInfo(o, info);
+        if (o.bytes.size() > data.size()) { // never amplify
+            ++oversized_;
+            continue;
+        }
+        const f64 now = std::chrono::duration<f64>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        auto b = buckets_.find(from.ip);
+        if (b == buckets_.end()) {
+            if (buckets_.size() >= kMaxBuckets) // bounded: drop idle entries, else start over
+                std::erase_if(buckets_, [&](const auto& kv) { return now - kv.second.last > 1.0; });
+            if (buckets_.size() >= kMaxBuckets) buckets_.clear();
+            b = buckets_.emplace(from.ip, Bucket{answer_burst, now}).first;
+        }
+        b->second.tokens = std::min(answer_burst, b->second.tokens + (now - b->second.last) * answers_per_second);
+        b->second.last = now;
+        if (b->second.tokens < 1.0) {
+            ++rate_limited_;
+            continue;
+        }
+        b->second.tokens -= 1.0;
         socket_.Send(from, o.bytes);
         ++answered_;
     }
@@ -205,7 +224,12 @@ void LanBrowser::Search(f64 now) {
     const u64 nonce = nonce_seed_;
     Out o;
     o.U32(kQueryMagic), o.U32(protocol_), o.U64(nonce);
+    o.bytes.resize(kDiscoveryQueryBytes, 0); // padding: the answer may be no bigger than this
     socket_.Send(Address::Broadcast(port_), o.bytes);
+    for (Address a : also_query) {
+        if (a.port == 0) a.port = port_;
+        socket_.Send(a, o.bytes);
+    }
     queries_.push_back({nonce, now});
     if (queries_.size() > 16) queries_.erase(queries_.begin());
     last_search_ = now;

@@ -5,6 +5,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -28,23 +29,38 @@ std::vector<u8> EncodeSessionInfo(const SessionInfo& info);
 bool DecodeSessionInfo(std::span<const u8> data, SessionInfo& out);
 
 constexpr u16 kDefaultDiscoveryPort = 7778;
+// A discovery query is padded to this many bytes, and a beacon never answers with more bytes than
+// the query that asked (M8.9 anti-amplification: a spoofed query can't be turned into a bigger reply).
+constexpr usize kDiscoveryQueryBytes = 1024;
 
 // Answers LAN discovery queries (Phase 22 step 5, docs/design/PHASE_SPECS.md
 // §22.5): listen on the discovery port, and every query with our protocol
 // id gets the session's info back, with the query's nonce so the browser
-// can time it.
+// can time it. M8.9: an answer is never larger than its query (queries are
+// padded to kDiscoveryQueryBytes; shorter ones, and answers that would not
+// fit, are counted as oversized and dropped), and each source IP gets a
+// token bucket of answers (rate per second, burst) in a table bounded at
+// kMaxBuckets addresses, so a beacon can't be used to flood anyone.
 class LanBeacon {
 public:
     LanBeacon(DatagramSocket& socket, u32 protocol_id = HostConfig{}.protocol_id) : socket_(socket), protocol_(protocol_id) {}
     SessionInfo info;
     bool enabled = true; // when false, queries are read and ignored
-    void Update();
+    f64 answers_per_second = 4.0, answer_burst = 8.0; // per source IP
+    static constexpr usize kMaxBuckets = 1024;
+    void Update(); // the rate limit runs on the steady clock
     u32 Answered() const { return answered_; }
+    u32 RateLimited() const { return rate_limited_; }
+    u32 Oversized() const { return oversized_; } // answer bigger than the query: not sent
 
 private:
+    struct Bucket {
+        f64 tokens = 0, last = 0;
+    };
     DatagramSocket& socket_;
     u32 protocol_;
-    u32 answered_ = 0;
+    u32 answered_ = 0, rate_limited_ = 0, oversized_ = 0;
+    std::unordered_map<u32, Bucket> buckets_;
 };
 
 struct LanSession {
@@ -68,6 +84,9 @@ public:
     std::vector<LanSession> Results() const;
     f64 expiry = 5.0;
     f64 auto_search = 0.0; // search again this often (0: only when asked)
+    // Unicast targets queried as well as the broadcast (a known host, or 127.0.0.1 where broadcast
+    // doesn't loop back); with no port, the discovery port.
+    std::vector<Address> also_query;
 
 private:
     DatagramSocket& socket_;
