@@ -274,9 +274,11 @@
   type struct AnimState
   type struct AnimVariable
   type struct Condition
+  type struct MachineBlend
   type struct StateChange
   type struct StateMachine
   type struct Transition
+  MachineBlend Blend(u32 machine_node)const
   bool AnimGraphFromJson(const nlohmann::json&json,AnimGraph&out,std::string*error=nullptr)
   bool FindTransition(const StateMachine&m,MachineState&ms,i32&target,f32&blend,std::vector<std::string>&used)
   bool InTransition(u32 machine_node)const
@@ -396,6 +398,9 @@
   bool DecompressClip(const std::vector<u8>&bytes,AnimationClip&out,std::string*error=nullptr)
   std::vector<u8>CompressClip(const AnimationClip&clip)
   usize RawClipSize(const AnimationClip&clip)
+[animation/include/aether/animation/gltf_source.h] experimental
+  type struct GltfCharacter
+  bool BuildCharacterFromGltf(const assets::GltfScene&scene,u32 skin,GltfCharacter&out,std::string*error=nullptr)
 [animation/include/aether/animation/ik.h] experimental
   type class FootPlacer
   type struct FabrikChain
@@ -428,10 +433,15 @@
 [animation/include/aether/animation/retarget.h] experimental
   type class Retargeter
   type struct BoneMapping
+  type struct RetargetIssue
+  type struct RetargetReport
   AnimationClip RetargetClip(const AnimationClip&clip,f32 rate=30.0f)const
   BoneMapping AutoMapBones(const Skeleton&source,const Skeleton&target)
+  RetargetReport ValidateRetarget(const Skeleton&source,const Skeleton&target,const BoneMapping&mapping,const std::vector<std::string>&required_target_bones=
+  f32 Coverage()const
   f32 TranslationScale()const
   public:Retargeter(const Skeleton&source,const Skeleton&target,const BoneMapping&mapping)
+  std::string Describe()const
   usize MappedCount()const
   void Retarget(const Pose&source_pose,Pose&target_pose)const
 [animation/include/aether/animation/root_motion.h] experimental
@@ -4119,7 +4129,7 @@
   ),AETHER_FIELD(flying,Field_EditAnywhere,
   ),AETHER_FIELD(gravity_scale,Field_EditAnywhere,
   ),AETHER_FIELD(height,Field_EditAnywhere,
-  ),AETHER_FIELD(input,Field_Transient),AETHER_FIELD(jump_requested,Field_Transient))
+  ),AETHER_FIELD(input,Field_Transient),AETHER_FIELD(jump_requested,Field_Transient),AETHER_FIELD(velocity,Field_ReadOnly | Field_Transient),AETHER_FIELD(grounded,Field_ReadOnly | Field_Transient))
   ),AETHER_FIELD(jump_buffer,Field_EditAnywhere,
   ),AETHER_FIELD(jump_velocity,Field_EditAnywhere,
   ),AETHER_FIELD(mass,Field_EditAnywhere,
@@ -4294,6 +4304,7 @@
   RenderSize ScaledRenderSize(u32 window_width,u32 window_height,f32 resolution_scale)
   SystemScheduler&Systems()
   World&GetWorld()
+  anim::AnimationSystem*Animation()
   audio::AudioSystem*AudioSystem()
   bool ExitRequested()const
   bool HasManifest()const

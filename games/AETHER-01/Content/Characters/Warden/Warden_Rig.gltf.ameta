@@ -1,0 +1,13 @@
+{
+  "$type": "AssetMeta",
+  "$v": 1,
+  "guid": "6c5ab96f-b09d-5147-be43-792507fbce62",
+  "importer": "Model",
+  "importer_version": 1,
+  "settings": {},
+  "labels": [
+    "Prototype",
+    "generated"
+  ],
+  "source_hash": ""
+}

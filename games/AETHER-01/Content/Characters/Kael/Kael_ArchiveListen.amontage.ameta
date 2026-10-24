@@ -1,0 +1,13 @@
+{
+  "$type": "AssetMeta",
+  "$v": 1,
+  "guid": "bc7ac0dd-760a-58d2-83be-20f7035eb9eb",
+  "importer": "AnimMontage",
+  "importer_version": 1,
+  "settings": {},
+  "labels": [
+    "Prototype",
+    "generated"
+  ],
+  "source_hash": ""
+}

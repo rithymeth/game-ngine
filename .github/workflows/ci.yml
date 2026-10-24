@@ -126,6 +126,8 @@ jobs:
           VK_ICD_FILENAMES: ${{ matrix.name == 'ASan+UBSan' && '/nonexistent/icd.json' || '' }}
           # The AETHER-01 ending test records its input; the M8.7 step replays it in the packaged player.
           AETHER01_INPUT_TRACE: ${{ github.workspace }}/build/aether01-input-trace.json
+          # And Kael's move-set test, for the M8.6 packaged character step.
+          AETHER01_MOVESET_TRACE: ${{ github.workspace }}/build/aether01-moveset-trace.json
         run: xvfb-run -a ./build/tests/aether_tests
       - name: Functional tests
         run: ./build/tools/functional/aether_functional --quiet --junit functional-results.xml
@@ -211,6 +213,21 @@ jobs:
         with:
           name: m87-cinematic-logs
           path: m87
+          if-no-files-found: warn
+      - name: Packaged character move set (M8.6)
+        # The same standalone pak replays the Kael move-set test's input headless: the player's animation host logs
+        # each state change of Kael's Animator, and every state the game can reach (idle, aim, interact, fire,
+        # reload, jump, fall, land, walk, run, hit, death) must appear, ending back in Idle after the restart.
+        if: matrix.name == 'GCC'
+        run: |
+          python3 tools/aether01_character_check.py --player build/player/aether_player \
+            --pak "$RUNNER_TEMP/m85-standalone/Paks/Game.apak" --trace build/aether01-moveset-trace.json --work m86
+      - name: Upload the character logs (M8.6)
+        if: matrix.name == 'GCC' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m86-character-logs
+          path: m86
           if-no-files-found: warn
       - name: Package the dedicated server (M8.9)
         # aether_server + aether_netclient + server.json + the cooked AETHER-01 pak as a .tar.gz with SHA256SUMS
