@@ -606,10 +606,16 @@ struct SceneRenderer::Impl {
                 SampledTextureHandle texture;
                 quad.texture = LoadTexture(game.UiImagePath(quad.texture), texture) ? texture.index : 0; // 0: drawn as its tint
             }
+            AddSubtitle(game, list, width, height);
             SubmitHudQuads(commands, list, width, height);
             return;
         }
-        if (!legacy_hud) return;
+        if (!legacy_hud) {
+            ui::DrawList list;
+            AddSubtitle(game, list, width, height);
+            if (!list.quads.empty()) SubmitHudQuads(commands, list, width, height);
+            return;
+        }
 
         const auto read_attribute = [&](Entity entity, const char* name, f32 fallback) {
             if (!world.HasComponent<gas::AttributeSet>(entity)) return fallback;
@@ -924,7 +930,21 @@ struct SceneRenderer::Impl {
                  "UP/DOWN SELECT  ENTER REBIND  DEL RESET  ESC BACK" : "ARROWS SELECT   ENTER CONFIRM   ESC BACK",
                  mx + 24, my + 344, 12, muted, 435);
         }
+        AddSubtitle(game, list, width, height);
         SubmitHudQuads(commands, list, width, height);
+    }
+
+    // The dialogue line a sequence's Subtitle track shows (Game::Subtitle, already
+    // translated and empty when the setting hides subtitles), low and centred.
+    void AddSubtitle(const Game& game, ui::DrawList& list, f32 width, f32 height) {
+        const std::string& line = game.Subtitle();
+        if (line.empty()) return;
+        const f32 box = std::min(720.0f, width - 48.0f);
+        const f32 x = (width - box) * 0.5f, y = height * 0.88f;
+        list.AddQuad({x, y, box, 54}, {0.0f, 0.0f, 0.0f, 0.72f});
+        const std::string& speaker = game.SubtitleSpeaker();
+        if (!speaker.empty()) list.AddText(*hud_font, speaker, 12, {x + 16, y + 6, box - 32, 18}, {0.18f, 0.82f, 0.95f, 1.0f});
+        list.AddText(*hud_font, line, 17, {x + 16, y + (speaker.empty() ? 16.0f : 24.0f), box - 32, 23}, {1.0f, 1.0f, 1.0f, 1.0f});
     }
 
     // Draws a UI draw list (quads in pixels, each clipped) with the HUD pipeline.

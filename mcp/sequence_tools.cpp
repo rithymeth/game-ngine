@@ -65,6 +65,7 @@ const char* TrackTypeName(seq::TrackType t) {
     case seq::TrackType::Animation: return "animation";
     case seq::TrackType::Fade: return "fade";
     case seq::TrackType::Subsequence: return "subsequence";
+    case seq::TrackType::Subtitle: return "subtitle";
     }
     return "transform";
 }
@@ -311,6 +312,13 @@ void RegisterSequenceTools(McpServer& server, std::shared_ptr<AssetHost> host) {
                              if (time >= k.time && time < k.time + k.duration) playing.push_back({{"sequence", k.sequence}, {"child_time", (time - k.time) * k.scale + k.offset}, {"key", i}});
                          }
                          v["playing"] = playing;
+                         break;
+                     }
+                     case seq::TrackType::Subtitle: {
+                         const seq::SubtitleKey* shown = nullptr;
+                         for (const seq::SubtitleKey& k : t.subtitles)
+                             if (k.time <= time && time < k.time + k.duration && (shown == nullptr || k.time >= shown->time)) shown = &k;
+                         v["text"] = shown ? Json(shown->text) : Json(nullptr);
                          break;
                      }
                      case seq::TrackType::Event:

@@ -110,6 +110,8 @@ void SequenceSystem::SkipAll() {
 void SequenceSystem::Update(f32 dt) {
     events_.clear();
     fade_ = FadeState{};
+    subtitle_ = nullptr;
+    subtitle_owner_ = kNullEntity;
     const u64 now = ++generation_;
     std::vector<Entity> entities;
     world_.ForEachArchetype([&](Archetype& archetype) {
@@ -241,6 +243,12 @@ void SequenceSystem::Update(f32 dt) {
         if (player->Fade().amount > fade_.amount) fade_ = player->Fade();
         comp.time = player->Time();
         comp.playing = player->Playing();
+        const SubtitleKey* line = player->Subtitle();
+        if (line && !subtitle_) {
+            subtitle_ = line;
+            subtitle_owner_ = e;
+        }
+        if (line ? comp.subtitle != line->text : !comp.subtitle.empty()) comp.subtitle = line ? line->text : std::string();
         if (slot.finished) {
             SequenceEvent ev;
             ev.kind = SequenceEvent::Kind::Finished;

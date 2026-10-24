@@ -95,7 +95,7 @@ struct ProofRun {
         game->BeginPlay();
         Frames(1);
     }
-    void Frames(int count) {
+    void Frames(int count, f32 dt = 1.0f / 60.0f) {
         for (int i = 0; i < count; ++i) {
             if (record) {
                 for (usize index = 1; index < input::kKeyCount; ++index) {
@@ -108,7 +108,7 @@ struct ProofRun {
                 recorded_input.EndFrame();
                 ++recorded_frames;
             }
-            game->Tick(1.0f / 60.0f);
+            game->Tick(dt);
         }
         AETHER_CHECK(game->ScriptErrors().empty());
         AETHER_CHECK(game->AudioSystem() != nullptr && game->AudioSystem()->Problems().empty());
@@ -571,6 +571,216 @@ AETHER_TEST(Aether01_WardenPhasesEndingAndNewGame) {
     AETHER_CHECK(run.Stat(run.hero, "MissionStage") == 0);
     AETHER_CHECK(run.Stat(run.scout, "Health") == 3);
     AETHER_CHECK(run.Stat(restored_bosses.front(), "Health") == 12);
+}
+
+// M8.7: the archive reveal's dialogue. Plays the mission to the archive (stage 5,
+// a checkpoint), then restarts from that checkpoint so each run below starts the
+// cooked Archive sequence from 0.
+namespace {
+void PlayToArchive(ProofRun& run) {
+    run.Tap(input::Key::E);
+    for (int shot = 0; shot < 3; ++shot) { run.Tap(input::Key::MouseLeft); run.Frames(15); }
+    run.ClearResearch();
+    run.game->Input().SetButton(input::Key::W, true);
+    run.Frames(280);
+    run.game->Input().SetButton(input::Key::W, false);
+    run.Frames(21);
+    const Entity boss = FindEntitiesWithTag(run.game->GetWorld(), "Warden").front();
+    for (int shot = 0; shot < 9; ++shot) { run.Tap(input::Key::MouseLeft); run.Frames(15); }
+    AETHER_CHECK(run.Stat(boss, "Health") == 0 && run.Stat(run.hero, "MissionStage") == 4);
+    run.game->Input().SetButton(input::Key::W, true);
+    for (int frame = 0; frame < 240 && run.game->GetWorld().GetComponent<Transform>(run.hero)->position.z > -39; ++frame) run.Frames(1);
+    run.game->Input().SetButton(input::Key::W, false);
+    run.Frames(20);
+    run.Tap(input::Key::E);
+    AETHER_CHECK(run.Stat(run.hero, "MissionStage") == 5);
+}
+
+// What one frame of the cinematic showed and played.
+struct CineFrame {
+    f32 time = 0;                  // the sequence's playhead after the frame
+    std::vector<std::string> cues; // dialogue cues playing (2D sequence cues)
+    std::string subtitle;          // Game::Subtitle()
+    f32 voice_gain = -1;           // a dialogue voice's gain to Master, -1 for none
+    f32 camera_z = 0;              // the main camera (the sequence's transform track moves it)
+};
+
+CineFrame Sample(ProofRun& run, Entity archive) {
+    CineFrame f;
+    f.camera_z = run.game->GetWorld().GetComponent<Transform>(FindEntitiesWithTag(run.game->GetWorld(), "MainCamera").front())->position.z;
+    f.time = run.game->GetWorld().GetComponent<SequenceComponent>(archive)->time;
+    f.subtitle = run.game->Subtitle();
+    for (const player::Game::SequenceCue& c : run.game->SequenceCues()) {
+        f.cues.push_back(c.cue);
+        audio::Mixer& mixer = run.game->AudioSystem()->GetMixer();
+        for (const audio::VoiceId v : run.game->AudioSystem()->Player().Voices(c.handle)) {
+            audio::VoiceInfo info;
+            if (mixer.GetVoiceInfo(v, info)) f.voice_gain = info.audibility;
+        }
+    }
+    return f;
+}
+
+// The authored dialogue (Content/Sequences/Archive.asequence, Text/Dialogue.astrings).
+struct AuthoredLine {
+    f32 time, duration;
+    const char* cue;
+    const char* en;
+    const char* fr;
+};
+constexpr AuthoredLine kArchiveLines[] = {
+    {0.5f, 1.8f, "Audio/dialogue_archive_1.acue", "Kael. You reached the archive. I hoped you would not.", "Kael. Tu as atteint l'archive. J'espérais que non."},
+    {2.75f, 1.8f, "Audio/dialogue_archive_2.acue", "HELIOS-7 did not fail. I redirected the failure.", "HELIOS-7 n'a pas échoué. J'ai détourné la panne."},
+    {5.0f, 1.8f, "Audio/dialogue_archive_3.acue", "This facility was sacrificed to preserve planetary life.",
+     "Cette installation a été sacrifiée pour préserver la vie de la planète."},
+};
+} // namespace
+
+AETHER_TEST(Aether01_ArchiveDialogueSyncAtFixedRatesAndSkip) {
+    ProofRun run("cinematic");
+    PlayToArchive(run);
+    struct Rate {
+        f32 hz;
+        f32 skip_at; // < 0: play to the end
+    };
+    // Varied frame rates; at each, play through, then again with a skip at an arbitrary time.
+    for (const Rate rate : {Rate{30, -1}, Rate{60, -1}, Rate{144, -1}, Rate{30, 2.9f}, Rate{60, 1.23f}, Rate{144, 5.71f}}) {
+        const f32 dt = 1.0f / rate.hz;
+        run.Start(); // the stage-5 checkpoint: MissionPresentation starts the reveal from 0
+        AETHER_CHECK(run.Stat(run.hero, "MissionStage") == 5);
+        const Entity archive = FindEntitiesWithTag(run.game->GetWorld(), "ArchiveTerminal").front();
+        std::vector<CineFrame> frames;
+        bool skipped = false;
+        for (int frame = 0; frame < static_cast<int>(rate.hz * 10) && run.Stat(run.hero, "ArchiveComplete") == 0; ++frame) {
+            const bool press = rate.skip_at >= 0 && !skipped && !frames.empty() && frames.back().time >= rate.skip_at;
+            run.game->Input().SetButton(input::Key::Enter, press);
+            skipped = skipped || press;
+            run.Frames(1, dt);
+            frames.push_back(Sample(run, archive));
+        }
+        run.game->Input().SetButton(input::Key::Enter, false);
+        AETHER_CHECK(!frames.empty());
+        const f32 tolerance = dt + 1e-4f; // one frame
+        for (const AuthoredLine& line : kArchiveLines) {
+            int started = -1, shown = -1, hidden = -1;
+            for (int i = 0; i < static_cast<int>(frames.size()); ++i) {
+                const CineFrame& f = frames[i];
+                const bool playing = std::find(f.cues.begin(), f.cues.end(), line.cue) != f.cues.end();
+                if (started < 0 && playing) started = i;
+                if (shown < 0 && f.subtitle == line.en) shown = i;
+                if (shown >= 0 && hidden < 0 && f.subtitle != line.en) hidden = i;
+            }
+            const bool reached = rate.skip_at < 0 || line.time < rate.skip_at;
+            if (!reached) {
+                AETHER_CHECK(started < 0 && shown < 0); // skipped past: neither voice nor subtitle ever starts
+                continue;
+            }
+            AETHER_CHECK(started >= 0 && shown == started); // voice and subtitle start on the same frame ...
+            if (started < 0 || shown < 0) continue;
+            AETHER_CHECK(frames[started].time >= line.time && frames[started].time - line.time < tolerance); // ... at the authored time
+            if (started > 0) AETHER_CHECK(frames[started - 1].time < line.time);
+            const bool cut = rate.skip_at >= 0 && rate.skip_at < line.time + line.duration;
+            if (!cut) {
+                AETHER_CHECK(hidden > shown);
+                if (hidden > shown) AETHER_CHECK(frames[hidden].time >= line.time + line.duration && frames[hidden].time - (line.time + line.duration) < tolerance);
+            }
+        }
+        const CineFrame& last = frames.back();
+        AETHER_CHECK(last.cues.empty() && last.subtitle.empty());
+        AETHER_CHECK(!run.game->GetWorld().GetComponent<SequenceComponent>(archive)->playing);
+        AETHER_CHECK(!run.game->GetWorld().GetComponent<AudioSource>(archive)->playing || rate.skip_at < 0);
+        AETHER_CHECK(run.Stat(run.hero, "ArchiveTime") == 8);
+        AETHER_CHECK(run.Stat(run.hero, "ArchiveComplete") == (rate.skip_at < 0 ? 1 : 2));
+        AETHER_CHECK(run.Stat(run.hero, "MissionStage") == 5 && run.Stat(run.hero, "Health") > 0);
+        for (const CineFrame& f : frames) {
+            if (f.time > 0 && f.time < 8) AETHER_CHECK(f.camera_z <= -32 && f.camera_z >= -34); // the camera track drives the view
+        }
+        if (rate.skip_at >= 0) {
+            // The press is read by the script after the sequencer ran, so the skip lands on the next frame (and the
+            // script sees it complete one later): the playhead jumps from the press time straight to the end.
+            const usize n = frames.size();
+            AETHER_CHECK(n >= 3 && frames[n - 2].time == 8 && frames[n - 3].time < 8 && frames[n - 3].time >= rate.skip_at && frames[n - 3].time - rate.skip_at < 2 * dt + 1e-4f);
+            run.Frames(static_cast<int>(rate.hz * 3), dt); // nothing comes back after the skip
+            const CineFrame after = Sample(run, archive);
+            AETHER_CHECK(after.cues.empty() && after.subtitle.empty() && after.time == 8);
+            AETHER_CHECK(run.Stat(run.hero, "ArchiveComplete") == 2);
+        }
+    }
+}
+
+AETHER_TEST(Aether01_ArchiveSubtitlesLocalizedPausedAndVoiceBusPersists) {
+    ProofRun run("cinematic-settings");
+    PlayToArchive(run);
+    // Reference: the first line's voice gain at full volume, English subtitles.
+    run.Start();
+    run.game->LoadSettings({});
+    const Entity archive = FindEntitiesWithTag(run.game->GetWorld(), "ArchiveTerminal").front();
+    CineFrame f;
+    for (int i = 0; i < 80 && f.voice_gain < 0; ++i) {
+        run.Frames(1);
+        f = Sample(run, archive);
+    }
+    AETHER_CHECK(f.subtitle == kArchiveLines[0].en && run.game->SubtitleSpeaker() == "AETHER");
+    const f32 full = f.voice_gain;
+    AETHER_CHECK(full > 0);
+    // Pause (the menu) mid-line: the sequence, its subtitle and its voice hold.
+    run.Tap(input::Key::Escape);
+    AETHER_CHECK(run.game->IsPaused());
+    const f32 paused_at = run.game->GetWorld().GetComponent<SequenceComponent>(archive)->time;
+    run.Frames(90);
+    AETHER_CHECK(run.game->GetWorld().GetComponent<SequenceComponent>(archive)->time == paused_at);
+    AETHER_CHECK(run.game->Subtitle() == kArchiveLines[0].en && run.game->SequenceCues().size() == 1);
+    run.Tap(input::Key::Escape);
+    AETHER_CHECK(!run.game->IsPaused());
+    run.Frames(1);
+    AETHER_CHECK(run.game->GetWorld().GetComponent<SequenceComponent>(archive)->time > paused_at);
+
+    // Settings: voice at half, music and SFX changed too, subtitles in French; saved.
+    save::GameSettings next = run.game->Settings().Get();
+    next.voice = 0.5f;
+    next.music = 0.25f;
+    next.sfx = 0.75f;
+    next.master = 0.8f;
+    run.game->Settings().Set(next);
+    run.game->Localization().SetLanguage("fr"); // the language follows into Settings()
+    AETHER_CHECK(run.game->Settings().Save().ok);
+
+    // A new runtime reads them back and applies them to the mixer and the cinematic.
+    run.Start();
+    run.game->LoadSettings({});
+    const auto& s = run.game->Settings().Get();
+    AETHER_CHECK(std::abs(s.voice - 0.5f) < 1e-4f && std::abs(s.music - 0.25f) < 1e-4f && std::abs(s.sfx - 0.75f) < 1e-4f && std::abs(s.master - 0.8f) < 1e-4f);
+    AETHER_CHECK(s.language == "fr" && s.subtitles);
+    audio::Mixer& mixer = run.game->AudioSystem()->GetMixer();
+    AETHER_CHECK(std::abs(mixer.BusVolume(mixer.FindBus("Voice")) - save::BusVolumeDb(0.5f)) < 0.01f);
+    AETHER_CHECK(std::abs(mixer.BusVolume(mixer.FindBus("Music")) - save::BusVolumeDb(0.25f)) < 0.01f);
+    AETHER_CHECK(std::abs(mixer.BusVolume(mixer.FindBus("SFX")) - save::BusVolumeDb(0.75f)) < 0.01f);
+    AETHER_CHECK(std::abs(mixer.BusVolume(audio::kMasterBus) - save::BusVolumeDb(0.8f)) < 0.01f);
+    const Entity archive2 = FindEntitiesWithTag(run.game->GetWorld(), "ArchiveTerminal").front();
+    f = CineFrame{};
+    for (int i = 0; i < 80 && f.voice_gain < 0; ++i) {
+        run.Frames(1);
+        f = Sample(run, archive2);
+    }
+    AETHER_CHECK(f.subtitle == kArchiveLines[0].fr);
+    // The dialogue plays through the Voice bus: its gain is Voice x Master of the reference.
+    AETHER_CHECK(std::abs(f.voice_gain / full - 0.5f * 0.8f) < 0.01f);
+
+    // Subtitles off (accessibility) persists too and hides the line, not the voice.
+    save::GameSettings off = run.game->Settings().Get();
+    off.subtitles = false;
+    run.game->Settings().Set(off);
+    AETHER_CHECK(run.game->Settings().Save().ok);
+    run.Start();
+    run.game->LoadSettings({});
+    AETHER_CHECK(!run.game->Settings().Get().subtitles);
+    const Entity archive3 = FindEntitiesWithTag(run.game->GetWorld(), "ArchiveTerminal").front();
+    f = CineFrame{};
+    for (int i = 0; i < 80 && f.voice_gain < 0; ++i) {
+        run.Frames(1);
+        f = Sample(run, archive3);
+    }
+    AETHER_CHECK(f.voice_gain > 0 && f.subtitle.empty());
 }
 
 AETHER_TEST(Aether01_WardenStrikeTellDamageAndDodge) {

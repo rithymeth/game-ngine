@@ -28,6 +28,8 @@ function Presentation:OnCreate()
     self.started = false
     Attributes.Define(self.player, "ArchiveTime", 0, 0, 8)
     Attributes.Define(self.player, "ArchivePlaying", 0, 0, 1)
+    -- 1 once the reveal has ended, either played through or skipped (2).
+    Attributes.Define(self.player, "ArchiveComplete", 0, 0, 2)
 end
 
 function Presentation:OnUpdate(dt)
@@ -50,14 +52,27 @@ function Presentation:OnUpdate(dt)
     if self.archive ~= nil then
         local sequence = self.archive:Get("SequenceComponent")
         if Attributes.Get(self.player, "MissionStage") == 5 then
-            if not self.started then sequence:Play(); self.started = true end
+            if not self.started then
+                sequence:Play()
+                self.started, self.skipped = true, false
+                Attributes.SetBase(self.player, "ArchiveComplete", 0)
+            elseif sequence:IsPlaying() and Input.IsTriggered("SkipCinematic") then
+                -- The sequencer applies the final pose, stops its voices and hides the subtitle.
+                sequence:Skip()
+                self.skipped = true
+            end
+            local playing = sequence:IsPlaying()
             Attributes.SetBase(self.player, "ArchiveTime", sequence:GetTime())
-            Attributes.SetBase(self.player, "ArchivePlaying", sequence:IsPlaying() and 1 or 0)
+            Attributes.SetBase(self.player, "ArchivePlaying", playing and 1 or 0)
+            if not playing and sequence:GetTime() >= 8 then
+                Attributes.SetBase(self.player, "ArchiveComplete", self.skipped and 2 or 1)
+            end
         elseif self.started then
             sequence:Stop()
             self.started = false
             Attributes.SetBase(self.player, "ArchiveTime", 0)
             Attributes.SetBase(self.player, "ArchivePlaying", 0)
+            Attributes.SetBase(self.player, "ArchiveComplete", 0)
         end
     end
 end

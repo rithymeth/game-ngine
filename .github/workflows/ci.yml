@@ -124,6 +124,8 @@ jobs:
           # the driver, so its Vulkan device tests skip (the others run them).
           VK_DRIVER_FILES: ${{ matrix.name == 'ASan+UBSan' && '/nonexistent/icd.json' || '' }}
           VK_ICD_FILENAMES: ${{ matrix.name == 'ASan+UBSan' && '/nonexistent/icd.json' || '' }}
+          # The AETHER-01 ending test records its input; the M8.7 step replays it in the packaged player.
+          AETHER01_INPUT_TRACE: ${{ github.workspace }}/build/aether01-input-trace.json
         run: xvfb-run -a ./build/tests/aether_tests
       - name: Functional tests
         run: ./build/tools/functional/aether_functional --quiet --junit functional-results.xml
@@ -195,6 +197,21 @@ jobs:
           if grep -E "^\[(ERROR|FATAL)\]" m85/standalone.txt; then exit 1; fi
           if grep -E "\.(aquest|aability|aeffect): " m85/standalone.txt; then exit 1; fi  # the cooked kit assets all load
           mv "$RUNNER_TEMP/m85-hidden-project" m85/project
+      - name: Packaged cinematic play-through and skip (M8.7)
+        # The standalone pak from the step above replays the recorded AETHER-01 playthrough headless twice: to the
+        # end of the archive reveal (3 voiced lines, 3 subtitles, 'Sequence finished') and with Enter pressed during
+        # the first line ('Sequence skipped', that voice stopped and its subtitle hidden, no later line, the ending state).
+        if: matrix.name == 'GCC'
+        run: |
+          python3 tools/aether01_cinematic_check.py --player build/player/aether_player \
+            --pak "$RUNNER_TEMP/m85-standalone/Paks/Game.apak" --trace build/aether01-input-trace.json --work m87
+      - name: Upload the cinematic logs (M8.7)
+        if: matrix.name == 'GCC' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m87-cinematic-logs
+          path: m87
+          if-no-files-found: warn
       - name: Package the dedicated server (M8.9)
         # aether_server + aether_netclient + server.json + the cooked AETHER-01 pak as a .tar.gz with SHA256SUMS
         # (tools/package_server.sh); the dedicated-server job below runs it on a clean container.
@@ -637,7 +654,11 @@ jobs:
               $state = $result | Where-Object { $_ -like 'Player attributes: *' } | Select-Object -Last 1
               if (-not $state) { throw 'Missing final game state' }
               $state = $state.Substring('Player attributes: '.Length) | ConvertFrom-Json
-              if ($state.MissionStage -ne 5 -or $state.Health -le 0 -or $state.ArchiveTime -ne 8) { throw 'Packaged playthrough did not complete the archive ending' }
+              if ($state.MissionStage -ne 5 -or $state.Health -le 0 -or $state.ArchiveTime -ne 8 -or $state.ArchiveComplete -ne 1) { throw 'Packaged playthrough did not complete the archive ending' }
+              # M8.7: the reveal's dialogue voiced and subtitled (player log markers).
+              if (@($result | Select-String -SimpleMatch 'Player: Subtitle shown: dlg.archive.').Count -ne 3 -or
+                  @($result | Select-String -SimpleMatch 'Player: Sequence cue started: Audio/dialogue_archive_').Count -ne 3 -or
+                  -not ($result | Select-String -SimpleMatch 'Player: Sequence finished: Sequences/Archive.asequence')) { throw 'Packaged archive dialogue markers missing' }
             }
           } finally { Pop-Location }
           if (-not $usesWarp) {

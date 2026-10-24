@@ -495,6 +495,7 @@ int main(int argc, char** argv) {
                 if (const auto* attributes = game.GetWorld().GetComponent<gas::AttributeSet>(e)) {
                     std::printf("Player attributes: %s\n", reflect::Json({{"Health", attributes->Get("Health")},
                         {"MissionStage", attributes->Get("MissionStage")}, {"ArchiveTime", attributes->Get("ArchiveTime")},
+                        {"ArchiveComplete", attributes->Get("ArchiveComplete")},
                         {"CampaignAct", attributes->Get("CampaignAct")}, {"Ending", attributes->Get("Ending")},
                         {"Energy", attributes->Get("Energy")}, {"AnimationState", attributes->Get("AnimationState")}}).dump().c_str());
                 }

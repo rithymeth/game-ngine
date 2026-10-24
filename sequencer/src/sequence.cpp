@@ -52,6 +52,7 @@ const char* TrackTypeName(TrackType t) {
     case TrackType::Animation: return "animation";
     case TrackType::Fade: return "fade";
     case TrackType::Subsequence: return "subsequence";
+    case TrackType::Subtitle: return "subtitle";
     }
     return "transform";
 }
@@ -124,6 +125,7 @@ void Track::Normalize() {
     std::stable_sort(audio.begin(), audio.end(), by_time);
     std::stable_sort(anims.begin(), anims.end(), by_time);
     std::stable_sort(subs.begin(), subs.end(), by_time);
+    std::stable_sort(subtitles.begin(), subtitles.end(), by_time);
 }
 
 void LevelSequence::Normalize() {
@@ -150,6 +152,7 @@ f32 LevelSequence::EffectiveDuration() const {
         if (!t.audio.empty()) last = std::max(last, t.audio.back().time);
         if (!t.anims.empty()) last = std::max(last, t.anims.back().time);
         for (const SubKey& k : t.subs) last = std::max(last, k.time + k.duration);
+        if (!t.subtitles.empty()) last = std::max(last, t.subtitles.back().time);
     }
     return duration > 0.0f ? std::max(duration, last) : last;
 }
@@ -197,7 +200,7 @@ std::vector<std::string> ValidateSequence(const LevelSequence& s) {
         if (t.id.empty()) add("SQ007", label + " has no id");
         else if (!ids.insert(t.id).second) add("SQ005", label + " repeats an id");
         const bool optional_binding = t.type == TrackType::Event || t.type == TrackType::Spawn || t.type == TrackType::CameraCut || t.type == TrackType::Audio ||
-                                      t.type == TrackType::Fade || t.type == TrackType::Subsequence;
+                                      t.type == TrackType::Fade || t.type == TrackType::Subsequence || t.type == TrackType::Subtitle;
         if (t.binding.IsNull() && !optional_binding) add("SQ008", label + " is bound to no entity");
 
         // Keys on a track of the wrong kind.
@@ -211,13 +214,15 @@ std::vector<std::string> ValidateSequence(const LevelSequence& s) {
         wrong(!t.audio.empty(), TrackType::Audio, "audio");
         wrong(!t.anims.empty(), TrackType::Animation, "animation");
         wrong(!t.subs.empty(), TrackType::Subsequence, "subsequence");
+        wrong(!t.subtitles.empty(), TrackType::Subtitle, "subtitle");
 
         const auto ordered = [&](const auto& keys, const char* what) {
             if (!StrictlyIncreasing(keys)) add("SQ002", label + ", " + what + ": keys aren't in increasing time order");
             if (s.duration > 0.0f && OutsideDuration(keys, s.duration)) add("SQ003", label + ", " + what + ": a key is outside the duration");
         };
         const bool key_list_track = t.type == TrackType::Event || t.type == TrackType::Spawn || t.type == TrackType::CameraCut ||
-                                    t.type == TrackType::Audio || t.type == TrackType::Animation || t.type == TrackType::Subsequence;
+                                    t.type == TrackType::Audio || t.type == TrackType::Animation || t.type == TrackType::Subsequence ||
+                                    t.type == TrackType::Subtitle;
         if (key_list_track && !t.channels.empty()) add("SQ013", label + " has value channels but isn't a value track");
 
         switch (t.type) {
@@ -279,6 +284,13 @@ std::vector<std::string> ValidateSequence(const LevelSequence& s) {
                 if (!(k.scale > 0.0f)) add("SQ023", label + " has a subsequence key whose scale isn't above 0");
             }
             ordered(t.subs, "subsequences");
+            break;
+        case TrackType::Subtitle:
+            for (const SubtitleKey& k : t.subtitles) {
+                if (k.text.empty()) add("SQ024", label + " has a subtitle key with no text");
+                if (!(k.duration > 0.0f)) add("SQ025", label + " has a subtitle key whose duration isn't above 0");
+            }
+            ordered(t.subtitles, "subtitles");
             break;
         case TrackType::Property:
             if (t.component.empty() || t.field.empty()) add("SQ004", label + " names no component or field");
@@ -344,6 +356,14 @@ nlohmann::json SequenceToJson(const LevelSequence& s) {
             track["audio"] = std::move(keys);
         } else if (t.type == TrackType::Fade) {
             track["fade_color"] = {t.fade_color.x, t.fade_color.y, t.fade_color.z, t.fade_color.w};
+        } else if (t.type == TrackType::Subtitle) {
+            nlohmann::json keys = nlohmann::json::array();
+            for (const SubtitleKey& k : t.subtitles) {
+                nlohmann::json key = {{"time", k.time}, {"duration", k.duration}, {"text", k.text}};
+                if (!k.speaker.empty()) key["speaker"] = k.speaker;
+                keys.push_back(std::move(key));
+            }
+            track["subtitles"] = std::move(keys);
         } else if (t.type == TrackType::Subsequence) {
             nlohmann::json subs = nlohmann::json::array();
             for (const SubKey& k : t.subs) {
@@ -403,6 +423,7 @@ static bool SequenceFromJsonImpl(const nlohmann::json& j, LevelSequence& out, st
         else if (type == "animation") t.type = TrackType::Animation;
         else if (type == "fade") t.type = TrackType::Fade;
         else if (type == "subsequence") t.type = TrackType::Subsequence;
+        else if (type == "subtitle") t.type = TrackType::Subtitle;
         else return fail("track '" + t.id + "' has an unknown type '" + type + "'");
         const bool optional_binding = t.type != TrackType::Transform && t.type != TrackType::Property && t.type != TrackType::Visibility &&
                                       t.type != TrackType::Animation && tj.value("binding", "").empty();
@@ -508,6 +529,17 @@ static bool SequenceFromJsonImpl(const nlohmann::json& j, LevelSequence& out, st
             k.offset = kj.value("offset", 0.0f);
             k.scale = kj.value("scale", 1.0f);
             t.subs.push_back(std::move(k));
+        }
+        for (const nlohmann::json& kj : tj.value("subtitles", nlohmann::json::array())) {
+            if (!kj.contains("time") || !kj["time"].is_number() || !kj.contains("duration") || !kj["duration"].is_number()) {
+                return fail("track '" + t.id + "': a subtitle key needs a time and a duration");
+            }
+            SubtitleKey k;
+            k.time = kj["time"].get<f32>();
+            k.duration = kj["duration"].get<f32>();
+            k.text = kj.value("text", "");
+            k.speaker = kj.value("speaker", "");
+            t.subtitles.push_back(std::move(k));
         }
         s.tracks.push_back(std::move(t));
     }
