@@ -7,6 +7,7 @@
 #include "aether/audio/audio_system.h"
 
 #include "aether/sequencer/sequence_system.h"
+#include "aether/assets/gltf_loader.h"
 
 #include "aether/core/log.h"
 #include "aether/gameplay/ability_system.h"
@@ -335,6 +336,7 @@ std::vector<std::string> Game::LoadSettings(const SettingsTargets& targets) {
 }
 
 audio::AudioSystem* Game::AudioSystem() { return runtime_ ? runtime_->audio.get() : nullptr; }
+anim::AnimationSystem* Game::Animation() { return runtime_ ? runtime_->animation.get() : nullptr; }
 
 void Game::ApplyAudioSettings() {
     if (!runtime_ || !runtime_->audio) return;
@@ -424,6 +426,7 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     ui::RegisterWidgetComponents(); // WidgetComponent (§18.4)
     RegisterRenderComponents(); // lights (DirectionalLight, SkyLight, PointLight, SpotLight) and post-process volumes, so scenes can name them
     RegisterSequenceComponents(); // SequenceComponent (§27.2)
+    RegisterAnimationComponents(); // Animator (§16.5, M8.6), before scene deserialization
     RegisterAudioComponents(); // cooked AudioSource/AudioListener/ReverbZone before deserialization
     kits_.RegisterComponents(); // the gameplay kits' components: attributes, tags, items, interactables, quests (§30)
     sprite2d::RegisterSprite2DComponents(); // sprites and tilemaps (§26.6)
@@ -758,6 +761,60 @@ void Game::StartRuntime() {
         return InstantiatePrefab(*world_, guids_, guid, *data, &placed);
     });
     runtime_->sequences->MakeActive();
+    // Animation (M8.6): assets load from the package by path the first time an Animator names them.
+    anim::AnimationLibrary library;
+    library.graph = [this](const std::string& path) -> const anim::AnimGraph* {
+        auto [it, inserted] = runtime_->anim_graphs.try_emplace(path);
+        if (inserted) {
+            std::vector<u8> bytes;
+            std::string error;
+            const json j = package_.ReadContent(path, bytes, &error) ? json::parse(bytes.begin(), bytes.end(), nullptr, false) : json();
+            auto graph = std::make_unique<anim::AnimGraph>();
+            if (!j.is_discarded() && !j.is_null() && anim::AnimGraphFromJson(j, *graph, &error)) it->second = std::move(graph);
+            else warnings_.push_back("Animation: " + path + ": " + (error.empty() ? "not an animation graph" : error));
+        }
+        return it->second.get();
+    };
+    library.skeleton = [this](const std::string& path) -> const anim::Skeleton* {
+        auto [it, inserted] = runtime_->anim_rigs.try_emplace(path);
+        if (inserted) {
+            std::vector<u8> bytes;
+            std::string error;
+            assets::GltfScene scene;
+            auto rig = std::make_unique<anim::GltfCharacter>();
+            // Rigs embed their buffer (a data: URI), so the in-memory parser opens no other file.
+            if (!package_.ReadContent(path, bytes, &error)) warnings_.push_back("Animation: " + path + ": " + error);
+            else if (!assets::LoadGltfFromMemory(bytes, scene)) warnings_.push_back("Animation: " + path + " isn't a self-contained glTF (embed its buffer)");
+            else if (!anim::BuildCharacterFromGltf(scene, 0, *rig, &error)) warnings_.push_back("Animation: " + path + ": " + error);
+            else it->second = std::move(rig);
+        }
+        return it->second ? &it->second->skeleton : nullptr;
+    };
+    library.montage = [this](const std::string& path) -> const anim::Montage* {
+        auto [it, inserted] = runtime_->anim_montages.try_emplace(path);
+        if (inserted) {
+            std::vector<u8> bytes;
+            std::string error;
+            const json j = package_.ReadContent(path, bytes, &error) ? json::parse(bytes.begin(), bytes.end(), nullptr, false) : json();
+            auto montage = std::make_unique<anim::Montage>();
+            if (!j.is_discarded() && !j.is_null() && anim::MontageFromJson(j, *montage, &error)) it->second = std::move(montage);
+            else warnings_.push_back("Animation: " + path + ": " + (error.empty() ? "not a montage" : error));
+        }
+        return it->second.get();
+    };
+    // A graph's clip names are the rigs' glTF animation names ("Rig.gltf#Clip" picks one rig's).
+    library.assets.clip = [this](const std::string& name) -> const anim::AnimationClip* {
+        const usize hash = name.find('#');
+        for (const auto& [path, rig] : runtime_->anim_rigs) {
+            if (!rig || (hash != std::string::npos && name.compare(0, hash, path) != 0)) continue;
+            const std::string clip = hash == std::string::npos ? name : name.substr(hash + 1);
+            for (const anim::AnimationClip& c : rig->clips) {
+                if (c.name == clip) return &c;
+            }
+        }
+        return nullptr;
+    };
+    runtime_->animation = std::make_unique<anim::AnimationSystem>(*world_, std::move(library));
     // The on-screen UI: layouts come from the package; a theme asset (.atheme), if the game ships one, styles every layout.
     runtime_->ui_router = std::make_unique<ui::UIInputRouter>(runtime_->ui_viewport, runtime_->ui_font);
     runtime_->ui_bridge = std::make_unique<ui::UIInputBridge>(*runtime_->ui_router);
@@ -1080,10 +1137,65 @@ void Game::BuildFrame() {
                     }
                 }
             }
-            // Animation keys still require an animation host in the player.
+            else if (e.kind == seq::SequenceEvent::Kind::Animation) {
+                // Montages on the track's entity, through its Animator (applied by Player.Animation this frame).
+                Animator* animator = !e.subject.IsNull() && world_->IsAlive(e.subject) ? world_->GetComponent<Animator>(e.subject) : nullptr;
+                if (!animator) {
+                    warnings_.push_back("Sequence animation '" + e.name + "' is on an entity without an Animator");
+                } else if (e.payload == "stop") {
+                    animator->StopMontage();
+                } else {
+                    animator->PlayMontage(e.name, e.value > 0.0f ? e.value : 1.0f);
+                }
+            }
         }
     };
     scheduler_.Add(std::move(sequencer));
+    // Characters animate after scripts set their parameters and sequences start their montages.
+    SystemDesc animation;
+    animation.name = "Player.Animation";
+    animation.phase = SystemPhase::Update;
+    animation.after = {"Player.Sequencer"};
+    animation.main_thread_only = true;
+    animation.run = [this](World&, const FrameContext& frame) {
+        if (!runtime_ || !runtime_->animation) return;
+        anim::AnimationSystem& system = *runtime_->animation;
+        system.Update(frame.dt);
+        for (const anim::EntityAnimEvent& e : system.Events()) {
+            const anim::AnimEvent& ev = e.event;
+            if (ev.type != anim::AnimEventType::StateChanged && ev.type != anim::AnimEventType::MontageStarted &&
+                ev.type != anim::AnimEventType::MontageEnded) continue;
+            std::string who = std::to_string(e.entity.index);
+            if (const Tags* tags = world_->GetComponent<Tags>(e.entity); tags && !tags->names.empty()) who = tags->names.front();
+            if (ev.type == anim::AnimEventType::StateChanged) {
+                AETHER_LOG_INFO("Player", "Anim state: %s %s: %s -> %s", who.c_str(), ev.machine.c_str(), ev.detail.c_str(), ev.name.c_str());
+            } else if (ev.type == anim::AnimEventType::MontageStarted) {
+                AETHER_LOG_INFO("Player", "Anim montage started: %s %s", who.c_str(), ev.name.c_str());
+            } else {
+                AETHER_LOG_INFO("Player", "Anim montage ended: %s %s%s", who.c_str(), ev.name.c_str(), ev.interrupted ? " (interrupted)" : "");
+            }
+            if (runtime_->blueprints) {
+                // Animation events reach the entity's Blueprints like the editor's preview sends them.
+                const char* event = anim::AnimationSystem::BlueprintEventName(ev.type);
+                if (ev.type == anim::AnimEventType::StateChanged) {
+                    const bp::VmValue args[] = {ev.machine, ev.detail, ev.name};
+                    runtime_->blueprints->VM().Dispatch(e.entity, event, args);
+                } else if (ev.type == anim::AnimEventType::MontageStarted) {
+                    const bp::VmValue args[] = {ev.name};
+                    runtime_->blueprints->VM().Dispatch(e.entity, event, args);
+                } else {
+                    const bp::VmValue args[] = {ev.name, ev.interrupted};
+                    runtime_->blueprints->VM().Dispatch(e.entity, event, args);
+                }
+            }
+        }
+        for (; runtime_->animation_problems < system.Problems().size(); ++runtime_->animation_problems) {
+            const std::string& problem = system.Problems()[runtime_->animation_problems];
+            AETHER_LOG_WARN("Player", "Animation: %s", problem.c_str());
+            warnings_.push_back("Animation: " + problem);
+        }
+    };
+    scheduler_.Add(std::move(animation));
     SystemDesc audio;
     audio.name = "Player.Audio";
     audio.phase = SystemPhase::Update;

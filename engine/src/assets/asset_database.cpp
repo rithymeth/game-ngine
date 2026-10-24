@@ -204,6 +204,7 @@ std::string ImporterForExtension(const stdfs::path& file) {
         {".abp", "Blueprint"}, {".aatlas", "SpriteAtlas"}, {".atileset", "Tileset"}, {".atilemap", "Tilemap"}, {".asequence", "Sequence"}, {".astrings", "StringTable"}, {".aeffect", "GameplayEffect"}, {".aability", "GameplayAbility"}, {".aitem", "ItemDefinition"}, {".aquest", "QuestDefinition"}, {".acue", "SoundCue"}, {".wav", "Sound"},    {".ogg", "Sound"},   {".flac", "Sound"},   {".mp3", "Sound"},    {".luau", "Script"},
         {".hlsl", "Shader"},  {".ttf", "Font"},    {".otf", "Font"},
         {".aui", "UILayout"}, {".atheme", "UITheme"}, // UI layouts and themes, shown by WidgetComponent and read by path
+        {".aanim", "AnimGraph"}, {".amontage", "AnimMontage"}, {".ablend", "BlendSpace"}, // animation data, read by path (M8.6)
     };
     auto it = kImporters.find(ToLower(file.extension().string()));
     return it != kImporters.end() ? it->second : std::string();

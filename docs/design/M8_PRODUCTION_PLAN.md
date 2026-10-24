@@ -171,6 +171,59 @@ stable through cook and save/load.
 **Pass:** the complete move set plays in editor and packaged player, transitions and root motion
 remain consistent at varied frame rates, and retargeting reports incompatible skeletons clearly.
 
+**Evidence so far (not passed).**
+
+- *Content.* Kael's production model (`Characters/Kael/Kael_Recon.gltf`) is rigid parts with no
+  skin or clips, so the gate runs on a procedurally generated stand-in:
+  `tools/generate_aether01_kael_rig.py` (stdlib, byte-reproducible) writes `Kael_Rig.gltf` (13
+  bones, one skinned box per bone, embedded buffer) with the slice clips idle, walk, run, sprint,
+  jump, fall, land, aim, fire (shoot), reload, hit, death and interact (walk/run/sprint carry root
+  translation at 2/6/8 m/s), the graph `Kael.aanim` (one `Locomotion` machine, a montage slot),
+  `Kael_ArchiveListen.amontage`, and `Characters/Warden/Warden_Rig.gltf` (other bone names, 1.35x
+  proportions, A-pose arms, an extra jaw bone) as a retarget target. The rig is not drawn: the
+  player still renders the greybox player model, so what is proven is the animation state and
+  pose, not the skinned image.
+- *Engine.* `anim::BuildCharacterFromGltf` builds a skeleton and clips from a loaded glTF scene;
+  the player has an animation host (`Game::Animation()`, system `Player.Animation` after the
+  sequencer) that loads `.aanim`/`.amontage`/rigs from the package by path, runs every `Animator`,
+  dispatches its events to Blueprints and logs `Anim state: <entity> <machine>: <from> -> <to>`
+  and montage start/end markers. `.aanim`/`.amontage`/`.ablend` are known asset types, so
+  `always_cook` folders ship them. `AnimGraphInstance::Blend` reports a machine's crossfade
+  weights. State crossfades now weight root motion (and notifies) by their average over the
+  frame, which made blended root motion frame-rate independent (at 30 Hz it was 0.10 m off the
+  144 Hz result over the walk/run/sprint segment, now 1.8 mm). `ValidateRetarget` reports
+  incompatible skeletons with codes RT001-RT009 (invalid skeleton, unknown bone, nothing mapped,
+  unmapped root, crossed hierarchy, missing required bone, two sources on one bone; warnings for
+  rest-pose bones and unscaled roots); a root at the feet now scales translation by the hips'
+  height. `CharacterMovement` exposes read-only `velocity`/`grounded` to scripts.
+- *Game.* `ThirdPersonController.luau` feeds the graph through the Animator's public methods
+  (Speed, Grounded, Aiming, Dead, Jump/Fire/Reload/Hit/Interact triggers); a new `Aim` action
+  (right mouse, left trigger). It also keeps the frame's movement input for every physics step:
+  at 30 Hz Kael previously moved 0.25 m where 60 and 144 Hz moved 6.2 m, because the second fixed
+  step of a frame had no input.
+- *Tests.* `Kael_GeneratedRigAndGraphAreValid`; `Kael_MoveSetTransitionsMatchAt30_60_144HzAndVariableDt`
+  (14 s script through all 13 states at 30/60/144 Hz and a 30/60/40/120 Hz variable sequence:
+  same 22 transitions, parameter-driven ones within the first frame after the change, clip-end
+  exits after the authored state time within one frame, crossfade weights sum to 1 within 1e-5,
+  poses within 2e-3 rad and root motion within 5 mm of 144 Hz at common times);
+  `Kael_RetargetsOntoTheWardenRigWithBoundedError` (every clip, 21 samples each: bone turn error
+  < 0.02 rad (measured 0.007), bone lengths kept to 1e-4 m, root moved 1.35x);
+  `Kael_RetargetReportsIncompatibleSkeletonsClearly`; on the cooked pak
+  `Aether01_KaelMoveSetPlaysInTheCookedGame` (input reaches idle, aim, interact, fire, reload,
+  jump, fall, land, walk, run, hit, death and back to idle; no warnings),
+  `Aether01_KaelLocomotionTransitionsAtVariedFrameRates` (30/60/144 Hz: same transitions within
+  a frame plus a physics step, same distance) and `Aether01_ArchiveSequencePlaysKaelMontageAndSkipStopsIt`.
+- *Packaged.* `tools/aether01_character_check.py` replays the move-set test's input
+  (`AETHER01_MOVESET_TRACE`) in the standalone `aether_player --headless` on the M8.5 pak and
+  requires every reachable state's marker, ending Death -> Idle (Linux GCC CI step "Packaged
+  character move set (M8.6)"); the M8.7 cinematic check also requires Kael's montage markers.
+  Both pass locally; not yet run on CI.
+- *Open.* Sprint is in the graph but unreachable in game (run speed 6 m/s is the cap); no editor
+  play-through of the move set has been recorded; the rig is generated, not Kael's production
+  mesh, and is not rendered skinned in the player; IK, aim and foot offsets, compression and
+  animation events through cook and save/load are not exercised by the slice; the retarget map
+  is written in the test, not an asset.
+
 ## M8.7 — Audio & Cinematics
 
 Complete sound effects, music, spatial attenuation, buses, mixing, reverb, occlusion, cues and
@@ -181,6 +234,10 @@ survive package cooking.
 **Pass:** one AETHER-01 sequence runs, pauses and skips without losing gameplay state; its
 dialogue, effects and subtitles are synchronized in the standalone build; mixer levels and
 accessibility settings persist.
+Sequence Animation tracks now play in the packaged player: the player's animation host (M8.6)
+turns their keys into `Animator::PlayMontage`/`StopMontage` on the bound entity, and the Archive
+reveal plays Kael's listening montage at 0.5 s and 5 s (`Aether01_ArchiveSequencePlaysKaelMontageAndSkipStopsIt`;
+a skip ends it interrupted; the packaged cinematic check counts its markers).
 The sequencer now exposes Skip on players and sequence components: it applies
 the final pose, releases temporary spawns/camera cuts/fade, stops active audio
 cues and animation montages through host callbacks, and reports a skipped

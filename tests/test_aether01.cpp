@@ -1,4 +1,5 @@
 #include "aether/cook/cooker.h"
+#include "aether/animation/animator.h"
 #include "aether/audio/audio_system.h"
 #include "aether/gameplay/ability_system.h"
 #include "aether/gameplay/attribute_set.h"
@@ -70,7 +71,7 @@ struct ProofRun {
     reflect::Json recorded_events = reflect::Json::array();
 
     explicit ProofRun(const char* name) {
-        record = std::string(name) == "ending";
+        record = std::string(name) == "ending" || std::string(name) == "kael-moves"; // replayed by the packaged checks
         root = fs::temp_directory_path() / "aether01_proof_tests" / (std::string(name) + assets::ToString(assets::NewAssetGuid()));
         fs::create_directories(root);
         const auto& project = GetProofProject();
@@ -781,6 +782,157 @@ AETHER_TEST(Aether01_ArchiveSubtitlesLocalizedPausedAndVoiceBusPersists) {
         f = Sample(run, archive3);
     }
     AETHER_CHECK(f.voice_gain > 0 && f.subtitle.empty());
+}
+
+// --- M8.6: Kael's move set in the cooked game ----------------------------------------------------
+namespace {
+struct AnimLog {
+    f64 time; // game time at the end of the frame
+    std::string from, to;
+};
+// One frame, keeping Kael's state changes and montage events (the AnimationSystem reports only its last Update's).
+void AnimFrame(ProofRun& run, std::vector<AnimLog>& log, std::vector<anim::AnimEvent>* montages = nullptr, f32 dt = 1.0f / 60.0f) {
+    run.Frames(1, dt);
+    anim::AnimationSystem* system = run.game->Animation();
+    AETHER_CHECK(system != nullptr);
+    if (!system) return;
+    for (const anim::EntityAnimEvent& e : system->Events()) {
+        if (e.entity != run.hero) continue;
+        if (e.event.type == anim::AnimEventType::StateChanged) log.push_back({run.game->Stats().time, e.event.detail, e.event.name});
+        else if (montages && (e.event.type == anim::AnimEventType::MontageStarted || e.event.type == anim::AnimEventType::MontageEnded)) montages->push_back(e.event);
+    }
+}
+bool Entered(const std::vector<AnimLog>& log, const std::string& state) {
+    return std::any_of(log.begin(), log.end(), [&](const AnimLog& l) { return l.to == state; });
+}
+} // namespace
+
+// Luau (ThirdPersonController) feeds the Animator's graph (Characters/Kael/Kael.aanim, on the generated rig) through
+// the public component methods; the player's animation host runs it. The slice set the game can reach, from input.
+AETHER_TEST(Aether01_KaelMoveSetPlaysInTheCookedGame) {
+    ProofRun run("kael-moves");
+    AETHER_CHECK(run.package.FindAsset("Characters/Kael/Kael.aanim") != nullptr && run.package.FindAsset("Characters/Kael/Kael_Rig.gltf") != nullptr);
+    AETHER_CHECK(run.game->Warnings().empty());
+    AETHER_CHECK(run.game->Animation() != nullptr && run.game->Animation()->InstanceOf(run.hero) != nullptr);
+    if (!run.game->Animation() || !run.game->Animation()->InstanceOf(run.hero)) return;
+    AETHER_CHECK(run.game->Animation()->Problems().empty());
+    AETHER_CHECK(run.game->Animation()->InstanceOf(run.hero)->CurrentState(20) == "Idle");
+    std::vector<AnimLog> log;
+    auto frames = [&](int n) { for (int i = 0; i < n; ++i) AnimFrame(run, log); };
+    auto hold = [&](input::Key key, int n) { run.game->Input().SetButton(key, true); frames(n); run.game->Input().SetButton(key, false); frames(1); };
+    frames(10);
+    hold(input::Key::MouseRight, 20); // aim
+    frames(20);
+    hold(input::Key::E, 1);           // pick up the rifle
+    frames(60);
+    hold(input::Key::MouseLeft, 1);   // fire
+    frames(30);
+    hold(input::Key::R, 1);           // reload
+    frames(90);
+    hold(input::Key::Space, 1);       // jump, fall, land
+    frames(90);
+    hold(input::Key::W, 60);          // walk up to a run, toward the Scout
+    frames(60);                        // and back down to idle
+    // The Scout reaches Kael: hits, then death; restart brings him back.
+    for (int i = 0; i < 1200 && run.Stat(run.hero, "Health") > 0; ++i) frames(1);
+    frames(30);
+    hold(input::Key::R, 1);
+    frames(30);
+    for (const AnimLog& l : log) std::printf("  %.3f %s -> %s\n", l.time, l.from.c_str(), l.to.c_str());
+    for (const char* state : {"Aim", "Walk", "Run", "Jump", "Fall", "Land", "Interact", "Fire", "Reload", "Hit", "Death", "Idle"}) {
+        AETHER_CHECK(Entered(log, state));
+        if (!Entered(log, state)) std::printf("  never entered %s\n", state);
+    }
+    AETHER_CHECK(!log.empty() && log.back().from == "Death" && log.back().to == "Idle");
+    AETHER_CHECK(run.game->Animation()->Problems().empty() && run.game->Warnings().empty());
+    // The pose is the graph's: skin matrices for every bone of the rig.
+    const std::vector<Mat4>* skin = run.game->Animation()->SkinMatricesOf(run.hero);
+    AETHER_CHECK(skin != nullptr && skin->size() == 13);
+    // The packaged character check (tools/aether01_character_check.py) replays this input in the standalone player.
+    if (const char* path = std::getenv("AETHER01_MOVESET_TRACE")) {
+        std::ofstream trace(path);
+        trace << reflect::Json({{"frames", run.recorded_frames}, {"events", run.recorded_events}}).dump(2);
+        AETHER_CHECK(trace.good());
+    }
+}
+
+// Walking from a standstill and stopping, at 30, 60 and 144 Hz: the same transitions at the same game times, within a
+// frame plus a physics step (the character's speed, which drives the graph, changes on the 60 Hz fixed step).
+AETHER_TEST(Aether01_KaelLocomotionTransitionsAtVariedFrameRates) {
+    ProofRun run("kael-rates");
+    std::vector<std::vector<AnimLog>> runs;
+    std::vector<f32> positions; // where each run stopped
+    for (const f32 hz : {144.0f, 30.0f, 60.0f}) {
+        run.Start();
+        const f32 dt = 1.0f / hz;
+        std::vector<AnimLog> log;
+        const f64 start = run.game->Stats().time;
+        while (run.game->Stats().time - start < 0.5 - 1e-6) AnimFrame(run, log, nullptr, dt);
+        run.game->Input().SetButton(input::Key::W, true);
+        while (run.game->Stats().time - start < 2.0 - 1e-6) AnimFrame(run, log, nullptr, dt);
+        run.game->Input().SetButton(input::Key::W, false);
+        while (run.game->Stats().time - start < 3.5 - 1e-6) AnimFrame(run, log, nullptr, dt);
+        for (AnimLog& l : log) l.time -= start;
+        positions.push_back(run.game->GetWorld().GetComponent<Transform>(run.hero)->position.z);
+        runs.push_back(log);
+        for (const AnimLog& l : log) std::printf("  %3.0f Hz %.4f %s -> %s\n", hz, l.time, l.from.c_str(), l.to.c_str());
+        AETHER_CHECK(log.size() == 4);
+        if (log.size() == 4) {
+            AETHER_CHECK(log[0].to == "Walk" && log[1].to == "Run" && log[2].to == "Walk" && log[3].to == "Idle");
+            AETHER_CHECK(log[0].time > 0.5 && log[0].time < 0.5 + 0.1);  // speed passes 0.5 m/s within the first fixed steps
+            AETHER_CHECK(log[2].time > 2.0 && log[2].time < 2.0 + 0.3);
+        }
+        if (runs.size() > 1 && log.size() == runs[0].size()) {
+            for (usize i = 0; i < log.size(); ++i) AETHER_CHECK(std::fabs(log[i].time - runs[0][i].time) <= dt + 1.0 / 144 + 1.0 / 60 + 1e-4);
+        }
+        // Kael covers the same ground at every rate (within a frame of running at 6 m/s).
+        AETHER_CHECK(positions.back() < -5.0f && std::fabs(positions.back() - positions.front()) <= 6.0f * (dt + 1.0f / 144));
+    }
+}
+
+// The archive reveal (M8.7) plays Kael's listening montage from its Animation track at 0.5 s and 5 s; a skip stops it.
+AETHER_TEST(Aether01_ArchiveSequencePlaysKaelMontageAndSkipStopsIt) {
+    ProofRun run("kael-montage");
+    PlayToArchive(run);
+    const char* montage = "Kael_ArchiveListen"; // the montage asset's name
+    for (const bool skip : {false, true}) {
+        run.Start();
+        AETHER_CHECK(run.Stat(run.hero, "MissionStage") == 5);
+        const Entity archive = FindEntitiesWithTag(run.game->GetWorld(), "ArchiveTerminal").front();
+        std::vector<AnimLog> log;
+        std::vector<anim::AnimEvent> montages;
+        std::vector<f32> started_at;
+        bool skipped = false;
+        for (int frame = 0; frame < 600 && run.Stat(run.hero, "ArchiveComplete") == 0; ++frame) {
+            const bool press = skip && !skipped && run.game->GetWorld().GetComponent<SequenceComponent>(archive)->time >= 1.0f;
+            run.game->Input().SetButton(input::Key::Enter, press);
+            skipped = skipped || press;
+            const usize before = montages.size();
+            AnimFrame(run, log, &montages);
+            for (usize i = before; i < montages.size(); ++i) {
+                if (montages[i].type == anim::AnimEventType::MontageStarted) started_at.push_back(run.game->GetWorld().GetComponent<SequenceComponent>(archive)->time);
+            }
+        }
+        run.game->Input().SetButton(input::Key::Enter, false);
+        for (int i = 0; i < 40; ++i) AnimFrame(run, log, &montages); // a stopped montage blends out
+        anim::AnimGraphInstance* kael = run.game->Animation() ? run.game->Animation()->InstanceOf(run.hero) : nullptr;
+        AETHER_CHECK(kael != nullptr);
+        if (!kael) continue;
+        for (const anim::AnimEvent& e : montages) {
+            AETHER_CHECK(e.name == montage);
+            std::printf("  %s %s %s%s\n", skip ? "skip" : "full", anim::AnimEventTypeName(e.type), e.name.c_str(), e.interrupted ? " (interrupted)" : "");
+        }
+        if (!skip) {
+            AETHER_CHECK(started_at.size() == 2);
+            if (started_at.size() == 2) AETHER_CHECK(std::fabs(started_at[0] - 0.5f) <= 1.0f / 60 + 1e-4f && std::fabs(started_at[1] - 5.0f) <= 1.0f / 60 + 1e-4f);
+        } else {
+            // One start, then the skip ends it interrupted; nothing plays after.
+            AETHER_CHECK(started_at.size() == 1);
+            AETHER_CHECK(std::any_of(montages.begin(), montages.end(), [](const anim::AnimEvent& e) { return e.type == anim::AnimEventType::MontageEnded && e.interrupted; }));
+        }
+        AETHER_CHECK(run.game->Warnings().empty());
+        AETHER_CHECK(!kael->IsPlayingMontage());
+    }
 }
 
 AETHER_TEST(Aether01_WardenStrikeTellDamageAndDodge) {

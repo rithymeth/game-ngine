@@ -52,6 +52,14 @@
           "$v": 1,
           "model": "0900acbe-00cf-4580-aec3-4d84467359f4",
           "asset_path": "models/aether_greybox_player.gltf"
+        },
+        "Animator": {
+          "$v": 1,
+          "graph": "Characters/Kael/Kael.aanim",
+          "skeleton": "Characters/Kael/Kael_Rig.gltf",
+          "root_motion": false,
+          "speed": 1.0,
+          "paused": false
         }
       },
       "guid": "88f690e4-8827-4383-bfb5-520bc345bff0"
