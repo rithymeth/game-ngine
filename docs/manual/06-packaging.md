@@ -105,6 +105,67 @@ A project's **Plugins** tool lists the engine's and the project's plugins and
 turns them on; the cooker records which, and the player starts their runtime
 modules before the first scene loads.
 
+## Game releases, patches and rollback (Linux)
+
+`tools/ship/aether_ship.py` (Python 3 standard library only) packages a cooked
+game for release and installs, patches and rolls it back on the player's
+machine. `tools/ship/build_release.sh --build build --out dist` runs the whole
+AETHER-01 flow: a strict shipping cook, the package, and a sample patch.
+
+    aether_ship.py package --build build --cooked Paks --version 1.0.0 --out dist
+    aether_ship.py install --archive AETHER-01-linux-x64.tar.gz --sums SHA256SUMS.txt --dest ~/Games/AETHER-01
+    ~/Games/AETHER-01/AETHER-01            # the launcher; extra arguments go to aether_player
+    aether_ship.py verify --install ~/Games/AETHER-01
+    aether_ship.py make-patch --from v1/AETHER-01-linux-x64.tar.gz --to v2/AETHER-01-linux-x64.tar.gz --out patch.tar.gz
+    aether_ship.py apply --install ~/Games/AETHER-01 --patch patch.tar.gz --sums SHA256SUMS.txt
+    aether_ship.py rollback --install ~/Games/AETHER-01
+    aether_ship.py check-symbols --install ~/Games/AETHER-01 --symbols AETHER-01-linux-x64-symbols.tar.gz
+
+`package` writes:
+
+- `AETHER-01-linux-x64.tar.gz`: `bin/aether_player` (stripped), the launcher,
+  `Paks/*.apak`, `CookManifest.json`, notices, `licenses/` and `GAME_MANIFEST.json`.
+- `AETHER-01-linux-x64-symbols.tar.gz`: the player's debug info, split with
+  `objcopy --only-keep-debug`, at `.build-id/xx/rest.debug` (the layout gdb's
+  `debug-file-directory` uses), plus `SYMBOLS.json`.
+- `AETHER-01-linux-x64.manifest.json`: the release manifest, with the package and
+  symbols archive hashes, and `SHA256SUMS.txt`.
+
+`GAME_MANIFEST.json` lists the project, version, `build_id` (a hash of every
+installed path and its SHA-256), git revision, engine and minimum engine
+version, the toolchain (from the build's CMake cache), the player's shared
+library dependencies, licenses, the paks in mount order (by name; later paks
+win), symbols with their GNU build-ids, and every file's size and SHA-256.
+Packaging the same build and cook twice gives byte-identical archives (sorted
+entries, fixed owner, mtime from `SOURCE_DATE_EPOCH`). A fresh cook is not yet
+reproducible, because imported sub-assets get new GUIDs when there is no
+`Intermediate` cache.
+
+A patch holds only the files that changed (usually an `aether_cook --patch-of`
+delta pak), the files it removes, and the new manifest. `apply` checks the
+archive against `SHA256SUMS.txt` (when given), the installed files against
+their manifest, that the patch was built from the installed `build_id`, every
+patch file against the new manifest, and the minimum engine version when the
+patch keeps the installed player. It then patches a copy (`<dir>.staging`),
+checks the copy against the new manifest, and switches it in with two
+renames, keeping the old version as `<dir>.previous`. A refused patch leaves
+the install unchanged. `rollback` swaps `<dir>` and `<dir>.previous`, so you
+can run it again to return to the update. If the machine stops between the
+two renames, the next `apply` or `rollback` finishes the switch.
+The player writes saves and settings to the user folder (`--user-dir`, or the
+OS's folder), outside the install. Files inside the install that the manifest
+doesn't list (a `Saved/` folder, for example) are copied over on both apply and
+rollback.
+
+Install the system Vulkan loader (`libvulkan1` on Ubuntu) to run the player,
+including `--headless`. The manifest's `runtime_dependencies` lists the
+libraries the player needs. On a tagged release, the Release job adds the three
+files above to the release's `SHA256SUMS.txt` and provenance attestation. On
+every CI run, the `game-ship` job tests install, launch, patch, rollback and
+refused patches in a bare `ubuntu:24.04` container
+(`tools/ship/ship_smoke.sh`), then assembles the release files without
+publishing them.
+
 ## Verifying an engine download
 
 Each GitHub release lists `SHA256SUMS.txt` and `RELEASE_MANIFEST.json` next to the zips. Every file also carries a

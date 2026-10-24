@@ -243,6 +243,21 @@ jobs:
           name: aether-server-linux-x64
           path: server-dist
           if-no-files-found: error
+      - name: Build the AETHER-01 Linux release candidate, symbols and patch (M8.10)
+        # tools/ship/build_release.sh: strict shipping cook -> v1 package (stripped player + build-id keyed
+        # symbols archive + GAME_MANIFEST.json + SHA256SUMS.txt), a v2 package with a delta pak, and the
+        # v1 -> v2 patch. The game-ship job installs, patches and rolls them back in a bare container.
+        if: matrix.name == 'GCC'
+        run: |
+          version="${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.release_tag || '' }}"
+          tools/ship/build_release.sh --build build --out ship-dist ${version:+--version "$version"}
+      - name: Upload the AETHER-01 Linux release candidate
+        if: matrix.name == 'GCC'
+        uses: actions/upload-artifact@v4
+        with:
+          name: aether01-linux-x64-ship
+          path: ship-dist
+          if-no-files-found: error
       - name: Play AETHER-01 through Vulkan with the validation layer
         # The cooked game in the player under Xvfb, drawn through Vulkan on lavapipe with the Khronos validation layer:
         # any validation error fails the step. Windows plays it on D3D12; this is the scene path on Vulkan (Linux,
@@ -360,6 +375,41 @@ jobs:
           name: dedicated-server-profile
           path: server-run
           if-no-files-found: ignore
+
+  game-ship:
+    name: Game install, patch and rollback (Linux clean container, M8.10)
+    # The AETHER-01 Linux package on a machine with nothing installed but python3 and the player's
+    # Vulkan loader (bare ubuntu:24.04): checksums, manifest and symbol build-id checks, a headless launch
+    # outside any checkout, v1 -> v2 patch, rollback, and refused damaged/tampered patches with v1 intact
+    # (tools/ship/ship_smoke.sh). Then a dry run of the release assembly (nothing is published).
+    needs: [linux]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the release candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: aether01-linux-x64-ship
+          path: ship-dist
+      - name: Install, launch, patch and roll back in a clean container
+        run: |
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE/ship-dist:/dist:ro" \
+            --volume "$GITHUB_WORKSPACE/tools/ship:/ship:ro" \
+            ubuntu:24.04 \
+            sh -euxc 'apt-get update -qq && apt-get install -y -qq --no-install-recommends python3 libvulkan1 > /dev/null && \
+              bash /ship/ship_smoke.sh /dist /tmp/ship'
+      - name: Release assembly dry run (no publish)
+        run: |
+          tools/ship/assemble_release.sh ship-dist/v1 release-dry-run
+          ls -l release-dry-run
+      - name: Upload the dry-run release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: aether01-release-dry-run
+          path: release-dry-run
+          if-no-files-found: error
 
   macos:
     name: macOS (Apple Silicon, MoltenVK)
@@ -1191,7 +1241,7 @@ jobs:
     # A pushed v* tag, or a manual run given a release_tag (which creates
     # the tag on the commit it built).
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
-    needs: [linux, clean-machine-sdk, dedicated-server, macos, windows, windows-package-validation, windows-sign-release, android, android-emulator, ios, ios-simulator]
+    needs: [linux, clean-machine-sdk, dedicated-server, game-ship, macos, windows, windows-package-validation, windows-sign-release, android, android-emulator, ios, ios-simulator]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -1216,6 +1266,11 @@ jobs:
         with:
           name: aether-server-macos-arm64
           path: server-input/macos
+      # M8.10: the AETHER-01 Linux package, its symbols and release manifest.
+      - uses: actions/download-artifact@v4
+        with:
+          name: aether01-linux-x64-ship
+          path: ship-input
       - name: Add the server packages to the release assets and SHA256SUMS
         # Each archive is checked against the SHA256SUMS.txt it was packaged with, copied in, and its line
         # appended to the release SHA256SUMS.txt (normalised to LF, no BOM). The per-package manifests ship
@@ -1231,9 +1286,11 @@ jobs:
           done
           mv sums.txt release-assets/SHA256SUMS.txt
           cat release-assets/SHA256SUMS.txt
+      - name: Add the AETHER-01 Linux package, symbols and manifest (M8.10)
+        run: tools/ship/assemble_release.sh ship-input/v1 release-assets
       - name: Check the archives against SHA256SUMS
         run: |
-          for f in AetherEditor-windows-x64.zip AETHER-01-windows-x64.zip aether-server-linux-x64.tar.gz aether-server-windows-x64.zip aether-server-macos-arm64.tar.gz; do
+          for f in AetherEditor-windows-x64.zip AETHER-01-windows-x64.zip aether-server-linux-x64.tar.gz aether-server-windows-x64.zip aether-server-macos-arm64.tar.gz AETHER-01-linux-x64.tar.gz AETHER-01-linux-x64-symbols.tar.gz AETHER-01-linux-x64.manifest.json; do
             want=$(tr -d '\r\357\273\277' < release-assets/SHA256SUMS.txt | awk -v n="$f" '$2==n {print tolower($1)}')
             have=$(sha256sum "release-assets/$f" | cut -d' ' -f1)
             echo "$f want=$want have=$have"
@@ -1249,6 +1306,9 @@ jobs:
             release-assets/aether-server-linux-x64.tar.gz
             release-assets/aether-server-windows-x64.zip
             release-assets/aether-server-macos-arm64.tar.gz
+            release-assets/AETHER-01-linux-x64.tar.gz
+            release-assets/AETHER-01-linux-x64-symbols.tar.gz
+            release-assets/AETHER-01-linux-x64.manifest.json
             release-assets/RELEASE_MANIFEST.json
             release-assets/SHA256SUMS.txt
       - name: Publish
@@ -1261,6 +1321,9 @@ jobs:
             release-assets/aether-server-windows-x64.zip
             release-assets/aether-server-macos-arm64.tar.gz
             release-assets/aether-server-*.json
+            release-assets/AETHER-01-linux-x64.tar.gz
+            release-assets/AETHER-01-linux-x64-symbols.tar.gz
+            release-assets/AETHER-01-linux-x64.manifest.json
             release-assets/RELEASE_MANIFEST.json
             release-assets/SHA256SUMS.txt
           generate_release_notes: true
