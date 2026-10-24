@@ -181,6 +181,20 @@ jobs:
           grep -E "^import cache: [0-9]+ reused, $models imported$" m85/edited.txt
           grep -E "^texture cache: [0-9]+ reused, 0 cooked$" m85/edited.txt
           [ "$(sha256sum < m85/first/Game.apak)" != "$(sha256sum < m85/edited/Game.apak)" ]
+          # Toolchain and revision the hashes above belong to.
+          echo "engine revision: $(git rev-parse HEAD)"; gcc --version | head -1; cmake --version | head -1
+          # Standalone load: the first pak, copied outside the checkout with the project sources moved away, runs in
+          # the player from an empty working directory (the startup scene, its scripts and kit assets come from the pak).
+          standalone="$RUNNER_TEMP/m85-standalone" && rm -rf "$standalone" && mkdir -p "$standalone/Paks" "$standalone/cwd"
+          cp m85/first/Game.apak "$standalone/Paks/" && mv m85/project "$RUNNER_TEMP/m85-hidden-project"
+          (cd "$standalone/cwd" && "$GITHUB_WORKSPACE/build/player/aether_player" --pak "$standalone/Paks/Game.apak" \
+            --headless --frames 120 --report --user-dir "$standalone/user") 2>&1 | tee m85/standalone.txt
+          grep -F "Loaded Scenes/Main.ascene" m85/standalone.txt
+          grep -E "^\[INFO\] Player: Ran 120 frames" m85/standalone.txt
+          # (a bare "! grep" does not fail a bash -e step mid-script)
+          if grep -E "^\[(ERROR|FATAL)\]" m85/standalone.txt; then exit 1; fi
+          if grep -E "\.(aquest|aability|aeffect): " m85/standalone.txt; then exit 1; fi  # the cooked kit assets all load
+          mv "$RUNNER_TEMP/m85-hidden-project" m85/project
       - name: Package the dedicated server (M8.9)
         # aether_server + aether_netclient + server.json + the cooked AETHER-01 pak as a .tar.gz with SHA256SUMS
         # (tools/package_server.sh); the dedicated-server job below runs it on a clean container.

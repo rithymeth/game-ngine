@@ -233,6 +233,8 @@ void ComputeSkinMatrices(const GltfScene& scene, const GltfAnimation* animation,
 // non-metallic-roughness material extensions (KHR_materials_*, etc), and
 // multiple/non-default scenes.
 [[nodiscard]] bool LoadGltf(const std::string& path, GltfScene& out_scene);
+// As above; on failure `error` (if given) gets the first reason, e.g. a parse error or a missing buffer.
+[[nodiscard]] bool LoadGltf(const std::string& path, GltfScene& out_scene, std::string* error);
 // Parses a self-contained glTF JSON document. External file URIs are refused;
 // data URIs remain available. The input is capped at 32 MiB for untrusted data.
 [[nodiscard]] bool LoadGltfFromMemory(std::span<const u8> json, GltfScene& out_scene);

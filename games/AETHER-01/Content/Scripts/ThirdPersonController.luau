@@ -9,6 +9,11 @@ local Weapons = {
     {capacity = 6, range = 8, cooldown = 0.8, reload = 1.6, damage = 3, shield_damage = 1, cone = 0.82, knockback = 1.5},
 }
 
+-- The mission is the cooked Quests/FirstContact quest (Content/Gameplay/FirstContact.aquest): one
+-- objective per checkpoint stage, so MissionStage is the number of objectives done.
+local Quest = "FirstContact"
+local Objectives = {"recover_rifle", "clear_hangar", "clear_research", "defeat_warden", "access_archive"}
+
 local function BoxObstacles()
     -- Physics is optional in portable CI/player builds. This game keeps its
     -- template fallback movement and skips collider queries in that build.
@@ -104,6 +109,8 @@ function Controller:OnCreate()
     Attributes.Define(self.entity, "Reloading", 0, 0, 1)
     Attributes.Define(self.entity, "DamageFlash", 0, 0, 1)
     Attributes.Define(self.entity, "HitConfirm", 0, 0, 1)
+    -- Firing is the cooked FireWeapon ability; its AmmoCost effect spends one round.
+    Abilities.Grant(self.entity, "FireWeapon")
     for _, enemy in ipairs(world:EntitiesWith("Tags")) do
         if enemy:Has("Tags") and enemy:Has("Transform") then
             for _, tag in ipairs(enemy:Get("Tags").names) do
@@ -157,7 +164,29 @@ function Controller:InitializeMission()
     Attributes.Define(self.entity, "SaveStatus", 0, -1, 1)
     Attributes.Define(self.entity, "ResearchClear", 0, 0, 1)
     self:LoadCheckpoint()
+    self:SyncQuest()
     self:ApplyMission()
+end
+
+-- Rebuild the quest log from the checkpoint stage (new game, restart or checkpoint load).
+function Controller:SyncQuest()
+    self.entity:Remove("QuestLog")
+    Quests.Start(self.entity, Quest)
+    for stage = 1, self.mission_stage do Quests.Progress(self.entity, Quest, Objectives[stage]) end
+end
+
+function Controller:QuestStage()
+    local stage = 0
+    while stage < #Objectives and Quests.GetProgress(self.entity, Quest, Objectives[stage + 1]) > 0 do stage += 1 end
+    return stage
+end
+
+-- Completes the objective for `stage` and moves the mission to where the quest now is.
+function Controller:CompleteObjective(stage)
+    Quests.Progress(self.entity, Quest, Objectives[stage])
+    self.mission_stage = self:QuestStage()
+    self:ApplyMission()
+    self:SaveCheckpoint()
 end
 
 function Controller:ApplyMission()
@@ -229,9 +258,7 @@ function Controller:UpdateMission()
     if self.mission_stage == 0 and Input.IsTriggered("Interact") and self.rifle ~= nil then
         local delta = self.rifle:Get("Transform").position - self.entity:Get("Transform").position
         if vector.magnitude(delta) <= 1.8 then
-            self.mission_stage = 1
-            self:ApplyMission()
-            self:SaveCheckpoint()
+            self:CompleteObjective(1)
         end
     elseif self.mission_stage == 1 then
         local scout_alive = false
@@ -241,9 +268,7 @@ function Controller:UpdateMission()
             end
         end
         if not scout_alive then
-            self.mission_stage = 2
-            self:ApplyMission()
-            self:SaveCheckpoint()
+            self:CompleteObjective(2)
         end
     elseif self.mission_stage == 2 then
         local clear = true
@@ -255,26 +280,20 @@ function Controller:UpdateMission()
         Attributes.SetBase(self.entity, "ResearchClear", clear and 1 or 0)
         if self.arena_gate ~= nil then self.arena_gate:Get("Transform").position = vector.create(0, clear and -10 or 2, -22) end
         if clear and self.entity:Get("Transform").position.z < -22 then
-            self.mission_stage = 3
-            self:ApplyMission()
-            self:SaveCheckpoint()
+            self:CompleteObjective(3)
         end
     elseif self.mission_stage == 3 then
         for _, enemy in ipairs(world:EntitiesWith("Tags")) do
             for _, tag in ipairs(enemy:Get("Tags").names) do
                 if tag == "Warden" and Attributes.Get(enemy, "Health") <= 0 then
-                    self.mission_stage = 4
-                    self:ApplyMission()
-                    self:SaveCheckpoint()
+                    self:CompleteObjective(4)
                 end
             end
         end
     elseif self.mission_stage == 4 and Input.IsTriggered("Interact") then
         local p = self.entity:Get("Transform").position
         if math.abs(p.x) <= 2 and math.abs(p.z + 40) <= 2 then
-            self.mission_stage = 5
-            self:ApplyMission()
-            self:SaveCheckpoint()
+            self:CompleteObjective(5)
         end
     end
 end
@@ -349,6 +368,7 @@ function Controller:OnUpdate(dt)
             self.magazines = {30, 12, 6}
             self.ammo = self.ammo_capacity
             self:SelectWeapon(1, true)
+            self:SyncQuest()
             self:ApplyMission()
         else
             if self.character ~= nil then
@@ -422,9 +442,15 @@ function Controller:OnUpdate(dt)
         end
     end
 
-    if self.mission_stage >= 1 and self.mission_stage < 5 and Input.IsTriggered("Fire") and self.fire_timer == 0 and not self.reloading and self.ammo > 0 then
+    local shot = 0
+    if self.mission_stage >= 1 and self.mission_stage < 5 and Input.IsTriggered("Fire") and self.fire_timer == 0 and not self.reloading then
+        -- Fails (cannot_afford) on an empty magazine; otherwise it has paid AmmoCost and the shot ends at once.
+        shot = Abilities.TryActivate(self.entity, "FireWeapon")
+        if shot > 0 then Abilities.End(shot) end
+    end
+    if shot > 0 then
         self.fire_timer = self.weapon_index == 1 and self.fire_cooldown or weapon.cooldown
-        self.ammo -= 1
+        self.ammo = Attributes.Get(self.entity, "Ammo")
         self.magazines[self.weapon_index] = self.ammo
         Attributes.SetBase(self.entity, "Ammo", self.ammo)
         local fx = -sy * math.cos(self.pitch)
