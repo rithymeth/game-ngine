@@ -294,6 +294,12 @@ public:
     loc::Localization& Localization() { return *localization_; }
     // A cooked asset's path for the game's current language (§29.6): its variant if
     // there is one, else the asset itself.
+    // The dialogue line a playing sequence's Subtitle track shows now (§27, M8.7),
+    // translated into the current language, and its speaker; empty when there is
+    // none or Settings().subtitles is off. Updated by the sequencer each frame;
+    // each change is logged ("Subtitle shown: <key>" / "Subtitle hidden").
+    const std::string& Subtitle() const { return subtitle_text_; }
+    const std::string& SubtitleSpeaker() const { return subtitle_speaker_; }
     std::string LocalizedAsset(const std::string& path) const { return package_.LocalizedPath(path, localization_->Language()); }
     // The player's settings (always there; Load/Save are the host's to call).
     save::SettingsStore<save::GameSettings>& Settings() { return *settings_; }
@@ -306,6 +312,14 @@ public:
     // Tests/headless games render deterministically on Tick; the window host
     // starts device output explicitly. Scene replacement stops the old output.
     audio::AudioSystem* AudioSystem();
+    // The 2D cues sequences are playing now (Audio keys on tracks bound to no
+    // entity, such as dialogue): the cue asset and its handle in
+    // AudioSystem()->Player(). For tests, tools and the debugger.
+    struct SequenceCue {
+        std::string cue;
+        u32 handle = 0; // an audio::CueHandle
+    };
+    std::vector<SequenceCue> SequenceCues() const;
     bool StartAudioOutput(std::string* error = nullptr);
 
 private:
@@ -381,6 +395,10 @@ private:
     // Saving: the world context points into the world, guids and lifecycle
     // above, so it is cleared before any of them goes.
     std::unique_ptr<loc::Localization> localization_;
+    void UpdateSubtitle();
+    const void* subtitle_key_ = nullptr; // the seq::SubtitleKey last translated
+    std::string subtitle_language_, subtitle_text_, subtitle_speaker_;
+    bool subtitle_enabled_ = true;
     u64 localization_listener_ = 0;
     bool localization_loaded_ = false;
     std::vector<std::string> localization_warnings_;
@@ -396,6 +414,7 @@ private:
     platform::PlatformLifecycle* platform_lifecycle_ = &platform_;
     platform::PlatformLifecycle::Handle platform_listener_ = 0;
     bool audio_was_running_ = false; // output was on when the game was suspended
+    bool pause_stopped_audio_ = false; // the pause menu stopped device output
     bool skip_next_dt_ = false;      // the first Tick after a resume
     u32 memory_pressure_events_ = 0;
     f32 ui_pointer_scale_x_ = 1.0f, ui_pointer_scale_y_ = 1.0f;

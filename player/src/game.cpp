@@ -547,6 +547,35 @@ void Game::LoadInputAssets() {
     ActivateInputContexts();
 }
 
+std::vector<Game::SequenceCue> Game::SequenceCues() const {
+    std::vector<SequenceCue> out;
+    if (!runtime_ || !runtime_->audio) return out;
+    for (const auto& [key, handle] : runtime_->sequence_audio) {
+        if (runtime_->audio->Player().IsPlaying(handle)) out.push_back({key.second, handle});
+    }
+    return out;
+}
+
+void Game::UpdateSubtitle() {
+    const seq::SubtitleKey* key = runtime_ && runtime_->sequences ? runtime_->sequences->Subtitle() : nullptr;
+    const bool enabled = settings_->Get().subtitles;
+    if (key == subtitle_key_ && enabled == subtitle_enabled_ && localization_->Language() == subtitle_language_) return;
+    if (key != subtitle_key_) {
+        if (key) AETHER_LOG_INFO("Player", "Subtitle shown: %s", key->text.c_str());
+        else AETHER_LOG_INFO("Player", "Subtitle hidden");
+    }
+    subtitle_key_ = key;
+    subtitle_enabled_ = enabled;
+    subtitle_language_ = localization_->Language();
+    if (key && enabled) {
+        subtitle_text_ = localization_->Text(key->text, key->text);
+        subtitle_speaker_ = key->speaker.empty() ? std::string() : localization_->Text(key->speaker, key->speaker);
+    } else {
+        subtitle_text_.clear();
+        subtitle_speaker_.clear();
+    }
+}
+
 void Game::LoadLocalization() {
     if (localization_loaded_) return;
     localization_loaded_ = true;
@@ -848,6 +877,9 @@ void Game::EndPlay() {
         if (runtime_->audio) runtime_->audio->StopAll();
         runtime_->sequence_audio.clear();
     }
+    subtitle_key_ = nullptr; // the sequences it points into go with the runtime
+    subtitle_text_.clear();
+    subtitle_speaker_.clear();
 }
 
 
@@ -998,12 +1030,20 @@ void Game::BuildFrame() {
     sequencer.run = [this](World&, const FrameContext& frame) {
         if (!runtime_ || !runtime_->sequences) return;
         runtime_->sequences->Update(frame.dt);
-        if (!runtime_->blueprints) return;
+        UpdateSubtitle();
         for (const seq::SequenceEvent& e : runtime_->sequences->Events()) {
+            if (e.kind == seq::SequenceEvent::Kind::Finished) {
+                AETHER_LOG_INFO("Player", "Sequence %s: %s", e.skipped ? "skipped" : "finished", e.name.c_str());
+            }
+        }
+        for (const seq::SequenceEvent& e : runtime_->sequences->Events()) {
+            // Audio keys play without Blueprints; markers and completion are Blueprint events.
             if (e.kind == seq::SequenceEvent::Kind::Marker) {
+                if (!runtime_->blueprints) continue;
                 const bp::VmValue args[] = {e.name, e.payload};
                 runtime_->blueprints->VM().Dispatch(e.entity, seq::SequenceSystem::kMarkerEvent, args);
             } else if (e.kind == seq::SequenceEvent::Kind::Finished) {
+                if (!runtime_->blueprints) continue;
                 const bp::VmValue args[] = {e.name};
                 runtime_->blueprints->VM().Dispatch(e.entity, seq::SequenceSystem::kFinishedEvent, args);
             }
@@ -1023,7 +1063,9 @@ void Game::BuildFrame() {
                     const auto key = std::make_pair(e.entity.index, e.name);
                     auto& handle = runtime_->sequence_audio[key];
                     if (e.payload == "stop" || e.payload == "fade_out") {
-                        runtime_->audio->Player().Stop(handle, e.payload == "fade_out" ? e.fade : 0.0f);
+                        if (runtime_->audio->Player().Stop(handle, e.payload == "fade_out" ? e.fade : 0.0f)) {
+                            AETHER_LOG_INFO("Player", "Sequence cue stopped: %s", e.name.c_str());
+                        }
                     } else {
                         const auto cue = runtime_->cues.find(e.name);
                         if (cue != runtime_->cues.end()) {
@@ -1033,6 +1075,7 @@ void Game::BuildFrame() {
                             params.volume_db = e.value;
                             params.fade_in = e.payload == "fade_in" ? e.fade : 0.0f;
                             handle = runtime_->audio->Player().Play(cue->second, params);
+                            AETHER_LOG_INFO("Player", "Sequence cue started: %s", e.name.c_str());
                         } else warnings_.push_back("Sequence audio cue missing: " + e.name);
                     }
                 }
@@ -1354,7 +1397,19 @@ void Game::UpdateProofMenu() {
             }
         }
     }
-    if (previous_menu != proof_menu_) paused_ = proof_menu_ != 0;
+    if (previous_menu != proof_menu_ && paused_ != (proof_menu_ != 0)) {
+        paused_ = proof_menu_ != 0;
+        // Pausing holds the world (and its sequences) still; device output stops too so
+        // dialogue doesn't run on ahead of its subtitles. Headless audio only renders on Tick.
+        if (paused_ && runtime_ && runtime_->output && runtime_->output->Running()) {
+            runtime_->output->Stop();
+            pause_stopped_audio_ = true;
+        } else if (!paused_ && pause_stopped_audio_) {
+            pause_stopped_audio_ = false;
+            std::string error;
+            if (runtime_ && runtime_->output && !runtime_->output->Start(480, &error)) AETHER_LOG_WARN("Player", "Audio did not restart after the pause menu: %s", error.c_str());
+        }
+    }
     if (previous_menu != 0 && proof_menu_ == 0 && !proof_load_input_ && !proof_new_input_) {
         // Consume the menu confirmation/back edge before gameplay reads it.
         // The same gamepad buttons also bind jump and interaction.

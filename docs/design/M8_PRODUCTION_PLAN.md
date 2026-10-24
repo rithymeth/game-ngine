@@ -186,8 +186,61 @@ the final pose, releases temporary spawns/camera cuts/fade, stops active audio
 cues and animation montages through host callbacks, and reports a skipped
 completion without firing intermediate cue keys. The packaged player now
 handles audio sequence events and the AETHER-01 prototype includes an Archive
-sequence; animation playback, localized dialogue/subtitles and a packaged
-skip/playthrough acceptance run remain open.
+sequence.
+
+**Evidence so far (not passed).**
+
+- *Engine.* Sequences have a Subtitle track (`SubtitleKey`: time, duration,
+  localization key, speaker; JSON `"type": "subtitle"`, validation SQ024/SQ025).
+  What it shows is a pure function of the playhead, nested sequences included,
+  and Stop/Skip clear it (`SequencePlayer::Subtitle`, `SequenceSystem::Subtitle`,
+  `SequenceComponent::GetSubtitle`). The player translates the line through the
+  cooked `.astrings` tables in the current language (`Game::Subtitle`,
+  `SubtitleSpeaker`), draws it over the HUD or the game's UI, and hides it when
+  the new `GameSettings::subtitles` accessibility setting is off. It logs markers:
+  `Subtitle shown: <key>`, `Subtitle hidden`, `Sequence cue started/stopped: <cue>`,
+  `Sequence finished/skipped: <sequence>`. Sequence audio keys now play even in
+  games without Blueprints. `Game::SequenceCues` lists the 2D cues sequences are
+  playing. The pause menu stops device audio output, so a paused cinematic's voice
+  can't run ahead of its subtitle.
+- *Content.* `Sequences/Archive.asequence` has three AETHER dialogue lines: Voice-bus
+  cues `Audio/dialogue_archive_{1,2,3}.acue` (placeholder voices from
+  `tools/generate_aether01_audio.py`) and a subtitle track keyed to
+  `Text/Dialogue.astrings` (en, fr). `MissionPresentation.luau` skips the reveal on
+  the new `SkipCinematic` action (Enter, gamepad Back) and records `ArchiveComplete`
+  (1 played through, 2 skipped).
+- *Tests (cooked pak, headless).* `Aether01_ArchiveDialogueSyncAtFixedRatesAndSkip`
+  plays the reveal at fixed 30, 60 and 144 Hz frame steps. In each run, every line's
+  voice and subtitle start on the same frame, within one frame after the authored
+  time, and the subtitle hides within one frame after time + duration. The camera
+  track moves the view. The test then skips at 2.9 s, 1.23 s and 5.71 s. Each skip
+  lands on the next frame, leaves no dialogue voice, subtitle or archive cue
+  playing, starts no later line (3 s more are checked), and ends at the archive
+  ending (stage 5, `ArchiveTime` 8, `ArchiveComplete` 2, health kept).
+  `Aether01_ArchiveSubtitlesLocalizedPausedAndVoiceBusPersists` checks the following:
+  - The pause menu holds the playhead, subtitle and voice.
+  - Master, music, SFX and voice volumes, the language (fr) and the subtitles
+    setting survive a restart and reach the mixer buses.
+  - The dialogue voice's gain follows Voice x Master (0.5 x 0.8 of the reference).
+  - With subtitles off the voice plays and no line shows.
+  - French subtitles come from the cooked table.
+
+  The `SequenceSubtitle_*` tests cover the format and the player/system behaviour.
+- *Packaged run.* `tools/aether01_cinematic_check.py` replays the recorded
+  playthrough (`AETHER01_INPUT_TRACE`) with the standalone `aether_player
+  --headless`, once to the end and once with Enter pressed during the first line,
+  and checks the log markers and the `--report` state. The Linux GCC CI job runs it
+  on the M8.5 standalone pak. The Windows packaged playthrough now also asserts the
+  dialogue markers and `ArchiveComplete`. Both pass locally against a fresh
+  development cook. Neither has run on CI yet.
+
+**Still open.** Animation keys still have no host in the player, so no animation
+plays from a sequence. VFX tracks are missing. The editor sequencer panel can't
+author Subtitle tracks yet, though MCP `seq_sample` reports them. The dialogue
+audio is a placeholder, not recorded voice. There is no localized voice-over
+(only subtitles are localized). Accessibility covers the subtitle toggle only, with
+no size or background options. The pause-menu audio stop only matters with device
+output, so headless tests can't check it. These checks have not yet passed on CI.
 
 ## M8.8 — AI & World Systems
 

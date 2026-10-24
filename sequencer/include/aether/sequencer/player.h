@@ -113,6 +113,13 @@ public:
     // its colour). `on_fade` is called when it changes. Stop clears it.
     const FadeState& Fade() const { return fade_; }
     std::function<void(const FadeState&)> on_fade;
+
+    // Subtitle tracks: the line on screen at the playhead (the latest-starting
+    // key whose [time, time + duration) holds it, among the unmuted Subtitle
+    // tracks, then the sequences playing inside this one), or null. Like the
+    // fade it follows the playhead; Stop and Skip clear it. The key lives in
+    // the sequence.
+    const SubtitleKey* Subtitle() const { return subtitle_; }
     static constexpr int kMaxSubsequenceDepth = 4;
 
     // What went wrong binding or applying, each reported once: a missing
@@ -171,6 +178,7 @@ private:
     std::vector<std::string> path_; // the sequences this one is nested in, outermost first, then itself (when known)
     FadeState fade_;
     FadeState pending_fade_;
+    const SubtitleKey* subtitle_ = nullptr;
     bool final_pose_ = false; // evaluating a child's first or last pose as it leaves its range: no spawns, cuts or hooks
     std::vector<Target> targets_;
     std::vector<std::string> problems_;
