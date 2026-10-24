@@ -146,7 +146,7 @@ sources and settings; a focused regression confirms that changing one texture
 recooks only that texture. This is a partial incremental-cook result, not the
 full dependent-asset rebuild gate.
 
-**Status (partial; awaiting CI):** every pass criterion now has evidence. The Linux GCC step
+**Status: pass** (green on CI in PR #691 on Linux, macOS, Windows, Android and iOS). The Linux GCC step
 "Content pipeline evidence (M8.5)" cooks AETHER-01 twice and checks the paks are byte-identical,
 with no imports and no texture cooks the second time. It then edits `test_cube.bin` and checks that
 exactly the 22 models that use it are re-imported. The step logs the sha256s with the git revision
