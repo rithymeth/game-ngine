@@ -26,6 +26,8 @@ struct ServerConfig {
     u32 max_players = 8;
     std::string password;            // empty: none. AETHER_SERVER_PASSWORD overrides the file.
     u32 build_id = 1;                // clients must send the same build to join
+    std::string token_secret;        // join-token issuer secret; empty: no tokens. AETHER_SERVER_TOKEN_SECRET overrides.
+    bool require_token = true;       // with a token_secret: joins without a valid token are refused
     std::string scene;               // empty: the package's startup scene
     std::vector<std::string> paks;   // empty: Paks/ beside the executable
     f64 tick_rate = 30.0;            // fixed simulation + network ticks per second
@@ -68,6 +70,7 @@ struct ServerStats {
     u64 bytes_sent = 0;
     u64 bytes_received = 0;
     usize replicated_entities = 0;
+    net::HostSecurityStats security; // drops: rate limited, bad cookies, replays, bad MACs
 };
 
 class DedicatedServer {
@@ -110,6 +113,7 @@ struct NetClientConfig {
     net::Address server = net::Address::Loopback(7777);
     std::string name = "netclient";
     std::string password;
+    std::string token;        // a join token (aether_server --issue-token)
     u32 build_id = 1;
     f64 duration = 5.0;       // seconds of replicated play after joining
     f64 join_timeout = 5.0;
