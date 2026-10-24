@@ -14,6 +14,7 @@
 #include "aether/reflection/serialize.h"
 
 #include <algorithm>
+#include <cstring>
 #include <deque>
 #include <set>
 
@@ -47,6 +48,35 @@ bool ParseConfiguration(const std::string& name, BuildConfiguration& out) {
 // --- Editor-only data ---------------------------------------------------------
 
 namespace {
+
+// A sound is decoded by the audio module at run time, which the cooker does not link: check the container
+// here so a broken file is reported at cook time. Empty if the header looks right, else the reason.
+std::string CheckSoundHeader(const std::string& path, const std::vector<u8>& bytes) {
+    const auto starts = [&](const char* magic, usize at = 0) {
+        const usize n = std::char_traits<char>::length(magic);
+        return bytes.size() >= at + n && std::equal(magic, magic + n, bytes.begin() + static_cast<std::ptrdiff_t>(at));
+    };
+    const auto ext = [&](const char* e) { return path.size() >= std::strlen(e) && path.compare(path.size() - std::strlen(e), std::string::npos, e) == 0; };
+    if (ext(".wav")) {
+        if (!starts("RIFF") || !starts("WAVE", 8)) return "not a RIFF/WAVE file";
+        bool fmt = false, data = false;
+        for (usize at = 12; at + 8 <= bytes.size();) {
+            const u32 size = static_cast<u32>(bytes[at + 4]) | static_cast<u32>(bytes[at + 5]) << 8 | static_cast<u32>(bytes[at + 6]) << 16 | static_cast<u32>(bytes[at + 7]) << 24;
+            fmt |= starts("fmt ", at);
+            data |= starts("data", at);
+            at += 8 + static_cast<usize>(size) + (size & 1u);
+        }
+        if (!fmt || !data) return "the WAVE file has no fmt or data chunk (truncated or corrupt)";
+    } else if (ext(".ogg")) {
+        if (!starts("OggS")) return "not an Ogg file";
+    } else if (ext(".flac")) {
+        if (!starts("fLaC")) return "not a FLAC file";
+    } else if (ext(".mp3")) {
+        const bool frame = bytes.size() >= 2 && bytes[0] == 0xFF && (bytes[1] & 0xE0) == 0xE0;
+        if (!starts("ID3") && !frame) return "not an MP3 file (no ID3 tag or frame sync)";
+    }
+    return {};
+}
 
 usize StripValue(json& value, const reflect::TypeInfo& type) {
     usize removed = 0;
@@ -268,6 +298,10 @@ CookReport Cook(const CookOptions& options) {
         std::vector<u8> bytes;
         if (!fs::ReadFileBytes(database.SourcePath(guid).string(), bytes)) {
             return fail("Can't read " + record.path);
+        }
+        if (record.importer == "Sound") {
+            const std::string problem = CheckSoundHeader(record.path, bytes);
+            if (!problem.empty()) report.warnings.push_back(record.path + ": " + problem + "; the game can't play it");
         }
         if (record.importer == "Scene" || record.importer == "Prefab") {
             json document = json::parse(bytes.begin(), bytes.end(), nullptr, false);

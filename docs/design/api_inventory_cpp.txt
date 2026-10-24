@@ -1183,6 +1183,7 @@
   Mat4 LocalTransform()const
   Quaternion rotation=Quaternion::Identity()
   [[nodiscard]]bool LoadGltf(const std::string&path,GltfScene&out_scene)
+  [[nodiscard]]bool LoadGltf(const std::string&path,GltfScene&out_scene,std::string*error)
   [[nodiscard]]bool LoadGltfFromMemory(std::span<const u8>json,GltfScene&out_scene)
   usize ComponentsPerKey()const
   void ComputeSkinMatrices(const GltfAnimationPose&pose,const GltfSkin&skin,std::vector<Mat4>&out_matrices,i32 mesh_node_index)

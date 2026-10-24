@@ -1,0 +1,12 @@
+{
+  "name": "FirstContact",
+  "title": "First Contact",
+  "description": "Arm up, clear HELIOS-7 and reach the archive.",
+  "objectives": [
+    {"id": "recover_rifle", "kind": "flag", "text": "Recover the AEGIS rifle"},
+    {"id": "clear_hangar", "kind": "flag", "text": "Defeat the Scout"},
+    {"id": "clear_research", "kind": "flag", "text": "Clear the research bay and enter the arena"},
+    {"id": "defeat_warden", "kind": "flag", "text": "Defeat the Warden"},
+    {"id": "access_archive", "kind": "flag", "text": "Access the archive"}
+  ]
+}

@@ -5,7 +5,8 @@
     "Input/",
     "fonts/",
     "Audio/",
-    "Sequences/"
+    "Sequences/",
+    "Gameplay/"
   ],
   "collision_matrix": [],
   "default_quality": "High",

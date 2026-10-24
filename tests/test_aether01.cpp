@@ -1,6 +1,9 @@
 #include "aether/cook/cooker.h"
 #include "aether/audio/audio_system.h"
+#include "aether/gameplay/ability_system.h"
 #include "aether/gameplay/attribute_set.h"
+#include "aether/gameplay/attribute_system.h"
+#include "aether/quests/quest_system.h"
 #include "aether/player/game.h"
 #include "aether/scene/components.h"
 #include "aether/scene/gameplay.h"
@@ -201,6 +204,44 @@ AETHER_TEST(Aether01_CookedCombatAmmoReloadAndScoutDefeat) {
     run.Frames(70);
     AETHER_CHECK(run.Stat(run.hero, "Ammo") == 30);
     AETHER_CHECK(run.Stat(run.hero, "Reloading") == 0);
+}
+
+// M8.4: the mission and the shot are authored as cooked kit assets (Content/Gameplay/*.aquest, *.aability,
+// *.aeffect) driven from Luau through the public Quests / Abilities / Effects APIs, not game-specific engine code.
+AETHER_TEST(Aether01_CookedQuestAndFireAbilityUseThePublicKits) {
+    ProofRun run("kits");
+    AETHER_CHECK(run.package.FindAsset("Gameplay/FirstContact.aquest") != nullptr);
+    AETHER_CHECK(run.package.FindAsset("Gameplay/FireWeapon.aability") != nullptr);
+    AETHER_CHECK(run.package.FindAsset("Gameplay/AmmoCost.aeffect") != nullptr);
+    AETHER_CHECK(run.game->Warnings().empty());
+    quest::QuestSystem* quests = quest::QuestSystem::Active();
+    gas::AbilitySystem* abilities = gas::AbilitySystem::Active();
+    AETHER_CHECK(quests != nullptr && abilities != nullptr);
+    if (!quests || !abilities) return;
+    AETHER_CHECK(quests->Title("FirstContact") == "First Contact");
+    AETHER_CHECK(quests->IsActive(run.hero, "FirstContact") && quests->GetProgress(run.hero, "FirstContact", "recover_rifle") == 0);
+    AETHER_CHECK(abilities->IsGranted(run.hero, "FireWeapon"));
+    run.Tap(input::Key::E);
+    AETHER_CHECK(quests->GetProgress(run.hero, "FirstContact", "recover_rifle") == 1 && run.Stat(run.hero, "MissionStage") == 1);
+    run.Tap(input::Key::MouseLeft); // FireWeapon pays AmmoCost
+    AETHER_CHECK(run.Stat(run.hero, "Ammo") == 29 && run.Stat(run.scout, "Health") == 2);
+    for (int shot = 0; shot < 3; ++shot) { run.Frames(15); run.Tap(input::Key::MouseLeft); }
+    run.Frames(2);
+    AETHER_CHECK(quests->GetProgress(run.hero, "FirstContact", "clear_hangar") == 1 && run.Stat(run.hero, "MissionStage") == 2);
+    AETHER_CHECK(quests->IsActive(run.hero, "FirstContact"));
+    // An empty magazine cannot afford the ability: the trigger does nothing.
+    run.Frames(15);
+    gas::AttributeSystem::Active()->SetBase(run.hero, "Ammo", 0);
+    AETHER_CHECK(abilities->CanActivate(run.hero, "FireWeapon") == gas::FailReason::CannotAfford);
+    run.Tap(input::Key::MouseLeft);
+    AETHER_CHECK(run.Stat(run.hero, "Ammo") == 0 && !abilities->IsActive(run.hero, "FireWeapon"));
+    // Reopening from the checkpoint rebuilds the quest log from the saved stage.
+    run.Start();
+    quests = quest::QuestSystem::Active();
+    AETHER_CHECK(quests != nullptr && quests->IsActive(run.hero, "FirstContact"));
+    if (!quests) return;
+    AETHER_CHECK(quests->GetProgress(run.hero, "FirstContact", "clear_hangar") == 1 && quests->GetProgress(run.hero, "FirstContact", "clear_research") == 0);
+    AETHER_CHECK(run.Stat(run.hero, "MissionStage") == 2);
 }
 
 AETHER_TEST(Aether01_CookedContactDeathAndRestart) {
