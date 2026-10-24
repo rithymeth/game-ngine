@@ -4283,6 +4283,7 @@
   type struct HeldControl
   type struct RebindableInput
   type struct RenderSize
+  type struct SequenceCue
   FrameContext Tick(f32 dt)
   Game&operator=(const Game&)=delete
   Game(const Game&)=delete
@@ -4315,6 +4316,8 @@
   const pak::VirtualFileSystem&Files()const
   const seq::LevelSequence*FindSequence(const std::string&path)
   const std::string&SceneName()const
+  const std::string&Subtitle()const
+  const std::string&SubtitleSpeaker()const
   const std::vector<std::string>&Dlcs()const
   const std::vector<std::string>&Warnings()const
   explicit Game(GamePackage&package)
@@ -4337,6 +4340,7 @@
   std::string UiImagePath(u32 id)const
   std::vector<AiDebugInfo>AiDebug()const
   std::vector<RebindableInput>RebindableInputs()const
+  std::vector<SequenceCue>SequenceCues()const
   std::vector<std::string>BlueprintErrors()const
   std::vector<std::string>LoadSettings(const SettingsTargets&targets)
   std::vector<std::string>ScriptErrors()const
@@ -4368,6 +4372,7 @@
   void SetUserPaths(const UserPaths&paths)
   void StartRuntime()
   void UpdateProofMenu()
+  void UpdateSubtitle()
   void UpdateUiPointers(f32 dt)
   void UsePlatformLifecycle(platform::PlatformLifecycle&lifecycle)
   void WatchSettingsLanguage()
@@ -4840,6 +4845,7 @@
   ),AETHER_FIELD(language,Field_EditAnywhere,
   ),AETHER_FIELD(music,Field_EditAnywhere,
   ),AETHER_FIELD(sfx,Field_EditAnywhere,
+  ),AETHER_FIELD(subtitles,Field_EditAnywhere,
   ),AETHER_FIELD(voice,Field_EditAnywhere,
   ),AETHER_FIELD(width,Field_EditAnywhere,
   AETHER_REFLECT(aether::save::GameSettings,1,AETHER_FIELD(quality,Field_EditAnywhere,
@@ -5104,6 +5110,7 @@
   bool ResolveTrack(usize index)
   bool operator==(const FadeState&o)const
   const FadeState&Fade()const
+  const SubtitleKey*Subtitle()const
   const std::vector<std::string>&Problems()const
   f32 Duration()const
   f32 Rate()const
@@ -5155,6 +5162,7 @@
   type struct RotationKey
   type struct SpawnKey
   type struct SubKey
+  type struct SubtitleKey
   type struct Track
   Quaternion EvaluateRotation(const std::vector<RotationKey>&keys,f32 time)
   Quaternion Slerp(const Quaternion&a,const Quaternion&b,f32 t)
@@ -5180,7 +5188,7 @@
   ),AETHER_FIELD(auto_play,Field_EditAnywhere,
   ),AETHER_FIELD(destroy_when_finished,Field_EditAnywhere),AETHER_METHOD(Play,Fn_BlueprintCallable),AETHER_METHOD(Pause,Fn_BlueprintCallable),AETHER_METHOD(Stop,Fn_BlueprintCallable),AETHER_METHOD(Skip,Fn_BlueprintCallable),AETHER_METHOD(SetTime,Fn_BlueprintCallable,
   ),AETHER_FIELD(loop,Field_EditAnywhere),AETHER_FIELD(rate,Field_EditAnywhere,
-  ),AETHER_METHOD(IsPlaying,Fn_BlueprintCallable | Fn_Pure),AETHER_METHOD(GetTime,Fn_BlueprintCallable | Fn_Pure))AETHER_REFLECT(aether::Sequencer,1,AETHER_METHOD(PlaySequence,Fn_BlueprintCallable,
+  ),AETHER_METHOD(IsPlaying,Fn_BlueprintCallable | Fn_Pure),AETHER_METHOD(GetTime,Fn_BlueprintCallable | Fn_Pure),AETHER_METHOD(GetSubtitle,Fn_BlueprintCallable | Fn_Pure))AETHER_REFLECT(aether::Sequencer,1,AETHER_METHOD(PlaySequence,Fn_BlueprintCallable,
   ),AETHER_METHOD(SetLoop,Fn_BlueprintCallable,
   ),AETHER_METHOD(SetRate,Fn_BlueprintCallable,
   ),AETHER_METHOD(StopAll,Fn_BlueprintCallable),AETHER_METHOD(SkipAll,Fn_BlueprintCallable))
@@ -5191,6 +5199,7 @@
   SequenceSystem(const SequenceSystem&)=delete
   bool IsPlaying()const
   const FadeState&Fade()const
+  const SubtitleKey*Subtitle(Entity*owner=nullptr)const
   const std::vector<SequenceEvent>&Events()const
   const std::vector<std::string>&Problems()const
   f32 GetTime()const
@@ -5199,6 +5208,7 @@
   static void PlaySequence(const std::string&sequence,bool loop)
   static void SkipAll()
   static void StopAll()
+  std::string GetSubtitle()const
   using SequenceSpawner=std::function<Entity(const Track&,Entity parent,const SpawnKey&)>
   void MakeActive()
   void Pause()
