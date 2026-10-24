@@ -833,6 +833,13 @@ jobs:
       - name: Build x86_64 debug APK
         working-directory: platforms/android
         run: gradle --no-daemon --stacktrace :app:assembleDebug -Paether.abis=x86_64 "-Paether.assets=${{ github.workspace }}/game-assets"
+      - name: Start host memory monitor
+        # The emulator process has died mid-scene with no trace (PRs #678, #679, #687). This samples host memory and
+        # the emulator's RSS every 5 s into the workspace so a host OOM kill shows up in the artifact.
+        run: |
+          mkdir -p emulator-diagnostics
+          nohup sh -c 'while true; do date -u +%T; free -m | sed -n 2,3p; ps -C qemu-system-x86_64-headless,qemu-system-x86_64 -o pid=,rss=,vsz= 2>/dev/null; sleep 5; done' > emulator-diagnostics/host-memory.log 2>&1 &
+          echo $! > host-memory-monitor.pid
       - name: Run on the emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -844,7 +851,8 @@ jobs:
           # host-side SwiftShader; with the default AVD memory the emulator process died mid-upload.
           ram-size: 4096M
           heap-size: 512M
-          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+          # -show-kernel puts the guest kernel console (lowmemorykiller, panics) on the emulator's stdout in the job log.
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -show-kernel
           script: |
             adb install -r platforms/android/app/build/outputs/apk/debug/app-debug.apk
             adb logcat -c
@@ -870,17 +878,35 @@ jobs:
             grep -q "AETHER_LIFECYCLE Suspend" emulator-lifecycle.txt
             [ "$(grep -c 'AETHER_LIFECYCLE Resume' emulator-lifecycle.txt)" -ge 2 ]
             [ "$(grep -c 'AETHER_RENDER PRESENTED' emulator-lifecycle.txt)" -ge 2 ]
+            adb shell dumpsys meminfo com.aether.engine > emulator-diagnostics/meminfo-before-scene.txt 2>&1 || true
+            adb shell cat /proc/meminfo > emulator-diagnostics/guest-proc-meminfo.txt 2>&1 || true
+            adb logcat -d -b crash > emulator-diagnostics/logcat-crash-before-scene.txt 2>&1 || true
             adb shell am force-stop com.aether.engine
+            for i in $(seq 1 30); do [ -z "$(adb shell pidof com.aether.engine)" ] && break; sleep 1; done; echo "previous app pid after force-stop: '$(adb shell pidof com.aether.engine)'"
+            sleep 3
+            adb shell dumpsys meminfo > emulator-diagnostics/meminfo-system-before-scene.txt 2>&1 || true
             adb logcat -c
             sh -c 'adb logcat -s Aether:* AetherEngine:* AndroidRuntime:* DEBUG:* libc:* vulkan:* > emulator-scene-stream.txt 2>&1 &'
             adb shell am start -W -n com.aether.engine/.MainActivity --es mode scene
-            timeout 150 sh -c 'until grep -q "AETHER_SCENE PRESENTED\|AETHER_SCENE FAIL" emulator-scene-stream.txt; do sleep 2; done' || { echo "no AETHER_SCENE result; device state: $(timeout 10 adb get-state 2>&1)"; cat emulator-scene-stream.txt; exit 1; }
+            timeout 150 sh -c 'until grep -q "AETHER_SCENE PRESENTED\|AETHER_SCENE FAIL" emulator-scene-stream.txt; do sleep 2; done' || { echo "no AETHER_SCENE result; device state: $(timeout 10 adb get-state 2>&1)"; cat emulator-scene-stream.txt; timeout 20 adb logcat -d -b crash > emulator-diagnostics/logcat-crash-scene.txt 2>&1; free -m; sudo dmesg | grep -i -E 'killed process|oom|out of memory' ; tail -n 40 emulator-diagnostics/host-memory.log; exit 1; }
             timeout 20 adb exec-out screencap > emulator-scene.raw
             cp emulator-scene-stream.txt emulator-scene.txt
             cat emulator-scene.txt
             grep -q "AETHER_SCENE LOADED" emulator-scene.txt
             grep -q "AETHER_SCENE PRESENTED" emulator-scene.txt
             python3 tools/android/check_screen.py emulator-scene.raw --scene
+      - name: Collect emulator crash diagnostics
+        if: always()
+        # The upload step cannot glob outside the workspace reliably, so the emulator's crash DBs/minidumps and the
+        # host's OOM-killer lines are copied into emulator-diagnostics/ first.
+        run: |
+          mkdir -p emulator-diagnostics
+          [ -f host-memory-monitor.pid ] && kill "$(cat host-memory-monitor.pid)" || true
+          find /tmp/android-* "${TMPDIR:-/tmp}"/android-* ~/.android ~/.config/Google 2>/dev/null \
+            \( -name 'emu-crash-*' -o -name '*.dmp' -o -name '*crash*.db' \) -print -exec cp -r {} emulator-diagnostics/ \; || true
+          free -m | tee emulator-diagnostics/host-free.txt
+          sudo dmesg -T | grep -i -E 'killed process|oom|out of memory|segfault|qemu' | tee emulator-diagnostics/host-dmesg-oom.txt || true
+          ls -la emulator-diagnostics
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -894,7 +920,7 @@ jobs:
             emulator-scene-stream.txt
             emulator-scene.raw
             emulator-pressed.raw
-            /tmp/android-runner/emu-crash-*.db
+            emulator-diagnostics/
           if-no-files-found: ignore
 
   ios:
