@@ -12,6 +12,8 @@
 #include "aether/net/session.h"
 #include "aether/net/socket.h"
 
+#include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -37,6 +39,10 @@ struct ServerConfig {
     f64 max_runtime = 0.0;           // seconds; 0: until signalled
     bool quit_when_empty = false;    // exit once every player that joined has left
     f64 status_interval = 10.0;      // seconds between status log lines; 0: never
+    bool lan_advertise = true;       // answer LAN discovery (aether_netclient --discover) on lan_port
+    u16 lan_port = net::kDefaultDiscoveryPort; // 0: any free port (tests)
+    std::string profile;             // a network profile capture (JSON lines) is written here; empty: none
+    f64 profile_interval = 1.0;      // seconds between capture records
 };
 
 // Parses a server.json body over `config` (unknown keys and wrong types are errors).
@@ -71,6 +77,7 @@ struct ServerStats {
     u64 bytes_received = 0;
     usize replicated_entities = 0;
     net::HostSecurityStats security; // drops: rate limited, bad cookies, replays, bad MACs
+    u32 lan_answered = 0, lan_rate_limited = 0, lan_oversized = 0; // LAN discovery queries
 };
 
 class DedicatedServer {
@@ -92,9 +99,32 @@ public:
     // quit_when_empty: true once someone joined and now nobody is left.
     bool EmptyAfterPlay() const { return stats_.joins > 0 && stats_.players == 0; }
     ServerStats Stats() const;
+    // The LAN discovery port answered on (config lan_advertise); 0 when not advertising (off, or the
+    // port was taken by another server on this host - a warning, not an error).
+    u16 LanPort() const { return beacon_ ? lan_socket_.LocalAddress().port : 0; }
+    const net::SessionInfo* Advert() const { return beacon_ ? &beacon_->info : nullptr; }
+
+    // Network profile capture (--profile): one JSON object per call - per peer RTT, loss, bytes and
+    // packets each way, bytes per channel; snapshots and their bytes since the last record; security
+    // drop counters; LAN discovery counters. ProfileSummaryJson() aggregates every record so far.
+    std::string ProfileRecord(f64 now);
+    std::string ProfileSummaryJson() const;
 
 private:
     void OnSessionEvent(const net::SessionEvent& event);
+    struct ProfileTotals {
+        u64 records = 0, snapshots = 0, snapshot_bytes = 0, bytes_sent = 0, bytes_received = 0;
+        u64 peer_samples = 0;
+        f64 rtt_sum = 0, rtt_max = 0, loss_max = 0, max_snapshot_avg = 0;
+        u32 peak_peers = 0;
+    };
+    net::UdpSocket lan_socket_;
+    std::unique_ptr<net::LanBeacon> beacon_;
+    ProfileTotals profile_;
+    u64 profile_snapshot_bytes_ = 0;
+    u32 profile_snapshots_ = 0;
+    std::map<net::PeerId, std::pair<u64, u64>> profile_peer_bytes_; // last seen sent/received
+    f64 profile_last_ = 0;
     ServerConfig config_;
     World* world_ = nullptr;
     net::UdpSocket socket_;
@@ -106,6 +136,20 @@ private:
     ServerStats stats_;
     f64 last_now_ = 0;
 };
+
+// --- LAN discovery (aether_netclient --discover) ----------------------------------------------------
+
+struct DiscoverConfig {
+    u32 build_id = 1;            // results with another build are listed as incompatible
+    u16 lan_port = net::kDefaultDiscoveryPort;
+    f64 timeout = 1.0;           // seconds of listening (queries are repeated every 0.25 s)
+    std::vector<net::Address> also_query = {net::Address::Loopback(0)}; // besides the broadcast; port 0: lan_port
+};
+// Broadcasts discovery queries and collects answers for `timeout` seconds, calling `pump` (if any) every
+// few milliseconds (tests tick an in-process server there). Sorted by ping.
+std::vector<net::LanSession> DiscoverServers(const DiscoverConfig& config, std::string* error,
+                                            const std::function<void()>& pump = {});
+std::string DiscoveryJson(const std::vector<net::LanSession>& servers);
 
 // --- The headless test client ---------------------------------------------------------------------
 

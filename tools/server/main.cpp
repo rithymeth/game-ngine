@@ -23,6 +23,16 @@
 #include <thread>
 #include <vector>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 using namespace aether;
 using namespace aether::player;
 using namespace aether::server;
@@ -34,6 +44,14 @@ enum Exit : int { kOk = 0, kStartupFailed = 1, kBadConfig = 2, kPortInUse = 3 };
 
 volatile std::sig_atomic_t g_stop = 0;
 extern "C" void OnSignal(int sig) { g_stop = sig; }
+#ifdef _WIN32
+// Ctrl+C, Ctrl+Break, closing the console, logoff and shutdown: stop the loop and give it time to finish.
+BOOL WINAPI OnConsoleEvent(DWORD event) {
+    g_stop = event == CTRL_C_EVENT ? SIGINT : SIGTERM;
+    if (event == CTRL_CLOSE_EVENT || event == CTRL_LOGOFF_EVENT || event == CTRL_SHUTDOWN_EVENT) Sleep(2000);
+    return TRUE;
+}
+#endif
 
 LogLevel ParseLevel(const std::string& s) {
     if (s == "trace") return LogLevel::Trace;
@@ -127,6 +145,9 @@ int main(int argc, char** argv) {
     if (!config.log_file.empty() && stdfs::path(config.log_file).is_relative() && !config_dir.empty() &&
         std::find(args.begin(), args.end(), "--log-file") == args.end())
         config.log_file = (config_dir / config.log_file).string();
+    if (!config.profile.empty() && stdfs::path(config.profile).is_relative() && !config_dir.empty() &&
+        std::find(args.begin(), args.end(), "--profile") == args.end())
+        config.profile = (config_dir / config.profile).string();
     Logger::Instance().SetMinLevel(ParseLevel(config.log_level));
     std::ofstream log_file;
     std::mutex log_mutex;
@@ -151,6 +172,9 @@ int main(int argc, char** argv) {
 
     std::signal(SIGINT, OnSignal);
     std::signal(SIGTERM, OnSignal);
+#ifdef _WIN32
+    SetConsoleCtrlHandler(OnConsoleEvent, TRUE);
+#endif
 
     GamePackage package;
     if (const char* env = std::getenv("AETHER_PAK_KEY")) {
@@ -199,15 +223,29 @@ int main(int argc, char** argv) {
                         config.name.c_str(), server.Port(), game.SceneName().c_str(), config.max_players, config.build_id,
                         config.password.empty() ? (config.token_secret.empty() ? "no password" : "no password, tokens") : (config.token_secret.empty() ? "password set" : "password set, tokens"), config.tick_rate,
                         server.Stats().replicated_entities);
+        std::ofstream profile;
+        if (!config.profile.empty()) {
+            std::error_code ec;
+            const stdfs::path parent = stdfs::path(config.profile).parent_path();
+            if (!parent.empty()) stdfs::create_directories(parent, ec);
+            profile.open(config.profile, std::ios::trunc);
+            if (!profile) {
+                AETHER_LOG_ERROR("Server", "can't write the profile capture %s", config.profile.c_str());
+                server.Stop();
+                game.EndPlay();
+                return kBadConfig;
+            }
+            AETHER_LOG_INFO("Server", "network profile capture every %.2f s to %s", config.profile_interval, config.profile.c_str());
+        }
         // Machine-readable readiness for scripts that wait on the log.
-        std::printf("AETHER_SERVER_READY port=%u\n", server.Port());
+        std::printf("AETHER_SERVER_READY port=%u lan_port=%u\n", server.Port(), server.LanPort());
         std::fflush(stdout);
 
         using Clock = std::chrono::steady_clock;
         const auto start = Clock::now();
         const auto step = std::chrono::duration<f64>(1.0 / config.tick_rate);
         auto next = start;
-        f64 last_status = 0;
+        f64 last_status = 0, last_profile = 0;
         const char* reason = "signal";
         for (;;) {
             if (g_stop) {
@@ -229,6 +267,11 @@ int main(int argc, char** argv) {
                 reason = "game_exit";
                 break;
             }
+            if (profile && now - last_profile >= config.profile_interval) {
+                last_profile = now;
+                profile << server.ProfileRecord(now) << '\n';
+                profile.flush();
+            }
             if (config.status_interval > 0 && now - last_status >= config.status_interval) {
                 last_status = now;
                 const ServerStats s = server.Stats();
@@ -243,16 +286,24 @@ int main(int argc, char** argv) {
             std::this_thread::sleep_until(next);
         }
         const ServerStats s = server.Stats();
+        if (profile) {
+            const f64 end = std::chrono::duration<f64>(Clock::now() - start).count();
+            profile << server.ProfileRecord(end) << '\n';
+            const std::string summary = server.ProfileSummaryJson();
+            profile << "{\"summary\":" << summary << "}\n";
+            profile.close();
+            std::printf("AETHER_SERVER_PROFILE %s\n", summary.c_str());
+        }
         server.Stop();
         game.EndPlay();
         std::printf("AETHER_SERVER_SUMMARY {\"reason\":\"%s\",\"ticks\":%llu,\"joins\":%llu,\"leaves\":%llu,\"refused\":%llu,"
                     "\"peak_players\":%u,\"pings\":%llu,\"rate_limited\":%llu,\"bad_cookies\":%llu,\"replayed_handshakes\":%llu,"
-                    "\"bad_macs\":%llu}\n",
+                    "\"bad_macs\":%llu,\"lan_answered\":%u,\"lan_rate_limited\":%u}\n",
                     reason, static_cast<unsigned long long>(s.ticks), static_cast<unsigned long long>(s.joins),
                     static_cast<unsigned long long>(s.leaves), static_cast<unsigned long long>(s.refused), s.peak_players,
                     static_cast<unsigned long long>(s.pings), static_cast<unsigned long long>(s.security.rate_limited),
                     static_cast<unsigned long long>(s.security.bad_cookies), static_cast<unsigned long long>(s.security.replayed_handshakes),
-                    static_cast<unsigned long long>(s.security.bad_macs));
+                    static_cast<unsigned long long>(s.security.bad_macs), s.lan_answered, s.lan_rate_limited);
         AETHER_LOG_INFO("Server", "stopped (%s)", reason);
     }
     if (sink >= 0) Logger::Instance().RemoveSink(sink);

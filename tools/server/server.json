@@ -18,5 +18,11 @@
     "replicate_scene": true,
     "max_runtime": 0,
     "quit_when_empty": false,
-    "status_interval": 10
+    "status_interval": 10,
+    // LAN discovery (aether_netclient --discover) on a second UDP port.
+    "lan_advertise": true,
+    "lan_port": 7778,
+    // A network profile capture (JSON lines), e.g. "logs/profile.jsonl"; empty: none.
+    "profile": "",
+    "profile_interval": 1
 }

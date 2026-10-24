@@ -154,6 +154,7 @@ void Connection::ReceivePacket(std::span<const u8> packet, f64 now) {
         const u16 id = GetU16(p + at + 2), len = GetU16(p + at + 4);
         at += kMessageHeader;
         if (at + len > packet.size() || channel >= channels_.size()) return; // malformed
+        if (channel < ConnectionStats::kStatChannels) stats_.channel_bytes_received[channel] += kMessageHeader + len;
         Deliver(channel, flags, id, std::vector<u8>(p + at, p + at + len));
         at += len;
     }
@@ -176,6 +177,7 @@ std::vector<std::vector<u8>> Connection::WritePackets(f64 now, bool keepalive) {
         bool any = false;
         const auto add = [&](u8 ch, const Outgoing& m) {
             if (packet.size() + kMessageHeader + m.data.size() > kMaxPacket) return false;
+            if (ch < ConnectionStats::kStatChannels) stats_.channel_bytes_sent[ch] += kMessageHeader + m.data.size();
             packet.push_back(ch);
             packet.push_back(m.flags);
             PutU16(packet, m.id);
