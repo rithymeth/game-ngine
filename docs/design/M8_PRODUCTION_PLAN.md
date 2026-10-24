@@ -215,10 +215,11 @@ waive this gate if multiplayer ships as a supported 1.0 feature.
 
 ### M8.9 evidence so far (automatable part)
 
-Status: not passed. Left before sign-off: security/auth hardening (tokens or accounts, packet
-authentication against spoofed source addresses, rate limits per address), a reviewed sign-off of
-the recorded thresholds below (and measuring them against the packaged server, not only the
-loopback simulation), a network profiler capture, and server packages beyond Linux x86-64.
+Status: not passed. Left before sign-off: a reviewed sign-off of the recorded thresholds below (and
+measuring them against the packaged server, not only the loopback simulation), a network profiler
+capture, server packages beyond Linux x86-64, publishing the server package as a release asset, LAN
+discovery from the dedicated server, and a cross-machine (and NAT) run. Security/auth hardening
+landed (2026-10-24, see "Security hardening" below); transport encryption is still out of scope.
 
 `tests/test_net_production.cpp` (`NetProd_*`, in the default `aether_tests` run) drives a
 server (`SessionHost` + `ReplicationServer` + `RpcRouter`) and four clients (`SessionClient` +
@@ -244,6 +245,10 @@ At 3 m/s, 0.3 m of divergence means state is 100 ms stale, 1.5 m means 500 ms, 2
 | Reconnect (hard drop) | 50 ms, 5% loss | server drops the dead peer <= 5.5 s; rejoin on the same address -> full exact state <= 2.0 s; pawn reused and owned again; its RPCs land | 5.067 s, 0.533 s; yes |
 | Reconnect (instant restart, same address) | same | old peer replaced, full state <= 2.0 s | 0.367 s |
 | Security: garbage | clean | 200 rounds of noise, empty, truncated, 64 KiB and every-kind framed junk from a stranger, plus junk data frames from a joined client's address: no crash, no stranger peer, the other clients stay exact | held |
+| Security: spoofed/forged frames (M8.9 hardening) | clean | forged-payload, re-tagged, guessed-tag data frames and a spoofed goodbye from a joined client's address, and a tagless "server" goodbye to a client: all dropped by the MAC, session kept, everyone exact | held (4 server-side, 1 client-side drops) |
+| Security: handshake | clean | ConnectRequest 69 B, every pre-verification reply <= request (29 B), short requests unanswered; no peer before a valid cookie; cookie from another address, forged, reused after leave, or older than 10 s refused | held |
+| Security: join tokens | clean | valid token joins (account recorded); expired -> TokenExpired; other issuer, other build, missing -> BadToken; token + wrong password -> WrongPassword | held |
+| Security: rate limits | clean | 120000 handshake datagrams in 1 s from one address -> <= burst + rate cookies; 30000 junk data frames in 1 s capped at the packet budget, the other 3 clients exact; 64 sources vs a 16-entry table stays <= 16 | 11 cookies; held |
 | Security: replay and authority | clean | a recorded RPC's datagrams replayed 3x from the owner and once from another address run it once; a non-owner (hacked `locally_owned`) is rejected; a wrong password is refused; a raw peer that skips the session gets no authority and is dropped after the join timeout | held |
 
 What this does not cover, so the gate stays open:
@@ -272,9 +277,29 @@ What this does not cover, so the gate stays open:
   not-joined peer owns nothing, so it is rejected, and `SessionHost` drops it after
   `join_timeout`). The dedicated server additionally hides every entity from peers that have not
   joined (a `ReplicationServer` relevancy rule); the bare `ReplicationServer` still sends state to
-  any connected peer. There are no tokens, encryption or packet signing: a spoofed source address can
-  inject data frames for a joined peer (the test shows the server survives it, not that it is
-  prevented).
+  any connected peer. Join tokens, a stateless cookie handshake, per-datagram SipHash-2-4 MACs and
+  per-address rate limits now exist (below); traffic is still not encrypted.
+- **Security hardening (2026-10-24).** `NetHost` connects with a stateless challenge (cookie =
+  SipHash-2-4(server secret, address, client nonce, time); requests padded to 69 B, no reply
+  before verification bigger than the request; one use per cookie, 10 s lifetime), derives
+  per-direction session keys from the secret, both nonces and the address, and tags every
+  Data/Disconnect datagram (8 B). Unauthenticated frames are dropped and counted
+  (`HostSecurityStats`). Per-address token buckets cap handshakes, datagrams and bytes in a table
+  bounded at 4096 addresses. `SessionHost::SetJoinTokens` checks signed join tokens (player id,
+  expiry, build id; `aet1.` text form); `aether_server` takes `token_secret` / `require_token` /
+  `--token-secret` / `AETHER_SERVER_TOKEN_SECRET` and `--issue-token`, `aether_netclient` takes
+  `--token`. SipHash-2-4 is written from the reference implementation and checked against its
+  published vectors (`NetProd_SipHashTestVectors`). Tests: `NetProd_Security*`,
+  `DedicatedServer_RealUdpJoinTokens`; `tools/server_smoke.sh` now runs with tokens required.
+  The existing garbage test used to frame its junk with a big-endian protocol id, so it never
+  reached the data path; it is fixed and now also requires the targeted client to stay exact.
+  Recorded numbers after the change (Release): clean 0.200 m / 0.017 s / 11242 B/s payload
+  (12022 B/s on the wire with header + MAC); soak 0.844 m / 0.100 s / 12073 (12661); loss5
+  0.892 m / 0.100 s; loss20 1.086 m / 0.150 s; latency 0.892 m / 0.183 s; reconnect drop 5.050 s,
+  rejoin 0.850 s, same-address restart 0.650 s (the handshake is now two round trips). All
+  thresholds unchanged; the bandwidth check now also applies to wire bytes. Not done: encryption
+  (an on-path observer can read the keys in the Accept), token revocation, per-IP (rather than
+  per-ip:port) limits; the wire protocol is incompatible with older builds.
 - **Network profiler capture.** `NetProfile` / `NetStatGroup` exist but no capture is recorded as
   evidence.
 - Interest management is exercised by the replication tests, not at production scale; the soak

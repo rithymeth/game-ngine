@@ -87,12 +87,39 @@ int main(int argc, char** argv) {
                 }
         }
     }
+    // --issue-token <player> [--token-ttl <seconds>]: print a join token signed with token_secret and exit.
+    std::string issue_player;
+    f64 token_ttl = 3600;
+    bool issue = false;
+    for (usize i = 0; i < args.size();) {
+        if ((args[i] == "--issue-token" || args[i] == "--token-ttl") && i + 1 < args.size()) {
+            if (args[i] == "--issue-token") issue = true, issue_player = args[i + 1];
+            else {
+                char* end = nullptr;
+                token_ttl = std::strtod(args[i + 1].c_str(), &end);
+                if (*end != '\0' || !(token_ttl > 0)) return std::fprintf(stderr, "aether_server: --token-ttl must be > 0\n"), kBadConfig;
+            }
+            args.erase(args.begin() + static_cast<std::ptrdiff_t>(i), args.begin() + static_cast<std::ptrdiff_t>(i + 2));
+        } else {
+            ++i;
+        }
+    }
     if (!ParseServerArgs(args, config, &error, &help)) {
         std::fprintf(stderr, "aether_server: %s\n%s", error.c_str(), ServerUsage());
         return kBadConfig;
     }
     if (help) {
         std::fputs(ServerUsage(), stdout);
+        return kOk;
+    }
+    if (issue) {
+        if (config.token_secret.empty()) {
+            std::fprintf(stderr, "aether_server: --issue-token needs token_secret (config, --token-secret or AETHER_SERVER_TOKEN_SECRET)\n");
+            return kBadConfig;
+        }
+        if (issue_player.empty() || issue_player.size() > 64) return std::fprintf(stderr, "aether_server: player id must be 1..64 characters\n"), kBadConfig;
+        net::JoinToken token{issue_player, net::UnixNow() + static_cast<u64>(token_ttl), config.build_id};
+        std::printf("%s\n", net::IssueJoinToken(config.token_secret, token).c_str());
         return kOk;
     }
 
@@ -170,7 +197,7 @@ int main(int argc, char** argv) {
         }
         AETHER_LOG_INFO("Server", "'%s' listening on UDP %u: scene %s, %u players max, build %u, %s, %.0f Hz, %zu replicated entities",
                         config.name.c_str(), server.Port(), game.SceneName().c_str(), config.max_players, config.build_id,
-                        config.password.empty() ? "no password" : "password set", config.tick_rate,
+                        config.password.empty() ? (config.token_secret.empty() ? "no password" : "no password, tokens") : (config.token_secret.empty() ? "password set" : "password set, tokens"), config.tick_rate,
                         server.Stats().replicated_entities);
         // Machine-readable readiness for scripts that wait on the log.
         std::printf("AETHER_SERVER_READY port=%u\n", server.Port());
@@ -219,10 +246,13 @@ int main(int argc, char** argv) {
         server.Stop();
         game.EndPlay();
         std::printf("AETHER_SERVER_SUMMARY {\"reason\":\"%s\",\"ticks\":%llu,\"joins\":%llu,\"leaves\":%llu,\"refused\":%llu,"
-                    "\"peak_players\":%u,\"pings\":%llu}\n",
+                    "\"peak_players\":%u,\"pings\":%llu,\"rate_limited\":%llu,\"bad_cookies\":%llu,\"replayed_handshakes\":%llu,"
+                    "\"bad_macs\":%llu}\n",
                     reason, static_cast<unsigned long long>(s.ticks), static_cast<unsigned long long>(s.joins),
                     static_cast<unsigned long long>(s.leaves), static_cast<unsigned long long>(s.refused), s.peak_players,
-                    static_cast<unsigned long long>(s.pings));
+                    static_cast<unsigned long long>(s.pings), static_cast<unsigned long long>(s.security.rate_limited),
+                    static_cast<unsigned long long>(s.security.bad_cookies), static_cast<unsigned long long>(s.security.replayed_handshakes),
+                    static_cast<unsigned long long>(s.security.bad_macs));
         AETHER_LOG_INFO("Server", "stopped (%s)", reason);
     }
     if (sink >= 0) Logger::Instance().RemoveSink(sink);

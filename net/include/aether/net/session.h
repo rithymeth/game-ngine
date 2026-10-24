@@ -2,6 +2,7 @@
 
 #include "aether/net/host.h"
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <utility>
@@ -81,8 +82,31 @@ private:
 
 // --- Hosting and joining -------------------------------------------------------------------------
 
-enum class JoinResult : u8 { Ok, WrongPassword, BuildMismatch, Full, NoRequest, Kicked, ConnectFailed, Lost };
+enum class JoinResult : u8 { Ok, WrongPassword, BuildMismatch, Full, NoRequest, Kicked, ConnectFailed, Lost, BadToken, TokenExpired };
 const char* JoinResultName(JoinResult result);
+
+// --- Join tokens (M8.9) ----------------------------------------------------------------------------
+// A token proves a backend (anything holding the issuer secret) let `player` join builds `build`
+// until `expires` (Unix seconds). Text form: "aet1.<hex payload>.<hex SipHash-2-4 tag>", with the
+// payload = version u8, expires u64, build u32, player (u8 length + bytes, at most 64). The tag key
+// is derived from the issuer secret; use 32+ random characters. Tokens are bearer credentials: not
+// bound to an address and replayable until they expire, so keep lifetimes short.
+struct JoinToken {
+    std::string player;
+    u64 expires = 0;
+    u32 build = 0;
+};
+std::string IssueJoinToken(const std::string& issuer_secret, const JoinToken& token);
+enum class TokenCheck : u8 { Ok, Malformed, BadSignature, Expired, WrongBuild };
+const char* TokenCheckName(TokenCheck check);
+TokenCheck VerifyJoinToken(const std::string& issuer_secret, const std::string& text, u32 build, u64 now_unix, JoinToken* out = nullptr);
+u64 UnixNow();
+
+struct JoinTokenConfig {
+    std::string issuer_secret; // empty: tokens are not checked (the default)
+    bool required = true;      // with a secret: a join without a valid token is refused
+    std::function<u64()> clock = UnixNow; // Unix seconds (tests inject one)
+};
 
 struct SessionConfig {
     u8 channel = 0;            // a ReliableOrdered channel
@@ -93,6 +117,7 @@ struct SessionConfig {
 struct SessionPlayer {
     PeerId peer = kNoPeer;
     std::string name;
+    std::string account; // the join token's player id (empty without a token)
 };
 
 enum class SessionEventType : u8 { PlayerJoined, PlayerLeft, JoinRefused };
@@ -120,10 +145,13 @@ public:
     void Kick(PeerId peer, f64 now);
     const SessionInfo& Info() const { return info_; }
     SessionInfo& MutableInfo() { return info_; }
+    // Join tokens alongside (or, with no password, instead of) the password.
+    void SetJoinTokens(JoinTokenConfig tokens) { tokens_ = std::move(tokens); }
 
 private:
     void Refuse(PeerId peer, JoinResult reason, f64 now);
     NetHost& host_;
+    JoinTokenConfig tokens_;
     SessionInfo info_;
     std::string password_;
     SessionConfig config_;
@@ -139,7 +167,8 @@ class SessionClient {
 public:
     explicit SessionClient(NetHost& host, SessionConfig config = {}) : host_(host), config_(config) {}
 
-    void Join(const Address& server, const std::string& player_name, const std::string& password, u32 build, f64 now);
+    void Join(const Address& server, const std::string& player_name, const std::string& password, u32 build, f64 now,
+              const std::string& token = {});
     void Leave(f64 now);
     bool HandleEvent(const NetEvent& event);
 
@@ -156,7 +185,7 @@ private:
     State state_ = State::Idle;
     JoinResult result_ = JoinResult::Ok;
     PeerId server_ = kNoPeer;
-    std::string name_, password_;
+    std::string name_, password_, token_;
     u32 build_ = 0;
     SessionInfo info_;
 };

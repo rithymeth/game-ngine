@@ -76,12 +76,14 @@ class RecordingSocket final : public DatagramSocket {
 public:
     explicit RecordingSocket(std::unique_ptr<DatagramSocket> inner) : inner_(std::move(inner)) {}
     bool Send(const Address& to, std::span<const u8> data) override {
+        bytes_sent += data.size();
         if (recording) sent.push_back({to, std::vector<u8>(data.begin(), data.end())});
         return inner_->Send(to, data);
     }
     bool Receive(Address& from, std::vector<u8>& data) override { return inner_->Receive(from, data); }
     Address LocalAddress() const override { return inner_->LocalAddress(); }
     bool recording = false;
+    u64 bytes_sent = 0; // on the wire, host header and MAC included
     std::vector<std::pair<Address, std::vector<u8>>> sent;
 
 private:
@@ -91,14 +93,15 @@ private:
 struct Metrics {
     f32 max_divergence = 0;
     f64 converge_seconds = -1;
-    f64 bytes_per_client_per_second = 0;
+    f64 bytes_per_client_per_second = 0;      // Connection payload (what the thresholds have always measured)
+    f64 wire_bytes_per_client_per_second = 0; // plus the host header and the 8-byte MAC per datagram
     u64 rpcs_issued = 0;
 };
 
 struct ProdSim {
     LoopbackNetwork net;
     World world;
-    std::unique_ptr<DatagramSocket> socket;
+    std::unique_ptr<RecordingSocket> socket;
     std::unique_ptr<NetHost> host;
     std::unique_ptr<SessionHost> session;
     std::unique_ptr<ReplicationServer> replication;
@@ -124,7 +127,7 @@ struct ProdSim {
 
     explicit ProdSim(u64 seed) : net(seed) {
         (void)GetComponentId<SoakPawn>();
-        socket = net.Open(kServerPort);
+        socket = std::make_unique<RecordingSocket>(net.Open(kServerPort));
         host = std::make_unique<NetHost>(*socket);
         host->Listen();
         SessionInfo info;
@@ -145,14 +148,16 @@ struct ProdSim {
         return world.CreateEntity(ni, Transform{Vec3{std::cos(phase) * 2.0f, std::sin(phase) * 2.0f, static_cast<f32>(i)}, Quaternion{}});
     }
 
-    Client& AddClient(const std::string& name, u16 port = 0, const std::string& password = "letmein") {
+    Client& AddClient(const std::string& name, u16 port = 0, const std::string& password = "letmein", const std::string& token = {},
+                      bool record = false) {
         auto c = std::make_unique<Client>();
         c->name = name;
         c->socket = std::make_unique<RecordingSocket>(net.Open(port));
         c->port = c->socket->LocalAddress().port;
+        c->socket->recording = record;
         c->host = std::make_unique<NetHost>(*c->socket);
         c->session = std::make_unique<SessionClient>(*c->host);
-        c->session->Join(Address::Loopback(kServerPort), name, password, kBuild, net.Now());
+        c->session->Join(Address::Loopback(kServerPort), name, password, kBuild, net.Now(), token);
         const PeerId server = c->session->Server();
         c->replication = std::make_unique<ReplicationClient>(c->world, *c->host, server);
         c->replication->OnSpawn("pawn", [](World& w, Entity e, const NetIdentity&) { w.AddComponent(e, SoakPawn{}); });
@@ -282,6 +287,7 @@ struct ProdSim {
         const int frames = static_cast<int>(seconds / kStep);
         u64 start_bytes = 0;
         for (PeerId p : host->Peers()) start_bytes += host->Peer(p)->connection->Stats().bytes_sent;
+        const u64 start_wire = socket->bytes_sent;
         for (int i = 0; i < frames; ++i, ++frame) {
             IssueRpcs(frame);
             Step(1, frame);
@@ -291,6 +297,7 @@ struct ProdSim {
         u64 bytes = 0;
         for (PeerId p : host->Peers()) bytes += host->Peer(p)->connection->Stats().bytes_sent;
         m.bytes_per_client_per_second = static_cast<f64>(bytes - start_bytes) / kClients / (net.Now() - start);
+        m.wire_bytes_per_client_per_second = static_cast<f64>(socket->bytes_sent - start_wire) / kClients / (net.Now() - start);
         moving = false;
         const f64 stopped = net.Now();
         while (net.Now() - stopped < 10.0) {
@@ -310,14 +317,16 @@ struct ProdSim {
 };
 
 void Report(const char* name, const Metrics& m) {
-    std::printf("    [m8.9] %s: max_divergence=%.3f m converge=%.3f s bw=%.0f B/s/client rpcs=%llu\n", name, m.max_divergence,
-                m.converge_seconds, m.bytes_per_client_per_second, static_cast<unsigned long long>(m.rpcs_issued));
+    std::printf("    [m8.9] %s: max_divergence=%.3f m converge=%.3f s bw=%.0f B/s/client (wire %.0f) rpcs=%llu\n", name,
+                m.max_divergence, m.converge_seconds, m.bytes_per_client_per_second, m.wire_bytes_per_client_per_second,
+                static_cast<unsigned long long>(m.rpcs_issued));
 }
 
 void CheckAgainst(const Metrics& m, const Thresholds& t) {
     CHECK(m.max_divergence <= t.max_divergence);
     CHECK(m.converge_seconds >= 0 && m.converge_seconds <= t.converge_seconds);
     CHECK(m.bytes_per_client_per_second <= kMaxBytesPerClientPerSecond);
+    CHECK(m.wire_bytes_per_client_per_second <= kMaxBytesPerClientPerSecond); // the MAC fits in the same budget
     CHECK(m.rpcs_issued > 0);
 }
 
@@ -464,21 +473,22 @@ AETHER_TEST(NetProd_SecurityGarbageAndOversizedPackets) {
     };
     const u32 protocol = HostConfig{}.protocol_id;
     for (int round = 0; round < 200; ++round) {
-        // Pure noise, empty, truncated headers, oversized datagrams, and valid headers with random bodies of every kind.
+        // Pure noise, empty, truncated headers (the protocol id is little-endian on the wire; before M8.9 this test
+        // wrote it big-endian, so its "framed" junk was discarded as foreign and never reached the data path), oversized datagrams, and valid headers with random bodies of every kind.
         stranger->Send(server, random_bytes(rng() % 1500));
         stranger->Send(server, {});
         stranger->Send(server, random_bytes(3));
         stranger->Send(server, random_bytes(64 * 1024));
         for (u8 kind = 0; kind < 8; ++kind) {
-            std::vector<u8> d = {static_cast<u8>(protocol >> 24), static_cast<u8>(protocol >> 16), static_cast<u8>(protocol >> 8),
-                                 static_cast<u8>(protocol), kind};
+            std::vector<u8> d = {static_cast<u8>(protocol), static_cast<u8>(protocol >> 8), static_cast<u8>(protocol >> 16),
+                                 static_cast<u8>(protocol >> 24), kind};
             for (u8 x : random_bytes(rng() % 64)) d.push_back(x);
             stranger->Send(server, d);
         }
         // The same from a joined client's own address (a spoofed or buggy peer): framed data with junk inside.
         auto& victim = *sim.clients[1];
-        std::vector<u8> d = {static_cast<u8>(protocol >> 24), static_cast<u8>(protocol >> 16), static_cast<u8>(protocol >> 8),
-                             static_cast<u8>(protocol), 4};
+        std::vector<u8> d = {static_cast<u8>(protocol), static_cast<u8>(protocol >> 8), static_cast<u8>(protocol >> 16),
+                             static_cast<u8>(protocol >> 24), 4};
         for (u8 x : random_bytes(rng() % 1300)) d.push_back(x);
         victim.socket->Send(server, d);
         sim.IssueRpcs(frame);
@@ -489,9 +499,10 @@ AETHER_TEST(NetProd_SecurityGarbageAndOversizedPackets) {
     sim.Step(120, frame);
     CHECK(sim.host->PeerCount() == static_cast<usize>(kClients));
     for (auto& c : sim.clients) CHECK(c->session->GetState() == SessionClient::State::Joined);
-    // The client fed junk may have lost reliable ordering state; the other three must be exact.
-    for (usize i = 0; i < sim.clients.size(); ++i)
-        if (i != 1) CHECK(sim.Exact(*sim.clients[i]));
+    // M8.9: the junk "from" the joined client's address fails the session MAC, so even that client stays exact
+    // (before packet authentication it could lose reliable ordering state and was exempt).
+    for (auto& c : sim.clients) CHECK(sim.Exact(*c));
+    CHECK(sim.host->SecurityStats().bad_macs >= 200);
     std::printf("    [m8.9] security: rpc malformed=%u unknown=%u rejected=%u\n", sim.rpc->Stats().malformed, sim.rpc->Stats().unknown,
                 sim.rpc->Stats().rejected);
 }
@@ -571,4 +582,239 @@ AETHER_TEST(NetProd_SecurityReplayAndAuthority) {
     CHECK(sim.rpc->Stats().rejected > rejected_before);
     CHECK(raw.PeerCount() == 0); // dropped for never joining (SessionConfig::join_timeout)
     CHECK(sim.session->Players().size() == static_cast<usize>(kClients) && sim.pawns.size() == static_cast<usize>(kClients));
+}
+
+// --- M8.9 security/auth hardening ------------------------------------------------------------------
+
+namespace {
+std::vector<u8> Framed(u8 kind, std::span<const u8> body = {}) {
+    const u32 protocol = HostConfig{}.protocol_id;
+    std::vector<u8> d = {static_cast<u8>(protocol), static_cast<u8>(protocol >> 8), static_cast<u8>(protocol >> 16),
+                         static_cast<u8>(protocol >> 24), kind};
+    d.insert(d.end(), body.begin(), body.end());
+    return d;
+}
+} // namespace
+
+AETHER_TEST(NetProd_SipHashTestVectors) {
+    // From the SipHash reference (github.com/veorq/SipHash, vectors.h): key 00..0f, message 00..(n-1).
+    SipKey key{};
+    for (u8 i = 0; i < 16; ++i) key[i] = i;
+    std::vector<u8> msg;
+    for (u8 i = 0; i < 64; ++i) msg.push_back(i);
+    CHECK(SipHash24(key, std::span<const u8>(msg).first(0)) == 0x726fdb47dd0e0e31ull);
+    CHECK(SipHash24(key, std::span<const u8>(msg).first(1)) == 0x74f839c593dc67fdull);
+    CHECK(SipHash24(key, std::span<const u8>(msg).first(8)) == 0x93f5f5799a932462ull);
+    CHECK(SipHash24(key, std::span<const u8>(msg).first(15)) == 0xa129ca6149be45e5ull); // the paper's example
+    CHECK(SipHash24(key, std::span<const u8>(msg).first(63)) == 0x958a324ceb064572ull);
+    CHECK(TagEqual(1, 1) && !TagEqual(1, 2));
+}
+
+AETHER_TEST(NetProd_SecuritySpoofedAndForgedFramesAreDropped) {
+    ProdSim sim(909);
+    for (int i = 0; i < kClients; ++i) sim.AddClient("p" + std::to_string(i));
+    int frame = 0;
+    while (!sim.AllJoined() && frame < 600) sim.Step(1, frame++);
+    CHECK(sim.AllJoined());
+    sim.Step(30, frame), frame += 30;
+    auto& p0 = *sim.clients[0];
+    const Address server = Address::Loopback(kServerPort);
+    const Entity pawn0 = sim.PawnFor("p0");
+    const Entity mine = p0.replication->FindEntity(sim.NetId(pawn0));
+    // A real RPC datagram from p0, captured.
+    p0.socket->recording = true;
+    CHECK(CallAddScore(p0.world, mine, 5) == RemoteCallResult::Sent);
+    p0.host->Update(sim.net.Now()); // flushes it without the server seeing it yet
+    p0.socket->recording = false;
+    sim.Step(30, frame), frame += 30;
+    CHECK(sim.world.GetComponent<SoakPawn>(pawn0)->score == 5);
+    std::vector<u8> real;
+    for (const auto& [to, d] : p0.socket->sent)
+        if (d.size() > 5 + 8 + 8 && d[4] == 4) real = d;
+    CHECK(!real.empty());
+    const u64 bad_before = sim.host->SecurityStats().bad_macs;
+    // Forged: the captured frame with one payload byte (and then the tag) flipped, from p0's own address.
+    std::vector<u8> forged = real;
+    forged[5 + 2] ^= 0x01; // the ack field
+    p0.socket->Send(server, forged);
+    std::vector<u8> retagged = real;
+    retagged.back() ^= 0x80;
+    p0.socket->Send(server, retagged);
+    // A different message, correctly framed, with a guessed tag, "from" p0: a spoofed injection.
+    std::vector<u8> injected = Framed(4, std::vector<u8>(64, 0x5A));
+    p0.socket->Send(server, injected);
+    // A spoofed goodbye for p0: the session must survive it.
+    std::vector<u8> bye = Framed(5, std::vector<u8>(8, 0));
+    p0.socket->Send(server, bye);
+    sim.Step(30, frame), frame += 30;
+    CHECK(sim.host->SecurityStats().bad_macs >= bad_before + 4);
+    CHECK(sim.world.GetComponent<SoakPawn>(pawn0)->score == 5);
+    CHECK(p0.session->GetState() == SessionClient::State::Joined && sim.host->PeerCount() == static_cast<usize>(kClients));
+    // The server's frames to a client are authenticated too: a spoofed "server" goodbye is ignored.
+    const u64 client_bad = p0.host->SecurityStats().bad_macs;
+    sim.socket->Send(Address::Loopback(p0.port), bye); // from the server's real address, no valid tag
+    sim.Step(10, frame), frame += 10;
+    CHECK(p0.host->SecurityStats().bad_macs == client_bad + 1);
+    CHECK(p0.session->GetState() == SessionClient::State::Joined);
+    sim.moving = false;
+    sim.Step(60, frame);
+    for (auto& c : sim.clients) CHECK(sim.Exact(*c));
+    std::printf("    [m8.9] security: forged/spoofed frames dropped by MAC: server %llu, client %llu\n",
+                static_cast<unsigned long long>(sim.host->SecurityStats().bad_macs - bad_before),
+                static_cast<unsigned long long>(p0.host->SecurityStats().bad_macs));
+}
+
+AETHER_TEST(NetProd_SecurityHandshakeIsStatelessAndUnreplayable) {
+    ProdSim sim(1001);
+    auto& c = sim.AddClient("p0", 0, "letmein", {}, /*record=*/true);
+    int frame = 0;
+    while (!sim.AllJoined() && frame < 600) sim.Step(1, frame++);
+    CHECK(sim.AllJoined());
+    // Anti-amplification: every server reply before verification is no bigger than the request.
+    std::vector<u8> request, response;
+    for (const auto& [to, d] : c.socket->sent) {
+        if (d.size() >= 5 && d[4] == 1) request = d;
+        if (d.size() >= 5 && d[4] == 7) response = d;
+    }
+    CHECK(request.size() == NetHost::kConnectRequestSize && response.size() == NetHost::kConnectRequestSize);
+    CHECK(sim.host->SecurityStats().challenges_sent >= 1);
+
+    // A stranger (or a spoofer that can't see replies) sends requests: it gets cookies, the server keeps no peer.
+    auto stranger = sim.net.Open();
+    const Address server = Address::Loopback(kServerPort);
+    for (int i = 0; i < 4; ++i) stranger->Send(server, request);
+    // Short requests (an amplification attempt) aren't answered at all.
+    stranger->Send(server, Framed(1, std::vector<u8>(8, 1)));
+    sim.Step(5, frame), frame += 5;
+    usize reply_bytes = 0, replies = 0;
+    Address from;
+    std::vector<u8> d;
+    while (stranger->Receive(from, d)) reply_bytes = std::max(reply_bytes, d.size()), ++replies;
+    CHECK(replies == 4 && reply_bytes <= request.size());
+    CHECK(sim.host->PeerCount() == 1);
+    // The real client's cookie response, copied to another address: bound to the source address, refused.
+    const u64 bad_cookies = sim.host->SecurityStats().bad_cookies;
+    stranger->Send(server, response);
+    sim.Step(5, frame), frame += 5;
+    CHECK(sim.host->SecurityStats().bad_cookies == bad_cookies + 1 && sim.host->PeerCount() == 1);
+    // Forged cookie from the client's address.
+    std::vector<u8> forged = response;
+    forged[5 + 16] ^= 1;
+    c.socket->Send(server, forged);
+    sim.Step(5, frame), frame += 5;
+    CHECK(sim.host->SecurityStats().bad_cookies == bad_cookies + 2);
+    // While the peer lives, a duplicate response just re-sends the Accept (no new peer, no replacement).
+    const PeerId peer = sim.host->Peers()[0];
+    c.socket->Send(server, response);
+    sim.Step(5, frame), frame += 5;
+    CHECK(sim.host->Peers().size() == 1 && sim.host->Peers()[0] == peer && c.session->GetState() == SessionClient::State::Joined);
+    // The client leaves; replaying its handshake from its own address (within the cookie lifetime) is refused.
+    c.session->Leave(sim.net.Now());
+    sim.Step(10, frame), frame += 10;
+    CHECK(sim.host->PeerCount() == 0);
+    const u64 replays = sim.host->SecurityStats().replayed_handshakes;
+    c.socket->Send(server, response);
+    sim.Step(10, frame), frame += 10;
+    CHECK(sim.host->SecurityStats().replayed_handshakes == replays + 1 && sim.host->PeerCount() == 0);
+    // ...and once the cookie has expired it is refused as stale.
+    sim.Step(static_cast<int>(HostConfig{}.cookie_lifetime / kStep) + 30, frame);
+    c.socket->Send(server, response);
+    sim.Step(5, frame);
+    CHECK(sim.host->SecurityStats().bad_cookies == bad_cookies + 3 && sim.host->PeerCount() == 0);
+    std::printf("    [m8.9] handshake: request %zu B, largest pre-verification reply %zu B; replays refused %llu\n", request.size(),
+                reply_bytes, static_cast<unsigned long long>(sim.host->SecurityStats().replayed_handshakes));
+}
+
+AETHER_TEST(NetProd_SecurityJoinTokens) {
+    const std::string secret = "a-very-secret-issuer-key-0123456789";
+    const u64 now = 1'800'000'000;
+    // The token format on its own.
+    const std::string good = IssueJoinToken(secret, {"acct-42", now + 600, kBuild});
+    JoinToken claims;
+    CHECK(VerifyJoinToken(secret, good, kBuild, now, &claims) == TokenCheck::Ok && claims.player == "acct-42");
+    CHECK(VerifyJoinToken(secret, good, kBuild, now + 600) == TokenCheck::Expired);
+    CHECK(VerifyJoinToken(secret, good, kBuild + 1, now) == TokenCheck::WrongBuild);
+    CHECK(VerifyJoinToken("another-issuer-secret-xxxxxxxx", good, kBuild, now) == TokenCheck::BadSignature);
+    std::string tampered = good;
+    tampered[good.find('.') + 3] = tampered[good.find('.') + 3] == '0' ? '1' : '0'; // a payload digit
+    CHECK(VerifyJoinToken(secret, tampered, kBuild, now) == TokenCheck::BadSignature);
+    CHECK(VerifyJoinToken(secret, "aet1.zz.00", kBuild, now) == TokenCheck::Malformed);
+    CHECK(VerifyJoinToken(secret, "", kBuild, now) == TokenCheck::Malformed);
+
+    // Through the session: tokens required alongside the password.
+    ProdSim sim(1101);
+    sim.session->SetJoinTokens({secret, true, [&] { return now; }});
+    sim.AddClient("ok", 0, "letmein", good);
+    sim.AddClient("expired", 0, "letmein", IssueJoinToken(secret, {"acct-1", now - 1, kBuild}));
+    sim.AddClient("forged", 0, "letmein", IssueJoinToken("not-the-issuer-secret-at-all", {"acct-2", now + 600, kBuild}));
+    sim.AddClient("oldbuild", 0, "letmein", IssueJoinToken(secret, {"acct-3", now + 600, kBuild - 1}));
+    sim.AddClient("none", 0, "letmein");
+    sim.AddClient("nopass", 0, "guess", IssueJoinToken(secret, {"acct-4", now + 600, kBuild}));
+    for (int frame = 0; frame < 300; ++frame) sim.Step(1, frame);
+    auto result = [&](usize i) { return sim.clients[i]->session->Result(); };
+    CHECK(sim.clients[0]->session->GetState() == SessionClient::State::Joined);
+    CHECK(sim.session->Players().size() == 1 && sim.session->Players()[0].account == "acct-42");
+    CHECK(result(1) == JoinResult::TokenExpired);
+    CHECK(result(2) == JoinResult::BadToken);
+    CHECK(result(3) == JoinResult::BadToken);
+    CHECK(result(4) == JoinResult::BadToken);
+    CHECK(result(5) == JoinResult::WrongPassword); // a token doesn't waive a configured password
+    for (usize i = 1; i < sim.clients.size(); ++i) CHECK(sim.clients[i]->session->GetState() == SessionClient::State::Failed);
+}
+
+AETHER_TEST(NetProd_SecurityRateLimitsPerAddress) {
+    ProdSim sim(1201);
+    for (int i = 0; i < kClients; ++i) sim.AddClient("p" + std::to_string(i));
+    int frame = 0;
+    while (!sim.AllJoined() && frame < 600) sim.Step(1, frame++);
+    CHECK(sim.AllJoined());
+    const Address server = Address::Loopback(kServerPort);
+    const HostConfig cfg;
+    // A handshake flood from one address: 2000 requests a frame for 1 s. Cookies are capped by the bucket.
+    auto flooder = sim.net.Open();
+    std::vector<u8> req = Framed(1, std::vector<u8>(NetHost::kConnectRequestSize - 5, 0));
+    const u64 challenges = sim.host->SecurityStats().challenges_sent, limited = sim.host->SecurityStats().rate_limited;
+    u64 sent = 0;
+    for (int i = 0; i < 60; ++i) {
+        for (int j = 0; j < 2000; ++j) flooder->Send(server, req), ++sent;
+        sim.IssueRpcs(frame);
+        sim.Step(1, frame++);
+    }
+    const u64 answered = sim.host->SecurityStats().challenges_sent - challenges;
+    CHECK(answered <= static_cast<u64>(cfg.handshake_burst + cfg.handshakes_per_second * 1.1) + 1);
+    CHECK(sim.host->SecurityStats().rate_limited - limited >= sent - answered);
+    // A data flood "from" a joined client (or the client itself misbehaving): capped at the packet budget,
+    // the other players unaffected.
+    auto& victim = *sim.clients[2];
+    const std::vector<u8> junk = Framed(4, std::vector<u8>(100, 7));
+    const u64 limited2 = sim.host->SecurityStats().rate_limited;
+    for (int i = 0; i < 60; ++i) {
+        for (int j = 0; j < 500; ++j) victim.socket->Send(server, junk);
+        sim.IssueRpcs(frame);
+        sim.Step(1, frame++);
+    }
+    CHECK(sim.host->SecurityStats().rate_limited - limited2 >= 30000 - static_cast<u64>(cfg.packet_burst + cfg.packets_per_second * 1.1));
+    sim.moving = false;
+    sim.Step(120, frame);
+    for (usize i = 0; i < sim.clients.size(); ++i)
+        if (i != 2) CHECK(sim.Exact(*sim.clients[i]));
+    std::printf("    [m8.9] rate limits: %llu handshake datagrams -> %llu cookies; total dropped over budget %llu\n",
+                static_cast<unsigned long long>(sent), static_cast<unsigned long long>(answered),
+                static_cast<unsigned long long>(sim.host->SecurityStats().rate_limited));
+
+    // The address table is bounded: 64 sources against a 16-entry table.
+    LoopbackNetwork net(5);
+    auto server_socket = net.Open(9000);
+    HostConfig small;
+    small.max_tracked_addresses = 16;
+    NetHost host(*server_socket, small);
+    host.Listen();
+    std::vector<std::unique_ptr<DatagramSocket>> sources;
+    for (int i = 0; i < 64; ++i) sources.push_back(net.Open());
+    for (int round = 0; round < 3; ++round) {
+        for (auto& s : sources) s->Send(Address::Loopback(9000), req);
+        net.Advance(0.05);
+        host.Update(net.Now());
+    }
+    CHECK(host.TrackedAddresses() <= 16 && host.PeerCount() == 0);
 }

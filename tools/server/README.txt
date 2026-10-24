@@ -9,6 +9,9 @@ Aether dedicated server
 Run:      bin/aether_server                       (UDP 7777, reads ./server.json and ./Paks)
           bin/aether_server --port 27015 --max-players 16 --build-id 89
           AETHER_SERVER_PASSWORD=secret bin/aether_server
+Tokens:   AETHER_SERVER_TOKEN_SECRET=<32+ random chars> bin/aether_server          (joins need a signed token)
+          AETHER_SERVER_TOKEN_SECRET=... bin/aether_server --issue-token player-1 --token-ttl 600
+          bin/aether_netclient --server 127.0.0.1:7777 --token aet1....
 Stop:     Ctrl+C or SIGTERM (clean shutdown, exit code 0)
 Check:    bin/aether_netclient --server 127.0.0.1:7777 --build-id 1 --duration 3
           (prints one AETHER_NETCLIENT {...} JSON line; exit 0 when it joined, saw state and got its RPC acked)
