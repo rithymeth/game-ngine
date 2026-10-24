@@ -87,6 +87,10 @@ function Controller:OnCreate()
     self.camera = world:EntitiesWith("Camera")[1]
     local have_character, character = pcall(function() return self.entity:Get("CharacterMovement") end)
     self.character = have_character and character or nil
+    -- Kael's move set (M8.6) is the Animator's graph (Characters/Kael/Kael.aanim); this script only feeds it.
+    local have_animator, animator = pcall(function() return self.entity:Get("Animator") end)
+    self.animator = have_animator and animator or nil
+    self.anim_health = 3
     self.fire_timer = 0
     self.scout_health = {}
     self.scout_spawn = {}
@@ -306,6 +310,32 @@ local function Quat(yaw, pitch)
     }
 end
 
+-- Each physics step consumes the character's input, and a slow frame runs several steps: keep this frame's
+-- movement for all of them, so Kael covers the same ground at 30 Hz as at 60 or 144 Hz.
+function Controller:OnFixedUpdate(dt)
+    if self.character ~= nil and self.move_input ~= nil and not self.dead then self.character.input = self.move_input end
+end
+
+-- The animation graph's inputs: speed and grounded from the character, the rest from this frame's actions.
+function Controller:Animate(moves)
+    local a = self.animator
+    if a == nil then return end
+    local speed, grounded = 0, self.vy == 0
+    if self.character ~= nil then
+        local v = self.character.velocity
+        speed = math.sqrt(v.x * v.x + v.z * v.z)
+        grounded = self.character.grounded
+    elseif moves ~= nil then
+        speed = vector.magnitude(moves) * self.speed
+    end
+    a:SetFloatParameter("Speed", self.dead and 0 or speed)
+    a:SetBoolParameter("Grounded", grounded)
+    a:SetBoolParameter("Dead", self.dead)
+    a:SetBoolParameter("Aiming", not self.dead and Input.IsTriggered("Aim"))
+    if self.health < self.anim_health and not self.dead then a:SetTrigger("Hit") end
+    self.anim_health = self.health
+end
+
 function Controller:OnUpdate(dt)
     local t = self.entity:Get("Transform")
     -- Enemy scripts also write the existing health/feedback attributes.
@@ -375,6 +405,8 @@ function Controller:OnUpdate(dt)
                 self.character.input = vector.create(0, 0, 0)
                 self.character.jump_requested = false
             end
+            self.move_input = nil
+            self:Animate(nil)
             return
         end
     end
@@ -403,11 +435,16 @@ function Controller:OnUpdate(dt)
         -- The player's existing Jolt CharacterSystem consumes this input in
         -- FixedUpdate, including slopes, steps, collision and buffered jumps.
         self.character.input = vector.create(vx, 0, vz)
+        self.move_input = self.character.input
         self.character.jump_requested = Input.IsTriggered("Jump")
+        if self.character.jump_requested and self.character.grounded and self.animator ~= nil then self.animator:SetTrigger("Jump") end
     else
         -- Preserve this template's movement when the engine is built without
         -- the optional physics module.
-        if self.vy == 0 and Input.IsTriggered("Jump") then self.vy = self.jump_speed end
+        if self.vy == 0 and Input.IsTriggered("Jump") then
+            self.vy = self.jump_speed
+            if self.animator ~= nil then self.animator:SetTrigger("Jump") end
+        end
         self.vy += self.gravity * dt
         local p = t.position
         local y = p.y + self.vy * dt
@@ -430,6 +467,7 @@ function Controller:OnUpdate(dt)
         self.reloading = true
         self.reload_timer = weapon.reload
         Attributes.SetBase(self.entity, "Reloading", 1)
+        if self.animator ~= nil then self.animator:SetTrigger("Reload") end
     end
     if self.reloading then
         self.reload_timer = self.reload_timer - dt
@@ -449,6 +487,7 @@ function Controller:OnUpdate(dt)
         if shot > 0 then Abilities.End(shot) end
     end
     if shot > 0 then
+        if self.animator ~= nil then self.animator:SetTrigger("Fire") end
         self.fire_timer = self.weapon_index == 1 and self.fire_cooldown or weapon.cooldown
         self.ammo = Attributes.Get(self.entity, "Ammo")
         self.magazines[self.weapon_index] = self.ammo
@@ -537,6 +576,9 @@ function Controller:OnUpdate(dt)
             end
         end
     end
+
+    if Input.IsTriggered("Interact") and self.animator ~= nil then self.animator:SetTrigger("Interact") end
+    self:Animate(move)
 
     -- Face the way it's going.
     if vx ~= 0 or vz ~= 0 then

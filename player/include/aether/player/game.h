@@ -62,6 +62,10 @@ namespace aether::audio {
 class AudioSystem;
 }
 
+namespace aether::anim {
+class AnimationSystem;
+}
+
 namespace aether::player {
 
 // Manifest.json, as the cooker writes it (§25.2).
@@ -320,6 +324,11 @@ public:
         u32 handle = 0; // an audio::CueHandle
     };
     std::vector<SequenceCue> SequenceCues() const;
+    // Every Animator's graph (M8.6): parameters from scripts and Blueprints, montages
+    // from sequences' Animation tracks. Null before a scene starts. Each state
+    // change is logged ("Anim state: <entity> <machine>: <from> -> <to>"), and
+    // montages ("Anim montage started: <montage>", "... ended: <montage>").
+    anim::AnimationSystem* Animation();
     bool StartAudioOutput(std::string* error = nullptr);
 
 private:

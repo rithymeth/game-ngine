@@ -572,6 +572,36 @@
             "type": "Pressed"
           }
         ]
+      },
+      {
+        "$v": 1,
+        "action": "Aim",
+        "actuation": 0.5,
+        "key": "MouseRight",
+        "modifiers": [],
+        "triggers": [
+          {
+            "chord_action": "",
+            "one_shot": false,
+            "time": 0.5,
+            "type": "Down"
+          }
+        ]
+      },
+      {
+        "$v": 1,
+        "action": "Aim",
+        "actuation": 0.5,
+        "key": "GamepadLeftTrigger",
+        "modifiers": [],
+        "triggers": [
+          {
+            "chord_action": "",
+            "one_shot": false,
+            "time": 0.5,
+            "type": "Down"
+          }
+        ]
       }
     ],
     "block_lower_contexts": false,

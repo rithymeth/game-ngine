@@ -150,6 +150,26 @@
           "interp": "linear"
         }
       ]
+    },
+    {
+      "id": "archive-kael",
+      "name": "Kael listens",
+      "type": "animation",
+      "binding": "88f690e4-8827-4383-bfb5-520bc345bff0",
+      "animation": [
+        {
+          "time": 0.5,
+          "montage": "Characters/Kael/Kael_ArchiveListen.amontage",
+          "action": "play",
+          "rate": 0.5
+        },
+        {
+          "time": 5.0,
+          "montage": "Characters/Kael/Kael_ArchiveListen.amontage",
+          "action": "play",
+          "rate": 0.5
+        }
+      ]
     }
   ]
 }

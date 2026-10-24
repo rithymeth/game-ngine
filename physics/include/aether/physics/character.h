@@ -132,5 +132,8 @@ AETHER_REFLECT(aether::CharacterMovement, 1,
     AETHER_FIELD(mass, Field_EditAnywhere, {.tooltip = "For pushing dynamic bodies", .category = "Movement", .range_min = 1.0, .range_max = 10000.0, .units = "kg"}),
     AETHER_FIELD(flying, Field_EditAnywhere, {.tooltip = "No gravity; input moves in 3D", .category = "Movement"}),
     AETHER_FIELD(input, Field_Transient),
-    AETHER_FIELD(jump_requested, Field_Transient)
+    AETHER_FIELD(jump_requested, Field_Transient),
+    // State scripts read (an animation graph's speed and grounded inputs); never saved.
+    AETHER_FIELD(velocity, Field_ReadOnly | Field_Transient),
+    AETHER_FIELD(grounded, Field_ReadOnly | Field_Transient)
 )
