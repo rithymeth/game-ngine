@@ -47,6 +47,7 @@ bool Validate(const ServerConfig& c, std::string* error) {
     if (c.status_interval < 0) return Fail(error, "status_interval must be >= 0");
     if (!ValidLevel(c.log_level)) return Fail(error, "log_level must be trace, info, warn or error");
     if (c.name.size() > 64) return Fail(error, "name must be at most 64 characters");
+    if (!c.token_secret.empty() && c.token_secret.size() < 16) return Fail(error, "token_secret must be at least 16 characters");
     return true;
 }
 
@@ -97,6 +98,8 @@ bool ParseServerConfigJson(const std::string& text, ServerConfig& config, std::s
         else if (key == "max_players") ok = want_uint(1024, u) && (c.max_players = static_cast<u32>(u), true);
         else if (key == "password") ok = want_string(c.password);
         else if (key == "build_id") ok = want_uint(0xFFFFFFFFull, u) && (c.build_id = static_cast<u32>(u), true);
+        else if (key == "token_secret") ok = want_string(c.token_secret);
+        else if (key == "require_token") ok = want_bool(c.require_token);
         else if (key == "scene") ok = want_string(c.scene);
         else if (key == "tick_rate") ok = want_number(c.tick_rate);
         else if (key == "log_file") ok = want_string(c.log_file);
@@ -125,8 +128,11 @@ const char* ServerUsage() {
            "                     [--port <n>] [--max-players <n>] [--password <text>] [--build-id <n>]\n"
            "                     [--name <text>] [--tick-rate <hz>] [--log-file <path>] [--log-level <level>]\n"
            "                     [--max-runtime <seconds>] [--quit-when-empty] [--no-replicate-scene]\n"
-           "                     [--status-interval <seconds>]\n"
-           "The command line overrides the config file; AETHER_SERVER_PASSWORD overrides both for the password.\n"
+           "                     [--status-interval <seconds>] [--token-secret <text>] [--require-token | --optional-token]\n"
+           "       aether_server [--config <server.json>] [--token-secret <text>] [--build-id <n>]\n"
+           "                     --issue-token <player> [--token-ttl <seconds>]   (prints a join token and exits)\n"
+           "The command line overrides the config file; AETHER_SERVER_PASSWORD and AETHER_SERVER_TOKEN_SECRET\n"
+           "override both for the password and the token issuer secret.\n"
            "Exit codes: 0 clean shutdown, 1 startup failure (package/scene), 2 bad config or arguments, 3 port in use.\n";
 }
 
@@ -154,6 +160,8 @@ bool ParseServerArgs(const std::vector<std::string>& args, ServerConfig& config,
         if (a == "--quit-when-empty") { c.quit_when_empty = true; continue; }
         if (a == "--no-replicate-scene") { c.replicate_scene = false; continue; }
         if (a == "--config") { ++i; continue; }
+        if (a == "--require-token") { c.require_token = true; continue; }
+        if (a == "--optional-token") { c.require_token = false; continue; }
         if (a == "--port") {
             if (!need("a port") || !ParseU64(value, 65535, u)) return Fail(error, "--port must be 0..65535");
             c.port = static_cast<u16>(u);
@@ -175,6 +183,9 @@ bool ParseServerArgs(const std::vector<std::string>& args, ServerConfig& config,
         } else if (a == "--password") {
             if (!need("a password")) return false;
             c.password = value;
+        } else if (a == "--token-secret") {
+            if (!need("a secret")) return false;
+            c.token_secret = value;
         } else if (a == "--name") {
             if (!need("a name")) return false;
             c.name = value;
@@ -197,6 +208,7 @@ bool ParseServerArgs(const std::vector<std::string>& args, ServerConfig& config,
         ++i;
     }
     if (const char* pw = std::getenv("AETHER_SERVER_PASSWORD")) c.password = pw;
+    if (const char* ts = std::getenv("AETHER_SERVER_TOKEN_SECRET")) c.token_secret = ts;
     if (!Validate(c, error)) return false;
     config = std::move(c);
     return true;

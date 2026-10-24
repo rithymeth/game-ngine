@@ -73,6 +73,10 @@ struct PredSim {
             }
         }
     }
+    // The handshake is two round trips (challenge, then response; M8.9): wait for every client.
+    void WaitConnected() {
+        for (int i = 0; i < 600 && peers.size() < clients.size(); ++i) Step();
+    }
     Entity SpawnCharacter(PeerId owner, const Vec3& at = {}) {
         NetIdentity ni;
         SetNetArchetype(ni, "character");
@@ -154,6 +158,7 @@ AETHER_TEST(Prediction_RespondsAtOnceAndAgrees) {
     sim.net.conditions.latency = 0.1;
     auto& owner = sim.AddClient();
     auto& other = sim.AddClient();
+    sim.WaitConnected();
     sim.Step(10);
     const Entity pawn = sim.SpawnCharacter(sim.peers[0]);
     sim.Step(20);
@@ -191,6 +196,7 @@ AETHER_TEST(Prediction_SurvivesLossAndReconciles) {
     sim.net.conditions.jitter = 0.02;
     sim.net.conditions.loss = 0.2;
     auto& owner = sim.AddClient();
+    sim.WaitConnected();
     sim.Step(30);
     const Entity pawn = sim.SpawnCharacter(sim.peers[0]);
     sim.Step(40);
@@ -238,6 +244,7 @@ AETHER_TEST(Prediction_ServerSanitizesAndChecksOwners) {
     PredSim sim;
     auto& owner = sim.AddClient();
     auto& thief = sim.AddClient();
+    sim.WaitConnected();
     sim.Step(10);
     const Entity pawn = sim.SpawnCharacter(sim.peers[0]);
     sim.Step(20);
