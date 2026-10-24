@@ -125,9 +125,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     @Override
     public void onTrimMemory(int level) {
         super.onTrimMemory(level);
-        if (level >= TRIM_MEMORY_RUNNING_LOW) {
-            nativeLifecycle(2, level >= TRIM_MEMORY_RUNNING_CRITICAL);
-        }
+        // The levels are not one scale: UI_HIDDEN (20) and BACKGROUND (40) sit above RUNNING_CRITICAL (15) but only mean
+        // the app left the screen, so a plain HOME press used to report "Critical" and trim every texture.
+        if (level == TRIM_MEMORY_UI_HIDDEN || level < TRIM_MEMORY_RUNNING_LOW) return;
+        nativeLifecycle(2, level == TRIM_MEMORY_RUNNING_CRITICAL || level >= TRIM_MEMORY_COMPLETE);
     }
 
     @Override
