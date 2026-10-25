@@ -1058,12 +1058,13 @@ jobs:
           arch: x86_64
           target: google_apis
           disable-animations: true
-          # The scene-mode run uploads the cooked game's meshes and textures through the emulator's
-          # host-side SwiftShader; with the default AVD memory the emulator process died mid-upload.
+          # The scene-mode run uploads the cooked game's meshes and textures; keep the AVD memory raised.
           ram-size: 4096M
           heap-size: 512M
+          # -gpu guest renders with SwiftShader inside the guest (Vulkan + GLES, present on API 30+ google_apis
+          # x86_64 images): host-side swiftshader_indirect intermittently crashed the emulator in the first frames.
           # -show-kernel puts the guest kernel console (lowmemorykiller, panics) on the emulator's stdout in the job log.
-          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -show-kernel
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu guest -show-kernel
           script: |
             adb install -r platforms/android/app/build/outputs/apk/debug/app-debug.apk
             adb logcat -c
