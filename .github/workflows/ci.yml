@@ -185,6 +185,15 @@ jobs:
           grep -E "^import cache: [0-9]+ reused, $models imported$" m85/edited.txt
           grep -E "^texture cache: [0-9]+ reused, 0 cooked$" m85/edited.txt
           [ "$(sha256sum < m85/first/Game.apak)" != "$(sha256sum < m85/edited/Game.apak)" ]
+          # Fresh cooks: two separate clean copies (no Intermediate/ import cache) give byte-identical output.
+          for c in a b; do
+            rm -rf "m85/fresh-$c" && cp -r games/AETHER-01 "m85/fresh-$c" && rm -rf "m85/fresh-$c/Intermediate"
+            ./build/tools/cook/aether_cook "m85/fresh-$c/AETHER-01.aproject" --out "m85/fresh-$c/out" --config development > "m85/fresh-$c.txt"
+          done
+          sha256sum m85/fresh-a/out/Game.apak m85/fresh-b/out/Game.apak m85/fresh-a/out/CookManifest.json m85/fresh-b/out/CookManifest.json
+          [ "$(sha256sum < m85/fresh-a/out/Game.apak)" = "$(sha256sum < m85/fresh-b/out/Game.apak)" ]
+          [ "$(sha256sum < m85/fresh-a/out/CookManifest.json)" = "$(sha256sum < m85/fresh-b/out/CookManifest.json)" ]
+          [ "$(sha256sum < m85/first/Game.apak)" = "$(sha256sum < m85/fresh-a/out/Game.apak)" ]
           # Toolchain and revision the hashes above belong to.
           echo "engine revision: $(git rev-parse HEAD)"; gcc --version | head -1; cmake --version | head -1
           # Standalone load: the first pak, copied outside the checkout with the project sources moved away, runs in

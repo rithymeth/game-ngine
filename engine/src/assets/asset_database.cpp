@@ -31,6 +31,41 @@ AssetGuid NewAssetGuid() {
     return AssetGuid{g.hi, g.lo};
 }
 
+AssetGuid DeriveSubAssetGuid(const AssetGuid& parent, std::string_view importer, std::string_view key) {
+    // Two FNV-1a 64 streams with different offset bases over a length-prefixed
+    // encoding (so ("ab","c") != ("a","bc")), each finished with a SplitMix64
+    // mix. Not cryptographic; only needs to be stable and well spread.
+    auto mix = [](u64 x) {
+        x ^= x >> 30;
+        x *= 0xbf58476d1ce4e5b9ull;
+        x ^= x >> 27;
+        x *= 0x94d049bb133111ebull;
+        return x ^ (x >> 31);
+    };
+    u64 a = 0xcbf29ce484222325ull;
+    u64 b = 0x84222325cbf29ce4ull;
+    auto byte = [&](unsigned char c) {
+        a = (a ^ c) * 0x100000001b3ull;
+        b = (b ^ static_cast<unsigned char>(c ^ 0x5a)) * 0x100000001b3ull;
+    };
+    auto word = [&](u64 v) {
+        for (int i = 0; i < 8; ++i) byte(static_cast<unsigned char>(v >> (8 * i)));
+    };
+    auto text = [&](std::string_view s) {
+        word(s.size());
+        for (char c : s) byte(static_cast<unsigned char>(c));
+    };
+    text("aether.subasset.v1");
+    word(parent.hi);
+    word(parent.lo);
+    text(importer);
+    text(key);
+    AssetGuid g{mix(a ^ mix(b)), mix(b + 0x9e3779b97f4a7c15ull) ^ a};
+    g.hi = (g.hi & ~0x000000000000F000ull) | 0x0000000000008000ull; // version 8
+    g.lo = (g.lo & 0x3FFFFFFFFFFFFFFFull) | 0x8000000000000000ull; // RFC variant
+    return g;
+}
+
 std::string ToString(const AssetGuid& guid) { return aether::ToString(EntityGuid{guid.hi, guid.lo}); }
 
 bool ParseAssetGuid(std::string_view text, AssetGuid& out) {
@@ -694,7 +729,15 @@ std::vector<AssetGuid> AssetDatabase::SetSubAssets(const AssetGuid& source_ref,
     for (const SubAssetMeta& wanted : sub_assets) {
         SubAssetMeta sub = wanted;
         auto found = existing.find(sub.key);
-        sub.guid = found != existing.end() ? found->second : NewAssetGuid();
+        // Persisted GUIDs are kept (scenes and prefabs reference them); new ones are
+        // derived, not random, so a fresh cook of uncommitted sub-assets is reproducible.
+        sub.guid = found != existing.end() ? found->second : DeriveSubAssetGuid(source, sub.importer, sub.key);
+        if (found == existing.end()) {
+            auto clash = records_.find(sub.guid);
+            if (clash != records_.end() && clash->second.parent != source) {
+                sub.guid = NewAssetGuid(); // astronomically unlikely clash with another asset
+            }
+        }
         guids.push_back(sub.guid);
         current_guids.insert(sub.guid);
         updated.push_back(std::move(sub));

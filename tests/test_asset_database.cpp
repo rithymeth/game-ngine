@@ -33,6 +33,26 @@ std::string ReadText(const stdfs::path& file) {
 
 } // namespace
 
+AETHER_TEST(AssetGuid_DerivedSubAssetGuidsAreStableAndDistinct) {
+    AssetGuid parent;
+    AETHER_CHECK(ParseAssetGuid("357e2f58-fe46-4aaf-b2fb-4253e498ee34", parent));
+    const AssetGuid mesh = DeriveSubAssetGuid(parent, "Mesh", "mesh:0");
+    // Pinned: the derivation is part of the content format (fresh cooks on any
+    // machine must agree), so changing it is a breaking change.
+    AETHER_CHECK(ToString(mesh) == "681c4446-4106-83e0-a4fd-dc5a4d52e955");
+    AETHER_CHECK(mesh == DeriveSubAssetGuid(parent, "Mesh", "mesh:0"));
+    AETHER_CHECK((mesh.hi & 0xF000) == 0x8000 && (mesh.lo >> 62) == 2); // v8, RFC variant
+    AssetGuid other_parent = parent;
+    other_parent.lo ^= 1;
+    std::set<std::string> seen = {ToString(mesh)};
+    seen.insert(ToString(DeriveSubAssetGuid(parent, "Mesh", "mesh:1")));
+    seen.insert(ToString(DeriveSubAssetGuid(parent, "Material", "mesh:0")));
+    seen.insert(ToString(DeriveSubAssetGuid(parent, "Mesh", "material:0")));
+    seen.insert(ToString(DeriveSubAssetGuid(other_parent, "Mesh", "mesh:0")));
+    seen.insert(ToString(DeriveSubAssetGuid(parent, "Mes", "hmesh:0"))); // length-prefixed fields
+    AETHER_CHECK(seen.size() == 6);
+}
+
 AETHER_TEST(AssetGuid_StringAndReflection) {
     AssetGuid g = NewAssetGuid();
     AssetGuid back;
