@@ -6,6 +6,7 @@
 #include "aether/gameplay/attribute_system.h"
 #include "aether/quests/quest_system.h"
 #include "aether/player/game.h"
+#include "../player/src/particle_pass.h"
 #include "aether/scene/components.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/serialization.h"
@@ -29,6 +30,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <memory>
+#include <stdexcept>
 
 using namespace aether;
 namespace fs = std::filesystem;
@@ -999,6 +1001,109 @@ AETHER_TEST(Aether01_ArchiveSignalParticlesPlayInSyncAndSkipStopsThem) {
         }
     }
 }
+
+#if defined(AETHER_HAS_VULKAN) && !defined(_WIN32)
+// The packaged player draws the archive signal (M8.7): the Archive reveal frame's particles, from the cooked game's
+// particle world and its scene camera, drawn through the player's particle pass (player/src/particle_pass.h, the
+// pass SceneRenderer records after the scene's surfaces) on Vulkan (lavapipe in CI) over the renderer's clear colour.
+// The additive motes add a cyan-blue glow (blue and green up, red not) where the sprites project, near the terminal,
+// and nowhere else. (The whole scene renderer isn't drawn here: lavapipe crashes in its JIT on the scene pipeline,
+// see the advisory "Play AETHER-01 through Vulkan" CI step.)
+AETHER_TEST(Aether01_ArchiveSignalParticlesDrawThroughThePlayerParticlePass) {
+    std::unique_ptr<gfx::rhi::IDevice> device;
+    try {
+        device = gfx::rhi::CreateDevice(gfx::rhi::Backend::Vulkan, false);
+    } catch (const std::exception&) {
+    }
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    ProofRun run("cinematic-vfx-draw");
+    PlayToArchive(run);
+    run.Start();
+    const Entity archive = FindEntitiesWithTag(run.game->GetWorld(), "ArchiveTerminal").front();
+    for (int frame = 0; frame < 600 && run.game->GetWorld().GetComponent<SequenceComponent>(archive)->time < 1.5f; ++frame) run.Frames(1);
+    vfx::ParticleWorld* particles = run.game->Particles();
+    AETHER_CHECK(particles != nullptr && particles->GetStats().particles > 10);
+    if (!particles) return;
+
+    // The frame as SceneRenderer::Draw builds it: the active camera, the particle world's draw data for its view.
+    constexpr u32 kWidth = 320, kHeight = 180;
+    World& world = run.game->GetWorld();
+    const Entity camera_entity = FindActiveCamera(world, run.game->Guids());
+    AETHER_CHECK(world.IsAlive(camera_entity) && world.GetComponent<Camera>(camera_entity) != nullptr);
+    const Mat4 view = CameraView(world, run.game->Guids(), camera_entity);
+    const Mat4 view_projection = CameraProjection(*world.GetComponent<Camera>(camera_entity), static_cast<f32>(kWidth) / kHeight) * view;
+    const vfx::ParticleCamera camera = vfx::ParticleCamera::FromView(view);
+    vfx::ParticleRenderData data;
+    particles->BuildRenderData(camera, data, &view_projection);
+    AETHER_CHECK(!data.sprites.empty());
+
+    std::unique_ptr<gfx::rhi::ISwapChain> target = device->CreateSwapChain(nullptr, kWidth, kHeight, 2);
+    player::ParticlePass pass(*device, *target);
+    AETHER_CHECK(pass.Valid());
+    std::unique_ptr<gfx::rhi::ICommandList> cmd = device->CreateCommandList();
+    const gfx::rhi::ClearColor clear{0.015f, 0.025f, 0.045f, 1.0f}; // the player's
+    std::vector<u8> pixels;
+    target->AcquireNextImage();
+    cmd->Reset();
+    cmd->BeginRenderPass(*target, clear);
+    pass.Draw(*cmd, data, camera, view_projection, 0);
+    cmd->EndRenderPass();
+    cmd->Close();
+    device->WaitForFence(device->Submit(*cmd, target.get()));
+    AETHER_CHECK(target->ReadBack(pixels));
+    target->Present(false);
+    AETHER_CHECK(pixels.size() == kWidth * kHeight * 4);
+    AETHER_CHECK(pass.Vertices().alpha.empty() && pass.Vertices().additive.size() == 6 * data.DrawnParticles());
+    if (pixels.size() != kWidth * kHeight * 4) return;
+
+    // Where the sprites land on screen, and the terminal.
+    const auto project = [&](const Vec3& p, f32& x, f32& y) {
+        const Vec4 clip = view_projection * Vec4(p.x, p.y, p.z, 1.0f);
+        if (clip.w <= 0.0f) return false;
+        x = (clip.x / clip.w * 0.5f + 0.5f) * kWidth;
+        y = (0.5f - clip.y / clip.w * 0.5f) * kHeight;
+        return true;
+    };
+    f32 min_x = 1e9f, min_y = 1e9f, max_x = -1e9f, max_y = -1e9f;
+    for (const auto& batch : data.sprites) {
+        for (const auto& sprite : batch.instances) {
+            f32 x = 0, y = 0;
+            if (!project(sprite.center, x, y)) continue;
+            min_x = std::min(min_x, x); max_x = std::max(max_x, x);
+            min_y = std::min(min_y, y); max_y = std::max(max_y, y);
+        }
+    }
+    const Vec3 terminal = world.GetComponent<Transform>(archive)->position + Vec3(0, 1.2f, 0);
+    f32 terminal_x = 0, terminal_y = 0;
+    AETHER_CHECK(project(terminal, terminal_x, terminal_y));
+    AETHER_CHECK(terminal_x >= min_x - 40 && terminal_x <= max_x + 40 && terminal_y >= min_y - 40 && terminal_y <= max_y + 40);
+
+    const u8 base[3] = {static_cast<u8>(std::lround(clear.r * 255)), static_cast<u8>(std::lround(clear.g * 255)), static_cast<u8>(std::lround(clear.b * 255))};
+    int darker = 0, glow = 0, glow_outside = 0, brightest = 0;
+    for (u32 y = 0; y < kHeight; ++y) {
+        for (u32 x = 0; x < kWidth; ++x) {
+            const u8* p = &pixels[(static_cast<usize>(y) * kWidth + x) * 4];
+            const int dr = p[0] - base[0], dg = p[1] - base[1], db = p[2] - base[2];
+            if (dr < -2 || dg < -2 || db < -2) ++darker;
+            if (db >= 8 && dg >= 4 && db > dr + 4 && dg > dr) {
+                const bool near = x + 12.0f >= min_x && x <= max_x + 12.0f && y + 12.0f >= min_y && y <= max_y + 12.0f;
+                ++(near ? glow : glow_outside);
+                brightest = std::max(brightest, db);
+            }
+        }
+    }
+    std::printf("  archive signal: %zu motes, %d cyan-blue pixels near the terminal (brightest +%d blue), %d elsewhere, %d darker; "
+                "sprites x %.0f-%.0f y %.0f-%.0f, terminal %.0f,%.0f\n",
+                data.DrawnParticles(), glow, brightest, glow_outside, darker, min_x, max_x, min_y, max_y, terminal_x, terminal_y);
+    AETHER_CHECK(darker == 0);
+    AETHER_CHECK(glow >= 20);
+    AETHER_CHECK(glow_outside == 0);
+    AETHER_CHECK(run.game->Warnings().empty());
+}
+#endif
 
 AETHER_TEST(Aether01_WardenStrikeTellDamageAndDodge) {
     ProofRun run("dodge");

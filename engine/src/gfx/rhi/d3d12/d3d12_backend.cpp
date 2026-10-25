@@ -348,7 +348,7 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
         // backend's equivalent VkPipelineColorBlendAttachmentState exactly.
         render_target_blend.BlendEnable = TRUE;
         render_target_blend.SrcBlend = D3D12_BLEND_SRC_ALPHA;
-        render_target_blend.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+        render_target_blend.DestBlend = desc.additive_blending ? D3D12_BLEND_ONE : D3D12_BLEND_INV_SRC_ALPHA;
     }
 
     // Always declared with the swap chain's own D32_FLOAT depth format
