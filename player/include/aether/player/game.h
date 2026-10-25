@@ -66,6 +66,10 @@ namespace aether::anim {
 class AnimationSystem;
 }
 
+namespace aether::vfx {
+class ParticleWorld;
+}
+
 namespace aether::player {
 
 // Manifest.json, as the cooker writes it (§25.2).
@@ -329,6 +333,15 @@ public:
     // change is logged ("Anim state: <entity> <machine>: <from> -> <to>"), and
     // montages ("Anim montage started: <montage>", "... ended: <montage>").
     anim::AnimationSystem* Animation();
+    // Every ParticleSystem component (M8.7): placed in the scene, spawned by
+    // Blueprints (Particles library) or by sequences' Vfx tracks. Particle
+    // systems (.avfx) load from the package by path on first use; the world is
+    // stepped after the characters animate, so attached effects follow them.
+    // Sequence effects are logged ("Sequence vfx started: <asset>", "...
+    // stopped: <asset>") and finished ones ("Vfx finished: <asset>"). Its
+    // BuildRenderData is the draw data for a renderer's particle pass. Null
+    // before a scene starts.
+    vfx::ParticleWorld* Particles();
     bool StartAudioOutput(std::string* error = nullptr);
 
 private:

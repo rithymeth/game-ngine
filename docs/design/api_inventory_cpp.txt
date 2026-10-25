@@ -4361,6 +4361,7 @@
   u32 CriticalMemoryPressureEvents()const
   u32 MemoryPressureEvents()const
   ui::Viewport*Ui()
+  vfx::ParticleWorld*Particles()
   void ActivateInputContexts()
   void AddInteractionStage()
   void AddInventoryStage()

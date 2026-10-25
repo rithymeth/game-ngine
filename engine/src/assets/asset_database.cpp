@@ -240,6 +240,7 @@ std::string ImporterForExtension(const stdfs::path& file) {
         {".hlsl", "Shader"},  {".ttf", "Font"},    {".otf", "Font"},
         {".aui", "UILayout"}, {".atheme", "UITheme"}, // UI layouts and themes, shown by WidgetComponent and read by path
         {".aanim", "AnimGraph"}, {".amontage", "AnimMontage"}, {".ablend", "BlendSpace"}, // animation data, read by path (M8.6)
+        {".avfx", "ParticleSystem"}, // particle systems, read by path by the player's particle world (M8.7)
     };
     auto it = kImporters.find(ToLower(file.extension().string()));
     return it != kImporters.end() ? it->second : std::string();
