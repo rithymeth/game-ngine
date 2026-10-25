@@ -3,7 +3,8 @@
 Replays the input trace the Aether01_WardenPhasesEndingAndNewGame test records
 (AETHER01_INPUT_TRACE), headless, against a cooked package, and checks the log
 markers the player writes for sequence dialogue (cue start/stop, subtitle
-show/hide, finished/skipped), Kael's archive montage and animation states (M8.6)
+show/hide, finished/skipped), Kael's archive montage and animation states (M8.6),
+the archive signal particle effect (started, stopped, and died out after a skip)
 and the final game state from --report. The skip
 run is the same trace with the SkipCinematic key (Enter) pressed partway through
 the reveal: it must stop the line that is playing, hide its subtitle, start no
@@ -81,6 +82,15 @@ def check(lines, skipped, log_file):
     for state in ("Walk", "Run", "Fire", "Interact"):
         if not count(f"Player: Anim state: Player Locomotion: ") or not count(f" -> {state}"): problems.append(f"Kael never entered {state}")
     if count("Animation:"): problems.append("animation problems in the log")
+    # M8.7: the reveal's Vfx track starts the archive signal particles on the terminal at 0.5 s and stops them
+    # at 7 s (or at the skip); the player's particle world runs them until they die out.
+    fx = "Fx/ArchiveSignal.avfx"
+    if count(f"Player: Sequence vfx started: {fx}") != 1: problems.append(f"expected one '{fx}' start, saw {count(f'Player: Sequence vfx started: {fx}')}")
+    if count(f"Player: Sequence vfx stopped: {fx}") != 1: problems.append(f"the {fx} effect was never stopped")
+    # The recorded trace ends with the reveal (1 s after the stop, inside the motes' 1.2-1.8 s life), so only the
+    # skip run plays on long enough to see them die out.
+    if skipped and count(f"Player: Vfx finished: {fx}") != 1: problems.append(f"the {fx} particles never died out")
+    if count("Particles:") or count("didn't start"): problems.append("particle problems in the log")
     # Each line's subtitle shows on the frame its voice starts: the two markers are adjacent.
     for index, line in enumerate(lines):
         if "Player: Subtitle shown: dlg.archive." in line:

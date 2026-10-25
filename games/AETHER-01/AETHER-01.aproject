@@ -7,7 +7,8 @@
     "Audio/",
     "Sequences/",
     "Gameplay/",
-    "Characters/"
+    "Characters/",
+    "Fx/"
   ],
   "collision_matrix": [],
   "default_quality": "High",
