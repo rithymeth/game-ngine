@@ -13,7 +13,7 @@
 // axes from the camera), so each becomes two triangles here and the vertex shader only projects them. Alpha-blended sprites from every batch
 // are sorted back to front by their distance along the view; additive ones are order-independent and keep their order. Ribbons are unrolled
 // from their indices the same way. A batch's or ribbon's `material` names a texture in the package (its sprites' flipbook cells, cross-faded
-// to the next cell when the batch blends frames); each vertex carries its texture's bindless index. Mesh particles are not drawn yet.
+// to the next cell when the batch blends frames); each vertex carries its texture's bindless index, and the pass draws each run of one texture separately. Mesh particles are not drawn yet.
 
 namespace aether::player {
 
@@ -42,6 +42,16 @@ struct ParticleVertexStreams {
         additive.clear();
     }
 };
+
+// A run of consecutive vertices with the same texture: the pass draws each separately (first-vertex Draw from the one buffer) so the
+// texture index is uniform across a draw, with no non-uniform descriptor indexing. Runs follow the stream's order (back to front stays).
+struct ParticleDrawRun {
+    u32 first_vertex = 0;
+    u32 vertex_count = 0;
+    u32 texture = 0;
+};
+// Fills `out` (cleared first) with `vertices`' runs.
+void ParticleTextureRuns(const std::vector<ParticleQuadVertex>& vertices, std::vector<ParticleDrawRun>& out);
 
 // A material (texture path) to its bindless texture index, 0 for none or one that couldn't be loaded. Called once per batch and ribbon.
 using ParticleTextureResolver = std::function<u32(const std::string& material)>;
@@ -80,6 +90,7 @@ private:
     gfx::rhi::PipelineHandle alpha_pipeline_, additive_pipeline_;
     std::array<std::array<Buffer, 2>, kFrameSlots> buffers_{};
     ParticleVertexStreams vertices_;
+    std::vector<ParticleDrawRun> runs_;
     ParticleTextureResolver textures_;
 };
 
