@@ -1063,6 +1063,9 @@ jobs:
           ram-size: 4096M
           heap-size: 512M
           # -show-kernel puts the guest kernel console (lowmemorykiller, panics) on the emulator's stdout in the job log.
+          # Note: on this google_apis image "-gpu guest" is not honoured (emulator 37.2.12 logs "the system image does
+          # not support guest rendering. Falling back to 'lavapipe' mode"), so Vulkan always goes through host
+          # gfxstream; with swiftshader_indirect it is host SwiftShader Vulkan instead of lavapipe.
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -show-kernel
           script: |
             adb install -r platforms/android/app/build/outputs/apk/debug/app-debug.apk
@@ -1118,6 +1121,27 @@ jobs:
           free -m | tee emulator-diagnostics/host-free.txt
           sudo dmesg -T | grep -i -E 'killed process|oom|out of memory|segfault|qemu' | tee emulator-diagnostics/host-dmesg-oom.txt || true
           ls -la emulator-diagnostics
+          # Artifacts can't always be fetched by whoever triages, so put the crash DB's readable contents in the job log:
+          # every file in the crashpad DB, any text files whole, and the interesting strings out of each minidump
+          # (crash reason, the faulting module names such as libgfxstream_backend/liblvp/libvulkan, abort messages).
+          for db in /tmp/android-*/emu-crash-*.db "${TMPDIR:-/tmp}"/android-*/emu-crash-*.db; do
+            [ -d "$db" ] || continue
+            echo "::group::Emulator crash DB $db"
+            find "$db" -type f -printf '%TT %10s %p\n' | sort
+            find "$db" -type f \( -name '*.txt' -o -name '*.log' -o -name '*.json' -o -name '*.ini' -o -name 'settings.dat' \) \
+              -size -256k -print -exec sh -c 'echo "----- $1"; strings -n 4 "$1" | head -n 200' _ {} \; || true
+            find "$db" -type f \( -name '*.dmp' -o -path '*/pending/*' -o -path '*/completed/*' -o -path '*/new/*' \) | while read -r dmp; do
+              echo "----- minidump $dmp ($(stat -c %s "$dmp") bytes)"
+              strings -n 6 "$dmp" | grep -i -E 'gfxstream|vulkan|vk[A-Z]|lvp|lavapipe|llvm|swiftshader|vk_|abort|assert|fatal|check failed|signal|sigsegv|sigabrt|exception|\.so' \
+                | sort | uniq -c | sort -rn | head -n 150 || true
+              echo "----- last strings of $dmp"
+              strings -n 8 "$dmp" | tail -n 60 || true
+            done
+            echo "::endgroup::"
+          done
+          echo "::group::AVD config"
+          cat ~/.android/avd/*.avd/config.ini ~/.android/avd/*.avd/hardware-qemu.ini 2>/dev/null | grep -i -E 'gpu|vulkan|ram|heap|feature|renderer' || true
+          echo "::endgroup::"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
