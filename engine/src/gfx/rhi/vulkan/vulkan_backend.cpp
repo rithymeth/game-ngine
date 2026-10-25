@@ -2930,18 +2930,19 @@ void VulkanCommandList::SetPushConstants(const void* data, u32 size_bytes) {
                         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, size_bytes, data);
 }
 
-void VulkanCommandList::Draw(u32 vertex_count) {
+void VulkanCommandList::Draw(u32 vertex_count, u32 first_vertex) {
     if (!recording_) {
         AETHER_LOG_ERROR("Vulkan", "Draw requires a recording command list");
         return;
     }
     if (!render_pass_active_ || !graphics_pipeline_bound_ ||
-        (graphics_uses_vertex_buffer_ && (!vertex_buffer_bound_ || vertex_count > bound_vertex_count_)) ||
+        (graphics_uses_vertex_buffer_ && (!vertex_buffer_bound_ || first_vertex > bound_vertex_count_ ||
+                                          vertex_count > bound_vertex_count_ - first_vertex)) ||
         (graphics_bindless_enabled_ && !graphics_bindless_bound_)) {
         AETHER_LOG_ERROR("Vulkan", "Draw requires a valid bound graphics pipeline");
         return;
     }
-    vkCmdDraw(command_buffer_, vertex_count, 1, 0, 0);
+    vkCmdDraw(command_buffer_, vertex_count, 1, first_vertex, 0);
 }
 
 void VulkanCommandList::BindVertexBuffer(BufferHandle buffer, u32 stride_bytes) {

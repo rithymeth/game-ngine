@@ -1221,18 +1221,19 @@ void D3D12CommandList::SetPushConstants(const void* data, u32 size_bytes) {
     cmd_.Get()->SetGraphicsRoot32BitConstants(0, (size_bytes + 3) / 4, data, 0);
 }
 
-void D3D12CommandList::Draw(u32 vertex_count) {
+void D3D12CommandList::Draw(u32 vertex_count, u32 first_vertex) {
     if (!recording_) {
         AETHER_LOG_ERROR("D3D12", "Draw requires a recording command list");
         return;
     }
     if (!render_pass_active_ || !graphics_pipeline_bound_ ||
-        (graphics_uses_vertex_buffer_ && (!vertex_buffer_bound_ || vertex_count > bound_vertex_count_)) ||
+        (graphics_uses_vertex_buffer_ && (!vertex_buffer_bound_ || first_vertex > bound_vertex_count_ ||
+                                          vertex_count > bound_vertex_count_ - first_vertex)) ||
         (graphics_bindless_enabled_ && !graphics_bindless_bound_)) {
         AETHER_LOG_ERROR("D3D12", "Draw requires a valid bound graphics pipeline");
         return;
     }
-    cmd_.Get()->DrawInstanced(vertex_count, 1, 0, 0);
+    cmd_.Get()->DrawInstanced(vertex_count, 1, first_vertex, 0);
 }
 
 void D3D12CommandList::BindVertexBuffer(BufferHandle buffer, u32 stride_bytes) {

@@ -59,8 +59,11 @@ public:
     virtual void SetPushConstants(const void* data, u32 size_bytes) = 0;
 
     // Draws `vertex_count` procedural vertices (SV_VertexID/gl_VertexIndex
-    // driven, no vertex buffer) as a triangle list.
-    virtual void Draw(u32 vertex_count) = 0;
+    // driven, no vertex buffer) as a triangle list. With a bound vertex
+    // buffer, `first_vertex` starts the draw that many vertices in, so one
+    // buffer can feed several draws (e.g. one per texture, keeping a bindless
+    // index uniform across each draw); first_vertex + vertex_count must fit.
+    virtual void Draw(u32 vertex_count, u32 first_vertex = 0) = 0;
 
     // Real vertex/index buffers + bindless textures (the "Unified Cross-API
     // Renderer" follow-up) — must be called after BindPipeline, with a
