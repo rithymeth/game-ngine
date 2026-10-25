@@ -5,11 +5,12 @@
 #
 #   tools/ship/assemble_release.sh <package dir from build_release.sh (v1)> <release assets dir> [archive base]
 #
-# archive base defaults to AETHER-01-linux-x64; the package and symbols names (.tar.gz or .zip)
+# archive base defaults to AETHER-01-linux-x64 (AETHER-01-macos-arm64 for the macOS bundle); the package and symbols names (.tar.gz or .zip)
 # are read from <base>.manifest.json.
 # Each input is checked against the SHA256SUMS.txt it was packaged with and the manifest's own
 # package/symbols hashes; SHA256SUMS.txt is normalised to LF without a BOM, then re-checked whole.
 set -euo pipefail
+command -v sha256sum >/dev/null 2>&1 || sha256sum() { shasum -a 256 "$@"; }  # stock macOS
 pkg="$1" assets="$2" base="${3:-AETHER-01-linux-x64}"
 mkdir -p "$assets"
 (cd "$pkg" && sha256sum -c SHA256SUMS.txt)

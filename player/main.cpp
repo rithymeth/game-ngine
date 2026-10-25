@@ -166,7 +166,8 @@ bool SaveScreenshotBmp(const std::string& path, u32 width, u32 height, const std
 }
 
 // --pak arguments (a folder means every .apak in it), else Paks/ beside the
-// executable, else Paks/ in the working directory.
+// executable (on macOS also ../Resources/Paks, the app bundle layout), else
+// Paks/ in the working directory.
 std::vector<std::string> PaksToMount(const Options& o, const char* argv0) {
     std::vector<std::string> paks;
     for (const std::string& p : o.paks) {
@@ -181,6 +182,10 @@ std::vector<std::string> PaksToMount(const Options& o, const char* argv0) {
     std::error_code ec;
     const stdfs::path exe_dir = stdfs::absolute(argv0, ec).parent_path();
     paks = GamePackage::FindPaks(exe_dir / "Paks");
+#ifdef __APPLE__
+    // macOS app bundle: <name>.app/Contents/MacOS/<exe> with the paks in Contents/Resources/Paks.
+    if (paks.empty()) paks = GamePackage::FindPaks(exe_dir.parent_path() / "Resources" / "Paks");
+#endif
     if (paks.empty()) paks = GamePackage::FindPaks("Paks");
     return paks;
 }
