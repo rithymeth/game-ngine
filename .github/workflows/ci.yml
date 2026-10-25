@@ -527,7 +527,8 @@ jobs:
       - name: Configure
         # Vulkan is off: hosted runners have no Vulkan loader to link
         # against. The D3D12 editor and the rest build as usual.
-        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DAETHER_BUILD_VULKAN=OFF -DAETHER_BUILD_QT_EDITOR=ON
+        # AETHER_MSVC_RELEASE_PDB: Release .pdb files for the game symbols archive (M8.10).
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DAETHER_BUILD_VULKAN=OFF -DAETHER_BUILD_QT_EDITOR=ON -DAETHER_MSVC_RELEASE_PDB=ON
       - name: Module graph
         # Check the Windows editor and D3D12 target set against the same
         # cross-configuration layer map enforced by the Linux GCC job.
@@ -664,6 +665,34 @@ jobs:
         with:
           name: AetherEditor-windows-x64
           path: dist/AetherEditor-windows-x64.zip
+      - name: Build the AETHER-01 Windows release candidate, symbols and patch (M8.10)
+        # tools/ship/build_release.sh under Git Bash: strict shipping cook -> v1 .zip package (AETHER-01.exe +
+        # DLLs + Paks + GAME_MANIFEST.json), a symbol-store .zip of the .pdb files keyed by the exe's RSDS
+        # GUID/age (SYMBOLS.json), a v2 package with a delta pak and the v1 -> v2 patch. Named
+        # AETHER-01-windows-x64-ship* so it sits beside AETHER-01-windows-x64.zip (package_aether01.ps1).
+        shell: bash
+        env:
+          PYTHON: python
+        run: |
+          version="${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.release_tag || '' }}"
+          tools/ship/build_release.sh --build build --out ship-dist --work ship-work --platform windows-x64 \
+            --archive-name AETHER-01-windows-x64-ship ${version:+--version "$version"}
+      - name: Install, launch, patch and roll back the Windows game package (M8.10)
+        # The same smoke as the Linux game-ship job, natively: SHA256SUMS, manifest, RSDS/PDB GUID+age check,
+        # headless launch outside the checkout (Health 3), damaged/tampered patches refused with v1 intact,
+        # patch -> Health 5, rollback -> Health 3, saves kept; then the release assembly dry run.
+        shell: bash
+        env:
+          PYTHON: python
+        run: |
+          bash tools/ship/ship_smoke.sh ship-dist ship-run windows-x64 AETHER-01-windows-x64-ship
+          tools/ship/assemble_release.sh ship-dist/v1 ship-release-dry-run AETHER-01-windows-x64-ship
+      - name: Upload the AETHER-01 Windows release candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: aether01-windows-x64-ship
+          path: ship-dist
+          if-no-files-found: error
       - name: Package and validate the standalone proof game
         shell: pwsh
         run: |
@@ -1280,6 +1309,10 @@ jobs:
         with:
           name: aether01-linux-x64-ship
           path: ship-input
+      - uses: actions/download-artifact@v4
+        with:
+          name: aether01-windows-x64-ship
+          path: ship-input-windows
       - name: Add the server packages to the release assets and SHA256SUMS
         # Each archive is checked against the SHA256SUMS.txt it was packaged with, copied in, and its line
         # appended to the release SHA256SUMS.txt (normalised to LF, no BOM). The per-package manifests ship
@@ -1297,9 +1330,11 @@ jobs:
           cat release-assets/SHA256SUMS.txt
       - name: Add the AETHER-01 Linux package, symbols and manifest (M8.10)
         run: tools/ship/assemble_release.sh ship-input/v1 release-assets
+      - name: Add the AETHER-01 Windows package, symbols and manifest (M8.10)
+        run: tools/ship/assemble_release.sh ship-input-windows/v1 release-assets AETHER-01-windows-x64-ship
       - name: Check the archives against SHA256SUMS
         run: |
-          for f in AetherEditor-windows-x64.zip AETHER-01-windows-x64.zip aether-server-linux-x64.tar.gz aether-server-windows-x64.zip aether-server-macos-arm64.tar.gz AETHER-01-linux-x64.tar.gz AETHER-01-linux-x64-symbols.tar.gz AETHER-01-linux-x64.manifest.json; do
+          for f in AetherEditor-windows-x64.zip AETHER-01-windows-x64.zip aether-server-linux-x64.tar.gz aether-server-windows-x64.zip aether-server-macos-arm64.tar.gz AETHER-01-linux-x64.tar.gz AETHER-01-linux-x64-symbols.tar.gz AETHER-01-linux-x64.manifest.json AETHER-01-windows-x64-ship.zip AETHER-01-windows-x64-ship-symbols.zip AETHER-01-windows-x64-ship.manifest.json; do
             want=$(tr -d '\r\357\273\277' < release-assets/SHA256SUMS.txt | awk -v n="$f" '$2==n {print tolower($1)}')
             have=$(sha256sum "release-assets/$f" | cut -d' ' -f1)
             echo "$f want=$want have=$have"
@@ -1318,6 +1353,9 @@ jobs:
             release-assets/AETHER-01-linux-x64.tar.gz
             release-assets/AETHER-01-linux-x64-symbols.tar.gz
             release-assets/AETHER-01-linux-x64.manifest.json
+            release-assets/AETHER-01-windows-x64-ship.zip
+            release-assets/AETHER-01-windows-x64-ship-symbols.zip
+            release-assets/AETHER-01-windows-x64-ship.manifest.json
             release-assets/RELEASE_MANIFEST.json
             release-assets/SHA256SUMS.txt
       - name: Publish
@@ -1333,6 +1371,9 @@ jobs:
             release-assets/AETHER-01-linux-x64.tar.gz
             release-assets/AETHER-01-linux-x64-symbols.tar.gz
             release-assets/AETHER-01-linux-x64.manifest.json
+            release-assets/AETHER-01-windows-x64-ship.zip
+            release-assets/AETHER-01-windows-x64-ship-symbols.zip
+            release-assets/AETHER-01-windows-x64-ship.manifest.json
             release-assets/RELEASE_MANIFEST.json
             release-assets/SHA256SUMS.txt
           generate_release_notes: true
