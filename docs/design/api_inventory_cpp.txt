@@ -4396,6 +4396,7 @@
   SceneRenderer(const SceneRenderer&)=delete
   public:SceneRenderer(gfx::rhi::IDevice&device,gfx::rhi::ISwapChain&swap_chain,const GamePackage&package)
   void Draw(Game&game,gfx::rhi::ICommandList&commands,u32 frame_index)
+  void SetDrawParticles(bool draw)
   void SetViewDistance(f32 metres)
   ~SceneRenderer()
 [player/include/aether/player/settings_apply.h] experimental

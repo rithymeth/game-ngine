@@ -2,7 +2,8 @@
 # aether_game is its runtime (mounting the paks, loading the startup scene,
 # the frame loop); aether_player is the executable around it.
 add_library(aether_game STATIC src/game.cpp src/game_kits.cpp src/user_paths.cpp src/settings_apply.cpp src/bindings_migrate.cpp
-                               src/scene_renderer.cpp src/frame_lights.cpp src/package_textures.cpp)
+                               src/scene_renderer.cpp src/frame_lights.cpp src/package_textures.cpp
+                               src/particle_pass.cpp)
 target_include_directories(aether_game PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # game.cpp includes the complete runtime surface and can exceed MSVC's
 # default COFF section-count limit in Debug builds.

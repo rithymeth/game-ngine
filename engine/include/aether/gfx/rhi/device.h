@@ -70,6 +70,12 @@ struct PipelineDesc {
     // depth-tested renderer — this RHI has no automatic draw-order sorting.
     bool enable_blending = false;
 
+    // With enable_blending: additive blending (src.rgb*src.a + dst.rgb;
+    // output alpha passes through unblended) instead of the standard alpha
+    // blend above, for glows and particles. Order-independent, so draws need
+    // no sorting. Ignored when enable_blending is false.
+    bool additive_blending = false;
+
     // Allows depth-tested transparent draws to respect opaque geometry
     // without preventing later transparent surfaces from contributing.
     // Ignored when depth_test is false. True preserves every pipeline's
