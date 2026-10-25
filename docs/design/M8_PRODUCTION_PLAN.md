@@ -321,11 +321,25 @@ sequence.
   lifetime of the stop or the skip. `tools/aether01_cinematic_check.py` asserts the
   start and stop markers in both packaged runs and the finished marker after the skip
   (the recorded trace ends 1 s after the stop, before the motes die out).
+- *VFX drawing in the packaged player.* The player's scene renderer has a particle pass:
+  after opaque and transparent surfaces it builds the particle world's draw data for the
+  scene camera and packs it (`player/src/particle_pass.h`) into camera-facing sprite quads
+  and unrolled ribbon triangles, alpha-blended ones sorted back to front across batches and
+  additive ones in their own stream, uploaded to per-frame-in-flight vertex buffers and drawn
+  depth-tested without depth writes through two pipelines (the RHI's new
+  `PipelineDesc::additive_blending`, on Vulkan and D3D12; one HLSL source like the other
+  passes). Sprites with no texture draw a soft round falloff. `PlayerParticles_*` tests check
+  the packing and sorting; `Aether01_ArchiveSignalParticlesDrawThroughThePlayerParticlePass`
+  draws the Archive reveal frame's particles (cooked pak, the scene camera) through that pass on
+  Vulkan (lavapipe) and checks the motes add cyan-blue only where they project, at the terminal.
+  (Not the whole scene renderer: lavapipe still crashes in its JIT on the scene pipeline, see
+  the advisory Vulkan player CI step.)
 
-**Still open.** The particle world's draw data is not yet submitted by the player's
-RHI scene renderer (no GPU particle pass there), so the effect simulates and builds
-sprite instances in the packaged player but isn't on screen. The editor panel can't
-author Vfx keys. The editor sequencer panel can't
+**Still open.** Particle materials' textures (flipbooks) and soft-particle depth fade
+aren't sampled yet (sprites draw the procedural falloff), and mesh particles aren't
+drawn; the particle pass has not been checked on screen in the full player frame (D3D12,
+MoltenVK, Android). The
+editor panel can't author Vfx keys. The editor sequencer panel can't
 author Subtitle tracks yet, though MCP `seq_sample` reports them. The dialogue
 audio is a placeholder, not recorded voice. There is no localized voice-over
 (only subtitles are localized). Accessibility covers the subtitle toggle only, with
