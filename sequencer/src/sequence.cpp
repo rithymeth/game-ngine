@@ -53,6 +53,7 @@ const char* TrackTypeName(TrackType t) {
     case TrackType::Fade: return "fade";
     case TrackType::Subsequence: return "subsequence";
     case TrackType::Subtitle: return "subtitle";
+    case TrackType::Vfx: return "vfx";
     }
     return "transform";
 }
@@ -126,6 +127,7 @@ void Track::Normalize() {
     std::stable_sort(anims.begin(), anims.end(), by_time);
     std::stable_sort(subs.begin(), subs.end(), by_time);
     std::stable_sort(subtitles.begin(), subtitles.end(), by_time);
+    std::stable_sort(vfx.begin(), vfx.end(), by_time);
 }
 
 void LevelSequence::Normalize() {
@@ -153,6 +155,7 @@ f32 LevelSequence::EffectiveDuration() const {
         if (!t.anims.empty()) last = std::max(last, t.anims.back().time);
         for (const SubKey& k : t.subs) last = std::max(last, k.time + k.duration);
         if (!t.subtitles.empty()) last = std::max(last, t.subtitles.back().time);
+        if (!t.vfx.empty()) last = std::max(last, t.vfx.back().time);
     }
     return duration > 0.0f ? std::max(duration, last) : last;
 }
@@ -200,7 +203,8 @@ std::vector<std::string> ValidateSequence(const LevelSequence& s) {
         if (t.id.empty()) add("SQ007", label + " has no id");
         else if (!ids.insert(t.id).second) add("SQ005", label + " repeats an id");
         const bool optional_binding = t.type == TrackType::Event || t.type == TrackType::Spawn || t.type == TrackType::CameraCut || t.type == TrackType::Audio ||
-                                      t.type == TrackType::Fade || t.type == TrackType::Subsequence || t.type == TrackType::Subtitle;
+                                      t.type == TrackType::Fade || t.type == TrackType::Subsequence || t.type == TrackType::Subtitle ||
+                                      t.type == TrackType::Vfx;
         if (t.binding.IsNull() && !optional_binding) add("SQ008", label + " is bound to no entity");
 
         // Keys on a track of the wrong kind.
@@ -215,6 +219,7 @@ std::vector<std::string> ValidateSequence(const LevelSequence& s) {
         wrong(!t.anims.empty(), TrackType::Animation, "animation");
         wrong(!t.subs.empty(), TrackType::Subsequence, "subsequence");
         wrong(!t.subtitles.empty(), TrackType::Subtitle, "subtitle");
+        wrong(!t.vfx.empty(), TrackType::Vfx, "vfx");
 
         const auto ordered = [&](const auto& keys, const char* what) {
             if (!StrictlyIncreasing(keys)) add("SQ002", label + ", " + what + ": keys aren't in increasing time order");
@@ -222,7 +227,7 @@ std::vector<std::string> ValidateSequence(const LevelSequence& s) {
         };
         const bool key_list_track = t.type == TrackType::Event || t.type == TrackType::Spawn || t.type == TrackType::CameraCut ||
                                     t.type == TrackType::Audio || t.type == TrackType::Animation || t.type == TrackType::Subsequence ||
-                                    t.type == TrackType::Subtitle;
+                                    t.type == TrackType::Subtitle || t.type == TrackType::Vfx;
         if (key_list_track && !t.channels.empty()) add("SQ013", label + " has value channels but isn't a value track");
 
         switch (t.type) {
@@ -291,6 +296,12 @@ std::vector<std::string> ValidateSequence(const LevelSequence& s) {
                 if (!(k.duration > 0.0f)) add("SQ025", label + " has a subtitle key whose duration isn't above 0");
             }
             ordered(t.subtitles, "subtitles");
+            break;
+        case TrackType::Vfx:
+            for (const VfxKey& k : t.vfx) {
+                if (k.effect.empty()) add("SQ026", label + " has a vfx key with no effect");
+            }
+            ordered(t.vfx, "vfx");
             break;
         case TrackType::Property:
             if (t.component.empty() || t.field.empty()) add("SQ004", label + " names no component or field");
@@ -376,6 +387,13 @@ nlohmann::json SequenceToJson(const LevelSequence& s) {
                 keys.push_back({{"time", k.time}, {"montage", k.montage}, {"action", k.action == AnimAction::Play ? "play" : "stop"}, {"rate", k.rate}});
             }
             track["animation"] = std::move(keys);
+        } else if (t.type == TrackType::Vfx) {
+            nlohmann::json keys = nlohmann::json::array();
+            for (const VfxKey& k : t.vfx) {
+                keys.push_back({{"time", k.time}, {"effect", k.effect}, {"action", k.action == VfxAction::Play ? "play" : "stop"},
+                                {"offset", {k.offset.x, k.offset.y, k.offset.z}}});
+            }
+            track["vfx"] = std::move(keys);
         } else if (t.type == TrackType::Transform) {
             nlohmann::json rotation = nlohmann::json::array();
             for (const RotationKey& r : t.rotation) {
@@ -424,6 +442,7 @@ static bool SequenceFromJsonImpl(const nlohmann::json& j, LevelSequence& out, st
         else if (type == "fade") t.type = TrackType::Fade;
         else if (type == "subsequence") t.type = TrackType::Subsequence;
         else if (type == "subtitle") t.type = TrackType::Subtitle;
+        else if (type == "vfx") t.type = TrackType::Vfx;
         else return fail("track '" + t.id + "' has an unknown type '" + type + "'");
         const bool optional_binding = t.type != TrackType::Transform && t.type != TrackType::Property && t.type != TrackType::Visibility &&
                                       t.type != TrackType::Animation && tj.value("binding", "").empty();
@@ -540,6 +559,18 @@ static bool SequenceFromJsonImpl(const nlohmann::json& j, LevelSequence& out, st
             k.text = kj.value("text", "");
             k.speaker = kj.value("speaker", "");
             t.subtitles.push_back(std::move(k));
+        }
+        for (const nlohmann::json& kj : tj.value("vfx", nlohmann::json::array())) {
+            if (!kj.contains("time") || !kj["time"].is_number()) return fail("track '" + t.id + "': a vfx key needs a time");
+            VfxKey k;
+            k.time = kj["time"].get<f32>();
+            k.effect = kj.value("effect", "");
+            const std::string action = kj.value("action", "play");
+            if (action == "play") k.action = VfxAction::Play;
+            else if (action == "stop") k.action = VfxAction::Stop;
+            else return fail("track '" + t.id + "': unknown vfx action '" + action + "'");
+            if (kj.contains("offset") && !vec3(kj["offset"], k.offset)) return fail("track '" + t.id + "': a vfx offset needs three numbers");
+            t.vfx.push_back(std::move(k));
         }
         s.tracks.push_back(std::move(t));
     }

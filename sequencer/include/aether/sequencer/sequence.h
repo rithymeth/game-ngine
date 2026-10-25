@@ -95,6 +95,18 @@ struct AnimKey {
     f32 rate = 1.0f;
 };
 
+enum class VfxAction : u8 { Play, Stop };
+// A particle effect (.avfx) started or stopped at a moment. Play starts it at
+// `offset` in the track entity's space (it follows the entity), or at `offset`
+// in the world when the track has none; Stop stops it spawning (what is alive
+// lives out its life). Fires like an Event key.
+struct VfxKey {
+    f32 time = 0.0f;
+    std::string effect; // the particle system asset (path)
+    VfxAction action = VfxAction::Play;
+    Vec3 offset{0, 0, 0};
+};
+
 // Another sequence played inside this one for [time, time + duration): the
 // child's own time is (t - time) * scale + offset. `duration` is required (and
 // above 0), so a sequence's length never needs the child loaded.
@@ -117,7 +129,7 @@ struct SubtitleKey {
     std::string speaker;
 };
 
-enum class TrackType : u8 { Transform, Property, Event, Visibility, Spawn, CameraCut, Audio, Animation, Fade, Subsequence, Subtitle };
+enum class TrackType : u8 { Transform, Property, Event, Visibility, Spawn, CameraCut, Audio, Animation, Fade, Subsequence, Subtitle, Vfx };
 
 struct Track {
     std::string id;   // unique in the sequence
@@ -153,6 +165,9 @@ struct Track {
     std::vector<SubKey> subs;
     // Subtitle: `subtitles`, the lines (no entity is needed).
     std::vector<SubtitleKey> subtitles;
+    // Vfx: `vfx`, the effects started and stopped (the binding, optional, is
+    // what they follow).
+    std::vector<VfxKey> vfx;
     std::string component;
     std::string field;
 
@@ -195,7 +210,8 @@ Quaternion EvaluateRotation(const std::vector<RotationKey>& keys, f32 time);
 // scale isn't above 0 (a Subsequence that loops back on itself is found when
 // it plays, since that needs the files). A Fade or Subsequence track needs no
 // entity. SQ024 a Subtitle key with no text; SQ025 one whose duration isn't
-// above 0; Subtitle tracks need no entity either. SQ002 and SQ003 cover every
+// above 0; Subtitle tracks need no entity either. SQ026 a Vfx key with no
+// effect (a Vfx track's entity is optional). SQ002 and SQ003 cover every
 // key list's order and range.
 std::vector<std::string> ValidateSequence(const LevelSequence& sequence);
 

@@ -66,6 +66,7 @@ const char* TrackTypeName(seq::TrackType t) {
     case seq::TrackType::Fade: return "fade";
     case seq::TrackType::Subsequence: return "subsequence";
     case seq::TrackType::Subtitle: return "subtitle";
+    case seq::TrackType::Vfx: return "vfx";
     }
     return "transform";
 }
@@ -323,7 +324,8 @@ void RegisterSequenceTools(McpServer& server, std::shared_ptr<AssetHost> host) {
                      }
                      case seq::TrackType::Event:
                      case seq::TrackType::Audio:
-                     case seq::TrackType::Animation: continue;
+                     case seq::TrackType::Animation:
+                     case seq::TrackType::Vfx: continue;
                      }
                      tracks[t.id] = v;
                  }
@@ -334,7 +336,7 @@ void RegisterSequenceTools(McpServer& server, std::shared_ptr<AssetHost> host) {
 
     server.AddTool(
         {"seq_events",
-         "Everything a sequence fires or changes at a moment, in time order: Event keys (name, payload), Audio keys (cue, action, fade), Animation keys (montage, action, rate), "
+         "Everything a sequence fires or changes at a moment, in time order: Event keys (name, payload), Audio keys (cue, action, fade), Animation keys (montage, action, rate), Vfx keys (effect, action, offset), "
          "camera cuts, prefabs spawning and despawning, sub-sequences starting and ending, and the times a fade starts and ends. `from` and `to` limit the window.",
          Schema({{"definition", {{"description", "The sequence: a JSON object, or its text"}}}, {"asset", {{"type", "string"}}}, {"from", {{"type", "number"}}}, {"to", {{"type", "number"}}}}),
          [host](const Json& args) -> Json {
@@ -359,6 +361,7 @@ void RegisterSequenceTools(McpServer& server, std::shared_ptr<AssetHost> host) {
                  for (const seq::EventKey& e : t.events) add(e.time, t, "event", {{"name", e.name}, {"payload", e.payload}});
                  for (const seq::AudioKey& a : t.audio) add(a.time, t, "audio", {{"cue", a.cue}, {"action", audio_actions[static_cast<usize>(a.action)]}, {"volume_db", a.volume_db}, {"fade", a.fade}});
                  for (const seq::AnimKey& a : t.anims) add(a.time, t, "animation", {{"montage", a.montage}, {"action", a.action == seq::AnimAction::Play ? "play" : "stop"}, {"rate", a.rate}});
+                 for (const seq::VfxKey& v : t.vfx) add(v.time, t, "vfx", {{"effect", v.effect}, {"action", v.action == seq::VfxAction::Play ? "play" : "stop"}, {"offset", {v.offset.x, v.offset.y, v.offset.z}}});
                  for (const seq::CutKey& c : t.cuts) add(c.time, t, "camera_cut", {{"camera", ToString(c.camera)}});
                  for (const seq::SpawnKey& s : t.spawns) {
                      add(s.time, t, "spawn", {{"prefab", s.prefab}});
