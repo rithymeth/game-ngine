@@ -7,10 +7,12 @@
 #include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
 #include "frame_lights.h"
+#include "particle_pass.h"
 #include "package_textures.h"
 #include "aether/ui/draw.h"
 #include "aether/ui/font.h"
 #include "aether/ui/viewport.h"
+#include "aether/vfx/particle_system.h"
 
 #include <nlohmann/json.hpp>
 
@@ -498,6 +500,10 @@ struct SceneRenderer::Impl {
     PipelineHandle pipeline;
     PipelineHandle transparent_pipeline;
     PipelineHandle hud_pipeline;
+    // The particle pass (M8.7), drawn after the scene's surfaces.
+    std::unique_ptr<ParticlePass> particles;
+    vfx::ParticleRenderData particle_data;
+    bool draw_particles = true;
     // The scene's lights, as frame constants (one buffer per frame in flight) where the device has them; else the shader's fixed light.
     static constexpr usize kFrameBuffers = 8;
     std::vector<BufferHandle> frame_buffers;
@@ -546,6 +552,8 @@ struct SceneRenderer::Impl {
         // The built-in HUD is specific to the AETHER-01 content contract; every game can show its own UI (WidgetComponent layouts)
         // with the same pipeline and font.
         legacy_hud = package.Manifest().project == "AETHER-01";
+
+        particles = std::make_unique<ParticlePass>(device, swap_chain);
 
         PipelineDesc hud_desc;
         hud_desc.hlsl_source = kHudShader;
@@ -1232,6 +1240,7 @@ SceneRenderer::SceneRenderer(IDevice& device, ISwapChain& swap_chain, const Game
 SceneRenderer::~SceneRenderer() = default;
 
 void SceneRenderer::SetViewDistance(f32 metres) { impl_->view_distance = metres; }
+void SceneRenderer::SetDrawParticles(bool draw) { impl_->draw_particles = draw; }
 
 void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     struct PendingTransparentDraw {
@@ -1283,10 +1292,21 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     BufferHandle frame_buffer; // this frame's lights, when the device has frame constants
     const Entity camera_entity = FindActiveCamera(world, guids);
     const Camera* camera = world.IsAlive(camera_entity) ? world.GetComponent<Camera>(camera_entity) : nullptr;
+    Mat4 particle_view_projection;
+    vfx::ParticleCamera particle_camera;
+    bool draw_particles = false;
     if (camera) {
         const f32 aspect = static_cast<f32>(renderer.swap_chain.Width()) /
                            static_cast<f32>(std::max(renderer.swap_chain.Height(), 1u));
-        const Mat4 view_projection = CameraProjection(LimitViewDistance(*camera, renderer.view_distance), aspect) * CameraView(world, guids, camera_entity);
+        const Mat4 camera_view = CameraView(world, guids, camera_entity);
+        const Mat4 view_projection = CameraProjection(LimitViewDistance(*camera, renderer.view_distance), aspect) * camera_view;
+        particle_view_projection = view_projection;
+        if (renderer.draw_particles && game.Particles()) {
+            particle_camera = vfx::ParticleCamera::FromView(camera_view);
+            renderer.particle_data.Clear();
+            game.Particles()->BuildRenderData(particle_camera, renderer.particle_data, &view_projection);
+            draw_particles = true;
+        }
         const Mat4 camera_transform = ComputeWorldTransform(world, guids, camera_entity);
         const Vec3 camera_position{camera_transform.cols[3].x, camera_transform.cols[3].y, camera_transform.cols[3].z};
         if (!renderer.frame_buffers.empty()) {
@@ -1499,6 +1519,8 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
             commands.DrawIndexed(draw.index_count);
         }
     }
+    // Particles after every surface (they test against its depth without writing it).
+    if (draw_particles) renderer.particles->Draw(commands, renderer.particle_data, particle_camera, particle_view_projection, frame_index);
     renderer.DrawHud(game, commands);
     commands.EndRenderPass();
 }
