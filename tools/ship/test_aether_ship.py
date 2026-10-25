@@ -659,6 +659,20 @@ class MacPackageTests(unittest.TestCase):
             return run("package", "--build", self.build, "--cooked", self.cooked, "--version", version, "--out", out,
                        "--name", "DEMO", "--project-dir", self.proj, "--platform", "macos-arm64", *extra)
 
+    def test_symlinked_homebrew_icd_is_followed(self):
+        # Homebrew's etc/vulkan/icd.d/MoltenVK_icd.json is a symlink into its Cellar.
+        cellar = os.path.join(self.tmp, "brew", "Cellar", "molten-vk", "1.0", "etc", "vulkan", "icd.d")
+        os.makedirs(cellar)
+        real = os.path.join(cellar, "MoltenVK_icd.json")
+        shutil.move(self.icd, real)
+        os.symlink(os.path.relpath(real, os.path.dirname(self.icd)), self.icd)
+        out = os.path.join(self.tmp, "v1")
+        self.assertEqual(self.package(out, "1.2.3"), 0)
+        with tarfile.open(os.path.join(out, "DEMO-macos-arm64.tar.gz")) as t:
+            names = t.getnames()
+        self.assertIn("DEMO/DEMO.app/Contents/Frameworks/libMoltenVK.dylib", names)
+        self.assertIn("DEMO/DEMO.app/Contents/Resources/vulkan/icd.d/MoltenVK_icd.json", names)
+
     def test_bundle_package_symbols_patch_and_rollback(self):
         v1, v2 = os.path.join(self.tmp, "v1"), os.path.join(self.tmp, "v2")
         self.assertEqual(self.package(v1, "1.2.3"), 0)
