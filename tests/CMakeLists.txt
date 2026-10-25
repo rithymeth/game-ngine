@@ -147,4 +147,6 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME production_gate_table COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/gate.py)
     add_test(NAME m8_gate_table COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/gate.py
         --table ${CMAKE_SOURCE_DIR}/docs/design/m8_gates.json)
+    # M8.10: release manifest, install, patch, rollback and build-id checks of tools/ship/aether_ship.py.
+    add_test(NAME ship_tool_tests COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ship/test_aether_ship.py)
 endif()
