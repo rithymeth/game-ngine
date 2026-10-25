@@ -554,6 +554,11 @@ struct SceneRenderer::Impl {
         legacy_hud = package.Manifest().project == "AETHER-01";
 
         particles = std::make_unique<ParticlePass>(device, swap_chain);
+        // Particle materials are textures in the package, through the same cache as the models' (0: untextured, drawn procedurally).
+        particles->SetTextureResolver([this](const std::string& material) -> u32 {
+            SampledTextureHandle texture;
+            return LoadTexture(material, texture) ? texture.index : 0u;
+        });
 
         PipelineDesc hud_desc;
         hud_desc.hlsl_source = kHudShader;
