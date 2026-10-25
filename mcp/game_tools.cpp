@@ -7077,6 +7077,7 @@ void RegisterGameTools(McpServer& server) {
                  case seq::SequenceEvent::Kind::Finished: type = "finished"; break;
                  case seq::SequenceEvent::Kind::Audio: type = "audio"; break;
                  case seq::SequenceEvent::Kind::Animation: type = "animation"; break;
+                 case seq::SequenceEvent::Kind::Vfx: type = "vfx"; break;
                  }
                  events.push_back({{"type", type}, {"entity", event_entity(event.entity)},
                                    {"name", event.name}, {"payload", event.payload},

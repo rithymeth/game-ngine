@@ -1148,6 +1148,13 @@ void Game::BuildFrame() {
                     animator->PlayMontage(e.name, e.value > 0.0f ? e.value : 1.0f);
                 }
             }
+            else if (e.kind == seq::SequenceEvent::Kind::Vfx) {
+                // The player has no particle world yet (.avfx isn't cooked), so a Vfx key is
+                // a timing marker here; hosts with a vfx::ParticleWorld spawn the effect.
+                AETHER_LOG_INFO("Player", "Sequence vfx %s: %s", e.payload == "stop" ? "stopped" : "started", e.name.c_str());
+                const std::string warning = "Sequence vfx '" + e.name + "' isn't drawn: the player doesn't play particle systems yet";
+                if (std::find(warnings_.begin(), warnings_.end(), warning) == warnings_.end()) warnings_.push_back(warning);
+            }
         }
     };
     scheduler_.Add(std::move(sequencer));

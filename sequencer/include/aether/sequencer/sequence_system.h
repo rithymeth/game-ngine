@@ -67,19 +67,20 @@ void RegisterSequenceComponents();
 namespace aether::seq {
 
 // What a playing sequence reported in the last Update: a Marker is an Event
-// key the playhead crossed; Audio and Animation are those keys crossed (for
-// the host to act on with its audio and animation systems); Finished is the
+// key the playhead crossed; Audio, Animation and Vfx are those keys crossed
+// (for the host to act on with its audio, animation and particle systems); Finished is the
 // sequence reaching its end or being skipped. Finished.skipped distinguishes
 // a deliberate skip from natural playback completion.
 struct SequenceEvent {
-    enum class Kind : u8 { Marker, Finished, Audio, Animation };
+    enum class Kind : u8 { Marker, Finished, Audio, Animation, Vfx };
     Kind kind = Kind::Marker;
     Entity entity;       // the SequenceComponent's entity
-    std::string name;    // Marker: the key's name; Finished: the sequence asset; Audio: the cue; Animation: the montage
-    std::string payload; // Marker: the key's payload; Audio and Animation: the action ("play", "stop", "fade_in", "fade_out")
-    Entity subject;      // Marker, Audio, Animation: the track's bound entity, if any
+    std::string name;    // Marker: the key's name; Finished: the sequence asset; Audio: the cue; Animation: the montage; Vfx: the effect
+    std::string payload; // Marker: the key's payload; Audio, Animation, Vfx: the action ("play", "stop", "fade_in", "fade_out")
+    Entity subject;      // Marker, Audio, Animation, Vfx: the track's bound entity, if any
     f32 value = 0.0f;    // Audio: volume in dB; Animation: the rate
     f32 fade = 0.0f;     // Audio: fade seconds
+    Vec3 offset{0, 0, 0}; // Vfx: where it starts, in the subject's space (the world's without one)
     bool skipped = false; // Finished: true when Skip ended the sequence
 };
 

@@ -295,8 +295,23 @@ sequence.
   dialogue markers and `ArchiveComplete`. Both pass locally against a fresh
   development cook. Neither has run on CI yet.
 
-**Still open.** Animation keys still have no host in the player, so no animation
-plays from a sequence. VFX tracks are missing. The editor sequencer panel can't
+- *VFX tracks.* Sequences have a Vfx track (`VfxKey`: time, `.avfx` effect, play/stop,
+  offset; JSON `"type": "vfx"`, validation SQ026; the binding, optional, is what the effect
+  follows). The player fires the keys once, forward only, like Audio and Animation keys
+  (`SequencePlayer::on_vfx`), gives every active effect a synthetic stop on Stop, Skip or
+  Bind, and `SequenceSystem` reports them as `SequenceEvent::Kind::Vfx` (MCP `seq_events`
+  and `game_sequence_events` list them). `SequenceVfx_ParticleWorldHostStartsAndStopsInSyncAt30_60_144Hz`
+  drives a `vfx::ParticleWorld` from those keys at 30, 60 and 144 Hz: the attached effect
+  has particles on the first frame at or after its key, follows the actor at its offset,
+  spawns nothing after the frame that crosses its stop key and dies out; a skip stops it on
+  the next frame and starts no later effect. `SequenceVfx_*` also cover the format, the
+  forward-only firing and the system events. The packaged player logs `Sequence vfx
+  started/stopped: <effect>` markers but has no particle world (`.avfx` isn't cooked), so it
+  warns that the effect isn't drawn.
+
+**Still open.** VFX keys are not drawn in the packaged player (no particle world or
+`.avfx` cook there), the Archive reveal has no Vfx track yet, and the editor panel can't
+author Vfx keys. The editor sequencer panel can't
 author Subtitle tracks yet, though MCP `seq_sample` reports them. The dialogue
 audio is a placeholder, not recorded voice. There is no localized voice-over
 (only subtitles are localized). Accessibility covers the subtitle toggle only, with
