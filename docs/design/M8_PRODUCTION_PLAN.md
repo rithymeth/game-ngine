@@ -572,7 +572,22 @@ Still open:
   `AETHER-01-windows-x64-ship.{zip,-symbols.zip,manifest.json}` to SHA256SUMS
   and the attestation. The PE/PDB parsers are tested only on synthetic
   fixtures until that CI run.
-- No macOS game package.
+- macOS (code and CI wiring added, not yet run on CI): `aether_ship.py
+  --platform macos-arm64` writes a `.tar.gz` holding `AETHER-01.app`. The
+  bundle has the stripped player in `Contents/MacOS`, `Info.plist`, the paks in
+  `Contents/Resources/Paks` (the player looks in `../Resources/Paks` on macOS),
+  and, in `Contents/Frameworks`, the non-system dylibs it loads (found from the
+  Mach-O load commands, parsed in pure Python), renamed `@rpath/<file>` with the
+  build rpaths replaced and an ad-hoc re-sign. MoltenVK ships with its ICD
+  manifest. The symbols are a `dsymutil` dSYM keyed by `LC_UUID`;
+  `check-symbols` compares the binary's UUID with the dSYM's DWARF UUID and
+  checks each bundled dylib against the manifest. The macOS job runs
+  `build_release.sh` and `ship_smoke.sh` natively plus the assembly dry run,
+  and the Release job publishes `AETHER-01-macos-arm64.{tar.gz,-symbols.tar.gz,manifest.json}`
+  with SHA256SUMS and the attestation. Linux outputs are byte-identical to
+  before. The Mach-O code is tested only on synthetic fixtures with stand-in
+  Xcode tools until that CI run. The app is unsigned and not notarized
+  (Gatekeeper quarantine on download), and only arm64 is built.
 - No Authenticode or other signing of the game package beyond the Sigstore
   attestation.
 - The sample patch is a CI fixture. A real upgrade from the prior tagged
