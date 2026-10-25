@@ -2,11 +2,12 @@
 # M8.10: builds the AETHER-01 release candidate and its first patch from an existing build dir.
 #
 #   tools/ship/build_release.sh --build <build dir> --out <dist dir> [--version <v>] [--work <dir>]
-#                               [--platform linux-x64|windows-x64] [--archive-name <base>]
+#                               [--platform linux-x64|windows-x64|macos-arm64] [--archive-name <base>]
 #
 # Writes into <dist>/v1 and <dist>/v2 (each: <base>.tar.gz, -symbols.tar.gz, .manifest.json,
 # SHA256SUMS.txt) and <dist>/<base>-patch.tar.gz (+ SHA256SUMS.txt); <base> defaults to
-# AETHER-01-<platform>. For windows-x64 (Git Bash, MSVC build dir with .pdb files) the archives are .zip.
+# AETHER-01-<platform>. For windows-x64 (Git Bash, MSVC build dir with .pdb files) the archives are .zip;
+# macos-arm64 (RelWithDebInfo build, Xcode command-line tools) packages an AETHER-01.app bundle + dSYM.
 # v1 is a strict shipping cook of games/AETHER-01. v2 is v1 plus a delta pak (aether_cook --patch-of,
 # Paks/Game_p1.apak) built from a copy of the project whose ThirdPersonController starts the player at
 # Health 5 instead of 3; that number is the content marker tools/ship/ship_smoke.sh checks via --report.
@@ -23,7 +24,7 @@ while [ $# -gt 0 ]; do
         *) echo "build_release.sh: unknown argument $1" >&2; exit 2 ;;
     esac
 done
-[ -n "$build" ] && [ -n "$out" ] || { sed -n '2,12p' "$0" >&2; exit 2; }
+[ -n "$build" ] && [ -n "$out" ] || { sed -n '2,13p' "$0" >&2; exit 2; }
 [ -n "$base" ] || base="AETHER-01-$platform"
 case "$platform" in windows*) ext=zip ;; *) ext=tar.gz ;; esac
 here="$(cd "$(dirname "$0")" && pwd)"

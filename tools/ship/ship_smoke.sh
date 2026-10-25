@@ -6,7 +6,8 @@
 #   tools/ship/ship_smoke.sh <dist dir from build_release.sh> <work dir> [platform] [archive base]
 #
 # platform defaults to linux-x64 (archives .tar.gz, launcher AETHER-01); windows-x64 uses .zip and
-# AETHER-01.exe. archive base defaults to AETHER-01-<platform>.
+# AETHER-01.exe; macos-arm64 uses .tar.gz and the app bundle's AETHER-01.app/Contents/MacOS/AETHER-01
+# (paks in AETHER-01.app/Contents/Resources/Paks). archive base defaults to AETHER-01-<platform>.
 #
 # Asserts: archive SHA-256 vs SHA256SUMS.txt; every installed file vs GAME_MANIFEST.json; the
 # stripped player's build-id matches the symbols archive; v1 launches headless outside any checkout
@@ -19,7 +20,13 @@ base="${4:-AETHER-01-$platform}"
 ship="$(cd "$(dirname "$0")" && pwd)/aether_ship.py"
 python="${PYTHON:-python3}"
 py="$python -I $ship"
-case "$platform" in windows*) ext=zip launcher=AETHER-01.exe ;; *) ext=tar.gz launcher=AETHER-01 ;; esac
+paks=Paks
+case "$platform" in
+    windows*) ext=zip launcher=AETHER-01.exe ;;
+    macos*) ext=tar.gz launcher=AETHER-01.app/Contents/MacOS/AETHER-01 paks=AETHER-01.app/Contents/Resources/Paks ;;
+    *) ext=tar.gz launcher=AETHER-01 ;;
+esac
+command -v sha256sum >/dev/null 2>&1 || sha256sum() { shasum -a 256 "$@"; }  # stock macOS
 pkg="$base.$ext" syms="$base-symbols.$ext" patch="$base-patch.$ext"
 rm -rf "$work" && mkdir -p "$work" && work="$(cd "$work" && pwd)"
 game="$work/opt/AETHER-01" user="$work/user"
@@ -50,7 +57,7 @@ step "refuse a patch whose payload does not match its manifest (archive re-packe
 $python -I - "$dist/$patch" "$work/tampered.$ext" <<'PY'
 import io, sys, tarfile, zipfile
 src, dst = sys.argv[1:]
-flip = lambda name, data: data[:-1] + bytes([data[-1] ^ 1]) if name.startswith("files/Paks/") and data else data
+flip = lambda name, data: data[:-1] + bytes([data[-1] ^ 1]) if name.startswith("files/") and name.endswith(".apak") and data else data
 if zipfile.is_zipfile(src):
     with zipfile.ZipFile(src) as z, zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as o:
         for i in z.infolist():
@@ -71,7 +78,7 @@ step "patch v1 -> v2"
 $py apply --install "$game" --patch "$dist/$patch" --sums "$dist/SHA256SUMS.txt"
 $py verify --install "$game"
 $py verify --install "$game.previous"
-test -f "$game/Paks/Game_p1.apak"
+test -f "$game/$paks/Game_p1.apak"
 expect_health 5.0
 grep -q "slot-1 progress" "$user/Saved/slot1.sav"
 grep -q "in-install user file" "$game/Saved/local.sav"
@@ -82,7 +89,7 @@ if $py apply --install "$game" --patch "$dist/$patch"; then echo "ship_smoke: pa
 step "rollback v2 -> v1"
 $py rollback --install "$game"
 $py verify --install "$game"
-test ! -e "$game/Paks/Game_p1.apak"
+test ! -e "$game/$paks/Game_p1.apak"
 expect_health 3.0
 grep -q "slot-1 progress" "$user/Saved/slot1.sav"
 grep -q "in-install user file" "$game/Saved/local.sav"
