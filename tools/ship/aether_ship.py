@@ -622,9 +622,15 @@ def stage_macos(a, stage: str, symdir: str, player: str) -> tuple:
             print("aether_ship: Vulkan loader bundled but no MoltenVK_icd.json found; the game needs a "
                   "system Vulkan driver", file=sys.stderr)
         else:
-            desc = read_json_file(icd)
+            # Homebrew installs etc/vulkan/icd.d/*.json as symlinks into its Cellar; this is a
+            # build-machine input, not package content, so follow the link.
+            desc = read_json_file(os.path.realpath(icd))
             lib = desc.get("ICD", {}).get("library_path", "")
-            lib_src = lib if os.path.isabs(lib) else os.path.join(os.path.dirname(icd), lib)
+            lib_src = lib
+            if not os.path.isabs(lib):
+                # A relative library_path is relative to the manifest; try where it was found, then its target.
+                candidates = [os.path.join(os.path.dirname(p), lib) for p in (icd, os.path.realpath(icd))]
+                lib_src = next((c for c in candidates if os.path.isfile(c)), candidates[0])
             if not os.path.isfile(lib_src):
                 raise ShipError(f"{icd}: library_path {lib} not found")
             fname = "libMoltenVK.dylib"
