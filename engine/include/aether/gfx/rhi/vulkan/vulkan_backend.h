@@ -408,7 +408,7 @@ public:
     void EndRenderPass() override;
     void BindPipeline(PipelineHandle pipeline) override;
     void SetPushConstants(const void* data, u32 size_bytes) override;
-    void Draw(u32 vertex_count) override;
+    void Draw(u32 vertex_count, u32 first_vertex = 0) override;
 
     void BindVertexBuffer(BufferHandle buffer, u32 stride_bytes) override;
     void BindIndexBuffer(BufferHandle buffer, IndexFormat format) override;

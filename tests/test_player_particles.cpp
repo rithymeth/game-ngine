@@ -222,3 +222,87 @@ AETHER_TEST(PlayerParticles_TexturedSpritesSampleTheirFlipbookCellOnVulkan) {
     AETHER_CHECK(frame0[centre + 1] > 200 && frame0[centre] < 40 && frame0[centre + 2] < 40);
     AETHER_CHECK(blended[centre + 1] < 140 && blended[centre + 1] + 40 < frame0[centre + 1]);
 }
+
+AETHER_TEST(PlayerParticles_StreamsSplitIntoPerTextureRunsInOrder) {
+    // Back to front interleaves two textures (A at z -6 and -2, B at -4): three runs, the sort kept, each a whole sprite's vertices.
+    vfx::ParticleRenderData data;
+    vfx::SpriteBatch a, b, plain;
+    a.material = "a";
+    a.instances = {Sprite(-2.0f), Sprite(-6.0f)};
+    b.material = "b";
+    b.instances = {Sprite(-4.0f)};
+    plain.blend = vfx::BlendMode::Additive;
+    plain.instances = {Sprite(-1.0f), Sprite(-3.0f)};
+    data.sprites = {a, b, plain};
+    ParticleVertexStreams out;
+    PackParticleVertices(data, vfx::ParticleCamera{}, out, [](const std::string& m) -> u32 { return m == "a" ? 5u : m == "b" ? 9u : 0u; });
+    std::vector<ParticleDrawRun> runs;
+    ParticleTextureRuns(out.alpha, runs);
+    AETHER_CHECK(runs.size() == 3);
+    if (runs.size() == 3) {
+        AETHER_CHECK(runs[0].first_vertex == 0 && runs[0].vertex_count == 6 && runs[0].texture == 5);
+        AETHER_CHECK(runs[1].first_vertex == 6 && runs[1].vertex_count == 6 && runs[1].texture == 9);
+        AETHER_CHECK(runs[2].first_vertex == 12 && runs[2].vertex_count == 6 && runs[2].texture == 5);
+    }
+    // Adjacent sprites with one texture share a draw; an empty stream has none.
+    ParticleTextureRuns(out.additive, runs);
+    AETHER_CHECK(runs.size() == 1 && runs[0].first_vertex == 0 && runs[0].vertex_count == 12 && runs[0].texture == 0);
+    ParticleTextureRuns({}, runs);
+    AETHER_CHECK(runs.empty());
+}
+
+AETHER_TEST(PlayerParticles_EachSpriteSamplesItsOwnTextureInOneStreamOnVulkan) {
+    std::unique_ptr<gfx::rhi::IDevice> device;
+    try {
+        device = gfx::rhi::CreateDevice(gfx::rhi::Backend::Vulkan, false);
+    } catch (const std::exception&) {
+    }
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    constexpr u32 kSize = 64;
+    std::unique_ptr<gfx::rhi::ISwapChain> target = device->CreateSwapChain(nullptr, kSize, kSize, 2);
+    ParticlePass pass(*device, *target);
+    AETHER_CHECK(pass.Valid());
+    // Green and magenta (both survive an RGBA/BGRA readback), 1 x 1, opaque.
+    const u8 green[] = {0, 255, 0, 255}, magenta[] = {255, 0, 255, 255};
+    const gfx::rhi::SampledTextureHandle tex_green = device->CreateTexture(1, 1, green), tex_magenta = device->CreateTexture(1, 1, magenta);
+    AETHER_CHECK(tex_green.IsValid() && tex_magenta.IsValid() && tex_green.index != tex_magenta.index);
+    pass.SetTextureResolver([&](const std::string& m) -> u32 { return m == "green" ? tex_green.index : m == "magenta" ? tex_magenta.index : 0u; });
+
+    // Three sprites in one alpha stream, left to right green, magenta, green (three runs, so three first-vertex draws from one buffer).
+    vfx::ParticleRenderData data;
+    const auto sprite = [](f32 x, f32 z) {
+        vfx::SpriteInstance s;
+        s.center = Vec3(x, 0.0f, z);
+        s.right = Vec3(0.2f, 0.0f, 0.0f);
+        s.up = Vec3(0.0f, 0.5f, 0.0f);
+        s.color = {1.0f, 1.0f, 1.0f, 1.0f};
+        return s;
+    };
+    vfx::SpriteBatch g, m;
+    g.material = "green";
+    g.instances = {sprite(-0.6f, 0.3f), sprite(0.6f, 0.7f)};
+    m.material = "magenta";
+    m.instances = {sprite(0.0f, 0.5f)};
+    data.sprites = {g, m};
+    std::unique_ptr<gfx::rhi::ICommandList> cmd = device->CreateCommandList();
+    target->AcquireNextImage();
+    cmd->Reset();
+    cmd->BeginRenderPass(*target, gfx::rhi::ClearColor{0.0f, 0.0f, 0.0f, 1.0f});
+    pass.Draw(*cmd, data, vfx::ParticleCamera{}, Mat4::Identity(), 0);
+    cmd->EndRenderPass();
+    cmd->Close();
+    device->WaitForFence(device->Submit(*cmd, target.get()));
+    std::vector<u8> out;
+    AETHER_CHECK(target->ReadBack(out) && out.size() == kSize * kSize * 4);
+    target->Present(false);
+    if (out.size() != kSize * kSize * 4) return;
+    const auto at = [&](f32 ndc_x) { return (static_cast<usize>(kSize / 2) * kSize + static_cast<usize>((ndc_x * 0.5f + 0.5f) * kSize)) * 4; };
+    const usize left = at(-0.6f), middle = at(0.0f), right = at(0.6f), gap = at(-0.3f);
+    AETHER_CHECK(out[left + 1] > 200 && out[left] < 40 && out[left + 2] < 40);
+    AETHER_CHECK(out[middle] > 200 && out[middle + 1] < 40 && out[middle + 2] > 200);
+    AETHER_CHECK(out[right + 1] > 200 && out[right] < 40 && out[right + 2] < 40);
+    AETHER_CHECK(out[gap] < 40 && out[gap + 1] < 40 && out[gap + 2] < 40);
+}

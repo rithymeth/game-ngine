@@ -338,8 +338,15 @@ sequence.
   in the package, loaded through the scene renderer's texture cache (BC/ASTC kept compressed
   where the device can) into the bindless table; each vertex carries its texture index, and
   sprites their flipbook cell, the next cell's offset and the frame blend, so the pass
-  samples the cell and cross-fades to the next when the renderer blends frames (one draw per
-  stream; untextured sprites keep the procedural falloff).
+  samples the cell and cross-fades to the next when the renderer blends frames (untextured
+  sprites keep the procedural falloff). Each stream is drawn as one draw per run of a texture
+  from its one vertex buffer (the RHI's `Draw` now takes a first vertex), with the texture
+  index in the push constants, so it is uniform across a draw: no non-uniform descriptor
+  indexing, which glslang's HLSL front end can't mark `NonUniformEXT` on Vulkan. The runs
+  keep the stream's order, so alpha sprites stay back to front.
+  `PlayerParticles_StreamsSplitIntoPerTextureRunsInOrder` checks the runs and
+  `PlayerParticles_EachSpriteSamplesItsOwnTextureInOneStreamOnVulkan` draws green, magenta,
+  green sprites in one stream on Vulkan (lavapipe), each with its own texture.
   `PlayerParticles_MaterialsResolveToTexturesWithFlipbookBlend` checks the packing and
   `PlayerParticles_TexturedSpritesSampleTheirFlipbookCellOnVulkan` draws a two-frame
   flipbook through the pass on Vulkan (lavapipe): the cell's colour, faded by the blend.

@@ -13,6 +13,7 @@ namespace {
 constexpr char kParticleShader[] = R"(
 struct PushConstants {
     float4x4 g_ViewProjection;
+    uint4 g_Texture; // x: this draw's bindless texture index (0: untextured)
 };
 #ifdef __spirv__
 [[vk::push_constant]]
@@ -20,12 +21,6 @@ struct PushConstants {
 ConstantBuffer<PushConstants> g_PC : register(b0);
 Texture2D g_Textures[32] : register(t0, space0);
 SamplerState g_Sampler : register(s0, space1);
-// The texture index varies per sprite within a draw. D3D12 (FXC 5.1) is told so; glslang's HLSL front end has no NonUniformResourceIndex.
-#ifdef __spirv__
-#define AETHER_NON_UNIFORM(i) (i)
-#else
-#define AETHER_NON_UNIFORM(i) NonUniformResourceIndex(i)
-#endif
 
 struct VSInput {
     float3 position : POSITION;
@@ -52,13 +47,16 @@ PSInput VSMain(VSInput input) {
 float4 PSMain(PSInput input) : SV_TARGET {
     float4 color = input.color;
     color.a = saturate(color.a);
-    uint texture_index = (uint)floor(input.params.x * 0.25);
-    float kind = input.params.x - 4.0 * (float)texture_index;
+    // The texture comes from the push constants, so it is uniform across the draw (the pass draws each run of one texture separately):
+    // indexing the bindless table with a per-vertex value would need NonUniformResourceIndex/NonUniformEXT, which glslang's HLSL front
+    // end doesn't emit. The vertex still carries its index (4 * index + kind) for the kind.
+    uint texture_index = g_PC.g_Texture.x;
+    float kind = input.params.x - 4.0 * floor(input.params.x * 0.25);
     bool sprite = kind > 0.5;
     if (texture_index != 0 && texture_index < 32) {
-        float4 texel = g_Textures[AETHER_NON_UNIFORM(texture_index)].Sample(g_Sampler, input.uv);
+        float4 texel = g_Textures[texture_index].Sample(g_Sampler, input.uv);
         float frame_blend = sprite ? saturate(kind - 1.0) : 0.0;
-        if (frame_blend > 0.0) texel = lerp(texel, g_Textures[AETHER_NON_UNIFORM(texture_index)].Sample(g_Sampler, input.uv + input.params.yz), frame_blend);
+        if (frame_blend > 0.0) texel = lerp(texel, g_Textures[texture_index].Sample(g_Sampler, input.uv + input.params.yz), frame_blend);
         color *= texel;
     } else if (sprite) {
         float2 cell = frac(input.uv) * 2.0 - 1.0;
@@ -73,8 +71,9 @@ float4 PSMain(PSInput input) : SV_TARGET {
 
 struct ParticleConstants {
     Mat4 view_projection;
+    u32 texture[4];
 };
-static_assert(sizeof(ParticleConstants) == 64);
+static_assert(sizeof(ParticleConstants) == 80);
 
 struct ColorOut {
     f32 rgba[4];
@@ -117,6 +116,17 @@ void AppendSprite(const vfx::SpriteInstance& s, vfx::BlendMode blend, bool blend
 }
 
 } // namespace
+
+void ParticleTextureRuns(const std::vector<ParticleQuadVertex>& vertices, std::vector<ParticleDrawRun>& out) {
+    out.clear();
+    for (usize i = 0; i < vertices.size();) {
+        const u32 texture = ParticleVertexTexture(vertices[i]);
+        usize end = i + 1;
+        while (end < vertices.size() && ParticleVertexTexture(vertices[end]) == texture) ++end;
+        out.push_back({static_cast<u32>(i), static_cast<u32>(end - i), texture});
+        i = end;
+    }
+}
 
 void PackParticleVertices(const vfx::ParticleRenderData& data, const vfx::ParticleCamera& camera, ParticleVertexStreams& out,
                           const ParticleTextureResolver& textures) {
@@ -200,9 +210,14 @@ void ParticlePass::DrawStream(gfx::rhi::ICommandList& commands, gfx::rhi::Pipeli
     commands.BindPipeline(pipeline);
     commands.BindBindlessTextures();
     commands.BindVertexBuffer(buffer.handle, sizeof(ParticleQuadVertex));
-    const ParticleConstants constants{view_projection};
-    commands.SetPushConstants(&constants, sizeof(constants));
-    commands.Draw(static_cast<u32>(vertices.size()));
+    // One draw per run of a texture (whole triangles: a sprite's or ribbon's vertices share one), in the stream's order, so alpha sprites
+    // stay sorted back to front and the shader's texture index is uniform across each draw.
+    ParticleTextureRuns(vertices, runs_);
+    for (const ParticleDrawRun& run : runs_) {
+        const ParticleConstants constants{view_projection, {run.texture, 0u, 0u, 0u}};
+        commands.SetPushConstants(&constants, sizeof(constants));
+        commands.Draw(run.vertex_count, run.first_vertex);
+    }
 }
 
 } // namespace aether::player
