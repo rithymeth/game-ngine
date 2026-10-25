@@ -337,6 +337,7 @@ std::vector<std::string> Game::LoadSettings(const SettingsTargets& targets) {
 
 audio::AudioSystem* Game::AudioSystem() { return runtime_ ? runtime_->audio.get() : nullptr; }
 anim::AnimationSystem* Game::Animation() { return runtime_ ? runtime_->animation.get() : nullptr; }
+vfx::ParticleWorld* Game::Particles() { return runtime_ ? runtime_->particles.get() : nullptr; }
 
 void Game::ApplyAudioSettings() {
     if (!runtime_ || !runtime_->audio) return;
@@ -815,6 +816,18 @@ void Game::StartRuntime() {
         return nullptr;
     };
     runtime_->animation = std::make_unique<anim::AnimationSystem>(*world_, std::move(library));
+    // Particles (M8.7): systems load from the package by path the first time a ParticleSystem names them.
+    runtime_->particles = std::make_unique<vfx::ParticleWorld>(*world_, [this](const std::string& path) -> const vfx::ParticleSystemAsset* {
+        auto [it, inserted] = runtime_->vfx_assets.try_emplace(path);
+        if (inserted) {
+            std::vector<u8> bytes;
+            std::string error;
+            auto asset = std::make_unique<vfx::ParticleSystemAsset>();
+            if (package_.ReadContent(path, bytes, &error) && vfx::LoadParticleSystem(std::string(bytes.begin(), bytes.end()), *asset, &error)) it->second = std::move(asset);
+            else warnings_.push_back("Particles: " + path + ": " + (error.empty() ? "not a particle system" : error));
+        }
+        return it->second.get();
+    }, &guids_);
     // The on-screen UI: layouts come from the package; a theme asset (.atheme), if the game ships one, styles every layout.
     runtime_->ui_router = std::make_unique<ui::UIInputRouter>(runtime_->ui_viewport, runtime_->ui_font);
     runtime_->ui_bridge = std::make_unique<ui::UIInputBridge>(*runtime_->ui_router);
@@ -933,6 +946,7 @@ void Game::EndPlay() {
         if (runtime_->output) runtime_->output->Stop();
         if (runtime_->audio) runtime_->audio->StopAll();
         runtime_->sequence_audio.clear();
+        runtime_->sequence_vfx.clear();
     }
     subtitle_key_ = nullptr; // the sequences it points into go with the runtime
     subtitle_text_.clear();
@@ -1148,12 +1162,29 @@ void Game::BuildFrame() {
                     animator->PlayMontage(e.name, e.value > 0.0f ? e.value : 1.0f);
                 }
             }
-            else if (e.kind == seq::SequenceEvent::Kind::Vfx) {
-                // The player has no particle world yet (.avfx isn't cooked), so a Vfx key is
-                // a timing marker here; hosts with a vfx::ParticleWorld spawn the effect.
-                AETHER_LOG_INFO("Player", "Sequence vfx %s: %s", e.payload == "stop" ? "stopped" : "started", e.name.c_str());
-                const std::string warning = "Sequence vfx '" + e.name + "' isn't drawn: the player doesn't play particle systems yet";
-                if (std::find(warnings_.begin(), warnings_.end(), warning) == warnings_.end()) warnings_.push_back(warning);
+            else if (e.kind == seq::SequenceEvent::Kind::Vfx && runtime_->particles) {
+                // Play spawns the effect on the track's entity (at its offset, following it) or at the offset in the
+                // world; Stop stops it spawning. Player.Particles steps it this frame, so it shows on the key's frame.
+                const auto key = std::make_pair(e.entity.index, e.name);
+                if (e.payload == "stop") {
+                    const auto it = runtime_->sequence_vfx.find(key);
+                    if (it == runtime_->sequence_vfx.end()) continue;
+                    if (ParticleSystem* ps = world_->IsAlive(it->second) ? world_->GetComponent<ParticleSystem>(it->second) : nullptr) ps->Deactivate();
+                    runtime_->sequence_vfx.erase(it);
+                    AETHER_LOG_INFO("Player", "Sequence vfx stopped: %s", e.name.c_str());
+                } else {
+                    if (const auto it = runtime_->sequence_vfx.find(key); it != runtime_->sequence_vfx.end() && world_->IsAlive(it->second)) {
+                        if (ParticleSystem* ps = world_->GetComponent<ParticleSystem>(it->second)) ps->Deactivate(); // a replay: the old one lives out
+                    }
+                    const bool attached = !e.subject.IsNull() && world_->IsAlive(e.subject);
+                    const Entity fx = attached ? runtime_->particles->SpawnAttached(e.name, e.subject, e.offset) : runtime_->particles->SpawnAtLocation(e.name, e.offset);
+                    if (fx.IsNull()) {
+                        warnings_.push_back("Sequence vfx '" + e.name + "' didn't start");
+                        continue;
+                    }
+                    runtime_->sequence_vfx[key] = fx;
+                    AETHER_LOG_INFO("Player", "Sequence vfx started: %s", e.name.c_str());
+                }
             }
         }
     };
@@ -1203,6 +1234,30 @@ void Game::BuildFrame() {
         }
     };
     scheduler_.Add(std::move(animation));
+    // Particles step after characters animate and sequences start or stop their effects.
+    SystemDesc particles;
+    particles.name = "Player.Particles";
+    particles.phase = SystemPhase::Update;
+    particles.after = {"Player.Animation"};
+    particles.main_thread_only = true;
+    particles.run = [this](World&, const FrameContext& frame) {
+        if (!runtime_ || !runtime_->particles) return;
+        vfx::ParticleWorld& system = *runtime_->particles;
+        system.Update(frame.dt);
+        for (const vfx::ParticleSystemFinishedEvent& e : system.Events()) {
+            AETHER_LOG_INFO("Player", "Vfx finished: %s", e.asset.c_str());
+            if (runtime_->blueprints) {
+                const bp::VmValue args[] = {e.asset};
+                runtime_->blueprints->VM().Dispatch(e.entity, vfx::ParticleWorld::kFinishedEvent, args);
+            }
+        }
+        for (; runtime_->particle_problems < system.Problems().size(); ++runtime_->particle_problems) {
+            const std::string& problem = system.Problems()[runtime_->particle_problems];
+            AETHER_LOG_WARN("Player", "Particles: %s", problem.c_str());
+            warnings_.push_back("Particles: " + problem);
+        }
+    };
+    scheduler_.Add(std::move(particles));
     SystemDesc audio;
     audio.name = "Player.Audio";
     audio.phase = SystemPhase::Update;

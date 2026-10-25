@@ -16,6 +16,8 @@
 #include "aether/ui/theme.h"
 #include "aether/ui/viewport.h"
 #include "aether/ui/widget_system.h"
+#include "aether/vfx/emitter.h"
+#include "aether/vfx/particle_system.h"
 
 #include <map>
 #if AETHER_KIT_INVENTORY
@@ -56,6 +58,14 @@ struct Game::Runtime {
     std::map<std::string, std::unique_ptr<anim::Montage>> anim_montages;
     std::unique_ptr<anim::AnimationSystem> animation;
     usize animation_problems = 0; // how many of animation->Problems() are already reported
+    // Particle systems (M8.7): .avfx assets read from the package by path on
+    // first use (null: unreadable, warned once), and the world that runs every
+    // ParticleSystem component. Sequence Vfx keys spawn effects into it; the
+    // effect a sequence started, by (sequence entity, asset), so its Stop finds it.
+    std::map<std::string, std::unique_ptr<vfx::ParticleSystemAsset>> vfx_assets;
+    std::unique_ptr<vfx::ParticleWorld> particles;
+    std::map<std::pair<u32, std::string>, Entity> sequence_vfx;
+    usize particle_problems = 0; // how many of particles->Problems() are already reported
     // The on-screen UI. Layout and painting use the renderer's font, so this one only serves the input router's text metrics.
     ui::BuiltinFont ui_font;
     ui::Viewport ui_viewport;
