@@ -26,6 +26,17 @@ machine that has nothing but python3 (CI uses a bare ubuntu:24.04 container).
   aether_ship.py rollback --install <dir>
   aether_ship.py check-symbols --install <dir> --symbols <symbols.tar.gz>
 
+Windows (--platform windows-x64): the package and symbols are .zip files, the
+player is staged as <name>.exe at the package root (it finds Paks/ next to
+itself) with the player's DLLs, and there is no ELF build-id. Symbols are the
+.pdb files the PE CodeView (RSDS) records name, in a symbol-store layout
+(<pdb>/<GUID><age>/<pdb>) with SYMBOLS.json; check-symbols compares each
+binary's RSDS GUID/age with the GUID (PDB info stream) and age (DBI stream)
+read from the .pdb itself. A patch is a .zip when --out ends in .zip.
+Switching uses os.replace on folders (no links); if a file in the install is
+in use (the game is running) the switch fails with a clear error and the
+install is left as it was or recoverable.
+
 Install layout: <dir> is the live install, <dir>.previous the backup kept by
 apply (rollback swaps the two, so a rolled-back update can be re-applied with
 rollback again). Files in <dir> that its manifest does not list (for example a
@@ -48,6 +59,8 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import uuid
+import zipfile
 import zlib
 
 MANIFEST = "GAME_MANIFEST.json"
@@ -197,6 +210,154 @@ def elf_needed(path: str) -> list:
     return sorted(set(re.findall(r"\(NEEDED\)\s+Shared library: \[([^\]]+)\]", out)))
 
 
+# ------------------------------------------------------------ PE / PDB
+
+def _pe_layout(data: bytes):
+    """(data directories [(rva, size)], sections [(va, vsize, raw_ptr, raw_size)]) of a PE image; None if not PE."""
+    if len(data) < 0x40 or data[:2] != b"MZ":
+        return None
+    pe, = struct.unpack_from("<I", data, 0x3C)
+    if pe + 24 > len(data) or data[pe:pe + 4] != b"PE\0\0":
+        return None
+    nsec, = struct.unpack_from("<H", data, pe + 6)
+    opt_size, = struct.unpack_from("<H", data, pe + 20)
+    opt = pe + 24
+    magic, = struct.unpack_from("<H", data, opt)
+    if magic == 0x20B:
+        ndirs_off, dirs_off = opt + 108, opt + 112
+    elif magic == 0x10B:
+        ndirs_off, dirs_off = opt + 92, opt + 96
+    else:
+        return None
+    ndirs, = struct.unpack_from("<I", data, ndirs_off)
+    dirs = [struct.unpack_from("<II", data, dirs_off + 8 * i) for i in range(min(ndirs, 16))]
+    secs = []
+    sec = opt + opt_size
+    for i in range(nsec):
+        vsize, va, raw_size, raw_ptr = struct.unpack_from("<IIII", data, sec + 40 * i + 8)
+        secs.append((va, vsize, raw_ptr, raw_size))
+    return dirs, secs
+
+
+def _rva_to_off(secs, rva: int):
+    for va, vsize, raw_ptr, raw_size in secs:
+        if va <= rva < va + max(vsize, raw_size):
+            return raw_ptr + (rva - va)
+    return None
+
+
+def format_guid(raw: bytes) -> str:
+    return str(uuid.UUID(bytes_le=bytes(raw))).upper()
+
+
+def symstore_key(guid: str, age: int) -> str:
+    """The symbol-server folder for a PDB: GUID without dashes + age in hex."""
+    return guid.replace("-", "").upper() + format(age, "X")
+
+
+def pe_codeview(path: str):
+    """The RSDS CodeView record of a PE file: {'guid', 'age', 'pdb'}; None if not PE or no RSDS record."""
+    with open(path, "rb") as f:
+        data = f.read()
+    try:
+        layout = _pe_layout(data)
+        if not layout:
+            return None
+        dirs, secs = layout
+        if len(dirs) <= 6 or not dirs[6][0]:
+            return None
+        rva, size = dirs[6]
+        off = _rva_to_off(secs, rva)
+        if off is None:
+            return None
+        for i in range(size // 28):
+            dtype, dsize, _addr, ptr = struct.unpack_from("<IIII", data, off + 28 * i + 12)
+            if dtype == 2 and dsize >= 24 and data[ptr:ptr + 4] == b"RSDS":  # IMAGE_DEBUG_TYPE_CODEVIEW
+                guid = format_guid(data[ptr + 4:ptr + 20])
+                age, = struct.unpack_from("<I", data, ptr + 20)
+                name = data[ptr + 24:ptr + dsize].split(b"\0", 1)[0].decode("utf-8", "replace")
+                return {"guid": guid, "age": age, "pdb": name}
+    except struct.error:
+        return None
+    return None
+
+
+def pe_imports(path: str) -> list:
+    """Imported DLL names of a PE file (import directory), sorted; [] if not PE."""
+    with open(path, "rb") as f:
+        data = f.read()
+    names = set()
+    try:
+        layout = _pe_layout(data)
+        if not layout or len(layout[0]) <= 1 or not layout[0][1][0]:
+            return []
+        dirs, secs = layout
+        off = _rva_to_off(secs, dirs[1][0])
+        while off is not None and off + 20 <= len(data):
+            name_rva, = struct.unpack_from("<I", data, off + 12)
+            if not name_rva:
+                break
+            noff = _rva_to_off(secs, name_rva)
+            if noff is not None:
+                names.add(data[noff:data.index(b"\0", noff)].decode("ascii", "replace"))
+            off += 20
+    except (struct.error, ValueError):
+        pass
+    return sorted(names, key=str.lower)
+
+
+PDB_MAGIC = b"Microsoft C/C++ MSF 7.00\r\n\x1aDS\0\0\0"
+
+
+def pdb_info(path: str):
+    """{'guid', 'age'} of an MSF 7.00 PDB: GUID from the PDB info stream (1), age from the DBI stream (3)
+    when present (that is the age debuggers match), else from the info stream. None if not a PDB."""
+    with open(path, "rb") as f:
+        data = f.read()
+    if not data.startswith(PDB_MAGIC):
+        return None
+    try:
+        block, _fpm, nblocks, dir_bytes, _unk, map_addr = struct.unpack_from("<6I", data, 32)
+        if block not in (512, 1024, 2048, 4096) or nblocks * block > len(data) + block:
+            return None
+        ndir_blocks = (dir_bytes + block - 1) // block
+        dir_blocks = struct.unpack_from("<%dI" % ndir_blocks, data, map_addr * block)
+        directory = b"".join(data[b * block:(b + 1) * block] for b in dir_blocks)[:dir_bytes]
+        nstreams, = struct.unpack_from("<I", directory, 0)
+        sizes = [0 if n == 0xFFFFFFFF else n for n in struct.unpack_from("<%dI" % nstreams, directory, 4)]
+        firsts, pos = [], 4 + 4 * nstreams  # each stream's block list follows the size table, in order
+        for sz in sizes:
+            firsts.append(pos)
+            pos += 4 * ((sz + block - 1) // block)
+
+        def stream(i):
+            n = (sizes[i] + block - 1) // block
+            blocks = struct.unpack_from("<%dI" % n, directory, firsts[i])
+            return b"".join(data[b * block:(b + 1) * block] for b in blocks)[:sizes[i]]
+
+        if nstreams < 2:
+            return None
+        info = stream(1)
+        _ver, _sig, age = struct.unpack_from("<III", info, 0)
+        guid = format_guid(info[12:28])
+        if nstreams > 3:
+            dbi = stream(3)
+            if len(dbi) >= 12:
+                age, = struct.unpack_from("<I", dbi, 8)
+        return {"guid": guid, "age": age}
+    except struct.error:
+        return None
+
+
+def is_windows(platform: str) -> bool:
+    return platform.startswith("windows")
+
+
+def player_path(m: dict) -> str:
+    """The player binary inside an install: <launcher> (the exe itself) on Windows, bin/aether_player elsewhere."""
+    return m["launcher"] if is_windows(m.get("platform", "")) and m.get("launcher") else "bin/aether_player"
+
+
 # --------------------------------------------------------------- manifest
 
 def file_entries(root: str) -> list:
@@ -337,8 +498,78 @@ def write_tar_gz(archive: str, root: str, top: str, mtime: int, executable=lambd
         g.write(raw.getvalue())
 
 
+def write_zip(archive: str, root: str, top: str, mtime: int) -> None:
+    """Deterministic .zip of <root> under folder <top>/ (or at the archive root when top is '')."""
+    import time
+    stamp = time.gmtime(max(mtime, 315532800))[:6]  # zip dates start at 1980
+    items = []
+    for dirpath, dirs, names in os.walk(root):
+        dirs.sort()
+        rel_dir = os.path.relpath(dirpath, root).replace(os.sep, "/")
+        if rel_dir != ".":
+            items.append((rel_dir + "/", None))
+        for n in sorted(names):
+            rel = n if rel_dir == "." else rel_dir + "/" + n
+            items.append((rel, os.path.join(dirpath, n)))
+    if top:
+        items.append(("", None))
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+        for rel, full in sorted(items):
+            name = (top + "/" + rel) if top else rel
+            if not name:
+                continue
+            info = zipfile.ZipInfo(name, stamp)
+            info.create_system = 0  # MS-DOS attributes: no Unix modes or owners recorded
+            if full is None:
+                info.external_attr = 0x10
+                z.writestr(info, b"")
+            else:
+                info.compress_type = zipfile.ZIP_DEFLATED
+                info.external_attr = 0x20
+                with open(full, "rb") as f:
+                    z.writestr(info, f.read())
+
+
+def write_archive(archive: str, root: str, top: str, mtime: int, executable=lambda rel: False) -> None:
+    if archive.lower().endswith(".zip"):
+        write_zip(archive, root, top, mtime)
+    else:
+        write_tar_gz(archive, root, top, mtime, executable)
+
+
+def _safe_extract_zip(archive: str, dest: str) -> None:
+    try:
+        with zipfile.ZipFile(archive) as z:
+            infos = z.infolist()
+            for i in infos:
+                safe_relpath(i.filename.rstrip("/"))
+                mode = i.external_attr >> 16
+                if i.create_system == 3 and mode and not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
+                    raise ShipError(f"{archive}: {i.filename} is not a regular file or folder")
+                if i.flag_bits & 0x1:
+                    raise ShipError(f"{archive}: {i.filename} is encrypted")
+            for i in infos:
+                target = os.path.join(dest, *i.filename.rstrip("/").split("/"))
+                if i.is_dir():
+                    os.makedirs(target, exist_ok=True)
+                    continue
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                with z.open(i) as src, open(target, "wb") as out:
+                    shutil.copyfileobj(src, out)
+    except (zipfile.BadZipFile, zipfile.LargeZipFile, OSError, EOFError, zlib.error, NotImplementedError) as e:
+        raise ShipError(f"{archive}: unreadable archive ({e})")
+
+
 def safe_extract(archive: str, dest: str) -> None:
     """Extracts regular files and folders only; refuses links, devices, absolute or '..' paths."""
+    try:
+        with open(archive, "rb") as f:
+            is_zip = f.read(4) == b"PK\x03\x04"
+    except OSError as e:
+        raise ShipError(f"{archive}: unreadable archive ({e})")
+    if is_zip:
+        _safe_extract_zip(archive, dest)
+        return
     try:
         with tarfile.open(archive, "r:gz") as t:
             members = t.getmembers()
@@ -408,15 +639,71 @@ exec "$here/bin/aether_player" --pak "$here/Paks" "$@"
 """
 
 
-def cmd_package(a) -> None:
-    repo = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    project_dir = a.project_dir or os.path.join(repo, "games", a.name)
+def find_pdb(binary_src: str, cv: dict, search: list):
+    """The .pdb a CodeView record names: its recorded path, else <name> in the binary's folder or <search>."""
+    name = re.split(r"[\\/]", cv["pdb"])[-1]
+    cands = [cv["pdb"]] + [os.path.join(d, name) for d in [os.path.dirname(binary_src)] + search]
+    for c in cands:
+        if c and os.path.isfile(c):
+            return c
+    return None
+
+
+def stage_windows(a, stage: str, symdir: str) -> tuple:
+    """Copies <name>.exe (the player) and its DLLs into <stage>; returns (player src, symbols, runtime deps)."""
     player = None
-    for cand in ("player/Release/aether_player", "player/aether_player"):
+    for cand in ("player/Release/aether_player.exe", "player/aether_player.exe"):
         if os.path.isfile(os.path.join(a.build, cand)):
             player = os.path.join(a.build, cand)
             break
     if not player:
+        raise ShipError(f"aether_player.exe not found in {a.build}/player")
+    player_dir = os.path.dirname(player)
+    binaries = [(player, a.name + ".exe")]
+    for n in sorted(os.listdir(player_dir)):
+        if n.lower().endswith(".dll"):
+            binaries.append((os.path.join(player_dir, n), n))
+    symbols = []
+    deps = set()
+    for src, rel in binaries:
+        dst = os.path.join(stage, rel)
+        shutil.copyfile(src, dst)
+        deps.update(pe_imports(dst))
+        if a.no_symbols:
+            continue
+        cv = pe_codeview(dst)
+        pdb = find_pdb(src, cv, [player_dir]) if cv else None
+        if not pdb:
+            if src == player:
+                raise ShipError(f"{player}: no CodeView record or .pdb found (link with /DEBUG; compile with /Zi)")
+            print(f"aether_ship: {rel}: no .pdb found, shipped without symbols", file=sys.stderr)
+            continue
+        info = pdb_info(pdb)
+        if not info or info["guid"] != cv["guid"] or info["age"] != cv["age"]:
+            raise ShipError(f"{pdb} does not match {rel} (exe {cv['guid']}/{cv['age']}, pdb {info})")
+        pdb_name = os.path.basename(pdb)
+        key = symstore_key(cv["guid"], cv["age"])
+        debug_rel = f"{pdb_name}/{key}/{pdb_name}"
+        debug = os.path.join(symdir, *debug_rel.split("/"))
+        os.makedirs(os.path.dirname(debug), exist_ok=True)
+        shutil.copyfile(pdb, debug)
+        symbols.append({"binary": rel, "build_id": key, "guid": cv["guid"], "age": cv["age"], "pdb": pdb_name,
+                        "debug_file": debug_rel, "bytes": os.path.getsize(debug), "sha256": sha256_file(debug)})
+    shipped = {r.lower() for _, r in binaries}
+    system = sorted(d for d in deps if d.lower() not in shipped)
+    return player, symbols, system
+
+
+def cmd_package(a) -> None:
+    repo = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    windows = is_windows(a.platform)
+    project_dir = a.project_dir or os.path.join(repo, "games", a.name)
+    player = None
+    for cand in ("player/Release/aether_player", "player/aether_player"):
+        if not windows and os.path.isfile(os.path.join(a.build, cand)):
+            player = os.path.join(a.build, cand)
+            break
+    if not player and not windows:
         raise ShipError(f"aether_player not found in {a.build}/player")
     paks = sorted(os.path.join(a.cooked, n) for n in os.listdir(a.cooked) if n.endswith(".apak")) + list(a.extra_pak or [])
     if not paks:
@@ -424,17 +711,22 @@ def cmd_package(a) -> None:
     os.makedirs(a.out, exist_ok=True)
     out = os.path.abspath(a.out)
     mtime = int(os.environ.get("SOURCE_DATE_EPOCH", "0"))
-    pkg_name = f"{a.name}-{a.platform}"
+    pkg_name = a.archive_name or f"{a.name}-{a.platform}"
+    ext = ".zip" if windows else ".tar.gz"
     with tempfile.TemporaryDirectory(dir=out) as tmp:
         stage = os.path.join(tmp, a.name)
         symdir = os.path.join(tmp, "symbols")
-        os.makedirs(os.path.join(stage, "bin"))
         os.makedirs(os.path.join(stage, "Paks"))
-        bin_player = os.path.join(stage, "bin", "aether_player")
-        shutil.copyfile(player, bin_player)
-        os.chmod(bin_player, 0o755)
         symbols = []
-        if not a.no_symbols:
+        if windows:
+            os.makedirs(symdir)
+            player, symbols, runtime_deps = stage_windows(a, stage, symdir)
+        else:
+            os.makedirs(os.path.join(stage, "bin"))
+            bin_player = os.path.join(stage, "bin", "aether_player")
+            shutil.copyfile(player, bin_player)
+            os.chmod(bin_player, 0o755)
+        if not a.no_symbols and not windows:
             build_id = elf_build_id(bin_player)
             if not build_id:
                 raise ShipError(f"{player} has no GNU build-id (link with -Wl,--build-id)")
@@ -454,8 +746,14 @@ def cmd_package(a) -> None:
         cook_manifest = os.path.join(a.cooked, "CookManifest.json")
         if os.path.isfile(cook_manifest):
             shutil.copyfile(cook_manifest, os.path.join(stage, "CookManifest.json"))
-        with open(os.path.join(stage, a.name), "w", newline="\n") as f:
-            f.write(LAUNCHER)
+        if not windows:
+            with open(os.path.join(stage, a.name), "w", newline="\n") as f:
+                f.write(LAUNCHER)
+            runtime_deps = elf_needed(bin_player)
+        else:
+            reqs = os.path.join(repo, "docs", "WINDOWS_REQUIREMENTS.md")
+            if os.path.isfile(reqs):
+                shutil.copyfile(reqs, os.path.join(stage, "WINDOWS_REQUIREMENTS.md"))
         for src, dst in (("README.md", "README.md"), ("THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.md")):
             if os.path.isfile(os.path.join(project_dir, src)):
                 shutil.copyfile(os.path.join(project_dir, src), os.path.join(stage, dst))
@@ -465,8 +763,8 @@ def cmd_package(a) -> None:
         meta = {
             "project": a.name, "version": a.version, "platform": a.platform, "git_rev": a.git_rev,
             "engine_version": engine_version, "min_engine_version": engine_version,
-            "launcher": a.name, "toolchain": read_toolchain(a.build),
-            "runtime_dependencies": elf_needed(bin_player),
+            "launcher": a.name + ".exe" if windows else a.name, "toolchain": read_toolchain(a.build),
+            "runtime_dependencies": runtime_deps,
             "licenses": sorted(os.listdir(os.path.join(stage, "licenses"))),
             "symbols": symbols,
         }
@@ -476,9 +774,9 @@ def cmd_package(a) -> None:
             f.write(manifest_bytes)
         if verify_tree(stage, manifest):
             raise ShipError("staged package does not match its own manifest")
-        archive = os.path.join(out, pkg_name + ".tar.gz")
+        archive = os.path.join(out, pkg_name + ext)
         execs = {"bin/aether_player", a.name}
-        write_tar_gz(archive, stage, a.name, mtime, lambda rel: rel in execs)
+        write_archive(archive, stage, a.name, mtime, lambda rel: rel in execs)
         outputs = [archive]
         release = {"$type": "AetherGameReleaseAsset", "$version": FORMAT_VERSION,
                    "package": {"name": os.path.basename(archive), "bytes": os.path.getsize(archive),
@@ -488,8 +786,8 @@ def cmd_package(a) -> None:
             with open(os.path.join(symdir, "SYMBOLS.json"), "wb") as f:
                 f.write(canonical_json({"project": a.name, "version": a.version, "build_id": manifest["build_id"],
                                         "symbols": symbols}))
-            sym_archive = os.path.join(out, pkg_name + "-symbols.tar.gz")
-            write_tar_gz(sym_archive, symdir, "", mtime)
+            sym_archive = os.path.join(out, pkg_name + "-symbols" + ext)
+            write_archive(sym_archive, symdir, "", mtime)
             outputs.append(sym_archive)
             release["symbols_archive"] = {"name": os.path.basename(sym_archive), "bytes": os.path.getsize(sym_archive),
                                           "sha256": sha256_file(sym_archive)}
@@ -549,8 +847,8 @@ def cmd_make_patch(a) -> None:
             f.write(canonical_json(patch))
         out = os.path.abspath(a.out)
         os.makedirs(os.path.dirname(out), exist_ok=True)
-        write_tar_gz(out, stage, "", int(os.environ.get("SOURCE_DATE_EPOCH", "0")),
-                     lambda rel: rel.startswith("files/") and new_files.get(rel[6:], {}).get("path") in ("bin/aether_player", new["launcher"]))
+        write_archive(out, stage, "", int(os.environ.get("SOURCE_DATE_EPOCH", "0")),
+                      lambda rel: rel.startswith("files/") and new_files.get(rel[6:], {}).get("path") in ("bin/aether_player", new["launcher"]))
     append_sums(os.path.dirname(out), [out])
     print(f"{old['version']} -> {new['version']}: {len(changed)} changed, {len(removed)} removed, "
           f"{os.path.getsize(out)} bytes ({os.path.basename(out)})")
@@ -594,25 +892,53 @@ def user_files(root: str, manifest: dict) -> list:
     return found
 
 
+IN_USE_HINT = "a file in it is in use or locked (close the game and anything reading its folder, then retry)"
+
+
+def _rmtree(path: str) -> None:
+    """shutil.rmtree that also clears read-only attributes (Windows); ShipError when files are in use."""
+    def onerror(fn, p, _exc):
+        try:
+            os.chmod(p, stat.S_IWRITE | stat.S_IREAD)
+            fn(p)
+        except OSError as e:
+            raise ShipError(f"cannot remove {path}: {IN_USE_HINT} ({e})")
+    shutil.rmtree(path, onerror=onerror)
+
+
+def _move(src: str, dst: str) -> None:
+    """One folder rename (os.replace; dst must not exist). Fails clearly when Windows refuses (files in use)."""
+    try:
+        os.replace(src, dst)
+    except OSError as e:
+        raise ShipError(f"cannot rename {src} -> {dst}: {IN_USE_HINT} ({e})")
+
+
 def recover(install: str) -> None:
     """Finishes a switch interrupted between its two renames: <install> gone, a verified staging folder present."""
     staging = install + ".staging"
     if not os.path.exists(install) and os.path.isdir(staging):
         verify_install(staging)
-        os.rename(staging, install)
+        _move(staging, install)
         print(f"recovered an interrupted update: {staging} -> {install}")
 
 
 def switch(install: str, new_root: str) -> None:
-    """<install> becomes <install>.previous, <new_root> becomes <install>. Each step is one rename."""
+    """<install> becomes <install>.previous, <new_root> becomes <install>. Each step is one rename.
+    If the first rename fails (Windows: the game is running) nothing changed but the staging copy, which is
+    removed. If the second fails, <install> is missing and the verified staging folder is what recover() uses."""
     previous = install + ".previous"
     staging = install + ".staging"
     if new_root != staging:
-        os.rename(new_root, staging)
-    if os.path.exists(previous):
-        shutil.rmtree(previous)
-    os.rename(install, previous)
-    os.rename(staging, install)
+        _move(new_root, staging)
+    try:
+        if os.path.exists(previous):
+            _rmtree(previous)
+        _move(install, previous)
+    except ShipError:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    _move(staging, install)
 
 
 def cmd_apply(a) -> None:
@@ -622,7 +948,7 @@ def cmd_apply(a) -> None:
     current = verify_install(install)
     staging = install + ".staging"
     if os.path.exists(staging):
-        shutil.rmtree(staging)
+        _rmtree(staging)
     with tempfile.TemporaryDirectory(dir=os.path.dirname(install)) as tmp:
         safe_extract(a.patch, tmp)
         patch, new = read_patch(tmp)
@@ -631,7 +957,7 @@ def cmd_apply(a) -> None:
         if patch["from"].get("build_id") != current["build_id"]:
             raise ShipError(f"patch is from {patch['from'].get('version')} ({patch['from'].get('build_id')}); "
                             f"installed is {current['version']} ({current['build_id']})")
-        replaces_player = any(f["path"] == "bin/aether_player" for f in patch["files"])
+        replaces_player = any(f["path"] == player_path(new) for f in patch["files"])
         if not replaces_player and parse_version(current["engine_version"]) < parse_version(new["min_engine_version"]):
             raise ShipError(f"patch needs engine {new['min_engine_version']}, installed player is {current['engine_version']}")
         # Stage a full copy (user files included), apply, verify the result against the target manifest.
@@ -647,7 +973,7 @@ def cmd_apply(a) -> None:
                 if os.path.lexists(dst):
                     os.remove(dst)
                 shutil.copyfile(os.path.join(tmp, "files", *f["path"].split("/")), dst)
-                if f["path"] in ("bin/aether_player", new["launcher"]):
+                if f["path"] in (player_path(new), new["launcher"]):
                     os.chmod(dst, 0o755)
             shutil.copyfile(os.path.join(tmp, MANIFEST), os.path.join(staging, MANIFEST))
             problems = verify_tree(staging, new)
@@ -671,7 +997,7 @@ def cmd_rollback(a) -> None:
     current = load_installed(install)
     staging = install + ".staging"
     if os.path.exists(staging):
-        shutil.rmtree(staging)
+        _rmtree(staging)
     shutil.copytree(previous, staging, symlinks=True)
     try:
         # Carry user files (saves, settings) the update created over to the version being restored.
@@ -706,7 +1032,7 @@ def cmd_install(a) -> None:
         m = verify_install(root)
         if os.path.exists(dest):
             os.rmdir(dest)
-        os.rename(root, dest)
+        _move(root, dest)
     print(f"installed {m['project']} {m['version']} ({m['build_id']}, {len(m['files'])} files) into {dest}")
 
 
@@ -728,6 +1054,16 @@ def cmd_check_symbols(a) -> None:
         for s in m["symbols"]:
             binary = os.path.join(install, *safe_relpath(s["binary"]).split("/"))
             debug = os.path.join(tmp, *safe_relpath(s["debug_file"]).split("/"))
+            if "guid" in s:  # Windows: PE CodeView RSDS record vs the PDB's own GUID/age
+                cv = pe_codeview(binary)
+                info = pdb_info(debug) if os.path.isfile(debug) else None
+                want = (s["guid"], s["age"])
+                if not cv or not info or (cv["guid"], cv["age"]) != want or (info["guid"], info["age"]) != want:
+                    raise ShipError(f"{s['binary']}: RSDS {cv}, pdb {info}, manifest {want}")
+                if sha256_file(debug) != s["sha256"]:
+                    raise ShipError(f"{s['debug_file']}: sha256 differs from the manifest")
+                print(f"{s['binary']}: PDB GUID {cv['guid']} age {cv['age']} matches {s['debug_file']}")
+                continue
             have_bin, have_dbg = elf_build_id(binary), elf_build_id(debug) if os.path.isfile(debug) else None
             if not (have_bin == have_dbg == s["build_id"]):
                 raise ShipError(f"{s['binary']}: build-id {have_bin}, symbols {have_dbg}, manifest {s['build_id']}")
@@ -750,6 +1086,7 @@ def main(argv=None) -> int:
     s.add_argument("--extra-pak", action="append")
     s.add_argument("--git-rev", default="")
     s.add_argument("--no-symbols", action="store_true")
+    s.add_argument("--archive-name", help="output base name (default <name>-<platform>)")
     s.set_defaults(fn=cmd_package)
     s = sub.add_parser("make-patch")
     s.add_argument("--from", dest="from_", required=True)

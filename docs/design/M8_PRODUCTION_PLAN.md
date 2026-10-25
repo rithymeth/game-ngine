@@ -148,8 +148,9 @@ full dependent-asset rebuild gate.
 
 **Status: pass** (green on CI in PR #691 on Linux, macOS, Windows, Android and iOS). Fresh cooks
 (no `Intermediate/`, from two separate copies) are now also byte-identical: sub-asset GUIDs missing from
-committed `.ameta` files are derived, not random (`Cook_FreshCooksFromCleanCopiesAreByteIdentical`; CI
-comparison pending). The Linux GCC step
+committed `.ameta` files are derived, not random (`Cook_FreshCooksFromCleanCopiesAreByteIdentical`;
+verified on CI in PR #695: the Linux GCC step "Content pipeline evidence (M8.5)" cooks two clean
+copies and their paks and manifests are byte-identical). The Linux GCC step
 "Content pipeline evidence (M8.5)" cooks AETHER-01 twice and checks the paks are byte-identical,
 with no imports and no texture cooks the second time. It then edits `test_cube.bin` and checks that
 exactly the 22 models that use it are re-imported. The step logs the sha256s with the git revision
@@ -549,19 +550,28 @@ list (saves) are carried over. The CI `game-ship` job runs
 
 On a `v*` tag, the Release job adds the package, symbols and manifest to
 `SHA256SUMS.txt`, the provenance attestation and the published assets. The
-tests are 18 `ship_tool_tests` unit tests (ctest).
+tests are 29 `ship_tool_tests` unit tests (ctest).
 
 Still open:
 
 - CI has not run this yet, and no tag has exercised it.
-- Fresh-cook reproducibility (fixed, pending CI): sub-asset GUIDs that a
+- Fresh-cook reproducibility (fixed, verified on CI in PR #695): sub-asset GUIDs that a
   committed `.ameta` doesn't list yet (the Kael/Warden rigs) were random on
   each import, so two cooks without `Intermediate/` differed. They are now
   derived from the parent GUID + importer + key (`DeriveSubAssetGuid`);
-  persisted GUIDs are kept. The M8.5 CI step now cooks AETHER-01 from two
-  clean copies and compares pak and manifest sha256.
-- No Windows game patch/rollback or `.pdb` symbols archive (MSVC symbols stay
-  in the build).
+  persisted GUIDs are kept. The Linux GCC step "Content pipeline evidence
+  (M8.5)" cooks AETHER-01 from two clean copies; both cooks are
+  byte-identical (pak and manifest sha256). This item is closed.
+- Windows (code and CI wiring added, not yet run on CI): `aether_ship.py
+  --platform windows-x64` writes a `.zip` package (`AETHER-01.exe` + DLLs),
+  a symbol-store `.pdb` zip whose `SYMBOLS.json` maps each binary to its PDB
+  GUID/age (exe RSDS record vs. PDB info/DBI streams, parsed in pure Python),
+  and a `.zip` patch. Folders are switched with `os.replace`, and files in use
+  fail with a clear error. The MSVC job (`-DAETHER_MSVC_RELEASE_PDB=ON`) runs
+  `ship_smoke.sh` natively under Git Bash, and the Release job adds
+  `AETHER-01-windows-x64-ship.{zip,-symbols.zip,manifest.json}` to SHA256SUMS
+  and the attestation. The PE/PDB parsers are tested only on synthetic
+  fixtures until that CI run.
 - No macOS game package.
 - No Authenticode or other signing of the game package beyond the Sigstore
   attestation.
