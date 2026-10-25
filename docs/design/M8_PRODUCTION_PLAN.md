@@ -305,12 +305,26 @@ sequence.
   has particles on the first frame at or after its key, follows the actor at its offset,
   spawns nothing after the frame that crosses its stop key and dies out; a skip stops it on
   the next frame and starts no later effect. `SequenceVfx_*` also cover the format, the
-  forward-only firing and the system events. The packaged player logs `Sequence vfx
-  started/stopped: <effect>` markers but has no particle world (`.avfx` isn't cooked), so it
-  warns that the effect isn't drawn.
+  forward-only firing and the system events.
 
-**Still open.** VFX keys are not drawn in the packaged player (no particle world or
-`.avfx` cook there), the Archive reveal has no Vfx track yet, and the editor panel can't
+- *VFX in the packaged player.* `.avfx` particle systems now cook (importer
+  `ParticleSystem`, read by path) and the player hosts a `vfx::ParticleWorld`
+  (`Game::Particles()`, stage `Player.Particles` after `Player.Animation`) that runs every
+  `ParticleSystem` component: placed, spawned by Blueprints, or started by a sequence's Vfx
+  keys (attached to the track's entity at the key's offset, or at the offset in the world).
+  Log markers: `Sequence vfx started/stopped: <effect>`, `Vfx finished: <effect>`;
+  unreadable assets and particle-world problems are warnings. The Archive reveal has a Vfx
+  track: `Fx/ArchiveSignal.avfx` (additive motes) on the terminal from 0.5 s to 7 s.
+  `Aether01_ArchiveSignalParticlesPlayInSyncAndSkipStopsThem` (cooked pak, 30/60/144 Hz,
+  full and skipped) checks the particles appear on the first frame at or after 0.5 s, the
+  draw data (`BuildRenderData`) puts them around the terminal, and they die out within their
+  lifetime of the stop or the skip. `tools/aether01_cinematic_check.py` asserts the
+  start and stop markers in both packaged runs and the finished marker after the skip
+  (the recorded trace ends 1 s after the stop, before the motes die out).
+
+**Still open.** The particle world's draw data is not yet submitted by the player's
+RHI scene renderer (no GPU particle pass there), so the effect simulates and builds
+sprite instances in the packaged player but isn't on screen. The editor panel can't
 author Vfx keys. The editor sequencer panel can't
 author Subtitle tracks yet, though MCP `seq_sample` reports them. The dialogue
 audio is a placeholder, not recorded voice. There is no localized voice-over

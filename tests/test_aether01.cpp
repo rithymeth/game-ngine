@@ -11,6 +11,7 @@
 #include "aether/scene/serialization.h"
 #include "aether/reflection/serialize.h"
 #include "aether/sequencer/sequence_system.h"
+#include "aether/vfx/particle_system.h"
 #include "test_framework.h"
 #include "aether/ai/perception.h"
 #include "aether/nav/components.h"
@@ -932,6 +933,70 @@ AETHER_TEST(Aether01_ArchiveSequencePlaysKaelMontageAndSkipStopsIt) {
         }
         AETHER_CHECK(run.game->Warnings().empty());
         AETHER_CHECK(!kael->IsPlayingMontage());
+    }
+}
+
+// The archive reveal (M8.7) starts the archive signal particles (Fx/ArchiveSignal.avfx, cooked into the pak) on the
+// terminal from its Vfx track at 0.5 s and stops them at 7 s; the player's particle world runs them. At 30, 60 and
+// 144 Hz particles appear on the first frame at or after 0.5 s, are drawn around the terminal (BuildRenderData),
+// and die out within their lifetime of the stop; a skip at 1.2 s stops them the same way, and nothing warns.
+AETHER_TEST(Aether01_ArchiveSignalParticlesPlayInSyncAndSkipStopsThem) {
+    ProofRun run("cinematic-vfx");
+    PlayToArchive(run);
+    constexpr f32 kStart = 0.5f, kStop = 7.0f, kSkipAt = 1.2f, kMaxLifetime = 1.8f;
+    for (const f32 hz : {30.0f, 60.0f, 144.0f}) {
+        for (const bool skip : {false, true}) {
+            const f32 dt = 1.0f / hz;
+            run.Start();
+            AETHER_CHECK(run.Stat(run.hero, "MissionStage") == 5);
+            vfx::ParticleWorld* particles = run.game->Particles();
+            AETHER_CHECK(particles != nullptr);
+            if (!particles) continue;
+            const Entity archive = FindEntitiesWithTag(run.game->GetWorld(), "ArchiveTerminal").front();
+            const Vec3 terminal = run.game->GetWorld().GetComponent<Transform>(archive)->position;
+            const vfx::ParticleCamera camera = vfx::ParticleCamera::FromView(Mat4::LookAtRH(terminal + Vec3(0, 2, 6), terminal, {0, 1, 0}));
+            // Wall time (frames x dt) as well as the playhead: a skip jumps the playhead to the end.
+            f32 first = -1.0f, last_alive = -1.0f, stop_wall = -1.0f;
+            bool skipped = false;
+            int finished = 0;
+            usize most = 0;
+            vfx::ParticleRenderData draw;
+            for (int frame = 0; frame < static_cast<int>(hz * 12); ++frame) {
+                const SequenceComponent* seq = run.game->GetWorld().GetComponent<SequenceComponent>(archive);
+                const bool press = skip && !skipped && seq->playing && seq->time >= kSkipAt;
+                run.game->Input().SetButton(input::Key::Enter, press);
+                skipped = skipped || press;
+                const bool was_playing = seq->playing;
+                run.Frames(1, dt);
+                const f32 wall = (frame + 1) * dt;
+                const SequenceComponent* after = run.game->GetWorld().GetComponent<SequenceComponent>(archive);
+                // The stop: the frame the playhead crosses 7 s, or the skip landing (it ends the sequence).
+                if (stop_wall < 0.0f && was_playing && (after->time >= kStop || !after->playing)) stop_wall = wall;
+                const usize count = particles->GetStats().particles;
+                for (const auto& e : particles->Events()) finished += e.asset == "Fx/ArchiveSignal.avfx";
+                if (count == 0) continue;
+                if (first < 0.0f) {
+                    first = after->time;
+                    particles->BuildRenderData(camera, draw);
+                    AETHER_CHECK(draw.DrawnParticles() == count && !draw.sprites.empty());
+                    for (const auto& batch : draw.sprites) {
+                        AETHER_CHECK(batch.blend == vfx::BlendMode::Additive);
+                        for (const auto& sprite : batch.instances) AETHER_CHECK((sprite.center - (terminal + Vec3(0, 1.2f, 0))).Length() < 1.5f);
+                    }
+                }
+                last_alive = wall;
+                most = std::max(most, count);
+            }
+            run.game->Input().SetButton(input::Key::Enter, false);
+            std::printf("  %3.0f Hz %s: first %.4f, stop %.4f, last alive %.4f, peak %zu\n", hz, skip ? "skip" : "full", first, stop_wall, last_alive, most);
+            AETHER_CHECK(first >= kStart - 1e-4f && first < kStart + dt + 1e-4f);
+            AETHER_CHECK(most > 10);
+            AETHER_CHECK(particles->GetStats().particles == 0 && finished == 1);
+            AETHER_CHECK(stop_wall > 0.0f && last_alive >= stop_wall - 0.1f && last_alive <= stop_wall + kMaxLifetime + 2 * dt + 1e-3f);
+            AETHER_CHECK(run.Stat(run.hero, "ArchiveComplete") == (skip ? 2 : 1));
+            if (skip) AETHER_CHECK(skipped && stop_wall < kSkipAt + 0.5f);
+            AETHER_CHECK(run.game->Warnings().empty());
+        }
     }
 }
 

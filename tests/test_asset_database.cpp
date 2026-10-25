@@ -62,6 +62,7 @@ AETHER_TEST(AssetGuid_StringAndReflection) {
     AETHER_CHECK(ImporterForExtension("hero.glb") == "Model");
     AETHER_CHECK(ImporterForExtension("Audio/alert.ACUE") == "SoundCue");
     AETHER_CHECK(ImporterForExtension("UI/Hud.aui") == "UILayout" && ImporterForExtension("UI/Dark.ATHEME") == "UITheme");
+    AETHER_CHECK(ImporterForExtension("Fx/Sparks.avfx") == "ParticleSystem");
     AETHER_CHECK(ImporterForExtension("notes.txt").empty());
 }
 
