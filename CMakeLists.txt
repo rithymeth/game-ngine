@@ -46,6 +46,13 @@ if(MSVC)
     # buffers instantiate aligned_storage with an extended alignment; opt in
     # to the conforming behaviour rather than MSVC's old static_assert.
     add_compile_definitions(_ENABLE_EXTENDED_ALIGNED_STORAGE)
+    # M8.10: Release binaries with a CodeView record and a matching .pdb (the game symbols archive,
+    # tools/ship/aether_ship.py --platform windows-x64). /OPT:REF,ICF keep Release's linker defaults.
+    option(AETHER_MSVC_RELEASE_PDB "Emit .pdb files for MSVC Release builds" OFF)
+    if(AETHER_MSVC_RELEASE_PDB)
+        add_compile_options($<$<CONFIG:Release>:/Zi>)
+        add_link_options($<$<CONFIG:Release>:/DEBUG:FULL> $<$<CONFIG:Release>:/OPT:REF> $<$<CONFIG:Release>:/OPT:ICF>)
+    endif()
 else()
     add_compile_options(-Wall -Wextra)
 endif()
