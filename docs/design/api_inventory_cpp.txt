@@ -1076,6 +1076,7 @@
   type struct AssetGuid
   type struct aether
   type struct std
+  AssetGuid DeriveSubAssetGuid(const AssetGuid&parent,std::string_view importer,std::string_view key)
   AssetGuid NewAssetGuid()
   [[nodiscard]]bool ParseAssetGuid(std::string_view text,AssetGuid&out)
   bool AssetGuidFromJson(const nlohmann::json&data,void*object)

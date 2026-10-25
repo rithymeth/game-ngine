@@ -146,7 +146,10 @@ sources and settings; a focused regression confirms that changing one texture
 recooks only that texture. This is a partial incremental-cook result, not the
 full dependent-asset rebuild gate.
 
-**Status: pass** (green on CI in PR #691 on Linux, macOS, Windows, Android and iOS). The Linux GCC step
+**Status: pass** (green on CI in PR #691 on Linux, macOS, Windows, Android and iOS). Fresh cooks
+(no `Intermediate/`, from two separate copies) are now also byte-identical: sub-asset GUIDs missing from
+committed `.ameta` files are derived, not random (`Cook_FreshCooksFromCleanCopiesAreByteIdentical`; CI
+comparison pending). The Linux GCC step
 "Content pipeline evidence (M8.5)" cooks AETHER-01 twice and checks the paks are byte-identical,
 with no imports and no texture cooks the second time. It then edits `test_cube.bin` and checks that
 exactly the 22 models that use it are re-imported. The step logs the sha256s with the git revision
@@ -551,8 +554,12 @@ tests are 18 `ship_tool_tests` unit tests (ctest).
 Still open:
 
 - CI has not run this yet, and no tag has exercised it.
-- A fresh cook is not reproducible: imported sub-asset GUIDs are regenerated
-  without `Intermediate/`.
+- Fresh-cook reproducibility (fixed, pending CI): sub-asset GUIDs that a
+  committed `.ameta` doesn't list yet (the Kael/Warden rigs) were random on
+  each import, so two cooks without `Intermediate/` differed. They are now
+  derived from the parent GUID + importer + key (`DeriveSubAssetGuid`);
+  persisted GUIDs are kept. The M8.5 CI step now cooks AETHER-01 from two
+  clean copies and compares pak and manifest sha256.
 - No Windows game patch/rollback or `.pdb` symbols archive (MSVC symbols stay
   in the build).
 - No macOS game package.

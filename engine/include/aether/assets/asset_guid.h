@@ -26,6 +26,12 @@ struct AssetGuid {
 };
 
 AssetGuid NewAssetGuid();
+// Deterministic GUID for a sub-asset that has none persisted yet: a hash of
+// the parent's GUID, the sub-asset's importer and its key ("mesh:0", ...),
+// stamped as an RFC 9562 version 8 UUID. The same inputs give the same GUID
+// on every machine and run, so fresh cooks are byte-reproducible; different
+// parents or keys give different GUIDs. Persisted GUIDs always win over this.
+AssetGuid DeriveSubAssetGuid(const AssetGuid& parent, std::string_view importer, std::string_view key);
 std::string ToString(const AssetGuid& guid);
 [[nodiscard]] bool ParseAssetGuid(std::string_view text, AssetGuid& out);
 
