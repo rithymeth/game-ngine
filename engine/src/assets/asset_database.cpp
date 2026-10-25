@@ -476,6 +476,35 @@ void AssetDatabase::RebuildDependencies() {
                     record.dependencies.push_back(it->second);
                 }
             }
+        } else if (record.importer == "ParticleSystem") {
+            // A .avfx names its renderers' materials (textures) and meshes by path, not GUID (M8.7): they ship with it.
+            std::vector<u8> source;
+            if (!fs::ReadFileBytes(Absolute(record.path).string(), source, kMaxDependencyScanBytes)) {
+                AETHER_LOG_WARN("Assets", "Skipping dependency scan for unreadable or oversized asset: %s", record.path.c_str());
+                continue;
+            }
+            const nlohmann::json document = nlohmann::json::parse(source.begin(), source.end(), nullptr, false);
+            std::vector<const nlohmann::json*> stack{&document};
+            while (!stack.empty()) {
+                const nlohmann::json& node = *stack.back();
+                stack.pop_back();
+                if (node.is_array()) {
+                    for (const nlohmann::json& child : node) stack.push_back(&child);
+                } else if (node.is_object()) {
+                    for (auto it = node.begin(); it != node.end(); ++it) {
+                        if ((it.key() == "material" || it.key() == "mesh") && it.value().is_string()) {
+                            const auto found = by_path_.find(it.value().get<std::string>());
+                            if (found != by_path_.end() && found->second != guid) record.dependencies.push_back(found->second);
+                        } else {
+                            stack.push_back(&it.value());
+                        }
+                    }
+                }
+            }
+            std::sort(record.dependencies.begin(), record.dependencies.end());
+            record.dependencies.erase(std::unique(record.dependencies.begin(), record.dependencies.end()), record.dependencies.end());
+            for (const AssetGuid& dependency : record.dependencies) referencers_[dependency].push_back(guid);
+            continue;
         } else if (record.importer != "Scene" && record.importer != "Prefab" && record.importer != "SpriteAtlas" &&
                    record.importer != "Tileset" && record.importer != "Tilemap" && record.importer != "Sequence") {
             continue;

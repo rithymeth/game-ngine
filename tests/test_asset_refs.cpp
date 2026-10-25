@@ -6,6 +6,7 @@
 #include "aether/scene/serialization.h"
 #include "test_framework.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -139,4 +140,29 @@ AETHER_TEST(ModelAssets_ResolveLinksPathsAndFollowsRenames) {
     ResolveModelAssets(world, db);
     AETHER_CHECK(world.GetComponent<ModelRenderer>(e)->model.guid == crate); // re-linked from its path
     stdfs::remove_all(root);
+}
+
+AETHER_TEST(AssetRefs_ParticleSystemMaterialsAndMeshesAreDependencies) {
+    // A .avfx names its renderers' textures and meshes by path (M8.7): the cook must ship them with it.
+    const stdfs::path root = FreshContent("aether_refs_avfx");
+    Write(root / "Fx/smoke.png", "not really a png");
+    Write(root / "Fx/rock.obj", "o rock");
+    Write(root / "Fx/unused.png", "x");
+    Write(root / "Fx/Smoke.avfx",
+          R"({"emitters": [{"render": [{"module": "SpriteRenderer", "material": "Fx/smoke.png"},
+                                       {"module": "MeshRenderer", "mesh": "Fx/rock.obj", "material": ""},
+                                       {"module": "RibbonRenderer", "material": "Fx/missing.png"}]}]})");
+    Write(root / "Fx/Broken.avfx", "{ not json");
+    AssetDatabase db(root);
+    db.Scan();
+    const AssetRecord* smoke = db.FindByPath("Fx/Smoke.avfx");
+    const AssetRecord* texture = db.FindByPath("Fx/smoke.png");
+    AETHER_CHECK(smoke && texture && smoke->importer == "ParticleSystem");
+    if (!smoke || !texture) return;
+    std::vector<AssetGuid> expected{texture->guid};
+    if (const AssetRecord* mesh = db.FindByPath("Fx/rock.obj")) expected.push_back(mesh->guid); // when .obj is an asset type
+    std::sort(expected.begin(), expected.end());
+    AETHER_CHECK(smoke->dependencies == expected);
+    AETHER_CHECK(db.Referencers(texture->guid).size() == 1);
+    AETHER_CHECK(db.FindByPath("Fx/Broken.avfx") && db.FindByPath("Fx/Broken.avfx")->dependencies.empty());
 }

@@ -334,10 +334,22 @@ sequence.
   Vulkan (lavapipe) and checks the motes add cyan-blue only where they project, at the terminal.
   (Not the whole scene renderer: lavapipe still crashes in its JIT on the scene pipeline, see
   the advisory Vulkan player CI step.)
+- *Particle textures and flipbooks.* A sprite batch's or ribbon's `material` names a texture
+  in the package, loaded through the scene renderer's texture cache (BC/ASTC kept compressed
+  where the device can) into the bindless table; each vertex carries its texture index, and
+  sprites their flipbook cell, the next cell's offset and the frame blend, so the pass
+  samples the cell and cross-fades to the next when the renderer blends frames (one draw per
+  stream; untextured sprites keep the procedural falloff).
+  `PlayerParticles_MaterialsResolveToTexturesWithFlipbookBlend` checks the packing and
+  `PlayerParticles_TexturedSpritesSampleTheirFlipbookCellOnVulkan` draws a two-frame
+  flipbook through the pass on Vulkan (lavapipe): the cell's colour, faded by the blend.
+  The asset database now scans `.avfx` renderers' `material`/`mesh` paths as dependencies,
+  so the cook ships an effect's textures with it
+  (`AssetRefs_ParticleSystemMaterialsAndMeshesAreDependencies`).
 
-**Still open.** Particle materials' textures (flipbooks) and soft-particle depth fade
-aren't sampled yet (sprites draw the procedural falloff), and mesh particles aren't
-drawn; the particle pass has not been checked on screen in the full player frame (D3D12,
+**Still open.** Soft-particle depth fade isn't applied yet (the RHI can't sample the
+swap chain's depth), and mesh particles aren't drawn; the particle pass has not been
+checked on screen in the full player frame (D3D12,
 MoltenVK, Android). The
 editor panel can't author Vfx keys. The editor sequencer panel can't
 author Subtitle tracks yet, though MCP `seq_sample` reports them. The dialogue
