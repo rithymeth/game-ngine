@@ -114,6 +114,16 @@ void SequencePlayer::Deactivate(bool send_cue_stops) {
             }
         }
         t.active_animation.clear();
+        if (send_cue_stops && on_vfx && t.cleanup_track) {
+            for (const ActiveVfx& active : t.active_vfx) {
+                VfxKey stop;
+                stop.effect = active.effect;
+                stop.action = VfxAction::Stop;
+                stop.offset = active.offset;
+                on_vfx(*t.cleanup_track, active.entity, stop);
+            }
+        }
+        t.active_vfx.clear();
         ReleaseCut(t);
         t.cut = -2;
         for (usize i = 0; i < t.children.size(); ++i) {
@@ -148,6 +158,10 @@ bool SequencePlayer::ResolveTrack(usize index) {
     if (track.type == TrackType::Animation) {
         if (!t.cleanup_track) t.cleanup_track = std::make_unique<Track>(track);
         t.active_animation.reserve(track.anims.size());
+    }
+    if (track.type == TrackType::Vfx) {
+        if (!t.cleanup_track) t.cleanup_track = std::make_unique<Track>(track);
+        t.active_vfx.reserve(track.vfx.size());
     }
     if (track.type == TrackType::Spawn) {
         t.spawned.assign(track.spawns.size(), kNullEntity);
@@ -185,6 +199,7 @@ bool SequencePlayer::ResolveTrack(usize index) {
             player->on_event = [me](const Track& tr, const EventKey& e) { if (me->on_event) me->on_event(tr, e); };
             player->on_audio = [me](const Track& tr, Entity en, const AudioKey& a) { if (me->on_audio) me->on_audio(tr, en, a); };
             player->on_animation = [me](const Track& tr, Entity en, const AnimKey& a) { if (me->on_animation) me->on_animation(tr, en, a); };
+            player->on_vfx = [me](const Track& tr, Entity en, const VfxKey& v) { if (me->on_vfx) me->on_vfx(tr, en, v); };
             player->on_spawn = [me](const Track& tr, Entity parent, const SpawnKey& key) { return me->on_spawn ? me->on_spawn(tr, parent, key) : kNullEntity; };
             player->on_despawn = [me](Entity e) { if (me->on_despawn) me->on_despawn(e); };
             player->on_camera_cut = [me](Entity e) { if (me->on_camera_cut) me->on_camera_cut(e); };
@@ -200,7 +215,7 @@ bool SequencePlayer::ResolveTrack(usize index) {
     t.entity = track.binding.IsNull() ? kNullEntity : guids_.Find(world_, track.binding);
     const bool entity_optional = track.type == TrackType::Event || track.type == TrackType::Spawn || track.type == TrackType::CameraCut ||
                                  track.type == TrackType::Audio || track.type == TrackType::Fade || track.type == TrackType::Subsequence ||
-                                 track.type == TrackType::Subtitle;
+                                 track.type == TrackType::Subtitle || track.type == TrackType::Vfx;
     if (entity_optional) {
         // These work without their entity (a bound one that is missing is
         // simply treated as none).
@@ -452,6 +467,21 @@ void SequencePlayer::FireEvents(f32 from, f32 to, bool include_from) {
                     active.erase(existing);
                 }
                 on_animation(track, entity, k);
+            }
+        } else if (track.type == TrackType::Vfx && on_vfx) {
+            const Entity entity = track.binding.IsNull() ? kNullEntity : guids_.Find(world_, track.binding);
+            for (const VfxKey& k : track.vfx) {
+                if (k.time > to) break;
+                if (!crossed(k.time)) continue;
+                auto& active = targets_[i].active_vfx;
+                const auto existing = std::find_if(active.begin(), active.end(), [&](const ActiveVfx& v) { return v.effect == k.effect; });
+                if (k.action == VfxAction::Play) {
+                    if (existing == active.end()) active.push_back({k.effect, entity, k.offset});
+                    else { existing->entity = entity; existing->offset = k.offset; }
+                } else if (existing != active.end()) {
+                    active.erase(existing);
+                }
+                on_vfx(track, entity, k);
             }
         }
     }

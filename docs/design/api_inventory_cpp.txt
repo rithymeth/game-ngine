@@ -5113,6 +5113,7 @@
   type class SequencePlayer
   type struct ActiveAnimation
   type struct ActiveAudio
+  type struct ActiveVfx
   type struct FadeState
   type struct Target
   SequencePlayer&operator=(const SequencePlayer&)=delete
@@ -5136,6 +5137,7 @@
   std::function<void(const FadeState&)>on_fade
   std::function<void(const Track&,Entity entity,const AnimKey&)>on_animation
   std::function<void(const Track&,Entity entity,const AudioKey&)>on_audio
+  std::function<void(const Track&,Entity entity,const VfxKey&)>on_vfx
   std::function<void(const Track&,const EventKey&)>on_event
   void AdvanceTo(f32 time)
   void ApplyCuts(const Track&track,Target&target)
@@ -5164,6 +5166,7 @@
   type enum class AudioAction
   type enum class Interp
   type enum class TrackType
+  type enum class VfxAction
   type struct AnimKey
   type struct AudioKey
   type struct Channel
@@ -5176,6 +5179,7 @@
   type struct SubKey
   type struct SubtitleKey
   type struct Track
+  type struct VfxKey
   Quaternion EvaluateRotation(const std::vector<RotationKey>&keys,f32 time)
   Quaternion Slerp(const Quaternion&a,const Quaternion&b,f32 t)
   Quaternion rotation=Quaternion::Identity()
