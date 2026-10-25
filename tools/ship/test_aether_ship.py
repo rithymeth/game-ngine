@@ -497,6 +497,281 @@ class SwitchTests(unittest.TestCase):
         self.assertEqual(ship.verify_install(game)["version"], "1.0.0")
 
 
+# ------------------------------------------------------------------ macOS
+
+U_PLAYER = bytes(range(16))
+U_VULKAN = bytes(range(16, 32))
+U_FOO = bytes(range(32, 48))
+U_MVK = bytes(range(48, 64))
+
+
+def _lc_str(cmd: int, head: bytes, text: str) -> bytes:
+    """A load command whose string follows <head> (the fields after cmd/cmdsize/offset), padded to 8 bytes."""
+    raw = text.encode() + b"\0"
+    size = (12 + len(head) + len(raw) + 7) & ~7
+    return struct.pack("<III", cmd, size, 12 + len(head)) + head + raw + b"\0" * (size - 12 - len(head) - len(raw))
+
+
+def make_macho(uid: bytes, dylibs=(), rpaths=(), id_name=None, filetype=2, payload=b"code") -> bytes:
+    """A 64-bit little-endian (arm64) Mach-O with LC_UUID, LC_ID_DYLIB, LC_LOAD_DYLIB and LC_RPATH commands."""
+    cmds = [struct.pack("<II", ship.LC_UUID, 24) + uid]
+    dylib_head = struct.pack("<III", 2, 0x10000, 0x10000)  # timestamp, current, compatibility version
+    if id_name:
+        cmds.append(_lc_str(ship.LC_ID_DYLIB, dylib_head, id_name))
+    cmds += [_lc_str(ship.LC_LOAD_DYLIB, dylib_head, d) for d in dylibs]
+    cmds += [_lc_str(ship.LC_RPATH, b"", r) for r in rpaths]
+    body = b"".join(cmds)
+    header = struct.pack("<IiiIIIII", 0xFEEDFACF, 0x0100000C, 0, filetype, len(cmds), len(body), 0, 0)
+    return header + body + payload
+
+
+def make_fat(*slices: bytes) -> bytes:
+    out = bytearray(struct.pack(">II", 0xCAFEBABE, len(slices)))
+    off = 4096
+    blobs = []
+    for sl in slices:
+        out += struct.pack(">iiIII", 0x0100000C, 0, off, len(sl), 12)
+        blobs.append((off, sl))
+        off += (len(sl) + 4095) & ~4095
+    for o, sl in blobs:
+        out += b"\0" * (o - len(out)) + sl
+    return bytes(out)
+
+
+class FakeXcode:
+    """Stands in for dsymutil/strip/install_name_tool/codesign: records calls, makes a dSYM that copies the
+    binary (same UUID, or <dsym_uuid>), and rewrites install names in place like install_name_tool."""
+
+    def __init__(self, dsym_uuid=None):
+        self.calls = []
+        self.dsym_uuid = dsym_uuid
+
+    def __call__(self, *args):
+        self.calls.append(args)
+        tool = args[0]
+        if tool == "dsymutil":
+            exe, dsym = args[1], args[3]
+            dwarf = os.path.join(dsym, "Contents", "Resources", "DWARF", os.path.basename(exe))
+            os.makedirs(os.path.dirname(dwarf))
+            data = make_macho(self.dsym_uuid, filetype=10) if self.dsym_uuid else open(exe, "rb").read() + b"DWARF"
+            open(dwarf, "wb").write(data)
+            open(os.path.join(dsym, "Contents", "Info.plist"), "w").write("<plist/>")
+        elif tool == "install_name_tool" and args[1] in ("-change", "-id"):
+            path = args[-1]
+            data = open(path, "rb").read()
+            if args[1] == "-change":
+                old, new = args[2], args[3]
+            else:
+                old, new = ship.macho_info(path)["id"], args[2]
+            assert len(new) <= len(old), "fake install_name_tool only shortens names"
+            data = data.replace(old.encode() + b"\0", new.encode().ljust(len(old) + 1, b"\0"))
+            open(path, "wb").write(data)
+
+
+class MachOTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def write(self, name, data):
+        p = os.path.join(self.tmp, name)
+        open(p, "wb").write(data)
+        return p
+
+    def test_load_commands_are_parsed(self):
+        p = self.write("x", make_macho(U_PLAYER, dylibs=["/usr/lib/libSystem.B.dylib", "@rpath/libvulkan.1.dylib"],
+                                       rpaths=["@executable_path/../Frameworks", "/opt/homebrew/lib"]))
+        info = ship.macho_info(p)
+        self.assertEqual(info["uuids"], ["00010203-0405-0607-0809-0A0B0C0D0E0F"])
+        self.assertEqual(info["dylibs"], ["/usr/lib/libSystem.B.dylib", "@rpath/libvulkan.1.dylib"])
+        self.assertEqual(info["rpaths"], ["@executable_path/../Frameworks", "/opt/homebrew/lib"])
+        self.assertIsNone(info["id"])
+        lib = self.write("l", make_macho(U_VULKAN, id_name="@rpath/libvulkan.1.dylib", filetype=6))
+        self.assertEqual(ship.macho_info(lib)["id"], "@rpath/libvulkan.1.dylib")
+
+    def test_fat_binary_lists_every_slice_uuid(self):
+        p = self.write("fat", make_fat(make_macho(U_PLAYER), make_macho(U_FOO)))
+        self.assertEqual(len(ship.macho_uuids(p)), 2)
+        self.assertEqual(ship.macho_uuids(p)[1], str(__import__("uuid").UUID(bytes=U_FOO)).upper())
+
+    def test_not_macho_or_truncated(self):
+        self.assertIsNone(ship.macho_info(self.write("elf", b"\x7fELF" + b"\0" * 60)))
+        self.assertIsNone(ship.macho_info(self.write("java", struct.pack(">II", 0xCAFEBABE, 52) + b"\0" * 40)))
+        truncated = make_macho(U_PLAYER, dylibs=["/usr/lib/libSystem.B.dylib"])[:40]
+        self.assertEqual(ship.macho_info(self.write("t", truncated))["uuids"], [])
+
+    def test_resolve_dylib(self):
+        lib_dir = os.path.join(self.tmp, "lib")
+        os.makedirs(lib_dir)
+        lib = self.write("lib/libfoo.dylib", b"x")
+        exe = os.path.join(self.tmp, "bin", "exe")
+        self.assertEqual(ship.resolve_dylib("@rpath/libfoo.dylib", exe, exe, ["/nope", lib_dir]), os.path.realpath(lib))
+        self.assertEqual(ship.resolve_dylib("@executable_path/../lib/libfoo.dylib", exe, exe, []), os.path.realpath(lib))
+        self.assertIsNone(ship.resolve_dylib("@rpath/libbar.dylib", exe, exe, [lib_dir]))
+        self.assertTrue(ship.is_system_dylib("/usr/lib/libc++.1.dylib"))
+        self.assertTrue(ship.is_system_dylib("/System/Library/Frameworks/Metal.framework/Versions/A/Metal"))
+        self.assertFalse(ship.is_system_dylib("/opt/homebrew/lib/libvulkan.1.dylib"))
+
+
+class MacPackageTests(unittest.TestCase):
+    """package/install/apply/rollback/check-symbols for --platform macos-arm64 on synthetic Mach-O build output."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.build = os.path.join(self.tmp, "build")
+        brew = os.path.join(self.tmp, "brew", "lib")
+        os.makedirs(os.path.join(self.build, "player"))
+        os.makedirs(brew)
+        self.foo_path = os.path.join(brew, "libfoo.1.dylib")
+        open(os.path.join(self.build, "player", "aether_player"), "wb").write(make_macho(
+            U_PLAYER, dylibs=["/usr/lib/libSystem.B.dylib", "@rpath/libvulkan.1.dylib", self.foo_path],
+            rpaths=[brew]))
+        open(os.path.join(brew, "libvulkan.1.4.dylib"), "wb").write(make_macho(
+            U_VULKAN, id_name=os.path.join(brew, "libvulkan.1.dylib"), filetype=6,
+            dylibs=["/usr/lib/libSystem.B.dylib", self.foo_path], rpaths=[brew]))
+        os.symlink("libvulkan.1.4.dylib", os.path.join(brew, "libvulkan.1.dylib"))
+        open(self.foo_path, "wb").write(make_macho(U_FOO, id_name=self.foo_path, filetype=6,
+                                                   dylibs=["/usr/lib/libc++.1.dylib"]))
+        open(os.path.join(brew, "libMoltenVK.dylib"), "wb").write(make_macho(
+            U_MVK, id_name=os.path.join(brew, "libMoltenVK.dylib"), filetype=6,
+            dylibs=["/System/Library/Frameworks/Metal.framework/Versions/A/Metal"]))
+        icd_dir = os.path.join(self.tmp, "brew", "etc", "vulkan", "icd.d")
+        os.makedirs(icd_dir)
+        self.icd = os.path.join(icd_dir, "MoltenVK_icd.json")
+        json.dump({"file_format_version": "1.0.0",
+                   "ICD": {"library_path": "../../../lib/libMoltenVK.dylib", "api_version": "1.2.0"}}, open(self.icd, "w"))
+        self.cooked = os.path.join(self.tmp, "cooked")
+        os.makedirs(self.cooked)
+        open(os.path.join(self.cooked, "Game.apak"), "wb").write(b"base" * 100)
+        self.proj = os.path.join(self.tmp, "proj")
+        os.makedirs(self.proj)
+        open(os.path.join(self.proj, "README.md"), "w").write("demo")
+        self.xcode = FakeXcode()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def package(self, out, version, *extra, xcode=None):
+        with unittest.mock.patch.object(ship, "macos_tool", xcode or self.xcode), \
+                unittest.mock.patch.dict(os.environ, {"VK_ICD_FILENAMES": self.icd, "VK_DRIVER_FILES": ""}):
+            return run("package", "--build", self.build, "--cooked", self.cooked, "--version", version, "--out", out,
+                       "--name", "DEMO", "--project-dir", self.proj, "--platform", "macos-arm64", *extra)
+
+    def test_bundle_package_symbols_patch_and_rollback(self):
+        v1, v2 = os.path.join(self.tmp, "v1"), os.path.join(self.tmp, "v2")
+        self.assertEqual(self.package(v1, "1.2.3"), 0)
+        pkg = os.path.join(v1, "DEMO-macos-arm64.tar.gz")
+        syms = os.path.join(v1, "DEMO-macos-arm64-symbols.tar.gz")
+        exe = "DEMO.app/Contents/MacOS/DEMO"
+        with tarfile.open(pkg) as t:
+            members = {m.name: m for m in t.getmembers()}
+            plist = t.extractfile("DEMO/DEMO.app/Contents/Info.plist").read().decode()
+            icd = json.loads(t.extractfile("DEMO/DEMO.app/Contents/Resources/vulkan/icd.d/MoltenVK_icd.json").read())
+        for rel in (exe, "DEMO.app/Contents/Frameworks/libvulkan.1.dylib", "DEMO.app/Contents/Frameworks/libfoo.1.dylib",
+                    "DEMO.app/Contents/Frameworks/libMoltenVK.dylib", "DEMO.app/Contents/Resources/Paks/Game.apak",
+                    "GAME_MANIFEST.json", "README.md"):
+            self.assertIn("DEMO/" + rel, members)
+        self.assertEqual(members["DEMO/" + exe].mode, 0o755)
+        self.assertEqual(members["DEMO/DEMO.app/Contents/Resources/Paks/Game.apak"].mode, 0o644)
+        self.assertNotIn("DEMO/Paks", members)
+        self.assertNotIn("DEMO/bin/aether_player", members)
+        self.assertIn("<key>CFBundleExecutable</key>\n\t<string>DEMO</string>", plist)
+        self.assertIn("<string>1.2.3</string>", plist)
+        self.assertEqual(icd["ICD"]["library_path"], "../../../Frameworks/libMoltenVK.dylib")
+        # Install names rewritten to @rpath, build rpath replaced by the bundle's Frameworks folder, all re-signed.
+        calls = self.xcode.calls
+        self.assertIn(("install_name_tool", "-add_rpath", "@executable_path/../Frameworks"), [c[:3] for c in calls])
+        self.assertTrue(any(c[:2] == ("install_name_tool", "-delete_rpath") and c[-1].endswith("/MacOS/DEMO") for c in calls))
+        self.assertEqual(sum(1 for c in calls if c[0] == "codesign"), 4)
+        self.assertLess(next(i for i, c in enumerate(calls) if c[0] == "dsymutil"),
+                        next(i for i, c in enumerate(calls) if c[0] == "strip"))
+
+        dest = os.path.join(self.tmp, "Games", "DEMO")
+        self.assertEqual(run("install", "--archive", pkg, "--sums", os.path.join(v1, "SHA256SUMS.txt"), "--dest", dest), 0)
+        m = ship.verify_install(dest)
+        self.assertEqual(m["launcher"], exe)
+        self.assertEqual(ship.player_path(m), exe)
+        self.assertEqual(m["paks"], ["DEMO.app/Contents/Resources/Paks/Game.apak"])
+        self.assertEqual(m["runtime_dependencies"], ["/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+                                                     "/usr/lib/libSystem.B.dylib", "/usr/lib/libc++.1.dylib"])
+        for b in m["binaries"]:
+            for dep in ship.macho_info(os.path.join(dest, *b["path"].split("/")))["dylibs"]:
+                self.assertTrue(ship.is_system_dylib(dep) or dep.startswith("@rpath/"), dep)
+        self.assertEqual(ship.macho_info(os.path.join(dest, "DEMO.app/Contents/Frameworks/libfoo.1.dylib"))["id"],
+                         "@rpath/libfoo.1.dylib")
+        self.assertEqual(os.stat(os.path.join(dest, *exe.split("/"))).st_mode & 0o777, 0o755)
+        player_uuid = str(__import__("uuid").UUID(bytes=U_PLAYER)).upper()
+        self.assertEqual(m["symbols"][0]["uuids"], [player_uuid])
+        self.assertEqual(m["symbols"][0]["debug_file"], f"{player_uuid}/DEMO.dSYM/Contents/Resources/DWARF/DEMO")
+        self.assertEqual(run("check-symbols", "--install", dest, "--symbols", syms), 0)
+
+        # Deterministic, and v2 differs only by its delta pak (Info.plist carries the numeric version only).
+        again = os.path.join(self.tmp, "again")
+        self.assertEqual(self.package(again, "1.2.3", xcode=FakeXcode()), 0)
+        self.assertEqual(ship.sha256_file(pkg), ship.sha256_file(os.path.join(again, "DEMO-macos-arm64.tar.gz")))
+        delta = os.path.join(self.tmp, "Game_p1.apak")
+        open(delta, "wb").write(b"delta")
+        self.assertEqual(self.package(v2, "1.2.3+p1", "--extra-pak", delta, xcode=FakeXcode()), 0)
+        patch = os.path.join(self.tmp, "patch.tar.gz")
+        self.assertEqual(run("make-patch", "--from", pkg, "--to", os.path.join(v2, "DEMO-macos-arm64.tar.gz"), "--out", patch), 0)
+        with tarfile.open(patch) as t:
+            names = sorted(n.name for n in t.getmembers() if n.isfile() and n.name.startswith("files/"))
+        self.assertEqual(names, ["files/DEMO.app/Contents/Resources/Paks/Game_p1.apak"])
+        os.makedirs(os.path.join(dest, "Saved"))
+        open(os.path.join(dest, "Saved", "a.sav"), "w").write("save")
+        self.assertEqual(run("apply", "--install", dest, "--patch", patch), 0)
+        self.assertTrue(os.path.isfile(os.path.join(dest, "DEMO.app/Contents/Resources/Paks/Game_p1.apak")))
+        self.assertEqual(ship.verify_install(dest)["paks"], ["DEMO.app/Contents/Resources/Paks/Game.apak",
+                                                            "DEMO.app/Contents/Resources/Paks/Game_p1.apak"])
+        self.assertEqual(run("rollback", "--install", dest), 0)
+        self.assertFalse(os.path.exists(os.path.join(dest, "DEMO.app/Contents/Resources/Paks/Game_p1.apak")))
+        self.assertTrue(os.path.isfile(os.path.join(dest, "Saved", "a.sav")))
+        self.assertEqual(os.stat(os.path.join(dest, *exe.split("/"))).st_mode & 0o777, 0o755)
+
+    def test_check_symbols_refuses_a_dsym_with_another_uuid(self):
+        v1 = os.path.join(self.tmp, "v1")
+        self.assertEqual(self.package(v1, "1.0.0"), 0)
+        dest = os.path.join(self.tmp, "inst")
+        self.assertEqual(run("install", "--archive", os.path.join(v1, "DEMO-macos-arm64.tar.gz"), "--dest", dest), 0)
+        syms = os.path.join(v1, "DEMO-macos-arm64-symbols.tar.gz")
+        bad = os.path.join(self.tmp, "bad-symbols.tar.gz")
+        with tarfile.open(syms) as t, tarfile.open(bad, "w:gz") as o:
+            for mem in t.getmembers():
+                data = t.extractfile(mem).read() if mem.isfile() else None
+                if mem.name.endswith("/DWARF/DEMO"):
+                    data = make_macho(U_FOO, filetype=10)
+                    mem.size = len(data)
+                o.addfile(mem, io.BytesIO(data) if data is not None else None)
+        self.assertEqual(run("check-symbols", "--install", dest, "--symbols", bad), 1)
+        self.assertEqual(run("check-symbols", "--install", dest, "--symbols", syms), 0)
+
+    def test_check_symbols_refuses_a_swapped_dylib(self):
+        v1 = os.path.join(self.tmp, "v1")
+        self.assertEqual(self.package(v1, "1.0.0"), 0)
+        dest = os.path.join(self.tmp, "inst")
+        self.assertEqual(run("install", "--archive", os.path.join(v1, "DEMO-macos-arm64.tar.gz"), "--dest", dest), 0)
+        m = ship.load_installed(dest)
+        m["binaries"][1]["uuids"] = ["00000000-0000-0000-0000-000000000000"]  # manifest/binary disagree
+        with unittest.mock.patch.object(ship, "verify_install", return_value=m):
+            self.assertEqual(run("check-symbols", "--install", dest, "--symbols",
+                                 os.path.join(v1, "DEMO-macos-arm64-symbols.tar.gz")), 1)
+
+    def test_mismatched_dsym_refused_at_package_time(self):
+        self.assertEqual(self.package(os.path.join(self.tmp, "v1"), "1.0.0", xcode=FakeXcode(dsym_uuid=U_FOO)), 1)
+
+    def test_missing_dependency_refused(self):
+        os.remove(self.foo_path)
+        self.assertEqual(self.package(os.path.join(self.tmp, "v1"), "1.0.0"), 1)
+
+    def test_player_without_uuid_refused(self):
+        data = make_macho(U_PLAYER)
+        data = data.replace(struct.pack("<II", ship.LC_UUID, 24), struct.pack("<II", 0x7FFFFFFF, 24))
+        open(os.path.join(self.build, "player", "aether_player"), "wb").write(data)
+        self.assertEqual(self.package(os.path.join(self.tmp, "v1"), "1.0.0"), 1)
+
+
 @unittest.skipUnless(shutil.which("cc") and shutil.which("objcopy"), "needs cc and objcopy")
 class SymbolTests(unittest.TestCase):
     def test_split_debug_keeps_build_id(self):

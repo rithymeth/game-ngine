@@ -105,7 +105,7 @@ A project's **Plugins** tool lists the engine's and the project's plugins and
 turns them on; the cooker records which, and the player starts their runtime
 modules before the first scene loads.
 
-## Game releases, patches and rollback (Linux and Windows)
+## Game releases, patches and rollback (Linux, Windows and macOS)
 
 `tools/ship/aether_ship.py` (Python 3 standard library only) packages a cooked
 game for release and installs, patches and rolls it back on the player's
@@ -205,6 +205,72 @@ and refused-patch checks natively, and the Release job adds the package,
 symbols and manifest to `SHA256SUMS.txt` and the attestation. The Windows game
 package is not Authenticode-signed; that stays the separate, optional
 `windows-sign-release` job.
+
+### macOS
+
+`--platform macos-arm64` (Apple Silicon) packages an app bundle. Build
+`RelWithDebInfo` (the dSYM needs the debug map) and have the Xcode command-line
+tools installed (`dsymutil`, `strip`, `install_name_tool`, `codesign`); the
+install, verify, patch and rollback half still needs only `python3`.
+
+    build_release.sh --build build --out dist --platform macos-arm64
+    python3 aether_ship.py install --archive AETHER-01-macos-arm64.tar.gz --sums SHA256SUMS.txt --dest ~/Games/AETHER-01
+    ~/Games/AETHER-01/AETHER-01.app/Contents/MacOS/AETHER-01 --headless --frames 60 --report
+    open ~/Games/AETHER-01/AETHER-01.app
+
+The differences from Linux:
+
+- The package is still a `.tar.gz` (it keeps the executable bits) with one top
+  folder, which holds `AETHER-01.app`, the notices, `licenses/` and
+  `GAME_MANIFEST.json`. Install it as a folder and keep the bundle inside it:
+  `verify`, `apply` and `rollback` work on that folder (`<dir>.previous`,
+  `<dir>.staging` as on Linux), not on the bundle alone.
+- Inside the bundle: `Contents/MacOS/AETHER-01` (the stripped player; it is the
+  manifest's `launcher`), `Contents/Info.plist`, `Contents/Resources/Paks/`
+  (the player looks in `../Resources/Paks` next to its executable on macOS),
+  and `Contents/Frameworks/` with every non-system dylib the player loads.
+- `package` reads the player's Mach-O load commands itself (pure Python,
+  thin or fat): `LC_LOAD_DYLIB` (and weak/re-export/lazy/upward variants),
+  `LC_RPATH`, `LC_ID_DYLIB` and `LC_UUID`. Libraries outside `/usr/lib` and
+  `/System` (Homebrew's `libvulkan.1.dylib`, for example) are resolved
+  through `@rpath`/`@loader_path`/`@executable_path`, copied into
+  `Frameworks/` (transitively), and renamed `@rpath/<file>`. Build-machine
+  rpaths are deleted and `@executable_path/../Frameworks` is added. When the
+  Vulkan loader is bundled, MoltenVK is bundled too (found through
+  `VK_ICD_FILENAMES`/`VK_DRIVER_FILES` or Homebrew's `MoltenVK_icd.json`), with
+  its ICD manifest in `Contents/Resources/vulkan/icd.d/`, a folder the loader
+  searches inside app bundles. Packaging fails if anything still loads a
+  library from outside the bundle. `runtime_dependencies` lists the system
+  libraries and frameworks it loads, and the manifest's `binaries` list every
+  Mach-O in the bundle with its `LC_UUID`.
+- Symbols: `dsymutil` writes `<UUID>/AETHER-01.dSYM` before the player is
+  stripped with `strip -S -x`. `-symbols.tar.gz` holds the dSYM and
+  `SYMBOLS.json`. `package` and `check-symbols` compare the binary's `LC_UUID`
+  with the UUID of the dSYM's DWARF Mach-O, and `check-symbols` also checks
+  every bundled dylib's UUID against the manifest. In lldb, use
+  `target symbols add <UUID>/AETHER-01.dSYM`.
+- `strip` and `install_name_tool` invalidate the linker's signature, and arm64
+  refuses to run unsigned code, so every Mach-O is re-signed ad hoc
+  (`codesign --force --sign -`, no identity, deterministic).
+- APFS is case-insensitive by default: manifests already refuse two paths that
+  differ only by case, and nothing in the install relies on case.
+
+The macOS CI job builds `AETHER-01-macos-arm64.*`, runs the same
+`ship_smoke.sh` natively (with the Homebrew Vulkan driver environment unset),
+does the release assembly dry run and uploads `aether01-macos-arm64-ship`. On
+a tag the Release job adds the package, symbols and manifest to
+`SHA256SUMS.txt`, the attestation and the published assets.
+
+Not covered yet: the app is not signed with a Developer ID or notarized (the
+repository has no Apple signing secrets). A downloaded copy carries the
+`com.apple.quarantine` attribute, and Gatekeeper blocks it ("cannot be
+opened"). Right-click > Open, or `xattr -dr com.apple.quarantine
+~/Games/AETHER-01`, lets it run. Installing with `aether_ship.py` from a
+quarantined archive doesn't copy the attribute, since Python extracts the
+files itself. Patching changes files in `Contents/Resources`, which would
+break a sealed (Developer ID) signature; a signed release would need to be
+re-signed after each patch, or keep its paks outside the bundle. Only arm64
+is built (no x86_64 or universal binary).
 
 ## Verifying an engine download
 

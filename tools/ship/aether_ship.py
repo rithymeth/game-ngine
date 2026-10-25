@@ -33,6 +33,17 @@ itself) with the player's DLLs, and there is no ELF build-id. Symbols are the
 (<pdb>/<GUID><age>/<pdb>) with SYMBOLS.json; check-symbols compares each
 binary's RSDS GUID/age with the GUID (PDB info stream) and age (DBI stream)
 read from the .pdb itself. A patch is a .zip when --out ends in .zip.
+
+macOS (--platform macos-arm64): a .tar.gz whose top folder holds <name>.app
+(Contents/MacOS/<name> = the stripped player, Info.plist, Frameworks/ with every
+non-system dylib it loads rewritten to @rpath/<file> plus MoltenVK and its ICD
+manifest in Resources/vulkan/icd.d, Resources/Paks/) next to the notices and
+GAME_MANIFEST.json; the manifest's launcher is the bundle executable and its
+"binaries" list every Mach-O with its LC_UUIDs. Symbols are a dsymutil .dSYM per
+UUID (<UUID>/<name>.dSYM); check-symbols compares the installed binary's LC_UUID
+with the dSYM's DWARF Mach-O UUID (load commands parsed in pure Python). Needs
+the Xcode command-line tools to package (dsymutil, strip, install_name_tool,
+codesign for an ad-hoc re-sign); install/apply/rollback need only python3.
 Switching uses os.replace on folders (no links); if a file in the install is
 in use (the game is running) the switch fails with a clear error and the
 install is left as it was or recoverable.
@@ -353,9 +364,302 @@ def is_windows(platform: str) -> bool:
     return platform.startswith("windows")
 
 
+def is_macos(platform: str) -> bool:
+    return platform.startswith("macos")
+
+
 def player_path(m: dict) -> str:
-    """The player binary inside an install: <launcher> (the exe itself) on Windows, bin/aether_player elsewhere."""
-    return m["launcher"] if is_windows(m.get("platform", "")) and m.get("launcher") else "bin/aether_player"
+    """The player binary inside an install: <launcher> (the exe itself) on Windows and macOS (the app bundle's
+    Contents/MacOS/<name>), bin/aether_player on Linux."""
+    platform = m.get("platform", "")
+    return m["launcher"] if (is_windows(platform) or is_macos(platform)) and m.get("launcher") else "bin/aether_player"
+
+
+# ------------------------------------------------------------ Mach-O (macOS)
+
+LC_REQ_DYLD = 0x80000000
+LC_LOAD_DYLIB, LC_ID_DYLIB, LC_UUID, LC_LAZY_LOAD_DYLIB = 0xC, 0xD, 0x1B, 0x20
+LC_LOAD_WEAK_DYLIB, LC_RPATH, LC_REEXPORT_DYLIB, LC_LOAD_UPWARD_DYLIB = (
+    0x18 | LC_REQ_DYLD, 0x1C | LC_REQ_DYLD, 0x1F | LC_REQ_DYLD, 0x23 | LC_REQ_DYLD)
+DYLIB_LOADS = (LC_LOAD_DYLIB, LC_LOAD_WEAK_DYLIB, LC_REEXPORT_DYLIB, LC_LAZY_LOAD_DYLIB, LC_LOAD_UPWARD_DYLIB)
+
+
+def _macho_slices(data: bytes) -> list:
+    """Offsets of the thin Mach-O images in <data> (one, or one per arch of a fat file); [] if not Mach-O."""
+    if len(data) < 8:
+        return []
+    magic_be, = struct.unpack_from(">I", data, 0)
+    if magic_be in (0xCAFEBABE, 0xCAFEBABF):  # fat header (always big-endian); 0xCAFEBABE is also Java class files
+        nfat, = struct.unpack_from(">I", data, 4)
+        if not 0 < nfat < 32:
+            return []
+        size = 20 if magic_be == 0xCAFEBABE else 32
+        offs = []
+        for i in range(nfat):
+            if magic_be == 0xCAFEBABE:
+                off, = struct.unpack_from(">I", data, 8 + size * i + 8)
+            else:
+                off, = struct.unpack_from(">Q", data, 8 + size * i + 8)
+            offs.append(off)
+        return [o for o in offs if _macho_slices(data[o:o + 4] + b"\0" * 4)]
+    magic_le, = struct.unpack_from("<I", data, 0)
+    return [0] if magic_le in (0xFEEDFACF, 0xFEEDFACE) else []
+
+
+def macho_info(path: str):
+    """Load commands of a Mach-O file (thin or fat): {'uuids': [UUID per slice], 'dylibs': [load names],
+    'rpaths': [...], 'id': LC_ID_DYLIB name or None, 'filetype': int}. None if not Mach-O.
+    Little-endian images only (arm64, x86_64)."""
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except OSError:
+        return None
+    info = {"uuids": [], "dylibs": [], "rpaths": [], "id": None, "filetype": 0}
+    slices = _macho_slices(data)
+    if not slices:
+        return None
+
+    def cstr(off):
+        end = data.find(b"\0", off)
+        return data[off:end if end >= 0 else len(data)].decode("utf-8", "replace")
+
+    try:
+        for base in slices:
+            magic, _cpu, _sub, filetype, ncmds, sizeofcmds = struct.unpack_from("<6I", data, base)
+            off = base + (32 if magic == 0xFEEDFACF else 28)
+            end = off + sizeofcmds
+            info["filetype"] = filetype
+            for _ in range(ncmds):
+                if off + 8 > end:
+                    break
+                cmd, cmdsize = struct.unpack_from("<II", data, off)
+                if cmdsize < 8 or off + cmdsize > end or off + cmdsize > len(data):
+                    break
+                if cmd == LC_UUID and cmdsize >= 24:
+                    info["uuids"].append(str(uuid.UUID(bytes=bytes(data[off + 8:off + 24]))).upper())
+                elif cmd in DYLIB_LOADS or cmd == LC_ID_DYLIB:
+                    name_off, = struct.unpack_from("<I", data, off + 8)
+                    name = cstr(off + name_off)
+                    if cmd == LC_ID_DYLIB:
+                        info["id"] = name
+                    elif name not in info["dylibs"]:
+                        info["dylibs"].append(name)
+                elif cmd == LC_RPATH:
+                    p_off, = struct.unpack_from("<I", data, off + 8)
+                    p = cstr(off + p_off)
+                    if p not in info["rpaths"]:
+                        info["rpaths"].append(p)
+                off += cmdsize
+    except struct.error:
+        return None
+    return info
+
+
+def macho_uuids(path: str) -> list:
+    info = macho_info(path)
+    return info["uuids"] if info else []
+
+
+def is_system_dylib(name: str) -> bool:
+    """Libraries every macOS has (the dyld shared cache): not bundled, listed as runtime dependencies."""
+    return name.startswith(("/usr/lib/", "/System/"))
+
+
+def resolve_dylib(name: str, loader: str, executable: str, rpaths: list):
+    """The file a load command names, resolving @rpath (against <rpaths>), @loader_path and @executable_path."""
+    def expand(p):
+        if p.startswith("@loader_path"):
+            return os.path.dirname(loader) + p[len("@loader_path"):]
+        if p.startswith("@executable_path"):
+            return os.path.dirname(executable) + p[len("@executable_path"):]
+        return p
+    if name.startswith("@rpath/"):
+        for r in rpaths:
+            c = os.path.normpath(os.path.join(expand(r), name[len("@rpath/"):]))
+            if os.path.isfile(c):
+                return os.path.realpath(c)
+        return None
+    c = os.path.normpath(expand(name))
+    return os.path.realpath(c) if os.path.isfile(c) else None
+
+
+def macos_tool(*args) -> None:
+    """Runs an Xcode command-line tool (dsymutil, strip, install_name_tool, codesign). Tests replace this."""
+    subprocess.run(list(args), check=True)
+
+
+INFO_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>{name}</string>
+	<key>CFBundleExecutable</key>
+	<string>{name}</string>
+	<key>CFBundleIdentifier</key>
+	<string>{bundle_id}</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>{name}</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>{version}</string>
+	<key>CFBundleVersion</key>
+	<string>{version}</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+</dict>
+</plist>
+"""
+
+
+def find_moltenvk_icd():
+    """The MoltenVK ICD manifest of the build machine: VK_ICD_FILENAMES / VK_DRIVER_FILES, else Homebrew's."""
+    for var in ("VK_DRIVER_FILES", "VK_ICD_FILENAMES"):
+        for p in os.environ.get(var, "").split(os.pathsep):
+            if p and os.path.isfile(p) and "moltenvk" in os.path.basename(p).lower():
+                return p
+    for prefix in ("/opt/homebrew", "/usr/local"):
+        for sub in ("etc", "share"):
+            p = os.path.join(prefix, sub, "vulkan", "icd.d", "MoltenVK_icd.json")
+            if os.path.isfile(p):
+                return p
+    return None
+
+
+def stage_macos(a, stage: str, symdir: str, player: str) -> tuple:
+    """Builds <stage>/<name>.app (Contents/MacOS/<name>, Info.plist, Frameworks/ with the non-system dylibs the
+    player loads, Resources/Paks, Resources/vulkan/icd.d/MoltenVK_icd.json when the Vulkan loader is bundled).
+    The player's DWARF goes to <symdir>/<UUID>/<name>.dSYM (dsymutil) before it is stripped (strip -S -x).
+    Returns (exe rel path, paks dir rel, symbols, runtime deps, binaries [{path, uuids}])."""
+    app_rel = f"{a.name}.app/Contents"
+    contents = os.path.join(stage, f"{a.name}.app", "Contents")
+    macos_dir, frameworks = os.path.join(contents, "MacOS"), os.path.join(contents, "Frameworks")
+    resources = os.path.join(contents, "Resources")
+    os.makedirs(macos_dir)
+    os.makedirs(os.path.join(resources, "Paks"))
+    exe_rel = f"{app_rel}/MacOS/{a.name}"
+    exe = os.path.join(macos_dir, a.name)
+    shutil.copyfile(player, exe)
+    os.chmod(exe, 0o755)
+    try:
+        short = ".".join(str(x) for x in parse_version(a.version))
+    except ShipError:
+        short = "0.0.0"
+    bundle_id = "com.aether." + re.sub(r"[^A-Za-z0-9.-]", "", a.name).lower()
+    with open(os.path.join(contents, "Info.plist"), "w", newline="\n") as f:
+        f.write(INFO_PLIST.format(name=a.name, bundle_id=bundle_id, version=short))
+    exe_info = macho_info(exe)
+    if not exe_info:
+        raise ShipError(f"{player} is not a Mach-O executable")
+    if not exe_info["uuids"]:
+        raise ShipError(f"{player} has no LC_UUID (do not link with -no_uuid)")
+    symbols = []
+    if not a.no_symbols:
+        key = "+".join(exe_info["uuids"])
+        dsym_rel = f"{key}/{a.name}.dSYM"
+        dsym = os.path.join(symdir, *dsym_rel.split("/"))
+        os.makedirs(os.path.dirname(dsym))
+        macos_tool("dsymutil", exe, "-o", dsym)  # reads the debug map's object files from the build dir
+        debug_rel = f"{dsym_rel}/Contents/Resources/DWARF/{a.name}"
+        debug = os.path.join(symdir, *debug_rel.split("/"))
+        if macho_uuids(debug) != exe_info["uuids"]:
+            raise ShipError(f"dSYM UUID {macho_uuids(debug)} does not match {exe_rel} {exe_info['uuids']}")
+        for dirpath, _dirs, names in os.walk(dsym):
+            for n in names:
+                os.chmod(os.path.join(dirpath, n), 0o644)
+        symbols.append({"binary": exe_rel, "build_id": key, "uuids": exe_info["uuids"], "debug_file": debug_rel,
+                        "dsym": dsym_rel, "bytes": os.path.getsize(debug), "sha256": sha256_file(debug)})
+    macos_tool("strip", "-S", "-x", exe)
+
+    # Bundle every non-system dylib the player (transitively) loads; refer to each as @rpath/<file>.
+    bundled = {}  # file name -> staged path
+    queue = [(exe, player, exe_info)]
+    icd = None
+    while queue:
+        staged, source, info = queue.pop(0)
+        for dep in info["dylibs"]:
+            if is_system_dylib(dep):
+                continue
+            fname = dep.rsplit("/", 1)[-1]
+            if fname not in bundled:
+                src = resolve_dylib(dep, source, player, info["rpaths"] + exe_info["rpaths"])
+                if not src:
+                    raise ShipError(f"{os.path.basename(source)} loads {dep}, which was not found (rpaths {info['rpaths']})")
+                os.makedirs(frameworks, exist_ok=True)
+                dst = os.path.join(frameworks, fname)
+                shutil.copyfile(src, dst)
+                os.chmod(dst, 0o755)
+                dinfo = macho_info(dst)
+                if not dinfo:
+                    raise ShipError(f"{src} is not a Mach-O library")
+                bundled[fname] = dst
+                if dinfo["id"] != "@rpath/" + fname:
+                    macos_tool("install_name_tool", "-id", "@rpath/" + fname, dst)
+                for r in dinfo["rpaths"]:
+                    if not r.startswith("@"):
+                        macos_tool("install_name_tool", "-delete_rpath", r, dst)
+                queue.append((dst, src, dinfo))
+            if dep != "@rpath/" + fname:
+                macos_tool("install_name_tool", "-change", dep, "@rpath/" + fname, staged)
+    for r in exe_info["rpaths"]:
+        if r != "@executable_path/../Frameworks":
+            macos_tool("install_name_tool", "-delete_rpath", r, exe)
+    if bundled and "@executable_path/../Frameworks" not in exe_info["rpaths"]:
+        macos_tool("install_name_tool", "-add_rpath", "@executable_path/../Frameworks", exe)
+    # The Vulkan loader finds drivers through ICD manifests; the bundle's Resources/vulkan/icd.d is on its
+    # search path, so ship MoltenVK and a manifest pointing at it.
+    if any(n.startswith("libvulkan") for n in bundled):
+        icd = find_moltenvk_icd()
+        if not icd:
+            print("aether_ship: Vulkan loader bundled but no MoltenVK_icd.json found; the game needs a "
+                  "system Vulkan driver", file=sys.stderr)
+        else:
+            desc = read_json_file(icd)
+            lib = desc.get("ICD", {}).get("library_path", "")
+            lib_src = lib if os.path.isabs(lib) else os.path.join(os.path.dirname(icd), lib)
+            if not os.path.isfile(lib_src):
+                raise ShipError(f"{icd}: library_path {lib} not found")
+            fname = "libMoltenVK.dylib"
+            dst = os.path.join(frameworks, fname)
+            shutil.copyfile(os.path.realpath(lib_src), dst)
+            os.chmod(dst, 0o755)
+            minfo = macho_info(dst)
+            if not minfo:
+                raise ShipError(f"{lib_src} is not a Mach-O library")
+            bundled[fname] = dst
+            if minfo["id"] != "@rpath/" + fname:
+                macos_tool("install_name_tool", "-id", "@rpath/" + fname, dst)
+            for dep in minfo["dylibs"]:
+                if not is_system_dylib(dep):
+                    raise ShipError(f"{lib_src} loads non-system {dep}; bundle it or use a self-contained MoltenVK")
+            desc["ICD"]["library_path"] = "../../../Frameworks/" + fname
+            os.makedirs(os.path.join(resources, "vulkan", "icd.d"))
+            with open(os.path.join(resources, "vulkan", "icd.d", "MoltenVK_icd.json"), "wb") as f:
+                f.write(canonical_json(desc))
+    # install_name_tool and strip invalidate the linker's ad-hoc signature, which arm64 requires: re-sign
+    # ad hoc (no identity, deterministic). Gatekeeper still treats the app as unsigned (see docs).
+    for path in [exe] + [bundled[n] for n in sorted(bundled)]:
+        macos_tool("codesign", "--force", "--sign", "-", path)
+    binaries, deps = [], set()
+    for path, rel in [(exe, exe_rel)] + [(bundled[n], f"{app_rel}/Frameworks/{n}") for n in sorted(bundled)]:
+        info = macho_info(path)
+        if path == exe and info["uuids"] != exe_info["uuids"]:
+            raise ShipError(f"{exe_rel}: LC_UUID changed while stripping/re-linking")
+        for dep in info["dylibs"]:
+            if is_system_dylib(dep):
+                deps.add(dep)
+            elif dep.rsplit("/", 1)[-1] not in bundled or not dep.startswith("@rpath/"):
+                raise ShipError(f"{rel} still loads {dep} from outside the bundle")
+        binaries.append({"path": rel, "uuids": info["uuids"]})
+    return exe_rel, f"{app_rel}/Resources/Paks", symbols, sorted(deps), binaries
 
 
 # --------------------------------------------------------------- manifest
@@ -378,7 +682,8 @@ def file_entries(root: str) -> list:
 
 def build_manifest(root: str, meta: dict) -> dict:
     files = file_entries(root)
-    paks = [f["path"] for f in files if f["path"].startswith("Paks/") and f["path"].endswith(".apak")]
+    paks_dir = meta.get("paks_dir", "Paks") + "/"
+    paks = [f["path"] for f in files if f["path"].startswith(paks_dir) and f["path"].endswith(".apak")]
     # Content identity: what is installed, independent of when or where it was built.
     build_id = sha256_bytes(b"".join(f"{f['path']}\0{f['sha256']}\n".encode() for f in files))[:16]
     manifest = {
@@ -399,6 +704,8 @@ def build_manifest(root: str, meta: dict) -> dict:
         "symbols": meta.get("symbols", []),
         "files": files,
     }
+    if "binaries" in meta:  # macOS: every Mach-O in the bundle with its LC_UUIDs
+        manifest["binaries"] = meta["binaries"]
     validate_manifest(manifest)
     return manifest
 
@@ -697,6 +1004,7 @@ def stage_windows(a, stage: str, symdir: str) -> tuple:
 def cmd_package(a) -> None:
     repo = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     windows = is_windows(a.platform)
+    macos = is_macos(a.platform)
     project_dir = a.project_dir or os.path.join(repo, "games", a.name)
     player = None
     for cand in ("player/Release/aether_player", "player/aether_player"):
@@ -712,21 +1020,29 @@ def cmd_package(a) -> None:
     out = os.path.abspath(a.out)
     mtime = int(os.environ.get("SOURCE_DATE_EPOCH", "0"))
     pkg_name = a.archive_name or f"{a.name}-{a.platform}"
-    ext = ".zip" if windows else ".tar.gz"
+    ext = ".zip" if windows else ".tar.gz"  # macOS: .tar.gz keeps the bundle's executable bits
     with tempfile.TemporaryDirectory(dir=out) as tmp:
         stage = os.path.join(tmp, a.name)
         symdir = os.path.join(tmp, "symbols")
-        os.makedirs(os.path.join(stage, "Paks"))
         symbols = []
+        paks_dir, launcher, extra_meta, execs = "Paks", a.name, {}, {"bin/aether_player", a.name}
+        if not macos:
+            os.makedirs(os.path.join(stage, paks_dir))
         if windows:
             os.makedirs(symdir)
             player, symbols, runtime_deps = stage_windows(a, stage, symdir)
+            launcher = a.name + ".exe"
+        elif macos:
+            os.makedirs(symdir)
+            launcher, paks_dir, symbols, runtime_deps, binaries = stage_macos(a, stage, symdir, player)
+            extra_meta = {"paks_dir": paks_dir, "binaries": binaries}
+            execs = {b["path"] for b in binaries}
         else:
             os.makedirs(os.path.join(stage, "bin"))
             bin_player = os.path.join(stage, "bin", "aether_player")
             shutil.copyfile(player, bin_player)
             os.chmod(bin_player, 0o755)
-        if not a.no_symbols and not windows:
+        if not a.no_symbols and not windows and not macos:
             build_id = elf_build_id(bin_player)
             if not build_id:
                 raise ShipError(f"{player} has no GNU build-id (link with -Wl,--build-id)")
@@ -742,11 +1058,13 @@ def cmd_package(a) -> None:
             symbols.append({"binary": "bin/aether_player", "build_id": build_id, "debug_file": debug_rel,
                             "bytes": os.path.getsize(debug), "sha256": sha256_file(debug)})
         for p in paks:
-            shutil.copyfile(p, os.path.join(stage, "Paks", os.path.basename(p)))
+            shutil.copyfile(p, os.path.join(stage, *paks_dir.split("/"), os.path.basename(p)))
         cook_manifest = os.path.join(a.cooked, "CookManifest.json")
         if os.path.isfile(cook_manifest):
             shutil.copyfile(cook_manifest, os.path.join(stage, "CookManifest.json"))
-        if not windows:
+        if macos:
+            pass  # the app bundle is the launcher; runtime_deps are the system dylibs it loads
+        elif not windows:
             with open(os.path.join(stage, a.name), "w", newline="\n") as f:
                 f.write(LAUNCHER)
             runtime_deps = elf_needed(bin_player)
@@ -763,11 +1081,12 @@ def cmd_package(a) -> None:
         meta = {
             "project": a.name, "version": a.version, "platform": a.platform, "git_rev": a.git_rev,
             "engine_version": engine_version, "min_engine_version": engine_version,
-            "launcher": a.name + ".exe" if windows else a.name, "toolchain": read_toolchain(a.build),
+            "launcher": launcher, "toolchain": read_toolchain(a.build),
             "runtime_dependencies": runtime_deps,
             "licenses": sorted(os.listdir(os.path.join(stage, "licenses"))),
             "symbols": symbols,
         }
+        meta.update(extra_meta)
         manifest = build_manifest(stage, meta)
         manifest_bytes = canonical_json(manifest)
         with open(os.path.join(stage, MANIFEST), "wb") as f:
@@ -775,7 +1094,6 @@ def cmd_package(a) -> None:
         if verify_tree(stage, manifest):
             raise ShipError("staged package does not match its own manifest")
         archive = os.path.join(out, pkg_name + ext)
-        execs = {"bin/aether_player", a.name}
         write_archive(archive, stage, a.name, mtime, lambda rel: rel in execs)
         outputs = [archive]
         release = {"$type": "AetherGameReleaseAsset", "$version": FORMAT_VERSION,
@@ -1054,6 +1372,14 @@ def cmd_check_symbols(a) -> None:
         for s in m["symbols"]:
             binary = os.path.join(install, *safe_relpath(s["binary"]).split("/"))
             debug = os.path.join(tmp, *safe_relpath(s["debug_file"]).split("/"))
+            if "uuids" in s:  # macOS: Mach-O LC_UUID of the installed binary vs the dSYM's DWARF file
+                have_bin, have_dbg = macho_uuids(binary), macho_uuids(debug) if os.path.isfile(debug) else []
+                if not have_bin or not (have_bin == have_dbg == s["uuids"]):
+                    raise ShipError(f"{s['binary']}: LC_UUID {have_bin}, dSYM {have_dbg}, manifest {s['uuids']}")
+                if sha256_file(debug) != s["sha256"]:
+                    raise ShipError(f"{s['debug_file']}: sha256 differs from the manifest")
+                print(f"{s['binary']}: UUID {' '.join(have_bin)} matches {s['dsym']}")
+                continue
             if "guid" in s:  # Windows: PE CodeView RSDS record vs the PDB's own GUID/age
                 cv = pe_codeview(binary)
                 info = pdb_info(debug) if os.path.isfile(debug) else None
@@ -1070,6 +1396,10 @@ def cmd_check_symbols(a) -> None:
             if sha256_file(debug) != s["sha256"]:
                 raise ShipError(f"{s['debug_file']}: sha256 differs from the manifest")
             print(f"{s['binary']}: build-id {have_bin} matches {s['debug_file']}")
+        for b in m.get("binaries", []):  # macOS: the bundled dylibs are the ones that were packaged
+            have = macho_uuids(os.path.join(install, *safe_relpath(b["path"]).split("/")))
+            if have != b["uuids"]:
+                raise ShipError(f"{b['path']}: LC_UUID {have}, manifest {b['uuids']}")
 
 
 def main(argv=None) -> int:

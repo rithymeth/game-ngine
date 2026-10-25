@@ -476,6 +476,30 @@ jobs:
           name: dedicated-server-profile-macos
           path: server-run/aether-server-macos-arm64/logs
           if-no-files-found: ignore
+      - name: Build the AETHER-01 macOS release candidate, symbols and patch (M8.10)
+        # tools/ship/build_release.sh --platform macos-arm64: strict shipping cook -> v1 .tar.gz holding
+        # AETHER-01.app (stripped player in Contents/MacOS, Homebrew's Vulkan loader + MoltenVK and its ICD
+        # manifest bundled in Contents/Frameworks / Resources/vulkan, install names rewritten to @rpath and
+        # ad-hoc re-signed, paks in Contents/Resources/Paks), a dsymutil .dSYM symbols archive keyed by the
+        # player's LC_UUID, a v2 package with a delta pak and the v1 -> v2 patch. Unsigned (no Developer ID).
+        run: |
+          version="${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.release_tag || '' }}"
+          tools/ship/build_release.sh --build build --out ship-dist --work ship-work --platform macos-arm64 \
+            ${version:+--version "$version"}
+      - name: Install, launch, patch and roll back the macOS game package (M8.10)
+        # The same smoke as Linux/Windows, natively, without the Homebrew Vulkan driver environment: SHA256SUMS,
+        # manifest, LC_UUID vs dSYM check, headless launch of the bundle executable outside the checkout
+        # (Health 3), damaged/tampered patches refused, patch -> Health 5, rollback -> Health 3, saves kept;
+        # then the release assembly dry run.
+        run: |
+          env -u VK_ICD_FILENAMES -u VK_DRIVER_FILES bash tools/ship/ship_smoke.sh ship-dist ship-run macos-arm64
+          tools/ship/assemble_release.sh ship-dist/v1 ship-release-dry-run AETHER-01-macos-arm64
+      - name: Upload the AETHER-01 macOS release candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: aether01-macos-arm64-ship
+          path: ship-dist
+          if-no-files-found: error
       - name: Screenshot the editor shell
         # Offscreen through MoltenVK; hosted runners may have no Metal
         # device, so this reports without failing the job.
@@ -1313,6 +1337,10 @@ jobs:
         with:
           name: aether01-windows-x64-ship
           path: ship-input-windows
+      - uses: actions/download-artifact@v4
+        with:
+          name: aether01-macos-arm64-ship
+          path: ship-input-macos
       - name: Add the server packages to the release assets and SHA256SUMS
         # Each archive is checked against the SHA256SUMS.txt it was packaged with, copied in, and its line
         # appended to the release SHA256SUMS.txt (normalised to LF, no BOM). The per-package manifests ship
@@ -1332,9 +1360,11 @@ jobs:
         run: tools/ship/assemble_release.sh ship-input/v1 release-assets
       - name: Add the AETHER-01 Windows package, symbols and manifest (M8.10)
         run: tools/ship/assemble_release.sh ship-input-windows/v1 release-assets AETHER-01-windows-x64-ship
+      - name: Add the AETHER-01 macOS package, symbols and manifest (M8.10)
+        run: tools/ship/assemble_release.sh ship-input-macos/v1 release-assets AETHER-01-macos-arm64
       - name: Check the archives against SHA256SUMS
         run: |
-          for f in AetherEditor-windows-x64.zip AETHER-01-windows-x64.zip aether-server-linux-x64.tar.gz aether-server-windows-x64.zip aether-server-macos-arm64.tar.gz AETHER-01-linux-x64.tar.gz AETHER-01-linux-x64-symbols.tar.gz AETHER-01-linux-x64.manifest.json AETHER-01-windows-x64-ship.zip AETHER-01-windows-x64-ship-symbols.zip AETHER-01-windows-x64-ship.manifest.json; do
+          for f in AetherEditor-windows-x64.zip AETHER-01-windows-x64.zip aether-server-linux-x64.tar.gz aether-server-windows-x64.zip aether-server-macos-arm64.tar.gz AETHER-01-linux-x64.tar.gz AETHER-01-linux-x64-symbols.tar.gz AETHER-01-linux-x64.manifest.json AETHER-01-windows-x64-ship.zip AETHER-01-windows-x64-ship-symbols.zip AETHER-01-windows-x64-ship.manifest.json AETHER-01-macos-arm64.tar.gz AETHER-01-macos-arm64-symbols.tar.gz AETHER-01-macos-arm64.manifest.json; do
             want=$(tr -d '\r\357\273\277' < release-assets/SHA256SUMS.txt | awk -v n="$f" '$2==n {print tolower($1)}')
             have=$(sha256sum "release-assets/$f" | cut -d' ' -f1)
             echo "$f want=$want have=$have"
@@ -1356,6 +1386,9 @@ jobs:
             release-assets/AETHER-01-windows-x64-ship.zip
             release-assets/AETHER-01-windows-x64-ship-symbols.zip
             release-assets/AETHER-01-windows-x64-ship.manifest.json
+            release-assets/AETHER-01-macos-arm64.tar.gz
+            release-assets/AETHER-01-macos-arm64-symbols.tar.gz
+            release-assets/AETHER-01-macos-arm64.manifest.json
             release-assets/RELEASE_MANIFEST.json
             release-assets/SHA256SUMS.txt
       - name: Publish
@@ -1374,6 +1407,9 @@ jobs:
             release-assets/AETHER-01-windows-x64-ship.zip
             release-assets/AETHER-01-windows-x64-ship-symbols.zip
             release-assets/AETHER-01-windows-x64-ship.manifest.json
+            release-assets/AETHER-01-macos-arm64.tar.gz
+            release-assets/AETHER-01-macos-arm64-symbols.tar.gz
+            release-assets/AETHER-01-macos-arm64.manifest.json
             release-assets/RELEASE_MANIFEST.json
             release-assets/SHA256SUMS.txt
           generate_release_notes: true
