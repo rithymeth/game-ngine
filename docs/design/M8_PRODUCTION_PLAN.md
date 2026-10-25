@@ -517,6 +517,52 @@ backs up and restores the previous artifacts if a later install step fails.
 Toolchain provenance,
 cryptographic signatures, install/upgrade and rollback evidence remain open.
 
+**Evidence so far (not passed).** `tools/ship/aether_ship.py` packages
+AETHER-01 for Linux. It writes `GAME_MANIFEST.json` (version, content
+`build_id`, git revision, engine/minimum engine version, CMake toolchain,
+`DT_NEEDED` runtime libraries, licenses, pak mount order, per-file size and
+SHA-256, symbols with GNU build-ids), a stripped player, a build-id keyed
+`objcopy --only-keep-debug` symbols archive, a release manifest and
+`SHA256SUMS.txt`. Packaging is byte-identical for the same build and cook.
+`tools/ship/build_release.sh` builds v1 (a strict shipping cook), v2 (v1 plus an
+`aether_cook --patch-of` delta pak whose player starts at Health 5, not 3) and
+the v1 → v2 patch. The patch holds two files and is about 9 KB. `apply`
+verifies the checksum, the installed manifest, the patch base `build_id`, the
+payload hashes and the minimum engine version. It stages a copy, verifies it,
+switches with two renames and keeps `<dir>.previous`. `rollback` swaps the two
+folders. Interrupted switches are recovered, and files the manifest doesn't
+list (saves) are carried over. The CI `game-ship` job runs
+`tools/ship/ship_smoke.sh` in bare `ubuntu:24.04` with only `python3` and
+`libvulkan1`. The job:
+
+- checks the SHA256SUMS, every installed file and the stripped player's build-id
+  against the symbol file;
+- launches v1 headless outside the checkout (`--report` Health 3.0);
+- refuses a damaged and a tampered patch, leaving v1 intact;
+- patches to v2 (Health 5.0), rolls back to v1 (Health 3.0) and rolls forward
+  again, with the user-dir save and an in-install `Saved/` file kept throughout;
+- runs `tools/ship/assemble_release.sh` as a release dry run that publishes
+  nothing.
+
+On a `v*` tag, the Release job adds the package, symbols and manifest to
+`SHA256SUMS.txt`, the provenance attestation and the published assets. The
+tests are 18 `ship_tool_tests` unit tests (ctest).
+
+Still open:
+
+- CI has not run this yet, and no tag has exercised it.
+- A fresh cook is not reproducible: imported sub-asset GUIDs are regenerated
+  without `Intermediate/`.
+- No Windows game patch/rollback or `.pdb` symbols archive (MSVC symbols stay
+  in the build).
+- No macOS game package.
+- No Authenticode or other signing of the game package beyond the Sigstore
+  attestation.
+- The sample patch is a CI fixture. A real upgrade from the prior tagged
+  candidate has not been recorded.
+- Profiles are only shipping (the game) and dedicated server. There is no
+  `aether_build` entry point.
+
 ## M8.11 — AETHER-01 Vertical Slice
 
 The target is a polished 15–30 minute slice, not a complete 3–5 hour game. Its critical path is
