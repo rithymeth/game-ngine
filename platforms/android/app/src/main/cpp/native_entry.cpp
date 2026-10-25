@@ -205,14 +205,21 @@ private:
                 const auto now = std::chrono::steady_clock::now();
                 const float dt = std::min(std::chrono::duration<float>(now - last).count(), 0.25f);
                 last = now;
+                // Frame 0 sub-stages: the emulator's host renderer has died inside the first scene frame, and the last
+                // marker in logcat names the RHI call (and so the host gfxstream call) it died in.
+                const bool first = presented == 0;
                 game.Tick(dt);
+                if (first) Log(ANDROID_LOG_INFO, "AETHER_SCENE STAGE frame0 acquire");
                 device->WaitForFence(fences[slot]);
                 swap_chain->AcquireNextImage();
                 rhi::ICommandList& cmd = *commands[slot];
                 cmd.Reset();
+                if (first) Log(ANDROID_LOG_INFO, "AETHER_SCENE STAGE frame0 record");
                 scene_renderer.Draw(game, cmd, slot);
                 cmd.Close();
+                if (first) Log(ANDROID_LOG_INFO, "AETHER_SCENE STAGE frame0 submit");
                 fences[slot] = device->Submit(cmd, swap_chain.get());
+                if (first) Log(ANDROID_LOG_INFO, "AETHER_SCENE STAGE frame0 present");
                 swap_chain->Present(true);
                 game.Input().EndFrame();
                 slot = (slot + 1) % frame_count;
