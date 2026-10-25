@@ -1796,7 +1796,7 @@
   virtual void Close()=0
   virtual void ComputeBufferBarrier(BufferHandle buffer)=0
   virtual void Dispatch(u32 groups_x,u32 groups_y=1,u32 groups_z=1)=0
-  virtual void Draw(u32 vertex_count)=0
+  virtual void Draw(u32 vertex_count,u32 first_vertex=0)=0
   virtual void DrawIndexed(u32 index_count)=0
   virtual void EndRenderPass()=0
   virtual void Reset()=0
@@ -1887,7 +1887,7 @@
   void ComputeQueueWaitOnGraphics(u64 graphics_fence_value)override
   void DeferCommandAllocator(ComPtr<ID3D12CommandAllocator>allocator)noexcept
   void Dispatch(u32 groups_x,u32 groups_y,u32 groups_z)override
-  void Draw(u32 vertex_count)override
+  void Draw(u32 vertex_count,u32 first_vertex=0)override
   void DrawIndexed(u32 index_count)override
   void EndRenderPass()override
   void GraphicsQueueWaitOnCompute(u64 compute_fence_value)override
@@ -2096,7 +2096,7 @@
   void DestroySwapchainAndImages()
   void DestroySyncObjects()
   void Dispatch(u32 groups_x,u32 groups_y,u32 groups_z)override
-  void Draw(u32 vertex_count)override
+  void Draw(u32 vertex_count,u32 first_vertex=0)override
   void DrawIndexed(u32 index_count)override
   void EndRenderPass()override
   void GraphicsQueueWaitOnCompute(u64 compute_fence_value)override
