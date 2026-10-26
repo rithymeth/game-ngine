@@ -989,3 +989,51 @@ AETHER_TEST(NetProd_GhostShift_SharedObjectTransformConvergesAfterLoss) {
     sim.Step(120, frame);
     for (auto& c : sim.clients) CHECK(sim.Exact(*c));
 }
+
+
+AETHER_TEST(NetProd_GhostShift_LateJoinReceivesCurrentSharedObjectState) {
+    // A player joining an in-progress contract must receive the host's current
+    // prop positions, not the initial spawn transform. The other players must
+    // retain their authoritative state while the new peer receives its baseline.
+    ProdSim sim(1231);
+    sim.net.conditions = {0.05, 0.02, 0.05f, 0.0f};
+    for (int i = 0; i < kClients - 1; ++i) sim.AddClient("p" + std::to_string(i));
+    int frame = 0;
+    while (sim.session->Players().size() != static_cast<usize>(kClients - 1) && frame < 600)
+        sim.Step(1, frame++);
+    CHECK(sim.session->Players().size() == static_cast<usize>(kClients - 1));
+    sim.Step(120, frame);
+    frame += 120;
+    sim.moving = false;
+
+    const Entity prop = sim.npcs[0];
+    const Vec3 moved{24.0f, -8.0f, 2.0f};
+    sim.world.GetComponent<Transform>(prop)->position = moved;
+    sim.Step(120, frame);
+    frame += 120;
+    const u32 prop_id = sim.NetId(prop);
+    for (const auto& c : sim.clients) {
+        const Entity remote = c->replication->FindEntity(prop_id);
+        CHECK(!remote.IsNull());
+        CHECK((c->world.GetComponent<Transform>(remote)->position - moved).Length() < 1e-4f);
+    }
+
+    auto& late = sim.AddClient("p3");
+    bool synchronized = false;
+    for (int i = 0; i < 600; ++i) {
+        sim.Step(1, frame++);
+        if (late.session->GetState() != SessionClient::State::Joined) continue;
+        const Entity remote = late.replication->FindEntity(prop_id);
+        if (!remote.IsNull() &&
+            (late.world.GetComponent<Transform>(remote)->position - moved).Length() < 1e-4f &&
+            sim.Exact(late)) {
+            synchronized = true;
+            break;
+        }
+    }
+    CHECK(synchronized);
+    CHECK(sim.session->Players().size() == static_cast<usize>(kClients));
+    CHECK(sim.pawns.size() == static_cast<usize>(kClients));
+    sim.Step(120, frame);
+    for (const auto& c : sim.clients) CHECK(sim.Exact(*c));
+}
