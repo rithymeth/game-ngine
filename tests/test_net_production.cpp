@@ -981,7 +981,7 @@ AETHER_TEST(NetProd_GhostShift_SharedObjectTransformConvergesAfterLoss) {
         converged = std::all_of(sim.clients.begin(), sim.clients.end(), [&](const auto& c) {
             const Entity remote = c->replication->FindEntity(prop_id);
             return !remote.IsNull() &&
-                   (c->world.GetComponent<Transform>(remote)->position - final_position).Length() < 1e-4f;
+                   (c->world.template GetComponent<Transform>(remote)->position - final_position).Length() < 1e-4f;
         });
         if (converged) break;
     }
