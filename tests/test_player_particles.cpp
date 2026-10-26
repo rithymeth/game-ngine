@@ -306,3 +306,115 @@ AETHER_TEST(PlayerParticles_EachSpriteSamplesItsOwnTextureInOneStreamOnVulkan) {
     AETHER_CHECK(out[right + 1] > 200 && out[right] < 40 && out[right + 2] < 40);
     AETHER_CHECK(out[gap] < 40 && out[gap + 1] < 40 && out[gap + 2] < 40);
 }
+
+namespace {
+
+// A unit quad in the mesh's XY plane (two triangles, -0.5..0.5), uv 0..1.
+ParticleMesh QuadMesh() {
+    ParticleMesh mesh;
+    const Vec3 bl(-0.5f, -0.5f, 0.0f), br(0.5f, -0.5f, 0.0f), tr(0.5f, 0.5f, 0.0f), tl(-0.5f, 0.5f, 0.0f);
+    mesh.positions = {bl, br, tr, bl, tr, tl};
+    mesh.uvs = {0, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0};
+    return mesh;
+}
+
+Mat4 Placed(f32 x, f32 z, f32 scale) {
+    Mat4 m = Mat4::Identity();
+    m.cols[0] = Vec4(scale, 0, 0, 0);
+    m.cols[1] = Vec4(0, scale, 0, 0);
+    m.cols[2] = Vec4(0, 0, scale, 0);
+    m.cols[3] = Vec4(x, 0, z, 1);
+    return m;
+}
+
+} // namespace
+
+AETHER_TEST(PlayerParticles_MeshInstancesExpandIntoTheOpaqueStream) {
+    const ParticleMesh quad = QuadMesh();
+    vfx::ParticleRenderData data;
+    vfx::MeshBatch batch, missing;
+    batch.mesh = "quad";
+    batch.material = "tex";
+    batch.transforms = {Placed(1.0f, -3.0f, 2.0f), Placed(-1.0f, -5.0f, 1.0f)};
+    batch.colors = {{0.5f, 0.25f, 1.0f, 0.2f}, {1.0f, 1.0f, 1.0f, 1.0f}};
+    missing.mesh = "nope";
+    missing.transforms = {Placed(0.0f, 0.0f, 1.0f)};
+    data.meshes = {batch, missing};
+    const auto meshes = [&](const std::string& m) -> const ParticleMesh* { return m == "quad" ? &quad : nullptr; };
+    const auto textures = [](const std::string& m) -> u32 { return m == "tex" ? 7u : 0u; };
+
+    // Without a mesh resolver mesh particles aren't drawn.
+    ParticleVertexStreams out;
+    PackParticleVertices(data, vfx::ParticleCamera{}, out, textures);
+    AETHER_CHECK(out.opaque.empty());
+
+    PackParticleVertices(data, vfx::ParticleCamera{}, out, textures, meshes);
+    AETHER_CHECK(out.alpha.empty() && out.additive.empty() && out.opaque.size() == 12); // two instances; the unresolved batch skipped
+    if (out.opaque.size() != 12) return;
+    // The first instance: scaled by 2 and moved to (1, 0, -3); its colour with alpha forced to 1; textured, not a sprite.
+    const ParticleQuadVertex& bl = out.opaque[0];
+    const ParticleQuadVertex& tr = out.opaque[2];
+    AETHER_CHECK(Near(bl.position[0], 0.0f) && Near(bl.position[1], -1.0f) && Near(bl.position[2], -3.0f));
+    AETHER_CHECK(Near(tr.position[0], 2.0f) && Near(tr.position[1], 1.0f));
+    AETHER_CHECK(Near(bl.uv[0], 0.0f) && Near(bl.uv[1], 1.0f) && Near(tr.uv[0], 1.0f) && Near(tr.uv[1], 0.0f));
+    AETHER_CHECK(Near(bl.color[0], 0.5f) && Near(bl.color[1], 0.25f) && Near(bl.color[3], 1.0f));
+    AETHER_CHECK(ParticleVertexTexture(bl) == 7 && !ParticleVertexIsSprite(bl));
+    AETHER_CHECK(Near(out.opaque[6].position[0], -1.5f) && Near(out.opaque[6].position[2], -5.0f));
+    std::vector<ParticleDrawRun> runs;
+    ParticleTextureRuns(out.opaque, runs);
+    AETHER_CHECK(runs.size() == 1 && runs[0].vertex_count == 12 && runs[0].texture == 7);
+}
+
+AETHER_TEST(PlayerParticles_MeshParticlesDrawOpaqueAndOccludeSpritesBehindOnVulkan) {
+    std::unique_ptr<gfx::rhi::IDevice> device;
+    try {
+        device = gfx::rhi::CreateDevice(gfx::rhi::Backend::Vulkan, false);
+    } catch (const std::exception&) {
+    }
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    constexpr u32 kSize = 64;
+    std::unique_ptr<gfx::rhi::ISwapChain> target = device->CreateSwapChain(nullptr, kSize, kSize, 2);
+    ParticlePass pass(*device, *target);
+    AETHER_CHECK(pass.Valid());
+    const ParticleMesh quad = QuadMesh();
+    pass.SetMeshResolver([&](const std::string& m) -> const ParticleMesh* { return m == "quad" ? &quad : nullptr; });
+
+    // A green mesh quad on the left half, in front (depth 0.3), and a magenta alpha sprite across the whole width behind it (0.7): the
+    // mesh writes depth, so the sprite shows only on the right.
+    vfx::ParticleRenderData data;
+    vfx::MeshBatch batch;
+    batch.mesh = "quad";
+    batch.transforms = {Placed(-0.5f, 0.3f, 1.0f)};
+    batch.colors = {{0.0f, 1.0f, 0.0f, 0.1f}}; // alpha ignored: opaque
+    data.meshes = {batch};
+    vfx::SpriteBatch sprites;
+    vfx::SpriteInstance s;
+    s.center = Vec3(0.0f, 0.0f, 0.7f);
+    s.right = Vec3(1.0f, 0.0f, 0.0f);
+    s.up = Vec3(0.0f, 1.0f, 0.0f);
+    s.color = {1.0f, 0.0f, 1.0f, 1.0f};
+    sprites.instances = {s};
+    data.sprites = {sprites};
+
+    std::unique_ptr<gfx::rhi::ICommandList> cmd = device->CreateCommandList();
+    target->AcquireNextImage();
+    cmd->Reset();
+    cmd->BeginRenderPass(*target, gfx::rhi::ClearColor{0.0f, 0.0f, 0.0f, 1.0f});
+    pass.Draw(*cmd, data, vfx::ParticleCamera{}, Mat4::Identity(), 0);
+    cmd->EndRenderPass();
+    cmd->Close();
+    device->WaitForFence(device->Submit(*cmd, target.get()));
+    std::vector<u8> out;
+    AETHER_CHECK(target->ReadBack(out) && out.size() == kSize * kSize * 4);
+    target->Present(false);
+    if (out.size() != kSize * kSize * 4) return;
+    AETHER_CHECK(pass.Vertices().opaque.size() == 6);
+    const auto at = [&](f32 ndc_x) { return (static_cast<usize>(kSize / 2) * kSize + static_cast<usize>((ndc_x * 0.5f + 0.5f) * kSize)) * 4; };
+    const usize mesh_px = at(-0.5f), sprite_px = at(0.25f);
+    // The mesh: pure green, opaque, not tinted by the sprite behind it. (The sprite's soft falloff still leaves magenta near its centre.)
+    AETHER_CHECK(out[mesh_px + 1] > 200 && out[mesh_px] < 40 && out[mesh_px + 2] < 40);
+    AETHER_CHECK(out[sprite_px] > 60 && out[sprite_px + 2] > 60 && out[sprite_px + 1] < 40);
+}

@@ -129,7 +129,7 @@ void ParticleTextureRuns(const std::vector<ParticleQuadVertex>& vertices, std::v
 }
 
 void PackParticleVertices(const vfx::ParticleRenderData& data, const vfx::ParticleCamera& camera, ParticleVertexStreams& out,
-                          const ParticleTextureResolver& textures) {
+                          const ParticleTextureResolver& textures, const ParticleMeshResolver& meshes) {
     out.Clear();
     const auto texture_of = [&](const std::string& material) -> u32 { return material.empty() || !textures ? 0u : textures(material); };
     struct Sorted {
@@ -168,6 +168,28 @@ void PackParticleVertices(const vfx::ParticleRenderData& data, const vfx::Partic
             }
         }
     }
+
+    // Mesh particles: each instance's transform applied to the mesh's triangles, opaque (alpha 1), shaded like a ribbon (colour times the
+    // texture, no falloff).
+    if (!meshes) return;
+    for (const vfx::MeshBatch& batch : data.meshes) {
+        const ParticleMesh* mesh = batch.mesh.empty() ? nullptr : meshes(batch.mesh);
+        if (mesh == nullptr || mesh->positions.size() < 3) continue;
+        const usize triangles = mesh->positions.size() / 3 * 3;
+        const bool has_uv = mesh->uvs.size() >= mesh->positions.size() * 2;
+        const Vec3 params(TextureBase(texture_of(batch.material)) + 0.25f, 0.0f, 0.0f);
+        out.opaque.reserve(out.opaque.size() + triangles * batch.transforms.size());
+        for (usize i = 0; i < batch.transforms.size(); ++i) {
+            const Mat4& m = batch.transforms[i];
+            const vfx::LinearColor c = i < batch.colors.size() ? batch.colors[i] : vfx::LinearColor{};
+            const ColorOut color = StraightColor(c, vfx::BlendMode::Opaque);
+            for (usize k = 0; k < triangles; ++k) {
+                const Vec3& p = mesh->positions[k];
+                const Vec4 w = m * Vec4(p.x, p.y, p.z, 1.0f);
+                out.opaque.push_back(Vertex(Vec3(w.x, w.y, w.z), params, has_uv ? mesh->uvs[k * 2] : 0.0f, has_uv ? mesh->uvs[k * 2 + 1] : 0.0f, color));
+            }
+        }
+    }
 }
 
 ParticlePass::ParticlePass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain) : device_(device) {
@@ -180,6 +202,12 @@ ParticlePass::ParticlePass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap
     desc.depth_write = false;
     desc.enable_blending = true;
     desc.enable_bindless_textures = true;
+    // Mesh particles first: opaque, writing depth.
+    desc.depth_write = true;
+    desc.enable_blending = false;
+    opaque_pipeline_ = device.CreatePipeline(desc, swap_chain);
+    desc.depth_write = false;
+    desc.enable_blending = true;
     alpha_pipeline_ = device.CreatePipeline(desc, swap_chain);
     desc.additive_blending = true;
     additive_pipeline_ = device.CreatePipeline(desc, swap_chain);
@@ -188,9 +216,10 @@ ParticlePass::ParticlePass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap
 
 void ParticlePass::Draw(gfx::rhi::ICommandList& commands, const vfx::ParticleRenderData& data, const vfx::ParticleCamera& camera,
                         const Mat4& view_projection, u32 frame_index) {
-    PackParticleVertices(data, camera, vertices_, textures_);
-    std::array<Buffer, 2>& slot = buffers_[frame_index % kFrameSlots];
-    // Alpha-blended back to front first, then additive light on top.
+    PackParticleVertices(data, camera, vertices_, textures_, meshes_);
+    std::array<Buffer, 3>& slot = buffers_[frame_index % kFrameSlots];
+    // Opaque mesh particles first (writing depth), alpha-blended back to front next, then additive light on top.
+    DrawStream(commands, opaque_pipeline_, vertices_.opaque, slot[2], view_projection);
     DrawStream(commands, alpha_pipeline_, vertices_.alpha, slot[0], view_projection);
     DrawStream(commands, additive_pipeline_, vertices_.additive, slot[1], view_projection);
 }

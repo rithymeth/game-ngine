@@ -353,9 +353,19 @@ sequence.
   The asset database now scans `.avfx` renderers' `material`/`mesh` paths as dependencies,
   so the cook ships an effect's textures with it
   (`AssetRefs_ParticleSystemMaterialsAndMeshesAreDependencies`).
+- *Mesh particles.* A mesh renderer's instances are drawn by the same pass: the scene
+  renderer flattens the `mesh` model from the package once (every node's triangles with its
+  transform baked in) and each instance's transform is applied to those triangles on the
+  CPU, coloured by the particle and textured by its `material`, into a third stream drawn
+  first through an opaque pipeline that writes depth, so blended sprites and ribbons behind
+  them are hidden. They are unlit, like the other particles.
+  `PlayerParticles_MeshInstancesExpandIntoTheOpaqueStream` checks the expansion and
+  `PlayerParticles_MeshParticlesDrawOpaqueAndOccludeSpritesBehindOnVulkan` draws a mesh in
+  front of a sprite on Vulkan (lavapipe) and checks the sprite shows only beside it.
 
 **Still open.** Soft-particle depth fade isn't applied yet (the RHI can't sample the
-swap chain's depth), and mesh particles aren't drawn; the particle pass has not been
+swap chain's depth), and mesh particles are unlit and expanded on the CPU (no GPU
+instancing); the particle pass has not been
 checked on screen in the full player frame (D3D12,
 MoltenVK, Android). The
 editor panel can't author Vfx keys. The editor sequencer panel can't
