@@ -361,7 +361,20 @@ sequence.
   transform baked in) and each instance's transform is applied to those triangles on the
   CPU, coloured by the particle and textured by its `material`, into a third stream drawn
   first through an opaque pipeline that writes depth, so blended sprites and ribbons behind
-  them are hidden. They are unlit, like the other particles.
+  them are hidden. They are lit with the scene shader's sun and sky (`ParticleLighting`:
+  the frame's `DirectionalLight`/`SkyLight` where the device has frame constants, else the
+  shader's fixed light; its dielectric diffuse part, tone mapped like the scene, no
+  specular or point/spot lights), through the pass's push constants on every backend; each
+  vertex's normal (the model's, node normal matrix baked in, or the face normal) goes
+  through the instance transform's inverse transpose and rides octahedral-encoded in the
+  vertex's unused params. GPU instancing stays open: the RHI has no instance-rate vertex
+  input or instanced draw, which would be new `PipelineDesc`/`ICommandList` API on every
+  backend, so instances are still expanded on the CPU into the reused per-frame buffer.
+  `PlayerParticles_MeshNormalsFollowTheInstanceTransform` checks the normal encoding,
+  rotation, mirror and non-uniform scale, and the lighting model;
+  `PlayerParticles_LitMeshParticlesShadeByNormalOnVulkan`/`OnD3D12` draw one quad mesh
+  twice, once mirrored in z, with the sun towards the camera: the facing copy is brighter
+  than the back-facing one (sky fill only), each within 8/255 of `ParticleLitColor`.
   `PlayerParticles_MeshInstancesExpandIntoTheOpaqueStream` checks the expansion and
   `PlayerParticles_MeshParticlesDrawOpaqueAndOccludeSpritesBehindOnVulkan` draws a mesh in
   front of a sprite on Vulkan (lavapipe) and checks the sprite shows only beside it.
@@ -390,8 +403,9 @@ sequence.
   WARP. They skip where there is no D3D12 device (Linux, macOS).
 
 **Still open.** Soft particles are checked on Vulkan (lavapipe) and, pending its first CI
-run, D3D12 (WARP), not on MoltenVK or Android hardware; mesh particles are unlit and expanded on the CPU (no GPU
-instancing); the particle pass has not been
+run, D3D12 (WARP), not on MoltenVK or Android hardware; mesh particles are lit (sun and sky only)
+but still expanded on the CPU (no GPU instancing: needs instanced-draw RHI API), and their
+D3D12 lit check awaits its first CI run; the particle pass has not been
 checked on screen in the full player frame (D3D12,
 MoltenVK, Android). The
 editor panel can't author Vfx keys. The editor sequencer panel can't
