@@ -39,14 +39,33 @@ want = {l.split()[1].lstrip("*"): l.split()[0].lower() for l in open(os.path.joi
 have = hashlib.sha256(open(path, "rb").read()).hexdigest()
 assert want.get(archive) == have, f"{archive}: SHA256SUMS says {want.get(archive)}, file is {have}"
 print(f"{archive}: OK ({have})")
+# Reject traversal, absolute paths, links and special entries before extraction.
+# This smoke test intentionally accepts only regular files and directories.
+def safe_member(name):
+    normalized = name.replace("\\", "/")
+    parts = normalized.split("/")
+    if normalized.startswith("/") or ":" in parts[0] or any(p == ".." for p in parts):
+        raise ValueError(f"unsafe archive member: {name!r}")
+    return os.path.join(work, *parts)
+
 if archive.endswith(".zip"):
+    import stat
     with zipfile.ZipFile(path) as z:
+        for i in z.infolist():
+            target = safe_member(i.filename)
+            kind = (i.external_attr >> 16) & 0o170000
+            if kind not in (0, stat.S_IFREG, stat.S_IFDIR):
+                raise ValueError(f"unsupported zip member type: {i.filename!r}")
         for i in z.infolist():
             z.extract(i, work)
             mode = (i.external_attr >> 16) & 0o777
-            if mode: os.chmod(os.path.join(work, i.filename), mode)
+            if mode: os.chmod(safe_member(i.filename), mode)
 else:
     with tarfile.open(path) as t:
+        for member in t.getmembers():
+            safe_member(member.name)
+            if not (member.isfile() or member.isdir()):
+                raise ValueError(f"unsupported tar member type: {member.name!r}")
         t.extractall(work, filter="data") if hasattr(tarfile, "data_filter") else t.extractall(work)
 PY
 root="$work/${archive%.tar.gz}"
