@@ -934,7 +934,14 @@ AETHER_TEST(Aether01_KaelSprintIsReachableAtVariedFrameRates) {
         auto back = std::find_if(log.begin(), log.end(), [](const AnimLog& l) { return l.from == "Sprint"; });
         AETHER_CHECK(back != log.end() && back->to == "Run" && back->time - start > 1.5 && back->time - start < 1.5 + 0.4);
         if (first != log.end()) sprint_times.push_back(first->time - start);
-        if (sprint_times.size() > 1) AETHER_CHECK(std::fabs(sprint_times.back() - sprint_times.front()) <= dt + 1.0 / 144 + 1.0 / 60 + 1e-4);
+#if AETHER_TEST_HAS_PHYSICS
+        const f64 sync_tolerance = dt + 1.0 / 144 + 1.0 / 60 + 1e-4;
+#else
+        // Without physics the speed jumps straight to sprint speed, so the graph steps Idle -> Walk -> Run -> Sprint
+        // one transition per frame: entry lands three frames after the press at each rate.
+        const f64 sync_tolerance = 3.0 * (dt + 1.0 / 144) + 1e-4;
+#endif
+        if (sprint_times.size() > 1) AETHER_CHECK(std::fabs(sprint_times.back() - sprint_times.front()) <= sync_tolerance);
         AETHER_CHECK(run.game->Warnings().empty());
     }
 }
