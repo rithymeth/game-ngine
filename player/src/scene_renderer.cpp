@@ -503,6 +503,8 @@ struct SceneRenderer::Impl {
     // The particle pass (M8.7), drawn after the scene's surfaces.
     std::unique_ptr<ParticlePass> particles;
     vfx::ParticleRenderData particle_data;
+    // Mesh particles' geometry, flattened once from the package's models (empty: the model couldn't be loaded).
+    std::unordered_map<std::string, ParticleMesh> particle_meshes;
     bool draw_particles = true;
     // The scene's lights, as frame constants (one buffer per frame in flight) where the device has them; else the shader's fixed light.
     static constexpr usize kFrameBuffers = 8;
@@ -559,6 +561,7 @@ struct SceneRenderer::Impl {
             SampledTextureHandle texture;
             return LoadTexture(material, texture) ? texture.index : 0u;
         });
+        particles->SetMeshResolver([this](const std::string& path) -> const ParticleMesh* { return FindParticleMesh(path); });
 
         PipelineDesc hud_desc;
         hud_desc.hlsl_source = kHudShader;
@@ -1231,6 +1234,40 @@ struct SceneRenderer::Impl {
         }
         if (freed > 0) AETHER_LOG_INFO("PlayerRenderer", "Memory pressure: freed %u GPU texture(s)", freed);
         return freed;
+    }
+
+    // A model as one triangle list in its own space (every node's mesh with its world transform baked in), for mesh particles.
+    const ParticleMesh* FindParticleMesh(const std::string& path) {
+        auto [it, inserted] = particle_meshes.try_emplace(path);
+        if (inserted) {
+            if (const Model* model = FindModel(path)) {
+                for (const assets::GltfNodeInstance& node : model->scene.node_instances) {
+                    if (node.mesh_index >= model->scene.meshes.size()) continue;
+                    for (const assets::GltfPrimitive& primitive : model->scene.meshes[node.mesh_index].primitives) {
+                        const auto append = [&](u32 index) {
+                            const assets::GltfVertex& v = primitive.vertices[index];
+                            const Vec4 p = node.world_transform * Vec4(v.position[0], v.position[1], v.position[2], 1.0f);
+                            it->second.positions.push_back(Vec3(p.x, p.y, p.z));
+                            it->second.uvs.push_back(v.uv[0]);
+                            it->second.uvs.push_back(v.uv[1]);
+                        };
+                        if (primitive.indices.empty()) {
+                            for (usize i = 0; i + 3 <= primitive.vertices.size(); ++i) append(static_cast<u32>(i));
+                        } else {
+                            for (usize i = 0; i + 3 <= primitive.indices.size(); i += 3) {
+                                if (primitive.indices[i] >= primitive.vertices.size() || primitive.indices[i + 1] >= primitive.vertices.size() ||
+                                    primitive.indices[i + 2] >= primitive.vertices.size()) {
+                                    continue;
+                                }
+                                for (usize k = 0; k < 3; ++k) append(primitive.indices[i + k]);
+                            }
+                        }
+                    }
+                }
+            }
+            if (it->second.positions.empty()) AETHER_LOG_WARN("PlayerRenderer", "Mesh particles' mesh '%s' has no triangles; not drawn", path.c_str());
+        }
+        return it->second.positions.empty() ? nullptr : &it->second;
     }
 
     Model* FindModel(const std::string& path) {
