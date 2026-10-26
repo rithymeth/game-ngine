@@ -1250,6 +1250,16 @@ struct SceneRenderer::Impl {
                             it->second.positions.push_back(Vec3(p.x, p.y, p.z));
                             it->second.uvs.push_back(v.uv[0]);
                             it->second.uvs.push_back(v.uv[1]);
+                            // The node's normal matrix (inverse transpose) baked in too, for lighting.
+                            Vec4 n = node.world_transform * Vec4(v.normal[0], v.normal[1], v.normal[2], 0.0f);
+                            Mat4 inverse;
+                            if (node.world_transform.TryInverse(inverse)) {
+                                const Vec4 c0 = inverse.cols[0], c1 = inverse.cols[1], c2 = inverse.cols[2];
+                                n = Vec4(c0.x * v.normal[0] + c0.y * v.normal[1] + c0.z * v.normal[2],
+                                         c1.x * v.normal[0] + c1.y * v.normal[1] + c1.z * v.normal[2],
+                                         c2.x * v.normal[0] + c2.y * v.normal[1] + c2.z * v.normal[2], 0.0f);
+                            }
+                            it->second.normals.push_back(Vec3(n.x, n.y, n.z).Normalized());
                         };
                         if (primitive.indices.empty()) {
                             for (usize i = 0; i + 3 <= primitive.vertices.size(); ++i) append(static_cast<u32>(i));
@@ -1353,12 +1363,20 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         }
         const Mat4 camera_transform = ComputeWorldTransform(world, guids, camera_entity);
         const Vec3 camera_position{camera_transform.cols[3].x, camera_transform.cols[3].y, camera_transform.cols[3].z};
+        // Mesh particles get the scene shader's sun and sky: the frame's lights where the device has frame constants, else the shader's
+        // fixed light (ParticleLighting's defaults), through the pass's push constants on every backend.
+        ParticleLighting particle_lighting;
+        particle_lighting.lit = true;
         if (!renderer.frame_buffers.empty()) {
             // The sun, sky and nearby point and spot lights of this scene (the previous use of this slot's frame has finished).
             frame_buffer = renderer.frame_buffers[frame_index % renderer.frame_buffers.size()];
             const FrameData frame_data = BuildFrameData(world, guids, camera_position);
             renderer.device.UpdateFrameConstantBuffer(frame_buffer, &frame_data, sizeof(frame_data));
+            particle_lighting.sun_direction = Vec3(frame_data.sun_direction[0], frame_data.sun_direction[1], frame_data.sun_direction[2]);
+            particle_lighting.sun_color = Vec3(frame_data.sun_color[0], frame_data.sun_color[1], frame_data.sun_color[2]);
+            particle_lighting.sky_color = Vec3(frame_data.sky_color[0], frame_data.sky_color[1], frame_data.sky_color[2]);
         }
+        if (renderer.particles) renderer.particles->SetLighting(particle_lighting);
         commands.BindPipeline(renderer.pipeline);
         if (frame_buffer.IsValid()) commands.BindFrameConstants(frame_buffer);
         commands.BindBindlessTextures();

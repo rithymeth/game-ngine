@@ -15,8 +15,11 @@ namespace {
 constexpr char kParticleShader[] = R"(
 struct PushConstants {
     float4x4 g_ViewProjection;
-    uint4 g_Texture;      // x: this draw's bindless texture index (0: untextured); y: the scene depth's (0: none); z: asuint(soft fade distance)
-    float4 g_DepthToView; // ParticleDepthToView: clip depth back to view z
+    uint4 g_Texture;      // x: this draw's bindless texture index (0: untextured); y: the scene depth's (0: none); z: asuint(soft fade distance);
+                          // w: 1 for a lit mesh-particle draw
+    float4 g_DepthToView; // ParticleDepthToView: clip depth back to view z; on a lit draw (never soft) the sky colour instead
+    float4 g_SunDirection; // lit draws: xyz towards the sun
+    float4 g_SunColor;     // lit draws: rgb colour times intensity
 };
 #ifdef __spirv__
 [[vk::push_constant]]
@@ -36,11 +39,22 @@ struct PSInput {
     float2 uv : TEXCOORD0;
     float4 color : TEXCOORD1;
     nointerpolation float3 params : TEXCOORD2;
+    float3 normal : TEXCOORD3; // lit draws: the world normal
 };
+
+// ParticleDecodeNormal: octahedral, so a mesh vertex's normal fits params.yz.
+float3 DecodeNormal(float2 e) {
+    float3 n = float3(e.x, e.y, 1.0 - abs(e.x) - abs(e.y));
+    float t = saturate(-n.z);
+    n.x += n.x >= 0.0 ? -t : t;
+    n.y += n.y >= 0.0 ? -t : t;
+    return normalize(n);
+}
 
 PSInput VSMain(VSInput input) {
     PSInput output;
     output.position = mul(g_PC.g_ViewProjection, float4(input.position, 1.0));
+    output.normal = g_PC.g_Texture.w != 0 ? DecodeNormal(input.params.yz) : float3(0.0, 0.0, 1.0);
     output.uv = input.uv;
     output.color = input.color;
     output.params = input.params;
@@ -60,7 +74,8 @@ float4 PSMain(PSInput input) : SV_TARGET {
     // end doesn't emit. The vertex still carries its index (4 * index + kind) for the kind.
     uint texture_index = g_PC.g_Texture.x;
     float kind = input.params.x - 4.0 * floor(input.params.x * 0.25);
-    bool sprite = kind > 0.5;
+    bool lit = g_PC.g_Texture.w != 0;
+    bool sprite = !lit && kind > 0.5;
     if (texture_index != 0 && texture_index < 32) {
         float4 texel = g_Textures[texture_index].Sample(g_Sampler, input.uv);
         float frame_blend = sprite ? saturate(kind - 1.0) : 0.0;
@@ -79,6 +94,14 @@ float4 PSMain(PSInput input) : SV_TARGET {
         float scene = g_Textures[depth_index].Load(int3(int2(input.position.xy), 0)).r;
         color.a *= saturate((ViewDistance(scene) - ViewDistance(input.position.z)) / soft);
     }
+    if (lit) {
+        // The scene shader's sun and sky, its dielectric diffuse part (ParticleLitColor), tone mapped like the scene.
+        float3 n = normalize(input.normal);
+        float n_dot_l = saturate(dot(n, normalize(g_PC.g_SunDirection.xyz)));
+        float sky_fill = 0.28 + 0.14 * saturate(n.y);
+        float3 lit_color = color.rgb * (sky_fill * g_PC.g_DepthToView.rgb + g_PC.g_SunColor.rgb * (n_dot_l * 0.96 / 3.14159265));
+        color.rgb = lit_color / (lit_color + 1.0);
+    }
     float3 encoded = saturate(color.rgb);
     encoded = lerp(encoded * 12.92, 1.055 * pow(encoded, 1.0 / 2.4) - 0.055, step(0.0031308, encoded));
     return float4(encoded, saturate(color.a));
@@ -87,10 +110,12 @@ float4 PSMain(PSInput input) : SV_TARGET {
 
 struct ParticleConstants {
     Mat4 view_projection;
-    u32 texture[4]; // texture, scene depth, soft fade (bits), 0
-    f32 depth_to_view[4];
+    u32 texture[4]; // texture, scene depth, soft fade (bits), lit
+    f32 depth_to_view[4]; // the sky colour on a lit draw
+    f32 sun_direction[4];
+    f32 sun_color[4];
 };
-static_assert(sizeof(ParticleConstants) == 96);
+static_assert(sizeof(ParticleConstants) == 128); // Vulkan's guaranteed push-constant minimum
 
 f32 SanitizedSoft(f32 soft) { return std::isfinite(soft) && soft > 0.0f ? soft : 0.0f; }
 
@@ -136,7 +161,56 @@ void AppendSprite(const vfx::SpriteInstance& s, vfx::BlendMode blend, bool blend
     out.insert(out.end(), {a, b, c, a, c, d});
 }
 
+// The inverse transpose of `m`'s upper 3x3 up to a positive scale (its cofactor matrix, sign-corrected by the determinant), so normals
+// stay perpendicular under non-uniform scale and flip with a mirror; normalised after.
+struct NormalMatrix {
+    Vec3 c0, c1, c2;
+    Vec3 operator()(const Vec3& n) const { return (c0 * n.x + c1 * n.y + c2 * n.z).Normalized(); }
+};
+NormalMatrix NormalMatrixOf(const Mat4& m) {
+    const Vec3 a(m.cols[0].x, m.cols[0].y, m.cols[0].z), b(m.cols[1].x, m.cols[1].y, m.cols[1].z), c(m.cols[2].x, m.cols[2].y, m.cols[2].z);
+    const f32 sign = a.Dot(b.Cross(c)) < 0.0f ? -1.0f : 1.0f;
+    return {b.Cross(c) * sign, c.Cross(a) * sign, a.Cross(b) * sign};
+}
+
 } // namespace
+
+void ParticleEncodeNormal(const Vec3& n, f32& u, f32& v) {
+    const f32 l1 = std::fabs(n.x) + std::fabs(n.y) + std::fabs(n.z);
+    if (!(l1 > 1e-20f)) {
+        u = v = 0.0f;
+        return;
+    }
+    f32 x = n.x / l1, y = n.y / l1;
+    if (n.z < 0.0f) {
+        const f32 ox = x, oy = y;
+        x = (1.0f - std::fabs(oy)) * (ox >= 0.0f ? 1.0f : -1.0f);
+        y = (1.0f - std::fabs(ox)) * (oy >= 0.0f ? 1.0f : -1.0f);
+    }
+    u = x;
+    v = y;
+}
+
+Vec3 ParticleDecodeNormal(f32 u, f32 v) {
+    Vec3 n(u, v, 1.0f - std::fabs(u) - std::fabs(v));
+    const f32 t = std::clamp(-n.z, 0.0f, 1.0f);
+    n.x += n.x >= 0.0f ? -t : t;
+    n.y += n.y >= 0.0f ? -t : t;
+    return n.Normalized();
+}
+
+Vec3 ParticleLitColor(const ParticleLighting& lighting, const Vec3& base, const Vec3& normal) {
+    const Vec3 n = normal.Normalized();
+    const f32 n_dot_l = std::clamp(n.Dot(lighting.sun_direction.Normalized()), 0.0f, 1.0f);
+    const f32 sky_fill = 0.28f + 0.14f * std::clamp(n.y, 0.0f, 1.0f);
+    const f32 sun = n_dot_l * 0.96f / 3.14159265f;
+    const auto channel = [&](f32 b, f32 sky, f32 sun_c) {
+        const f32 c = b * (sky_fill * sky + sun_c * sun);
+        return c / (c + 1.0f);
+    };
+    return Vec3(channel(base.x, lighting.sky_color.x, lighting.sun_color.x), channel(base.y, lighting.sky_color.y, lighting.sun_color.y),
+                channel(base.z, lighting.sky_color.z, lighting.sun_color.z));
+}
 
 void ParticleTextureRuns(const std::vector<ParticleQuadVertex>& vertices, std::vector<ParticleDrawRun>& out, const std::vector<f32>* soft) {
     out.clear();
@@ -215,23 +289,32 @@ void PackParticleVertices(const vfx::ParticleRenderData& data, const vfx::Partic
         }
     }
 
-    // Mesh particles: each instance's transform applied to the mesh's triangles, opaque (alpha 1), shaded like a ribbon (colour times the
-    // texture, no falloff).
+    // Mesh particles: each instance's transform applied to the mesh's triangles and its normal matrix to their normals (encoded in
+    // params.yz), opaque (alpha 1); kind 0.25 like a ribbon (colour times the texture, no falloff), lit by the pass.
     if (!meshes) return;
     for (const vfx::MeshBatch& batch : data.meshes) {
         const ParticleMesh* mesh = batch.mesh.empty() ? nullptr : meshes(batch.mesh);
         if (mesh == nullptr || mesh->positions.size() < 3) continue;
         const usize triangles = mesh->positions.size() / 3 * 3;
         const bool has_uv = mesh->uvs.size() >= mesh->positions.size() * 2;
-        const Vec3 params(TextureBase(texture_of(batch.material)) + 0.25f, 0.0f, 0.0f);
+        const bool has_normals = mesh->normals.size() >= mesh->positions.size();
+        const f32 kind = TextureBase(texture_of(batch.material)) + 0.25f;
         out.opaque.reserve(out.opaque.size() + triangles * batch.transforms.size());
         for (usize i = 0; i < batch.transforms.size(); ++i) {
             const Mat4& m = batch.transforms[i];
             const vfx::LinearColor c = i < batch.colors.size() ? batch.colors[i] : vfx::LinearColor{};
             const ColorOut color = StraightColor(c, vfx::BlendMode::Opaque);
+            const NormalMatrix normal_matrix = NormalMatrixOf(m);
+            Vec3 face_normal(0.0f, 0.0f, 1.0f);
             for (usize k = 0; k < triangles; ++k) {
                 const Vec3& p = mesh->positions[k];
                 const Vec4 w = m * Vec4(p.x, p.y, p.z, 1.0f);
+                if (!has_normals && k % 3 == 0) {
+                    const Vec3 n = (mesh->positions[k + 1] - p).Cross(mesh->positions[k + 2] - p);
+                    face_normal = n.LengthSq() > 1e-30f ? n : Vec3(0.0f, 0.0f, 1.0f);
+                }
+                Vec3 params(kind, 0.0f, 0.0f);
+                ParticleEncodeNormal(normal_matrix(has_normals ? mesh->normals[k] : face_normal), params.y, params.z);
                 out.opaque.push_back(Vertex(Vec3(w.x, w.y, w.z), params, has_uv ? mesh->uvs[k * 2] : 0.0f, has_uv ? mesh->uvs[k * 2 + 1] : 0.0f, color));
             }
         }
@@ -270,7 +353,7 @@ void ParticlePass::Draw(gfx::rhi::ICommandList& commands, const vfx::ParticleRen
     depth_to_view_ = ParticleDepthToView(projection);
     std::array<Buffer, 3>& slot = buffers_[frame_index % kFrameSlots];
     // Opaque mesh particles first (writing depth), alpha-blended back to front next, then additive light on top.
-    DrawStream(commands, opaque_pipeline_, vertices_.opaque, nullptr, slot[2], view_projection, 0);
+    DrawStream(commands, opaque_pipeline_, vertices_.opaque, nullptr, slot[2], view_projection, 0, lighting_.lit);
     // The scene's depth so far (surfaces and mesh particles) for the soft sprites, only on frames that have some; the blended draws after
     // the copy don't write depth, so the copy stays what they test against.
     u32 scene_depth = 0;
@@ -280,7 +363,7 @@ void ParticlePass::Draw(gfx::rhi::ICommandList& commands, const vfx::ParticleRen
 }
 
 void ParticlePass::DrawStream(gfx::rhi::ICommandList& commands, gfx::rhi::PipelineHandle pipeline, const std::vector<ParticleQuadVertex>& vertices,
-                              const std::vector<f32>* soft, Buffer& buffer, const Mat4& view_projection, u32 scene_depth) {
+                              const std::vector<f32>* soft, Buffer& buffer, const Mat4& view_projection, u32 scene_depth, bool lit) {
     if (vertices.empty() || !pipeline.IsValid()) return;
     if (!buffer.handle.IsValid() || buffer.capacity < vertices.size()) {
         usize capacity = std::max<usize>(buffer.capacity, 6 * 1024);
@@ -300,8 +383,13 @@ void ParticlePass::DrawStream(gfx::rhi::ICommandList& commands, gfx::rhi::Pipeli
     for (const ParticleDrawRun& run : runs_) {
         u32 soft_bits = 0;
         std::memcpy(&soft_bits, &run.soft_fade, sizeof(soft_bits));
-        const ParticleConstants constants{view_projection, {run.texture, scene_depth, soft_bits, 0u},
-                                          {depth_to_view_[0], depth_to_view_[1], depth_to_view_[2], depth_to_view_[3]}};
+        ParticleConstants constants{view_projection, {run.texture, scene_depth, soft_bits, lit ? 1u : 0u},
+                                    {depth_to_view_[0], depth_to_view_[1], depth_to_view_[2], depth_to_view_[3]}, {}, {}};
+        if (lit) {
+            const ParticleLighting& l = lighting_;
+            constants = {view_projection, {run.texture, 0u, 0u, 1u}, {l.sky_color.x, l.sky_color.y, l.sky_color.z, 0.0f},
+                         {l.sun_direction.x, l.sun_direction.y, l.sun_direction.z, 0.0f}, {l.sun_color.x, l.sun_color.y, l.sun_color.z, 0.0f}};
+        }
         commands.SetPushConstants(&constants, sizeof(constants));
         commands.Draw(run.vertex_count, run.first_vertex);
     }

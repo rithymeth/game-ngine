@@ -416,6 +416,111 @@ static void PlayerParticles_MeshParticlesDrawOpaqueAndOccludeSpritesBehind(gfx::
     AETHER_CHECK(out[sprite_px] > 60 && out[sprite_px + 2] > 60 && out[sprite_px + 1] < 40);
 }
 
+AETHER_TEST(PlayerParticles_MeshNormalsFollowTheInstanceTransform) {
+    // Octahedral encoding round-trips unit normals, both hemispheres and the axes.
+    for (const Vec3& n : {Vec3(0, 0, 1), Vec3(0, 0, -1), Vec3(1, 0, 0), Vec3(0, -1, 0), Vec3(0.3f, -0.5f, 0.81f).Normalized(),
+                          Vec3(-0.6f, 0.2f, -0.77f).Normalized()}) {
+        f32 u = 0, v = 0;
+        ParticleEncodeNormal(n, u, v);
+        const Vec3 d = ParticleDecodeNormal(u, v);
+        AETHER_CHECK(Near(d.x, n.x, 1e-4f) && Near(d.y, n.y, 1e-4f) && Near(d.z, n.z, 1e-4f));
+    }
+    // The quad has no normals: its face normal (+Z, counter-clockwise) goes through each instance's inverse transpose.
+    const ParticleMesh quad = QuadMesh();
+    ParticleMesh with_normals = quad;
+    with_normals.normals.assign(6, Vec3(1.0f, 1.0f, 0.0f).Normalized());
+    vfx::ParticleRenderData data;
+    vfx::MeshBatch batch, explicit_normals;
+    batch.mesh = "quad";
+    Mat4 rotate_y = Mat4::Identity(); // 90 degrees about +Y: +Z goes to +X
+    rotate_y.cols[0] = Vec4(0, 0, -1, 0);
+    rotate_y.cols[2] = Vec4(1, 0, 0, 0);
+    Mat4 mirror = Mat4::Identity();
+    mirror.cols[2] = Vec4(0, 0, -1, 0);
+    batch.transforms = {Mat4::Identity(), rotate_y, mirror};
+    explicit_normals.mesh = "normals";
+    Mat4 squash = Mat4::Identity(); // non-uniform scale: x by 4; a (1, 1, 0) normal tilts towards y, not x
+    squash.cols[0] = Vec4(4, 0, 0, 0);
+    explicit_normals.transforms = {squash};
+    data.meshes = {batch, explicit_normals};
+    const auto meshes = [&](const std::string& m) -> const ParticleMesh* { return m == "quad" ? &quad : m == "normals" ? &with_normals : nullptr; };
+    ParticleVertexStreams out;
+    PackParticleVertices(data, vfx::ParticleCamera{}, out, {}, meshes);
+    AETHER_CHECK(out.opaque.size() == 24);
+    if (out.opaque.size() != 24) return;
+    const auto normal_is = [&](usize vertex, const Vec3& expected) {
+        const Vec3 n = ParticleVertexNormal(out.opaque[vertex]);
+        return Near(n.x, expected.x, 1e-4f) && Near(n.y, expected.y, 1e-4f) && Near(n.z, expected.z, 1e-4f);
+    };
+    AETHER_CHECK(normal_is(0, Vec3(0, 0, 1)) && normal_is(5, Vec3(0, 0, 1)));
+    AETHER_CHECK(normal_is(6, Vec3(1, 0, 0)));
+    AETHER_CHECK(normal_is(12, Vec3(0, 0, -1))); // the mirror flips it (geometry unchanged: the quad is flat)
+    AETHER_CHECK(normal_is(18, Vec3(0.25f, 1.0f, 0.0f).Normalized()));
+    // Still a kind-0.25 vertex with its texture, so runs and the shader's kind decode are unchanged.
+    AETHER_CHECK(!ParticleVertexIsSprite(out.opaque[12]) && ParticleVertexTexture(out.opaque[12]) == 0);
+
+    // The lighting model: facing the sun is brighter than facing away; facing away keeps the sky fill only.
+    ParticleLighting light;
+    light.lit = true;
+    light.sun_direction = Vec3(0, 0, -1);
+    const Vec3 base(0.0f, 1.0f, 0.0f);
+    const Vec3 front = ParticleLitColor(light, base, Vec3(0, 0, -1)), back = ParticleLitColor(light, base, Vec3(0, 0, 1));
+    AETHER_CHECK(front.y > back.y + 0.2f && front.x == 0.0f && back.x == 0.0f);
+    const f32 sky_only = 0.28f / 1.28f;
+    AETHER_CHECK(Near(back.y, sky_only, 1e-5f));
+}
+
+namespace {
+f32 SrgbEncode(f32 c) { return c <= 0.0031308f ? c * 12.92f : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f; }
+} // namespace
+
+// Two copies of one quad mesh side by side, the right one mirrored in z (same pixels, normal flipped by the instance transform): with
+// the sun towards the camera (which looks down +Z in clip space), the mirrored one faces it and is brighter; the other shows sky fill only.
+static void PlayerParticles_LitMeshParticlesShadeByNormal(gfx::rhi::Backend backend) {
+    std::unique_ptr<gfx::rhi::IDevice> device = MakeRenderDevice(backend);
+    if (!device) return;
+    constexpr u32 kSize = 64;
+    std::unique_ptr<gfx::rhi::ISwapChain> target = device->CreateSwapChain(nullptr, kSize, kSize, 2);
+    ParticlePass pass(*device, *target);
+    AETHER_CHECK(pass.Valid());
+    const ParticleMesh quad = QuadMesh();
+    pass.SetMeshResolver([&](const std::string& m) -> const ParticleMesh* { return m == "quad" ? &quad : nullptr; });
+    ParticleLighting light;
+    light.lit = true;
+    light.sun_direction = Vec3(0.0f, 0.0f, -1.0f);
+    pass.SetLighting(light);
+
+    vfx::ParticleRenderData data;
+    vfx::MeshBatch batch;
+    batch.mesh = "quad";
+    Mat4 back = Placed(-0.5f, 0.5f, 0.9f), front = Placed(0.5f, 0.5f, 0.9f);
+    front.cols[2].z = -0.9f;
+    batch.transforms = {back, front};
+    batch.colors = {{0.0f, 1.0f, 0.0f, 1.0f}, {0.0f, 1.0f, 0.0f, 1.0f}};
+    data.meshes = {batch};
+
+    std::unique_ptr<gfx::rhi::ICommandList> cmd = device->CreateCommandList();
+    target->AcquireNextImage();
+    cmd->Reset();
+    cmd->BeginRenderPass(*target, gfx::rhi::ClearColor{0.0f, 0.0f, 0.0f, 1.0f});
+    pass.Draw(*cmd, data, vfx::ParticleCamera{}, Mat4::Identity(), Mat4::Identity(), 0);
+    cmd->EndRenderPass();
+    cmd->Close();
+    device->WaitForFence(device->Submit(*cmd, target.get()));
+    std::vector<u8> out;
+    AETHER_CHECK(target->ReadBack(out) && out.size() == kSize * kSize * 4);
+    target->Present(false);
+    if (out.size() != kSize * kSize * 4) return;
+    const auto at = [&](f32 ndc_x) { return (static_cast<usize>(kSize / 2) * kSize + static_cast<usize>((ndc_x * 0.5f + 0.5f) * kSize)) * 4; };
+    const usize back_px = at(-0.5f), front_px = at(0.5f);
+    const f32 expect_front = SrgbEncode(ParticleLitColor(light, Vec3(0, 1, 0), Vec3(0, 0, -1)).y) * 255.0f;
+    const f32 expect_back = SrgbEncode(ParticleLitColor(light, Vec3(0, 1, 0), Vec3(0, 0, 1)).y) * 255.0f;
+    std::printf("    lit mesh green: front %u (expect %.0f), back %u (expect %.0f)\n", out[front_px + 1], expect_front, out[back_px + 1], expect_back);
+    AETHER_CHECK(out[front_px + 1] > out[back_px + 1] + 40);
+    AETHER_CHECK(std::fabs(out[front_px + 1] - expect_front) < 8.0f && std::fabs(out[back_px + 1] - expect_back) < 8.0f);
+    AETHER_CHECK(out[front_px] < 8 && out[front_px + 2] < 8 && out[back_px] < 8 && out[back_px + 2] < 8);
+}
+
 AETHER_TEST(PlayerParticles_SoftFadeRidesPerVertexAndSplitsRuns) {
     // Two alpha batches with one texture, one soft (0.5) and one not, interleaved by depth; an additive soft batch with a bad value
     // (NaN: treated as off) and one negative; a ribbon (never soft).
@@ -583,3 +688,5 @@ AETHER_TEST(PlayerParticles_MeshParticlesDrawOpaqueAndOccludeSpritesBehindOnD3D1
 
 AETHER_TEST(PlayerParticles_SoftSpritesFadeNearOpaqueDepthOnVulkan) { PlayerParticles_SoftSpritesFadeNearOpaqueDepth(gfx::rhi::Backend::Vulkan); }
 AETHER_TEST(PlayerParticles_SoftSpritesFadeNearOpaqueDepthOnD3D12) { PlayerParticles_SoftSpritesFadeNearOpaqueDepth(gfx::rhi::Backend::D3D12); }
+AETHER_TEST(PlayerParticles_LitMeshParticlesShadeByNormalOnVulkan) { PlayerParticles_LitMeshParticlesShadeByNormal(gfx::rhi::Backend::Vulkan); }
+AETHER_TEST(PlayerParticles_LitMeshParticlesShadeByNormalOnD3D12) { PlayerParticles_LitMeshParticlesShadeByNormal(gfx::rhi::Backend::D3D12); }
