@@ -383,9 +383,14 @@ sequence.
   `PlayerParticles_SoftSpritesFadeNearOpaqueDepthOnVulkan` draws a sprite through an opaque
   quad tilted in depth on Vulkan (lavapipe): with `soft_fade` 0 a hard edge at the
   intersection, with 0.3 the sprite ramps up from it with the depth gap.
+- *D3D12 render checks.* The D3D12 backend now makes offscreen swap chains (a null window:
+  committed render targets that `Present` cycles through, read back like Vulkan's), so the
+  four particle render checks (textured flipbook, per-sprite textures, mesh occlusion, soft
+  fade) also run as `..._OnD3D12` in `aether_tests`, which the Windows MSVC CI job runs on
+  WARP. They skip where there is no D3D12 device (Linux, macOS).
 
-**Still open.** Soft particles are checked on Vulkan (lavapipe) only, not on D3D12,
-MoltenVK or Android hardware; mesh particles are unlit and expanded on the CPU (no GPU
+**Still open.** Soft particles are checked on Vulkan (lavapipe) and, pending its first CI
+run, D3D12 (WARP), not on MoltenVK or Android hardware; mesh particles are unlit and expanded on the CPU (no GPU
 instancing); the particle pass has not been
 checked on screen in the full player frame (D3D12,
 MoltenVK, Android). The

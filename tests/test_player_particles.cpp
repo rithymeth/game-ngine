@@ -14,7 +14,7 @@
 // The player's particle pass, CPU side (player/src/particle_pass.h): sprites become two camera-facing triangles in the
 // alpha or additive stream, alpha-blended sprites sort back to front across batches, premultiplied colours become
 // straight alpha, and ribbons unroll from their indices. Materials resolve to bindless textures carried per vertex with the
-// flipbook's next cell and frame blend, and (on a Vulkan device) a textured sprite samples its texture.
+// flipbook's next cell and frame blend, and (on a Vulkan or D3D12 device) the pass renders: textures, mesh occlusion, soft fade.
 
 using namespace aether;
 using namespace aether::player;
@@ -22,6 +22,23 @@ using namespace aether::player;
 namespace {
 
 bool Near(f32 a, f32 b, f32 e = 1e-5f) { return std::fabs(a - b) <= e; }
+
+// The GPU render checks run on every backend this build has: Vulkan (lavapipe on Linux CI) and D3D12 (WARP on the hosted Windows CI
+// runner, through the offscreen swap chain). A backend without a device skips with a note.
+std::unique_ptr<gfx::rhi::IDevice> MakeRenderDevice(gfx::rhi::Backend backend) {
+    std::unique_ptr<gfx::rhi::IDevice> device;
+    if (gfx::rhi::IsBackendAvailable(backend)) {
+        try {
+            device = gfx::rhi::CreateDevice(backend, false);
+        } catch (const std::exception&) {
+        }
+    }
+    if (!device) {
+        std::printf("    (no %s device: install a driver (Mesa's lavapipe for Vulkan, WARP for D3D12) to run this)\n",
+                    backend == gfx::rhi::Backend::Vulkan ? "Vulkan" : "D3D12");
+    }
+    return device;
+}
 
 vfx::SpriteInstance Sprite(f32 z, vfx::LinearColor color = {}) {
     vfx::SpriteInstance s;
@@ -163,16 +180,9 @@ AETHER_TEST(PlayerParticles_MaterialsResolveToTexturesWithFlipbookBlend) {
     AETHER_CHECK(ParticleVertexTexture(out.alpha[0]) == 0 && ParticleVertexTexture(out.additive[6]) == 0);
 }
 
-AETHER_TEST(PlayerParticles_TexturedSpritesSampleTheirFlipbookCellOnVulkan) {
-    std::unique_ptr<gfx::rhi::IDevice> device;
-    try {
-        device = gfx::rhi::CreateDevice(gfx::rhi::Backend::Vulkan, false);
-    } catch (const std::exception&) {
-    }
-    if (!device) {
-        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
-        return;
-    }
+static void PlayerParticles_TexturedSpritesSampleTheirFlipbookCell(gfx::rhi::Backend backend) {
+    std::unique_ptr<gfx::rhi::IDevice> device = MakeRenderDevice(backend);
+    if (!device) return;
     constexpr u32 kSize = 64;
     std::unique_ptr<gfx::rhi::ISwapChain> target = device->CreateSwapChain(nullptr, kSize, kSize, 2);
     ParticlePass pass(*device, *target);
@@ -252,16 +262,9 @@ AETHER_TEST(PlayerParticles_StreamsSplitIntoPerTextureRunsInOrder) {
     AETHER_CHECK(runs.empty());
 }
 
-AETHER_TEST(PlayerParticles_EachSpriteSamplesItsOwnTextureInOneStreamOnVulkan) {
-    std::unique_ptr<gfx::rhi::IDevice> device;
-    try {
-        device = gfx::rhi::CreateDevice(gfx::rhi::Backend::Vulkan, false);
-    } catch (const std::exception&) {
-    }
-    if (!device) {
-        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
-        return;
-    }
+static void PlayerParticles_EachSpriteSamplesItsOwnTextureInOneStream(gfx::rhi::Backend backend) {
+    std::unique_ptr<gfx::rhi::IDevice> device = MakeRenderDevice(backend);
+    if (!device) return;
     constexpr u32 kSize = 64;
     std::unique_ptr<gfx::rhi::ISwapChain> target = device->CreateSwapChain(nullptr, kSize, kSize, 2);
     ParticlePass pass(*device, *target);
@@ -366,16 +369,9 @@ AETHER_TEST(PlayerParticles_MeshInstancesExpandIntoTheOpaqueStream) {
     AETHER_CHECK(runs.size() == 1 && runs[0].vertex_count == 12 && runs[0].texture == 7);
 }
 
-AETHER_TEST(PlayerParticles_MeshParticlesDrawOpaqueAndOccludeSpritesBehindOnVulkan) {
-    std::unique_ptr<gfx::rhi::IDevice> device;
-    try {
-        device = gfx::rhi::CreateDevice(gfx::rhi::Backend::Vulkan, false);
-    } catch (const std::exception&) {
-    }
-    if (!device) {
-        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
-        return;
-    }
+static void PlayerParticles_MeshParticlesDrawOpaqueAndOccludeSpritesBehind(gfx::rhi::Backend backend) {
+    std::unique_ptr<gfx::rhi::IDevice> device = MakeRenderDevice(backend);
+    if (!device) return;
     constexpr u32 kSize = 64;
     std::unique_ptr<gfx::rhi::ISwapChain> target = device->CreateSwapChain(nullptr, kSize, kSize, 2);
     ParticlePass pass(*device, *target);
@@ -503,22 +499,15 @@ AETHER_TEST(PlayerParticles_SoftFadeRoundTripsThroughTheEmitterJson) {
     AETHER_CHECK(j.dump().find("\"soft_fade\":0.75") != std::string::npos);
 }
 
-AETHER_TEST(PlayerParticles_SoftSpritesFadeNearOpaqueDepthOnVulkan) {
-    std::unique_ptr<gfx::rhi::IDevice> device;
-    try {
-        device = gfx::rhi::CreateDevice(gfx::rhi::Backend::Vulkan, false);
-    } catch (const std::exception&) {
-    }
-    if (!device) {
-        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
-        return;
-    }
+static void PlayerParticles_SoftSpritesFadeNearOpaqueDepth(gfx::rhi::Backend backend) {
+    std::unique_ptr<gfx::rhi::IDevice> device = MakeRenderDevice(backend);
+    if (!device) return;
     constexpr u32 kSize = 64;
     std::unique_ptr<gfx::rhi::ISwapChain> target = device->CreateSwapChain(nullptr, kSize, kSize, 2);
     ParticlePass pass(*device, *target);
     AETHER_CHECK(pass.Valid());
     if (pass.SceneDepthTexture() == 0) {
-        std::printf("    (this Vulkan device can't copy and sample its depth format: soft particles are off)\n");
+        std::printf("    (this device can't copy and sample its depth format: soft particles are off)\n");
         return;
     }
     const u8 white[] = {255, 255, 255, 255};
@@ -582,3 +571,15 @@ AETHER_TEST(PlayerParticles_SoftSpritesFadeNearOpaqueDepthOnVulkan) {
     AETHER_CHECK(green(soft, 56) > 235);
     AETHER_CHECK(green(soft, 40) > green(soft, 34) + 30 && green(soft, 40) < 220);
 }
+
+AETHER_TEST(PlayerParticles_TexturedSpritesSampleTheirFlipbookCellOnVulkan) { PlayerParticles_TexturedSpritesSampleTheirFlipbookCell(gfx::rhi::Backend::Vulkan); }
+AETHER_TEST(PlayerParticles_TexturedSpritesSampleTheirFlipbookCellOnD3D12) { PlayerParticles_TexturedSpritesSampleTheirFlipbookCell(gfx::rhi::Backend::D3D12); }
+
+AETHER_TEST(PlayerParticles_EachSpriteSamplesItsOwnTextureInOneStreamOnVulkan) { PlayerParticles_EachSpriteSamplesItsOwnTextureInOneStream(gfx::rhi::Backend::Vulkan); }
+AETHER_TEST(PlayerParticles_EachSpriteSamplesItsOwnTextureInOneStreamOnD3D12) { PlayerParticles_EachSpriteSamplesItsOwnTextureInOneStream(gfx::rhi::Backend::D3D12); }
+
+AETHER_TEST(PlayerParticles_MeshParticlesDrawOpaqueAndOccludeSpritesBehindOnVulkan) { PlayerParticles_MeshParticlesDrawOpaqueAndOccludeSpritesBehind(gfx::rhi::Backend::Vulkan); }
+AETHER_TEST(PlayerParticles_MeshParticlesDrawOpaqueAndOccludeSpritesBehindOnD3D12) { PlayerParticles_MeshParticlesDrawOpaqueAndOccludeSpritesBehind(gfx::rhi::Backend::D3D12); }
+
+AETHER_TEST(PlayerParticles_SoftSpritesFadeNearOpaqueDepthOnVulkan) { PlayerParticles_SoftSpritesFadeNearOpaqueDepth(gfx::rhi::Backend::Vulkan); }
+AETHER_TEST(PlayerParticles_SoftSpritesFadeNearOpaqueDepthOnD3D12) { PlayerParticles_SoftSpritesFadeNearOpaqueDepth(gfx::rhi::Backend::D3D12); }
