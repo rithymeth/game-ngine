@@ -1087,7 +1087,8 @@ AETHER_TEST(Aether01_ArchiveSignalParticlesDrawThroughThePlayerParticlePass) {
     const Entity camera_entity = FindActiveCamera(world, run.game->Guids());
     AETHER_CHECK(world.IsAlive(camera_entity) && world.GetComponent<Camera>(camera_entity) != nullptr);
     const Mat4 view = CameraView(world, run.game->Guids(), camera_entity);
-    const Mat4 view_projection = CameraProjection(*world.GetComponent<Camera>(camera_entity), static_cast<f32>(kWidth) / kHeight) * view;
+    const Mat4 projection = CameraProjection(*world.GetComponent<Camera>(camera_entity), static_cast<f32>(kWidth) / kHeight);
+    const Mat4 view_projection = projection * view;
     const vfx::ParticleCamera camera = vfx::ParticleCamera::FromView(view);
     vfx::ParticleRenderData data;
     particles->BuildRenderData(camera, data, &view_projection);
@@ -1102,7 +1103,7 @@ AETHER_TEST(Aether01_ArchiveSignalParticlesDrawThroughThePlayerParticlePass) {
     target->AcquireNextImage();
     cmd->Reset();
     cmd->BeginRenderPass(*target, clear);
-    pass.Draw(*cmd, data, camera, view_projection, 0);
+    pass.Draw(*cmd, data, camera, view_projection, projection, 0);
     cmd->EndRenderPass();
     cmd->Close();
     device->WaitForFence(device->Submit(*cmd, target.get()));

@@ -1334,15 +1334,17 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     BufferHandle frame_buffer; // this frame's lights, when the device has frame constants
     const Entity camera_entity = FindActiveCamera(world, guids);
     const Camera* camera = world.IsAlive(camera_entity) ? world.GetComponent<Camera>(camera_entity) : nullptr;
-    Mat4 particle_view_projection;
+    Mat4 particle_view_projection, particle_projection;
     vfx::ParticleCamera particle_camera;
     bool draw_particles = false;
     if (camera) {
         const f32 aspect = static_cast<f32>(renderer.swap_chain.Width()) /
                            static_cast<f32>(std::max(renderer.swap_chain.Height(), 1u));
         const Mat4 camera_view = CameraView(world, guids, camera_entity);
-        const Mat4 view_projection = CameraProjection(LimitViewDistance(*camera, renderer.view_distance), aspect) * camera_view;
+        const Mat4 projection = CameraProjection(LimitViewDistance(*camera, renderer.view_distance), aspect);
+        const Mat4 view_projection = projection * camera_view;
         particle_view_projection = view_projection;
+        particle_projection = projection;
         if (renderer.draw_particles && game.Particles()) {
             particle_camera = vfx::ParticleCamera::FromView(camera_view);
             renderer.particle_data.Clear();
@@ -1561,8 +1563,12 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
             commands.DrawIndexed(draw.index_count);
         }
     }
-    // Particles after every surface (they test against its depth without writing it).
-    if (draw_particles) renderer.particles->Draw(commands, renderer.particle_data, particle_camera, particle_view_projection, frame_index);
+    // Particles after every surface (they test against its depth without writing it). Soft sprites make the pass copy the depth
+    // (ICommandList::CopySceneDepth): the transparent surfaces above don't write depth, so the copy is the opaque scene plus the mesh
+    // particles; the HUD below binds its own pipeline.
+    if (draw_particles) {
+        renderer.particles->Draw(commands, renderer.particle_data, particle_camera, particle_view_projection, particle_projection, frame_index);
+    }
     renderer.DrawHud(game, commands);
     commands.EndRenderPass();
 }

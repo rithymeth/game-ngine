@@ -98,6 +98,12 @@ public:
     bool DestroyTexture(SampledTextureHandle texture) override;
     SampledTextureHandle CreateR32FloatTexture(u32 width, u32 height, const f32* values) override;
     DescriptorHeap& BindlessTextureHeap() { return *bindless_texture_heap_; }
+    // A bindless slot for a resource someone else owns (a swap chain's scene-depth copy, ISwapChain::SceneDepthTexture): it counts against
+    // the table, DestroyTexture refuses it, and it views the white fallback until SetExternalBindlessTexture gives it a resource (null:
+    // back to the fallback). Invalid when the table is full. Between frames only.
+    SampledTextureHandle ReserveExternalBindlessSlot();
+    void SetExternalBindlessTexture(SampledTextureHandle slot, ID3D12Resource* resource, DXGI_FORMAT srv_format);
+    void ReleaseExternalBindlessSlot(SampledTextureHandle slot);
 
     std::unique_ptr<ICommandList> CreateComputeCommandList() override;
     u64 SubmitCompute(ICommandList& cmd) override;
@@ -191,8 +197,17 @@ public:
     // share a writable depth attachment.
     D3D12_CPU_DESCRIPTOR_HANDLE DepthDSV(u32 index) const { return depth_dsv_heap_->CPUHandle(index); }
 
+    // Scene depth (see ISwapChain::SceneDepthTexture): the depth buffers are R32_TYPELESS (D32_FLOAT views) so CopySceneDepth can
+    // CopyResource one into scene_depth_copy_ (R32_TYPELESS, an R32_FLOAT SRV in the bindless table, kept in PIXEL_SHADER_RESOURCE).
+    SampledTextureHandle SceneDepthTexture() override;
+    bool SceneDepthEnabled() const { return scene_depth_handle_.IsValid(); }
+    ID3D12Resource* DepthResource(u32 index) const { return depth_resources_[index].Get(); }
+    ID3D12Resource* SceneDepthCopy() const { return scene_depth_copy_.Get(); }
+    ~D3D12SwapChain() override;
+
 private:
     void CreateDepthBuffer(u32 width, u32 height);
+    void CreateSceneDepthCopy();
 
     D3D12Device& device_;
     gfx::SwapChain swap_chain_;
@@ -201,6 +216,8 @@ private:
 
     std::vector<ComPtr<ID3D12Resource>> depth_resources_;
     std::unique_ptr<DescriptorHeap> depth_dsv_heap_;
+    SampledTextureHandle scene_depth_handle_{};
+    ComPtr<ID3D12Resource> scene_depth_copy_;
 };
 
 class D3D12CommandList final : public ICommandList {
@@ -231,6 +248,7 @@ public:
     void Dispatch(u32 groups_x, u32 groups_y, u32 groups_z) override;
     void BindBindlessTextures() override;
     void BindFrameConstants(BufferHandle buffer) override;
+    bool CopySceneDepth() override;
 
     void* NativeHandle() const override { return cmd_.Get(); }
     bool BelongsTo(const D3D12Device& device) const { return &device_ == &device; }
@@ -253,6 +271,7 @@ private:
     bool has_closed_recording_ = false;
     u64 last_submitted_fence_ = 0;
     ID3D12Resource* active_backbuffer_ = nullptr; // set by BeginRenderPass, consumed by EndRenderPass
+    D3D12SwapChain* active_swap_chain_ = nullptr; // likewise, for CopySceneDepth
     u32 frame_constants_root_index_ = ~0u;        // of the pipeline BindPipeline last bound
     u32 compute_storage_buffer_count_ = 0;
     u32 compute_sampled_texture_count_ = 0;

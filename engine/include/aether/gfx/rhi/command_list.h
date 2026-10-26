@@ -99,6 +99,13 @@ public:
     // until the next BindPipeline. A no-op on devices without support.
     virtual void BindFrameConstants(BufferHandle /*buffer*/) {}
 
+    // Inside a BeginRenderPass pass: copies the depth drawn so far into the swap chain's SceneDepthTexture (which must already exist) and
+    // continues the same pass, colour and depth kept (Vulkan ends the render pass, copies and begins a loading one; D3D12 copies between
+    // barriers). The bound pipeline and its bindings are gone afterwards and the viewport and scissor are the full swap chain again, as after
+    // BeginRenderPass: rebind before drawing. Draws after it may read the texture; they must not write depth they then expect to read. False
+    // (nothing recorded, the pass untouched) without an active pass or a SceneDepthTexture, and on devices without support (the default).
+    virtual bool CopySceneDepth() { return false; }
+
     // Escape hatch: the backend-native command list/buffer pointer
     // (ID3D12GraphicsCommandList* for D3D12, VkCommandBuffer for Vulkan,
     // reinterpret_cast from a uintptr_t on the Vulkan side since VkCommandBuffer
