@@ -202,7 +202,8 @@ remain consistent at varied frame rates, and retargeting reports incompatible sk
   height. `CharacterMovement` exposes read-only `velocity`/`grounded` to scripts.
 - *Game.* `ThirdPersonController.luau` feeds the graph through the Animator's public methods
   (Speed, Grounded, Aiming, Dead, Jump/Fire/Reload/Hit/Interact triggers); a new `Aim` action
-  (right mouse, left trigger). It also keeps the frame's movement input for every physics step:
+  (right mouse, left trigger) and a `Sprint` action (Shift, left stick click: 8 m/s while moving and not
+  aiming, past the graph's 7 m/s Sprint threshold; run stays 6 m/s). It also keeps the frame's movement input for every physics step:
   at 30 Hz Kael previously moved 0.25 m where 60 and 144 Hz moved 6.2 m, because the second fixed
   step of a frame had no input.
 - *Tests.* `Kael_GeneratedRigAndGraphAreValid`; `Kael_MoveSetTransitionsMatchAt30_60_144HzAndVariableDt`
@@ -216,13 +217,15 @@ remain consistent at varied frame rates, and retargeting reports incompatible sk
   `Aether01_KaelMoveSetPlaysInTheCookedGame` (input reaches idle, aim, interact, fire, reload,
   jump, fall, land, walk, run, hit, death and back to idle; no warnings),
   `Aether01_KaelLocomotionTransitionsAtVariedFrameRates` (30/60/144 Hz: same transitions within
-  a frame plus a physics step, same distance) and `Aether01_ArchiveSequencePlaysKaelMontageAndSkipStopsIt`.
+  a frame plus a physics step, same distance), `Aether01_KaelSprintIsReachableAtVariedFrameRates` (30/60/144 Hz:
+  Shift reaches Sprint once at the same time within a frame plus a physics step, over 7.5 m/s, back to Run within
+  0.4 s of release, no sprint while aiming; the move-set test and packaged check now also require Sprint) and `Aether01_ArchiveSequencePlaysKaelMontageAndSkipStopsIt`.
 - *Packaged.* `tools/aether01_character_check.py` replays the move-set test's input
   (`AETHER01_MOVESET_TRACE`) in the standalone `aether_player --headless` on the M8.5 pak and
   requires every reachable state's marker, ending Death -> Idle (Linux GCC CI step "Packaged
   character move set (M8.6)"); the M8.7 cinematic check also requires Kael's montage markers.
   Both pass locally; not yet run on CI.
-- *Open.* Sprint is in the graph but unreachable in game (run speed 6 m/s is the cap); no editor
+- *Open.* No editor
   play-through of the move set has been recorded; the rig is generated, not Kael's production
   mesh, and is not rendered skinned in the player; IK, aim and foot offsets, compression and
   animation events through cook and save/load are not exercised by the slice; the retarget map

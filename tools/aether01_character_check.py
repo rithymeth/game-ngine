@@ -2,7 +2,7 @@
 
 Replays the input trace the Aether01_KaelMoveSetPlaysInTheCookedGame test records
 (AETHER01_MOVESET_TRACE: aim, pick up the rifle, fire, reload, jump, walk to a
-run, then the Scout's hits, death and a restart) headless against a cooked
+run and a sprint, then the Scout's hits, death and a restart) headless against a cooked
 package, and checks the markers the player's animation host logs for Kael's
 Animator ("Player: Anim state: Player Locomotion: <from> -> <to>"): every state
 of the move set the game can reach appears, the run ends back in Idle after the
@@ -18,8 +18,8 @@ import re
 import subprocess
 import sys
 
-# Sprint needs more than the character's 6 m/s run speed, so the game never reaches it.
-EXPECTED = ["Idle", "Aim", "Interact", "Fire", "Reload", "Jump", "Fall", "Land", "Walk", "Run", "Hit", "Death"]
+# Sprint is held Shift (8 m/s; the graph enters Sprint above 7 m/s).
+EXPECTED = ["Idle", "Aim", "Interact", "Fire", "Reload", "Jump", "Fall", "Land", "Walk", "Run", "Sprint", "Hit", "Death"]
 MARKER = re.compile(r"Player: Anim state: Player Locomotion: (\w+) -> (\w+)$")
 
 

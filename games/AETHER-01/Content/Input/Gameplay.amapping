@@ -602,6 +602,36 @@
             "type": "Down"
           }
         ]
+      },
+      {
+        "$v": 1,
+        "action": "Sprint",
+        "actuation": 0.5,
+        "key": "LeftShift",
+        "modifiers": [],
+        "triggers": [
+          {
+            "chord_action": "",
+            "one_shot": false,
+            "time": 0.5,
+            "type": "Down"
+          }
+        ]
+      },
+      {
+        "$v": 1,
+        "action": "Sprint",
+        "actuation": 0.5,
+        "key": "GamepadLeftThumb",
+        "modifiers": [],
+        "triggers": [
+          {
+            "chord_action": "",
+            "one_shot": false,
+            "time": 0.5,
+            "type": "Down"
+          }
+        ]
       }
     ],
     "block_lower_contexts": false,
