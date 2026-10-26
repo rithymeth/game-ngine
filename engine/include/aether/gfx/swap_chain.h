@@ -13,6 +13,9 @@ class Device;
 // flight on the GPU — that's the frame loop's job (wait on the fence value
 // recorded the last time this backbuffer index was used, before reusing its
 // command allocator), consistent with the engine's explicit-sync principle.
+// A null `hwnd` makes an offscreen chain: committed render targets (no window,
+// no DXGI swap chain) that Present cycles through, for headless renders and
+// readback tests (the same contract as the Vulkan backend's offscreen chains).
 class SwapChain {
 public:
     SwapChain(Device& device, void* hwnd, u32 width, u32 height, u32 buffer_count = 2);
@@ -38,6 +41,7 @@ public:
     u32 Height() const { return height_; }
     u32 BufferCount() const { return buffer_count_; }
     DXGI_FORMAT Format() const { return format_; }
+    bool Offscreen() const { return offscreen_; }
 
 private:
     void CreateRenderTargetViews();
@@ -51,6 +55,8 @@ private:
     u32 width_ = 0;
     u32 height_ = 0;
     u32 buffer_count_ = 0;
+    u32 current_ = 0; // offscreen only: the target Present last advanced to
+    bool offscreen_ = false;
     DXGI_FORMAT format_ = DXGI_FORMAT_R8G8B8A8_UNORM;
 };
 

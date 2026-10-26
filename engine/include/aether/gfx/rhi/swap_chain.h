@@ -42,8 +42,8 @@ public:
     // bytes a pixel, rows top to bottom), waiting for the GPU first. Call it
     // between Submit and Present. False where the backend or swap chain
     // can't read back (Phase 24, docs/design/PHASE_SPECS.md §24.3: the
-    // Vulkan backend's offscreen swap chains, and its window swap chains
-    // where the surface allows it).
+    // Vulkan and D3D12 backends' offscreen swap chains (a null window), and
+    // Vulkan's window swap chains where the surface allows it).
     virtual bool ReadBack(std::vector<u8>& rgba8) {
         (void)rgba8;
         return false;

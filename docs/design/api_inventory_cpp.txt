@@ -2165,6 +2165,7 @@
   ID3D12Resource*CurrentBackBuffer()const
   SwapChain&operator=(const SwapChain&)=delete
   SwapChain(const SwapChain&)=delete
+  bool Offscreen()const
   private:void CreateRenderTargetViews()
   public:SwapChain(Device&device,void*hwnd,u32 width,u32 height,u32 buffer_count=2)
   u32 BufferCount()const
