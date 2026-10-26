@@ -948,3 +948,44 @@ AETHER_TEST(NetProd_GhostShift_ReconnectPreservesSharedStateAndOwnership) {
     sim.Step(120, frame);
     for (auto& c : sim.clients) CHECK(sim.Exact(*c));
 }
+
+
+AETHER_TEST(NetProd_GhostShift_SharedObjectTransformConvergesAfterLoss) {
+    // Host-owned movable objects (doors/furniture) use authoritative Transform
+    // replication. A client-local edit must not persist after the next snapshot.
+    // This is transform sync coverage, not a full Jolt rigid-body prediction test.
+    ProdSim sim(1223);
+    sim.net.conditions = {0.08, 0.03, 0.10f, 0.02f};
+    for (int i = 0; i < kClients; ++i) sim.AddClient("p" + std::to_string(i));
+    int frame = 0;
+    while (!sim.AllJoined() && frame < 600) sim.Step(1, frame++);
+    CHECK(sim.AllJoined());
+    sim.Step(120, frame);
+    frame += 120;
+
+    const Entity prop = sim.npcs[0];
+    const u32 prop_id = sim.NetId(prop);
+    // Stop the test harness from moving/churning NPCs. The host alone moves
+    // this shared prop, then clients must converge despite lost snapshots.
+    sim.moving = false;
+    const Vec3 final_position{12.0f, -3.0f, 7.0f};
+    sim.world.GetComponent<Transform>(prop)->position = final_position;
+    for (auto& c : sim.clients) {
+        const Entity remote = c->replication->FindEntity(prop_id);
+        CHECK(!remote.IsNull());
+        c->world.GetComponent<Transform>(remote)->position = Vec3{-90.0f, 50.0f, 0.0f};
+    }
+    bool converged = false;
+    for (int i = 0; i < 300; ++i) {
+        sim.Step(1, frame++);
+        converged = std::all_of(sim.clients.begin(), sim.clients.end(), [&](const auto& c) {
+            const Entity remote = c->replication->FindEntity(prop_id);
+            return !remote.IsNull() &&
+                   (c->world.GetComponent<Transform>(remote)->position - final_position).Length() < 1e-4f;
+        });
+        if (converged) break;
+    }
+    CHECK(converged);
+    sim.Step(120, frame);
+    for (auto& c : sim.clients) CHECK(sim.Exact(*c));
+}
