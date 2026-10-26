@@ -818,3 +818,35 @@ AETHER_TEST(NetProd_SecurityRateLimitsPerAddress) {
     }
     CHECK(host.TrackedAddresses() <= 16 && host.PeerCount() == 0);
 }
+
+
+AETHER_TEST(NetProd_GhostShift_OnlyOwnerCanChangeSharedState) {
+    // Ghost Shift engine prerequisite: an authenticated client may mutate only its own
+    // replicated pawn. Other clients cannot forge ownership to change its state.
+    ProdSim sim(1207);
+    for (int i = 0; i < kClients; ++i) sim.AddClient("p" + std::to_string(i));
+    int frame = 0;
+    while (!sim.AllJoined() && frame < 600) sim.Step(1, frame++);
+    CHECK(sim.AllJoined());
+    sim.Step(60, frame);
+    frame += 60;
+
+    const Entity target = sim.PawnFor("p0");
+    const u32 net_id = sim.NetId(target);
+    const Entity owner_entity = sim.clients[0]->replication->FindEntity(net_id);
+    const Entity attacker_entity = sim.clients[1]->replication->FindEntity(net_id);
+    CHECK(!owner_entity.IsNull() && !attacker_entity.IsNull());
+    CHECK(CallAddScore(sim.clients[0]->world, owner_entity, 7) == RemoteCallResult::Sent);
+    CHECK(CallAddScore(sim.clients[1]->world, attacker_entity, 99) == RemoteCallResult::Refused);
+    // A compromised client may lie about its local ownership; the host must still reject.
+    sim.clients[1]->world.GetComponent<NetIdentity>(attacker_entity)->locally_owned = true;
+    CHECK(CallAddScore(sim.clients[1]->world, attacker_entity, 99) == RemoteCallResult::Sent);
+    sim.Step(90, frame);
+    frame += 90;
+    CHECK(sim.world.GetComponent<SoakPawn>(target)->score == 7);
+    CHECK(sim.rpc->Stats().rejected >= 1);
+    // The authoritative result must be visible to every participant.
+    sim.moving = false;
+    sim.Step(120, frame);
+    for (auto& c : sim.clients) CHECK(sim.ScoresMatch(*c));
+}
