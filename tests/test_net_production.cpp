@@ -850,3 +850,36 @@ AETHER_TEST(NetProd_GhostShift_OnlyOwnerCanChangeSharedState) {
     sim.Step(120, frame);
     for (auto& c : sim.clients) CHECK(sim.ScoresMatch(*c));
 }
+
+
+AETHER_TEST(NetProd_GhostShift_RejectsFifthPlayerWithoutBreakingSession) {
+    // A 1-4 player game must not silently accept a fifth player. Existing
+    // participants must retain authority and replication after a full-lobby join.
+    ProdSim sim(1211);
+    for (int i = 0; i < kClients; ++i) sim.AddClient("p" + std::to_string(i));
+    int frame = 0;
+    while (!sim.AllJoined() && frame < 600) sim.Step(1, frame++);
+    CHECK(sim.AllJoined());
+    sim.Step(60, frame);
+    frame += 60;
+    const Entity pawn = sim.PawnFor("p0");
+    const Entity owned = sim.clients[0]->replication->FindEntity(sim.NetId(pawn));
+    CHECK(!owned.IsNull());
+    CHECK(CallAddScore(sim.clients[0]->world, owned, 4) == RemoteCallResult::Sent);
+    sim.Step(60, frame);
+    frame += 60;
+    CHECK(sim.world.GetComponent<SoakPawn>(pawn)->score == 4);
+
+    auto& fifth = sim.AddClient("p4");
+    for (int i = 0; i < 300; ++i) sim.Step(1, frame++);
+    CHECK(fifth.session->GetState() != SessionClient::State::Joined);
+    CHECK(sim.session->Players().size() == static_cast<usize>(kClients));
+    CHECK(sim.pawns.size() == static_cast<usize>(kClients));
+    CHECK(sim.PawnFor("p4").IsNull());
+    for (int i = 0; i < kClients; ++i)
+        CHECK(sim.clients[i]->session->GetState() == SessionClient::State::Joined);
+
+    sim.moving = false;
+    sim.Step(120, frame);
+    for (int i = 0; i < kClients; ++i) CHECK(sim.Exact(*sim.clients[i]));
+}
