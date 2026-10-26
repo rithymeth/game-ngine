@@ -1,7 +1,8 @@
 -- Third person controller: put it on the character (tagged Player). The Look
 -- axis orbits the camera (the entity with a Camera component) around it, WASD or
 -- the left stick moves relative to where the camera looks, and the character
--- turns to face where it goes. Space or the A button jumps.
+-- turns to face where it goes. Space or the A button jumps; Shift or the left
+-- stick click sprints.
 local Controller = {}
 local Weapons = {
     {capacity = 30, range = 24, cooldown = 0.22, reload = 1.1, damage = 1, shield_damage = 1, cone = 0.94, knockback = 0.3},
@@ -61,6 +62,9 @@ end
 --@range 0 30
 --@tooltip Running speed, metres per second
 Controller.speed = 6
+--@range 0 30
+--@tooltip Sprint speed (Sprint held while moving and not aiming), metres per second
+Controller.sprint_speed = 8
 --@range 0 1
 Controller.look_speed = 0.12
 --@range 1 20
@@ -326,7 +330,7 @@ function Controller:Animate(moves)
         speed = math.sqrt(v.x * v.x + v.z * v.z)
         grounded = self.character.grounded
     elseif moves ~= nil then
-        speed = vector.magnitude(moves) * self.speed
+        speed = vector.magnitude(moves) * (self.move_speed or self.speed)
     end
     a:SetFloatParameter("Speed", self.dead and 0 or speed)
     a:SetBoolParameter("Grounded", grounded)
@@ -430,10 +434,15 @@ function Controller:OnUpdate(dt)
     local sy, cy = math.sin(self.yaw), math.cos(self.yaw)
     local vx = -sy * move.y + cy * move.x
     local vz = -cy * move.y - sy * move.x
+    -- Sprint (Shift, left stick click) while moving and not aiming; the graph enters Sprint above 7 m/s.
+    local sprinting = Input.IsTriggered("Sprint") and not Input.IsTriggered("Aim") and vector.magnitude(move) > 0.5
+    local move_speed = sprinting and self.sprint_speed or self.speed
+    self.move_speed = move_speed
 
     if self.character ~= nil then
         -- The player's existing Jolt CharacterSystem consumes this input in
         -- FixedUpdate, including slopes, steps, collision and buffered jumps.
+        self.character.walk_speed = move_speed
         self.character.input = vector.create(vx, 0, vz)
         self.move_input = self.character.input
         self.character.jump_requested = Input.IsTriggered("Jump")
@@ -449,7 +458,7 @@ function Controller:OnUpdate(dt)
         local p = t.position
         local y = p.y + self.vy * dt
         if y <= self.floor then y = self.floor; self.vy = 0 end
-        t.position = vector.create(p.x + vx * self.speed * dt, y, p.z + vz * self.speed * dt)
+        t.position = vector.create(p.x + vx * move_speed * dt, y, p.z + vz * move_speed * dt)
         if self.mission_stage == 2 and Attributes.Get(self.entity, "ResearchClear") == 0 and t.position.z < -21 then
             t.position = vector.create(t.position.x, t.position.y, -21)
         end

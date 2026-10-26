@@ -20,6 +20,7 @@
 #include "aether/scene/script_component.h"
 #if AETHER_TEST_HAS_PHYSICS
 #include "aether/physics/components.h"
+#include "aether/physics/character.h"
 #endif
 
 #include <filesystem>
@@ -834,6 +835,10 @@ AETHER_TEST(Aether01_KaelMoveSetPlaysInTheCookedGame) {
     frames(90);
     hold(input::Key::Space, 1);       // jump, fall, land
     frames(90);
+    run.game->Input().SetButton(input::Key::LeftShift, true);
+    hold(input::Key::S, 60);          // Shift held: sprint (8 m/s) away from the Scout
+    run.game->Input().SetButton(input::Key::LeftShift, false);
+    frames(60);
     hold(input::Key::W, 60);          // walk up to a run, toward the Scout
     frames(60);                        // and back down to idle
     // The Scout reaches Kael: hits, then death; restart brings him back.
@@ -842,7 +847,7 @@ AETHER_TEST(Aether01_KaelMoveSetPlaysInTheCookedGame) {
     hold(input::Key::R, 1);
     frames(30);
     for (const AnimLog& l : log) std::printf("  %.3f %s -> %s\n", l.time, l.from.c_str(), l.to.c_str());
-    for (const char* state : {"Aim", "Walk", "Run", "Jump", "Fall", "Land", "Interact", "Fire", "Reload", "Hit", "Death", "Idle"}) {
+    for (const char* state : {"Aim", "Walk", "Run", "Sprint", "Jump", "Fall", "Land", "Interact", "Fire", "Reload", "Hit", "Death", "Idle"}) {
         AETHER_CHECK(Entered(log, state));
         if (!Entered(log, state)) std::printf("  never entered %s\n", state);
     }
@@ -890,6 +895,47 @@ AETHER_TEST(Aether01_KaelLocomotionTransitionsAtVariedFrameRates) {
         }
         // Kael covers the same ground at every rate (within a frame of running at 6 m/s).
         AETHER_CHECK(positions.back() < -5.0f && std::fabs(positions.back() - positions.front()) <= 6.0f * (dt + 1.0f / 144));
+    }
+}
+
+// Sprint is reachable in game: Shift held while moving lifts the character to the controller's sprint speed (8 m/s),
+// past the graph's 7 m/s Sprint threshold, at 30, 60 and 144 Hz; releasing Shift drops back to Run, aiming blocks it.
+AETHER_TEST(Aether01_KaelSprintIsReachableAtVariedFrameRates) {
+    ProofRun run("kael-sprint");
+    std::vector<f64> sprint_times;
+    for (const f32 hz : {144.0f, 30.0f, 60.0f}) {
+        run.Start();
+        const f32 dt = 1.0f / hz;
+        std::vector<AnimLog> log;
+        const f64 start = run.game->Stats().time;
+        auto until = [&](f64 t) { while (run.game->Stats().time - start < t - 1e-6) AnimFrame(run, log, nullptr, dt); };
+        until(0.2);
+        run.game->Input().SetButton(input::Key::W, true);
+        run.game->Input().SetButton(input::Key::LeftShift, true);
+        until(1.5);
+#if AETHER_TEST_HAS_PHYSICS
+        const CharacterMovement* movement = run.game->GetWorld().GetComponent<CharacterMovement>(run.hero);
+        AETHER_CHECK(movement != nullptr);
+        if (movement) AETHER_CHECK(std::sqrt(movement->velocity.x * movement->velocity.x + movement->velocity.z * movement->velocity.z) > 7.5f);
+#endif
+        run.game->Input().SetButton(input::Key::LeftShift, false);
+        until(2.5);
+        run.game->Input().SetButton(input::Key::MouseRight, true); // aiming: Shift does not sprint
+        run.game->Input().SetButton(input::Key::LeftShift, true);
+        until(3.2);
+        run.game->Input().SetButton(input::Key::W, false);
+        run.game->Input().SetButton(input::Key::LeftShift, false);
+        run.game->Input().SetButton(input::Key::MouseRight, false);
+        until(4.5);
+        for (const AnimLog& l : log) std::printf("  %3.0f Hz %.4f %s -> %s\n", hz, l.time - start, l.from.c_str(), l.to.c_str());
+        auto first = std::find_if(log.begin(), log.end(), [](const AnimLog& l) { return l.to == "Sprint"; });
+        AETHER_CHECK(first != log.end());
+        AETHER_CHECK(std::count_if(log.begin(), log.end(), [](const AnimLog& l) { return l.to == "Sprint"; }) == 1);
+        auto back = std::find_if(log.begin(), log.end(), [](const AnimLog& l) { return l.from == "Sprint"; });
+        AETHER_CHECK(back != log.end() && back->to == "Run" && back->time - start > 1.5 && back->time - start < 1.5 + 0.4);
+        if (first != log.end()) sprint_times.push_back(first->time - start);
+        if (sprint_times.size() > 1) AETHER_CHECK(std::fabs(sprint_times.back() - sprint_times.front()) <= dt + 1.0 / 144 + 1.0 / 60 + 1e-4);
+        AETHER_CHECK(run.game->Warnings().empty());
     }
 }
 
