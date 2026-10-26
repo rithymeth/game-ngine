@@ -48,6 +48,14 @@ public:
         (void)rgba8;
         return false;
     }
+
+    // A sampleable copy of this swap chain's depth (Width() x Height(), the depth buffer's own values, 0 near .. 1 far), in the device's
+    // bindless table: what soft particles and other depth-aware blended draws read. The first call creates it (call it at setup, between
+    // frames: it reserves a bindless slot and waits for the GPU) and from then on the swap chain's render pass keeps its depth so
+    // ICommandList::CopySceneDepth can fill the texture mid-pass; the handle stays the same across Resize. Read it with a texel load at
+    // SV_Position.xy (g_Textures[i].Load(int3(xy, 0)).r), not a filtered sample. Invalid where the backend or the depth format can't (the
+    // default), or the table is full; the caller then draws without depth reads.
+    virtual SampledTextureHandle SceneDepthTexture() { return {}; }
 };
 
 } // namespace aether::gfx::rhi

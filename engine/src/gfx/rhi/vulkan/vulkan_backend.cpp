@@ -1315,6 +1315,30 @@ bool VulkanDevice::DestroyTexture(SampledTextureHandle texture) {
     return true;
 }
 
+SampledTextureHandle VulkanDevice::ReserveExternalBindlessSlot() {
+    if (TextureTableFull()) {
+        AETHER_LOG_ERROR("Vulkan", "ReserveExternalBindlessSlot: the bindless texture table is full (capacity=%u real textures)", kMaxUserBindlessTextures);
+        return {};
+    }
+    // An empty record: the device never destroys it (the owner does) and DestroyTexture refuses it. The slot keeps the fallback view.
+    return SampledTextureHandle{StoreTextureRecord(SampledTextureRecord{})};
+}
+
+void VulkanDevice::SetExternalBindlessView(SampledTextureHandle slot, VkImageView view) {
+    if (!slot.IsValid() || slot.index < kFirstUserBindlessTextureIndex) return;
+    SampledTextureRecord record{};
+    record.view = view;
+    WriteBindlessTexture(slot.index, view != VK_NULL_HANDLE ? record : dummy_texture_);
+}
+
+void VulkanDevice::ReleaseExternalBindlessSlot(SampledTextureHandle slot) {
+    if (!slot.IsValid() || slot.index < kFirstUserBindlessTextureIndex) return;
+    const u32 position = slot.index - kFirstUserBindlessTextureIndex;
+    if (position >= sampled_textures_.size() || sampled_textures_[position].image != VK_NULL_HANDLE) return;
+    WriteBindlessTexture(slot.index, dummy_texture_);
+    free_texture_slots_.push_back(position);
+}
+
 // Frame constant buffers are host-visible and mapped (CreateBufferInternal) but are not vertex buffers, so this cannot
 // go through UpdateVertexBuffer, which rejects them: it used to, and the player's lights never reached the GPU. The
 // caller only rewrites a slot whose previous frame has finished (SceneRenderer keeps one per frame in flight).
@@ -1996,9 +2020,12 @@ VulkanSwapChain::~VulkanSwapChain() {
     }
     DestroySyncObjects();
     DestroySwapchainAndImages();
+    device_.ReleaseExternalBindlessSlot(scene_depth_handle_);
     if (default_render_pass_ != VK_NULL_HANDLE) {
         vkDestroyRenderPass(device_.Handle(), default_render_pass_, nullptr);
     }
+    if (store_depth_render_pass_ != VK_NULL_HANDLE) vkDestroyRenderPass(device_.Handle(), store_depth_render_pass_, nullptr);
+    if (resume_render_pass_ != VK_NULL_HANDLE) vkDestroyRenderPass(device_.Handle(), resume_render_pass_, nullptr);
     if (surface_ != VK_NULL_HANDLE) {
         vkDestroySurfaceKHR(device_.Instance(), surface_, nullptr);
     }
@@ -2075,6 +2102,133 @@ void VulkanSwapChain::CreateDefaultRenderPass() {
     AETHER_VK_CHECK(vkCreateRenderPass(device_.Handle(), &rp_info, nullptr, &default_render_pass_));
 }
 
+// The scene-depth variants of the default render pass (same attachments, formats and subpass, so render-pass compatible with it and its
+// framebuffers and pipelines): the first one of a frame clears like the default but stores depth for CopySceneDepth; the resume one loads
+// colour (left in PRESENT_SRC by the pass before) and depth (left in DEPTH_STENCIL_ATTACHMENT_OPTIMAL by CopySceneDepth's barrier).
+VkRenderPass VulkanSwapChain::CreateRenderPassVariant(bool load_existing, bool store_depth) {
+    VkAttachmentDescription color_attachment{};
+    color_attachment.format = format_;
+    color_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    color_attachment.loadOp = load_existing ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
+    color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    color_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    color_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    color_attachment.initialLayout = load_existing ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_UNDEFINED;
+    color_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+    VkAttachmentDescription depth_attachment{};
+    depth_attachment.format = depth_format_;
+    depth_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    depth_attachment.loadOp = load_existing ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depth_attachment.storeOp = store_depth ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depth_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    depth_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depth_attachment.initialLayout =
+        load_existing ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
+    depth_attachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentDescription attachments[2] = {color_attachment, depth_attachment};
+    VkAttachmentReference color_ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkAttachmentReference depth_ref{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments = &color_ref;
+    subpass.pDepthStencilAttachment = &depth_ref;
+
+    // As the default pass's (the acquire semaphore); the resume pass also orders its colour loads after the first pass's writes. Depth
+    // is ordered by CopySceneDepth's own barrier.
+    VkSubpassDependency dependency{};
+    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependency.dstSubpass = 0;
+    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.srcAccessMask = load_existing ? VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT : 0;
+    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                               (load_existing ? VK_ACCESS_COLOR_ATTACHMENT_READ_BIT : 0);
+
+    VkRenderPassCreateInfo rp_info{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+    rp_info.attachmentCount = 2;
+    rp_info.pAttachments = attachments;
+    rp_info.subpassCount = 1;
+    rp_info.pSubpasses = &subpass;
+    rp_info.dependencyCount = 1;
+    rp_info.pDependencies = &dependency;
+    VkRenderPass render_pass = VK_NULL_HANDLE;
+    AETHER_VK_CHECK(vkCreateRenderPass(device_.Handle(), &rp_info, nullptr, &render_pass));
+    return render_pass;
+}
+
+SampledTextureHandle VulkanSwapChain::SceneDepthTexture() {
+    if (scene_depth_handle_.IsValid()) return scene_depth_handle_;
+    VkFormatProperties properties{};
+    vkGetPhysicalDeviceFormatProperties(device_.PhysicalDevice(), depth_format_, &properties);
+    constexpr VkFormatFeatureFlags required =
+        VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+    if ((properties.optimalTilingFeatures & required) != required) {
+        AETHER_LOG_WARN("Vulkan", "SceneDepthTexture: depth format %d can't be copied and sampled here; no scene depth",
+                        static_cast<int>(depth_format_));
+        return {};
+    }
+    if (device_.WaitForDeviceIdle() != VK_SUCCESS) return {};
+    const SampledTextureHandle handle = device_.ReserveExternalBindlessSlot();
+    if (!handle.IsValid()) return {};
+    try {
+        if (store_depth_render_pass_ == VK_NULL_HANDLE) store_depth_render_pass_ = CreateRenderPassVariant(false, true);
+        if (resume_render_pass_ == VK_NULL_HANDLE) resume_render_pass_ = CreateRenderPassVariant(true, false);
+        scene_depth_handle_ = handle;
+        CreateSceneDepthImage();
+    } catch (...) {
+        DestroySceneDepthImage();
+        device_.ReleaseExternalBindlessSlot(handle);
+        scene_depth_handle_ = {};
+        throw;
+    }
+    return scene_depth_handle_;
+}
+
+void VulkanSwapChain::CreateSceneDepthImage() {
+    VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    image_info.imageType = VK_IMAGE_TYPE_2D;
+    image_info.format = depth_format_;
+    image_info.extent = {extent_.width, extent_.height, 1};
+    image_info.mipLevels = 1;
+    image_info.arrayLayers = 1;
+    image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+    image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    image_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    AETHER_VK_CHECK(vkCreateImage(device_.Handle(), &image_info, nullptr, &scene_depth_image_));
+    VkMemoryRequirements mem_reqs{};
+    vkGetImageMemoryRequirements(device_.Handle(), scene_depth_image_, &mem_reqs);
+    VkMemoryAllocateInfo alloc_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    alloc_info.allocationSize = mem_reqs.size;
+    alloc_info.memoryTypeIndex =
+        FindMemoryType(device_.PhysicalDevice(), mem_reqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    AETHER_VK_CHECK(vkAllocateMemory(device_.Handle(), &alloc_info, nullptr, &scene_depth_memory_));
+    AETHER_VK_CHECK(vkBindImageMemory(device_.Handle(), scene_depth_image_, scene_depth_memory_, 0));
+    VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    view_info.image = scene_depth_image_;
+    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view_info.format = depth_format_;
+    view_info.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1}; // depth only: a sampled view has one aspect
+    AETHER_VK_CHECK(vkCreateImageView(device_.Handle(), &view_info, nullptr, &scene_depth_view_));
+    // The image stays UNDEFINED until the first CopySceneDepth, which transitions it (its contents are fully overwritten each time), so
+    // nothing may sample it before then.
+    device_.SetExternalBindlessView(scene_depth_handle_, scene_depth_view_);
+}
+
+void VulkanSwapChain::DestroySceneDepthImage() {
+    if (scene_depth_handle_.IsValid()) device_.SetExternalBindlessView(scene_depth_handle_, VK_NULL_HANDLE);
+    if (scene_depth_view_ != VK_NULL_HANDLE) vkDestroyImageView(device_.Handle(), scene_depth_view_, nullptr);
+    if (scene_depth_image_ != VK_NULL_HANDLE) vkDestroyImage(device_.Handle(), scene_depth_image_, nullptr);
+    if (scene_depth_memory_ != VK_NULL_HANDLE) vkFreeMemory(device_.Handle(), scene_depth_memory_, nullptr);
+    scene_depth_view_ = VK_NULL_HANDLE;
+    scene_depth_image_ = VK_NULL_HANDLE;
+    scene_depth_memory_ = VK_NULL_HANDLE;
+}
+
 void VulkanSwapChain::CreateDepthResources() {
     VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     image_info.imageType = VK_IMAGE_TYPE_2D;
@@ -2084,7 +2238,8 @@ void VulkanSwapChain::CreateDepthResources() {
     image_info.arrayLayers = 1;
     image_info.samples = VK_SAMPLE_COUNT_1_BIT;
     image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
-    image_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    // TRANSFER_SRC for CopySceneDepth (harmless when it's never used).
+    image_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     depth_images_.resize(image_views_.size(), VK_NULL_HANDLE);
@@ -2109,9 +2264,11 @@ void VulkanSwapChain::CreateDepthResources() {
         view_info.subresourceRange = {DepthAttachmentAspect(depth_format_), 0, 1, 0, 1};
         AETHER_VK_CHECK(vkCreateImageView(device_.Handle(), &view_info, nullptr, &depth_image_views_[i]));
     }
+    if (SceneDepthEnabled()) CreateSceneDepthImage();
 }
 
 void VulkanSwapChain::DestroyDepthResources() {
+    DestroySceneDepthImage();
     for (usize i = 0; i < depth_images_.size(); ++i) {
         if (i < depth_image_views_.size() && depth_image_views_[i] != VK_NULL_HANDLE) {
             vkDestroyImageView(device_.Handle(), depth_image_views_[i], nullptr);
@@ -2682,6 +2839,7 @@ void VulkanCommandList::Reset() {
     AETHER_VK_CHECK(vkResetCommandBuffer(command_buffer_, 0));
     last_submitted_fence_ = 0;
     render_pass_active_ = false;
+    active_swap_chain_ = nullptr;
     graphics_pipeline_bound_ = false;
     graphics_bindless_enabled_ = false;
     graphics_bindless_bound_ = false;
@@ -2829,7 +2987,7 @@ void VulkanCommandList::BeginRenderPass(ISwapChain& swap_chain, const ClearColor
     clear_values[1].depthStencil.depth = 1.0f;
 
     VkRenderPassBeginInfo rp_begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-    rp_begin.renderPass = vk_swap.DefaultRenderPass();
+    rp_begin.renderPass = vk_swap.BeginRenderPassHandle();
     rp_begin.framebuffer = vk_swap.CurrentFramebuffer();
     rp_begin.renderArea.offset = {0, 0};
     rp_begin.renderArea.extent = {vk_swap.Width(), vk_swap.Height()};
@@ -2837,7 +2995,11 @@ void VulkanCommandList::BeginRenderPass(ISwapChain& swap_chain, const ClearColor
     rp_begin.pClearValues = clear_values;
     vkCmdBeginRenderPass(command_buffer_, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
     render_pass_active_ = true;
+    active_swap_chain_ = &vk_swap;
+    SetFullViewport(vk_swap);
+}
 
+void VulkanCommandList::SetFullViewport(const VulkanSwapChain& vk_swap) {
     // Negative-height viewport (y = height, height = -height): the standard
     // trick to make Vulkan's NDC +Y point up like D3D12's, entirely on the
     // host side — callers of this abstract BeginRenderPass never need to
@@ -2864,6 +3026,11 @@ void VulkanCommandList::EndRenderPass() {
     }
     vkCmdEndRenderPass(command_buffer_);
     render_pass_active_ = false;
+    active_swap_chain_ = nullptr;
+    ResetGraphicsBindings();
+}
+
+void VulkanCommandList::ResetGraphicsBindings() {
     graphics_pipeline_bound_ = false;
     graphics_bindless_enabled_ = false;
     graphics_bindless_bound_ = false;
@@ -3213,6 +3380,76 @@ void VulkanCommandList::BindBindlessTextures() {
     vkCmdBindDescriptorSets(command_buffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, bound_pipeline_layout_, 0, 2, sets, 0,
                              nullptr);
     graphics_bindless_bound_ = true;
+}
+
+} // namespace aether::gfx::rhi::vulkan_backend
+
+namespace aether::gfx::rhi::vulkan_backend {
+
+bool VulkanCommandList::CopySceneDepth() {
+    if (!recording_ || !render_pass_active_ || !active_swap_chain_ || !active_swap_chain_->SceneDepthEnabled()) {
+        AETHER_LOG_ERROR("Vulkan", "CopySceneDepth requires an active render pass on a swap chain with a SceneDepthTexture");
+        return false;
+    }
+    VulkanSwapChain& swap = *active_swap_chain_;
+    vkCmdEndRenderPass(command_buffer_);
+
+    const VkImageAspectFlags depth_aspects = DepthAttachmentAspect(swap.DepthFormat());
+    VkImageMemoryBarrier to_copy[2]{};
+    to_copy[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    to_copy[0].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    to_copy[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    to_copy[0].oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    to_copy[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    to_copy[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_copy[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_copy[0].image = swap.CurrentDepthImage();
+    to_copy[0].subresourceRange = {depth_aspects, 0, 1, 0, 1};
+    // The previous copy's readers (an earlier frame's fragment shaders) finish before this overwrites it; the old contents are dropped.
+    to_copy[1] = to_copy[0];
+    to_copy[1].srcAccessMask = 0;
+    to_copy[1].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    to_copy[1].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    to_copy[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    to_copy[1].image = swap.SceneDepthImage();
+    vkCmdPipelineBarrier(command_buffer_,
+                         VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, to_copy);
+
+    VkImageCopy region{};
+    region.srcSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
+    region.dstSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
+    region.extent = {swap.Width(), swap.Height(), 1};
+    vkCmdCopyImage(command_buffer_, swap.CurrentDepthImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, swap.SceneDepthImage(),
+                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+    VkImageMemoryBarrier after_copy[2]{};
+    after_copy[0] = to_copy[0];
+    after_copy[0].srcAccessMask = 0; // a read; only the layout change needs ordering
+    after_copy[0].dstAccessMask =
+        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    after_copy[0].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    after_copy[0].newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    after_copy[1] = to_copy[1];
+    after_copy[1].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    after_copy[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    after_copy[1].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    after_copy[1].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    vkCmdPipelineBarrier(command_buffer_, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         0, 0, nullptr, 0, nullptr, 2, after_copy);
+
+    VkRenderPassBeginInfo rp_begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    rp_begin.renderPass = swap.ResumeRenderPass();
+    rp_begin.framebuffer = swap.CurrentFramebuffer();
+    rp_begin.renderArea.offset = {0, 0};
+    rp_begin.renderArea.extent = {swap.Width(), swap.Height()};
+    vkCmdBeginRenderPass(command_buffer_, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
+    ResetGraphicsBindings();
+    SetFullViewport(swap);
+    return true;
 }
 
 } // namespace aether::gfx::rhi::vulkan_backend

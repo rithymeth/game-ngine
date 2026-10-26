@@ -864,6 +864,73 @@ SampledTextureHandle D3D12Device::CreateR32FloatTexture(u32 width, u32 height, c
     return SampledTextureHandle{bindless_index};
 }
 
+SampledTextureHandle D3D12Device::ReserveExternalBindlessSlot() {
+    if (sampled_texture_count_ >= kMaxUserBindlessTextures || !bindless_texture_heap_->CanAllocate()) {
+        AETHER_LOG_ERROR("D3D12", "ReserveExternalBindlessSlot: the bindless texture table is full (capacity=%u real textures)", kMaxUserBindlessTextures);
+        return {};
+    }
+    const u32 index = bindless_texture_heap_->Allocate(); // still the fallback view the constructor wrote
+    if (index == DescriptorHeap::kInvalidIndex) return {};
+    ++sampled_texture_count_;
+    return SampledTextureHandle{index};
+}
+
+void D3D12Device::SetExternalBindlessTexture(SampledTextureHandle slot, ID3D12Resource* resource, DXGI_FORMAT srv_format) {
+    if (!slot.IsValid() || slot.index < kFirstUserBindlessTextureIndex || slot.index >= kMaxBindlessTextures) return;
+    D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+    srv.Format = resource ? srv_format : DXGI_FORMAT_R8G8B8A8_UNORM;
+    srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srv.Texture2D.MipLevels = 1;
+    device_.Handle()->CreateShaderResourceView(resource ? resource : dummy_texture_->Handle(), &srv,
+                                                bindless_texture_heap_->CPUHandle(slot.index));
+}
+
+void D3D12Device::ReleaseExternalBindlessSlot(SampledTextureHandle slot) {
+    if (!slot.IsValid() || slot.index < kFirstUserBindlessTextureIndex || slot.index >= kMaxBindlessTextures) return;
+    SetExternalBindlessTexture(slot, nullptr, DXGI_FORMAT_UNKNOWN);
+    bindless_texture_heap_->Free(slot.index);
+    if (sampled_texture_count_ > 0) --sampled_texture_count_;
+}
+
+D3D12SwapChain::~D3D12SwapChain() {
+    if (!scene_depth_handle_.IsValid()) return;
+    try {
+        device_.Native().WaitForFence(device_.Native().Submit(nullptr, 0)); // nothing in flight still reads the copy
+    } catch (...) {
+        AETHER_LOG_WARN("D3D12", "Could not drain the graphics queue before releasing the scene depth copy");
+    }
+    device_.ReleaseExternalBindlessSlot(scene_depth_handle_);
+}
+
+SampledTextureHandle D3D12SwapChain::SceneDepthTexture() {
+    if (scene_depth_handle_.IsValid()) return scene_depth_handle_;
+    device_.Native().WaitForFence(device_.Native().Submit(nullptr, 0));
+    scene_depth_handle_ = device_.ReserveExternalBindlessSlot();
+    if (!scene_depth_handle_.IsValid()) return {};
+    CreateSceneDepthCopy();
+    return scene_depth_handle_;
+}
+
+void D3D12SwapChain::CreateSceneDepthCopy() {
+    D3D12_HEAP_PROPERTIES default_heap{};
+    default_heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+    D3D12_RESOURCE_DESC desc{};
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    desc.Width = swap_chain_.Width();
+    desc.Height = swap_chain_.Height();
+    desc.DepthOrArraySize = 1;
+    desc.MipLevels = 1;
+    desc.Format = DXGI_FORMAT_R32_TYPELESS; // the depth buffers' own format, as CopyResource requires
+    desc.SampleDesc.Count = 1;
+    device_.SetExternalBindlessTexture(scene_depth_handle_, nullptr, DXGI_FORMAT_UNKNOWN);
+    scene_depth_copy_.Reset();
+    AETHER_D3D_CHECK(device_.Native().Handle()->CreateCommittedResource(
+        &default_heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr,
+        IID_PPV_ARGS(&scene_depth_copy_)));
+    device_.SetExternalBindlessTexture(scene_depth_handle_, scene_depth_copy_.Get(), DXGI_FORMAT_R32_FLOAT);
+}
+
 D3D12SwapChain::D3D12SwapChain(D3D12Device& device, void* hwnd, u32 width, u32 height, u32 buffer_count)
     : device_(device), swap_chain_(device.Native(), hwnd, width, height, buffer_count) {
     for (u32 i = 0; i < swap_chain_.BufferCount(); ++i) {
@@ -883,7 +950,8 @@ void D3D12SwapChain::CreateDepthBuffer(u32 width, u32 height) {
     depth_desc.Height = height;
     depth_desc.DepthOrArraySize = 1;
     depth_desc.MipLevels = 1;
-    depth_desc.Format = DXGI_FORMAT_D32_FLOAT;
+    // Typeless with a D32_FLOAT view, so CopySceneDepth can copy it into an R32_TYPELESS texture read as R32_FLOAT.
+    depth_desc.Format = DXGI_FORMAT_R32_TYPELESS;
     depth_desc.SampleDesc.Count = 1;
     depth_desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
 
@@ -909,6 +977,7 @@ void D3D12SwapChain::CreateDepthBuffer(u32 width, u32 height) {
         device_.Native().Handle()->CreateDepthStencilView(depth_resources_[i].Get(), &dsv_desc,
                                                            depth_dsv_heap_->CPUHandle(i));
     }
+    if (SceneDepthEnabled()) CreateSceneDepthCopy();
 }
 
 void D3D12SwapChain::Resize(u32 width, u32 height) {
@@ -1012,6 +1081,7 @@ void D3D12CommandList::Reset() {
     recording_ = true;
     has_closed_recording_ = false;
     render_pass_active_ = false;
+    active_swap_chain_ = nullptr;
     active_backbuffer_ = nullptr;
     graphics_pipeline_bound_ = false;
     graphics_bindless_enabled_ = false;
@@ -1140,7 +1210,41 @@ void D3D12CommandList::BeginRenderPass(ISwapChain& swap_chain, const ClearColor&
     cmd_.Get()->RSSetScissorRects(1, &scissor);
 
     active_backbuffer_ = backbuffer;
+    active_swap_chain_ = &d3d_swap;
     render_pass_active_ = true;
+}
+
+bool D3D12CommandList::CopySceneDepth() {
+    if (!recording_ || !render_pass_active_ || !active_swap_chain_ || !active_swap_chain_->SceneDepthEnabled()) {
+        AETHER_LOG_ERROR("D3D12", "CopySceneDepth requires an active render pass on a swap chain with a SceneDepthTexture");
+        return false;
+    }
+    D3D12SwapChain& swap = *active_swap_chain_;
+    ID3D12Resource* depth = swap.DepthResource(swap.CurrentIndex());
+    ID3D12Resource* copy = swap.SceneDepthCopy();
+    D3D12_RESOURCE_BARRIER to_copy[2] = {
+        TransitionBarrier(depth, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_COPY_SOURCE),
+        TransitionBarrier(copy, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST)};
+    cmd_.Get()->ResourceBarrier(2, to_copy);
+    cmd_.Get()->CopyResource(copy, depth);
+    D3D12_RESOURCE_BARRIER after_copy[2] = {
+        TransitionBarrier(depth, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE),
+        TransitionBarrier(copy, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)};
+    cmd_.Get()->ResourceBarrier(2, after_copy);
+
+    // The render targets stay bound; match Vulkan's resumed pass: bindings gone, full viewport.
+    D3D12_VIEWPORT viewport{0.0f, 0.0f, static_cast<f32>(swap.Width()), static_cast<f32>(swap.Height()), 0.0f, 1.0f};
+    D3D12_RECT scissor{0, 0, static_cast<LONG>(swap.Width()), static_cast<LONG>(swap.Height())};
+    cmd_.Get()->RSSetViewports(1, &viewport);
+    cmd_.Get()->RSSetScissorRects(1, &scissor);
+    graphics_pipeline_bound_ = false;
+    graphics_bindless_enabled_ = false;
+    graphics_bindless_bound_ = false;
+    graphics_uses_vertex_buffer_ = false;
+    vertex_buffer_bound_ = false;
+    index_buffer_bound_ = false;
+    graphics_push_constant_size_bytes_ = 0;
+    return true;
 }
 
 void D3D12CommandList::EndRenderPass() {
@@ -1156,6 +1260,7 @@ void D3D12CommandList::EndRenderPass() {
         TransitionBarrier(active_backbuffer_, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
     cmd_.Get()->ResourceBarrier(1, &to_present);
     active_backbuffer_ = nullptr;
+    active_swap_chain_ = nullptr;
     render_pass_active_ = false;
     graphics_pipeline_bound_ = false;
     graphics_bindless_enabled_ = false;

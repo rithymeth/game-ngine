@@ -1782,6 +1782,7 @@
 [engine/include/aether/gfx/rhi/command_list.h] experimental
   type class ICommandList
   public:virtual ~ICommandList()=default
+  virtual bool CopySceneDepth()
   virtual void BeginRenderPass(ISwapChain&swap_chain,const ClearColor&clear_color)=0
   virtual void BindBindlessTextures()=0
   virtual void BindComputeConstantBuffer(u32 slot,BufferHandle buffer)=0
@@ -1824,14 +1825,19 @@
   D3D12_RESOURCE_STATES ToD3D12(ResourceState state)
   DescriptorHeap&BindlessTextureHeap()
   ID3D12DescriptorHeap*ComputeStorageHeap()const
+  ID3D12Resource*DepthResource(u32 index)const
+  ID3D12Resource*SceneDepthCopy()const
   PipelineHandle CreatePipeline(const PipelineDesc&desc,ISwapChain&swap_chain)override
   SampledTextureHandle CreateCompressedTexture(CompressedTextureFormat format,u32 width,u32 height,std::span<const CompressedMip>mips)override
   SampledTextureHandle CreateR32FloatTexture(u32 width,u32 height,const f32*values)override
   SampledTextureHandle CreateTexture(u32 width,u32 height,const u8*rgba8_pixels)override
+  SampledTextureHandle ReserveExternalBindlessSlot()
+  SampledTextureHandle SceneDepthTexture()override
   TextureHandle CurrentBackBuffer()const override
   TextureHandle RegisterTexture(ID3D12Resource*resource,D3D12_CPU_DESCRIPTOR_HANDLE rtv)
   bool BelongsTo(const D3D12Device&device)const
   bool ConsumeUsedBefore(u32 index)
+  bool CopySceneDepth()override
   bool DestroyTexture(SampledTextureHandle texture)override
   bool IsComputeFenceComplete(u64 fence_value)const override
   bool IsComputeList()const
@@ -1844,6 +1850,7 @@
   bool IsTextureValid(TextureHandle handle)const
   bool IsVertexBuffer(BufferHandle handle)const
   bool ReadBack(std::vector<u8>&rgba8)override
+  bool SceneDepthEnabled()const
   bool SupportsCompressedTexture(CompressedTextureFormat f)const override
   bool SupportsFrameConstants()const override
   const ComputePipelineRecord&GetComputePipeline(ComputePipelineHandle handle)const
@@ -1885,6 +1892,7 @@
   void Close()override
   void ComputeBufferBarrier(BufferHandle buffer)override
   void ComputeQueueWaitOnGraphics(u64 graphics_fence_value)override
+  void CreateSceneDepthCopy()
   void DeferCommandAllocator(ComPtr<ID3D12CommandAllocator>allocator)noexcept
   void Dispatch(u32 groups_x,u32 groups_y,u32 groups_z)override
   void Draw(u32 vertex_count,u32 first_vertex=0)override
@@ -1893,9 +1901,11 @@
   void GraphicsQueueWaitOnCompute(u64 compute_fence_value)override
   void MarkSubmitted(u64 fence_value)
   void Present(bool vsync)override
+  void ReleaseExternalBindlessSlot(SampledTextureHandle slot)
   void ReserveBufferRegistryEntry()
   void Reset()override
   void Resize(u32 width,u32 height)override
+  void SetExternalBindlessTexture(SampledTextureHandle slot,ID3D12Resource*resource,DXGI_FORMAT srv_format)
   void SetPushConstants(const void*data,u32 size_bytes)override
   void SetViewportAndScissor(const Viewport&viewport,const Rect&scissor)override
   void TransitionTexture(TextureHandle texture,ResourceState before,ResourceState after)override
@@ -1909,6 +1919,7 @@
   void*NativeHandle()const override
   ~D3D12CommandList()override
   ~D3D12Device()override
+  ~D3D12SwapChain()override
 [engine/include/aether/gfx/rhi/device.h] experimental
   type class IDevice
   type enum class VertexLayout
@@ -1950,6 +1961,7 @@
 [engine/include/aether/gfx/rhi/swap_chain.h] experimental
   type class ISwapChain
   public:virtual ~ISwapChain()=default
+  virtual SampledTextureHandle SceneDepthTexture()
   virtual TextureHandle CurrentBackBuffer()const=0
   virtual bool ReadBack(std::vector<u8>&rgba8)
   virtual u32 BufferCount()const=0
@@ -2003,6 +2015,8 @@
   SampledTextureHandle CreateCompressedTexture(CompressedTextureFormat format,u32 width,u32 height,std::span<const CompressedMip>mips)override
   SampledTextureHandle CreateR32FloatTexture(u32 width,u32 height,const f32*values)override
   SampledTextureHandle CreateTexture(u32 width,u32 height,const u8*rgba8_pixels)override
+  SampledTextureHandle ReserveExternalBindlessSlot()
+  SampledTextureHandle SceneDepthTexture()override
   SampledTextureRecord UploadImageRecord(VkFormat format,u32 width,u32 height,const std::vector<ImageLevel>&levels)
   SampledTextureRecord UploadTextureRecord(u32 width,u32 height,const u8*rgba8_pixels)
   TextureHandle CurrentBackBuffer()const override
@@ -2013,20 +2027,27 @@
   VkDescriptorSetLayout BindlessTextureSetLayout()const
   VkDescriptorSetLayout FrameConstantsSetLayout()const
   VkDevice Handle()const
+  VkFormat DepthFormat()const
   VkFormat Format()const
   VkFramebuffer CurrentFramebuffer()const
+  VkImage CurrentDepthImage()const
   VkImage GetTexture(TextureHandle handle)const
+  VkImage SceneDepthImage()const
   VkImageLayout ToVkImageLayout(ResourceState state)
   VkImageView ImageView(u32 index)const
   VkInstance Instance()const
   VkPhysicalDevice PhysicalDevice()const
   VkQueue ComputeQueue()const
   VkQueue Queue()const
+  VkRenderPass BeginRenderPassHandle()const
+  VkRenderPass CreateRenderPassVariant(bool load_existing,bool store_depth)
   VkRenderPass DefaultRenderPass()const
+  VkRenderPass ResumeRenderPass()const
   VkResult WaitForDeviceIdle()
   VkSemaphore CurrentImageAvailableSemaphore()const
   VkSemaphore CurrentRenderFinishedSemaphore()const
   bool BelongsTo(const VulkanDevice&device)const
+  bool CopySceneDepth()override
   bool DestroyTexture(SampledTextureHandle texture)override
   bool IsComputeDispatchWithinLimits(u32 groups_x,u32 groups_y,u32 groups_z)const
   bool IsComputeFenceComplete(u64 fence_value)const override
@@ -2038,6 +2059,7 @@
   bool IsSubmissionInFlight()const
   bool IsVertexBuffer(BufferHandle handle)const
   bool ReadBack(std::vector<u8>&rgba8)override
+  bool SceneDepthEnabled()const
   bool SupportsCompressedTexture(CompressedTextureFormat format)const override
   bool SupportsFrameConstants()const override
   bool TextureTableFull()const
@@ -2088,11 +2110,13 @@
   void CreateDefaultRenderPass()
   void CreateDepthResources()
   void CreateFramebuffers()
+  void CreateSceneDepthImage()
   void CreateSyncObjects()
   void DeferCommandListResources(VkCommandPool command_pool,std::vector<VkDescriptorPool>descriptor_pools)noexcept
   void Destroy()noexcept
   void DestroyDepthResources()
   void DestroyFramebuffers()
+  void DestroySceneDepthImage()
   void DestroySwapchainAndImages()
   void DestroySyncObjects()
   void Dispatch(u32 groups_x,u32 groups_y,u32 groups_z)override
@@ -2102,8 +2126,12 @@
   void GraphicsQueueWaitOnCompute(u64 compute_fence_value)override
   void MarkSubmitted(u64 fence_value)
   void Present(bool vsync)override
+  void ReleaseExternalBindlessSlot(SampledTextureHandle slot)
   void Reset()override
+  void ResetGraphicsBindings()
   void Resize(u32 width,u32 height)override
+  void SetExternalBindlessView(SampledTextureHandle slot,VkImageView view)
+  void SetFullViewport(const VulkanSwapChain&swap_chain)
   void SetPushConstants(const void*data,u32 size_bytes)override
   void SetViewportAndScissor(const Viewport&viewport,const Rect&scissor)override
   void TransitionTexture(TextureHandle texture,ResourceState before,ResourceState after)override
