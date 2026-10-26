@@ -138,6 +138,12 @@ public:
         return sampled_textures_[handle.index - kFirstUserBindlessTextureIndex];
     }
     usize SampledTextureCount() const { return sampled_textures_.size(); }
+    // A bindless slot for an image someone else owns (a swap chain's scene-depth copy, ISwapChain::SceneDepthTexture): it counts against
+    // the table, DestroyTexture refuses it, and it samples the white fallback until SetExternalBindlessView gives it a view (null: back to
+    // the fallback). Invalid when the table is full. Only between frames (the descriptor write must not race a draw using the table).
+    SampledTextureHandle ReserveExternalBindlessSlot();
+    void SetExternalBindlessView(SampledTextureHandle slot, VkImageView view);
+    void ReleaseExternalBindlessSlot(SampledTextureHandle slot);
 
     // The device-global bindless texture table — TWO descriptor sets, not
     // one: set 0 is a SAMPLED_IMAGE array (kMaxBindlessTextures slots,
@@ -339,6 +345,17 @@ public:
     VkRenderPass DefaultRenderPass() const { return default_render_pass_; }
     VkFramebuffer CurrentFramebuffer() const { return framebuffers_[current_image_index_]; }
 
+    // Scene depth (ISwapChain::SceneDepthTexture / ICommandList::CopySceneDepth). Once enabled, BeginRenderPass uses a variant of the
+    // default render pass that stores depth (render-pass compatible with it, so every pipeline still works), CopySceneDepth ends it, copies
+    // the current image's depth into scene_depth_image_ and continues in ResumeRenderPass (loads color and depth).
+    SampledTextureHandle SceneDepthTexture() override;
+    bool SceneDepthEnabled() const { return scene_depth_handle_.IsValid(); }
+    VkRenderPass BeginRenderPassHandle() const { return SceneDepthEnabled() ? store_depth_render_pass_ : default_render_pass_; }
+    VkRenderPass ResumeRenderPass() const { return resume_render_pass_; }
+    VkImage CurrentDepthImage() const { return depth_images_[current_image_index_]; }
+    VkImage SceneDepthImage() const { return scene_depth_image_; }
+    VkFormat DepthFormat() const { return depth_format_; }
+
 private:
     void CreateSwapchainAndImages(u32 width, u32 height);
     std::vector<VkImage> CreateOffscreenImages(u32 width, u32 height);
@@ -350,6 +367,9 @@ private:
     void DestroyFramebuffers();
     void CreateDepthResources();
     void DestroyDepthResources();
+    VkRenderPass CreateRenderPassVariant(bool load_existing, bool store_depth);
+    void CreateSceneDepthImage();
+    void DestroySceneDepthImage();
 
     VulkanDevice& device_;
     void* window_ = nullptr; // HWND or GLFWwindow*; null when offscreen
@@ -380,6 +400,15 @@ private:
     std::vector<VkImage> depth_images_;
     std::vector<VkDeviceMemory> depth_memories_;
     std::vector<VkImageView> depth_image_views_;
+
+    // Scene depth copy (SceneDepthTexture): one image for every swap chain image (the copy and the reads after it are ordered on the one
+    // graphics queue by CopySceneDepth's barriers), recreated with the depth buffers, keeping its bindless slot.
+    SampledTextureHandle scene_depth_handle_{};
+    VkRenderPass store_depth_render_pass_ = VK_NULL_HANDLE;
+    VkRenderPass resume_render_pass_ = VK_NULL_HANDLE;
+    VkImage scene_depth_image_ = VK_NULL_HANDLE;
+    VkDeviceMemory scene_depth_memory_ = VK_NULL_HANDLE;
+    VkImageView scene_depth_view_ = VK_NULL_HANDLE;
 
     std::vector<TextureHandle> handles_;                   // one per swapchain image
     std::vector<VkImageView> image_views_;                 // one per swapchain image
@@ -421,6 +450,7 @@ public:
     void Dispatch(u32 groups_x, u32 groups_y, u32 groups_z) override;
     void BindBindlessTextures() override;
     void BindFrameConstants(BufferHandle buffer) override;
+    bool CopySceneDepth() override;
 
     void* NativeHandle() const override { return command_buffer_; }
     bool BelongsTo(const VulkanDevice& device) const { return &device_ == &device; }
@@ -462,6 +492,9 @@ private:
     u64 bound_index_count_ = 0;
     u32 graphics_push_constant_size_bytes_ = 0;
     bool render_pass_active_ = false;
+    VulkanSwapChain* active_swap_chain_ = nullptr; // set by BeginRenderPass, for CopySceneDepth
+    void SetFullViewport(const VulkanSwapChain& swap_chain);
+    void ResetGraphicsBindings();
 };
 
 } // namespace aether::gfx::rhi::vulkan_backend

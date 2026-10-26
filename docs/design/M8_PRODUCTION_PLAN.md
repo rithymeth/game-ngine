@@ -365,9 +365,27 @@ sequence.
   `PlayerParticles_MeshInstancesExpandIntoTheOpaqueStream` checks the expansion and
   `PlayerParticles_MeshParticlesDrawOpaqueAndOccludeSpritesBehindOnVulkan` draws a mesh in
   front of a sprite on Vulkan (lavapipe) and checks the sprite shows only beside it.
+- *Soft particles.* A sprite renderer's `soft_fade` (the `.avfx` field, 0: off) fades its
+  sprites out within that view distance of the opaque scene behind them instead of
+  hard-clipping. The RHI can now sample scene depth: `ISwapChain::SceneDepthTexture()` makes
+  a copy of the swap chain's depth in the bindless table (at setup), and
+  `ICommandList::CopySceneDepth()` fills it mid-pass and continues the same pass (Vulkan:
+  ends the render pass, copies the depth image and begins a colour/depth-loading
+  render-pass-compatible one; D3D12: the depth buffers are `R32_TYPELESS` and are
+  `CopyResource`d between barriers; the default is unsupported, and soft sprites then draw
+  hard-edged). The particle pass draws the mesh particles first, copies the depth only on
+  frames with a soft sprite, then the blended streams read it with a texel load at the
+  pixel and reconstruct view distances from the projection; the soft distance rides per
+  draw run in the push constants (runs split where it changes).
+  `PlayerParticles_SoftFadeRidesPerVertexAndSplitsRuns`,
+  `PlayerParticles_SoftFadeReconstructsViewDistanceFromDepth` and
+  `PlayerParticles_SoftFadeRoundTripsThroughTheEmitterJson` check the CPU side;
+  `PlayerParticles_SoftSpritesFadeNearOpaqueDepthOnVulkan` draws a sprite through an opaque
+  quad tilted in depth on Vulkan (lavapipe): with `soft_fade` 0 a hard edge at the
+  intersection, with 0.3 the sprite ramps up from it with the depth gap.
 
-**Still open.** Soft-particle depth fade isn't applied yet (the RHI can't sample the
-swap chain's depth), and mesh particles are unlit and expanded on the CPU (no GPU
+**Still open.** Soft particles are checked on Vulkan (lavapipe) only, not on D3D12,
+MoltenVK or Android hardware; mesh particles are unlit and expanded on the CPU (no GPU
 instancing); the particle pass has not been
 checked on screen in the full player frame (D3D12,
 MoltenVK, Android). The
