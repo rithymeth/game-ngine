@@ -883,3 +883,68 @@ AETHER_TEST(NetProd_GhostShift_RejectsFifthPlayerWithoutBreakingSession) {
     sim.Step(120, frame);
     for (int i = 0; i < kClients; ++i) CHECK(sim.Exact(*sim.clients[i]));
 }
+
+
+AETHER_TEST(NetProd_GhostShift_ReconnectPreservesSharedStateAndOwnership) {
+    // A disconnect must not erase the authoritative shared state or give a
+    // returning player a duplicate pawn. Other players keep participating.
+    ProdSim sim(1217);
+    sim.net.conditions = {0.05, 0.02, 0.05f, 0.0f};
+    for (int i = 0; i < kClients; ++i) sim.AddClient("p" + std::to_string(i));
+    int frame = 0;
+    while (!sim.AllJoined() && frame < 600) sim.Step(1, frame++);
+    CHECK(sim.AllJoined());
+    sim.Step(60, frame);
+    frame += 60;
+
+    const Entity p0 = sim.PawnFor("p0");
+    const Entity p1 = sim.PawnFor("p1");
+    const u32 original_id = sim.NetId(p0);
+    const Entity original_client_pawn = sim.clients[0]->replication->FindEntity(original_id);
+    CHECK(!original_client_pawn.IsNull());
+    CHECK(CallAddScore(sim.clients[0]->world, original_client_pawn, 11) == RemoteCallResult::Sent);
+    sim.Step(90, frame);
+    frame += 90;
+    CHECK(sim.world.GetComponent<SoakPawn>(p0)->score == 11);
+
+    const u16 port = sim.clients[0]->port;
+    sim.Kill(0);
+    const f64 dropped_at = sim.net.Now();
+    while (sim.session->Players().size() == static_cast<usize>(kClients) &&
+           sim.net.Now() - dropped_at < 10.0) sim.Step(1, frame++);
+    CHECK(sim.session->Players().size() == static_cast<usize>(kClients - 1));
+    // The remaining player can still change its own state while p0 is away.
+    const Entity other = sim.clients[0]->replication->FindEntity(sim.NetId(p1));
+    CHECK(!other.IsNull());
+    CHECK(CallAddScore(sim.clients[0]->world, other, 3) == RemoteCallResult::Sent);
+    sim.Step(90, frame);
+    frame += 90;
+    CHECK(sim.world.GetComponent<SoakPawn>(p1)->score == 3);
+
+    auto& back = sim.AddClient("p0", port);
+    const f64 rejoined_at = sim.net.Now();
+    bool restored = false;
+    while (sim.net.Now() - rejoined_at < 10.0) {
+        sim.Step(1, frame++);
+        if (back.session->GetState() == SessionClient::State::Joined &&
+            sim.Divergence(back) >= 0 && sim.ScoresMatch(back)) {
+            restored = true;
+            break;
+        }
+    }
+    CHECK(restored);
+    CHECK(sim.NetId(sim.PawnFor("p0")) == original_id);
+    CHECK(sim.pawns.size() == static_cast<usize>(kClients));
+    CHECK(sim.world.GetComponent<SoakPawn>(p0)->score == 11);
+    CHECK(sim.world.GetComponent<SoakPawn>(p1)->score == 3);
+    const Entity returned = back.replication->FindEntity(original_id);
+    CHECK(!returned.IsNull());
+    CHECK(back.world.GetComponent<NetIdentity>(returned)->locally_owned);
+    CHECK(CallAddScore(back.world, returned, 2) == RemoteCallResult::Sent);
+    sim.Step(90, frame);
+    frame += 90;
+    CHECK(sim.world.GetComponent<SoakPawn>(p0)->score == 13);
+    sim.moving = false;
+    sim.Step(120, frame);
+    for (auto& c : sim.clients) CHECK(sim.Exact(*c));
+}
