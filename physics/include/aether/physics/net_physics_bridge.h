@@ -4,7 +4,9 @@
 
 namespace aether {
 
-// Server-side bridge. Instantiate with net::NetPhysicsState in the game/network integration layer.\n// This physics module must not depend on the higher-level net module.\n// Call after PhysicsScene::Step to copy live Jolt
+// Server-side bridge. Instantiate with net::NetPhysicsState in the game/network integration layer.
+// This physics module must not depend on the higher-level net module.
+// Call after PhysicsScene::Step to copy live Jolt
 // velocities/activation state into the ECS component replicated by net.
 // Does not create components, mutate Jolt, or run client-side simulation.
 // Returns the number of dynamic bodies updated.
