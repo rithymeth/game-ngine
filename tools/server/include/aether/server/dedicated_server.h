@@ -192,6 +192,10 @@ public:
     bool Done() const { return done_; }
     const NetClientResult& Result();
     World& GetWorld() { return world_; }
+    // Optional host-level hook, invoked only after an accepted replication snapshot.
+    // A game with Jolt may bind a physics reconciliation callback here; the
+    // headless networking core deliberately has no physics dependency.
+    void OnSnapshotApplied(net::ReplicationClient::SnapshotAppliedFn fn);
 
 private:
     NetClientConfig config_;
@@ -200,6 +204,7 @@ private:
     std::unique_ptr<net::NetHost> host_;
     std::unique_ptr<net::SessionClient> session_;
     std::unique_ptr<net::ReplicationClient> replication_;
+    net::ReplicationClient::SnapshotAppliedFn snapshot_applied_;
     std::unique_ptr<net::RpcRouter> rpc_;
     NetClientResult result_;
     f64 start_ = 0, joined_at_ = -1, rpc_at_ = -1;
