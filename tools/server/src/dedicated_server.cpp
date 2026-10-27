@@ -316,6 +316,11 @@ std::string DiscoveryJson(const std::vector<LanSession>& servers) {
 
 // --- NetClient ----------------------------------------------------------------------------------
 
+void NetClient::OnSnapshotApplied(net::ReplicationClient::SnapshotAppliedFn fn) {
+    snapshot_applied_ = std::move(fn);
+    if (replication_) replication_->OnSnapshotApplied(snapshot_applied_);
+}
+
 NetClient::~NetClient() {
     rpc_.reset();
     replication_.reset();
@@ -336,6 +341,7 @@ bool NetClient::Start(const NetClientConfig& config, f64 now, std::string* error
     session_->Join(config.server, config.name, config.password, config.build_id, now, config.token);
     const PeerId server = session_->Server();
     replication_ = std::make_unique<ReplicationClient>(world_, *host_, server);
+    replication_->OnSnapshotApplied(snapshot_applied_);
     replication_->OnSpawn(kPlayerArchetype, [](World& w, Entity e, const NetIdentity&) { w.AddComponent(e, ServerPlayer{}); });
     rpc_ = std::make_unique<RpcRouter>(world_, *host_, *replication_, server);
     start_ = now;
