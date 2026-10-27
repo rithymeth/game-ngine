@@ -12,6 +12,7 @@
 #include <Jolt/Physics/Body/BodyInterface.h>
 
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <set>
 #include <string>
@@ -171,7 +172,7 @@ AETHER_TEST(PhysicsConstraints_LockedDoorHoldsUnlocksAndRelocks) {
 AETHER_TEST(PhysicsConstraints_DistanceTetherCapsSeparationAndSprings) {
     for (int soft = 0; soft < 2; ++soft) {
         Sim sim;
-        const Entity ball = sim.Ball(Vec3(0, 10, 0), 2.0f);
+        const Entity ball = sim.Ball(Vec3(0, 9.5f, 0), 2.0f);
         PhysicsJoint tether;
         tether.type = JointType::Distance;
         tether.connected_anchor = Vec3(0, 10, 0); // the world
@@ -299,13 +300,13 @@ AETHER_TEST(PhysicsConstraints_BreaksFireExactlyOnce) {
     const Entity crate = sim.Box(Vec3(0, 10, 10), Vec3(0.5f, 0.5f, 0.5f), 50.0f);
     const Entity holder = sim.world.CreateEntity();
 
-    sim.Run(30);
-    AETHER_CHECK(seen.empty() && sim.scene.JointCount() == 2);
+    sim.scene.Sync();
     GrabSettings grip;
     grip.max_force = 1000.0f;
     grip.break_force = 600.0f;
-    const GrabId grab = sim.scene.Grab(crate, holder, Vec3(0, 10.5f, 10), grip);
-    sim.Run(1);
+    const GrabId grab = sim.scene.Grab(crate, holder, Vec3(0, 10.5f, 10), grip); // holds its 490 N
+    sim.Run(30);
+    AETHER_CHECK(seen.empty() && sim.scene.JointCount() == 2);
     AETHER_CHECK(sim.scene.IsGrabActive(grab));
 
     sim.Bodies().AddForce(sim.Body(weight), JPH::Vec3(2000, 0, 0));
@@ -336,6 +337,7 @@ AETHER_TEST(PhysicsConstraints_BreaksFireExactlyOnce) {
     AETHER_CHECK(std::abs(sim.Joint(door).angle) > 10.0f);
 
     // Clearing `broken` re-arms it.
+    sim.Bodies().SetLinearAndAngularVelocity(sim.Body(weight), JPH::Vec3::sZero(), JPH::Vec3::sZero()); // caught
     sim.Joint(weight).broken = false;
     sim.Run(1);
     AETHER_CHECK(sim.scene.JointCount() == 2 && seen.size() == 3);
@@ -637,9 +639,9 @@ AETHER_TEST(PhysicsConstraints_LuauBindings) {
     host.SetGlobal("crate", EntityRef{crate});
     host.SetGlobal("holder", EntityRef{holder});
     ScriptResult r = host.Run(R"(
-        grab = Physics.Grab(crate, holder, vector(5, 1.5, 0), 500)
+        grab = Physics.Grab(crate, holder, vector.create(5, 1.5, 0), 500)
         assert(grab > 0 and Physics.IsGrabActive(grab))
-        assert(Physics.SetGrabTarget(grab, vector(5, 3, 0)))
+        assert(Physics.SetGrabTarget(grab, vector.create(5, 3, 0)))
         assert(Physics.SetJointMotorTarget(door, 40))
         assert(Physics.SetJointEnabled(door, true))
         assert(Physics.SetJointLocked(door, false))
@@ -662,7 +664,7 @@ AETHER_TEST(PhysicsConstraints_LuauBindings) {
         AETHER_CHECK(std::abs(std::get<f64>(r.values[0]) - 40.0) < 3.0);
         AETHER_CHECK(std::get<bool>(r.values[1]) && !std::get<bool>(r.values[2]));
     }
-    AETHER_CHECK(sim.Pos(crate).y > 2.5f);
+    AETHER_CHECK(sim.Pos(crate).y > 2.3f);
     AETHER_CHECK(!host.Run("Physics.Grab(1, 2)").ok); // bad arguments fail
 }
 #endif

@@ -200,6 +200,9 @@ private:
     std::vector<PhysicsEvent> events_;
     std::map<u32, JointTracked> joints_; // by entity index: deterministic order
     std::map<GrabId, GrabTracked> grabs_;
+    // Bodies released from grabs stay in snapshots until they have slept for
+    // a while, so clients see where they land: EntityKey -> quiet steps.
+    std::map<u64, u32> released_;
     GrabId next_grab_ = 1;
     std::unordered_map<EntityGuid, Entity> guids_; // rebuilt each Sync for joints
     ConstraintBreakHandler break_handler_;
