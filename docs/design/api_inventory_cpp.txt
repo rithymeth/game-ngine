@@ -4236,6 +4236,8 @@
   void FreeJob(Job*job)override
   void QueueJobs(Job**jobs,JPH::uint num_jobs)override
   ~JoltJobSystemAdapter()override
+[physics/include/aether/physics/net_physics_bridge.h] experimental
+  inline usize CaptureAuthoritativePhysicsState(World&world,PhysicsScene&scene)
 [physics/include/aether/physics/physics_scene.h] experimental
   type class PhysicsScene
   type enum class PhysicsEventType
