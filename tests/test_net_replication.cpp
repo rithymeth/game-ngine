@@ -427,7 +427,9 @@ AETHER_TEST(Replication_SnapshotCallbackRunsAfterAcceptedWorldUpdate) {
         if (!replicated.IsNull()) {
             const Transform* pose = world.GetComponent<Transform>(replicated);
             CHECK(pose != nullptr);
-            CHECK(Near(pose->position, sim.server_world.GetComponent<Transform>(prop)->position));
+            Transform latest{};
+            CHECK(client.rc->ReadReplicated(id, GetComponentId<Transform>(), &latest));
+            CHECK(Near(pose->position, latest.position));
         }
     });
     sim.Step(40);
