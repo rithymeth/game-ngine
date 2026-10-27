@@ -4239,6 +4239,7 @@
 [physics/include/aether/physics/net_physics_bridge.h] experimental
   template<typename MotionState>inline usize ApplyAuthoritativePhysicsMotion(World&world,PhysicsScene&scene)
   template<typename MotionState>inline usize CaptureAuthoritativePhysicsState(World&world,PhysicsScene&scene)
+  template<typename MotionState>inline usize ReconcileAuthoritativePhysicsPosition(World&world,PhysicsScene&scene,f32 tolerance=0.01f)
 [physics/include/aether/physics/physics_scene.h] experimental
   type class PhysicsScene
   type enum class PhysicsEventType
