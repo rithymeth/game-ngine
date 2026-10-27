@@ -52,4 +52,26 @@ inline usize ApplyAuthoritativePhysicsMotion(World& world, PhysicsScene& scene) 
     return updated;
 }
 
+// Reconcile the Jolt pose with a Transform already updated by authoritative
+// replication. Unlike gameplay motion, this is a snapshot correction: it
+// teleports only existing dynamic bodies when position error exceeds the
+// caller's tolerance. This helper does not interpolate or alter the ECS
+// Transform. Call after snapshot application and before the next physics step.
+template <typename MotionState>
+inline usize ReconcileAuthoritativePhysicsPosition(World& world, PhysicsScene& scene, f32 tolerance = 0.01f) {
+    usize corrected = 0;
+    const f32 threshold = tolerance > 0.0f ? tolerance : 0.0f;
+    world.ForEach<Transform, RigidBody, MotionState>(
+        [&](Transform& transform, RigidBody& body, MotionState&) {
+            if (body.motion != BodyMotion::Dynamic || body.body_id.IsInvalid()) return;
+            const JPH::BodyID id = body.body_id;
+            if (scene.BodyOf(scene.EntityOf(id)) != id) return;
+            const Vec3 error = scene.Physics().GetPosition(id) - transform.position;
+            if (error.Length() <= threshold) return;
+            scene.Physics().SetPosition(id, transform.position);
+            ++corrected;
+        });
+    return corrected;
+}
+
 } // namespace aether
