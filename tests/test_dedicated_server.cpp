@@ -126,9 +126,11 @@ AETHER_TEST(DedicatedServer_RealUdpJoinReplicateRpc) {
     good.push_back(make("ada", "hunter2", 89, 1.5));
     good.push_back(make("ada", "hunter2", 89, 1.5)); // same name: the server makes it unique
     u32 accepted_snapshots = 0;
+    u32 populated_snapshots = 0;
     good[0]->OnSnapshotApplied([&](World& snapshot_world) {
         ++accepted_snapshots;
-        CHECK(snapshot_world.EntityCount() > 0);
+        // A valid initial snapshot can precede the first replicated spawn.
+        if (snapshot_world.EntityCount() > 0) ++populated_snapshots;
     });
     auto wrong_password = make("eve", "guess", 89, 1.0);
     auto wrong_build = make("old", "hunter2", 88, 1.0);
@@ -155,7 +157,7 @@ AETHER_TEST(DedicatedServer_RealUdpJoinReplicateRpc) {
         CHECK(r.bytes_received > 0 && r.bytes_sent > 0 && r.snapshots > 0);
         CHECK(r.Passed(true));
     }
-    CHECK(accepted_snapshots > 0 && refused_snapshots == 0);
+    CHECK(accepted_snapshots > 0 && populated_snapshots > 0 && refused_snapshots == 0);
     CHECK(good[0]->Result().player_name != good[1]->Result().player_name);
     CHECK(!wrong_password->Result().joined && wrong_password->Result().join_result == "WrongPassword");
     CHECK(!wrong_build->Result().joined && wrong_build->Result().join_result == "BuildMismatch");
