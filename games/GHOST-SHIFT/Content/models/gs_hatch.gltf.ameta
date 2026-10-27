@@ -6,5 +6,15 @@
   "importer_version": 4,
   "labels": [],
   "settings": {},
-  "source_hash": ""
+  "source_hash": "fnv1a64:f63fc661eaa26820",
+  "sub_assets": {
+    "material:0": {
+      "guid": "dd7c3d02-9a2a-86ea-8cb5-f7db0f52a8aa",
+      "importer": "Material"
+    },
+    "mesh:0": {
+      "guid": "30268341-bc38-822c-9382-c4306e4dfebd",
+      "importer": "Mesh"
+    }
+  }
 }
