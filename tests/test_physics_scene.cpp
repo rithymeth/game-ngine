@@ -431,9 +431,7 @@ AETHER_TEST(PhysicsScene_ReplicatedSnapshotCorrectsClientJoltBeforeInterpolation
     client_replication.OnSnapshotApplied([&](World& w) {
         // Replication has finished updating Transform and NetPhysicsState.
         // Keep the authoritative ECS pose; visual smoothing must never write it.
-        client_scene.Sync();
-        ReconcileAuthoritativePhysicsPosition<net::NetPhysicsState>(w, client_scene);
-        ApplyAuthoritativePhysicsMotion<net::NetPhysicsState>(w, client_scene);
+        ApplyAuthoritativePhysicsSnapshot<net::NetPhysicsState>(w, client_scene);
         ++applied;
         for (const auto& [id, e] : client_replication.Entities()) {
             (void)id;
