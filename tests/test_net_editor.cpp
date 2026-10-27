@@ -1,5 +1,9 @@
 #include "net/net_panels.h"
 #include "test_framework.h"
+#if AETHER_EDITOR_NET_PHYSICS
+#include "aether/net/physics_state.h"
+#include "aether/physics/physics_scene.h"
+#endif
 
 #include <imgui.h>
 
@@ -64,7 +68,93 @@ usize Networked(World& world) {
     return n;
 }
 
+#if AETHER_EDITOR_NET_PHYSICS
+Entity FindPhysicsProp(World& world) {
+    Entity found;
+    world.ForEachArchetype([&](const Archetype& archetype) {
+        if (!archetype.Has(GetComponentId<net::NetPhysicsState>()) ||
+            !archetype.Has(GetComponentId<RigidBody>())) return;
+        for (usize chunk = 0; chunk < archetype.ChunkCount(); ++chunk) {
+            if (archetype.ChunkEntityCount(chunk) > 0) {
+                found = archetype.EntityArray(chunk)[0];
+                return;
+            }
+        }
+    });
+    return found;
+}
+#endif
+
 } // namespace
+
+#if AETHER_EDITOR_NET_PHYSICS
+AETHER_TEST(NetPlay_OptInPhysicsReconcilesAcceptedSnapshots) {
+    RegisterPhysicsComponentSerializers();
+    World edited;
+    RigidBody body;
+    body.motion = BodyMotion::Dynamic;
+    SphereCollider sphere;
+    sphere.radius = 0.5f;
+    edited.CreateEntity(Transform{Vec3(0, 3, 0), Quaternion::Identity()}, body, sphere, net::NetPhysicsState{});
+
+    NetPlaySession play;
+    NetPlaySettings settings;
+    settings.clients = 1;
+    settings.spawn_players = false;
+    settings.authoritative_physics = true;
+    settings.conditions.latency = 0.03;
+    CHECK(play.Start(edited, settings));
+    if (!play.Running()) return;
+    PhysicsScene* server_scene = play.ServerPhysicsScene();
+    PhysicsScene* client_scene = play.ClientPhysicsScene(0);
+    CHECK(server_scene && client_scene);
+    if (!server_scene || !client_scene) return;
+    server_scene->Physics().SetGravity(Vec3{0, 0, 0});
+    for (int i = 0; i < 100; ++i) play.Tick(kStep);
+
+    World& server_world = play.ServerWorld();
+    World& client_world = play.ClientWorld(0);
+    const Entity server_prop = FindPhysicsProp(server_world);
+    const Entity client_prop = FindPhysicsProp(client_world);
+    CHECK(!server_prop.IsNull() && !client_prop.IsNull());
+    if (server_prop.IsNull() || client_prop.IsNull()) return;
+    const JPH::BodyID server_body = server_scene->BodyOf(server_prop);
+    const JPH::BodyID client_body = client_scene->BodyOf(client_prop);
+    CHECK(!server_body.IsInvalid() && !client_body.IsInvalid());
+    if (server_body.IsInvalid() || client_body.IsInvalid()) return;
+
+    // A large authoritative translation and rotation must update the client
+    // Jolt body, not merely the delayed visual interpolation buffer.
+    const Quaternion yaw = Quaternion::FromAxisAngle(Vec3{0, 1, 0}, 0.75f);
+    Transform* server_pose = server_world.GetComponent<Transform>(server_prop);
+    server_pose->position = Vec3{6, 3, 1};
+    server_pose->rotation = yaw;
+    for (int i = 0; i < 100; ++i) play.Tick(kStep);
+    const Transform* client_pose = client_world.GetComponent<Transform>(client_prop);
+    CHECK(client_pose != nullptr);
+    if (!client_pose) return;
+    CHECK(std::fabs(client_pose->position.x - 6.0f) < 0.03f);
+    CHECK(std::fabs(client_scene->Physics().GetPosition(client_body).x - 6.0f) < 0.03f);
+    CHECK(std::fabs(client_scene->Physics().GetPosition(client_body).z - 1.0f) < 0.03f);
+    CHECK(std::fabs(client_scene->Physics().GetRotation(client_body).y - yaw.y) < 0.03f);
+    CHECK(std::fabs(client_pose->rotation.y - yaw.y) < 0.03f);
+
+    // A sleeping server body stays asleep after accepted snapshots. The
+    // client does not step Jolt or write render interpolation into ECS.
+    server_scene->Physics().BodyInterface().DeactivateBody(server_body);
+    for (int i = 0; i < 50; ++i) play.Tick(kStep);
+    const auto* motion = client_world.GetComponent<net::NetPhysicsState>(client_prop);
+    CHECK(motion && motion->sleeping);
+    CHECK(!client_scene->Physics().BodyInterface().IsActive(client_body));
+    CHECK(std::fabs(client_world.GetComponent<Transform>(client_prop)->position.x - 6.0f) < 0.03f);
+
+    play.Stop();
+    CHECK(play.ServerPhysicsScene() == nullptr && play.ClientPhysicsScene(0) == nullptr);
+    settings.authoritative_physics = false;
+    CHECK(play.Start(edited, settings));
+    CHECK(play.ServerPhysicsScene() == nullptr && play.ClientPhysicsScene(0) == nullptr);
+}
+#endif
 
 AETHER_TEST(NetPlay_ListenServerAndClients) {
     World edited;

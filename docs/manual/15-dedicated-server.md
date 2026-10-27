@@ -285,3 +285,19 @@ scene, and existing single-player games (including Evervale) are unchanged.
 For physics entities, use `SnapshotInterpolation::SampleRenderTransform`
 for visual smoothing; never write its sampled pose back to the authoritative
 ECS `Transform` or the Jolt body.
+
+
+### Network Play-in-Editor physics opt-in
+
+In Network Play-in-Editor, enable **Authoritative Jolt physics (opt-in)**
+for a physics-enabled build. The simulated multiplayer server steps Jolt and
+captures `net::NetPhysicsState` before sending snapshots. Each client owns
+its own `PhysicsScene` and applies the accepted snapshot to Jolt (position,
+rotation, velocities, tracked pose and sleep state) before interpolation.
+Client Jolt is not stepped: this is authoritative correction, not prediction.
+`SnapshotInterpolation::SampleRenderTransform` remains the visual-only API
+for physics entities; its sampled pose must not be written into ECS or Jolt.
+
+This editor integration does not enable networking or physics reconciliation
+in the shipped single-player player. The real UDP `server::NetClient` still
+requires its game host to explicitly attach a `PhysicsScene` callback.
