@@ -4243,6 +4243,7 @@
   template<typename MotionState>inline usize ApplyAuthoritativePhysicsMotion(World&world,PhysicsScene&scene)
   template<typename MotionState>inline usize CaptureAuthoritativePhysicsState(World&world,PhysicsScene&scene)
   template<typename MotionState>inline usize ReconcileAuthoritativePhysicsPosition(World&world,PhysicsScene&scene,f32 tolerance=0.01f)
+  template<typename MotionState>inline usize ReconcileAuthoritativePhysicsPose(World&world,PhysicsScene&scene,f32 position_tolerance=0.01f,f32 rotation_tolerance_radians=0.01f)
 [physics/include/aether/physics/physics_scene.h] experimental
   type class PhysicsScene
   type enum class PhysicsEventType
@@ -4260,6 +4261,7 @@
   SceneHit RayCast(const Vec3&from,const Vec3&to,LayerMask layers=kAllLayers,Entity ignore=kNullEntity,bool include_triggers=false)const
   SceneHit SphereCast(f32 radius,const Vec3&from,const Vec3&to,LayerMask layers=kAllLayers,Entity ignore=kNullEntity,bool include_triggers=false)const
   bool Build(Entity entity,Tracked&tracked,std::string&problem)
+  bool ReconcileAuthoritativePose(Entity entity,f32 position_tolerance,f32 rotation_tolerance_radians)
   const char*PhysicsEventName(PhysicsEventType type)
   const std::unordered_map<u32,std::string>&Problems()const
   const std::vector<PhysicsEvent>&Events()const
