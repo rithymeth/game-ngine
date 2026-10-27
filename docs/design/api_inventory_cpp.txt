@@ -3998,6 +3998,7 @@
   using DespawnFn=std::function<void(World&,Entity)>
   using PriorityFn=std::function<f32(PeerId peer,Entity entity,f32 distance)>
   using RelevancyFn=std::function<bool(PeerId peer,Entity entity)>
+  using SnapshotAppliedFn=std::function<void(World&)>
   using SpawnFn=std::function<void(World&,Entity,const NetIdentity&)>
   usize EntityCount()const
   usize SnapshotBudget()const
@@ -4005,6 +4006,7 @@
   void ClearViewer(PeerId peer)
   void Gather(ReplicatedState&current)
   void OnDespawn(DespawnFn fn)
+  void OnSnapshotApplied(SnapshotAppliedFn fn)
   void OnSpawn(const std::string&archetype,SpawnFn fn)
   void PredictLocally(ComponentId component)
   void Reset(f64 now)
