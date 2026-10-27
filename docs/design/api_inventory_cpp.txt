@@ -4240,6 +4240,7 @@
   void QueueJobs(Job**jobs,JPH::uint num_jobs)override
   ~JoltJobSystemAdapter()override
 [physics/include/aether/physics/net_physics_bridge.h] experimental
+  template<typename MotionState>inline void ApplyAuthoritativePhysicsSnapshot(World&world,PhysicsScene&scene)
   template<typename MotionState>inline usize ApplyAuthoritativePhysicsMotion(World&world,PhysicsScene&scene)
   template<typename MotionState>inline usize CaptureAuthoritativePhysicsState(World&world,PhysicsScene&scene)
   template<typename MotionState>inline usize ReconcileAuthoritativePhysicsPose(World&world,PhysicsScene&scene,f32 position_tolerance=0.01f,f32 rotation_tolerance_radians=0.01f)
