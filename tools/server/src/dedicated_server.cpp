@@ -352,8 +352,14 @@ bool NetClient::Start(const NetClientConfig& config, f64 now, std::string* error
 void NetClient::Tick(f64 now) {
     if (done_ || !host_) return;
     host_->Update(now);
-    for (const NetEvent& e : host_->TakeEvents())
-        if (!session_->HandleEvent(e) && !replication_->HandleEvent(e)) rpc_->HandleEvent(e);
+    for (const NetEvent& e : host_->TakeEvents()) {
+        if (session_->HandleEvent(e)) continue;
+        // Never apply replicated state (or invoke host snapshot callbacks)
+        // until the session has successfully joined. A refused client may
+        // receive an early empty snapshot while the handshake is in flight.
+        if (session_->GetState() != SessionClient::State::Joined) continue;
+        if (!replication_->HandleEvent(e)) rpc_->HandleEvent(e);
+    }
     const SessionClient::State state = session_->GetState();
     if (state == SessionClient::State::Failed) {
         result_.join_result = JoinResultName(session_->Result());
