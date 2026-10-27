@@ -19,7 +19,7 @@ Stop conditions: existing production checks regress; state authority or persiste
 ## Work ledger (ordered by dependency)
 | ID | Owner | Engine change / integration | Acceptance evidence | Status |
 |---|---|---|---|---|
-| GS-00 | Architect | Inventory current multiplayer/RPC, Jolt, AI/Nav, editor, audio and packaging APIs; map reuse vs gaps | Code references and tests on current master | queued |
+| GS-00 | Architect | Inventory current multiplayer/RPC, Jolt, AI/Nav, editor, audio and packaging APIs; map reuse vs gaps | Code references and tests on current master | done — [GHOST_SHIFT_INVENTORY.md](GHOST_SHIFT_INVENTORY.md) |
 | GS-01 | Network | Host-and-join session lifecycle, lobby, timeout and reconnect test harness | Two remote clients join one host; logs include session IDs | queued |
 | GS-02 | Network/security | Authority checks for tool requests, ownership and rate limiting | Malformed/duplicate/late RPCs rejected without state corruption | queued |
 | GS-03 | Gameplay | Replicated contamination state with idempotent vacuum action | All peers agree on removed residue and battery/tank usage | queued |

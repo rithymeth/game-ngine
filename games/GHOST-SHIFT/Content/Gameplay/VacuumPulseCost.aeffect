@@ -1,0 +1,16 @@
+{
+  "name": "VacuumPulseCost",
+  "duration_policy": "instant",
+  "modifiers": [
+    {
+      "attribute": "Battery",
+      "op": "add",
+      "magnitude": -2
+    },
+    {
+      "attribute": "Tank",
+      "op": "add",
+      "magnitude": 1
+    }
+  ]
+}

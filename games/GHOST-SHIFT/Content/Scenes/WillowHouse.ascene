@@ -1,0 +1,3148 @@
+{
+  "$type": "Scene",
+  "$version": 1,
+  "entities": [
+    {
+      "guid": "9be22acc-cd17-5dc0-9d91-27bce60ded6f",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            -0.38,
+            0.2,
+            0.08,
+            0.9
+          ]
+        },
+        "DirectionalLight": {
+          "$v": 1,
+          "color": [
+            0.55,
+            0.62,
+            0.9
+          ],
+          "intensity": 0.9,
+          "cast_shadows": false
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Moon"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "d4ad8bb1-5496-5fc1-a83a-41a862a9a41c",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "SkyLight": {
+          "$v": 1,
+          "color": [
+            0.25,
+            0.28,
+            0.45
+          ],
+          "intensity": 0.5
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Sky"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "2c3db4b8-bd5e-526b-867d-af91e997f188",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            1.65,
+            4.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "Camera": {
+          "$v": 1,
+          "projection": "Perspective",
+          "fov_degrees": 75.0,
+          "near_plane": 0.05,
+          "far_plane": 300.0,
+          "ortho_height": 10.0,
+          "priority": 0
+        },
+        "AudioListener": {
+          "$v": 1,
+          "active": true
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "MainCamera"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "d4cfd9cd-91ee-5a37-b877-4e59edaf6379",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "AudioSource": {
+          "$v": 1,
+          "cue": "Audio/ambient.acue",
+          "auto_play": true,
+          "volume_db": 0,
+          "pitch": 1
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "AmbientAudio"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "cce3b5b7-2e29-5bd5-8254-34c745827a7d",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "AudioSource": {
+          "$v": 1,
+          "cue": "Audio/vacuum.acue",
+          "auto_play": false,
+          "volume_db": 0,
+          "pitch": 1
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "SfxVacuum"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "9e0f6a92-8093-5776-b115-a05e1ffff6b3",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "AudioSource": {
+          "$v": 1,
+          "cue": "Audio/stun.acue",
+          "auto_play": false,
+          "volume_db": 0,
+          "pitch": 1
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "SfxStun"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "ea2ac3ec-ed5e-5bb0-9fd9-d7d3aa3d3860",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            0.05,
+            4.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "CharacterMovement": {
+          "$v": 1,
+          "acceleration": 24.0,
+          "air_acceleration": 6.0,
+          "air_control": 0.4,
+          "braking": 30.0,
+          "coyote_time": 0.1,
+          "flying": false,
+          "gravity_scale": 1.0,
+          "height": 1.75,
+          "jump_buffer": 0.1,
+          "jump_velocity": 4.0,
+          "mass": 75.0,
+          "max_slope_degrees": 50.0,
+          "radius": 0.3,
+          "run_speed": 3.6,
+          "step_height": 0.35,
+          "walk_speed": 3.6
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "e5fa0bce-b3d1-538a-96fb-e46774e5f2c5",
+          "properties": []
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Player"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "aa11fc47-f342-50a0-a870-72f21d7e623a",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            -0.25,
+            10.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            40.0,
+            0.5,
+            20.0
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "67951e04-c1fa-57d8-9dc3-5231a17cb06f",
+          "asset_path": "models/gs_lawn.gltf"
+        }
+      }
+    },
+    {
+      "guid": "993a8331-20bd-58ed-bca8-b4ffec5aa98a",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            -0.25,
+            10.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            20.0,
+            0.25,
+            10.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "NavWalkable"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "5ce9f0f3-35fc-52fd-991b-1d6ead83ad7a",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            1.1,
+            9.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            2.2,
+            2.2,
+            4.800000000000001
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "85cc5ad9-0c6f-558d-8b8f-ab4be2c08501",
+          "asset_path": "models/gs_van.gltf"
+        }
+      }
+    },
+    {
+      "guid": "bcbbfc66-9d69-5685-ac1a-4bcbd91df68c",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            1.1,
+            9.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.1,
+            1.1,
+            2.4000000000000004
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        }
+      }
+    },
+    {
+      "guid": "7e278377-416a-54f3-886d-d8e094f7bb21",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            0.0,
+            6.4
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Van"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "20824a17-ec5f-5629-9b53-ba7d4ff4c9be",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            -0.15,
+            -4.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            12.0,
+            0.3,
+            8.0
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "5c86a6d1-e787-5d93-9b52-d17e5e5d09a7",
+          "asset_path": "models/gs_floor.gltf"
+        }
+      }
+    },
+    {
+      "guid": "1a182a64-6f5c-5048-8d90-aaa8daf64841",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            -0.15,
+            -4.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            6.0,
+            0.15,
+            4.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "NavWalkable"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "eaa7b976-cc48-5886-a951-512062b4ab36",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -1.5,
+            -0.15,
+            -12.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            9.0,
+            0.3,
+            8.0
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "5c86a6d1-e787-5d93-9b52-d17e5e5d09a7",
+          "asset_path": "models/gs_floor.gltf"
+        }
+      }
+    },
+    {
+      "guid": "7040cb9b-6d3c-5b3e-9d16-778d6642637c",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -1.5,
+            -0.15,
+            -12.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            4.5,
+            0.15,
+            4.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "NavWalkable"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "523fa344-9be1-530e-b8b5-fa14fa1e8e42",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.5,
+            -0.15,
+            -9.5
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            3.0,
+            0.3,
+            3.0
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "5c86a6d1-e787-5d93-9b52-d17e5e5d09a7",
+          "asset_path": "models/gs_floor.gltf"
+        }
+      }
+    },
+    {
+      "guid": "8f39036c-507e-547f-9ee0-e62af2c4552d",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.5,
+            -0.15,
+            -9.5
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.5,
+            0.15,
+            1.5
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "NavWalkable"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "5194462b-442c-55a6-8b3a-766c20bcc828",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -3.5,
+            1.5,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            5.0,
+            3.0,
+            0.2
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "a73639e4-f8b1-5d96-a40d-73d4de208f7c",
+          "asset_path": "models/gs_wall.gltf"
+        }
+      }
+    },
+    {
+      "guid": "66690bde-9e97-5c72-937d-d5d1b64beb79",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -3.5,
+            1.5,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            2.5,
+            1.5,
+            0.1
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        }
+      }
+    },
+    {
+      "guid": "756237dd-872a-5eb0-8c1f-3cc37956bfdb",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            3.5,
+            1.5,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            5.0,
+            3.0,
+            0.2
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "a73639e4-f8b1-5d96-a40d-73d4de208f7c",
+          "asset_path": "models/gs_wall.gltf"
+        }
+      }
+    },
+    {
+      "guid": "65b9e7ac-a19e-5ff7-9223-6893dea796fe",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            3.5,
+            1.5,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            2.5,
+            1.5,
+            0.1
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        }
+      }
+    },
+    {
+      "guid": "25e41a7c-9331-5941-9e2f-1884f56f3edb",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            0.0,
+            -16.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            12.0,
+            6.0,
+            0.20000000000000107
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "a73639e4-f8b1-5d96-a40d-73d4de208f7c",
+          "asset_path": "models/gs_wall.gltf"
+        }
+      }
+    },
+    {
+      "guid": "b7463edc-f706-5863-9536-e3ff3d90a776",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            0.0,
+            -16.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            6.0,
+            3.0,
+            0.10000000000000053
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        }
+      }
+    },
+    {
+      "guid": "9d7ccd63-43db-5fc0-8a7a-c2c0d0fae35e",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -6.0,
+            0.0,
+            -8.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            0.1999999999999993,
+            6.0,
+            16.0
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "a73639e4-f8b1-5d96-a40d-73d4de208f7c",
+          "asset_path": "models/gs_wall.gltf"
+        }
+      }
+    },
+    {
+      "guid": "a500c3b6-de0d-5693-a9c2-9bdc5caf7c05",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -6.0,
+            0.0,
+            -8.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.09999999999999964,
+            3.0,
+            8.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        }
+      }
+    },
+    {
+      "guid": "502a7558-1c29-5fad-8598-c8e09e5ac0e9",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            6.0,
+            0.0,
+            -8.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            0.1999999999999993,
+            6.0,
+            16.0
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "a73639e4-f8b1-5d96-a40d-73d4de208f7c",
+          "asset_path": "models/gs_wall.gltf"
+        }
+      }
+    },
+    {
+      "guid": "925691a1-1e70-5b1f-9120-7fcfb4a27191",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            6.0,
+            0.0,
+            -8.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.09999999999999964,
+            3.0,
+            8.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        }
+      }
+    },
+    {
+      "guid": "0599b873-518c-5f72-b4f9-21c2b425c56a",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -3.5,
+            1.5,
+            -8.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            5.0,
+            3.0,
+            0.1999999999999993
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "a73639e4-f8b1-5d96-a40d-73d4de208f7c",
+          "asset_path": "models/gs_wall.gltf"
+        }
+      }
+    },
+    {
+      "guid": "30a71bfd-70a5-5c97-a951-fc7da48cf7b9",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -3.5,
+            1.5,
+            -8.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            2.5,
+            1.5,
+            0.09999999999999964
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        }
+      }
+    },
+    {
+      "guid": "74190bfd-e53a-5bf5-9d5e-340debe06991",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            3.5,
+            1.5,
+            -8.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            5.0,
+            3.0,
+            0.1999999999999993
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "a73639e4-f8b1-5d96-a40d-73d4de208f7c",
+          "asset_path": "models/gs_wall.gltf"
+        }
+      }
+    },
+    {
+      "guid": "45841073-b09f-587d-b919-15672b95886c",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            3.5,
+            1.5,
+            -8.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            2.5,
+            1.5,
+            0.09999999999999964
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        }
+      }
+    },
+    {
+      "guid": "0b4d0d00-3eee-5c14-b94a-cb100365e2f3",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            2.6,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            2.0,
+            0.7999999999999998,
+            0.2
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "a73639e4-f8b1-5d96-a40d-73d4de208f7c",
+          "asset_path": "models/gs_wall.gltf"
+        }
+      }
+    },
+    {
+      "guid": "5212717c-ff85-5247-b857-19e4ff79e1a8",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            2.6,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.0,
+            0.3999999999999999,
+            0.1
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        }
+      }
+    },
+    {
+      "guid": "518cedda-2d8c-5466-a4c6-bb4c0b79bced",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            2.6,
+            -8.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            2.0,
+            0.7999999999999998,
+            0.1999999999999993
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "a73639e4-f8b1-5d96-a40d-73d4de208f7c",
+          "asset_path": "models/gs_wall.gltf"
+        }
+      }
+    },
+    {
+      "guid": "8f2462b1-bef3-5cd8-af2f-38069b91ce23",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            2.6,
+            -8.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.0,
+            0.3999999999999999,
+            0.09999999999999964
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        }
+      }
+    },
+    {
+      "guid": "f0c41cc8-a833-546b-b1e6-09a4b1126562",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -1.3,
+            3.1,
+            -8.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            9.4,
+            0.20000000000000018,
+            16.0
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "5c86a6d1-e787-5d93-9b52-d17e5e5d09a7",
+          "asset_path": "models/gs_floor.gltf"
+        }
+      }
+    },
+    {
+      "guid": "c732024b-3b26-5064-bd15-8aaa376702bf",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -1.3,
+            3.1,
+            -8.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            4.7,
+            0.10000000000000009,
+            8.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        }
+      }
+    },
+    {
+      "guid": "04026b7a-f25e-59f8-b5e8-6efa67502d27",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            5.3,
+            3.1,
+            -8.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.4000000000000004,
+            0.20000000000000018,
+            16.0
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "5c86a6d1-e787-5d93-9b52-d17e5e5d09a7",
+          "asset_path": "models/gs_floor.gltf"
+        }
+      }
+    },
+    {
+      "guid": "d3ce09ed-207d-594b-a7ab-11225b704382",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            5.3,
+            3.1,
+            -8.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.7000000000000002,
+            0.10000000000000009,
+            8.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        }
+      }
+    },
+    {
+      "guid": "529a393f-663d-54a3-b26d-7d8520a25646",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.0,
+            3.1,
+            -11.3
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.1999999999999997,
+            0.20000000000000018,
+            9.4
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "5c86a6d1-e787-5d93-9b52-d17e5e5d09a7",
+          "asset_path": "models/gs_floor.gltf"
+        }
+      }
+    },
+    {
+      "guid": "8462d94d-a6ef-5498-8eb6-c60926190f40",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.0,
+            3.1,
+            -11.3
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.5999999999999999,
+            0.10000000000000009,
+            4.7
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        }
+      }
+    },
+    {
+      "guid": "a2ce80ba-8ad4-5af3-8595-eaa5a5bc3bea",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.0,
+            3.1,
+            -2.7
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.1999999999999997,
+            0.20000000000000018,
+            5.4
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "5c86a6d1-e787-5d93-9b52-d17e5e5d09a7",
+          "asset_path": "models/gs_floor.gltf"
+        }
+      }
+    },
+    {
+      "guid": "fe7dbe8f-f327-5165-b7a9-5ffd07ec3294",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.0,
+            3.1,
+            -2.7
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.5999999999999999,
+            0.10000000000000009,
+            2.7
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        }
+      }
+    },
+    {
+      "guid": "de1f04d3-cbc8-5ce0-802d-3e104cebc96b",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.0,
+            3.2,
+            -6.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.1999999999999997,
+            0.10000000000000009,
+            1.1999999999999993
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "7bea3fdc-c4c4-5fcd-817f-06ff2dd4a605",
+          "asset_path": "models/gs_hatch.gltf"
+        }
+      }
+    },
+    {
+      "guid": "de6de5e3-ec71-5702-b014-2c58541b8e7c",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.0,
+            3.0,
+            -6.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "AtticHatch"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "0b15b280-85ce-5cf3-8699-8f36fd7300c8",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            -3.15,
+            -12.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            12.0,
+            0.2999999999999998,
+            8.0
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "854f4568-96ce-54ef-ac76-bf584f513e33",
+          "asset_path": "models/gs_basement.gltf"
+        }
+      }
+    },
+    {
+      "guid": "885416ab-5c25-53a4-8579-4fa63adbed81",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            -3.15,
+            -12.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            6.0,
+            0.1499999999999999,
+            4.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "NavWalkable"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "d579235f-6f07-5bec-b6cd-b2804c648875",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            -1.5,
+            -8.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            12.0,
+            3.0,
+            0.1999999999999993
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "854f4568-96ce-54ef-ac76-bf584f513e33",
+          "asset_path": "models/gs_basement.gltf"
+        }
+      }
+    },
+    {
+      "guid": "27355c2d-79b8-58b2-8b13-78b090e98c79",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            -1.5,
+            -8.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            6.0,
+            1.5,
+            0.09999999999999964
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        }
+      }
+    },
+    {
+      "guid": "d957fb51-7e91-5b99-a8dd-3d760b25ff0e",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.5,
+            -1.65,
+            -11.25
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            2.5999999999999996,
+            2.7,
+            0.5
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "6617b4ea-e4ac-5998-b153-a272ffd80ff0",
+          "asset_path": "models/gs_stairs.gltf"
+        }
+      }
+    },
+    {
+      "guid": "d3c87036-8e9c-5c60-add7-04c7168ffaee",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.5,
+            -1.65,
+            -11.25
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2999999999999998,
+            1.35,
+            0.25
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "NavWalkable"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "f5a2602a-3f74-5660-bcc3-0a72cc6159aa",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.5,
+            -1.8,
+            -11.75
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            2.5999999999999996,
+            2.4,
+            0.5
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "6617b4ea-e4ac-5998-b153-a272ffd80ff0",
+          "asset_path": "models/gs_stairs.gltf"
+        }
+      }
+    },
+    {
+      "guid": "02321563-705d-5c71-ac4c-323aba55d62d",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.5,
+            -1.8,
+            -11.75
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2999999999999998,
+            1.2,
+            0.25
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "NavWalkable"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "5b4ea4c3-311c-59de-b578-fd21adf1bf50",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.5,
+            -1.95,
+            -12.25
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            2.5999999999999996,
+            2.1,
+            0.5
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "6617b4ea-e4ac-5998-b153-a272ffd80ff0",
+          "asset_path": "models/gs_stairs.gltf"
+        }
+      }
+    },
+    {
+      "guid": "f1920625-ff5a-5fbf-bbf9-ddd4171d1d4c",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.5,
+            -1.95,
+            -12.25
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2999999999999998,
+            1.05,
+            0.25
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "NavWalkable"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "dd60c64e-c6ad-5a78-bcfb-3c8dcd8ea44e",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.5,
+            -2.1,
+            -12.75
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            2.5999999999999996,
+            1.8,
+            0.5
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "6617b4ea-e4ac-5998-b153-a272ffd80ff0",
+          "asset_path": "models/gs_stairs.gltf"
+        }
+      }
+    },
+    {
+      "guid": "d48df6a5-5f0a-569e-8d77-76bfab68b4be",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.5,
+            -2.1,
+            -12.75
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2999999999999998,
+            0.9,
+            0.25
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "NavWalkable"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "cf699cd0-dc46-5e9f-9dad-0adc48d9eabe",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.5,
+            -2.25,
+            -13.25
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            2.5999999999999996,
+            1.5,
+            0.5
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "6617b4ea-e4ac-5998-b153-a272ffd80ff0",
+          "asset_path": "models/gs_stairs.gltf"
+        }
+      }
+    },
+    {
+      "guid": "e2737ec4-6b5e-5e78-a49d-3220c1d7ca88",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.5,
+            -2.25,
+            -13.25
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2999999999999998,
+            0.75,
+            0.25
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "NavWalkable"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "5ba268af-413a-52ef-a1d2-11971398f137",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.5,
+            -2.4,
+            -13.75
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            2.5999999999999996,
+            1.2000000000000002,
+            0.5
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "6617b4ea-e4ac-5998-b153-a272ffd80ff0",
+          "asset_path": "models/gs_stairs.gltf"
+        }
+      }
+    },
+    {
+      "guid": "70ecda19-5fc6-59a9-854c-8120e410f4f5",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.5,
+            -2.4,
+            -13.75
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2999999999999998,
+            0.6000000000000001,
+            0.25
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "NavWalkable"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "93fe6a8b-ad0f-549d-b96e-568079a6c017",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.5,
+            -2.55,
+            -14.25
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            2.5999999999999996,
+            0.8999999999999999,
+            0.5
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "6617b4ea-e4ac-5998-b153-a272ffd80ff0",
+          "asset_path": "models/gs_stairs.gltf"
+        }
+      }
+    },
+    {
+      "guid": "9e1e6ba2-b372-51dd-aefd-91a5e042c656",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.5,
+            -2.55,
+            -14.25
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2999999999999998,
+            0.44999999999999996,
+            0.25
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "NavWalkable"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "d12ffa35-1873-5f52-af8a-8f28bf22e5e3",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.5,
+            -2.7,
+            -14.75
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            2.5999999999999996,
+            0.6000000000000001,
+            0.5
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "6617b4ea-e4ac-5998-b153-a272ffd80ff0",
+          "asset_path": "models/gs_stairs.gltf"
+        }
+      }
+    },
+    {
+      "guid": "5f8b4435-d146-5a2d-a34a-59d934db3110",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.5,
+            -2.7,
+            -14.75
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2999999999999998,
+            0.30000000000000004,
+            0.25
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "NavWalkable"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "8aa9317c-2be6-5a69-8c2f-2eff7822701d",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.5,
+            -2.8499999999999996,
+            -15.25
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            2.5999999999999996,
+            0.30000000000000027,
+            0.5
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "6617b4ea-e4ac-5998-b153-a272ffd80ff0",
+          "asset_path": "models/gs_stairs.gltf"
+        }
+      }
+    },
+    {
+      "guid": "ed205aed-a8fe-57be-8334-2ae1fc13c33b",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.5,
+            -2.8499999999999996,
+            -15.25
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2999999999999998,
+            0.15000000000000013,
+            0.25
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "NavWalkable"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "7bfba045-d23d-5f9e-85d5-240304433284",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.5,
+            -3.0,
+            -15.75
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            2.5999999999999996,
+            0.0,
+            0.5
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "6617b4ea-e4ac-5998-b153-a272ffd80ff0",
+          "asset_path": "models/gs_stairs.gltf"
+        }
+      }
+    },
+    {
+      "guid": "e228f738-63c6-5d36-b4b5-7e4e3057a310",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.5,
+            -3.0,
+            -15.75
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2999999999999998,
+            0.0,
+            0.25
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "NavWalkable"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "a2fbe6a3-0730-5810-9ea3-0d7220db94c8",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -5.1,
+            0.4,
+            -1.55
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.3999999999999995,
+            0.8,
+            1.9
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "aa73474e-2a49-5115-884f-3c5c37c4422f",
+          "asset_path": "models/gs_furniture.gltf"
+        }
+      }
+    },
+    {
+      "guid": "76e22e57-095a-5e01-952f-c972708ff947",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -5.1,
+            0.4,
+            -1.55
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.6999999999999997,
+            0.4,
+            0.95
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        }
+      }
+    },
+    {
+      "guid": "b9e1be3d-a100-50c7-b8f1-43ee45271d6e",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            0.4,
+            -12.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            2.0,
+            0.8,
+            1.0
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "aa73474e-2a49-5115-884f-3c5c37c4422f",
+          "asset_path": "models/gs_furniture.gltf"
+        }
+      }
+    },
+    {
+      "guid": "46201d98-eee1-59a1-9d02-a96434a0147f",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            0.4,
+            -12.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.0,
+            0.4,
+            0.5
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        }
+      }
+    },
+    {
+      "guid": "06f63d33-f146-5305-bc0b-7fad69ca17e9",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -5.4,
+            1.0,
+            -15.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            0.7999999999999998,
+            2.0,
+            1.6000000000000014
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "aa73474e-2a49-5115-884f-3c5c37c4422f",
+          "asset_path": "models/gs_furniture.gltf"
+        }
+      }
+    },
+    {
+      "guid": "499919c7-e246-5c5c-bae2-58edf6d25bf1",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -5.4,
+            1.0,
+            -15.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.3999999999999999,
+            1.0,
+            0.8000000000000007
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        }
+      }
+    },
+    {
+      "guid": "2823cbe8-440e-50b3-b515-4a1c9d3853b2",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -5.5,
+            -2.1,
+            -9.5
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            0.5999999999999996,
+            1.8,
+            2.0
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "aa73474e-2a49-5115-884f-3c5c37c4422f",
+          "asset_path": "models/gs_furniture.gltf"
+        }
+      }
+    },
+    {
+      "guid": "4a4d0ca5-46b2-570c-84c8-0461e924c924",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -5.5,
+            -2.1,
+            -9.5
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.2999999999999998,
+            0.9,
+            1.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        }
+      }
+    },
+    {
+      "guid": "252c1482-c108-5756-9807-1761a31a4eff",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -3.0,
+            0.02,
+            -3.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.4,
+            0.04,
+            1.4
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "75758539-2f1c-5c72-9324-e29b5d9b7b6d",
+          "asset_path": "models/gs_ectoplasm.gltf"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Ectoplasm",
+            "Patch1"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "bcb45c12-5ce6-527f-a997-efc03d1376a7",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            3.0,
+            0.02,
+            -5.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.4,
+            0.04,
+            1.4
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "75758539-2f1c-5c72-9324-e29b5d9b7b6d",
+          "asset_path": "models/gs_ectoplasm.gltf"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Ectoplasm",
+            "Patch2"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "43a87468-9c16-594f-979c-023e3285ee77",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -3.0,
+            0.02,
+            -12.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.4,
+            0.04,
+            1.4
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "75758539-2f1c-5c72-9324-e29b5d9b7b6d",
+          "asset_path": "models/gs_ectoplasm.gltf"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Ectoplasm",
+            "Patch3"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "c971eafd-11b6-5285-b7d1-95896a54943d",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            -2.98,
+            -13.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.4,
+            0.04,
+            1.4
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "75758539-2f1c-5c72-9324-e29b5d9b7b6d",
+          "asset_path": "models/gs_ectoplasm.gltf"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Ectoplasm",
+            "Patch4"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "0ac7a72f-ed04-53f6-b684-1789cf6a10d4",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -4.5,
+            0.02,
+            -6.5
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            0.03,
+            1.0
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "49473f25-f19a-58d6-b5c8-cf598dd74895",
+          "asset_path": "models/gs_stain.gltf"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "CursedStain"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "71641dd5-499c-5b80-92a1-735eb517a4e7",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -5.0,
+            0.0,
+            -1.5
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "HidingSpot",
+            "Hiding1",
+            "CouchSpot"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "605d2409-bab0-51c7-9b47-1a39751a5fb7",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -5.0,
+            0.0,
+            -15.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "HidingSpot",
+            "Hiding2",
+            "KitchenCupboardSpot"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "16a96693-dde0-5936-9723-1f031ad3a5df",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -5.0,
+            -3.0,
+            -9.5
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "HidingSpot",
+            "Hiding3",
+            "BasementShelfSpot"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "206a344b-e699-5a79-af31-e0afe405074f",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.0,
+            3.0,
+            -6.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "HidingSpot",
+            "Hiding4",
+            "AtticHatchSpot"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "1ba900df-3708-5874-a9ba-9ed9815221aa",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            1.2,
+            -4.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "PranksterWaypoint",
+            "Waypoint1"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "0275220e-5ecd-5386-91c3-7c0fcb6a20e6",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            -3.0,
+            1.2,
+            -10.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "PranksterWaypoint",
+            "Waypoint2"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "4ecd81bb-0004-57d5-ab79-fb6713c02f55",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            2.0,
+            1.2,
+            -14.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "PranksterWaypoint",
+            "Waypoint3"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "41ceba30-6d3a-58f3-b6f5-81aa96bf5f41",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            -1.8,
+            -12.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "PranksterWaypoint",
+            "Waypoint4"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "4940a6a9-945c-56fe-b6fe-f343c86b286a",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            2.5,
+            1.2,
+            -2.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "PranksterWaypoint",
+            "Waypoint5"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "9aeac6df-4ccb-5e1f-a39f-eee72f7f2ecf",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            -100.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            0.5,
+            0.3,
+            0.9
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "18138b06-f096-5b27-ac91-4d69b6acb19e",
+          "asset_path": "models/gs_tool.gltf"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "StolenTool"
+          ]
+        }
+      }
+    },
+    {
+      "guid": "b0ebb98e-aa2c-5ab3-8b10-3a64c647dc0c",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            0.0,
+            1.2,
+            -4.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            0.6,
+            0.9,
+            0.6
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "5b9b99f7-d082-5d22-b5a9-2563ddef9df5",
+          "asset_path": "models/gs_ghost.gltf"
+        },
+        "PointLight": {
+          "$v": 1,
+          "color": [
+            0.4,
+            1.0,
+            0.7
+          ],
+          "intensity": 0.0,
+          "range": 8.0,
+          "cast_shadows": false
+        },
+        "AudioSource": {
+          "$v": 1,
+          "cue": "Audio/moan.acue",
+          "auto_play": false,
+          "volume_db": 0,
+          "pitch": 1
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "b386cbfa-0b3b-5547-b124-74bec83ca125",
+          "properties": []
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Prankster",
+            "Ghost"
+          ]
+        }
+      }
+    }
+  ]
+}
