@@ -1,8 +1,13 @@
 #pragma once
 
+#include "aether/physics/constraints.h"
 #include "aether/physics/physics_world.h"
 
+#include <Jolt/Physics/Constraints/SixDOFConstraint.h>
+#include <Jolt/Physics/Constraints/TwoBodyConstraint.h>
+
 #include <functional>
+#include <map>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -102,6 +107,34 @@ public:
     void AdoptBody(JPH::BodyID body, Entity entity);
     void ReleaseBody(JPH::BodyID body);
 
+    // --- Constraints (docs/design/PHYSICS_CONSTRAINTS.md) -------------------
+    // PhysicsJoint components are kept in step by Sync, like bodies. Runtime
+    // grabs: `holder` pulls `object`'s body at `world_point` toward a target
+    // (initially that point) with a spring capped at settings.max_force;
+    // several grabs on one body add up. Returns kInvalidGrab when the object
+    // has no dynamic body. A grab ends with Release, ReleaseHolder, a break,
+    // or its body going away.
+    GrabId Grab(Entity object, Entity holder, const Vec3& world_point, const GrabSettings& settings = {});
+    bool SetGrabTarget(GrabId grab, const Vec3& target);
+    bool Release(GrabId grab);
+    usize ReleaseHolder(Entity holder); // every grab the holder has; returns how many
+    usize GrabCount(Entity object) const;
+    bool IsGrabActive(GrabId grab) const;
+    usize JointCount() const; // joints with a live Jolt constraint
+
+    // Called for each break after the step (before contact events), in a
+    // deterministic order: locks then joints by entity index, then grabs by id.
+    using ConstraintBreakHandler = std::function<void(const ConstraintBreakEvent&)>;
+    void SetConstraintBreakHandler(ConstraintBreakHandler handler) { break_handler_ = std::move(handler); }
+    const std::vector<ConstraintBreakEvent>& ConstraintBreaks() const { return breaks_; } // the last Step's
+
+    // Networking: the joints' live state plus the poses and velocities of
+    // the bodies they (and grabs) move. Apply sets the PhysicsJoint fields and
+    // the bodies at once; the next Step applies the joint changes.
+    ConstraintSnapshot CaptureConstraintState() const;
+    void ApplyConstraintState(const ConstraintSnapshot& snapshot);
+
+    World& EcsWorld() const { return world_; }
     PhysicsWorld& Physics() const { return physics_; }
     JPH::BodyID BodyOf(Entity entity) const; // invalid if it has none
     Entity EntityOf(JPH::BodyID body) const; // null if it isn't one of ours
@@ -124,7 +157,35 @@ private:
         BodyMotion motion = BodyMotion::Static;
     };
 
+    struct JointTracked {
+        Entity entity;
+        JPH::Ref<JPH::TwoBodyConstraint> constraint;
+        JPH::Ref<JPH::TwoBodyConstraint> lock;
+        JPH::BodyID body1, body2; // body1 is the connected one (invalid: the world)
+        Entity other;
+        std::vector<u8> settings;
+        bool enabled = true;
+        f32 motor_target = 0.0f;
+    };
+    struct GrabTracked {
+        Entity object, holder;
+        JPH::BodyID body;
+        JPH::Ref<JPH::SixDOFConstraint> constraint;
+        Vec3 origin; // constraint-space origin (the first grab point), world space
+        Vec3 target;
+        Vec3 local_point; // the grabbed point in the body's space
+        GrabSettings settings;
+    };
+
     bool Build(Entity entity, Tracked& tracked, std::string& problem);
+    void SyncJoints();
+    bool CreateJoint(JointTracked& joint, const PhysicsJoint& component);
+    void RemoveJointConstraints(JointTracked& joint);
+    void RemoveLock(JointTracked& joint);
+    void DetachBody(JPH::BodyID body); // removes every constraint on it, before it is destroyed
+    void RemoveAllConstraints();
+    void CheckBreaks(f32 dt);
+    Entity FindByGuid(const EntityGuid& guid) const;
     void Destroy(Tracked& tracked);
     void Dispatch();
     Entity Owner(JPH::BodyID body) const; // ours, or destroyed since the last dispatch
@@ -137,6 +198,12 @@ private:
     std::unordered_map<u32, u64> graveyard_; // destroyed bodies -> entity, until their End is dispatched
     EventHandler handler_;
     std::vector<PhysicsEvent> events_;
+    std::map<u32, JointTracked> joints_; // by entity index: deterministic order
+    std::map<GrabId, GrabTracked> grabs_;
+    GrabId next_grab_ = 1;
+    std::unordered_map<EntityGuid, Entity> guids_; // rebuilt each Sync for joints
+    ConstraintBreakHandler break_handler_;
+    std::vector<ConstraintBreakEvent> breaks_;
 };
 
 } // namespace aether
