@@ -1,0 +1,10 @@
+{
+  "$type": "AssetMeta",
+  "$v": 1,
+  "guid": "c31f4c0c-afe6-5daf-a8a2-f09c3f72f628",
+  "importer": "GameplayAbility",
+  "importer_version": 1,
+  "labels": [],
+  "settings": {},
+  "source_hash": ""
+}

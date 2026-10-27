@@ -1,0 +1,35 @@
+{
+  "name": "moan",
+  "nodes": [
+    {
+      "id": 1,
+      "pos": [
+        0.0,
+        0.0
+      ],
+      "sound": "Audio/moan.wav",
+      "type": "Wave",
+      "looping": false
+    }
+  ],
+  "output": {
+    "attenuation": {
+      "lowpass_at_max_hz": 0.0,
+      "max_distance": 25.0,
+      "min_distance": 1.0,
+      "model": "Inverse",
+      "rolloff": 1.0
+    },
+    "bus": "SFX",
+    "doppler": 1.0,
+    "occlusion": false,
+    "pitch": 1.0,
+    "priority": 128,
+    "spatial": true,
+    "spatial_blend": 1.0,
+    "virtual": "Continue",
+    "volume_db": -2.0
+  },
+  "root": 1,
+  "version": 1
+}
