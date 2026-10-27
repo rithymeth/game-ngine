@@ -484,3 +484,44 @@ AETHER_TEST(PhysicsScene_ReplicatedSnapshotCorrectsClientJoltBeforeInterpolation
             AETHER_CHECK(!client_physics.BodyInterface().IsActive(body));
     }
 }
+
+
+AETHER_TEST(PhysicsScene_AuthoritativePoseTracksRotationAndPreservesSleep) {
+    Sim s;
+    BoxCollider box;
+    box.half_extents = Vec3(0.4f, 0.6f, 0.8f);
+    const Entity dynamic = s.Body(Vec3(0, 5, 0), box);
+    s.world.AddComponent(dynamic, net::NetPhysicsState{});
+    const Entity stationary = s.Body(Vec3(10, 5, 0), box, BodyMotion::Static);
+    s.world.AddComponent(stationary, net::NetPhysicsState{});
+    s.scene.Sync();
+
+    const JPH::BodyID body = s.scene.BodyOf(dynamic);
+    AETHER_CHECK(!body.IsInvalid());
+    s.physics.BodyInterface().DeactivateBody(body);
+    AETHER_CHECK(!s.physics.BodyInterface().IsActive(body));
+
+    Transform* pose = s.world.GetComponent<Transform>(dynamic);
+    pose->position = Vec3(4, 7, 2);
+    pose->rotation = Quaternion::FromAxisAngle(Vec3(0, 1, 0), 1.0f);
+    AETHER_CHECK(ReconcileAuthoritativePhysicsPose<net::NetPhysicsState>(s.world, s.scene) == 1);
+    AETHER_CHECK_NEAR((s.physics.GetPosition(body) - pose->position).Length(), 0.0f, 1e-4f);
+    const Quaternion actual = s.physics.GetRotation(body);
+    const f32 dot = actual.x * pose->rotation.x + actual.y * pose->rotation.y +
+                    actual.z * pose->rotation.z + actual.w * pose->rotation.w;
+    AETHER_CHECK_NEAR(std::abs(dot), 1.0f, 1e-4f);
+    AETHER_CHECK(!s.physics.BodyInterface().IsActive(body));
+    AETHER_CHECK(ReconcileAuthoritativePhysicsPose<net::NetPhysicsState>(s.world, s.scene) == 0);
+
+    // Tiny replicated position changes must not be replayed as activating
+    // gameplay teleports by the following PhysicsScene::Step.
+    pose->position.x += 0.005f;
+    AETHER_CHECK(ReconcileAuthoritativePhysicsPose<net::NetPhysicsState>(s.world, s.scene) == 0);
+    s.scene.Step(kDt);
+    AETHER_CHECK(!s.physics.BodyInterface().IsActive(body));
+
+    // A quaternion and its negation represent the same orientation.
+    pose->rotation = Quaternion(-actual.x, -actual.y, -actual.z, -actual.w);
+    AETHER_CHECK(ReconcileAuthoritativePhysicsPose<net::NetPhysicsState>(s.world, s.scene) == 0);
+    AETHER_CHECK_NEAR(s.physics.GetPosition(s.scene.BodyOf(stationary)).x, 10.0f, 1e-4f);
+}
