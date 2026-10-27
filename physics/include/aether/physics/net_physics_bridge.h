@@ -52,26 +52,32 @@ inline usize ApplyAuthoritativePhysicsMotion(World& world, PhysicsScene& scene) 
     return updated;
 }
 
-// Reconcile the Jolt pose with a Transform already updated by authoritative
-// replication. Unlike gameplay motion, this is a snapshot correction: it
-// teleports only existing dynamic bodies when position error exceeds the
-// caller's tolerance. This helper does not interpolate or alter the ECS
-// Transform. Call after snapshot application and before the next physics step.
+// Reconcile a replicated authoritative pose with an existing client Jolt
+// dynamic body. PhysicsScene updates its tracked pose even for tiny errors,
+// avoiding an unwanted wake/teleport during the next Step. Jolt activation
+// is left untouched here; apply NetPhysicsState with the motion helper after.
+// The ECS Transform remains authoritative and visual interpolation is separate.
 template <typename MotionState>
-inline usize ReconcileAuthoritativePhysicsPosition(World& world, PhysicsScene& scene, f32 tolerance = 0.01f) {
+inline usize ReconcileAuthoritativePhysicsPose(World& world, PhysicsScene& scene,
+                                               f32 position_tolerance = 0.01f,
+                                               f32 rotation_tolerance_radians = 0.01f) {
     usize corrected = 0;
-    const f32 threshold = tolerance > 0.0f ? tolerance : 0.0f;
     world.ForEach<Transform, RigidBody, MotionState>(
-        [&](Transform& transform, RigidBody& body, MotionState&) {
+        [&](Transform&, RigidBody& body, MotionState&) {
             if (body.motion != BodyMotion::Dynamic || body.body_id.IsInvalid()) return;
-            const JPH::BodyID id = body.body_id;
-            if (scene.BodyOf(scene.EntityOf(id)) != id) return;
-            const Vec3 error = scene.Physics().GetPosition(id) - transform.position;
-            if (error.Length() <= threshold) return;
-            scene.Physics().SetPosition(id, transform.position);
-            ++corrected;
+            const Entity entity = scene.EntityOf(body.body_id);
+            if (entity.IsNull() || scene.BodyOf(entity) != body.body_id) return;
+            if (scene.ReconcileAuthoritativePose(entity, position_tolerance, rotation_tolerance_radians))
+                ++corrected;
         });
     return corrected;
+}
+
+// Compatibility entry point: authoritative snapshots contain orientation as
+// well as position. Use the pose helper directly for an explicit angle limit.
+template <typename MotionState>
+inline usize ReconcileAuthoritativePhysicsPosition(World& world, PhysicsScene& scene, f32 tolerance = 0.01f) {
+    return ReconcileAuthoritativePhysicsPose<MotionState>(world, scene, tolerance);
 }
 
 } // namespace aether
