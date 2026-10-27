@@ -9,6 +9,14 @@ add_library(Aether::ServerCore ALIAS aether_server_core)
 
 add_executable(aether_server main.cpp)
 target_link_libraries(aether_server PRIVATE Aether::ServerCore Aether::Game)
+# The executable (not ServerCore) bridges the optional physics module into
+# network replication. ServerCore remains headless and physics-independent.
+if(TARGET Aether::Physics)
+    target_link_libraries(aether_server PRIVATE Aether::Physics)
+    target_compile_definitions(aether_server PRIVATE AETHER_SERVER_PHYSICS=1)
+else()
+    target_compile_definitions(aether_server PRIVATE AETHER_SERVER_PHYSICS=0)
+endif()
 
 add_executable(aether_netclient netclient_main.cpp)
 target_link_libraries(aether_netclient PRIVATE Aether::ServerCore)

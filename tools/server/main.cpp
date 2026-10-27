@@ -11,6 +11,11 @@
 #include "aether/player/game.h"
 #include "aether/server/dedicated_server.h"
 
+#if AETHER_SERVER_PHYSICS
+#include "aether/net/physics_state.h"
+#include "aether/physics/net_physics_bridge.h"
+#endif
+
 #include <algorithm>
 #include <chrono>
 #include <csignal>
@@ -213,6 +218,10 @@ int main(int argc, char** argv) {
         for (const std::string& w : game.Warnings()) AETHER_LOG_WARN("Server", "%s", w.c_str());
         game.BeginPlay();
 
+#if AETHER_SERVER_PHYSICS
+        // Register the replicated motion contract before the host gathers snapshots.
+        (void)GetComponentId<net::NetPhysicsState>();
+#endif
         DedicatedServer server;
         if (!server.Start(config, game.GetWorld(), &error)) {
             AETHER_LOG_ERROR("Server", "%s", error.c_str());
@@ -262,6 +271,13 @@ int main(int argc, char** argv) {
                 break;
             }
             game.Tick(static_cast<f32>(1.0 / config.tick_rate));
+#if AETHER_SERVER_PHYSICS
+            // The game has already stepped Jolt and synchronized Transform.
+            // Capture motion before ReplicationServer::Update builds snapshots.
+            // Scenes without NetPhysicsState components are unaffected.
+            if (PhysicsScene* scene = game.PhysicsQueries())
+                CaptureAuthoritativePhysicsState<net::NetPhysicsState>(game.GetWorld(), *scene);
+#endif
             server.Tick(now);
             if (game.ExitRequested()) {
                 reason = "game_exit";
