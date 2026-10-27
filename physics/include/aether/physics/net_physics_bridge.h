@@ -80,4 +80,18 @@ inline usize ReconcileAuthoritativePhysicsPosition(World& world, PhysicsScene& s
     return ReconcileAuthoritativePhysicsPose<MotionState>(world, scene, tolerance);
 }
 
+
+// Opt-in client-host callback body. Invoke only after ReplicationClient has
+// accepted and applied a snapshot, outside PhysicsScene::Step. Sync creates
+// newly replicated collider bodies; pose reconciliation updates tracked Jolt
+// transforms without waking sleeping bodies; motion applies server velocity
+// and sleeping state last. No render interpolation writes to ECS here.
+// The caller owns PhysicsScene and its lifetime (typically the game host).
+template <typename MotionState>
+inline void ApplyAuthoritativePhysicsSnapshot(World& world, PhysicsScene& scene) {
+    scene.Sync();
+    ReconcileAuthoritativePhysicsPose<MotionState>(world, scene);
+    ApplyAuthoritativePhysicsMotion<MotionState>(world, scene);
+}
+
 } // namespace aether
