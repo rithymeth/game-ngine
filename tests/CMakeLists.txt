@@ -96,7 +96,7 @@ if(WIN32)
 endif()
 
 if(TARGET Aether::Physics)
-    target_sources(aether_tests PRIVATE test_physics.cpp test_physics_scene.cpp test_physics_events.cpp test_physics_queries.cpp test_character.cpp test_physics_debug.cpp test_animation_root_motion.cpp)
+    target_sources(aether_tests PRIVATE test_physics.cpp test_physics_scene.cpp test_physics_events.cpp test_physics_queries.cpp test_character.cpp test_physics_debug.cpp test_physics_constraints.cpp test_animation_root_motion.cpp)
     target_link_libraries(aether_tests PRIVATE Aether::Physics)
     target_compile_definitions(aether_tests PRIVATE AETHER_TEST_PLAYER_PHYSICS=1)
 endif()
