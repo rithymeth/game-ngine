@@ -366,3 +366,28 @@ AETHER_TEST(PhysicsScene_ReconcilesAuthoritativePositionOnlyAboveTolerance) {
     AETHER_CHECK_NEAR(s.physics.GetPosition(s.scene.BodyOf(stationary)).x, 3.0f, 1e-4f);
     AETHER_CHECK(s.scene.BodyOf(missing).IsInvalid());
 }
+
+
+AETHER_TEST(PhysicsScene_ServerTickCapturesLatestJoltMotionBeforeReplication) {
+    Sim s;
+    const Entity prop = s.Body(Vec3(0, 5, 0), Sphere(0.5f));
+    s.world.AddComponent(prop, net::NetPhysicsState{});
+    auto* motion = s.world.GetComponent<net::NetPhysicsState>(prop);
+    motion->linear_velocity = Vec3(99.0f, 99.0f, 99.0f);
+
+    // Same order as the dedicated server: game physics tick, capture, network tick.
+    s.scene.Step(kDt);
+    AETHER_CHECK(CaptureAuthoritativePhysicsState<net::NetPhysicsState>(s.world, s.scene) == 1);
+    const JPH::BodyID id = s.scene.BodyOf(prop);
+    AETHER_CHECK(!id.IsInvalid());
+    AETHER_CHECK(s.world.GetComponent<Transform>(prop)->position.y < 5.0f);
+    AETHER_CHECK_NEAR(motion->linear_velocity.y, s.physics.BodyInterface().GetLinearVelocity(id).GetY(), 1e-4f);
+    AETHER_CHECK(motion->linear_velocity.y < 0.0f);
+
+    // A second tick must capture new Jolt state, not the previous snapshot.
+    s.physics.BodyInterface().SetLinearVelocity(id, JPH::Vec3(0.0f, 10.0f, 0.0f));
+    s.scene.Step(kDt);
+    AETHER_CHECK(CaptureAuthoritativePhysicsState<net::NetPhysicsState>(s.world, s.scene) == 1);
+    AETHER_CHECK(motion->linear_velocity.y > 0.0f);
+    AETHER_CHECK_NEAR(motion->linear_velocity.y, s.physics.BodyInterface().GetLinearVelocity(id).GetY(), 1e-4f);
+}
