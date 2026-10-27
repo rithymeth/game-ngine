@@ -3916,6 +3916,7 @@
   type struct Sample_
   Quaternion NlerpShortest(const Quaternion&a,const Quaternion&b,f32 t)
   bool Sample(f64 time,Transform&out)const
+  bool SampleRenderTransform(u32 net_id,Transform&out)const
   const InterpolationBuffer*Buffer(u32 net_id)const
   f64 Delay()const
   f64 Newest()const
