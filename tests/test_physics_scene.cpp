@@ -304,3 +304,37 @@ AETHER_TEST(PhysicsScene_CapturesAuthoritativeJoltMotionForReplication) {
     AETHER_CHECK(CaptureAuthoritativePhysicsState<net::NetPhysicsState>(s.world, s.scene) == 1);
     AETHER_CHECK(state->sleeping);
 }
+
+
+AETHER_TEST(PhysicsScene_AppliesAuthoritativeMotionToClientJoltBody) {
+    Sim s;
+    const Entity dynamic = s.Body(Vec3(0, 5, 0), Sphere(0.5f));
+    s.world.AddComponent(dynamic, net::NetPhysicsState{});
+    const Entity stationary = s.Body(Vec3(3, 5, 0), Sphere(0.5f), BodyMotion::Static);
+    s.world.AddComponent(stationary, net::NetPhysicsState{});
+    const Entity missing = s.world.CreateEntity(RigidBody{}, net::NetPhysicsState{});
+    s.scene.Sync();
+
+    auto* state = s.world.GetComponent<net::NetPhysicsState>(dynamic);
+    state->linear_velocity = Vec3(2.0f, 3.0f, 4.0f);
+    state->angular_velocity = Vec3(0.0f, 1.5f, 0.0f);
+    state->sleeping = false;
+    AETHER_CHECK(ApplyAuthoritativePhysicsMotion<net::NetPhysicsState>(s.world, s.scene) == 1);
+    const auto body = s.scene.BodyOf(dynamic);
+    const auto linear = s.physics.BodyInterface().GetLinearVelocity(body);
+    const auto angular = s.physics.BodyInterface().GetAngularVelocity(body);
+    AETHER_CHECK_NEAR(linear.GetX(), 2.0f, 1e-4f);
+    AETHER_CHECK_NEAR(linear.GetY(), 3.0f, 1e-4f);
+    AETHER_CHECK_NEAR(linear.GetZ(), 4.0f, 1e-4f);
+    AETHER_CHECK_NEAR(angular.GetY(), 1.5f, 1e-4f);
+    AETHER_CHECK(s.physics.BodyInterface().IsActive(body));
+
+    state->linear_velocity = Vec3{};
+    state->angular_velocity = Vec3{};
+    state->sleeping = true;
+    AETHER_CHECK(ApplyAuthoritativePhysicsMotion<net::NetPhysicsState>(s.world, s.scene) == 1);
+    AETHER_CHECK(!s.physics.BodyInterface().IsActive(body));
+    AETHER_CHECK(s.physics.BodyInterface().GetLinearVelocity(body).Length() == 0.0f);
+    AETHER_CHECK(s.world.GetComponent<net::NetPhysicsState>(stationary) != nullptr);
+    AETHER_CHECK(s.scene.BodyOf(missing).IsInvalid());
+}
