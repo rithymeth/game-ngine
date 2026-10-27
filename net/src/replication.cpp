@@ -542,6 +542,7 @@ bool ReplicationClient::Receive(std::span<const u8> data) {
     ++stats_.snapshots;
     const u8 ack[3] = {kAck, static_cast<u8>(id), static_cast<u8>(id >> 8)};
     host_.Send(server_, config_.control_channel, ack);
+    if (on_snapshot_applied_) on_snapshot_applied_(world_);
     return true;
 }
 
