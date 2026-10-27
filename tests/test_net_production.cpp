@@ -1052,3 +1052,49 @@ AETHER_TEST(NetProd_PhysicsStateFieldsAreReplicated) {
     CHECK(std::string(it->fields[1]->name) == "angular_velocity");
     CHECK(std::string(it->fields[2]->name) == "sleeping");
 }
+
+
+AETHER_TEST(NetProd_PhysicsStateRoundTripsAcrossFourClients) {
+    // Verify actual snapshot encoding/decoding, not just reflection flags.
+    ProdSim sim(1249);
+    sim.net.conditions = {0.05, 0.02, 0.05f, 0.0f};
+    for (int i = 0; i < kClients; ++i) sim.AddClient("p" + std::to_string(i));
+    int frame = 0;
+    while (!sim.AllJoined() && frame < 600) sim.Step(1, frame++);
+    CHECK(sim.AllJoined());
+    sim.moving = false;
+
+    NetIdentity ni;
+    SetNetArchetype(ni, "physics_prop");
+    NetPhysicsState initial;
+    initial.linear_velocity = Vec3{1.0f, 2.0f, 3.0f};
+    initial.angular_velocity = Vec3{0.0f, 4.0f, 0.0f};
+    const Entity prop = sim.world.CreateEntity(ni, Transform{}, initial);
+    sim.Step(120, frame);
+    frame += 120;
+    const u32 id = sim.NetId(prop);
+    for (const auto& c : sim.clients) {
+        const Entity remote = c->replication->FindEntity(id);
+        CHECK(!remote.IsNull());
+        const auto* state = c->world.GetComponent<NetPhysicsState>(remote);
+        CHECK(state != nullptr);
+        CHECK((state->linear_velocity - initial.linear_velocity).Length() < 1e-4f);
+        CHECK((state->angular_velocity - initial.angular_velocity).Length() < 1e-4f);
+        CHECK(!state->sleeping);
+    }
+
+    auto* authoritative = sim.world.GetComponent<NetPhysicsState>(prop);
+    authoritative->linear_velocity = Vec3{};
+    authoritative->angular_velocity = Vec3{};
+    authoritative->sleeping = true;
+    sim.Step(180, frame);
+    for (const auto& c : sim.clients) {
+        const Entity remote = c->replication->FindEntity(id);
+        CHECK(!remote.IsNull());
+        const auto* state = c->world.GetComponent<NetPhysicsState>(remote);
+        CHECK(state != nullptr);
+        CHECK(state->linear_velocity.Length() < 1e-4f);
+        CHECK(state->angular_velocity.Length() < 1e-4f);
+        CHECK(state->sleeping);
+    }
+}
