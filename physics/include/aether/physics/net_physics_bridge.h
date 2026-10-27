@@ -50,4 +50,6 @@ inline usize ApplyAuthoritativePhysicsMotion(World& world, PhysicsScene& scene) 
             ++updated;
         });
     return updated;
+}
+
 } // namespace aether
