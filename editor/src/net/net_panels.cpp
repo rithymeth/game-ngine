@@ -78,6 +78,9 @@ void NetPlayPanel::Draw() {
         ImGui::Checkbox("Replicate the scene", &settings.replicate_scene);
         ImGui::SameLine();
         ImGui::Checkbox("Spawn players", &settings.spawn_players);
+#if AETHER_EDITOR_NET_PHYSICS
+        ImGui::Checkbox("Authoritative Jolt physics (opt-in)", &settings.authoritative_physics);
+#endif
     }
     // The simulated network: changeable while playing.
     ImGui::SeparatorText("Network");
