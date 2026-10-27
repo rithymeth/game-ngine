@@ -195,6 +195,13 @@ public:
     using DespawnFn = std::function<void(World&, Entity)>;
     void OnDespawn(DespawnFn fn) { on_despawn_ = std::move(fn); }
 
+    // Called only after a valid, newer snapshot has fully updated the ECS
+    // world (including spawns and despawns). Hosts with a PhysicsScene can
+    // reconcile Jolt here, before their next physics step. This networking
+    // module deliberately knows nothing about Jolt or rendering.
+    using SnapshotAppliedFn = std::function<void(World&)>;
+    void OnSnapshotApplied(SnapshotAppliedFn fn) { on_snapshot_applied_ = std::move(fn); }
+
     // Takes the snapshots out of the host's events; true when `event` was one.
     bool HandleEvent(const NetEvent& event);
 
@@ -236,6 +243,7 @@ private:
     std::unordered_map<u32, Entity> entities_;
     std::unordered_map<std::string, SpawnFn> on_spawn_;
     DespawnFn on_despawn_;
+    SnapshotAppliedFn on_snapshot_applied_;
     std::vector<ComponentId> predicted_;
     u16 last_ = 0xFFFF;
     bool any_ = false;

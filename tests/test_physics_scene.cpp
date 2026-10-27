@@ -1,5 +1,7 @@
 #include "aether/job/job_system.h"
 #include "aether/net/physics_state.h"
+#include "aether/net/replication.h"
+#include "aether/net/interpolation.h"
 #include "aether/physics/physics_scene.h"
 #include "aether/physics/net_physics_bridge.h"
 #include "aether/reflection/serialize.h"
@@ -390,4 +392,95 @@ AETHER_TEST(PhysicsScene_ServerTickCapturesLatestJoltMotionBeforeReplication) {
     AETHER_CHECK(CaptureAuthoritativePhysicsState<net::NetPhysicsState>(s.world, s.scene) == 1);
     AETHER_CHECK(motion->linear_velocity.y > 0.0f);
     AETHER_CHECK_NEAR(motion->linear_velocity.y, s.physics.BodyInterface().GetLinearVelocity(id).GetY(), 1e-4f);
+}
+
+
+AETHER_TEST(PhysicsScene_ReplicatedSnapshotCorrectsClientJoltBeforeInterpolation) {
+    RegisterPhysicsComponentSerializers();
+    (void)GetComponentId<net::NetPhysicsState>();
+    JobSystem jobs{2};
+    World server_world, client_world;
+    PhysicsWorld server_physics{jobs}, client_physics{jobs};
+    PhysicsScene server_scene{server_world, server_physics};
+    PhysicsScene client_scene{client_world, client_physics};
+
+    net::LoopbackNetwork network{73};
+    auto server_socket = network.Open(7777);
+    auto client_socket = network.Open();
+    net::NetHost server_host{*server_socket}, client_host{*client_socket};
+    server_host.Listen();
+    const net::PeerId peer = client_host.Connect(net::Address::Loopback(7777), network.Now());
+    net::ReplicationServer server_replication{server_world, server_host};
+    net::ReplicationClient client_replication{client_world, client_host, peer};
+    net::SnapshotInterpolation interpolation{client_world, client_replication, 0.1};
+
+    net::NetIdentity identity;
+    net::SetNetArchetype(identity, "physics-prop");
+    RigidBody rigid;
+    rigid.motion = BodyMotion::Dynamic;
+    const Entity server_entity = server_world.CreateEntity(
+        identity, Transform{Vec3(0, 5, 0), Quaternion::Identity()}, rigid, Sphere(0.5f), net::NetPhysicsState{});
+    client_replication.OnSpawn("physics-prop", [](World& w, Entity e, const net::NetIdentity&) {
+        RigidBody body;
+        body.motion = BodyMotion::Dynamic;
+        w.AddComponent(e, body);
+        w.AddComponent(e, Sphere(0.5f));
+    });
+
+    u32 applied = 0;
+    client_replication.OnSnapshotApplied([&](World& w) {
+        // Replication has finished updating Transform and NetPhysicsState.
+        // Keep the authoritative ECS pose; visual smoothing must never write it.
+        client_scene.Sync();
+        ReconcileAuthoritativePhysicsPosition<net::NetPhysicsState>(w, client_scene);
+        ApplyAuthoritativePhysicsMotion<net::NetPhysicsState>(w, client_scene);
+        ++applied;
+        for (const auto& [id, e] : client_replication.Entities()) {
+            (void)id;
+            const auto* transform = w.GetComponent<Transform>(e);
+            const auto* motion = w.GetComponent<net::NetPhysicsState>(e);
+            if (!transform || !motion) continue;
+            const JPH::BodyID body = client_scene.BodyOf(e);
+            AETHER_CHECK(!body.IsInvalid());
+            if (body.IsInvalid()) continue;
+            AETHER_CHECK_NEAR((client_physics.GetPosition(body) - transform->position).Length(), 0.0f, 0.011f);
+            AETHER_CHECK(client_physics.BodyInterface().IsActive(body) != motion->sleeping);
+        }
+    });
+
+    for (int frame = 0; frame < 140; ++frame) {
+        if (frame == 50)
+            server_world.GetComponent<Transform>(server_entity)->position = Vec3(6, 7, 1);
+        if (frame == 90)
+            server_physics.BodyInterface().DeactivateBody(server_scene.BodyOf(server_entity));
+        server_scene.Step(kDt);
+        CaptureAuthoritativePhysicsState<net::NetPhysicsState>(server_world, server_scene);
+        network.Advance(kDt);
+        const f64 now = network.Now();
+        server_host.Update(now);
+        for (const net::NetEvent& event : server_host.TakeEvents())
+            server_replication.HandleEvent(event);
+        server_replication.Update(now);
+        client_host.Update(now);
+        for (const net::NetEvent& event : client_host.TakeEvents())
+            client_replication.HandleEvent(event);
+        const u32 net_id = server_world.GetComponent<net::NetIdentity>(server_entity)->net_id;
+        const Entity client_entity = client_replication.FindEntity(net_id);
+        Transform before{};
+        const bool has_pose = !client_entity.IsNull() && client_world.HasComponent<Transform>(client_entity);
+        if (has_pose) before = *client_world.GetComponent<Transform>(client_entity);
+        interpolation.Update(now);
+        if (has_pose)
+            AETHER_CHECK_NEAR((client_world.GetComponent<Transform>(client_entity)->position - before.position).Length(), 0.0f, 1e-5f);
+    }
+    AETHER_CHECK(applied > 2);
+    const u32 net_id = server_world.GetComponent<net::NetIdentity>(server_entity)->net_id;
+    const Entity client_entity = client_replication.FindEntity(net_id);
+    AETHER_CHECK(!client_entity.IsNull());
+    if (!client_entity.IsNull()) {
+        const JPH::BodyID body = client_scene.BodyOf(client_entity);
+        AETHER_CHECK(!body.IsInvalid());
+        if (!body.IsInvalid())
+            AETHER_CHECK(!client_physics.BodyInterface().IsActive(body));
+    }
 }
