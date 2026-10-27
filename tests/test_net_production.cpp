@@ -1,4 +1,5 @@
 #include "aether/net/rpc.h"
+#include "aether/net/physics_state.h"
 #include "aether/net/session.h"
 #include "aether/scene/components.h"
 #include "test_framework.h"
@@ -1036,4 +1037,18 @@ AETHER_TEST(NetProd_GhostShift_LateJoinReceivesCurrentSharedObjectState) {
     CHECK(sim.pawns.size() == static_cast<usize>(kClients));
     sim.Step(120, frame);
     for (const auto& c : sim.clients) CHECK(sim.Exact(*c));
+}
+
+AETHER_TEST(NetProd_PhysicsStateFieldsAreReplicated) {
+    // The engine-neutral state must be discoverable by the generic delta
+    // replication registry, including the sleep bit. Jolt BodyID stays local.
+    const ComponentId id = GetComponentId<NetPhysicsState>();
+    const auto& types = ReplicatedComponentTypes();
+    const auto it = std::find_if(types.begin(), types.end(),
+                                 [id](const ReplicatedComponentType& t) { return t.id == id; });
+    CHECK(it != types.end());
+    CHECK(it->fields.size() == 3);
+    CHECK(std::string(it->fields[0]->name) == "linear_velocity");
+    CHECK(std::string(it->fields[1]->name) == "angular_velocity");
+    CHECK(std::string(it->fields[2]->name) == "sleeping");
 }
