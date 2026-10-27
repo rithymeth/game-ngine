@@ -24,6 +24,7 @@ namespace {
 
 constexpr f32 kDegToRad = 3.14159265358979323846f / 180.0f;
 constexpr f32 kRadToDeg = 180.0f / 3.14159265358979323846f;
+constexpr u32 kReleasedQuietSteps = 60; // a released body stays in snapshots this long after it sleeps
 
 JPH::Vec3 J(const Vec3& v) { return JPH::Vec3(v.x, v.y, v.z); }
 JPH::RVec3 JR(const Vec3& v) { return JPH::RVec3(v.x, v.y, v.z); }
@@ -159,6 +160,7 @@ void PhysicsScene::RemoveAllConstraints() {
         if (grab.constraint != nullptr) physics_.System().RemoveConstraint(grab.constraint);
     }
     grabs_.clear();
+    released_.clear();
 }
 
 bool PhysicsScene::CreateJoint(JointTracked& joint, const PhysicsJoint& c) {
@@ -393,6 +395,20 @@ void PhysicsScene::CheckBreaks(f32 dt) {
             ++it;
         }
     }
+    for (const auto& [id, grab] : grabs_) {
+        (void)id;
+        released_[EntityKey(grab.object)] = 0;
+    }
+    for (auto it = released_.begin(); it != released_.end();) {
+        const JPH::BodyID body = world_.IsAlive(EntityFromKey(it->first)) ? BodyOf(EntityFromKey(it->first)) : JPH::BodyID();
+        const bool held = GrabCount(EntityFromKey(it->first)) != 0;
+        if (body.IsInvalid() || (!held && !bodies.IsActive(body) && ++it->second > kReleasedQuietSteps)) {
+            it = released_.erase(it);
+        } else {
+            if (held || bodies.IsActive(body)) it->second = 0;
+            ++it;
+        }
+    }
     for (const ConstraintBreakEvent& event : breaks_) {
         if (break_handler_) break_handler_(event);
     }
@@ -437,6 +453,7 @@ GrabId PhysicsScene::Grab(Entity object, Entity holder, const Vec3& world_point,
     grab.settings = settings;
     const GrabId id = next_grab_++;
     grabs_.emplace(id, std::move(grab));
+    released_[EntityKey(object)] = 0;
     return id;
 }
 
@@ -499,9 +516,9 @@ ConstraintSnapshot PhysicsScene::CaptureConstraintState() const {
         moved.push_back(joint.entity);
         if (!joint.other.IsNull()) moved.push_back(joint.other);
     }
-    for (const auto& [id, grab] : grabs_) {
-        (void)id;
-        moved.push_back(grab.object);
+    for (const auto& [key, quiet] : released_) { // includes every grabbed body
+        (void)quiet;
+        moved.push_back(EntityFromKey(key));
     }
     std::sort(out.joints.begin(), out.joints.end(), [](const auto& a, const auto& b) { return a.entity < b.entity; });
 
