@@ -50,6 +50,11 @@ public:
     f64 Delay() const { return delay_; }
     void SetDelay(f64 delay) { delay_ = delay; }
     const InterpolationBuffer* Buffer(u32 net_id) const;
+    // Sample the delayed visual pose without changing the authoritative ECS
+    // Transform. Physics props must use this pose for rendering only: Jolt
+    // and server corrections continue to consume the latest snapshot.
+    // Returns false if no samples exist for this network entity.
+    bool SampleRenderTransform(u32 net_id, Transform& out) const;
     // Frames where the render time had run past an entity's newest sample.
     u32 Starved() const { return starved_; }
 
