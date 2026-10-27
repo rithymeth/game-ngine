@@ -2,6 +2,7 @@
 // components, so scenes can name them, when the plugin is enabled.
 #include "aether/physics/components.h"
 #include "aether/physics/character.h"
+#include "aether/physics/constraints.h"
 #include "aether/plugin/plugin.h"
 
 namespace {
@@ -17,6 +18,7 @@ public:
         (void)GetComponentId<ConvexCollider>();
         (void)GetComponentId<MeshCollider>();
         (void)GetComponentId<CharacterMovement>();
+        (void)GetComponentId<PhysicsJoint>();
         RegisterPhysicsComponentSerializers();
     }
 };

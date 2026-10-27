@@ -53,6 +53,10 @@ struct ScriptError {
 //   Input.OnStarted / OnTriggered / OnCompleted / OnCanceled(action) -> event (fired with the action's value)
 //   Physics.AddForce / AddImpulse / SetLinearVelocity(entity, vector)
 //   Physics.GetLinearVelocity(entity), Physics.Raycast(...), Physics.SphereCast(...)
+//   Physics.Grab(object, holder, point, maxForce?, frequency?, damping?, breakForce?) -> grab id (0: none)
+//   Physics.SetGrabTarget(grab, point), Physics.Release(grab), Physics.IsGrabActive(grab)
+//   Physics.SetJointEnabled / SetJointLocked(entity, bool), Physics.SetJointMotorTarget(entity, number)
+//   Physics.GetJointState(entity) -> enabled, locked, broken, angle (nil if none), Physics.RepairJoint(entity)
 // Connections and timers made while one of an entity's callbacks runs belong
 // to that entity's script, and end when it's destroyed (§11.2).
 class AiDebugStore;
