@@ -1,18 +1,18 @@
 #pragma once
 
-#include "aether/net/physics_state.h"
 #include "aether/physics/physics_scene.h"
 
 namespace aether {
 
-// Server-side bridge. Call after PhysicsScene::Step to copy live Jolt
+// Server-side bridge. Instantiate with net::NetPhysicsState in the game/network integration layer.\n// This physics module must not depend on the higher-level net module.\n// Call after PhysicsScene::Step to copy live Jolt
 // velocities/activation state into the ECS component replicated by net.
 // Does not create components, mutate Jolt, or run client-side simulation.
 // Returns the number of dynamic bodies updated.
+template <typename MotionState>
 inline usize CaptureAuthoritativePhysicsState(World& world, PhysicsScene& scene) {
     usize updated = 0;
-    world.ForEach<RigidBody, net::NetPhysicsState>(
-        [&](RigidBody& body, net::NetPhysicsState& state) {
+    world.ForEach<RigidBody, MotionState>(
+        [&](RigidBody& body, MotionState& state) {
             if (body.motion != BodyMotion::Dynamic || body.body_id.IsInvalid()) return;
             const auto& interface = scene.Physics().BodyInterface();
             const auto velocity = interface.GetLinearVelocity(body.body_id);
