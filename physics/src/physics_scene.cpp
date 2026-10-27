@@ -104,6 +104,7 @@ const char* PhysicsEventName(PhysicsEventType type) {
 PhysicsScene::PhysicsScene(World& world, PhysicsWorld& physics) : world_(world), physics_(physics) {}
 
 PhysicsScene::~PhysicsScene() {
+    RemoveAllConstraints(); // constraints always go before their bodies
     for (auto& [key, tracked] : bodies_) {
         (void)key;
         if (!tracked.body.IsInvalid()) physics_.DestroyBody(tracked.body);
@@ -122,6 +123,7 @@ Entity PhysicsScene::EntityOf(JPH::BodyID body) const {
 
 void PhysicsScene::Destroy(Tracked& tracked) {
     if (tracked.body.IsInvalid()) return;
+    DetachBody(tracked.body); // its joints and grabs go first; joints are rebuilt by SyncJoints
     const u32 id = tracked.body.GetIndexAndSequenceNumber();
     graveyard_[id] = by_body_[id]; // its contacts End at the next step
     by_body_.erase(id);
@@ -323,6 +325,7 @@ void PhysicsScene::Sync() {
             ++it;
         }
     }
+    SyncJoints();
 }
 
 void PhysicsScene::Step(f32 dt) {
@@ -355,6 +358,7 @@ void PhysicsScene::Step(f32 dt) {
         tracked.position = t->position;
         tracked.rotation = t->rotation;
     }
+    CheckBreaks(dt);
     Dispatch();
 }
 

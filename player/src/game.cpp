@@ -265,6 +265,7 @@ Game::Game(GamePackage& package)
     (void)GetComponentId<CapsuleCollider>();
     (void)GetComponentId<ConvexCollider>();
     (void)GetComponentId<MeshCollider>();
+    (void)GetComponentId<PhysicsJoint>();
 #endif
 }
 
