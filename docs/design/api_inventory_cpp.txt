@@ -3934,6 +3934,9 @@
   public:explicit NetStatGroup(const NetHost&host,std::string name="")
   std::vector<StatLine>Lines()const
   ~NetStatGroup()
+[net/include/aether/net/physics_state.h] experimental
+  type struct NetPhysicsState
+  AETHER_REFLECT(aether::net::NetPhysicsState,1,AETHER_FIELD(linear_velocity,Field_Replicated),AETHER_FIELD(angular_velocity,Field_Replicated),AETHER_FIELD(sleeping,Field_Replicated))
 [net/include/aether/net/prediction.h] experimental
   type class MovementClient
   type class MovementServer
