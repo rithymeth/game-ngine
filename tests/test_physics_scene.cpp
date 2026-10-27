@@ -1,4 +1,5 @@
 #include "aether/job/job_system.h"
+#include "aether/net/physics_state.h"
 #include "aether/physics/physics_scene.h"
 #include "aether/physics/net_physics_bridge.h"
 #include "aether/reflection/serialize.h"
@@ -283,7 +284,7 @@ AETHER_TEST(PhysicsScene_CapturesAuthoritativeJoltMotionForReplication) {
     const Entity without_collider = s.world.CreateEntity(RigidBody{}, net::NetPhysicsState{});
 
     s.scene.Step(kDt);
-    AETHER_CHECK(CaptureAuthoritativePhysicsState(s.world, s.scene) == 1);
+    AETHER_CHECK(CaptureAuthoritativePhysicsState<net::NetPhysicsState>(s.world, s.scene) == 1);
     const auto* state = s.world.GetComponent<net::NetPhysicsState>(dynamic);
     AETHER_CHECK(state != nullptr && state->linear_velocity.y < 0.0f && !state->sleeping);
     AETHER_CHECK(s.world.GetComponent<net::NetPhysicsState>(stationary)->linear_velocity.Length() == 0.0f);
@@ -293,13 +294,13 @@ AETHER_TEST(PhysicsScene_CapturesAuthoritativeJoltMotionForReplication) {
     AETHER_CHECK(!body.IsInvalid());
     s.physics.BodyInterface().SetLinearVelocity(body, JPH::Vec3(2.0f, 3.0f, 4.0f));
     s.physics.BodyInterface().SetAngularVelocity(body, JPH::Vec3(0.0f, 1.5f, 0.0f));
-    AETHER_CHECK(CaptureAuthoritativePhysicsState(s.world, s.scene) == 1);
+    AETHER_CHECK(CaptureAuthoritativePhysicsState<net::NetPhysicsState>(s.world, s.scene) == 1);
     AETHER_CHECK_NEAR(state->linear_velocity.x, 2.0f, 1e-4f);
     AETHER_CHECK_NEAR(state->linear_velocity.y, 3.0f, 1e-4f);
     AETHER_CHECK_NEAR(state->linear_velocity.z, 4.0f, 1e-4f);
     AETHER_CHECK_NEAR(state->angular_velocity.y, 1.5f, 1e-4f);
 
     s.physics.BodyInterface().DeactivateBody(body);
-    AETHER_CHECK(CaptureAuthoritativePhysicsState(s.world, s.scene) == 1);
+    AETHER_CHECK(CaptureAuthoritativePhysicsState<net::NetPhysicsState>(s.world, s.scene) == 1);
     AETHER_CHECK(state->sleeping);
 }
