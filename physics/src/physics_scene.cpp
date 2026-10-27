@@ -325,6 +325,41 @@ void PhysicsScene::Sync() {
     }
 }
 
+bool PhysicsScene::ReconcileAuthoritativePose(Entity entity, f32 position_tolerance, f32 rotation_tolerance_radians) {
+    const auto it = bodies_.find(EntityKey(entity));
+    if (it == bodies_.end()) return false;
+    Tracked& tracked = it->second;
+    const RigidBody* rigid = world_.GetComponent<RigidBody>(entity);
+    const Transform* transform = world_.GetComponent<Transform>(entity);
+    if (!rigid || !transform || tracked.motion != BodyMotion::Dynamic ||
+        tracked.body.IsInvalid() || rigid->body_id != tracked.body) return false;
+
+    const Vec3 current_position = physics_.GetPosition(tracked.body);
+    const Quaternion current_rotation = physics_.GetRotation(tracked.body).Normalized();
+    const Quaternion desired_rotation = transform->rotation.Normalized();
+    const f32 position_error = (current_position - transform->position).Length();
+    const f32 dot = std::abs(current_rotation.x * desired_rotation.x +
+                             current_rotation.y * desired_rotation.y +
+                             current_rotation.z * desired_rotation.z +
+                             current_rotation.w * desired_rotation.w);
+    // q and -q represent the same rotation; compare the shortest angle.
+    const f32 angle_threshold = std::cos(std::clamp(rotation_tolerance_radians, 0.0f, 3.14159265f) * 0.5f);
+    const bool move = position_error > std::max(0.0f, position_tolerance);
+    const bool rotate = dot < angle_threshold;
+    if (move || rotate) {
+        const Vec3 position = move ? transform->position : current_position;
+        const Quaternion rotation = rotate ? desired_rotation : current_rotation;
+        physics_.BodyInterface().SetPositionAndRotation(
+            tracked.body, JPH::RVec3(position.x, position.y, position.z),
+            ToJolt(rotation), JPH::EActivation::DontActivate);
+    }
+    // A sub-tolerance snapshot still changed the ECS Transform. Mark it as
+    // received so Step won't wake a sleeping body just to replay the update.
+    tracked.position = transform->position;
+    tracked.rotation = transform->rotation;
+    return move || rotate;
+}
+
 void PhysicsScene::Step(f32 dt) {
     Sync();
     JPH::BodyInterface& bodies = physics_.BodyInterface();
