@@ -27,4 +27,29 @@ inline usize CaptureAuthoritativePhysicsState(World& world, PhysicsScene& scene)
     return updated;
 }
 
+// Client-side motion correction after receiving a server snapshot.
+// The authoritative Transform is applied separately by replication; this
+// helper only reconciles Jolt velocities and activation for existing dynamic
+// bodies. Call outside PhysicsScene::Step, after applying the snapshot.
+// Returns the number of bodies updated. Does not create or destroy bodies.
+template <typename MotionState>
+inline usize ApplyAuthoritativePhysicsMotion(World& world, PhysicsScene& scene) {
+    usize updated = 0;
+    world.ForEach<RigidBody, MotionState>(
+        [&](RigidBody& body, MotionState& state) {
+            if (body.motion != BodyMotion::Dynamic || body.body_id.IsInvalid()) return;
+            auto& interface = scene.Physics().BodyInterface();
+            const JPH::BodyID id = body.body_id;
+            if (scene.BodyOf(scene.EntityOf(id)) != id) return;
+            interface.SetLinearAndAngularVelocity(
+                id,
+                JPH::Vec3(state.linear_velocity.x, state.linear_velocity.y, state.linear_velocity.z),
+                JPH::Vec3(state.angular_velocity.x, state.angular_velocity.y, state.angular_velocity.z));
+            if (state.sleeping) interface.DeactivateBody(id);
+            else interface.ActivateBody(id);
+            ++updated;
+        });
+    return updated;
+}
+
 } // namespace aether
