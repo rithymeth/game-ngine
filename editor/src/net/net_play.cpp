@@ -1,6 +1,10 @@
 #include "net/net_play.h"
 
 #include "aether/scene/serialization.h"
+#if AETHER_EDITOR_NET_PHYSICS
+#include "aether/net/physics_state.h"
+#include "aether/physics/net_physics_bridge.h"
+#endif
 
 #include <algorithm>
 
@@ -29,6 +33,11 @@ const char* NetPlayModeName(NetPlayMode mode) {
 
 struct NetPlaySession::Server {
     World world;
+#if AETHER_EDITOR_NET_PHYSICS
+    std::unique_ptr<JobSystem> physics_jobs;
+    std::unique_ptr<PhysicsWorld> physics;
+    std::unique_ptr<PhysicsScene> physics_scene;
+#endif
     std::unique_ptr<DatagramSocket> socket;
     std::unique_ptr<NetHost> host;
     std::unique_ptr<ReplicationServer> replication;
@@ -38,6 +47,11 @@ struct NetPlaySession::Server {
 
 struct NetPlaySession::Peer {
     World world;
+#if AETHER_EDITOR_NET_PHYSICS
+    std::unique_ptr<JobSystem> physics_jobs;
+    std::unique_ptr<PhysicsWorld> physics;
+    std::unique_ptr<PhysicsScene> physics_scene;
+#endif
     std::unique_ptr<DatagramSocket> socket;
     std::unique_ptr<NetHost> host;
     PeerId server = kNoPeer;
@@ -53,6 +67,17 @@ NetPlaySession::~NetPlaySession() { Stop(); }
 bool NetPlaySession::Start(const World& edited, const NetPlaySettings& settings, std::string* error) {
     Stop();
     settings_ = settings;
+#if AETHER_EDITOR_NET_PHYSICS
+    if (settings.authoritative_physics) {
+        RegisterPhysicsComponentSerializers();
+        (void)GetComponentId<net::NetPhysicsState>();
+    }
+#else
+    if (settings.authoritative_physics) {
+        if (error) *error = "networked Jolt requires the Physics module";
+        return false;
+    }
+#endif
     net_ = std::make_unique<LoopbackNetwork>(settings.seed);
     net_->conditions = settings.conditions;
     server_ = std::make_unique<Server>();
@@ -68,6 +93,13 @@ bool NetPlaySession::Start(const World& edited, const NetPlaySettings& settings,
                 SetNetArchetype(ni, "scene");
                 server_->world.AddComponent(e, ni);
             }
+#if AETHER_EDITOR_NET_PHYSICS
+    if (settings.authoritative_physics) {
+        server_->physics_jobs = std::make_unique<JobSystem>(2);
+        server_->physics = std::make_unique<PhysicsWorld>(*server_->physics_jobs);
+        server_->physics_scene = std::make_unique<PhysicsScene>(server_->world, *server_->physics);
+    }
+#endif
     server_->socket = net_->Open(kGamePort);
     HostConfig config;
     config.max_peers = std::max<u32>(settings.clients, 1);
@@ -85,6 +117,17 @@ bool NetPlaySession::Start(const World& edited, const NetPlaySettings& settings,
         c->host = std::make_unique<NetHost>(*c->socket);
         c->server = c->host->Connect(Address::Loopback(kGamePort), net_->Now());
         c->replication = std::make_unique<ReplicationClient>(c->world, *c->host, c->server);
+#if AETHER_EDITOR_NET_PHYSICS
+        if (settings.authoritative_physics) {
+            c->physics_jobs = std::make_unique<JobSystem>(2);
+            c->physics = std::make_unique<PhysicsWorld>(*c->physics_jobs);
+            c->physics_scene = std::make_unique<PhysicsScene>(c->world, *c->physics);
+            PhysicsScene* scene = c->physics_scene.get();
+            c->replication->OnSnapshotApplied([scene](World& world) {
+                ApplyAuthoritativePhysicsSnapshot<net::NetPhysicsState>(world, *scene);
+            });
+        }
+#endif
         Server* server = server_.get();
         World* client_world = &c->world;
         c->replication->OnSpawn("", [server, client_world](World&, Entity e, const NetIdentity& ni) {
@@ -161,6 +204,14 @@ void NetPlaySession::Tick(f64 dt) {
         if (!s.replication->HandleEvent(e) && !s.movement->HandleEvent(e)) s.rpc->HandleEvent(e);
     }
     s.movement->Update(now);
+#if AETHER_EDITOR_NET_PHYSICS
+    if (s.physics_scene) {
+        // The server alone steps Jolt. Capture authoritative motion after the
+        // step and before replication serializes the outgoing snapshot.
+        s.physics_scene->Step(static_cast<f32>(dt));
+        CaptureAuthoritativePhysicsState<net::NetPhysicsState>(s.world, *s.physics_scene);
+    }
+#endif
     s.replication->Update(now);
     for (auto& c : clients_) {
         c->host->Update(now);
@@ -187,6 +238,23 @@ bool NetPlaySession::MoveListenPlayer(f32 x, f32 z, bool jump, f32 dt) {
 
 World& NetPlaySession::ServerWorld() { return server_->world; }
 World& NetPlaySession::ClientWorld(usize client) { return clients_[client]->world; }
+
+PhysicsScene* NetPlaySession::ServerPhysicsScene() const {
+#if AETHER_EDITOR_NET_PHYSICS
+    return server_ ? server_->physics_scene.get() : nullptr;
+#else
+    return nullptr;
+#endif
+}
+
+PhysicsScene* NetPlaySession::ClientPhysicsScene(usize client) const {
+#if AETHER_EDITOR_NET_PHYSICS
+    return client < clients_.size() ? clients_[client]->physics_scene.get() : nullptr;
+#else
+    (void)client;
+    return nullptr;
+#endif
+}
 
 Entity NetPlaySession::ServerPawn(usize client) const {
     if (client >= clients_.size()) return Entity{};
