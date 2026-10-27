@@ -4238,6 +4238,7 @@
   ~JoltJobSystemAdapter()override
 [physics/include/aether/physics/net_physics_bridge.h] experimental
   template<typename MotionState>inline usize CaptureAuthoritativePhysicsState(World&world,PhysicsScene&scene)
+  template<typename MotionState>inline usize ApplyAuthoritativePhysicsMotion(World&world,PhysicsScene&scene)
 [physics/include/aether/physics/physics_scene.h] experimental
   type class PhysicsScene
   type enum class PhysicsEventType
