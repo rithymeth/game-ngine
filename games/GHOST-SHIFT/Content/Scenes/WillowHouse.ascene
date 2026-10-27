@@ -2834,7 +2834,7 @@
           "names": [
             "HidingSpot",
             "Hiding1",
-            "Couch"
+            "CouchSpot"
           ]
         }
       }
@@ -2861,7 +2861,7 @@
           "names": [
             "HidingSpot",
             "Hiding2",
-            "KitchenCupboard"
+            "KitchenCupboardSpot"
           ]
         }
       }
@@ -2888,7 +2888,7 @@
           "names": [
             "HidingSpot",
             "Hiding3",
-            "BasementShelf"
+            "BasementShelfSpot"
           ]
         }
       }
@@ -2915,7 +2915,7 @@
           "names": [
             "HidingSpot",
             "Hiding4",
-            "AtticHatch"
+            "AtticHatchSpot"
           ]
         }
       }

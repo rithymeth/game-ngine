@@ -117,7 +117,6 @@ MODELS = {
     "hatch": ((0.75, 0.62, 0.20, 1), None),
     "ghost": ((0.80, 0.95, 1.0, 1), (0.30, 0.45, 0.55)),
     "tool": ((0.95, 0.75, 0.10, 1), (0.40, 0.30, 0.00)),
-    "marker": ((0.20, 0.35, 0.80, 1), None),
 }
 MODEL_GUID = {}
 
@@ -370,7 +369,7 @@ def build_scene(script_guids):
                ["Ectoplasm", f"Patch{i}"])
     entity("stain", {"Transform": transform((STAIN[0], STAIN[1] + 0.02, STAIN[2]), scale=(1.0, 0.03, 1.0)), "ModelRenderer": model("stain")}, ["CursedStain"])
     for i, (name, pos) in enumerate(HIDING_SPOTS, 1):
-        entity(f"hiding.{name}", {"Transform": transform(pos)}, ["HidingSpot", f"Hiding{i}", name])
+        entity(f"hiding.{name}", {"Transform": transform(pos)}, ["HidingSpot", f"Hiding{i}", name + "Spot"])
     for i, pos in enumerate(WAYPOINTS, 1):
         entity(f"waypoint.{i}", {"Transform": transform(pos)}, ["PranksterWaypoint", f"Waypoint{i}"])
     # The tool the Prankster hides: parked far away until a prank.

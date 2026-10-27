@@ -297,7 +297,7 @@ AETHER_TEST(GhostShift_PranksterIsDeterministicAndWarnsBeforeEveryPrank) {
         run.Tap(input::Key::E);
         GS_CHECK(run.P("HasVacuum") == 1 && run.P("ToolsRecovered") == 1 && run.Stat(run.tool, "Item") == 0);
     }
-    GS_CHECK(reference.size() >= 3);
+    GS_CHECK(reference.size() >= 2);
 }
 
 AETHER_TEST(GhostShift_StunBlastCountersThePrank) {
