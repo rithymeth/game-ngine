@@ -274,9 +274,13 @@ AETHER_TEST(Prediction_PhysicsPropInterpolatesVisualPoseWithoutRewindingSimulati
     NetIdentity identity;
     SetNetArchetype(identity, "physics_prop");
     const Entity prop = sim.world.CreateEntity(identity, Transform{}, NetPhysicsState{});
-    const u32 id = sim.NetId(prop);
     Transform missing;
-    CHECK(!viewer.interpolation->SampleRenderTransform(id, missing));
+    CHECK(!viewer.interpolation->SampleRenderTransform(0, missing));
+    // Net IDs are assigned by ReplicationServer::Gather on a send tick,
+    // not when World::CreateEntity creates the entity.
+    sim.Step(5);
+    const u32 id = sim.NetId(prop);
+    CHECK(id != 0);
 
     f32 previous_visual = 0.0f;
     f32 max_delta = 0.0f;
