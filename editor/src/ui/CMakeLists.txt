@@ -70,6 +70,14 @@ if(TARGET Aether::Scripting)
     target_sources(aether_editor_ui PRIVATE ../ai/ai_debugger.cpp)
     target_compile_definitions(aether_editor_ui PUBLIC AETHER_EDITOR_SCRIPTING=1)
 endif()
+# Network Play-in-Editor may own a Jolt scene, but only when Physics is built.
+# The editor remains usable in configurations without the optional module.
+if(TARGET Aether::Physics)
+    target_link_libraries(aether_editor_ui PRIVATE Aether::Physics)
+    target_compile_definitions(aether_editor_ui PUBLIC AETHER_EDITOR_NET_PHYSICS=1)
+else()
+    target_compile_definitions(aether_editor_ui PUBLIC AETHER_EDITOR_NET_PHYSICS=0)
+endif()
 add_library(Aether::EditorUI ALIAS aether_editor_ui)
 
 # Phase 24 step 5: Dear ImGui on the RHI's Vulkan backend (imgui_impl_vulkan
