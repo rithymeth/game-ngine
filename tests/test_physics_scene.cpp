@@ -1,5 +1,6 @@
 #include "aether/job/job_system.h"
 #include "aether/physics/physics_scene.h"
+#include "aether/physics/net_physics_bridge.h"
 #include "aether/reflection/serialize.h"
 #include "aether/scene/serialization.h"
 #include "test_framework.h"
@@ -269,4 +270,36 @@ AETHER_TEST(PhysicsScene_LayersFollowTheCollisionMatrix) {
     s.world.AddComponent(haunt, Layer{2});
     s.Run(120);
     AETHER_CHECK(s.Y(haunt) > 1.5f); // stacked on the player (it may roll off later, but not through)
+}
+
+AETHER_TEST(PhysicsScene_CapturesAuthoritativeJoltMotionForReplication) {
+    Sim s;
+    const Entity dynamic = s.Body(Vec3(0, 5, 0), Sphere(0.5f));
+    s.world.AddComponent(dynamic, net::NetPhysicsState{});
+
+    // Non-dynamic and not-yet-created bodies must not be read from Jolt.
+    const Entity stationary = s.Body(Vec3(3, 5, 0), Sphere(0.5f), BodyMotion::Static);
+    s.world.AddComponent(stationary, net::NetPhysicsState{});
+    const Entity without_collider = s.world.CreateEntity(RigidBody{}, net::NetPhysicsState{});
+
+    s.scene.Step(kDt);
+    AETHER_CHECK(CaptureAuthoritativePhysicsState(s.world, s.scene) == 1);
+    const auto* state = s.world.GetComponent<net::NetPhysicsState>(dynamic);
+    AETHER_CHECK(state != nullptr && state->linear_velocity.y < 0.0f && !state->sleeping);
+    AETHER_CHECK(s.world.GetComponent<net::NetPhysicsState>(stationary)->linear_velocity.Length() == 0.0f);
+    AETHER_CHECK(s.world.GetComponent<net::NetPhysicsState>(without_collider)->linear_velocity.Length() == 0.0f);
+
+    const JPH::BodyID body = s.scene.BodyOf(dynamic);
+    AETHER_CHECK(!body.IsInvalid());
+    s.physics.BodyInterface().SetLinearVelocity(body, JPH::Vec3(2.0f, 3.0f, 4.0f));
+    s.physics.BodyInterface().SetAngularVelocity(body, JPH::Vec3(0.0f, 1.5f, 0.0f));
+    AETHER_CHECK(CaptureAuthoritativePhysicsState(s.world, s.scene) == 1);
+    AETHER_CHECK_NEAR(state->linear_velocity.x, 2.0f, 1e-4f);
+    AETHER_CHECK_NEAR(state->linear_velocity.y, 3.0f, 1e-4f);
+    AETHER_CHECK_NEAR(state->linear_velocity.z, 4.0f, 1e-4f);
+    AETHER_CHECK_NEAR(state->angular_velocity.y, 1.5f, 1e-4f);
+
+    s.physics.BodyInterface().DeactivateBody(body);
+    AETHER_CHECK(CaptureAuthoritativePhysicsState(s.world, s.scene) == 1);
+    AETHER_CHECK(state->sleeping);
 }
