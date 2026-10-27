@@ -258,3 +258,30 @@ What it does not do:
 - Packages and smoke tests cover Linux x86-64, Windows x64 and macOS arm64,
   each on one machine over localhost. No cross-machine or NAT run is
   recorded yet, and discovery is LAN broadcast only (no internet lobby).
+
+
+### Opt-in authoritative Jolt correction on a client
+
+A client host that owns a `PhysicsScene` for its `NetClient::GetWorld()`
+can register an accepted-snapshot callback before or after `NetClient::Start`:
+
+```cpp
+client.OnSnapshotApplied([&](World& world) {
+    ApplyAuthoritativePhysicsSnapshot<net::NetPhysicsState>(world, client_physics_scene);
+});
+```
+
+Include `aether/physics/net_physics_bridge.h` and `aether/net/physics_state.h`
+in the **game/host integration target**, and link the optional Physics module
+there. `ServerCore` and `Net` do not depend on Jolt. The callback runs
+synchronously after a valid, newer replicated snapshot has updated the ECS,
+before the host's next physics step. It creates missing collider bodies,
+reconciles authoritative position/rotation and tracked poses, then applies
+replicated velocity and sleeping state. Ensure the scene outlives the callback,
+and remove the callback before destroying the scene.
+
+This hook is **opt-in**. The headless smoke-test client does not create a Jolt
+scene, and existing single-player games (including Evervale) are unchanged.
+For physics entities, use `SnapshotInterpolation::SampleRenderTransform`
+for visual smoothing; never write its sampled pose back to the authoritative
+ECS `Transform` or the Jolt body.

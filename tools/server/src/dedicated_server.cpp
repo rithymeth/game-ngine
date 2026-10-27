@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cstdio>
 #include <thread>
+#include <utility>
 
 AETHER_REFLECT(aether::server::ServerPlayer, 1,
     AETHER_FIELD(pings, Field_Replicated),
@@ -316,6 +317,11 @@ std::string DiscoveryJson(const std::vector<LanSession>& servers) {
 
 // --- NetClient ----------------------------------------------------------------------------------
 
+void NetClient::OnSnapshotApplied(net::ReplicationClient::SnapshotAppliedFn fn) {
+    snapshot_applied_ = std::move(fn);
+    if (replication_) replication_->OnSnapshotApplied(snapshot_applied_);
+}
+
 NetClient::~NetClient() {
     rpc_.reset();
     replication_.reset();
@@ -336,6 +342,7 @@ bool NetClient::Start(const NetClientConfig& config, f64 now, std::string* error
     session_->Join(config.server, config.name, config.password, config.build_id, now, config.token);
     const PeerId server = session_->Server();
     replication_ = std::make_unique<ReplicationClient>(world_, *host_, server);
+    replication_->OnSnapshotApplied(snapshot_applied_);
     replication_->OnSpawn(kPlayerArchetype, [](World& w, Entity e, const NetIdentity&) { w.AddComponent(e, ServerPlayer{}); });
     rpc_ = std::make_unique<RpcRouter>(world_, *host_, *replication_, server);
     start_ = now;
@@ -345,8 +352,14 @@ bool NetClient::Start(const NetClientConfig& config, f64 now, std::string* error
 void NetClient::Tick(f64 now) {
     if (done_ || !host_) return;
     host_->Update(now);
-    for (const NetEvent& e : host_->TakeEvents())
-        if (!session_->HandleEvent(e) && !replication_->HandleEvent(e)) rpc_->HandleEvent(e);
+    for (const NetEvent& e : host_->TakeEvents()) {
+        if (session_->HandleEvent(e)) continue;
+        // Never apply replicated state (or invoke host snapshot callbacks)
+        // until the session has successfully joined. A refused client may
+        // receive an early empty snapshot while the handshake is in flight.
+        if (session_->GetState() != SessionClient::State::Joined) continue;
+        if (!replication_->HandleEvent(e)) rpc_->HandleEvent(e);
+    }
     const SessionClient::State state = session_->GetState();
     if (state == SessionClient::State::Failed) {
         result_.join_result = JoinResultName(session_->Result());
