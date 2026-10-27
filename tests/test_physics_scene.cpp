@@ -338,3 +338,31 @@ AETHER_TEST(PhysicsScene_AppliesAuthoritativeMotionToClientJoltBody) {
     AETHER_CHECK(s.world.GetComponent<net::NetPhysicsState>(stationary) != nullptr);
     AETHER_CHECK(s.scene.BodyOf(missing).IsInvalid());
 }
+
+
+AETHER_TEST(PhysicsScene_ReconcilesAuthoritativePositionOnlyAboveTolerance) {
+    Sim s;
+    const Entity dynamic = s.Body(Vec3(0, 5, 0), Sphere(0.5f));
+    s.world.AddComponent(dynamic, net::NetPhysicsState{});
+    const Entity stationary = s.Body(Vec3(3, 5, 0), Sphere(0.5f), BodyMotion::Static);
+    s.world.AddComponent(stationary, net::NetPhysicsState{});
+    const Entity missing = s.world.CreateEntity(Transform{}, RigidBody{}, net::NetPhysicsState{});
+    s.scene.Sync();
+    const auto body = s.scene.BodyOf(dynamic);
+    AETHER_CHECK(!body.IsInvalid());
+
+    // Small replication noise should not cause a Jolt teleport.
+    s.world.GetComponent<Transform>(dynamic)->position.x += 0.005f;
+    AETHER_CHECK(ReconcileAuthoritativePhysicsPosition<net::NetPhysicsState>(s.world, s.scene, 0.01f) == 0);
+    AETHER_CHECK_NEAR(s.physics.GetPosition(body).x, 0.0f, 1e-4f);
+
+    // Large server correction must be reflected in the live Jolt body.
+    s.world.GetComponent<Transform>(dynamic)->position = Vec3(4, 7, 2);
+    AETHER_CHECK(ReconcileAuthoritativePhysicsPosition<net::NetPhysicsState>(s.world, s.scene, 0.01f) == 1);
+    AETHER_CHECK_NEAR(s.physics.GetPosition(body).x, 4.0f, 1e-4f);
+    AETHER_CHECK_NEAR(s.physics.GetPosition(body).y, 7.0f, 1e-4f);
+    AETHER_CHECK_NEAR(s.physics.GetPosition(body).z, 2.0f, 1e-4f);
+    AETHER_CHECK(ReconcileAuthoritativePhysicsPosition<net::NetPhysicsState>(s.world, s.scene, 0.01f) == 0);
+    AETHER_CHECK_NEAR(s.physics.GetPosition(s.scene.BodyOf(stationary)).x, 3.0f, 1e-4f);
+    AETHER_CHECK(s.scene.BodyOf(missing).IsInvalid());
+}
