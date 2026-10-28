@@ -24,14 +24,20 @@
 
 #if AETHER_TEST_PLAYER_PHYSICS
 #include "aether/physics/components.h"
+#include "aether/physics/net_physics_bridge.h"
+#include "aether/net/physics_state.h"
+#include "aether/server/dedicated_server.h"
 #endif
 
 #include <nlohmann/json.hpp>
 
+#include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 
 // Phase 25 step 4: the player's runtime - the manifest, mounting cooked
 // archives, the startup scene with its prefabs, and the frame loop.
@@ -945,6 +951,94 @@ AETHER_TEST(Player_SimulatesPhysics) {
     const f32 rest = game.GetWorld().GetComponent<Transform>(e)->position.y;
     CHECK(rest > 0.3f && rest < 0.7f); // on the floor
 }
+
+AETHER_TEST(Player_RealUdpSnapshotsShareGameWorld) {
+    if (!Game::HasPhysics()) return;
+    // Exercise the shipped host's real UDP path against a cooked Game World
+    // and its live PhysicsScene, not the headless client's private World.
+    const stdfs::path dir = TestDir("UdpGameWorld");
+    GamePackage package;
+    CHECK(package.Mount(MakePak(dir, "Game.apak").string()));
+    Game game(package);
+    CHECK(game.LoadStartupScene());
+    PhysicsScene* physics = game.PhysicsQueries();
+    CHECK(physics != nullptr);
+    if (!physics) return;
+    game.BeginPlay();
+
+    server::RegisterServerComponents();
+    World server_world;
+    net::NetPhysicsState motion;
+    motion.linear_velocity = Vec3(1, 2, 3);
+    const Entity source = server_world.CreateEntity(
+        Transform{Vec3(10, 4, 0), Quaternion::Identity()}, motion);
+    server::ServerConfig server_config;
+    server_config.port = 0;
+    server_config.lan_advertise = false;
+    server_config.build_id = 123;
+    server::DedicatedServer server;
+    std::string error;
+    if (!server.Start(server_config, server_world, &error)) {
+        std::printf("    (no UDP here: %s)\n", error.c_str());
+        game.EndPlay();
+        return;
+    }
+
+    using Clock = std::chrono::steady_clock;
+    const auto start = Clock::now();
+    const auto now = [&] { return std::chrono::duration<f64>(Clock::now() - start).count(); };
+    server::NetClient client;
+    CHECK(client.UseWorld(game.GetWorld()));
+    CHECK(&client.GetWorld() == &game.GetWorld());
+    u32 accepted = 0;
+    bool saw_initial = false, saw_updated = false;
+    client.OnSnapshotApplied([&](World& world) {
+        CHECK(&world == &game.GetWorld());
+        // Exactly the bridge used by aether_player after an accepted snapshot.
+        ApplyAuthoritativePhysicsSnapshot<net::NetPhysicsState>(world, *physics);
+        ++accepted;
+        world.ForEach<Transform, net::NetPhysicsState>(
+            [&](Transform& transform, net::NetPhysicsState& state) {
+                if (std::fabs(transform.position.x - 10.0f) < 0.01f &&
+                    std::fabs(state.linear_velocity.x - 1.0f) < 0.01f)
+                    saw_initial = true;
+                if (std::fabs(transform.position.x - 25.0f) < 0.01f &&
+                    std::fabs(state.linear_velocity.x - 7.0f) < 0.01f && state.sleeping)
+                    saw_updated = true;
+            });
+    });
+    server::NetClientConfig client_config;
+    client_config.server = net::Address::Loopback(server.Port());
+    client_config.build_id = 123;
+    client_config.send_rpc = false; // shipped player does not send the smoke-test Ping
+    client_config.duration = 1.5;
+    client_config.join_timeout = 3.0;
+    CHECK(client.Start(client_config, now(), &error));
+    CHECK(!client.UseWorld(game.GetWorld())); // World cannot change after Start
+    game.SetAuthoritativePhysicsClient(true);
+    bool moved = false;
+    while (!client.Done() && now() < 6.0) {
+        server.Tick(now());
+        client.Tick(now());
+        if (saw_initial && !moved) {
+            server_world.GetComponent<Transform>(source)->position = Vec3(25, 4, 0);
+            auto* state = server_world.GetComponent<net::NetPhysicsState>(source);
+            state->linear_velocity = Vec3(7, 0, 0);
+            state->sleeping = true;
+            moved = true;
+        }
+        game.Tick(1.0f / 60.0f); // authoritative mode: never step local Jolt
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(client.Done() && client.Result().joined);
+    CHECK(client.Result().snapshots > 0 && accepted > 0);
+    CHECK(saw_initial && saw_updated);
+    CHECK(client.Result().rpcs_sent == 0);
+    game.SetAuthoritativePhysicsClient(false);
+    game.EndPlay();
+    server.Stop();
+}
+
 #endif
 
 // The order the player runs its systems in, as a snapshot: the kit migration (Phase 37 step 4) must not change it.
