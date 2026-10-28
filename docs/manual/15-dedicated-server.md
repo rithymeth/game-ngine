@@ -301,3 +301,14 @@ for physics entities; its sampled pose must not be written into ECS or Jolt.
 This editor integration does not enable networking or physics reconciliation
 in the shipped single-player player. The real UDP `server::NetClient` still
 requires its game host to explicitly attach a `PhysicsScene` callback.
+
+### Sharing the shipped client's game World (UDP)
+
+Before `server::NetClient::Start`, call `UseWorld(game.GetWorld())` so UDP
+replication and the cooked game's `PhysicsScene` refer to the same ECS world.
+The game must outlive the network client; rebinding after Start is rejected.
+The default headless client continues using its own World. A subsequent
+opt-in player-host integration will attach `OnSnapshotApplied` to
+`ApplyAuthoritativePhysicsSnapshot<net::NetPhysicsState>` and suppress
+client-side Jolt stepping. Do not use interpolated render poses as simulation
+transforms or enable reconciliation for Evervale's single-player runtime.
