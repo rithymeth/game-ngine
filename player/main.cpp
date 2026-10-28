@@ -32,6 +32,12 @@
 #include "aether/platform/platform_plugin.h"
 #include "aether/player/scene_renderer.h"
 
+#if AETHER_PLAYER_NETCLIENT && AETHER_PLAYER_PHYSICS
+#include "aether/server/dedicated_server.h"
+#include "aether/net/physics_state.h"
+#include "aether/physics/net_physics_bridge.h"
+#endif
+
 #include "aether/core/log.h"
 #include "aether/core/version.h"
 #include "aether/debug/crash.h"
@@ -51,6 +57,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -75,6 +82,9 @@ struct Options {
     std::string screenshot;
     std::string replay_input;          // recorded input for deterministic package verification
     bool report = false;              // print where the Player-tagged entity ended up
+    std::string server; // empty: offline single-player (the default)
+    std::string player_name = "player", password, token;
+    u32 build_id = 1;
 };
 
 void Usage() {
@@ -82,7 +92,9 @@ void Usage() {
                  "usage: aether_player [--pak <file|dir>]... [--scene <path>] [--frames <n>] [--headless]\n"
                  "                     [--backend d3d12|vulkan] [--size <w>x<h>] [--quality <preset>]\n"
                  "                     [--key <64 hex digits>] [--press <Key>]... [--screenshot <file.bmp>]\n"
-                 "                     [--report] [--user-dir <dir>] [--replay-input <file.json>]\n");
+                 "                     [--report] [--user-dir <dir>] [--replay-input <file.json>]\n"
+                 "                     [--server <ip:port>] [--name <text>] [--password <text>]\n"
+                 "                     [--token <join token>] [--build-id <n>] (opt-in UDP + Jolt)\n");
 }
 
 bool ParseArgs(int argc, char** argv, Options& o) {
@@ -111,6 +123,19 @@ bool ParseArgs(int argc, char** argv, Options& o) {
             o.user_dir = argv[++i];
         } else if (a == "--quality" && has_value) {
             o.quality = argv[++i];
+        } else if (a == "--server" && has_value) {
+            o.server = argv[++i];
+        } else if (a == "--name" && has_value) {
+            o.player_name = argv[++i];
+        } else if (a == "--password" && has_value) {
+            o.password = argv[++i];
+        } else if (a == "--token" && has_value) {
+            o.token = argv[++i];
+        } else if (a == "--build-id" && has_value) {
+            char* end = nullptr;
+            const unsigned long long id = std::strtoull(argv[++i], &end, 10);
+            if (!*argv[i] || *end != '\0' || id > std::numeric_limits<u32>::max()) return false;
+            o.build_id = static_cast<u32>(id);
         } else if (a == "--backend" && has_value) {
             o.backend = argv[++i];
         } else if (a == "--size" && has_value) {
@@ -309,6 +334,58 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // Keep the UDP client alive for the whole game session. It shares the
+    // loaded Game World, which also owns the PhysicsScene's ECS entities.
+#if AETHER_PLAYER_NETCLIENT && AETHER_PLAYER_PHYSICS
+    std::unique_ptr<server::NetClient> network_client;
+    std::chrono::steady_clock::time_point network_start;
+    if (!options.server.empty()) {
+        if (!options.replay_input.empty()) {
+            std::fprintf(stderr, "aether_player: --server cannot be combined with --replay-input\n");
+            return 2;
+        }
+        const auto address = net::Address::Parse(options.server);
+        if (!address) {
+            std::fprintf(stderr, "aether_player: --server must be an IPv4 address and port\n");
+            return 2;
+        }
+        if (!game.PhysicsQueries()) {
+            std::fprintf(stderr, "aether_player: no PhysicsScene available for multiplayer\n");
+            return 1;
+        }
+        server::NetClientConfig cfg;
+        cfg.server = *address;
+        cfg.name = options.player_name;
+        cfg.password = options.password.empty() && std::getenv("AETHER_SERVER_PASSWORD")
+                           ? std::getenv("AETHER_SERVER_PASSWORD") : options.password;
+        cfg.token = options.token.empty() && std::getenv("AETHER_JOIN_TOKEN")
+                        ? std::getenv("AETHER_JOIN_TOKEN") : options.token;
+        cfg.build_id = options.build_id;
+        cfg.send_rpc = false; // no headless smoke-test Ping in the shipped game
+        cfg.duration = std::numeric_limits<f64>::max();
+        network_client = std::make_unique<server::NetClient>();
+        if (!network_client->UseWorld(game.GetWorld())) return 1;
+        network_client->OnSnapshotApplied([&game](World& world) {
+            // Only accepted snapshots enter here. Physics and Net remain
+            // independent; the shipped host owns this integration.
+            if (&world != &game.GetWorld()) return;
+            if (PhysicsScene* scene = game.PhysicsQueries())
+                ApplyAuthoritativePhysicsSnapshot<net::NetPhysicsState>(world, *scene);
+        });
+        network_start = std::chrono::steady_clock::now();
+        if (!network_client->Start(cfg, 0.0, &error)) {
+            std::fprintf(stderr, "aether_player: UDP join failed: %s\n", error.c_str());
+            return 1;
+        }
+        game.SetAuthoritativePhysicsClient(true); // no local Jolt/character stepping
+    }
+#else
+    if (!options.server.empty()) {
+        std::fprintf(stderr, "aether_player: UDP physics client requires ServerCore and Jolt\n");
+        return 2;
+    }
+#endif
+
     try {
         struct ReplayEvent { i64 frame; input::Key key; f32 value; };
         std::vector<ReplayEvent> replay;
@@ -401,6 +478,7 @@ int main(int argc, char** argv) {
         u32 frame_slot = 0;
         bool screenshot_written = false;
         bool screenshot_failed = false;
+        bool network_failed = false;
         auto last = std::chrono::steady_clock::now();
         auto last_stats = last;
         for (i64 frame = 0; options.frames < 0 || frame < options.frames; ++frame) {
@@ -443,6 +521,16 @@ int main(int argc, char** argv) {
                 game.SetUiPointerScale(static_cast<f32>(swap_chain->Width()) / static_cast<f32>(window->Width()),
                                        static_cast<f32>(swap_chain->Height()) / static_cast<f32>(window->Height()));
             }
+#if AETHER_PLAYER_NETCLIENT && AETHER_PLAYER_PHYSICS
+            if (network_client) {
+                network_client->Tick(std::chrono::duration<f64>(now - network_start).count());
+                if (network_client->Done()) {
+                    AETHER_LOG_ERROR("Player", "UDP session ended: %s", network_client->Result().join_result.c_str());
+                    network_failed = true;
+                    break;
+                }
+            }
+#endif
             game.Tick(dt);
             if (game.ExitRequested()) break;
 
@@ -507,6 +595,7 @@ int main(int argc, char** argv) {
             }
         }
         game.EndPlay();
+        if (network_failed) return 1;
         if (!options.screenshot.empty() && (!screenshot_written || screenshot_failed)) return 4;
         // Settings are written only if the game changed them: a damaged file
         // isn't overwritten by a run that never touched it.
