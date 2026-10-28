@@ -993,7 +993,7 @@ AETHER_TEST(Player_RealUdpSnapshotsShareGameWorld) {
     server::NetClient client;
     CHECK(client.UseWorld(game.GetWorld()));
     CHECK(&client.GetWorld() == &game.GetWorld());
-    u32 accepted = 0;
+    u32 accepted = 0, jolt_verified = 0;
     bool saw_initial = false, saw_updated = false;
     const Quaternion updated_rotation = Quaternion::FromAxisAngle(Vec3(0, 1, 0), Radians(90.0f));
     client.OnSnapshotApplied([&](World& world) {
@@ -1001,6 +1001,22 @@ AETHER_TEST(Player_RealUdpSnapshotsShareGameWorld) {
         // Exactly the bridge used by aether_player after an accepted snapshot.
         ApplyAuthoritativePhysicsSnapshot<net::NetPhysicsState>(world, *physics);
         ++accepted;
+        // Real UDP snapshots must reconcile the shipped Game's live Jolt body,
+        // including its tracked pose and activation, before render sampling.
+        world.ForEach<Transform, RigidBody, net::NetPhysicsState>(
+            [&](Transform& transform, RigidBody& body, net::NetPhysicsState& motion_state) {
+                CHECK(!body.body_id.IsInvalid());
+                if (body.body_id.IsInvalid()) return;
+                const Vec3 position = physics->Physics().GetPosition(body.body_id);
+                const Quaternion rotation = physics->Physics().GetRotation(body.body_id);
+                const f32 dot = rotation.x * transform.rotation.x + rotation.y * transform.rotation.y +
+                                rotation.z * transform.rotation.z + rotation.w * transform.rotation.w;
+                CHECK((position - transform.position).Length() < 0.011f);
+                CHECK(std::fabs(dot) > 0.999f);
+                CHECK(physics->Physics().BodyInterface().IsActive(body.body_id) != motion_state.sleeping);
+                ++jolt_verified;
+            });
+        CHECK(ReconcileAuthoritativePhysicsPose<net::NetPhysicsState>(world, *physics) == 0);
         world.ForEach<Transform, net::NetPhysicsState>(
             [&](Transform& transform, net::NetPhysicsState& state) {
                 if (std::fabs(transform.position.x - 10.0f) < 0.01f &&
@@ -1022,16 +1038,43 @@ AETHER_TEST(Player_RealUdpSnapshotsShareGameWorld) {
     client_config.join_timeout = 3.0;
     CHECK(client.Start(client_config, now(), &error));
     CHECK(client.Replication() != nullptr);
+    // The shipped host uses a cooked World/PhysicsScene; network spawns get
+    // their local collider here, while the server owns all replicated motion.
+    client.Replication()->OnSpawn(server::kSceneArchetype, [](World& world, Entity entity, const net::NetIdentity&) {
+        RigidBody body;
+        body.motion = BodyMotion::Dynamic;
+        world.AddComponent(entity, body);
+        SphereCollider sphere;
+        sphere.radius = 0.5f;
+        world.AddComponent(entity, sphere);
+    });
     net::SnapshotInterpolation visual(game.GetWorld(), *client.Replication());
     visual.SetRenderOnly(true);
     CHECK(!client.UseWorld(game.GetWorld())); // World cannot change after Start
     game.SetAuthoritativePhysicsClient(true);
     bool moved = false;
     bool sampled_visual = false;
+    bool gap_started = false, gap_finished = false, resumed_after_gap = false;
+    f64 gap_until = 0.0;
+    u32 accepted_at_gap_end = 0;
     u32 poll_iteration = 0;
     while (!client.Done() && now() < 6.0) {
-        server.Tick(now());
-        client.Tick(now());
+        const f64 tick_now = now();
+        // A deterministic 180 ms snapshot-transmission gap exercises recovery
+        // from missing updates without pretending to inject UDP packet loss.
+        if (saw_updated && !gap_started) {
+            gap_started = true;
+            gap_until = tick_now + 0.18;
+        }
+        if (!gap_started || tick_now >= gap_until) {
+            if (gap_started && !gap_finished) {
+                gap_finished = true;
+                accepted_at_gap_end = accepted;
+            }
+            server.Tick(tick_now);
+        }
+        client.Tick(tick_now);
+        if (gap_finished && accepted > accepted_at_gap_end) resumed_after_gap = true;
         if (saw_initial && !moved) {
             server_world.GetComponent<Transform>(source)->position = Vec3(25, 4, 0);
             server_world.GetComponent<Transform>(source)->rotation = updated_rotation;
@@ -1076,6 +1119,8 @@ AETHER_TEST(Player_RealUdpSnapshotsShareGameWorld) {
     CHECK(client.Done() && client.Result().joined);
     CHECK(client.Result().snapshots > 0 && accepted > 0);
     CHECK(saw_initial && saw_updated);
+    CHECK(jolt_verified > 0);
+    CHECK(gap_started && gap_finished && resumed_after_gap);
     CHECK(sampled_visual);
     CHECK(client.Result().rpcs_sent == 0);
     game.SetAuthoritativePhysicsClient(false);
