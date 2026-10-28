@@ -307,8 +307,19 @@ requires its game host to explicitly attach a `PhysicsScene` callback.
 Before `server::NetClient::Start`, call `UseWorld(game.GetWorld())` so UDP
 replication and the cooked game's `PhysicsScene` refer to the same ECS world.
 The game must outlive the network client; rebinding after Start is rejected.
-The default headless client continues using its own World. A subsequent
-opt-in player-host integration will attach `OnSnapshotApplied` to
-`ApplyAuthoritativePhysicsSnapshot<net::NetPhysicsState>` and suppress
-client-side Jolt stepping. Do not use interpolated render poses as simulation
-transforms or enable reconciliation for Evervale's single-player runtime.
+The default headless client continues using its own World. The shipped
+`aether_player` now opts into this host integration only with `--server`:
+
+```sh
+aether_player --pak Paks --server 127.0.0.1:7777 --name player1 --build-id 1
+```
+
+`--password` and `--token` are optional; `AETHER_SERVER_PASSWORD` and
+`AETHER_JOIN_TOKEN` are also supported. The client binds `Game::GetWorld()`
+before joining, applies accepted snapshots to the same `PhysicsScene`, and
+suppresses client-side Jolt/character stepping. The host does not run the
+headless client's test RPC. The Game and loaded scene must outlive the UDP
+client; do not replace the scene while connected. The renderer currently
+uses authoritative ECS poses; any future interpolation must sample into
+render-only transforms, never back into ECS or Jolt. Without `--server`,
+Evervale and other shipped single-player games keep their original physics.
