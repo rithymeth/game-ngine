@@ -3,6 +3,7 @@
 #include "aether/gfx/rhi/device.h"
 #include "aether/player/game.h"
 
+#include <functional>
 #include <memory>
 
 namespace aether::player {
@@ -22,6 +23,9 @@ public:
     void SetViewDistance(f32 metres);
     // Whether the particle pass draws the game's particle effects (Game::Particles()); on by default.
     void SetDrawParticles(bool draw);
+    // Optional visual-only transform sampler. Never mutates Game's World or PhysicsScene.
+    // Leave unset for the original offline/single-player rendering path.
+    void SetRenderPoseSampler(std::function<bool(Entity, Transform&)> sampler);
     void Draw(Game& game, gfx::rhi::ICommandList& commands, u32 frame_index);
 
 private:
