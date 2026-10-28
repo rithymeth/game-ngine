@@ -5580,9 +5580,9 @@
   type struct SplatmapLayer
   type struct TerrainBrush
   SplatmapData BuildSplatmap(u32 resolution,span<const SplatmapLayer>layers,const std::vector<f32>&layer_weights)
-  std::array<f32,4>BlendTerrainLayerHeights(const std::array<f32,4>&painted_weights,const std::array<f32,4>&material_heights,f32 contrast)
   f32 BrushWeight(f32 dx,f32 dz,f32 radius,f32 strength,f32 falloff)
   i32 LayerToChannel(u32 layer_index)
+  std::array<f32,4>BlendTerrainLayerHeights(const std::array<f32,4>&painted_weights,const std::array<f32,4>&material_heights,f32 contrast)
   std::array<f32,4>GetWeights(f32 u,f32 v)const
   u32 ChannelToLayer(i32 channel)
   u32 PackWeights(u32 layer_count,span<const f32>weights)
