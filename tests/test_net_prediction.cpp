@@ -264,6 +264,48 @@ AETHER_TEST(Prediction_ServerSanitizesAndChecksOwners) {
 }
 
 
+
+AETHER_TEST(Prediction_RenderOnlyInterpolationPreservesAllAuthoritativeTransforms) {
+    PredSim sim(41);
+    sim.net.conditions.latency = 0.05;
+    sim.net.conditions.jitter = 0.01;
+    auto& viewer = sim.AddClient();
+    viewer.interpolation->SetRenderOnly(true);
+    sim.WaitConnected();
+
+    // Non-physics entities must also remain authoritative in ECS when the
+    // shipped player uses visual-only interpolation (physics props already
+    // have this guarantee from the normal SnapshotInterpolation path).
+    NetIdentity identity;
+    SetNetArchetype(identity, "visual_only");
+    const Entity mover = sim.world.CreateEntity(identity, Transform{});
+    sim.Step(10);
+    const u32 id = sim.NetId(mover);
+    CHECK(id != 0);
+
+    bool saw_delayed_visual = false;
+    for (int i = 0; i < 150; ++i) {
+        sim.world.GetComponent<Transform>(mover)->position.x = static_cast<f32>(i) / 12.0f;
+        sim.Step();
+        const Entity client_entity = viewer.replication->FindEntity(id);
+        if (client_entity.IsNull()) continue;
+        Transform authoritative;
+        if (!viewer.replication->ReadReplicated(id, GetComponentId<Transform>(), &authoritative)) continue;
+        const Transform* ecs = viewer.world.GetComponent<Transform>(client_entity);
+        CHECK(ecs != nullptr);
+        if (!ecs) continue;
+        CHECK(Near(ecs->position, authoritative.position));
+
+        Transform visual;
+        if (viewer.interpolation->SampleRenderTransform(id, visual) && i > 60 &&
+            visual.position.x < ecs->position.x - 0.1f)
+            saw_delayed_visual = true;
+        // Sampling must be read-only, too.
+        CHECK(Near(ecs->position, authoritative.position));
+    }
+    CHECK(saw_delayed_visual);
+}
+
 AETHER_TEST(Prediction_PhysicsPropInterpolatesVisualPoseWithoutRewindingSimulation) {
     PredSim sim(29);
     sim.net.conditions.latency = 0.05;
