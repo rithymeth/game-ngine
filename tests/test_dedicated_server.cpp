@@ -185,7 +185,7 @@ AETHER_TEST(DedicatedServer_RealUdpJoinReplicateRpc) {
     CHECK(refused_client_world.EntityCount() == 1 && refused_client_world.IsAlive(preserved));
     const Transform* preserved_transform = refused_client_world.GetComponent<Transform>(preserved);
     CHECK(preserved_transform != nullptr);
-    if (preserved_transform) CHECK(std::fabs(preserved_transform->position.x - 99.0f) < 0.001f);
+    if (preserved_transform) CHECK(preserved_transform->position == Vec3(99, 4, 2));
     // A refused session is terminal for this NetClient too: a new attempt needs a fresh object.
     error.clear();
     CHECK(!wrong_password->Start(restart_attempt, now(), &error));
