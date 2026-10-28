@@ -336,6 +336,12 @@ NetClient::~NetClient() {
 }
 
 bool NetClient::Start(const NetClientConfig& config, f64 now, std::string* error) {
+    // Restarting this object would retain its old replication stream, socket,
+    // and World entities. A new session currently requires a fresh NetClient.
+    if (host_) {
+        if (error) *error = "NetClient already started; use a fresh client for a new session";
+        return false;
+    }
     RegisterServerComponents();
     config_ = config;
     std::string socket_error;
