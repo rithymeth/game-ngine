@@ -356,10 +356,14 @@ int main(int argc, char** argv) {
         server::NetClientConfig cfg;
         cfg.server = *address;
         cfg.name = options.player_name;
-        cfg.password = options.password.empty() && std::getenv("AETHER_SERVER_PASSWORD")
-                           ? std::getenv("AETHER_SERVER_PASSWORD") : options.password;
-        cfg.token = options.token.empty() && std::getenv("AETHER_JOIN_TOKEN")
-                        ? std::getenv("AETHER_JOIN_TOKEN") : options.token;
+        cfg.password = options.password;
+        cfg.token = options.token;
+        if (cfg.password.empty()) {
+            if (const char* value = std::getenv("AETHER_SERVER_PASSWORD")) cfg.password = value;
+        }
+        if (cfg.token.empty()) {
+            if (const char* value = std::getenv("AETHER_JOIN_TOKEN")) cfg.token = value;
+        }
         cfg.build_id = options.build_id;
         cfg.send_rpc = false; // no headless smoke-test Ping in the shipped game
         cfg.duration = std::numeric_limits<f64>::max();
