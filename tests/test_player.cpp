@@ -9,6 +9,7 @@
 #include "aether/scene/gameplay.h"
 #include "aether/platform/window.h"
 #include "../player/src/package_textures.h"
+#include "../player/src/render_pose.h"
 #include "aether/cook/texture_cook.h"
 #include "aether/scene/script_component.h"
 #include "aether/sequencer/sequence.h"
@@ -26,6 +27,7 @@
 #include "aether/physics/components.h"
 #include "aether/physics/net_physics_bridge.h"
 #include "aether/net/physics_state.h"
+#include "aether/net/interpolation.h"
 #include "aether/server/dedicated_server.h"
 #endif
 
@@ -1014,9 +1016,13 @@ AETHER_TEST(Player_RealUdpSnapshotsShareGameWorld) {
     client_config.duration = 1.5;
     client_config.join_timeout = 3.0;
     CHECK(client.Start(client_config, now(), &error));
+    CHECK(client.Replication() != nullptr);
+    net::SnapshotInterpolation visual(game.GetWorld(), *client.Replication());
+    visual.SetRenderOnly(true);
     CHECK(!client.UseWorld(game.GetWorld())); // World cannot change after Start
     game.SetAuthoritativePhysicsClient(true);
     bool moved = false;
+    bool sampled_visual = false;
     while (!client.Done() && now() < 6.0) {
         server.Tick(now());
         client.Tick(now());
@@ -1028,11 +1034,27 @@ AETHER_TEST(Player_RealUdpSnapshotsShareGameWorld) {
             moved = true;
         }
         game.Tick(1.0f / 60.0f); // authoritative mode: never step local Jolt
+        visual.Update(now()); // shipped player's render-only interpolation path
+        game.GetWorld().ForEach<net::NetIdentity, net::NetPhysicsState>(
+            [&](const net::NetIdentity& identity, const net::NetPhysicsState&) {
+                Transform sampled;
+                if (!visual.SampleRenderTransform(identity.net_id, sampled)) return;
+                sampled_visual = true;
+                Transform authoritative;
+                if (!client.Replication()->ReadReplicated(identity.net_id, GetComponentId<Transform>(), &authoritative))
+                    return;
+                const Entity entity = client.Replication()->FindEntity(identity.net_id);
+                const Transform* current = game.GetWorld().IsAlive(entity)
+                                               ? game.GetWorld().GetComponent<Transform>(entity) : nullptr;
+                CHECK(current != nullptr);
+                if (current) CHECK(std::fabs(current->position.x - authoritative.position.x) < 0.01f);
+            });
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     CHECK(client.Done() && client.Result().joined);
     CHECK(client.Result().snapshots > 0 && accepted > 0);
     CHECK(saw_initial && saw_updated);
+    CHECK(sampled_visual);
     CHECK(client.Result().rpcs_sent == 0);
     game.SetAuthoritativePhysicsClient(false);
     game.EndPlay();
@@ -1061,6 +1083,37 @@ std::string DescribeStages(Game& game) {
     return out;
 }
 } // namespace
+
+
+AETHER_TEST(Player_RenderPoseHierarchyIsVisualOnly) {
+    World world;
+    GuidIndex guids;
+    const EntityGuid root_guid{1, 2};
+    const Entity root = world.CreateEntity(
+        IdComponent{root_guid},
+        Transform{Vec3(10, 0, 0), Quaternion::Identity(), Vec3(2, 2, 2)});
+    const Entity child = world.CreateEntity(
+        Parent{root_guid},
+        Transform{Vec3(1, 0, 0), Quaternion::Identity(), Vec3(3, 3, 3)});
+    guids.Rebuild(world);
+
+    const Mat4 original = ComputeWorldTransform(world, guids, child);
+    CHECK(std::fabs(original.cols[3].x - 12.0f) < 1e-4f);
+    const Mat4 sampled = ComputeRenderWorldTransform(
+        world, guids, child, [&](Entity entity, Transform& pose) {
+            if (entity == root) pose.position = Vec3(20, 0, 0);
+            else if (entity == child) pose.position = Vec3(2, 0, 0);
+            else return false;
+            pose.scale = Vec3(99, 99, 99); // a sampler cannot replace authored scale
+            return true;
+        });
+    CHECK(std::fabs(sampled.cols[3].x - 24.0f) < 1e-4f);
+    CHECK(std::fabs(sampled.cols[0].x - 6.0f) < 1e-4f);
+    CHECK(std::fabs(world.GetComponent<Transform>(root)->position.x - 10.0f) < 1e-4f);
+    CHECK(std::fabs(world.GetComponent<Transform>(child)->position.x - 1.0f) < 1e-4f);
+    const Mat4 offline = ComputeRenderWorldTransform(world, guids, child, {});
+    CHECK(std::fabs(offline.cols[3].x - original.cols[3].x) < 1e-4f);
+}
 
 AETHER_TEST(Player_StageOrderSnapshot) {
     const stdfs::path dir = TestDir("StageOrder");

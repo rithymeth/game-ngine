@@ -49,6 +49,9 @@ public:
     f64 RenderTime() const { return render_time_; }
     f64 Delay() const { return delay_; }
     void SetDelay(f64 delay) { delay_ = delay; }
+    // Opt-in for shipped render hosts: collect/smooth every remote pose but
+    // never write a delayed sample into the authoritative ECS World.
+    void SetRenderOnly(bool enabled) { render_only_ = enabled; }
     const InterpolationBuffer* Buffer(u32 net_id) const;
     // Sample the delayed visual pose without changing the authoritative ECS
     // Transform. Physics props must use this pose for rendering only: Jolt
@@ -62,6 +65,7 @@ private:
     World& world_;
     ReplicationClient& replication_;
     f64 delay_;
+    bool render_only_ = false;
     u32 seen_snapshots_ = 0;
     bool has_offset_ = false;
     f64 offset_ = 0.0, render_time_ = -1e300;

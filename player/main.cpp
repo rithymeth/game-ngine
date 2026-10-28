@@ -35,6 +35,7 @@
 #if AETHER_PLAYER_NETCLIENT && AETHER_PLAYER_PHYSICS
 #include "aether/server/dedicated_server.h"
 #include "aether/net/physics_state.h"
+#include "aether/net/interpolation.h"
 #include "aether/physics/net_physics_bridge.h"
 #endif
 
@@ -338,6 +339,7 @@ int main(int argc, char** argv) {
     // loaded Game World, which also owns the PhysicsScene's ECS entities.
 #if AETHER_PLAYER_NETCLIENT && AETHER_PLAYER_PHYSICS
     std::unique_ptr<server::NetClient> network_client;
+    std::unique_ptr<net::SnapshotInterpolation> render_interpolation;
     std::chrono::steady_clock::time_point network_start;
     if (!options.server.empty()) {
         if (!options.replay_input.empty()) {
@@ -382,6 +384,11 @@ int main(int argc, char** argv) {
             return 1;
         }
         game.SetAuthoritativePhysicsClient(true); // no local Jolt/character stepping
+        // Existing Net interpolation buffers render poses separately from the
+        // authoritative Game World shared with Jolt and the UDP client.
+        render_interpolation = std::make_unique<net::SnapshotInterpolation>(
+            game.GetWorld(), *network_client->Replication());
+        render_interpolation->SetRenderOnly(true);
     }
 #else
     if (!options.server.empty()) {
@@ -462,6 +469,15 @@ int main(int argc, char** argv) {
                     command_lists.push_back(device->CreateCommandList());
                 }
                 scene_renderer = std::make_unique<SceneRenderer>(*device, *swap_chain, package);
+#if AETHER_PLAYER_NETCLIENT && AETHER_PLAYER_PHYSICS
+                if (render_interpolation) {
+                    scene_renderer->SetRenderPoseSampler([&](Entity entity, Transform& visual) {
+                        const auto* identity = game.GetWorld().GetComponent<net::NetIdentity>(entity);
+                        return identity && !identity->locally_owned &&
+                               render_interpolation->SampleRenderTransform(identity->net_id, visual);
+                    });
+                }
+#endif
                 if (quality) scene_renderer->SetViewDistance(quality->view_distance);
                 window->on_resize = [&](u32, u32) { resized = true; };
             } else {
@@ -537,6 +553,10 @@ int main(int argc, char** argv) {
 #endif
             game.Tick(dt);
             if (game.ExitRequested()) break;
+#if AETHER_PLAYER_NETCLIENT && AETHER_PLAYER_PHYSICS
+            if (render_interpolation)
+                render_interpolation->Update(std::chrono::duration<f64>(now - network_start).count());
+#endif
 
             if (swap_chain) {
                 device->WaitForFence(frame_fences[frame_slot]);

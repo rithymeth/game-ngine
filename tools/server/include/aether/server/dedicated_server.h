@@ -192,6 +192,9 @@ public:
     bool Done() const { return done_; }
     const NetClientResult& Result();
     World& GetWorld() { return *world_ref_; }
+    // The active replication stream, for game-host render-only interpolation.
+    // Null before Start; owned by this NetClient and never by the renderer.
+    net::ReplicationClient* Replication() { return replication_.get(); }
     // Before Start, a shipped game host may bind its own World so accepted
     // snapshots update the same ECS world used by its PhysicsScene and renderer.
     // The external World must outlive this client. Returns false after Start.
