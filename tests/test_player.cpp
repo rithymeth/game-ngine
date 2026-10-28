@@ -931,6 +931,9 @@ AETHER_TEST(Player_SimulatesPhysics) {
     const Entity e = FindTagged(game.GetWorld(), "Ball");
     // The opt-in multiplayer client must not advance Jolt between snapshots.
     game.SetAuthoritativePhysicsClient(true);
+    std::string reload_error;
+    CHECK(!game.LoadStartupScene(&reload_error)); // external UDP World must not dangle
+    CHECK(reload_error.find("authoritative multiplayer") != std::string::npos);
     for (int i = 0; i < 30; ++i) game.Tick(1.0f / 60.0f);
     CHECK(std::fabs(game.GetWorld().GetComponent<Transform>(e)->position.y - 10.0f) < 0.001f);
     // Default single-player physics still steps when opt-in is disabled.
