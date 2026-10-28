@@ -226,6 +226,10 @@ public:
     // 3D scene queries (when the Physics module is linked); null until a
     // scene is loaded or when this player was built without Physics.
     PhysicsScene* PhysicsQueries();
+    // Shipped UDP clients receive authoritative Jolt state from accepted snapshots.
+    // Opt-in only: keep physics queries/bodies, but never locally step Jolt or
+    // character simulation. Single-player (including Evervale) stays unchanged.
+    void SetAuthoritativePhysicsClient(bool enabled) { authoritative_physics_client_ = enabled; }
 
     // Input (§26.4). The host (the window, or a test) sets keys, buttons and
     // mouse movement here before each Tick; the game's actions come from the
@@ -382,6 +386,7 @@ private:
     GameStats stats_;
     FrameContext last_frame_;
     bool paused_ = false, exit_requested_ = false;
+    bool authoritative_physics_client_ = false;
     i32 proof_menu_ = 0, proof_menu_row_ = 0, proof_settings_status_ = 0;
     input::KeyCapture proof_key_capture_;
     bool proof_key_capture_active_ = false;
