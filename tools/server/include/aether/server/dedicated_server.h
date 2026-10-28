@@ -191,7 +191,11 @@ public:
     // Joined and played for `duration`, or failed (refused / timed out).
     bool Done() const { return done_; }
     const NetClientResult& Result();
-    World& GetWorld() { return world_; }
+    World& GetWorld() { return *world_ref_; }
+    // Before Start, a shipped game host may bind its own World so accepted
+    // snapshots update the same ECS world used by its PhysicsScene and renderer.
+    // The external World must outlive this client. Returns false after Start.
+    bool UseWorld(World& world);
     // Optional host-level hook, invoked only after an accepted replication snapshot.
     // A game with Jolt may bind a physics reconciliation callback here; the
     // headless networking core deliberately has no physics dependency.
@@ -200,6 +204,7 @@ public:
 private:
     NetClientConfig config_;
     World world_;
+    World* world_ref_ = &world_; // owned by default; optional game-host world
     net::UdpSocket socket_;
     std::unique_ptr<net::NetHost> host_;
     std::unique_ptr<net::SessionClient> session_;
