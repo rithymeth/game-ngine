@@ -298,9 +298,8 @@ Client Jolt is not stepped: this is authoritative correction, not prediction.
 `SnapshotInterpolation::SampleRenderTransform` remains the visual-only API
 for physics entities; its sampled pose must not be written into ECS or Jolt.
 
-This editor integration does not enable networking or physics reconciliation
-in the shipped single-player player. The real UDP `server::NetClient` still
-requires its game host to explicitly attach a `PhysicsScene` callback.
+This editor integration does not change the shipped single-player player.
+The shipped UDP client has a separate explicit `--server` opt-in, described below.
 
 ### Sharing the shipped client's game World (UDP)
 
