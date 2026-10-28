@@ -987,6 +987,36 @@ AETHER_TEST(Player_RealUdpSnapshotsShareGameWorld) {
         return;
     }
 
+    // A real UDP relay allows deterministic downstream datagram loss without
+    // adding fault-injection hooks to the shipped Net/Physics modules.
+    net::UdpSocket relay;
+    CHECK(relay.Open(0, &error));
+    if (!relay.IsOpen()) {
+        game.EndPlay();
+        server.Stop();
+        return;
+    }
+    const net::Address server_endpoint = net::Address::Loopback(server.Port());
+    net::Address client_endpoint;
+    bool drop_downstream = false;
+    u32 dropped_downstream = 0;
+    const auto pump_udp = [&] {
+        net::Address from;
+        std::vector<u8> packet;
+        while (relay.Receive(from, packet)) {
+            if (from == server_endpoint) {
+                if (drop_downstream) {
+                    ++dropped_downstream;
+                } else if (client_endpoint.port != 0) {
+                    CHECK(relay.Send(client_endpoint, std::span<const u8>(packet.data(), packet.size())));
+                }
+            } else {
+                client_endpoint = from;
+                CHECK(relay.Send(server_endpoint, std::span<const u8>(packet.data(), packet.size())));
+            }
+        }
+    };
+
     using Clock = std::chrono::steady_clock;
     const auto start = Clock::now();
     const auto now = [&] { return std::chrono::duration<f64>(Clock::now() - start).count(); };
@@ -1031,7 +1061,7 @@ AETHER_TEST(Player_RealUdpSnapshotsShareGameWorld) {
             });
     });
     server::NetClientConfig client_config;
-    client_config.server = net::Address::Loopback(server.Port());
+    client_config.server = net::Address::Loopback(relay.LocalAddress().port);
     client_config.build_id = 123;
     client_config.send_rpc = false; // shipped player does not send the smoke-test Ping
     client_config.duration = 1.5;
@@ -1055,8 +1085,9 @@ AETHER_TEST(Player_RealUdpSnapshotsShareGameWorld) {
     bool moved = false;
     bool sampled_visual = false;
     bool gap_started = false, gap_finished = false, resumed_after_gap = false;
-    f64 gap_until = 0.0;
-    u32 accepted_at_gap_end = 0;
+    bool loss_started = false, loss_finished = false, resumed_after_loss = false;
+    f64 gap_until = 0.0, loss_until = 0.0;
+    u32 accepted_at_gap_end = 0, accepted_at_loss_end = 0;
     u32 poll_iteration = 0;
     while (!client.Done() && now() < 6.0) {
         const f64 tick_now = now();
@@ -1066,6 +1097,19 @@ AETHER_TEST(Player_RealUdpSnapshotsShareGameWorld) {
             gap_started = true;
             gap_until = tick_now + 0.18;
         }
+        if (resumed_after_gap && !loss_started) {
+            loss_started = true;
+            loss_until = tick_now + 0.18;
+        }
+        drop_downstream = loss_started && tick_now < loss_until;
+        if (loss_started && !loss_finished && !drop_downstream) {
+            loss_finished = true;
+            accepted_at_loss_end = accepted;
+        }
+        // Forward actual OS UDP datagrams through the relay; during the loss
+        // window only server->client datagrams are discarded. The server
+        // continues ticking and transmitting, unlike the snapshot-gap phase.
+        pump_udp();
         if (!gap_started || tick_now >= gap_until) {
             if (gap_started && !gap_finished) {
                 gap_finished = true;
@@ -1073,8 +1117,11 @@ AETHER_TEST(Player_RealUdpSnapshotsShareGameWorld) {
             }
             server.Tick(tick_now);
         }
+        pump_udp();
         client.Tick(tick_now);
+        pump_udp();
         if (gap_finished && accepted > accepted_at_gap_end) resumed_after_gap = true;
+        if (loss_finished && accepted > accepted_at_loss_end) resumed_after_loss = true;
         if (saw_initial && !moved) {
             server_world.GetComponent<Transform>(source)->position = Vec3(25, 4, 0);
             server_world.GetComponent<Transform>(source)->rotation = updated_rotation;
@@ -1121,6 +1168,7 @@ AETHER_TEST(Player_RealUdpSnapshotsShareGameWorld) {
     CHECK(saw_initial && saw_updated);
     CHECK(jolt_verified > 0);
     CHECK(gap_started && gap_finished && resumed_after_gap);
+    CHECK(loss_started && loss_finished && dropped_downstream > 0 && resumed_after_loss);
     CHECK(sampled_visual);
     CHECK(client.Result().rpcs_sent == 0);
     game.SetAuthoritativePhysicsClient(false);
