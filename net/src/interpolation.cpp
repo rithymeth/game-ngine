@@ -90,7 +90,7 @@ void SnapshotInterpolation::Update(f64 now) {
         // Never overwrite the authoritative simulation pose of a replicated
         // physics prop with a delayed render pose. Jolt correction and
         // simulation must read the latest replicated Transform instead.
-        if (world_.HasComponent<NetPhysicsState>(entity)) continue;
+        if (render_only_ || world_.HasComponent<NetPhysicsState>(entity)) continue;
         buffer.Sample(render_time_, *t);
     }
 }
