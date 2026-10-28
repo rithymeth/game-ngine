@@ -146,7 +146,10 @@ AETHER_TEST(DedicatedServer_RealUdpJoinReplicateRpc) {
         // A valid initial snapshot can precede the first replicated spawn.
         if (snapshot_world.EntityCount() > 0) ++populated_snapshots;
     });
-    auto wrong_password = make("eve", "guess", 89, 1.0);
+    // A refused join must not touch a game-owned World, including its pre-existing entities.
+    World refused_client_world;
+    const Entity preserved = refused_client_world.CreateEntity(Transform{Vec3{99, 4, 2}, Quaternion{}});
+    auto wrong_password = make("eve", "guess", 89, 1.0, &refused_client_world);
     auto wrong_build = make("old", "hunter2", 88, 1.0);
     u32 refused_snapshots = 0;
     wrong_password->OnSnapshotApplied([&](World&) { ++refused_snapshots; });
@@ -178,6 +181,18 @@ AETHER_TEST(DedicatedServer_RealUdpJoinReplicateRpc) {
     CHECK(!wrong_build->Result().joined && wrong_build->Result().join_result == "BuildMismatch");
     CHECK(!wrong_password->Result().Passed(true));
     CHECK(wrong_password->Result().entities_seen == 0 && wrong_build->Result().entities_seen == 0); // no state before joining
+    CHECK(&wrong_password->GetWorld() == &refused_client_world);
+    CHECK(refused_client_world.EntityCount() == 1 && refused_client_world.IsAlive(preserved));
+    const Transform* preserved_transform = refused_client_world.GetComponent<Transform>(preserved);
+    CHECK(preserved_transform != nullptr);
+    if (preserved_transform) CHECK(preserved_transform->position.x == 99.0f && preserved_transform->position.y == 4.0f &&
+                                   preserved_transform->position.z == 2.0f);
+    // A refused session is terminal for this NetClient too: a new attempt needs a fresh object.
+    error.clear();
+    CHECK(!wrong_password->Start(restart_attempt, now(), &error));
+    CHECK(error.find("fresh client") != std::string::npos);
+    CHECK(!wrong_password->UseWorld(shared_client_world));
+    CHECK(refused_snapshots == 0 && refused_client_world.EntityCount() == 1);
     // Even after Leave/Done, the same object cannot silently reuse stale
     // replication and physics state; rejoin uses a fresh NetClient.
     error.clear();
