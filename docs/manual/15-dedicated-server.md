@@ -318,7 +318,7 @@ aether_player --pak Paks --server 127.0.0.1:7777 --name player1 --build-id 1
 before joining, applies accepted snapshots to the same `PhysicsScene`, and
 suppresses client-side Jolt/character stepping. The host does not run the
 headless client's test RPC. The Game and loaded scene must outlive the UDP
-client; do not replace the scene while connected. The renderer currently
+client; scene replacement is rejected while the opt-in is active. The renderer currently
 uses authoritative ECS poses; any future interpolation must sample into
 render-only transforms, never back into ECS or Jolt. Without `--server`,
 Evervale and other shipped single-player games keep their original physics.
