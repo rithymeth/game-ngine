@@ -4422,6 +4422,7 @@
   void LoadLocalization()
   void OnPlatformEvent(const platform::LifecycleMessage&message)
   void RefreshSaveContext()
+  void SetAuthoritativePhysicsClient(bool enabled)
   void SetPaused(bool paused)
   void SetUiPointerScale(f32 x,f32 y)
   void SetUserPaths(const UserPaths&paths)

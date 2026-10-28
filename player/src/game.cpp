@@ -422,6 +422,9 @@ bool Game::LoadStartupScene(std::string* error) {
 }
 
 bool Game::LoadScene(const std::string& path, std::string* error) {
+    // The UDP client keeps a pointer to this World. Replacing it mid-session
+    // would leave replication writing to freed ECS memory.
+    if (authoritative_physics_client_) return Fail(error, "Can't replace a scene while authoritative multiplayer is active");
     StartModules(); // their components, before the scene names them
     bp::RegisterBlueprintComponents(); // BlueprintInstance, before scene deserialization
     ui::RegisterWidgetComponents(); // WidgetComponent (§18.4)
@@ -1035,7 +1038,7 @@ void Game::BuildFrame() {
     physics.main_thread_only = true;
     physics.run = [this](World&, const FrameContext& frame) {
 #if AETHER_GAME_PHYSICS
-        if (physics_) {
+        if (physics_ && !authoritative_physics_client_) {
             physics_->characters->Step(frame.fixed_dt);
             physics_->scene->Step(frame.fixed_dt);
         }

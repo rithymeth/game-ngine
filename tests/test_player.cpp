@@ -929,6 +929,15 @@ AETHER_TEST(Player_SimulatesPhysics) {
     game.BeginPlay();
     CHECK(game.Stats().physics_bodies == 2);
     const Entity e = FindTagged(game.GetWorld(), "Ball");
+    // The opt-in multiplayer client must not advance Jolt between snapshots.
+    game.SetAuthoritativePhysicsClient(true);
+    std::string reload_error;
+    CHECK(!game.LoadStartupScene(&reload_error)); // external UDP World must not dangle
+    CHECK(reload_error.find("authoritative multiplayer") != std::string::npos);
+    for (int i = 0; i < 30; ++i) game.Tick(1.0f / 60.0f);
+    CHECK(std::fabs(game.GetWorld().GetComponent<Transform>(e)->position.y - 10.0f) < 0.001f);
+    // Default single-player physics still steps when opt-in is disabled.
+    game.SetAuthoritativePhysicsClient(false);
     for (int i = 0; i < 30; ++i) game.Tick(1.0f / 60.0f);
     const f32 half_second = game.GetWorld().GetComponent<Transform>(e)->position.y;
     CHECK(half_second < 9.0f && half_second > 8.0f); // ~10 - g t^2 / 2 = 8.77
