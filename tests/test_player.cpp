@@ -972,6 +972,7 @@ AETHER_TEST(Player_RealUdpSnapshotsShareGameWorld) {
     World server_world;
     net::NetPhysicsState motion;
     motion.linear_velocity = Vec3(1, 2, 3);
+    motion.angular_velocity = Vec3(0, 1, 0);
     const Entity source = server_world.CreateEntity(
         Transform{Vec3(10, 4, 0), Quaternion::Identity()}, motion);
     server::ServerConfig server_config;
@@ -994,6 +995,7 @@ AETHER_TEST(Player_RealUdpSnapshotsShareGameWorld) {
     CHECK(&client.GetWorld() == &game.GetWorld());
     u32 accepted = 0;
     bool saw_initial = false, saw_updated = false;
+    const Quaternion updated_rotation = Quaternion::FromAxisAngle(Vec3(0, 1, 0), Radians(90.0f));
     client.OnSnapshotApplied([&](World& world) {
         CHECK(&world == &game.GetWorld());
         // Exactly the bridge used by aether_player after an accepted snapshot.
@@ -1005,7 +1007,10 @@ AETHER_TEST(Player_RealUdpSnapshotsShareGameWorld) {
                     std::fabs(state.linear_velocity.x - 1.0f) < 0.01f)
                     saw_initial = true;
                 if (std::fabs(transform.position.x - 25.0f) < 0.01f &&
-                    std::fabs(state.linear_velocity.x - 7.0f) < 0.01f && state.sleeping)
+                    std::fabs(transform.rotation.y - updated_rotation.y) < 0.01f &&
+                    std::fabs(transform.rotation.w - updated_rotation.w) < 0.01f &&
+                    std::fabs(state.linear_velocity.x - 7.0f) < 0.01f &&
+                    std::fabs(state.angular_velocity.z - 3.0f) < 0.01f && state.sleeping)
                     saw_updated = true;
             });
     });
@@ -1023,20 +1028,23 @@ AETHER_TEST(Player_RealUdpSnapshotsShareGameWorld) {
     game.SetAuthoritativePhysicsClient(true);
     bool moved = false;
     bool sampled_visual = false;
+    u32 poll_iteration = 0;
     while (!client.Done() && now() < 6.0) {
         server.Tick(now());
         client.Tick(now());
         if (saw_initial && !moved) {
             server_world.GetComponent<Transform>(source)->position = Vec3(25, 4, 0);
+            server_world.GetComponent<Transform>(source)->rotation = updated_rotation;
             auto* state = server_world.GetComponent<net::NetPhysicsState>(source);
             state->linear_velocity = Vec3(7, 0, 0);
+            state->angular_velocity = Vec3(0, 0, 3);
             state->sleeping = true;
             moved = true;
         }
         game.Tick(1.0f / 60.0f); // authoritative mode: never step local Jolt
         visual.Update(now()); // shipped player's render-only interpolation path
         game.GetWorld().ForEach<net::NetIdentity, net::NetPhysicsState>(
-            [&](const net::NetIdentity& identity, const net::NetPhysicsState&) {
+            [&](const net::NetIdentity& identity, const net::NetPhysicsState& motion_state) {
                 Transform sampled;
                 if (!visual.SampleRenderTransform(identity.net_id, sampled)) return;
                 sampled_visual = true;
@@ -1047,9 +1055,23 @@ AETHER_TEST(Player_RealUdpSnapshotsShareGameWorld) {
                 const Transform* current = game.GetWorld().IsAlive(entity)
                                                ? game.GetWorld().GetComponent<Transform>(entity) : nullptr;
                 CHECK(current != nullptr);
-                if (current) CHECK(std::fabs(current->position.x - authoritative.position.x) < 0.01f);
+                if (current) {
+                    // Render sampling must not rewind any accepted authoritative ECS pose.
+                    CHECK(std::fabs(current->position.x - authoritative.position.x) < 0.01f);
+                    CHECK(std::fabs(current->rotation.y - authoritative.rotation.y) < 0.01f);
+                    CHECK(std::fabs(current->rotation.w - authoritative.rotation.w) < 0.01f);
+                }
+                net::NetPhysicsState authoritative_motion;
+                if (client.Replication()->ReadReplicated(identity.net_id, GetComponentId<net::NetPhysicsState>(),
+                                                         &authoritative_motion)) {
+                    CHECK(std::fabs(motion_state.linear_velocity.x - authoritative_motion.linear_velocity.x) < 0.01f);
+                    CHECK(std::fabs(motion_state.angular_velocity.z - authoritative_motion.angular_velocity.z) < 0.01f);
+                    CHECK(motion_state.sleeping == authoritative_motion.sleeping);
+                }
             });
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        // Deliberately vary UDP polling cadence to exercise bursty snapshot arrival.
+        // This is jitter coverage, not a packet-loss simulation.
+        std::this_thread::sleep_for(std::chrono::milliseconds((++poll_iteration % 11 == 0) ? 18 : 2));
     }
     CHECK(client.Done() && client.Result().joined);
     CHECK(client.Result().snapshots > 0 && accepted > 0);
