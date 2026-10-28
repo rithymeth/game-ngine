@@ -1035,7 +1035,7 @@ void Game::BuildFrame() {
     physics.main_thread_only = true;
     physics.run = [this](World&, const FrameContext& frame) {
 #if AETHER_GAME_PHYSICS
-        if (physics_) {
+        if (physics_ && !authoritative_physics_client_) {
             physics_->characters->Step(frame.fixed_dt);
             physics_->scene->Step(frame.fixed_dt);
         }
