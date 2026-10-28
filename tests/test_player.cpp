@@ -1346,6 +1346,35 @@ AETHER_TEST(Player_RealUdpTwoCookedClientsKeepIndependentAuthoritativeJoltWorlds
         return;
     }
 
+    // Only client A traverses a real UDP relay. Client B uses the direct
+    // socket path, so downstream loss for A must not stall B's snapshots.
+    net::UdpSocket relay_a;
+    CHECK(relay_a.Open(0, &error));
+    if (!relay_a.IsOpen()) {
+        server.Stop();
+        return;
+    }
+    const net::Address server_endpoint = net::Address::Loopback(server.Port());
+    net::Address client_a_endpoint;
+    bool drop_a_downstream = false;
+    u32 dropped_a_downstream = 0;
+    const auto pump_a = [&] {
+        net::Address from;
+        std::vector<u8> packet;
+        while (relay_a.Receive(from, packet)) {
+            if (from == server_endpoint) {
+                if (drop_a_downstream) {
+                    ++dropped_a_downstream;
+                } else if (client_a_endpoint.port != 0) {
+                    CHECK(relay_a.Send(client_a_endpoint, std::span<const u8>(packet.data(), packet.size())));
+                }
+            } else {
+                client_a_endpoint = from;
+                CHECK(relay_a.Send(server_endpoint, std::span<const u8>(packet.data(), packet.size())));
+            }
+        }
+    };
+
     Game game_a(package), game_b(package);
     CHECK(game_a.LoadStartupScene() && game_b.LoadStartupScene());
     PhysicsScene* physics_a = game_a.PhysicsQueries();
@@ -1405,13 +1434,14 @@ AETHER_TEST(Player_RealUdpTwoCookedClientsKeepIndependentAuthoritativeJoltWorlds
     configure(client_a, a);
     configure(client_b, b);
     server::NetClientConfig cfg;
-    cfg.server = net::Address::Loopback(server.Port());
+    cfg.server = net::Address::Loopback(relay_a.LocalAddress().port);
     cfg.build_id = 123;
     cfg.send_rpc = false;
-    cfg.duration = 1.8;
+    cfg.duration = 2.4;
     cfg.join_timeout = 3.0;
     cfg.name = "cooked-a";
     const bool started_a = client_a.Start(cfg, now(), &error);
+    cfg.server = net::Address::Loopback(server.Port());
     cfg.name = "cooked-b";
     const bool started_b = client_b.Start(cfg, now(), &error);
     CHECK(started_a && started_b);
@@ -1441,6 +1471,9 @@ AETHER_TEST(Player_RealUdpTwoCookedClientsKeepIndependentAuthoritativeJoltWorlds
     game_a.SetAuthoritativePhysicsClient(true);
     game_b.SetAuthoritativePhysicsClient(true);
     bool moved = false;
+    bool loss_started = false, loss_finished = false, a_recovered = false, b_kept_receiving = false;
+    f64 loss_until = 0.0;
+    u32 a_accepted_at_loss_end = 0, b_accepted_at_loss_start = 0;
     const auto sample = [](server::NetClient& client, Probe& p, net::SnapshotInterpolation& visual) {
         p.game->GetWorld().ForEach<net::NetIdentity, net::NetPhysicsState>(
             [&](const net::NetIdentity& identity, const net::NetPhysicsState& state) {
@@ -1466,9 +1499,27 @@ AETHER_TEST(Player_RealUdpTwoCookedClientsKeepIndependentAuthoritativeJoltWorlds
             });
     };
     while ((!client_a.Done() || !client_b.Done()) && now() < 6.0) {
-        server.Tick(now());
-        client_a.Tick(now());
-        client_b.Tick(now());
+        const f64 tick_now = now();
+        // Both clients first receive the updated authoritative pose. Then
+        // discard only A's real server-to-client UDP datagrams for 180 ms.
+        if (a.updated && b.updated && !loss_started) {
+            loss_started = true;
+            loss_until = tick_now + 0.18;
+            b_accepted_at_loss_start = b.accepted;
+        }
+        drop_a_downstream = loss_started && tick_now < loss_until;
+        if (loss_started && !loss_finished && !drop_a_downstream) {
+            loss_finished = true;
+            a_accepted_at_loss_end = a.accepted;
+            b_kept_receiving = b.accepted > b_accepted_at_loss_start;
+        }
+        pump_a();
+        server.Tick(tick_now);
+        pump_a();
+        client_a.Tick(tick_now);
+        client_b.Tick(tick_now);
+        pump_a();
+        if (loss_finished && a.accepted > a_accepted_at_loss_end) a_recovered = true;
         if (a.initial && b.initial && !moved) {
             auto* transform = server_world.GetComponent<Transform>(source);
             transform->position = Vec3(25, 4, 0);
@@ -1494,6 +1545,8 @@ AETHER_TEST(Player_RealUdpTwoCookedClientsKeepIndependentAuthoritativeJoltWorlds
     CHECK(moved && a.initial && b.initial && a.updated && b.updated);
     CHECK(a.accepted > 0 && b.accepted > 0 && a.jolt_verified > 0 && b.jolt_verified > 0);
     CHECK(a.sampled && b.sampled);
+    CHECK(loss_started && loss_finished && dropped_a_downstream > 0);
+    CHECK(b_kept_receiving && a_recovered);
     game_a.SetAuthoritativePhysicsClient(false);
     game_b.SetAuthoritativePhysicsClient(false);
     game_a.EndPlay();
