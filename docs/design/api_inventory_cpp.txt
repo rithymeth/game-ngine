@@ -3927,6 +3927,7 @@
   usize Size()const
   void Push(f64 time,const Transform&transform)
   void SetDelay(f64 delay)
+  void SetRenderOnly(bool enabled)
   void Update(f64 now)
 [net/include/aether/net/net_stats.h] experimental
   type class NetStatGroup
@@ -4440,6 +4441,7 @@
   public:SceneRenderer(gfx::rhi::IDevice&device,gfx::rhi::ISwapChain&swap_chain,const GamePackage&package)
   void Draw(Game&game,gfx::rhi::ICommandList&commands,u32 frame_index)
   void SetDrawParticles(bool draw)
+  void SetRenderPoseSampler(std::function<bool(Entity,Transform&)>sampler)
   void SetViewDistance(f32 metres)
   ~SceneRenderer()
 [player/include/aether/player/settings_apply.h] experimental
