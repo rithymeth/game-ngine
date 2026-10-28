@@ -204,3 +204,22 @@ AETHER_TEST(SplatmapFromWeights) {
     SplatmapData pm = BuildSplatmap(4, layers, painted);
     AETHER_CHECK(pm.pixels[0] == 255 && pm.pixels[4] == 0 && pm.pixels[5] == 255);
 }
+
+
+AETHER_TEST(TerrainHeightBlend_PreservesPaintAndNormalizes) {
+    const std::array<f32, 4> paint{0.25f, 0.75f, 0.0f, 0.0f};
+    const std::array<f32, 4> heights{1.0f, 0.0f, 1.0f, 1.0f};
+    const auto legacy = BlendTerrainLayerHeights(paint, heights, 0.0f);
+    AETHER_CHECK_NEAR(legacy[0], 0.25f, 1e-5f);
+    AETHER_CHECK_NEAR(legacy[1], 0.75f, 1e-5f);
+    const auto blended = BlendTerrainLayerHeights(paint, heights, 1.0f);
+    AETHER_CHECK(blended[0] > legacy[0]);
+    AETHER_CHECK(blended[1] < legacy[1]);
+    AETHER_CHECK(blended[2] == 0.0f && blended[3] == 0.0f);
+    AETHER_CHECK_NEAR(blended[0] + blended[1], 1.0f, 1e-5f);
+    const auto empty = BlendTerrainLayerHeights({0, 0, 0, 0}, heights, 1.0f);
+    AETHER_CHECK(empty[0] == 1.0f && empty[1] == 0.0f);
+    const auto flat = BlendTerrainLayerHeights({0.5f, 0.5f, 0, 0}, {0, 0, 0, 0}, 1.0f);
+    AETHER_CHECK_NEAR(flat[0], 0.5f, 1e-5f);
+    AETHER_CHECK_NEAR(flat[1], 0.5f, 1e-5f);
+}
