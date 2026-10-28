@@ -110,7 +110,8 @@ AETHER_TEST(DedicatedServer_RealUdpJoinReplicateRpc) {
     using Clock = std::chrono::steady_clock;
     const auto start = Clock::now();
     const auto now = [&] { return std::chrono::duration<f64>(Clock::now() - start).count(); };
-    auto make = [&](const char* name, const char* password, u32 build, f64 duration) {
+    World shared_client_world; // same World a game host can give its PhysicsScene
+    auto make = [&](const char* name, const char* password, u32 build, f64 duration, World* external = nullptr) {
         NetClientConfig cc;
         cc.server = net::Address::Loopback(server.Port());
         cc.name = name;
@@ -119,15 +120,20 @@ AETHER_TEST(DedicatedServer_RealUdpJoinReplicateRpc) {
         cc.duration = duration;
         cc.join_timeout = 3.0;
         auto c = std::make_unique<NetClient>();
+        if (external) CHECK(c->UseWorld(*external));
         CHECK(c->Start(cc, now(), &error));
         return c;
     };
     std::vector<std::unique_ptr<NetClient>> good;
-    good.push_back(make("ada", "hunter2", 89, 1.5));
+    good.push_back(make("ada", "hunter2", 89, 1.5, &shared_client_world));
     good.push_back(make("ada", "hunter2", 89, 1.5)); // same name: the server makes it unique
+    CHECK(&good[0]->GetWorld() == &shared_client_world);
+    CHECK(&good[1]->GetWorld() != &shared_client_world);
+    CHECK(!good[0]->UseWorld(shared_client_world)); // no rebinding after Start
     u32 accepted_snapshots = 0;
     u32 populated_snapshots = 0;
     good[0]->OnSnapshotApplied([&](World& snapshot_world) {
+        CHECK(&snapshot_world == &shared_client_world);
         ++accepted_snapshots;
         // A valid initial snapshot can precede the first replicated spawn.
         if (snapshot_world.EntityCount() > 0) ++populated_snapshots;
@@ -158,6 +164,7 @@ AETHER_TEST(DedicatedServer_RealUdpJoinReplicateRpc) {
         CHECK(r.Passed(true));
     }
     CHECK(accepted_snapshots > 0 && populated_snapshots > 0 && refused_snapshots == 0);
+    CHECK(shared_client_world.EntityCount() >= 6); // actual UDP spawns in external World
     CHECK(good[0]->Result().player_name != good[1]->Result().player_name);
     CHECK(!wrong_password->Result().joined && wrong_password->Result().join_result == "WrongPassword");
     CHECK(!wrong_build->Result().joined && wrong_build->Result().join_result == "BuildMismatch");
