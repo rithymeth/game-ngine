@@ -130,6 +130,14 @@ AETHER_TEST(DedicatedServer_RealUdpJoinReplicateRpc) {
     CHECK(&good[0]->GetWorld() == &shared_client_world);
     CHECK(&good[1]->GetWorld() != &shared_client_world);
     CHECK(!good[0]->UseWorld(shared_client_world)); // no rebinding after Start
+    // A second Start must not overwrite the live session's config or World.
+    NetClientConfig restart_attempt;
+    restart_attempt.server = net::Address::Loopback(server.Port());
+    restart_attempt.build_id = 89;
+    error.clear();
+    CHECK(!good[0]->Start(restart_attempt, now(), &error));
+    CHECK(error.find("already started") != std::string::npos);
+    CHECK(&good[0]->GetWorld() == &shared_client_world);
     u32 accepted_snapshots = 0;
     u32 populated_snapshots = 0;
     good[0]->OnSnapshotApplied([&](World& snapshot_world) {
@@ -170,6 +178,12 @@ AETHER_TEST(DedicatedServer_RealUdpJoinReplicateRpc) {
     CHECK(!wrong_build->Result().joined && wrong_build->Result().join_result == "BuildMismatch");
     CHECK(!wrong_password->Result().Passed(true));
     CHECK(wrong_password->Result().entities_seen == 0 && wrong_build->Result().entities_seen == 0); // no state before joining
+    // Even after Leave/Done, the same object cannot silently reuse stale
+    // replication and physics state; rejoin uses a fresh NetClient.
+    error.clear();
+    CHECK(!good[0]->Start(restart_attempt, now(), &error));
+    CHECK(error.find("fresh client") != std::string::npos);
+    CHECK(good[0]->Result().joined && good[0]->Result().snapshots > 0);
 
     // The good clients said goodbye: the server sees the room empty again.
     for (int i = 0; i < 200 && !server.EmptyAfterPlay(); ++i) {
