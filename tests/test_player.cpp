@@ -1321,6 +1321,186 @@ AETHER_TEST(Player_RealUdpRejoinReconcilesFreshJoltWorld) {
     server.Stop();
 }
 
+
+AETHER_TEST(Player_RealUdpTwoCookedClientsKeepIndependentAuthoritativeJoltWorlds) {
+    if (!Game::HasPhysics()) return;
+    // Two actual UDP clients, each with a distinct cooked Game/World/Jolt
+    // scene, observe the same dedicated-server entity and its motion updates.
+    const stdfs::path dir = TestDir("UdpTwoClientGameWorlds");
+    GamePackage package;
+    CHECK(package.Mount(MakePak(dir, "Game.apak").string()));
+    server::RegisterServerComponents();
+    World server_world;
+    net::NetPhysicsState motion;
+    motion.linear_velocity = Vec3(1, 2, 3);
+    const Entity source = server_world.CreateEntity(
+        Transform{Vec3(10, 4, 0), Quaternion::Identity()}, motion);
+    server::ServerConfig server_config;
+    server_config.port = 0;
+    server_config.lan_advertise = false;
+    server_config.build_id = 123;
+    server::DedicatedServer server;
+    std::string error;
+    if (!server.Start(server_config, server_world, &error)) {
+        std::printf("    (no UDP here: %s)\n", error.c_str());
+        return;
+    }
+
+    Game game_a(package), game_b(package);
+    CHECK(game_a.LoadStartupScene() && game_b.LoadStartupScene());
+    PhysicsScene* physics_a = game_a.PhysicsQueries();
+    PhysicsScene* physics_b = game_b.PhysicsQueries();
+    CHECK(physics_a != nullptr && physics_b != nullptr);
+    if (!physics_a || !physics_b) {
+        server.Stop();
+        return;
+    }
+    CHECK(&game_a.GetWorld() != &game_b.GetWorld());
+    game_a.BeginPlay();
+    game_b.BeginPlay();
+    using Clock = std::chrono::steady_clock;
+    const auto start = Clock::now();
+    const auto now = [&] { return std::chrono::duration<f64>(Clock::now() - start).count(); };
+    const Quaternion updated_rotation = Quaternion::FromAxisAngle(Vec3(0, 1, 0), Radians(90.0f));
+
+    struct Probe {
+        Game* game;
+        PhysicsScene* physics;
+        u32 accepted = 0, jolt_verified = 0;
+        bool initial = false, updated = false, sampled = false;
+    };
+    Probe a{&game_a, physics_a}, b{&game_b, physics_b};
+    server::NetClient client_a, client_b;
+    const auto configure = [&](server::NetClient& client, Probe& probe) {
+        CHECK(client.UseWorld(probe.game->GetWorld()));
+        Probe* p = &probe;
+        client.OnSnapshotApplied([p, updated_rotation](World& world) {
+            CHECK(&world == &p->game->GetWorld());
+            ApplyAuthoritativePhysicsSnapshot<net::NetPhysicsState>(world, *p->physics);
+            ++p->accepted;
+            world.ForEach<Transform, RigidBody, net::NetPhysicsState>(
+                [&](Transform& transform, RigidBody& body, net::NetPhysicsState& state) {
+                    CHECK(!body.body_id.IsInvalid());
+                    if (body.body_id.IsInvalid()) return;
+                    const Vec3 position = p->physics->Physics().GetPosition(body.body_id);
+                    const Quaternion rotation = p->physics->Physics().GetRotation(body.body_id);
+                    const f32 dot = rotation.x * transform.rotation.x + rotation.y * transform.rotation.y +
+                                    rotation.z * transform.rotation.z + rotation.w * transform.rotation.w;
+                    CHECK((position - transform.position).Length() < 0.011f);
+                    CHECK(std::fabs(dot) > 0.999f);
+                    CHECK(p->physics->Physics().BodyInterface().IsActive(body.body_id) != state.sleeping);
+                    if (std::fabs(transform.position.x - 10.0f) < 0.01f &&
+                        std::fabs(state.linear_velocity.x - 1.0f) < 0.01f && !state.sleeping)
+                        p->initial = true;
+                    if (std::fabs(transform.position.x - 25.0f) < 0.01f &&
+                        std::fabs(transform.rotation.y - updated_rotation.y) < 0.01f &&
+                        std::fabs(state.linear_velocity.x - 7.0f) < 0.01f &&
+                        std::fabs(state.angular_velocity.z - 3.0f) < 0.01f && state.sleeping)
+                        p->updated = true;
+                    ++p->jolt_verified;
+                });
+            CHECK(ReconcileAuthoritativePhysicsPose<net::NetPhysicsState>(world, *p->physics) == 0);
+        });
+    };
+    configure(client_a, a);
+    configure(client_b, b);
+    server::NetClientConfig cfg;
+    cfg.server = net::Address::Loopback(server.Port());
+    cfg.build_id = 123;
+    cfg.send_rpc = false;
+    cfg.duration = 1.8;
+    cfg.join_timeout = 3.0;
+    cfg.name = "cooked-a";
+    const bool started_a = client_a.Start(cfg, now(), &error);
+    cfg.name = "cooked-b";
+    const bool started_b = client_b.Start(cfg, now(), &error);
+    CHECK(started_a && started_b);
+    if (!started_a || !started_b) {
+        game_a.EndPlay();
+        game_b.EndPlay();
+        server.Stop();
+        return;
+    }
+    const auto register_spawn = [](server::NetClient& client) {
+        client.Replication()->OnSpawn(server::kSceneArchetype,
+            [](World& world, Entity entity, const net::NetIdentity&) {
+                RigidBody body;
+                body.motion = BodyMotion::Dynamic;
+                world.AddComponent(entity, body);
+                SphereCollider sphere;
+                sphere.radius = 0.5f;
+                world.AddComponent(entity, sphere);
+            });
+    };
+    register_spawn(client_a);
+    register_spawn(client_b);
+    net::SnapshotInterpolation visual_a(game_a.GetWorld(), *client_a.Replication());
+    net::SnapshotInterpolation visual_b(game_b.GetWorld(), *client_b.Replication());
+    visual_a.SetRenderOnly(true);
+    visual_b.SetRenderOnly(true);
+    game_a.SetAuthoritativePhysicsClient(true);
+    game_b.SetAuthoritativePhysicsClient(true);
+    bool moved = false;
+    const auto sample = [](server::NetClient& client, Probe& p, net::SnapshotInterpolation& visual) {
+        p.game->GetWorld().ForEach<net::NetIdentity, net::NetPhysicsState>(
+            [&](const net::NetIdentity& identity, const net::NetPhysicsState& state) {
+                Transform rendered;
+                if (!visual.SampleRenderTransform(identity.net_id, rendered)) return;
+                p.sampled = true;
+                Transform authoritative;
+                if (!client.Replication()->ReadReplicated(identity.net_id, GetComponentId<Transform>(),
+                                                          &authoritative)) return;
+                const Entity entity = client.Replication()->FindEntity(identity.net_id);
+                const Transform* current = p.game->GetWorld().IsAlive(entity)
+                    ? p.game->GetWorld().GetComponent<Transform>(entity) : nullptr;
+                CHECK(current != nullptr);
+                if (!current) return;
+                CHECK((current->position - authoritative.position).Length() < 0.011f);
+                net::NetPhysicsState replicated;
+                if (client.Replication()->ReadReplicated(identity.net_id, GetComponentId<net::NetPhysicsState>(),
+                                                         &replicated)) {
+                    CHECK(std::fabs(state.linear_velocity.x - replicated.linear_velocity.x) < 0.01f);
+                    CHECK(std::fabs(state.angular_velocity.z - replicated.angular_velocity.z) < 0.01f);
+                    CHECK(state.sleeping == replicated.sleeping);
+                }
+            });
+    };
+    while ((!client_a.Done() || !client_b.Done()) && now() < 6.0) {
+        server.Tick(now());
+        client_a.Tick(now());
+        client_b.Tick(now());
+        if (a.initial && b.initial && !moved) {
+            auto* transform = server_world.GetComponent<Transform>(source);
+            transform->position = Vec3(25, 4, 0);
+            transform->rotation = updated_rotation;
+            auto* state = server_world.GetComponent<net::NetPhysicsState>(source);
+            state->linear_velocity = Vec3(7, 0, 0);
+            state->angular_velocity = Vec3(0, 0, 3);
+            state->sleeping = true;
+            moved = true;
+        }
+        game_a.Tick(1.0f / 60.0f);
+        game_b.Tick(1.0f / 60.0f);
+        visual_a.Update(now());
+        visual_b.Update(now());
+        sample(client_a, a, visual_a);
+        sample(client_b, b, visual_b);
+        std::this_thread::sleep_for(std::chrono::milliseconds(3));
+    }
+    CHECK(client_a.Done() && client_b.Done());
+    CHECK(client_a.Result().joined && client_b.Result().joined);
+    CHECK(client_a.Result().snapshots > 0 && client_b.Result().snapshots > 0);
+    CHECK(server.Stats().joins >= 2 && server.Stats().peak_players >= 2);
+    CHECK(moved && a.initial && b.initial && a.updated && b.updated);
+    CHECK(a.accepted > 0 && b.accepted > 0 && a.jolt_verified > 0 && b.jolt_verified > 0);
+    CHECK(a.sampled && b.sampled);
+    game_a.SetAuthoritativePhysicsClient(false);
+    game_b.SetAuthoritativePhysicsClient(false);
+    game_a.EndPlay();
+    game_b.EndPlay();
+    server.Stop();
+}
+
 #endif
 
 // The order the player runs its systems in, as a snapshot: the kit migration (Phase 37 step 4) must not change it.
