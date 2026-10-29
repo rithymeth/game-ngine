@@ -295,6 +295,16 @@ AETHER_TEST(DedicatedServer_RealUdpFullPreservesGameWorld) {
     CHECK(first.Done() && server.EmptyAfterPlay());
     CHECK(server.Stats().players == 0 && server.Stats().replicated_entities == 1);
 
+    // The refused client must remain terminal even when the server has a
+    // free slot. Retrying the same object must not reuse its old UDP host,
+    // rebind the external World, or turn the earlier refusal into a join.
+    error.clear();
+    CHECK(!refused.Start(cc, now(), &error));
+    CHECK(error.find("fresh client") != std::string::npos);
+    CHECK(refused.Done() && !refused.Result().joined && refused.Result().join_result == "Full");
+    CHECK(&refused.GetWorld() == &game_world && game_world.EntityCount() == 1);
+    CHECK(game_world.IsAlive(preserved) && refused.Result().snapshots == 0 && applied == 0);
+
     World next_world;
     NetClient next;
     CHECK(next.UseWorld(next_world));
