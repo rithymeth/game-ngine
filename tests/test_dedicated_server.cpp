@@ -337,6 +337,13 @@ AETHER_TEST(DedicatedServer_RealUdpRestartCleansLivePawn) {
     RegisterServerComponents();
     World server_world;
     const Entity preserved = server_world.CreateEntity(Transform{Vec3{13, 2, -6}, Quaternion{}});
+    // A scene with a sparse, preassigned ID must not collide with the
+    // automatically assigned scene or pawn IDs across server restarts.
+    net::NetIdentity sparse_identity;
+    sparse_identity.net_id = 4096;
+    net::SetNetArchetype(sparse_identity, kSceneArchetype);
+    const Entity sparse_scene = server_world.CreateEntity(
+        sparse_identity, Transform{Vec3{-21, 5, 8}, Quaternion{}});
     ServerConfig config;
     config.port = 0;
     config.lan_advertise = false;
@@ -374,15 +381,25 @@ AETHER_TEST(DedicatedServer_RealUdpRestartCleansLivePawn) {
         return;
     }
     CHECK(!first.Done() && server.Stats().players == 1);
-    CHECK(server_world.EntityCount() == 2);
+    CHECK(server_world.EntityCount() == 3);
+    const net::NetIdentity* assigned = server_world.GetComponent<net::NetIdentity>(preserved);
+    CHECK(assigned != nullptr && assigned->net_id > sparse_identity.net_id);
+    const u32 assigned_id = assigned ? assigned->net_id : 0;
 
     server.Stop(); // live peer is disconnected; only its pawn may be destroyed
     CHECK(!server.Running());
-    CHECK(server_world.EntityCount() == 1 && server_world.IsAlive(preserved));
+    CHECK(server_world.EntityCount() == 2 && server_world.IsAlive(preserved) &&
+          server_world.IsAlive(sparse_scene));
     const Transform* original = server_world.GetComponent<Transform>(preserved);
     CHECK(original != nullptr);
     if (original) CHECK(original->position.x == 13.0f && original->position.y == 2.0f &&
                         original->position.z == -6.0f);
+    const Transform* sparse_transform = server_world.GetComponent<Transform>(sparse_scene);
+    CHECK(sparse_transform != nullptr);
+    if (sparse_transform) CHECK(sparse_transform->position.x == -21.0f &&
+                                sparse_transform->position.y == 5.0f && sparse_transform->position.z == 8.0f);
+    const net::NetIdentity* kept = server_world.GetComponent<net::NetIdentity>(preserved);
+    CHECK(kept != nullptr && kept->net_id == assigned_id);
 
     // The old NetClient cannot be recycled even after the server restarts.
     error.clear();
@@ -395,7 +412,7 @@ AETHER_TEST(DedicatedServer_RealUdpRestartCleansLivePawn) {
     if (!server.Running()) return;
     CHECK(server.Stats().players == 0 && server.Stats().joins == 0 &&
           server.Stats().leaves == 0 && server.Stats().refused == 0);
-    CHECK(server_world.EntityCount() == 1);
+    CHECK(server_world.EntityCount() == 2);
 
     World next_world;
     NetClient next;
@@ -412,15 +429,31 @@ AETHER_TEST(DedicatedServer_RealUdpRestartCleansLivePawn) {
     }
     CHECK(next.Done() && next.Result().joined);
     CHECK(next.Result().pawn_seen && next.Result().snapshots > 0);
-    CHECK(next.Result().entities_seen >= 2 && next_world.EntityCount() >= 2);
+    CHECK(next.Result().entities_seen >= 3 && next_world.EntityCount() >= 3);
+    std::vector<u32> received_ids;
+    next_world.ForEachArchetype([&](const Archetype& archetype) {
+        const ComponentId id = GetComponentId<net::NetIdentity>();
+        if (!archetype.Has(id)) return;
+        for (usize chunk = 0; chunk < archetype.ChunkCount(); ++chunk) {
+            const auto* identities = static_cast<const net::NetIdentity*>(archetype.ComponentArray(chunk, id));
+            for (u32 row = 0; row < archetype.ChunkEntityCount(chunk); ++row)
+                received_ids.push_back(identities[row].net_id);
+        }
+    });
+    CHECK(received_ids.size() >= 3);
+    CHECK(std::find(received_ids.begin(), received_ids.end(), sparse_identity.net_id) != received_ids.end());
+    CHECK(std::find(received_ids.begin(), received_ids.end(), assigned_id) != received_ids.end());
+    std::sort(received_ids.begin(), received_ids.end());
+    CHECK(std::adjacent_find(received_ids.begin(), received_ids.end()) == received_ids.end());
     for (int i = 0; i < 200 && !server.EmptyAfterPlay(); ++i) {
         server.Tick(now());
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     CHECK(server.EmptyAfterPlay());
     CHECK(server.Stats().joins == 1 && server.Stats().leaves == 1 &&
-          server.Stats().players == 0 && server.Stats().replicated_entities == 1);
-    CHECK(server_world.EntityCount() == 1 && server_world.IsAlive(preserved));
+          server.Stats().players == 0 && server.Stats().replicated_entities == 2);
+    CHECK(server_world.EntityCount() == 2 && server_world.IsAlive(preserved) &&
+          server_world.IsAlive(sparse_scene));
     server.Stop();
 }
 
