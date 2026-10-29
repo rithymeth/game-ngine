@@ -282,6 +282,41 @@ AETHER_TEST(DedicatedServer_RealUdpFullPreservesGameWorld) {
     CHECK(first.Result().joined && !first.Done());
     CHECK(server.Stats().players == 1 && server.Stats().peak_players == 1 &&
           server.Stats().joins == 1 && server.Stats().refused == 1);
+
+    // A refused peer must not consume the only slot permanently. Once the
+    // legitimate player leaves, a fresh real UDP client can join this same
+    // authoritative server and receive the scene and its own pawn.
+    const f64 leave_deadline = now() + 7.0;
+    while ((!first.Done() || !server.EmptyAfterPlay()) && now() < leave_deadline) {
+        server.Tick(now());
+        first.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(first.Done() && server.EmptyAfterPlay());
+    CHECK(server.Stats().players == 0 && server.Stats().replicated_entities == 1);
+
+    World next_world;
+    NetClient next;
+    CHECK(next.UseWorld(next_world));
+    cc.name = "after-full";
+    cc.duration = 1.0;
+    CHECK(next.Start(cc, now(), &error));
+    const f64 rejoin_deadline = now() + 4.0;
+    while (!next.Done() && now() < rejoin_deadline) {
+        server.Tick(now());
+        next.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(next.Done() && next.Result().joined);
+    CHECK(next.Result().snapshots > 0 && next.Result().entities_seen >= 2);
+    CHECK(next_world.EntityCount() >= 2);
+    for (int i = 0; i < 200 && !server.EmptyAfterPlay(); ++i) {
+        server.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(server.EmptyAfterPlay());
+    CHECK(server.Stats().joins == 2 && server.Stats().leaves == 2 &&
+          server.Stats().refused == 1 && server.Stats().replicated_entities == 1);
     server.Stop();
 }
 
