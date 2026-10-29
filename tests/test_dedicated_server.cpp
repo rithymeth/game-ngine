@@ -304,7 +304,11 @@ AETHER_TEST(DedicatedServer_RealUdpJoinTokens) {
     const auto start = Clock::now();
     const auto now = [&] { return std::chrono::duration<f64>(Clock::now() - start).count(); };
     const u64 unix_now = net::UnixNow();
-    auto make = [&](const char* name, const std::string& token) {
+    // Token refusals must not apply even an early snapshot to a game-owned World.
+    World refused_world;
+    const Entity preserved = refused_world.CreateEntity(Transform{Vec3{17, 6, -9}, Quaternion{}});
+    u32 refused_snapshots = 0;
+    auto make = [&](const char* name, const std::string& token, World* external = nullptr) {
         NetClientConfig cc;
         cc.server = net::Address::Loopback(server.Port());
         cc.name = name;
@@ -313,15 +317,19 @@ AETHER_TEST(DedicatedServer_RealUdpJoinTokens) {
         cc.duration = 1.0;
         cc.join_timeout = 3.0;
         auto c = std::make_unique<NetClient>();
+        if (external) {
+            CHECK(c->UseWorld(*external));
+            c->OnSnapshotApplied([&](World&) { ++refused_snapshots; });
+        }
         CHECK(c->Start(cc, now(), &error));
         return c;
     };
     std::vector<std::unique_ptr<NetClient>> clients;
     clients.push_back(make("good", net::IssueJoinToken(config.token_secret, {"acct-good", unix_now + 60, 89})));
-    clients.push_back(make("expired", net::IssueJoinToken(config.token_secret, {"acct-old", unix_now - 5, 89})));
-    clients.push_back(make("forged", net::IssueJoinToken("some-other-issuer-secret", {"acct-x", unix_now + 60, 89})));
-    clients.push_back(make("build", net::IssueJoinToken(config.token_secret, {"acct-b", unix_now + 60, 88})));
-    clients.push_back(make("none", ""));
+    clients.push_back(make("expired", net::IssueJoinToken(config.token_secret, {"acct-old", unix_now - 5, 89}), &refused_world));
+    clients.push_back(make("forged", net::IssueJoinToken("some-other-issuer-secret", {"acct-x", unix_now + 60, 89}), &refused_world));
+    clients.push_back(make("build", net::IssueJoinToken(config.token_secret, {"acct-b", unix_now + 60, 88}), &refused_world));
+    clients.push_back(make("none", "", &refused_world));
     auto all_done = [&] { return std::all_of(clients.begin(), clients.end(), [](auto& c) { return c->Done(); }); };
     while (!all_done() && now() < 8.0) {
         server.Tick(now());
@@ -334,7 +342,17 @@ AETHER_TEST(DedicatedServer_RealUdpJoinTokens) {
     CHECK(clients[2]->Result().join_result == "BadToken");
     CHECK(clients[3]->Result().join_result == "BadToken");
     CHECK(clients[4]->Result().join_result == "BadToken");
-    for (usize i = 1; i < clients.size(); ++i) CHECK(!clients[i]->Result().joined && clients[i]->Result().entities_seen == 0);
+    for (usize i = 1; i < clients.size(); ++i) {
+        CHECK(!clients[i]->Result().joined && clients[i]->Result().entities_seen == 0);
+        CHECK(clients[i]->Result().snapshots == 0 && &clients[i]->GetWorld() == &refused_world);
+        CHECK(!clients[i]->UseWorld(world)); // a refused session cannot rebind the caller's World
+    }
+    CHECK(refused_snapshots == 0);
+    CHECK(refused_world.EntityCount() == 1 && refused_world.IsAlive(preserved));
+    const Transform* original = refused_world.GetComponent<Transform>(preserved);
+    CHECK(original != nullptr);
+    if (original) CHECK(original->position.x == 17.0f && original->position.y == 6.0f &&
+                        original->position.z == -9.0f);
     server.Stop();
 }
 
