@@ -611,7 +611,7 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     // Refusal while both slots are occupied must not touch a separate
     // game-owned World, even when a slot subsequently becomes available.
     World refused_world;
-    const Entity preserved = refused_world.CreateEntity(Transform{Vec3{27, 5, -9}, Quaternion{}});
+    const Entity preserved_refused_entity = refused_world.CreateEntity(Transform{Vec3{27, 5, -9}, Quaternion{}});
     NetClient refused;
     CHECK(refused.UseWorld(refused_world));
     u32 applied = 0;
@@ -629,7 +629,7 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     CHECK(refused.Done() && !refused.Result().joined && refused.Result().join_result == "Full");
     CHECK(refused.Result().snapshots == 0 && refused.Result().entities_seen == 0 && applied == 0);
     CHECK(&refused.GetWorld() == &refused_world && refused_world.EntityCount() == 1);
-    CHECK(refused_world.IsAlive(preserved));
+    CHECK(refused_world.IsAlive(preserved_refused_entity));
     CHECK(server.Stats().players == 2 && server.Stats().refused == 1);
 
     const f64 leave_deadline = now() + 5.0;
@@ -651,8 +651,8 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     CHECK(error.find("fresh client") != std::string::npos);
     CHECK(refused.Done() && !refused.Result().joined && refused.Result().join_result == "Full");
     CHECK(&refused.GetWorld() == &refused_world && refused_world.EntityCount() == 1);
-    CHECK(refused_world.IsAlive(preserved) && refused.Result().snapshots == 0 && applied == 0);
-    const Transform* untouched = refused_world.GetComponent<Transform>(preserved);
+    CHECK(refused_world.IsAlive(preserved_refused_entity) && refused.Result().snapshots == 0 && applied == 0);
+    const Transform* untouched = refused_world.GetComponent<Transform>(preserved_refused_entity);
     CHECK(untouched != nullptr);
     if (untouched) CHECK(untouched->position.x == 27.0f &&
                          untouched->position.y == 5.0f && untouched->position.z == -9.0f);
