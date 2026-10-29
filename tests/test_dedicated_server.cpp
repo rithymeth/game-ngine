@@ -213,6 +213,78 @@ AETHER_TEST(DedicatedServer_RealUdpJoinReplicateRpc) {
     CHECK(!server.Running());
 }
 
+// A capacity refusal is a real UDP join failure, not permission to replicate
+// into the caller's game-owned World. The already joined player must stay live.
+AETHER_TEST(DedicatedServer_RealUdpFullPreservesGameWorld) {
+    RegisterServerComponents();
+    World server_world;
+    server_world.CreateEntity(Transform{Vec3{2, 0, 0}, Quaternion{}});
+    ServerConfig config;
+    config.port = 0;
+    config.lan_advertise = false;
+    config.max_players = 1;
+    config.build_id = 91;
+    DedicatedServer server;
+    std::string error;
+    if (!server.Start(config, server_world, &error)) {
+        std::printf("    (no UDP here: %s)\n", error.c_str());
+        return;
+    }
+
+    using Clock = std::chrono::steady_clock;
+    const auto start = Clock::now();
+    const auto now = [&] { return std::chrono::duration<f64>(Clock::now() - start).count(); };
+    NetClientConfig cc;
+    cc.server = net::Address::Loopback(server.Port());
+    cc.build_id = 91;
+    cc.join_timeout = 3.0;
+    cc.duration = 5.0; // keep the first slot occupied throughout the refusal
+    cc.send_rpc = false;
+    cc.name = "first";
+    NetClient first;
+    CHECK(first.Start(cc, now(), &error));
+    while ((!first.Result().joined || first.Result().snapshots == 0) && now() < 4.0) {
+        server.Tick(now());
+        first.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(first.Result().joined && first.Result().snapshots > 0);
+    if (!first.Result().joined) {
+        server.Stop();
+        return;
+    }
+
+    World game_world;
+    const Entity preserved = game_world.CreateEntity(Transform{Vec3{31, 7, -4}, Quaternion{}});
+    NetClient refused;
+    CHECK(refused.UseWorld(game_world));
+    u32 applied = 0;
+    refused.OnSnapshotApplied([&](World&) { ++applied; });
+    cc.name = "second";
+    CHECK(refused.Start(cc, now(), &error));
+    const f64 deadline = now() + 3.0;
+    while (!refused.Done() && now() < deadline) {
+        server.Tick(now());
+        first.Tick(now());
+        refused.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(refused.Done());
+    CHECK(!refused.Result().joined && refused.Result().join_result == "Full");
+    CHECK(refused.Result().entities_seen == 0 && refused.Result().snapshots == 0 && applied == 0);
+    CHECK(game_world.EntityCount() == 1 && game_world.IsAlive(preserved));
+    const Transform* original = game_world.GetComponent<Transform>(preserved);
+    CHECK(original != nullptr);
+    if (original) CHECK(original->position.x == 31.0f && original->position.y == 7.0f &&
+                        original->position.z == -4.0f);
+    CHECK(&refused.GetWorld() == &game_world);
+    CHECK(!refused.UseWorld(server_world));
+    CHECK(first.Result().joined && !first.Done());
+    CHECK(server.Stats().players == 1 && server.Stats().peak_players == 1 &&
+          server.Stats().joins == 1 && server.Stats().refused == 1);
+    server.Stop();
+}
+
 AETHER_TEST(DedicatedServer_RealUdpJoinTokens) {
     RegisterServerComponents();
     World world;
