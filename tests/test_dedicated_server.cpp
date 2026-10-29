@@ -582,7 +582,7 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     cc.join_timeout = 3.0;
     cc.send_rpc = false;
     cc.name = "leaving";
-    cc.duration = 2.0;
+    cc.duration = 4.0;
     NetClient leaving;
     CHECK(leaving.Start(cc, now(), &error));
     cc.name = "remaining";
@@ -608,6 +608,30 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     }
     CHECK(server.Stats().players == 2 && world.EntityCount() == 3);
 
+    // Refusal while both slots are occupied must not touch a separate
+    // game-owned World, even when a slot subsequently becomes available.
+    World refused_world;
+    const Entity preserved_refused_entity = refused_world.CreateEntity(Transform{Vec3{27, 5, -9}, Quaternion{}});
+    NetClient refused;
+    CHECK(refused.UseWorld(refused_world));
+    u32 applied = 0;
+    refused.OnSnapshotApplied([&](World&) { ++applied; });
+    cc.name = "full-refused";
+    CHECK(refused.Start(cc, now(), &error));
+    const f64 refuse_deadline = now() + 3.0;
+    while (!refused.Done() && now() < refuse_deadline) {
+        server.Tick(now());
+        leaving.Tick(now());
+        remaining.Tick(now());
+        refused.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(refused.Done() && !refused.Result().joined && refused.Result().join_result == "Full");
+    CHECK(refused.Result().snapshots == 0 && refused.Result().entities_seen == 0 && applied == 0);
+    CHECK(&refused.GetWorld() == &refused_world && refused_world.EntityCount() == 1);
+    CHECK(refused_world.IsAlive(preserved_refused_entity));
+    CHECK(server.Stats().players == 2 && server.Stats().refused == 1);
+
     const f64 leave_deadline = now() + 5.0;
     while ((!leaving.Done() || server.Stats().players != 1) && now() < leave_deadline) {
         server.Tick(now());
@@ -619,6 +643,19 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     CHECK(server.Stats().players == 1 && server.Stats().joins == 2 &&
           server.Stats().leaves == 1 && server.Stats().replicated_entities == 2);
     CHECK(world.EntityCount() == 2 && world.IsAlive(scene));
+
+    // A previously Full-refused client is terminal, not an implicit
+    // reconnect candidate when the other player remains active.
+    error.clear();
+    CHECK(!refused.Start(cc, now(), &error));
+    CHECK(error.find("fresh client") != std::string::npos);
+    CHECK(refused.Done() && !refused.Result().joined && refused.Result().join_result == "Full");
+    CHECK(&refused.GetWorld() == &refused_world && refused_world.EntityCount() == 1);
+    CHECK(refused_world.IsAlive(preserved_refused_entity) && refused.Result().snapshots == 0 && applied == 0);
+    const Transform* untouched = refused_world.GetComponent<Transform>(preserved_refused_entity);
+    CHECK(untouched != nullptr);
+    if (untouched) CHECK(untouched->position.x == 27.0f &&
+                         untouched->position.y == 5.0f && untouched->position.z == -9.0f);
 
     NetClient fresh;
     cc.name = "replacement";
@@ -640,7 +677,8 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     CHECK(server.Stats().players == 1 && server.Stats().joins == 3 &&
-          server.Stats().leaves == 2 && server.Stats().peak_players == 2);
+          server.Stats().leaves == 2 && server.Stats().peak_players == 2 &&
+          server.Stats().refused == 1);
     CHECK(world.EntityCount() == 2 && world.IsAlive(scene));
     server.Stop();
     CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
