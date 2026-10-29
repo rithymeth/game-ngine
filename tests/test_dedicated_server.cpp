@@ -457,6 +457,103 @@ AETHER_TEST(DedicatedServer_RealUdpRestartCleansLivePawn) {
     server.Stop();
 }
 
+// A live shutdown with two joined UDP peers must clean up *both* server-owned
+// pawns without destroying game-owned scene state or poisoning the next session.
+AETHER_TEST(DedicatedServer_RealUdpRestartCleansMultipleLivePawns) {
+    RegisterServerComponents();
+    World server_world;
+    const Entity scene = server_world.CreateEntity(Transform{Vec3{7, -3, 11}, Quaternion{}});
+    ServerConfig config;
+    config.port = 0;
+    config.lan_advertise = false;
+    config.max_players = 2;
+    config.build_id = 94;
+    DedicatedServer server;
+    std::string error;
+    if (!server.Start(config, server_world, &error)) {
+        std::printf("    (no UDP here: %s)\n", error.c_str());
+        return;
+    }
+
+    using Clock = std::chrono::steady_clock;
+    const auto start = Clock::now();
+    const auto now = [&] { return std::chrono::duration<f64>(Clock::now() - start).count(); };
+    NetClientConfig cc;
+    cc.server = net::Address::Loopback(server.Port());
+    cc.build_id = 94;
+    cc.join_timeout = 3.0;
+    cc.duration = 10.0; // both clients remain joined when the server stops
+    cc.send_rpc = false;
+    cc.name = "first-live";
+    NetClient first;
+    CHECK(first.Start(cc, now(), &error));
+    cc.name = "second-live";
+    NetClient second;
+    CHECK(second.Start(cc, now(), &error));
+    const f64 deadline = now() + 5.0;
+    while ((!first.Result().joined || !second.Result().joined ||
+            !first.Result().pawn_seen || !second.Result().pawn_seen ||
+            first.Result().snapshots == 0 || second.Result().snapshots == 0) && now() < deadline) {
+        server.Tick(now());
+        first.Tick(now());
+        second.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(first.Result().joined && second.Result().joined);
+    CHECK(first.Result().pawn_seen && second.Result().pawn_seen);
+    CHECK(first.Result().snapshots > 0 && second.Result().snapshots > 0);
+    if (!first.Result().joined || !second.Result().joined) {
+        server.Stop();
+        return;
+    }
+    CHECK(!first.Done() && !second.Done());
+    CHECK(server.Stats().players == 2 && server.Stats().joins == 2);
+    CHECK(server_world.EntityCount() == 3 && server.Stats().replicated_entities == 3);
+
+    server.Stop();
+    CHECK(!server.Running());
+    CHECK(server_world.EntityCount() == 1 && server_world.IsAlive(scene));
+    const Transform* preserved = server_world.GetComponent<Transform>(scene);
+    CHECK(preserved != nullptr);
+    if (preserved) CHECK(preserved->position.x == 7.0f &&
+                         preserved->position.y == -3.0f && preserved->position.z == 11.0f);
+    error.clear();
+    CHECK(!first.Start(cc, now(), &error));
+    CHECK(error.find("fresh client") != std::string::npos);
+    error.clear();
+    CHECK(!second.Start(cc, now(), &error));
+    CHECK(error.find("fresh client") != std::string::npos);
+
+    error.clear();
+    CHECK(server.Start(config, server_world, &error));
+    if (!server.Running()) return;
+    CHECK(server.Stats().players == 0 && server.Stats().joins == 0 &&
+          server.Stats().leaves == 0 && server.Stats().refused == 0);
+    CHECK(server_world.EntityCount() == 1);
+    NetClient fresh;
+    cc.server = net::Address::Loopback(server.Port());
+    cc.name = "fresh-after-two";
+    cc.duration = 0.8;
+    CHECK(fresh.Start(cc, now(), &error));
+    const f64 fresh_deadline = now() + 4.0;
+    while (!fresh.Done() && now() < fresh_deadline) {
+        server.Tick(now());
+        fresh.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(fresh.Done() && fresh.Result().joined && fresh.Result().pawn_seen);
+    CHECK(fresh.Result().snapshots > 0 && fresh.Result().entities_seen >= 2);
+    for (int i = 0; i < 200 && !server.EmptyAfterPlay(); ++i) {
+        server.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(server.EmptyAfterPlay());
+    CHECK(server.Stats().joins == 1 && server.Stats().leaves == 1 &&
+          server.Stats().players == 0 && server.Stats().replicated_entities == 1);
+    CHECK(server_world.EntityCount() == 1 && server_world.IsAlive(scene));
+    server.Stop();
+}
+
 AETHER_TEST(DedicatedServer_RealUdpJoinTokens) {
     RegisterServerComponents();
     World world;
