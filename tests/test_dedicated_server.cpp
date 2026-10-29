@@ -554,6 +554,102 @@ AETHER_TEST(DedicatedServer_RealUdpRestartCleansMultipleLivePawns) {
     server.Stop();
 }
 
+// Releasing one live UDP player must free only that player's pawn and slot.
+// The remaining player must keep receiving authoritative state while a fresh
+// peer fills the vacant slot on the same server without a restart.
+AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
+    RegisterServerComponents();
+    World world;
+    const Entity scene = world.CreateEntity(Transform{Vec3{12, 4, -6}, Quaternion{}});
+    ServerConfig config;
+    config.port = 0;
+    config.lan_advertise = false;
+    config.max_players = 2;
+    config.build_id = 95;
+    DedicatedServer server;
+    std::string error;
+    if (!server.Start(config, world, &error)) {
+        std::printf("    (no UDP here: %s)\\n", error.c_str());
+        return;
+    }
+
+    using Clock = std::chrono::steady_clock;
+    const auto start = Clock::now();
+    const auto now = [&] { return std::chrono::duration<f64>(Clock::now() - start).count(); };
+    NetClientConfig cc;
+    cc.server = net::Address::Loopback(server.Port());
+    cc.build_id = 95;
+    cc.join_timeout = 3.0;
+    cc.send_rpc = false;
+    cc.name = "leaving";
+    cc.duration = 2.0;
+    NetClient leaving;
+    CHECK(leaving.Start(cc, now(), &error));
+    cc.name = "remaining";
+    cc.duration = 10.0;
+    NetClient remaining;
+    CHECK(remaining.Start(cc, now(), &error));
+
+    const f64 join_deadline = now() + 5.0;
+    while ((!leaving.Result().joined || !remaining.Result().joined ||
+            !leaving.Result().pawn_seen || !remaining.Result().pawn_seen ||
+            leaving.Result().snapshots == 0 || remaining.Result().snapshots == 0) &&
+           now() < join_deadline) {
+        server.Tick(now());
+        leaving.Tick(now());
+        remaining.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(leaving.Result().joined && remaining.Result().joined);
+    CHECK(leaving.Result().pawn_seen && remaining.Result().pawn_seen);
+    if (!leaving.Result().joined || !remaining.Result().joined) {
+        server.Stop();
+        return;
+    }
+    CHECK(server.Stats().players == 2 && world.EntityCount() == 3);
+
+    const f64 leave_deadline = now() + 5.0;
+    while ((!leaving.Done() || server.Stats().players != 1) && now() < leave_deadline) {
+        server.Tick(now());
+        leaving.Tick(now());
+        remaining.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(leaving.Done() && remaining.Result().joined && !remaining.Done());
+    CHECK(server.Stats().players == 1 && server.Stats().joins == 2 &&
+          server.Stats().leaves == 1 && server.Stats().replicated_entities == 2);
+    CHECK(world.EntityCount() == 2 && world.IsAlive(scene));
+
+    NetClient fresh;
+    cc.name = "replacement";
+    cc.duration = 1.0;
+    CHECK(fresh.Start(cc, now(), &error));
+    const f64 fresh_deadline = now() + 5.0;
+    while (!fresh.Done() && now() < fresh_deadline) {
+        server.Tick(now());
+        remaining.Tick(now());
+        fresh.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(fresh.Done() && fresh.Result().joined && fresh.Result().pawn_seen);
+    CHECK(fresh.Result().snapshots > 0 && fresh.Result().entities_seen >= 3);
+    CHECK(remaining.Result().joined && !remaining.Done());
+    for (int i = 0; i < 200 && server.Stats().players != 1; ++i) {
+        server.Tick(now());
+        remaining.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(server.Stats().players == 1 && server.Stats().joins == 3 &&
+          server.Stats().leaves == 2 && server.Stats().peak_players == 2);
+    CHECK(world.EntityCount() == 2 && world.IsAlive(scene));
+    server.Stop();
+    CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
+    const Transform* preserved = world.GetComponent<Transform>(scene);
+    CHECK(preserved != nullptr);
+    if (preserved) CHECK(preserved->position.x == 12.0f &&
+                         preserved->position.y == 4.0f && preserved->position.z == -6.0f);
+}
+
 AETHER_TEST(DedicatedServer_RealUdpJoinTokens) {
     RegisterServerComponents();
     World world;
