@@ -685,6 +685,20 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
           server.Stats().leaves == 2 && server.Stats().peak_players == 2 &&
           server.Stats().refused == 1);
     CHECK(world.EntityCount() == 2 && world.IsAlive(scene));
+
+    // Releasing the replacement must not stall the surviving player's
+    // authoritative snapshot stream after capacity drops back to one.
+    const u32 snapshots_after_replacement_leave = remaining.Result().snapshots;
+    const f64 survivor_deadline = now() + 1.0;
+    while (remaining.Result().snapshots <= snapshots_after_replacement_leave &&
+           now() < survivor_deadline) {
+        server.Tick(now());
+        remaining.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(remaining.Result().joined && !remaining.Done());
+    CHECK(remaining.Result().snapshots > snapshots_after_replacement_leave);
+    CHECK(server.Stats().players == 1 && world.EntityCount() == 2);
     server.Stop();
     CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
     const Transform* preserved = world.GetComponent<Transform>(scene);
