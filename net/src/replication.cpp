@@ -4,6 +4,7 @@
 #include "aether/scene/components.h"
 
 #include <algorithm>
+#include <limits>
 #include <cstring>
 
 namespace aether::net {
@@ -205,6 +206,19 @@ ReplicationServer::ReplicationServer(World& world, NetHost& host, ReplicationCon
     : world_(world), host_(host), config_(config) {
     config_.byte_budget = std::min(config_.byte_budget, Connection::kMaxFragment);
     config_.history = std::max<u32>(config_.history, 2);
+    // A restarted server may reuse a World with previously assigned scene IDs.
+    // Reserve those IDs before a new player's pawn gets an ID of its own.
+    const ComponentId identity_id = GetComponentId<NetIdentity>();
+    world_.ForEachArchetype([&](const Archetype& archetype) {
+        if (!archetype.Has(identity_id)) return;
+        for (usize chunk = 0; chunk < archetype.ChunkCount(); ++chunk) {
+            const auto* identities = static_cast<const NetIdentity*>(archetype.ComponentArray(chunk, identity_id));
+            for (u32 row = 0; row < archetype.ChunkEntityCount(chunk); ++row) {
+                const u32 id = identities[row].net_id;
+                if (id >= next_net_id_ && id != std::numeric_limits<u32>::max()) next_net_id_ = id + 1;
+            }
+        }
+    });
 }
 
 void ReplicationServer::SetViewer(PeerId peer, const Vec3& position) {
