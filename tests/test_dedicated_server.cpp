@@ -657,6 +657,9 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     if (untouched) CHECK(untouched->position.x == 27.0f &&
                          untouched->position.y == 5.0f && untouched->position.z == -9.0f);
 
+    // The surviving player must keep receiving authoritative snapshots while
+    // a new peer fills the vacated slot; a join alone is not sufficient.
+    const u32 remaining_snapshots_before_replacement = remaining.Result().snapshots;
     NetClient fresh;
     cc.name = "replacement";
     cc.duration = 1.0;
@@ -671,6 +674,8 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     CHECK(fresh.Done() && fresh.Result().joined && fresh.Result().pawn_seen);
     CHECK(fresh.Result().snapshots > 0 && fresh.Result().entities_seen >= 3);
     CHECK(remaining.Result().joined && !remaining.Done());
+    CHECK(remaining.Result().pawn_seen &&
+          remaining.Result().snapshots > remaining_snapshots_before_replacement);
     for (int i = 0; i < 200 && server.Stats().players != 1; ++i) {
         server.Tick(now());
         remaining.Tick(now());
