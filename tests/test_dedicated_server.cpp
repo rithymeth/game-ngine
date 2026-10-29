@@ -644,6 +644,32 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
           server.Stats().leaves == 1 && server.Stats().replicated_entities == 2);
     CHECK(world.EntityCount() == 2 && world.IsAlive(scene));
 
+    // Counts alone can conceal a survivor pawn being destroyed and replaced.
+    // Remember its authoritative owner and replication identity before churn.
+    u32 survivor_net_id = 0;
+    net::PeerId survivor_owner = net::kNoPeer;
+    u32 survivor_pawns = 0;
+    // ServerPlayer is reflected in dedicated_server.cpp, not in this test TU.
+    // Inspect its network archetype instead of instantiating an unreflected
+    // GetComponentId<ServerPlayer>() here (which breaks RPC registration).
+    world.ForEach<net::NetIdentity>([&](net::NetIdentity& identity) {
+        if (std::string(identity.archetype) != kPlayerArchetype) return;
+        ++survivor_pawns;
+        survivor_net_id = identity.net_id;
+        survivor_owner = identity.owner;
+    });
+    CHECK(survivor_pawns == 1 && survivor_net_id != 0 && survivor_owner != net::kNoPeer);
+    const auto check_survivor_identity = [&]() {
+        u32 pawn_count = 0;
+        u32 matching = 0;
+        world.ForEach<net::NetIdentity>([&](net::NetIdentity& identity) {
+            if (std::string(identity.archetype) != kPlayerArchetype) return;
+            ++pawn_count;
+            if (identity.net_id == survivor_net_id && identity.owner == survivor_owner) ++matching;
+        });
+        CHECK(pawn_count == 1 && matching == 1);
+    };
+
     // A previously Full-refused client is terminal, not an implicit
     // reconnect candidate when the other player remains active.
     error.clear();
@@ -685,6 +711,7 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
           server.Stats().leaves == 2 && server.Stats().peak_players == 2 &&
           server.Stats().refused == 1);
     CHECK(world.EntityCount() == 2 && world.IsAlive(scene));
+    check_survivor_identity();
 
     // Releasing the replacement must not stall the surviving player's
     // authoritative snapshot stream after capacity drops back to one.
@@ -729,6 +756,7 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
           server.Stats().leaves == 3 && server.Stats().peak_players == 2 &&
           server.Stats().refused == 1 && server.Stats().replicated_entities == 2);
     CHECK(world.EntityCount() == 2 && world.IsAlive(scene));
+    check_survivor_identity();
     server.Stop();
     CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
     const Transform* preserved = world.GetComponent<Transform>(scene);
