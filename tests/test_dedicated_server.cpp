@@ -330,6 +330,100 @@ AETHER_TEST(DedicatedServer_RealUdpFullPreservesGameWorld) {
     server.Stop();
 }
 
+// Restarting a dedicated server while a UDP client is still joined must
+// destroy only the server-owned pawn. A fresh session on the restarted server
+// must replicate the preserved scene and a new pawn, without stale slots.
+AETHER_TEST(DedicatedServer_RealUdpRestartCleansLivePawn) {
+    RegisterServerComponents();
+    World server_world;
+    const Entity preserved = server_world.CreateEntity(Transform{Vec3{13, 2, -6}, Quaternion{}});
+    ServerConfig config;
+    config.port = 0;
+    config.lan_advertise = false;
+    config.max_players = 1;
+    config.build_id = 93;
+    DedicatedServer server;
+    std::string error;
+    if (!server.Start(config, server_world, &error)) {
+        std::printf("    (no UDP here: %s)\n", error.c_str());
+        return;
+    }
+
+    using Clock = std::chrono::steady_clock;
+    const auto start = Clock::now();
+    const auto now = [&] { return std::chrono::duration<f64>(Clock::now() - start).count(); };
+    NetClientConfig cc;
+    cc.server = net::Address::Loopback(server.Port());
+    cc.build_id = 93;
+    cc.name = "before-restart";
+    cc.join_timeout = 3.0;
+    cc.duration = 10.0; // still joined when the server stops
+    cc.send_rpc = false;
+    NetClient first;
+    CHECK(first.Start(cc, now(), &error));
+    const f64 first_deadline = now() + 4.0;
+    while ((!first.Result().joined || !first.Result().pawn_seen || first.Result().snapshots == 0) &&
+           now() < first_deadline) {
+        server.Tick(now());
+        first.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(first.Result().joined && first.Result().pawn_seen && first.Result().snapshots > 0);
+    if (!first.Result().joined) {
+        server.Stop();
+        return;
+    }
+    CHECK(!first.Done() && server.Stats().players == 1);
+    CHECK(server_world.EntityCount() == 2);
+
+    server.Stop(); // live peer is disconnected; only its pawn may be destroyed
+    CHECK(!server.Running());
+    CHECK(server_world.EntityCount() == 1 && server_world.IsAlive(preserved));
+    const Transform* original = server_world.GetComponent<Transform>(preserved);
+    CHECK(original != nullptr);
+    if (original) CHECK(original->position.x == 13.0f && original->position.y == 2.0f &&
+                        original->position.z == -6.0f);
+
+    // The old NetClient cannot be recycled even after the server restarts.
+    error.clear();
+    CHECK(!first.Start(cc, now(), &error));
+    CHECK(error.find("fresh client") != std::string::npos);
+    CHECK(first.Result().joined && first.Result().snapshots > 0);
+
+    error.clear();
+    CHECK(server.Start(config, server_world, &error));
+    if (!server.Running()) return;
+    CHECK(server.Stats().players == 0 && server.Stats().joins == 0 &&
+          server.Stats().leaves == 0 && server.Stats().refused == 0);
+    CHECK(server_world.EntityCount() == 1);
+
+    World next_world;
+    NetClient next;
+    CHECK(next.UseWorld(next_world));
+    cc.server = net::Address::Loopback(server.Port());
+    cc.name = "after-restart";
+    cc.duration = 0.8;
+    CHECK(next.Start(cc, now(), &error));
+    const f64 next_deadline = now() + 4.0;
+    while (!next.Done() && now() < next_deadline) {
+        server.Tick(now());
+        next.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(next.Done() && next.Result().joined);
+    CHECK(next.Result().pawn_seen && next.Result().snapshots > 0);
+    CHECK(next.Result().entities_seen >= 2 && next_world.EntityCount() >= 2);
+    for (int i = 0; i < 200 && !server.EmptyAfterPlay(); ++i) {
+        server.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(server.EmptyAfterPlay());
+    CHECK(server.Stats().joins == 1 && server.Stats().leaves == 1 &&
+          server.Stats().players == 0 && server.Stats().replicated_entities == 1);
+    CHECK(server_world.EntityCount() == 1 && server_world.IsAlive(preserved));
+    server.Stop();
+}
+
 AETHER_TEST(DedicatedServer_RealUdpJoinTokens) {
     RegisterServerComponents();
     World world;
