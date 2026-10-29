@@ -649,7 +649,11 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     u32 survivor_net_id = 0;
     net::PeerId survivor_owner = net::kNoPeer;
     u32 survivor_pawns = 0;
-    world.ForEach<net::NetIdentity, ServerPlayer>([&](net::NetIdentity& identity, ServerPlayer&) {
+    // ServerPlayer is reflected in dedicated_server.cpp, not in this test TU.
+    // Inspect its network archetype instead of instantiating an unreflected
+    // GetComponentId<ServerPlayer>() here (which breaks RPC registration).
+    world.ForEach<net::NetIdentity>([&](net::NetIdentity& identity) {
+        if (std::string(identity.archetype) != kPlayerArchetype) return;
         ++survivor_pawns;
         survivor_net_id = identity.net_id;
         survivor_owner = identity.owner;
@@ -658,7 +662,8 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     const auto check_survivor_identity = [&]() {
         u32 pawn_count = 0;
         u32 matching = 0;
-        world.ForEach<net::NetIdentity, ServerPlayer>([&](net::NetIdentity& identity, ServerPlayer&) {
+        world.ForEach<net::NetIdentity>([&](net::NetIdentity& identity) {
+            if (std::string(identity.archetype) != kPlayerArchetype) return;
             ++pawn_count;
             if (identity.net_id == survivor_net_id && identity.owner == survivor_owner) ++matching;
         });
