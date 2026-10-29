@@ -699,6 +699,36 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     CHECK(remaining.Result().joined && !remaining.Done());
     CHECK(remaining.Result().snapshots > snapshots_after_replacement_leave);
     CHECK(server.Stats().players == 1 && world.EntityCount() == 2);
+
+    // A second fresh session must reuse the same vacated capacity without
+    // evicting the original survivor or leaving a ghost pawn behind.
+    const u32 snapshots_before_second_replacement = remaining.Result().snapshots;
+    NetClient second_replacement;
+    cc.name = "replacement-again";
+    cc.duration = 0.8;
+    CHECK(second_replacement.Start(cc, now(), &error));
+    bool second_slot_occupied = false;
+    const f64 second_deadline = now() + 4.0;
+    while (!second_replacement.Done() && now() < second_deadline) {
+        server.Tick(now());
+        remaining.Tick(now());
+        second_replacement.Tick(now());
+        second_slot_occupied |= server.Stats().players == 2 && world.EntityCount() == 3;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(second_replacement.Done() && second_replacement.Result().joined);
+    CHECK(second_replacement.Result().pawn_seen && second_replacement.Result().snapshots > 0);
+    CHECK(second_slot_occupied && remaining.Result().joined && !remaining.Done());
+    CHECK(remaining.Result().snapshots > snapshots_before_second_replacement);
+    for (int i = 0; i < 200 && server.Stats().players != 1; ++i) {
+        server.Tick(now());
+        remaining.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(server.Stats().players == 1 && server.Stats().joins == 4 &&
+          server.Stats().leaves == 3 && server.Stats().peak_players == 2 &&
+          server.Stats().refused == 1 && server.Stats().replicated_entities == 2);
+    CHECK(world.EntityCount() == 2 && world.IsAlive(scene));
     server.Stop();
     CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
     const Transform* preserved = world.GetComponent<Transform>(scene);
