@@ -717,7 +717,9 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
         server.Tick(now());
         remaining.Tick(now());
         fresh.Tick(now());
-        if (server.Stats().players == 2 && world.EntityCount() == 3) {
+        // The join event creates the pawn before the next replication tick
+        // assigns its nonzero net_id. Check after the client sees that pawn.
+        if (fresh.Result().pawn_seen && server.Stats().players == 2 && world.EntityCount() == 3) {
             first_occupied = true;
             first_identity_stable &= two_live_pawns_keep_survivor_identity();
         }
@@ -768,7 +770,7 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
         server.Tick(now());
         remaining.Tick(now());
         second_replacement.Tick(now());
-        if (server.Stats().players == 2 && world.EntityCount() == 3) {
+        if (second_replacement.Result().pawn_seen && server.Stats().players == 2 && world.EntityCount() == 3) {
             second_slot_occupied = true;
             second_identity_stable &= two_live_pawns_keep_survivor_identity();
         }
