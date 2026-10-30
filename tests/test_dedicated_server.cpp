@@ -706,6 +706,21 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
         stable &= current != 0 && (recorded == 0 || recorded == current);
         if (recorded == 0) recorded = current;
     };
+    // Each new UDP session must have its own owner PeerId even when it
+    // occupies the same player slot as a departed replacement.
+    const auto live_replacement_owner = [&]() {
+        net::PeerId owner = net::kNoPeer;
+        world.ForEach<net::NetIdentity>([&](net::NetIdentity& identity) {
+            if (std::string(identity.archetype) == kPlayerArchetype &&
+                identity.owner != survivor_owner) owner = identity.owner;
+        });
+        return owner;
+    };
+    const auto record_replacement_owner = [&](net::PeerId& recorded, bool& stable) {
+        const net::PeerId current = live_replacement_owner();
+        stable &= current != net::kNoPeer && (recorded == net::kNoPeer || recorded == current);
+        if (recorded == net::kNoPeer) recorded = current;
+    };
 
     // A previously Full-refused client is terminal, not an implicit
     // reconnect candidate when the other player remains active.
@@ -728,6 +743,8 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     bool first_identity_stable = true;
     u32 first_replacement_net_id = 0;
     bool first_replacement_id_stable = true;
+    net::PeerId first_replacement_owner = net::kNoPeer;
+    bool first_replacement_owner_stable = true;
     cc.name = "replacement";
     cc.duration = 1.0;
     CHECK(fresh.Start(cc, now(), &error));
@@ -742,12 +759,15 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
             first_occupied = true;
             first_identity_stable &= two_live_pawns_keep_survivor_identity();
             record_replacement_net_id(first_replacement_net_id, first_replacement_id_stable);
+            record_replacement_owner(first_replacement_owner, first_replacement_owner_stable);
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     CHECK(fresh.Done() && fresh.Result().joined && fresh.Result().pawn_seen);
     CHECK(first_occupied && first_identity_stable);
     CHECK(first_replacement_id_stable && first_replacement_net_id != 0);
+    CHECK(first_replacement_owner_stable && first_replacement_owner != net::kNoPeer &&
+          first_replacement_owner != survivor_owner);
     CHECK(fresh.Result().snapshots > 0 && fresh.Result().entities_seen >= 3);
     CHECK(remaining.Result().joined && !remaining.Done());
     CHECK(remaining.Result().pawn_seen &&
@@ -788,6 +808,8 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     bool second_identity_stable = true;
     u32 second_replacement_net_id = 0;
     bool second_replacement_id_stable = true;
+    net::PeerId second_replacement_owner = net::kNoPeer;
+    bool second_replacement_owner_stable = true;
     const f64 second_deadline = now() + 4.0;
     while (!second_replacement.Done() && now() < second_deadline) {
         server.Tick(now());
@@ -797,6 +819,7 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
             second_slot_occupied = true;
             second_identity_stable &= two_live_pawns_keep_survivor_identity();
             record_replacement_net_id(second_replacement_net_id, second_replacement_id_stable);
+            record_replacement_owner(second_replacement_owner, second_replacement_owner_stable);
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
@@ -805,6 +828,9 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     CHECK(second_slot_occupied && second_identity_stable);
     CHECK(second_replacement_id_stable && second_replacement_net_id != 0 &&
           second_replacement_net_id != first_replacement_net_id);
+    CHECK(second_replacement_owner_stable && second_replacement_owner != net::kNoPeer &&
+          second_replacement_owner != survivor_owner &&
+          second_replacement_owner != first_replacement_owner);
     CHECK(remaining.Result().joined && !remaining.Done());
     CHECK(remaining.Result().snapshots > snapshots_before_second_replacement);
     for (int i = 0; i < 200 && server.Stats().players != 1; ++i) {
