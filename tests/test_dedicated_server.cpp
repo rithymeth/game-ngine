@@ -943,6 +943,20 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     CHECK(survivor_client_has_no_ghost_pawn());
+
+    // Repeated slot reuse must not stop the survivor's authoritative
+    // snapshot stream after the second replacement disconnects.
+    const u32 snapshots_after_second_leave = remaining.Result().snapshots;
+    const f64 second_survivor_deadline = now() + 1.0;
+    while (remaining.Result().snapshots <= snapshots_after_second_leave &&
+           now() < second_survivor_deadline) {
+        server.Tick(now());
+        remaining.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(remaining.Result().joined && !remaining.Done());
+    CHECK(remaining.Result().snapshots > snapshots_after_second_leave);
+    CHECK(client_owns_authoritative_pawn(remaining, survivor_net_id, survivor_owner));
     server.Stop();
     CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
     const Transform* preserved = world.GetComponent<Transform>(scene);
