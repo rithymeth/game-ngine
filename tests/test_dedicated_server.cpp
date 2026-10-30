@@ -735,6 +735,20 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
         return net_id != 0 && owner != net::kNoPeer && owned_pawns == 1 && matching == 1;
     };
 
+    // A departed replacement must disappear from the surviving client's
+    // replicated World, not merely from the authoritative server's World.
+    const auto survivor_client_has_no_ghost_pawn = [&]() {
+        u32 player_pawns = 0;
+        u32 matching = 0;
+        remaining.GetWorld().ForEach<net::NetIdentity>([&](net::NetIdentity& identity) {
+            if (std::string(identity.archetype) != kPlayerArchetype) return;
+            ++player_pawns;
+            if (identity.net_id == survivor_net_id && identity.owner == survivor_owner &&
+                identity.locally_owned) ++matching;
+        });
+        return player_pawns == 1 && matching == 1;
+    };
+
     // A previously Full-refused client is terminal, not an implicit
     // reconnect candidate when the other player remains active.
     error.clear();
@@ -817,6 +831,13 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     CHECK(remaining.Result().joined && !remaining.Done());
     CHECK(remaining.Result().snapshots > snapshots_after_replacement_leave);
     CHECK(server.Stats().players == 1 && world.EntityCount() == 2);
+    const f64 first_cleanup_deadline = now() + 1.0;
+    while (!survivor_client_has_no_ghost_pawn() && now() < first_cleanup_deadline) {
+        server.Tick(now());
+        remaining.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(survivor_client_has_no_ghost_pawn());
 
     // A second fresh session must reuse the same vacated capacity without
     // evicting the original survivor or leaving a ghost pawn behind.
@@ -872,6 +893,13 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
           server.Stats().refused == 1 && server.Stats().replicated_entities == 2);
     CHECK(world.EntityCount() == 2 && world.IsAlive(scene));
     check_survivor_identity();
+    const f64 second_cleanup_deadline = now() + 1.0;
+    while (!survivor_client_has_no_ghost_pawn() && now() < second_cleanup_deadline) {
+        server.Tick(now());
+        remaining.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(survivor_client_has_no_ghost_pawn());
     server.Stop();
     CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
     const Transform* preserved = world.GetComponent<Transform>(scene);
