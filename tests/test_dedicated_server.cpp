@@ -735,6 +735,20 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
         return net_id != 0 && owner != net::kNoPeer && owned_pawns == 1 && matching == 1;
     };
 
+    // A replacement must also receive the surviving player's authoritative
+    // pawn as a remotely owned entity, without duplicates or ghost pawns.
+    const auto replacement_sees_remote_survivor = [&](NetClient& client) {
+        u32 player_pawns = 0;
+        u32 remote_survivors = 0;
+        client.GetWorld().ForEach<net::NetIdentity>([&](net::NetIdentity& identity) {
+            if (std::string(identity.archetype) != kPlayerArchetype) return;
+            ++player_pawns;
+            if (identity.net_id == survivor_net_id && identity.owner == survivor_owner &&
+                !identity.locally_owned) ++remote_survivors;
+        });
+        return player_pawns == 2 && remote_survivors == 1;
+    };
+
     // A departed replacement must disappear from the surviving client's
     // replicated World, not merely from the authoritative server's World.
     const auto survivor_client_has_no_ghost_pawn = [&]() {
@@ -774,6 +788,7 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     bool first_replacement_owner_stable = true;
     bool first_client_identity_stable = true;
     bool first_survivor_client_identity_stable = true;
+    bool first_replacement_saw_remote_survivor = false;
     cc.name = "replacement";
     cc.duration = 1.0;
     CHECK(fresh.Start(cc, now(), &error));
@@ -793,6 +808,7 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
                 fresh, first_replacement_net_id, first_replacement_owner);
             first_survivor_client_identity_stable &= client_owns_authoritative_pawn(
                 remaining, survivor_net_id, survivor_owner);
+            first_replacement_saw_remote_survivor |= replacement_sees_remote_survivor(fresh);
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
@@ -803,6 +819,7 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
           first_replacement_owner != survivor_owner);
     CHECK(first_client_identity_stable);
     CHECK(first_survivor_client_identity_stable);
+    CHECK(first_replacement_saw_remote_survivor);
     CHECK(fresh.Result().snapshots > 0 && fresh.Result().entities_seen >= 3);
     CHECK(remaining.Result().joined && !remaining.Done());
     CHECK(remaining.Result().pawn_seen &&
@@ -854,6 +871,7 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     bool second_replacement_owner_stable = true;
     bool second_client_identity_stable = true;
     bool second_survivor_client_identity_stable = true;
+    bool second_replacement_saw_remote_survivor = false;
     const f64 second_deadline = now() + 4.0;
     while (!second_replacement.Done() && now() < second_deadline) {
         server.Tick(now());
@@ -868,6 +886,7 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
                 second_replacement, second_replacement_net_id, second_replacement_owner);
             second_survivor_client_identity_stable &= client_owns_authoritative_pawn(
                 remaining, survivor_net_id, survivor_owner);
+            second_replacement_saw_remote_survivor |= replacement_sees_remote_survivor(second_replacement);
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
@@ -881,6 +900,7 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
           second_replacement_owner != first_replacement_owner);
     CHECK(second_client_identity_stable);
     CHECK(second_survivor_client_identity_stable);
+    CHECK(second_replacement_saw_remote_survivor);
     CHECK(remaining.Result().joined && !remaining.Done());
     CHECK(remaining.Result().snapshots > snapshots_before_second_replacement);
     for (int i = 0; i < 200 && server.Stats().players != 1; ++i) {
