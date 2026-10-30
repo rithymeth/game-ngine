@@ -957,6 +957,19 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     CHECK(remaining.Result().joined && !remaining.Done());
     CHECK(remaining.Result().snapshots > snapshots_after_second_leave);
     CHECK(client_owns_authoritative_pawn(remaining, survivor_net_id, survivor_owner));
+
+    // Completed replacement sessions must not silently restart in-place:
+    // their old UDP/replication state requires a fresh NetClient instance.
+    error.clear();
+    CHECK(!fresh.Start(cc, now(), &error));
+    CHECK(error.find("fresh client") != std::string::npos);
+    error.clear();
+    CHECK(!second_replacement.Start(cc, now(), &error));
+    CHECK(error.find("fresh client") != std::string::npos);
+    CHECK(fresh.Done() && fresh.Result().joined);
+    CHECK(second_replacement.Done() && second_replacement.Result().joined);
+    CHECK(remaining.Result().joined && !remaining.Done());
+    CHECK(server.Stats().players == 1 && server.Stats().joins == 4);
     server.Stop();
     CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
     const Transform* preserved = world.GetComponent<Transform>(scene);
