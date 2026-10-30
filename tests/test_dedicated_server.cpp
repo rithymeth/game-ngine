@@ -759,6 +759,7 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     net::PeerId first_replacement_owner = net::kNoPeer;
     bool first_replacement_owner_stable = true;
     bool first_client_identity_stable = true;
+    bool first_survivor_client_identity_stable = true;
     cc.name = "replacement";
     cc.duration = 1.0;
     CHECK(fresh.Start(cc, now(), &error));
@@ -776,6 +777,8 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
             record_replacement_owner(first_replacement_owner, first_replacement_owner_stable);
             first_client_identity_stable &= client_owns_authoritative_pawn(
                 fresh, first_replacement_net_id, first_replacement_owner);
+            first_survivor_client_identity_stable &= client_owns_authoritative_pawn(
+                remaining, survivor_net_id, survivor_owner);
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
@@ -785,6 +788,7 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     CHECK(first_replacement_owner_stable && first_replacement_owner != net::kNoPeer &&
           first_replacement_owner != survivor_owner);
     CHECK(first_client_identity_stable);
+    CHECK(first_survivor_client_identity_stable);
     CHECK(fresh.Result().snapshots > 0 && fresh.Result().entities_seen >= 3);
     CHECK(remaining.Result().joined && !remaining.Done());
     CHECK(remaining.Result().pawn_seen &&
@@ -828,6 +832,7 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     net::PeerId second_replacement_owner = net::kNoPeer;
     bool second_replacement_owner_stable = true;
     bool second_client_identity_stable = true;
+    bool second_survivor_client_identity_stable = true;
     const f64 second_deadline = now() + 4.0;
     while (!second_replacement.Done() && now() < second_deadline) {
         server.Tick(now());
@@ -840,6 +845,8 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
             record_replacement_owner(second_replacement_owner, second_replacement_owner_stable);
             second_client_identity_stable &= client_owns_authoritative_pawn(
                 second_replacement, second_replacement_net_id, second_replacement_owner);
+            second_survivor_client_identity_stable &= client_owns_authoritative_pawn(
+                remaining, survivor_net_id, survivor_owner);
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
@@ -852,6 +859,7 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
           second_replacement_owner != survivor_owner &&
           second_replacement_owner != first_replacement_owner);
     CHECK(second_client_identity_stable);
+    CHECK(second_survivor_client_identity_stable);
     CHECK(remaining.Result().joined && !remaining.Done());
     CHECK(remaining.Result().snapshots > snapshots_before_second_replacement);
     for (int i = 0; i < 200 && server.Stats().players != 1; ++i) {
