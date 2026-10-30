@@ -749,6 +749,21 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
         return player_pawns == 2 && remote_survivors == 1;
     };
 
+    // The surviving client must also replicate each live replacement as a
+    // remotely owned pawn with the server's identity, never a stale slot occupant.
+    const auto survivor_sees_remote_replacement = [&](u32 net_id, net::PeerId owner) {
+        if (net_id == 0 || owner == net::kNoPeer) return false;
+        u32 player_pawns = 0;
+        u32 remote_replacements = 0;
+        remaining.GetWorld().ForEach<net::NetIdentity>([&](net::NetIdentity& identity) {
+            if (std::string(identity.archetype) != kPlayerArchetype) return;
+            ++player_pawns;
+            if (identity.net_id == net_id && identity.owner == owner &&
+                !identity.locally_owned) ++remote_replacements;
+        });
+        return player_pawns == 2 && remote_replacements == 1;
+    };
+
     // A departed replacement must disappear from the surviving client's
     // replicated World, not merely from the authoritative server's World.
     const auto survivor_client_has_no_ghost_pawn = [&]() {
@@ -789,6 +804,7 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     bool first_client_identity_stable = true;
     bool first_survivor_client_identity_stable = true;
     bool first_replacement_saw_remote_survivor = false;
+    bool survivor_saw_first_remote_replacement = false;
     cc.name = "replacement";
     cc.duration = 1.0;
     CHECK(fresh.Start(cc, now(), &error));
@@ -809,6 +825,8 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
             first_survivor_client_identity_stable &= client_owns_authoritative_pawn(
                 remaining, survivor_net_id, survivor_owner);
             first_replacement_saw_remote_survivor |= replacement_sees_remote_survivor(fresh);
+            survivor_saw_first_remote_replacement |= survivor_sees_remote_replacement(
+                first_replacement_net_id, first_replacement_owner);
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
@@ -820,6 +838,7 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     CHECK(first_client_identity_stable);
     CHECK(first_survivor_client_identity_stable);
     CHECK(first_replacement_saw_remote_survivor);
+    CHECK(survivor_saw_first_remote_replacement);
     CHECK(fresh.Result().snapshots > 0 && fresh.Result().entities_seen >= 3);
     CHECK(remaining.Result().joined && !remaining.Done());
     CHECK(remaining.Result().pawn_seen &&
@@ -872,6 +891,7 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     bool second_client_identity_stable = true;
     bool second_survivor_client_identity_stable = true;
     bool second_replacement_saw_remote_survivor = false;
+    bool survivor_saw_second_remote_replacement = false;
     const f64 second_deadline = now() + 4.0;
     while (!second_replacement.Done() && now() < second_deadline) {
         server.Tick(now());
@@ -887,6 +907,8 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
             second_survivor_client_identity_stable &= client_owns_authoritative_pawn(
                 remaining, survivor_net_id, survivor_owner);
             second_replacement_saw_remote_survivor |= replacement_sees_remote_survivor(second_replacement);
+            survivor_saw_second_remote_replacement |= survivor_sees_remote_replacement(
+                second_replacement_net_id, second_replacement_owner);
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
@@ -901,6 +923,7 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     CHECK(second_client_identity_stable);
     CHECK(second_survivor_client_identity_stable);
     CHECK(second_replacement_saw_remote_survivor);
+    CHECK(survivor_saw_second_remote_replacement);
     CHECK(remaining.Result().joined && !remaining.Done());
     CHECK(remaining.Result().snapshots > snapshots_before_second_replacement);
     for (int i = 0; i < 200 && server.Stats().players != 1; ++i) {
