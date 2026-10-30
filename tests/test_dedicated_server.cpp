@@ -722,6 +722,19 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
         if (recorded == net::kNoPeer) recorded = current;
     };
 
+    // A live replacement client must see the same authoritative pawn
+    // identity as the server, not a stale pawn from a reused capacity slot.
+    const auto client_owns_authoritative_pawn = [&](NetClient& client, u32 net_id, net::PeerId owner) {
+        u32 owned_pawns = 0;
+        u32 matching = 0;
+        client.GetWorld().ForEach<net::NetIdentity>([&](net::NetIdentity& identity) {
+            if (std::string(identity.archetype) != kPlayerArchetype || !identity.locally_owned) return;
+            ++owned_pawns;
+            if (identity.net_id == net_id && identity.owner == owner) ++matching;
+        });
+        return net_id != 0 && owner != net::kNoPeer && owned_pawns == 1 && matching == 1;
+    };
+
     // A previously Full-refused client is terminal, not an implicit
     // reconnect candidate when the other player remains active.
     error.clear();
@@ -745,6 +758,7 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     bool first_replacement_id_stable = true;
     net::PeerId first_replacement_owner = net::kNoPeer;
     bool first_replacement_owner_stable = true;
+    bool first_client_identity_stable = true;
     cc.name = "replacement";
     cc.duration = 1.0;
     CHECK(fresh.Start(cc, now(), &error));
@@ -760,6 +774,8 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
             first_identity_stable &= two_live_pawns_keep_survivor_identity();
             record_replacement_net_id(first_replacement_net_id, first_replacement_id_stable);
             record_replacement_owner(first_replacement_owner, first_replacement_owner_stable);
+            first_client_identity_stable &= client_owns_authoritative_pawn(
+                fresh, first_replacement_net_id, first_replacement_owner);
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
@@ -768,6 +784,7 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     CHECK(first_replacement_id_stable && first_replacement_net_id != 0);
     CHECK(first_replacement_owner_stable && first_replacement_owner != net::kNoPeer &&
           first_replacement_owner != survivor_owner);
+    CHECK(first_client_identity_stable);
     CHECK(fresh.Result().snapshots > 0 && fresh.Result().entities_seen >= 3);
     CHECK(remaining.Result().joined && !remaining.Done());
     CHECK(remaining.Result().pawn_seen &&
@@ -810,6 +827,7 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     bool second_replacement_id_stable = true;
     net::PeerId second_replacement_owner = net::kNoPeer;
     bool second_replacement_owner_stable = true;
+    bool second_client_identity_stable = true;
     const f64 second_deadline = now() + 4.0;
     while (!second_replacement.Done() && now() < second_deadline) {
         server.Tick(now());
@@ -820,6 +838,8 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
             second_identity_stable &= two_live_pawns_keep_survivor_identity();
             record_replacement_net_id(second_replacement_net_id, second_replacement_id_stable);
             record_replacement_owner(second_replacement_owner, second_replacement_owner_stable);
+            second_client_identity_stable &= client_owns_authoritative_pawn(
+                second_replacement, second_replacement_net_id, second_replacement_owner);
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
@@ -831,6 +851,7 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     CHECK(second_replacement_owner_stable && second_replacement_owner != net::kNoPeer &&
           second_replacement_owner != survivor_owner &&
           second_replacement_owner != first_replacement_owner);
+    CHECK(second_client_identity_stable);
     CHECK(remaining.Result().joined && !remaining.Done());
     CHECK(remaining.Result().snapshots > snapshots_before_second_replacement);
     for (int i = 0; i < 200 && server.Stats().players != 1; ++i) {
