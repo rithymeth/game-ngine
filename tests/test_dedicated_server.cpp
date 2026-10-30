@@ -768,7 +768,8 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     // with the server's identity and transform, despite reused player slots.
     const auto replacement_sees_authoritative_scene = [&](NetClient& client) {
         const auto* server_identity = world.GetComponent<net::NetIdentity>(scene);
-        if (!server_identity || server_identity->net_id == 0) return false;
+        if (!server_identity || server_identity->net_id == 0 ||
+            server_identity->owner != net::kNoPeer) return false;
         u32 scenes = 0;
         u32 matches = 0;
         client.GetWorld().ForEach<net::NetIdentity, Transform>(
@@ -776,6 +777,7 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
                 if (std::string(identity.archetype) != kSceneArchetype) return;
                 ++scenes;
                 if (identity.net_id == server_identity->net_id &&
+                    identity.owner == net::kNoPeer && !identity.locally_owned &&
                     transform.position.x == 12.0f && transform.position.y == 4.0f &&
                     transform.position.z == -6.0f) ++matches;
             });
@@ -895,6 +897,7 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     CHECK(survivor_client_has_no_ghost_pawn());
+    CHECK(replacement_sees_authoritative_scene(remaining));
 
     // A second fresh session must reuse the same vacated capacity without
     // evicting the original survivor or leaving a ghost pawn behind.
@@ -967,6 +970,7 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     CHECK(survivor_client_has_no_ghost_pawn());
+    CHECK(replacement_sees_authoritative_scene(remaining));
 
     // Repeated slot reuse must not stop the survivor's authoritative
     // snapshot stream after the second replacement disconnects.
