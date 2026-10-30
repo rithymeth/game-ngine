@@ -670,6 +670,26 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
         CHECK(pawn_count == 1 && matching == 1);
     };
 
+    // Counts after a replacement leaves cannot detect temporary pawn
+    // reassignment while two clients are connected. Inspect the live
+    // authoritative identities without instantiating ServerPlayer here.
+    const auto two_live_pawns_keep_survivor_identity = [&]() {
+        u32 pawns = 0;
+        u32 survivor_matches = 0;
+        u32 replacement_matches = 0;
+        world.ForEach<net::NetIdentity>([&](net::NetIdentity& identity) {
+            if (std::string(identity.archetype) != kPlayerArchetype) return;
+            ++pawns;
+            if (identity.net_id == survivor_net_id && identity.owner == survivor_owner) {
+                ++survivor_matches;
+            } else if (identity.net_id != 0 && identity.net_id != survivor_net_id &&
+                       identity.owner != net::kNoPeer && identity.owner != survivor_owner) {
+                ++replacement_matches;
+            }
+        });
+        return pawns == 2 && survivor_matches == 1 && replacement_matches == 1;
+    };
+
     // A previously Full-refused client is terminal, not an implicit
     // reconnect candidate when the other player remains active.
     error.clear();
@@ -687,6 +707,8 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     // a new peer fills the vacated slot; a join alone is not sufficient.
     const u32 remaining_snapshots_before_replacement = remaining.Result().snapshots;
     NetClient fresh;
+    bool first_occupied = false;
+    bool first_identity_stable = true;
     cc.name = "replacement";
     cc.duration = 1.0;
     CHECK(fresh.Start(cc, now(), &error));
@@ -695,9 +717,16 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
         server.Tick(now());
         remaining.Tick(now());
         fresh.Tick(now());
+        // The join event creates the pawn before the next replication tick
+        // assigns its nonzero net_id. Check after the client sees that pawn.
+        if (fresh.Result().pawn_seen && server.Stats().players == 2 && world.EntityCount() == 3) {
+            first_occupied = true;
+            first_identity_stable &= two_live_pawns_keep_survivor_identity();
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     CHECK(fresh.Done() && fresh.Result().joined && fresh.Result().pawn_seen);
+    CHECK(first_occupied && first_identity_stable);
     CHECK(fresh.Result().snapshots > 0 && fresh.Result().entities_seen >= 3);
     CHECK(remaining.Result().joined && !remaining.Done());
     CHECK(remaining.Result().pawn_seen &&
@@ -735,17 +764,22 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     cc.duration = 0.8;
     CHECK(second_replacement.Start(cc, now(), &error));
     bool second_slot_occupied = false;
+    bool second_identity_stable = true;
     const f64 second_deadline = now() + 4.0;
     while (!second_replacement.Done() && now() < second_deadline) {
         server.Tick(now());
         remaining.Tick(now());
         second_replacement.Tick(now());
-        second_slot_occupied |= server.Stats().players == 2 && world.EntityCount() == 3;
+        if (second_replacement.Result().pawn_seen && server.Stats().players == 2 && world.EntityCount() == 3) {
+            second_slot_occupied = true;
+            second_identity_stable &= two_live_pawns_keep_survivor_identity();
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     CHECK(second_replacement.Done() && second_replacement.Result().joined);
     CHECK(second_replacement.Result().pawn_seen && second_replacement.Result().snapshots > 0);
-    CHECK(second_slot_occupied && remaining.Result().joined && !remaining.Done());
+    CHECK(second_slot_occupied && second_identity_stable);
+    CHECK(remaining.Result().joined && !remaining.Done());
     CHECK(remaining.Result().snapshots > snapshots_before_second_replacement);
     for (int i = 0; i < 200 && server.Stats().players != 1; ++i) {
         server.Tick(now());
