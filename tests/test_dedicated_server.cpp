@@ -970,6 +970,23 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     CHECK(second_replacement.Done() && second_replacement.Result().joined);
     CHECK(remaining.Result().joined && !remaining.Done());
     CHECK(server.Stats().players == 1 && server.Stats().joins == 4);
+
+    // Rejected in-place restarts must not interrupt the surviving peer's
+    // snapshot stream or create a hidden join, leave, or refusal event.
+    const u32 snapshots_after_rejected_restarts = remaining.Result().snapshots;
+    const f64 restart_rejection_deadline = now() + 1.0;
+    while (remaining.Result().snapshots <= snapshots_after_rejected_restarts &&
+           now() < restart_rejection_deadline) {
+        server.Tick(now());
+        remaining.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(remaining.Result().joined && !remaining.Done());
+    CHECK(remaining.Result().snapshots > snapshots_after_rejected_restarts);
+    CHECK(client_owns_authoritative_pawn(remaining, survivor_net_id, survivor_owner));
+    CHECK(server.Stats().players == 1 && server.Stats().joins == 4 &&
+          server.Stats().leaves == 3 && server.Stats().refused == 1);
+    CHECK(world.EntityCount() == 2 && survivor_client_has_no_ghost_pawn());
     server.Stop();
     CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
     const Transform* preserved = world.GetComponent<Transform>(scene);
