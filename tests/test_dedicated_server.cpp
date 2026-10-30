@@ -690,6 +690,23 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
         return pawns == 2 && survivor_matches == 1 && replacement_matches == 1;
     };
 
+    // The replication server allocates monotonically increasing IDs. A
+    // vacated player slot must not alias an earlier replacement pawn in
+    // delayed snapshots or a surviving client's replication history.
+    const auto live_replacement_net_id = [&]() {
+        u32 id = 0;
+        world.ForEach<net::NetIdentity>([&](net::NetIdentity& identity) {
+            if (std::string(identity.archetype) == kPlayerArchetype &&
+                identity.owner != survivor_owner) id = identity.net_id;
+        });
+        return id;
+    };
+    const auto record_replacement_net_id = [&](u32& recorded, bool& stable) {
+        const u32 current = live_replacement_net_id();
+        stable &= current != 0 && (recorded == 0 || recorded == current);
+        if (recorded == 0) recorded = current;
+    };
+
     // A previously Full-refused client is terminal, not an implicit
     // reconnect candidate when the other player remains active.
     error.clear();
@@ -709,6 +726,8 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     NetClient fresh;
     bool first_occupied = false;
     bool first_identity_stable = true;
+    u32 first_replacement_net_id = 0;
+    bool first_replacement_id_stable = true;
     cc.name = "replacement";
     cc.duration = 1.0;
     CHECK(fresh.Start(cc, now(), &error));
@@ -722,11 +741,13 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
         if (fresh.Result().pawn_seen && server.Stats().players == 2 && world.EntityCount() == 3) {
             first_occupied = true;
             first_identity_stable &= two_live_pawns_keep_survivor_identity();
+            record_replacement_net_id(first_replacement_net_id, first_replacement_id_stable);
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     CHECK(fresh.Done() && fresh.Result().joined && fresh.Result().pawn_seen);
     CHECK(first_occupied && first_identity_stable);
+    CHECK(first_replacement_id_stable && first_replacement_net_id != 0);
     CHECK(fresh.Result().snapshots > 0 && fresh.Result().entities_seen >= 3);
     CHECK(remaining.Result().joined && !remaining.Done());
     CHECK(remaining.Result().pawn_seen &&
@@ -765,6 +786,8 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     CHECK(second_replacement.Start(cc, now(), &error));
     bool second_slot_occupied = false;
     bool second_identity_stable = true;
+    u32 second_replacement_net_id = 0;
+    bool second_replacement_id_stable = true;
     const f64 second_deadline = now() + 4.0;
     while (!second_replacement.Done() && now() < second_deadline) {
         server.Tick(now());
@@ -773,12 +796,15 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
         if (second_replacement.Result().pawn_seen && server.Stats().players == 2 && world.EntityCount() == 3) {
             second_slot_occupied = true;
             second_identity_stable &= two_live_pawns_keep_survivor_identity();
+            record_replacement_net_id(second_replacement_net_id, second_replacement_id_stable);
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     CHECK(second_replacement.Done() && second_replacement.Result().joined);
     CHECK(second_replacement.Result().pawn_seen && second_replacement.Result().snapshots > 0);
     CHECK(second_slot_occupied && second_identity_stable);
+    CHECK(second_replacement_id_stable && second_replacement_net_id != 0 &&
+          second_replacement_net_id != first_replacement_net_id);
     CHECK(remaining.Result().joined && !remaining.Done());
     CHECK(remaining.Result().snapshots > snapshots_before_second_replacement);
     for (int i = 0; i < 200 && server.Stats().players != 1; ++i) {
