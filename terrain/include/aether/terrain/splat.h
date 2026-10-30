@@ -51,6 +51,16 @@ struct SplatmapData {
 SplatmapData BuildSplatmap(u32 resolution, span<const SplatmapLayer> layers,
                            const std::vector<f32>& layer_weights);
 
+
+// Height-aware material weights for up to four painted PBR layers.
+// Heights are normalized material height-map samples in [0,1].
+// contrast=0 preserves the original painted weights; larger values sharpen
+// transitions while preserving absent layers. Returns normalized weights.
+std::array<f32, 4> BlendTerrainLayerHeights(
+    const std::array<f32, 4>& painted_weights,
+    const std::array<f32, 4>& material_heights,
+    f32 contrast);
+
 // A brush for terrain painting.
 struct TerrainBrush {
     f32 radius = 2.0f;       // world units
