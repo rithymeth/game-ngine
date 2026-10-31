@@ -275,6 +275,12 @@ AETHER_TEST(DedicatedServer_RealUdpJoinReplicateRpc) {
     CHECK(s.replicated_entities == 5); // the pawns went with their players
     server.Stop();
     CHECK(!server.Running());
+    // A normal leave already accounted for each RPC. Stopping an empty server
+    // must not count the completed sessions again or erase their history.
+    const ServerStats stopped = server.Stats();
+    CHECK(stopped.players == 0 && stopped.joins == s.joins && stopped.leaves == s.leaves);
+    CHECK(stopped.refused == s.refused && stopped.peak_players == s.peak_players && stopped.pings == s.pings);
+    CHECK(world.EntityCount() == 5);
 }
 
 // A capacity refusal is a real UDP join failure, not permission to replicate
