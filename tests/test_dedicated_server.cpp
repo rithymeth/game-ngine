@@ -1332,3 +1332,82 @@ AETHER_TEST(DedicatedServer_RealUdpLanDiscoveryAndProfile) {
     CHECK(summary.find("\"peak_peers\":1") != std::string::npos);
     server.Stop();
 }
+
+
+// Completed-session RPCs and live-session RPCs must share one history counter:
+// PlayerLeft folds the first pawn, while Stop folds only the remaining pawn.
+AETHER_TEST(DedicatedServer_StopCombinesCompletedAndActiveRpcHistory) {
+    RegisterServerComponents();
+    World world;
+    const Entity scene = world.CreateEntity(Transform{Vec3{4, -2, 9}, Quaternion{}});
+    ServerConfig config;
+    config.port = 0;
+    config.lan_advertise = false;
+    config.max_players = 2;
+    config.build_id = 97;
+    DedicatedServer server;
+    std::string error;
+    if (!server.Start(config, world, &error)) {
+        std::printf("    (no UDP here: %s)\n", error.c_str());
+        return;
+    }
+    const auto* original_identity = world.GetComponent<net::NetIdentity>(scene);
+    CHECK(original_identity != nullptr);
+    const u32 scene_id = original_identity ? original_identity->net_id : 0;
+
+    using Clock = std::chrono::steady_clock;
+    const auto start = Clock::now();
+    const auto now = [&] { return std::chrono::duration<f64>(Clock::now() - start).count(); };
+    NetClientConfig cc;
+    cc.server = net::Address::Loopback(server.Port());
+    cc.build_id = 97;
+    cc.join_timeout = 3.0;
+    cc.duration = 3.0;
+    cc.name = "completed-rpc";
+    NetClient completed;
+    CHECK(completed.Start(cc, now(), &error));
+    cc.duration = 10.0;
+    cc.name = "active-rpc";
+    NetClient active;
+    CHECK(active.Start(cc, now(), &error));
+
+    const f64 ack_deadline = now() + 5.0;
+    while ((!completed.Result().rpc_ack || !active.Result().rpc_ack) && now() < ack_deadline) {
+        server.Tick(now());
+        completed.Tick(now());
+        active.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(completed.Result().rpc_ack && active.Result().rpc_ack);
+    CHECK(server.Stats().players == 2 && server.Stats().pings == 2);
+    if (!completed.Result().rpc_ack || !active.Result().rpc_ack) {
+        server.Stop();
+        return;
+    }
+
+    const f64 leave_deadline = now() + 6.0;
+    while ((!completed.Done() || server.Stats().players != 1) && now() < leave_deadline) {
+        server.Tick(now());
+        completed.Tick(now());
+        active.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(completed.Done() && !active.Done());
+    CHECK(server.Stats().players == 1 && server.Stats().joins == 2 &&
+          server.Stats().leaves == 1 && server.Stats().pings == 2);
+    CHECK(world.EntityCount() == 2 && world.IsAlive(scene));
+
+    server.Stop();
+    CHECK(!server.Running());
+    CHECK(server.Stats().players == 0 && server.Stats().joins == 2 &&
+          server.Stats().leaves == 1 && server.Stats().pings == 2);
+    server.Stop();
+    CHECK(server.Stats().players == 0 && server.Stats().joins == 2 &&
+          server.Stats().leaves == 1 && server.Stats().pings == 2);
+    CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
+    const auto* identity = world.GetComponent<net::NetIdentity>(scene);
+    CHECK(identity && identity->net_id == scene_id && identity->owner == net::kNoPeer);
+    const Transform* transform = world.GetComponent<Transform>(scene);
+    CHECK(transform && transform->position.x == 4.0f &&
+          transform->position.y == -2.0f && transform->position.z == 9.0f);
+}
