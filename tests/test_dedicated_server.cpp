@@ -1351,10 +1351,6 @@ AETHER_TEST(DedicatedServer_StopCombinesCompletedAndActiveRpcHistory) {
         std::printf("    (no UDP here: %s)\n", error.c_str());
         return;
     }
-    const auto* original_identity = world.GetComponent<net::NetIdentity>(scene);
-    CHECK(original_identity != nullptr);
-    const u32 scene_id = original_identity ? original_identity->net_id : 0;
-
     using Clock = std::chrono::steady_clock;
     const auto start = Clock::now();
     const auto now = [&] { return std::chrono::duration<f64>(Clock::now() - start).count(); };
@@ -1380,6 +1376,9 @@ AETHER_TEST(DedicatedServer_StopCombinesCompletedAndActiveRpcHistory) {
     }
     CHECK(completed.Result().rpc_ack && active.Result().rpc_ack);
     CHECK(server.Stats().players == 2 && server.Stats().pings == 2);
+    const auto* original_identity = world.GetComponent<net::NetIdentity>(scene);
+    CHECK(original_identity && original_identity->net_id != 0);
+    const u32 scene_id = original_identity ? original_identity->net_id : 0;
     if (!completed.Result().rpc_ack || !active.Result().rpc_ack) {
         server.Stop();
         return;
