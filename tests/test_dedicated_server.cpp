@@ -4,6 +4,7 @@
 #include "test_framework.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -156,7 +157,9 @@ AETHER_TEST(DedicatedServer_StopPreservesActiveRpcHistory) {
 AETHER_TEST(DedicatedServer_RealUdpJoinReplicateRpc) {
     RegisterServerComponents();
     World world;
-    for (int i = 0; i < 5; ++i) world.CreateEntity(Transform{Vec3{static_cast<f32>(i), 0, 0}, Quaternion{}});
+    std::array<Entity, 5> scenes{};
+    for (usize i = 0; i < scenes.size(); ++i)
+        scenes[i] = world.CreateEntity(Transform{Vec3{static_cast<f32>(i), 0, 0}, Quaternion{}});
     ServerConfig config;
     config.port = 0;
     config.max_players = 2;
@@ -273,6 +276,18 @@ AETHER_TEST(DedicatedServer_RealUdpJoinReplicateRpc) {
     CHECK(server.EmptyAfterPlay());
     CHECK(s.joins == 2 && s.leaves == 2 && s.refused == 2 && s.peak_players == 2 && s.pings == 2);
     CHECK(s.replicated_entities == 5); // the pawns went with their players
+    // Snapshot every scene identity before shutdown: an unchanged entity count
+    // alone cannot detect an accidental identity or ownership rewrite.
+    std::array<u32, 5> scene_net_ids{};
+    for (usize i = 0; i < scenes.size(); ++i) {
+        const auto* identity = world.GetComponent<net::NetIdentity>(scenes[i]);
+        CHECK(identity != nullptr);
+        if (identity) {
+            scene_net_ids[i] = identity->net_id;
+            CHECK(identity->net_id != 0 && identity->owner == net::kNoPeer &&
+                  std::string(identity->archetype) == kSceneArchetype);
+        }
+    }
     server.Stop();
     CHECK(!server.Running());
     // A normal leave already accounted for each RPC. Stopping an empty server
@@ -281,6 +296,15 @@ AETHER_TEST(DedicatedServer_RealUdpJoinReplicateRpc) {
     CHECK(stopped.players == 0 && stopped.joins == s.joins && stopped.leaves == s.leaves);
     CHECK(stopped.refused == s.refused && stopped.peak_players == s.peak_players && stopped.pings == s.pings);
     CHECK(world.EntityCount() == 5);
+    for (usize i = 0; i < scenes.size(); ++i) {
+        CHECK(world.IsAlive(scenes[i]));
+        const auto* identity = world.GetComponent<net::NetIdentity>(scenes[i]);
+        const auto* transform = world.GetComponent<Transform>(scenes[i]);
+        CHECK(identity && identity->net_id == scene_net_ids[i] &&
+              identity->owner == net::kNoPeer && std::string(identity->archetype) == kSceneArchetype);
+        CHECK(transform && transform->position.x == static_cast<f32>(i) &&
+              transform->position.y == 0.0f && transform->position.z == 0.0f);
+    }
 }
 
 // A capacity refusal is a real UDP join failure, not permission to replicate
