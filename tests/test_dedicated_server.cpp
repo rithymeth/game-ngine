@@ -103,7 +103,7 @@ AETHER_TEST(DedicatedServer_StopPreservesActiveRpcHistory) {
     DedicatedServer server;
     std::string error;
     if (!server.Start(config, world, &error)) {
-        std::printf("    (no UDP here: %s)\\n", error.c_str());
+        std::printf("    (no UDP here: %s)\n", error.c_str());
         return;
     }
     using Clock = std::chrono::steady_clock;
