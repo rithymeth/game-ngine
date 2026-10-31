@@ -1040,6 +1040,9 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     // the game-owned scene's authoritative network identity.
     const u32 scene_net_id_before_stop = server_scene_identity ? server_scene_identity->net_id : 0;
     server.Stop();
+    CHECK(!server.Running());
+    CHECK(server.Stats().players == 0 && server.Stats().peak_players == 2 &&
+          server.Stats().joins == 4 && server.Stats().leaves == 3 && server.Stats().refused == 1);
     CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
     const auto* scene_identity_after_stop = world.GetComponent<net::NetIdentity>(scene);
     CHECK(scene_identity_after_stop != nullptr);
