@@ -1339,7 +1339,18 @@ AETHER_TEST(DedicatedServer_RealUdpLanDiscoveryAndProfile) {
 AETHER_TEST(DedicatedServer_StopCombinesCompletedAndActiveRpcHistory) {
     RegisterServerComponents();
     World world;
-    const Entity scene = world.CreateEntity(Transform{Vec3{4, -2, 9}, Quaternion{}});
+    const Entity scene = world.CreateEntity(
+        Transform{Vec3{4, -2, 9}, Quaternion{0, 0, 0.6f, 0.8f}, Vec3{2, 3, 4}});
+    // The mixed completed/active stop and subsequent restart must not mutate
+    // the game-owned scene's non-default transform.
+    const auto scene_transform_intact = [&]() {
+        const Transform* t = world.GetComponent<Transform>(scene);
+        return t && t->position.x == 4.0f && t->position.y == -2.0f &&
+               t->position.z == 9.0f && t->rotation.x == 0.0f &&
+               t->rotation.y == 0.0f && t->rotation.z == 0.6f &&
+               t->rotation.w == 0.8f && t->scale.x == 2.0f &&
+               t->scale.y == 3.0f && t->scale.z == 4.0f;
+    };
     ServerConfig config;
     config.port = 0;
     config.lan_advertise = false;
@@ -1406,9 +1417,7 @@ AETHER_TEST(DedicatedServer_StopCombinesCompletedAndActiveRpcHistory) {
     CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
     const auto* identity = world.GetComponent<net::NetIdentity>(scene);
     CHECK(identity && identity->net_id == scene_id && identity->owner == net::kNoPeer);
-    const Transform* transform = world.GetComponent<Transform>(scene);
-    CHECK(transform && transform->position.x == 4.0f &&
-          transform->position.y == -2.0f && transform->position.z == 9.0f);
+    CHECK(scene_transform_intact());
 
     // Restart after a mixed completed/live shutdown must begin a fresh session
     // history. The completed peer's and stopped peer's RPCs must not leak into it.
@@ -1421,6 +1430,7 @@ AETHER_TEST(DedicatedServer_StopCombinesCompletedAndActiveRpcHistory) {
     const auto* restarted_identity = world.GetComponent<net::NetIdentity>(scene);
     CHECK(restarted_identity && restarted_identity->net_id == scene_id &&
           restarted_identity->owner == net::kNoPeer);
+    CHECK(scene_transform_intact());
 
     NetClient fresh;
     cc.server = net::Address::Loopback(server.Port());
@@ -1442,7 +1452,9 @@ AETHER_TEST(DedicatedServer_StopCombinesCompletedAndActiveRpcHistory) {
     const auto* final_identity = world.GetComponent<net::NetIdentity>(scene);
     CHECK(final_identity && final_identity->net_id == scene_id &&
           final_identity->owner == net::kNoPeer);
+    CHECK(scene_transform_intact());
     server.Stop();
     CHECK(server.Stats().pings == 1 && server.Stats().joins == 1 &&
           server.Stats().leaves == 1 && server.Stats().players == 0);
+    CHECK(scene_transform_intact());
 }
