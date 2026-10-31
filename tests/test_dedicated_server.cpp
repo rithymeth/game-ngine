@@ -140,6 +140,17 @@ AETHER_TEST(DedicatedServer_StopPreservesActiveRpcHistory) {
     CHECK(preserved != nullptr);
     if (preserved) CHECK(preserved->position.x == 7.0f &&
                          preserved->position.y == 2.0f && preserved->position.z == -3.0f);
+    // Stop may be called again by the destructor; it must not double-count RPCs
+    // or mutate the game-owned scene on a second shutdown.
+    server.Stop();
+    CHECK(!server.Running() && server.Stats().players == 0 && server.Stats().pings == 1);
+    CHECK(server.Stats().joins == 1 && server.Stats().leaves == 0);
+    CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
+    const auto* twice_stopped = world.GetComponent<net::NetIdentity>(scene);
+    CHECK(twice_stopped && twice_stopped->net_id == scene_net_id && twice_stopped->owner == net::kNoPeer);
+    const Transform* twice_preserved = world.GetComponent<Transform>(scene);
+    CHECK(twice_preserved && twice_preserved->position.x == 7.0f &&
+          twice_preserved->position.y == 2.0f && twice_preserved->position.z == -3.0f);
 }
 
 AETHER_TEST(DedicatedServer_RealUdpJoinReplicateRpc) {
