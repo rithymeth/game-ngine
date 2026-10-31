@@ -113,6 +113,8 @@ void DedicatedServer::Stop() {
         for (auto& [peer, pawn] : pawns_)
             if (world_->IsAlive(pawn)) world_->DestroyEntity(pawn);
     pawns_.clear();
+    // Live occupancy must reflect shutdown, while lifetime counters remain available.
+    stats_.players = 0;
     world_ = nullptr;
 }
 
