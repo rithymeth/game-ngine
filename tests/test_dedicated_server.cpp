@@ -95,7 +95,8 @@ AETHER_TEST(DedicatedServer_CommandLineOverridesFile) {
 AETHER_TEST(DedicatedServer_StopPreservesActiveRpcHistory) {
     RegisterServerComponents();
     World world;
-    const Entity scene = world.CreateEntity(Transform{Vec3{7, 2, -3}, Quaternion{}});
+    // Active shutdown exercises a different path than completed player leaves.
+    const Entity scene = world.CreateEntity(Transform{Vec3{7, 2, -3}, Quaternion{0, 0, 0.6f, 0.8f}, Vec3{2, 3, 4}});
     ServerConfig config;
     config.port = 0;
     config.lan_advertise = false;
@@ -139,8 +140,12 @@ AETHER_TEST(DedicatedServer_StopPreservesActiveRpcHistory) {
     if (after_stop) CHECK(after_stop->net_id == scene_net_id && after_stop->owner == net::kNoPeer);
     const Transform* preserved = world.GetComponent<Transform>(scene);
     CHECK(preserved != nullptr);
-    if (preserved) CHECK(preserved->position.x == 7.0f &&
-                         preserved->position.y == 2.0f && preserved->position.z == -3.0f);
+    if (preserved) {
+        CHECK(preserved->position.x == 7.0f && preserved->position.y == 2.0f && preserved->position.z == -3.0f);
+        CHECK(preserved->rotation.x == 0.0f && preserved->rotation.y == 0.0f &&
+              preserved->rotation.z == 0.6f && preserved->rotation.w == 0.8f);
+        CHECK(preserved->scale.x == 2.0f && preserved->scale.y == 3.0f && preserved->scale.z == 4.0f);
+    }
     // Stop may be called again by the destructor; it must not double-count RPCs
     // or mutate the game-owned scene on a second shutdown.
     server.Stop();
@@ -152,6 +157,11 @@ AETHER_TEST(DedicatedServer_StopPreservesActiveRpcHistory) {
     const Transform* twice_preserved = world.GetComponent<Transform>(scene);
     CHECK(twice_preserved && twice_preserved->position.x == 7.0f &&
           twice_preserved->position.y == 2.0f && twice_preserved->position.z == -3.0f);
+    if (twice_preserved) {
+        CHECK(twice_preserved->rotation.x == 0.0f && twice_preserved->rotation.y == 0.0f &&
+              twice_preserved->rotation.z == 0.6f && twice_preserved->rotation.w == 0.8f);
+        CHECK(twice_preserved->scale.x == 2.0f && twice_preserved->scale.y == 3.0f && twice_preserved->scale.z == 4.0f);
+    }
 }
 
 AETHER_TEST(DedicatedServer_RealUdpJoinReplicateRpc) {
