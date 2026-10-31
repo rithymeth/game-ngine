@@ -158,8 +158,13 @@ AETHER_TEST(DedicatedServer_RealUdpJoinReplicateRpc) {
     RegisterServerComponents();
     World world;
     std::array<Entity, 5> scenes{};
-    for (usize i = 0; i < scenes.size(); ++i)
-        scenes[i] = world.CreateEntity(Transform{Vec3{static_cast<f32>(i), 0, 0}, Quaternion{}});
+    for (usize i = 0; i < scenes.size(); ++i) {
+        // A non-default orientation and scale catch shutdown mutations that
+        // an identity-only or position-only scene check would miss.
+        const Quaternion rotation = i == 3 ? Quaternion{0, 0, 0.6f, 0.8f} : Quaternion{};
+        const Vec3 scale = i == 3 ? Vec3{2, 3, 4} : Vec3{1, 1, 1};
+        scenes[i] = world.CreateEntity(Transform{Vec3{static_cast<f32>(i), 0, 0}, rotation, scale});
+    }
     ServerConfig config;
     config.port = 0;
     config.max_players = 2;
@@ -304,6 +309,14 @@ AETHER_TEST(DedicatedServer_RealUdpJoinReplicateRpc) {
               identity->owner == net::kNoPeer && std::string(identity->archetype) == kSceneArchetype);
         CHECK(transform && transform->position.x == static_cast<f32>(i) &&
               transform->position.y == 0.0f && transform->position.z == 0.0f);
+        if (transform) {
+            const Quaternion expected = i == 3 ? Quaternion{0, 0, 0.6f, 0.8f} : Quaternion{};
+            CHECK(transform->rotation.x == expected.x && transform->rotation.y == expected.y &&
+                  transform->rotation.z == expected.z && transform->rotation.w == expected.w);
+            CHECK(transform->scale.x == (i == 3 ? 2.0f : 1.0f) &&
+                  transform->scale.y == (i == 3 ? 3.0f : 1.0f) &&
+                  transform->scale.z == (i == 3 ? 4.0f : 1.0f));
+        }
     }
 }
 
