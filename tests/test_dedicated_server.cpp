@@ -1457,4 +1457,22 @@ AETHER_TEST(DedicatedServer_StopCombinesCompletedAndActiveRpcHistory) {
     CHECK(server.Stats().pings == 1 && server.Stats().joins == 1 &&
           server.Stats().leaves == 1 && server.Stats().players == 0);
     CHECK(scene_transform_intact());
+
+    // A second restart must also discard the fresh session's history without
+    // recreating or modifying the original game-owned scene.
+    error.clear();
+    CHECK(server.Start(config, world, &error));
+    if (!server.Running()) return;
+    CHECK(server.Stats().players == 0 && server.Stats().joins == 0 &&
+          server.Stats().leaves == 0 && server.Stats().pings == 0);
+    CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
+    const auto* second_restart_identity = world.GetComponent<net::NetIdentity>(scene);
+    CHECK(second_restart_identity && second_restart_identity->net_id == scene_id &&
+          second_restart_identity->owner == net::kNoPeer);
+    CHECK(scene_transform_intact());
+    server.Stop();
+    CHECK(server.Stats().players == 0 && server.Stats().joins == 0 &&
+          server.Stats().leaves == 0 && server.Stats().pings == 0);
+    CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
+    CHECK(scene_transform_intact());
 }
