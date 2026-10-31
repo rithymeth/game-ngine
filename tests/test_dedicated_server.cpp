@@ -600,7 +600,7 @@ AETHER_TEST(DedicatedServer_RealUdpRestartCleansMultipleLivePawns) {
     cc.build_id = 94;
     cc.join_timeout = 3.0;
     cc.duration = 10.0; // both clients remain joined when the server stops
-    cc.send_rpc = false;
+    cc.send_rpc = true; // both active pawns must contribute acknowledged RPCs on Stop
     cc.name = "first-live";
     NetClient first;
     CHECK(first.Start(cc, now(), &error));
@@ -610,7 +610,8 @@ AETHER_TEST(DedicatedServer_RealUdpRestartCleansMultipleLivePawns) {
     const f64 deadline = now() + 5.0;
     while ((!first.Result().joined || !second.Result().joined ||
             !first.Result().pawn_seen || !second.Result().pawn_seen ||
-            first.Result().snapshots == 0 || second.Result().snapshots == 0) && now() < deadline) {
+            first.Result().snapshots == 0 || second.Result().snapshots == 0 ||
+            !first.Result().rpc_ack || !second.Result().rpc_ack) && now() < deadline) {
         server.Tick(now());
         first.Tick(now());
         second.Tick(now());
@@ -619,6 +620,7 @@ AETHER_TEST(DedicatedServer_RealUdpRestartCleansMultipleLivePawns) {
     CHECK(first.Result().joined && second.Result().joined);
     CHECK(first.Result().pawn_seen && second.Result().pawn_seen);
     CHECK(first.Result().snapshots > 0 && second.Result().snapshots > 0);
+    CHECK(first.Result().rpc_ack && second.Result().rpc_ack);
     if (!first.Result().joined || !second.Result().joined) {
         server.Stop();
         return;
@@ -626,9 +628,16 @@ AETHER_TEST(DedicatedServer_RealUdpRestartCleansMultipleLivePawns) {
     CHECK(!first.Done() && !second.Done());
     CHECK(server.Stats().players == 2 && server.Stats().joins == 2);
     CHECK(server_world.EntityCount() == 3 && server.Stats().replicated_entities == 3);
+    CHECK(server.Stats().pings == 2);
 
     server.Stop();
     CHECK(!server.Running());
+    // Both live pawn counters must be folded into history exactly once.
+    CHECK(server.Stats().players == 0 && server.Stats().pings == 2);
+    CHECK(server.Stats().joins == 2 && server.Stats().leaves == 0);
+    server.Stop();
+    CHECK(server.Stats().players == 0 && server.Stats().pings == 2);
+    CHECK(server.Stats().joins == 2 && server.Stats().leaves == 0);
     CHECK(server_world.EntityCount() == 1 && server_world.IsAlive(scene));
     const Transform* preserved = server_world.GetComponent<Transform>(scene);
     CHECK(preserved != nullptr);
