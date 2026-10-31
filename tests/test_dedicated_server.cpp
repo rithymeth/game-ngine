@@ -1036,8 +1036,16 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
             });
     }
     CHECK(client_scene_matches == 1 && client_scene_entities == 1);
+    // Shutdown may remove session-owned pawns, but must not strip or reassign
+    // the game-owned scene's authoritative network identity.
+    const u32 scene_net_id_before_stop = server_scene_identity ? server_scene_identity->net_id : 0;
     server.Stop();
     CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
+    const auto* scene_identity_after_stop = world.GetComponent<net::NetIdentity>(scene);
+    CHECK(scene_identity_after_stop != nullptr);
+    if (scene_identity_after_stop)
+        CHECK(scene_identity_after_stop->net_id == scene_net_id_before_stop &&
+              scene_identity_after_stop->owner == net::kNoPeer);
     const Transform* preserved = world.GetComponent<Transform>(scene);
     CHECK(preserved != nullptr);
     if (preserved) CHECK(preserved->position.x == 12.0f &&
