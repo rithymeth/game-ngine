@@ -1019,19 +1019,23 @@ AETHER_TEST(DedicatedServer_RealUdpPartialLeaveReusesSlot) {
     // Slot churn and rejected restarts must preserve the replicated scene
     // entity, its server identity, and its authoritative static transform.
     const net::NetIdentity* server_scene_identity = world.GetComponent<net::NetIdentity>(scene);
-    CHECK(server_scene_identity != nullptr && server_scene_identity->net_id != 0);
+    CHECK(server_scene_identity != nullptr && server_scene_identity->net_id != 0 &&
+          server_scene_identity->owner == net::kNoPeer);
     u32 client_scene_matches = 0;
+    u32 client_scene_entities = 0;
     if (server_scene_identity) {
         remaining.GetWorld().ForEach<net::NetIdentity, Transform>(
             [&](net::NetIdentity& identity, Transform& transform) {
+                if (std::string(identity.archetype) == kSceneArchetype) ++client_scene_entities;
                 if (identity.net_id != server_scene_identity->net_id) return;
                 ++client_scene_matches;
                 CHECK(std::string(identity.archetype) == kSceneArchetype);
+                CHECK(identity.owner == net::kNoPeer && !identity.locally_owned);
                 CHECK(transform.position.x == 12.0f &&
                       transform.position.y == 4.0f && transform.position.z == -6.0f);
             });
     }
-    CHECK(client_scene_matches == 1);
+    CHECK(client_scene_matches == 1 && client_scene_entities == 1);
     server.Stop();
     CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
     const Transform* preserved = world.GetComponent<Transform>(scene);
