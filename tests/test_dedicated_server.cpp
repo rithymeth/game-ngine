@@ -1409,4 +1409,40 @@ AETHER_TEST(DedicatedServer_StopCombinesCompletedAndActiveRpcHistory) {
     const Transform* transform = world.GetComponent<Transform>(scene);
     CHECK(transform && transform->position.x == 4.0f &&
           transform->position.y == -2.0f && transform->position.z == 9.0f);
+
+    // Restart after a mixed completed/live shutdown must begin a fresh session
+    // history. The completed peer's and stopped peer's RPCs must not leak into it.
+    error.clear();
+    CHECK(server.Start(config, world, &error));
+    if (!server.Running()) return;
+    CHECK(server.Stats().players == 0 && server.Stats().joins == 0 &&
+          server.Stats().leaves == 0 && server.Stats().pings == 0);
+    CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
+    const auto* restarted_identity = world.GetComponent<net::NetIdentity>(scene);
+    CHECK(restarted_identity && restarted_identity->net_id == scene_id &&
+          restarted_identity->owner == net::kNoPeer);
+
+    NetClient fresh;
+    cc.server = net::Address::Loopback(server.Port());
+    cc.name = "fresh-after-mixed-stop";
+    cc.duration = 0.8;
+    cc.send_rpc = true;
+    CHECK(fresh.Start(cc, now(), &error));
+    const f64 fresh_deadline = now() + 5.0;
+    while ((!fresh.Done() || server.Stats().players != 0) && now() < fresh_deadline) {
+        server.Tick(now());
+        fresh.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(fresh.Done() && fresh.Result().joined && fresh.Result().pawn_seen &&
+          fresh.Result().rpc_ack && fresh.Result().snapshots > 0);
+    CHECK(server.Stats().players == 0 && server.Stats().joins == 1 &&
+          server.Stats().leaves == 1 && server.Stats().pings == 1);
+    CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
+    const auto* final_identity = world.GetComponent<net::NetIdentity>(scene);
+    CHECK(final_identity && final_identity->net_id == scene_id &&
+          final_identity->owner == net::kNoPeer);
+    server.Stop();
+    CHECK(server.Stats().pings == 1 && server.Stats().joins == 1 &&
+          server.Stats().leaves == 1 && server.Stats().players == 0);
 }
