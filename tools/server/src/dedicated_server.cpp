@@ -111,7 +111,12 @@ void DedicatedServer::Stop() {
     socket_.Close();
     if (world_)
         for (auto& [peer, pawn] : pawns_)
-            if (world_->IsAlive(pawn)) world_->DestroyEntity(pawn);
+            if (world_->IsAlive(pawn)) {
+                // A stopped session must retain RPC history from still-connected pawns.
+                if (const ServerPlayer* sp = world_->GetComponent<ServerPlayer>(pawn))
+                    stats_.pings += static_cast<u64>(sp->pings);
+                world_->DestroyEntity(pawn);
+            }
     pawns_.clear();
     // Live occupancy must reflect shutdown, while lifetime counters remain available.
     stats_.players = 0;
