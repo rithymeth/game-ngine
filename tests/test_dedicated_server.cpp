@@ -89,6 +89,59 @@ AETHER_TEST(DedicatedServer_CommandLineOverridesFile) {
     std::filesystem::remove_all(dir);
 }
 
+// A shutdown with an active player must retain acknowledged RPC history,
+// just as a normal PlayerLeft event does, without destroying game-owned scene data.
+AETHER_TEST(DedicatedServer_StopPreservesActiveRpcHistory) {
+    RegisterServerComponents();
+    World world;
+    const Entity scene = world.CreateEntity(Transform{Vec3{7, 2, -3}, Quaternion{}});
+    ServerConfig config;
+    config.port = 0;
+    config.lan_advertise = false;
+    config.max_players = 1;
+    config.build_id = 96;
+    DedicatedServer server;
+    std::string error;
+    if (!server.Start(config, world, &error)) {
+        std::printf("    (no UDP here: %s)\n", error.c_str());
+        return;
+    }
+    using Clock = std::chrono::steady_clock;
+    const auto start = Clock::now();
+    const auto now = [&] { return std::chrono::duration<f64>(Clock::now() - start).count(); };
+    NetClientConfig cc;
+    cc.server = net::Address::Loopback(server.Port());
+    cc.name = "active-rpc";
+    cc.build_id = 96;
+    cc.duration = 10.0; // Still connected when Stop() is called.
+    cc.join_timeout = 3.0;
+    NetClient client;
+    CHECK(client.Start(cc, now(), &error));
+    const f64 deadline = now() + 5.0;
+    while (!client.Result().rpc_ack && now() < deadline) {
+        server.Tick(now());
+        client.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(client.Result().joined && client.Result().rpc_ack && !client.Done());
+    CHECK(server.Stats().players == 1 && server.Stats().pings == 1);
+    const auto* before_stop = world.GetComponent<net::NetIdentity>(scene);
+    CHECK(before_stop != nullptr);
+    const u32 scene_net_id = before_stop ? before_stop->net_id : 0;
+    server.Stop();
+    CHECK(!server.Running());
+    CHECK(server.Stats().players == 0 && server.Stats().pings == 1 &&
+          server.Stats().joins == 1 && server.Stats().leaves == 0);
+    CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
+    const auto* after_stop = world.GetComponent<net::NetIdentity>(scene);
+    CHECK(after_stop != nullptr);
+    if (after_stop) CHECK(after_stop->net_id == scene_net_id && after_stop->owner == net::kNoPeer);
+    const Transform* preserved = world.GetComponent<Transform>(scene);
+    CHECK(preserved != nullptr);
+    if (preserved) CHECK(preserved->position.x == 7.0f &&
+                         preserved->position.y == 2.0f && preserved->position.z == -3.0f);
+}
+
 AETHER_TEST(DedicatedServer_RealUdpJoinReplicateRpc) {
     RegisterServerComponents();
     World world;
