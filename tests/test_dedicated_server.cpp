@@ -1610,3 +1610,100 @@ AETHER_TEST(DedicatedServer_StopCombinesCompletedAndActiveRpcHistory) {
     CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
     CHECK(scene_transform_intact());
 }
+
+
+// A refused old-build handshake must not evict or disrupt an already-active
+// compatible UDP client or alter the game-owned scene and its NetIdentity.
+AETHER_TEST(DedicatedServer_StaleBuildRefusalPreservesLiveRpcSession) {
+    RegisterServerComponents();
+    World world;
+    const Entity scene = world.CreateEntity(
+        Transform{Vec3{6, -3, 2}, Quaternion{0, 0, 0.6f, 0.8f}, Vec3{2, 2, 3}});
+    ServerConfig config;
+    config.port = 0;
+    config.lan_advertise = false;
+    config.max_players = 2;
+    config.build_id = 109;
+    DedicatedServer server;
+    std::string error;
+    if (!server.Start(config, world, &error)) {
+        std::printf("    (no UDP here: %s)\n", error.c_str());
+        return;
+    }
+    using Clock = std::chrono::steady_clock;
+    const auto start = Clock::now();
+    const auto now = [&] { return std::chrono::duration<f64>(Clock::now() - start).count(); };
+    NetClientConfig cc;
+    cc.server = net::Address::Loopback(server.Port());
+    cc.build_id = 109;
+    cc.name = "live-matching-build";
+    cc.join_timeout = 3.0;
+    cc.duration = 10.0;
+    cc.send_rpc = true;
+    NetClient live;
+    CHECK(live.Start(cc, now(), &error));
+    const f64 live_deadline = now() + 5.0;
+    while ((!live.Result().rpc_ack || live.Result().snapshots == 0) && now() < live_deadline) {
+        server.Tick(now());
+        live.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(live.Result().joined && live.Result().pawn_seen &&
+          live.Result().rpc_ack && live.Result().snapshots > 0 && !live.Done());
+    CHECK(server.Stats().players == 1 && server.Stats().joins == 1 &&
+          server.Stats().leaves == 0 && server.Stats().pings == 1 &&
+          server.Stats().refused == 0);
+    const auto* original_identity = world.GetComponent<net::NetIdentity>(scene);
+    CHECK(original_identity && original_identity->net_id != 0 &&
+          original_identity->owner == net::kNoPeer);
+    const u32 scene_id = original_identity ? original_identity->net_id : 0;
+
+    // Refuse an old build while the matching-build player remains connected.
+    cc.build_id = 108;
+    cc.name = "stale-while-live";
+    cc.duration = 0.8;
+    NetClient stale;
+    CHECK(stale.Start(cc, now(), &error));
+    const f64 refusal_deadline = now() + 4.0;
+    while (!stale.Done() && now() < refusal_deadline) {
+        server.Tick(now());
+        live.Tick(now());
+        stale.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(stale.Done() && !stale.Result().joined &&
+          stale.Result().join_result == "BuildMismatch" &&
+          stale.Result().entities_seen == 0 && stale.Result().snapshots == 0);
+    CHECK(live.Result().rpc_ack && !live.Done());
+    CHECK(server.Stats().players == 1 && server.Stats().joins == 1 &&
+          server.Stats().leaves == 0 && server.Stats().pings == 1 &&
+          server.Stats().refused == 1);
+    CHECK(world.EntityCount() == 2 && world.IsAlive(scene));
+    const auto* identity = world.GetComponent<net::NetIdentity>(scene);
+    CHECK(identity && identity->net_id == scene_id &&
+          identity->owner == net::kNoPeer);
+    const Transform* t = world.GetComponent<Transform>(scene);
+    CHECK(t && t->position.x == 6.0f && t->position.y == -3.0f &&
+          t->position.z == 2.0f && t->rotation.z == 0.6f &&
+          t->rotation.w == 0.8f && t->scale.x == 2.0f &&
+          t->scale.y == 2.0f && t->scale.z == 3.0f);
+
+    server.Stop();
+    server.Stop();
+    CHECK(server.Stats().players == 0 && server.Stats().joins == 1 &&
+          server.Stats().leaves == 0 && server.Stats().pings == 1 &&
+          server.Stats().refused == 1);
+    CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
+    const auto* stopped_identity = world.GetComponent<net::NetIdentity>(scene);
+    CHECK(stopped_identity && stopped_identity->net_id == scene_id &&
+          stopped_identity->owner == net::kNoPeer);
+    const Transform* stopped_transform = world.GetComponent<Transform>(scene);
+    CHECK(stopped_transform && stopped_transform->position.x == 6.0f &&
+          stopped_transform->position.y == -3.0f &&
+          stopped_transform->position.z == 2.0f &&
+          stopped_transform->rotation.z == 0.6f &&
+          stopped_transform->rotation.w == 0.8f &&
+          stopped_transform->scale.x == 2.0f &&
+          stopped_transform->scale.y == 2.0f &&
+          stopped_transform->scale.z == 3.0f);
+}
