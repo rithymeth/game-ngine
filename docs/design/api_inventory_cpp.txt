@@ -3916,6 +3916,7 @@
   type struct Sample_
   Quaternion NlerpShortest(const Quaternion&a,const Quaternion&b,f32 t)
   bool Sample(f64 time,Transform&out)const
+  bool SampleRenderTransform(u32 net_id,Transform&out)const
   const InterpolationBuffer*Buffer(u32 net_id)const
   f64 Delay()const
   f64 Newest()const
@@ -3926,6 +3927,7 @@
   usize Size()const
   void Push(f64 time,const Transform&transform)
   void SetDelay(f64 delay)
+  void SetRenderOnly(bool enabled)
   void Update(f64 now)
 [net/include/aether/net/net_stats.h] experimental
   type class NetStatGroup
@@ -3934,6 +3936,9 @@
   public:explicit NetStatGroup(const NetHost&host,std::string name="")
   std::vector<StatLine>Lines()const
   ~NetStatGroup()
+[net/include/aether/net/physics_state.h] experimental
+  type struct NetPhysicsState
+  AETHER_REFLECT(aether::net::NetPhysicsState,1,AETHER_FIELD(linear_velocity,Field_Replicated),AETHER_FIELD(angular_velocity,Field_Replicated),AETHER_FIELD(sleeping,Field_Replicated))
 [net/include/aether/net/prediction.h] experimental
   type class MovementClient
   type class MovementServer
@@ -3994,6 +3999,7 @@
   using DespawnFn=std::function<void(World&,Entity)>
   using PriorityFn=std::function<f32(PeerId peer,Entity entity,f32 distance)>
   using RelevancyFn=std::function<bool(PeerId peer,Entity entity)>
+  using SnapshotAppliedFn=std::function<void(World&)>
   using SpawnFn=std::function<void(World&,Entity,const NetIdentity&)>
   usize EntityCount()const
   usize SnapshotBudget()const
@@ -4001,6 +4007,7 @@
   void ClearViewer(PeerId peer)
   void Gather(ReplicatedState&current)
   void OnDespawn(DespawnFn fn)
+  void OnSnapshotApplied(SnapshotAppliedFn fn)
   void OnSpawn(const std::string&archetype,SpawnFn fn)
   void PredictLocally(ComponentId component)
   void Reset(f64 now)
@@ -4266,6 +4273,12 @@
   void FreeJob(Job*job)override
   void QueueJobs(Job**jobs,JPH::uint num_jobs)override
   ~JoltJobSystemAdapter()override
+[physics/include/aether/physics/net_physics_bridge.h] experimental
+  template<typename MotionState>inline usize ApplyAuthoritativePhysicsMotion(World&world,PhysicsScene&scene)
+  template<typename MotionState>inline usize CaptureAuthoritativePhysicsState(World&world,PhysicsScene&scene)
+  template<typename MotionState>inline usize ReconcileAuthoritativePhysicsPose(World&world,PhysicsScene&scene,f32 position_tolerance=0.01f,f32 rotation_tolerance_radians=0.01f)
+  template<typename MotionState>inline usize ReconcileAuthoritativePhysicsPosition(World&world,PhysicsScene&scene,f32 tolerance=0.01f)
+  template<typename MotionState>inline void ApplyAuthoritativePhysicsSnapshot(World&world,PhysicsScene&scene)
 [physics/include/aether/physics/physics_scene.h] experimental
   type class PhysicsScene
   type enum class PhysicsEventType
@@ -4291,6 +4304,7 @@
   bool Build(Entity entity,Tracked&tracked,std::string&problem)
   bool CreateJoint(JointTracked&joint,const PhysicsJoint&component)
   bool IsGrabActive(GrabId grab)const
+  bool ReconcileAuthoritativePose(Entity entity,f32 position_tolerance,f32 rotation_tolerance_radians)
   bool Release(GrabId grab)
   bool SetGrabTarget(GrabId grab,const Vec3&target)
   const char*PhysicsEventName(PhysicsEventType type)
@@ -4465,6 +4479,7 @@
   void LoadLocalization()
   void OnPlatformEvent(const platform::LifecycleMessage&message)
   void RefreshSaveContext()
+  void SetAuthoritativePhysicsClient(bool enabled)
   void SetPaused(bool paused)
   void SetUiPointerScale(f32 x,f32 y)
   void SetUserPaths(const UserPaths&paths)
@@ -4482,6 +4497,7 @@
   public:SceneRenderer(gfx::rhi::IDevice&device,gfx::rhi::ISwapChain&swap_chain,const GamePackage&package)
   void Draw(Game&game,gfx::rhi::ICommandList&commands,u32 frame_index)
   void SetDrawParticles(bool draw)
+  void SetRenderPoseSampler(std::function<bool(Entity,Transform&)>sampler)
   void SetViewDistance(f32 metres)
   ~SceneRenderer()
 [player/include/aether/player/settings_apply.h] experimental

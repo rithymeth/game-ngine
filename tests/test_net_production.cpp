@@ -1,4 +1,5 @@
 #include "aether/net/rpc.h"
+#include "aether/net/physics_state.h"
 #include "aether/net/session.h"
 #include "aether/scene/components.h"
 #include "test_framework.h"
@@ -988,4 +989,112 @@ AETHER_TEST(NetProd_GhostShift_SharedObjectTransformConvergesAfterLoss) {
     CHECK(converged);
     sim.Step(120, frame);
     for (auto& c : sim.clients) CHECK(sim.Exact(*c));
+}
+
+
+AETHER_TEST(NetProd_GhostShift_LateJoinReceivesCurrentSharedObjectState) {
+    // A player joining an in-progress contract must receive the host's current
+    // prop positions, not the initial spawn transform. The other players must
+    // retain their authoritative state while the new peer receives its baseline.
+    ProdSim sim(1231);
+    sim.net.conditions = {0.05, 0.02, 0.05f, 0.0f};
+    for (int i = 0; i < kClients - 1; ++i) sim.AddClient("p" + std::to_string(i));
+    int frame = 0;
+    while (sim.session->Players().size() != static_cast<usize>(kClients - 1) && frame < 600)
+        sim.Step(1, frame++);
+    CHECK(sim.session->Players().size() == static_cast<usize>(kClients - 1));
+    sim.Step(120, frame);
+    frame += 120;
+    sim.moving = false;
+
+    const Entity prop = sim.npcs[0];
+    const Vec3 moved{24.0f, -8.0f, 2.0f};
+    sim.world.GetComponent<Transform>(prop)->position = moved;
+    sim.Step(120, frame);
+    frame += 120;
+    const u32 prop_id = sim.NetId(prop);
+    for (const auto& c : sim.clients) {
+        const Entity remote = c->replication->FindEntity(prop_id);
+        CHECK(!remote.IsNull());
+        CHECK((c->world.GetComponent<Transform>(remote)->position - moved).Length() < 1e-4f);
+    }
+
+    auto& late = sim.AddClient("p3");
+    bool synchronized = false;
+    for (int i = 0; i < 600; ++i) {
+        sim.Step(1, frame++);
+        if (late.session->GetState() != SessionClient::State::Joined) continue;
+        const Entity remote = late.replication->FindEntity(prop_id);
+        if (!remote.IsNull() &&
+            (late.world.GetComponent<Transform>(remote)->position - moved).Length() < 1e-4f &&
+            sim.Exact(late)) {
+            synchronized = true;
+            break;
+        }
+    }
+    CHECK(synchronized);
+    CHECK(sim.session->Players().size() == static_cast<usize>(kClients));
+    CHECK(sim.pawns.size() == static_cast<usize>(kClients));
+    sim.Step(120, frame);
+    for (const auto& c : sim.clients) CHECK(sim.Exact(*c));
+}
+
+AETHER_TEST(NetProd_PhysicsStateFieldsAreReplicated) {
+    // The engine-neutral state must be discoverable by the generic delta
+    // replication registry, including the sleep bit. Jolt BodyID stays local.
+    const ComponentId id = GetComponentId<NetPhysicsState>();
+    const auto& types = ReplicatedComponentTypes();
+    const auto it = std::find_if(types.begin(), types.end(),
+                                 [id](const ReplicatedComponentType& t) { return t.id == id; });
+    CHECK(it != types.end());
+    CHECK(it->fields.size() == 3);
+    CHECK(std::string(it->fields[0]->name) == "linear_velocity");
+    CHECK(std::string(it->fields[1]->name) == "angular_velocity");
+    CHECK(std::string(it->fields[2]->name) == "sleeping");
+}
+
+
+AETHER_TEST(NetProd_PhysicsStateRoundTripsAcrossFourClients) {
+    // Verify actual snapshot encoding/decoding, not just reflection flags.
+    ProdSim sim(1249);
+    sim.net.conditions = {0.05, 0.02, 0.05f, 0.0f};
+    for (int i = 0; i < kClients; ++i) sim.AddClient("p" + std::to_string(i));
+    int frame = 0;
+    while (!sim.AllJoined() && frame < 600) sim.Step(1, frame++);
+    CHECK(sim.AllJoined());
+    sim.moving = false;
+
+    NetIdentity ni;
+    SetNetArchetype(ni, "physics_prop");
+    NetPhysicsState initial;
+    initial.linear_velocity = Vec3{1.0f, 2.0f, 3.0f};
+    initial.angular_velocity = Vec3{0.0f, 4.0f, 0.0f};
+    const Entity prop = sim.world.CreateEntity(ni, Transform{}, initial);
+    sim.Step(120, frame);
+    frame += 120;
+    const u32 id = sim.NetId(prop);
+    for (const auto& c : sim.clients) {
+        const Entity remote = c->replication->FindEntity(id);
+        CHECK(!remote.IsNull());
+        const auto* state = c->world.GetComponent<NetPhysicsState>(remote);
+        CHECK(state != nullptr);
+        CHECK((state->linear_velocity - initial.linear_velocity).Length() < 1e-4f);
+        CHECK((state->angular_velocity - initial.angular_velocity).Length() < 1e-4f);
+        CHECK(!state->sleeping);
+    }
+
+    auto* authoritative = sim.world.GetComponent<NetPhysicsState>(prop);
+    authoritative->linear_velocity = Vec3{};
+    authoritative->angular_velocity = Vec3{};
+    authoritative->sleeping = true;
+    sim.Step(180, frame);
+    for (const auto& c : sim.clients) {
+        const Entity remote = c->replication->FindEntity(id);
+        CHECK(!remote.IsNull());
+        const auto* state = c->world.GetComponent<NetPhysicsState>(remote);
+        CHECK(state != nullptr);
+        CHECK(state->linear_velocity.Length() < 1e-4f);
+        CHECK(state->angular_velocity.Length() < 1e-4f);
+        CHECK(state->sleeping);
+    }
 }
