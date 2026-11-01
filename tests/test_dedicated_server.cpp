@@ -1862,10 +1862,72 @@ AETHER_TEST(DedicatedServer_StaleBuildRefusalPreservesLiveRpcSession) {
           repeat_refusal_identity->net_id == scene_id &&
           repeat_refusal_identity->owner == net::kNoPeer);
 
+    // A second stale-build refusal must not poison the freed player slot:
+    // a fresh compatible client can still join, acknowledge an RPC, and leave
+    // while the original survivor continues receiving authoritative snapshots.
+    cc.build_id = 109;
+    cc.name = "fresh-after-repeat-stale-refusal";
+    cc.duration = 1.5;
+    const u32 survivor_snapshots_before_fresh_join = live.Result().snapshots;
+    NetClient fresh_after_refusal;
+    CHECK(fresh_after_refusal.Start(cc, now(), &error));
+    const f64 fresh_join_deadline = now() + 5.0;
+    while ((!fresh_after_refusal.Result().rpc_ack ||
+            fresh_after_refusal.Result().snapshots == 0 ||
+            live.Result().snapshots <= survivor_snapshots_before_fresh_join) &&
+           now() < fresh_join_deadline) {
+        server.Tick(now());
+        live.Tick(now());
+        fresh_after_refusal.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(fresh_after_refusal.Result().joined &&
+          fresh_after_refusal.Result().pawn_seen &&
+          fresh_after_refusal.Result().rpc_ack &&
+          fresh_after_refusal.Result().snapshots > 0 &&
+          !fresh_after_refusal.Done());
+    CHECK(live.Result().joined && live.Result().rpc_ack && !live.Done() &&
+          live.Result().snapshots > survivor_snapshots_before_fresh_join);
+    CHECK(server.Stats().players == 2 && server.Stats().joins == 4 &&
+          server.Stats().leaves == 2 && server.Stats().pings == 4 &&
+          server.Stats().refused == 2);
+    CHECK(world.EntityCount() == 3 && world.IsAlive(scene));
+
+    const u32 survivor_snapshots_before_fresh_leave = live.Result().snapshots;
+    const f64 fresh_leave_deadline = now() + 5.0;
+    while ((!fresh_after_refusal.Done() || server.Stats().players != 1 ||
+            live.Result().snapshots <= survivor_snapshots_before_fresh_leave) &&
+           now() < fresh_leave_deadline) {
+        server.Tick(now());
+        live.Tick(now());
+        fresh_after_refusal.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(fresh_after_refusal.Done() && fresh_after_refusal.Result().joined &&
+          fresh_after_refusal.Result().rpc_ack);
+    CHECK(live.Result().joined && live.Result().rpc_ack && !live.Done() &&
+          live.Result().snapshots > survivor_snapshots_before_fresh_leave);
+    CHECK(server.Stats().players == 1 && server.Stats().joins == 4 &&
+          server.Stats().leaves == 3 && server.Stats().pings == 4 &&
+          server.Stats().refused == 2);
+    CHECK(world.EntityCount() == 2 && world.IsAlive(scene));
+    const auto* fresh_leave_identity = world.GetComponent<net::NetIdentity>(scene);
+    CHECK(fresh_leave_identity && fresh_leave_identity->net_id == scene_id &&
+          fresh_leave_identity->owner == net::kNoPeer);
+    const Transform* fresh_leave_transform = world.GetComponent<Transform>(scene);
+    CHECK(fresh_leave_transform && fresh_leave_transform->position.x == 6.0f &&
+          fresh_leave_transform->position.y == -3.0f &&
+          fresh_leave_transform->position.z == 2.0f &&
+          fresh_leave_transform->rotation.z == 0.6f &&
+          fresh_leave_transform->rotation.w == 0.8f &&
+          fresh_leave_transform->scale.x == 2.0f &&
+          fresh_leave_transform->scale.y == 2.0f &&
+          fresh_leave_transform->scale.z == 3.0f);
+
     server.Stop();
     server.Stop();
-    CHECK(server.Stats().players == 0 && server.Stats().joins == 3 &&
-          server.Stats().leaves == 2 && server.Stats().pings == 3 &&
+    CHECK(server.Stats().players == 0 && server.Stats().joins == 4 &&
+          server.Stats().leaves == 3 && server.Stats().pings == 4 &&
           server.Stats().refused == 2);
     CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
     const auto* stopped_identity = world.GetComponent<net::NetIdentity>(scene);
