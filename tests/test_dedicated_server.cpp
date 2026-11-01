@@ -1694,8 +1694,16 @@ AETHER_TEST(DedicatedServer_StaleBuildRefusalPreservesLiveRpcSession) {
           server.Stats().leaves == 0 && server.Stats().pings == 1 &&
           server.Stats().refused == 1);
     CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
-    CHECK(world.GetComponent<net::NetIdentity>(scene) &&
-          world.GetComponent<net::NetIdentity>(scene)->net_id == scene_id);
-    CHECK(t && t->position.x == 6.0f && t->position.y == -3.0f &&
-          t->position.z == 2.0f);
+    const auto* stopped_identity = world.GetComponent<net::NetIdentity>(scene);
+    CHECK(stopped_identity && stopped_identity->net_id == scene_id &&
+          stopped_identity->owner == net::kNoPeer);
+    const Transform* stopped_transform = world.GetComponent<Transform>(scene);
+    CHECK(stopped_transform && stopped_transform->position.x == 6.0f &&
+          stopped_transform->position.y == -3.0f &&
+          stopped_transform->position.z == 2.0f &&
+          stopped_transform->rotation.z == 0.6f &&
+          stopped_transform->rotation.w == 0.8f &&
+          stopped_transform->scale.x == 2.0f &&
+          stopped_transform->scale.y == 2.0f &&
+          stopped_transform->scale.z == 3.0f);
 }
