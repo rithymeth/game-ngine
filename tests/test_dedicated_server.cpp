@@ -1704,10 +1704,49 @@ AETHER_TEST(DedicatedServer_StaleBuildRefusalPreservesLiveRpcSession) {
           t->rotation.w == 0.8f && t->scale.x == 2.0f &&
           t->scale.y == 2.0f && t->scale.z == 3.0f);
 
+    // The refused client must not consume a player slot or prevent another
+    // matching-build client from joining alongside the original survivor.
+    const u32 survivor_snapshots_before_second_join = live.Result().snapshots;
+    cc.build_id = 109;
+    cc.name = "second-matching-after-refusal";
+    cc.duration = 10.0;
+    NetClient second;
+    CHECK(second.Start(cc, now(), &error));
+    const f64 second_deadline = now() + 5.0;
+    while ((!second.Result().rpc_ack || second.Result().snapshots == 0 ||
+            live.Result().snapshots <= survivor_snapshots_before_second_join) &&
+           now() < second_deadline) {
+        server.Tick(now());
+        live.Tick(now());
+        second.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(second.Result().joined && second.Result().pawn_seen &&
+          second.Result().rpc_ack && second.Result().snapshots > 0 &&
+          !second.Done());
+    CHECK(live.Result().joined && live.Result().rpc_ack && !live.Done() &&
+          live.Result().snapshots > survivor_snapshots_before_second_join);
+    CHECK(server.Stats().players == 2 && server.Stats().joins == 2 &&
+          server.Stats().leaves == 0 && server.Stats().pings == 2 &&
+          server.Stats().refused == 1);
+    CHECK(world.EntityCount() == 3 && world.IsAlive(scene));
+    const auto* second_join_identity = world.GetComponent<net::NetIdentity>(scene);
+    CHECK(second_join_identity && second_join_identity->net_id == scene_id &&
+          second_join_identity->owner == net::kNoPeer);
+    const Transform* second_join_transform = world.GetComponent<Transform>(scene);
+    CHECK(second_join_transform && second_join_transform->position.x == 6.0f &&
+          second_join_transform->position.y == -3.0f &&
+          second_join_transform->position.z == 2.0f &&
+          second_join_transform->rotation.z == 0.6f &&
+          second_join_transform->rotation.w == 0.8f &&
+          second_join_transform->scale.x == 2.0f &&
+          second_join_transform->scale.y == 2.0f &&
+          second_join_transform->scale.z == 3.0f);
+
     server.Stop();
     server.Stop();
-    CHECK(server.Stats().players == 0 && server.Stats().joins == 1 &&
-          server.Stats().leaves == 0 && server.Stats().pings == 1 &&
+    CHECK(server.Stats().players == 0 && server.Stats().joins == 2 &&
+          server.Stats().leaves == 0 && server.Stats().pings == 2 &&
           server.Stats().refused == 1);
     CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
     const auto* stopped_identity = world.GetComponent<net::NetIdentity>(scene);
