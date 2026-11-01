@@ -86,11 +86,11 @@ jobs:
         env:
           CC: ${{ matrix.cc }}
           CXX: ${{ matrix.cxx }}
+        # Keep sanitizer stacks readable without exhausting the hosted runner disk at link time.
         run: >
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=${{ matrix.type }}
           "-DCMAKE_CXX_FLAGS=${{ matrix.flags }}"
-          # Keep sanitizer stacks readable without exhausting the hosted runner disk at link time.
           "-DCMAKE_CXX_FLAGS_DEBUG=${{ matrix.name == 'ASan+UBSan' && '-O0 -g1' || '-g' }}"
           -DAETHER_BUILD_PHYSICS=${{ matrix.physics }}
           -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_SANDBOX=OFF
