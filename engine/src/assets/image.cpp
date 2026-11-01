@@ -4,9 +4,42 @@
 
 #include <stb_image.h>
 
+#include <algorithm>
+#include <iterator>
 #include <limits>
 
 namespace aether::assets {
+
+namespace {
+
+// stb_image can reserve the declared IDAT size before it discovers that a
+// truncated PNG does not contain those bytes. Validate chunk bounds against
+// the actual input first so tiny malformed files cannot request GiB of RAM.
+bool PngChunksFitInput(std::span<const u8> bytes) {
+    constexpr u8 signature[] = {0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a};
+    if (bytes.size() < sizeof(signature) ||
+        !std::equal(std::begin(signature), std::end(signature), bytes.begin())) {
+        return true; // Let stb_image handle other formats and invalid signatures.
+    }
+
+    usize offset = sizeof(signature);
+    while (offset <= bytes.size() && bytes.size() - offset >= 12) {
+        const u64 chunk_size = (static_cast<u64>(bytes[offset]) << 24) |
+                               (static_cast<u64>(bytes[offset + 1]) << 16) |
+                               (static_cast<u64>(bytes[offset + 2]) << 8) |
+                               static_cast<u64>(bytes[offset + 3]);
+        // Each chunk also needs a four-byte type and four-byte CRC.
+        if (chunk_size > bytes.size() - offset - 12) return false;
+        const bool is_end = bytes[offset + 4] == 'I' && bytes[offset + 5] == 'E' &&
+                            bytes[offset + 6] == 'N' && bytes[offset + 7] == 'D';
+        if (is_end) return chunk_size == 0;
+        offset += static_cast<usize>(chunk_size) + 12;
+    }
+    return false;
+}
+
+} // namespace
+
 
 bool DecodeImageFile(const std::string& path, ImageData& out_image) {
     return DecodeImageFile(path, out_image, 16 * 1024 * 1024);
@@ -51,7 +84,8 @@ bool DecodeImageFile(const std::string& path, ImageData& out_image, u64 max_pixe
 }
 
 bool DecodeImageFromMemory(std::span<const u8> bytes, ImageData& out_image, u64 max_pixels) {
-    if (bytes.empty() || bytes.size() > static_cast<usize>(std::numeric_limits<int>::max())) return false;
+    if (bytes.empty() || bytes.size() > static_cast<usize>(std::numeric_limits<int>::max()) ||
+        !PngChunksFitInput(bytes)) return false;
     int width = 0, height = 0, channels = 0;
     const auto* input = reinterpret_cast<const stbi_uc*>(bytes.data());
     const int input_size = static_cast<int>(bytes.size());

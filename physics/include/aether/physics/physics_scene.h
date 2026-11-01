@@ -65,6 +65,14 @@ public:
     void Sync();
     void Step(f32 dt);
 
+    // Accept an authoritative replicated Transform for an existing dynamic
+    // Jolt body. Correct position/rotation only beyond the tolerances, then
+    // refresh the tracked pose even for sub-tolerance changes. This prevents
+    // the next Step from treating a received snapshot as gameplay teleport.
+    // Preserves sleeping state; apply replicated motion/activation separately.
+    // Returns true if Jolt's pose was corrected. Call outside Step.
+    bool ReconcileAuthoritativePose(Entity entity, f32 position_tolerance, f32 rotation_tolerance_radians);
+
     // Called for each event after the step, in a deterministic order (the
     // body pairs sorted, then body 1's entity before body 2's). An event
     // whose `self` was destroyed earlier in the same dispatch (by a handler)

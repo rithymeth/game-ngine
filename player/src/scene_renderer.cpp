@@ -7,6 +7,7 @@
 #include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
 #include "frame_lights.h"
+#include "render_pose.h"
 #include "particle_pass.h"
 #include "package_textures.h"
 #include "aether/ui/draw.h"
@@ -517,6 +518,7 @@ struct SceneRenderer::Impl {
     u32 sampled_texture_count = 0;
     u32 seen_critical_pressure = 0;
     f32 view_distance = 0.0f;
+    std::function<bool(Entity, Transform&)> render_pose_sampler;
     Entity animated_player;
     Vec3 previous_player_position{};
     f64 previous_animation_time = 0.0;
@@ -1293,6 +1295,9 @@ SceneRenderer::~SceneRenderer() = default;
 
 void SceneRenderer::SetViewDistance(f32 metres) { impl_->view_distance = metres; }
 void SceneRenderer::SetDrawParticles(bool draw) { impl_->draw_particles = draw; }
+void SceneRenderer::SetRenderPoseSampler(std::function<bool(Entity, Transform&)> sampler) {
+    impl_->render_pose_sampler = std::move(sampler);
+}
 
 void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     struct PendingTransparentDraw {
@@ -1390,7 +1395,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                 for (usize row = 0; row < count; ++row) {
                     Impl::Model* model = renderer.FindModel(models[row].asset_path);
                     if (!model) continue;
-                    const Mat4 entity_transform = ComputeWorldTransform(world, guids, entities[row]);
+                    const Mat4 entity_transform = ComputeRenderWorldTransform(world, guids, entities[row], renderer.render_pose_sampler);
                     (void)transforms; // ComputeWorldTransform also includes any parent chain.
                     const bool is_player = std::find(player_entities.begin(), player_entities.end(), entities[row]) != player_entities.end();
                     std::string selected_clip = is_player ? locomotion_clip : "Enemy_Idle";

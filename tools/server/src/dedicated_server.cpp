@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cstdio>
 #include <thread>
+#include <utility>
 
 AETHER_REFLECT(aether::server::ServerPlayer, 1,
     AETHER_FIELD(pings, Field_Replicated),
@@ -110,8 +111,15 @@ void DedicatedServer::Stop() {
     socket_.Close();
     if (world_)
         for (auto& [peer, pawn] : pawns_)
-            if (world_->IsAlive(pawn)) world_->DestroyEntity(pawn);
+            if (world_->IsAlive(pawn)) {
+                // A stopped session must retain RPC history from still-connected pawns.
+                if (const ServerPlayer* sp = world_->GetComponent<ServerPlayer>(pawn))
+                    stats_.pings += static_cast<u64>(sp->pings);
+                world_->DestroyEntity(pawn);
+            }
     pawns_.clear();
+    // Live occupancy must reflect shutdown, while lifetime counters remain available.
+    stats_.players = 0;
     world_ = nullptr;
 }
 
@@ -316,6 +324,17 @@ std::string DiscoveryJson(const std::vector<LanSession>& servers) {
 
 // --- NetClient ----------------------------------------------------------------------------------
 
+bool NetClient::UseWorld(World& world) {
+    if (host_) return false;
+    world_ref_ = &world;
+    return true;
+}
+
+void NetClient::OnSnapshotApplied(net::ReplicationClient::SnapshotAppliedFn fn) {
+    snapshot_applied_ = std::move(fn);
+    if (replication_) replication_->OnSnapshotApplied(snapshot_applied_);
+}
+
 NetClient::~NetClient() {
     rpc_.reset();
     replication_.reset();
@@ -324,6 +343,12 @@ NetClient::~NetClient() {
 }
 
 bool NetClient::Start(const NetClientConfig& config, f64 now, std::string* error) {
+    // Restarting this object would retain its old replication stream, socket,
+    // and World entities. A new session currently requires a fresh NetClient.
+    if (host_) {
+        if (error) *error = "NetClient already started; use a fresh client for a new session";
+        return false;
+    }
     RegisterServerComponents();
     config_ = config;
     std::string socket_error;
@@ -335,9 +360,10 @@ bool NetClient::Start(const NetClientConfig& config, f64 now, std::string* error
     session_ = std::make_unique<SessionClient>(*host_);
     session_->Join(config.server, config.name, config.password, config.build_id, now, config.token);
     const PeerId server = session_->Server();
-    replication_ = std::make_unique<ReplicationClient>(world_, *host_, server);
+    replication_ = std::make_unique<ReplicationClient>(*world_ref_, *host_, server);
+    replication_->OnSnapshotApplied(snapshot_applied_);
     replication_->OnSpawn(kPlayerArchetype, [](World& w, Entity e, const NetIdentity&) { w.AddComponent(e, ServerPlayer{}); });
-    rpc_ = std::make_unique<RpcRouter>(world_, *host_, *replication_, server);
+    rpc_ = std::make_unique<RpcRouter>(*world_ref_, *host_, *replication_, server);
     start_ = now;
     return true;
 }
@@ -345,8 +371,14 @@ bool NetClient::Start(const NetClientConfig& config, f64 now, std::string* error
 void NetClient::Tick(f64 now) {
     if (done_ || !host_) return;
     host_->Update(now);
-    for (const NetEvent& e : host_->TakeEvents())
-        if (!session_->HandleEvent(e) && !replication_->HandleEvent(e)) rpc_->HandleEvent(e);
+    for (const NetEvent& e : host_->TakeEvents()) {
+        if (session_->HandleEvent(e)) continue;
+        // Never apply replicated state (or invoke host snapshot callbacks)
+        // until the session has successfully joined. A refused client may
+        // receive an early empty snapshot while the handshake is in flight.
+        if (session_->GetState() != SessionClient::State::Joined) continue;
+        if (!replication_->HandleEvent(e)) rpc_->HandleEvent(e);
+    }
     const SessionClient::State state = session_->GetState();
     if (state == SessionClient::State::Failed) {
         result_.join_result = JoinResultName(session_->Result());
@@ -366,16 +398,16 @@ void NetClient::Tick(f64 now) {
     result_.entities_seen = std::max(result_.entities_seen, replication_->EntityCount());
     // Our pawn: Ping it once, then wait for the replicated counter to say the server ran it.
     for (const auto& [net_id, e] : replication_->Entities()) {
-        const NetIdentity* ni = world_.IsAlive(e) ? world_.GetComponent<NetIdentity>(e) : nullptr;
+        const NetIdentity* ni = world_ref_->IsAlive(e) ? world_ref_->GetComponent<NetIdentity>(e) : nullptr;
         if (!ni || !ni->locally_owned || std::string(ni->archetype) != kPlayerArchetype) continue;
-        ServerPlayer* sp = world_.GetComponent<ServerPlayer>(e);
+        ServerPlayer* sp = world_ref_->GetComponent<ServerPlayer>(e);
         if (!sp) continue;
         result_.pawn_seen = true;
         if (config_.send_rpc && result_.rpcs_sent == 0) {
             const reflect::TypeInfo& type = reflect::Reflect<ServerPlayer>();
             std::vector<reflect::Any> args = {i32{42}};
             RemoteCallResult r = RemoteCallResult::Refused;
-            CallFunction(world_, e, type, *type.FindFunction("Ping"), sp, args, nullptr, &r);
+            CallFunction(*world_ref_, e, type, *type.FindFunction("Ping"), sp, args, nullptr, &r);
             if (r == RemoteCallResult::Sent) ++result_.rpcs_sent, rpc_at_ = now;
         }
         if (result_.rpcs_sent > 0 && !result_.rpc_ack && sp->pings >= 1 && sp->last_value == 42) {

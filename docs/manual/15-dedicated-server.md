@@ -258,3 +258,67 @@ What it does not do:
 - Packages and smoke tests cover Linux x86-64, Windows x64 and macOS arm64,
   each on one machine over localhost. No cross-machine or NAT run is
   recorded yet, and discovery is LAN broadcast only (no internet lobby).
+
+
+### Opt-in authoritative Jolt correction on a client
+
+A client host that owns a `PhysicsScene` for its `NetClient::GetWorld()`
+can register an accepted-snapshot callback before or after `NetClient::Start`:
+
+```cpp
+client.OnSnapshotApplied([&](World& world) {
+    ApplyAuthoritativePhysicsSnapshot<net::NetPhysicsState>(world, client_physics_scene);
+});
+```
+
+Include `aether/physics/net_physics_bridge.h` and `aether/net/physics_state.h`
+in the **game/host integration target**, and link the optional Physics module
+there. `ServerCore` and `Net` do not depend on Jolt. The callback runs
+synchronously after a valid, newer replicated snapshot has updated the ECS,
+before the host's next physics step. It creates missing collider bodies,
+reconciles authoritative position/rotation and tracked poses, then applies
+replicated velocity and sleeping state. Ensure the scene outlives the callback,
+and remove the callback before destroying the scene.
+
+This hook is **opt-in**. The headless smoke-test client does not create a Jolt
+scene, and existing single-player games (including Evervale) are unchanged.
+For physics entities, use `SnapshotInterpolation::SampleRenderTransform`
+for visual smoothing; never write its sampled pose back to the authoritative
+ECS `Transform` or the Jolt body.
+
+
+### Network Play-in-Editor physics opt-in
+
+In Network Play-in-Editor, enable **Authoritative Jolt physics (opt-in)**
+for a physics-enabled build. The simulated multiplayer server steps Jolt and
+captures `net::NetPhysicsState` before sending snapshots. Each client owns
+its own `PhysicsScene` and applies the accepted snapshot to Jolt (position,
+rotation, velocities, tracked pose and sleep state) before interpolation.
+Client Jolt is not stepped: this is authoritative correction, not prediction.
+`SnapshotInterpolation::SampleRenderTransform` remains the visual-only API
+for physics entities; its sampled pose must not be written into ECS or Jolt.
+
+This editor integration does not change the shipped single-player player.
+The shipped UDP client has a separate explicit `--server` opt-in, described below.
+
+### Sharing the shipped client's game World (UDP)
+
+Before `server::NetClient::Start`, call `UseWorld(game.GetWorld())` so UDP
+replication and the cooked game's `PhysicsScene` refer to the same ECS world.
+The game must outlive the network client; rebinding after Start is rejected.
+The default headless client continues using its own World. The shipped
+`aether_player` now opts into this host integration only with `--server`:
+
+```sh
+aether_player --pak Paks --server 127.0.0.1:7777 --name player1 --build-id 1
+```
+
+`--password` and `--token` are optional; `AETHER_SERVER_PASSWORD` and
+`AETHER_JOIN_TOKEN` are also supported. The client binds `Game::GetWorld()`
+before joining, applies accepted snapshots to the same `PhysicsScene`, and
+suppresses client-side Jolt/character stepping. The host does not run the
+headless client's test RPC. The Game and loaded scene must outlive the UDP
+client; scene replacement is rejected while the opt-in is active. The renderer currently
+uses authoritative ECS poses; any future interpolation must sample into
+render-only transforms, never back into ECS or Jolt. Without `--server`,
+Evervale and other shipped single-player games keep their original physics.

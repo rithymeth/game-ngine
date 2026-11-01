@@ -1,5 +1,9 @@
 #include "aether/job/job_system.h"
+#include "aether/net/physics_state.h"
+#include "aether/net/replication.h"
+#include "aether/net/interpolation.h"
 #include "aether/physics/physics_scene.h"
+#include "aether/physics/net_physics_bridge.h"
 #include "aether/reflection/serialize.h"
 #include "aether/scene/serialization.h"
 #include "test_framework.h"
@@ -269,4 +273,253 @@ AETHER_TEST(PhysicsScene_LayersFollowTheCollisionMatrix) {
     s.world.AddComponent(haunt, Layer{2});
     s.Run(120);
     AETHER_CHECK(s.Y(haunt) > 1.5f); // stacked on the player (it may roll off later, but not through)
+}
+
+AETHER_TEST(PhysicsScene_CapturesAuthoritativeJoltMotionForReplication) {
+    Sim s;
+    const Entity dynamic = s.Body(Vec3(0, 5, 0), Sphere(0.5f));
+    s.world.AddComponent(dynamic, net::NetPhysicsState{});
+
+    // Non-dynamic and not-yet-created bodies must not be read from Jolt.
+    const Entity stationary = s.Body(Vec3(3, 5, 0), Sphere(0.5f), BodyMotion::Static);
+    s.world.AddComponent(stationary, net::NetPhysicsState{});
+    const Entity without_collider = s.world.CreateEntity(RigidBody{}, net::NetPhysicsState{});
+
+    s.scene.Step(kDt);
+    AETHER_CHECK(CaptureAuthoritativePhysicsState<net::NetPhysicsState>(s.world, s.scene) == 1);
+    const auto* state = s.world.GetComponent<net::NetPhysicsState>(dynamic);
+    AETHER_CHECK(state != nullptr && state->linear_velocity.y < 0.0f && !state->sleeping);
+    AETHER_CHECK(s.world.GetComponent<net::NetPhysicsState>(stationary)->linear_velocity.Length() == 0.0f);
+    AETHER_CHECK(s.world.GetComponent<net::NetPhysicsState>(without_collider)->linear_velocity.Length() == 0.0f);
+
+    const JPH::BodyID body = s.scene.BodyOf(dynamic);
+    AETHER_CHECK(!body.IsInvalid());
+    s.physics.BodyInterface().SetLinearVelocity(body, JPH::Vec3(2.0f, 3.0f, 4.0f));
+    s.physics.BodyInterface().SetAngularVelocity(body, JPH::Vec3(0.0f, 1.5f, 0.0f));
+    AETHER_CHECK(CaptureAuthoritativePhysicsState<net::NetPhysicsState>(s.world, s.scene) == 1);
+    AETHER_CHECK_NEAR(state->linear_velocity.x, 2.0f, 1e-4f);
+    AETHER_CHECK_NEAR(state->linear_velocity.y, 3.0f, 1e-4f);
+    AETHER_CHECK_NEAR(state->linear_velocity.z, 4.0f, 1e-4f);
+    AETHER_CHECK_NEAR(state->angular_velocity.y, 1.5f, 1e-4f);
+
+    s.physics.BodyInterface().DeactivateBody(body);
+    AETHER_CHECK(CaptureAuthoritativePhysicsState<net::NetPhysicsState>(s.world, s.scene) == 1);
+    AETHER_CHECK(state->sleeping);
+}
+
+
+AETHER_TEST(PhysicsScene_AppliesAuthoritativeMotionToClientJoltBody) {
+    Sim s;
+    const Entity dynamic = s.Body(Vec3(0, 5, 0), Sphere(0.5f));
+    s.world.AddComponent(dynamic, net::NetPhysicsState{});
+    const Entity stationary = s.Body(Vec3(3, 5, 0), Sphere(0.5f), BodyMotion::Static);
+    s.world.AddComponent(stationary, net::NetPhysicsState{});
+    const Entity missing = s.world.CreateEntity(RigidBody{}, net::NetPhysicsState{});
+    s.scene.Sync();
+
+    auto* state = s.world.GetComponent<net::NetPhysicsState>(dynamic);
+    state->linear_velocity = Vec3(2.0f, 3.0f, 4.0f);
+    state->angular_velocity = Vec3(0.0f, 1.5f, 0.0f);
+    state->sleeping = false;
+    AETHER_CHECK(ApplyAuthoritativePhysicsMotion<net::NetPhysicsState>(s.world, s.scene) == 1);
+    const auto body = s.scene.BodyOf(dynamic);
+    const auto linear = s.physics.BodyInterface().GetLinearVelocity(body);
+    const auto angular = s.physics.BodyInterface().GetAngularVelocity(body);
+    AETHER_CHECK_NEAR(linear.GetX(), 2.0f, 1e-4f);
+    AETHER_CHECK_NEAR(linear.GetY(), 3.0f, 1e-4f);
+    AETHER_CHECK_NEAR(linear.GetZ(), 4.0f, 1e-4f);
+    AETHER_CHECK_NEAR(angular.GetY(), 1.5f, 1e-4f);
+    AETHER_CHECK(s.physics.BodyInterface().IsActive(body));
+
+    state->linear_velocity = Vec3{};
+    state->angular_velocity = Vec3{};
+    state->sleeping = true;
+    AETHER_CHECK(ApplyAuthoritativePhysicsMotion<net::NetPhysicsState>(s.world, s.scene) == 1);
+    AETHER_CHECK(!s.physics.BodyInterface().IsActive(body));
+    AETHER_CHECK(s.physics.BodyInterface().GetLinearVelocity(body).Length() == 0.0f);
+    AETHER_CHECK(s.world.GetComponent<net::NetPhysicsState>(stationary) != nullptr);
+    AETHER_CHECK(s.scene.BodyOf(missing).IsInvalid());
+}
+
+
+AETHER_TEST(PhysicsScene_ReconcilesAuthoritativePositionOnlyAboveTolerance) {
+    Sim s;
+    const Entity dynamic = s.Body(Vec3(0, 5, 0), Sphere(0.5f));
+    s.world.AddComponent(dynamic, net::NetPhysicsState{});
+    const Entity stationary = s.Body(Vec3(3, 5, 0), Sphere(0.5f), BodyMotion::Static);
+    s.world.AddComponent(stationary, net::NetPhysicsState{});
+    const Entity missing = s.world.CreateEntity(Transform{}, RigidBody{}, net::NetPhysicsState{});
+    s.scene.Sync();
+    const auto body = s.scene.BodyOf(dynamic);
+    AETHER_CHECK(!body.IsInvalid());
+
+    // Small replication noise should not cause a Jolt teleport.
+    s.world.GetComponent<Transform>(dynamic)->position.x += 0.005f;
+    AETHER_CHECK(ReconcileAuthoritativePhysicsPosition<net::NetPhysicsState>(s.world, s.scene, 0.01f) == 0);
+    AETHER_CHECK_NEAR(s.physics.GetPosition(body).x, 0.0f, 1e-4f);
+
+    // Large server correction must be reflected in the live Jolt body.
+    s.world.GetComponent<Transform>(dynamic)->position = Vec3(4, 7, 2);
+    AETHER_CHECK(ReconcileAuthoritativePhysicsPosition<net::NetPhysicsState>(s.world, s.scene, 0.01f) == 1);
+    AETHER_CHECK_NEAR(s.physics.GetPosition(body).x, 4.0f, 1e-4f);
+    AETHER_CHECK_NEAR(s.physics.GetPosition(body).y, 7.0f, 1e-4f);
+    AETHER_CHECK_NEAR(s.physics.GetPosition(body).z, 2.0f, 1e-4f);
+    AETHER_CHECK(ReconcileAuthoritativePhysicsPosition<net::NetPhysicsState>(s.world, s.scene, 0.01f) == 0);
+    AETHER_CHECK_NEAR(s.physics.GetPosition(s.scene.BodyOf(stationary)).x, 3.0f, 1e-4f);
+    AETHER_CHECK(s.scene.BodyOf(missing).IsInvalid());
+}
+
+
+AETHER_TEST(PhysicsScene_ServerTickCapturesLatestJoltMotionBeforeReplication) {
+    Sim s;
+    const Entity prop = s.Body(Vec3(0, 5, 0), Sphere(0.5f));
+    s.world.AddComponent(prop, net::NetPhysicsState{});
+    auto* motion = s.world.GetComponent<net::NetPhysicsState>(prop);
+    motion->linear_velocity = Vec3(99.0f, 99.0f, 99.0f);
+
+    // Same order as the dedicated server: game physics tick, capture, network tick.
+    s.scene.Step(kDt);
+    AETHER_CHECK(CaptureAuthoritativePhysicsState<net::NetPhysicsState>(s.world, s.scene) == 1);
+    const JPH::BodyID id = s.scene.BodyOf(prop);
+    AETHER_CHECK(!id.IsInvalid());
+    AETHER_CHECK(s.world.GetComponent<Transform>(prop)->position.y < 5.0f);
+    AETHER_CHECK_NEAR(motion->linear_velocity.y, s.physics.BodyInterface().GetLinearVelocity(id).GetY(), 1e-4f);
+    AETHER_CHECK(motion->linear_velocity.y < 0.0f);
+
+    // A second tick must capture new Jolt state, not the previous snapshot.
+    s.physics.BodyInterface().SetLinearVelocity(id, JPH::Vec3(0.0f, 10.0f, 0.0f));
+    s.scene.Step(kDt);
+    AETHER_CHECK(CaptureAuthoritativePhysicsState<net::NetPhysicsState>(s.world, s.scene) == 1);
+    AETHER_CHECK(motion->linear_velocity.y > 0.0f);
+    AETHER_CHECK_NEAR(motion->linear_velocity.y, s.physics.BodyInterface().GetLinearVelocity(id).GetY(), 1e-4f);
+}
+
+
+AETHER_TEST(PhysicsScene_ReplicatedSnapshotCorrectsClientJoltBeforeInterpolation) {
+    RegisterPhysicsComponentSerializers();
+    (void)GetComponentId<net::NetPhysicsState>();
+    JobSystem jobs{2};
+    World server_world, client_world;
+    PhysicsWorld server_physics{jobs}, client_physics{jobs};
+    PhysicsScene server_scene{server_world, server_physics};
+    PhysicsScene client_scene{client_world, client_physics};
+
+    net::LoopbackNetwork network{73};
+    auto server_socket = network.Open(7777);
+    auto client_socket = network.Open();
+    net::NetHost server_host{*server_socket}, client_host{*client_socket};
+    server_host.Listen();
+    const net::PeerId peer = client_host.Connect(net::Address::Loopback(7777), network.Now());
+    net::ReplicationServer server_replication{server_world, server_host};
+    net::ReplicationClient client_replication{client_world, client_host, peer};
+    net::SnapshotInterpolation interpolation{client_world, client_replication, 0.1};
+
+    net::NetIdentity identity;
+    net::SetNetArchetype(identity, "physics-prop");
+    RigidBody rigid;
+    rigid.motion = BodyMotion::Dynamic;
+    const Entity server_entity = server_world.CreateEntity(
+        identity, Transform{Vec3(0, 5, 0), Quaternion::Identity()}, rigid, Sphere(0.5f), net::NetPhysicsState{});
+    client_replication.OnSpawn("physics-prop", [](World& w, Entity e, const net::NetIdentity&) {
+        RigidBody body;
+        body.motion = BodyMotion::Dynamic;
+        w.AddComponent(e, body);
+        w.AddComponent(e, Sphere(0.5f));
+    });
+
+    u32 applied = 0;
+    client_replication.OnSnapshotApplied([&](World& w) {
+        // Replication has finished updating Transform and NetPhysicsState.
+        // Keep the authoritative ECS pose; visual smoothing must never write it.
+        ApplyAuthoritativePhysicsSnapshot<net::NetPhysicsState>(w, client_scene);
+        ++applied;
+        for (const auto& [id, e] : client_replication.Entities()) {
+            (void)id;
+            const auto* transform = w.GetComponent<Transform>(e);
+            const auto* motion = w.GetComponent<net::NetPhysicsState>(e);
+            if (!transform || !motion) continue;
+            const JPH::BodyID body = client_scene.BodyOf(e);
+            AETHER_CHECK(!body.IsInvalid());
+            if (body.IsInvalid()) continue;
+            AETHER_CHECK_NEAR((client_physics.GetPosition(body) - transform->position).Length(), 0.0f, 0.011f);
+            AETHER_CHECK(client_physics.BodyInterface().IsActive(body) != motion->sleeping);
+        }
+    });
+
+    for (int frame = 0; frame < 140; ++frame) {
+        if (frame == 50)
+            server_world.GetComponent<Transform>(server_entity)->position = Vec3(6, 7, 1);
+        if (frame == 90)
+            server_physics.BodyInterface().DeactivateBody(server_scene.BodyOf(server_entity));
+        server_scene.Step(kDt);
+        CaptureAuthoritativePhysicsState<net::NetPhysicsState>(server_world, server_scene);
+        network.Advance(kDt);
+        const f64 now = network.Now();
+        server_host.Update(now);
+        for (const net::NetEvent& event : server_host.TakeEvents())
+            server_replication.HandleEvent(event);
+        server_replication.Update(now);
+        client_host.Update(now);
+        for (const net::NetEvent& event : client_host.TakeEvents())
+            client_replication.HandleEvent(event);
+        const u32 net_id = server_world.GetComponent<net::NetIdentity>(server_entity)->net_id;
+        const Entity client_entity = client_replication.FindEntity(net_id);
+        Transform before{};
+        const bool has_pose = !client_entity.IsNull() && client_world.HasComponent<Transform>(client_entity);
+        if (has_pose) before = *client_world.GetComponent<Transform>(client_entity);
+        interpolation.Update(now);
+        if (has_pose)
+            AETHER_CHECK_NEAR((client_world.GetComponent<Transform>(client_entity)->position - before.position).Length(), 0.0f, 1e-5f);
+    }
+    AETHER_CHECK(applied > 2);
+    const u32 net_id = server_world.GetComponent<net::NetIdentity>(server_entity)->net_id;
+    const Entity client_entity = client_replication.FindEntity(net_id);
+    AETHER_CHECK(!client_entity.IsNull());
+    if (!client_entity.IsNull()) {
+        const JPH::BodyID body = client_scene.BodyOf(client_entity);
+        AETHER_CHECK(!body.IsInvalid());
+        if (!body.IsInvalid())
+            AETHER_CHECK(!client_physics.BodyInterface().IsActive(body));
+    }
+}
+
+
+AETHER_TEST(PhysicsScene_AuthoritativePoseTracksRotationAndPreservesSleep) {
+    Sim s;
+    BoxCollider box;
+    box.half_extents = Vec3(0.4f, 0.6f, 0.8f);
+    const Entity dynamic = s.Body(Vec3(0, 5, 0), box);
+    s.world.AddComponent(dynamic, net::NetPhysicsState{});
+    const Entity stationary = s.Body(Vec3(10, 5, 0), box, BodyMotion::Static);
+    s.world.AddComponent(stationary, net::NetPhysicsState{});
+    s.scene.Sync();
+
+    const JPH::BodyID body = s.scene.BodyOf(dynamic);
+    AETHER_CHECK(!body.IsInvalid());
+    s.physics.BodyInterface().DeactivateBody(body);
+    AETHER_CHECK(!s.physics.BodyInterface().IsActive(body));
+
+    Transform* pose = s.world.GetComponent<Transform>(dynamic);
+    pose->position = Vec3(4, 7, 2);
+    pose->rotation = Quaternion::FromAxisAngle(Vec3(0, 1, 0), 1.0f);
+    AETHER_CHECK(ReconcileAuthoritativePhysicsPose<net::NetPhysicsState>(s.world, s.scene) == 1);
+    AETHER_CHECK_NEAR((s.physics.GetPosition(body) - pose->position).Length(), 0.0f, 1e-4f);
+    const Quaternion actual = s.physics.GetRotation(body);
+    const f32 dot = actual.x * pose->rotation.x + actual.y * pose->rotation.y +
+                    actual.z * pose->rotation.z + actual.w * pose->rotation.w;
+    AETHER_CHECK_NEAR(std::abs(dot), 1.0f, 1e-4f);
+    AETHER_CHECK(!s.physics.BodyInterface().IsActive(body));
+    AETHER_CHECK(ReconcileAuthoritativePhysicsPose<net::NetPhysicsState>(s.world, s.scene) == 0);
+
+    // Tiny replicated position changes must not be replayed as activating
+    // gameplay teleports by the following PhysicsScene::Step.
+    pose->position.x += 0.005f;
+    AETHER_CHECK(ReconcileAuthoritativePhysicsPose<net::NetPhysicsState>(s.world, s.scene) == 0);
+    s.scene.Step(kDt);
+    AETHER_CHECK(!s.physics.BodyInterface().IsActive(body));
+
+    // A quaternion and its negation represent the same orientation.
+    pose->rotation = Quaternion(-actual.x, -actual.y, -actual.z, -actual.w);
+    AETHER_CHECK(ReconcileAuthoritativePhysicsPose<net::NetPhysicsState>(s.world, s.scene) == 0);
+    AETHER_CHECK_NEAR(s.physics.GetPosition(s.scene.BodyOf(stationary)).x, 10.0f, 1e-4f);
 }

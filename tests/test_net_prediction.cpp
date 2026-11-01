@@ -1,4 +1,5 @@
 #include "aether/net/interpolation.h"
+#include "aether/net/physics_state.h"
 #include "aether/net/prediction.h"
 #include "test_framework.h"
 
@@ -260,4 +261,106 @@ AETHER_TEST(Prediction_ServerSanitizesAndChecksOwners) {
     CHECK(thief.movement->Predict(theirs, 1, 0, false, kStep));
     sim.Step(10);
     CHECK(sim.movement->GetStats().rejected == 1 && std::fabs(sim.ServerPos(pawn).x - 0.4f) < 1e-5f);
+}
+
+
+
+AETHER_TEST(Prediction_RenderOnlyInterpolationPreservesAllAuthoritativeTransforms) {
+    PredSim sim(41);
+    sim.net.conditions.latency = 0.05;
+    sim.net.conditions.jitter = 0.01;
+    auto& viewer = sim.AddClient();
+    viewer.interpolation->SetRenderOnly(true);
+    sim.WaitConnected();
+
+    // Non-physics entities must also remain authoritative in ECS when the
+    // shipped player uses visual-only interpolation (physics props already
+    // have this guarantee from the normal SnapshotInterpolation path).
+    NetIdentity identity;
+    SetNetArchetype(identity, "visual_only");
+    const Entity mover = sim.world.CreateEntity(identity, Transform{});
+    sim.Step(10);
+    const u32 id = sim.NetId(mover);
+    CHECK(id != 0);
+
+    bool saw_delayed_visual = false;
+    for (int i = 0; i < 150; ++i) {
+        sim.world.GetComponent<Transform>(mover)->position.x = static_cast<f32>(i) / 12.0f;
+        sim.Step();
+        const Entity client_entity = viewer.replication->FindEntity(id);
+        if (client_entity.IsNull()) continue;
+        Transform authoritative;
+        if (!viewer.replication->ReadReplicated(id, GetComponentId<Transform>(), &authoritative)) continue;
+        const Transform* ecs = viewer.world.GetComponent<Transform>(client_entity);
+        CHECK(ecs != nullptr);
+        if (!ecs) continue;
+        CHECK(Near(ecs->position, authoritative.position));
+
+        Transform visual;
+        if (viewer.interpolation->SampleRenderTransform(id, visual) && i > 60 &&
+            visual.position.x < ecs->position.x - 0.1f)
+            saw_delayed_visual = true;
+        // Sampling must be read-only, too.
+        CHECK(Near(ecs->position, authoritative.position));
+    }
+    CHECK(saw_delayed_visual);
+}
+
+AETHER_TEST(Prediction_PhysicsPropInterpolatesVisualPoseWithoutRewindingSimulation) {
+    PredSim sim(29);
+    sim.net.conditions.latency = 0.05;
+    sim.net.conditions.jitter = 0.01;
+    auto& viewer = sim.AddClient();
+    sim.WaitConnected();
+
+    NetIdentity identity;
+    SetNetArchetype(identity, "physics_prop");
+    const Entity prop = sim.world.CreateEntity(identity, Transform{}, NetPhysicsState{});
+    Transform missing;
+    CHECK(!viewer.interpolation->SampleRenderTransform(0, missing));
+    // Net IDs are assigned by ReplicationServer::Gather on a send tick,
+    // not when World::CreateEntity creates the entity.
+    sim.Step(5);
+    const u32 id = sim.NetId(prop);
+    CHECK(id != 0);
+
+    f32 previous_visual = 0.0f;
+    f32 max_delta = 0.0f;
+    bool initialized = false;
+    for (int i = 0; i < 180; ++i) {
+        sim.world.GetComponent<Transform>(prop)->position.x = static_cast<f32>(i) * 5.0f / 60.0f;
+        sim.Step();
+
+        const Entity client_entity = viewer.replication->FindEntity(id);
+        if (client_entity.IsNull()) continue;
+        const auto* motion = viewer.world.GetComponent<NetPhysicsState>(client_entity);
+        const auto* simulation = viewer.world.GetComponent<Transform>(client_entity);
+        CHECK(motion != nullptr && simulation != nullptr);
+
+        // The simulation must retain the most recent authoritative snapshot,
+        // not the deliberately delayed visual pose.
+        Transform authoritative;
+        CHECK(viewer.replication->ReadReplicated(id, GetComponentId<Transform>(), &authoritative));
+        CHECK(Near(simulation->position, authoritative.position));
+
+        Transform visual;
+        CHECK(viewer.interpolation->SampleRenderTransform(id, visual));
+        CHECK(visual.position.x <= simulation->position.x + 1e-4f);
+        if (i > 90) {
+            CHECK(simulation->position.x - visual.position.x > 0.2f);
+            if (initialized) {
+                CHECK(visual.position.x + 1e-4f >= previous_visual);
+                max_delta = std::max(max_delta, visual.position.x - previous_visual);
+            }
+            previous_visual = visual.position.x;
+            initialized = true;
+        }
+    }
+    CHECK(initialized && max_delta < 0.2f);
+    CHECK(viewer.interpolation->Buffer(id) != nullptr);
+
+    sim.world.DestroyEntity(prop);
+    sim.Step(20);
+    Transform visual;
+    CHECK(!viewer.interpolation->SampleRenderTransform(id, visual));
 }

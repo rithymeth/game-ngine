@@ -408,3 +408,36 @@ AETHER_TEST(Replication_SixtyFourPlayersConvergeThroughLoss) {
     }
     CHECK(converged == kPlayers);
 }
+
+
+AETHER_TEST(Replication_SnapshotCallbackRunsAfterAcceptedWorldUpdate) {
+    ReplSim sim({}, 17);
+    // Duplicated and delayed packets must not cause duplicate callbacks.
+    sim.net.conditions.duplicate = 0.35;
+    sim.net.conditions.jitter = 0.02;
+    auto& client = sim.AddClient();
+    const Entity prop = sim.Spawn(Vec3(1, 2, 3));
+    u32 callbacks = 0;
+    client.rc->OnSnapshotApplied([&](World& world) {
+        ++callbacks;
+        CHECK(callbacks == client.rc->GetStats().snapshots);
+        const u32 id = sim.NetId(prop);
+        const Entity replicated = client.rc->FindEntity(id);
+        CHECK(!replicated.IsNull());
+        if (!replicated.IsNull()) {
+            const Transform* pose = world.GetComponent<Transform>(replicated);
+            CHECK(pose != nullptr);
+            Transform latest{};
+            CHECK(client.rc->ReadReplicated(id, GetComponentId<Transform>(), &latest));
+            CHECK(Near(pose->position, latest.position));
+        }
+    });
+    sim.Step(40);
+    CHECK(callbacks > 0);
+    const u32 first = callbacks;
+    sim.server_world.GetComponent<Transform>(prop)->position = Vec3(9, 4, 2);
+    sim.Step(40);
+    CHECK(callbacks > first);
+    CHECK(callbacks == client.rc->GetStats().snapshots);
+    CHECK(Near(client.world.GetComponent<Transform>(client.rc->FindEntity(sim.NetId(prop)))->position, Vec3(9, 4, 2)));
+}
