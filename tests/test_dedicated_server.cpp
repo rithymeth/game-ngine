@@ -1830,11 +1830,43 @@ AETHER_TEST(DedicatedServer_StaleBuildRefusalPreservesLiveRpcSession) {
           third_leave_transform->scale.y == 2.0f &&
           third_leave_transform->scale.z == 3.0f);
 
+    // A stale handshake after the freed slot has been reused and released
+    // must still be refused without disturbing the original survivor.
+    const u32 survivor_snapshots_before_repeat_refusal = live.Result().snapshots;
+    cc.build_id = 108;
+    cc.name = "stale-after-slot-reuse";
+    cc.duration = 0.8;
+    NetClient stale_after_reuse;
+    CHECK(stale_after_reuse.Start(cc, now(), &error));
+    const f64 repeat_refusal_deadline = now() + 4.0;
+    while ((!stale_after_reuse.Done() ||
+            live.Result().snapshots <= survivor_snapshots_before_repeat_refusal) &&
+           now() < repeat_refusal_deadline) {
+        server.Tick(now());
+        live.Tick(now());
+        stale_after_reuse.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(stale_after_reuse.Done() && !stale_after_reuse.Result().joined &&
+          stale_after_reuse.Result().join_result == "BuildMismatch" &&
+          stale_after_reuse.Result().entities_seen == 0 &&
+          stale_after_reuse.Result().snapshots == 0);
+    CHECK(live.Result().joined && live.Result().rpc_ack && !live.Done() &&
+          live.Result().snapshots > survivor_snapshots_before_repeat_refusal);
+    CHECK(server.Stats().players == 1 && server.Stats().joins == 3 &&
+          server.Stats().leaves == 2 && server.Stats().pings == 3 &&
+          server.Stats().refused == 2);
+    CHECK(world.EntityCount() == 2 && world.IsAlive(scene));
+    const auto* repeat_refusal_identity = world.GetComponent<net::NetIdentity>(scene);
+    CHECK(repeat_refusal_identity &&
+          repeat_refusal_identity->net_id == scene_id &&
+          repeat_refusal_identity->owner == net::kNoPeer);
+
     server.Stop();
     server.Stop();
     CHECK(server.Stats().players == 0 && server.Stats().joins == 3 &&
           server.Stats().leaves == 2 && server.Stats().pings == 3 &&
-          server.Stats().refused == 1);
+          server.Stats().refused == 2);
     CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
     const auto* stopped_identity = world.GetComponent<net::NetIdentity>(scene);
     CHECK(stopped_identity && stopped_identity->net_id == scene_id &&
