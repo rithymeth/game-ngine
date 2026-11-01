@@ -1775,10 +1775,65 @@ AETHER_TEST(DedicatedServer_StaleBuildRefusalPreservesLiveRpcSession) {
           after_leave_transform->scale.y == 2.0f &&
           after_leave_transform->scale.z == 3.0f);
 
+    // The clean leave must free a slot for a fresh compatible UDP session,
+    // without evicting the original survivor or replaying its RPC.
+    const u32 survivor_snapshots_before_third_join = live.Result().snapshots;
+    cc.name = "third-matching-after-clean-leave";
+    cc.duration = 1.5;
+    NetClient third;
+    CHECK(third.Start(cc, now(), &error));
+    const f64 third_join_deadline = now() + 5.0;
+    while ((!third.Result().rpc_ack || third.Result().snapshots == 0 ||
+            live.Result().snapshots <= survivor_snapshots_before_third_join) &&
+           now() < third_join_deadline) {
+        server.Tick(now());
+        live.Tick(now());
+        third.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(third.Result().joined && third.Result().pawn_seen &&
+          third.Result().rpc_ack && third.Result().snapshots > 0);
+    CHECK(live.Result().joined && live.Result().rpc_ack && !live.Done() &&
+          live.Result().snapshots > survivor_snapshots_before_third_join);
+    CHECK(server.Stats().players == 2 && server.Stats().joins == 3 &&
+          server.Stats().leaves == 1 && server.Stats().pings == 3 &&
+          server.Stats().refused == 1);
+    CHECK(world.EntityCount() == 3 && world.IsAlive(scene));
+
+    const u32 survivor_snapshots_before_third_leave = live.Result().snapshots;
+    const f64 third_leave_deadline = now() + 5.0;
+    while ((!third.Done() || server.Stats().players != 1 ||
+            live.Result().snapshots <= survivor_snapshots_before_third_leave) &&
+           now() < third_leave_deadline) {
+        server.Tick(now());
+        live.Tick(now());
+        third.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(third.Done() && third.Result().joined && third.Result().rpc_ack);
+    CHECK(live.Result().joined && live.Result().rpc_ack && !live.Done() &&
+          live.Result().snapshots > survivor_snapshots_before_third_leave);
+    CHECK(server.Stats().players == 1 && server.Stats().joins == 3 &&
+          server.Stats().leaves == 2 && server.Stats().pings == 3 &&
+          server.Stats().refused == 1);
+    CHECK(world.EntityCount() == 2 && world.IsAlive(scene));
+    const auto* third_leave_identity = world.GetComponent<net::NetIdentity>(scene);
+    CHECK(third_leave_identity && third_leave_identity->net_id == scene_id &&
+          third_leave_identity->owner == net::kNoPeer);
+    const Transform* third_leave_transform = world.GetComponent<Transform>(scene);
+    CHECK(third_leave_transform && third_leave_transform->position.x == 6.0f &&
+          third_leave_transform->position.y == -3.0f &&
+          third_leave_transform->position.z == 2.0f &&
+          third_leave_transform->rotation.z == 0.6f &&
+          third_leave_transform->rotation.w == 0.8f &&
+          third_leave_transform->scale.x == 2.0f &&
+          third_leave_transform->scale.y == 2.0f &&
+          third_leave_transform->scale.z == 3.0f);
+
     server.Stop();
     server.Stop();
-    CHECK(server.Stats().players == 0 && server.Stats().joins == 2 &&
-          server.Stats().leaves == 1 && server.Stats().pings == 2 &&
+    CHECK(server.Stats().players == 0 && server.Stats().joins == 3 &&
+          server.Stats().leaves == 2 && server.Stats().pings == 3 &&
           server.Stats().refused == 1);
     CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
     const auto* stopped_identity = world.GetComponent<net::NetIdentity>(scene);
