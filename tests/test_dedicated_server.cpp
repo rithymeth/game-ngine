@@ -1678,6 +1678,22 @@ AETHER_TEST(DedicatedServer_StaleBuildRefusalPreservesLiveRpcSession) {
     CHECK(server.Stats().players == 1 && server.Stats().joins == 1 &&
           server.Stats().leaves == 0 && server.Stats().pings == 1 &&
           server.Stats().refused == 1);
+
+    // A refused handshake must not merely leave the compatible client marked
+    // connected: its authoritative snapshot stream must continue advancing.
+    const u32 snapshots_before_refusal_recovery = live.Result().snapshots;
+    const f64 survivor_deadline = now() + 1.5;
+    while (live.Result().snapshots <= snapshots_before_refusal_recovery &&
+           now() < survivor_deadline) {
+        server.Tick(now());
+        live.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(live.Result().joined && live.Result().rpc_ack && !live.Done());
+    CHECK(live.Result().snapshots > snapshots_before_refusal_recovery);
+    CHECK(server.Stats().players == 1 && server.Stats().joins == 1 &&
+          server.Stats().leaves == 0 && server.Stats().pings == 1 &&
+          server.Stats().refused == 1);
     CHECK(world.EntityCount() == 2 && world.IsAlive(scene));
     const auto* identity = world.GetComponent<net::NetIdentity>(scene);
     CHECK(identity && identity->net_id == scene_id &&
