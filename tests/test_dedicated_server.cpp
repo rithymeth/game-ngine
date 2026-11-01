@@ -1638,7 +1638,7 @@ AETHER_TEST(DedicatedServer_StaleBuildRefusalPreservesLiveRpcSession) {
     cc.build_id = 109;
     cc.name = "live-matching-build";
     cc.join_timeout = 3.0;
-    cc.duration = 10.0;
+    cc.duration = 15.0; // Keep the original player active through the second client leave.
     cc.send_rpc = true;
     NetClient live;
     CHECK(live.Start(cc, now(), &error));
@@ -1709,7 +1709,7 @@ AETHER_TEST(DedicatedServer_StaleBuildRefusalPreservesLiveRpcSession) {
     const u32 survivor_snapshots_before_second_join = live.Result().snapshots;
     cc.build_id = 109;
     cc.name = "second-matching-after-refusal";
-    cc.duration = 10.0;
+    cc.duration = 2.0;
     NetClient second;
     CHECK(second.Start(cc, now(), &error));
     const f64 second_deadline = now() + 5.0;
@@ -1743,10 +1743,42 @@ AETHER_TEST(DedicatedServer_StaleBuildRefusalPreservesLiveRpcSession) {
           second_join_transform->scale.y == 2.0f &&
           second_join_transform->scale.z == 3.0f);
 
+    // The second matching-build client must leave normally without evicting
+    // the first client or stopping its authoritative snapshot stream.
+    const u32 survivor_snapshots_before_second_leave = live.Result().snapshots;
+    const f64 second_leave_deadline = now() + 5.0;
+    while ((!second.Done() || server.Stats().players != 1 ||
+            live.Result().snapshots <= survivor_snapshots_before_second_leave) &&
+           now() < second_leave_deadline) {
+        server.Tick(now());
+        live.Tick(now());
+        second.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(second.Done() && second.Result().joined && second.Result().rpc_ack);
+    CHECK(live.Result().joined && live.Result().rpc_ack && !live.Done() &&
+          live.Result().snapshots > survivor_snapshots_before_second_leave);
+    CHECK(server.Stats().players == 1 && server.Stats().joins == 2 &&
+          server.Stats().leaves == 1 && server.Stats().pings == 2 &&
+          server.Stats().refused == 1);
+    CHECK(world.EntityCount() == 2 && world.IsAlive(scene));
+    const auto* after_leave_identity = world.GetComponent<net::NetIdentity>(scene);
+    CHECK(after_leave_identity && after_leave_identity->net_id == scene_id &&
+          after_leave_identity->owner == net::kNoPeer);
+    const Transform* after_leave_transform = world.GetComponent<Transform>(scene);
+    CHECK(after_leave_transform && after_leave_transform->position.x == 6.0f &&
+          after_leave_transform->position.y == -3.0f &&
+          after_leave_transform->position.z == 2.0f &&
+          after_leave_transform->rotation.z == 0.6f &&
+          after_leave_transform->rotation.w == 0.8f &&
+          after_leave_transform->scale.x == 2.0f &&
+          after_leave_transform->scale.y == 2.0f &&
+          after_leave_transform->scale.z == 3.0f);
+
     server.Stop();
     server.Stop();
     CHECK(server.Stats().players == 0 && server.Stats().joins == 2 &&
-          server.Stats().leaves == 0 && server.Stats().pings == 2 &&
+          server.Stats().leaves == 1 && server.Stats().pings == 2 &&
           server.Stats().refused == 1);
     CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
     const auto* stopped_identity = world.GetComponent<net::NetIdentity>(scene);
