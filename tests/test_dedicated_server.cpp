@@ -1853,6 +1853,16 @@ AETHER_TEST(DedicatedServer_StaleBuildRefusalPreservesLiveRpcSession) {
           stale_after_reuse.Result().join_result == "BuildMismatch" &&
           stale_after_reuse.Result().entities_seen == 0 &&
           stale_after_reuse.Result().snapshots == 0);
+
+    // A terminal build refusal must not reuse the same UDP client object:
+    // only a fresh client may attempt another session.
+    error.clear();
+    CHECK(!stale_after_reuse.Start(cc, now(), &error));
+    CHECK(error.find("fresh client") != std::string::npos);
+    CHECK(stale_after_reuse.Done() && !stale_after_reuse.Result().joined &&
+          stale_after_reuse.Result().join_result == "BuildMismatch" &&
+          stale_after_reuse.Result().entities_seen == 0 &&
+          stale_after_reuse.Result().snapshots == 0);
     CHECK(live.Result().joined && live.Result().rpc_ack && !live.Done() &&
           live.Result().snapshots > survivor_snapshots_before_repeat_refusal);
     CHECK(server.Stats().players == 1 && server.Stats().joins == 3 &&
@@ -1943,6 +1953,17 @@ AETHER_TEST(DedicatedServer_StaleBuildRefusalPreservesLiveRpcSession) {
         wrong_password_after_reuse.Tick(now());
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
+    CHECK(wrong_password_after_reuse.Done() &&
+          !wrong_password_after_reuse.Result().joined &&
+          wrong_password_after_reuse.Result().join_result == "WrongPassword" &&
+          wrong_password_after_reuse.Result().entities_seen == 0 &&
+          wrong_password_after_reuse.Result().snapshots == 0);
+
+    // Authentication refusal is terminal too: restarting this client object
+    // must not turn its rejected handshake into a live session.
+    error.clear();
+    CHECK(!wrong_password_after_reuse.Start(cc, now(), &error));
+    CHECK(error.find("fresh client") != std::string::npos);
     CHECK(wrong_password_after_reuse.Done() &&
           !wrong_password_after_reuse.Result().joined &&
           wrong_password_after_reuse.Result().join_result == "WrongPassword" &&
