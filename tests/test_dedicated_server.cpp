@@ -1475,4 +1475,43 @@ AETHER_TEST(DedicatedServer_StopCombinesCompletedAndActiveRpcHistory) {
           server.Stats().leaves == 0 && server.Stats().pings == 0);
     CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
     CHECK(scene_transform_intact());
+
+    // A third start after an idle second-stop must still accept a new real UDP
+    // session with fresh counters, without mutating the original scene.
+    error.clear();
+    CHECK(server.Start(config, world, &error));
+    if (!server.Running()) return;
+    CHECK(server.Stats().players == 0 && server.Stats().joins == 0 &&
+          server.Stats().leaves == 0 && server.Stats().pings == 0);
+    CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
+    CHECK(scene_transform_intact());
+
+    NetClient after_idle;
+    cc.server = net::Address::Loopback(server.Port());
+    cc.name = "fresh-after-idle-stop";
+    CHECK(after_idle.Start(cc, now(), &error));
+    const f64 after_idle_deadline = now() + 5.0;
+    while ((!after_idle.Done() || server.Stats().players != 0) &&
+           now() < after_idle_deadline) {
+        server.Tick(now());
+        after_idle.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(after_idle.Done() && after_idle.Result().joined &&
+          after_idle.Result().pawn_seen && after_idle.Result().rpc_ack &&
+          after_idle.Result().snapshots > 0);
+    CHECK(server.Stats().players == 0 && server.Stats().joins == 1 &&
+          server.Stats().leaves == 1 && server.Stats().pings == 1);
+    CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
+    const auto* after_idle_identity = world.GetComponent<net::NetIdentity>(scene);
+    CHECK(after_idle_identity && after_idle_identity->net_id == scene_id &&
+          after_idle_identity->owner == net::kNoPeer);
+    CHECK(scene_transform_intact());
+
+    server.Stop();
+    server.Stop();
+    CHECK(server.Stats().players == 0 && server.Stats().joins == 1 &&
+          server.Stats().leaves == 1 && server.Stats().pings == 1);
+    CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
+    CHECK(scene_transform_intact());
 }
