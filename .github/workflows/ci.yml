@@ -86,10 +86,12 @@ jobs:
         env:
           CC: ${{ matrix.cc }}
           CXX: ${{ matrix.cxx }}
+        # Keep sanitizer stacks readable without exhausting the hosted runner disk at link time.
         run: >
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=${{ matrix.type }}
           "-DCMAKE_CXX_FLAGS=${{ matrix.flags }}"
+          "-DCMAKE_CXX_FLAGS_DEBUG=${{ matrix.name == 'ASan+UBSan' && '-O0 -g1' || '-g' }}"
           -DAETHER_BUILD_PHYSICS=${{ matrix.physics }}
           -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_SANDBOX=OFF
           -DAETHER_PLATFORM_PLUGINS=platforms/example
@@ -709,7 +711,20 @@ jobs:
         env:
           PYTHON: python
         run: |
-          bash tools/ship/ship_smoke.sh ship-dist ship-run windows-x64 AETHER-01-windows-x64-ship
+          # Windows Defender can briefly hold a just-exited player executable open.
+          # Retry only the explicit transient rename-lock error; all other failures stay red.
+          for attempt in 1 2 3; do
+            if bash tools/ship/ship_smoke.sh ship-dist ship-run windows-x64 AETHER-01-windows-x64-ship > ship-smoke.log 2>&1; then
+              cat ship-smoke.log
+              break
+            fi
+            cat ship-smoke.log
+            if ! grep -q "cannot rename .*a file in it is in use or locked" ship-smoke.log || [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            echo "Retrying Windows shipping smoke after a transient rename lock (attempt $attempt/3)"
+            sleep 2
+          done
           tools/ship/assemble_release.sh ship-dist/v1 ship-release-dry-run AETHER-01-windows-x64-ship
       - name: Upload the AETHER-01 Windows release candidate
         uses: actions/upload-artifact@v4
