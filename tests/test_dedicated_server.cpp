@@ -1655,6 +1655,16 @@ AETHER_TEST(DedicatedServer_StaleBuildRefusalPreservesLiveRpcSession) {
     CHECK(server.Stats().players == 1 && server.Stats().joins == 1 &&
           server.Stats().leaves == 0 && server.Stats().pings == 1 &&
           server.Stats().refused == 0);
+    // Starting an already-connected UDP client again must not reset its
+    // active transport, acknowledged RPC, or authoritative snapshot stream.
+    const u32 snapshots_before_rejected_restart = live.Result().snapshots;
+    error.clear();
+    CHECK(!live.Start(cc, now(), &error));
+    CHECK(error.find("fresh client") != std::string::npos);
+    CHECK(live.Result().joined && live.Result().pawn_seen &&
+          live.Result().rpc_ack && !live.Done() &&
+          live.Result().snapshots == snapshots_before_rejected_restart);
+
     const auto* original_identity = world.GetComponent<net::NetIdentity>(scene);
     CHECK(original_identity && original_identity->net_id != 0 &&
           original_identity->owner == net::kNoPeer);
