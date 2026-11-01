@@ -1624,6 +1624,7 @@ AETHER_TEST(DedicatedServer_StaleBuildRefusalPreservesLiveRpcSession) {
     config.lan_advertise = false;
     config.max_players = 2;
     config.build_id = 109;
+    config.password = "auth-109";
     DedicatedServer server;
     std::string error;
     if (!server.Start(config, world, &error)) {
@@ -1636,6 +1637,7 @@ AETHER_TEST(DedicatedServer_StaleBuildRefusalPreservesLiveRpcSession) {
     NetClientConfig cc;
     cc.server = net::Address::Loopback(server.Port());
     cc.build_id = 109;
+    cc.password = "auth-109";
     cc.name = "live-matching-build";
     cc.join_timeout = 3.0;
     cc.duration = 15.0; // Keep the original player active through the second client leave.
@@ -1924,11 +1926,52 @@ AETHER_TEST(DedicatedServer_StaleBuildRefusalPreservesLiveRpcSession) {
           fresh_leave_transform->scale.y == 2.0f &&
           fresh_leave_transform->scale.z == 3.0f);
 
+    // Authentication must still reject an incorrect password after repeated
+    // slot reuse, without leaking snapshots or interrupting the survivor.
+    const u32 survivor_snapshots_before_auth_refusal = live.Result().snapshots;
+    cc.password = "incorrect";
+    cc.name = "wrong-password-after-slot-reuse";
+    cc.duration = 0.8;
+    NetClient wrong_password_after_reuse;
+    CHECK(wrong_password_after_reuse.Start(cc, now(), &error));
+    const f64 auth_refusal_deadline = now() + 4.0;
+    while ((!wrong_password_after_reuse.Done() ||
+            live.Result().snapshots <= survivor_snapshots_before_auth_refusal) &&
+           now() < auth_refusal_deadline) {
+        server.Tick(now());
+        live.Tick(now());
+        wrong_password_after_reuse.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(wrong_password_after_reuse.Done() &&
+          !wrong_password_after_reuse.Result().joined &&
+          wrong_password_after_reuse.Result().join_result == "WrongPassword" &&
+          wrong_password_after_reuse.Result().entities_seen == 0 &&
+          wrong_password_after_reuse.Result().snapshots == 0);
+    CHECK(live.Result().joined && live.Result().rpc_ack && !live.Done() &&
+          live.Result().snapshots > survivor_snapshots_before_auth_refusal);
+    CHECK(server.Stats().players == 1 && server.Stats().joins == 4 &&
+          server.Stats().leaves == 3 && server.Stats().pings == 4 &&
+          server.Stats().refused == 3);
+    CHECK(world.EntityCount() == 2 && world.IsAlive(scene));
+    const auto* auth_refusal_identity = world.GetComponent<net::NetIdentity>(scene);
+    CHECK(auth_refusal_identity && auth_refusal_identity->net_id == scene_id &&
+          auth_refusal_identity->owner == net::kNoPeer);
+    const Transform* auth_refusal_transform = world.GetComponent<Transform>(scene);
+    CHECK(auth_refusal_transform && auth_refusal_transform->position.x == 6.0f &&
+          auth_refusal_transform->position.y == -3.0f &&
+          auth_refusal_transform->position.z == 2.0f &&
+          auth_refusal_transform->rotation.z == 0.6f &&
+          auth_refusal_transform->rotation.w == 0.8f &&
+          auth_refusal_transform->scale.x == 2.0f &&
+          auth_refusal_transform->scale.y == 2.0f &&
+          auth_refusal_transform->scale.z == 3.0f);
+
     server.Stop();
     server.Stop();
     CHECK(server.Stats().players == 0 && server.Stats().joins == 4 &&
           server.Stats().leaves == 3 && server.Stats().pings == 4 &&
-          server.Stats().refused == 2);
+          server.Stats().refused == 3);
     CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
     const auto* stopped_identity = world.GetComponent<net::NetIdentity>(scene);
     CHECK(stopped_identity && stopped_identity->net_id == scene_id &&
