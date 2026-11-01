@@ -1967,10 +1967,74 @@ AETHER_TEST(DedicatedServer_StaleBuildRefusalPreservesLiveRpcSession) {
           auth_refusal_transform->scale.y == 2.0f &&
           auth_refusal_transform->scale.z == 3.0f);
 
+    // A wrong-password refusal must not poison the freed player slot:
+    // a later correctly authenticated client can still join, receive
+    // authoritative snapshots, acknowledge an RPC, and leave cleanly.
+    cc.password = "auth-109";
+    cc.name = "valid-after-wrong-password";
+    cc.duration = 1.0;
+    const u32 survivor_snapshots_before_auth_recovery = live.Result().snapshots;
+    NetClient valid_after_auth_refusal;
+    CHECK(valid_after_auth_refusal.Start(cc, now(), &error));
+    const f64 auth_recovery_join_deadline = now() + 5.0;
+    while ((!valid_after_auth_refusal.Result().rpc_ack ||
+            valid_after_auth_refusal.Result().snapshots == 0 ||
+            live.Result().snapshots <= survivor_snapshots_before_auth_recovery) &&
+           now() < auth_recovery_join_deadline) {
+        server.Tick(now());
+        live.Tick(now());
+        valid_after_auth_refusal.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(valid_after_auth_refusal.Result().joined &&
+          valid_after_auth_refusal.Result().pawn_seen &&
+          valid_after_auth_refusal.Result().rpc_ack &&
+          valid_after_auth_refusal.Result().snapshots > 0 &&
+          !valid_after_auth_refusal.Done());
+    CHECK(live.Result().joined && live.Result().rpc_ack && !live.Done() &&
+          live.Result().snapshots > survivor_snapshots_before_auth_recovery);
+    CHECK(server.Stats().players == 2 && server.Stats().joins == 5 &&
+          server.Stats().leaves == 3 && server.Stats().pings == 5 &&
+          server.Stats().refused == 3);
+    CHECK(world.EntityCount() == 3 && world.IsAlive(scene));
+
+    const u32 survivor_snapshots_before_auth_recovery_leave = live.Result().snapshots;
+    const f64 auth_recovery_leave_deadline = now() + 5.0;
+    while ((!valid_after_auth_refusal.Done() || server.Stats().players != 1 ||
+            live.Result().snapshots <= survivor_snapshots_before_auth_recovery_leave) &&
+           now() < auth_recovery_leave_deadline) {
+        server.Tick(now());
+        live.Tick(now());
+        valid_after_auth_refusal.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(valid_after_auth_refusal.Done() &&
+          valid_after_auth_refusal.Result().joined &&
+          valid_after_auth_refusal.Result().rpc_ack);
+    CHECK(live.Result().joined && live.Result().rpc_ack && !live.Done() &&
+          live.Result().snapshots > survivor_snapshots_before_auth_recovery_leave);
+    CHECK(server.Stats().players == 1 && server.Stats().joins == 5 &&
+          server.Stats().leaves == 4 && server.Stats().pings == 5 &&
+          server.Stats().refused == 3);
+    CHECK(world.EntityCount() == 2 && world.IsAlive(scene));
+    const auto* auth_recovery_identity = world.GetComponent<net::NetIdentity>(scene);
+    CHECK(auth_recovery_identity && auth_recovery_identity->net_id == scene_id &&
+          auth_recovery_identity->owner == net::kNoPeer);
+    const Transform* auth_recovery_transform = world.GetComponent<Transform>(scene);
+    CHECK(auth_recovery_transform &&
+          auth_recovery_transform->position.x == 6.0f &&
+          auth_recovery_transform->position.y == -3.0f &&
+          auth_recovery_transform->position.z == 2.0f &&
+          auth_recovery_transform->rotation.z == 0.6f &&
+          auth_recovery_transform->rotation.w == 0.8f &&
+          auth_recovery_transform->scale.x == 2.0f &&
+          auth_recovery_transform->scale.y == 2.0f &&
+          auth_recovery_transform->scale.z == 3.0f);
+
     server.Stop();
     server.Stop();
-    CHECK(server.Stats().players == 0 && server.Stats().joins == 4 &&
-          server.Stats().leaves == 3 && server.Stats().pings == 4 &&
+    CHECK(server.Stats().players == 0 && server.Stats().joins == 5 &&
+          server.Stats().leaves == 4 && server.Stats().pings == 5 &&
           server.Stats().refused == 3);
     CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
     const auto* stopped_identity = world.GetComponent<net::NetIdentity>(scene);
