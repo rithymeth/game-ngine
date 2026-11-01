@@ -1544,4 +1544,25 @@ AETHER_TEST(DedicatedServer_StopCombinesCompletedAndActiveRpcHistory) {
           server.Stats().refused == 1);
     CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
     CHECK(scene_transform_intact());
+
+    // A further restart must clear both accepted RPC history and the stale
+    // build refusal, without discarding or changing the game-owned scene.
+    error.clear();
+    CHECK(server.Start(config, world, &error));
+    if (!server.Running()) return;
+    CHECK(server.Stats().players == 0 && server.Stats().joins == 0 &&
+          server.Stats().leaves == 0 && server.Stats().pings == 0 &&
+          server.Stats().refused == 0);
+    CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
+    const auto* fourth_identity = world.GetComponent<net::NetIdentity>(scene);
+    CHECK(fourth_identity && fourth_identity->net_id == scene_id &&
+          fourth_identity->owner == net::kNoPeer);
+    CHECK(scene_transform_intact());
+    server.Stop();
+    server.Stop();
+    CHECK(server.Stats().players == 0 && server.Stats().joins == 0 &&
+          server.Stats().leaves == 0 && server.Stats().pings == 0 &&
+          server.Stats().refused == 0);
+    CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
+    CHECK(scene_transform_intact());
 }
