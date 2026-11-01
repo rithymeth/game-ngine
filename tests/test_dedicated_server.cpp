@@ -1565,4 +1565,48 @@ AETHER_TEST(DedicatedServer_StopCombinesCompletedAndActiveRpcHistory) {
           server.Stats().refused == 0);
     CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
     CHECK(scene_transform_intact());
+
+    // After clearing refused-build and RPC history, an idle Stop must not
+    // prevent a new matching-build UDP session from joining and sending RPC.
+    error.clear();
+    CHECK(server.Start(config, world, &error));
+    if (!server.Running()) return;
+    CHECK(server.Stats().players == 0 && server.Stats().joins == 0 &&
+          server.Stats().leaves == 0 && server.Stats().pings == 0 &&
+          server.Stats().refused == 0);
+    CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
+    CHECK(scene_transform_intact());
+
+    NetClient after_refusal_reset;
+    cc.server = net::Address::Loopback(server.Port());
+    cc.build_id = 98;
+    cc.duration = 0.8;
+    cc.name = "fresh-after-refusal-reset";
+    CHECK(after_refusal_reset.Start(cc, now(), &error));
+    const f64 reset_deadline = now() + 5.0;
+    while ((!after_refusal_reset.Done() || server.Stats().players != 0) &&
+           now() < reset_deadline) {
+        server.Tick(now());
+        after_refusal_reset.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(after_refusal_reset.Done() && after_refusal_reset.Result().joined &&
+          after_refusal_reset.Result().pawn_seen &&
+          after_refusal_reset.Result().rpc_ack &&
+          after_refusal_reset.Result().snapshots > 0);
+    CHECK(server.Stats().players == 0 && server.Stats().joins == 1 &&
+          server.Stats().leaves == 1 && server.Stats().pings == 1 &&
+          server.Stats().refused == 0);
+    CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
+    const auto* reset_identity = world.GetComponent<net::NetIdentity>(scene);
+    CHECK(reset_identity && reset_identity->net_id == scene_id &&
+          reset_identity->owner == net::kNoPeer);
+    CHECK(scene_transform_intact());
+    server.Stop();
+    server.Stop();
+    CHECK(server.Stats().players == 0 && server.Stats().joins == 1 &&
+          server.Stats().leaves == 1 && server.Stats().pings == 1 &&
+          server.Stats().refused == 0);
+    CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
+    CHECK(scene_transform_intact());
 }
