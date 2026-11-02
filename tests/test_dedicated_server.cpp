@@ -2143,6 +2143,9 @@ AETHER_TEST(DedicatedServer_TimedOutUdpClientRemainsTerminal) {
         std::printf("    (no UDP here: %s)\n", error.c_str());
         return;
     }
+    // A first idle server tick assigns the scene's NetIdentity.net_id.
+    // No server ticks occur once the client's handshake begins.
+    server.Tick(1.0);
     const auto* identity = world.GetComponent<net::NetIdentity>(scene);
     CHECK(identity && identity->net_id != 0 && identity->owner == net::kNoPeer);
     const u32 scene_id = identity ? identity->net_id : 0;
@@ -2152,15 +2155,15 @@ AETHER_TEST(DedicatedServer_TimedOutUdpClientRemainsTerminal) {
     cc.name = "timeout-no-server-tick";
     cc.join_timeout = 0.1;
     NetClient timed_out;
-    CHECK(timed_out.Start(cc, 0.0, &error));
+    CHECK(timed_out.Start(cc, 1.0, &error));
     // Do not tick the server: its pending handshake cannot be accepted.
-    timed_out.Tick(1.0);
+    timed_out.Tick(2.0);
     CHECK(timed_out.Done() && !timed_out.Result().joined &&
           timed_out.Result().join_result == "Timeout" &&
           timed_out.Result().entities_seen == 0 &&
           timed_out.Result().snapshots == 0);
     error.clear();
-    CHECK(!timed_out.Start(cc, 1.1, &error));
+    CHECK(!timed_out.Start(cc, 2.1, &error));
     CHECK(error.find("fresh client") != std::string::npos);
     CHECK(timed_out.Done() && !timed_out.Result().joined &&
           timed_out.Result().join_result == "Timeout" &&
