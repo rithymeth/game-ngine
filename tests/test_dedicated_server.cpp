@@ -2125,3 +2125,60 @@ AETHER_TEST(DedicatedServer_StaleBuildRefusalPreservesLiveRpcSession) {
           stopped_transform->scale.y == 2.0f &&
           stopped_transform->scale.z == 3.0f);
 }
+
+// A timed-out real-UDP handshake must leave its NetClient object terminal.
+// This tests the client lifecycle guard without claiming that a delayed
+// datagram has been processed or that automatic reconnect is supported.
+AETHER_TEST(DedicatedServer_TimedOutUdpClientRemainsTerminal) {
+    RegisterServerComponents();
+    World world;
+    const Entity scene = world.CreateEntity(
+        Transform{Vec3{4, -2, 7}, Quaternion{0, 0, 0.6f, 0.8f}, Vec3{2, 3, 4}});
+    ServerConfig config;
+    config.port = 0;
+    config.lan_advertise = false;
+    DedicatedServer server;
+    std::string error;
+    if (!server.Start(config, world, &error)) {
+        std::printf("    (no UDP here: %s)\\n", error.c_str());
+        return;
+    }
+    const auto* identity = world.GetComponent<net::NetIdentity>(scene);
+    CHECK(identity && identity->net_id != 0 && identity->owner == net::kNoPeer);
+    const u32 scene_id = identity ? identity->net_id : 0;
+
+    NetClientConfig cc;
+    cc.server = net::Address::Loopback(server.Port());
+    cc.name = "timeout-no-server-tick";
+    cc.join_timeout = 0.1;
+    NetClient timed_out;
+    CHECK(timed_out.Start(cc, 0.0, &error));
+    // Do not tick the server: its pending handshake cannot be accepted.
+    timed_out.Tick(1.0);
+    CHECK(timed_out.Done() && !timed_out.Result().joined &&
+          timed_out.Result().join_result == "Timeout" &&
+          timed_out.Result().entities_seen == 0 &&
+          timed_out.Result().snapshots == 0);
+    error.clear();
+    CHECK(!timed_out.Start(cc, 1.1, &error));
+    CHECK(error.find("fresh client") != std::string::npos);
+    CHECK(timed_out.Done() && !timed_out.Result().joined &&
+          timed_out.Result().join_result == "Timeout" &&
+          timed_out.Result().entities_seen == 0 &&
+          timed_out.Result().snapshots == 0);
+    CHECK(server.Stats().players == 0 && server.Stats().joins == 0 &&
+          server.Stats().leaves == 0 && server.Stats().pings == 0 &&
+          server.Stats().refused == 0);
+
+    server.Stop();
+    server.Stop();
+    CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
+    const auto* stopped_identity = world.GetComponent<net::NetIdentity>(scene);
+    CHECK(stopped_identity && stopped_identity->net_id == scene_id &&
+          stopped_identity->owner == net::kNoPeer);
+    const auto* t = world.GetComponent<Transform>(scene);
+    CHECK(t && t->position.x == 4.0f && t->position.y == -2.0f &&
+          t->position.z == 7.0f && t->rotation.z == 0.6f &&
+          t->rotation.w == 0.8f && t->scale.x == 2.0f &&
+          t->scale.y == 3.0f && t->scale.z == 4.0f);
+}
