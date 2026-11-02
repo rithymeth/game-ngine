@@ -1773,6 +1773,24 @@ AETHER_TEST(DedicatedServer_StaleBuildRefusalPreservesLiveRpcSession) {
     CHECK(server.Stats().players == 1 && server.Stats().joins == 2 &&
           server.Stats().leaves == 1 && server.Stats().pings == 2 &&
           server.Stats().refused == 1);
+
+    // A normally completed UDP client is terminal just like a refused or
+    // currently connected client. Reusing its object must not rejoin the
+    // freed slot, replay its acknowledged RPC, or disturb the survivor.
+    const u32 survivor_snapshots_before_completed_guard = live.Result().snapshots;
+    const u32 completed_snapshots = second.Result().snapshots;
+    error.clear();
+    CHECK(!second.Start(cc, now(), &error));
+    CHECK(error.find("fresh client") != std::string::npos);
+    CHECK(second.Done() && second.Result().joined &&
+          second.Result().pawn_seen && second.Result().rpc_ack &&
+          second.Result().snapshots == completed_snapshots);
+    CHECK(live.Result().joined && live.Result().rpc_ack && !live.Done() &&
+          live.Result().snapshots == survivor_snapshots_before_completed_guard);
+    CHECK(server.Stats().players == 1 && server.Stats().joins == 2 &&
+          server.Stats().leaves == 1 && server.Stats().pings == 2 &&
+          server.Stats().refused == 1);
+
     CHECK(world.EntityCount() == 2 && world.IsAlive(scene));
     const auto* after_leave_identity = world.GetComponent<net::NetIdentity>(scene);
     CHECK(after_leave_identity && after_leave_identity->net_id == scene_id &&
