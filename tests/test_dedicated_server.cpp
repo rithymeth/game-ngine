@@ -1884,6 +1884,19 @@ AETHER_TEST(DedicatedServer_StaleBuildRefusalPreservesLiveRpcSession) {
           repeat_refusal_identity->net_id == scene_id &&
           repeat_refusal_identity->owner == net::kNoPeer);
 
+    // A stale-build refusal must not make the original live UDP client
+    // restartable, even when Start receives the now-mismatched build config.
+    const u32 snapshots_before_stale_guard = live.Result().snapshots;
+    error.clear();
+    CHECK(!live.Start(cc, now(), &error));
+    CHECK(error.find("fresh client") != std::string::npos);
+    CHECK(live.Result().joined && live.Result().pawn_seen &&
+          live.Result().rpc_ack && !live.Done() &&
+          live.Result().snapshots == snapshots_before_stale_guard);
+    CHECK(server.Stats().players == 1 && server.Stats().joins == 3 &&
+          server.Stats().leaves == 2 && server.Stats().pings == 3 &&
+          server.Stats().refused == 2);
+
     // A second stale-build refusal must not poison the freed player slot:
     // a fresh compatible client can still join, acknowledge an RPC, and leave
     // while the original survivor continues receiving authoritative snapshots.
