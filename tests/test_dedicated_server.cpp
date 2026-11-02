@@ -2140,7 +2140,7 @@ AETHER_TEST(DedicatedServer_TimedOutUdpClientRemainsTerminal) {
     DedicatedServer server;
     std::string error;
     if (!server.Start(config, world, &error)) {
-        std::printf("    (no UDP here: %s)\\n", error.c_str());
+        std::printf("    (no UDP here: %s)\n", error.c_str());
         return;
     }
     const auto* identity = world.GetComponent<net::NetIdentity>(scene);
