@@ -1998,6 +1998,19 @@ AETHER_TEST(DedicatedServer_StaleBuildRefusalPreservesLiveRpcSession) {
           auth_refusal_transform->scale.y == 2.0f &&
           auth_refusal_transform->scale.z == 3.0f);
 
+    // A rejected password must not make the live survivor restartable,
+    // even when the attempted Start uses the now-invalid client config.
+    const u32 snapshots_before_auth_guard = live.Result().snapshots;
+    error.clear();
+    CHECK(!live.Start(cc, now(), &error));
+    CHECK(error.find("fresh client") != std::string::npos);
+    CHECK(live.Result().joined && live.Result().pawn_seen &&
+          live.Result().rpc_ack && !live.Done() &&
+          live.Result().snapshots == snapshots_before_auth_guard);
+    CHECK(server.Stats().players == 1 && server.Stats().joins == 4 &&
+          server.Stats().leaves == 3 && server.Stats().pings == 4 &&
+          server.Stats().refused == 3);
+
     // A wrong-password refusal must not poison the freed player slot:
     // a later correctly authenticated client can still join, receive
     // authoritative snapshots, acknowledge an RPC, and leave cleanly.
