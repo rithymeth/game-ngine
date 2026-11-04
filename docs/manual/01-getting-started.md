@@ -14,7 +14,7 @@ does not require a graphics card or prior Aether experience.
 
 The Coin Run window uses Windows GDI software rendering. It does not use the
 engine's D3D12 renderer. Current platform scope is described in the
-[platform support policy](../design/PLATFORM_SUPPORT_POLICY.md).
+[support policy proposal](support_policy.md).
 
 ## Build and launch
 
@@ -68,6 +68,8 @@ from the Windows window and renderer.
 
 ## Where to go next
 
+- The editor's **New Project** tool includes **Blank**, **First Person**, **Third Person**, **Top Down**, **Vehicle** and **2D Platformer** starting points; see [the template notes](README.md#the-aether-manual) and inspect each sample before choosing a workflow.
+- For later command-line steps, `aether_cook` builds a packaged game, `aether_player` launches a cooked package, and `aether_docgen` generates the API reference. See [packaging](06-packaging.md) and [API reference](08-api-reference.md).
 - Read [Projects and assets](02-projects-and-assets.md) for project structure.
 - Use the [Aether manual](README.md) for scripting, input, 2D, and packaging.
 - The Qt editor is an opt-in Windows/D3D12 migration host with partial tool

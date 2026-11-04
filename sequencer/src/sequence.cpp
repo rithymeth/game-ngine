@@ -380,7 +380,7 @@ static bool SequenceFromJsonImpl(const nlohmann::json& j, LevelSequence& out, st
         if (error) *error = why;
         return false;
     };
-    if (!j.is_object() || j.value("$type", "") != "LevelSequence") return fail("not a level sequence");
+    if (!j.is_object() || JsonString(j, "$type") != "LevelSequence") return fail("not a level sequence");
     const u32 version = static_cast<u32>(JsonVersion(j));
     if (version == 0 || version > LevelSequence::kVersion) return fail("sequence version " + std::to_string(version) + " isn't supported");
     LevelSequence s;

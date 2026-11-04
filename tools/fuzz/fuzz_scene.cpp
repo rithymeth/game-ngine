@@ -14,7 +14,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     if (size == 0) return 0;
     aether::World world;
     const std::span<const aether::u8> bytes(data + 1, size - 1);
-    if (data[0] & 1) aether::LoadSceneJsonFromMemory(world, bytes, "fuzz");
-    else aether::LoadSceneFromMemory(world, bytes, "fuzz");
+    if (data[0] & 1) (void)aether::LoadSceneJsonFromMemory(world, bytes, "fuzz");
+    else (void)aether::LoadSceneFromMemory(world, bytes, "fuzz");
     return 0;
 }

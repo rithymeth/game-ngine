@@ -23,7 +23,8 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <unistd.h>
-#if __has_include(<execinfo.h>)
+// Android's bionic only declares backtrace() from API 33; the header exists earlier but the functions do not.
+#if __has_include(<execinfo.h>) && !(defined(__ANDROID__) && __ANDROID_API__ < 33)
 #include <execinfo.h>
 #define AETHER_HAS_EXECINFO 1
 #endif

@@ -4,6 +4,8 @@
 
 #include "macros.h"
 
+#include <exception>
+#include <new>
 #include <algorithm>
 #include <set>
 
@@ -1091,7 +1093,8 @@ const CompiledFunction* CompiledBlueprint::FindEvent(std::string_view key) const
     return it != events.end() ? &functions[it->second] : nullptr;
 }
 
-CompileResult CompileBlueprint(const Blueprint& source) {
+namespace {
+CompileResult CompileBlueprintImpl(const Blueprint& source) {
     CompileResult result;
     result.diagnostics = ValidateBlueprint(source);
     if (!result.diagnostics.Ok()) {
@@ -1191,6 +1194,26 @@ CompileResult CompileBlueprint(const Blueprint& source) {
         result.blueprint = std::move(out);
     }
     return result;
+}
+} // namespace
+
+CompileResult CompileBlueprint(const Blueprint& source) {
+    // A node's config with a field of the wrong type makes nlohmann throw while lowering; that is a damaged
+    // blueprint, so report it as a compile error rather than ending the process.
+    try {
+        return CompileBlueprintImpl(source);
+    } catch (const std::bad_alloc&) {
+        throw;
+    } catch (const std::exception& e) {
+        CompileResult result;
+        Diagnostic d;
+        d.code = "BP999";
+        d.severity = Severity::Error;
+        d.message = std::string("The blueprint has a malformed node setting: ") + e.what();
+        result.diagnostics.diagnostics.push_back(std::move(d));
+        result.diagnostics.errors = 1;
+        return result;
+    }
 }
 
 } // namespace aether::bp

@@ -2,6 +2,7 @@
 #include "aether/assets/gltf_loader.h"
 #include "aether/assets/image.h"
 #include "aether/audio/audio_system.h"
+#include "aether/cook/mesh_summary.h"
 #include "aether/ai/bt_world.h"
 #include "aether/nav/debug_draw.h"
 #include "aether/blueprint/system.h"
@@ -118,6 +119,7 @@
 #include <cctype>
 #include <cmath>
 #include <filesystem>
+#include <map>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -1814,6 +1816,14 @@ struct CameraInspectorWidgets {
     QDoubleSpinBox* focus_distance = nullptr;
 };
 
+// The Mesh section of the Inspector: what a placed model cooks to (LOD and meshlet counts).
+struct MeshInspectorWidgets {
+    QGroupBox* group = nullptr;
+    QLabel* summary = nullptr;
+    QTableWidget* table = nullptr;
+    QLabel* note = nullptr;
+};
+
 QWidget* MakeInspector(QScrollArea*& inspector_scroll, QStackedWidget*& inspector_stack,
                        QPushButton*& empty_add_entity,
                        QLabel*& selection_status, QLineEdit*& entity_name,
@@ -1822,7 +1832,7 @@ QWidget* MakeInspector(QScrollArea*& inspector_scroll, QStackedWidget*& inspecto
                        std::array<QDoubleSpinBox*, 3>& scale,
                        QPushButton*& reset_position, QPushButton*& reset_rotation,
                        QPushButton*& reset_scale,
-                       CameraInspectorWidgets& camera) {
+                       CameraInspectorWidgets& camera, MeshInspectorWidgets& mesh) {
     auto* body = new QWidget;
     auto* layout = new QVBoxLayout(body);
     layout->setContentsMargins(14, 14, 14, 14);
@@ -2008,6 +2018,30 @@ QWidget* MakeInspector(QScrollArea*& inspector_scroll, QStackedWidget*& inspecto
     cine_form->addRow("Focus distance", camera.focus_distance);
     camera.cine_group->setVisible(false);
     layout->addWidget(camera.cine_group);
+
+    mesh.group = new QGroupBox("Mesh", body);
+    mesh.group->setObjectName("meshInspectorGroup");
+    auto* mesh_layout = new QVBoxLayout(mesh.group);
+    mesh_layout->setSpacing(6);
+    mesh.summary = new QLabel(mesh.group);
+    mesh.summary->setObjectName("meshInspectorSummary");
+    mesh.summary->setWordWrap(true);
+    mesh_layout->addWidget(mesh.summary);
+    mesh.table = new QTableWidget(0, 4, mesh.group);
+    mesh.table->setObjectName("meshLodTable");
+    mesh.table->setHorizontalHeaderLabels({"LOD", "Triangles", "Error", "Meshlets"});
+    mesh.table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    mesh.table->setSelectionMode(QAbstractItemView::NoSelection);
+    mesh.table->verticalHeader()->setVisible(false);
+    mesh.table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    mesh.table->setAccessibleName("Level of detail table");
+    mesh_layout->addWidget(mesh.table);
+    mesh.note = new QLabel(mesh.group);
+    mesh.note->setObjectName("muted");
+    mesh.note->setWordWrap(true);
+    mesh_layout->addWidget(mesh.note);
+    mesh.group->setVisible(false);
+    layout->addWidget(mesh.group);
 
     layout->addStretch();
 
@@ -2306,7 +2340,7 @@ public:
                                                                inspector_status_, inspector_name_,
                                                                position_fields_, rotation_fields_, scale_fields_,
                                                                reset_position_button_, reset_rotation_button_, reset_scale_button_,
-                                                               camera_inspector_);
+                                                               camera_inspector_, mesh_inspector_);
         auto* inspector_body = inspector_stack_->widget(1);
         auto* inspector_layout = qobject_cast<QVBoxLayout*>(inspector_body->layout());
         physics_component_panel_ = new aether::editor::qt::PhysicsComponentPanel(scene_document_, [this] {
@@ -2632,6 +2666,63 @@ public:
     }
 
     void OpenProjectFile(const std::filesystem::path& file) { OpenProject(file, false); }
+
+    // Shows what the selected entity's model cooks to: its LOD chain and meshlet counts, from the same code the
+    // cooker uses. Hidden when the entity has no model. Cached per file and write time; a model that can't be read or
+    // is too large says so instead of showing numbers.
+    void SyncMeshInspector() {
+        const auto* renderer = scene_document_.GetWorld().GetComponent<aether::ModelRenderer>(selected_entity_);
+        if (!renderer || renderer->asset_path[0] == '\0') {
+            mesh_inspector_.group->setVisible(false);
+            return;
+        }
+        mesh_inspector_.group->setVisible(true);
+        std::filesystem::path path(renderer->asset_path);
+        if (path.is_relative()) path = mesh_content_root_ / path;
+        path = path.lexically_normal();
+        std::error_code ec;
+        const auto written = std::filesystem::last_write_time(path, ec);
+        mesh_inspector_.table->setRowCount(0);
+        if (ec) {
+            mesh_inspector_.summary->setText("The model file can't be found.");
+            mesh_inspector_.note->setText(QString::fromStdString(path.generic_string()));
+            return;
+        }
+        const std::string key = path.generic_string() + "|" + std::to_string(written.time_since_epoch().count());
+        auto found = mesh_summaries_.find(key);
+        if (found == mesh_summaries_.end()) {
+            aether::assets::GltfScene scene;
+            aether::cook::MeshSummary summary;
+            if (aether::assets::LoadGltf(path.string(), scene)) summary = aether::cook::SummarizeMeshLods(scene);
+            else summary.message = "The model can't be read.";
+            if (mesh_summaries_.size() > 64) mesh_summaries_.clear();
+            found = mesh_summaries_.emplace(key, std::move(summary)).first;
+        }
+        const aether::cook::MeshSummary& s = found->second;
+        if (!s.ok) {
+            mesh_inspector_.summary->setText(QString::fromStdString(s.message));
+            mesh_inspector_.note->clear();
+            return;
+        }
+        mesh_inspector_.summary->setText(QString("%1 primitive(s) · %2 vertices")
+                                             .arg(s.primitives).arg(static_cast<qulonglong>(s.vertices)));
+        mesh_inspector_.table->setRowCount(static_cast<int>(s.lods.size()));
+        for (int row = 0; row < static_cast<int>(s.lods.size()); ++row) {
+            const auto& lod = s.lods[static_cast<std::size_t>(row)];
+            const QStringList cells = {QString("LOD%1").arg(lod.level),
+                                       QString::number(static_cast<qulonglong>(lod.triangles)),
+                                       row == 0 ? QString("—") : QString::number(static_cast<double>(lod.error), 'f', 3),
+                                       QString::number(static_cast<qulonglong>(lod.meshlets))};
+            for (int col = 0; col < 4; ++col) {
+                auto* cell = new QTableWidgetItem(cells[col]);
+                cell->setTextAlignment(col == 0 ? Qt::AlignLeft | Qt::AlignVCenter : Qt::AlignRight | Qt::AlignVCenter);
+                mesh_inspector_.table->setItem(row, col, cell);
+            }
+        }
+        mesh_inspector_.table->setFixedHeight(mesh_inspector_.table->horizontalHeader()->height() +
+                                              mesh_inspector_.table->rowHeight(0) * static_cast<int>(s.lods.size()) + 4);
+        mesh_inspector_.note->setText(QString::fromStdString(s.message));
+    }
 
     bool RunSelfTest() {
         const auto require = [](bool condition, const char* message) {
@@ -2962,7 +3053,14 @@ public:
                               reloaded_sequence.Sequence().tracks.size() == 1,
                               "saved Qt animation sequence should round-trip from disk");
 
-            const std::filesystem::path source_model(AETHER_QT_TEST_MODEL_PATH);
+            std::filesystem::path source_model(AETHER_QT_TEST_MODEL_PATH);
+            // Release-package self-tests run on a clean machine without the
+            // source checkout. Prefer the build-tree fixture when available,
+            // then fall back to the copy shipped with the editor package.
+            if (!std::filesystem::exists(source_model)) {
+                source_model = std::filesystem::path(QCoreApplication::applicationDirPath().toStdWString()) /
+                               "assets" / "models" / "test_textured_cube.gltf";
+            }
             const auto content_model = self_test_paths.content / source_model.filename();
             std::error_code copy_error;
             passed &= require(std::filesystem::copy_file(source_model, content_model,
@@ -2982,6 +3080,9 @@ public:
             const auto* placed_model = scene_document_.GetWorld().GetComponent<aether::ModelRenderer>(selected_entity_);
             passed &= require(placed_model && std::string(placed_model->asset_path) == source_model.filename().string(),
                               "Place Model should create a scene entity referencing the selected project asset");
+            passed &= require(!mesh_inspector_.group->isHidden() && mesh_inspector_.table->rowCount() == 4 &&
+                                  mesh_inspector_.table->item(0, 1) && mesh_inspector_.table->item(0, 1)->text() == "12",
+                              "the Inspector Mesh section should list the placed cube's four LODs, 12 triangles at LOD0");
         }
         std::filesystem::remove_all(self_test_root, filesystem_error);
         if (passed) qInfo() << "Qt editor self-test passed";
@@ -3760,6 +3861,7 @@ private:
             }
             camera_inspector_.group->setVisible(false);
             camera_inspector_.cine_group->setVisible(false);
+            mesh_inspector_.group->setVisible(false);
             RefreshSequenceTarget();
             UpdateSceneStatus();
             return;
@@ -3786,6 +3888,7 @@ private:
         if (camera) SyncCameraInspector();
         camera_inspector_.cine_group->setVisible(cine_camera != nullptr);
         if (cine_camera) SyncCineCameraInspector();
+        SyncMeshInspector();
         reset_position_button_->setEnabled(transform != nullptr);
         reset_rotation_button_->setEnabled(transform != nullptr);
         reset_scale_button_->setEnabled(transform != nullptr);
@@ -4166,7 +4269,10 @@ private:
             const auto relative = path.lexically_relative(content);
             if (!relative.empty() && *relative.begin() != "..") {
                 project_settings_.startup_scene = relative.generic_string();
-                aether::SaveProject(project_file_, project_settings_, nullptr);
+                std::string project_error;
+                if (!aether::SaveProject(project_file_, project_settings_, &project_error))
+                    statusBar()->showMessage("Scene saved, but the startup scene couldn't be recorded in the project: " +
+                                             QString::fromStdString(project_error));
             }
         }
         UpdateSceneStatus();
@@ -4489,6 +4595,8 @@ private:
         physics_component_panel_->SetLayerNames(project_settings_.layers);
         RememberRecentProject(file);
         viewport_->SetContentRoot(paths.content);
+        mesh_content_root_ = paths.content;
+        mesh_summaries_.clear();
         navigation_editor_widget_->SetContentRoot(paths.content);
         sound_cue_editor_widget_->SetContentRoot(paths.content);
 #if defined(AETHER_QT_EDITOR_SCRIPTING)
@@ -5399,6 +5507,9 @@ private:
     QPushButton* reset_rotation_button_ = nullptr;
     QPushButton* reset_scale_button_ = nullptr;
     CameraInspectorWidgets camera_inspector_;
+    MeshInspectorWidgets mesh_inspector_;
+    std::filesystem::path mesh_content_root_;
+    std::map<std::string, aether::cook::MeshSummary> mesh_summaries_; // by model path and write time
     aether::editor::qt::PhysicsComponentPanel* physics_component_panel_ = nullptr;
 #if defined(AETHER_QT_EDITOR_SCRIPTING)
     aether::editor::qt::ScriptComponentEditor* script_component_editor_ = nullptr;

@@ -1,7 +1,10 @@
 # Module layers (Phase 37 step 2). A target may link only to targets in a strictly lower layer.
 # Regenerate with tools/check_module_graph.py --update after an intentional change to the graph.
 aether_bcenc 0
+aether_meshopt 0
 aether_engine 1
+aether_alloc_audit 4
+aether_soak 3
 aether_animation 2
 aether_audio 2
 aether_bench_lib 2
@@ -18,12 +21,18 @@ aether_net 2
 aether_pak 2
 aether_physics 2
 aether_renderer 2
+aether_replay_ai 4
 aether_replay_assetmeta 2
 aether_replay_gltf 2
+aether_replay_input 2
 aether_replay_pak 2
+aether_replay_plugin 2
 aether_replay_prefab 2
 aether_replay_scene 2
+aether_replay_sprite2d 3
 aether_replay_texture 2
+aether_replay_files 3
+aether_replay_ui 4
 aether_rhi_demo 2
 aether_sandbox 2
 aether_save 2
@@ -52,7 +61,7 @@ aether_replay_sequence 3
 aether_templates 3
 aether_ui 3
 aether_docgen 4
-aether_mcp 4
+aether_mcp 6
 aether_module_AI 4
 aether_replay_gameplay 4
 aether_scripting 4
@@ -60,7 +69,7 @@ aether_bench 5
 aether_editor_qt 5
 aether_editor_ui 5
 aether_game 5
-aether_mcp_server 5
+aether_mcp_server 7
 aether_editor 6
 aether_editor_vulkan 6
 aether_player 6

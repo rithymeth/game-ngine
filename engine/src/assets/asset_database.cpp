@@ -193,6 +193,7 @@ std::string ImporterForExtension(const stdfs::path& file) {
         {".hdr", "Texture"},  {".gltf", "Model"},  {".glb", "Model"},    {".ascene", "Scene"}, {".aprefab", "Prefab"}, {".aaction", "InputAction"}, {".amapping", "InputMapping"},
         {".abp", "Blueprint"}, {".aatlas", "SpriteAtlas"}, {".atileset", "Tileset"}, {".atilemap", "Tilemap"}, {".asequence", "Sequence"}, {".astrings", "StringTable"}, {".aeffect", "GameplayEffect"}, {".aability", "GameplayAbility"}, {".aitem", "ItemDefinition"}, {".aquest", "QuestDefinition"}, {".acue", "SoundCue"}, {".wav", "Sound"},    {".ogg", "Sound"},   {".flac", "Sound"},   {".mp3", "Sound"},    {".luau", "Script"},
         {".hlsl", "Shader"},  {".ttf", "Font"},    {".otf", "Font"},
+        {".aui", "UILayout"}, {".atheme", "UITheme"}, // UI layouts and themes, shown by WidgetComponent and read by path
     };
     auto it = kImporters.find(ToLower(file.extension().string()));
     return it != kImporters.end() ? it->second : std::string();
@@ -305,7 +306,9 @@ ScanResult AssetDatabase::Scan() {
             }
         }
         if (changed) {
-            SaveAssetMeta(entry.meta_file, entry.meta);
+            std::string meta_error;
+            if (!SaveAssetMeta(entry.meta_file, entry.meta, &meta_error))
+                AETHER_LOG_WARN("Assets", "Couldn't write %s: %s", entry.meta_file.string().c_str(), meta_error.c_str());
         }
         AssetRecord record;
         record.guid = entry.meta.guid;

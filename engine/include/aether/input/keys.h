@@ -160,14 +160,58 @@ public:
         }
     }
     // Everything released and centred (e.g. the window lost focus).
-    void Clear() { values_.fill(0.0f); }
+    void Clear() {
+        values_.fill(0.0f);
+        pointers_ = {};
+        touch_ids_ = {};
+    }
+
+    // --- Pointers ------------------------------------------------------------------------
+    // Where the pointers are, in window pixels: the mouse is pointer 0 (always there; `down` follows its left button), and each touch takes
+    // the next free slot, 1 .. kMaxPointers - 1, until it ends. The first touch also holds Key::MouseLeft, so code written for the mouse
+    // works on a phone. UIInputRouter and the player's UI take these; gameplay can read them too.
+    struct Pointer {
+        f32 x = 0.0f, y = 0.0f;
+        bool down = false;   // a button or a finger is pressed
+        bool active = false; // the mouse (always) or a finger on the screen
+    };
+    static constexpr usize kMaxPointers = 10;
+    const Pointer& GetPointer(usize index) const { return pointers_[index < kMaxPointers ? index : 0]; }
+    void SetPointer(usize index, f32 x, f32 y, bool down, bool active) {
+        if (index < kMaxPointers) pointers_[index] = {x, y, down, active};
+    }
+    // The slot (1 ..) a touch id uses: its own if it has one, else (with `create`) the lowest free one; -1 if none is free or it has none.
+    i32 TouchSlot(u32 touch_id, bool create) {
+        for (usize i = 1; i < kMaxPointers; ++i) {
+            if (touch_ids_[i].used && touch_ids_[i].id == touch_id) return static_cast<i32>(i);
+        }
+        if (!create) return -1;
+        for (usize i = 1; i < kMaxPointers; ++i) {
+            if (!touch_ids_[i].used) {
+                touch_ids_[i] = {true, touch_id};
+                return static_cast<i32>(i);
+            }
+        }
+        return -1;
+    }
+    void ReleaseTouchSlot(u32 touch_id) {
+        for (usize i = 1; i < kMaxPointers; ++i) {
+            if (touch_ids_[i].used && touch_ids_[i].id == touch_id) touch_ids_[i] = {};
+        }
+    }
 
 private:
+    struct TouchId {
+        bool used = false;
+        u32 id = 0;
+    };
     static usize Index(Key key) {
         const usize i = static_cast<usize>(key);
         return i < kKeyCount ? i : 0;
     }
     std::array<f32, kKeyCount> values_{};
+    std::array<Pointer, kMaxPointers> pointers_{};
+    std::array<TouchId, kMaxPointers> touch_ids_{};
 };
 
 } // namespace aether::input

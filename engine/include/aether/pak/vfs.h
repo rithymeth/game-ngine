@@ -1,5 +1,7 @@
 #pragma once
 
+// @stability: stable
+
 #include "aether/core/base.h"
 #include "aether/pak/pak.h"
 

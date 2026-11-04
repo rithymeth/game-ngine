@@ -22,10 +22,10 @@ struct ImageData {
 // out_image untouched) if the file doesn't exist or fails to decode; check
 // the return value rather than out_image.pixels.empty(), since a decoded
 // zero-area image is a malformed-file case this treats as failure too.
-bool DecodeImageFile(const std::string& path, ImageData& out_image);
-bool DecodeImageFile(const std::string& path, ImageData& out_image, u64 max_pixels);
+[[nodiscard]] bool DecodeImageFile(const std::string& path, ImageData& out_image);
+[[nodiscard]] bool DecodeImageFile(const std::string& path, ImageData& out_image, u64 max_pixels);
 // Decodes an in-memory image after checking its dimensions. The pixel budget
 // bounds allocations when this is used on untrusted/imported data.
-bool DecodeImageFromMemory(std::span<const u8> bytes, ImageData& out_image, u64 max_pixels = 16 * 1024 * 1024);
+[[nodiscard]] bool DecodeImageFromMemory(std::span<const u8> bytes, ImageData& out_image, u64 max_pixels = 16 * 1024 * 1024);
 
 } // namespace aether::assets

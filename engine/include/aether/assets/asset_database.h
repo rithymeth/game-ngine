@@ -35,9 +35,9 @@ struct AssetMeta {
     static constexpr const char* kExtension = ".ameta";
 };
 
-bool LoadAssetMeta(const std::filesystem::path& meta_file, AssetMeta& out, std::string* error = nullptr);
-bool LoadAssetMetaFromMemory(std::span<const u8> bytes, AssetMeta& out, std::string* error = nullptr);
-bool SaveAssetMeta(const std::filesystem::path& meta_file, const AssetMeta& meta, std::string* error = nullptr);
+[[nodiscard]] bool LoadAssetMeta(const std::filesystem::path& meta_file, AssetMeta& out, std::string* error = nullptr);
+[[nodiscard]] bool LoadAssetMetaFromMemory(std::span<const u8> bytes, AssetMeta& out, std::string* error = nullptr);
+[[nodiscard]] bool SaveAssetMeta(const std::filesystem::path& meta_file, const AssetMeta& meta, std::string* error = nullptr);
 
 // Which importer handles a source file, by extension (case-insensitive), or
 // "" if the file isn't an asset the engine knows. Importers themselves arrive
@@ -116,7 +116,7 @@ public:
     // Records that the asset's current source has been imported (writes its
     // hash into the .ameta, clearing needs_import).
     // `importer_version`, if non-zero, is also recorded.
-    bool MarkImported(const AssetGuid& guid, std::string* error = nullptr, u32 importer_version = 0);
+    [[nodiscard]] bool MarkImported(const AssetGuid& guid, std::string* error = nullptr, u32 importer_version = 0);
 
     // Absolute paths of an asset's source and .ameta ("" if unknown GUID).
     std::filesystem::path SourcePath(const AssetGuid& guid) const;

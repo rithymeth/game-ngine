@@ -1,5 +1,7 @@
 #pragma once
 
+// @stability: stable
+
 #include "aether/reflection/any.h"
 #include "aether/reflection/registry.h"
 #include "aether/reflection/type_info.h"

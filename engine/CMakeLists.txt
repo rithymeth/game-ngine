@@ -1,5 +1,6 @@
 add_library(aether_engine STATIC
     src/core/log.cpp
+    src/core/alloc_track.cpp
     src/core/cvar.cpp
     src/core/console.cpp
     src/core/profiler.cpp
@@ -13,6 +14,10 @@ add_library(aether_engine STATIC
     src/platform/filesystem.cpp
     src/platform/window_events.cpp
     src/platform/platform_plugin.cpp
+    src/platform/lifecycle.cpp
+    src/cook/mesh_cook.cpp
+    src/cook/mesh_summary.cpp
+    src/cook/meshlet_cook.cpp
     src/platform/process.cpp
     src/pak/pak.cpp
     src/pak/vfs.cpp
@@ -20,12 +25,14 @@ add_library(aether_engine STATIC
     src/docs/api_docs.cpp
     src/cook/package.cpp
     src/plugin/plugin.cpp
+    src/plugin/package.cpp
     src/cook/texture_cook.cpp
     src/math/math.cpp
     src/job/job_system.cpp
     src/kit/kit_registry.cpp
     src/ecs/archetype.cpp
     src/scene/serialization.cpp
+    src/scene/test_world.cpp
     src/scene/entity_guid.cpp
     src/scene/hierarchy.cpp
     src/scene/prefab.cpp
@@ -61,7 +68,7 @@ target_include_directories(aether_engine PRIVATE ${stb_SOURCE_DIR})
 # of the JSON archive, and what schema migration hooks edit).
 target_link_libraries(aether_engine PUBLIC nlohmann_json::nlohmann_json)
 # .apak compression (Phase 25).
-target_link_libraries(aether_engine PRIVATE lz4_static libzstd_static aether_bcenc)
+target_link_libraries(aether_engine PRIVATE lz4_static libzstd_static aether_bcenc aether_meshopt)
 
 if(WIN32)
     target_sources(aether_engine PRIVATE

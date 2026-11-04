@@ -54,6 +54,7 @@ struct BufferRecord {
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkDeviceSize size_bytes = 0;
     void* mapped = nullptr;
+    VkDescriptorSet constants_set = VK_NULL_HANDLE; // frame constants: the set that points at this buffer (see CreateConstantBuffer)
     bool is_storage = false;
     bool is_constant = false;
     bool is_vertex = false;
@@ -120,6 +121,16 @@ public:
     }
 
     SampledTextureHandle CreateTexture(u32 width, u32 height, const u8* rgba8_pixels) override;
+    bool SupportsCompressedTexture(CompressedTextureFormat format) const override;
+    SampledTextureHandle CreateCompressedTexture(CompressedTextureFormat format, u32 width, u32 height, std::span<const CompressedMip> mips) override;
+    bool DestroyTexture(SampledTextureHandle texture) override;
+
+    // Frame constants (PipelineDesc::frame_constants_size_bytes): descriptor set 2, one uniform buffer at binding 0, which is where the HLSL's
+    // `register(b0, space2)` lands under DXC's default mapping (space N is set N, register bN is binding N).
+    bool SupportsFrameConstants() const override { return true; }
+    BufferHandle CreateFrameConstantBuffer(u64 size_bytes) override;
+    void UpdateFrameConstantBuffer(BufferHandle buffer, const void* data, u64 size_bytes) override { UpdateVertexBuffer(buffer, data, size_bytes); }
+    VkDescriptorSetLayout FrameConstantsSetLayout() const { return frame_constants_set_layout_; }
     SampledTextureHandle CreateR32FloatTexture(u32 width, u32 height, const f32* values) override;
     const SampledTextureRecord& GetSampledTexture(SampledTextureHandle handle) const {
         return sampled_textures_[handle.index - kFirstUserBindlessTextureIndex];
@@ -232,7 +243,11 @@ private:
     std::vector<PipelineRecord> pipelines_;
     std::vector<ComputePipelineRecord> compute_pipelines_;
     std::vector<BufferRecord> buffers_;
-    std::vector<SampledTextureRecord> sampled_textures_;
+    std::vector<SampledTextureRecord> sampled_textures_; // position i is bindless slot i + kFirstUserBindlessTextureIndex; a freed one is empty
+    std::vector<u32> free_texture_slots_;                // positions in sampled_textures_ DestroyTexture emptied, reused first
+    // Stores `record` in the first free position (or a new one) and returns its bindless index.
+    u32 StoreTextureRecord(const SampledTextureRecord& record);
+    bool TextureTableFull() const { return sampled_textures_.size() - free_texture_slots_.size() >= kMaxUserBindlessTextures; }
 
     VkDescriptorSetLayout bindless_texture_set_layout_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout bindless_sampler_set_layout_ = VK_NULL_HANDLE;
@@ -240,6 +255,11 @@ private:
     VkDescriptorSet bindless_texture_set_ = VK_NULL_HANDLE;
     VkDescriptorSet bindless_sampler_set_ = VK_NULL_HANDLE;
     VkSampler bindless_sampler_ = VK_NULL_HANDLE;
+    // Frame constants: one uniform buffer per set, one set per constant buffer, allocated from this pool.
+    VkDescriptorSetLayout frame_constants_set_layout_ = VK_NULL_HANDLE;
+    VkDescriptorPool frame_constants_pool_ = VK_NULL_HANDLE;
+    static constexpr u32 kMaxConstantBuffers = 64;
+    u32 constant_buffer_count_ = 0;
 
     // A 1x1 white dummy image, permanently retained for slot zero and also
     // referenced by every other bindless descriptor slot before real
@@ -251,8 +271,16 @@ private:
 
     BufferHandle CreateBufferInternal(const void* data, u64 size_bytes);
     void CreateBindlessTextureInfrastructure();
-    SampledTextureRecord UploadTextureRecord(u32 width, u32 height, const void* pixels, VkFormat format, u32 bytes_per_pixel);
-    void UpdateBindlessTextureDescriptor(u32 index, VkImageView view);
+    SampledTextureRecord UploadTextureRecord(u32 width, u32 height, const u8* rgba8_pixels);
+    // One image of `format` with the given levels (largest first; each `size` bytes of tightly packed texels or blocks), staged and copied.
+    struct ImageLevel {
+        const u8* data = nullptr;
+        u64 size = 0;
+        u32 width = 0, height = 0;
+    };
+    SampledTextureRecord UploadImageRecord(VkFormat format, u32 width, u32 height, const std::vector<ImageLevel>& levels);
+    // Writes `record` into slot `index` of the bindless table.
+    void WriteBindlessTexture(u32 index, const SampledTextureRecord& record);
     void Destroy() noexcept;
 };
 
@@ -390,6 +418,7 @@ public:
     void ComputeBufferBarrier(BufferHandle buffer) override;
     void Dispatch(u32 groups_x, u32 groups_y, u32 groups_z) override;
     void BindBindlessTextures() override;
+    void BindFrameConstants(BufferHandle buffer) override;
 
     void* NativeHandle() const override { return command_buffer_; }
     bool BelongsTo(const VulkanDevice& device) const { return &device_ == &device; }

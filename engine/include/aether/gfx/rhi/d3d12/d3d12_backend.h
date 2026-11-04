@@ -29,6 +29,7 @@ struct TextureRecord {
 struct PipelineRecord {
     ComPtr<ID3D12RootSignature> root_signature;
     ComPtr<ID3D12PipelineState> pso;
+    u32 frame_constants_root_index = ~0u; // the root CBV for PipelineDesc::frame_constants_size_bytes, if any
     u32 push_constant_size_bytes = 0;
     bool enable_bindless_textures = false;
     bool use_vertex_buffer = false;
@@ -68,6 +69,9 @@ public:
     BufferHandle CreateConstantBuffer(u64 size_bytes, const void* initial_data) override;
     void UpdateConstantBuffer(BufferHandle buffer, const void* data, u64 size_bytes, u64 offset) override;
     void UpdateVertexBuffer(BufferHandle buffer, const void* data, u64 size_bytes) override;
+    bool SupportsFrameConstants() const override { return true; }
+    BufferHandle CreateFrameConstantBuffer(u64 size_bytes) override;
+    void UpdateFrameConstantBuffer(BufferHandle buffer, const void* data, u64 size_bytes) override { UpdateConstantBuffer(buffer, data, size_bytes, 0); }
     const gfx::Buffer& GetBuffer(BufferHandle handle) const { return *buffers_[handle.index]; }
     usize BufferCount() const { return buffers_.size(); }
     D3D12_GPU_DESCRIPTOR_HANDLE ComputeStorageDescriptor(BufferHandle handle) const;
@@ -89,6 +93,9 @@ public:
     }
 
     SampledTextureHandle CreateTexture(u32 width, u32 height, const u8* rgba8_pixels) override;
+    bool SupportsCompressedTexture(CompressedTextureFormat f) const override { return f == CompressedTextureFormat::BC1 || f == CompressedTextureFormat::BC3 || f == CompressedTextureFormat::BC7; } // core D3D12; it has no ASTC
+    SampledTextureHandle CreateCompressedTexture(CompressedTextureFormat format, u32 width, u32 height, std::span<const CompressedMip> mips) override;
+    bool DestroyTexture(SampledTextureHandle texture) override;
     SampledTextureHandle CreateR32FloatTexture(u32 width, u32 height, const f32* values) override;
     DescriptorHeap& BindlessTextureHeap() { return *bindless_texture_heap_; }
 
@@ -223,6 +230,7 @@ public:
     void ComputeBufferBarrier(BufferHandle buffer) override;
     void Dispatch(u32 groups_x, u32 groups_y, u32 groups_z) override;
     void BindBindlessTextures() override;
+    void BindFrameConstants(BufferHandle buffer) override;
 
     void* NativeHandle() const override { return cmd_.Get(); }
     bool BelongsTo(const D3D12Device& device) const { return &device_ == &device; }
@@ -245,6 +253,7 @@ private:
     bool has_closed_recording_ = false;
     u64 last_submitted_fence_ = 0;
     ID3D12Resource* active_backbuffer_ = nullptr; // set by BeginRenderPass, consumed by EndRenderPass
+    u32 frame_constants_root_index_ = ~0u;        // of the pipeline BindPipeline last bound
     u32 compute_storage_buffer_count_ = 0;
     u32 compute_sampled_texture_count_ = 0;
     u32 compute_constant_buffer_count_ = 0;

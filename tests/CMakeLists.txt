@@ -4,6 +4,8 @@ add_executable(aether_tests
     test_math.cpp
     test_filesystem.cpp
     test_job_system.cpp
+    test_platform_lifecycle.cpp
+    test_meshlet_cook.cpp test_mesh_cook.cpp test_mesh_summary.cpp test_format_versions.cpp test_ai_decision.cpp test_alloc_track.cpp test_test_world.cpp
     test_kit_registry.cpp
     test_ecs.cpp
     test_serialization.cpp
@@ -47,7 +49,7 @@ if(TARGET aether_mcp)
     target_link_libraries(aether_tests PRIVATE aether_mcp)
 endif()
 # Phase 25 step 4: the player's runtime.
-target_sources(aether_tests PRIVATE test_player.cpp test_player_save.cpp test_loc_runtime.cpp test_package.cpp test_pak_patch.cpp test_plugin.cpp test_templates.cpp test_aether01.cpp)
+target_sources(aether_tests PRIVATE test_player.cpp test_player_lights.cpp test_player_save.cpp test_loc_runtime.cpp test_package.cpp test_pak_patch.cpp test_plugin.cpp test_templates.cpp test_aether01.cpp)
 target_link_libraries(aether_tests PRIVATE Aether::Game Aether::Templates Aether::Blueprint)
 if(TARGET Aether::Physics)
     target_link_libraries(aether_tests PRIVATE Aether::Physics)
@@ -105,7 +107,7 @@ if(TARGET Aether::Scripting)
     target_link_libraries(aether_tests PRIVATE Aether::Scripting)
 endif()
 
-target_sources(aether_tests PRIVATE test_blueprint_graph.cpp test_blueprint_vm.cpp test_blueprint_latent.cpp test_blueprint_nodes.cpp test_blueprint_arrays.cpp test_blueprint_world.cpp test_blueprint_messages.cpp test_blueprint_macros.cpp test_blueprint_sort.cpp test_blueprint_debugger.cpp test_blueprint_samples.cpp test_renderer.cpp test_renderer_lighting.cpp test_frame_graph.cpp test_post.cpp test_material_graph.cpp test_material_codegen.cpp test_material_instance.cpp test_material_functions.cpp test_animation.cpp test_animation_blending.cpp test_anim_graph.cpp test_animator.cpp test_ik.cpp test_audio.cpp test_audio_3d.cpp test_audio_cues.cpp test_audio_system.cpp test_audio_threading.cpp test_ui_layout.cpp test_ui_input.cpp test_ui_assets.cpp test_ui_widgets.cpp test_ui_text.cpp test_ui_fallback.cpp test_ui_loc.cpp test_vfx_particles.cpp test_vfx_render.cpp test_vfx_events.cpp test_vfx_components.cpp test_vfx_gpu.cpp test_nav_mesh.cpp test_nav_dynamic.cpp test_nav_crowd.cpp test_ai_behavior_tree.cpp
+target_sources(aether_tests PRIVATE test_blueprint_graph.cpp test_blueprint_vm.cpp test_blueprint_latent.cpp test_blueprint_nodes.cpp test_blueprint_arrays.cpp test_blueprint_world.cpp test_blueprint_messages.cpp test_blueprint_macros.cpp test_blueprint_sort.cpp test_blueprint_debugger.cpp test_blueprint_samples.cpp test_renderer.cpp test_renderer_lighting.cpp test_frame_graph.cpp test_post.cpp test_material_graph.cpp test_material_codegen.cpp test_material_instance.cpp test_material_functions.cpp test_animation.cpp test_animation_blending.cpp test_anim_graph.cpp test_animator.cpp test_ik.cpp test_audio.cpp test_audio_3d.cpp test_audio_cues.cpp test_audio_system.cpp test_audio_threading.cpp test_ui_layout.cpp test_ui_input.cpp test_ui_assets.cpp test_ui_widgets.cpp test_ui_text.cpp test_ui_fallback.cpp test_ui_loc.cpp test_vfx_particles.cpp test_vfx_render.cpp test_vfx_events.cpp test_vfx_components.cpp test_vfx_gpu.cpp test_nav_mesh.cpp test_nav_dynamic.cpp test_nav_crowd.cpp test_legacy_files.cpp test_nav_hierarchical.cpp test_streaming_flythrough.cpp test_ai_behavior_tree.cpp
     test_terrain.cpp
     test_terrain_splat.cpp
     test_terrain_renderer.cpp
@@ -140,6 +142,7 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_module_graph.py --dot ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/module_graph_cycle.dot --no-includes)
     set_tests_properties(module_graph_catches_a_cycle PROPERTIES WILL_FAIL TRUE)
     add_test(NAME api_stability_annotations COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_api_stability.py)
+    add_test(NAME api_freeze_checks COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/check_api_freeze.py)
     add_test(NAME production_gate_table COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/gate.py)
     add_test(NAME m8_gate_table COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/gate.py
         --table ${CMAKE_SOURCE_DIR}/docs/design/m8_gates.json)

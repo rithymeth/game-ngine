@@ -279,7 +279,7 @@ std::filesystem::path MakePackage(const char* dir_name, const std::vector<std::t
     }
     const std::filesystem::path file = dir / "Game.apak";
     std::string error;
-    writer.Write(file.string(), &error);
+    AETHER_CHECK(writer.Write(file.string(), &error));
     return file;
 }
 
