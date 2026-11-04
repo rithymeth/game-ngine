@@ -828,6 +828,28 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
             if (alpha_mode == "MASK") material.alpha_mode = MaterialAlphaMode::Mask;
             else if (alpha_mode == "BLEND") material.alpha_mode = MaterialAlphaMode::Blend;
             material.alpha_cutoff = material_json.value("alphaCutoff", 0.5f);
+            if (material_json.contains("extensions") && material_json["extensions"].is_object()) {
+                const Json& extensions = material_json["extensions"];
+                const auto object_of = [&](const char* name) -> const Json* {
+                    const auto it = extensions.find(name);
+                    return it != extensions.end() && it->is_object() ? &*it : nullptr;
+                };
+                if (const Json* coat = object_of("KHR_materials_clearcoat")) {
+                    material.clear_coat = coat->value("clearcoatFactor", 0.0f);
+                    material.clear_coat_roughness = coat->value("clearcoatRoughnessFactor", 0.0f);
+                }
+                if (const Json* sheen = object_of("KHR_materials_sheen")) {
+                    if (sheen->contains("sheenColorFactor") && (*sheen)["sheenColorFactor"].is_array()) {
+                        const Json& color = (*sheen)["sheenColorFactor"];
+                        for (usize i = 0; i < 3 && i < color.size(); ++i) material.sheen_color[i] = color[i].get<f32>();
+                    }
+                    material.sheen_roughness = sheen->value("sheenRoughnessFactor", 0.0f);
+                }
+                if (const Json* anisotropy = object_of("KHR_materials_anisotropy")) {
+                    material.anisotropy_strength = anisotropy->value("anisotropyStrength", 0.0f);
+                    material.anisotropy_rotation = anisotropy->value("anisotropyRotation", 0.0f);
+                }
+            }
             out_scene.materials.push_back(material);
         }
     }
@@ -950,6 +972,29 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
                      path.c_str(), out_scene.meshes.size(), out_scene.materials.size(),
                      out_scene.node_instances.size(), out_scene.skins.size(), out_scene.animations.size());
     return true;
+}
+
+bool GltfMaterial::HasSurfaceExtension() const {
+    return clear_coat > 0.0f || sheen_color[0] > 0.0f || sheen_color[1] > 0.0f || sheen_color[2] > 0.0f || anisotropy_strength > 0.0f;
+}
+
+void PackSurfaceExtension(const GltfMaterial& material, u8 texels[8]) {
+    const auto byte = [](f32 value) {
+        // NaN fails both comparisons and packs as 0.
+        const f32 clamped = value > 0.0f ? (value < 1.0f ? value : 1.0f) : 0.0f;
+        return static_cast<u8>(clamped * 255.0f + 0.5f);
+    };
+    constexpr f32 kTwoPi = 6.28318530718f;
+    f32 turns = material.anisotropy_rotation / kTwoPi;
+    turns -= std::floor(turns); // any angle, wrapped into 0..1
+    texels[0] = byte(material.clear_coat);
+    texels[1] = byte(material.clear_coat_roughness);
+    texels[2] = byte(material.sheen_roughness);
+    texels[3] = byte(material.anisotropy_strength);
+    texels[4] = byte(material.sheen_color[0]);
+    texels[5] = byte(material.sheen_color[1]);
+    texels[6] = byte(material.sheen_color[2]);
+    texels[7] = byte(turns);
 }
 
 bool LoadGltf(const std::string& path, GltfScene& out_scene, std::string* error) {

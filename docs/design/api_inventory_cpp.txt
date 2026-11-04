@@ -1196,11 +1196,13 @@
   [[nodiscard]]bool LoadGltf(const std::string&path,GltfScene&out_scene)
   [[nodiscard]]bool LoadGltf(const std::string&path,GltfScene&out_scene,std::string*error)
   [[nodiscard]]bool LoadGltfFromMemory(std::span<const u8>json,GltfScene&out_scene)
+  bool HasSurfaceExtension()const
   usize ComponentsPerKey()const
   void ComputeSkinMatrices(const GltfAnimationPose&pose,const GltfSkin&skin,std::vector<Mat4>&out_matrices,i32 mesh_node_index)
   void ComputeSkinMatrices(const GltfScene&scene,const GltfAnimation*animation,f32 time_seconds,const GltfSkin&skin,std::vector<Mat4>&out_matrices,i32 mesh_node_index=-1)
   void EvaluateAnimation(const GltfScene&scene,const GltfAnimation&animation,f32 time_seconds,std::vector<GltfNodeInstance>&out_node_instances)
   void EvaluateAnimationPose(const GltfScene&scene,const GltfAnimation&animation,f32 time_seconds,GltfAnimationPose&out_pose)
+  void PackSurfaceExtension(const GltfMaterial&material,u8 texels[8])
 [engine/include/aether/assets/gltf_references.h] experimental
   type struct GltfFileReference
   int RewriteGltfUris(const std::filesystem::path&gltf_file,const std::function<std::optional<std::string>(const std::string&uri)>&rewrite,std::string*error=nullptr)
@@ -4517,6 +4519,7 @@
   SceneRenderer&operator=(const SceneRenderer&)=delete
   SceneRenderer(const SceneRenderer&)=delete
   public:SceneRenderer(gfx::rhi::IDevice&device,gfx::rhi::ISwapChain&swap_chain,const GamePackage&package)
+  std::string SceneShaderSource(bool with_frame_data)
   void Draw(Game&game,gfx::rhi::ICommandList&commands,u32 frame_index)
   void SetDrawParticles(bool draw)
   void SetRenderPoseSampler(std::function<bool(Entity,Transform&)>sampler)

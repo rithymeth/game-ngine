@@ -5,8 +5,14 @@
 
 #include <functional>
 #include <memory>
+#include <string>
 
 namespace aether::player {
+
+// The HLSL the scene pass compiles (entry points VSMain and PSMain), as SceneRenderer builds it: the advanced PBR library ahead of the scene
+// shader, and with the frame-constants block when `with_frame_data` (what devices that support frame constants get). Here so a test can
+// compile the real source with glslang.
+std::string SceneShaderSource(bool with_frame_data);
 
 // Draws the current game's cooked ModelRenderer entities through the same
 // cross-API RHI used by the renderer demos. The player owns this alongside
