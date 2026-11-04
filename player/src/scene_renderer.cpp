@@ -1,6 +1,8 @@
 #include "aether/player/scene_renderer.h"
 
 #include "aether/renderer/material_codegen.h"
+#include "aether/renderer/components.h"
+#include "aether/renderer/decal.h"
 
 #include "aether/assets/gltf_loader.h"
 #include "aether/assets/image.h"
@@ -11,6 +13,7 @@
 #include "frame_lights.h"
 #include "render_pose.h"
 #include "particle_pass.h"
+#include "decal_pass.h"
 #include "package_textures.h"
 #include "aether/ui/draw.h"
 #include "aether/ui/font.h"
@@ -583,6 +586,7 @@ struct SceneRenderer::Impl {
     PipelineHandle hud_pipeline;
     // The particle pass (M8.7), drawn after the scene's surfaces.
     std::unique_ptr<ParticlePass> particles;
+    std::unique_ptr<DecalPass> decals;
     vfx::ParticleRenderData particle_data;
     // Mesh particles' geometry, flattened once from the package's models (empty: the model couldn't be loaded).
     std::unordered_map<std::string, ParticleMesh> particle_meshes;
@@ -638,6 +642,7 @@ struct SceneRenderer::Impl {
         legacy_hud = package.Manifest().project == "AETHER-01";
 
         particles = std::make_unique<ParticlePass>(device, swap_chain);
+        decals = std::make_unique<DecalPass>(device, swap_chain);
         // Particle materials are textures in the package, through the same cache as the models' (0: untextured, drawn procedurally).
         particles->SetTextureResolver([this](const std::string& material) -> u32 {
             SampledTextureHandle texture;
@@ -684,6 +689,40 @@ struct SceneRenderer::Impl {
             if (legacy_hud) AETHER_LOG_WARN("PlayerRenderer", "Cooked package has no fonts/Roboto-Medium.ttf; HUD text is unavailable");
             else AETHER_LOG_INFO("PlayerRenderer", "Cooked package has no fonts/Roboto-Medium.ttf; UI text is unavailable");
         }
+    }
+
+    // The frame's decals: every enabled Decal component on an entity with a Transform, as ready-to-draw items (visible ones, in draw order).
+    std::vector<DecalPassItem> GatherDecals(const World& world, const GuidIndex& guids, const Mat4& view_projection, const Vec3& camera_position) {
+        std::vector<mat::DecalInput> inputs;
+        std::vector<const Decal*> found;
+        world.ForEachArchetype([&](const Archetype& archetype) {
+            if (!archetype.Mask().test(GetComponentId<Decal>())) return;
+            for (usize chunk = 0; chunk < archetype.ChunkCount(); ++chunk) {
+                const Entity* entities = archetype.EntityArray(chunk);
+                for (usize i = 0; i < archetype.ChunkEntityCount(chunk); ++i) {
+                    const Decal* decal = world.GetComponent<Decal>(entities[i]);
+                    if (decal == nullptr || !decal->enabled || !world.HasComponent<Transform>(entities[i])) continue;
+                    inputs.push_back({ComputeWorldTransform(world, guids, entities[i]), decal->size, decal->sort_order, static_cast<u32>(found.size())});
+                    found.push_back(decal);
+                }
+            }
+        });
+        std::vector<DecalPassItem> items;
+        if (inputs.empty()) return items;
+        std::vector<mat::DecalDraw> draws;
+        mat::BuildDecalDraws(inputs, view_projection, camera_position, draws);
+        for (const mat::DecalDraw& draw : draws) {
+            const Decal& decal = *found[draw.id];
+            DecalPassItem item;
+            item.draw = draw;
+            SampledTextureHandle texture;
+            if (!decal.texture.empty() && LoadTexture(decal.texture, texture)) item.texture = texture.index;
+            item.color[0] = DecalTint(decal.color.x), item.color[1] = DecalTint(decal.color.y), item.color[2] = DecalTint(decal.color.z);
+            item.color[3] = std::clamp(decal.opacity, 0.0f, 1.0f);
+            item.fade_start = decal.angle_fade_start, item.fade_end = decal.angle_fade_end;
+            items.push_back(item);
+        }
+        return items;
     }
 
     void DrawHud(Game& game, ICommandList& commands) {
@@ -1445,6 +1484,9 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     Mat4 particle_view_projection, particle_projection;
     vfx::ParticleCamera particle_camera;
     bool draw_particles = false;
+    Mat4 decal_view_projection;
+    Vec3 decal_camera_position;
+    bool have_camera = false;
     if (camera) {
         const f32 aspect = static_cast<f32>(renderer.swap_chain.Width()) /
                            static_cast<f32>(std::max(renderer.swap_chain.Height(), 1u));
@@ -1461,6 +1503,9 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         }
         const Mat4 camera_transform = ComputeWorldTransform(world, guids, camera_entity);
         const Vec3 camera_position{camera_transform.cols[3].x, camera_transform.cols[3].y, camera_transform.cols[3].z};
+        decal_view_projection = view_projection;
+        decal_camera_position = camera_position;
+        have_camera = true;
         // Mesh particles get the scene shader's sun and sky: the frame's lights where the device has frame constants, else the shader's
         // fixed light (ParticleLighting's defaults), through the pass's push constants on every backend.
         ParticleLighting particle_lighting;
@@ -1661,6 +1706,13 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                 }
             }
         });
+    }
+    // Decals paint over the opaque surfaces' lit colour, before the transparent ones. The pass copies the scene depth first, so the transparent
+    // draws below rebind their own pipeline, frame constants and texture table.
+    if (have_camera && renderer.decals && renderer.decals->Valid()) {
+        const std::vector<DecalPassItem> decal_items =
+            renderer.GatherDecals(world, guids, decal_view_projection, decal_camera_position);
+        renderer.decals->Draw(commands, decal_items);
     }
     if (!transparent_draws.empty()) {
         std::stable_sort(transparent_draws.begin(), transparent_draws.end(),
