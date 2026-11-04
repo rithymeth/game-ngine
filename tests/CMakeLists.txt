@@ -103,6 +103,7 @@ endif()
 if(TARGET Aether::PhysicsNet)
     target_sources(aether_tests PRIVATE test_physics_net.cpp)
     target_link_libraries(aether_tests PRIVATE Aether::PhysicsNet)
+    target_compile_definitions(aether_tests PRIVATE AETHER_TEST_HAS_PHYSICS_NET=1)
 endif()
 
 if(TARGET Aether::Scripting)
