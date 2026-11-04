@@ -119,6 +119,110 @@ float4 AetherTriplanarLevel(Texture2D t, SamplerState s, float3 p, float3 n, flo
 }
 )";
 
+// The advanced PBR terms (Phase 39.3). References: Burley 2012 (anisotropic GGX), Estevez and Kulla 2017
+// (Charlie sheen), Neubelt and Pettineo 2013 (sheen visibility), Kelemen 2001 (clear coat visibility).
+const char* const kAdvancedPbrHlsl = R"(// Aether advanced PBR terms. Do not edit.
+#ifndef AETHER_ADVANCED_PBR_HLSL
+#define AETHER_ADVANCED_PBR_HLSL
+
+#define AETHER_PI 3.14159265359
+
+// GGX distribution with squared roughness a (alpha = roughness * roughness).
+float AetherD_GGX(float a, float NoH) {
+    float a2 = a * a;
+    float d = NoH * NoH * (a2 - 1.0) + 1.0;
+    return a2 / (AETHER_PI * d * d);
+}
+
+float AetherF_Schlick(float f0, float VoH) {
+    float f = pow(1.0 - VoH, 5.0);
+    return f0 + (1.0 - f0) * f;
+}
+
+// Anisotropic roughness along the tangent (at) and bitangent (ab) from the material's roughness and
+// anisotropy (-1..1); the minimum keeps the highlight finite.
+void AetherAnisotropicRoughness(float roughness, float anisotropy, out float at, out float ab) {
+    float a = roughness * roughness;
+    at = max(a * (1.0 + anisotropy), 0.002);
+    ab = max(a * (1.0 - anisotropy), 0.002);
+}
+
+// Turns the tangent frame around the normal; rotation is in turns (0..1).
+void AetherRotateTangentFrame(float3 T, float3 B, float rotation, out float3 Tr, out float3 Br) {
+    float s, c;
+    sincos(rotation * 2.0 * AETHER_PI, s, c);
+    Tr = T * c + B * s;
+    Br = B * c - T * s;
+}
+
+float AetherD_GGXAniso(float at, float ab, float NoH, float ToH, float BoH) {
+    float a2 = at * ab;
+    float3 d = float3(ab * ToH, at * BoH, a2 * NoH);
+    float d2 = dot(d, d);
+    float b2 = a2 / d2;
+    return a2 * b2 * b2 * (1.0 / AETHER_PI);
+}
+
+float AetherV_SmithGGXAniso(float at, float ab, float ToV, float BoV, float ToL, float BoL, float NoV, float NoL) {
+    float lambdaV = NoL * length(float3(at * ToV, ab * BoV, NoV));
+    float lambdaL = NoV * length(float3(at * ToL, ab * BoL, NoL));
+    return 0.5 / max(lambdaV + lambdaL, 0.00001);
+}
+
+// The specular lobe of an anisotropic surface for one light, times NoL; f0 is the base reflectance.
+float3 AetherAnisotropicSpecular(float3 f0, float roughness, float anisotropy, float3 N, float3 T, float3 B, float3 V,
+                                 float3 L, float rotation) {
+    float3 Tr, Br;
+    AetherRotateTangentFrame(T, B, rotation, Tr, Br);
+    float3 H = normalize(V + L);
+    float NoL = saturate(dot(N, L)), NoV = max(dot(N, V), 0.0001), NoH = saturate(dot(N, H));
+    float VoH = saturate(dot(V, H));
+    float at, ab;
+    AetherAnisotropicRoughness(roughness, anisotropy, at, ab);
+    float D = AetherD_GGXAniso(at, ab, NoH, dot(Tr, H), dot(Br, H));
+    float Vis = AetherV_SmithGGXAniso(at, ab, dot(Tr, V), dot(Br, V), dot(Tr, L), dot(Br, L), NoV, NoL);
+    float3 F = f0 + (1.0 - f0) * pow(1.0 - VoH, 5.0);
+    return D * Vis * F * NoL;
+}
+
+// The Charlie sheen distribution; roughness is the material's (not squared).
+float AetherD_Charlie(float roughness, float NoH) {
+    float a = max(roughness * roughness, 0.002);
+    float invA = 1.0 / a;
+    float cos2h = NoH * NoH;
+    float sin2h = max(1.0 - cos2h, 0.0078125);
+    return (2.0 + invA) * pow(sin2h, invA * 0.5) / (2.0 * AETHER_PI);
+}
+
+float AetherV_Neubelt(float NoV, float NoL) {
+    return 1.0 / (4.0 * max(NoL + NoV - NoL * NoV, 0.00001));
+}
+
+// The sheen layer's specular for one light, times NoL.
+float3 AetherSheen(float3 sheen_color, float sheen_roughness, float NoV, float NoL, float NoH) {
+    return sheen_color * (AetherD_Charlie(sheen_roughness, NoH) * AetherV_Neubelt(NoV, NoL) * NoL);
+}
+
+// Clear coat: weight is the material's clear_coat. spec is the coat's specular for one light (times NoL by
+// the caller); attenuation is what is left for the layers below (1 - the coat's Fresnel).
+struct AetherCoat {
+    float spec;
+    float attenuation;
+};
+AetherCoat AetherClearCoat(float weight, float coat_roughness, float NoH, float LoH) {
+    float a = max(coat_roughness * coat_roughness, 0.002);
+    float D = AetherD_GGX(a, NoH);
+    float Vis = 0.25 / max(LoH * LoH, 0.0001);
+    float F = AetherF_Schlick(0.04, LoH) * weight;
+    AetherCoat c;
+    c.spec = D * Vis * F;
+    c.attenuation = 1.0 - F;
+    return c;
+}
+
+#endif
+)";
+
 struct OutputPin {
     const char* pin;
     const char* field;
@@ -128,6 +232,9 @@ constexpr OutputPin kSurfacePins[] = {
     {"BaseColor", "base_color", PinType::Float3}, {"Metallic", "metallic", PinType::Float},
     {"Roughness", "roughness", PinType::Float},   {"Normal", "normal", PinType::Float3},
     {"Emissive", "emissive", PinType::Float3},    {"AO", "ao", PinType::Float},
+    {"ClearCoat", "clear_coat", PinType::Float},  {"ClearCoatRoughness", "clear_coat_roughness", PinType::Float},
+    {"SheenColor", "sheen_color", PinType::Float3}, {"SheenRoughness", "sheen_roughness", PinType::Float},
+    {"Anisotropy", "anisotropy", PinType::Float}, {"AnisotropyRotation", "anisotropy_rotation", PinType::Float},
     {"Opacity", "opacity", PinType::Float},       {"OpacityMask", "opacity_mask", PinType::Float},
 };
 
@@ -337,6 +444,8 @@ u64 Fnv1a(const std::string& s, u64 h) {
 
 } // namespace
 
+const char* AdvancedPbrHlsl() { return kAdvancedPbrHlsl; }
+
 std::string HlslIdentifier(const std::string& name) {
     std::string out;
     for (const char c : name) out += std::isalnum(static_cast<unsigned char>(c)) ? c : '_';
@@ -470,6 +579,12 @@ GeneratedMaterial GenerateHlsl(const Material& material) {
          "    float3 normal; // tangent space\n"
          "    float3 emissive;\n"
          "    float ao;\n"
+         "    float clear_coat;           // 0..1 weight of the clear coat layer\n"
+         "    float clear_coat_roughness;\n"
+         "    float3 sheen_color;         // black turns the sheen off\n"
+         "    float sheen_roughness;\n"
+         "    float anisotropy;           // -1..1, along the tangent when positive\n"
+         "    float anisotropy_rotation;  // 0..1 turns of the tangent frame\n"
          "    float opacity;\n"
          "    float opacity_mask;\n"
          "};\n\n";

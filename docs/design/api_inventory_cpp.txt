@@ -4725,6 +4725,7 @@
   ParameterLayout LayoutParameters(const Material&material)
   bool operator==(const MaterialFeatures&o)const
   const ParameterSlot*Find(const std::string&name)const
+  const char*AdvancedPbrHlsl()
   std::string HlslIdentifier(const std::string&name)
 [renderer/include/aether/renderer/material_instance.h] experimental
   type class ParameterBlock
