@@ -279,6 +279,10 @@ struct SurfaceExtension {
     float sheen_roughness;
     float anisotropy;
     float anisotropy_rotation;
+    float hair;
+    float hair_shift;
+    float hair_secondary_shift;
+    float3 hair_tint;
 };
 SurfaceExtension NoSurfaceExtension() {
     SurfaceExtension e;
@@ -289,6 +293,10 @@ SurfaceExtension NoSurfaceExtension() {
     e.sheen_roughness = 0.0;
     e.anisotropy = 0.0;
     e.anisotropy_rotation = 0.0;
+    e.hair = 0.0;
+    e.hair_shift = 0.0;
+    e.hair_secondary_shift = 0.0;
+    e.hair_tint = float3(1.0, 1.0, 1.0);
     return e;
 }
 SurfaceExtension LoadSurfaceExtension(uint index) {
@@ -302,6 +310,20 @@ SurfaceExtension LoadSurfaceExtension(uint index) {
     e.anisotropy = first.w;
     e.sheen_color = second.xyz;
     e.anisotropy_rotation = second.w;
+    e.hair = 0.0;
+    e.hair_shift = 0.0;
+    e.hair_secondary_shift = 0.0;
+    e.hair_tint = float3(1.0, 1.0, 1.0);
+    uint extension_width, extension_height;
+    g_Textures[index].GetDimensions(extension_width, extension_height);
+    if (extension_width >= 4) { // a hair material: two more texels
+        float4 third = g_Textures[index].Load(int3(2, 0, 0));
+        float4 fourth = g_Textures[index].Load(int3(3, 0, 0));
+        e.hair = 1.0;
+        e.hair_shift = third.x - 0.5;
+        e.hair_secondary_shift = third.y - 0.5;
+        e.hair_tint = float3(third.z, third.w, fourth.x);
+    }
     return e;
 }
 
@@ -317,7 +339,12 @@ float3 SurfaceLightEx(float3 light_direction, float3 normal, float3 view_directi
     float n_dot_h = saturate(dot(normal, half_vector));
     float l_dot_h = saturate(dot(light_direction, half_vector));
     float v_dot_h = saturate(dot(view_direction, half_vector));
-    if (ext.anisotropy > 0.001) {
+    if (ext.hair > 0.5) {
+        // Strands run along the tangent: Kajiya-Kay diffuse and a shifted two-lobe highlight replace the surface lobes.
+        float3 strand_specular = AetherHairSpecular(float3(1.0, 1.0, 1.0), ext.hair_tint, T, normal, view_direction, light_direction,
+                                                    ext.hair_shift, ext.hair_secondary_shift, roughness);
+        lit = (AetherHairDiffuse(base_color, T, light_direction) + strand_specular * 0.5) * n_dot_l;
+    } else if (ext.anisotropy > 0.001) {
         float3 fresnel = f0 + (1.0 - f0) * pow(1.0 - v_dot_h, 5.0);
         float3 diffuse = (1.0 - fresnel) * (1.0 - metallic) * base_color / 3.14159265 * n_dot_l;
         lit = diffuse + AetherAnisotropicSpecular(f0, roughness, ext.anisotropy, normal, T, B, view_direction, light_direction,
@@ -1317,9 +1344,11 @@ struct SceneRenderer::Impl {
                         if (extension_textures.size() < out.scene.materials.size()) extension_textures.resize(out.scene.materials.size());
                         SampledTextureHandle& cached = extension_textures[material_index];
                         if (!cached.IsValid()) {
-                            u8 texels[8];
+                            u8 texels[16] = {};
                             assets::PackSurfaceExtension(material, texels);
-                            cached = device.CreateTexture(2, 1, texels);
+                            // A hair material adds two texels, which the shader finds by the texture's width.
+                            if (material.hair) assets::PackHairExtension(material, texels + 8);
+                            cached = device.CreateTexture(material.hair ? 4 : 2, 1, texels);
                         }
                         // A full bindless table leaves the material plain rather than failing the model.
                         draw.extension_texture = cached;
@@ -1744,7 +1773,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
 
 // The advanced PBR library (anisotropic GGX, sheen, clear coat) goes ahead of the scene shader.
 std::string SceneShaderSource(bool with_frame_data) {
-    return std::string(with_frame_data ? "#define AETHER_FRAME_DATA 1\n" : "") + mat::AdvancedPbrHlsl() + kSceneShader;
+    return std::string(with_frame_data ? "#define AETHER_FRAME_DATA 1\n" : "") + mat::AdvancedPbrHlsl() + mat::ShadingModelsHlsl() + kSceneShader;
 }
 
 } // namespace aether::player
