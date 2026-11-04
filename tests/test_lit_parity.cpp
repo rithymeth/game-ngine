@@ -50,9 +50,18 @@ AETHER_TEST(LitParity_WriteBmpRoundTripsTheHeaderAndPixels) {
     const std::vector<u8> rgba = {255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 10, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255};
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "aether_parity_test.bmp";
     AETHER_CHECK(parity::WriteBmp(path.string(), rgba, 3, 2));
-    std::ifstream in(path, std::ios::binary);
-    std::vector<unsigned char> file((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::vector<unsigned char> file;
+    {
+        // Closed before the remove below: Windows refuses to delete a file that is still open, and remove() throws.
+        std::ifstream in(path, std::ios::binary);
+        file.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
     AETHER_CHECK(file.size() == 54 + 12 * 2); // 3 pixels * 3 bytes = 9, padded to 12, two rows
+    if (file.size() != 54 + 12 * 2) {         // a short read must fail the test, not index past the end
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
+        return;
+    }
     AETHER_CHECK(file[0] == 'B' && file[1] == 'M' && file[18] == 3 && file[22] == 2 && file[28] == 24);
     // The first stored row is the image's bottom row, in BGR: (10, 20, 30) -> 30, 20, 10.
     AETHER_CHECK(file[54] == 30 && file[55] == 20 && file[56] == 10);
