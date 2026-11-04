@@ -333,6 +333,76 @@ void ScriptSystem::InstallApi(bool install_kit_apis) {
             call.Return(ScriptValue{}); call.Return(ScriptValue{}); call.Return(0.0);
         }
     });
+    // Constraints (docs/design/PHYSICS_CONSTRAINTS.md).
+    host_.RegisterNative("Physics", "Grab", [this](NativeCall& call) {
+        if (!physics_scene_) return call.Fail("Physics isn't bound to a running scene");
+        if (!call.IsEntity(0) || !call.IsVector(2))
+            return call.Fail("Physics.Grab(object, holder, worldPoint, maxForce?, frequency?, damping?, breakForce?) expected");
+        GrabSettings settings;
+        settings.max_force = static_cast<f32>(call.Number(3, settings.max_force));
+        settings.frequency = static_cast<f32>(call.Number(4, settings.frequency));
+        settings.damping = static_cast<f32>(call.Number(5, settings.damping));
+        settings.break_force = static_cast<f32>(call.Number(6, settings.break_force));
+        const Entity holder = call.IsEntity(1) ? call.EntityArg(1) : kNullEntity;
+        call.Return(static_cast<f64>(physics_scene_->Grab(call.EntityArg(0), holder, call.Vector(2), settings)));
+    });
+    host_.RegisterNative("Physics", "SetGrabTarget", [this](NativeCall& call) {
+        if (!physics_scene_) return call.Fail("Physics isn't bound to a running scene");
+        if (!call.IsNumber(0) || !call.IsVector(1)) return call.Fail("Physics.SetGrabTarget(grab, worldPoint) expected");
+        call.Return(physics_scene_->SetGrabTarget(static_cast<GrabId>(call.Number(0)), call.Vector(1)));
+    });
+    host_.RegisterNative("Physics", "Release", [this](NativeCall& call) {
+        if (!physics_scene_) return call.Fail("Physics isn't bound to a running scene");
+        if (!call.IsNumber(0)) return call.Fail("Physics.Release(grab) expected");
+        call.Return(physics_scene_->Release(static_cast<GrabId>(call.Number(0))));
+    });
+    host_.RegisterNative("Physics", "IsGrabActive", [this](NativeCall& call) {
+        if (!physics_scene_) return call.Fail("Physics isn't bound to a running scene");
+        if (!call.IsNumber(0)) return call.Fail("Physics.IsGrabActive(grab) expected");
+        call.Return(physics_scene_->IsGrabActive(static_cast<GrabId>(call.Number(0))));
+    });
+    auto joint_of = [this](NativeCall& call, const char* usage) -> PhysicsJoint* {
+        if (!physics_scene_) {
+            call.Fail("Physics isn't bound to a running scene");
+            return nullptr;
+        }
+        if (!call.IsEntity(0)) {
+            call.Fail(usage);
+            return nullptr;
+        }
+        World& world = physics_scene_->EcsWorld();
+        const Entity e = call.EntityArg(0);
+        return world.IsAlive(e) ? world.GetComponent<PhysicsJoint>(e) : nullptr;
+    };
+    host_.RegisterNative("Physics", "SetJointEnabled", [joint_of](NativeCall& call) {
+        PhysicsJoint* joint = joint_of(call, "Physics.SetJointEnabled(entity, enabled) expected");
+        if (joint != nullptr) joint->enabled = call.Bool(1, true);
+        call.Return(joint != nullptr);
+    });
+    host_.RegisterNative("Physics", "SetJointLocked", [joint_of](NativeCall& call) {
+        PhysicsJoint* joint = joint_of(call, "Physics.SetJointLocked(entity, locked) expected");
+        if (joint != nullptr) joint->locked = call.Bool(1, true);
+        call.Return(joint != nullptr);
+    });
+    host_.RegisterNative("Physics", "SetJointMotorTarget", [joint_of](NativeCall& call) {
+        PhysicsJoint* joint = joint_of(call, "Physics.SetJointMotorTarget(entity, target) expected");
+        if (joint != nullptr) joint->motor_target = static_cast<f32>(call.Number(1));
+        call.Return(joint != nullptr);
+    });
+    host_.RegisterNative("Physics", "GetJointState", [joint_of](NativeCall& call) {
+        const PhysicsJoint* joint = joint_of(call, "Physics.GetJointState(entity) expected");
+        if (joint == nullptr) return call.Return(ScriptValue{});
+        call.Return(joint->enabled);
+        call.Return(joint->locked);
+        call.Return(joint->broken);
+        call.Return(static_cast<f64>(joint->angle));
+    });
+    host_.RegisterNative("Physics", "RepairJoint", [joint_of](NativeCall& call) {
+        PhysicsJoint* joint = joint_of(call, "Physics.RepairJoint(entity) expected");
+        const bool was_broken = joint != nullptr && joint->broken;
+        if (joint != nullptr) joint->broken = false;
+        call.Return(was_broken);
+    });
 #endif
 
     InstallSaveApi(host_); // SaveGames (Phase 28 step 4)
