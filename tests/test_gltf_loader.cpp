@@ -461,3 +461,68 @@ AETHER_TEST(Gltf_PrimitiveParsesJointsAndWeightsWhenBothPresent) {
     std::filesystem::remove(path);
     std::filesystem::remove(bin_path);
 }
+
+// Phase 39.3: KHR_materials_clearcoat, sheen and anisotropy.
+AETHER_TEST(Gltf_SurfaceExtensionsAreReadAndDefaultToOff) {
+    constexpr const char* kExtended = R"({
+      "asset": {"version": "2.0"},
+      "materials": [
+        {"pbrMetallicRoughness": {}},
+        {"pbrMetallicRoughness": {},
+         "extensions": {
+           "KHR_materials_clearcoat": {"clearcoatFactor": 0.8, "clearcoatRoughnessFactor": 0.15},
+           "KHR_materials_sheen": {"sheenColorFactor": [0.9, 0.5, 0.25], "sheenRoughnessFactor": 0.4},
+           "KHR_materials_anisotropy": {"anisotropyStrength": 0.6, "anisotropyRotation": 1.5707963}
+         }},
+        {"pbrMetallicRoughness": {}, "extensions": {"KHR_materials_clearcoat": {}, "KHR_materials_unknown": {"x": 1}}}
+      ]
+    })";
+    const std::string path = WriteTempGltf("aether_test_surface_ext.gltf", kExtended);
+    GltfScene scene;
+    AETHER_CHECK(LoadGltf(path, scene));
+    AETHER_CHECK(scene.materials.size() == 3);
+
+    const GltfMaterial& plain = scene.materials[0];
+    AETHER_CHECK(!plain.HasSurfaceExtension() && plain.clear_coat == 0.0f && plain.sheen_color[0] == 0.0f && plain.anisotropy_strength == 0.0f);
+
+    const GltfMaterial& m = scene.materials[1];
+    AETHER_CHECK(m.HasSurfaceExtension());
+    AETHER_CHECK(std::fabs(m.clear_coat - 0.8f) < 1e-6f && std::fabs(m.clear_coat_roughness - 0.15f) < 1e-6f);
+    AETHER_CHECK(std::fabs(m.sheen_color[0] - 0.9f) < 1e-6f && std::fabs(m.sheen_color[1] - 0.5f) < 1e-6f &&
+                 std::fabs(m.sheen_color[2] - 0.25f) < 1e-6f && std::fabs(m.sheen_roughness - 0.4f) < 1e-6f);
+    AETHER_CHECK(std::fabs(m.anisotropy_strength - 0.6f) < 1e-6f && std::fabs(m.anisotropy_rotation - 1.5707963f) < 1e-6f);
+
+    // An extension with no fields takes the extension's defaults (off); one the loader doesn't know is ignored.
+    AETHER_CHECK(!scene.materials[2].HasSurfaceExtension());
+    std::filesystem::remove(path);
+}
+
+AETHER_TEST(Gltf_PackSurfaceExtensionMakesTwoTexels) {
+    GltfMaterial m;
+    u8 texels[8];
+    PackSurfaceExtension(m, texels);
+    for (u8 b : texels) AETHER_CHECK(b == 0);
+
+    m.clear_coat = 1.0f;
+    m.clear_coat_roughness = 0.5f;
+    m.sheen_roughness = 0.2f;
+    m.anisotropy_strength = 0.4f;
+    m.sheen_color[0] = 1.0f, m.sheen_color[1] = 0.0f, m.sheen_color[2] = 0.5f;
+    m.anisotropy_rotation = 3.14159265f; // half a turn
+    PackSurfaceExtension(m, texels);
+    AETHER_CHECK(texels[0] == 255 && texels[1] == 128 && texels[2] == 51 && texels[3] == 102);
+    AETHER_CHECK(texels[4] == 255 && texels[5] == 0 && texels[6] == 128 && texels[7] == 128);
+
+    // Angles wrap into one turn, in either direction; values past the range clamp; NaN packs as 0.
+    m.anisotropy_rotation = 3.14159265f + 6.28318531f;
+    PackSurfaceExtension(m, texels);
+    AETHER_CHECK(texels[7] >= 127 && texels[7] <= 129);
+    m.anisotropy_rotation = -3.14159265f;
+    PackSurfaceExtension(m, texels);
+    AETHER_CHECK(texels[7] >= 127 && texels[7] <= 129);
+    m.clear_coat = 7.0f;
+    m.clear_coat_roughness = -1.0f;
+    m.sheen_roughness = std::nanf("");
+    PackSurfaceExtension(m, texels);
+    AETHER_CHECK(texels[0] == 255 && texels[1] == 0 && texels[2] == 0);
+}
