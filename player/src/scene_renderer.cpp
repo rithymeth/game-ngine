@@ -267,7 +267,9 @@ float4 PSMain(PSInput input) : SV_TARGET {
     uint normal_index = (g_PC.g_MaterialTextures >> 6) & 63;
     uint metallic_roughness_index = (g_PC.g_MaterialTextures >> 12) & 63;
     uint occlusion_index = (g_PC.g_MaterialTextures >> 18) & 63;
-    float4 base_sample = base_index < 32 ? g_Textures[base_index].Sample(g_Sampler, input.uv) : float4(1, 1, 1, 1);
+    // Not a ?: — HLSL evaluates both arms, so the "no texture" index (63) would still be sampled out of bounds.
+    float4 base_sample = float4(1, 1, 1, 1);
+    if (base_index < 32) base_sample = g_Textures[base_index].Sample(g_Sampler, input.uv);
     uint alpha_mode = g_PC.g_AlphaOptions & 3;
     float surface_alpha = saturate(base_sample.a * g_PC.g_Color.a);
     if (alpha_mode == 1) {
