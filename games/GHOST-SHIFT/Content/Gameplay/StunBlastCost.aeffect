@@ -1,0 +1,11 @@
+{
+  "name": "StunBlastCost",
+  "duration_policy": "instant",
+  "modifiers": [
+    {
+      "attribute": "Battery",
+      "op": "add",
+      "magnitude": -4
+    }
+  ]
+}

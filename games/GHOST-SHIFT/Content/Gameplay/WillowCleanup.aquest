@@ -1,0 +1,30 @@
+{
+  "name": "WillowCleanup",
+  "title": "Willow House: Basic Cleanup",
+  "description": "Vacuum the ectoplasm, keep the Prankster in check and get back to the van.",
+  "objectives": [
+    {
+      "id": "clean_ectoplasm",
+      "kind": "count",
+      "target": "ectoplasm",
+      "required": 4,
+      "text": "Vacuum the ectoplasm patches"
+    },
+    {
+      "id": "scrub_stain",
+      "kind": "flag",
+      "text": "Scrub the cursed stain with the UV scrubber",
+      "optional": true
+    },
+    {
+      "id": "extract",
+      "kind": "flag",
+      "text": "Return to the van and extract"
+    }
+  ],
+  "rewards": {
+    "effects": [
+      "ContractPayout"
+    ]
+  }
+}
