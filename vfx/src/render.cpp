@@ -76,6 +76,7 @@ void Sprites(const EmitterInstance& e, const Frame& f, const SpriteRenderer& r, 
     batch.blend = r.blend;
     batch.soft_fade = r.soft_fade;
     batch.blend_frames = r.blend_frames;
+    batch.lit = r.lit;
     batch.instances.reserve(p.count);
     const Vec3 axis = Normalized(f.Direction(r.axis), {0, 1, 0});
     for (usize i : Order(e, f, r.sort, cam)) {

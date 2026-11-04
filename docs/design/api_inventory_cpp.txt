@@ -1202,6 +1202,7 @@
   void ComputeSkinMatrices(const GltfScene&scene,const GltfAnimation*animation,f32 time_seconds,const GltfSkin&skin,std::vector<Mat4>&out_matrices,i32 mesh_node_index=-1)
   void EvaluateAnimation(const GltfScene&scene,const GltfAnimation&animation,f32 time_seconds,std::vector<GltfNodeInstance>&out_node_instances)
   void EvaluateAnimationPose(const GltfScene&scene,const GltfAnimation&animation,f32 time_seconds,GltfAnimationPose&out_pose)
+  void PackHairExtension(const GltfMaterial&material,u8 texels[8])
   void PackSurfaceExtension(const GltfMaterial&material,u8 texels[8])
 [engine/include/aether/assets/gltf_references.h] experimental
   type struct GltfFileReference
@@ -5816,7 +5817,7 @@
   public:TerrainPass(gfx::rhi::IDevice&device,gfx::rhi::ISwapChain&swap_chain)
   public:explicit RhiTerrainGpu(gfx::rhi::IDevice&device):device_(device)
   static_assert(sizeof(TerrainConstants)==128)
-  std::array<u8,3>TerrainReferenceColor(const std::array<Vec3,4>&albedo_linear,const std::array<f32,4>&painted_weights,const std::array<f32,4>&heights,const TerrainDrawParams&params)
+  std::array<u8,3>TerrainReferenceColor(const std::array<Vec3,4>&albedo_linear,const std::array<f32,4>&painted_weights,const std::array<f32,4>&heights,const TerrainDrawParams&params,const Vec3&world_position=Vec3(0.0f,0.0f,0.0f))
   u32 Draw(gfx::rhi::ICommandList&commands,const RhiTerrainGpu&gpu,std::span<const RenderChunk>chunks,const Mat4&view_projection,const TerrainDrawParams&params)
   u64 CreateBuffer(const void*data,u64 bytes,bool index)override
   usize Live()const

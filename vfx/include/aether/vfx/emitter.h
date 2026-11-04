@@ -189,6 +189,7 @@ struct SpriteRenderer {
     f32 cycles = 1.0f, fps = 10.0f;
     bool blend_frames = false; // cross-fade to the next frame (the shader samples both)
     f32 soft_fade = 0.0f;      // soft particles: fade out within this distance of what's behind (0: off)
+    bool lit = false;          // lit by the scene's sun, sky and point lights (per sprite, from a normal facing the camera)
     f32 camera_offset = 0.0f;  // pulled towards the camera, so big sprites don't cut into walls
 };
 enum class MeshOrientation : u8 {

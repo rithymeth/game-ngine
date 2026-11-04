@@ -212,6 +212,27 @@ Vec3 ParticleLitColor(const ParticleLighting& lighting, const Vec3& base, const 
                 channel(base.z, lighting.sky_color.z, lighting.sun_color.z));
 }
 
+Vec3 ParticleSpriteLight(const ParticleLighting& lighting, const Vec3& position, const Vec3& camera_position) {
+    const Vec3 to_camera = camera_position - position;
+    const f32 length = std::sqrt(to_camera.Dot(to_camera));
+    const Vec3 n = length > 1e-5f ? to_camera * (1.0f / length) : Vec3(0, 0, 1);
+    const auto wrapped = [](f32 n_dot_l) { return std::clamp((n_dot_l + 0.5f) / 1.5f, 0.0f, 1.0f); };
+    const f32 sky_fill = 0.28f + 0.14f * std::clamp(n.y, 0.0f, 1.0f);
+    const f32 sun = wrapped(n.Dot(lighting.sun_direction.Normalized())) * 0.96f / 3.14159265f;
+    Vec3 light(sky_fill * lighting.sky_color.x + sun * lighting.sun_color.x, sky_fill * lighting.sky_color.y + sun * lighting.sun_color.y,
+               sky_fill * lighting.sky_color.z + sun * lighting.sun_color.z);
+    for (const ParticlePointLight& point : lighting.points) {
+        if (!(point.range > 0.0f)) continue;
+        const Vec3 to_light = point.position - position;
+        const f32 distance = std::max(std::sqrt(to_light.Dot(to_light)), 1e-4f);
+        f32 falloff = std::clamp(1.0f - std::pow(distance / point.range, 4.0f), 0.0f, 1.0f);
+        falloff = falloff * falloff / (distance * distance + 1.0f);
+        const f32 amount = wrapped(n.Dot(to_light * (1.0f / distance))) * falloff / 3.14159265f;
+        light = light + point.color * amount;
+    }
+    return light;
+}
+
 void ParticleTextureRuns(const std::vector<ParticleQuadVertex>& vertices, std::vector<ParticleDrawRun>& out, const std::vector<f32>* soft) {
     out.clear();
     const bool has_soft = soft != nullptr && soft->size() == vertices.size();
@@ -244,11 +265,22 @@ f32 ParticleSoftFade(const std::array<f32, 4>& depth_to_view, f32 scene_depth, f
 }
 
 void PackParticleVertices(const vfx::ParticleRenderData& data, const vfx::ParticleCamera& camera, ParticleVertexStreams& out,
-                          const ParticleTextureResolver& textures, const ParticleMeshResolver& meshes) {
+                          const ParticleTextureResolver& textures, const ParticleMeshResolver& meshes, const ParticleLighting* sprite_lighting) {
     out.Clear();
+    // A lit batch's sprites get their light baked into the colour (the push constants have no room for another lighting block).
+    const auto shaded = [&](const vfx::SpriteBatch& batch, const vfx::SpriteInstance& s) {
+        vfx::SpriteInstance copy = s;
+        if (!batch.lit || sprite_lighting == nullptr || !sprite_lighting->lit) return copy;
+        const Vec3 light = ParticleSpriteLight(*sprite_lighting, s.center, camera.position);
+        const auto tone = [](f32 c, f32 l) { const f32 v = c * l; return v / (v + 1.0f); };
+        copy.color.r = tone(s.color.r, light.x);
+        copy.color.g = tone(s.color.g, light.y);
+        copy.color.b = tone(s.color.b, light.z);
+        return copy;
+    };
     const auto texture_of = [&](const std::string& material) -> u32 { return material.empty() || !textures ? 0u : textures(material); };
     struct Sorted {
-        const vfx::SpriteInstance* sprite;
+        vfx::SpriteInstance sprite;
         vfx::BlendMode blend;
         bool blend_frames;
         u32 texture;
@@ -261,16 +293,16 @@ void PackParticleVertices(const vfx::ParticleRenderData& data, const vfx::Partic
         const u32 texture = texture_of(batch.material);
         const f32 soft = SanitizedSoft(batch.soft_fade);
         if (batch.blend == vfx::BlendMode::Additive) {
-            for (const vfx::SpriteInstance& s : batch.instances) AppendSprite(s, batch.blend, batch.blend_frames, texture, soft, out.additive, out.additive_soft);
+            for (const vfx::SpriteInstance& raw : batch.instances) AppendSprite(shaded(batch, raw), batch.blend, batch.blend_frames, texture, soft, out.additive, out.additive_soft);
         } else {
             for (const vfx::SpriteInstance& s : batch.instances) {
-                alpha_sprites.push_back({&s, batch.blend, batch.blend_frames, texture, soft, (s.center - camera.position).Dot(camera.forward)});
+                alpha_sprites.push_back({shaded(batch, s), batch.blend, batch.blend_frames, texture, soft, (s.center - camera.position).Dot(camera.forward)});
             }
         }
     }
     // Back to front across batches (stable: ties keep the batches' own order).
     std::stable_sort(alpha_sprites.begin(), alpha_sprites.end(), [](const Sorted& l, const Sorted& r) { return l.depth > r.depth; });
-    for (const Sorted& s : alpha_sprites) AppendSprite(*s.sprite, s.blend, s.blend_frames, s.texture, s.soft, out.alpha, out.alpha_soft);
+    for (const Sorted& s : alpha_sprites) AppendSprite(s.sprite, s.blend, s.blend_frames, s.texture, s.soft, out.alpha, out.alpha_soft);
 
     for (const vfx::RibbonStrip& ribbon : data.ribbons) {
         const bool additive = ribbon.blend == vfx::BlendMode::Additive;
@@ -349,7 +381,7 @@ ParticlePass::ParticlePass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap
 
 void ParticlePass::Draw(gfx::rhi::ICommandList& commands, const vfx::ParticleRenderData& data, const vfx::ParticleCamera& camera,
                         const Mat4& view_projection, const Mat4& projection, u32 frame_index) {
-    PackParticleVertices(data, camera, vertices_, textures_, meshes_);
+    PackParticleVertices(data, camera, vertices_, textures_, meshes_, &lighting_);
     depth_to_view_ = ParticleDepthToView(projection);
     std::array<Buffer, 3>& slot = buffers_[frame_index % kFrameSlots];
     // Opaque mesh particles first (writing depth), alpha-blended back to front next, then additive light on top.

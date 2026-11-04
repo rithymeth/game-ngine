@@ -48,7 +48,14 @@ struct GltfMaterial {
     f32 anisotropy_strength = 0.0f;  // anisotropyStrength, 0..1
     f32 anisotropy_rotation = 0.0f;  // anisotropyRotation, radians counter-clockwise from the tangent
 
-    // Any of the three extensions does something.
+    // AETHER_materials_hair (an engine extension: glTF has no hair model). A material with it is lit as strands along its tangent by the
+    // renderer's Kajiya-Kay two-lobe highlight; the shifts move the two highlights along the strand (-0.5..0.5).
+    bool hair = false;
+    f32 hair_shift = 0.0f;           // hairShift
+    f32 hair_secondary_shift = 0.0f; // hairSecondaryShift
+    f32 hair_tint[3] = {1.0f, 1.0f, 1.0f}; // hairTint, colours the secondary highlight
+
+    // Any of the four extensions does something.
     bool HasSurfaceExtension() const;
 };
 
@@ -57,6 +64,10 @@ struct GltfMaterial {
 //   texel 1: sheen colour r, g, b, anisotropy rotation in turns (0..1)
 // Every value is clamped to 0..1 and rounded to 8 bits.
 void PackSurfaceExtension(const GltfMaterial& material, u8 texels[8]);
+// A hair material's two further texels (the texture is then 4 x 1):
+//   texel 2: primary shift, secondary shift (both as shift + 0.5), tint r, tint g
+//   texel 3: tint b, 0, 0, 0
+void PackHairExtension(const GltfMaterial& material, u8 texels[8]);
 
 struct GltfPrimitive {
     std::vector<GltfVertex> vertices;

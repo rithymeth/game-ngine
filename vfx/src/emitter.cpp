@@ -104,7 +104,7 @@ void Fields(SpriteRenderer& m, Visitor& v) {
     v.String("material", m.material), v.Enum("blend", m.blend, kBlends), v.Enum("sort", m.sort, kSorts), v.Enum("facing", m.facing, kFacings);
     v.Vector("axis", m.axis), v.Float("aspect", m.aspect), v.Float("stretch", m.stretch);
     v.U32("columns", m.columns), v.U32("rows", m.rows), v.U32("frames", m.frames), v.Enum("flipbook", m.flipbook, kFlipbooks);
-    v.Float("cycles", m.cycles), v.Float("fps", m.fps), v.Bool("blend_frames", m.blend_frames), v.Float("soft_fade", m.soft_fade);
+    v.Float("cycles", m.cycles), v.Float("fps", m.fps), v.Bool("blend_frames", m.blend_frames), v.Float("soft_fade", m.soft_fade), v.Bool("lit", m.lit);
     v.Float("camera_offset", m.camera_offset);
 }
 void Fields(MeshRenderer& m, Visitor& v) {
