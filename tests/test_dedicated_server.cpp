@@ -2185,3 +2185,84 @@ AETHER_TEST(DedicatedServer_TimedOutUdpClientRemainsTerminal) {
           t->rotation.w == 0.8f && t->scale.x == 2.0f &&
           t->scale.y == 3.0f && t->scale.z == 4.0f);
 }
+
+// A handshake timeout must not poison a later, genuinely fresh UDP session.
+// This intentionally creates another NetClient rather than reviving the
+// terminal one; automatic in-place reconnect is not supported.
+AETHER_TEST(DedicatedServer_FreshUdpClientAfterHandshakeTimeoutAndRestart) {
+    RegisterServerComponents();
+    World world;
+    const Entity scene = world.CreateEntity(
+        Transform{Vec3{8, -3, 5}, Quaternion{0, 0, 0.6f, 0.8f}, Vec3{2, 3, 4}});
+    ServerConfig config;
+    config.port = 0;
+    config.lan_advertise = false;
+    DedicatedServer server;
+    std::string error;
+    if (!server.Start(config, world, &error)) {
+        std::printf("    (no UDP here: %s)\n", error.c_str());
+        return;
+    }
+    server.Tick(1.0);
+    const auto* identity = world.GetComponent<net::NetIdentity>(scene);
+    CHECK(identity && identity->net_id != 0 && identity->owner == net::kNoPeer);
+    const u32 scene_id = identity ? identity->net_id : 0;
+
+    NetClientConfig cc;
+    cc.server = net::Address::Loopback(server.Port());
+    cc.name = "timed-out-before-join";
+    cc.join_timeout = 0.1;
+    NetClient expired;
+    CHECK(expired.Start(cc, 1.0, &error));
+    expired.Tick(2.0); // deliberately no server tick during the handshake
+    CHECK(expired.Done() && !expired.Result().joined &&
+          expired.Result().join_result == "Timeout");
+    server.Stop();
+    server.Stop();
+    CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
+
+    error.clear();
+    CHECK(server.Start(config, world, &error));
+    if (!server.Running()) return;
+    CHECK(server.Stats().joins == 0 && server.Stats().players == 0);
+    using Clock = std::chrono::steady_clock;
+    const auto start = Clock::now();
+    const auto now = [&] {
+        return 2.0 + std::chrono::duration<f64>(Clock::now() - start).count();
+    };
+    cc.server = net::Address::Loopback(server.Port());
+    cc.name = "fresh-after-timeout";
+    cc.join_timeout = 3.0;
+    cc.duration = 0.5;
+    NetClient fresh;
+    CHECK(fresh.Start(cc, now(), &error));
+    const f64 deadline = now() + 4.0;
+    while (!fresh.Done() && now() < deadline) {
+        server.Tick(now());
+        fresh.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(fresh.Done() && fresh.Result().joined && fresh.Result().pawn_seen &&
+          fresh.Result().snapshots > 0 && fresh.Result().rpc_ack &&
+          fresh.Result().rpcs_sent == 1);
+    for (int i = 0; i < 200 && !server.EmptyAfterPlay(); ++i) {
+        server.Tick(now());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(server.EmptyAfterPlay());
+    CHECK(server.Stats().joins == 1 && server.Stats().leaves == 1 &&
+          server.Stats().pings == 1 && server.Stats().players == 0);
+    CHECK(expired.Done() && !expired.Result().joined &&
+          expired.Result().join_result == "Timeout");
+    server.Stop();
+    server.Stop();
+    CHECK(world.EntityCount() == 1 && world.IsAlive(scene));
+    const auto* kept = world.GetComponent<net::NetIdentity>(scene);
+    const auto* transform = world.GetComponent<Transform>(scene);
+    CHECK(kept && kept->net_id == scene_id && kept->owner == net::kNoPeer);
+    CHECK(transform && transform->position.x == 8.0f &&
+          transform->position.y == -3.0f && transform->position.z == 5.0f &&
+          transform->rotation.z == 0.6f && transform->rotation.w == 0.8f &&
+          transform->scale.x == 2.0f && transform->scale.y == 3.0f &&
+          transform->scale.z == 4.0f);
+}
