@@ -41,7 +41,8 @@ Camera LimitViewDistance(const Camera& camera, f32 view_distance);
 FrameData BuildFrameData(const World& world, const GuidIndex& guids, const Vec3& camera_position);
 
 // Particle lights (vfx::ParticleLight: fire, sparks, explosions) join the point lights: the scene's and the particles' are pooled and the
-// kMaxPointLights nearest to `camera_position` stay (ties keep the scene's lights). A light with no radius or no energy is ignored. Call after
+// kMaxPointLights nearest to `camera_position` stay, except that the scene's nearest four keep their slots however many particle lights
+// there are. A light with no radius or no energy is ignored. Call after
 // BuildFrameData, before the frame constants are uploaded.
 void AddParticleLights(FrameData& data, std::span<const vfx::ParticleLight> lights, const Vec3& camera_position);
 

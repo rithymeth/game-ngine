@@ -41,6 +41,7 @@ struct SpriteBatch {
     BlendMode blend = BlendMode::Alpha;
     f32 soft_fade = 0.0f;
     bool blend_frames = false;
+    bool lit = false; // the renderer lights each sprite (SpriteRenderer::lit)
     std::vector<SpriteInstance> instances; // in drawing order
 };
 

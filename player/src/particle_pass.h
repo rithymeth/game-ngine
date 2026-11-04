@@ -50,8 +50,15 @@ inline Vec3 ParticleVertexNormal(const ParticleQuadVertex& v) { return ParticleD
 
 // The light mesh particles get: the scene shader's sun (direction towards it, colour times intensity) and sky ambient, the same defaults
 // as its fixed light. `lit` false draws them unlit (colour times texture), as before M8.7's lighting; the scene renderer always lights them.
+// A point light for lit sprites (the frame's nearest point lights, particle lights included): the scene shader's falloff over `range`.
+struct ParticlePointLight {
+    Vec3 position;
+    f32 range = 0.0f;
+    Vec3 color; // colour times intensity
+};
 struct ParticleLighting {
     bool lit = false;
+    std::vector<ParticlePointLight> points; // lit sprites only (mesh particles take the sun and sky)
     Vec3 sun_direction{-0.4f, 0.8f, -0.35f};
     Vec3 sun_color{3.0f, 3.0f, 3.0f};
     Vec3 sky_color{1.0f, 1.0f, 1.0f};
@@ -60,6 +67,10 @@ struct ParticleLighting {
 // (sky fill 0.28 + 0.14 * max(n.y, 0) times the sky, plus 0.96 / pi * N.L times the sun; no specular) tone mapped like the scene
 // (c / (c + 1)), before the sRGB encode. For tests and tools.
 Vec3 ParticleLitColor(const ParticleLighting& lighting, const Vec3& base_color, const Vec3& normal);
+
+// What a lit sprite (vfx::SpriteBatch::lit) is multiplied by before tone mapping: the sun, sky and point lights on a normal facing `camera_position`,
+// with a half-wrapped N.L so a flat billboard has no black side. The sprite's colour then goes through c / (c + 1) like a lit mesh particle.
+Vec3 ParticleSpriteLight(const ParticleLighting& lighting, const Vec3& position, const Vec3& camera_position);
 
 struct ParticleVertexStreams {
     std::vector<ParticleQuadVertex> alpha;    // Alpha, Premultiplied (converted to straight alpha) and Opaque (alpha 1)
@@ -113,7 +124,8 @@ using ParticleMeshResolver = std::function<const ParticleMesh*(const std::string
 // Fills `out` (cleared first; its capacity is kept, so a renderer reusing it allocates only when a frame has more particles than before).
 // Without a resolver nothing is textured; without a mesh resolver mesh particles are not drawn.
 void PackParticleVertices(const vfx::ParticleRenderData& data, const vfx::ParticleCamera& camera, ParticleVertexStreams& out,
-                          const ParticleTextureResolver& textures = {}, const ParticleMeshResolver& meshes = {});
+                          const ParticleTextureResolver& textures = {}, const ParticleMeshResolver& meshes = {},
+                          const ParticleLighting* sprite_lighting = nullptr);
 
 // The GPU side: an opaque (mesh particles, writing depth), an alpha-blended and an additive pipeline (one HLSL source, compiled by the RHI for each backend, sampling the bindless
 // texture table), depth-tested against the
