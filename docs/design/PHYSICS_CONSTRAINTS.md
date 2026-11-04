@@ -120,14 +120,31 @@ Determinism: two worlds built and driven identically are bit-identical over
 240 steps and produce identical snapshots (same binary, same Jolt build).
 Constraints are added in a deterministic order (entity index, grab id).
 
+### Over the network (`physics_net/`, the `Aether::PhysicsNet` target)
+
+`aether_net` and `aether_physics` share a layer, so the glue between them is its own layer-3 module. It is host-authoritative end to end:
+
+* **Snapshots.** `PhysicsNetHost::Tick` sends the constraint snapshot to every peer every `snapshot_interval` (20 Hz by default) on the unreliable
+  channel, split into chunks of at most 1000 bytes (`EncodeSnapshotChunks`; records are independent, so a chunk applies alone and a lost one only
+  delays its records). `PhysicsNetClient` applies each chunk with `ApplyConstraintState` and drops a chunk of an older snapshot than one already
+  applied (wrap-safe), so a late or duplicated datagram cannot move the scene backwards.
+* **Grabs.** A client never creates a grab. `RequestGrab` (reliable) names an object by GUID and a world point; the host runs `ValidateGrab` against
+  its own world, with the pawn registered by `SetPlayer` as the holder (so the holder's position is the host's, not the client's claim), and
+  answers with a `GrabResult`. The rules, in order: known player, request rate (token bucket), the object exists and is a dynamic body, the game's
+  `SetGrabbableFilter`, not already holding (`max_grabs_per_peer`), the point within `reach` of the holder, the point within `max_object_offset` of
+  the object, and fewer than `max_holders_per_object` holders. `SetTarget` (sequenced channel, latest wins) moves a granted grab, clamped to
+  `max_target_distance` of the holder.
+* **Lifetimes.** A grab ends with a release from the client, its client disconnecting or its pawn being replaced, a target timeout (`target_timeout`
+  after the last target; `first_target_grace` for the first, since the client cannot send one until the reliable answer reaches it), or the physics
+  ending it (a break, its object going away); the host tells the client with `GrabStatus::Released`.
+* **Tested** (`tests/test_physics_net.cpp`) through the real `NetHost` on `LoopbackNetwork`: two players lift and carry a crate one cannot lift,
+  on a clean link, at 20% loss (50 ms latency, 30 ms jitter, 5% duplication) and at 40% loss (150 ms, 80 ms jitter). The crate reaches its target
+  and the clients' copies end within 0.06 m of the host's; a run is bit-repeatable for a seed.
+
 ### Left for GS-04
 
-* Wire the snapshot into the net layer (channel, rate, unreliable send of the
-  latest snapshot; relevance filtering by distance/interest).
-* Client-side grab prediction: clients don't create grabs; a client's own
-  hold should be predicted locally and reconciled.
-* Interpolation/smoothing of the correction instead of a hard teleport.
-* Host-side validation of grab requests (reach, max holders per prop).
+* Client-side prediction of the player's own grab (the client still waits for the host), and smoothing of the correction instead of a hard teleport.
+* Relevance filtering by distance or interest (every peer gets every snapshot).
 * Joint reference pose: a joint created on a late-joining client is set up at
   the poses it sees then; scenes should be loaded in their authored pose
   before snapshots are applied (or the reference must be authored).
