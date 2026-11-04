@@ -487,6 +487,10 @@ if(AETHER_KIT_QUESTS)
     add_subdirectory(quests)
 endif()
 add_subdirectory(net)
+if(TARGET Aether::Physics)
+    # Physics over the network: the glue between the two (they share a layer, so neither may depend on the other).
+    add_subdirectory(physics_net)
+endif()
 
 # Recast/Detour (zlib, recastnavigation/recastnavigation) for navigation
 # meshes, pathfinding and crowds (Phase 20). Only the libraries.

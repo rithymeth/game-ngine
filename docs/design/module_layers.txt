@@ -53,6 +53,7 @@ aether_module_Audio 3
 aether_module_Navigation 3
 aether_module_Networking 3
 aether_module_Physics 3
+aether_physics_net 3
 aether_quests 3
 aether_replay_anim 3
 aether_replay_blueprint 3
