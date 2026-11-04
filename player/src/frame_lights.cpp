@@ -125,4 +125,40 @@ FrameData BuildFrameData(const World& world, const GuidIndex& guids, const Vec3&
     return data;
 }
 
+void AddParticleLights(FrameData& data, std::span<const vfx::ParticleLight> lights, const Vec3& camera_position) {
+    struct Candidate {
+        f32 distance_squared;
+        f32 position_range[4];
+        f32 color[4];
+    };
+    std::vector<Candidate> pool;
+    const auto distance_squared = [&](f32 x, f32 y, f32 z) {
+        const f32 dx = x - camera_position.x, dy = y - camera_position.y, dz = z - camera_position.z;
+        return dx * dx + dy * dy + dz * dz;
+    };
+    for (u32 i = 0; i < data.counts[0] && i < kMaxPointLights; ++i) {
+        Candidate c{distance_squared(data.point_position_range[i][0], data.point_position_range[i][1], data.point_position_range[i][2]), {}, {}};
+        std::copy(std::begin(data.point_position_range[i]), std::end(data.point_position_range[i]), std::begin(c.position_range));
+        std::copy(std::begin(data.point_color[i]), std::end(data.point_color[i]), std::begin(c.color));
+        pool.push_back(c);
+    }
+    const usize scene_lights = pool.size();
+    for (const vfx::ParticleLight& light : lights) {
+        const f32 energy = light.intensity;
+        if (!(light.radius > 0.0f) || !(energy > 0.0f)) continue; // (also drops NaN)
+        Candidate c{distance_squared(light.position.x, light.position.y, light.position.z), {}, {}};
+        Set4(c.position_range, light.position.x, light.position.y, light.position.z, light.radius);
+        Set4(c.color, light.color.r * energy, light.color.g * energy, light.color.b * energy, 0.0f);
+        pool.push_back(c);
+    }
+    if (pool.size() == scene_lights) return; // nothing to add: leave the scene's lights as they are
+    std::stable_sort(pool.begin(), pool.end(), [](const Candidate& a, const Candidate& b) { return a.distance_squared < b.distance_squared; });
+    if (pool.size() > kMaxPointLights) pool.resize(kMaxPointLights);
+    for (usize i = 0; i < pool.size(); ++i) {
+        std::copy(std::begin(pool[i].position_range), std::end(pool[i].position_range), std::begin(data.point_position_range[i]));
+        std::copy(std::begin(pool[i].color), std::end(pool[i].color), std::begin(data.point_color[i]));
+    }
+    data.counts[0] = static_cast<u32>(pool.size());
+}
+
 } // namespace aether::player

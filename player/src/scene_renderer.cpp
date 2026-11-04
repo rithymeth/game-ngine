@@ -1542,7 +1542,8 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         if (!renderer.frame_buffers.empty()) {
             // The sun, sky and nearby point and spot lights of this scene (the previous use of this slot's frame has finished).
             frame_buffer = renderer.frame_buffers[frame_index % renderer.frame_buffers.size()];
-            const FrameData frame_data = BuildFrameData(world, guids, camera_position);
+            FrameData frame_data = BuildFrameData(world, guids, camera_position);
+            if (draw_particles) AddParticleLights(frame_data, renderer.particle_data.lights, camera_position);
             renderer.device.UpdateFrameConstantBuffer(frame_buffer, &frame_data, sizeof(frame_data));
             particle_lighting.sun_direction = Vec3(frame_data.sun_direction[0], frame_data.sun_direction[1], frame_data.sun_direction[2]);
             particle_lighting.sun_color = Vec3(frame_data.sun_color[0], frame_data.sun_color[1], frame_data.sun_color[2]);
