@@ -4,6 +4,9 @@
 #include "aether/math/math.h"
 #include "aether/scene/entity_guid.h"
 #include "aether/scene/gameplay.h"
+#include "aether/vfx/render.h"
+
+#include <span>
 
 // What the scene shader reads once a frame: the camera, the sun, the sky's ambient light and the nearest point and spot lights, gathered from the
 // world's DirectionalLight, SkyLight, PointLight and SpotLight components (renderer/components.h). The layout is the HLSL struct `FrameData` in
@@ -36,5 +39,11 @@ Camera LimitViewDistance(const Camera& camera, f32 view_distance);
 // The first DirectionalLight and SkyLight in the world (an entity with no Transform keeps the default direction), and the PointLights and SpotLights
 // nearest to `camera_position`, up to the limits above. Positions and directions are world space (parents included).
 FrameData BuildFrameData(const World& world, const GuidIndex& guids, const Vec3& camera_position);
+
+// Particle lights (vfx::ParticleLight: fire, sparks, explosions) join the point lights: the scene's and the particles' are pooled and the
+// kMaxPointLights nearest to `camera_position` stay, except that the scene's nearest four keep their slots however many particle lights
+// there are. A light with no radius or no energy is ignored. Call after
+// BuildFrameData, before the frame constants are uploaded.
+void AddParticleLights(FrameData& data, std::span<const vfx::ParticleLight> lights, const Vec3& camera_position);
 
 } // namespace aether::player

@@ -845,6 +845,15 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
                     }
                     material.sheen_roughness = sheen->value("sheenRoughnessFactor", 0.0f);
                 }
+                if (const Json* hair = object_of("AETHER_materials_hair")) {
+                    material.hair = true;
+                    material.hair_shift = hair->value("hairShift", 0.0f);
+                    material.hair_secondary_shift = hair->value("hairSecondaryShift", 0.0f);
+                    if (hair->contains("hairTint") && (*hair)["hairTint"].is_array()) {
+                        const Json& tint = (*hair)["hairTint"];
+                        for (usize i = 0; i < 3 && i < tint.size(); ++i) material.hair_tint[i] = tint[i].get<f32>();
+                    }
+                }
                 if (const Json* anisotropy = object_of("KHR_materials_anisotropy")) {
                     material.anisotropy_strength = anisotropy->value("anisotropyStrength", 0.0f);
                     material.anisotropy_rotation = anisotropy->value("anisotropyRotation", 0.0f);
@@ -975,7 +984,7 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
 }
 
 bool GltfMaterial::HasSurfaceExtension() const {
-    return clear_coat > 0.0f || sheen_color[0] > 0.0f || sheen_color[1] > 0.0f || sheen_color[2] > 0.0f || anisotropy_strength > 0.0f;
+    return clear_coat > 0.0f || sheen_color[0] > 0.0f || sheen_color[1] > 0.0f || sheen_color[2] > 0.0f || anisotropy_strength > 0.0f || hair;
 }
 
 void PackSurfaceExtension(const GltfMaterial& material, u8 texels[8]) {
@@ -995,6 +1004,19 @@ void PackSurfaceExtension(const GltfMaterial& material, u8 texels[8]) {
     texels[5] = byte(material.sheen_color[1]);
     texels[6] = byte(material.sheen_color[2]);
     texels[7] = byte(turns);
+}
+
+void PackHairExtension(const GltfMaterial& material, u8 texels[8]) {
+    const auto byte = [](f32 value) {
+        const f32 clamped = value > 0.0f ? (value < 1.0f ? value : 1.0f) : 0.0f; // NaN packs as 0
+        return static_cast<u8>(clamped * 255.0f + 0.5f);
+    };
+    texels[0] = byte(material.hair_shift + 0.5f);
+    texels[1] = byte(material.hair_secondary_shift + 0.5f);
+    texels[2] = byte(material.hair_tint[0]);
+    texels[3] = byte(material.hair_tint[1]);
+    texels[4] = byte(material.hair_tint[2]);
+    texels[5] = texels[6] = texels[7] = 0;
 }
 
 bool LoadGltf(const std::string& path, GltfScene& out_scene, std::string* error) {

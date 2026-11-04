@@ -1,4 +1,5 @@
 #include "../player/src/frame_lights.h"
+#include "../player/src/particle_pass.h"
 
 #include "aether/renderer/components.h"
 #include "aether/scene/components.h"
@@ -6,6 +7,7 @@
 #include "test_framework.h"
 
 #include <cmath>
+#include <vector>
 
 // The scene's lights as the player's shader reads them (player/src/frame_lights.h): defaults without light components, the sun's direction from its
 // rotation, the sky's ambient colour, and the nearest point and spot lights.
@@ -94,4 +96,105 @@ AETHER_TEST(PlayerLights_ViewDistancePullsInTheFarPlaneOnly) {
     AETHER_CHECK(LimitViewDistance(camera, 0.01f).far_plane > camera.near_plane); // kept clear of the near plane
     camera.projection = Projection::Orthographic;
     AETHER_CHECK(Near(LimitViewDistance(camera, 300.0f).far_plane, 1000.0f));
+}
+
+AETHER_TEST(PlayerLights_ParticleLightsJoinTheScenesAndTheNearestEightStay) {
+    FrameData d;
+    d.counts[0] = 1; // one scene light, far away
+    d.point_position_range[0][0] = 100.0f, d.point_position_range[0][3] = 50.0f;
+    d.point_color[0][0] = 2.0f;
+    const auto particle = [](f32 x, f32 radius, f32 intensity) {
+        vfx::ParticleLight l;
+        l.position = Vec3(x, 0, 0);
+        l.color = {1.0f, 0.5f, 0.0f, 1.0f};
+        l.radius = radius;
+        l.intensity = intensity;
+        return l;
+    };
+    // Nothing usable (no radius, no energy, NaN): the scene's light is left exactly as it was.
+    const std::vector<vfx::ParticleLight> useless = {particle(1, 0.0f, 1.0f), particle(2, 3.0f, 0.0f), particle(3, std::nanf(""), 1.0f)};
+    AddParticleLights(d, useless, Vec3(0, 0, 0));
+    AETHER_CHECK(d.counts[0] == 1 && d.point_position_range[0][0] == 100.0f);
+
+    // A particle light is a point light with its colour times its intensity, and it sorts in by distance from the camera.
+    const std::vector<vfx::ParticleLight> one = {particle(5, 4.0f, 3.0f)};
+    AddParticleLights(d, one, Vec3(0, 0, 0));
+    AETHER_CHECK(d.counts[0] == 2);
+    AETHER_CHECK(d.point_position_range[0][0] == 5.0f && d.point_position_range[0][3] == 4.0f); // nearer than the scene light, so first
+    AETHER_CHECK(Near(d.point_color[0][0], 3.0f) && Near(d.point_color[0][1], 1.5f) && Near(d.point_color[0][2], 0.0f));
+    AETHER_CHECK(d.point_position_range[1][0] == 100.0f && Near(d.point_color[1][0], 2.0f)); // the scene's light follows
+
+    // Twelve more than fit: the scene's light keeps a slot (it is far away, but a lamp is not pushed out by sparks), the particles' nearest fill the rest.
+    std::vector<vfx::ParticleLight> many;
+    for (int i = 1; i <= 12; ++i) many.push_back(particle(static_cast<f32>(i), 1.0f, 1.0f));
+    FrameData e;
+    e.counts[0] = 1;
+    e.point_position_range[0][0] = 100.0f, e.point_position_range[0][3] = 50.0f;
+    e.point_color[0][0] = 2.0f;
+    AddParticleLights(e, many, Vec3(0, 0, 0));
+    AETHER_CHECK(e.counts[0] == kMaxPointLights);
+    u32 scene_light_slots = 0;
+    for (u32 i = 0; i < kMaxPointLights; ++i) {
+        if (e.point_position_range[i][0] == 100.0f) ++scene_light_slots;
+        if (i > 0) AETHER_CHECK(e.point_position_range[i - 1][0] <= e.point_position_range[i][0]);
+    }
+    AETHER_CHECK(scene_light_slots == 1);
+    AETHER_CHECK(e.point_position_range[0][0] == 1.0f && e.point_position_range[6][0] == 7.0f); // particles 1..7 and the far scene light
+
+    // Eight scene lights: the particles may take only the other four slots.
+    FrameData full;
+    full.counts[0] = 8;
+    for (int i = 0; i < 8; ++i) full.point_position_range[i][0] = 20.0f + static_cast<f32>(i), full.point_position_range[i][3] = 5.0f;
+    AddParticleLights(full, many, Vec3(0, 0, 0));
+    u32 from_scene = 0;
+    for (u32 i = 0; i < kMaxPointLights; ++i) from_scene += full.point_position_range[i][0] >= 20.0f ? 1u : 0u;
+    AETHER_CHECK(full.counts[0] == kMaxPointLights && from_scene == 4);
+}
+
+AETHER_TEST(PlayerLights_LitSpritesTakeTheSunSkyAndNearbyPointLights) {
+    player::ParticleLighting lighting;
+    lighting.lit = true;
+    lighting.sun_direction = Vec3(0, 1, 0);
+    lighting.sun_color = Vec3(3, 3, 3);
+    lighting.sky_color = Vec3(1, 1, 1);
+    const Vec3 camera(0, 0, 10);
+    const Vec3 sprite(0, 0, 0);
+    const Vec3 base = player::ParticleSpriteLight(lighting, sprite, camera);
+    AETHER_CHECK(base.x > 0.3f && Near(base.x, base.y) && Near(base.y, base.z)); // sky fill plus the sun across the face, never black
+    // A sprite whose camera sees its top is lit by the sun more than one seen from below.
+    AETHER_CHECK(player::ParticleSpriteLight(lighting, sprite, Vec3(0, 10, 0)).x > player::ParticleSpriteLight(lighting, sprite, Vec3(0, -10, 0)).x);
+    // A point light adds its colour near it and nothing beyond its range.
+    lighting.points.push_back({Vec3(0, 0, 2), 5.0f, Vec3(10, 5, 0)});
+    const Vec3 lit = player::ParticleSpriteLight(lighting, sprite, camera);
+    AETHER_CHECK(lit.x > base.x && lit.x - base.x > 2.0f * (lit.z - base.z) * 0.9f && Near(lit.z, base.z));
+    lighting.points[0].position = Vec3(0, 0, 50);
+    AETHER_CHECK(Near(player::ParticleSpriteLight(lighting, sprite, camera).x, base.x));
+}
+
+AETHER_TEST(PlayerLights_OnlyALitBatchHasItsSpritesShaded) {
+    vfx::ParticleRenderData data;
+    for (bool lit : {false, true}) {
+        vfx::SpriteBatch batch;
+        batch.lit = lit;
+        vfx::SpriteInstance s;
+        s.center = Vec3(0, 0, 0);
+        s.right = Vec3(1, 0, 0);
+        s.up = Vec3(0, 1, 0);
+        s.color = {1.0f, 1.0f, 1.0f, 1.0f};
+        batch.instances.push_back(s);
+        data.sprites.push_back(batch);
+    }
+    vfx::ParticleCamera camera;
+    camera.position = Vec3(0, 0, 10);
+    player::ParticleLighting lighting;
+    lighting.lit = true;
+    player::ParticleVertexStreams streams;
+    player::PackParticleVertices(data, camera, streams, {}, {}, &lighting);
+    AETHER_CHECK(streams.alpha.size() == 12); // two sprites, six vertices each
+    const f32 first = streams.alpha[0].color[0], second = streams.alpha[6].color[0];
+    const f32 unlit = std::max(first, second), shaded = std::min(first, second);
+    AETHER_CHECK(Near(unlit, 1.0f) && shaded > 0.1f && shaded < 0.9f);
+    // Without lighting both draw as they always did.
+    player::PackParticleVertices(data, camera, streams);
+    AETHER_CHECK(Near(streams.alpha[0].color[0], 1.0f) && Near(streams.alpha[6].color[0], 1.0f));
 }

@@ -526,3 +526,34 @@ AETHER_TEST(Gltf_PackSurfaceExtensionMakesTwoTexels) {
     PackSurfaceExtension(m, texels);
     AETHER_CHECK(texels[0] == 255 && texels[1] == 0 && texels[2] == 0);
 }
+
+// AETHER_materials_hair: strand shading for hair cards, an engine extension.
+AETHER_TEST(Gltf_HairExtensionIsReadAndPacksTwoMoreTexels) {
+    constexpr const char* kHair = R"({
+      "asset": {"version": "2.0"},
+      "materials": [
+        {"pbrMetallicRoughness": {}},
+        {"pbrMetallicRoughness": {},
+         "extensions": {"AETHER_materials_hair": {"hairShift": -0.1, "hairSecondaryShift": 0.2, "hairTint": [1.0, 0.5, 0.0]}}},
+        {"pbrMetallicRoughness": {}, "extensions": {"AETHER_materials_hair": {}}}
+      ]
+    })";
+    const std::string path = WriteTempGltf("aether_test_hair_ext.gltf", kHair);
+    GltfScene scene;
+    AETHER_CHECK(LoadGltf(path, scene));
+    AETHER_CHECK(scene.materials.size() == 3);
+    AETHER_CHECK(!scene.materials[0].hair && !scene.materials[0].HasSurfaceExtension());
+
+    const GltfMaterial& m = scene.materials[1];
+    AETHER_CHECK(m.hair && m.HasSurfaceExtension());
+    AETHER_CHECK(std::fabs(m.hair_shift + 0.1f) < 1e-6f && std::fabs(m.hair_secondary_shift - 0.2f) < 1e-6f);
+    AETHER_CHECK(m.hair_tint[0] == 1.0f && m.hair_tint[1] == 0.5f && m.hair_tint[2] == 0.0f);
+    // An empty extension is still hair, with no shift and a white tint.
+    AETHER_CHECK(scene.materials[2].hair && scene.materials[2].hair_tint[2] == 1.0f && scene.materials[2].hair_shift == 0.0f);
+
+    u8 texels[8];
+    PackHairExtension(m, texels);
+    AETHER_CHECK(texels[0] == 102 && texels[1] == 179); // (-0.1 + 0.5) and (0.2 + 0.5) in 8 bits
+    AETHER_CHECK(texels[2] == 255 && texels[3] == 128 && texels[4] == 0);
+    std::filesystem::remove(path);
+}
