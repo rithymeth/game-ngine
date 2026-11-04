@@ -156,8 +156,17 @@ Nav.MoveTowards function
 Physics table
 Physics.AddForce function
 Physics.AddImpulse function
+Physics.GetJointState function
 Physics.GetLinearVelocity function
+Physics.Grab function
+Physics.IsGrabActive function
 Physics.Raycast function
+Physics.Release function
+Physics.RepairJoint function
+Physics.SetGrabTarget function
+Physics.SetJointEnabled function
+Physics.SetJointLocked function
+Physics.SetJointMotorTarget function
 Physics.SetLinearVelocity function
 Physics.SphereCast function
 Quests table

@@ -4219,6 +4219,39 @@
   bool HasCollider(const World&world,Entity entity)
   usize MigrateLegacyRigidBodies(World&world)
   void RegisterPhysicsComponentSerializers()
+[physics/include/aether/physics/constraints.h] experimental
+  type enum class ConstraintBreakKind
+  type enum class JointMotor
+  type enum class JointType
+  type struct BodyStateRecord
+  type struct ConstraintBreakEvent
+  type struct ConstraintSnapshot
+  type struct GrabSettings
+  type struct JointStateRecord
+  type struct PhysicsJoint
+  ),AETHER_FIELD(anchor,Field_EditAnywhere,
+  ),AETHER_FIELD(angle,Field_ReadOnly | Field_Replicated,
+  ),AETHER_FIELD(axis,Field_EditAnywhere,
+  ),AETHER_FIELD(break_force,Field_EditAnywhere,
+  ),AETHER_FIELD(break_torque,Field_EditAnywhere,
+  ),AETHER_FIELD(broken,Field_EditAnywhere | Field_Replicated,
+  ),AETHER_FIELD(connected_anchor,Field_EditAnywhere,
+  ),AETHER_FIELD(enabled,Field_EditAnywhere | Field_Replicated),AETHER_FIELD(locked,Field_EditAnywhere | Field_Replicated,
+  ),AETHER_FIELD(lock_break_force,Field_EditAnywhere,
+  ),AETHER_FIELD(max_angle,Field_EditAnywhere,
+  ),AETHER_FIELD(max_distance,Field_EditAnywhere,
+  ),AETHER_FIELD(min_angle,Field_EditAnywhere,
+  ),AETHER_FIELD(min_distance,Field_EditAnywhere,
+  ),AETHER_FIELD(motor,Field_EditAnywhere),AETHER_FIELD(motor_max_torque,Field_EditAnywhere,
+  ),AETHER_FIELD(motor_damping,Field_EditAnywhere,
+  ),AETHER_FIELD(motor_frequency,Field_EditAnywhere,
+  ),AETHER_FIELD(motor_target,Field_EditAnywhere,
+  ),AETHER_FIELD(spring_damping,Field_EditAnywhere,
+  ),AETHER_FIELD(spring_frequency,Field_EditAnywhere,
+  AETHER_ENUM(aether::JointType,1,AETHER_ENUM_VALUE(Fixed),AETHER_ENUM_VALUE(Point),AETHER_ENUM_VALUE(Hinge),AETHER_ENUM_VALUE(Distance))AETHER_ENUM(aether::JointMotor,1,AETHER_ENUM_VALUE(None),AETHER_ENUM_VALUE(Velocity),AETHER_ENUM_VALUE(Position))AETHER_REFLECT(aether::PhysicsJoint,1,AETHER_FIELD(type,Field_EditAnywhere),AETHER_FIELD(connected,Field_EditAnywhere,
+  Quaternion rotation=Quaternion::Identity()
+  [[nodiscard]]bool DeserializeConstraintSnapshot(std::span<const u8>bytes,ConstraintSnapshot&out)
+  std::vector<u8>SerializeConstraintSnapshot(const ConstraintSnapshot&snapshot)
 [physics/include/aether/physics/debug_draw.h] experimental
   type enum class ColliderHandleKind
   type struct ColliderHandle
@@ -4249,11 +4282,16 @@
 [physics/include/aether/physics/physics_scene.h] experimental
   type class PhysicsScene
   type enum class PhysicsEventType
+  type struct GrabTracked
+  type struct JointTracked
   type struct PhysicsEvent
   type struct SceneHit
   type struct Tracked
+  ConstraintSnapshot CaptureConstraintState()const
   Entity EntityOf(JPH::BodyID body)const
+  Entity FindByGuid(const EntityGuid&guid)const
   Entity Owner(JPH::BodyID body)const
+  GrabId Grab(Entity object,Entity holder,const Vec3&world_point,const GrabSettings&settings=
   JPH::BodyID BodyOf(Entity entity)const
   PhysicsScene&operator=(const PhysicsScene&)=delete
   PhysicsScene(const PhysicsScene&)=delete
@@ -4262,10 +4300,16 @@
   SceneHit OrientedCapsuleCast(f32 radius,f32 height,const Quaternion&rotation,const Vec3&from,const Vec3&to,LayerMask layers=kAllLayers,Entity ignore=kNullEntity,bool include_triggers=false)const
   SceneHit RayCast(const Vec3&from,const Vec3&to,LayerMask layers=kAllLayers,Entity ignore=kNullEntity,bool include_triggers=false)const
   SceneHit SphereCast(f32 radius,const Vec3&from,const Vec3&to,LayerMask layers=kAllLayers,Entity ignore=kNullEntity,bool include_triggers=false)const
+  World&EcsWorld()const
   bool Build(Entity entity,Tracked&tracked,std::string&problem)
+  bool CreateJoint(JointTracked&joint,const PhysicsJoint&component)
+  bool IsGrabActive(GrabId grab)const
   bool ReconcileAuthoritativePose(Entity entity,f32 position_tolerance,f32 rotation_tolerance_radians)
+  bool Release(GrabId grab)
+  bool SetGrabTarget(GrabId grab,const Vec3&target)
   const char*PhysicsEventName(PhysicsEventType type)
   const std::unordered_map<u32,std::string>&Problems()const
+  const std::vector<ConstraintBreakEvent>&ConstraintBreaks()const
   const std::vector<PhysicsEvent>&Events()const
   public:PhysicsScene(World&world,PhysicsWorld&physics)
   static Entity EntityFromKey(u64 key)
@@ -4276,15 +4320,27 @@
   std::vector<Entity>OverlapOrientedCapsule(const Vec3&center,f32 radius,f32 height,const Quaternion&rotation,LayerMask layers=kAllLayers,Entity ignore=kNullEntity,bool include_triggers=false)const
   std::vector<Entity>OverlapSphere(const Vec3&center,f32 radius,LayerMask layers=kAllLayers,Entity ignore=kNullEntity,bool include_triggers=false)const
   std::vector<SceneHit>RayCastAll(const Vec3&from,const Vec3&to,LayerMask layers=kAllLayers,Entity ignore=kNullEntity,bool include_triggers=false,usize max_hits=64)const
+  using ConstraintBreakHandler=std::function<void(const ConstraintBreakEvent&)>
   using EventHandler=std::function<void(const PhysicsEvent&)>
   usize BodyCount()const
+  usize GrabCount(Entity object)const
+  usize JointCount()const
+  usize ReleaseHolder(Entity holder)
   void AdoptBody(JPH::BodyID body,Entity entity)
+  void ApplyConstraintState(const ConstraintSnapshot&snapshot)
+  void CheckBreaks(f32 dt)
   void Destroy(Tracked&tracked)
+  void DetachBody(JPH::BodyID body)
   void Dispatch()
   void ReleaseBody(JPH::BodyID body)
+  void RemoveAllConstraints()
+  void RemoveJointConstraints(JointTracked&joint)
+  void RemoveLock(JointTracked&joint)
+  void SetConstraintBreakHandler(ConstraintBreakHandler handler)
   void SetEventHandler(EventHandler handler)
   void Step(f32 dt)
   void Sync()
+  void SyncJoints()
   ~PhysicsScene()
 [physics/include/aether/physics/physics_world.h] experimental
   type class PhysicsWorld
