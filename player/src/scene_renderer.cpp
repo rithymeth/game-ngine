@@ -1,5 +1,7 @@
 #include "aether/player/scene_renderer.h"
 
+#include "aether/renderer/material_codegen.h"
+
 #include "aether/assets/gltf_loader.h"
 #include "aether/assets/image.h"
 #include "aether/core/log.h"
@@ -44,7 +46,7 @@ struct DrawConstants {
     Mat4 mvp;
     f32 color[4] = {1, 1, 1, 1};
     u32 normal_matrix_packed[5]{};
-    u32 material_textures = 0x00ffffffu;
+    u32 material_textures = 0x3fffffffu; // four texture indices and the extension index (63 = none), 6 bits each
     u32 material_factors_0 = 0x3c003c00u;
     u32 material_factors_1 = 0x3c003c00u;
     f32 camera_local[3]{};
@@ -86,7 +88,8 @@ u32 PackHalfPair(f32 low, f32 high) {
 u32 PackMaterialTextures(const SampledTextureHandle& base_color, bool has_base_color,
                          const SampledTextureHandle& normal, bool has_normal,
                          const SampledTextureHandle& metallic_roughness, bool has_metallic_roughness,
-                         const SampledTextureHandle& occlusion, bool has_occlusion) {
+                         const SampledTextureHandle& occlusion, bool has_occlusion,
+                         const SampledTextureHandle& extension, bool has_extension) {
     constexpr u32 absent = 63u;
     const u32 base = has_base_color && base_color.IsValid() ? base_color.index : absent;
     const u32 normal_index = has_normal && normal.IsValid() ? normal.index : absent;
@@ -94,8 +97,9 @@ u32 PackMaterialTextures(const SampledTextureHandle& base_color, bool has_base_c
                                              ? metallic_roughness.index
                                              : absent;
     const u32 occlusion_index = has_occlusion && occlusion.IsValid() ? occlusion.index : absent;
+    const u32 extension_index = has_extension && extension.IsValid() ? extension.index : absent;
     return (base & 63u) | ((normal_index & 63u) << 6) | ((metallic_roughness_index & 63u) << 12) |
-           ((occlusion_index & 63u) << 18);
+           ((occlusion_index & 63u) << 18) | ((extension_index & 63u) << 24);
 }
 
 u32 PackMaterialOptions(assets::MaterialAlphaMode mode, f32 cutoff, const f32 emissive[3]) {
@@ -262,6 +266,71 @@ float3 SurfaceLight(float3 light_direction, float3 normal, float3 view_direction
     return (diffuse + specular) * n_dot_l;
 }
 
+// KHR_materials_clearcoat, sheen and anisotropy (Phase 39.3), read from a 2x1 texture of packed factors when the material has them
+// (assets::PackSurfaceExtension). Materials without it take the plain SurfaceLight path unchanged.
+struct SurfaceExtension {
+    float active;
+    float clear_coat;
+    float clear_coat_roughness;
+    float3 sheen_color;
+    float sheen_roughness;
+    float anisotropy;
+    float anisotropy_rotation;
+};
+SurfaceExtension NoSurfaceExtension() {
+    SurfaceExtension e;
+    e.active = 0.0;
+    e.clear_coat = 0.0;
+    e.clear_coat_roughness = 0.0;
+    e.sheen_color = float3(0.0, 0.0, 0.0);
+    e.sheen_roughness = 0.0;
+    e.anisotropy = 0.0;
+    e.anisotropy_rotation = 0.0;
+    return e;
+}
+SurfaceExtension LoadSurfaceExtension(uint index) {
+    float4 first = g_Textures[index].Load(int3(0, 0, 0));
+    float4 second = g_Textures[index].Load(int3(1, 0, 0));
+    SurfaceExtension e;
+    e.active = 1.0;
+    e.clear_coat = first.x;
+    e.clear_coat_roughness = first.y;
+    e.sheen_roughness = first.z;
+    e.anisotropy = first.w;
+    e.sheen_color = second.xyz;
+    e.anisotropy_rotation = second.w;
+    return e;
+}
+
+// SurfaceLight plus the extensions: anisotropy replaces the specular lobe, sheen adds a fibre lobe on top (and takes a little of the base's
+// energy), and the clear coat covers the lot with its own specular and attenuates what is below it. T and B are the surface tangent frame.
+float3 SurfaceLightEx(float3 light_direction, float3 normal, float3 view_direction, float3 base_color, float metallic, float roughness,
+                      float3 f0, SurfaceExtension ext, float3 T, float3 B) {
+    float3 lit = SurfaceLight(light_direction, normal, view_direction, base_color, metallic, roughness, f0);
+    if (ext.active < 0.5) return lit;
+    float3 half_vector = normalize(view_direction + light_direction);
+    float n_dot_l = saturate(dot(normal, light_direction));
+    float n_dot_v = max(saturate(dot(normal, view_direction)), 1e-4);
+    float n_dot_h = saturate(dot(normal, half_vector));
+    float l_dot_h = saturate(dot(light_direction, half_vector));
+    float v_dot_h = saturate(dot(view_direction, half_vector));
+    if (ext.anisotropy > 0.001) {
+        float3 fresnel = f0 + (1.0 - f0) * pow(1.0 - v_dot_h, 5.0);
+        float3 diffuse = (1.0 - fresnel) * (1.0 - metallic) * base_color / 3.14159265 * n_dot_l;
+        lit = diffuse + AetherAnisotropicSpecular(f0, roughness, ext.anisotropy, normal, T, B, view_direction, light_direction,
+                                                  ext.anisotropy_rotation);
+    }
+    float sheen_peak = max(ext.sheen_color.r, max(ext.sheen_color.g, ext.sheen_color.b));
+    if (sheen_peak > 0.0) {
+        lit = lit * (1.0 - 0.2 * sheen_peak) + AetherSheen(ext.sheen_color, ext.sheen_roughness, n_dot_v, n_dot_l, n_dot_h);
+    }
+    if (ext.clear_coat > 0.001) {
+        AetherCoat coat = AetherClearCoat(ext.clear_coat, max(ext.clear_coat_roughness, 0.04), n_dot_h, l_dot_h);
+        lit = lit * coat.attenuation + coat.spec * n_dot_l;
+    }
+    return lit;
+}
+
 float4 PSMain(PSInput input) : SV_TARGET {
     uint base_index = g_PC.g_MaterialTextures & 63;
     uint normal_index = (g_PC.g_MaterialTextures >> 6) & 63;
@@ -304,6 +373,12 @@ float4 PSMain(PSInput input) : SV_TARGET {
         float occlusion_sample = g_Textures[occlusion_index].Sample(g_Sampler, input.uv).r;
         ambient_occlusion = lerp(1.0, occlusion_sample, occlusion_strength);
     }
+    SurfaceExtension surface_ext = NoSurfaceExtension();
+    uint extension_index = (g_PC.g_MaterialTextures >> 24) & 63;
+    // Not a ?: for the same reason as above.
+    if (extension_index < 32) surface_ext = LoadSurfaceExtension(extension_index);
+    float3 surface_tangent = normalize(tangent - normal * dot(normal, tangent));
+    float3 surface_bitangent = normalize(cross(normal, surface_tangent)) * input.tangent_sign;
     float3 view_local = g_PC.g_CameraLocal - input.local_position;
     float3 view_direction = normalize(ApplyModelTransform(view_local));
     float3 f0 = lerp(0.04.xxx, base_color, metallic);
@@ -321,7 +396,7 @@ float4 PSMain(PSInput input) : SV_TARGET {
     // the key light. The environment term includes reflected metal color.
     float sky_fill = 0.28 + 0.14 * saturate(normal.y);
     float3 environment = (base_color * (1.0 - metallic) * sky_fill + f0 * (0.45 + 0.25 * roughness)) * sky_tint;
-    float3 color = environment * ambient_occlusion + SurfaceLight(sun_direction, normal, view_direction, base_color, metallic, roughness, f0) * sun_radiance;
+    float3 color = environment * ambient_occlusion + SurfaceLightEx(sun_direction, normal, view_direction, base_color, metallic, roughness, f0, surface_ext, surface_tangent, surface_bitangent) * sun_radiance;
 #ifdef AETHER_FRAME_DATA
     // The world position of this pixel: the camera minus the (world-space) vector from the pixel to the camera.
     float3 world_position = g_Frame.camera_world.xyz - ApplyModelTransform(view_local);
@@ -330,7 +405,7 @@ float4 PSMain(PSInput input) : SV_TARGET {
         float distance = max(length(to_light), 1e-4);
         float falloff = saturate(1.0 - pow(distance / g_Frame.point_position_range[point_index].w, 4.0));
         falloff = falloff * falloff / (distance * distance + 1.0);
-        color += SurfaceLight(to_light / distance, normal, view_direction, base_color, metallic, roughness, f0) * g_Frame.point_color[point_index].rgb * falloff;
+        color += SurfaceLightEx(to_light / distance, normal, view_direction, base_color, metallic, roughness, f0, surface_ext, surface_tangent, surface_bitangent) * g_Frame.point_color[point_index].rgb * falloff;
     }
     for (uint spot_index = 0; spot_index < g_Frame.counts.y; ++spot_index) {
         float3 to_light = g_Frame.spot_position_range[spot_index].xyz - world_position;
@@ -340,7 +415,7 @@ float4 PSMain(PSInput input) : SV_TARGET {
                                 dot(-light_direction, g_Frame.spot_direction_outer[spot_index].xyz));
         float falloff = saturate(1.0 - pow(distance / g_Frame.spot_position_range[spot_index].w, 4.0));
         falloff = falloff * falloff / (distance * distance + 1.0);
-        color += SurfaceLight(light_direction, normal, view_direction, base_color, metallic, roughness, f0) * g_Frame.spot_color_inner[spot_index].rgb * falloff * cone;
+        color += SurfaceLightEx(light_direction, normal, view_direction, base_color, metallic, roughness, f0, surface_ext, surface_tangent, surface_bitangent) * g_Frame.spot_color_inner[spot_index].rgb * falloff * cone;
     }
 #endif
     float3 emissive = float3((g_PC.g_AlphaOptions >> 2) & 15,
@@ -478,6 +553,9 @@ struct SceneRenderer::Impl {
         bool has_normal_texture = false;
         bool has_metallic_roughness_texture = false;
         bool has_occlusion_texture = false;
+        // KHR_materials_clearcoat, sheen and anisotropy: a 2x1 texture of the packed factors (assets::PackSurfaceExtension), read by texel fetch.
+        SampledTextureHandle extension_texture;
+        bool has_extension_texture = false;
     };
     struct MaterialTextures {
         SampledTextureHandle base_color;
@@ -528,9 +606,9 @@ struct SceneRenderer::Impl {
 
     Impl(IDevice& d, ISwapChain& s, const GamePackage& p) : device(d), swap_chain(s), package(p) {
         PipelineDesc desc;
-        desc.hlsl_source = kSceneShader;
+        desc.hlsl_source = SceneShaderSource(false);
         if (device.SupportsFrameConstants()) {
-            desc.hlsl_source = std::string("#define AETHER_FRAME_DATA 1\n") + kSceneShader;
+            desc.hlsl_source = SceneShaderSource(true);
             desc.frame_constants_size_bytes = sizeof(FrameData);
             for (usize i = 0; i < kFrameBuffers; ++i) frame_buffers.push_back(device.CreateFrameConstantBuffer(sizeof(FrameData)));
         }
@@ -1147,6 +1225,7 @@ struct SceneRenderer::Impl {
             }
         }
 
+        std::vector<SampledTextureHandle> extension_textures;
         out.meshes.resize(out.scene.meshes.size());
         for (usize mesh_index = 0; mesh_index < out.scene.meshes.size(); ++mesh_index) {
             const auto& source_mesh = out.scene.meshes[mesh_index];
@@ -1195,6 +1274,18 @@ struct SceneRenderer::Impl {
                     draw.alpha_cutoff = material.alpha_cutoff;
                     draw.alpha_mode = material.alpha_mode;
                     const usize material_index = static_cast<usize>(primitive.material_index);
+                    if (material.HasSurfaceExtension()) {
+                        if (extension_textures.size() < out.scene.materials.size()) extension_textures.resize(out.scene.materials.size());
+                        SampledTextureHandle& cached = extension_textures[material_index];
+                        if (!cached.IsValid()) {
+                            u8 texels[8];
+                            assets::PackSurfaceExtension(material, texels);
+                            cached = device.CreateTexture(2, 1, texels);
+                        }
+                        // A full bindless table leaves the material plain rather than failing the model.
+                        draw.extension_texture = cached;
+                        draw.has_extension_texture = cached.IsValid();
+                    }
                     if (material_index < material_textures.size()) {
                         const MaterialTextures& textures_for_material = material_textures[material_index];
                         draw.base_color_texture = textures_for_material.base_color;
@@ -1540,7 +1631,8 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                 primitive.base_color_texture, primitive.has_base_color_texture,
                                 primitive.normal_texture, primitive.has_normal_texture,
                                 primitive.metallic_roughness_texture, primitive.has_metallic_roughness_texture,
-                                primitive.occlusion_texture, primitive.has_occlusion_texture);
+                                primitive.occlusion_texture, primitive.has_occlusion_texture,
+                                primitive.extension_texture, primitive.has_extension_texture);
                             constants.material_factors_0 = PackHalfPair(primitive.metallic, primitive.roughness);
                             constants.material_factors_1 = PackHalfPair(primitive.normal_scale, primitive.occlusion_strength);
                             constants.alpha_options = PackMaterialOptions(primitive.alpha_mode, primitive.alpha_cutoff, primitive.emissive);
@@ -1596,6 +1688,11 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     }
     renderer.DrawHud(game, commands);
     commands.EndRenderPass();
+}
+
+// The advanced PBR library (anisotropic GGX, sheen, clear coat) goes ahead of the scene shader.
+std::string SceneShaderSource(bool with_frame_data) {
+    return std::string(with_frame_data ? "#define AETHER_FRAME_DATA 1\n" : "") + mat::AdvancedPbrHlsl() + kSceneShader;
 }
 
 } // namespace aether::player

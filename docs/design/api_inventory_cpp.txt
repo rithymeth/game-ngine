@@ -1196,11 +1196,13 @@
   [[nodiscard]]bool LoadGltf(const std::string&path,GltfScene&out_scene)
   [[nodiscard]]bool LoadGltf(const std::string&path,GltfScene&out_scene,std::string*error)
   [[nodiscard]]bool LoadGltfFromMemory(std::span<const u8>json,GltfScene&out_scene)
+  bool HasSurfaceExtension()const
   usize ComponentsPerKey()const
   void ComputeSkinMatrices(const GltfAnimationPose&pose,const GltfSkin&skin,std::vector<Mat4>&out_matrices,i32 mesh_node_index)
   void ComputeSkinMatrices(const GltfScene&scene,const GltfAnimation*animation,f32 time_seconds,const GltfSkin&skin,std::vector<Mat4>&out_matrices,i32 mesh_node_index=-1)
   void EvaluateAnimation(const GltfScene&scene,const GltfAnimation&animation,f32 time_seconds,std::vector<GltfNodeInstance>&out_node_instances)
   void EvaluateAnimationPose(const GltfScene&scene,const GltfAnimation&animation,f32 time_seconds,GltfAnimationPose&out_pose)
+  void PackSurfaceExtension(const GltfMaterial&material,u8 texels[8])
 [engine/include/aether/assets/gltf_references.h] experimental
   type struct GltfFileReference
   int RewriteGltfUris(const std::filesystem::path&gltf_file,const std::function<std::optional<std::string>(const std::string&uri)>&rewrite,std::string*error=nullptr)
@@ -1759,11 +1761,13 @@
   ImageDiff CompareImages(const std::vector<u8>&a,const std::vector<u8>&b,u32 width,u32 height,const Tolerance&tolerance)
   SceneReport RunScene(const Scene&scene,u32 width,u32 height,const std::vector<rhi::Backend>&backends,const Tolerance&tolerance)
   bool Ok(const Tolerance&tolerance)const
-  bool RenderScene(rhi::IDevice&device,const Scene&scene,u32 width,u32 height,std::vector<u8>&pixels,std::string*error=nullptr)
+  bool RenderScene(rhi::IDevice&device,const Scene&scene,u32 width,u32 height,std::vector<u8>&pixels,std::string*error=nullptr,f64*frame_ms=nullptr)
   bool Within(const ImageDiff&diff,const Tolerance&tolerance)
+  bool WriteBmp(const std::string&path,const std::vector<u8>&rgba,u32 width,u32 height)
   const char*BackendName(rhi::Backend backend)
   const std::vector<Scene>&Scenes()
   f64 BadFraction()const
+  std::function<std::string(u32 width,u32 height)>hlsl
   std::string Describe(const ImageDiff&diff)
   std::string SceneHlsl(const Scene&scene,u32 width,u32 height)
   std::vector<u8>ReferenceImage(const Scene&scene,u32 width,u32 height)
@@ -4515,6 +4519,7 @@
   SceneRenderer&operator=(const SceneRenderer&)=delete
   SceneRenderer(const SceneRenderer&)=delete
   public:SceneRenderer(gfx::rhi::IDevice&device,gfx::rhi::ISwapChain&swap_chain,const GamePackage&package)
+  std::string SceneShaderSource(bool with_frame_data)
   void Draw(Game&game,gfx::rhi::ICommandList&commands,u32 frame_index)
   void SetDrawParticles(bool draw)
   void SetRenderPoseSampler(std::function<bool(Entity,Transform&)>sampler)
@@ -4690,6 +4695,8 @@
   void PlaceTransients()
   void SideEffect()
   void Write(ResourceId resource,Access access)
+[renderer/include/aether/renderer/lit_parity.h] experimental
+  const std::vector<gfx::parity::Scene>&LitParityScenes()
 [renderer/include/aether/renderer/material.h] experimental
   type enum class BlendMode
   type enum class Fit

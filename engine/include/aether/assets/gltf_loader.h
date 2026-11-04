@@ -38,7 +38,25 @@ struct GltfMaterial {
     std::string normal_texture;
     std::string metallic_roughness_texture;
     std::string occlusion_texture;
+
+    // KHR_materials_clearcoat, KHR_materials_sheen and KHR_materials_anisotropy (Phase 39.3), factors only: their textures are not read.
+    // All three default to "off" (the extensions' own defaults), so a material without them is unchanged.
+    f32 clear_coat = 0.0f;           // clearcoatFactor
+    f32 clear_coat_roughness = 0.0f; // clearcoatRoughnessFactor
+    f32 sheen_color[3] = {0.0f, 0.0f, 0.0f}; // sheenColorFactor
+    f32 sheen_roughness = 0.0f;      // sheenRoughnessFactor
+    f32 anisotropy_strength = 0.0f;  // anisotropyStrength, 0..1
+    f32 anisotropy_rotation = 0.0f;  // anisotropyRotation, radians counter-clockwise from the tangent
+
+    // Any of the three extensions does something.
+    bool HasSurfaceExtension() const;
 };
+
+// The extension factors as two RGBA8 texels (8 bytes) for the renderer's per-material table, which is read with texel fetches:
+//   texel 0: clear coat, clear coat roughness, sheen roughness, anisotropy strength
+//   texel 1: sheen colour r, g, b, anisotropy rotation in turns (0..1)
+// Every value is clamped to 0..1 and rounded to 8 bits.
+void PackSurfaceExtension(const GltfMaterial& material, u8 texels[8]);
 
 struct GltfPrimitive {
     std::vector<GltfVertex> vertices;
