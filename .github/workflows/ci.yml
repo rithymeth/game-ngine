@@ -47,16 +47,29 @@ jobs:
         run: >
           sudo apt-get update && sudo apt-get install -y ninja-build xvfb
           libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
-          libvulkan-dev glslang-dev glslang-tools spirv-tools mesa-vulkan-drivers vulkan-validationlayers
+          ccache libvulkan-dev glslang-dev glslang-tools spirv-tools mesa-vulkan-drivers vulkan-validationlayers
       - name: Cache fetched dependencies
         uses: actions/cache@v4
         with:
           path: build/_deps
           key: deps-linux-GCC-${{ hashFiles('**/CMakeLists.txt') }}
           restore-keys: deps-linux-GCC-
+      - name: Cache compiled objects (ccache)
+        # Compilation is ~90% of the PR gate. The key is unique per commit so every run saves
+        # its objects; restore-keys falls back to the newest cache (a PR run or master).
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-linux-GCC-${{ github.sha }}
+          restore-keys: ccache-linux-GCC-
       - name: Configure
+        env:
+          CCACHE_BASEDIR: ${{ github.workspace }}
+          CCACHE_COMPILERCHECK: content
+          CCACHE_MAXSIZE: 1G
         run: >
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           -DAETHER_BUILD_PHYSICS=OFF -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_SANDBOX=OFF
           -DAETHER_PLATFORM_PLUGINS=platforms/example
       - name: Module graph
@@ -64,7 +77,12 @@ jobs:
           cmake --graphviz=build/graph.dot build
           python3 tools/check_module_graph.py --dot build/graph.dot
       - name: Build
-        run: cmake --build build --parallel
+        env:
+          CCACHE_BASEDIR: ${{ github.workspace }}
+          CCACHE_MAXSIZE: 1G
+        run: |
+          cmake --build build --parallel
+          ccache --show-stats
       - name: Unit tests
         env:
           AETHER_REQUIRE_VULKAN: "1"
@@ -136,7 +154,7 @@ jobs:
         # (HLSL to SPIR-V) and Mesa's lavapipe (software Vulkan) let the
         # Vulkan backend build and its tests render on a runner with no GPU.
         run: >
-          sudo apt-get update && sudo apt-get install -y ninja-build xvfb
+          sudo apt-get update && sudo apt-get install -y ninja-build ccache xvfb
           libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
           libvulkan-dev glslang-dev glslang-tools spirv-tools mesa-vulkan-drivers vulkan-validationlayers
       - name: Cache fetched dependencies
@@ -145,12 +163,23 @@ jobs:
           path: build/_deps
           key: deps-linux-${{ matrix.name }}-${{ hashFiles('**/CMakeLists.txt') }}
           restore-keys: deps-linux-${{ matrix.name }}-
+      - name: Cache compiled objects (ccache)
+        # GCC shares its key with the pull-request gate, so master pushes warm the PR cache.
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-linux-${{ matrix.name }}-${{ github.sha }}
+          restore-keys: ccache-linux-${{ matrix.name }}-
       - name: Configure
         env:
           CC: ${{ matrix.cc }}
           CXX: ${{ matrix.cxx }}
+          CCACHE_BASEDIR: ${{ github.workspace }}
+          CCACHE_COMPILERCHECK: content
+          CCACHE_MAXSIZE: 1G
         run: >
           cmake -S . -B build -G Ninja
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           -DCMAKE_BUILD_TYPE=${{ matrix.type }}
           "-DCMAKE_CXX_FLAGS=${{ matrix.flags }}"
           "-DCMAKE_CXX_FLAGS_DEBUG=${{ matrix.name == 'ASan+UBSan' && '-O0 -g1' || '-g' }}"
@@ -165,7 +194,12 @@ jobs:
           cmake --graphviz=build/graph.dot build
           python3 tools/check_module_graph.py --dot build/graph.dot
       - name: Build
-        run: cmake --build build --parallel
+        env:
+          CCACHE_BASEDIR: ${{ github.workspace }}
+          CCACHE_MAXSIZE: 1G
+        run: |
+          cmake --build build --parallel
+          ccache --show-stats
       - name: Install the SDK and build its template consumer
         if: github.event_name != 'pull_request' && matrix.name == 'GCC'
         run: |
