@@ -119,6 +119,219 @@ float4 AetherTriplanarLevel(Texture2D t, SamplerState s, float3 p, float3 n, flo
 }
 )";
 
+// The advanced PBR terms (Phase 39.3). References: Burley 2012 (anisotropic GGX), Estevez and Kulla 2017
+// (Charlie sheen), Neubelt and Pettineo 2013 (sheen visibility), Kelemen 2001 (clear coat visibility).
+const char* const kAdvancedPbrHlsl = R"(// Aether advanced PBR terms. Do not edit.
+#ifndef AETHER_ADVANCED_PBR_HLSL
+#define AETHER_ADVANCED_PBR_HLSL
+
+#define AETHER_PI 3.14159265359
+
+// GGX distribution with squared roughness a (alpha = roughness * roughness).
+float AetherD_GGX(float a, float NoH) {
+    float a2 = a * a;
+    float d = NoH * NoH * (a2 - 1.0) + 1.0;
+    return a2 / (AETHER_PI * d * d);
+}
+
+float AetherF_Schlick(float f0, float VoH) {
+    float f = pow(1.0 - VoH, 5.0);
+    return f0 + (1.0 - f0) * f;
+}
+
+// Anisotropic roughness along the tangent (at) and bitangent (ab) from the material's roughness and
+// anisotropy (-1..1); the minimum keeps the highlight finite.
+void AetherAnisotropicRoughness(float roughness, float anisotropy, out float at, out float ab) {
+    float a = roughness * roughness;
+    at = max(a * (1.0 + anisotropy), 0.002);
+    ab = max(a * (1.0 - anisotropy), 0.002);
+}
+
+// Turns the tangent frame around the normal; rotation is in turns (0..1).
+void AetherRotateTangentFrame(float3 T, float3 B, float rotation, out float3 Tr, out float3 Br) {
+    float s, c;
+    sincos(rotation * 2.0 * AETHER_PI, s, c);
+    Tr = T * c + B * s;
+    Br = B * c - T * s;
+}
+
+float AetherD_GGXAniso(float at, float ab, float NoH, float ToH, float BoH) {
+    float a2 = at * ab;
+    float3 d = float3(ab * ToH, at * BoH, a2 * NoH);
+    float d2 = dot(d, d);
+    float b2 = a2 / d2;
+    return a2 * b2 * b2 * (1.0 / AETHER_PI);
+}
+
+float AetherV_SmithGGXAniso(float at, float ab, float ToV, float BoV, float ToL, float BoL, float NoV, float NoL) {
+    float lambdaV = NoL * length(float3(at * ToV, ab * BoV, NoV));
+    float lambdaL = NoV * length(float3(at * ToL, ab * BoL, NoL));
+    return 0.5 / max(lambdaV + lambdaL, 0.00001);
+}
+
+// The specular lobe of an anisotropic surface for one light, times NoL; f0 is the base reflectance.
+float3 AetherAnisotropicSpecular(float3 f0, float roughness, float anisotropy, float3 N, float3 T, float3 B, float3 V,
+                                 float3 L, float rotation) {
+    float3 Tr, Br;
+    AetherRotateTangentFrame(T, B, rotation, Tr, Br);
+    float3 H = normalize(V + L);
+    float NoL = saturate(dot(N, L)), NoV = max(dot(N, V), 0.0001), NoH = saturate(dot(N, H));
+    float VoH = saturate(dot(V, H));
+    float at, ab;
+    AetherAnisotropicRoughness(roughness, anisotropy, at, ab);
+    float D = AetherD_GGXAniso(at, ab, NoH, dot(Tr, H), dot(Br, H));
+    float Vis = AetherV_SmithGGXAniso(at, ab, dot(Tr, V), dot(Br, V), dot(Tr, L), dot(Br, L), NoV, NoL);
+    float3 F = f0 + (1.0 - f0) * pow(1.0 - VoH, 5.0);
+    return D * Vis * F * NoL;
+}
+
+// The Charlie sheen distribution; roughness is the material's (not squared).
+float AetherD_Charlie(float roughness, float NoH) {
+    float a = max(roughness * roughness, 0.002);
+    float invA = 1.0 / a;
+    float cos2h = NoH * NoH;
+    float sin2h = max(1.0 - cos2h, 0.0078125);
+    return (2.0 + invA) * pow(sin2h, invA * 0.5) / (2.0 * AETHER_PI);
+}
+
+float AetherV_Neubelt(float NoV, float NoL) {
+    return 1.0 / (4.0 * max(NoL + NoV - NoL * NoV, 0.00001));
+}
+
+// The sheen layer's specular for one light, times NoL.
+float3 AetherSheen(float3 sheen_color, float sheen_roughness, float NoV, float NoL, float NoH) {
+    return sheen_color * (AetherD_Charlie(sheen_roughness, NoH) * AetherV_Neubelt(NoV, NoL) * NoL);
+}
+
+// Clear coat: weight is the material's clear_coat. spec is the coat's specular for one light (times NoL by
+// the caller); attenuation is what is left for the layers below (1 - the coat's Fresnel).
+struct AetherCoat {
+    float spec;
+    float attenuation;
+};
+AetherCoat AetherClearCoat(float weight, float coat_roughness, float NoH, float LoH) {
+    float a = max(coat_roughness * coat_roughness, 0.002);
+    float D = AetherD_GGX(a, NoH);
+    float Vis = 0.25 / max(LoH * LoH, 0.0001);
+    float F = AetherF_Schlick(0.04, LoH) * weight;
+    AetherCoat c;
+    c.spec = D * Vis * F;
+    c.attenuation = 1.0 - F;
+    return c;
+}
+
+#endif
+)";
+
+// Subsurface, hair, cloth and decals (Phase 39.4). References: Kajiya and Kay 1989 and Scheuermann 2004 (shifted strand highlights),
+// Gotanda 2010 and Barre-Brisebois 2011 (wrapped diffuse and thin-surface transmission), Ashikhmin and Premoze 2007 and Estevez and Kulla
+// 2017 (cloth).
+const char* const kShadingModelsHlsl = R"(// Aether shading models and decals. Do not edit.
+#ifndef AETHER_SHADING_MODELS_HLSL
+#define AETHER_SHADING_MODELS_HLSL
+
+#ifndef AETHER_PI
+#define AETHER_PI 3.14159265359
+#endif
+
+// Subsurface: the diffuse term with the terminator wrapped around the surface; the light that wrapped past it takes on the subsurface
+// colour, less of it the thicker the surface. wrap is 0 (plain Lambert) .. 1.
+float3 AetherSubsurfaceDiffuse(float3 albedo, float3 subsurface_color, float thickness, float3 N, float3 L, float wrap) {
+    float ndl = dot(N, L);
+    float lit = saturate(ndl);
+    float wrapped = saturate((ndl + wrap) / ((1.0 + wrap) * (1.0 + wrap)));
+    float3 scattered = subsurface_color * (wrapped - lit) * (1.0 - saturate(thickness));
+    return (albedo * lit + scattered) / AETHER_PI;
+}
+
+// Subsurface: light entering the far side and leaving toward the viewer, strongest for thin surfaces. distortion bends the lobe along
+// the normal, power narrows it.
+float3 AetherSubsurfaceTransmission(float3 subsurface_color, float thickness, float3 N, float3 V, float3 L, float distortion, float power) {
+    float3 H = normalize(L + N * distortion);
+    float back = pow(saturate(dot(V, -H)), power);
+    return subsurface_color * (back * (1.0 - saturate(thickness)));
+}
+
+// Hair: the strand tangent moved along the normal, which separates the two highlights.
+float3 AetherShiftTangent(float3 T, float3 N, float shift) {
+    return normalize(T + N * shift);
+}
+
+// One Kajiya-Kay highlight lobe around a (shifted) tangent.
+float AetherHairLobe(float3 T, float3 V, float3 L, float exponent) {
+    float3 H = normalize(L + V);
+    float tdh = dot(T, H);
+    float sin_th = sqrt(max(1.0 - tdh * tdh, 0.0));
+    float fade = smoothstep(-1.0, 0.0, tdh);
+    return fade * pow(sin_th, exponent);
+}
+
+// The strand diffuse term: brightest when the light is across the strand.
+float3 AetherHairDiffuse(float3 albedo, float3 T, float3 L) {
+    float tdl = dot(T, L);
+    return albedo * sqrt(max(1.0 - tdl * tdl, 0.0)) / AETHER_PI;
+}
+
+// Hair: a sharp white primary highlight and a broader tinted secondary one, each on its own shifted tangent; roughness (0..1) widens both.
+float3 AetherHairSpecular(float3 specular_color, float3 tint, float3 T, float3 N, float3 V, float3 L, float shift, float secondary_shift,
+                          float roughness) {
+    float r = saturate(roughness);
+    float primary = AetherHairLobe(AetherShiftTangent(T, N, shift), V, L, lerp(256.0, 16.0, r));
+    float secondary = AetherHairLobe(AetherShiftTangent(T, N, secondary_shift), V, L, lerp(64.0, 8.0, r));
+    return specular_color * (primary + tint * secondary);
+}
+
+// Cloth: the Ashikhmin distribution, which peaks at grazing angles instead of along the normal.
+float AetherD_Ashikhmin(float roughness, float NoH) {
+    float a2 = max(roughness * roughness, 0.002);
+    float cos2h = NoH * NoH;
+    float sin2h = max(1.0 - cos2h, 0.0078125);
+    float sin4h = sin2h * sin2h;
+    float cot2 = -cos2h / (a2 * sin2h);
+    return 1.0 / (AETHER_PI * (4.0 * a2 + 1.0)) * (4.0 * exp(cot2) / sin4h + sin4h);
+}
+
+// Cloth: sheen colour through the Ashikhmin lobe, plus fibre fuzz that lifts the silhouette; times NoL.
+float3 AetherClothSpecular(float3 sheen_color, float sheen_roughness, float fuzz, float NoV, float NoL, float NoH) {
+    float vis = 1.0 / (4.0 * max(NoL + NoV - NoL * NoV, 0.00001));
+    float lobe = AetherD_Ashikhmin(sheen_roughness, NoH) * vis;
+    float rim = fuzz * pow(1.0 - saturate(NoV), 3.0);
+    return sheen_color * ((lobe + rim) * NoL);
+}
+
+// Cloth diffuse: soft Lambert with a little wrap, since fibres scatter light past the terminator.
+float3 AetherClothDiffuse(float3 albedo, float NoL, float wrap) {
+    return albedo * (saturate((NoL + wrap) / (1.0 + wrap)) / AETHER_PI);
+}
+
+// Decals: world_to_decal maps the decal's unit box (-0.5..0.5 on every axis) onto the world. Returns 1 inside the box with uv (0..1)
+// across the face the decal is projected through, 0 outside.
+float AetherDecalProject(float4x4 world_to_decal, float3 world_position, out float2 uv) {
+    float3 p = mul(world_to_decal, float4(world_position, 1.0)).xyz;
+    uv = p.xy + 0.5;
+    float3 edge = 0.5 - abs(p);
+    return (edge.x >= 0.0 && edge.y >= 0.0 && edge.z >= 0.0) ? 1.0 : 0.0;
+}
+
+// Decals: fades out where the surface turns edge-on to the projection. Full strength at start_cos and above, gone at end_cos.
+float AetherDecalAngleFade(float3 surface_normal, float3 decal_forward, float start_cos, float end_cos) {
+    float c = saturate(dot(surface_normal, -decal_forward));
+    return saturate((c - end_cos) / max(start_cos - end_cos, 0.0001));
+}
+
+float3 AetherDecalBlendColor(float3 destination, float3 source, float opacity) {
+    return lerp(destination, source, saturate(opacity));
+}
+
+// Decals: a whiteout blend of the decal's normal over the surface's, weighted by opacity.
+float3 AetherDecalBlendNormal(float3 destination, float3 source, float opacity) {
+    float w = saturate(opacity);
+    return normalize(float3(destination.xy + source.xy * w, destination.z * lerp(1.0, source.z, w)));
+}
+
+#endif
+)";
+
 struct OutputPin {
     const char* pin;
     const char* field;
@@ -128,6 +341,12 @@ constexpr OutputPin kSurfacePins[] = {
     {"BaseColor", "base_color", PinType::Float3}, {"Metallic", "metallic", PinType::Float},
     {"Roughness", "roughness", PinType::Float},   {"Normal", "normal", PinType::Float3},
     {"Emissive", "emissive", PinType::Float3},    {"AO", "ao", PinType::Float},
+    {"ClearCoat", "clear_coat", PinType::Float},  {"ClearCoatRoughness", "clear_coat_roughness", PinType::Float},
+    {"SheenColor", "sheen_color", PinType::Float3}, {"SheenRoughness", "sheen_roughness", PinType::Float},
+    {"Anisotropy", "anisotropy", PinType::Float}, {"AnisotropyRotation", "anisotropy_rotation", PinType::Float},
+    {"SubsurfaceColor", "subsurface_color", PinType::Float3}, {"Thickness", "thickness", PinType::Float},
+    {"HairShift", "hair_shift", PinType::Float},  {"HairSecondaryShift", "hair_secondary_shift", PinType::Float},
+    {"HairTint", "hair_tint", PinType::Float3},   {"Fuzz", "fuzz", PinType::Float},
     {"Opacity", "opacity", PinType::Float},       {"OpacityMask", "opacity_mask", PinType::Float},
 };
 
@@ -337,6 +556,10 @@ u64 Fnv1a(const std::string& s, u64 h) {
 
 } // namespace
 
+const char* AdvancedPbrHlsl() { return kAdvancedPbrHlsl; }
+
+const char* ShadingModelsHlsl() { return kShadingModelsHlsl; }
+
 std::string HlslIdentifier(const std::string& name) {
     std::string out;
     for (const char c : name) out += std::isalnum(static_cast<unsigned char>(c)) ? c : '_';
@@ -346,7 +569,7 @@ std::string HlslIdentifier(const std::string& name) {
 bool MaterialFeatures::operator==(const MaterialFeatures& o) const {
     return texcoords == o.texcoords && world_position == o.world_position && vertex_normal == o.vertex_normal &&
            camera_vector == o.camera_vector && time == o.time && world_position_offset == o.world_position_offset &&
-           alpha_test == o.alpha_test && translucent == o.translucent;
+           alpha_test == o.alpha_test && translucent == o.translucent && decal == o.decal;
 }
 
 const ParameterSlot* ParameterLayout::Find(const std::string& name) const {
@@ -405,10 +628,15 @@ GeneratedMaterial GenerateHlsl(const Material& material) {
     const bool unlit = m.shading == ShadingModel::Unlit;
     g.features.alpha_test = m.blend == BlendMode::Masked;
     g.features.translucent = m.blend == BlendMode::Translucent || m.blend == BlendMode::Additive;
+    g.features.decal = m.blend == BlendMode::Decal;
     auto pin_used = [&](const std::string& pin) {
-        if (pin == "Opacity") return g.features.translucent;
+        if (pin == "Opacity") return g.features.translucent || g.features.decal;
         if (pin == "OpacityMask") return g.features.alpha_test;
         if (unlit) return pin == "Emissive";
+        // The pins one shading model reads stay at their defaults for the others.
+        if (pin == "SubsurfaceColor" || pin == "Thickness") return m.shading == ShadingModel::Subsurface;
+        if (pin == "HairShift" || pin == "HairSecondaryShift" || pin == "HairTint") return m.shading == ShadingModel::Hair;
+        if (pin == "Fuzz") return m.shading == ShadingModel::Cloth;
         return true;
     };
     const NodeId out = flat.output;
@@ -470,6 +698,18 @@ GeneratedMaterial GenerateHlsl(const Material& material) {
          "    float3 normal; // tangent space\n"
          "    float3 emissive;\n"
          "    float ao;\n"
+         "    float clear_coat;           // 0..1 weight of the clear coat layer\n"
+         "    float clear_coat_roughness;\n"
+         "    float3 sheen_color;         // black turns the sheen off\n"
+         "    float sheen_roughness;\n"
+         "    float anisotropy;           // -1..1, along the tangent when positive\n"
+         "    float anisotropy_rotation;  // 0..1 turns of the tangent frame\n"
+         "    float3 subsurface_color;    // Subsurface: the colour light takes on inside the surface\n"
+         "    float thickness;            // Subsurface: 0 thin (light passes through) .. 1 thick\n"
+         "    float hair_shift;           // Hair: moves the primary highlight along the strand\n"
+         "    float hair_secondary_shift; // Hair: the same for the secondary highlight\n"
+         "    float3 hair_tint;           // Hair: colours the secondary highlight\n"
+         "    float fuzz;                 // Cloth: 0..1 strength of the fibre fuzz\n"
          "    float opacity;\n"
          "    float opacity_mask;\n"
          "};\n\n";
@@ -489,8 +729,9 @@ GeneratedMaterial GenerateHlsl(const Material& material) {
     h += "    return " + wpo + ";\n}\n\n#endif\n";
     g.hlsl = std::move(h);
 
-    static const char* kBlend[] = {"OPAQUE", "MASKED", "TRANSLUCENT", "ADDITIVE"};
-    g.defines.push_back(unlit ? "MATERIAL_SHADING_UNLIT=1" : "MATERIAL_SHADING_DEFAULT_LIT=1");
+    static const char* kBlend[] = {"OPAQUE", "MASKED", "TRANSLUCENT", "ADDITIVE", "DECAL"};
+    static const char* kShading[] = {"DEFAULT_LIT", "UNLIT", "SUBSURFACE", "HAIR", "CLOTH"};
+    g.defines.push_back(std::string("MATERIAL_SHADING_") + kShading[static_cast<int>(m.shading)] + "=1");
     g.defines.push_back(std::string("MATERIAL_BLEND_") + kBlend[static_cast<int>(m.blend)] + "=1");
     if (m.two_sided) g.defines.push_back("MATERIAL_TWO_SIDED=1");
     if (g.features.alpha_test) g.defines.push_back("MATERIAL_OPACITY_MASK_CLIP=" + Number(m.opacity_mask_clip));
