@@ -6,6 +6,7 @@
 #include "test_framework.h"
 
 #include <cmath>
+#include <vector>
 
 // The scene's lights as the player's shader reads them (player/src/frame_lights.h): defaults without light components, the sun's direction from its
 // rotation, the sky's ambient colour, and the nearest point and spot lights.
@@ -94,4 +95,40 @@ AETHER_TEST(PlayerLights_ViewDistancePullsInTheFarPlaneOnly) {
     AETHER_CHECK(LimitViewDistance(camera, 0.01f).far_plane > camera.near_plane); // kept clear of the near plane
     camera.projection = Projection::Orthographic;
     AETHER_CHECK(Near(LimitViewDistance(camera, 300.0f).far_plane, 1000.0f));
+}
+
+AETHER_TEST(PlayerLights_ParticleLightsJoinTheScenesAndTheNearestEightStay) {
+    FrameData d;
+    d.counts[0] = 1; // one scene light, far away
+    d.point_position_range[0][0] = 100.0f, d.point_position_range[0][3] = 50.0f;
+    d.point_color[0][0] = 2.0f;
+    const auto particle = [](f32 x, f32 radius, f32 intensity) {
+        vfx::ParticleLight l;
+        l.position = Vec3(x, 0, 0);
+        l.color = {1.0f, 0.5f, 0.0f, 1.0f};
+        l.radius = radius;
+        l.intensity = intensity;
+        return l;
+    };
+    // Nothing usable (no radius, no energy, NaN): the scene's light is left exactly as it was.
+    const std::vector<vfx::ParticleLight> useless = {particle(1, 0.0f, 1.0f), particle(2, 3.0f, 0.0f), particle(3, std::nanf(""), 1.0f)};
+    AddParticleLights(d, useless, Vec3(0, 0, 0));
+    AETHER_CHECK(d.counts[0] == 1 && d.point_position_range[0][0] == 100.0f);
+
+    // A particle light is a point light with its colour times its intensity, and it sorts in by distance from the camera.
+    const std::vector<vfx::ParticleLight> one = {particle(5, 4.0f, 3.0f)};
+    AddParticleLights(d, one, Vec3(0, 0, 0));
+    AETHER_CHECK(d.counts[0] == 2);
+    AETHER_CHECK(d.point_position_range[0][0] == 5.0f && d.point_position_range[0][3] == 4.0f); // nearer than the scene light, so first
+    AETHER_CHECK(Near(d.point_color[0][0], 3.0f) && Near(d.point_color[0][1], 1.5f) && Near(d.point_color[0][2], 0.0f));
+    AETHER_CHECK(d.point_position_range[1][0] == 100.0f && Near(d.point_color[1][0], 2.0f)); // the scene's light follows
+
+    // Twelve more than fit: the eight nearest to the camera stay, and the scene's far light is the one dropped.
+    std::vector<vfx::ParticleLight> many;
+    for (int i = 1; i <= 12; ++i) many.push_back(particle(static_cast<f32>(i), 1.0f, 1.0f));
+    FrameData e = d;
+    AddParticleLights(e, many, Vec3(0, 0, 0));
+    AETHER_CHECK(e.counts[0] == kMaxPointLights);
+    for (u32 i = 0; i < kMaxPointLights; ++i) AETHER_CHECK(e.point_position_range[i][0] < 50.0f);
+    for (u32 i = 1; i < kMaxPointLights; ++i) AETHER_CHECK(e.point_position_range[i - 1][0] <= e.point_position_range[i][0]);
 }
