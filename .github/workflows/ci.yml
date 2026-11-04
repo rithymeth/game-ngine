@@ -81,7 +81,7 @@ jobs:
           CCACHE_BASEDIR: ${{ github.workspace }}
           CCACHE_MAXSIZE: 1G
         run: |
-          cmake --build build --parallel
+          cmake --build build --target aether_pr_gate --parallel
           ccache --show-stats
       - name: Unit tests
         env:
