@@ -354,3 +354,127 @@ AETHER_TEST(MaterialCodegen_AdvancedPbrLibraryCompilesWithGlslang) {
     AETHER_CHECK(ok);
     std::filesystem::remove_all(dir);
 }
+
+// Phase 39.4: subsurface, hair, cloth and decals.
+AETHER_TEST(MaterialCodegen_ShadingModelsPickTheirDefinesAndPins) {
+    struct Case {
+        ShadingModel model;
+        const char* define;
+    };
+    for (const Case& c : {Case{ShadingModel::DefaultLit, "MATERIAL_SHADING_DEFAULT_LIT=1"}, Case{ShadingModel::Unlit, "MATERIAL_SHADING_UNLIT=1"},
+                          Case{ShadingModel::Subsurface, "MATERIAL_SHADING_SUBSURFACE=1"}, Case{ShadingModel::Hair, "MATERIAL_SHADING_HAIR=1"},
+                          Case{ShadingModel::Cloth, "MATERIAL_SHADING_CLOTH=1"}}) {
+        Material m = LitMaterial();
+        m.shading = c.model;
+        const GeneratedMaterial g = GenerateHlsl(m);
+        AETHER_CHECK(g.ok && std::count(g.defines.begin(), g.defines.end(), std::string(c.define)) == 1);
+    }
+
+    // Each model reads its own pins; the others leave them at their defaults.
+    struct PinCase {
+        ShadingModel model;
+        const char* pin;
+        const char* field;
+    };
+    for (const PinCase& c : {PinCase{ShadingModel::Subsurface, "Thickness", "thickness"}, PinCase{ShadingModel::Hair, "HairShift", "hair_shift"},
+                             PinCase{ShadingModel::Cloth, "Fuzz", "fuzz"}}) {
+        Material m = LitMaterial();
+        m.shading = c.model;
+        m.Connect(m.Add("Const.Float", {{"value", 0.5}}), "value", 1, c.pin);
+        AETHER_CHECK(Contains(GenerateHlsl(m).hlsl, std::string("o.") + c.field + " = 0.5;"));
+        Material other = LitMaterial(); // DefaultLit
+        other.Connect(other.Add("Const.Float", {{"value", 0.5}}), "value", 1, c.pin);
+        const Analysis a = Analyze(other);
+        AETHER_CHECK(a.Ok() && a.Has("MT009"));
+        AETHER_CHECK(Contains(GenerateHlsl(other).hlsl, std::string("o.") + c.field + " = 0.0;"));
+    }
+    const GeneratedMaterial plain = GenerateHlsl(LitMaterial());
+    AETHER_CHECK(Contains(plain.hlsl, "o.hair_secondary_shift = -0.1;") && Contains(plain.hlsl, "o.hair_tint = float3(1.0, 1.0, 1.0);"));
+    for (const char* field : {"subsurface_color", "thickness", "hair_shift", "hair_secondary_shift", "hair_tint", "fuzz"}) {
+        AETHER_CHECK(Contains(plain.hlsl, std::string(" ") + field + ";"));
+    }
+}
+
+AETHER_TEST(MaterialCodegen_DecalBlendUsesOpacity) {
+    Material m = LitMaterial();
+    m.blend = BlendMode::Decal;
+    m.Connect(m.Add("Const.Float", {{"value", 0.6}}), "value", 1, "Opacity");
+    const GeneratedMaterial g = GenerateHlsl(m);
+    AETHER_CHECK(g.ok && g.features.decal && !g.features.translucent && !g.features.alpha_test);
+    AETHER_CHECK(Contains(g.hlsl, "o.opacity = 0.6;"));
+    AETHER_CHECK(std::count(g.defines.begin(), g.defines.end(), std::string("MATERIAL_BLEND_DECAL=1")) == 1);
+    AETHER_CHECK(!Analyze(m).Has("MT009")); // a Decal reads Opacity
+
+    Material opaque = m;
+    opaque.blend = BlendMode::Opaque;
+    AETHER_CHECK(Analyze(opaque).Has("MT009"));
+    AETHER_CHECK(GenerateHlsl(opaque).permutation_key != g.permutation_key);
+    MaterialFeatures a, b;
+    b.decal = true;
+    AETHER_CHECK(!(a == b));
+}
+
+AETHER_TEST(MaterialCodegen_NewShadingModelsAndDecalsRoundTripThroughFiles) {
+    for (const ShadingModel model : {ShadingModel::Subsurface, ShadingModel::Hair, ShadingModel::Cloth}) {
+        Material m = LitMaterial();
+        m.shading = model;
+        m.blend = BlendMode::Decal;
+        Material back;
+        std::string error;
+        AETHER_CHECK(MaterialFromJson(MaterialToJson(m), back, &error));
+        AETHER_CHECK(back.shading == model && back.blend == BlendMode::Decal);
+    }
+    // Files from before the new models still load, and an unknown model is refused.
+    nlohmann::json old = MaterialToJson(LitMaterial());
+    old["shading"] = "DefaultLit";
+    Material loaded;
+    AETHER_CHECK(MaterialFromJson(old, loaded) && loaded.shading == ShadingModel::DefaultLit);
+    old["shading"] = "Glass";
+    std::string error;
+    AETHER_CHECK(!MaterialFromJson(old, loaded, &error) && Contains(error, "unknown shading model"));
+}
+
+AETHER_TEST(MaterialCodegen_ShadingModelsLibraryCompilesWithGlslang) {
+    const std::string lib = ShadingModelsHlsl();
+    for (const char* name : {"AetherSubsurfaceDiffuse", "AetherSubsurfaceTransmission", "AetherHairSpecular", "AetherHairDiffuse",
+                             "AetherClothSpecular", "AetherClothDiffuse", "AetherDecalProject", "AetherDecalAngleFade", "AetherDecalBlendColor",
+                             "AetherDecalBlendNormal"}) {
+        AETHER_CHECK(Contains(lib, name));
+    }
+    AETHER_CHECK(Count(lib, "#ifndef AETHER_SHADING_MODELS_HLSL") == 1);
+    if (!GlslangAvailable()) {
+        std::printf("  (glslangValidator not found: skipping the HLSL compile check)\n");
+        return;
+    }
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "aether_shading_models";
+    std::filesystem::create_directories(dir);
+    const std::filesystem::path src = dir / "models.hlsl", out = dir / "log.txt";
+    {
+        std::ofstream f(src);
+        f << lib
+          << "float4 main(float4 pos : SV_Position, float3 n : TEXCOORD0, float3 v : TEXCOORD1, float3 l : TEXCOORD2) : SV_Target {\n"
+             "    float3 N = normalize(n), V = normalize(v), L = normalize(l), T = normalize(cross(N, float3(0, 1, 0)));\n"
+             "    float3 H = normalize(V + L);\n"
+             "    float NoV = saturate(dot(N, V)), NoL = saturate(dot(N, L)), NoH = saturate(dot(N, H));\n"
+             "    float3 c = AetherSubsurfaceDiffuse(float3(0.8, 0.6, 0.5), float3(1, 0.3, 0.2), pos.x, N, L, 0.5);\n"
+             "    c += AetherSubsurfaceTransmission(float3(1, 0.3, 0.2), pos.y, N, V, L, 0.2, 4.0);\n"
+             "    c += AetherHairSpecular(float3(1, 1, 1), float3(1, 0.8, 0.6), T, N, V, L, 0.1, -0.1, pos.z) + AetherHairDiffuse(float3(0.2, 0.1, 0.05), T, L);\n"
+             "    c += AetherClothSpecular(float3(0.5, 0.5, 0.6), pos.w, pos.x, NoV, NoL, NoH) + AetherClothDiffuse(float3(0.3, 0.3, 0.4), NoL, 0.3);\n"
+             "    float4x4 w2d = float4x4(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1);\n"
+             "    float2 uv;\n"
+             "    float inside = AetherDecalProject(w2d, v, uv);\n"
+             "    float fade = AetherDecalAngleFade(N, L, 0.8, 0.2);\n"
+             "    c = AetherDecalBlendColor(c, float3(uv, 0.0), inside * fade);\n"
+             "    float3 nn = AetherDecalBlendNormal(N, T, inside * fade);\n"
+             "    return float4(c + nn, 1.0);\n"
+             "}\n";
+    }
+    const std::string cmd = "glslangValidator -D -V -S frag -e main \"" + src.string() + "\" -o \"" + (dir / "out.spv").string() + "\" > \"" +
+                            out.string() + "\" 2>&1";
+    const bool ok = std::system(cmd.c_str()) == 0;
+    std::ifstream l(out);
+    const std::string log((std::istreambuf_iterator<char>(l)), std::istreambuf_iterator<char>());
+    if (!ok) std::printf("%s\n", log.c_str());
+    AETHER_CHECK(ok);
+    std::filesystem::remove_all(dir);
+}

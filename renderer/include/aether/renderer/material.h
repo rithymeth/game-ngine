@@ -17,8 +17,10 @@ namespace aether::mat {
 // with typed pins that compile to HLSL. This is the model, the node
 // library, type inference and validation.
 
-enum class ShadingModel : u8 { DefaultLit, Unlit };
-enum class BlendMode : u8 { Opaque, Masked, Translucent, Additive };
+// Subsurface (skin, wax, leaves: light scattered through the surface), Hair (two-lobe strand highlights) and Cloth (sheen and fuzz)
+// add pins to the Material Output that only they read (Phase 39.4). A Decal blends its surface over what it is projected onto.
+enum class ShadingModel : u8 { DefaultLit, Unlit, Subsurface, Hair, Cloth };
+enum class BlendMode : u8 { Opaque, Masked, Translucent, Additive, Decal };
 
 // Pin types. Generic math pins are Any until inference gives them a type.
 enum class PinType : u8 { None, Float, Float2, Float3, Float4, Texture, Any };
