@@ -2634,6 +2634,58 @@
       }
     },
     {
+      "guid": "62e94c50-b7d8-5c84-85b2-d406bec36289",
+      "components": {
+        "Transform": {
+          "$v": 1,
+          "position": [
+            4.5,
+            0.5,
+            -1.5
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "ModelRenderer": {
+          "$v": 1,
+          "model": "aa73474e-2a49-5115-884f-3c5c37c4422f",
+          "asset_path": "models/gs_furniture.gltf"
+        },
+        "RigidBody": {
+          "$v": 1,
+          "motion": "Dynamic",
+          "mass": 50.0
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "MovableProp"
+          ]
+        }
+      }
+    },
+    {
       "guid": "252c1482-c108-5756-9807-1761a31a4eff",
       "components": {
         "Transform": {

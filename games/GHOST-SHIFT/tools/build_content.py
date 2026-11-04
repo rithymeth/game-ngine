@@ -363,6 +363,13 @@ def build_scene(script_guids):
     solid("table", (-1.0, 0, -12.5), (1.0, 0.8, -11.5), "furniture")
     solid("cupboard", (-5.8, 0, -15.8), (-5.0, 2.0, -14.2), "furniture")
     solid("shelf", (-5.8, -3, -10.5), (-5.2, -1.2, -8.5), "furniture")
+    # A heavy crate in the living room for the players to move together (GS-04): one dynamic 50 kg body the host owns. One player's grip
+    # can't lift it (a grab's force is capped), two can. In the east corner, clear of the couch, the patches and the way out to the van.
+    entity("crate", {"Transform": transform((4.5, 0.5, -1.5)), "ModelRenderer": model("furniture"),
+                     "RigidBody": {"$v": 1, "motion": "Dynamic", "mass": 50.0},
+                     "BoxCollider": {"$v": 1, "center": [0.0, 0.0, 0.0], "friction": 0.6, "half_extents": [0.5, 0.5, 0.5],
+                                     "is_trigger": False, "report_stay": False, "restitution": 0.0}},
+           ["MovableProp"])
 
     for i, (x, y, z) in enumerate(PATCHES, 1):
         entity(f"ectoplasm.{i}", {"Transform": transform((x, y + 0.02, z), scale=(1.4, 0.04, 1.4)), "ModelRenderer": model("ectoplasm")},
