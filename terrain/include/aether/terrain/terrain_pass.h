@@ -17,7 +17,8 @@ namespace aether::terrain {
 // A layer's texture holds its albedo in RGB (sRGB-encoded, like every other colour texture) and its height in alpha. The splatmap is an RGBA8
 // texture of the four layers' painted weights, sampled with the same texel mapping as SplatmapData::GetWeights (u = 0 is the first texel's
 // centre, u = 1 the last's), so the GPU reads the weights the CPU would. The blend, the same arithmetic as BlendTerrainLayerHeights, turns the
-// painted weights and the layers' heights into the weights the albedos are mixed with. Lighting is diffuse only for now: a sky term and one sun.
+// painted weights and the layers' heights into the weights the albedos are mixed with. Lighting is a sky term and one sun on a Lambert diffuse plus a GGX specular lobe; each layer has a roughness and a metallic value, blended by the
+// same weights as the albedo. (Per-layer normal maps are not done: the push constants have no room for their indices.)
 
 // A TerrainGpu over the RHI: TerrainRenderer's chunk buffers become vertex and index buffers on the device. The RHI cannot free a buffer
 // (it has no destroy), so DestroyBuffer forgets the handle and the device keeps the memory until it goes away.
@@ -42,6 +43,8 @@ gfx::rhi::SampledTextureHandle UploadSplatmap(gfx::rhi::IDevice& device, const S
 struct TerrainLayerBinding {
     gfx::rhi::SampledTextureHandle albedo_height; // RGB albedo, A height
     f32 tile_scale = 0.1f;                        // texture repeats per world unit
+    f32 roughness = 0.9f;                         // 0..1, stored in 6 bits
+    f32 metallic = 0.0f;                          // 0..1, stored in 2 bits (steps of a third)
 };
 
 struct TerrainDrawParams {
@@ -53,16 +56,18 @@ struct TerrainDrawParams {
     Vec3 sun_direction{-0.4f, 0.8f, -0.35f}; // towards the sun (normalized in the shader)
     f32 sun_intensity = 3.0f;
     f32 sky_intensity = 1.0f;
+    Vec3 camera_position{0.0f, 10.0f, 0.0f}; // for the specular view vector
 };
 
-// The push constants, exactly 128 bytes: the matrix, the splatmap's world rectangle, the tiling, the sun and the contrast, and the packed texture
-// indices (four layers and the splatmap, 6 bits each) with the two intensities.
+// The push constants, exactly 128 bytes: the matrix, the splatmap's world rectangle, the camera with the layers' surface values, the sun and the
+// contrast, and the packed texture indices (four layers and the splatmap, 6 bits each) with the intensities and tiling as halves.
 struct TerrainConstants {
     Mat4 view_projection;
     f32 splat_rect[4];  // origin x, origin z, 1 / width, 1 / depth
-    f32 layer_tiles[4];
+    f32 camera[4];      // camera position xyz; w: the layers' roughness (6 bits each, bits 0..23) and metallic (2 bits each, bits 24..31) as u32 bits
     f32 light[4];       // sun direction xyz (towards the sun), height contrast
-    u32 packed[4];      // x: layer 0..3 texture indices at bits 0, 6, 12, 18 and the splatmap's at 24; y, z: sun and sky intensity as float bits
+    u32 packed[4];      // x: layer 0..3 texture indices at bits 0, 6, 12, 18 and the splatmap's at 24; y: sun intensity | sky intensity << 16 (halves);
+                        // z, w: the four layers' tile scales as halves (layer 0 in z's low half)
 };
 static_assert(sizeof(TerrainConstants) == 128);
 TerrainConstants PackTerrainConstants(const Mat4& view_projection, const TerrainDrawParams& params);
@@ -89,8 +94,9 @@ private:
 const std::vector<gfx::parity::Scene>& TerrainParityScenes();
 
 // What the terrain shader outputs for one pixel of a surface facing up, on the CPU: the albedos (linear) mixed by the blended weights, lit by the
-// sky and the sun, tone mapped and sRGB-encoded, as 8-bit channels. For tests and tools.
+// sky and the sun (diffuse and GGX specular, seen from params.camera_position), tone mapped and sRGB-encoded, as 8-bit channels. For tests and tools.
 std::array<u8, 3> TerrainReferenceColor(const std::array<Vec3, 4>& albedo_linear, const std::array<f32, 4>& painted_weights,
-                                        const std::array<f32, 4>& heights, const TerrainDrawParams& params);
+                                        const std::array<f32, 4>& heights, const TerrainDrawParams& params,
+                                        const Vec3& world_position = Vec3(0.0f, 0.0f, 0.0f));
 
 } // namespace aether::terrain
