@@ -28,7 +28,10 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # A newer push to a pull request supersedes the older run. Runs on master are never cancelled: they are the only full verification of what
+  # was merged (the pull-request gate is a fast subset), and when several merges land close together a cancelling policy leaves most of them
+  # without a result. A run already going on master finishes; if more merges arrive meanwhile, the newest waits and the rest are skipped.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

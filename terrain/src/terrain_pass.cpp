@@ -3,6 +3,7 @@
 #include "aether/core/log.h"
 
 #include <algorithm>
+#include <limits>
 #include <cmath>
 #include <cstring>
 
@@ -29,9 +30,9 @@ constexpr char kTerrainBody[] = R"(
 struct PushConstants {
     float4x4 g_ViewProjection;
     float4 g_SplatRect;   // origin x, origin z, 1 / width, 1 / depth
-    float4 g_LayerTiles;
+    float4 g_Camera;      // camera position, surface bits (roughness 6 bits and metallic 2 bits per layer)
     float4 g_Light;       // sun direction (towards the sun), height contrast
-    uint4 g_Packed;       // x: layer 0..3 indices (6 bits each) and the splatmap's at bit 24; y, z: sun and sky intensity
+    uint4 g_Packed;       // x: layer 0..3 indices (6 bits each) and the splatmap's at bit 24; y: sun and sky intensity (halves); z, w: tiles (halves)
 };
 #ifdef __spirv__
 [[vk::push_constant]]
@@ -83,23 +84,50 @@ float4 PSMain(PSInput input) : SV_TARGET {
 
     float3 albedo[4];
     float heights[4];
-    float tiles[4] = { g_PC.g_LayerTiles.x, g_PC.g_LayerTiles.y, g_PC.g_LayerTiles.z, g_PC.g_LayerTiles.w };
+    float tiles[4] = { f16tof32(g_PC.g_Packed.z & 0xffff), f16tof32(g_PC.g_Packed.z >> 16), f16tof32(g_PC.g_Packed.w & 0xffff), f16tof32(g_PC.g_Packed.w >> 16) };
+    uint surface = asuint(g_PC.g_Camera.w);
+    float rough[4];
+    float metal[4];
     for (uint layer = 0; layer < 4; ++layer) {
         uint index = (g_PC.g_Packed.x >> (6 * layer)) & 63;
         float4 texel = g_Textures[index].Sample(g_Sampler, input.world.xz * tiles[layer]);
         albedo[layer] = SRGBToLinear(texel.rgb);
         heights[layer] = texel.a;
+        rough[layer] = float((surface >> (6 * layer)) & 63) / 63.0;
+        metal[layer] = float((surface >> (24 + 2 * layer)) & 3) / 3.0;
     }
     float4 weights = AetherBlendTerrainHeights(painted, float4(heights[0], heights[1], heights[2], heights[3]), g_PC.g_Light.w);
     float3 base_color = albedo[0] * weights.x + albedo[1] * weights.y + albedo[2] * weights.z + albedo[3] * weights.w;
 
+    float roughness = dot(weights, float4(rough[0], rough[1], rough[2], rough[3]));
+    float metallic = dot(weights, float4(metal[0], metal[1], metal[2], metal[3]));
+
     float3 normal = normalize(input.normal);
     float3 sun_direction = normalize(g_PC.g_Light.xyz);
-    float sun_intensity = asfloat(g_PC.g_Packed.y);
-    float sky_intensity = asfloat(g_PC.g_Packed.z);
+    float sun_intensity = f16tof32(g_PC.g_Packed.y & 0xffff);
+    float sky_intensity = f16tof32(g_PC.g_Packed.y >> 16);
     float sky_fill = 0.28 + 0.14 * saturate(normal.y);
     float n_dot_l = saturate(dot(normal, sun_direction));
-    float3 color = base_color * (sky_fill * sky_intensity + sun_intensity * n_dot_l / 3.14159265);
+
+    float3 view = g_PC.g_Camera.xyz - input.world;
+    float view_length = length(view);
+    view = view_length > 0.0001 ? view / view_length : normal;
+    float3 half_vector = sun_direction + view;
+    float half_length = length(half_vector);
+    half_vector = half_length > 0.0001 ? half_vector / half_length : normal;
+    float n_dot_v = max(dot(normal, view), 0.0001);
+    float n_dot_h = saturate(dot(normal, half_vector));
+    float v_dot_h = saturate(dot(view, half_vector));
+    float r = max(roughness, 0.045);
+    float a2 = r * r * r * r;
+    float d_denominator = n_dot_h * n_dot_h * (a2 - 1.0) + 1.0;
+    float distribution = a2 / (3.14159265 * d_denominator * d_denominator);
+    float k = (r + 1.0) * (r + 1.0) / 8.0;
+    float geometry = (n_dot_l / (n_dot_l * (1.0 - k) + k)) * (n_dot_v / (n_dot_v * (1.0 - k) + k));
+    float3 f0 = lerp(float3(0.04, 0.04, 0.04), base_color, metallic);
+    float3 fresnel = f0 + (1.0 - f0) * pow(1.0 - v_dot_h, 5.0);
+    float3 specular = distribution * geometry * fresnel / (4.0 * n_dot_v);
+    float3 color = base_color * (1.0 - metallic) * (sky_fill * sky_intensity + sun_intensity * n_dot_l / 3.14159265) + sun_intensity * specular;
     color = color / (color + 1.0);
     return float4(LinearToSRGB(color), 1.0);
 }
@@ -111,6 +139,35 @@ f32 LinearToSrgb(f32 c) {
     c = std::max(c, 0.0f);
     return c <= 0.0031308f ? c * 12.92f : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f;
 }
+u32 FloatToHalf(f32 v) {
+    u32 b;
+    std::memcpy(&b, &v, 4);
+    const u32 sign = (b >> 16) & 0x8000u, m = b & 0x7fffffu;
+    const int e = static_cast<int>((b >> 23) & 0xff) - 127 + 15;
+    if (((b >> 23) & 0xff) == 0xff) return sign | 0x7c00u | (m ? 0x200u : 0u);
+    if (e >= 31) return sign | 0x7c00u;
+    if (e <= 0) {
+        if (e < -10) return sign;
+        const u32 full = m | 0x800000u, shift = static_cast<u32>(14 - e);
+        u32 r = full >> shift;
+        if ((full >> (shift - 1)) & 1u) ++r;
+        return sign | r;
+    }
+    u32 r = sign | (static_cast<u32>(e) << 10) | (m >> 13);
+    if (m & 0x1000u) ++r;
+    return r;
+}
+f32 HalfToFloat(u32 h) {
+    const u32 exponent = (h >> 10) & 31u, mantissa = h & 1023u;
+    f32 v;
+    if (exponent == 0) v = std::ldexp(static_cast<f32>(mantissa), -24);
+    else if (exponent == 31) v = mantissa ? std::numeric_limits<f32>::quiet_NaN() : std::numeric_limits<f32>::infinity();
+    else v = std::ldexp(static_cast<f32>(1024 + mantissa), static_cast<int>(exponent) - 25);
+    return (h & 0x8000u) ? -v : v;
+}
+f32 ThroughHalf(f32 v) { return HalfToFloat(FloatToHalf(v)); }
+u32 Quantize(f32 v, u32 steps) { return static_cast<u32>(std::lround(std::clamp(v, 0.0f, 1.0f) * static_cast<f32>(steps))); }
+
 u8 ToByte(f32 v) { return static_cast<u8>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f)); }
 
 } // namespace
@@ -162,14 +219,17 @@ TerrainConstants PackTerrainConstants(const Mat4& view_projection, const Terrain
     c.splat_rect[2] = 1.0f / width, c.splat_rect[3] = 1.0f / depth;
     u32 packed = 0;
     for (u32 i = 0; i < 4; ++i) {
-        c.layer_tiles[i] = params.layers[i].tile_scale;
         packed |= (params.layers[i].albedo_height.index & 63u) << (6 * i);
     }
     packed |= (params.splatmap.index & 63u) << 24;
     c.packed[0] = packed;
-    const f32 sun = params.sun_intensity, sky = params.sky_intensity;
-    std::memcpy(&c.packed[1], &sun, sizeof(u32));
-    std::memcpy(&c.packed[2], &sky, sizeof(u32));
+    c.packed[1] = FloatToHalf(params.sun_intensity) | (FloatToHalf(params.sky_intensity) << 16);
+    c.packed[2] = FloatToHalf(params.layers[0].tile_scale) | (FloatToHalf(params.layers[1].tile_scale) << 16);
+    c.packed[3] = FloatToHalf(params.layers[2].tile_scale) | (FloatToHalf(params.layers[3].tile_scale) << 16);
+    u32 surface = 0;
+    for (u32 i = 0; i < 4; ++i) surface |= (Quantize(params.layers[i].roughness, 63) << (6 * i)) | (Quantize(params.layers[i].metallic, 3) << (24 + 2 * i));
+    c.camera[0] = params.camera_position.x, c.camera[1] = params.camera_position.y, c.camera[2] = params.camera_position.z;
+    std::memcpy(&c.camera[3], &surface, sizeof(u32));
     c.light[0] = params.sun_direction.x, c.light[1] = params.sun_direction.y, c.light[2] = params.sun_direction.z;
     c.light[3] = std::clamp(params.height_contrast, 0.0f, 1.0f);
     return c;
@@ -208,18 +268,46 @@ u32 TerrainPass::Draw(gfx::rhi::ICommandList& commands, const RhiTerrainGpu& gpu
 }
 
 std::array<u8, 3> TerrainReferenceColor(const std::array<Vec3, 4>& albedo_linear, const std::array<f32, 4>& painted_weights,
-                                        const std::array<f32, 4>& heights, const TerrainDrawParams& params) {
+                                        const std::array<f32, 4>& heights, const TerrainDrawParams& params, const Vec3& world_position) {
     const std::array<f32, 4> w = BlendTerrainLayerHeights(painted_weights, heights, params.height_contrast);
     Vec3 base{0, 0, 0};
-    for (usize i = 0; i < 4; ++i) base = base + albedo_linear[i] * w[i];
-    const Vec3 up{0, 1, 0};
+    f32 roughness = 0.0f, metallic = 0.0f;
+    for (usize i = 0; i < 4; ++i) {
+        base = base + albedo_linear[i] * w[i];
+        roughness += w[i] * static_cast<f32>(Quantize(params.layers[i].roughness, 63)) / 63.0f; // the same steps the constants hold
+        metallic += w[i] * static_cast<f32>(Quantize(params.layers[i].metallic, 3)) / 3.0f;
+    }
+    const Vec3 normal{0, 1, 0};
     const Vec3 sun = params.sun_direction.Normalized();
-    const f32 n_dot_l = std::clamp(up.Dot(sun), 0.0f, 1.0f);
+    const f32 sun_intensity = ThroughHalf(params.sun_intensity), sky_intensity = ThroughHalf(params.sky_intensity);
+    const f32 n_dot_l = std::clamp(normal.Dot(sun), 0.0f, 1.0f);
     const f32 sky_fill = 0.28f + 0.14f;
-    const f32 light = sky_fill * params.sky_intensity + params.sun_intensity * n_dot_l / 3.14159265f;
+    Vec3 view = params.camera_position - world_position;
+    const f32 view_length = std::sqrt(view.Dot(view));
+    view = view_length > 0.0001f ? view * (1.0f / view_length) : normal;
+    Vec3 half_vector = sun + view;
+    const f32 half_length = std::sqrt(half_vector.Dot(half_vector));
+    half_vector = half_length > 0.0001f ? half_vector * (1.0f / half_length) : normal;
+    const f32 n_dot_v = std::max(normal.Dot(view), 0.0001f);
+    const f32 n_dot_h = std::clamp(normal.Dot(half_vector), 0.0f, 1.0f);
+    const f32 v_dot_h = std::clamp(view.Dot(half_vector), 0.0f, 1.0f);
+    const f32 r = std::max(roughness, 0.045f);
+    const f32 a2 = r * r * r * r;
+    const f32 d_denominator = n_dot_h * n_dot_h * (a2 - 1.0f) + 1.0f;
+    const f32 distribution = a2 / (3.14159265f * d_denominator * d_denominator);
+    const f32 k = (r + 1.0f) * (r + 1.0f) / 8.0f;
+    const f32 geometry = (n_dot_l / (n_dot_l * (1.0f - k) + k)) * (n_dot_v / (n_dot_v * (1.0f - k) + k));
+    const f32 base_channel[3] = {base.x, base.y, base.z};
+    const f32 diffuse_light = sky_fill * sky_intensity + sun_intensity * n_dot_l / 3.14159265f;
+    const f32 fresnel_weight = std::pow(1.0f - v_dot_h, 5.0f);
     std::array<u8, 3> out{};
-    const f32 c[3] = {base.x * light, base.y * light, base.z * light};
-    for (usize i = 0; i < 3; ++i) out[i] = ToByte(LinearToSrgb(c[i] / (c[i] + 1.0f)));
+    for (usize i = 0; i < 3; ++i) {
+        const f32 f0 = 0.04f + (base_channel[i] - 0.04f) * metallic;
+        const f32 fresnel = f0 + (1.0f - f0) * fresnel_weight;
+        const f32 specular = distribution * geometry * fresnel / (4.0f * n_dot_v);
+        const f32 c = base_channel[i] * (1.0f - metallic) * diffuse_light + sun_intensity * specular;
+        out[i] = ToByte(LinearToSrgb(c / (c + 1.0f)));
+    }
     return out;
 }
 

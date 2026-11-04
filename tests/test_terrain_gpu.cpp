@@ -52,12 +52,17 @@ AETHER_TEST(TerrainGpu_ConstantsPackTheBindingsIntoOneHundredTwentyEightBytes) {
     const u32 p = c.packed[0];
     AETHER_CHECK((p & 63u) == 3 && ((p >> 6) & 63u) == 8 && ((p >> 12) & 63u) == 13 && ((p >> 18) & 63u) == 18 && ((p >> 24) & 63u) == 27);
     AETHER_CHECK(c.splat_rect[0] == 10.0f && c.splat_rect[1] == -4.0f && c.splat_rect[2] == 1.0f / 64.0f && c.splat_rect[3] == 1.0f / 32.0f);
-    AETHER_CHECK(c.layer_tiles[0] == 0.1f && std::fabs(c.layer_tiles[3] - 0.4f) < 1e-6f);
+    const auto half = [](u32 bits) { // the test's own decoder, apart from the one the packing uses
+        const u32 e = (bits >> 10) & 31u, m = bits & 1023u;
+        return std::ldexp(static_cast<f32>(1024 + m), static_cast<int>(e) - 25);
+    };
+    AETHER_CHECK(std::fabs(half(c.packed[2] & 0xffffu) - 0.1f) < 1e-3f && std::fabs(half(c.packed[2] >> 16) - 0.2f) < 1e-3f);
+    AETHER_CHECK(std::fabs(half(c.packed[3] & 0xffffu) - 0.3f) < 1e-3f && std::fabs(half(c.packed[3] >> 16) - 0.4f) < 1e-3f);
     AETHER_CHECK(c.light[0] == 1.0f && c.light[1] == 2.0f && c.light[2] == 3.0f && c.light[3] == 1.0f);
-    f32 sun, sky;
-    std::memcpy(&sun, &c.packed[1], 4);
-    std::memcpy(&sky, &c.packed[2], 4);
-    AETHER_CHECK(sun == 4.5f && sky == 0.25f);
+    AETHER_CHECK(half(c.packed[1] & 0xffffu) == 4.5f && half(c.packed[1] >> 16) == 0.25f);
+    u32 surface;
+    std::memcpy(&surface, &c.camera[3], 4);
+    AETHER_CHECK(c.camera[0] == params.camera_position.x && (surface & 63u) == 57u && ((surface >> 24) & 3u) == 0); // 0.9 * 63 = 56.7
     // A splatmap with no size gets a unit rectangle rather than a divide by zero.
     params.splat_size[0] = params.splat_size[1] = 0.0f;
     const TerrainConstants unit = PackTerrainConstants(Mat4::Identity(), params);
@@ -66,6 +71,7 @@ AETHER_TEST(TerrainGpu_ConstantsPackTheBindingsIntoOneHundredTwentyEightBytes) {
 
 AETHER_TEST(TerrainGpu_ReferenceColorUsesTheHeightsOfTheLayers) {
     TerrainDrawParams params;
+    for (TerrainLayerBinding& layer : params.layers) layer.roughness = 1.0f; // the dielectric specular is the faintest, but sRGB lifts it to about 30 of 255
     const std::array<Vec3, 4> albedo = {Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1), Vec3(1, 1, 0)};
     const std::array<f32, 4> heights = {0.1f, 0.9f, 0.5f, 0.5f};
     const std::array<f32, 4> half = {0.5f, 0.5f, 0.0f, 0.0f};
@@ -78,20 +84,46 @@ AETHER_TEST(TerrainGpu_ReferenceColorUsesTheHeightsOfTheLayers) {
     AETHER_CHECK(sharp[1] > sharp[0] + 40);
     // A layer with no paint contributes nothing whatever its height; no paint at all gives layer 0.
     params.height_contrast = 1.0f;
-    AETHER_CHECK(TerrainReferenceColor(albedo, {1.0f, 0.0f, 0.0f, 0.0f}, heights, params)[1] == 0);
+    AETHER_CHECK(TerrainReferenceColor(albedo, {1.0f, 0.0f, 0.0f, 0.0f}, heights, params)[1] <= 40);
     const std::array<u8, 3> none = TerrainReferenceColor(albedo, {0.0f, 0.0f, 0.0f, 0.0f}, heights, params);
-    AETHER_CHECK(none[0] > 0 && none[1] == 0 && none[2] == 0);
+    AETHER_CHECK(none[0] > 0 && none[1] <= 40 && none[2] <= 40);
     // Black albedo stays black; the sun brightens an up-facing surface over the sky alone.
-    AETHER_CHECK(TerrainReferenceColor({Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(0, 0, 0)}, {1, 0, 0, 0}, heights, params)[0] == 0);
+    AETHER_CHECK(TerrainReferenceColor({Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(0, 0, 0)}, {1, 0, 0, 0}, heights, params)[0] <= 40);
     params.sun_intensity = 0.0f;
     const std::array<u8, 3> shade = TerrainReferenceColor(albedo, {1, 0, 0, 0}, heights, params);
     params.sun_intensity = 3.0f;
     AETHER_CHECK(TerrainReferenceColor(albedo, {1, 0, 0, 0}, heights, params)[0] > shade[0]);
 }
 
+AETHER_TEST(TerrainGpu_LayersRoughnessAndMetallicShapeTheSpecular) {
+    const std::array<Vec3, 4> grey = {Vec3(0.2f, 0.2f, 0.2f), Vec3(0.2f, 0.2f, 0.2f), Vec3(0.2f, 0.2f, 0.2f), Vec3(0.2f, 0.2f, 0.2f)};
+    const std::array<f32, 4> heights = {0.5f, 0.5f, 0.5f, 0.5f};
+    TerrainDrawParams params;
+    params.sun_direction = Vec3(0, 1, 0);
+    params.camera_position = Vec3(0, 10, 0); // looking straight down the half vector: the highlight is at its peak
+    const auto at = [&](f32 roughness, f32 metallic) {
+        for (TerrainLayerBinding& layer : params.layers) layer.roughness = roughness, layer.metallic = metallic;
+        return TerrainReferenceColor(grey, {1, 0, 0, 0}, heights, params);
+    };
+    // Smooth dielectric: the highlight is a tight bright lobe; rough: it spreads and lowers.
+    AETHER_CHECK(at(0.1f, 0.0f)[0] > at(0.9f, 0.0f)[0]);
+    // A metal has no diffuse: at full roughness a grey metal is darker than the grey dielectric.
+    AETHER_CHECK(at(1.0f, 1.0f)[0] < at(1.0f, 0.0f)[0]);
+    // Moving the camera off the mirror direction dims a smooth surface's highlight.
+    const u8 peak = at(0.2f, 0.0f)[0];
+    params.camera_position = Vec3(10, 3, 0);
+    AETHER_CHECK(at(0.2f, 0.0f)[0] < peak);
+    // The values are stored in 6 and 2 bits and the packing says so.
+    for (TerrainLayerBinding& layer : params.layers) layer.roughness = 1.0f, layer.metallic = 1.0f;
+    u32 bits;
+    const TerrainConstants c = PackTerrainConstants(Mat4::Identity(), params);
+    std::memcpy(&bits, &c.camera[3], 4);
+    AETHER_CHECK(bits == 0xffffffffu);
+}
+
 AETHER_TEST(TerrainGpu_ShaderBlendsLikeTheCpuAndReadsTheSplatmapLikeIt) {
     const std::string hlsl = TerrainShaderSource();
-    for (const char* part : {"AetherBlendTerrainHeights", "VSMain", "PSMain", "GetDimensions", "(splat_size - 1.0) + 0.5", "g_LayerTiles", "0.01 + h"}) {
+    for (const char* part : {"AetherBlendTerrainHeights", "VSMain", "PSMain", "GetDimensions", "(splat_size - 1.0) + 0.5", "g_Camera", "0.01 + h"}) {
         AETHER_CHECK(Contains(hlsl, part));
     }
     // The blend is one function shared with the parity scene, and the shader carries exactly it.
@@ -199,6 +231,7 @@ AETHER_TEST(TerrainGpu_ADrawnTerrainShowsEachQuadrantsHeightBlendedLayers) {
         AETHER_CHECK(pass.Valid());
         TerrainDrawParams params;
         params.height_contrast = 0.9f;
+        params.camera_position = Vec3(32, 60, 32);
         for (u32 i = 0; i < 4; ++i) {
             const u8 texel[4] = {kLayers[i].rgb[0], kLayers[i].rgb[1], kLayers[i].rgb[2], kLayers[i].height};
             params.layers[i].albedo_height = device.CreateTexture(1, 1, texel);
@@ -255,7 +288,7 @@ AETHER_TEST(TerrainGpu_ADrawnTerrainShowsEachQuadrantsHeightBlendedLayers) {
             const u32 px = static_cast<u32>((clip.x / clip.w * 0.5f + 0.5f) * kW), py = static_cast<u32>((0.5f - clip.y / clip.w * 0.5f) * kH);
             const u8* got = &pixels[(static_cast<usize>(py) * kW + px) * 4];
             const std::array<f32, 4> painted = splat.GetWeights(centres[q][0] / 64.0f, centres[q][1] / 64.0f);
-            const std::array<u8, 3> want = TerrainReferenceColor(albedo, painted, heights, params);
+            const std::array<u8, 3> want = TerrainReferenceColor(albedo, painted, heights, params, Vec3(centres[q][0], 0.0f, centres[q][1]));
             const bool ok = std::abs(got[0] - want[0]) <= 4 && std::abs(got[1] - want[1]) <= 4 && std::abs(got[2] - want[2]) <= 4;
             if (!ok) {
                 std::printf("    %s, %s quadrant: got (%u, %u, %u), want (%u, %u, %u)\n", named.name, names[q], got[0], got[1], got[2], want[0], want[1],
@@ -267,8 +300,8 @@ AETHER_TEST(TerrainGpu_ADrawnTerrainShowsEachQuadrantsHeightBlendedLayers) {
         TerrainDrawParams flat_params = params;
         flat_params.height_contrast = 0.0f;
         const std::array<f32, 4> mixed = splat.GetWeights(16.0f / 64.0f, 48.0f / 64.0f);
-        const std::array<u8, 3> sharp = TerrainReferenceColor(albedo, mixed, heights, params);
-        const std::array<u8, 3> plain = TerrainReferenceColor(albedo, mixed, heights, flat_params);
+        const std::array<u8, 3> sharp = TerrainReferenceColor(albedo, mixed, heights, params, Vec3(16, 0, 48));
+        const std::array<u8, 3> plain = TerrainReferenceColor(albedo, mixed, heights, flat_params, Vec3(16, 0, 48));
         AETHER_CHECK(std::abs(sharp[0] - plain[0]) + std::abs(sharp[1] - plain[1]) > 30);
         // A corner of the image is outside the terrain: the clear colour.
         AETHER_CHECK(pixels[0] == 0 && pixels[1] == 0 && pixels[2] == 0);
