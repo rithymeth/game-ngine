@@ -1,0 +1,11 @@
+{
+  "name": "ContractPayout",
+  "duration_policy": "instant",
+  "modifiers": [
+    {
+      "attribute": "Currency",
+      "op": "add",
+      "magnitude": 250
+    }
+  ]
+}
