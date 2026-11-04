@@ -20,11 +20,14 @@ namespace aether::terrain {
 // painted weights and the layers' heights into the weights the albedos are mixed with. Lighting is a sky term and one sun on a Lambert diffuse plus a GGX specular lobe; each layer has a roughness and a metallic value, blended by the
 // same weights as the albedo. (Per-layer normal maps are not done: the push constants have no room for their indices.)
 
-// A TerrainGpu over the RHI: TerrainRenderer's chunk buffers become vertex and index buffers on the device. The RHI cannot free a buffer
-// (it has no destroy), so DestroyBuffer forgets the handle and the device keeps the memory until it goes away.
+// A TerrainGpu over the RHI: TerrainRenderer's chunk buffers become vertex and index buffers on the device. DestroyBuffer frees the device
+// buffer (the RHI retires it once the frames still drawing with it finish); the destructor frees the ones still live.
 class RhiTerrainGpu final : public TerrainGpu {
 public:
     explicit RhiTerrainGpu(gfx::rhi::IDevice& device) : device_(device) {}
+    ~RhiTerrainGpu() override;
+    RhiTerrainGpu(const RhiTerrainGpu&) = delete;
+    RhiTerrainGpu& operator=(const RhiTerrainGpu&) = delete;
     u64 CreateBuffer(const void* data, u64 bytes, bool index) override;
     void DestroyBuffer(u64 buffer) override;
     // The device buffer for an id from CreateBuffer; invalid for 0, an unknown id or a destroyed one.
@@ -79,6 +82,9 @@ const char* TerrainBlendHlsl();
 class TerrainPass {
 public:
     TerrainPass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain);
+    ~TerrainPass();
+    TerrainPass(const TerrainPass&) = delete;
+    TerrainPass& operator=(const TerrainPass&) = delete;
     bool Valid() const { return pipeline_.IsValid(); }
     // Records the chunks' draws inside the current render pass (depth-tested against, and writing, the swap chain's depth). Returns how many
     // chunks were drawn (those with live buffers).
@@ -86,6 +92,7 @@ public:
              const TerrainDrawParams& params);
 
 private:
+    gfx::rhi::IDevice& device_;
     gfx::rhi::PipelineHandle pipeline_;
 };
 

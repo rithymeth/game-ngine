@@ -449,6 +449,124 @@ void VulkanDevice::DeferCommandListResources(VkCommandPool command_pool,
     }
 }
 
+void VulkanDevice::Retire(std::function<void()> release) {
+    RetiredResource entry;
+    entry.graphics_fence = next_fence_value_.load() - 1; // the latest submission: it may be the last one to use the resource
+    entry.compute_fence = next_compute_fence_value_.load() - 1;
+    entry.release = std::move(release);
+    if (IsFenceComplete(entry.graphics_fence) && IsComputeFenceComplete(entry.compute_fence)) {
+        entry.release(); // idle GPU: nothing to wait for
+        return;
+    }
+    std::lock_guard<std::mutex> lock(retire_mutex_);
+    retire_queue_.push_back(std::move(entry));
+}
+
+void VulkanDevice::DrainRetired() {
+    std::vector<RetiredResource> ready;
+    {
+        std::lock_guard<std::mutex> lock(retire_mutex_);
+        if (retire_queue_.empty()) return;
+        std::vector<RetiredResource> waiting;
+        for (RetiredResource& entry : retire_queue_) {
+            if (IsFenceComplete(entry.graphics_fence) && IsComputeFenceComplete(entry.compute_fence)) ready.push_back(std::move(entry));
+            else waiting.push_back(std::move(entry));
+        }
+        retire_queue_ = std::move(waiting);
+    }
+    for (RetiredResource& entry : ready) entry.release();
+}
+
+void VulkanDevice::FlushRetired() noexcept {
+    std::vector<RetiredResource> all;
+    {
+        std::lock_guard<std::mutex> lock(retire_mutex_);
+        all = std::move(retire_queue_);
+        retire_queue_.clear();
+    }
+    for (RetiredResource& entry : all) entry.release();
+}
+
+void VulkanDevice::ReclaimTextureSlots() {
+    DrainRetired();
+    std::lock_guard<std::mutex> lock(retire_mutex_);
+    for (u32 position : released_texture_slots_) free_texture_slots_.push_back(position);
+    released_texture_slots_.clear();
+}
+
+IDevice::ResourceStats VulkanDevice::GetResourceStats() const {
+    ResourceStats stats;
+    stats.live_buffers = live_buffers_;
+    stats.live_pipelines = live_pipelines_;
+    stats.live_compute_pipelines = live_compute_pipelines_;
+    for (const SampledTextureRecord& texture : sampled_textures_) stats.live_textures += texture.image != VK_NULL_HANDLE ? 1u : 0u;
+    stats.buffer_slots = static_cast<u32>(buffers_.size());
+    stats.pipeline_slots = static_cast<u32>(pipelines_.size());
+    stats.compute_pipeline_slots = static_cast<u32>(compute_pipelines_.size());
+    std::lock_guard<std::mutex> lock(retire_mutex_);
+    stats.pending_retire = static_cast<u32>(retire_queue_.size());
+    return stats;
+}
+
+bool VulkanDevice::DestroyBuffer(BufferHandle buffer) {
+    if (!IsBufferAlive(buffer)) {
+        AETHER_LOG_ERROR("Vulkan", "DestroyBuffer: handle %u is invalid or already destroyed", buffer.index);
+        return false;
+    }
+    const BufferRecord record = buffers_[buffer.index];
+    buffers_[buffer.index] = {};
+    free_buffer_slots_.push_back(buffer.index);
+    --live_buffers_;
+    Retire([this, record] {
+        if (record.mapped) vkUnmapMemory(device_, record.memory);
+        if (record.constants_set != VK_NULL_HANDLE) {
+            vkFreeDescriptorSets(device_, frame_constants_pool_, 1, &record.constants_set);
+            --constant_buffer_count_;
+        }
+        vkDestroyBuffer(device_, record.buffer, nullptr);
+        vkFreeMemory(device_, record.memory, nullptr);
+    });
+    DrainRetired();
+    return true;
+}
+
+bool VulkanDevice::DestroyPipeline(PipelineHandle pipeline) {
+    if (!IsPipelineAlive(pipeline)) {
+        AETHER_LOG_ERROR("Vulkan", "DestroyPipeline: handle %u is invalid or already destroyed", pipeline.index);
+        return false;
+    }
+    const PipelineRecord record = pipelines_[pipeline.index];
+    pipelines_[pipeline.index] = {};
+    free_pipeline_slots_.push_back(pipeline.index);
+    --live_pipelines_;
+    Retire([this, record] {
+        vkDestroyPipeline(device_, record.pipeline, nullptr);
+        if (record.layout != VK_NULL_HANDLE) vkDestroyPipelineLayout(device_, record.layout, nullptr);
+    });
+    DrainRetired();
+    return true;
+}
+
+bool VulkanDevice::DestroyComputePipeline(ComputePipelineHandle pipeline) {
+    if (!IsComputePipelineAlive(pipeline)) {
+        AETHER_LOG_ERROR("Vulkan", "DestroyComputePipeline: handle %u is invalid or already destroyed", pipeline.index);
+        return false;
+    }
+    const ComputePipelineRecord record = compute_pipelines_[pipeline.index];
+    compute_pipelines_[pipeline.index] = {};
+    free_compute_pipeline_slots_.push_back(pipeline.index);
+    --live_compute_pipelines_;
+    Retire([this, record] {
+        vkDestroyPipeline(device_, record.pipeline, nullptr);
+        if (record.layout != VK_NULL_HANDLE) vkDestroyPipelineLayout(device_, record.layout, nullptr);
+        if (record.storage_layout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device_, record.storage_layout, nullptr);
+        if (record.constant_layout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device_, record.constant_layout, nullptr);
+        if (record.sampled_layout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device_, record.sampled_layout, nullptr);
+    });
+    DrainRetired();
+    return true;
+}
+
 VkResult VulkanDevice::WaitForDeviceIdle() {
     std::unique_lock<std::mutex> graphics_lock(graphics_queue_mutex_);
     if (compute_queue_ != queue_) {
@@ -472,6 +590,18 @@ void VulkanDevice::Destroy() noexcept {
             if (resources.command_pool != VK_NULL_HANDLE) vkDestroyCommandPool(device_, resources.command_pool, nullptr);
         }
         deferred_command_list_resources_.clear();
+        // The device is idle, so everything destroyed-but-pending can go now; records the free lists emptied are skipped below, which is what
+        // keeps each native object freed exactly once.
+        if (live_buffers_ != 0 || live_pipelines_ != 0 || live_compute_pipelines_ != 0) {
+            AETHER_LOG_WARN("Vulkan", "Device torn down with live resources: %u buffers, %u pipelines, %u compute pipelines (leak?)",
+                            live_buffers_, live_pipelines_, live_compute_pipelines_);
+        }
+        {
+            u32 live_textures = 0;
+            for (const SampledTextureRecord& texture : sampled_textures_) live_textures += texture.image != VK_NULL_HANDLE ? 1u : 0u;
+            if (live_textures != 0) AETHER_LOG_WARN("Vulkan", "Device torn down with %u live textures (leak?)", live_textures);
+        }
+        FlushRetired();
         for (const PipelineRecord& record : pipelines_) {
             if (record.pipeline != VK_NULL_HANDLE) {
                 vkDestroyPipeline(device_, record.pipeline, nullptr);
@@ -495,6 +625,7 @@ void VulkanDevice::Destroy() noexcept {
         }
         for (const BufferRecord& buffer : buffers_) {
             if (buffer.mapped) vkUnmapMemory(device_, buffer.memory);
+            if (buffer.constants_set != VK_NULL_HANDLE) vkFreeDescriptorSets(device_, frame_constants_pool_, 1, &buffer.constants_set);
             if (buffer.buffer != VK_NULL_HANDLE) vkDestroyBuffer(device_, buffer.buffer, nullptr);
             if (buffer.memory != VK_NULL_HANDLE) vkFreeMemory(device_, buffer.memory, nullptr);
         }
@@ -610,12 +741,14 @@ void VulkanDevice::WaitForComputeFence(u64 fence_value) {
                          static_cast<unsigned long long>(fence_value));
         throw std::invalid_argument("Vulkan compute fence value was not submitted");
     }
-    if (IsComputeFenceComplete(fence_value)) return;
-    VkSemaphoreWaitInfo wait_info{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
-    wait_info.semaphoreCount = 1;
-    wait_info.pSemaphores = &compute_timeline_semaphore_;
-    wait_info.pValues = &fence_value;
-    AETHER_VK_CHECK(vkWaitSemaphores(device_, &wait_info, UINT64_MAX));
+    if (!IsComputeFenceComplete(fence_value)) {
+        VkSemaphoreWaitInfo wait_info{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
+        wait_info.semaphoreCount = 1;
+        wait_info.pSemaphores = &compute_timeline_semaphore_;
+        wait_info.pValues = &fence_value;
+        AETHER_VK_CHECK(vkWaitSemaphores(device_, &wait_info, UINT64_MAX));
+    }
+    DrainRetired();
 }
 
 void VulkanDevice::WithQueuesIdle(const std::function<void()>& operation) {
@@ -902,6 +1035,18 @@ BufferRecord CreateHostVisibleBuffer(VkDevice device, VkPhysicalDevice physical_
 }
 } // namespace
 
+u32 VulkanDevice::AcquireBufferSlot(const BufferRecord& record) {
+    ++live_buffers_;
+    if (!free_buffer_slots_.empty()) {
+        const u32 slot = free_buffer_slots_.back();
+        free_buffer_slots_.pop_back();
+        buffers_[slot] = record;
+        return slot;
+    }
+    buffers_.push_back(record);
+    return static_cast<u32>(buffers_.size() - 1);
+}
+
 BufferHandle VulkanDevice::CreateBufferInternal(const void* data, u64 size_bytes) {
     // Both usages on every buffer regardless of which CreateXBuffer call
     // made it — simpler than tracking per-buffer usage flags, and harmless:
@@ -911,9 +1056,9 @@ BufferHandle VulkanDevice::CreateBufferInternal(const void* data, u64 size_bytes
     owned_record.Get() = CreateHostVisibleBuffer(device_, physical_device_, size_bytes,
                                                   VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                                   data, true);
-    buffers_.push_back(owned_record.Get());
+    const u32 slot = AcquireBufferSlot(owned_record.Get());
     owned_record.Release();
-    return BufferHandle{static_cast<u32>(buffers_.size() - 1)};
+    return BufferHandle{slot};
 }
 
 BufferHandle VulkanDevice::CreateVertexBuffer(const void* data, u64 size_bytes) {
@@ -949,9 +1094,9 @@ BufferHandle VulkanDevice::CreateStorageBuffer(u64 size_bytes, u32 element_strid
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         initial_data, true, queue_family_index_, compute_queue_family_index_);
     owned_record.Get().is_storage = true;
-    buffers_.push_back(owned_record.Get());
+    const u32 slot = AcquireBufferSlot(owned_record.Get());
     owned_record.Release();
-    return BufferHandle{static_cast<u32>(buffers_.size() - 1)};
+    return BufferHandle{slot};
 }
 
 BufferHandle VulkanDevice::CreateConstantBuffer(u64 size_bytes, const void* initial_data) {
@@ -963,13 +1108,13 @@ BufferHandle VulkanDevice::CreateConstantBuffer(u64 size_bytes, const void* init
     owned_record.Get() = CreateHostVisibleBuffer(device_, physical_device_, size_bytes,
         VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, initial_data, true, queue_family_index_, compute_queue_family_index_);
     owned_record.Get().is_constant = true;
-    buffers_.push_back(owned_record.Get());
+    const u32 slot = AcquireBufferSlot(owned_record.Get());
     owned_record.Release();
-    return BufferHandle{static_cast<u32>(buffers_.size() - 1)};
+    return BufferHandle{slot};
 }
 
 void VulkanDevice::UpdateConstantBuffer(BufferHandle buffer, const void* data, u64 size_bytes, u64 offset) {
-    if (!buffer.IsValid() || buffer.index >= buffers_.size() || !data || size_bytes == 0) {
+    if (!IsBufferAlive(buffer) || !data || size_bytes == 0) {
         AETHER_LOG_ERROR("Vulkan", "UpdateConstantBuffer received an invalid handle, source, or size");
         return;
     }
@@ -982,7 +1127,7 @@ void VulkanDevice::UpdateConstantBuffer(BufferHandle buffer, const void* data, u
 }
 
 void VulkanDevice::UpdateStorageBuffer(BufferHandle buffer, const void* data, u64 size_bytes, u64 offset) {
-    if (!buffer.IsValid() || buffer.index >= buffers_.size() || !data || size_bytes == 0) {
+    if (!IsBufferAlive(buffer) || !data || size_bytes == 0) {
         AETHER_LOG_ERROR("Vulkan", "UpdateStorageBuffer received an invalid handle, source, or size");
         return;
     }
@@ -1163,6 +1308,7 @@ SampledTextureHandle VulkanDevice::CreateTexture(u32 width, u32 height, const u8
         AETHER_LOG_ERROR("Vulkan", "CreateTexture requires non-zero dimensions and non-null RGBA8 pixel data");
         throw std::invalid_argument("CreateTexture requires non-zero dimensions and non-null RGBA8 pixel data");
     }
+    ReclaimTextureSlots();
     if (TextureTableFull()) {
         AETHER_LOG_ERROR("Vulkan", "CreateTexture exhausted the bindless texture table (capacity=%u real textures)",
                          kMaxUserBindlessTextures);
@@ -1242,6 +1388,7 @@ SampledTextureHandle VulkanDevice::CreateCompressedTexture(CompressedTextureForm
         AETHER_LOG_ERROR("Vulkan", "CreateCompressedTexture: this device cannot sample that format");
         return {};
     }
+    ReclaimTextureSlots();
     if (TextureTableFull()) {
         AETHER_LOG_ERROR("Vulkan", "CreateCompressedTexture exhausted the bindless texture table (capacity=%u real textures)", kMaxUserBindlessTextures);
         return {};
@@ -1272,6 +1419,7 @@ SampledTextureHandle VulkanDevice::CreateR32FloatTexture(u32 width, u32 height, 
         AETHER_LOG_ERROR("Vulkan", "R32_SFLOAT images do not support sampling and transfer-destination usage");
         return {};
     }
+    ReclaimTextureSlots();
     if (TextureTableFull()) {
         AETHER_LOG_ERROR("Vulkan", "CreateR32FloatTexture exhausted the bindless texture table (capacity=%u real textures)",
                          kMaxUserBindlessTextures);
@@ -1290,6 +1438,7 @@ SampledTextureHandle VulkanDevice::CreateR32FloatTexture(u32 width, u32 height, 
 }
 
 u32 VulkanDevice::StoreTextureRecord(const SampledTextureRecord& record) {
+    ReclaimTextureSlots();
     if (!free_texture_slots_.empty()) {
         const u32 position = free_texture_slots_.back();
         free_texture_slots_.pop_back();
@@ -1300,22 +1449,30 @@ u32 VulkanDevice::StoreTextureRecord(const SampledTextureRecord& record) {
     return static_cast<u32>(sampled_textures_.size() - 1) + kFirstUserBindlessTextureIndex;
 }
 
+// Deferred, not a device stall. The bindless set has no update-after-bind, so its descriptor cannot be rewritten while a submitted command
+// buffer may still use it: the rewrite to the white fallback, the image release and the slot's return to the free list all happen at
+// retirement (at once when the GPU is idle). Until then a stale handle still samples the old image, which stays alive; after, it samples
+// white. The slot is not reusable before retirement, so a new texture can never be written under a submission still reading the old one.
 bool VulkanDevice::DestroyTexture(SampledTextureHandle texture) {
     if (!texture.IsValid() || texture.index < kFirstUserBindlessTextureIndex) return false;
     const u32 position = texture.index - kFirstUserBindlessTextureIndex;
     if (position >= sampled_textures_.size() || sampled_textures_[position].image == VK_NULL_HANDLE) return false;
-    AETHER_VK_CHECK(vkDeviceWaitIdle(device_)); // nothing in flight still reads it
     const SampledTextureRecord record = sampled_textures_[position];
-    WriteBindlessTexture(texture.index, dummy_texture_); // a stale handle samples white, not freed memory
-    vkDestroyImageView(device_, record.view, nullptr);
-    vkDestroyImage(device_, record.image, nullptr);
-    vkFreeMemory(device_, record.memory, nullptr);
     sampled_textures_[position] = {};
-    free_texture_slots_.push_back(position);
+    sampled_textures_[position].retiring = true;
+    Retire([this, record, position, index = texture.index] {
+        WriteBindlessTexture(index, dummy_texture_);
+        vkDestroyImageView(device_, record.view, nullptr);
+        vkDestroyImage(device_, record.image, nullptr);
+        vkFreeMemory(device_, record.memory, nullptr);
+        std::lock_guard<std::mutex> lock(retire_mutex_);
+        released_texture_slots_.push_back(position);
+    });
     return true;
 }
 
 SampledTextureHandle VulkanDevice::ReserveExternalBindlessSlot() {
+    ReclaimTextureSlots();
     if (TextureTableFull()) {
         AETHER_LOG_ERROR("Vulkan", "ReserveExternalBindlessSlot: the bindless texture table is full (capacity=%u real textures)", kMaxUserBindlessTextures);
         return {};
@@ -1334,7 +1491,7 @@ void VulkanDevice::SetExternalBindlessView(SampledTextureHandle slot, VkImageVie
 void VulkanDevice::ReleaseExternalBindlessSlot(SampledTextureHandle slot) {
     if (!slot.IsValid() || slot.index < kFirstUserBindlessTextureIndex) return;
     const u32 position = slot.index - kFirstUserBindlessTextureIndex;
-    if (position >= sampled_textures_.size() || sampled_textures_[position].image != VK_NULL_HANDLE) return;
+    if (position >= sampled_textures_.size() || sampled_textures_[position].image != VK_NULL_HANDLE || sampled_textures_[position].retiring) return;
     WriteBindlessTexture(slot.index, dummy_texture_);
     free_texture_slots_.push_back(position);
 }
@@ -1343,7 +1500,7 @@ void VulkanDevice::ReleaseExternalBindlessSlot(SampledTextureHandle slot) {
 // go through UpdateVertexBuffer, which rejects them: it used to, and the player's lights never reached the GPU. The
 // caller only rewrites a slot whose previous frame has finished (SceneRenderer keeps one per frame in flight).
 void VulkanDevice::UpdateFrameConstantBuffer(BufferHandle buffer, const void* data, u64 size_bytes) {
-    if (!buffer.IsValid() || buffer.index >= buffers_.size() || buffers_[buffer.index].constants_set == VK_NULL_HANDLE) {
+    if (!IsBufferAlive(buffer) || buffers_[buffer.index].constants_set == VK_NULL_HANDLE) {
         AETHER_LOG_ERROR("Vulkan", "UpdateFrameConstantBuffer needs a buffer made by CreateFrameConstantBuffer (%u)",
                          buffer.index);
         return;
@@ -1362,6 +1519,7 @@ BufferHandle VulkanDevice::CreateFrameConstantBuffer(u64 size_bytes) {
         AETHER_LOG_ERROR("Vulkan", "CreateConstantBuffer requires a non-zero size");
         throw std::invalid_argument("CreateConstantBuffer requires a non-zero size");
     }
+    DrainRetired(); // destroyed frame-constant buffers give their sets back at retirement
     if (constant_buffer_count_ >= kMaxConstantBuffers) {
         AETHER_LOG_ERROR("Vulkan", "CreateConstantBuffer: out of constant buffers (capacity=%u)", kMaxConstantBuffers);
         return {};
@@ -1487,6 +1645,7 @@ void VulkanDevice::CreateBindlessTextureInfrastructure() {
     AETHER_VK_CHECK(vkCreateDescriptorSetLayout(device_, &constants_layout_info, nullptr, &frame_constants_set_layout_));
     VkDescriptorPoolSize constants_pool_size{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kMaxConstantBuffers};
     VkDescriptorPoolCreateInfo constants_pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    constants_pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT; // DestroyBuffer frees a buffer's set
     constants_pool_info.maxSets = kMaxConstantBuffers;
     constants_pool_info.poolSizeCount = 1;
     constants_pool_info.pPoolSizes = &constants_pool_size;
@@ -1577,9 +1736,18 @@ ComputePipelineHandle VulkanDevice::CreateComputePipeline(const ComputePipelineD
     pipeline_info.stage = stage;
     pipeline_info.layout = record.layout;
     AETHER_VK_CHECK(vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &record.pipeline));
-    compute_pipelines_.push_back(record);
+    ++live_compute_pipelines_;
+    u32 slot;
+    if (!free_compute_pipeline_slots_.empty()) {
+        slot = free_compute_pipeline_slots_.back();
+        free_compute_pipeline_slots_.pop_back();
+        compute_pipelines_[slot] = record;
+    } else {
+        compute_pipelines_.push_back(record);
+        slot = static_cast<u32>(compute_pipelines_.size() - 1);
+    }
     owned_record.Release();
-    return ComputePipelineHandle{static_cast<u32>(compute_pipelines_.size() - 1)};
+    return ComputePipelineHandle{slot};
 }
 
 PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain& swap_chain) {
@@ -1744,9 +1912,18 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
 
     AETHER_VK_CHECK(pipeline_result);
 
-    pipelines_.push_back(record);
+    ++live_pipelines_;
+    u32 slot;
+    if (!free_pipeline_slots_.empty()) {
+        slot = free_pipeline_slots_.back();
+        free_pipeline_slots_.pop_back();
+        pipelines_[slot] = record;
+    } else {
+        pipelines_.push_back(record);
+        slot = static_cast<u32>(pipelines_.size() - 1);
+    }
     owned_record.Release();
-    return PipelineHandle{static_cast<u32>(pipelines_.size() - 1)};
+    return PipelineHandle{slot};
 }
 
 u64 VulkanDevice::Submit(ICommandList& cmd, ISwapChain* wait_on_swap_chain) {
@@ -1813,6 +1990,7 @@ u64 VulkanDevice::Submit(ICommandList& cmd, ISwapChain* wait_on_swap_chain) {
     ++next_fence_value_;
     rhi_cmd->MarkSubmitted(fence_value);
     if (pending_graphics_wait_.valid) pending_graphics_wait_ = {};
+    DrainRetired();
     return fence_value;
 }
 
@@ -1825,12 +2003,14 @@ void VulkanDevice::WaitForFence(u64 fence_value) {
                          static_cast<unsigned long long>(fence_value));
         throw std::invalid_argument("Vulkan graphics fence value was not submitted");
     }
-    if (IsFenceComplete(fence_value)) return;
-    VkSemaphoreWaitInfo wait_info{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
-    wait_info.semaphoreCount = 1;
-    wait_info.pSemaphores = &timeline_semaphore_;
-    wait_info.pValues = &fence_value;
-    AETHER_VK_CHECK(vkWaitSemaphores(device_, &wait_info, UINT64_MAX));
+    if (!IsFenceComplete(fence_value)) {
+        VkSemaphoreWaitInfo wait_info{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
+        wait_info.semaphoreCount = 1;
+        wait_info.pSemaphores = &timeline_semaphore_;
+        wait_info.pValues = &fence_value;
+        AETHER_VK_CHECK(vkWaitSemaphores(device_, &wait_info, UINT64_MAX));
+    }
+    DrainRetired();
 }
 
 bool VulkanDevice::IsFenceComplete(u64 fence_value) const {
@@ -3058,7 +3238,7 @@ void VulkanCommandList::BindPipeline(PipelineHandle pipeline) {
         bound_pipeline_layout_ = VK_NULL_HANDLE;
         return;
     }
-    if (!pipeline.IsValid() || pipeline.index >= device_.PipelineCount()) {
+    if (!device_.IsPipelineAlive(pipeline)) {
         AETHER_LOG_ERROR("Vulkan", "BindPipeline received an invalid graphics-pipeline handle");
         graphics_pipeline_bound_ = false;
         graphics_bindless_enabled_ = false;
@@ -3167,7 +3347,7 @@ void VulkanCommandList::DrawIndexed(u32 index_count) {
 }
 
 void VulkanCommandList::BindFrameConstants(BufferHandle buffer) {
-    if (!buffer.IsValid() || device_.GetBuffer(buffer).constants_set == VK_NULL_HANDLE) {
+    if (!device_.IsBufferAlive(buffer) || device_.GetBuffer(buffer).constants_set == VK_NULL_HANDLE) {
         AETHER_LOG_ERROR("Vulkan", "BindFrameConstants needs a buffer made by CreateConstantBuffer");
         return;
     }
@@ -3179,7 +3359,7 @@ void VulkanCommandList::BindComputePipeline(ComputePipelineHandle pipeline) {
         AETHER_LOG_ERROR("Vulkan", "BindComputePipeline requires a recording command list");
         return;
     }
-    if (!compute_queue_ || !pipeline.IsValid() || pipeline.index >= device_.ComputePipelineCount()) {
+    if (!compute_queue_ || !device_.IsComputePipelineAlive(pipeline)) {
         AETHER_LOG_ERROR("Vulkan", "BindComputePipeline requires a compute command list and valid pipeline handle");
         bound_compute_pipeline_ = {};
         compute_storage_bound_.clear();
@@ -3230,12 +3410,12 @@ void VulkanCommandList::BindComputeConstantBuffer(u32 slot, BufferHandle buffer)
         AETHER_LOG_ERROR("Vulkan", "BindComputeConstantBuffer requires a recording command list");
         return;
     }
-    if (!compute_queue_ || !bound_compute_pipeline_.IsValid()) {
+    if (!compute_queue_ || !device_.IsComputePipelineAlive(bound_compute_pipeline_)) {
         AETHER_LOG_ERROR("Vulkan", "BindComputeConstantBuffer requires a bound compute pipeline");
         return;
     }
     const ComputePipelineRecord& pipeline = device_.GetComputePipeline(bound_compute_pipeline_);
-    if (slot >= pipeline.constant_buffer_count || !buffer.IsValid() || buffer.index >= device_.BufferCount() ||
+    if (slot >= pipeline.constant_buffer_count || !buffer.IsValid() || !device_.IsBufferAlive(buffer) ||
         !device_.GetBuffer(buffer).is_constant) {
         AETHER_LOG_ERROR("Vulkan", "BindComputeConstantBuffer received an invalid slot or buffer handle");
         return;
@@ -3257,12 +3437,12 @@ void VulkanCommandList::BindComputeStorageBuffer(u32 slot, BufferHandle buffer) 
         AETHER_LOG_ERROR("Vulkan", "BindComputeStorageBuffer requires a recording command list");
         return;
     }
-    if (!compute_queue_ || !bound_compute_pipeline_.IsValid()) {
+    if (!compute_queue_ || !device_.IsComputePipelineAlive(bound_compute_pipeline_)) {
         AETHER_LOG_ERROR("Vulkan", "BindComputeStorageBuffer requires a bound compute pipeline");
         return;
     }
     const ComputePipelineRecord& pipeline = device_.GetComputePipeline(bound_compute_pipeline_);
-    if (slot >= pipeline.storage_buffer_count || !buffer.IsValid() || buffer.index >= device_.BufferCount() ||
+    if (slot >= pipeline.storage_buffer_count || !buffer.IsValid() || !device_.IsBufferAlive(buffer) ||
         !device_.GetBuffer(buffer).is_storage) {
         AETHER_LOG_ERROR("Vulkan", "BindComputeStorageBuffer received an invalid slot or buffer handle");
         return;
@@ -3284,14 +3464,15 @@ void VulkanCommandList::BindComputeSampledTexture(u32 slot, SampledTextureHandle
         AETHER_LOG_ERROR("Vulkan", "BindComputeSampledTexture requires a recording command list");
         return;
     }
-    if (!compute_queue_ || !bound_compute_pipeline_.IsValid()) {
+    if (!compute_queue_ || !device_.IsComputePipelineAlive(bound_compute_pipeline_)) {
         AETHER_LOG_ERROR("Vulkan", "BindComputeSampledTexture requires a bound compute pipeline");
         return;
     }
     const ComputePipelineRecord& pipeline = device_.GetComputePipeline(bound_compute_pipeline_);
     if (slot >= pipeline.sampled_texture_count || !texture.IsValid() ||
         texture.index < kFirstUserBindlessTextureIndex ||
-        texture.index - kFirstUserBindlessTextureIndex >= device_.SampledTextureCount()) {
+        texture.index - kFirstUserBindlessTextureIndex >= device_.SampledTextureCount() ||
+        device_.GetSampledTexture(texture).view == VK_NULL_HANDLE) {
         AETHER_LOG_ERROR("Vulkan", "BindComputeSampledTexture received an invalid slot or texture handle");
         return;
     }
@@ -3314,7 +3495,7 @@ void VulkanCommandList::ComputeBufferBarrier(BufferHandle buffer) {
         AETHER_LOG_ERROR("Vulkan", "ComputeBufferBarrier requires a recording command list");
         return;
     }
-    if (!compute_queue_ || !buffer.IsValid() || buffer.index >= device_.BufferCount() ||
+    if (!compute_queue_ || !buffer.IsValid() || !device_.IsBufferAlive(buffer) ||
         !device_.GetBuffer(buffer).is_storage) {
         AETHER_LOG_ERROR("Vulkan", "ComputeBufferBarrier requires a compute command list and storage buffer");
         return;
@@ -3342,7 +3523,7 @@ void VulkanCommandList::Dispatch(u32 groups_x, u32 groups_y, u32 groups_z) {
         AETHER_LOG_ERROR("Vulkan", "Compute dispatch group counts are zero or exceed device limits");
         return;
     }
-    if (!compute_queue_ || !bound_compute_pipeline_.IsValid()) {
+    if (!compute_queue_ || !device_.IsComputePipelineAlive(bound_compute_pipeline_)) {
         AETHER_LOG_ERROR("Vulkan", "Dispatch requires a bound compute pipeline");
         return;
     }

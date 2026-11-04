@@ -8,6 +8,7 @@
 #include "aether/gfx/swap_chain.h"
 #include "aether/gfx/texture.h"
 
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -59,6 +60,14 @@ public:
     ComputePipelineHandle CreateComputePipeline(const ComputePipelineDesc& desc) override;
     const PipelineRecord& GetPipeline(PipelineHandle handle) const { return pipelines_[handle.index]; }
     usize PipelineCount() const { return pipelines_.size(); }
+    bool IsPipelineAlive(PipelineHandle h) const { return h.IsValid() && h.index < pipelines_.size() && pipelines_[h.index].pso != nullptr; }
+    bool IsComputePipelineAlive(ComputePipelineHandle h) const { return h.IsValid() && h.index < compute_pipelines_.size() && compute_pipelines_[h.index].pso != nullptr; }
+    bool IsBufferAlive(BufferHandle h) const { return h.IsValid() && h.index < buffers_.size() && buffers_[h.index] != nullptr; }
+    bool DestroyBuffer(BufferHandle buffer) override;
+    bool DestroyPipeline(PipelineHandle pipeline) override;
+    bool DestroyComputePipeline(ComputePipelineHandle pipeline) override;
+    ResourceStats GetResourceStats() const override;
+    void ReleaseRetiredResources() override { DrainRetired(); }
     const ComputePipelineRecord& GetComputePipeline(ComputePipelineHandle handle) const { return compute_pipelines_[handle.index]; }
     usize ComputePipelineCount() const { return compute_pipelines_.size(); }
 
@@ -133,6 +142,24 @@ private:
     BufferHandle CreateBufferInternal(const void* data, u64 size_bytes, bool is_vertex,
                                       std::optional<IndexFormat> index_format = std::nullopt);
     void ReserveBufferRegistryEntry();
+    // Stores a new buffer in the first free slot (or a new one) with its per-slot flags and returns the slot.
+    u32 StoreBuffer(std::unique_ptr<gfx::Buffer> buffer, u32 storage_descriptor, bool is_constant, bool is_vertex,
+                    std::optional<IndexFormat> index_format);
+    u32 StorePipeline(PipelineRecord&& record);
+    u32 StoreComputePipeline(ComputePipelineRecord&& record);
+
+    // Retire queue: destroyed resources are kept alive by the closure until the graphics and compute fences reach the values that were the
+    // latest submitted at destruction (every submission that could use them has then completed); then the closure frees their descriptors.
+    struct RetiredResource {
+        u64 graphics_fence = 0, compute_fence = 0;
+        std::function<void()> release;
+    };
+    mutable std::mutex retire_mutex_;
+    std::vector<RetiredResource> retire_queue_;
+    void Retire(std::function<void()> release);
+    void DrainRetired();
+    std::vector<u32> free_buffer_slots_, free_pipeline_slots_, free_compute_pipeline_slots_;
+    u32 live_buffers_ = 0, live_pipelines_ = 0, live_compute_pipelines_ = 0;
 
     // Declared before device_ so deferred allocators are released only after
     // gfx::Device has made its final queue-drain attempt during destruction.

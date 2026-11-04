@@ -197,6 +197,12 @@ bool RenderScene(rhi::IDevice& device, const Scene& scene, u32 width, u32 height
     desc.hlsl_source = SceneHlsl(scene, width, height);
     const rhi::PipelineHandle pipeline = device.CreatePipeline(desc, *target);
     if (!pipeline.IsValid()) return fail("the scene's pipeline did not compile");
+    // Frees the pipeline on every return below (the device retires it once the last submission finishes).
+    struct PipelineGuard {
+        rhi::IDevice& device;
+        rhi::PipelineHandle handle;
+        ~PipelineGuard() { device.DestroyPipeline(handle); }
+    } pipeline_guard{device, pipeline};
     std::unique_ptr<rhi::ICommandList> cmd = device.CreateCommandList();
     target->AcquireNextImage();
     cmd->Reset();

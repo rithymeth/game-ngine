@@ -118,6 +118,7 @@ private:
 class GpuEmitterRuntime {
 public:
     GpuEmitterRuntime() = default;
+    ~GpuEmitterRuntime() { Release(); }
     GpuEmitterRuntime(const GpuEmitterRuntime&) = delete;
     GpuEmitterRuntime& operator=(const GpuEmitterRuntime&) = delete;
 
@@ -147,6 +148,9 @@ public:
     bool IsInitialized() const { return initialized_; }
 
 private:
+    // Destroys every device buffer and pipeline this runtime made (the device retires them once in-flight work finishes).
+    void Release();
+
     gfx::rhi::IDevice* device_ = nullptr;
     GpuEmitterDriver driver_{Emitter{}};
     GeneratedParticleShader shader_;
