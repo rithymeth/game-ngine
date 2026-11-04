@@ -4630,17 +4630,22 @@
   void SpotBoundingSphere(const RenderSpotLight&spot,Vec3&center,f32&radius)
 [renderer/include/aether/renderer/components.h] experimental
   type enum class Tonemapper
+  type struct Decal
   type struct DirectionalLight
   type struct PointLight
   type struct PostProcessVolume
   type struct SkyLight
   type struct SpotLight
   ))AETHER_ENUM(aether::Tonemapper,1,AETHER_ENUM_VALUE(ACES),AETHER_ENUM_VALUE(AgX),AETHER_ENUM_VALUE(None))AETHER_REFLECT(aether::PostProcessVolume,1,AETHER_FIELD(global,Field_EditAnywhere,
+  ),AETHER_FIELD(angle_fade_end,Field_EditAnywhere,
+  ),AETHER_FIELD(angle_fade_start,Field_EditAnywhere,
   ),AETHER_FIELD(blend_distance,Field_EditAnywhere,
   ),AETHER_FIELD(bloom_intensity,Field_EditAnywhere,
   ),AETHER_FIELD(cast_shadows,Field_EditAnywhere))AETHER_REFLECT(aether::PointLight,1,AETHER_FIELD(color,Field_EditAnywhere),AETHER_FIELD(intensity,Field_EditAnywhere,
   ),AETHER_FIELD(cast_shadows,Field_EditAnywhere))AETHER_REFLECT(aether::SkyLight,1,AETHER_FIELD(color,Field_EditAnywhere),AETHER_FIELD(intensity,Field_EditAnywhere,
   ),AETHER_FIELD(cast_shadows,Field_EditAnywhere))AETHER_REFLECT(aether::SpotLight,1,AETHER_FIELD(color,Field_EditAnywhere),AETHER_FIELD(intensity,Field_EditAnywhere,
+  ),AETHER_FIELD(color,Field_EditAnywhere),AETHER_FIELD(opacity,Field_EditAnywhere,
+  ),AETHER_FIELD(enabled,Field_EditAnywhere))
   ),AETHER_FIELD(exposure_compensation,Field_EditAnywhere,
   ),AETHER_FIELD(extents,Field_EditAnywhere,
   ),AETHER_FIELD(inner_angle_degrees,Field_EditAnywhere,
@@ -4648,11 +4653,20 @@
   ),AETHER_FIELD(priority,Field_EditAnywhere,
   ),AETHER_FIELD(range,Field_EditAnywhere,
   ),AETHER_FIELD(saturation,Field_EditAnywhere,
-  ),AETHER_FIELD(tonemapper,Field_EditAnywhere))
+  ),AETHER_FIELD(size,Field_EditAnywhere,
+  ),AETHER_FIELD(sort_order,Field_EditAnywhere,
+  ),AETHER_FIELD(tonemapper,Field_EditAnywhere))AETHER_REFLECT(aether::Decal,1,AETHER_FIELD(texture,Field_EditAnywhere,
   ),AETHER_FIELD(vignette,Field_EditAnywhere,
   ),AETHER_FIELD(weight,Field_EditAnywhere,
   AETHER_REFLECT(aether::DirectionalLight,1,AETHER_FIELD(color,Field_EditAnywhere),AETHER_FIELD(intensity,Field_EditAnywhere,
   void RegisterRenderComponents()
+[renderer/include/aether/renderer/decal.h] experimental
+  type struct DecalDraw
+  type struct DecalInput
+  Mat4 DecalLocalToWorld(const Mat4&world,const Vec3&size)
+  Vec3 DecalUnitPosition(const DecalDraw&draw,f32 ndc_x,f32 ndc_y,f32 depth)
+  bool DecalScreenRect(const Mat4&local_to_world,const Mat4&view_projection,f32 rect[4])
+  void BuildDecalDraws(const std::vector<DecalInput>&inputs,const Mat4&view_projection,const Vec3&camera_position,std::vector<DecalDraw>&out)
 [renderer/include/aether/renderer/draw_list.h] experimental
   type struct DrawBatch
   type struct DrawList

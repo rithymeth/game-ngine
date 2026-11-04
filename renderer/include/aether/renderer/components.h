@@ -3,6 +3,8 @@
 #include "aether/math/math.h"
 #include "aether/reflection/reflection.h"
 
+#include <string>
+
 namespace aether {
 
 // Rendering components (Phase 14 step 1). Colors are linear RGB. The
@@ -54,6 +56,20 @@ struct PostProcessVolume {
     Tonemapper tonemapper = Tonemapper::ACES;
 };
 
+// A decal (Phase 39.4): a box, `size` metres across, at the entity's transform, that paints `texture` onto whatever opaque surfaces are inside it,
+// projected along the box's local Z. Where a surface turns edge-on to that axis the decal fades (its |cos| between angle_fade_end and
+// angle_fade_start). Drawn after the opaque scene, over the surfaces' lit colour, unlit (colour is a tint; there is no lighting on the decal itself yet).
+struct Decal {
+    std::string texture;           // a texture in the package; empty draws a flat tint
+    Vec3 size{1, 1, 1};            // the box's full width, height and depth, in metres
+    Vec3 color{1, 1, 1};           // linear tint, multiplied into the texture
+    f32 opacity = 1.0f;            // 0..1, times the texture's alpha
+    f32 angle_fade_start = 0.5f;   // full strength where |surface normal . projection axis| is at least this
+    f32 angle_fade_end = 0.1f;     // gone where it is at most this
+    i32 sort_order = 0;            // lower draws first; ties draw far to near
+    bool enabled = true;
+};
+
 // Registers the components with the ECS (idempotent), so scenes load them.
 void RegisterRenderComponents();
 
@@ -94,4 +110,14 @@ AETHER_REFLECT(aether::PostProcessVolume, 1,
     AETHER_FIELD(vignette, Field_EditAnywhere, {.range_min = 0.0, .range_max = 1.0}),
     AETHER_FIELD(saturation, Field_EditAnywhere, {.range_min = 0.0, .range_max = 2.0}),
     AETHER_FIELD(tonemapper, Field_EditAnywhere)
+)
+AETHER_REFLECT(aether::Decal, 1,
+    AETHER_FIELD(texture, Field_EditAnywhere, {.tooltip = "A texture in the package; empty draws a flat tint"}),
+    AETHER_FIELD(size, Field_EditAnywhere, {.tooltip = "The box's full size; the decal projects along its local Z", .range_min = 0.001, .range_max = 10000.0, .units = "m"}),
+    AETHER_FIELD(color, Field_EditAnywhere),
+    AETHER_FIELD(opacity, Field_EditAnywhere, {.range_min = 0.0, .range_max = 1.0}),
+    AETHER_FIELD(angle_fade_start, Field_EditAnywhere, {.tooltip = "Full strength at or above this |cos| between the surface normal and the projection", .range_min = 0.0, .range_max = 1.0}),
+    AETHER_FIELD(angle_fade_end, Field_EditAnywhere, {.tooltip = "Gone at or below this |cos|", .range_min = 0.0, .range_max = 1.0}),
+    AETHER_FIELD(sort_order, Field_EditAnywhere, {.tooltip = "Lower draws first"}),
+    AETHER_FIELD(enabled, Field_EditAnywhere)
 )
