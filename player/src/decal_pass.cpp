@@ -82,7 +82,11 @@ DecalConstants PackDecalConstants(const DecalPassItem& item, u32 scene_depth_ind
     return c;
 }
 
-DecalPass::DecalPass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain) {
+DecalPass::~DecalPass() {
+    if (pipeline_.IsValid()) device_.DestroyPipeline(pipeline_);
+}
+
+DecalPass::DecalPass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain) : device_(device) {
     const gfx::rhi::SampledTextureHandle depth = swap_chain.SceneDepthTexture();
     scene_depth_ = depth.IsValid() && depth.index < gfx::rhi::kMaxBindlessTextures ? depth.index : 0u;
     if (scene_depth_ == 0) {

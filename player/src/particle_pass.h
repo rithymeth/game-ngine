@@ -135,6 +135,9 @@ class ParticlePass {
 public:
     static constexpr usize kFrameSlots = 8;
     ParticlePass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain);
+    ~ParticlePass();
+    ParticlePass(const ParticlePass&) = delete;
+    ParticlePass& operator=(const ParticlePass&) = delete;
     // How materials become textures (the scene renderer's texture cache); unset, particles draw untextured.
     void SetTextureResolver(ParticleTextureResolver resolver) { textures_ = std::move(resolver); }
     // How mesh paths become geometry (the scene renderer's model cache); unset, mesh particles are not drawn.

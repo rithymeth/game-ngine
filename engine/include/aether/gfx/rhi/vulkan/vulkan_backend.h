@@ -71,6 +71,7 @@ struct SampledTextureRecord {
     VkImage image = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE;
+    bool retiring = false; // DestroyTexture emptied it; the slot is not reusable until the GPU is done with the old image
 };
 
 // Vulkan counterpart to d3d12_backend::D3D12Device. Notably: this
@@ -101,6 +102,9 @@ public:
     PipelineHandle CreatePipeline(const PipelineDesc& desc, ISwapChain& swap_chain) override;
     ComputePipelineHandle CreateComputePipeline(const ComputePipelineDesc& desc) override;
     const PipelineRecord& GetPipeline(PipelineHandle handle) const { return pipelines_[handle.index]; }
+    bool IsPipelineAlive(PipelineHandle h) const { return h.IsValid() && h.index < pipelines_.size() && pipelines_[h.index].pipeline != VK_NULL_HANDLE; }
+    bool IsComputePipelineAlive(ComputePipelineHandle h) const { return h.IsValid() && h.index < compute_pipelines_.size() && compute_pipelines_[h.index].pipeline != VK_NULL_HANDLE; }
+    bool IsBufferAlive(BufferHandle h) const { return h.IsValid() && h.index < buffers_.size() && buffers_[h.index].buffer != VK_NULL_HANDLE; }
     usize PipelineCount() const { return pipelines_.size(); }
     const ComputePipelineRecord& GetComputePipeline(ComputePipelineHandle handle) const { return compute_pipelines_[handle.index]; }
     usize ComputePipelineCount() const { return compute_pipelines_.size(); }
@@ -126,6 +130,11 @@ public:
     bool SupportsCompressedTexture(CompressedTextureFormat format) const override;
     SampledTextureHandle CreateCompressedTexture(CompressedTextureFormat format, u32 width, u32 height, std::span<const CompressedMip> mips) override;
     bool DestroyTexture(SampledTextureHandle texture) override;
+    bool DestroyBuffer(BufferHandle buffer) override;
+    bool DestroyPipeline(PipelineHandle pipeline) override;
+    bool DestroyComputePipeline(ComputePipelineHandle pipeline) override;
+    ResourceStats GetResourceStats() const override;
+    void ReleaseRetiredResources() override { DrainRetired(); }
 
     // Frame constants (PipelineDesc::frame_constants_size_bytes): descriptor set 2, one uniform buffer at binding 0, which is where the HLSL's
     // `register(b0, space2)` lands under DXC's default mapping (space N is set N, register bN is binding N).
@@ -253,6 +262,22 @@ private:
     std::vector<BufferRecord> buffers_;
     std::vector<SampledTextureRecord> sampled_textures_; // position i is bindless slot i + kFirstUserBindlessTextureIndex; a freed one is empty
     std::vector<u32> free_texture_slots_;                // positions in sampled_textures_ DestroyTexture emptied, reused first
+    std::vector<u32> free_buffer_slots_, free_pipeline_slots_, free_compute_pipeline_slots_; // emptied by Destroy*, reused first
+    u32 live_buffers_ = 0, live_pipelines_ = 0, live_compute_pipelines_ = 0;
+
+    // Retire queue: native objects of destroyed resources, released once the graphics and compute timelines reach the values that were the
+    // latest submitted when the resource was destroyed (so every submission that could have used it has completed).
+    struct RetiredResource {
+        u64 graphics_fence = 0, compute_fence = 0;
+        std::function<void()> release;
+    };
+    mutable std::mutex retire_mutex_;
+    std::vector<RetiredResource> retire_queue_;
+    std::vector<u32> released_texture_slots_; // positions whose image was released, moved to free_texture_slots_ by ReclaimTextureSlots
+    void Retire(std::function<void()> release);
+    void DrainRetired();
+    void ReclaimTextureSlots();
+    void FlushRetired() noexcept; // runs everything queued; only with the device idle
     // Stores `record` in the first free position (or a new one) and returns its bindless index.
     u32 StoreTextureRecord(const SampledTextureRecord& record);
     bool TextureTableFull() const { return sampled_textures_.size() - free_texture_slots_.size() >= kMaxUserBindlessTextures; }
@@ -267,7 +292,7 @@ private:
     VkDescriptorSetLayout frame_constants_set_layout_ = VK_NULL_HANDLE;
     VkDescriptorPool frame_constants_pool_ = VK_NULL_HANDLE;
     static constexpr u32 kMaxConstantBuffers = 64;
-    u32 constant_buffer_count_ = 0;
+    std::atomic<u32> constant_buffer_count_{0};
 
     // A 1x1 white dummy image, permanently retained for slot zero and also
     // referenced by every other bindless descriptor slot before real
@@ -277,6 +302,7 @@ private:
     // actually samples.
     SampledTextureRecord dummy_texture_;
 
+    u32 AcquireBufferSlot(const BufferRecord& record);
     BufferHandle CreateBufferInternal(const void* data, u64 size_bytes);
     void CreateBindlessTextureInfrastructure();
     SampledTextureRecord UploadTextureRecord(u32 width, u32 height, const u8* rgba8_pixels);

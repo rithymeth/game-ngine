@@ -194,8 +194,15 @@ u64 RhiTerrainGpu::CreateBuffer(const void* data, u64 bytes, bool index) {
     return buffers_.size(); // id - 1 is the slot
 }
 
+RhiTerrainGpu::~RhiTerrainGpu() {
+    for (const gfx::rhi::BufferHandle handle : buffers_) {
+        if (handle.IsValid()) device_.DestroyBuffer(handle);
+    }
+}
+
 void RhiTerrainGpu::DestroyBuffer(u64 buffer) {
     if (buffer == 0 || buffer > buffers_.size() || !buffers_[buffer - 1].IsValid()) return;
+    device_.DestroyBuffer(buffers_[buffer - 1]);
     buffers_[buffer - 1] = gfx::rhi::BufferHandle{};
     --live_;
 }
@@ -235,7 +242,11 @@ TerrainConstants PackTerrainConstants(const Mat4& view_projection, const Terrain
     return c;
 }
 
-TerrainPass::TerrainPass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain) {
+TerrainPass::~TerrainPass() {
+    if (pipeline_.IsValid()) device_.DestroyPipeline(pipeline_);
+}
+
+TerrainPass::TerrainPass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain) : device_(device) {
     gfx::rhi::PipelineDesc desc;
     desc.hlsl_source = TerrainShaderSource();
     desc.push_constant_size_bytes = sizeof(TerrainConstants);
