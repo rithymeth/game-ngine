@@ -602,11 +602,11 @@ void MaterialEditorWidget::RefreshDetails() {
         QObject::connect(remove, &QPushButton::clicked, this, [this, name] { document_.RemoveParameter(name.toStdString()); Refresh(); });
     } else {
         const auto& m = document_.Get();
-        auto* shading = new QComboBox(details_); shading->addItems({"Default Lit", "Unlit"}); shading->setCurrentIndex(static_cast<int>(m.shading)); details_form_->addRow("Shading", shading);
+        auto* shading = new QComboBox(details_); shading->addItems({"Default Lit", "Unlit", "Subsurface", "Hair", "Cloth"}); shading->setCurrentIndex(static_cast<int>(m.shading)); details_form_->addRow("Shading", shading);
         QObject::connect(shading, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int i) {
             document_.Edit("Change shading", [=](aether::mat::Material& material) { material.shading = static_cast<aether::mat::ShadingModel>(i); }); Refresh();
         });
-        auto* blend = new QComboBox(details_); blend->addItems({"Opaque", "Masked", "Translucent", "Additive"}); blend->setCurrentIndex(static_cast<int>(m.blend)); details_form_->addRow("Blend mode", blend);
+        auto* blend = new QComboBox(details_); blend->addItems({"Opaque", "Masked", "Translucent", "Additive", "Decal"}); blend->setCurrentIndex(static_cast<int>(m.blend)); details_form_->addRow("Blend mode", blend);
         QObject::connect(blend, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int i) {
             document_.Edit("Change blend mode", [=](aether::mat::Material& material) { material.blend = static_cast<aether::mat::BlendMode>(i); }); Refresh();
         });

@@ -3866,14 +3866,17 @@ HLSL, like Unreal's material editor. They live in `Aether::Renderer`
 
 **Step 1: the material model** (§15.2).
 
-- **Material**: shading model (Default Lit or Unlit), blend mode (Opaque,
-  Masked, Translucent, Additive), two-sided, the mask clip value, named
+- **Material**: shading model (Default Lit, Unlit, Subsurface, Hair or
+  Cloth; the last three add Material Output pins only they read), blend mode
+  (Opaque, Masked, Translucent, Additive, Decal), two-sided, the mask clip value, named
   parameters (scalar, vector or texture, with defaults and groups),
   nodes and links.
 - **Node library** (`ResolveNode`, `ListNodeTypes` for the palette):
   - the Material Output node (BaseColor, Metallic, Roughness, Normal,
     Emissive, AO, ClearCoat, ClearCoatRoughness, SheenColor, SheenRoughness,
-    Anisotropy, AnisotropyRotation, Opacity, OpacityMask, WorldPositionOffset);
+    Anisotropy, AnisotropyRotation, SubsurfaceColor, Thickness, HairShift,
+    HairSecondaryShift, HairTint, Fuzz, Opacity, OpacityMask,
+    WorldPositionOffset);
   - constants, and parameter nodes (`Param.Scalar:Roughness`);
   - Texture Sample (a texture input is required; UVs default to UV0),
     Unpack Normal;

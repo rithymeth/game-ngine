@@ -360,14 +360,14 @@ void MaterialEditor::DrawMaterialDetails() {
         return;
     }
     ImGui::SeparatorText("Material");
-    static const char* kShading[] = {"Default Lit", "Unlit"};
+    static const char* kShading[] = {"Default Lit", "Unlit", "Subsurface", "Hair", "Cloth"};
     int shading = static_cast<int>(m.shading);
-    if (ImGui::Combo("Shading", &shading, kShading, 2)) {
+    if (ImGui::Combo("Shading", &shading, kShading, 5)) {
         doc_.Edit("Change shading", [&](Material& x) { x.shading = static_cast<mat::ShadingModel>(shading); });
     }
-    static const char* kBlend[] = {"Opaque", "Masked", "Translucent", "Additive"};
+    static const char* kBlend[] = {"Opaque", "Masked", "Translucent", "Additive", "Decal"};
     int blend = static_cast<int>(m.blend);
-    if (ImGui::Combo("Blend Mode", &blend, kBlend, 4)) {
+    if (ImGui::Combo("Blend Mode", &blend, kBlend, 5)) {
         doc_.Edit("Change blend mode", [&](Material& x) { x.blend = static_cast<mat::BlendMode>(blend); });
     }
     bool two_sided = m.two_sided;

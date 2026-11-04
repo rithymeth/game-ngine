@@ -48,6 +48,7 @@ struct MaterialFeatures {
     bool world_position_offset = false; // the vertex stage adds an offset
     bool alpha_test = false;            // Masked
     bool translucent = false;           // Translucent or Additive
+    bool decal = false;                 // Decal: drawn onto the surfaces it is projected on, blended by Opacity
     bool operator==(const MaterialFeatures& o) const;
 };
 
@@ -73,6 +74,12 @@ GeneratedMaterial GenerateHlsl(const Material& material);
 // refraction) that reports how much light it takes from the base layer. Plain HLSL helpers
 // prefixed "Aether", to be included once ahead of the generated material.
 const char* AdvancedPbrHlsl();
+
+// The shading models and decals of Phase 39.4, for the lighting pass that reads a Subsurface, Hair or Cloth material's pins: wrapped
+// diffuse with back-lit transmission (skin, wax, leaves), two-lobe Kajiya-Kay strand highlights with a shifted tangent (hair), the
+// Ashikhmin cloth distribution with fibre fuzz, and decal projection, angle fade and colour and normal blending. Plain HLSL helpers
+// prefixed "Aether", self-contained, to be included once ahead of the generated material.
+const char* ShadingModelsHlsl();
 
 // A name made safe for HLSL: letters, digits and underscores.
 std::string HlslIdentifier(const std::string& name);

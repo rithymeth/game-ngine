@@ -4746,6 +4746,7 @@
   bool operator==(const MaterialFeatures&o)const
   const ParameterSlot*Find(const std::string&name)const
   const char*AdvancedPbrHlsl()
+  const char*ShadingModelsHlsl()
   std::string HlslIdentifier(const std::string&name)
 [renderer/include/aether/renderer/material_instance.h] experimental
   type class ParameterBlock
