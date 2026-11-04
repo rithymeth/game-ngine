@@ -723,3 +723,17 @@ endif()
 set(AETHER_PACKAGE_USE_TRACY ${AETHER_TRACY})
 set(AETHER_PACKAGE_LZ4_FILENAME "${AETHER_LZ4_INSTALL_FILENAME}")
 aether_generate_package_config()
+
+# The pull-request gate (.github/workflows/ci.yml) runs only these: the unit and functional binaries, the frozen
+# API sample and the fuzz-corpus replays. Building this target instead of "all" skips the player, tools, benches,
+# demos and games, which the post-merge lanes still build.
+set(_aether_pr_gate_deps aether_tests aether_functional frozen_api_game)
+get_property(_aether_replays GLOBAL PROPERTY AETHER_REPLAY_TARGETS)
+list(APPEND _aether_pr_gate_deps ${_aether_replays})
+list(FILTER _aether_pr_gate_deps INCLUDE REGEX ".")
+foreach(_t IN LISTS _aether_pr_gate_deps)
+    if(NOT TARGET ${_t})
+        list(REMOVE_ITEM _aether_pr_gate_deps ${_t})
+    endif()
+endforeach()
+add_custom_target(aether_pr_gate DEPENDS ${_aether_pr_gate_deps})
