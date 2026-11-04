@@ -1748,6 +1748,26 @@
 [engine/include/aether/gfx/material.h] experimental
   type struct MaterialData
   MaterialData LoadMaterial(const assets::GltfMaterial&source,assets::AssetManager&assets,ID3D12GraphicsCommandList*upload_cmd)
+[engine/include/aether/gfx/parity.h] experimental
+  type enum class SceneKind
+  type struct BackendRun
+  type struct ImageDiff
+  type struct Pair
+  type struct Scene
+  type struct SceneReport
+  type struct Tolerance
+  ImageDiff CompareImages(const std::vector<u8>&a,const std::vector<u8>&b,u32 width,u32 height,const Tolerance&tolerance)
+  SceneReport RunScene(const Scene&scene,u32 width,u32 height,const std::vector<rhi::Backend>&backends,const Tolerance&tolerance)
+  bool Ok(const Tolerance&tolerance)const
+  bool RenderScene(rhi::IDevice&device,const Scene&scene,u32 width,u32 height,std::vector<u8>&pixels,std::string*error=nullptr)
+  bool Within(const ImageDiff&diff,const Tolerance&tolerance)
+  const char*BackendName(rhi::Backend backend)
+  const std::vector<Scene>&Scenes()
+  f64 BadFraction()const
+  std::string Describe(const ImageDiff&diff)
+  std::string SceneHlsl(const Scene&scene,u32 width,u32 height)
+  std::vector<u8>ReferenceImage(const Scene&scene,u32 width,u32 height)
+  usize RenderedCount()const
 [engine/include/aether/gfx/render_graph.h] experimental
   type class PassBuilder
   type class RenderGraph
