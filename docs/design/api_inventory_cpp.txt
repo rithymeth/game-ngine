@@ -1738,6 +1738,8 @@
   bool IsComputeFenceComplete(u64 fence_value)const
   bool IsFenceComplete(u64 fence_value)const
   public:explicit Device(bool enable_debug_layer=true)
+  u64 LastSubmittedComputeFence()const
+  u64 LastSubmittedFence()const
   u64 Submit(ID3D12CommandList*const*lists,u32 count)
   u64 SubmitCompute(ID3D12CommandList*const*lists,u32 count)
   void ComputeQueueWaitOnGraphics(u64 graphics_fence_value)
@@ -1836,6 +1838,7 @@
   type class D3D12SwapChain
   type struct ComputePipelineRecord
   type struct PipelineRecord
+  type struct RetiredResource
   type struct TextureRecord
   Backend GetBackend()const override
   BufferHandle CreateConstantBuffer(u64 size_bytes,const void*initial_data)override
@@ -1853,6 +1856,7 @@
   ID3D12Resource*DepthResource(u32 index)const
   ID3D12Resource*SceneDepthCopy()const
   PipelineHandle CreatePipeline(const PipelineDesc&desc,ISwapChain&swap_chain)override
+  ResourceStats GetResourceStats()const override
   SampledTextureHandle CreateCompressedTexture(CompressedTextureFormat format,u32 width,u32 height,std::span<const CompressedMip>mips)override
   SampledTextureHandle CreateR32FloatTexture(u32 width,u32 height,const f32*values)override
   SampledTextureHandle CreateTexture(u32 width,u32 height,const u8*rgba8_pixels)override
@@ -1863,12 +1867,18 @@
   bool BelongsTo(const D3D12Device&device)const
   bool ConsumeUsedBefore(u32 index)
   bool CopySceneDepth()override
+  bool DestroyBuffer(BufferHandle buffer)override
+  bool DestroyComputePipeline(ComputePipelineHandle pipeline)override
+  bool DestroyPipeline(PipelineHandle pipeline)override
   bool DestroyTexture(SampledTextureHandle texture)override
+  bool IsBufferAlive(BufferHandle h)const
   bool IsComputeFenceComplete(u64 fence_value)const override
   bool IsComputeList()const
+  bool IsComputePipelineAlive(ComputePipelineHandle h)const
   bool IsConstantBuffer(BufferHandle handle)const
   bool IsFenceComplete(u64 fence_value)const override
   bool IsIndexBuffer(BufferHandle handle,IndexFormat format)const
+  bool IsPipelineAlive(PipelineHandle h)const
   bool IsReadyForSubmit()const
   bool IsStorageBuffer(BufferHandle handle)const
   bool IsSubmissionInFlight()const
@@ -1889,6 +1899,7 @@
   public:D3D12SwapChain(D3D12Device&device,void*hwnd,u32 width,u32 height,u32 buffer_count)
   public:explicit D3D12CommandList(D3D12Device&device,D3D12_COMMAND_LIST_TYPE type=D3D12_COMMAND_LIST_TYPE_DIRECT)
   public:explicit D3D12Device(bool enable_debug_layer)
+  std::function<void()>release
   std::mutex&SubmissionMutex()
   std::unique_ptr<ICommandList>CreateCommandList()override
   std::unique_ptr<ICommandList>CreateComputeCommandList()override
@@ -1896,6 +1907,9 @@
   u32 BufferCount()const override
   u32 CurrentIndex()const
   u32 Height()const override
+  u32 StoreBuffer(std::unique_ptr<gfx::Buffer>buffer,u32 storage_descriptor,bool is_constant,bool is_vertex,std::optional<IndexFormat>index_format)
+  u32 StoreComputePipeline(ComputePipelineRecord&&record)
+  u32 StorePipeline(PipelineRecord&&record)
   u32 Width()const override
   u64 Submit(ICommandList&cmd,ISwapChain*wait_on_swap_chain=nullptr)override
   u64 SubmitCompute(ICommandList&cmd)override
@@ -1920,6 +1934,7 @@
   void CreateSceneDepthCopy()
   void DeferCommandAllocator(ComPtr<ID3D12CommandAllocator>allocator)noexcept
   void Dispatch(u32 groups_x,u32 groups_y,u32 groups_z)override
+  void DrainRetired()
   void Draw(u32 vertex_count,u32 first_vertex=0)override
   void DrawIndexed(u32 index_count)override
   void EndRenderPass()override
@@ -1927,9 +1942,11 @@
   void MarkSubmitted(u64 fence_value)
   void Present(bool vsync)override
   void ReleaseExternalBindlessSlot(SampledTextureHandle slot)
+  void ReleaseRetiredResources()override
   void ReserveBufferRegistryEntry()
   void Reset()override
   void Resize(u32 width,u32 height)override
+  void Retire(std::function<void()>release)
   void SetExternalBindlessTexture(SampledTextureHandle slot,ID3D12Resource*resource,DXGI_FORMAT srv_format)
   void SetPushConstants(const void*data,u32 size_bytes)override
   void SetViewportAndScissor(const Viewport&viewport,const Rect&scissor)override
@@ -1950,6 +1967,7 @@
   type enum class VertexLayout
   type struct ComputePipelineDesc
   type struct PipelineDesc
+  type struct ResourceStats
   bool IsBackendAvailable(Backend backend)
   public:virtual ~IDevice()=default
   std::unique_ptr<IDevice>CreateDevice(Backend backend,bool enable_debug_layer=true)
@@ -1961,9 +1979,13 @@
   virtual BufferHandle CreateVertexBuffer(const void*data,u64 size_bytes)=0
   virtual ComputePipelineHandle CreateComputePipeline(const ComputePipelineDesc&desc)=0
   virtual PipelineHandle CreatePipeline(const PipelineDesc&desc,ISwapChain&swap_chain)=0
+  virtual ResourceStats GetResourceStats()const
   virtual SampledTextureHandle CreateCompressedTexture(CompressedTextureFormat,u32,u32,std::span<const CompressedMip>)
   virtual SampledTextureHandle CreateR32FloatTexture(u32 width,u32 height,const f32*values)=0
   virtual SampledTextureHandle CreateTexture(u32 width,u32 height,const u8*rgba8_pixels)=0
+  virtual bool DestroyBuffer(BufferHandle)
+  virtual bool DestroyComputePipeline(ComputePipelineHandle)
+  virtual bool DestroyPipeline(PipelineHandle)
   virtual bool DestroyTexture(SampledTextureHandle)
   virtual bool IsComputeFenceComplete(u64 fence_value)const=0
   virtual bool IsFenceComplete(u64 fence_value)const=0
@@ -1976,6 +1998,7 @@
   virtual u64 SubmitCompute(ICommandList&cmd)=0
   virtual void ComputeQueueWaitOnGraphics(u64 graphics_fence_value)=0
   virtual void GraphicsQueueWaitOnCompute(u64 compute_fence_value)=0
+  virtual void ReleaseRetiredResources()
   virtual void UpdateConstantBuffer(BufferHandle buffer,const void*data,u64 size_bytes,u64 offset=0)=0
   virtual void UpdateFrameConstantBuffer(BufferHandle,const void*,u64)
   virtual void UpdateStorageBuffer(BufferHandle buffer,const void*data,u64 size_bytes,u64 offset=0)=0
@@ -2025,6 +2048,7 @@
   type struct ImageLevel
   type struct PendingWait
   type struct PipelineRecord
+  type struct RetiredResource
   type struct SampledTextureRecord
   type struct TextureRecord
   #pragma once #include "" #if defined(_WIN32)#define WIN32_LEAN_AND_MEAN #ifndef NOMINMAX #define NOMINMAX #endif #include<Windows.h>#define VK_USE_PLATFORM_WIN32_KHR #elif defined(__ANDROID__)#define VK_USE_PLATFORM_ANDROID_KHR #endif #include<vulkan/vulkan.h>#include<vector>#include<array>#include<atomic>#include<functional>#include<mutex>namespace aether::gfx::rhi::vulkan_backend
@@ -2037,6 +2061,7 @@
   BufferHandle CreateVertexBuffer(const void*data,u64 size_bytes)override
   ComputePipelineHandle CreateComputePipeline(const ComputePipelineDesc&desc)override
   PipelineHandle CreatePipeline(const PipelineDesc&desc,ISwapChain&swap_chain)override
+  ResourceStats GetResourceStats()const override
   SampledTextureHandle CreateCompressedTexture(CompressedTextureFormat format,u32 width,u32 height,std::span<const CompressedMip>mips)override
   SampledTextureHandle CreateR32FloatTexture(u32 width,u32 height,const f32*values)override
   SampledTextureHandle CreateTexture(u32 width,u32 height,const u8*rgba8_pixels)override
@@ -2073,13 +2098,19 @@
   VkSemaphore CurrentRenderFinishedSemaphore()const
   bool BelongsTo(const VulkanDevice&device)const
   bool CopySceneDepth()override
+  bool DestroyBuffer(BufferHandle buffer)override
+  bool DestroyComputePipeline(ComputePipelineHandle pipeline)override
+  bool DestroyPipeline(PipelineHandle pipeline)override
   bool DestroyTexture(SampledTextureHandle texture)override
+  bool IsBufferAlive(BufferHandle h)const
   bool IsComputeDispatchWithinLimits(u32 groups_x,u32 groups_y,u32 groups_z)const
   bool IsComputeFenceComplete(u64 fence_value)const override
   bool IsComputeList()const
+  bool IsComputePipelineAlive(ComputePipelineHandle h)const
   bool IsFenceComplete(u64 fence_value)const override
   bool IsIndexBuffer(BufferHandle handle,IndexFormat format)const
   bool IsOffscreen()const
+  bool IsPipelineAlive(PipelineHandle h)const
   bool IsReadyForSubmit()const
   bool IsSubmissionInFlight()const
   bool IsVertexBuffer(BufferHandle handle)const
@@ -2097,12 +2128,14 @@
   public:VulkanSwapChain(VulkanDevice&device,void*native_window_handle,u32 width,u32 height,u32 buffer_count)
   public:explicit VulkanCommandList(VulkanDevice&device,u32 queue_family_index,bool compute_queue=false)
   public:explicit VulkanDevice(bool enable_debug_layer)
+  std::function<void()>release
   std::mutex&ComputeQueueMutex()
   std::mutex&GraphicsQueueMutex()
   std::unique_ptr<ICommandList>CreateCommandList()override
   std::unique_ptr<ICommandList>CreateComputeCommandList()override
   std::unique_ptr<ISwapChain>CreateSwapChain(void*native_window_handle,u32 width,u32 height,u32 buffer_count)override
   std::vector<VkImage>CreateOffscreenImages(u32 width,u32 height)
+  u32 AcquireBufferSlot(const BufferRecord&record)
   u32 BufferCount()const override
   u32 ComputeQueueFamilyIndex()const
   u32 CurrentImageIndex()const
@@ -2145,16 +2178,21 @@
   void DestroySwapchainAndImages()
   void DestroySyncObjects()
   void Dispatch(u32 groups_x,u32 groups_y,u32 groups_z)override
+  void DrainRetired()
   void Draw(u32 vertex_count,u32 first_vertex=0)override
   void DrawIndexed(u32 index_count)override
   void EndRenderPass()override
+  void FlushRetired()noexcept
   void GraphicsQueueWaitOnCompute(u64 compute_fence_value)override
   void MarkSubmitted(u64 fence_value)
   void Present(bool vsync)override
+  void ReclaimTextureSlots()
   void ReleaseExternalBindlessSlot(SampledTextureHandle slot)
+  void ReleaseRetiredResources()override
   void Reset()override
   void ResetGraphicsBindings()
   void Resize(u32 width,u32 height)override
+  void Retire(std::function<void()>release)
   void SetExternalBindlessView(SampledTextureHandle slot,VkImageView view)
   void SetFullViewport(const VulkanSwapChain&swap_chain)
   void SetPushConstants(const void*data,u32 size_bytes)override
@@ -5807,7 +5845,11 @@
   type struct TerrainConstants
   type struct TerrainDrawParams
   type struct TerrainLayerBinding
+  RhiTerrainGpu&operator=(const RhiTerrainGpu&)=delete
+  RhiTerrainGpu(const RhiTerrainGpu&)=delete
   TerrainConstants PackTerrainConstants(const Mat4&view_projection,const TerrainDrawParams&params)
+  TerrainPass&operator=(const TerrainPass&)=delete
+  TerrainPass(const TerrainPass&)=delete
   bool Valid()const
   const char*TerrainBlendHlsl()
   const char*TerrainShaderSource()
@@ -5822,6 +5864,8 @@
   u64 CreateBuffer(const void*data,u64 bytes,bool index)override
   usize Live()const
   void DestroyBuffer(u64 buffer)override
+  ~RhiTerrainGpu()override
+  ~TerrainPass()
 [ui/include/aether/ui/animation.h] experimental
   type class UIAnimator
   type enum class Ease
@@ -6563,6 +6607,7 @@
   f32 SampleBakedCurve(const std::vector<f32>&table,f32 t)
   gfx::rhi::BufferHandle AliveListBuffer()const
   gfx::rhi::BufferHandle ParticleBuffer()const
+  private:void Release()
   public:GpuEmitterDriver(const Emitter&emitter,u64 seed=1)
   public:GpuEmitterRuntime()=default
   std::vector<LinearColor>BakeGradient(const ColorGradient&gradient,u32 samples=kGradientSamples)
@@ -6579,6 +6624,7 @@
   void SetSceneDepthTexture(gfx::rhi::SampledTextureHandle texture,u32 width,u32 height)
   void Stop()
   void Teleport(const EmitterPose&pose)
+  ~GpuEmitterRuntime()
 [vfx/include/aether/vfx/particle_system.h] experimental
   type class ParticleWorld
   type enum class Kind

@@ -379,6 +379,18 @@ ParticlePass::ParticlePass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap
     if (!Valid()) AETHER_LOG_WARN("PlayerRenderer", "Particle pipelines unavailable; particle effects are not drawn");
 }
 
+ParticlePass::~ParticlePass() {
+    for (std::array<Buffer, 3>& slot : buffers_) {
+        for (Buffer& buffer : slot) {
+            if (buffer.handle.IsValid()) device_.DestroyBuffer(buffer.handle);
+            buffer = {};
+        }
+    }
+    for (const gfx::rhi::PipelineHandle pipeline : {opaque_pipeline_, alpha_pipeline_, additive_pipeline_}) {
+        if (pipeline.IsValid()) device_.DestroyPipeline(pipeline);
+    }
+}
+
 void ParticlePass::Draw(gfx::rhi::ICommandList& commands, const vfx::ParticleRenderData& data, const vfx::ParticleCamera& camera,
                         const Mat4& view_projection, const Mat4& projection, u32 frame_index) {
     PackParticleVertices(data, camera, vertices_, textures_, meshes_, &lighting_);
@@ -401,9 +413,12 @@ void ParticlePass::DrawStream(gfx::rhi::ICommandList& commands, gfx::rhi::Pipeli
         usize capacity = std::max<usize>(buffer.capacity, 6 * 1024);
         while (capacity < vertices.size()) capacity *= 2;
         const std::vector<ParticleQuadVertex> zeros(capacity, ParticleQuadVertex{});
-        buffer.handle = device_.CreateVertexBuffer(zeros.data(), capacity * sizeof(ParticleQuadVertex));
-        buffer.capacity = buffer.handle.IsValid() ? capacity : 0;
-        if (!buffer.handle.IsValid()) return;
+        const gfx::rhi::BufferHandle grown = device_.CreateVertexBuffer(zeros.data(), capacity * sizeof(ParticleQuadVertex));
+        // The outgrown buffer may still be read by frames in flight; the device frees it once they finish.
+        if (buffer.handle.IsValid()) device_.DestroyBuffer(buffer.handle);
+        buffer.handle = grown;
+        buffer.capacity = grown.IsValid() ? capacity : 0;
+        if (!grown.IsValid()) return;
     }
     device_.UpdateVertexBuffer(buffer.handle, vertices.data(), vertices.size() * sizeof(ParticleQuadVertex));
     commands.BindPipeline(pipeline);

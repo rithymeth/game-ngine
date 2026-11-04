@@ -29,6 +29,7 @@
 #include <cmath>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace aether::player {
@@ -623,6 +624,7 @@ struct SceneRenderer::Impl {
     std::vector<BufferHandle> frame_buffers;
     bool legacy_hud = false; // the AETHER-01 HUD, drawn when the game has no UI of its own
     SampledTextureHandle white_texture;
+    SampledTextureHandle font_texture_handle;
     std::unique_ptr<ui::SdfFont> hud_font;
     std::unordered_map<std::string, Model> models;
     std::unordered_map<std::string, SampledTextureHandle> textures;
@@ -634,6 +636,42 @@ struct SceneRenderer::Impl {
     Vec3 previous_player_position{};
     f64 previous_animation_time = 0.0;
     bool has_previous_player_position = false;
+
+    // Releases every GPU object the renderer made: pipelines, frame constants, each model's vertex/index buffers and the textures it
+    // loaded. The device retires them once any frame still drawing with them has finished, so this is safe right after the last Draw.
+    ~Impl() {
+        auto free_buffer = [this](BufferHandle& buffer) {
+            if (buffer.IsValid()) device.DestroyBuffer(buffer);
+            buffer = {};
+        };
+        std::unordered_set<u32> freed_textures;
+        auto free_texture = [&](SampledTextureHandle& texture) {
+            if (texture.IsValid() && freed_textures.insert(texture.index).second) device.DestroyTexture(texture);
+            texture = {};
+        };
+        for (auto& [path, model] : models) {
+            for (auto& primitives : model.meshes) {
+                for (Primitive& primitive : primitives) {
+                    if (primitive.frame_vertex_buffers.empty()) {
+                        free_buffer(primitive.vertices);
+                    } else {
+                        for (BufferHandle& buffer : primitive.frame_vertex_buffers) free_buffer(buffer);
+                        primitive.vertices = {};
+                    }
+                    free_buffer(primitive.indices);
+                    free_texture(primitive.extension_texture);
+                }
+            }
+        }
+        for (BufferHandle& buffer : frame_buffers) free_buffer(buffer);
+        for (auto& [path, texture] : textures) free_texture(texture);
+        free_texture(font_texture_handle);
+        free_texture(white_texture);
+        for (PipelineHandle* handle : {&pipeline, &transparent_pipeline, &hud_pipeline}) {
+            if (handle->IsValid()) device.DestroyPipeline(*handle);
+            *handle = {};
+        }
+    }
 
     Impl(IDevice& d, ISwapChain& s, const GamePackage& p) : device(d), swap_chain(s), package(p) {
         PipelineDesc desc;
@@ -704,6 +742,7 @@ struct SceneRenderer::Impl {
                     static_cast<u32>(hud_font->AtlasWidth()), static_cast<u32>(hud_font->AtlasHeight()), rgba.data());
                 if (font_texture.IsValid()) {
                     ++sampled_texture_count;
+                    font_texture_handle = font_texture;
                     hud_font->SetTexture(font_texture.index);
                 } else {
                     AETHER_LOG_WARN("PlayerRenderer", "Couldn't upload the AETHER-01 HUD font atlas");
