@@ -16,6 +16,7 @@ loc experimental
 nav experimental
 net experimental
 physics experimental
+physics_net experimental
 player experimental
 quests experimental
 renderer experimental

@@ -4405,6 +4405,69 @@
   void Step(f32 dt)
   void SyncPhysicsToTransforms(World&world,PhysicsWorld&physics,f32 dt)
   ~PhysicsWorld()
+[physics_net/include/aether/physics_net/client.h] experimental
+  type class PhysicsNetClient
+  type enum class ClientGrabState
+  type struct Entry
+  type struct PhysicsNetClientStats
+  ClientGrabState StateOf(const EntityGuid&object)const
+  GrabStatus LastStatus(const EntityGuid&object)const
+  bool HandleEvent(const net::NetEvent&event)
+  bool Release(const EntityGuid&object)
+  bool SetTarget(const EntityGuid&object,const Vec3&target)
+  const PhysicsNetClientStats&Stats()const
+  public:PhysicsNetClient(PhysicsScene&scene,net::NetHost&host,net::PeerId server):scene_(scene),host_(host),server_(server)
+  u16 RequestGrab(const EntityGuid&object,const Vec3&point)
+[physics_net/include/aether/physics_net/grab_policy.h] experimental
+  type struct GrabFacts
+  type struct GrabPolicy
+  type struct TokenBucket
+  GrabStatus ValidateGrab(const GrabPolicy&policy,const GrabFacts&facts)
+  Vec3 ClampGrabTarget(const GrabPolicy&policy,const Vec3&holder,const Vec3&target)
+  bool Take(f64 now,f64 per_second,f64 burst)
+[physics_net/include/aether/physics_net/host.h] experimental
+  type class PhysicsNetHost
+  type struct HeldGrab
+  type struct PhysicsNetHostConfig
+  type struct PhysicsNetHostStats
+  type struct Player
+  Vec3 PositionOf(Entity entity)const
+  bool HandleEvent(const net::NetEvent&event)
+  const PhysicsNetHostConfig&Config()const
+  const PhysicsNetHostStats&Stats()const
+  public:PhysicsNetHost(PhysicsScene&scene,net::NetHost&host,const GuidIndex&guids,PhysicsNetHostConfig config=
+  std::function<bool(Entity)>filter_
+  usize GrabsOf(net::PeerId peer)const
+  void OnRelease(net::PeerId peer,const GrabRelease&release)
+  void OnRequest(net::PeerId peer,const GrabRequest&request)
+  void OnTarget(net::PeerId peer,const GrabTarget&target)
+  void ReleaseAll(Player&player)
+  void RemovePlayer(net::PeerId peer)
+  void Reply(net::PeerId peer,u16 request_id,GrabStatus status,const EntityGuid&object)
+  void SetGrabbableFilter(std::function<bool(Entity)>filter)
+  void SetPlayer(net::PeerId peer,Entity pawn)
+  void Tick(f64 now)
+[physics_net/include/aether/physics_net/protocol.h] experimental
+  type enum class GrabStatus
+  type enum class MessageType
+  type struct GrabRelease
+  type struct GrabRequest
+  type struct GrabResult
+  type struct GrabTarget
+  type struct SnapshotChunk
+  [[nodiscard]]bool Decode(std::span<const u8>data,GrabRelease&out)
+  [[nodiscard]]bool Decode(std::span<const u8>data,GrabRequest&out)
+  [[nodiscard]]bool Decode(std::span<const u8>data,GrabResult&out)
+  [[nodiscard]]bool Decode(std::span<const u8>data,GrabTarget&out)
+  [[nodiscard]]bool Decode(std::span<const u8>data,SnapshotChunk&out)
+  const char*GrabStatusName(GrabStatus status)
+  std::optional<MessageType>PeekMessageType(std::span<const u8>data)
+  std::vector<std::vector<u8>>EncodeSnapshotChunks(u32 sequence,const ConstraintSnapshot&snapshot,usize max_bytes=1000)
+  std::vector<u8>Encode(const GrabRelease&message)
+  std::vector<u8>Encode(const GrabRequest&message)
+  std::vector<u8>Encode(const GrabResult&message)
+  std::vector<u8>Encode(const GrabTarget&message)
+  std::vector<u8>Encode(const SnapshotChunk&message)
 [player/include/aether/player/bindings_migrate.h] experimental
   std::vector<std::string>MigrateLegacyBindings(const std::filesystem::path&saved_dir,save::SettingsStore<save::GameSettings>&store)
 [player/include/aether/player/game.h] experimental
