@@ -13,6 +13,12 @@
 #if AETHER_TEST_HAS_PHYSICS
 #include "aether/physics/character.h"
 #endif
+#if AETHER_TEST_HAS_PHYSICS_NET
+#include "aether/net/host.h"
+#include "aether/physics/physics_scene.h"
+#include "aether/physics_net/client.h"
+#include "aether/physics_net/host.h"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -319,6 +325,137 @@ AETHER_TEST(GhostShift_StunBlastCountersThePrank) {
         GS_CHECK(run.G("GhostState") == 0); // recovers to Dormant, ready to try again
     }
 }
+
+#if AETHER_TEST_HAS_PHYSICS_NET
+// GS-04: two players move the same heavy prop. The real Willow House runs on a host and on two clients (three player::Game instances, each with its
+// own physics), joined by the engine's physics-over-the-network module on a simulated link. The crate weighs 50 kg and a grab is capped at 300 N,
+// so one player cannot lift it and two can; the host validates every request, and the clients' copies follow its snapshots.
+AETHER_TEST(GhostShift_TwoPlayersMoveTheCrateTogetherUnderLatencyAndLoss) {
+    struct Link {
+        const char* name;
+        net::LinkConditions conditions;
+    };
+    net::LinkConditions clean, lossy;
+    lossy.latency = 0.06, lossy.jitter = 0.04, lossy.loss = 0.25f, lossy.duplicate = 0.05f;
+    for (const Link& link : {Link{"clean", clean}, Link{"25% loss, 60 ms, 40 ms jitter, 5% duplicates", lossy}}) {
+        GsRun host("net-host", 30), alice("net-alice", 30), bob("net-bob", 30);
+        GsRun* games[3] = {&host, &alice, &bob};
+        for (GsRun* g : games) g->Suppress(true); // the Prankster is not part of this test
+        PhysicsScene* host_physics = host.game->PhysicsQueries();
+        GS_CHECK(host_physics != nullptr && alice.game->PhysicsQueries() != nullptr && bob.game->PhysicsQueries() != nullptr);
+        if (host_physics == nullptr) continue;
+        const Entity crate = host.One("MovableProp");
+        const IdComponent* id = host.game->GetWorld().GetComponent<IdComponent>(crate);
+        GS_CHECK(id != nullptr && !id->guid.IsNull());
+        if (id == nullptr) continue;
+        const EntityGuid crate_guid = id->guid;
+        const Vec3 start = host.Pos(crate);
+        GS_CHECK(std::fabs(start.x - 4.5f) < 0.01f && std::fabs(start.y - 0.5f) < 0.05f);
+
+        // The two players' pawns on the host, either side of the crate (holders need a position and a GUID, not a body).
+        World& host_world = host.game->GetWorld();
+        const Entity pawns[2] = {host_world.CreateEntity(Transform{Vec3(3.0f, 1.0f, -1.5f), Quaternion::Identity()}, IdComponent{EntityGuid{0x6531, 1}}),
+                                 host_world.CreateEntity(Transform{Vec3(4.5f, 1.0f, -3.0f), Quaternion::Identity()}, IdComponent{EntityGuid{0x6531, 2}})};
+        for (int i = 0; i < 2; ++i) host.game->Guids().Add(EntityGuid{0x6531, static_cast<u64>(i + 1)}, pawns[i]);
+
+        net::LoopbackNetwork network(5);
+        auto server_socket = network.Open(7777);
+        net::NetHost server(*server_socket);
+        server.Listen();
+        physics_net::PhysicsNetHostConfig config;
+        config.policy.settings.max_force = 300.0f;
+        physics_net::PhysicsNetHost physics_host(*host_physics, server, host.game->Guids(), config);
+        std::unique_ptr<net::DatagramSocket> sockets[2];
+        std::unique_ptr<net::NetHost> hosts[2];
+        net::PeerId server_peer[2] = {net::kNoPeer, net::kNoPeer}, client_peer[2] = {net::kNoPeer, net::kNoPeer};
+        std::unique_ptr<physics_net::PhysicsNetClient> clients[2];
+        GsRun* players[2] = {&alice, &bob};
+        f64 now = 0.0;
+        const auto frame = [&] {
+            now += 1.0 / 30.0;
+            network.Advance(1.0 / 30.0);
+            server.Update(now);
+            for (const net::NetEvent& e : server.TakeEvents()) {
+                if (e.type == net::NetEventType::Connected) {
+                    for (int i = 0; i < 2; ++i)
+                        if (hosts[i] && server_peer[i] == net::kNoPeer && client_peer[i] != net::kNoPeer) {
+                            server_peer[i] = e.peer;
+                            physics_host.SetPlayer(e.peer, pawns[i]);
+                            break;
+                        }
+                }
+                physics_host.HandleEvent(e);
+            }
+            for (int i = 0; i < 2; ++i) {
+                if (!hosts[i]) continue;
+                hosts[i]->Update(now);
+                for (const net::NetEvent& e : hosts[i]->TakeEvents()) clients[i]->HandleEvent(e);
+            }
+            host.Frames(1);
+            physics_host.Tick(now);
+            alice.Frames(1);
+            bob.Frames(1);
+        };
+        for (int i = 0; i < 2; ++i) { // each joins in turn, before the link degrades
+            sockets[i] = network.Open();
+            hosts[i] = std::make_unique<net::NetHost>(*sockets[i]);
+            client_peer[i] = hosts[i]->Connect(net::Address::Loopback(7777), now);
+            clients[i] = std::make_unique<physics_net::PhysicsNetClient>(*players[i]->game->PhysicsQueries(), *hosts[i], client_peer[i]);
+            for (int guard = 0; guard < 300 && server_peer[i] == net::kNoPeer; ++guard) frame();
+            GS_CHECK(server_peer[i] != net::kNoPeer);
+        }
+        network.conditions = link.conditions;
+
+        // One player alone can't lift the crate: alice grabs the left top edge and pulls it up one metre.
+        clients[0]->RequestGrab(crate_guid, start + Vec3(-0.5f, 0.5f, 0.0f));
+        for (int guard = 0; guard < 300 && clients[0]->StateOf(crate_guid) != physics_net::ClientGrabState::Held; ++guard) frame();
+        GS_CHECK(clients[0]->StateOf(crate_guid) == physics_net::ClientGrabState::Held);
+        for (int i = 0; i < 120; ++i) {
+            clients[0]->SetTarget(crate_guid, start + Vec3(-0.5f, 1.5f, 0.0f));
+            frame();
+        }
+        GS_CHECK(host.Pos(crate).y < start.y + 0.3f);
+
+        // Bob joins the grab; together they lift it a metre and carry it 1.5 m toward the middle of the room.
+        clients[1]->RequestGrab(crate_guid, start + Vec3(0.5f, 0.5f, 0.0f));
+        for (int guard = 0; guard < 300 && clients[1]->StateOf(crate_guid) != physics_net::ClientGrabState::Held; ++guard) {
+            clients[0]->SetTarget(crate_guid, start + Vec3(-0.5f, 1.5f, 0.0f)); // alice keeps her grip
+            frame();
+        }
+        GS_CHECK(clients[1]->StateOf(crate_guid) == physics_net::ClientGrabState::Held);
+        const auto aim = [&](f32 dx, f32 dy) {
+            clients[0]->SetTarget(crate_guid, start + Vec3(dx - 0.5f, dy + 0.5f, 0.0f));
+            clients[1]->SetTarget(crate_guid, start + Vec3(dx + 0.5f, dy + 0.5f, 0.0f));
+        };
+        for (int i = 0; i < 150; ++i) aim(0.0f, 1.0f), frame();
+        for (int i = 1; i <= 90; ++i) aim(-1.5f * static_cast<f32>(i) / 90.0f, 1.0f), frame();
+        for (int i = 0; i < 150; ++i) aim(-1.5f, 1.0f), frame();
+        const Vec3 at = host.Pos(crate);
+        if (std::fabs(at.x - (start.x - 1.5f)) >= 0.35f || std::fabs(at.y - (start.y + 1.0f)) >= 0.35f) {
+            std::printf("    %s: the crate ended at (%.2f, %.2f, %.2f) from (%.2f, %.2f, %.2f)\n", link.name, at.x, at.y, at.z, start.x, start.y, start.z);
+        }
+        GS_CHECK(std::fabs(at.x - (start.x - 1.5f)) < 0.35f && std::fabs(at.y - (start.y + 1.0f)) < 0.35f && std::fabs(at.z - start.z) < 0.35f);
+        GS_CHECK(physics_host.Stats().granted == 2 && physics_host.Stats().denied == 0 && physics_host.Stats().malformed == 0);
+        for (int i = 0; i < 2; ++i) {
+            const Vec3 copy = players[i]->Pos(players[i]->One("MovableProp"));
+            const Vec3 d = copy - at;
+            const f32 error = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+            if (error >= 0.2f) std::printf("    %s: client %d's crate is %.3f m from the host's\n", link.name, i, error);
+            GS_CHECK(error < 0.2f);
+        }
+        if (link.conditions.loss > 0.0f) GS_CHECK(network.Dropped() > 0);
+
+        // Alice lets go: bob alone can't hold it up, so it falls back toward the floor on the host and on both clients.
+        GS_CHECK(clients[0]->Release(crate_guid));
+        for (int i = 0; i < 150; ++i) {
+            clients[1]->SetTarget(crate_guid, start + Vec3(-1.0f, 1.5f, 0.0f));
+            frame();
+        }
+        GS_CHECK(host.Pos(crate).y < start.y + 0.6f);
+        GS_CHECK(host_physics->GrabCount(crate) == 1);
+    }
+}
+#endif
 #endif
 
 // ------------------------------------------------------------------------------------------------
